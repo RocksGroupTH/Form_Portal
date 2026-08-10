@@ -503,6 +503,16 @@ html {
   }
 }
 
+/* Shared page-header back button — clear hover affordance */
+.page-back-btn {
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.page-back-btn:hover {
+  background: var(--bg-card-alt);
+  border-color: var(--text-faint);
+  color: var(--text-heading);
+}
+
 /* ===== Accounting feature — pastel accent scope ===== */
 /* Overrides only the accent/action/nav-active tokens inside .acc-theme.
    All other pages are completely unaffected. */
@@ -546,4 +556,144 @@ html {
 html:has(.acc-theme) {
   overflow-x: clip;
 }
+
+/* Staggered entrance for accounting popups (reuses fadeInUp) */
+.acc-fade-up {
+  animation: fadeInUp 0.4s var(--ease-out-expo) both;
+}
+
+/* Dashed "add row" button — subtle accent on hover */
+.acc-add-row {
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.acc-add-row:hover {
+  background: var(--bg-card-alt);
+  border-color: var(--nav-active-text);
+  color: var(--nav-active-text);
+}
+
+/* Draft delete button — danger tint on hover */
+.acc-draft-del {
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.acc-draft-del:hover {
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  border-color: color-mix(in srgb, var(--color-danger) 40%, transparent);
+  color: var(--color-danger);
+}
+
+/* Accounting popup-loading animations */
+.acc-spin { animation: claudeSpin 0.9s linear infinite; }
+.acc-ping { animation: acc-ping 1.6s cubic-bezier(0, 0, 0.2, 1) infinite; }
+@keyframes acc-ping {
+  0% { transform: scale(0.85); opacity: 0.6; }
+  80%, 100% { transform: scale(1.25); opacity: 0; }
+}
+.acc-progress {
+  width: 40%;
+  animation: acc-progress 1.2s ease-in-out infinite;
+}
+@keyframes acc-progress {
+  0% { margin-left: -40%; }
+  100% { margin-left: 100%; }
+}
 /* ===== End Accounting scoped styles ===== */
+
+/* ===== Floating Tour FAB — GLOBAL (portal-rendered to document.body) ===== */
+
+@keyframes tour-fab-pulse {
+  0%   { box-shadow: 0 0 0 0    rgba(193, 71, 40, 0.55), 0 10px 24px rgba(15, 23, 42, 0.18); }
+  70%  { box-shadow: 0 0 0 14px rgba(193, 71, 40, 0),    0 10px 24px rgba(15, 23, 42, 0.18); }
+  100% { box-shadow: 0 0 0 0    rgba(193, 71, 40, 0),    0 10px 24px rgba(15, 23, 42, 0.18); }
+}
+@keyframes tour-fab-bob {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-3px); }
+}
+@keyframes tour-tip-in {
+  0%   { opacity: 0; transform: translate(-6px, 0) scale(0.94); }
+  100% { opacity: 1; transform: translate(0, 0) scale(1); }
+}
+
+.tour-fab {
+  position: fixed;
+  left: 18px;
+  bottom: 18px;
+  z-index: 9000;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 999px;
+  border: none;
+  cursor: pointer;
+  color: #fff;
+  background: linear-gradient(135deg, #d05a3e 0%, #c1462a 55%, #9a3320 100%);
+  animation: tour-fab-pulse 2.4s ease-out infinite, tour-fab-bob 3.2s ease-in-out infinite;
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1), filter 180ms ease;
+}
+.tour-fab:hover {
+  transform: translateY(-4px) scale(1.06);
+  filter: brightness(1.05);
+  animation-play-state: paused;
+}
+.tour-fab:active { transform: translateY(-1px) scale(0.97); }
+.tour-fab:focus-visible {
+  outline: 3px solid rgba(193, 71, 40, 0.45);
+  outline-offset: 3px;
+}
+.tour-fab-icon {
+  font-weight: 700;
+  font-size: 22px;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+.tour-fab-tip {
+  position: absolute;
+  left: calc(100% + 12px);
+  top: 50%;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 180ms ease, visibility 0s linear 180ms;
+}
+.tour-fab-tip::before {
+  content: "";
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 6px solid transparent;
+  border-right-color: var(--bg-card);
+  filter: drop-shadow(-1px 0 0 var(--border));
+}
+.tour-fab-tip-sub {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-top: 2px;
+  letter-spacing: 0.02em;
+}
+.tour-fab-wrap:hover .tour-fab-tip,
+.tour-fab:focus-visible + .tour-fab-tip {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 180ms ease, visibility 0s;
+  animation: tour-tip-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .tour-fab { animation: none; }
+}
+/* ===== End Floating Tour FAB ===== */
