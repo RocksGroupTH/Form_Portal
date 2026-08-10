@@ -14,7 +14,6 @@ declare module "next-auth" {
       nickname: string;
       color: string;
       photo: string | null;
-      hasIntel: boolean;
     };
   }
   interface User {
@@ -32,7 +31,6 @@ declare module "@auth/core/jwt" {
     color: string;
     userId: string;
     photo: string | null;
-    hasIntel?: boolean;
   }
 }
 

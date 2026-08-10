@@ -15,12 +15,12 @@ import { useUserPhoto } from "@/lib/hooks/useUserPhoto";
 import { getBrandFromSearchParams, replaceSearchParams, setBrandInSearchParams } from "@/lib/brand-url";
 import { TRAVEL_FROM_PARAM, resolveTravelReturnPath } from "@/features/accounting/lib/navigation";
 import {
-  Sun, Moon, Home, FileText, BarChart3, MapPin, ClipboardList, ClipboardCheck, Send,
+  Sun, Moon, Home, FileText, ClipboardList, ClipboardCheck, Send,
 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 
 const ICON_MAP: Record<string, React.ComponentType<{ size?: number }>> = {
-  FileText, BarChart3, MapPin, ClipboardList, ClipboardCheck, Send,
+  FileText, ClipboardList, ClipboardCheck, Send,
 };
 
 function NavIcon({ icon, size = 16 }: { icon: string; size?: number }) {
@@ -32,11 +32,10 @@ export function Navbar() {
   const pathname = usePathname();
   const sp = useSearchParams();
   const { brand } = useBrand();
-  const { data: session, status } = useSession();
+  const { data: session } = useSession();
   const { theme, toggleTheme } = useTheme();
   const user = session?.user;
-  const hasIntel = status === "authenticated" && (session?.user?.hasIntel ?? false);
-  const visibleNav = NAV.filter((n) => !n.requiresIntel || hasIntel);
+  const visibleNav = NAV;
   const displayPhoto = useUserPhoto();
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileMobile, setProfileMobile] = useState(false);

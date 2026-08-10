@@ -13,7 +13,7 @@ export async function listAllBrands(): Promise<AccBrandOption[]> {
   `);
   // The Codex Logo column points at /uploads/brands/* which this app does not
   // serve. Use the local processed logos at /brandlogo/{code}-200.png instead
-  // (same convention as the Locations feature).
+  // (same convention as the brand switcher).
   return r.recordset.map((x: { Code: string; Name: string | null; Logo: string | null }) => ({
     brandCode: x.Code,
     brandName: x.Name ?? x.Code,

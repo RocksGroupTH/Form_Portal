@@ -1,6 +1,6 @@
 /**
  * Process-lifetime in-memory cache for Accounting / ERP prep routes.
- * Separate from intelligence/api-cache to avoid cross-bundle export issues in Turbopack.
+ * Kept local to the acc namespace to avoid cross-bundle export issues in Turbopack.
  */
 
 type CacheEntry = { ts: number; data: unknown };

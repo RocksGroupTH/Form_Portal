@@ -110,8 +110,8 @@ export function GoogleMapsKeySettings({ embedded, onChanged }: Props) {
     <div>
       {!embedded && (
         <p className="text-[12px] mb-5" style={{ color: "var(--text-muted)" }}>
-          API Key ระดับระบบสำหรับ Google Maps (ค้นหาสถานที่ · คำนวณระยะทาง) ใช้กับฟอร์ม AP-1,
-          ฟิลด์เส้นทางในฟอร์มสำนักงาน และหน้า Locations
+          API Key ระดับระบบสำหรับ Google Maps (ค้นหาสถานที่ · คำนวณระยะทาง) ใช้กับฟอร์ม AP-1
+          และฟิลด์เส้นทางในฟอร์มสำนักงาน
         </p>
       )}
 

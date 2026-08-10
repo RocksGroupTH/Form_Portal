@@ -18,6 +18,8 @@ import {
   Map as MapIcon,
   Loader2,
   FlaskConical,
+  FileText,
+  ClipboardList,
 } from "lucide-react";
 import { isSystemAdminRole } from "@/lib/roles";
 
@@ -28,6 +30,8 @@ const ICON_MAP: Record<string, React.ComponentType<{ size?: number; style?: Reac
   Shield,
   Map: MapIcon,
   FlaskConical,
+  FileText,
+  ClipboardList,
 };
 
 export default function SettingsHubPage() {

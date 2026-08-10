@@ -63,7 +63,7 @@ function LoginContent() {
             <span className="text-[22px] font-bold">Rocks Fast</span>
           </div>
           <p className="text-[14px] leading-relaxed opacity-80">
-            Internal portal for Rocks Group — office forms, business intelligence, and brand locations in one place.
+            Internal portal for Rocks Group — office forms, requests, and approvals in one place.
           </p>
         </div>
         <p className="text-[11px] opacity-40 mt-4">Rocks Group — Rocks Fast</p>

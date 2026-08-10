@@ -29,23 +29,21 @@ export type NavItem = {
   devHostOnly?: boolean;
   /** Settings hub — visible only to System Admin */
   systemAdminOnly?: boolean;
-  /** Requires Intelligence permission (admin role, brand grant, or group membership) */
-  requiresIntel?: boolean;
   /** Request hub — office/management variant: render the form icon with a small settings badge */
   manage?: boolean;
 };
 
 export const NAV: NavItem[] = [
   {
-    id: "request",
-    label: "Request",
-    icon: "ClipboardList",
-    desc: "Submit master-data requests — items, vendors, price changes",
-    href: "/request",
+    id: "forms",
+    label: "Forms",
+    icon: "FileText",
+    desc: "ฟอร์มทั้งหมดและคำขอที่ส่งได้",
+    href: "/forms",
   },
   {
     id: "my-request",
-    label: "My Request",
+    label: "My Requests",
     icon: "Send",
     desc: "คำขอที่คุณส่งและสถานะ",
     href: "/my-request",
@@ -56,22 +54,6 @@ export const NAV: NavItem[] = [
     icon: "ClipboardCheck",
     desc: "คำขอที่รอคุณอนุมัติหรือเกี่ยวข้อง",
     href: "/my-work",
-  },
-  {
-    id: "intelligence",
-    label: "Fast Intelligence",
-    icon: "BarChart3",
-    desc: "Company reports & business intelligence",
-    href: "/intelligence",
-    requiresIntel: true,
-  },
-  {
-    id: "locations",
-    label: "Locations",
-    icon: "MapPin",
-    desc: "View locations for all brands",
-    href: "/locations",
-    requiresIntel: true,
   },
 ];
 
@@ -153,7 +135,7 @@ export const SETTINGS_CARDS: NavItem[] = [
     id: "maps",
     label: "Maps & Routing",
     icon: "Map",
-    desc: "Google Maps API Key (AP-1 · ฟอร์ม · Locations)",
+    desc: "Google Maps API Key (AP-1 · ฟอร์ม)",
     href: "/settings/maps",
   },
   {
@@ -174,7 +156,7 @@ export const SETTINGS_CARDS: NavItem[] = [
     id: "brand-config",
     label: "Brand Configuration",
     icon: "Layers",
-    desc: "Configure BC, ERP SQL, and dashboard SQL for each brand",
+    desc: "Configure BC and ERP SQL for each brand",
     href: "/settings/brand-config",
   },
   {
@@ -186,10 +168,24 @@ export const SETTINGS_CARDS: NavItem[] = [
     systemAdminOnly: true,
   },
   {
-    id: "intel-permissions",
-    label: "Intelligence Permissions",
+    id: "users",
+    label: "Users & Roles",
     icon: "Shield",
-    desc: "Brand access groups, members, and user roles",
-    href: "/intelligence/admin/permissions",
+    desc: "จัดการผู้ใช้ บทบาท และการซิงก์จาก Active Directory",
+    href: "/settings/users",
+  },
+  {
+    id: "manage-forms",
+    label: "Manage Forms",
+    icon: "FileText",
+    desc: "สร้างและแก้ไขฟอร์ม พร้อมตั้งค่าลำดับการอนุมัติ",
+    href: "/forms/admin",
+  },
+  {
+    id: "accounting-admin",
+    label: "Accounting Admin",
+    icon: "ClipboardList",
+    desc: "คิวอนุมัติ รายงาน และตั้งค่าของ AP-1 / AP-17",
+    href: "/request/accounting",
   },
 ];

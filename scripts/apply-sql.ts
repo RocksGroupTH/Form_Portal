@@ -1,14 +1,12 @@
 /* eslint-disable no-console */
 /**
- * Apply a .sql file against one or all configured brand Dashboard DBs.
+ * Apply a .sql file against one named database on the app's MSSQL server.
  *
  * Usage:
- *   npm run apply-sql -- --file sql/foodstory-views.sql
- *   npm run apply-sql -- --file sql/foodstory-views.sql --db Rocks_UNO_Data
+ *   npm run apply-sql -- --db Fast_Form --file migrations/013_portal_acc_core.sql
  *
- * Default mode enumerates BrandConfig.DashboardDatabaseName for every
- * active brand whose DashboardDbConnectionId is set, then runs the file
- * against each target.
+ * Both --db and --file are required. Credentials come from the MSSQL_* keys
+ * in .env.local; the file is split on GO and each batch is run in order.
  */
 
 import fs from "node:fs";
@@ -39,23 +37,25 @@ function loadDotEnvLocal() {
 
 interface Args {
   file: string;
-  db: string | null;
-  brand: string | null;
+  db: string;
 }
 
 function parseArgs(): Args {
-  const out: Args = { file: "", db: null, brand: null };
+  let file = "";
+  let db = "";
   const argv = process.argv.slice(2);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--file" || a === "-f") out.file = argv[++i] ?? "";
-    else if (a === "--db" || a === "-d") out.db = argv[++i] ?? null;
-    else if (a === "--brand" || a === "-b") out.brand = argv[++i] ?? null;
+    if (a === "--file" || a === "-f") file = argv[++i] ?? "";
+    else if (a === "--db" || a === "-d") db = argv[++i] ?? "";
   }
-  if (!out.file) {
+  if (!file) {
     throw new Error("Missing --file <path>");
   }
-  return out;
+  if (!db) {
+    throw new Error("--db <database> is required, e.g. --db Fast_Form");
+  }
+  return { file, db };
 }
 
 function splitBatches(text: string): string[] {
@@ -80,16 +80,6 @@ async function runOnDb(
     console.log(`  batch ${i + 1}/${batches.length} (${batches[i].length} chars)`);
     await pool.request().batch(batches[i]);
   }
-  // Verify: count views matching the names defined in the file (best effort)
-  const check = await pool.request().query(`
-    SELECT name FROM sys.views WHERE schema_id = SCHEMA_ID('dbo')
-      AND name LIKE 'vw_Foodstory_%'
-  `);
-  console.log(
-    `  verified: ${check.recordset.length} matching view(s) — ${check.recordset
-      .map((r: { name: string }) => r.name)
-      .join(", ") || "none"}`,
-  );
   console.log(`  applied ${path.basename(filePath)} to ${label} OK`);
 }
 
@@ -107,46 +97,9 @@ async function main() {
   }
   console.log(`Loaded ${batches.length} batch(es) from ${args.file}`);
 
-  if (args.brand) {
-    // --brand resolves through getBrandDashboardPool — handles external SQL servers
-    // whose credentials are stored encrypted in DbConnection (not in env).
-    const { getBrandDashboardPool } = await import("../src/lib/intelligence/brand-pool");
-    await runOnDb(
-      `brand ${args.brand}`,
-      () => getBrandDashboardPool(args.brand!),
-      filePath,
-      batches,
-    );
-  } else if (args.db) {
-    // --db uses MSSQL_* env credentials (saai's home server only).
-    const { getAppPool } = await import("../src/lib/db/mssql");
-    await runOnDb(args.db, () => getAppPool(args.db!), filePath, batches);
-  } else {
-    // Default: enumerate every brand whose Dashboard DB is configured.
-    // Uses getBrandDashboardPool per target so external-server brands work.
-    const { listConfiguredBrandTargets, getBrandDashboardPool } = await import(
-      "../src/lib/intelligence/brand-pool"
-    );
-    const targets = await listConfiguredBrandTargets();
-    if (targets.length === 0) {
-      throw new Error(
-        "No brand targets found in BrandConfig. Configure DashboardDbConnectionId + DashboardDatabaseName, or pass --db <name>.",
-      );
-    }
-    console.log(
-      `Found ${targets.length} target(s): ${targets
-        .map((t) => `${t.brandCode}→${t.databaseName}`)
-        .join(", ")}`,
-    );
-    for (const t of targets) {
-      await runOnDb(
-        `${t.brandCode} → ${t.databaseName}`,
-        () => getBrandDashboardPool(t.brandCode),
-        filePath,
-        batches,
-      );
-    }
-  }
+  // --db uses the MSSQL_* env credentials for the app's own SQL server.
+  const { getAppPool } = await import("../src/lib/db/mssql");
+  await runOnDb(args.db, () => getAppPool(args.db), filePath, batches);
 
   console.log("\nDone.");
   process.exit(0);

@@ -34,7 +34,7 @@ export function MapProviderSettings() {
     <div className="space-y-6">
       <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>
         ตั้งค่า <strong>Google Maps API Key</strong> สำหรับแผนที่และคำนวณระยะทาง
-        ใช้กับฟอร์มเบิกค่าเดินทาง AP-1, ฟิลด์เส้นทางในฟอร์มสำนักงาน และหน้า Locations
+        ใช้กับฟอร์มเบิกค่าเดินทาง AP-1 และฟิลด์เส้นทางในฟอร์มสำนักงาน
       </p>
 
       <div

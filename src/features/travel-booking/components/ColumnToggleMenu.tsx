@@ -11,9 +11,8 @@ export interface ColumnToggleOption<K extends string> {
 
 /**
  * Generic show/hide-columns dropdown — a button that opens a checkbox list.
- * Mirrors the column-visibility picker pattern in
- * `src/features/intelligence/components/DataTable.tsx` (plain absolute-positioned
- * panel, not a Radix menu), factored out here so any AP-17 report table can reuse it.
+ * Deliberately a plain absolute-positioned panel (no portal, not a Radix menu),
+ * factored out here so any AP-17 report table can reuse it.
  */
 export function ColumnToggleMenu<K extends string>({
   columns,

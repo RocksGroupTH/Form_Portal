@@ -76,44 +76,11 @@ export function getDataPool(): Promise<sql.ConnectionPool> {
 
 /**
  * Get a pool on the app's MSSQL server (MSSQL_* env) for an arbitrary database.
- * Used by getBrandDashboardPool when a brand's Dashboard target uses APP_DB_CONNECTION_ID.
+ * Used for databases outside the three named pools above — e.g. Rocks_Portal_HR.
  */
 export function getAppPool(databaseName: string): Promise<sql.ConnectionPool> {
   return getNamedPool(databaseName);
 }
-
-/** Foodstory brand DB — e.g., Rocks_UNO_Data, Rocks_KSI_Data */
-export function getFoodstoryPool(brand: string): Promise<sql.ConnectionPool> {
-  const brands = env.FOODSTORY_BRANDS;
-  const dbName = brands?.[brand];
-  if (!dbName) throw new Error(`Unknown Foodstory brand: ${brand}`);
-
-  const host = env.FOODSTORY_DB_HOST || env.MSSQL_HOST;
-  const key = `${host}:${dbName}`;
-
-  let poolPromise = pools.get(key);
-  if (!poolPromise) {
-    poolPromise = new sql.ConnectionPool(
-      applySqlPort(
-        {
-          server: host,
-          database: dbName,
-          user: env.MSSQL_USER,
-          password: env.MSSQL_PASSWORD,
-          options: sharedOptions,
-          pool: sharedPool,
-        },
-        env.MSSQL_PORT,
-      ),
-    ).connect().catch((err) => {
-      pools.delete(key);
-      throw err;
-    });
-    pools.set(key, poolPromise);
-  }
-  return poolPromise;
-}
-
 
 /** @deprecated Use getCorePool() — kept for backward compatibility */
 export const getPool = getCorePool;

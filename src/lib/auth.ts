@@ -41,33 +41,6 @@ export function clearTeamMemberRoleCache(email?: string) {
   } else {
     roleCache.clear();
   }
-  clearIntelCache(email);
-}
-
-const INTEL_CACHE_TTL_MS = 60 * 1000;
-const intelCache = new Map<string, { value: boolean; expiresAt: number }>();
-
-async function getCachedHasIntel(email: string, role: string): Promise<boolean> {
-  const key = `${email.toLowerCase()}|${role}`;
-  const now = Date.now();
-  const cached = intelCache.get(key);
-  if (cached && now < cached.expiresAt) return cached.value;
-
-  const { hasIntelAccess } = await import("@/lib/intel-access");
-  const value = await hasIntelAccess(email, role);
-  intelCache.set(key, { value, expiresAt: now + INTEL_CACHE_TTL_MS });
-  return value;
-}
-
-function clearIntelCache(email?: string) {
-  if (email) {
-    const prefix = `${email.toLowerCase()}|`;
-    intelCache.forEach((_, k) => {
-      if (k.startsWith(prefix)) intelCache.delete(k);
-    });
-  } else {
-    intelCache.clear();
-  }
 }
 
 function applyTeamMemberToToken(
@@ -219,15 +192,6 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           }
         }
 
-        if (token.email) {
-          try {
-            t.hasIntel = await getCachedHasIntel(token.email as string, t.role as string);
-          } catch (intelErr: unknown) {
-            console.error("[Auth] jwt hasIntel lookup:", intelErr instanceof Error ? intelErr.message : intelErr);
-            t.hasIntel = (t.hasIntel as boolean) ?? false;
-          }
-        }
-
         return token;
       } catch (err: unknown) {
         console.error("[Auth] jwt error:", err instanceof Error ? err.message : err);
@@ -243,7 +207,6 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       session.user.color = token.color as string;
       session.user.photo = (token.photo as string | null) ?? null;
       session.user.id = token.userId as string;
-      session.user.hasIntel = (token.hasIntel as boolean) ?? false;
       return session;
     },
   },

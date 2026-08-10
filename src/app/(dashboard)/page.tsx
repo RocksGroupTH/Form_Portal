@@ -11,8 +11,6 @@ import { useBrand } from "@/components/BrandProvider";
 import { getBrandFromSearchParams, replaceSearchParams, setBrandInSearchParams } from "@/lib/brand-url";
 import {
   FileText,
-  BarChart3,
-  MapPin,
   Package,
   ClipboardList,
   Settings2,
@@ -22,8 +20,6 @@ const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
 const ICON_MAP: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
   FileText,
-  BarChart3,
-  MapPin,
   Package,
   ClipboardList,
   Settings2,
@@ -42,8 +38,7 @@ export default function DashboardPage() {
   );
 
   const isAdmin = status === "authenticated" && (meData?.data?.isAdmin ?? canAdmin);
-  const hasIntel = status === "authenticated" && (user?.hasIntel ?? false);
-  const visibleHomeCards = HOME_CARDS.filter((card) => !card.requiresIntel || hasIntel);
+  const visibleHomeCards = HOME_CARDS;
   const cards = isAdmin ? [...visibleHomeCards, ...ADMIN_HOME_CARDS] : visibleHomeCards;
 
   const hrefWithBrand = (href: string) => {

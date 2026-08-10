@@ -2,8 +2,8 @@
  * Brand registry — shared between server (middleware, RootLayout cookie read)
  * and client (BrandProvider, BrandSwitcher, BrandGate).
  *
- * NOTE: keep in sync with FOODSTORY_BRANDS env var. Intelligence hub uses
- * BrandConfig Dashboard SQL — brands without dashboard config show "SOON".
+ * NOTE: keep in sync with the BrandConfig rows in Fast_Core — a brand listed
+ * here with no BrandConfig row cannot resolve an ERP connection.
  */
 
 export const BRAND_COOKIE = "rocks-fast-brand";

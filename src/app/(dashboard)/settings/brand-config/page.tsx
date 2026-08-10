@@ -42,6 +42,13 @@ interface LookupItem {
   name: string;
 }
 
+/**
+ * The two `dashboard*` fields are no longer editable here — the Master Dashboard
+ * they configured lives in the Rocks Fast app, which still reads these columns.
+ * They are carried through read → state → save untouched so a save from this
+ * page cannot blank them out (`updateBrandConfig` always writes
+ * `DashboardDbConnectionId`, so omitting it would NULL the column).
+ */
 type FormState = {
   bcId: string;
   bcName: string;
@@ -98,7 +105,7 @@ function databaseOptions(names: string[], current?: string): SearchableSelectOpt
   return out.sort((a, b) => a.label.localeCompare(b.label));
 }
 
-type GroupKey = "bc" | "erp" | "dashboard";
+type GroupKey = "bc" | "erp";
 
 interface GroupStatus {
   key: GroupKey;
@@ -128,25 +135,10 @@ function getErpGroupStatus(
   return { key: "erp", label: "Config Server (ERP)", complete: missing.length === 0, missing };
 }
 
-function getDashboardGroupStatus(
-  dbConnectionId: number | string | null | undefined,
-  databaseName: string | null | undefined,
-): GroupStatus {
-  const missing: string[] = [];
-  const hasServer =
-    typeof dbConnectionId === "string"
-      ? hasDbServerSelected(dbConnectionId)
-      : dbConnectionId != null;
-  if (!hasServer) missing.push("SQL Server");
-  if (!databaseName?.trim()) missing.push("Database");
-  return { key: "dashboard", label: "Config Server (Dashboard)", complete: missing.length === 0, missing };
-}
-
 function getGroupStatusesFromRow(c: BrandConfigRow): GroupStatus[] {
   return [
     getBcGroupStatus(c.bcId, c.bcName),
     getErpGroupStatus(c.dbConnectionId, c.databaseName),
-    getDashboardGroupStatus(c.dashboardDbConnectionId, c.dashboardDatabaseName),
   ];
 }
 
@@ -154,7 +146,6 @@ function getGroupStatusesFromForm(form: FormState): GroupStatus[] {
   return [
     getBcGroupStatus(form.bcId, form.bcName),
     getErpGroupStatus(form.dbConnectionId, form.databaseName),
-    getDashboardGroupStatus(form.dashboardDbConnectionId, form.dashboardDatabaseName),
   ];
 }
 
@@ -231,7 +222,6 @@ function BrandConfigCard({
 const GROUP_SHORT: Record<GroupKey, string> = {
   bc: "BC",
   erp: "ERP",
-  dashboard: "Dashboard",
 };
 
 function GroupStatusBadge({ status, short }: { status: GroupStatus; short?: boolean }) {
@@ -364,12 +354,9 @@ function BrandConfigModal({
   bcConnections,
   erpDbList,
   erpDbLoading,
-  dashboardDbList,
-  dashboardDbLoading,
   saving,
   onChange,
   onErpServerChange,
-  onDashboardServerChange,
   onSave,
   onClose,
 }: {
@@ -379,17 +366,14 @@ function BrandConfigModal({
   bcConnections: LookupItem[];
   erpDbList: string[];
   erpDbLoading: boolean;
-  dashboardDbList: string[];
-  dashboardDbLoading: boolean;
   saving: boolean;
   onChange: (f: FormState) => void;
   onErpServerChange: (connectionId: string) => void;
-  onDashboardServerChange: (connectionId: string) => void;
   onSave: () => void;
   onClose: () => void;
 }) {
   const set = (key: keyof FormState, value: string) => onChange({ ...form, [key]: value });
-  const [bcStatus, erpStatus, dashboardStatus] = getGroupStatusesFromForm(form);
+  const [bcStatus, erpStatus] = getGroupStatusesFromForm(form);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "var(--overlay-bg)" }}>
@@ -447,19 +431,6 @@ function BrandConfigModal({
             onDatabaseChange={(name) => set("databaseName", name)}
           />
           </div>
-
-          <div className="pt-1" style={{ borderTop: "1px solid var(--border-card)" }}>
-          <SqlServerSection
-            status={dashboardStatus}
-            connectionId={form.dashboardDbConnectionId}
-            databaseName={form.dashboardDatabaseName}
-            dbConnections={dbConnections}
-            dbList={dashboardDbList}
-            dbLoading={dashboardDbLoading}
-            onConnectionChange={onDashboardServerChange}
-            onDatabaseChange={(name) => set("dashboardDatabaseName", name)}
-          />
-          </div>
         </div>
 
         <div className="flex gap-2 px-5 py-3 shrink-0" style={{ borderTop: "1px solid var(--border-card)", background: "var(--bg-card-alt)" }}>
@@ -500,8 +471,6 @@ export default function BrandConfigPage() {
   });
   const [erpDbList, setErpDbList] = useState<string[]>([]);
   const [erpDbLoading, setErpDbLoading] = useState(false);
-  const [dashboardDbList, setDashboardDbList] = useState<string[]>([]);
-  const [dashboardDbLoading, setDashboardDbLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const configs = data?.data?.configs ?? [];
@@ -514,55 +483,39 @@ export default function BrandConfigPage() {
     if (status === "authenticated" && !isAdmin) router.replace("/");
   }, [status, isAdmin, router]);
 
-  const loadDatabases = useCallback(
-    async (connectionId: string, target: "erp" | "dashboard") => {
-      const setList = target === "erp" ? setErpDbList : setDashboardDbList;
-      const setLoading = target === "erp" ? setErpDbLoading : setDashboardDbLoading;
-
-      if (!connectionId) {
-        setList([]);
-        return;
+  const loadDatabases = useCallback(async (connectionId: string) => {
+    if (!connectionId) {
+      setErpDbList([]);
+      return;
+    }
+    setErpDbLoading(true);
+    try {
+      const res = await fetch(`/api/settings/connections/${connectionId}/databases`);
+      const json = await res.json();
+      if (json.ok) {
+        setErpDbList((json.data as { databases: string[] }).databases);
+      } else {
+        toast.error(json.error ?? "Failed to load databases");
+        setErpDbList([]);
       }
-      setLoading(true);
-      try {
-        const res = await fetch(`/api/settings/connections/${connectionId}/databases`);
-        const json = await res.json();
-        if (json.ok) {
-          setList((json.data as { databases: string[] }).databases);
-        } else {
-          toast.error(json.error ?? "Failed to load databases");
-          setList([]);
-        }
-      } finally {
-        setLoading(false);
-      }
-    },
-    [],
-  );
+    } finally {
+      setErpDbLoading(false);
+    }
+  }, []);
 
   const openEdit = (c: BrandConfigRow) => {
     setForm(formFromRow(c));
     setEditing(c);
     if (c.dbConnectionId != null) {
-      void loadDatabases(String(c.dbConnectionId), "erp");
+      void loadDatabases(String(c.dbConnectionId));
     } else {
       setErpDbList([]);
-    }
-    if (c.dashboardDbConnectionId != null) {
-      void loadDatabases(String(c.dashboardDbConnectionId), "dashboard");
-    } else {
-      setDashboardDbList([]);
     }
   };
 
   const handleErpServerChange = (connectionId: string) => {
     setForm((prev) => ({ ...prev, dbConnectionId: connectionId, databaseName: "" }));
-    void loadDatabases(connectionId, "erp");
-  };
-
-  const handleDashboardServerChange = (connectionId: string) => {
-    setForm((prev) => ({ ...prev, dashboardDbConnectionId: connectionId, dashboardDatabaseName: "" }));
-    void loadDatabases(connectionId, "dashboard");
+    void loadDatabases(connectionId);
   };
 
   const handleSave = async () => {
@@ -578,12 +531,12 @@ export default function BrandConfigPage() {
           bcConnectionId: form.bcConnectionId ? Number(form.bcConnectionId) : null,
           dbConnectionId: hasDbServerSelected(form.dbConnectionId) ? Number(form.dbConnectionId) : null,
           databaseName: hasDbServerSelected(form.dbConnectionId) ? form.databaseName || null : null,
-          dashboardDbConnectionId: hasDbServerSelected(form.dashboardDbConnectionId)
+          // Not editable here — echoed back exactly as the API returned them so
+          // Rocks Fast's Master Dashboard config survives a save from this page.
+          dashboardDbConnectionId: form.dashboardDbConnectionId
             ? Number(form.dashboardDbConnectionId)
             : null,
-          dashboardDatabaseName: hasDbServerSelected(form.dashboardDbConnectionId)
-            ? form.dashboardDatabaseName || null
-            : null,
+          dashboardDatabaseName: form.dashboardDatabaseName || null,
         }),
       });
       const json = await res.json();
@@ -612,7 +565,7 @@ export default function BrandConfigPage() {
       <PageHeaderBar
         icon={Layers}
         title="Brand Configuration"
-        subtitle="Configure BC, ERP SQL, and Dashboard SQL for each brand"
+        subtitle="Configure BC and ERP SQL for each brand"
         backHref="/settings"
       />
 
@@ -647,12 +600,9 @@ export default function BrandConfigPage() {
           bcConnections={bcConnections}
           erpDbList={erpDbList}
           erpDbLoading={erpDbLoading}
-          dashboardDbList={dashboardDbList}
-          dashboardDbLoading={dashboardDbLoading}
           saving={saving}
           onChange={setForm}
           onErpServerChange={handleErpServerChange}
-          onDashboardServerChange={handleDashboardServerChange}
           onSave={handleSave}
           onClose={() => setEditing(null)}
         />
