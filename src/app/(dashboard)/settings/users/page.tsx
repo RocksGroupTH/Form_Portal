@@ -1,12 +1,14 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import useSWR from "swr";
-import { Plus, Trash2, UserCog, Search, Shield } from "lucide-react";
+import { Plus, Trash2, UserCog, Search, Shield, Loader2 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { toast } from "sonner";
+import { isSystemAdminRole } from "@/lib/roles";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -195,6 +197,10 @@ interface User {
 }
 
 export default function SettingsUsersPage() {
+  const router = useRouter();
+  const { data: session, status } = useSession();
+  const isSystemAdmin = isSystemAdminRole(session?.user?.role);
+
   const { data, mutate } = useSWR<{ ok: boolean; data: { users: User[] } }>(
     "/api/settings/users", fetcher,
   );
@@ -202,8 +208,11 @@ export default function SettingsUsersPage() {
   const [confirmAction, setConfirmAction] = useState<{ title: string; message: string; danger?: boolean; onConfirm: () => void } | null>(null);
   const [rolePickerFor, setRolePickerFor] = useState<{ email: string; name: string } | null>(null);
 
-  const { data: session } = useSession();
-  const isSystemAdmin = session?.user?.role === "System Admin";
+  useEffect(() => {
+    if (status === "authenticated" && !isSystemAdmin) {
+      router.replace("/settings");
+    }
+  }, [status, isSystemAdmin, router]);
 
   const users = data?.data?.users ?? [];
 
@@ -221,6 +230,14 @@ export default function SettingsUsersPage() {
       toast.error(json.error ?? "Failed");
     }
   };
+
+  if (status === "loading" || (status === "authenticated" && !isSystemAdmin)) {
+    return (
+      <PageContainer className="py-12 flex justify-center">
+        <Loader2 size={24} className="animate-spin" style={{ color: "var(--text-muted)" }} />
+      </PageContainer>
+    );
+  }
 
   return (
     <PageContainer className="py-6 px-3 sm:px-0">
