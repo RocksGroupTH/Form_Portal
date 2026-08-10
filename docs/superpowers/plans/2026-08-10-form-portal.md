@@ -88,7 +88,7 @@ Run in PowerShell. `robocopy` returns 0–7 on success, so the exit code must be
 ```powershell
 robocopy "c:\Users\PC\source\repos\Web\RocksFast" "c:\Users\PC\source\repos\Web\Form_Portal" /E `
   /XD node_modules .next .git uploads sampledata sampleform .superpowers .cache docs logs .claude `
-  /XF .env.local tsconfig.tsbuildinfo .AutoDeploy.bat
+  /XF .env.local tsconfig.tsbuildinfo .AutoDeploy.bat .gitignore
 if ($LASTEXITCODE -le 7) { $global:LASTEXITCODE = 0; "copy ok" } else { "copy FAILED: $LASTEXITCODE" }
 ```
 
