@@ -311,8 +311,9 @@ export function HomeCatalogue() {
         </>
       )}
 
-      {/* Form Builder forms */}
-      {general.length > 0 && (
+      {/* Form Builder forms — gated on isLoading too, same as the stat strip and
+          continue section, so it doesn't pop in after the rest of the page has settled. */}
+      {!isLoading && general.length > 0 && (
         <>
           <SectionLabel
             title="ฟอร์มทั่วไป"
