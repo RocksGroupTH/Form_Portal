@@ -402,7 +402,7 @@ export function ErpInterfaceEnvironmentSettings() {
 
   const setEnvironment = async (env: ErpBcEnvironment) => {
     if (env === "Sandbox" && !sandboxHostAllowed) {
-      toast.error("UAT ใช้ได้เฉพาะบน localhost:3020 เท่านั้น");
+      toast.error("UAT ใช้ได้เฉพาะบน localhost:3021 เท่านั้น");
       return;
     }
     if (env === globalEnv || envSaving) return;
@@ -471,7 +471,7 @@ export function ErpInterfaceEnvironmentSettings() {
             </h2>
             <p className="text-[12px] m-0 mt-1" style={{ color: "var(--text-muted)" }}>
               กำหนดว่า Interface ERP จะชี้ไป Production หรือ UAT — ใช้ UAT ได้เฉพาะ dev ที่{" "}
-              <code className="text-[11px]">localhost:3020</code>
+              <code className="text-[11px]">localhost:3021</code>
             </p>
           </div>
           <span
@@ -510,7 +510,7 @@ export function ErpInterfaceEnvironmentSettings() {
             <AlertTriangle size={16} className="shrink-0 mt-0.5" style={{ color: "var(--text-muted)" }} />
             <p className="m-0 leading-relaxed">
               Host นี้บังคับใช้ <strong>Production</strong> เสมอ — สลับ UAT ได้เฉพาะตอนรัน dev ที่{" "}
-              <code>localhost:3020</code>
+              <code>localhost:3021</code>
             </p>
           </div>
         )}

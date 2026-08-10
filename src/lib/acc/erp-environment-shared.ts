@@ -14,7 +14,7 @@ export interface ErpEnvironmentInfo {
   globalEnvironment: ErpBcEnvironment;
   canUseSandbox: boolean;
   canConfigure: boolean;
-  /** True when current host allows UAT (localhost:3020). */
+  /** True when current host allows UAT (localhost:3021). */
   sandboxHostAllowed: boolean;
 }
 

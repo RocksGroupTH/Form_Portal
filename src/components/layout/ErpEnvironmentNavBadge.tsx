@@ -13,7 +13,7 @@ interface ErpEnvironmentNavBadgeProps {
 }
 
 /**
- * ERP PRO/UAT indicator — visible only on localhost:3020 (local dev testing).
+ * ERP PRO/UAT indicator — visible only on localhost:3021 (local dev testing).
  */
 export function ErpEnvironmentNavBadge({ compact = false }: ErpEnvironmentNavBadgeProps) {
   const { status } = useSession();

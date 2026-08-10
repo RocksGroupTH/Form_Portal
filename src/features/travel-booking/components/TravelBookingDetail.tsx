@@ -378,7 +378,7 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
     [request.approvals],
   );
   /* Same gate as AP-1 (`canActManagerStep`): assigned StaffId / assigned email, plus the
-     localhost:3020 dev bypass that lets any logged-in user action the step while testing. */
+     localhost:3021 dev bypass that lets any logged-in user action the step while testing. */
   const isDevHost = useErpSandboxDevHost();
   const canActManager =
     request.status === "Submitted" &&
@@ -535,7 +535,7 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
           <div className="mb-4 pb-4 flex flex-col gap-3" style={{ borderBottom: "1px solid var(--border-light)" }}>
             {isDevHost ? (
               <p className="text-[10px] m-0" style={{ color: "var(--text-faint)" }}>
-                โหมดทดสอบ (localhost:3020) — ผู้ใช้ที่ล็อกอินกดอนุมัติแทนผู้จัดการได้
+                โหมดทดสอบ (localhost:3021) — ผู้ใช้ที่ล็อกอินกดอนุมัติแทนผู้จัดการได้
               </p>
             ) : null}
             <div className="flex flex-wrap gap-2">
