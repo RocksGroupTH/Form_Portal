@@ -98,14 +98,18 @@
   --bg-selected: #e8effc;
   --bg-badge: #eef3fb;
   --bg-meta: #f7f9fd;
+  --bg-hover: #eff4fb;
+  --bg-main: #f4f7fc;
 
   /* Text */
   --text-primary: #2b3446;
   --text-secondary: #4b566b;
-  --text-muted: #8b97aa;
-  --text-faint: #a3aec0;
+  --text-muted: #687591;
+  --text-faint: #8695ab;
   --text-heading: #1f2735;
   --text-inverse: #ffffff;
+  --text-warning: #b5793a;
+  --text-danger: #c25b5b;
 
   /* Borders */
   --border: #e7edf6;
@@ -120,6 +124,7 @@
   /* Shadows */
   --shadow-sm: 0 1px 2px rgba(59, 79, 116, 0.06);
   --shadow-md: 0 2px 8px -3px rgba(59, 79, 116, 0.16);
+  --shadow-lg: 0 8px 24px -8px rgba(59, 79, 116, 0.20);
   --shadow-xl: 0 12px 32px -12px rgba(59, 79, 116, 0.28);
   --shadow-card: 0 2px 8px -3px rgba(59, 79, 116, 0.16);
   --shadow-lift: 0 12px 32px -12px rgba(59, 79, 116, 0.28);
@@ -147,6 +152,7 @@
   --accent: #4c74c4;
   --accent-hover: #3d63b0;
   --accent-subtle: rgba(76, 116, 196, 0.08);
+  --color-info: #4c74c4;
 
   /* Brand mark gradient */
   --mark-from: #7fa0e0;
@@ -204,6 +210,8 @@
   --bg-selected: #1b2432;
   --bg-badge: #1f2630;
   --bg-meta: #12171e;
+  --bg-hover: #1c222c;
+  --bg-main: #0f1319;
 
   --text-primary: #e6ecf5;
   --text-secondary: #b9c3d1;
@@ -211,6 +219,8 @@
   --text-faint: #5b6675;
   --text-heading: #f1f5fb;
   --text-inverse: #0f1319;
+  --text-warning: #e8b96a;
+  --text-danger: #e29a9a;
 
   --border: #262e3a;
   --border-main: #262e3a;
@@ -223,6 +233,7 @@
 
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 4px 16px -6px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 8px 24px -8px rgba(0, 0, 0, 0.5);
   --shadow-xl: 0 12px 32px -12px rgba(0, 0, 0, 0.6);
   --shadow-card: 0 2px 8px -3px rgba(0, 0, 0, 0.45);
   --shadow-lift: 0 12px 32px -12px rgba(0, 0, 0, 0.6);
@@ -246,6 +257,7 @@
   --accent: #7fa0e0;
   --accent-hover: #9fb9e8;
   --accent-subtle: rgba(127, 160, 224, 0.14);
+  --color-info: #7fa0e0;
 
   --mark-from: #7fa0e0;
   --mark-to: #5b7fc9;
