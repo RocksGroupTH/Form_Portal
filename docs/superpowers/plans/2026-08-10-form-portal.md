@@ -377,7 +377,11 @@ These two files are fully rewritten in Tasks 5 and 6; here they only need to com
 
 - [ ] **Step 7: Remove the Master Dashboard CSS scope**
 
-In `src/app/globals.css`, delete everything from the `.master-scope {` rule through the `/* ===== End Master Dashboard scoped styles ===== */` marker (roughly lines 537–975). Also delete the `@theme` comment block about "Dashboard-reference Tailwind tokens" and the four tokens it introduces (`--color-accent`, `--color-positive`, `--color-cardBorder`, `--color-muted`) — they exist only for the tour and charts.
+In `src/app/globals.css`, delete the `@theme` comment block about "Dashboard-reference Tailwind tokens" and the four tokens it introduces (`--color-accent`, `--color-positive`, `--color-cardBorder`, `--color-muted`) — they exist only for the charts.
+
+Then remove the Master Dashboard styles. **Do not delete the whole span from `.master-scope {` to the `/* ===== End Master Dashboard scoped styles ===== */` marker as one block** — that range interleaves app-wide and Accounting rules that retained components still use (`.tour-fab*`, `.acc-spin`, `.acc-ping`, `.acc-progress`, `.acc-fade-up`, `.acc-add-row`, `.acc-draft-del`, `.page-back-btn`, and the keyframes they depend on). CSS classes are not typechecked, so `tsc` and `npm run build` will pass while the UI silently breaks.
+
+Instead, delete selector by selector: every rule whose selector is `.master-scope`-scoped, plus `.recharts-*` rules (the charts are gone), plus any rule you confirm has zero references in `src/`. For each candidate rule, grep the class name across `src/` first and keep anything still referenced.
 
 Then confirm nothing else referenced them:
 
