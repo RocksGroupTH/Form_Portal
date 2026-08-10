@@ -1,0 +1,333 @@
+/**
+ * AP-17 — Accommodation / Ticket Booking Request.
+ * camelCase shapes mirroring the `AccTravelBooking*` tables (migration 048)
+ * + `Fast_Data.dbo.TravelProvince` (migration 049).
+ * See docs/superpowers/specs/2026-07-14-ap17-accommodation-ticket-booking-design.md §2, §3, §9.
+ */
+
+/** AccRequest.Status values used by AP-17 (mirrors the shared Acc* status machine, "Approved" renamed "Completed" for this form's semantics). */
+export type TravelBookingStatus =
+  | "Draft"
+  | "Submitted"
+  | "ManagerApproved"
+  | "Completed"
+  | "Rejected"
+  | "Returned"
+  | "Cancelled";
+
+/** Transport direction — go (ขาไป) / return (ขากลับ). */
+export type TravelDirection = "go" | "return";
+
+/** Admin-fill-in booking type (AccTravelBookingDetail.BookingType). */
+export type BookingType = "room" | "ticket" | "rent";
+
+/* ---- Settings option types (AccTravelReason / Accommodation / VehicleOption / RentVehicle) ---- */
+
+interface TravelSettingsOption {
+  id: number;
+  name: string;
+  isActive: boolean;
+  sortOrder: number;
+  /** When true, selecting this option requires the matching *CustomText field. */
+  requiresCustomReason: boolean;
+  /** Optional emoji shown on the option card / picker (like AP-1 AccVehicle.Icon). */
+  icon: string | null;
+}
+
+/** ข้อ5 — เหตุผลการเดินทาง (AccTravelReason). */
+export type TravelReasonOption = TravelSettingsOption;
+/**
+ * ข้อ10 — ที่พัก (AccTravelAccommodation). `needsRoomBooking` config drives the form:
+ * selecting this accommodation flags the request for Admin room booking.
+ */
+export interface Accommodation extends TravelSettingsOption {
+  needsRoomBooking: boolean;
+}
+/** One configured departure/place option for a vehicle (AccTravelVehiclePlace). */
+export interface VehiclePlace {
+  id: number;
+  name: string;
+  sortOrder: number;
+}
+/**
+ * ข้อ12 — การเดินทาง (AccTravelVehicleOption). Beyond the shared option shape, a
+ * vehicle carries the config that drives the requester form: whether it needs a
+ * departure place (+ the pickable `places`), admin ticket booking, a depart time,
+ * or a vehicle rental.
+ */
+export interface VehicleOption extends TravelSettingsOption {
+  needsDepartureLocations: boolean;
+  needsTicketBooking: boolean;
+  needsDepartTime: boolean;
+  needsVehicleRent: boolean;
+  places: VehiclePlace[];
+}
+/**
+ * ข้อ15 — เช่ายานพาหนะ (AccTravelRentVehicle). `needsRentBooking` config drives the form:
+ * selecting this rental flags the request for Admin to arrange the rental.
+ */
+export interface RentVehicle extends TravelSettingsOption {
+  needsRentBooking: boolean;
+}
+
+/** Fast_Data.dbo.TravelProvince — ข้อ8 จังหวัด. */
+export interface ProvinceOption {
+  id: number;
+  nameTh: string;
+  nameEn: string | null;
+}
+
+/** ข้อ9 — สถานที่ไปปฏิบัติงาน (AccTravelWorkLocation), free-text multi-add. */
+export interface WorkLocation {
+  id: number;
+  name: string;
+  sortOrder: number;
+}
+
+/** ข้อ13 — จุดขึ้นรถ/ขึ้นเครื่อง per direction (AccTravelDepartureLocation), when *NeedsDepartureLocations. */
+export interface DepartureLocation {
+  id: number;
+  direction: TravelDirection;
+  name: string;
+  sortOrder: number;
+}
+
+/** File attached to a request, a booking detail row, or the ID card (AccRequestFile). */
+export interface TravelBookingFileMeta {
+  id: number;
+  refType: string;
+  refId: number;
+  fileName: string;
+  fileSize: number;
+  contentType: string;
+}
+
+/** Admin fill-in booking row (AccTravelBookingDetail), 2.x. */
+export interface BookingDetail {
+  id: number;
+  bookingType: BookingType;
+  bookingNo: string | null;
+  priceExVat: number | null;
+  files: TravelBookingFileMeta[];
+}
+
+/** One approval step instance against the shared AccApproval table (AP-17 only ever uses the MANAGER step). */
+export interface TravelBookingApproval {
+  id: number;
+  requestId: number;
+  stepCode: "MANAGER";
+  stepOrder: number;
+  assignedTo: number | null;
+  assignedEmail: string | null;
+  status: "Pending" | "Approved" | "Rejected" | "Returned";
+  comment: string | null;
+  isChecked: boolean | null;
+  actionedByStaffId: number | null;
+  actionedAt: string | null;
+  createdAt: string;
+  /** HR-enriched display names/emails (joined from Rocks_Portal_HR.Employee by StaffId), mirrors AP-1's AccApproval. */
+  actionedByHrName: string | null;
+  actionedByHrEmail: string | null;
+  assignedToHrName: string | null;
+  assignedToHrEmail: string | null;
+  assignedToHrPhotoUrl: string | null;
+}
+
+/**
+ * One tab/request — the join of AccRequest (header) + AccTravelBooking (AP-17 detail)
+ * + its child rows. A multi-request submission produces N of these, sharing `groupKey`.
+ */
+export interface TravelBookingRequest {
+  /** AccRequest.Id — absent for a tab that hasn't been persisted yet. */
+  id?: number;
+  requestNo: string | null;
+  status: TravelBookingStatus;
+
+  // requester snapshot (from AccRequest / AccTravelBooking)
+  staffId: number | null;
+  requesterFullName: string | null;
+  requesterPhotoUrl: string | null;
+  requesterEmail: string | null;
+  requesterPosition: string | null;
+  requesterDepartmentName: string | null;
+  phone: string | null;
+  allowanceSnapshot: number | null;
+
+  // ข้อ5 — เหตุผลการเดินทาง
+  reasonId: number | null;
+  reasonName: string | null;
+  reasonCustomText: string | null;
+
+  // ข้อ7 — รายละเอียดการไปปฏิบัติงาน
+  workDetail: string | null;
+
+  // ข้อ8/9 — จังหวัด + สถานที่ปฏิบัติงาน
+  provinceId: number | null;
+  provinceName: string | null;
+  workLocations: WorkLocation[];
+
+  // ข้อ10 — ที่พักค้างคืน
+  accommodationId: number | null;
+  accommodationName: string | null;
+  accommodationCustomText: string | null;
+  needsRoomBooking: boolean;
+
+  // ข้อ6 — วันเดินทาง (range)
+  departDate: string | null;
+  returnDate: string | null;
+  // ข้อ11 — เวลา
+  departTime: string | null; // 'HH:mm'
+  returnTime: string | null; // 'HH:mm'
+
+  // ข้อ12 — ยานพาหนะ ขาไป
+  goVehicleId: number | null;
+  goVehicleName: string | null;
+  goVehicleCustomText: string | null;
+  goNeedsDepartureLocations: boolean;
+  goNeedsTicketBooking: boolean;
+  goNeedsDepartTime: boolean;
+  goNeedsVehicleRent: boolean;
+
+  // ข้อ12 — ยานพาหนะ ขากลับ
+  returnVehicleId: number | null;
+  returnVehicleName: string | null;
+  returnVehicleCustomText: string | null;
+  returnNeedsDepartureLocations: boolean;
+  returnNeedsTicketBooking: boolean;
+  returnNeedsDepartTime: boolean;
+  returnNeedsVehicleRent: boolean;
+
+  // ข้อ13 — จุดขึ้นรถ/ขึ้นเครื่อง (both directions combined; filter by .direction)
+  departureLocations: DepartureLocation[];
+
+  // ข้อ15/16 — เช่ายานพาหนะ (captured once per request)
+  rentVehicleId: number | null;
+  rentVehicleName: string | null;
+  rentVehicleCustomText: string | null;
+  needsRentBooking: boolean;
+  rentStartDate: string | null;
+  rentEndDate: string | null;
+
+  // ข้อ18
+  notes: string | null;
+
+  // multi-request chain / per-diem
+  isContinuation: boolean;
+  perDiemDays: number;
+  perDiemTotal: number;
+
+  paymentDate: string | null;
+  submittedAt: string | null;
+
+  groupKey: string | null;
+  sortOrder: number;
+
+  // ข้อ17 — แนบบัตรประชาชน (>=1)
+  idCardFiles: TravelBookingFileMeta[];
+  // Admin fill-in (2.x)
+  bookingDetails: BookingDetail[];
+  approvals: TravelBookingApproval[];
+}
+
+/** All tabs of one multi-request submission, keyed by their shared GroupKey. */
+export interface TravelBookingGroup {
+  groupKey: string;
+  requests: TravelBookingRequest[];
+}
+
+/** Lightweight row for a draft-group picker (no child rows / files). */
+export interface TravelBookingDraftSummary {
+  groupKey: string;
+  tabCount: number;
+  /** Earliest DepartDate across the group's tabs. */
+  departDate: string | null;
+  /** Latest ReturnDate across the group's tabs. */
+  returnDate: string | null;
+  provinceName: string | null;
+  workDetail: string | null;
+  updatedAt: string;
+}
+
+/**
+ * Writable subset of `TravelBookingRequest` for one tab — what the form posts on
+ * save-draft/submit. Server-derived fields (names resolved from ids, requester
+ * snapshot, isContinuation, perDiem*, paymentDate, submittedAt, requestNo, status,
+ * approvals, bookingDetails) are omitted; the server fills those in.
+ */
+export interface SaveTravelBookingInput {
+  /** AccRequest.Id — present when updating an existing tab within a draft group. */
+  id?: number;
+
+  reasonId: number | null;
+  reasonCustomText: string | null;
+
+  workDetail: string | null;
+
+  provinceId: number | null;
+  workLocations: { name: string; sortOrder: number }[];
+
+  accommodationId: number | null;
+  accommodationCustomText: string | null;
+  needsRoomBooking: boolean;
+
+  departDate: string | null;
+  returnDate: string | null;
+  departTime: string | null;
+  returnTime: string | null;
+
+  goVehicleId: number | null;
+  goVehicleCustomText: string | null;
+  goNeedsDepartureLocations: boolean;
+  goNeedsTicketBooking: boolean;
+  goNeedsDepartTime: boolean;
+  goNeedsVehicleRent: boolean;
+
+  returnVehicleId: number | null;
+  returnVehicleCustomText: string | null;
+  returnNeedsDepartureLocations: boolean;
+  returnNeedsTicketBooking: boolean;
+  returnNeedsDepartTime: boolean;
+  returnNeedsVehicleRent: boolean;
+
+  departureLocations: { direction: TravelDirection; name: string; sortOrder: number }[];
+
+  rentVehicleId: number | null;
+  rentVehicleCustomText: string | null;
+  needsRentBooking: boolean;
+  rentStartDate: string | null;
+  rentEndDate: string | null;
+
+  notes: string | null;
+
+  sortOrder: number;
+}
+
+/** One multi-request submission (save-draft or submit payload). */
+export interface SaveTravelBookingGroupInput {
+  /** Existing GroupKey when updating a previously-saved draft group; omitted for a new group. */
+  id?: string;
+  tabs: SaveTravelBookingInput[];
+  /** Optional: open on behalf of a same-department colleague (their HR StaffId). */
+  requesterStaffId?: number | null;
+}
+
+/**
+ * Row returned by `GET /api/request/travel-booking/admin/queue` — a client-safe copy of
+ * `AdminQueueItem` from `src/lib/acc/travel-booking/admin-service.ts` (server-only, so its
+ * own interface can't be imported from a `"use client"` page).
+ */
+export interface TravelBookingAdminQueueItem {
+  id: number;
+  requestNo: string | null;
+  requesterFullName: string | null;
+  requesterPosition: string | null;
+  requesterDepartmentName: string | null;
+  provinceName: string | null;
+  departDate: string | null;
+  returnDate: string | null;
+  needsRoomBooking: boolean;
+  needsTicketBooking: boolean;
+  needsRentBooking: boolean;
+  paymentDate: string | null;
+  updatedAt: string;
+}

@@ -1,0 +1,1020 @@
+@import "tailwindcss";
+
+@theme {
+  /* Rocks Group brand colors */
+  --color-brand-navy: #1A0608;
+  --color-brand-navy-light: #2D0C0E;
+  --color-brand-red: #A3121B;
+  --color-brand-light: #fdf5f5;
+  --color-brand-border: #ead9d9;
+
+  /* Status colors */
+  --color-status-red: #e74c3c;
+  --color-status-blue: #3498db;
+  --color-status-green: #27ae60;
+  --color-status-teal: #16a085;
+  --color-status-purple: #8e44ad;
+  --color-status-orange: #f39c12;
+
+  /* Semantic action colors */
+  --color-action: #2563eb;
+  --color-action-hover: #1d4ed8;
+  --color-success: #16a34a;
+  --color-success-light: #22c55e;
+  --color-danger: #dc2626;
+  --color-danger-hover: #b91c1c;
+  --color-warning: #d97706;
+  --color-warning-light: #f59e0b;
+  --color-purple: #7c3aed;
+  --color-indigo: #6366f1;
+  --color-muted-gray: #64748b;
+
+  /* Dashboard-reference Tailwind tokens — port of the
+     Dashboard project's `tailwind.config.ts` palette so utility
+     classes used by the Master Dashboard tour / charts (`bg-accent`,
+     `text-muted`, `border-cardBorder`, `bg-positive`) generate
+     correctly under Tailwind v4. Without these declarations Tailwind
+     leaves the classes unresolved → Next button becomes white text on
+     no background and disappears in light mode. The runtime values
+     for theme switching still come from the `.master-scope` palettes
+     defined further down. */
+  --color-accent: #c14728;
+  --color-positive: #15b357;
+  --color-cardBorder: #e5e7eb;
+  --color-muted: #64748b;
+
+  /* Typography scale */
+  --text-2xs: 9px;
+  --text-xs: 10px;
+  --text-sm: 11px;
+  --text-md: 12px;
+  --text-base: 13px;
+  --text-lg: 14px;
+  --text-xl: 16px;
+  --text-2xl: 20px;
+
+  /* Spacing scale */
+  --space-0: 0px;
+  --space-0\.5: 2px;
+  --space-1: 4px;
+  --space-1\.5: 6px;
+  --space-2: 8px;
+  --space-2\.5: 10px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* Border radius scale */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+  --radius-full: 9999px;
+
+  /* Font — self-hosted Noto Sans Thai (src/assets/fonts, layout.tsx localFont).
+     CSS vars on <html>; body uses notoSansThai.className + font-sans utility. */
+  --font-sans: var(--font-noto-thai), var(--font-noto), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-display: var(--font-space), var(--font-noto-thai), var(--font-noto), ui-sans-serif, system-ui, sans-serif;
+
+  /* Motion */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-back: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-spring: cubic-bezier(0.22, 1.2, 0.36, 1);
+  --duration-fast: 120ms;
+  --duration-normal: 200ms;
+  --duration-smooth: 300ms;
+  --duration-slow: 400ms;
+}
+
+/* ─── Light Theme ─── */
+
+:root,
+[data-theme="light"] {
+  --navbar-h: 48px;
+
+  /* Backgrounds */
+  --bg-page: #f0eded;
+  --bg-base: #fbfafa;
+  --bg-card: #fbfafa;
+  --bg-card-hover: #f5f3f3;
+  --bg-card-alt: #f9fafb;
+  --bg-elevated: #ffffff;
+  --bg-input: #fafbfc;
+  --bg-sidebar: #1A0608;
+  --bg-topbar: rgba(251, 250, 250, 0.78);
+  --bg-modal: #ffffff;
+  --bg-dropdown: #ffffff;
+  --bg-row-stripe: #fdf5f5;
+  --bg-row-hover: #f0eae8;
+  --bg-selected: #fdf5f5;
+  --bg-badge: #f5f5f5;
+  --bg-meta: #f9fafb;
+
+  /* Text */
+  --text-primary: #111111;
+  --text-secondary: #333333;
+  --text-muted: #888888;
+  --text-faint: #aaaaaa;
+  --text-heading: #1A0608;
+  --text-inverse: #ffffff;
+
+  /* Borders */
+  --border: #e5e0e0;
+  --border-main: #e5e0e0;
+  --border-light: #f0f0f0;
+  --border-subtle: #f0f0f0;
+  --border-card: rgba(0, 0, 0, 0.06);
+  --border-input: #e5e7eb;
+  --border-accent: #ead9d9;
+  --border-elevated: rgba(0, 0, 0, 0.1);
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.05), 0 0 0 1px rgba(255,255,255,0.5) inset;
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.08), 0 0 0 1px rgba(255,255,255,0.6) inset;
+  --shadow-xl: 0 8px 24px rgba(0,0,0,0.12), 0 0 0 1px rgba(255,255,255,0.4) inset;
+
+  --overlay-bg: rgba(0,0,0,0.4);
+
+  /* Nav */
+  --nav-active-bg: rgba(163, 18, 27, 0.1);
+  --nav-active-text: #A3121B;
+
+  /* Buttons */
+  --btn-primary-bg: #A3121B;
+  --btn-primary-text: #ffffff;
+  --btn-danger-bg: var(--color-danger);
+  --btn-danger-text: #ffffff;
+  --btn-ghost-bg: transparent;
+  --btn-ghost-text: var(--text-secondary);
+  --btn-ghost-hover: var(--bg-card-hover);
+
+  /* Interactive accent */
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-subtle: rgba(37, 99, 235, 0.08);
+
+  /* Tooltip */
+  --bg-tooltip: #1e293b;
+
+  /* Info boxes */
+  --bg-info-green: #f0fdf4;
+  --border-info-green: #bbf7d0;
+  --text-info-green: #166534;
+  --bg-info-yellow: #fffbeb;
+  --border-info-yellow: #fde68a;
+  --text-info-yellow: #92400e;
+
+  /* Focus rings */
+  --ring-action: 0 0 0 3px rgba(37, 99, 235, 0.2);
+  --ring-danger: 0 0 0 3px rgba(220, 38, 38, 0.2);
+
+  /* Shadows — elevated surfaces */
+  --shadow-modal: 0 16px 48px rgba(0, 0, 0, 0.16);
+  --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.12);
+  --shadow-dropdown: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+
+/* ─── Gold Theme (Dark Luxury) ─── */
+
+[data-theme="gold"] {
+  --navbar-h: 48px;
+
+  --bg-page: #0c0b0e;
+  --bg-base: #161418;
+  --bg-card: #161418;
+  --bg-card-hover: #1e1b22;
+  --bg-card-alt: #1a1820;
+  --bg-elevated: #1a1820;
+  --bg-input: #13111a;
+  --bg-sidebar: #0a090c;
+  --bg-topbar: rgba(19, 17, 21, 0.80);
+  --bg-modal: #161418;
+  --bg-dropdown: #1a1820;
+  --bg-row-stripe: #141218;
+  --bg-row-hover: #1e1a22;
+  --bg-selected: #1c1714;
+  --bg-badge: #221e1a;
+  --bg-meta: #13111a;
+
+  --text-primary: #ede8df;
+  --text-secondary: #c5bfb2;
+  --text-muted: #8a847a;
+  --text-faint: #5c574f;
+  --text-heading: #f5f0e5;
+  --text-inverse: #0c0b0e;
+
+  --border: #2a2520;
+  --border-main: #2a2520;
+  --border-light: #1f1b18;
+  --border-subtle: #1f1b18;
+  --border-card: rgba(196, 154, 44, 0.12);
+  --border-input: #3a3328;
+  --border-accent: #3d3222;
+  --border-elevated: rgba(196, 154, 44, 0.2);
+
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.4), 0 0 0 1px rgba(196,154,44,0.04) inset;
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.5), 0 0 0 1px rgba(196,154,44,0.06) inset;
+  --shadow-xl: 0 8px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(196,154,44,0.08) inset;
+
+  --overlay-bg: rgba(0,0,0,0.7);
+
+  --nav-active-bg: rgba(196,154,44,0.1);
+  --nav-active-text: #e6bf64;
+
+  --btn-primary-bg: #c49a2c;
+  --btn-primary-text: #0c0b0e;
+  --btn-danger-bg: #991b1b;
+  --btn-danger-text: #fecaca;
+  --btn-ghost-bg: transparent;
+  --btn-ghost-text: var(--text-secondary);
+  --btn-ghost-hover: var(--bg-card-hover);
+
+  --accent: #c49a2c;
+  --accent-hover: #a67c1e;
+  --accent-subtle: rgba(196, 154, 44, 0.12);
+
+  --bg-tooltip: #1a1714;
+
+  --bg-info-green: #052e16;
+  --border-info-green: #166534;
+  --text-info-green: #86efac;
+  --bg-info-yellow: #422006;
+  --border-info-yellow: #92400e;
+  --text-info-yellow: #fde68a;
+
+  --ring-action: 0 0 0 3px rgba(196, 154, 44, 0.3);
+  --ring-danger: 0 0 0 3px rgba(248, 113, 104, 0.3);
+
+  --shadow-modal: 0 16px 48px rgba(0, 0, 0, 0.5);
+  --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-dropdown: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+/* ─── Base Styles ─── */
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-page);
+  color: var(--text-primary);
+  margin: 0;
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+/* Ensure portals (sonner toasts, dialogs) inherit app font */
+html {
+  font-family: var(--font-sans);
+}
+
+* { box-sizing: border-box; }
+
+/* Prevent iOS auto-zoom on inputs */
+@media screen and (max-width: 767px) {
+  input, textarea, select { font-size: 16px !important; }
+}
+
+/* Smooth theme transitions */
+[data-theme] * {
+  transition-property: background-color, border-color, color, box-shadow;
+  transition-duration: 0.15s;
+  transition-timing-function: ease;
+}
+
+/* btn-lift: hover lift for primary/secondary buttons */
+.btn-lift {
+  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.18s ease;
+}
+.btn-lift:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.10), 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+.btn-lift:active:not(:disabled) {
+  transform: translateY(0); box-shadow: none;
+}
+
+/* Gold badge hover glow */
+[data-theme="gold"] .gold-badge-glow:hover {
+  box-shadow: 0 0 8px rgba(196,154,44,0.25), 0 0 2px rgba(196,154,44,0.15);
+}
+[data-theme="light"] .gold-badge-glow:hover {
+  box-shadow: 0 0 6px rgba(0,0,0,0.06), 0 0 0 1px rgba(0,0,0,0.04) inset;
+}
+
+/* Gold input focus */
+[data-theme="gold"] input:focus, [data-theme="gold"] textarea:focus, [data-theme="gold"] select:focus {
+  border-color: #c49a2c !important;
+  box-shadow: 0 0 0 2px rgba(196,154,44,0.12), inset 0 0 8px rgba(196,154,44,0.04) !important;
+}
+
+/* Gold primary button glow */
+[data-theme="gold"] .btn-lift:hover:not(:disabled) {
+  box-shadow: 0 0 8px rgba(196,154,44,0.25), 0 2px 12px rgba(196,154,44,0.1) !important;
+}
+
+/* Gold scrollbar */
+[data-theme="gold"] ::-webkit-scrollbar { width: 8px; height: 8px; }
+[data-theme="gold"] ::-webkit-scrollbar-track { background: var(--bg-card); }
+[data-theme="gold"] ::-webkit-scrollbar-thumb { background: #2a2520; border-radius: 4px; }
+[data-theme="gold"] ::-webkit-scrollbar-thumb:hover { background: #3a3328; }
+
+/* Slim scrollbar utility */
+.slim-scroll { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.slim-scroll:hover { scrollbar-color: rgba(150,150,160,0.35) transparent; }
+
+/* ─── Animations ─── */
+
+@keyframes dialogIn {
+  from { opacity: 0; transform: scale(0.96) translateY(4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+@keyframes overlayFadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slideInRight { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@keyframes fullScreenSlideUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes popoverEnter {
+  from { opacity: 0; transform: scale(0.95) translateY(-4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+@keyframes dropdownIn {
+  from { opacity: 0; transform: translateY(-4px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Profile header — live weather effects */
+@keyframes profileWeatherRain {
+  from { background-position: 0 0; }
+  to { background-position: -12px 24px; }
+}
+@keyframes profileWeatherSnow {
+  from { background-position: 0 0, 8px 16px; }
+  to { background-position: 0 32px, 8px 48px; }
+}
+.profile-weather-rain {
+  opacity: 0.35;
+  background-image: repeating-linear-gradient(
+    112deg,
+    transparent,
+    transparent 6px,
+    rgba(255, 255, 255, 0.35) 6px,
+    rgba(255, 255, 255, 0.35) 7px
+  );
+  background-size: 14px 24px;
+  animation: profileWeatherRain 0.7s linear infinite;
+}
+.profile-weather-snow {
+  opacity: 0.5;
+  background-image:
+    radial-gradient(circle, rgba(255, 255, 255, 0.9) 0.8px, transparent 1px),
+    radial-gradient(circle, rgba(255, 255, 255, 0.6) 0.6px, transparent 0.8px);
+  background-size: 18px 32px, 24px 40px;
+  animation: profileWeatherSnow 4s linear infinite;
+}
+.profile-weather-sun {
+  filter: drop-shadow(0 2px 8px rgba(255, 180, 50, 0.45));
+  animation: profileWeatherSunPulse 5s ease-in-out infinite;
+  transform-origin: center center;
+}
+@keyframes profileWeatherSunPulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.05); opacity: 0.92; }
+}
+@keyframes profileWeatherSunDrift {
+  0%, 100% { transform: translate(0, 0); }
+  33% { transform: translate(-8px, 5px); }
+  66% { transform: translate(6px, -4px); }
+}
+@keyframes profileWeatherMoonDrift {
+  0%, 100% { transform: translate(0, 0); }
+  40% { transform: translate(-10px, 4px); }
+  70% { transform: translate(7px, -3px); }
+}
+@keyframes profileWeatherCloudDriftA {
+  0%, 100% { transform: translate(0, 0); }
+  25% { transform: translate(-20px, 5px); }
+  50% { transform: translate(-28px, 0); }
+  75% { transform: translate(-12px, -6px); }
+}
+@keyframes profileWeatherCloudDriftB {
+  0%, 100% { transform: translate(0, 0); }
+  30% { transform: translate(16px, -4px); }
+  60% { transform: translate(-14px, 3px); }
+  85% { transform: translate(8px, 5px); }
+}
+@keyframes profileWeatherCloudDriftC {
+  0%, 100% { transform: translate(0, 0); }
+  35% { transform: translate(-12px, -5px); }
+  65% { transform: translate(18px, 4px); }
+}
+@keyframes profileWeatherFogDrift {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(-24px, 3px); }
+}
+@keyframes profileWeatherStarTwinkle {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+.profile-weather-drift-sun {
+  animation: profileWeatherSunDrift 14s ease-in-out infinite;
+  will-change: transform;
+}
+.profile-weather-drift-moon {
+  animation: profileWeatherMoonDrift 18s ease-in-out infinite;
+  will-change: transform;
+}
+.profile-weather-cloud-a {
+  animation: profileWeatherCloudDriftA 11s ease-in-out infinite;
+  will-change: transform;
+}
+.profile-weather-cloud-b {
+  animation: profileWeatherCloudDriftB 15s ease-in-out infinite 0.8s;
+  will-change: transform;
+}
+.profile-weather-cloud-c {
+  animation: profileWeatherCloudDriftC 13s ease-in-out infinite 1.6s;
+  will-change: transform;
+}
+.profile-weather-fog-a {
+  animation: profileWeatherFogDrift 20s ease-in-out infinite;
+  will-change: transform;
+}
+.profile-weather-fog-b {
+  animation: profileWeatherFogDrift 24s ease-in-out infinite reverse 2s;
+  will-change: transform;
+}
+.profile-weather-star {
+  transform-origin: center center;
+  transform-box: fill-box;
+  animation: profileWeatherStarTwinkle 3.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .profile-weather-sun,
+  .profile-weather-drift-sun,
+  .profile-weather-drift-moon,
+  .profile-weather-cloud-a,
+  .profile-weather-cloud-b,
+  .profile-weather-cloud-c,
+  .profile-weather-fog-a,
+  .profile-weather-fog-b,
+  .profile-weather-star,
+  .profile-weather-rain,
+  .profile-weather-snow {
+    animation: none !important;
+  }
+}
+
+@keyframes reportLoadBar {
+  0% { width: 0%; margin-left: 0%; }
+  50% { width: 60%; margin-left: 20%; }
+  100% { width: 0%; margin-left: 100%; }
+}
+
+/* AI Insight loading animation */
+@keyframes claudePulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.05); opacity: 0.9; } }
+@keyframes claudeSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes claudeBar { 0% { width: 0%; margin-left: 0; } 50% { width: 60%; margin-left: 20%; } 100% { width: 0%; margin-left: 100%; } }
+
+/* Hide scrollbar utility */
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* Dialog body scroll — thin thumb inset inside rounded modal */
+.dialog-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 45%, transparent) transparent;
+}
+.dialog-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.dialog-scroll::-webkit-scrollbar-track {
+  background: transparent;
+  margin: 6px 0;
+}
+.dialog-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-muted) 40%, transparent);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.dialog-scroll::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-muted) 65%, transparent);
+  background-clip: padding-box;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ===== Recharts focus outline suppression =====
+   Recharts 3 makes the chart SVG (and any zIndex <g> layer) focusable, so
+   browsers paint a focus ring on click. We disable it at the source with
+   `accessibilityLayer={false}` on the charts; this is the belt-and-braces
+   net that catches every focusable Recharts descendant in any browser
+   (the click outline differs per UA — black in Edge, yellow in the VS Code
+   browser). Descendant combinator covers .recharts-surface AND the
+   .recharts-zIndex-layer_* groups. */
+.recharts-wrapper:focus,
+.recharts-wrapper :focus,
+.recharts-surface:focus,
+.recharts-surface:focus-visible {
+  outline: none !important;
+}
+
+/* ===== Master Dashboard — scoped Dashboard-project look (light/dark) ===== */
+
+.master-scope {
+  /* Dashboard LIGHT palette */
+  --bg-base: #f4f6fb;
+  --bg-card: #ffffff;
+  --bg-elevated: #f0f1f4;
+  --bg-hover: #f0f1f4;
+  --border: #e5e7eb;
+  --border-card: #e5e7eb;
+  --border-subtle: #eef2f7;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+  --accent: #c1462a;
+  --color-accent: #c1462a;
+  --nav-active-text: #c1462a;
+  --accent-subtle: rgba(193, 70, 42, 0.08);
+  --warning: #d97706;
+  --positive: #15b357;
+  --grid: #eef2f7;
+  --scrollbar: #cbd5e1;
+  --scrollbar-hover: #94a3b8;
+  --skeleton-from: rgba(241, 245, 249, 0.85);
+  --skeleton-to: rgba(226, 232, 240, 0.95);
+
+  font-family:
+    var(--font-noto-thai),
+    var(--font-noto),
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
+  background: var(--bg-base);
+  color: var(--text-primary);
+}
+
+.master-scope[data-master-mode="dark"] {
+  --bg-base: #0c0e14;
+  --bg-card: #14171f;
+  --bg-elevated: #1c2030;
+  --bg-hover: #1c2030;
+  --border: #252a3a;
+  --border-card: #252a3a;
+  --border-subtle: #1f2330;
+  --text-primary: #f1f5f9;
+  --text-secondary: #c5cdd9;
+  --text-muted: #8b95b0;
+  --accent: #d05a3e;
+  --color-accent: #d05a3e;
+  --nav-active-text: #d05a3e;
+  --accent-subtle: rgba(208, 90, 62, 0.16);
+  --warning: #fbbf24;
+  --positive: #22c55e;
+  --grid: #252a3a;
+  --scrollbar: #3a4060;
+  --scrollbar-hover: #545e78;
+  --skeleton-from: rgba(28, 32, 48, 0.85);
+  --skeleton-to: rgba(48, 54, 78, 0.95);
+}
+
+.master-scope .card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 1px 1px rgba(15, 23, 42, 0.03);
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.master-scope .tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.master-scope .font-display {
+  font-family: var(--font-display);
+}
+
+/* Pretty scrollbars inside master dashboard */
+.master-scope .scroll-thin,
+.master-scope .tooltip-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
+}
+.master-scope .scroll-thin::-webkit-scrollbar,
+.master-scope .tooltip-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.master-scope .scroll-thin::-webkit-scrollbar-thumb,
+.master-scope .tooltip-scroll::-webkit-scrollbar-thumb {
+  background: var(--scrollbar);
+  border-radius: 3px;
+}
+.master-scope .scroll-thin::-webkit-scrollbar-thumb:hover,
+.master-scope .tooltip-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-hover);
+}
+
+/* Skeleton shimmer */
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+.master-scope .skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--skeleton-from) 25%,
+    var(--skeleton-to)   50%,
+    var(--skeleton-from) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 6px;
+}
+
+/* Accounting loading skeleton + staggered entrance (reuses shimmer/fadeInUp).
+   Tinted from --text-muted so it stays visible on cards in both light & dark. */
+.acc-theme .acc-skeleton {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--text-muted) 14%, transparent) 25%,
+    color-mix(in srgb, var(--text-muted) 28%, transparent) 50%,
+    color-mix(in srgb, var(--text-muted) 14%, transparent) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: 8px;
+}
+.acc-fade-up {
+  animation: fadeInUp 0.4s var(--ease-out-expo) both;
+}
+
+/* Shared page-header back button — clear hover affordance */
+.page-back-btn {
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.page-back-btn:hover {
+  background: var(--bg-card-alt);
+  border-color: var(--text-faint);
+  color: var(--text-heading);
+}
+
+/* Dashed "add row" button — subtle accent on hover */
+.acc-add-row {
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.acc-add-row:hover {
+  background: var(--bg-card-alt);
+  border-color: var(--nav-active-text);
+  color: var(--nav-active-text);
+}
+
+/* Draft delete button — danger tint on hover */
+.acc-draft-del {
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.acc-draft-del:hover {
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  border-color: color-mix(in srgb, var(--color-danger) 40%, transparent);
+  color: var(--color-danger);
+}
+
+/* Accounting popup-loading animations */
+.acc-spin { animation: claudeSpin 0.9s linear infinite; }
+.acc-ping { animation: acc-ping 1.6s cubic-bezier(0, 0, 0.2, 1) infinite; }
+@keyframes acc-ping {
+  0% { transform: scale(0.85); opacity: 0.6; }
+  80%, 100% { transform: scale(1.25); opacity: 0; }
+}
+.acc-progress {
+  width: 40%;
+  animation: acc-progress 1.2s ease-in-out infinite;
+}
+@keyframes acc-progress {
+  0% { margin-left: -40%; }
+  100% { margin-left: 100%; }
+}
+
+/* Chart enter animation */
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.master-scope .chart-enter {
+  animation: fadeSlideIn 0.35s ease both;
+}
+
+/* Empty state */
+.master-scope .empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  width: 100%;
+  gap: 6px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 8px;
+}
+.master-scope .empty-state .empty-icon {
+  font-size: 26px;
+  filter: grayscale(0.2);
+  opacity: 0.7;
+  margin-bottom: 2px;
+}
+.master-scope .empty-state .empty-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.master-scope .empty-state .empty-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  max-width: 220px;
+  line-height: 1.35;
+}
+
+/* Drag-and-drop "pickup" effect — used by the FullDataTab field chips */
+@keyframes field-chip-pickup {
+  from {
+    transform: scale(1) rotate(0deg);
+    box-shadow: 0 0 0 rgba(15, 23, 42, 0);
+  }
+  to {
+    transform: scale(1.06) rotate(-1.5deg);
+    box-shadow:
+      0 18px 36px -6px rgba(15, 23, 42, 0.32),
+      0 8px 16px -4px rgba(15, 23, 42, 0.18);
+  }
+}
+
+/* ===== Day/Night Toggle (.tt-switch) — GLOBAL (portal-rendered) ===== */
+
+@keyframes tt-twinkle {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(0.7); }
+}
+
+.tt-switch {
+  --tt-w: 60px; --tt-h: 26px;
+  position: relative; width: var(--tt-w); height: var(--tt-h);
+  border-radius: 999px; border: 1px solid var(--border);
+  overflow: hidden; cursor: pointer; padding: 0;
+  transition: background .6s ease, border-color .4s ease, box-shadow .4s ease, transform .15s ease;
+}
+.tt-switch.is-light { background: linear-gradient(140deg, #7ec8ff, #b6dfff 55%, #d4eaff); box-shadow: inset 0 2px 6px rgba(0, 80, 160, .12); }
+.tt-switch.is-dark  { background: linear-gradient(140deg, #0b1024, #1b214a 60%, #2a2f5a); box-shadow: inset 0 2px 6px rgba(0, 0, 0, .35); }
+.tt-switch:hover  { transform: translateY(-1px); }
+.tt-switch:active { transform: scale(.97); }
+
+.tt-sky { position: absolute; inset: 0; }
+
+.tt-thumb {
+  position: absolute; top: 3px; left: 3px;
+  width: 20px; height: 20px; border-radius: 50%;
+  transition: transform .55s cubic-bezier(0.6, -0.28, 0.3, 1.45);
+}
+.tt-switch.is-light .tt-thumb { transform: translateX(0); }
+.tt-switch.is-dark  .tt-thumb { transform: translateX(calc(var(--tt-w) - 20px - 6px)); }
+
+.tt-sun-rays {
+  position: absolute; inset: 0;
+  transition: opacity .35s ease, transform .55s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.tt-switch.is-light .tt-sun-rays { opacity: 1; transform: scale(1) rotate(0deg); }
+.tt-switch.is-dark  .tt-sun-rays { opacity: 0; transform: scale(.3) rotate(90deg); }
+.tt-ray {
+  position: absolute; top: 50%; left: 50%;
+  width: 2px; height: 22px; margin: -11px 0 0 -1px;
+  background: #ffb000; border-radius: 2px;
+}
+.tt-ray-0   { transform: rotate(0deg); }
+.tt-ray-45  { transform: rotate(45deg); }
+.tt-ray-90  { transform: rotate(90deg); }
+.tt-ray-135 { transform: rotate(135deg); }
+
+.tt-disc {
+  position: absolute; top: 50%; left: 50%;
+  width: 14px; height: 14px; margin: -7px 0 0 -7px;
+  border-radius: 50%; overflow: hidden;
+  transition: background .5s ease, box-shadow .5s ease, transform .6s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.tt-switch.is-light .tt-disc { background: radial-gradient(circle at 35% 35%, #ffe58a, #ffbf33 65%, #ff9e00); box-shadow: 0 0 8px rgba(255, 170, 0, .6); }
+.tt-switch.is-dark  .tt-disc { background: radial-gradient(circle at 35% 35%, #f7f8ff, #dfe3f4 60%, #b6bcd4); box-shadow: 0 0 8px rgba(220, 225, 245, .45); transform: scale(1.05); }
+
+.tt-moon-mask {
+  position: absolute; top: 50%; left: 50%;
+  width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%;
+  transition: transform .5s cubic-bezier(0.34, 1.56, 0.64, 1), opacity .3s ease;
+}
+.tt-switch.is-light .tt-moon-mask { transform: translate(10px, -7px) scale(.4); opacity: 0; background: #7ec8ff; }
+.tt-switch.is-dark  .tt-moon-mask { transform: translate(4px, -3px) scale(1);  opacity: 1; background: #1b214a; }
+
+.tt-moon-crater {
+  position: absolute; background: rgba(130, 140, 170, .4); border-radius: 50%; opacity: 0;
+  transition: opacity .35s ease .2s;
+}
+.tt-crater-1 { width: 2.5px; height: 2.5px; top: 9px; left: 3px; }
+.tt-crater-2 { width: 2px;   height: 2px;   top: 4px; left: 4px; }
+.tt-crater-3 { width: 2px;   height: 2px;   top: 7px; left: 7px; }
+.tt-switch.is-dark .tt-moon-crater { opacity: 1; }
+
+.tt-cloud {
+  position: absolute; background: #fff; border-radius: 999px;
+  filter: drop-shadow(0 1px 2px rgba(0, 60, 120, .15));
+  transition: transform .7s cubic-bezier(0.34, 1.56, 0.64, 1), opacity .45s ease;
+}
+.tt-cloud::before, .tt-cloud::after { content: ""; position: absolute; background: #fff; border-radius: 999px; }
+.tt-cloud-1 { width: 12px; height: 5px; top: 6px;  left: 4px; }
+.tt-cloud-1::before { width: 7px; height: 7px; top: -3px; left: 3px; }
+.tt-cloud-1::after  { width: 5px; height: 5px; top: -1px; left: 7px; }
+.tt-cloud-2 { width: 9px; height: 3px; top: 16px; left: 20px; }
+.tt-cloud-2::before { width: 4px; height: 4px; top: -2px; left: 2px; }
+.tt-cloud-3 { width: 10px; height: 4px; top: 4px; left: 33px; }
+.tt-cloud-3::before { width: 6px; height: 6px; top: -2px; left: 2px; }
+.tt-switch.is-light .tt-cloud   { opacity: 1; transform: translateX(0); }
+.tt-switch.is-dark  .tt-cloud-1 { opacity: 0; transform: translateX(-25px); }
+.tt-switch.is-dark  .tt-cloud-2 { opacity: 0; transform: translateX(-20px); }
+.tt-switch.is-dark  .tt-cloud-3 { opacity: 0; transform: translateX(-22px); }
+
+.tt-star {
+  position: absolute; background: #fff; border-radius: 50%;
+  box-shadow: 0 0 3px rgba(255, 255, 255, .75);
+  transition: transform .7s cubic-bezier(0.34, 1.56, 0.64, 1), opacity .5s ease;
+}
+.tt-star-1 { width: 2px;   height: 2px;   top: 5px;  left: 7px; }
+.tt-star-2 { width: 1.5px; height: 1.5px; top: 14px; left: 16px; }
+.tt-star-3 { width: 2px;   height: 2px;   top: 8px;  left: 22px; }
+.tt-star-4 { width: 1.5px; height: 1.5px; top: 18px; left: 12px; }
+.tt-switch.is-light .tt-star   { opacity: 0; transform: translateX(10px) scale(.2); }
+.tt-switch.is-dark  .tt-star   { opacity: 1; transform: translateX(0) scale(1); }
+.tt-switch.is-dark  .tt-star-1 { animation: tt-twinkle 2.1s ease-in-out infinite; }
+.tt-switch.is-dark  .tt-star-2 { animation: tt-twinkle 2.8s ease-in-out infinite .4s; }
+.tt-switch.is-dark  .tt-star-3 { animation: tt-twinkle 2.4s ease-in-out infinite .9s; }
+.tt-switch.is-dark  .tt-star-4 { animation: tt-twinkle 3.0s ease-in-out infinite .2s; }
+
+/* ===== Floating Tour FAB — GLOBAL (portal-rendered to document.body) ===== */
+
+@keyframes tour-fab-pulse {
+  0%   { box-shadow: 0 0 0 0    rgba(193, 71, 40, 0.55), 0 10px 24px rgba(15, 23, 42, 0.18); }
+  70%  { box-shadow: 0 0 0 14px rgba(193, 71, 40, 0),    0 10px 24px rgba(15, 23, 42, 0.18); }
+  100% { box-shadow: 0 0 0 0    rgba(193, 71, 40, 0),    0 10px 24px rgba(15, 23, 42, 0.18); }
+}
+@keyframes tour-fab-bob {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-3px); }
+}
+@keyframes tour-tip-in {
+  0%   { opacity: 0; transform: translate(-6px, 0) scale(0.94); }
+  100% { opacity: 1; transform: translate(0, 0) scale(1); }
+}
+
+.tour-fab {
+  position: fixed;
+  left: 18px;
+  bottom: 18px;
+  z-index: 9000;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 999px;
+  border: none;
+  cursor: pointer;
+  color: #fff;
+  background: linear-gradient(135deg, #d05a3e 0%, #c1462a 55%, #9a3320 100%);
+  animation: tour-fab-pulse 2.4s ease-out infinite, tour-fab-bob 3.2s ease-in-out infinite;
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1), filter 180ms ease;
+}
+.tour-fab:hover {
+  transform: translateY(-4px) scale(1.06);
+  filter: brightness(1.05);
+  animation-play-state: paused;
+}
+.tour-fab:active { transform: translateY(-1px) scale(0.97); }
+.tour-fab:focus-visible {
+  outline: 3px solid rgba(193, 71, 40, 0.45);
+  outline-offset: 3px;
+}
+.tour-fab-icon {
+  font-weight: 700;
+  font-size: 22px;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+.tour-fab-tip {
+  position: absolute;
+  left: calc(100% + 12px);
+  top: 50%;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 180ms ease, visibility 0s linear 180ms;
+}
+.tour-fab-tip::before {
+  content: "";
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 6px solid transparent;
+  border-right-color: var(--bg-card);
+  filter: drop-shadow(-1px 0 0 var(--border));
+}
+.tour-fab-tip-sub {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-top: 2px;
+  letter-spacing: 0.02em;
+}
+.tour-fab-wrap:hover .tour-fab-tip,
+.tour-fab:focus-visible + .tour-fab-tip {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 180ms ease, visibility 0s;
+  animation: tour-tip-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .tour-fab { animation: none; }
+}
+/* ===== End Master Dashboard scoped styles ===== */
+
+/* ===== Accounting feature — pastel accent scope ===== */
+/* Overrides only the accent/action/nav-active tokens inside .acc-theme.
+   All other pages are completely unaffected. */
+.acc-theme {
+  --color-action:    #e0838f;   /* pastel rose — primary action buttons */
+  --color-action-hover: #d06070;
+  --nav-active-bg:   #fbeef0;   /* pastel rose tint — icon chips & active tabs */
+  --nav-active-text: #d27f8c;   /* soft rose accent — active text & icons */
+  --btn-primary-bg:  #e0838f;   /* primary button bg */
+  --btn-primary-text: #ffffff;
+  --accent:          #e0838f;
+  --accent-hover:    #d06070;
+  --accent-subtle:   rgba(224, 131, 143, 0.10);
+  --ring-action:     0 0 0 3px rgba(224, 131, 143, 0.22);
+}
+
+/* Hide scrollbars in accounting — scrolling still works */
+.acc-theme,
+.acc-theme * {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.acc-theme *::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* Hide native number spinners inside accounting UI */
+.acc-theme input[type="number"]::-webkit-outer-spin-button,
+.acc-theme input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.acc-theme input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* Clip stray horizontal overflow on accounting pages (does not affect vertical sticky scroll) */
+html:has(.acc-theme) {
+  overflow-x: clip;
+}
+/* ===== End Accounting scoped styles ===== */

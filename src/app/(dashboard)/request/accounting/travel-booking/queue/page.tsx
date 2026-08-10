@@ -1,0 +1,209 @@
+"use client";
+
+import { useCallback, useState } from "react";
+import useSWR from "swr";
+import { BedDouble, Car, ChevronRight, ClipboardList, Inbox, Loader2, Ticket } from "lucide-react";
+import { PageContainer } from "@/components/layout/PageContainer";
+import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
+import { SidePanel, SidePanelClose } from "@/components/ui/SidePanel";
+import { useAccountingAccess } from "@/features/accounting/hooks/useAccountingAccess";
+import { fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
+import { TravelBookingDetail } from "@/features/travel-booking/components/TravelBookingDetail";
+import type { TravelBookingAdminQueueItem, TravelBookingRequest } from "@/features/travel-booking/types";
+
+async function fetcher(url: string): Promise<TravelBookingAdminQueueItem[]> {
+  const res = await fetch(url);
+  const json = await res.json();
+  if (!json.ok) throw new Error(typeof json.error === "string" ? json.error : "โหลดข้อมูลไม่สำเร็จ");
+  return json.data as TravelBookingAdminQueueItem[];
+}
+
+function NeedBadge({ icon, label }: { icon: React.ReactNode; label: string }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1 text-[10.5px] font-semibold px-2 py-0.5 rounded-full"
+      style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}
+    >
+      {icon}
+      {label}
+    </span>
+  );
+}
+
+/**
+ * AP-17 admin work queue (spec §8.1) — requests that finished Manager approval and are
+ * waiting on Admin to fill room/ticket/rent booking details. Gated on `canAccount` (approver
+ * OR IT/System Admin), matching `canAccessAccountArea` — the same gate the backing
+ * `admin/queue`, `admin/requests/[id]/booking`, and `admin/requests/[id]/complete` routes
+ * enforce — rather than `AccountApproverGuard` (AP-1's guard, which only checks
+ * `isApprover` and would incorrectly hide this page from IT/System Admin viewers who
+ * aren't also rows in `AccApprover`).
+ */
+export default function TravelBookingAdminQueuePage() {
+  const { loading: accessLoading, canAccount } = useAccountingAccess();
+  const { data, error, isLoading, mutate } = useSWR(
+    canAccount ? "/api/request/travel-booking/admin/queue" : null,
+    fetcher,
+  );
+
+  /* Detail opens in a SidePanel (same as My Request) — Admin fills the booking in, or bounces
+     the request back, without losing their place in a long queue. */
+  const [openId, setOpenId] = useState<number | null>(null);
+  const [detail, setDetail] = useState<TravelBookingRequest | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+
+  const loadDetail = useCallback(async (id: number): Promise<TravelBookingRequest | null> => {
+    setLoadingDetail(true);
+    try {
+      const res = await fetch(`/api/request/travel-booking/requests/${id}`);
+      const json = await res.json();
+      const req = json.ok ? (json.data as TravelBookingRequest) : null;
+      setDetail(req);
+      return req;
+    } catch {
+      setDetail(null);
+      return null;
+    } finally {
+      setLoadingDetail(false);
+    }
+  }, []);
+
+  const openRequest = useCallback(
+    (id: number) => {
+      setOpenId(id);
+      setDetail(null);
+      void loadDetail(id);
+    },
+    [loadDetail],
+  );
+
+  /* After any action, refresh both the queue and the open request — and close the panel once
+     the request has left the Admin stage (completed / returned / rejected). */
+  const handleChanged = useCallback(async () => {
+    void mutate();
+    if (openId == null) return;
+    const updated = await loadDetail(openId);
+    if (updated && updated.status !== "ManagerApproved") {
+      setOpenId(null);
+      setDetail(null);
+    }
+  }, [mutate, openId, loadDetail]);
+
+  return (
+    <PageContainer className="acc-theme py-6 px-3 sm:px-0">
+      <PageHeaderBar
+        icon={ClipboardList}
+        title="คิวจองที่พัก/ตั๋วโดยสาร (AP-17)"
+        subtitle="รายการที่ผู้จัดการอนุมัติแล้ว รอ Admin กรอกข้อมูลการจอง"
+        backHref="/request/accounting/travel-booking"
+      />
+
+      <div className="rounded-2xl overflow-hidden" style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)" }}>
+        {accessLoading ? (
+          <p className="text-[13px] py-10 text-center" style={{ color: "var(--text-muted)" }}>
+            กำลังตรวจสอบสิทธิ์...
+          </p>
+        ) : !canAccount ? (
+          <div className="py-16 text-center px-4">
+            <p className="text-[32px] mb-3">🔒</p>
+            <h2 className="text-[16px] font-bold mb-1" style={{ color: "var(--text-heading)" }}>
+              ไม่มีสิทธิ์เข้าถึง
+            </h2>
+            <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>
+              หน้านี้สำหรับผู้อนุมัติฝ่ายบัญชี / IT Admin / System Admin เท่านั้น
+            </p>
+          </div>
+        ) : isLoading ? (
+          <p className="text-[13px] py-10 text-center" style={{ color: "var(--text-muted)" }}>
+            กำลังโหลด...
+          </p>
+        ) : error ? (
+          <p className="text-[13px] py-10 text-center" style={{ color: "var(--color-danger)" }}>
+            {error instanceof Error ? error.message : "โหลดข้อมูลไม่สำเร็จ"}
+          </p>
+        ) : !data || data.length === 0 ? (
+          <div className="py-16 text-center px-4">
+            <Inbox size={32} style={{ color: "var(--text-faint)", margin: "0 auto 12px" }} />
+            <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>
+              ไม่มีรายการรอ Admin กรอกข้อมูลการจอง
+            </p>
+          </div>
+        ) : (
+          <div className="flex flex-col" style={{ borderTop: "1px solid var(--border-light)" }}>
+            {data.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => openRequest(item.id)}
+                className="w-full text-left flex items-center gap-3 px-5 py-4 cursor-pointer border-none bg-transparent transition-colors hover:opacity-90"
+                style={{ borderBottom: "1px solid var(--border-light)", background: "transparent" }}
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap mb-1">
+                    <span className="text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>
+                      {item.requestNo ?? "-"}
+                    </span>
+                    <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>
+                      {item.requesterFullName ?? "-"}
+                    </span>
+                    {item.requesterDepartmentName && (
+                      <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                        · {item.requesterDepartmentName}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap text-[11.5px]" style={{ color: "var(--text-muted)" }}>
+                    <span>{item.provinceName ?? "-"}</span>
+                    {item.departDate && (
+                      <span>
+                        · {fmtYmdDisplay(item.departDate)}
+                        {item.returnDate && item.returnDate !== item.departDate ? ` – ${fmtYmdDisplay(item.returnDate)}` : ""}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+                    {item.needsRoomBooking && <NeedBadge icon={<BedDouble size={11} />} label="ห้องพัก" />}
+                    {item.needsTicketBooking && <NeedBadge icon={<Ticket size={11} />} label="ตั๋วโดยสาร" />}
+                    {item.needsRentBooking && <NeedBadge icon={<Car size={11} />} label="รถเช่า" />}
+                  </div>
+                </div>
+                <ChevronRight size={16} style={{ color: "var(--text-faint)" }} className="shrink-0" />
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <SidePanel open={openId != null} onClose={() => setOpenId(null)} width="min(760px, 100vw)" zIndex={50}>
+        <div
+          className="flex items-center justify-between px-4 py-3 shrink-0"
+          style={{ borderBottom: "1px solid var(--border-light)" }}
+        >
+          <div className="min-w-0">
+            <p className="text-[14px] font-bold truncate m-0" style={{ color: "var(--text-heading)" }}>
+              {detail?.requestNo ?? "รายละเอียดคำขอ"}
+            </p>
+            <p className="text-[11px] m-0 mt-0.5" style={{ color: "var(--text-muted)" }}>
+              กรอกข้อมูลการจอง หรือส่งกลับ/ไม่อนุมัติคำขอ
+            </p>
+          </div>
+          <SidePanelClose onClick={() => setOpenId(null)} />
+        </div>
+
+        <div className="flex-1 overflow-y-auto no-scrollbar px-4 py-4 acc-theme">
+          {loadingDetail && !detail ? (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 size={24} className="animate-spin" style={{ color: "var(--text-muted)" }} />
+            </div>
+          ) : detail ? (
+            <TravelBookingDetail request={detail} onChanged={() => void handleChanged()} />
+          ) : (
+            <p className="text-[13px] py-16 text-center" style={{ color: "var(--text-muted)" }}>
+              โหลดรายละเอียดไม่สำเร็จ
+            </p>
+          )}
+        </div>
+      </SidePanel>
+    </PageContainer>
+  );
+}
