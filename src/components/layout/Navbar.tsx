@@ -14,13 +14,14 @@ import { ErpEnvironmentNavBadge } from "@/components/layout/ErpEnvironmentNavBad
 import { useUserPhoto } from "@/lib/hooks/useUserPhoto";
 import { getBrandFromSearchParams, replaceSearchParams, setBrandInSearchParams } from "@/lib/brand-url";
 import { TRAVEL_FROM_PARAM, resolveTravelReturnPath } from "@/features/accounting/lib/navigation";
+import { useRole } from "@/lib/hooks/useRole";
 import {
-  Sun, Moon, Home, FileText, ClipboardList, ClipboardCheck, Send,
+  Sun, Moon, Home, FileText, ClipboardList, ClipboardCheck, Send, Settings2,
 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 
 const ICON_MAP: Record<string, React.ComponentType<{ size?: number }>> = {
-  FileText, ClipboardList, ClipboardCheck, Send,
+  Home, FileText, ClipboardList, ClipboardCheck, Send, Settings2,
 };
 
 function NavIcon({ icon, size = 16 }: { icon: string; size?: number }) {
@@ -35,7 +36,14 @@ export function Navbar() {
   const { data: session } = useSession();
   const { theme, toggleTheme } = useTheme();
   const user = session?.user;
-  const visibleNav = NAV;
+  const { canAdmin } = useRole();
+  const visibleNav = [
+    { id: "home", label: "Home", icon: "Home", desc: "", href: "/" },
+    ...NAV,
+    ...(canAdmin
+      ? [{ id: "settings", label: "Settings", icon: "Settings2", desc: "", href: "/settings" }]
+      : []),
+  ];
   const displayPhoto = useUserPhoto();
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileMobile, setProfileMobile] = useState(false);
@@ -105,15 +113,28 @@ export function Navbar() {
         {/* Left: Logo */}
         <div ref={leftRef} className="flex items-center gap-3 shrink-0">
           <Link href={hrefWithBrand("/")} className="flex items-center gap-2 no-underline">
-            <img src="/brandlogo/rocks.png" alt="Rocks Fast" width={24} height={24} />
+            <span
+              className="flex items-center justify-center rounded-[7px] font-extrabold text-white"
+              style={{
+                width: 22,
+                height: 22,
+                fontSize: 12,
+                background: "linear-gradient(140deg, var(--mark-from), var(--mark-to))",
+              }}
+            >
+              F
+            </span>
             <span className="text-[14px] font-bold whitespace-nowrap" style={{ color: "var(--text-heading)" }}>
-              Rocks Fast
+              Form Portal
             </span>
           </Link>
         </div>
 
         {/* Center: Nav Links */}
-        <nav className="flex items-center gap-1 flex-nowrap min-w-0">
+        <nav
+          className="flex items-center gap-0.5 flex-nowrap min-w-0 rounded-full p-[3px]"
+          style={{ background: "var(--bg-badge)" }}
+        >
           {visibleNav.map((item) => {
             const active = isActive(item.href);
             return (
@@ -122,12 +143,14 @@ export function Navbar() {
                 href={hrefWithBrand(item.href)}
                 title={iconOnlyNav ? item.label : undefined}
                 aria-label={iconOnlyNav ? item.label : undefined}
-                className={`flex items-center rounded-lg text-[13px] font-medium no-underline transition-colors shrink-0 ${
+                className={`flex items-center rounded-full text-[13px] no-underline transition-colors shrink-0 ${
                   iconOnlyNav ? "justify-center p-2" : "gap-1.5 px-3 py-1.5"
                 }`}
                 style={{
-                  background: active ? "var(--nav-active-bg)" : "transparent",
-                  color: active ? "var(--nav-active-text)" : "var(--text-secondary)",
+                  background: active ? "var(--bg-card)" : "transparent",
+                  color: active ? "var(--nav-active-text)" : "var(--text-muted)",
+                  fontWeight: active ? 700 : 500,
+                  boxShadow: active ? "var(--shadow-sm)" : "none",
                 }}
               >
                 <NavIcon icon={item.icon} size={iconOnlyNav ? 17 : 15} />
@@ -137,17 +160,18 @@ export function Navbar() {
           })}
         </nav>
 
-        {/* Off-screen measurer — full labels to detect when icons-only is needed */}
+        {/* Off-screen measurer — mirrors the capsule nav's padding/gap so the collapse threshold stays accurate */}
         <div
           ref={measureRef}
-          className="absolute flex items-center gap-1 invisible pointer-events-none"
+          className="absolute flex items-center gap-0.5 rounded-full p-[3px] invisible pointer-events-none"
           style={{ left: -9999, top: 0 }}
           aria-hidden="true"
         >
           {visibleNav.map((item) => (
             <span
               key={item.id}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium whitespace-nowrap"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-[13px] whitespace-nowrap"
+              style={{ fontWeight: 700 }}
             >
               <NavIcon icon={item.icon} size={15} />
               {item.label}
@@ -183,7 +207,7 @@ export function Navbar() {
 
       {/* ── Mobile Top Bar ── */}
       <header
-        className="fixed top-0 left-0 right-0 z-30 flex md:hidden items-center justify-between px-3 h-14"
+        className="fixed top-0 left-0 right-0 z-30 flex md:hidden items-center justify-between px-3 h-14 backdrop-blur-md"
         style={{
           background: "var(--bg-topbar)",
           borderBottom: "1px solid var(--border-main)",
@@ -203,9 +227,19 @@ export function Navbar() {
 
         {/* Center: Logo */}
         <Link href={hrefWithBrand("/")} className="flex items-center gap-1.5 no-underline">
-          <img src="/brandlogo/rocks.png" alt="Rocks Fast" width={22} height={22} />
+          <span
+            className="flex items-center justify-center rounded-[7px] font-extrabold text-white"
+            style={{
+              width: 20,
+              height: 20,
+              fontSize: 11,
+              background: "linear-gradient(140deg, var(--mark-from), var(--mark-to))",
+            }}
+          >
+            F
+          </span>
           <span className="text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>
-            Rocks Fast
+            Form Portal
           </span>
         </Link>
 
@@ -234,19 +268,7 @@ export function Navbar() {
           borderTop: "1px solid var(--border-main)",
         }}
       >
-        {/* Home tab */}
-        <Link
-          href={hrefWithBrand("/")}
-          className="flex flex-col items-center justify-center gap-0.5 flex-1 min-w-0 no-underline py-1.5 px-0.5"
-          style={{ color: isActive("/") && pathname === "/" ? "var(--nav-active-text)" : "var(--text-muted)" }}
-        >
-          <Home size={20} className="shrink-0" />
-          <span className="text-[9px] font-medium text-center leading-[1.15] w-full whitespace-normal">
-            Home
-          </span>
-        </Link>
-
-        {/* Feature tabs */}
+        {/* Feature tabs (Home leads visibleNav; see composition above) */}
         {visibleNav.map((item) => {
           const active = isActive(item.href);
           return (
