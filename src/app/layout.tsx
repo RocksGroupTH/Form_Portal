@@ -79,7 +79,7 @@ export default async function RootLayout({
       <head>
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem("rocks-fast-theme");if(!t){var m=document.cookie.match(/rocks-fast-theme=(light|gold)/);if(m)t=m[1]}if(t==="light"||t==="gold"){document.documentElement.setAttribute("data-theme",t)}else{document.documentElement.setAttribute("data-theme","light")}}catch(e){document.documentElement.setAttribute("data-theme","light")}})()`,
+            __html: `(function(){try{var t=localStorage.getItem("form-portal-theme");if(!t){var m=document.cookie.match(/form-portal-theme=(light|dark)/);if(m)t=m[1]}if(t==="light"||t==="dark"){document.documentElement.setAttribute("data-theme",t)}else{document.documentElement.setAttribute("data-theme","light")}}catch(e){document.documentElement.setAttribute("data-theme","light")}})()`,
           }}
         />
       </head>

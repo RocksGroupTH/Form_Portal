@@ -163,9 +163,9 @@ export function Navbar() {
             onClick={toggleTheme}
             className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer border-none"
             style={{ background: "transparent", color: "var(--text-secondary)" }}
-            aria-label={`Switch to ${theme === "light" ? "gold" : "light"} mode`}
+            aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
           >
-            {theme === "gold" ? <Sun size={16} /> : <Moon size={16} />}
+            {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
           </button>
 
           {user && (
@@ -217,9 +217,9 @@ export function Navbar() {
             onClick={toggleTheme}
             className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer border-none"
             style={{ background: "transparent", color: "var(--text-secondary)" }}
-            aria-label={`Switch to ${theme === "light" ? "gold" : "light"} mode`}
+            aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
           >
-            {theme === "gold" ? <Sun size={16} /> : <Moon size={16} />}
+            {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
           </button>
         </div>
       </header>

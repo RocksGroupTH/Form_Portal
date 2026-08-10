@@ -6,7 +6,7 @@ export const FullScreenModal = React.memo(function FullScreenModal({
   open, onClose, title, children, zIndex = 50, uniformSurface = false, hideHeader = false,
 }: {
   open: boolean; onClose: () => void; title?: string; children: React.ReactNode; zIndex?: number;
-  /** Use --bg-modal for entire sheet (light white / dark gold) */
+  /** Use --bg-modal for entire sheet (light white / dark navy) */
   uniformSurface?: boolean;
   /** Children manage their own chrome (title / close) */
   hideHeader?: boolean;

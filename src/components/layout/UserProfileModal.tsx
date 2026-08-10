@@ -43,8 +43,8 @@ const SIGN_OUT_STYLE: React.CSSProperties = {
   color: "var(--color-danger)",
 };
 
-function profileTitleStyle(theme: "light" | "gold", darkSky?: boolean): React.CSSProperties {
-  if (theme === "gold") {
+function profileTitleStyle(theme: "light" | "dark", darkSky?: boolean): React.CSSProperties {
+  if (theme === "dark") {
     return {
       color: "var(--text-heading)",
       textShadow: "0 1px 3px rgba(0,0,0,0.9), 0 1px 6px rgba(0,0,0,0.65), 0 0 2px rgba(0,0,0,0.8)",
