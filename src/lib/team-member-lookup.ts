@@ -40,8 +40,8 @@ export async function findTeamMemberByEmail(email: string): Promise<TeamMemberRo
  * on it (`AccRequest.CreatedBy` in AP-1 / AP-17 — draft listing, edit, submit, cancel, delete)
  * silently fails: the request is written with `CreatedBy = NULL`, which then matches nobody.
  * Provisioning at login keeps those users working without a System Admin having to add them by
- * hand first. `AppRole` is the lowest role — Intelligence access stays gated by brand
- * permissions on top of it, so this grants nothing beyond the Request forms.
+ * hand first. `AppRole` is the lowest role, so this grants nothing beyond the Request forms;
+ * any further gating (brand access, admin settings) is layered on top of it per-feature.
  *
  * Idempotent: the insert is guarded, and the row is re-read either way, so concurrent logins
  * can't create duplicates.

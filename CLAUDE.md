@@ -1,13 +1,14 @@
-# Rocks Fast — Developer Guide
+# Form Portal — Developer Guide
 
-> Internal portal for Rocks Group. Built with Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS 4, MSSQL.
+> Internal request/forms portal for Rocks Group. Built with Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS 4, MSSQL.
+> Cloned from the **Rocks Fast** codebase with Fast Intelligence and Locations removed — see "Shared with Rocks Fast" below before running this alongside that app.
 
 ## Quick Start
 
 ```bash
 npm install
 cp .env.example .env.local   # Fill in credentials
-npm run dev                   # http://localhost:3020
+npm run dev                   # http://localhost:3021
 ```
 
 ## Architecture
@@ -16,33 +17,59 @@ npm run dev                   # http://localhost:3020
 
 | Database | Pool | Purpose |
 |----------|------|---------|
-| **Fast_Core** | `getCorePool()` | TeamMember (auth), config, Intel permissions |
+| **Fast_Core** | `getCorePool()` | TeamMember (auth), config, brand/DB/BC connection settings |
 | **Fast_Form** | `getFormPool()` | Form definitions, submissions, approvals, files, logs |
-| **Fast_Data** | `getDataPool()` | BI reports config, dashboards (not actively used by reports — queries go direct to Foodstory) |
-| **Rocks_UNO_Data** | `getFoodstoryPool("UNO")` | UNO Coffee Foodstory POS data |
-| **Rocks_KSI_Data** | `getFoodstoryPool("KSI")` | KSI Foodstory POS data |
-| **Rocks_PCTH_Data** | (cross-DB query) | Centralized ETL_JobLog (LocationSync status) |
-| **Rocks_Codex** | (cross-DB query) | Holiday calendar (`[Rocks_Codex].[dbo].[Holiday]`) |
-| **Fast_Form** (Acc* tables) | `getAccPool()` → `getFormPool()` | Accounting forms: travel expense reimbursement (AP-1) |
+| **Fast_Data** | `getDataPool()` | Used by Accounting and ERP sync — department maps, travel-booking province lookups, ERP account/dimension sync (`src/lib/acc/department-map-service.ts`, `src/lib/acc/travel-booking/province-service.ts`, `src/lib/acc/travel-booking/request-service.ts`, `src/lib/erp/account-sync.ts`, `src/lib/erp/dimension-sync.ts`). **Not** a BI/reporting database in this app. |
+| **Rocks_Portal_HR** | `getHrPool()` → `getAppPool("Rocks_Portal_HR")` | Employee master, manager chain, per-diem allowance history — cross-referenced by StaffId/email |
+| **Rocks_Codex** | (cross-DB query, e.g. `[Rocks_Codex].[dbo].[Holiday]`, `[Rocks_Codex].[dbo].[Brand]`) | Holiday calendar, company brand master |
+| **Fast_Form** (Acc* tables) | `getAccPool()` → `getFormPool()` | Accounting forms: travel expense (AP-1), travel booking (AP-17) |
 
 **IMPORTANT**: Use `new sql.ConnectionPool(config).connect()` for isolated pools. Never use `sql.connect()` (global singleton — causes cross-DB bugs). Pool max is set to 30.
 
 ### Auth
 
 - Microsoft Entra ID (Azure AD) via NextAuth 5
-- Session: `{ user: { id, name, email, role, nickname, color, photo } }`
+- Session: `{ user: { id, name, email, role, nickname, color, photo } }` — no `hasIntel` flag (Intelligence is gone)
 - Roles: `Staff | IT Admin | System Admin | Viewer`
-- TeamMember lookup from `Fast_Core.dbo.TeamMember`
+- TeamMember lookup from `Fast_Core.dbo.TeamMember`; a missing row is provisioned at login (`provisionTeamMember`) so drafts stay owned by their creator
 - Profile photo fetched via client credentials (`getADUserPhoto`) instead of delegated token
 - Role hierarchy: System Admin > IT Admin > Staff/Viewer
 
-### Theme
+### Theme — Sky
 
-- Light + Gold (dark luxury)
-- localStorage key: `rocks-fast-theme`
-- Cookie: `rocks-fast-theme` (persists across sessions)
+- Palette: **Sky** — pastel cool-blue light theme (`light`) plus a dark counterpart (`dark`, formerly named `gold` in the Rocks Fast original)
+- localStorage key: `form-portal-theme`
+- Cookie: `form-portal-theme` (persists across sessions; read by the no-flash inline script in `src/app/layout.tsx`)
 - Default: `light`
-- CSS variables: `var(--bg-card)`, `var(--text-primary)`, etc.
+- CSS variables: `var(--bg-card)`, `var(--text-primary)`, etc. — see `src/app/globals.css` for the full token list (defined once under `:root, [data-theme="light"]` and again under `[data-theme="dark"]`)
+- Shape and depth: card radius `--radius-card` (14px), tile radius `--radius-tile` (12px), pill `--radius-full` (999px); `--shadow-card` / `--shadow-lift` rather than heavy borders; tinted icon tiles (`--nav-active-bg` background behind icons); capsule nav (`--radius-full` pill shape for the top nav)
+- Brand mark gradient: `--mark-from` → `--mark-to`
+- Status pills: `--status-{pending,ok,draft,bad}-{bg,text}`
+- The `.acc-theme` scope on Accounting pages (`src/app/globals.css`) was retuned from the original's rose accent to Sky; its non-colour rules (hidden scrollbars, suppressed number spinners, `overflow-x: clip`) are unchanged
+
+## Shared with Rocks Fast
+
+Form Portal was cloned from the Rocks Fast codebase and **still shares live infrastructure** with it. This is not a separate environment — treat both apps as one system when operating on shared resources:
+
+- **Same databases**: Fast_Core, Fast_Form, Fast_Data, Rocks_Portal_HR, Rocks_Codex are the exact same SQL Server databases used by Rocks Fast. There is no schema or data isolation between the two apps.
+- **Same SharePoint folder**: Accounting file attachments (`SHAREPOINT_ACC_SITE` / `SHAREPOINT_ACC_FOLDER`) point at the same document library Rocks Fast uses.
+- **Same `AccEmailQueue`**: Both apps write to and drain the same email queue table in Fast_Form.
+- **⚠️ Do not run both dev servers at once** — Rocks Fast (port 3020) and Form Portal (port 3021) polling/draining the same `AccEmailQueue` concurrently risks duplicate email sends (approval notifications, payment confirmations, etc. going out twice).
+- **`UPLOAD_ROOT`** — local attachment storage env var. Points at the sibling Rocks Fast repo's `uploads/forms` directory (`c:/Users/PC/source/repos/Web/RocksFast/uploads/forms` in dev) so files already recorded in the shared DB stay downloadable from either app. Accounting attachments primarily use SharePoint now; local disk serves the Form Builder and older Accounting rows created before SharePoint storage existed. See `src/lib/storage.ts`.
+- **`ERP_SANDBOX_ALLOWED_HOSTS`** (`src/lib/acc/erp-environment-shared.ts`) — host-and-port matched allowlist (`["localhost:3021", "127.0.0.1:3021"]`) gating two things: the `devHostOnly` management/settings cards in `REQUEST_CARDS` (`src/lib/constants.ts`) and whether a System Admin can toggle the ERP interface into UAT/Sandbox mode. If this app's port ever changes, this list must be updated or both gates silently disappear.
+- **`src/lib/brand-config.ts` is deliberately frozen** — it still contains Dashboard-DB helper fields (`dashboardDbConnectionId`, `dashboardDatabaseName`) with no callers in this app; the Rocks Fast sibling reads them for its Intelligence dashboards. The Brand Configuration settings page hides those fields in the UI but still round-trips their values on save, so Rocks Fast keeps working. **Do not "clean up" these fields** — they are load-bearing for the sibling app even though nothing in Form Portal consumes them.
+
+## Navigation
+
+Top bar and mobile tabs: **Home** · **Forms** · **My Requests** · **My Work** · **Settings** (Settings for IT Admin/System Admin only). Labels are English; in-page copy is Thai. Defined in `NAV` (`src/lib/constants.ts`).
+
+- **`Home`** (`/`) — a form catalogue: greeting, stat strip, search, resumable drafts, then forms grouped into **Accounting** (AP-1 travel expense, AP-17 travel booking) and **Form Builder**. It is a link surface only — it creates no API of its own and does not merge the two request systems (Office Forms and Accounting remain separate data models). `src/features/home/HomeCatalogue.tsx`.
+- **`Forms`** (`/forms`) — the Form Builder catalog + "My Submissions", back in the top nav after being orphaned in the Rocks Fast sibling.
+- **`My Requests`** (`/my-request`) — requests you submitted and their status, across both Office Forms and Accounting.
+- **`My Work`** (`/my-work`) — requests awaiting your approval or otherwise involving you.
+- **`Settings`** (`/settings`, admin only) — hub linking to: Maps & Routing, Database Connections, Business Central, Brand Configuration, ERP Interface Environment, **Users & Roles** (`/settings/users`, System Admin only), Manage Forms (`/forms/admin`), Accounting Admin (`/request/accounting`).
+
+Every dashboard route is also gated by `BrandGate` (`src/components/BrandGate.tsx`), a non-dismissable modal that blocks rendering until the user picks a company brand (PCTH / KSI / PCMY / UNO — `src/lib/brand.ts`). This brand cookie (`rocks-fast-brand`) is unrelated to Intelligence (which is gone); it scopes ERP/Business Central context for Accounting.
 
 ## Features
 
@@ -67,7 +94,7 @@ Configurable form builder with approval workflows.
 - `src/features/forms/email-queue.ts` — Async email notification queue
 - `src/features/forms/email-templates.ts` — HTML email templates (XSS-safe with `esc()`)
 - `src/lib/graph.ts` — Microsoft Graph API (token cached with promise lock): `searchADUsers`, `getADUserByEmail`, `getADUserPhoto`, `sendEmail` (with attachments)
-- `src/lib/storage.ts` — File storage abstraction (local backend)
+- `src/lib/storage.ts` — File storage abstraction (local backend, rooted at `UPLOAD_ROOT`)
 
 **Field types:** text, textarea, number, date, select, radio, checkbox, file, route (Google Maps), section, info
 
@@ -78,200 +105,43 @@ Configurable form builder with approval workflows.
 - Auto-approve conditions (JSON rules)
 - Email notifications via Microsoft Graph API (queued, async)
 
-### 2. Fast Intelligence (`/intelligence`)
+### 2. Request → Accounting (`/request/accounting`)
 
-BI dashboards with Recharts + interactive data tables (TanStack Table).
+Two live Accounting forms share a generic request/approval backbone, plus a Business Central ERP integration layer.
 
-**Multi-brand support:** UNO and KSI are enabled, each with its own Foodstory DB. Brand is passed via `?brand=` URL param through hub → dashboards/reports. All API routes accept `?brand=` and query the correct DB via `getFoodstoryPool(brand)`.
+**Storage:** Acc* tables live in **`Fast_Form`**, accessed via `getAccPool()` (= `getFormPool()`, `src/lib/acc/pool.ts`). Numbered migrations in `migrations/` (013 onward) build up the shared header tables, AP-1 detail tables, AP-17 detail tables, and settings. Apply with `npm run apply-sql -- --db Fast_Form --file <path>` (see `scripts/apply-sql.ts`).
 
-**Hub page** has 2 phases: brand selection → workspace view (data sources, architecture modal, dashboard/report links). Phase 2 shows brand logo (no text), per-brand data freshness, and dynamic branch counts fetched from API.
+**Generic header (shared by all Accounting forms):** `AccFormMaster` (form catalog), `AccRequest` (shared request header), `AccApproval`, `AccActivityLog`, `AccSequence`, `AccEmailQueue`, `AccRequestFile`.
 
-**Pages (19):**
-- `/intelligence` — Hub: brand selector → workspace with data sources, dashboards, reports
-- `/intelligence/dashboards/master` — Executive Master Dashboard (KPI strips, dynamic view, full-data export, tour)
-- `/intelligence/dashboards/master/print` — Print/PDF-ready version of Master Dashboard
-- `/intelligence/dashboards/daily-sales` — Revenue trends, KPIs (Daily Sales Pulse)
-- `/intelligence/dashboards/branch-performance` — Branch ranking
-- `/intelligence/dashboards/top-products` — Best sellers, category mix
-- `/intelligence/dashboards/hourly-products` — Hourly revenue dashboard
-- `/intelligence/dashboards/product-by-hour` — Product x hour heatmap matrix
-- `/intelligence/dashboards/product-option` — Product & option group analysis
-- `/intelligence/reports/sales-monitor` — Daily sales by branch, channel
-- `/intelligence/reports/sales-item` — Revenue by menu item
-- `/intelligence/reports/transaction` — Bill-level detail (grouped by receipt)
-- `/intelligence/reports/tender` — Payment breakdown (grouped by tender type)
-- `/intelligence/reports/promotion` — Voucher usage & discounts
-- `/intelligence/reports/void` — Voided items with reason
-- `/intelligence/reports/vat` — Tax summary (7% VAT)
-- `/intelligence/reports/edc` — Credit card / EDC transactions
-- `/intelligence/reports/waste` — Barista quota & waste tracking
-- `/intelligence/admin/permissions` — Permission management (IT Admin+)
-- (Coming soon: Stock Movement, Recipe/BOM, Damage)
+**Running number:** `TOFyy-xxxx`-style, allocated atomically at submit via `src/lib/acc/sequence.ts`.
 
-**Layouts:**
-- `src/app/(dashboard)/intelligence/reports/layout.tsx` — Fixed positioning to fill viewport (no page scrollbar) + beta banner
-- `src/app/(dashboard)/intelligence/dashboards/layout.tsx` — Beta banner for dashboards
+#### AP-1 — Travel Expense Reimbursement (`/request/travel-expense`)
 
-**API Routes (37):** `/api/intelligence/*`
-- `branches`, `data-freshness`, `holidays`
-- `dashboards/daily-sales`, `dashboards/branch-performance`, `dashboards/top-products`, `dashboards/hourly-products`, `dashboards/product-by-hour`, `dashboards/product-option`, `dashboards/payment-mix`
-- `dashboards/master/{kpi,hourly,mode-proportion,ticket-by-sale-type,sales-by/[colorBy],ads-trend,by-store,branch-map,distincts,full-data,full-data/count,export-pdf,preview-thumbnail,readiness}` — 14 routes powering the Master Dashboard
-- `reports/sales-monitor`, `reports/sales-item`, `reports/transaction`, `reports/tender`, `reports/promotion`, `reports/void`, `reports/vat`, `reports/edc`, `reports/waste`
-- `reports/send-email` — Email report as Excel attachment via Graph API
-- `permissions` — GET: returns allowed brands for current user
-- `permissions/admin` — GET/POST: CRUD for groups, members, brand permissions + user role management
-- `etl/materialize` — Manual ETL trigger (materialization, not active yet)
+Office travel-expense reimbursement form (fuel/toll/parking against a route or manual entry).
 
-**Other API Routes:**
-- `GET /api/users/search?q=...` — Azure AD user search with photos (used by permissions admin)
+- **Pages:** `/request/travel-expense` (fill/resume draft), `/request/travel-expense/[id]` (detail + timeline + self-cancel ≤24h after submit)
+- **Detail tables:** `AccTravelExpense` + `AccTravelExpenseItem`
+- **Settings tables:** `AccApprover` (configured account approvers), `AccVehicle` (vehicle rate table), `AccFormBrand` (brand access per form)
+- **Workflow:** Manager (resolved from `Rocks_Portal_HR.Employee.ManagerStaffId`) → Account (from `AccApprover`). Email notification at every transition via Graph queue (`src/lib/acc/email-queue.ts`), drained after each action. Account approval sets `PaymentDate` = next 2nd or 4th Friday, shifted forward past holidays from `Rocks_Codex.Holiday` (`src/lib/acc/payment-calendar.ts`).
+- **Conditional fields:** `AccVehicle.IsManualEntry = true` → fare + toll inputs; `false` → OpenRouteService distance × rate + toll + parking, via `DistanceMapField` → `LeafletRoutePicker` (plain Leaflet, `dynamic ssr:false`) + ORS geocoding/directions proxied through global `/api/ors/{geocode,directions}` (`src/lib/ors.ts`). Manual-km fallback when ORS is unavailable.
+- **OpenRouteService is a global system setting:** API key stored in `Fast_Core.AppSetting` (`src/lib/app-settings.ts`) with `ORS_API_KEY` env fallback; resolved by `resolveOrsKey()`. Configured at **Settings → Maps & Routing → OpenRouteService** (`/settings/openrouteservice`, IT/System Admin) via `/api/settings/ors` (+`/test`; key always masked).
+- Shared calculation logic in `src/lib/acc/calc.ts`. Travel date validation: unique per StaffId (except Rejected status), ≤1 month in the past, no future dates.
 
-**Master Dashboard (`/intelligence/dashboards/master`):**
-- Self-contained namespace at `src/features/intelligence/master/`
-  - `components/` — 8 export-modal files, 12 chart files, 4 filter files, LeftRail/RightRail/DashboardGrid/MasterDashboard, DashboardTour
-  - `hooks/` — `useMasterFilters` (URL ↔ state), `useDistincts`/`useBranchMap` (brand-aware), `useChartTheme` (reads `[data-theme]` attribute), `useMasterData` (SWR + envelope unwrap)
-  - `lib/` — `calc`, `palette`, `format`, `csv`, `exporters` (xlsx-js-style), `pdf-export` (dynamic-imported html2canvas+jspdf)
-  - `types.ts` — `ViewKey`, `FilterKey`, `ColorByKey`, `MetricKey`, row types
-- Brand resolution: `BrandConfig.DashboardDbConnectionId` + `DashboardDatabaseName` → `getBrandDashboardPool(brand)` from `src/lib/intelligence/brand-pool.ts`
-- View: `dbo.vw_Foodstory_Clean` (apply via `npm run apply-sql -- --file sql/foodstory-views.sql`) — must exist in every brand's Dashboard DB
-- API route shape: `buildMasterContext(req, route)` from `src/lib/intelligence/master-route.ts` handles auth + brand validation + cache + filter parsing; routes call `withCache(ctx, loader)` then return `jsonResponse`
-- Cache: `src/lib/intelligence/api-cache.ts` — 90s TTL, brand-aware key
-- Empty state when `BrandConfig` has no Dashboard DB configured — IT Admin+ sees link to `/settings/brand-config`
+#### AP-17 — Travel Booking (`/request/travel-booking`)
 
-**Key components:**
-- `src/features/intelligence/components/DataTable.tsx` — Reusable TanStack Table with search, multi-level group by, expand/collapse, column visibility toggle, Excel download, email export, schedule mockup, sticky header, footer totals, sparkline % in groups, right-aligned numbers, row hover, dynamic height measurement via useRef
-- `src/features/intelligence/components/KpiCard.tsx` — Stat card with trend indicator
-- `src/features/intelligence/components/DashboardLayout.tsx` — Shared dashboard wrapper with filters, brand logo in header, no brand switcher (brand set from URL)
-- `src/features/intelligence/components/ReportKpiBar.tsx` — Inline KPI stat bar for reports
-- `src/features/intelligence/components/ReportEmptyState.tsx` — Contextual empty state
-- `src/features/intelligence/components/ReportLoading.tsx` — Logo + animated loading bar
-- `src/features/intelligence/components/HourlyProducts.tsx` — Hourly revenue dashboard component
-- `src/features/intelligence/components/ProductByHour.tsx` — Product x hour heatmap matrix component
-- `src/features/intelligence/components/ProductOptionAnalysis.tsx` — Option group analysis component
+Accommodation/ticket booking requests for provincial work travel — supports multiple bookings per request, an admin booking queue, per-diem history, and on-behalf submission.
 
-**Key hooks:**
-- `src/features/intelligence/hooks/useReportFilters.ts` — Persist report filters (brand, branch, dates) to localStorage
+- **Pages:** `/request/travel-booking` (fill/resume draft, multi-row), `/request/travel-booking/[id]` (detail), plus office/admin views under `/request/accounting/travel-booking*` (queue, report, settings)
+- **Feature code:** `src/features/travel-booking/`; service/lib code under `src/lib/acc/travel-booking/`
+- Uses `Rocks_Portal_HR.EmployeeAllowanceLog` for effective-dated per-diem history and `Fast_Data` for province lookups (`province-service.ts`)
 
-**Key files:**
-- `src/features/intelligence/materialize.ts` — Materialization engine (built but not active yet)
-- `sql/intel-materialized-tables.sql` — SQL for pre-computed tables (Intel_* tables in Fast_Data)
+#### Business Central / ERP integration
 
-**Data sources:**
-- Foodstory POS UNO (`Rocks_UNO_Data`) — 663K bill details, 17 branches
-- Foodstory POS KSI (`Rocks_KSI_Data`) — 290K bill details, 6 branches
-- Foodstory POS options (`FS_BillDetailOption`) — BillDetailId, OptionGroup, OptionValue (both UNO & KSI)
-- Location Master (`Fast_Core`) — Store locations
-- ETL status — `ETL_JobLog` in each Foodstory DB (per brand, status='success') + `Rocks_PCTH_Data` (centralized LocationSync, status='OK')
-- Data freshness API returns separate entries per brand: `"Foodstory UNO"`, `"Foodstory KSI"`, `"Location Master"`
-- Holidays — `[Rocks_Codex].[dbo].[Holiday]` cross-database query
-- Business Central — Coming soon (Recipe, Inventory, Financial)
-- Manual File — Coming soon (BD targets, flat files)
+Accounting requests can be pushed into Dynamics 365 Business Central. Configuration lives under **Settings**: Database Connections, Business Central (OAuth2 connection), Brand Configuration (per-brand BC + ERP SQL target), ERP Interface Environment (Production/UAT toggle, System Admin only, gated to dev hosts by `ERP_SANDBOX_ALLOWED_HOSTS`). Sync logic in `src/lib/erp/account-sync.ts` and `src/lib/erp/dimension-sync.ts` (both query `Fast_Data`), OData client in `src/lib/bc/`.
 
-**Report financial formatting:**
-- Revenue columns: blue (#2563eb) — `fmtRevenue()`
-- Cost columns: red (#dc2626) — `fmtCost()`
-- Neutral columns: default — `fmtBaht()`
+**Key libs (`src/lib/acc/`):** `pool`, `sequence`, `payment-calendar`, `employee-context`, `brand-options`, `access`, `settings-service`, `request-service`, `approval-engine`, `report-service`, `email-queue`, `email-templates`, `calc`, `erp-environment-shared`, plus `travel-booking/*`.
 
-**Foodstory query patterns:**
-- Always filter: `void_flag != '1' AND is_revenue = '1'`
-- Use `_num` columns for calculations: `quantity_num`, `price_num`, `discounted_price_num`
-- Date column: `IngestDate` (business date)
-- Branch filter: `CAST(b.branch_id AS NVARCHAR) = @branch`
-- Branch join (deduplicated): `LEFT JOIN (SELECT branch_id, branch_name, branch_code FROM FS_MasterBranch GROUP BY branch_id, branch_name, branch_code) m ON CAST(b.branch_id AS NVARCHAR) = m.branch_id` — **must use GROUP BY subquery** to avoid doubling SUM values from multiple sync dates
-- Branch list: `GROUP BY branch_id` to deduplicate (multiple sync dates)
-- Promotion (FS_VoucherUsage): filter by `branch_name` via subquery from `FS_MasterBranch`
-- Option data: `FS_BillDetailOption` joined via `BillDetailId`
-
-**Dashboard patterns:**
-- Dashboard/report pages read `brand` from URL `?brand=` via `useSearchParams`, wrapped in `<Suspense>`, fallback to "UNO"
-- Dashboard pages use from/to dates (not days count) for accurate period ranges
-- QuickDateFilter has SDLW (Same Day Last Week) preset, mobile-hidden date inputs
-- Date formatting: use local getters (e.g. `getFullYear()`, `getMonth()`), never `toISOString()` for display
-- Server is Thai time — do NOT use `fixThaiDate()`
-- Brand logos: `/brandlogo/{brand}-200.png` (e.g. `uno-200.png`, `ksi-200.png`)
-
-**Report patterns:**
-- Reports use `useReportFilters` hook for persisting filters to localStorage
-- Reports have KPI summary bar (`ReportKpiBar`), filter chip, empty state (`ReportEmptyState`)
-- Reports layout uses fixed positioning to fill viewport (no page scrollbar)
-- DataTable dynamically measures available height with `useRef`
-- Multi-level group by with expand/collapse and sparkline % in groups
-
-**Permission System (Brand-level access control):**
-
-Intelligence uses brand-level permissions. Forms + Locations have no permission check (everyone can access).
-
-- **IT Admin / System Admin**: auto-access to all brands (no explicit permission needed)
-- **Staff / Viewer**: need explicit brand permission (direct user grant or via group membership)
-- **No permission**: user stays on brand selection page (cannot enter workspace)
-- **Enforcement**: client-side on hub page; API routes do not enforce brand permission yet
-
-**Permission tables (in Fast_Core):**
-- `IntelPermissionGroup` — custom permission groups (e.g., "UNO Managers")
-- `IntelPermissionGroupMember` — group membership by email
-- `IntelBrandPermission` — grant brand access to a user (by email) or group (by GroupId)
-
-**Admin page (`/intelligence/admin/permissions`):**
-- 3-column layout: Groups | Members | Brand Access
-- User Roles section (System Admin only) — add users from AD, change roles, resync from AD, deactivate
-- AD search modal (Codex-style) with debounce, photos, "Already Added" indicator
-- Proper confirm/role-picker modals (no native `confirm()`/`prompt()`)
-- Access: IT Admin+ via profile dropdown "Permissions" link
-
-**Key patterns:**
-- AD search uses `$filter` with `startswith` (no `$orderby` — not supported on some tenants)
-- Role hierarchy: System Admin > IT Admin > Staff/Viewer
-
-### 3. Locations (`/locations`)
-
-Brand locations map view — placeholder, coming soon.
-
-### 4. Request → Accounting: Travel Expense Reimbursement (AP-1) (`/request/travel-expense`)
-
-Office travel-expense reimbursement form — first form in the new **Accounting** group of the **Request** section.
-
-**Storage:** Acc* tables live in **`Fast_Form`**, accessed via `getAccPool()` (= `getFormPool()`, `src/lib/acc/pool.ts`). Migrations: `migrations/013_portal_acc_core.sql` (shared header tables + AP-1 seed), `014_portal_acc_travel_expense.sql` (detail tables), `015_portal_acc_settings_kv.sql` (AccSetting). Apply with `npm run apply-sql -- --db Fast_Form --file <path>`.
-
-**DB schema (Fast_Form, Acc* tables):**
-- Generic header: `AccFormMaster` (form catalog), `AccRequest` (shared request header), `AccApproval`, `AccActivityLog`, `AccSequence`, `AccEmailQueue`, `AccRequestFile` — designed to support future Accounting forms
-- Travel-expense detail: `AccTravelExpense` + `AccTravelExpenseItem`
-- Settings: `AccApprover` (configured account approvers), `AccVehicle` (vehicle rate table), `AccFormBrand` (brand access per form)
-
-**Running number:** `TOFyy-xxxx` (yy = 2-digit Christian year of submit date), resets per year, allocated atomically at submit via `src/lib/acc/sequence.ts`.
-
-**Pages (4):**
-- `/request/travel-expense` — Fill form + resume saved draft
-- `/request/travel-expense/[id]` — Detail view: submission data, approval timeline, self-cancel (≤24 h after submit)
-- `/request/accounting/approvals` — Accounting team working queue
-- `/request/accounting/report` — Filter + Excel export of all requests
-- `/request/accounting/settings` — IT Admin / System Admin: manage approvers, vehicles, brand access
-
-**API Routes:** `/api/request/accounting/*`
-- `requests` — list / create draft
-- `requests/[id]` — GET detail, PATCH update draft, DELETE cancel
-- `requests/[id]/submit` — allocate running number, trigger Manager email
-- `requests/[id]/approve` — Manager or Account approval step; sets PaymentDate on Account approval
-- `requests/[id]/reject` — reject with reason
-- `requests/[id]/return` — return for revision
-- `options/brands`, `options/vehicles` — dropdown data for form
-- `payment-dates` — compute next 2nd / 4th Friday (holiday-shifted)
-- `settings/approvers`, `settings/vehicles`, `settings/brands` — CRUD for admin settings
-- `report`, `report/export` — filtered list + Excel download
-- `email/process` — drain email queue (called opportunistically after each action)
-- `files` — upload / download attached files
-
-**Workflow:** Manager (resolved from `Rocks_Portal_HR.Employee.ManagerStaffId`) → Account (from `AccApprover` table). Email notification at every transition via Graph queue (`src/lib/acc/email-queue.ts`), drained after each action. Account approval sets `PaymentDate` = next 2nd or 4th Friday, shifted forward past holidays from `Rocks_Codex.Holiday`.
-
-**Conditional fields:**
-- `AccVehicle.IsManualEntry = true` → show fare + toll inputs; total = fare + toll
-- `IsManualEntry = false` → show OpenRouteService (Leaflet/OSM) distance × rate + toll + parking inputs; rate lookup from `AccVehicle`
-- **Distance picker:** `DistanceMapField` → `LeafletRoutePicker` (plain Leaflet, loaded `dynamic ssr:false`) + ORS geocoding/directions proxied via global `/api/ors/{geocode,directions}` (`src/lib/ors.ts`). Manual-km fallback when ORS is unavailable. (forms `route` field + locations still use Google Maps.)
-- **OpenRouteService is a global system setting:** API key stored in `Fast_Core.AppSetting` (`src/lib/app-settings.ts`, migration 016) with `ORS_API_KEY` env fallback; resolved by `resolveOrsKey()`. Configured at **Settings → Configuration → OpenRouteService** (`/settings/openrouteservice`, IT/System Admin) via `/api/settings/ors` (+`/test`; key always masked). Reusable by any form needing maps.
-- Shared calculation logic in `src/lib/acc/calc.ts`
-- Travel date validation: unique per StaffId (except Rejected status), ≤1 month in the past, no future dates
-
-**Key libs (`src/lib/acc/`):** `pool`, `sequence`, `payment-calendar`, `employee-context`, `brand-options`, `access`, `settings-service`, `request-service`, `approval-engine`, `report-service`, `email-queue`, `email-templates`, `calc`
-
-**Feature UI:** `src/features/accounting/` — form components, approval queue, report table, settings panels
+**Feature UI:** `src/features/accounting/` (AP-1) and `src/features/travel-booking/` (AP-17) — form components, approval queues, report tables, settings panels.
 
 ## Project Structure
 
@@ -280,34 +150,37 @@ src/
 ├── app/
 │   ├── (auth)/login, unauthorized
 │   ├── (dashboard)/
-│   │   ├── forms/               # 8 pages
-│   │   ├── intelligence/        # 17 pages (hub + 6 dashboards + 9 reports + 1 admin)
-│   │   │   ├── dashboards/layout.tsx  # Beta banner
-│   │   │   └── reports/layout.tsx     # Fixed viewport layout + beta banner
-│   │   ├── locations/           # 1 page (placeholder)
-│   │   └── page.tsx             # Dashboard home
+│   │   ├── forms/                    # Form Builder — 8 pages
+│   │   ├── my-request/, my-work/     # Personal request tracking
+│   │   ├── request/                  # Accounting hub, AP-1, AP-17, ERP prep
+│   │   ├── settings/                 # Admin settings hub — connections, BC, brand config, ERP, users
+│   │   └── page.tsx                  # Home — form catalogue
 │   ├── api/
-│   │   ├── auth/                # NextAuth
-│   │   ├── forms/               # 16 routes
-│   │   ├── intelligence/        # 23 routes (branches, data-freshness, holidays, 6 dashboards, 9 reports, send-email, permissions, permissions/admin, etl/materialize)
-│   │   └── users/               # 1 route (search — AD user search)
-│   ├── loading.tsx              # Global loading screen (Rocks Group logo + animated bar)
-│   └── layout.tsx
+│   │   ├── auth/                     # NextAuth
+│   │   ├── forms/                    # 16 routes
+│   │   ├── request/accounting/       # AP-1, AP-17, ERP prep API routes
+│   │   ├── settings/                 # Connections, BC, brand-config, ORS, Google Maps, users
+│   │   └── users/                    # AD user search
+│   ├── loading.tsx                   # Global loading screen
+│   └── layout.tsx                    # Root layout — theme no-flash script, providers
 ├── features/
-│   ├── forms/                   # Types, schemas, constants, workflow-engine, email, components, hooks
-│   └── intelligence/            # Types, constants, DataTable, dashboards, components, hooks, materialize.ts
+│   ├── forms/                        # Types, schemas, constants, workflow-engine, email, components, hooks
+│   ├── accounting/                   # AP-1 form, approvals, report, settings UI
+│   ├── travel-booking/               # AP-17 form, admin queue, report, settings UI
+│   └── home/                         # Home catalogue
 ├── components/
-│   ├── ui/                      # Button, Badge, Avatar, Dialog, DropdownMenu, SidePanel, FullScreenModal
-│   └── layout/                  # Navbar, RouteGuard, PageContainer
+│   ├── ui/                           # Button, Badge, Avatar, Dialog, DropdownMenu, SidePanel, FullScreenModal
+│   └── layout/                       # Navbar, RouteGuard, PageContainer
 ├── lib/
-│   ├── db/mssql.ts              # Multi-DB pools (Core, Form, Data, Foodstory) + teamMemberTable(), pool max=30
-│   ├── graph.ts                 # Microsoft Graph API (searchADUsers, getADUserByEmail, getADUserPhoto, sendEmail)
-│   ├── storage.ts               # File storage
+│   ├── db/mssql.ts                   # Multi-DB pools (Core, Form, Data, generic getAppPool) + teamMemberTable(), pool max=30
+│   ├── acc/                          # Accounting domain logic (see above)
+│   ├── erp/                          # Business Central sync
+│   ├── hr/                           # Rocks_Portal_HR cross-DB lookups
+│   ├── graph.ts                      # Microsoft Graph API (searchADUsers, getADUserByEmail, getADUserPhoto, sendEmail)
+│   ├── storage.ts                    # Local file storage (UPLOAD_ROOT)
 │   ├── auth.ts, auth.config.ts, api-auth.ts
 │   └── hooks/
-├── env.ts                       # Type-safe env validation
-sql/
-└── intel-materialized-tables.sql  # Pre-computed Intel_* tables for Fast_Data
+├── env.ts                            # Type-safe env validation
 ```
 
 ## Conventions
@@ -320,14 +193,11 @@ sql/
 - **CSS**: Use `var(--variable)` — never raw hex. See `globals.css` for all tokens.
 - **Icons**: `lucide-react` only
 - **Toasts**: `sonner` — `toast.success()`, `toast.error()`
-- **Charts**: `recharts` for dashboards, `@tanstack/react-table` for interactive data tables
 - **Excel**: `xlsx-js-style` (not `xlsx` — old SheetJS CE has vulnerabilities)
 - **Components**: `"use client"` only when needed. Use existing UI components from `@/components/ui`
 - **ES5 target**: Don't use `[...set]` or `[...map.values()]` — use `Array.from()` instead
-- **Financial colors**: Revenue = blue `fmtRevenue()`, Cost = red `fmtCost()`, Neutral = default `fmtBaht()`
 - **Date display**: Use local getters (`getFullYear()`, `getMonth()`), never `toISOString()` — server is Thai time, do NOT use `fixThaiDate()`
 - **Logos**: Rocks Group logo for navbar/favicon, Codex Family logo for app loading screen
-- **Report filters**: Persist to localStorage via `useReportFilters` hook
 
 ## Environment Variables
 
@@ -353,11 +223,20 @@ MSSQL_DATA_DATABASE=Fast_Data
 # Email
 GRAPH_MAIL_FROM=noreply@rocksgroup.com
 
-# Foodstory
-FOODSTORY_DB_HOST=
-FOODSTORY_BRANDS={"UNO":"Rocks_UNO_Data","KSI":"Rocks_KSI_Data"}
+# SharePoint (Accounting file storage — shared with Rocks Fast)
+SHAREPOINT_ACC_SITE=
+SHAREPOINT_ACC_FOLDER=
+
+# OpenRouteService (AP-1 distance calculation fallback)
+ORS_API_KEY=
+
+# Google Maps
+GOOGLE_MAPS_API_KEY=
+NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=
+
+# Local attachment storage — point at the Rocks Fast sibling's uploads folder
+UPLOAD_ROOT=
 
 # Client
-NEXT_PUBLIC_APP_URL=http://localhost:3020
-NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=
+NEXT_PUBLIC_APP_URL=http://localhost:3021
 ```

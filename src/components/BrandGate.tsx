@@ -11,8 +11,8 @@ import { useBrand } from "./BrandProvider";
  * picks a brand. Once a brand is selected (via the modal or BrandSwitcher),
  * the cookie is set and children render normally.
  *
- * Note: All enabled brands are selectable here. Per-feature permission checks
- * (e.g. Intelligence dashboards) happen at the API layer.
+ * Note: All enabled brands are selectable here. Per-feature access checks
+ * (e.g. ERP sync, brand-scoped Accounting settings) happen at the API layer.
  */
 export function BrandGate({ children }: { children: React.ReactNode }) {
   const { brand, setBrand } = useBrand();

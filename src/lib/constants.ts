@@ -58,25 +58,6 @@ export const NAV: NavItem[] = [
 ];
 
 /**
- * Cards shown on the home page (/). Mirrors the Navbar minus the personal
- * tracking views (My Request / My Work), which live on their own pages.
- */
-export const HOME_CARDS: NavItem[] = NAV.filter(
-  (n) => n.id !== "my-work" && n.id !== "my-request",
-);
-
-/** Home page only — IT Admin / System Admin (not in top Navbar) */
-export const ADMIN_HOME_CARDS: NavItem[] = [
-  {
-    id: "settings",
-    label: "Settings",
-    icon: "Settings2",
-    desc: "Database connections, permissions & system configuration",
-    href: "/settings",
-  },
-];
-
-/**
  * Sub-cards shown on the Request hub page (/request).
  * Each represents a category of request the user can make.
  * Optional `group` / `groupTh` fields are used by the hub to render section headers.

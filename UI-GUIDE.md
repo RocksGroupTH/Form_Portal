@@ -2,6 +2,10 @@
 
 > Reusable UI guide for building new web applications in the Rocks Group ecosystem.
 > Copy this file into any new project so AI assistants follow the same design language.
+> This snapshot reflects **Form Portal**'s current implementation — the **Sky** palette
+> (`light` / `dark` themes), 14px card radius, 12px tile radius, and capsule nav. Swap the
+> palette section for whichever brand colours the next project needs; the structural and
+> component guidance below applies regardless of palette.
 
 ---
 
@@ -324,79 +328,33 @@ No `tailwind.config.ts`. All tokens go in `globals.css`:
 export default { plugins: { "@tailwindcss/postcss": {} } };
 ```
 
-### Rocks Group Brand Colors
+### Sky Brand Colors (Form Portal)
 
 **Corporate identity:**
 
 | Token | Hex | Use |
 |-------|-----|-----|
-| `--color-brand-navy` | `#1A0608` | Signature dark (sidebar, headings) |
-| `--color-brand-navy-light` | `#2D0C0E` | Navy hover/alt |
-| `--color-brand-red` | `#A3121B` | Primary CTA, logo red |
-| `--color-brand-light` | `#fdf5f5` | Off-white backgrounds |
-| `--color-brand-border` | `#ead9d9` | Warm border accent |
+| `--color-brand-navy` | `#1b2434` | Signature dark (sidebar, headings) |
+| `--color-brand-navy-light` | `#2b3446` | Navy hover/alt |
+| `--color-brand-red` | `#4c74c4` | Primary CTA, accent (kept the `-red` token name for drop-in compatibility with the old palette; it now holds the Sky accent blue) |
+| `--color-brand-light` | `#e8effc` | Pale-blue backgrounds |
+| `--color-brand-border` | `#dbe6f8` | Cool border accent |
 
-**Sub-brand colors** (used on map pins, badges, legends — supports dual-color `"c1/c2"` split pins):
+**Shape & depth (modern treatment — replaces the old heavy-border look):**
 
-| Brand | Primary | Secondary | Preview |
-|-------|---------|-----------|---------|
-| **Rocks** | `#dc2626` (red) | — | Solid red |
-| **PCTH** | `#16a34a` (green) | `#FFEA00` (yellow) | Split green/yellow |
-| **PCMY** | `#FFEA00` (yellow) | `#16a34a` (green) | Split yellow/green |
-| **KSI** | `#5A4118` (brown) | `#F6B446` (amber) | Split brown/amber |
-| **UNO** | `#dc2626` (red) | `#1a1a1a` (black) | Split red/black |
+| Token | Value | Use |
+|-------|-------|-----|
+| `--radius-card` | `14px` | Cards, panels, modals |
+| `--radius-tile` | `12px` | Icon tiles, smaller surfaces |
+| `--radius-full` | `999px` | Pills, badges, capsule nav |
+| `--shadow-card` | `0 2px 8px -3px rgba(59,79,116,.16)` (light) / darker in `dark` | Default card elevation — **prefer this over a heavy `1px solid` border** |
+| `--shadow-lift` | `0 12px 32px -12px rgba(59,79,116,.28)` | Hover/lift elevation on interactive cards |
+| `--nav-active-bg` / `--nav-active-text` | tinted accent pair | Tinted icon tiles: icon sits on `--nav-active-bg`, coloured with `--nav-active-text`, instead of a flat grey chip |
+| Nav shape | `--radius-full` | The top nav renders as a capsule (pill), not a squared bar |
+| `--mark-from` / `--mark-to` | gradient stops | Brand mark gradient (logo mark, avatar fallback, loading accents) |
+| `--status-{pending,ok,draft,bad}-{bg,text}` | tinted pairs | Status pills — tinted background + matching text, not solid fills |
 
-**Fallback palette** (for brands without explicit override, assigned by index):
-
-```
-#dc2626  #2563eb  #16a34a  #f59e0b  #7c3aed
-#ec4899  #06b6d4  #ea580c  #84cc16  #6366f1
-```
-
-**Dual-color pin helper** (store in a shared constants file):
-
-```typescript
-/** Brand code → color. Use "c1/c2" for split dual-color pins */
-const BRAND_COLOR_OVERRIDES: Record<string, string> = {
-  Rocks: "#dc2626",
-  PCTH: "#16a34a/#FFEA00",
-  PCMY: "#FFEA00/#16a34a",
-  KSI:  "#5A4118/#F6B446",
-  UNO:  "#dc2626/#1a1a1a",
-};
-
-function parseBrandColor(color: string): [string, string | null] {
-  const idx = color.indexOf("/");
-  if (idx === -1) return [color, null];
-  return [color.slice(0, idx), color.slice(idx + 1)];
-}
-```
-
-**SVG map pin generator** (supports single & dual-color):
-
-```typescript
-const PIN_PATH = "M14 0C6.3 0 0 6.3 0 14c0 10.5 14 26 14 26s14-15.5 14-26C28 6.3 21.7 0 14 0z";
-
-function createPinSvg(color: string): string {
-  const [c1, c2] = parseBrandColor(color);
-  if (c2) {
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="40" viewBox="0 0 28 40">
-      <defs>
-        <clipPath id="l"><rect x="0" y="0" width="14" height="40"/></clipPath>
-        <clipPath id="r"><rect x="14" y="0" width="14" height="40"/></clipPath>
-      </defs>
-      <path d="${PIN_PATH}" fill="${c1}" clip-path="url(#l)"/>
-      <path d="${PIN_PATH}" fill="${c2}" clip-path="url(#r)"/>
-      <path d="${PIN_PATH}" fill="none" stroke="white" stroke-width="1.5"/>
-      <circle cx="14" cy="13" r="5.5" fill="white"/>
-    </svg>`;
-  }
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="40" viewBox="0 0 28 40">
-    <path d="${PIN_PATH}" fill="${c1}" stroke="white" stroke-width="1.5"/>
-    <circle cx="14" cy="13" r="5.5" fill="white"/>
-  </svg>`;
-}
-```
+Practical rule: reach for `--shadow-card` + `--radius-card` before reaching for a border. Borders (`--border-card`) are for definition on flat surfaces (table rows, list dividers), not for lifting a card off the page.
 
 ---
 
@@ -406,12 +364,12 @@ function createPinSvg(color: string): string {
 @import "tailwindcss";
 
 @theme {
-  /* ── Rocks Group Brand ── */
-  --color-brand-navy: #1A0608;
-  --color-brand-navy-light: #2D0C0E;
-  --color-brand-red: #A3121B;
-  --color-brand-light: #fdf5f5;
-  --color-brand-border: #ead9d9;
+  /* ── Sky Brand (Form Portal) ── */
+  --color-brand-navy: #1b2434;
+  --color-brand-navy-light: #2b3446;
+  --color-brand-red: #4c74c4;
+  --color-brand-light: #e8effc;
+  --color-brand-border: #dbe6f8;
 
   /* ── Status Colors ── */
   --color-status-red: #e74c3c;
@@ -466,7 +424,9 @@ function createPinSvg(color: string): string {
   --radius-full: 9999px;
 
   /* ── Font ── */
-  --font-sans: 'Segoe UI', Arial, sans-serif;
+  /* Form Portal self-hosts Noto Sans Thai (src/assets/fonts, next/font/local in layout.tsx).
+     Fall back to a generic system stack for a fresh project without that font. */
+  --font-sans: var(--font-noto-thai), var(--font-noto), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 
   /* ── Motion ── */
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
@@ -487,48 +447,54 @@ function createPinSvg(color: string): string {
   --navbar-h: 48px;
 
   /* Backgrounds */
-  --bg-page: #f0eded;
-  --bg-card: #fbfafa;
-  --bg-card-hover: #f5f3f3;
-  --bg-card-alt: #f9fafb;
-  --bg-input: #fafbfc;
-  --bg-sidebar: #1A0608;
-  --bg-topbar: rgba(251, 250, 250, 0.78);
+  --bg-page: #f4f7fc;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f7f9fd;
+  --bg-card-alt: #f4f7fc;
+  --bg-input: #ffffff;
+  --bg-sidebar: #1b2434;
+  --bg-topbar: rgba(255, 255, 255, 0.78);
   --bg-modal: #ffffff;
   --bg-dropdown: #ffffff;
-  --bg-row-stripe: #fdf5f5;
-  --bg-selected: #fdf5f5;
-  --bg-badge: #f5f5f5;
+  --bg-row-stripe: #f9fbfe;
+  --bg-selected: #e8effc;
+  --bg-badge: #eef3fb;
 
   /* Text */
-  --text-primary: #111111;
-  --text-secondary: #333333;
-  --text-muted: #888888;
-  --text-faint: #aaaaaa;
-  --text-heading: #1A0608;
+  --text-primary: #2b3446;
+  --text-secondary: #4b566b;
+  --text-muted: #687591;
+  --text-faint: #8695ab;
+  --text-heading: #1f2735;
   --text-inverse: #ffffff;
 
   /* Borders */
-  --border-main: #e5e0e0;
-  --border-light: #f0f0f0;
-  --border-card: rgba(0, 0, 0, 0.06);
-  --border-input: #e5e7eb;
-  --border-accent: #ead9d9;
-  --border-elevated: rgba(0, 0, 0, 0.1);
+  --border-main: #e7edf6;
+  --border-light: #eff3f9;
+  --border-card: rgba(59, 79, 116, 0.08);
+  --border-input: #dde5f0;
+  --border-accent: #dbe6f8;
+  --border-elevated: rgba(59, 79, 116, 0.14);
 
-  /* Shadows */
-  --shadow-sm: 0 1px 2px rgba(0,0,0,0.05), 0 0 0 1px rgba(255,255,255,0.5) inset;
-  --shadow-md: 0 4px 12px rgba(0,0,0,0.08), 0 0 0 1px rgba(255,255,255,0.6) inset;
-  --shadow-xl: 0 8px 24px rgba(0,0,0,0.12), 0 0 0 1px rgba(255,255,255,0.4) inset;
+  /* Shadows — see "Shape & depth" above; prefer shadow-card over a heavy border */
+  --shadow-sm: 0 1px 2px rgba(59, 79, 116, 0.06);
+  --shadow-md: 0 2px 8px -3px rgba(59, 79, 116, 0.16);
+  --shadow-xl: 0 12px 32px -12px rgba(59, 79, 116, 0.28);
+  --shadow-card: 0 2px 8px -3px rgba(59, 79, 116, 0.16);
+  --shadow-lift: 0 12px 32px -12px rgba(59, 79, 116, 0.28);
 
-  --overlay-bg: rgba(0,0,0,0.4);
+  --overlay-bg: rgba(31, 39, 53, 0.38);
 
-  /* Nav */
-  --nav-active-bg: rgba(163, 18, 27, 0.1);
-  --nav-active-text: #A3121B;
+  /* Radii — modern treatment */
+  --radius-card: 14px;
+  --radius-tile: 12px;
+
+  /* Nav — tinted icon tiles, capsule nav */
+  --nav-active-bg: rgba(76, 116, 196, 0.10);
+  --nav-active-text: #4c74c4;
 
   /* Buttons */
-  --btn-primary-bg: #A3121B;
+  --btn-primary-bg: #4c74c4;
   --btn-primary-text: #ffffff;
   --btn-danger-bg: var(--color-danger);
   --btn-danger-text: #ffffff;
@@ -537,87 +503,120 @@ function createPinSvg(color: string): string {
   --btn-ghost-hover: var(--bg-card-hover);
 
   /* Interactive accent */
-  --accent: #2563eb;
-  --accent-hover: #1d4ed8;
+  --accent: #4c74c4;
+  --accent-hover: #3d63b0;
+
+  /* Brand mark gradient */
+  --mark-from: #7fa0e0;
+  --mark-to: #5b7fc9;
+
+  /* Status pills — tinted bg + matching text */
+  --status-pending-bg: #e8effc;
+  --status-pending-text: #4c74c4;
+  --status-ok-bg: #e2f3e9;
+  --status-ok-text: #3d8560;
+  --status-draft-bg: #fdeee0;
+  --status-draft-text: #b5793a;
+  --status-bad-bg: #fce9e9;
+  --status-bad-text: #c25b5b;
 
   /* Tooltip */
-  --bg-tooltip: #1e293b;
+  --bg-tooltip: #2b3446;
 
   /* Info boxes */
-  --bg-info-green: #f0fdf4;
-  --border-info-green: #bbf7d0;
-  --text-info-green: #166534;
-  --bg-info-yellow: #fffbeb;
-  --border-info-yellow: #fde68a;
-  --text-info-yellow: #92400e;
+  --bg-info-green: #eef8f2;
+  --border-info-green: #cfe9dc;
+  --text-info-green: #3d8560;
+  --bg-info-yellow: #fdf6ec;
+  --border-info-yellow: #f3ddbd;
+  --text-info-yellow: #b5793a;
 
   /* Focus rings */
-  --ring-action: 0 0 0 3px rgba(37, 99, 235, 0.2);
-  --ring-danger: 0 0 0 3px rgba(220, 38, 38, 0.2);
+  --ring-action: 0 0 0 3px rgba(76, 116, 196, 0.22);
+  --ring-danger: 0 0 0 3px rgba(194, 91, 91, 0.22);
 
   /* Shadows — elevated surfaces */
-  --shadow-modal: 0 16px 48px rgba(0, 0, 0, 0.16);
-  --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.12);
-  --shadow-dropdown: 0 4px 16px rgba(0, 0, 0, 0.1);
+  --shadow-modal: 0 16px 48px -12px rgba(31, 39, 53, 0.22);
+  --shadow-popover: 0 8px 24px -8px rgba(31, 39, 53, 0.18);
+  --shadow-dropdown: 0 4px 16px -6px rgba(31, 39, 53, 0.16);
 }
 ```
 
-### Gold Theme Variables (Dark Luxury)
+### Dark Theme Variables (Sky, night)
+
+The dark theme is named `dark` — not `gold`, which was the original Rocks Fast dark-luxury theme name.
 
 ```css
-[data-theme="gold"] {
-  --bg-page: #0c0b0e;
-  --bg-card: #161418;
-  --bg-card-hover: #1e1b22;
-  --bg-card-alt: #1a1820;
-  --bg-input: #13111a;
-  --bg-sidebar: #0a090c;
-  --bg-topbar: rgba(19, 17, 21, 0.80);
-  --bg-modal: #161418;
-  --bg-dropdown: #1a1820;
-  --bg-row-stripe: #141218;
-  --bg-selected: #1c1714;
-  --bg-badge: #221e1a;
+[data-theme="dark"] {
+  --bg-page: #0f1319;
+  --bg-card: #161b23;
+  --bg-card-hover: #1c222c;
+  --bg-card-alt: #1a202a;
+  --bg-input: #12171e;
+  --bg-sidebar: #0c1015;
+  --bg-topbar: rgba(22, 27, 35, 0.80);
+  --bg-modal: #161b23;
+  --bg-dropdown: #1a202a;
+  --bg-row-stripe: #141920;
+  --bg-selected: #1b2432;
+  --bg-badge: #1f2630;
 
-  --text-primary: #ede8df;
-  --text-secondary: #c5bfb2;
-  --text-muted: #8a847a;
-  --text-faint: #5c574f;
-  --text-heading: #f5f0e5;
-  --text-inverse: #0c0b0e;
+  --text-primary: #e6ecf5;
+  --text-secondary: #b9c3d1;
+  --text-muted: #8592a3;
+  --text-faint: #5b6675;
+  --text-heading: #f1f5fb;
+  --text-inverse: #0f1319;
 
-  --border-main: #2a2520;
-  --border-light: #1f1b18;
-  --border-card: rgba(196, 154, 44, 0.12);
-  --border-input: #3a3328;
-  --border-accent: #3d3222;
-  --border-elevated: rgba(196, 154, 44, 0.2);
+  --border-main: #262e3a;
+  --border-light: #1e2530;
+  --border-card: rgba(127, 160, 224, 0.12);
+  --border-input: #333d4c;
+  --border-accent: #2c3849;
+  --border-elevated: rgba(127, 160, 224, 0.20);
 
-  --shadow-sm: 0 1px 3px rgba(0,0,0,0.4), 0 0 0 1px rgba(196,154,44,0.04) inset;
-  --shadow-md: 0 4px 16px rgba(0,0,0,0.5), 0 0 0 1px rgba(196,154,44,0.06) inset;
-  --shadow-xl: 0 8px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(196,154,44,0.08) inset;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px -6px rgba(0, 0, 0, 0.5);
+  --shadow-xl: 0 12px 32px -12px rgba(0, 0, 0, 0.6);
+  --shadow-card: 0 2px 8px -3px rgba(0, 0, 0, 0.45);
+  --shadow-lift: 0 12px 32px -12px rgba(0, 0, 0, 0.6);
 
-  --overlay-bg: rgba(0,0,0,0.7);
+  --overlay-bg: rgba(0, 0, 0, 0.65);
 
-  --nav-active-bg: rgba(196,154,44,0.1);
-  --nav-active-text: #e6bf64;
+  --radius-card: 14px;
+  --radius-tile: 12px;
 
-  --btn-primary-bg: #c49a2c;
-  --btn-primary-text: #0c0b0e;
-  --btn-danger-bg: #991b1b;
-  --btn-danger-text: #fecaca;
+  --nav-active-bg: rgba(127, 160, 224, 0.14);
+  --nav-active-text: #9fb9e8;
 
-  --accent: #c49a2c;
-  --accent-hover: #a67c1e;
+  --btn-primary-bg: #5b7fc9;
+  --btn-primary-text: #ffffff;
+  --btn-danger-bg: #8f3b3b;
+  --btn-danger-text: #fbdcdc;
 
-  --bg-tooltip: #1a1714;
+  --accent: #7fa0e0;
+  --accent-hover: #9fb9e8;
 
-  --ring-action: 0 0 0 3px rgba(196, 154, 44, 0.3);
-  --ring-danger: 0 0 0 3px rgba(248, 113, 104, 0.3);
+  --mark-from: #7fa0e0;
+  --mark-to: #5b7fc9;
 
-  --shadow-modal: 0 16px 48px rgba(0, 0, 0, 0.5);
-  --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.45);
-  --shadow-dropdown: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --status-pending-bg: #1c2739;
+  --status-pending-text: #9fb9e8;
+  --status-ok-bg: #172b23;
+  --status-ok-text: #7cc4a0;
+  --status-draft-bg: #2e2418;
+  --status-draft-text: #e8b96a;
+  --status-bad-bg: #2f1d1d;
+  --status-bad-text: #e29a9a;
+
+  --bg-tooltip: #1f2630;
+
+  --ring-action: 0 0 0 3px rgba(127, 160, 224, 0.30);
+  --ring-danger: 0 0 0 3px rgba(226, 154, 154, 0.30);
+
+  --shadow-modal: 0 16px 48px -12px rgba(0, 0, 0, 0.6);
+  --shadow-popover: 0 8px 24px -8px rgba(0, 0, 0, 0.5);
+  --shadow-dropdown: 0 4px 16px -6px rgba(0, 0, 0, 0.45);
 }
 ```
 
@@ -628,28 +627,33 @@ function createPinSvg(color: string): string {
 "use client";
 import { createContext, useContext, useState, useEffect } from "react";
 
-type Theme = "light" | "gold";
+type Theme = "light" | "dark";
 const ThemeContext = createContext<{
   theme: Theme;
   toggleTheme: () => void;
   setTheme: (t: Theme) => void;
 }>({ theme: "light", toggleTheme: () => {}, setTheme: () => {} });
 
+// Form Portal's actual storage key is "form-portal-theme" (src/components/ThemeProvider.tsx),
+// set in both localStorage and a cookie so the no-flash script (below) and the server can read it.
+const STORAGE_KEY = "form-portal-theme";
+
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setThemeState] = useState<Theme>("light");
 
   useEffect(() => {
-    const saved = localStorage.getItem("it-codex-theme") as Theme | null;
+    const saved = localStorage.getItem(STORAGE_KEY) as Theme | null;
     if (saved) { setThemeState(saved); document.documentElement.setAttribute("data-theme", saved); }
   }, []);
 
   const setTheme = (t: Theme) => {
     setThemeState(t);
-    localStorage.setItem("it-codex-theme", t);
+    localStorage.setItem(STORAGE_KEY, t);
+    document.cookie = `${STORAGE_KEY}=${t}; path=/; max-age=31536000`;
     document.documentElement.setAttribute("data-theme", t);
   };
 
-  const toggleTheme = () => setTheme(theme === "light" ? "gold" : "light");
+  const toggleTheme = () => setTheme(theme === "light" ? "dark" : "light");
 
   return <ThemeContext.Provider value={{ theme, toggleTheme, setTheme }}>{children}</ThemeContext.Provider>;
 }
@@ -657,13 +661,16 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 export const useTheme = () => useContext(ThemeContext);
 ```
 
-**Prevent flash** — add inline script in root `layout.tsx` before providers:
+**Prevent flash** — add inline script in root `layout.tsx` before providers (reads localStorage first, falls back to the cookie, matching Form Portal's actual script):
 ```html
 <html data-theme="light">
   <head>
     <script dangerouslySetInnerHTML={{ __html: `
-      try { const t = localStorage.getItem("it-codex-theme");
-      if (t) document.documentElement.setAttribute("data-theme", t); } catch {}
+      try {
+        var t = localStorage.getItem("form-portal-theme");
+        if (!t) { var m = document.cookie.match(/form-portal-theme=(light|dark)/); if (m) t = m[1]; }
+        document.documentElement.setAttribute("data-theme", (t === "light" || t === "dark") ? t : "light");
+      } catch (e) { document.documentElement.setAttribute("data-theme", "light"); }
     ` }} />
   </head>
 ```
@@ -771,7 +778,7 @@ export const Badge = React.memo(function Badge({
 // components/ui/Avatar.tsx
 "use client";
 
-export function Avatar({ name, color = "#1A0608", size = 32, photo }: {
+export function Avatar({ name, color = "#1b2434", size = 32, photo }: {
   name: string; color?: string; size?: number; photo?: string | null;
 }) {
   if (photo) {
@@ -1011,30 +1018,32 @@ body {
   transform: translateY(0); box-shadow: none;
 }
 
-/* Gold badge hover glow */
-[data-theme="gold"] .gold-badge-glow:hover {
-  box-shadow: 0 0 8px rgba(196,154,44,0.25), 0 0 2px rgba(196,154,44,0.15);
+/* Dark badge hover glow — class name kept as "gold-badge-glow" in Form Portal's actual
+   globals.css (harmless leftover name from the Rocks Fast original); only the theme
+   selector changed from [data-theme="gold"] to [data-theme="dark"]. */
+[data-theme="dark"] .gold-badge-glow:hover {
+  box-shadow: 0 0 8px rgba(127, 160, 224, 0.25), 0 0 2px rgba(127, 160, 224, 0.15);
 }
 [data-theme="light"] .gold-badge-glow:hover {
   box-shadow: 0 0 6px rgba(0,0,0,0.06), 0 0 0 1px rgba(0,0,0,0.04) inset;
 }
 
-/* Gold input focus */
-[data-theme="gold"] input:focus, [data-theme="gold"] textarea:focus, [data-theme="gold"] select:focus {
-  border-color: #c49a2c !important;
-  box-shadow: 0 0 0 2px rgba(196,154,44,0.12), inset 0 0 8px rgba(196,154,44,0.04) !important;
+/* Dark input focus */
+[data-theme="dark"] input:focus, [data-theme="dark"] textarea:focus, [data-theme="dark"] select:focus {
+  border-color: #7fa0e0 !important;
+  box-shadow: 0 0 0 2px rgba(127, 160, 224, 0.12), inset 0 0 8px rgba(127, 160, 224, 0.04) !important;
 }
 
-/* Gold primary button glow */
-[data-theme="gold"] .btn-lift:hover:not(:disabled) {
-  box-shadow: 0 0 8px rgba(196,154,44,0.25), 0 2px 12px rgba(196,154,44,0.1) !important;
+/* Dark primary button glow */
+[data-theme="dark"] .btn-lift:hover:not(:disabled) {
+  box-shadow: 0 0 8px rgba(127, 160, 224, 0.25), 0 2px 12px rgba(127, 160, 224, 0.1) !important;
 }
 
-/* Gold scrollbar */
-[data-theme="gold"] ::-webkit-scrollbar { width: 8px; height: 8px; }
-[data-theme="gold"] ::-webkit-scrollbar-track { background: var(--bg-card); }
-[data-theme="gold"] ::-webkit-scrollbar-thumb { background: #2a2520; border-radius: 4px; }
-[data-theme="gold"] ::-webkit-scrollbar-thumb:hover { background: #3a3328; }
+/* Dark scrollbar */
+[data-theme="dark"] ::-webkit-scrollbar { width: 8px; height: 8px; }
+[data-theme="dark"] ::-webkit-scrollbar-track { background: var(--bg-card); }
+[data-theme="dark"] ::-webkit-scrollbar-thumb { background: #2a3340; border-radius: 4px; }
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: #38434f; }
 
 /* Slim scrollbar utility */
 .slim-scroll { scrollbar-width: thin; scrollbar-color: transparent transparent; }
