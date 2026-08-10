@@ -59,6 +59,15 @@ The new repo gets a clean `git init` and will be pushed to GitHub later.
 field), `tesseract.js` (AP-17 ID-card OCR), `xlsx-js-style` (Accounting reports), `sharp`, `swr`,
 `sonner`, `@dnd-kit/*` (Form Builder drag-and-drop), `mssql`, `zod`, `react-hook-form`.
 
+### Tooling that depends on the removed code
+
+`scripts/apply-sql.ts` imports `src/lib/intelligence/brand-pool.ts` for its `--brand` mode and for
+enumerating brands with a configured Dashboard DB. Both modes go; the script keeps `--db <name>`
+only, which is what every Acc migration already uses.
+
+`scripts/smoke-test.ts` exists solely to probe brand Dashboard DBs. It is deleted along with the
+`smoke` npm script.
+
 ### Database pools — what stays
 `getFoodstoryPool()` and `getBrandDashboardPool()` are Intelligence-only and are removed from
 `src/lib/db/mssql.ts` and `src/lib/intelligence/brand-pool.ts`.
@@ -194,6 +203,16 @@ palette swap requires no component rewrites.
 - **Form tiles** — each form gets a tinted icon tile
 - Everything else (form pages, approval queues, report tables, settings panels) inherits the new
   tokens without structural edits
+
+### The `.acc-theme` scope
+
+`globals.css` defines a pastel-rose accent scope (`.acc-theme`, `--accent: #e0838f`) applied to every
+Accounting page — AP-1 and AP-17 forms, queues, reports, and settings. Left alone it would keep the
+largest part of the app pink while everything around it turns blue.
+
+**Decision:** the colour overrides inside `.acc-theme` are retuned to Sky so the whole app reads as
+one system. The non-colour rules in that scope (hidden scrollbars, suppressed number spinners,
+`html:has(.acc-theme) { overflow-x: clip }`) are kept exactly as they are.
 
 ### Dark theme
 
