@@ -173,6 +173,7 @@ export const SETTINGS_CARDS: NavItem[] = [
     icon: "Shield",
     desc: "จัดการผู้ใช้ บทบาท และการซิงก์จาก Active Directory",
     href: "/settings/users",
+    systemAdminOnly: true,
   },
   {
     id: "manage-forms",
