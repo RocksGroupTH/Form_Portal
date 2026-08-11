@@ -42,7 +42,8 @@ npm run dev                   # http://localhost:3021
 - Cookie: `form-portal-theme` (persists across sessions; read by the no-flash inline script in `src/app/layout.tsx`)
 - Default: `light`
 - CSS variables: `var(--bg-card)`, `var(--text-primary)`, etc. — see `src/app/globals.css` for the full token list (defined once under `:root, [data-theme="light"]` and again under `[data-theme="dark"]`)
-- Shape and depth: card radius `--radius-card` (14px), tile radius `--radius-tile` (12px), pill `--radius-full` (999px); `--shadow-card` / `--shadow-lift` rather than heavy borders; tinted icon tiles (`--nav-active-bg` background behind icons); capsule nav (`--radius-full` pill shape for the top nav)
+- Shape and depth: card radius `--radius-card` (14px), tile radius `--radius-tile` (12px); `--shadow-card` rather than heavy borders; tinted icon tiles (`--nav-active-bg` background behind icons); the capsule nav uses Tailwind's `rounded-full`, not a token — `--radius-full` and `--shadow-lift` are defined in `globals.css` but nothing consumes them
+- Semantic action tokens live in the `@theme` block, which is where Tailwind 4 sources `text-danger` / `text-warning` and friends: action `#4c74c4` / hover `#3d63b0`, success `#3d8560`, warning `#b5793a`, danger `#c25b5b`. They are single-valued across both themes on purpose — surfaces needing a per-theme value use `--btn-danger-bg`, `--text-danger`, `--status-*` or `--ring-*` instead
 - Brand mark gradient: `--mark-from` → `--mark-to`
 - Status pills: `--status-{pending,ok,draft,bad}-{bg,text}`
 - The `.acc-theme` scope on Accounting pages (`src/app/globals.css`) was retuned from the original's rose accent to Sky; its non-colour rules (hidden scrollbars, suppressed number spinners, `overflow-x: clip`) are unchanged
@@ -197,7 +198,7 @@ src/
 - **Components**: `"use client"` only when needed. Use existing UI components from `@/components/ui`
 - **ES5 target**: Don't use `[...set]` or `[...map.values()]` — use `Array.from()` instead
 - **Date display**: Use local getters (`getFullYear()`, `getMonth()`), never `toISOString()` — server is Thai time, do NOT use `fixThaiDate()`
-- **Logos**: Rocks Group logo for navbar/favicon, Codex Family logo for app loading screen
+- **Logos**: the navbar mark is a CSS gradient `F` (`--mark-from` → `--mark-to`), not an image. `public/brandlogo/` holds only the Rocks Group and company-brand logos, so the favicon and the login lockup still use `/brandlogo/rocks.png` and the loading screen uses the Codex Family logo — replace the favicon in `src/app/layout.tsx` once a Form Portal icon exists, or the two apps share a tab icon
 
 ## Environment Variables
 
@@ -240,3 +241,13 @@ UPLOAD_ROOT=
 # Client
 NEXT_PUBLIC_APP_URL=http://localhost:3021
 ```
+
+## Deployment
+
+Not yet done — Form Portal has no host of its own. Before it is deployed:
+
+- **`PRODUCTION_HOSTS` in `next.config.mjs` must be updated.** It currently lists only the Rocks Fast sibling's hosts (`fast.rocksgroup.com`, `test.m-group.com`, `www.test.m-group.com`) and feeds both `allowedDevOrigins` and `experimental.serverActions.allowedOrigins`. Server actions issued from an unlisted host are rejected as cross-origin, so a Form Portal host that is missing from this list fails at runtime, not at build.
+- **`NEXTAUTH_URL` and `NEXT_PUBLIC_APP_URL`** must both match the address users actually open, including port.
+- **`ERP_SANDBOX_ALLOWED_HOSTS`** (`src/lib/acc/erp-environment-shared.ts`) is `localhost:3021` / `127.0.0.1:3021` — the `devHostOnly` management cards and the ERP UAT toggle disappear on any other host, which is intended for production but worth knowing.
+- **`UPLOAD_ROOT`** must resolve on the target machine to the same files the shared `Fast_Form` rows point at (see "Shared with Rocks Fast").
+- Liveness probe: `curl http://127.0.0.1:3021/api/health` → `{"ok":true,"data":{"service":"form-portal",…}}`.
