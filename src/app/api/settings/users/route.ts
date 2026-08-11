@@ -5,10 +5,16 @@ import { requireRole } from "@/lib/api-auth";
 
 const VALID_ROLES = ["Staff", "IT Admin", "System Admin", "Viewer"];
 
-/** GET /api/settings/users — active team members for the Users & Roles page. */
+/**
+ * GET /api/settings/users — active team members for the Users & Roles page.
+ *
+ * System Admin only, matching the UI: the Settings hub card is `systemAdminOnly`
+ * and the page redirects anyone else away. Without this an IT Admin could still
+ * read every user's name, email, and role straight from the endpoint.
+ */
 export async function GET() {
   try {
-    const session = await requireRole(["IT Admin", "System Admin"]);
+    const session = await requireRole(["System Admin"]);
     if (session instanceof Response) return session;
 
     const pool = await getCorePool();
@@ -75,6 +81,23 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ ok: false, error: "name and email required" }, { status: 400 });
         }
         const role = VALID_ROLES.includes(requestedRole ?? "") ? requestedRole! : "Staff";
+        /*
+         * `deleteUser` below only sets IsActive = 0, and GET filters IsActive = 1.
+         * A guarded INSERT therefore matched the deactivated row, inserted nothing,
+         * and returned {ok:true} with no id — the UI toasted success, the list never
+         * changed, and the AD modal would not mark the user "Already Added" either,
+         * so the flow was unrecoverable from this page.
+         *
+         * Reactivate instead of inserting. The row's Id is referenced all over both
+         * apps (AccRequest.CreatedBy/SubmittedBy, OfficeFormSubmissions.SubmittedBy,
+         * OfficeFormApprovals.AssignedTo), so a second row would orphan that history.
+         * Only IsActive / FullName / AppRole are written — the caller genuinely
+         * supplies those. Position, Color, Photo, and ManagerId are left untouched
+         * because the Rocks Fast sibling reads them (avatar colour, cached AD photo,
+         * Form Builder manager resolution) and this endpoint has nothing to put there.
+         * Nickname is only filled if it is currently blank, so a hand-curated one is
+         * not clobbered by the `name.split(" ")[0]` fallback.
+         */
         const result = await pool.request()
           .input("name", sql.NVarChar, name.trim())
           .input("nickname", sql.NVarChar, (nickname ?? name.split(" ")[0]).trim())
@@ -82,12 +105,47 @@ export async function POST(req: NextRequest) {
           .input("role", sql.NVarChar, role)
           .input("color", sql.NVarChar, "#6c757d")
           .query(`
-            IF NOT EXISTS (SELECT 1 FROM TeamMember WHERE LOWER(LTRIM(RTRIM(Email))) = @email)
-            INSERT INTO TeamMember (FullName, Nickname, Email, AppRole, Position, Color, IsActive)
-            OUTPUT INSERTED.Id
-            VALUES (@name, @nickname, @email, @role, '', @color, 1)
+            DECLARE @existingId INT, @wasActive BIT;
+
+            SELECT TOP 1 @existingId = Id, @wasActive = IsActive
+            FROM TeamMember
+            WHERE LOWER(LTRIM(RTRIM(Email))) = @email;
+
+            IF @existingId IS NULL
+            BEGIN
+              INSERT INTO TeamMember (FullName, Nickname, Email, AppRole, Position, Color, IsActive)
+              VALUES (@name, @nickname, @email, @role, '', @color, 1);
+              SELECT CAST(SCOPE_IDENTITY() AS INT) AS Id, 'created' AS Outcome;
+            END
+            ELSE IF @wasActive = 1
+            BEGIN
+              SELECT @existingId AS Id, 'exists' AS Outcome;
+            END
+            ELSE
+            BEGIN
+              UPDATE TeamMember
+              SET IsActive = 1,
+                  FullName = @name,
+                  Nickname = COALESCE(NULLIF(LTRIM(RTRIM(Nickname)), N''), @nickname),
+                  AppRole  = @role,
+                  UpdatedAt = GETDATE()
+              WHERE Id = @existingId;
+              SELECT @existingId AS Id, 'reactivated' AS Outcome;
+            END
           `);
-        return NextResponse.json({ ok: true, data: result.recordset[0] });
+
+        const row = result.recordset[0] as { Id: number; Outcome: string } | undefined;
+        if (!row) {
+          return NextResponse.json({ ok: false, error: "Failed to add user" }, { status: 500 });
+        }
+        // Nothing changed — say so rather than letting the UI toast "Done".
+        if (row.Outcome === "exists") {
+          return NextResponse.json(
+            { ok: false, error: `${email.trim()} is already an active user` },
+            { status: 409 },
+          );
+        }
+        return NextResponse.json({ ok: true, data: { id: row.Id, outcome: row.Outcome } });
       }
 
       case "deleteUser": {
