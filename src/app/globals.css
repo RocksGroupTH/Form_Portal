@@ -69,7 +69,6 @@
   /* Font — self-hosted Noto Sans Thai (src/assets/fonts, layout.tsx localFont).
      CSS vars on <html>; body uses notoSansThai.className + font-sans utility. */
   --font-sans: var(--font-noto-thai), var(--font-noto), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --font-display: var(--font-space), var(--font-noto-thai), var(--font-noto), ui-sans-serif, system-ui, sans-serif;
 
   /* Motion */
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);

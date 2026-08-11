@@ -39,7 +39,6 @@
     "@types/mssql": "^9.1.9",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "eslint": "^9.39.4",
     "next-auth": "^5.0.0-beta.30",
     "postcss": "^8.5.8",
     "tailwindcss": "^4.2.2",

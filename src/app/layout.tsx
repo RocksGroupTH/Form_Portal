@@ -6,7 +6,7 @@ import { Toaster } from "sonner";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { BrandProvider } from "@/components/BrandProvider";
 import { BRAND_COOKIE, isValidBrand } from "@/lib/brand";
-import { Noto_Sans, Space_Grotesk } from "next/font/google";
+import { Noto_Sans } from "next/font/google";
 import "./globals.css";
 
 // Weights aligned with the Dashboard reference project so Master
@@ -45,13 +45,6 @@ const notoSansThai = localFont({
   variable: "--font-noto-thai",
   display: "swap",
 });
-// Space Grotesk powers `.font-display` (chart card titles, KPI numbers).
-const spaceGrotesk = Space_Grotesk({
-  subsets: ["latin"],
-  variable: "--font-space",
-  display: "swap",
-});
-
 export const metadata: Metadata = {
   title: "Form Portal — Rocks Group",
   description: "Internal request and forms portal for Rocks Group",
@@ -79,7 +72,7 @@ export default async function RootLayout({
     <html
       lang="th"
       suppressHydrationWarning
-      className={`${notoSans.variable} ${notoSansThai.variable} ${spaceGrotesk.variable}`}
+      className={`${notoSans.variable} ${notoSansThai.variable}`}
     >
       <head>
         <script

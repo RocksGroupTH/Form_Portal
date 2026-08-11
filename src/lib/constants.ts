@@ -1,19 +1,3 @@
-export const C = {
-  navy: "#1A0608",
-  navyLight: "#2D0C0E",
-  red: "#e74c3c",
-  blue: "#3498db",
-  green: "#27ae60",
-  teal: "#16a085",
-  purple: "#8e44ad",
-  orange: "#f39c12",
-  dark: "#2c2c2c",
-  muted: "#888888",
-  light: "#fdf5f5",
-  white: "#ffffff",
-  border: "#ead9d9",
-} as const;
-
 export type NavItem = {
   id: string;
   label: string;

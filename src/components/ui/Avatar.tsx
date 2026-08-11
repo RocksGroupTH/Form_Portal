@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 
-export function Avatar({ name, color = "#1A0608", size = 32, photo }: {
+// Default fill for members with no TeamMember.Color — the Sky navy, not the old
+// maroon identity. Feeds `background` below, so a token works here.
+export function Avatar({ name, color = "var(--color-brand-navy)", size = 32, photo }: {
   name: string; color?: string; size?: number; photo?: string | null;
 }) {
   const [imgFailed, setImgFailed] = useState(false);
@@ -21,7 +23,7 @@ export function Avatar({ name, color = "#1A0608", size = 32, photo }: {
   }
   return (
     <div className="rounded-full flex items-center justify-center font-bold shrink-0"
-      style={{ width: size, height: size, background: color, color: "#fff", fontSize: size * 0.35 }}>
+      style={{ width: size, height: size, background: color, color: "var(--btn-primary-text)", fontSize: size * 0.35 }}>
       {name.slice(0, 2).toUpperCase()}
     </div>
   );
