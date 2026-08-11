@@ -32,7 +32,7 @@ export async function setGlobalErpInterfaceEnvironment(
     throw new Error("Invalid ERP interface environment");
   }
   if (env === "Sandbox" && !isErpSandboxHostAllowed(host)) {
-    throw new Error("UAT/Sandbox ใช้ได้เฉพาะบน localhost:3021 เท่านั้น");
+    throw new Error("UAT/Sandbox ใช้ได้เฉพาะบน localhost:3020 เท่านั้น");
   }
   await setAppSetting(ERP_INTERFACE_ENV_KEY, env, userId);
 }
@@ -52,7 +52,7 @@ export async function getRequestHost(): Promise<string | null> {
 
 /**
  * Effective environment for the current user.
- * Sandbox only on localhost:3021 + System Admin; all other hosts → Production.
+ * Sandbox only on localhost:3020 + System Admin; all other hosts → Production.
  */
 export async function resolveEffectiveErpEnvironment(
   role: string | null | undefined,

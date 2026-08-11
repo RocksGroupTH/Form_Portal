@@ -1288,7 +1288,7 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
             >
               {isDevHost ? (
                 <p className="text-[10px] m-0" style={{ color: "var(--text-faint)" }}>
-                  โหมดทดสอบ (localhost:3021) — ผู้ใช้ที่ล็อกอินกดอนุมัติแทนผู้จัดการได้
+                  โหมดทดสอบ (localhost:3020) — ผู้ใช้ที่ล็อกอินกดอนุมัติแทนผู้จัดการได้
                 </p>
               ) : null}
               <div className="flex flex-wrap gap-2">

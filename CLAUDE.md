@@ -8,7 +8,7 @@
 ```bash
 npm install
 cp .env.example .env.local   # Fill in credentials
-npm run dev                   # http://localhost:3021
+npm run dev                   # http://localhost:3020
 ```
 
 ## Architecture
@@ -55,9 +55,9 @@ Form Portal was cloned from the Rocks Fast codebase and **still shares live infr
 - **Same databases**: Fast_Core, Fast_Form, Fast_Data, Rocks_Portal_HR, Rocks_Codex are the exact same SQL Server databases used by Rocks Fast. There is no schema or data isolation between the two apps.
 - **Same SharePoint folder**: Accounting file attachments (`SHAREPOINT_ACC_SITE` / `SHAREPOINT_ACC_FOLDER`) point at the same document library Rocks Fast uses.
 - **Same `AccEmailQueue`**: Both apps write to and drain the same email queue table in Fast_Form.
-- **⚠️ Do not run both dev servers at once** — Rocks Fast (port 3020) and Form Portal (port 3021) polling/draining the same `AccEmailQueue` concurrently risks duplicate email sends (approval notifications, payment confirmations, etc. going out twice).
+- **⚠️ Both apps use port 3020** — Form Portal was moved off 3021 onto the same port Rocks Fast uses, so only one of them can run at a time on a given machine; the second to start fails with `EADDRINUSE`. This also removes the previous risk of both apps polling/draining the same `AccEmailQueue` concurrently and sending approval/payment emails twice.
 - **`UPLOAD_ROOT`** — local attachment storage env var. Points at the sibling Rocks Fast repo's `uploads/forms` directory (`c:/Users/PC/source/repos/Web/RocksFast/uploads/forms` in dev) so files already recorded in the shared DB stay downloadable from either app. Accounting attachments primarily use SharePoint now; local disk serves the Form Builder and older Accounting rows created before SharePoint storage existed. See `src/lib/storage.ts`.
-- **`ERP_SANDBOX_ALLOWED_HOSTS`** (`src/lib/acc/erp-environment-shared.ts`) — host-and-port matched allowlist (`["localhost:3021", "127.0.0.1:3021"]`) gating two things: the `devHostOnly` management/settings cards in `REQUEST_CARDS` (`src/lib/constants.ts`) and whether a System Admin can toggle the ERP interface into UAT/Sandbox mode. If this app's port ever changes, this list must be updated or both gates silently disappear.
+- **`ERP_SANDBOX_ALLOWED_HOSTS`** (`src/lib/acc/erp-environment-shared.ts`) — host-and-port matched allowlist (`["localhost:3020", "127.0.0.1:3020"]`) gating two things: the `devHostOnly` management/settings cards in `REQUEST_CARDS` (`src/lib/constants.ts`) and whether a System Admin can toggle the ERP interface into UAT/Sandbox mode. If this app's port ever changes, this list must be updated or both gates silently disappear.
 - **`src/lib/brand-config.ts` is deliberately frozen** — it still contains Dashboard-DB helper fields (`dashboardDbConnectionId`, `dashboardDatabaseName`) with no callers in this app; the Rocks Fast sibling reads them for its Intelligence dashboards. The Brand Configuration settings page hides those fields in the UI but still round-trips their values on save, so Rocks Fast keeps working. **Do not "clean up" these fields** — they are load-bearing for the sibling app even though nothing in Form Portal consumes them.
 
 ## Navigation
@@ -239,7 +239,7 @@ NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=
 UPLOAD_ROOT=
 
 # Client
-NEXT_PUBLIC_APP_URL=http://localhost:3021
+NEXT_PUBLIC_APP_URL=http://localhost:3020
 ```
 
 ## Deployment
@@ -248,6 +248,6 @@ Not yet done — Form Portal has no host of its own. Before it is deployed:
 
 - **`PRODUCTION_HOSTS` in `next.config.mjs` must be updated.** It currently lists only the Rocks Fast sibling's hosts (`fast.rocksgroup.com`, `test.m-group.com`, `www.test.m-group.com`) and feeds both `allowedDevOrigins` and `experimental.serverActions.allowedOrigins`. Server actions issued from an unlisted host are rejected as cross-origin, so a Form Portal host that is missing from this list fails at runtime, not at build.
 - **`NEXTAUTH_URL` and `NEXT_PUBLIC_APP_URL`** must both match the address users actually open, including port.
-- **`ERP_SANDBOX_ALLOWED_HOSTS`** (`src/lib/acc/erp-environment-shared.ts`) is `localhost:3021` / `127.0.0.1:3021` — the `devHostOnly` management cards and the ERP UAT toggle disappear on any other host, which is intended for production but worth knowing.
+- **`ERP_SANDBOX_ALLOWED_HOSTS`** (`src/lib/acc/erp-environment-shared.ts`) is `localhost:3020` / `127.0.0.1:3020` — the `devHostOnly` management cards and the ERP UAT toggle disappear on any other host, which is intended for production but worth knowing.
 - **`UPLOAD_ROOT`** must resolve on the target machine to the same files the shared `Fast_Form` rows point at (see "Shared with Rocks Fast").
-- Liveness probe: `curl http://127.0.0.1:3021/api/health` → `{"ok":true,"data":{"service":"form-portal",…}}`.
+- Liveness probe: `curl http://127.0.0.1:3020/api/health` → `{"ok":true,"data":{"service":"form-portal",…}}`.

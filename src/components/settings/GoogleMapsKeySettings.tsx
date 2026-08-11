@@ -251,7 +251,7 @@ export function GoogleMapsKeySettings({ embedded, onChanged }: Props) {
             <code className="mx-1 px-1 rounded" style={{ background: "var(--bg-badge)" }}>
               {typeof window !== "undefined" ? `${window.location.origin}/*` : "https://your-domain/*"}
             </code>
-            และ <code className="mx-1 px-1 rounded" style={{ background: "var(--bg-badge)" }}>http://localhost:3021/*</code> สำหรับ dev
+            และ <code className="mx-1 px-1 rounded" style={{ background: "var(--bg-badge)" }}>http://localhost:3020/*</code> สำหรับ dev
           </li>
           <li>
             API restrictions: จำกัดเฉพาะ Maps JavaScript, Places (New), Directions, Geocoding
@@ -260,7 +260,7 @@ export function GoogleMapsKeySettings({ embedded, onChanged }: Props) {
         </ol>
         <p className="text-[11px] rounded-lg px-3 py-2 m-0" style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}>
           <strong>ทำไมเคย error REQUEST_DENIED?</strong> ปุ่มทดสอบเดิมเรียก Geocoding จาก server
-          แต่ HTTP referrer ใช้ได้เฉพาะ request จากเว็บ (เช่น <code>localhost:3021</code>) — ตอนนี้ทดสอบจากเบราว์เซอร์แล้ว
+          แต่ HTTP referrer ใช้ได้เฉพาะ request จากเว็บ (เช่น <code>localhost:3020</code>) — ตอนนี้ทดสอบจากเบราว์เซอร์แล้ว
           หากยัง error ให้ตรวจ: เปิด Billing, เปิด Geocoding API, และเพิ่ม Geocoding ใน API restrictions
         </p>
         <p className="text-[11px]">

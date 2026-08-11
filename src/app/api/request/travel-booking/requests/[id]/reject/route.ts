@@ -46,7 +46,7 @@ export async function POST(
 
   const isManager = staffId != null && staffId === managerStaffId;
   const isAdmin = isAdminRole(session.user.role);
-  // Local dev (localhost:3021) — any logged-in user may action the manager step, same as AP-1.
+  // Local dev (localhost:3020) — any logged-in user may action the manager step, same as AP-1.
   const devBypass = isManagerDevBypassHost(await getRequestHost());
   const allowed = atAdminStage
     ? await canAccessAccountArea(loginEmail, session.user.role)

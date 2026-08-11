@@ -4,9 +4,9 @@
   "description": "Form and request portal for Rocks Group",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3021",
+    "dev": "next dev -p 3020",
     "build": "next build",
-    "start": "next start -p 3021",
+    "start": "next start -p 3020",
     "apply-sql": "tsx scripts/apply-sql.ts"
   },
   "dependencies": {

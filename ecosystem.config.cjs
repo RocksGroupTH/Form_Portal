@@ -12,7 +12,7 @@ module.exports = {
       // Pointing PM2 at the Next binary's JS entrypoint with the node
       // interpreter avoids the .cmd spawn entirely.
       script: path.join(__dirname, "node_modules", "next", "dist", "bin", "next"),
-      args: "start -p 3021",
+      args: "start -p 3020",
       interpreter: "node",
       instances: 1,
       exec_mode: "fork",
@@ -21,7 +21,7 @@ module.exports = {
       min_uptime: "10s",
       env: {
         NODE_ENV: "production",
-        PORT: "3021",
+        PORT: "3020",
       },
       error_file: "logs/pm2-error.log",
       out_file: "logs/pm2-out.log",

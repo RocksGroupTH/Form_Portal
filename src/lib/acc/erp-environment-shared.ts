@@ -1,7 +1,7 @@
 export type ErpBcEnvironment = "Production" | "Sandbox";
 
 /** Hosts where UAT/Sandbox may be enabled (local dev only). */
-export const ERP_SANDBOX_ALLOWED_HOSTS = ["localhost:3021", "127.0.0.1:3021"] as const;
+export const ERP_SANDBOX_ALLOWED_HOSTS = ["localhost:3020", "127.0.0.1:3020"] as const;
 
 export function isErpSandboxHostAllowed(host?: string | null): boolean {
   const h = (host ?? "").toLowerCase().trim();
@@ -14,7 +14,7 @@ export interface ErpEnvironmentInfo {
   globalEnvironment: ErpBcEnvironment;
   canUseSandbox: boolean;
   canConfigure: boolean;
-  /** True when current host allows UAT (localhost:3021). */
+  /** True when current host allows UAT (localhost:3020). */
   sandboxHostAllowed: boolean;
 }
 
