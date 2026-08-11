@@ -59,21 +59,21 @@ function LoginContent() {
       >
         <div>
           <div className="flex items-center gap-3 mb-8">
-            <img src="/brandlogo/rocks.png" alt="Rocks Fast" width={40} height={40} className="brightness-0 invert" />
-            <span className="text-[22px] font-bold">Rocks Fast</span>
+            <img src="/brandlogo/rocks.png" alt="Form Portal" width={40} height={40} className="brightness-0 invert" />
+            <span className="text-[22px] font-bold">Form Portal</span>
           </div>
           <p className="text-[14px] leading-relaxed opacity-80">
             Internal portal for Rocks Group — office forms, requests, and approvals in one place.
           </p>
         </div>
-        <p className="text-[11px] opacity-40 mt-4">Rocks Group — Rocks Fast</p>
+        <p className="text-[11px] opacity-40 mt-4">Rocks Group — Form Portal</p>
       </div>
 
       <div className="flex-1 flex items-center justify-center p-6">
         <div className="w-full max-w-sm">
           <div className="flex md:hidden items-center justify-center gap-2 mb-8">
-            <img src="/brandlogo/rocks.png" alt="Rocks Fast" width={32} height={32} />
-            <span className="text-[18px] font-bold" style={{ color: "var(--text-heading)" }}>Rocks Fast</span>
+            <img src="/brandlogo/rocks.png" alt="Form Portal" width={32} height={32} />
+            <span className="text-[18px] font-bold" style={{ color: "var(--text-heading)" }}>Form Portal</span>
           </div>
 
           <h1 className="text-[20px] font-bold mb-2" style={{ color: "var(--text-heading)" }}>Sign in</h1>

@@ -8,7 +8,7 @@ export async function GET() {
   return NextResponse.json({
     ok: true,
     data: {
-      service: "rocks-fast",
+      service: "form-portal",
       nodeEnv: process.env.NODE_ENV ?? "development",
       uptimeSec: Math.floor(process.uptime()),
     },

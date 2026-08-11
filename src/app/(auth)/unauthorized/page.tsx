@@ -18,7 +18,7 @@ export default function UnauthorizedPage() {
           Access Denied
         </h1>
         <p className="text-[13px] mb-6" style={{ color: "var(--text-muted)" }}>
-          Your account is not authorized to access Rocks Fast. If you believe this is an error, please contact your administrator.
+          Your account is not authorized to access Form Portal. If you believe this is an error, please contact your administrator.
         </p>
 
         <Link

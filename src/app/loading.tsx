@@ -6,7 +6,7 @@ export default function Loading() {
     >
       <img
         src="/codexfamilylogo/logo_3_speed_128.png"
-        alt="Rocks Fast"
+        alt="Form Portal"
         width={64}
         height={64}
         className="animate-pulse"
@@ -15,7 +15,7 @@ export default function Loading() {
         className="text-[14px] font-bold"
         style={{ color: "var(--text-heading)" }}
       >
-        Rocks Fast
+        Form Portal
       </span>
     </div>
   );

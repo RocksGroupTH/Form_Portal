@@ -53,8 +53,13 @@ const spaceGrotesk = Space_Grotesk({
 });
 
 export const metadata: Metadata = {
-  title: "Rocks Fast — Rocks Group",
-  description: "Internal portal for Rocks Group",
+  title: "Form Portal — Rocks Group",
+  description: "Internal request and forms portal for Rocks Group",
+  // NOTE: still the Rocks Group mark. `public/brandlogo/` holds only the Rocks
+  // Group and company-brand logos, and the navbar's "F" mark is a CSS gradient
+  // rather than a file — there is no Form Portal image to point at yet. Until one
+  // is supplied here, both apps share a tab icon and the <title> above is what
+  // distinguishes them.
   icons: {
     icon: "/brandlogo/rocks.png",
     apple: "/brandlogo/rocks.png",

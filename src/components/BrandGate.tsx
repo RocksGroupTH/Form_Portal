@@ -74,7 +74,7 @@ export function BrandGate({ children }: { children: React.ReactNode }) {
               className="text-[20px] sm:text-[22px] font-bold mb-1"
               style={{ color: "var(--text-heading)" }}
             >
-              Welcome to Rocks Fast
+              Welcome to Form Portal
             </h2>
             <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>
               Choose a brand workspace to continue. You can switch any time from the navbar.
