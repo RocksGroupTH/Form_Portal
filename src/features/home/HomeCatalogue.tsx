@@ -11,7 +11,7 @@ import {
   setBrandInSearchParams,
 } from "@/lib/brand-url";
 import { useHomeData } from "@/features/home/useHomeData";
-import { Search, FileText, Route, Luggage, ClipboardCheck, FilePen, ArrowRight } from "lucide-react";
+import { Search, FileText, Route, Luggage, ClipboardCheck, FileCheck, FilePen, ArrowRight } from "lucide-react";
 
 const ACCOUNTING_FORMS = [
   {
@@ -68,6 +68,72 @@ function StatCard({ value, label, tone }: { value: number; label: string; tone: 
   );
 }
 
+/**
+ * Inline load-failure line — same shape the accounting queues use in place of
+ * their content (see request/accounting/travel-booking/queue/page.tsx:120-123).
+ * A dashboard strip does not warrant a toast on every background revalidation;
+ * it only has to stop claiming a number it does not have.
+ */
+function LoadError({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="text-[12px] mt-0.5" style={{ color: "var(--color-danger)" }}>
+      {children}
+    </p>
+  );
+}
+
+/** One "waiting on you" row. Each approval system gets its own row and its own queue link. */
+function PendingLink({ href, Icon, title, subtitle, count }: {
+  href: string;
+  Icon: React.ComponentType<{ size?: number }>;
+  title: string;
+  subtitle: string;
+  count: number;
+}) {
+  return (
+    <Link
+      href={href}
+      className="flex items-center gap-3 px-3.5 py-3 no-underline"
+      style={{
+        background: "var(--bg-card)",
+        borderRadius: "var(--radius-card)",
+        boxShadow: "var(--shadow-card)",
+        border: "1px solid var(--border-card)",
+      }}
+    >
+      <span
+        className="flex items-center justify-center shrink-0"
+        style={{
+          width: 30, height: 30,
+          borderRadius: 10,
+          background: "var(--status-ok-bg)",
+          color: "var(--status-ok-text)",
+        }}
+      >
+        <Icon size={15} />
+      </span>
+      <span className="flex-1 min-w-0">
+        <span className="block text-[12.5px] font-bold" style={{ color: "var(--text-primary)" }}>
+          {title}
+        </span>
+        <span className="block text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+          {subtitle}
+        </span>
+      </span>
+      <span
+        className="text-[10px] font-bold px-2.5 py-1 shrink-0"
+        style={{
+          borderRadius: 999,
+          background: "var(--status-pending-bg)",
+          color: "var(--status-pending-text)",
+        }}
+      >
+        {count} รายการ
+      </span>
+    </Link>
+  );
+}
+
 function SectionLabel({ title, action }: { title: string; action?: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between mt-6 mb-2.5">
@@ -84,7 +150,18 @@ export function HomeCatalogue() {
   const { brand } = useBrand();
   const sp = useSearchParams();
   const [query, setQuery] = useState("");
-  const { pendingCount, monthCount, draftCount, drafts, forms, isLoading } = useHomeData();
+  const {
+    accPendingCount,
+    formPendingCount,
+    pendingCount,
+    monthCount,
+    resumableCount,
+    resumable,
+    forms,
+    formsError,
+    summaryError,
+    isLoading,
+  } = useHomeData();
 
   const hrefWithBrand = (href: string) => {
     const current = new URLSearchParams(sp.toString());
@@ -113,9 +190,16 @@ export function HomeCatalogue() {
         <h1 className="text-[20px] font-extrabold tracking-tight" style={{ color: "var(--text-heading)" }}>
           {greeting()}{name ? `, ${name}` : ""} 👋
         </h1>
-        <p className="text-[12px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-          มีงานรออนุมัติ {pendingCount} รายการ และฉบับร่างค้างไว้ {draftCount} ฉบับ
-        </p>
+        {summaryError ? (
+          <LoadError>โหลดข้อมูลสรุปไม่สำเร็จ — ลองรีเฟรชหน้าอีกครั้ง</LoadError>
+        ) : isLoading ? null : (
+          // "คำขอที่ยังทำไม่เสร็จ" covers both statuses the drafts endpoints return
+          // (Draft and Returned) — AP-17 cannot tell them apart, so the wording must
+          // be true for either. See ResumableGroup.returnedCount.
+          <p className="text-[12px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+            มีงานรออนุมัติ {pendingCount} รายการ และคำขอที่ยังทำไม่เสร็จ {resumableCount} รายการ
+          </p>
+        )}
       </div>
 
       {/* Search */}
@@ -138,7 +222,7 @@ export function HomeCatalogue() {
         />
       </div>
 
-      {isLoading ? (
+      {summaryError ? null : isLoading ? (
         <p className="text-[12px] mt-4" style={{ color: "var(--text-muted)" }}>
           กำลังโหลดข้อมูล...
         </p>
@@ -148,15 +232,17 @@ export function HomeCatalogue() {
           <div className="grid grid-cols-3 gap-2.5 mt-4">
             <StatCard value={pendingCount} label="รออนุมัติจากคุณ" tone="var(--status-pending-text)" />
             <StatCard value={monthCount} label="คำขอเดือนนี้" tone="var(--status-ok-text)" />
-            <StatCard value={draftCount} label="ฉบับร่าง" tone="var(--status-draft-text)" />
+            {/* Draft + Returned — the drafts endpoints return both and AP-17 cannot
+                separate them, so the label names both rather than under-reporting. */}
+            <StatCard value={resumableCount} label="ร่าง / ตีกลับ" tone="var(--status-draft-text)" />
           </div>
 
           {/* Continue where you left off */}
-          {(drafts.length > 0 || pendingCount > 0) && (
+          {(resumable.length > 0 || pendingCount > 0) && (
             <>
               <SectionLabel title="ทำต่อจากที่ค้างไว้" />
               <div className="flex flex-col gap-2">
-                {drafts.map((d) => (
+                {resumable.map((d) => (
                   <Link
                     key={d.key}
                     href={hrefWithBrand(d.href)}
@@ -184,63 +270,52 @@ export function HomeCatalogue() {
                         {d.formCode} · {d.label}
                       </span>
                       <span className="block text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-                        {d.count} ฉบับร่าง · แก้ไขล่าสุด {timeAgo(d.updatedAt)}
+                        {/* AP-1 knows the split; AP-17 does not, so it says the neutral
+                            thing rather than calling returned requests drafts. */}
+                        {d.returnedCount === null
+                          ? `${d.count} รายการ`
+                          : d.returnedCount === 0
+                            ? `${d.count} ฉบับร่าง`
+                            : d.returnedCount === d.count
+                              ? `${d.count} รายการที่ถูกตีกลับ`
+                              : `${d.count - d.returnedCount} ฉบับร่าง · ${d.returnedCount} ตีกลับ`}
+                        {" · แก้ไขล่าสุด "}
+                        {timeAgo(d.updatedAt)}
                       </span>
                     </span>
                     <span
                       className="text-[10px] font-bold px-2.5 py-1 shrink-0"
                       style={{
                         borderRadius: 999,
-                        background: "var(--status-draft-bg)",
-                        color: "var(--status-draft-text)",
+                        background: d.returnedCount ? "var(--status-bad-bg)" : "var(--status-draft-bg)",
+                        color: d.returnedCount ? "var(--status-bad-text)" : "var(--status-draft-text)",
                       }}
                     >
-                      ฉบับร่าง
+                      {d.returnedCount ? "ตีกลับ" : d.returnedCount === null ? "ทำต่อ" : "ฉบับร่าง"}
                     </span>
                   </Link>
                 ))}
 
-                {pendingCount > 0 && (
-                  <Link
+                {/* Accounting (AP-1 / AP-17) approvals and Form Builder approvals are
+                    separate systems with separate queues — one row each, never merged. */}
+                {accPendingCount > 0 && (
+                  <PendingLink
                     href={hrefWithBrand("/my-work")}
-                    className="flex items-center gap-3 px-3.5 py-3 no-underline"
-                    style={{
-                      background: "var(--bg-card)",
-                      borderRadius: "var(--radius-card)",
-                      boxShadow: "var(--shadow-card)",
-                      border: "1px solid var(--border-card)",
-                    }}
-                  >
-                    <span
-                      className="flex items-center justify-center shrink-0"
-                      style={{
-                        width: 30, height: 30,
-                        borderRadius: 10,
-                        background: "var(--status-ok-bg)",
-                        color: "var(--status-ok-text)",
-                      }}
-                    >
-                      <ClipboardCheck size={15} />
-                    </span>
-                    <span className="flex-1 min-w-0">
-                      <span className="block text-[12.5px] font-bold" style={{ color: "var(--text-primary)" }}>
-                        รออนุมัติจากคุณ
-                      </span>
-                      <span className="block text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-                        ไปที่ My Work เพื่อตรวจและอนุมัติ
-                      </span>
-                    </span>
-                    <span
-                      className="text-[10px] font-bold px-2.5 py-1 shrink-0"
-                      style={{
-                        borderRadius: 999,
-                        background: "var(--status-pending-bg)",
-                        color: "var(--status-pending-text)",
-                      }}
-                    >
-                      {pendingCount} รายการ
-                    </span>
-                  </Link>
+                    Icon={ClipboardCheck}
+                    title="รออนุมัติจากคุณ · บัญชี"
+                    subtitle="ไปที่ My Work เพื่อตรวจและอนุมัติ"
+                    count={accPendingCount}
+                  />
+                )}
+
+                {formPendingCount > 0 && (
+                  <PendingLink
+                    href={hrefWithBrand("/forms/approvals")}
+                    Icon={FileCheck}
+                    title="รออนุมัติจากคุณ · ฟอร์มทั่วไป"
+                    subtitle="ไปที่ Forms → Approvals เพื่อตรวจและอนุมัติ"
+                    count={formPendingCount}
+                  />
                 )}
               </div>
             </>
@@ -311,9 +386,18 @@ export function HomeCatalogue() {
         </>
       )}
 
+      {/* Form Builder catalogue failed to load — say so instead of silently
+          rendering a portal with no general forms in it. */}
+      {formsError && (
+        <>
+          <SectionLabel title="ฟอร์มทั่วไป" />
+          <LoadError>โหลดรายการฟอร์มไม่สำเร็จ — ลองรีเฟรชหน้าอีกครั้ง</LoadError>
+        </>
+      )}
+
       {/* Form Builder forms — gated on isLoading too, same as the stat strip and
           continue section, so it doesn't pop in after the rest of the page has settled. */}
-      {!isLoading && general.length > 0 && (
+      {!isLoading && !formsError && general.length > 0 && (
         <>
           <SectionLabel
             title="ฟอร์มทั่วไป"
@@ -365,7 +449,7 @@ export function HomeCatalogue() {
         </>
       )}
 
-      {q !== "" && accounting.length === 0 && general.length === 0 && (
+      {q !== "" && !formsError && accounting.length === 0 && general.length === 0 && (
         <p className="text-[12px] mt-8 text-center" style={{ color: "var(--text-muted)" }}>
           ไม่พบฟอร์มที่ตรงกับ &ldquo;{query}&rdquo;
         </p>
