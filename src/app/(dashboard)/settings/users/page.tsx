@@ -152,11 +152,11 @@ function ADSearchModal({ onClose, onSelect, existingEmails, title }: {
               {results.map((u) => {
                 const added = existing.has(u.email.toLowerCase());
                 return (
-                  <div key={u.email} className="flex items-center gap-3 px-3 py-2.5 rounded-xl" style={{ border: `1px solid ${added ? "#16a34a30" : "var(--border-card)"}`, background: added ? "#16a34a08" : "var(--bg-card)" }}>
+                  <div key={u.email} className="flex items-center gap-3 px-3 py-2.5 rounded-xl" style={{ border: `1px solid ${added ? "color-mix(in srgb, var(--status-ok-text) 30%, transparent)" : "var(--border-card)"}`, background: added ? "var(--status-ok-bg)" : "var(--bg-card)" }}>
                     {u.photo ? (
                       <img src={u.photo} alt={u.name} className="w-9 h-9 rounded-full shrink-0 object-cover" />
                     ) : (
-                      <div className="w-9 h-9 rounded-full flex items-center justify-center text-[12px] font-bold shrink-0" style={{ background: added ? "#16a34a20" : "var(--nav-active-bg)", color: added ? "#16a34a" : "var(--nav-active-text)" }}>
+                      <div className="w-9 h-9 rounded-full flex items-center justify-center text-[12px] font-bold shrink-0" style={{ background: added ? "color-mix(in srgb, var(--status-ok-text) 20%, transparent)" : "var(--nav-active-bg)", color: added ? "var(--status-ok-text)" : "var(--nav-active-text)" }}>
                         {u.name.split(" ").map((n) => n[0]).slice(0, 2).join("")}
                       </div>
                     )}
@@ -167,7 +167,7 @@ function ADSearchModal({ onClose, onSelect, existingEmails, title }: {
                       </p>
                     </div>
                     {added ? (
-                      <span className="text-[10px] font-bold px-2 py-1 rounded-lg" style={{ color: "#16a34a", background: "#16a34a12" }}>Added</span>
+                      <span className="text-[10px] font-bold px-2 py-1 rounded-lg" style={{ color: "var(--status-ok-text)", background: "var(--status-ok-bg)" }}>Added</span>
                     ) : (
                       <button
                         onClick={() => { onSelect(u.email, u.name); onClose(); }}
@@ -283,7 +283,7 @@ export default function SettingsUsersPage() {
             <button
               onClick={() => setShowAddUserModal(true)}
               className="flex items-center gap-1.5 text-[12px] font-medium px-3 py-2 rounded-lg cursor-pointer border-none"
-              style={{ background: "var(--color-action)", color: "#fff" }}
+              style={{ background: "var(--color-action)", color: "var(--btn-primary-text)" }}
             >
               <Plus size={12} /> Add User from AD
             </button>
@@ -323,7 +323,14 @@ export default function SettingsUsersPage() {
                     <td className="px-4 py-2" style={{ color: "var(--text-muted)" }}>{u.email}</td>
                     <td className="px-4 py-2">
                       {session?.user?.email?.toLowerCase() === u.email.toLowerCase() ? (
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded" style={{ background: u.role === "System Admin" ? "#fef2f2" : "#dbeafe", color: u.role === "System Admin" ? "#991b1b" : "#1e40af" }}>
+                        <span
+                          className="text-[10px] font-bold px-2 py-0.5 rounded"
+                          style={
+                            u.role === "System Admin"
+                              ? { background: "var(--status-bad-bg)", color: "var(--status-bad-text)" }
+                              : { background: "var(--status-pending-bg)", color: "var(--status-pending-text)" }
+                          }
+                        >
                           {u.role} (you)
                         </span>
                       ) : (

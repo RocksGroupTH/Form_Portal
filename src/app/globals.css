@@ -16,15 +16,21 @@
   --color-status-purple: #8e44ad;
   --color-status-orange: #f39c12;
 
-  /* Semantic action colors */
-  --color-action: #2563eb;
-  --color-action-hover: #1d4ed8;
-  --color-success: #16a34a;
-  --color-success-light: #22c55e;
-  --color-danger: #dc2626;
-  --color-danger-hover: #b91c1c;
-  --color-warning: #d97706;
-  --color-warning-light: #f59e0b;
+  /* Semantic action colors — Sky (spec §5).
+     These feed both `var(--color-*)` reads and the Tailwind utilities Tailwind 4
+     generates from the `--color-*` namespace (`text-danger`, `text-warning`, …).
+     They are theme-agnostic on purpose: every value below is a mid-tone that
+     carries on both the light (#f4f7fc) and dark (#0f1319) page grounds, and the
+     surfaces that genuinely need a per-theme value already have theme-scoped
+     tokens (`--btn-danger-bg`, `--text-danger`, `--status-*`, `--ring-*`). */
+  --color-action: #4c74c4;
+  --color-action-hover: #3d63b0;
+  --color-success: #3d8560;
+  --color-success-light: #5aa37c;
+  --color-danger: #c25b5b;
+  --color-danger-hover: #a94a4a;
+  --color-warning: #b5793a;
+  --color-warning-light: #c98a44;
   --color-purple: #7c3aed;
   --color-indigo: #6366f1;
   --color-muted-gray: #64748b;
