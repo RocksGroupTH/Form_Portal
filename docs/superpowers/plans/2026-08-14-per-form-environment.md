@@ -910,6 +910,13 @@ this a tester emails a real manager asking them to approve a fake request.
 - Consumes: `resolveFormEnvironment` (Task 3)
 - Produces: no new exports; `buildAccFolderPath` gains an optional `environment` option.
 
+**Finding from Task 1's coverage run:** `/api/request/accounting/email/process`
+classifies as AP-1, so it drains only the production `AccEmailQueue`. When AP-17
+is flagged UAT its queued mail sits in the UAT database and this endpoint never
+sees it. Per-action drains still work because they run inside the request that
+queued them, so this only affects the manual/scheduled sweep. Step 6 below makes
+that endpoint drain both databases.
+
 - [ ] **Step 1: Add the redirect address**
 
 In `src/env.ts`:
@@ -989,6 +996,39 @@ file lands without `_UAT`.
 npx tsc --noEmit && npm test
 git add src/lib/acc/email-queue.ts src/features/forms/email-queue.ts src/lib/acc/sharepoint-path.ts src/app/api/request/accounting/requests/\[id\]/files/route.ts src/app/api/request/travel-booking/requests/\[id\]/files/route.ts src/env.ts .env.example
 git commit -m "feat(env): redirect UAT mail and separate UAT attachments"
+```
+
+- [ ] **Step 6: Drain both queues from the sweep endpoint**
+
+`src/app/api/request/accounting/email/process/route.ts` currently calls
+`processQueue()` once against whatever pool its route resolves to. Change it to
+run the drain against both databases explicitly:
+
+```ts
+import { getProductionFormPool, getUatFormPool } from "@/lib/db/mssql";
+
+  const [prod, uat] = await Promise.all([getProductionFormPool(), getUatFormPool()]);
+  const results = await Promise.all([
+    processQueueOn(prod, "Production", max),
+    processQueueOn(uat, "UAT", max),
+  ]);
+```
+
+This requires `processQueue` in `src/lib/acc/email-queue.ts` to take its pool
+and environment as parameters rather than resolving them itself. Keep the
+existing zero-argument `processQueue()` as a thin wrapper that resolves both and
+calls `processQueueOn`, so the ~12 per-action drain call sites do not change.
+
+Verify: with AP-17 on UAT, queue mail from an AP-17 action, then
+`curl -X POST http://localhost:3020/api/request/accounting/email/process`.
+Expected: the UAT message is sent (to `UAT_MAIL_REDIRECT`) and
+`SELECT COUNT(*) FROM AccEmailQueue WHERE Status='Pending'` returns 0 in both
+databases.
+
+```bash
+npx tsc --noEmit && npm test
+git add src/app/api/request/accounting/email/process/route.ts src/lib/acc/email-queue.ts
+git commit -m "fix(env): drain the email queue in both databases"
 ```
 
 ---
