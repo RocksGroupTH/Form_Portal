@@ -8,7 +8,8 @@
     "build": "next build",
     "start": "next start -p 3020",
     "apply-sql": "tsx scripts/apply-sql.ts",
-    "test": "tsx --test src/lib/form-environment/classify-path.test.ts"
+    "test": "tsx --test src/lib/form-environment/classify-path.test.ts",
+    "check:alignment": "tsx scripts/checks/verify-master-alignment.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

@@ -624,7 +624,28 @@ time an admin saves anything.
 
 **Interfaces:**
 - Consumes: `getProductionFormPool`, `getUatFormPool` (Task 3)
-- Produces: `writeBothPools<T>(fn: (pool: ConnectionPool, isUat: boolean) => Promise<T>): Promise<T>` — runs `fn` inside a transaction on each database, commits both or neither, and returns the production result.
+- Produces: `writeBothPools<T>(fn: (tx: Transaction) => Promise<T>): Promise<T>` — runs `fn` inside a transaction on each database, commits both or neither, and returns the production result. Also `scripts/checks/verify-master-alignment.ts`, wired as `npm run check:alignment`.
+
+**Correction made during implementation.** The steps below were written around
+capturing production's id and replaying it into UAT under `IDENTITY_INSERT`. On
+reading the code, almost every mutation turned out to be a `MERGE` on a natural
+key — Email, SettingKey, FormCode+BrandCode, StaffId — so splitting each one
+into matched/inserted branches to thread an id would have been both invasive and
+easy to get subtly wrong.
+
+The implementation runs the identical statement against both databases instead.
+The natural keys make the resulting row the same in each, and because both
+databases were seeded with identity values preserved and now receive exactly the
+same inserts, their identity counters stay in lockstep and assign the same id.
+
+That is an invariant rather than a guarantee — a manual SQL edit against one
+database alone would break it silently — so `npm run check:alignment` asserts it
+and is the thing to run when a setting looks different between forms.
+
+`upsertVehicle` in `travel-booking/settings-service.ts` is the one exception and
+does thread the id explicitly, because its child `AccTravelVehiclePlace` rows
+reference it and guessing there would corrupt the relationship rather than just
+a display order.
 
 - [ ] **Step 1: Write the helper**
 

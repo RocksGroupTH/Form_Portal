@@ -1,4 +1,5 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
+import { writeBothPools } from "@/lib/acc/dual-write";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import { getAllowedBrands } from "@/lib/acc/brand-options";
 import { deleteAccCachedByPrefix } from "@/lib/acc/acc-cache";
@@ -10,16 +11,19 @@ import {
 
 async function assertClaimBrandAllowed(brandCode: string): Promise<void> {
   const allowed = await getAllowedBrands(AP1_FORM_CODE);
-  const ok = allowed.some((b) => b.brandCode.toUpperCase() === brandCode.toUpperCase());
+  const ok = allowed.some(
+    (b) => b.brandCode.toUpperCase() === brandCode.toUpperCase(),
+  );
   if (!ok) throw new Error("แบรนด์นี้ไม่ได้เปิดใช้ใน AP-1");
 }
 
-async function resolveInterfaceBrandForClaim(brandCode: string): Promise<string | null> {
+async function resolveInterfaceBrandForClaim(
+  brandCode: string,
+): Promise<string | null> {
   const pool = await getAccPool();
   const r = await pool
     .request()
-    .input("brand", sql.NVarChar, brandCode.trim().toUpperCase())
-    .query(`
+    .input("brand", sql.NVarChar, brandCode.trim().toUpperCase()).query(`
       SELECT InterfaceBrandCode
       FROM [dbo].[AccBrandErpInterface]
       WHERE BrandCode = @brand
@@ -121,9 +125,9 @@ export async function upsertBrandBranch(
   const pool = await getAccPool();
   let rowId = input.id;
   if (rowId == null) {
-    const existing = await pool.request()
-      .input("brand", sql.NVarChar, brandCode)
-      .query(`
+    const existing = await pool
+      .request()
+      .input("brand", sql.NVarChar, brandCode).query(`
         SELECT TOP 1 Id FROM [dbo].[AccBrandBranchCode]
         WHERE BrandCode = @brand
         ORDER BY SortOrder, Id
@@ -131,20 +135,25 @@ export async function upsertBrandBranch(
     rowId = (existing.recordset[0] as { Id: number } | undefined)?.Id;
   }
 
-  const req = pool
-    .request()
-    .input("brand", sql.NVarChar, brandCode)
-    .input("branchCode", sql.NVarChar, branchCode)
-    .input("displayName", sql.NVarChar, input.displayName?.trim() || null)
-    .input("deptAsBranch", sql.Bit, deptAsBranch ? 1 : 0)
-    .input("fixedErpDept", sql.NVarChar, deptAsBranch ? fixedErpDeptCode : null)
-    .input("active", sql.Bit, input.isActive === false ? 0 : 1)
-    .input("sort", sql.Int, input.sortOrder ?? 0)
-    .input("user", sql.Int, userId || null);
+  await writeBothPools(async (tx) => {
+    const req = tx
+      .request()
+      .input("brand", sql.NVarChar, brandCode)
+      .input("branchCode", sql.NVarChar, branchCode)
+      .input("displayName", sql.NVarChar, input.displayName?.trim() || null)
+      .input("deptAsBranch", sql.Bit, deptAsBranch ? 1 : 0)
+      .input(
+        "fixedErpDept",
+        sql.NVarChar,
+        deptAsBranch ? fixedErpDeptCode : null,
+      )
+      .input("active", sql.Bit, input.isActive === false ? 0 : 1)
+      .input("sort", sql.Int, input.sortOrder ?? 0)
+      .input("user", sql.Int, userId || null);
 
-  if (rowId) {
-    req.input("id", sql.Int, rowId);
-    await req.query(`
+    if (rowId) {
+      req.input("id", sql.Int, rowId);
+      await req.query(`
       UPDATE [dbo].[AccBrandBranchCode]
       SET BrandCode = @brand,
           BranchCode = @branchCode,
@@ -156,13 +165,14 @@ export async function upsertBrandBranch(
           UpdatedAt = SYSDATETIME()
       WHERE Id = @id
     `);
-  } else {
-    await req.query(`
+    } else {
+      await req.query(`
       INSERT INTO [dbo].[AccBrandBranchCode]
         (BrandCode, BranchCode, DisplayName, DeptAsBranch, FixedErpDeptCode, IsActive, SortOrder, CreatedBy)
       VALUES (@brand, @branchCode, @displayName, @deptAsBranch, @fixedErpDept, @active, @sort, @user)
     `);
-  }
+    }
+  });
 
   deleteAccCachedByPrefix("acc:journal-ctx:");
 }

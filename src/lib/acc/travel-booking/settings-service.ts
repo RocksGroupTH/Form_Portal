@@ -1,5 +1,12 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
-import type { Accommodation, RentVehicle, TravelReasonOption, VehicleOption, VehiclePlace } from "@/features/travel-booking/types";
+import { writeBothPools } from "@/lib/acc/dual-write";
+import type {
+  Accommodation,
+  RentVehicle,
+  TravelReasonOption,
+  VehicleOption,
+  VehiclePlace,
+} from "@/features/travel-booking/types";
 
 /**
  * CRUD for the 4 AP-17 settings tables (AccTravelReason / AccTravelAccommodation /
@@ -38,7 +45,10 @@ function mapRow(x: Record<string, unknown>): TravelSettingsRow {
   };
 }
 
-async function listSettings(kind: TravelSettingsKind, activeOnly: boolean): Promise<TravelSettingsRow[]> {
+async function listSettings(
+  kind: TravelSettingsKind,
+  activeOnly: boolean,
+): Promise<TravelSettingsRow[]> {
   const table = TABLES[kind];
   const pool = await getAccPool();
   const r = await pool.request().query(`
@@ -50,63 +60,92 @@ async function listSettings(kind: TravelSettingsKind, activeOnly: boolean): Prom
 
 async function upsertSettings(
   kind: TravelSettingsKind,
-  row: { id?: number; name: string; isActive?: boolean; sortOrder?: number; requiresCustomReason?: boolean; icon?: string | null },
+  row: {
+    id?: number;
+    name: string;
+    isActive?: boolean;
+    sortOrder?: number;
+    requiresCustomReason?: boolean;
+    icon?: string | null;
+  },
   userId: number,
 ): Promise<void> {
   const table = TABLES[kind];
-  const pool = await getAccPool();
-  const req = pool.request()
-    .input("name", sql.NVarChar, row.name)
-    .input("active", sql.Bit, row.isActive === false ? 0 : 1)
-    .input("sort", sql.Int, row.sortOrder ?? 0)
-    .input("requiresCustom", sql.Bit, row.requiresCustomReason ? 1 : 0)
-    .input("icon", sql.NVarChar, row.icon?.trim() || null)
-    .input("user", sql.Int, userId || null);
-  if (row.id) {
-    req.input("id", sql.Int, row.id);
-    await req.query(`UPDATE [dbo].[${table}] SET Name=@name, IsActive=@active, SortOrder=@sort,
-      RequiresCustomReason=@requiresCustom, Icon=@icon, UpdatedAt=SYSDATETIME() WHERE Id=@id`);
-  } else {
-    await req.query(`INSERT INTO [dbo].[${table}] (Name,IsActive,SortOrder,RequiresCustomReason,Icon,CreatedBy)
-      VALUES (@name,@active,@sort,@requiresCustom,@icon,@user)`);
-  }
+  await writeBothPools(async (tx) => {
+    const req = tx
+      .request()
+      .input("name", sql.NVarChar, row.name)
+      .input("active", sql.Bit, row.isActive === false ? 0 : 1)
+      .input("sort", sql.Int, row.sortOrder ?? 0)
+      .input("requiresCustom", sql.Bit, row.requiresCustomReason ? 1 : 0)
+      .input("icon", sql.NVarChar, row.icon?.trim() || null)
+      .input("user", sql.Int, userId || null);
+    if (row.id) {
+      req.input("id", sql.Int, row.id);
+      await req.query(`UPDATE [dbo].[${table}] SET Name=@name, IsActive=@active, SortOrder=@sort,
+        RequiresCustomReason=@requiresCustom, Icon=@icon, UpdatedAt=SYSDATETIME() WHERE Id=@id`);
+    } else {
+      await req.query(`INSERT INTO [dbo].[${table}] (Name,IsActive,SortOrder,RequiresCustomReason,Icon,CreatedBy)
+        VALUES (@name,@active,@sort,@requiresCustom,@icon,@user)`);
+    }
+  });
 }
 
 /** Persist a new display order (SortOrder = position in the array). */
-async function reorderSettings(kind: TravelSettingsKind, orderedIds: number[]): Promise<void> {
+async function reorderSettings(
+  kind: TravelSettingsKind,
+  orderedIds: number[],
+): Promise<void> {
   if (!orderedIds.length) return;
   const table = TABLES[kind];
-  const pool = await getAccPool();
-  const tx = pool.transaction();
-  await tx.begin();
-  try {
+  await writeBothPools(async (tx) => {
     for (let i = 0; i < orderedIds.length; i++) {
-      await tx.request()
+      await tx
+        .request()
         .input("id", sql.Int, orderedIds[i])
         .input("sort", sql.Int, i)
-        .query(`UPDATE [dbo].[${table}] SET SortOrder=@sort, UpdatedAt=SYSDATETIME() WHERE Id=@id`);
+        .query(
+          `UPDATE [dbo].[${table}] SET SortOrder=@sort, UpdatedAt=SYSDATETIME() WHERE Id=@id`,
+        );
     }
-    await tx.commit();
-  } catch (e) { await tx.rollback(); throw e; }
+  });
 }
 
 /** Flip IsActive for one row of any of the 4 settings tables. */
-export async function toggleActive(kind: TravelSettingsKind, id: number, isActive: boolean, userId: number): Promise<void> {
+export async function toggleActive(
+  kind: TravelSettingsKind,
+  id: number,
+  isActive: boolean,
+  userId: number,
+): Promise<void> {
   const table = TABLES[kind];
-  const pool = await getAccPool();
-  await pool.request()
-    .input("id", sql.Int, id)
-    .input("active", sql.Bit, isActive ? 1 : 0)
-    .input("user", sql.Int, userId || null)
-    .query(`UPDATE [dbo].[${table}] SET IsActive=@active, UpdatedAt=SYSDATETIME() WHERE Id=@id`);
+  await writeBothPools(async (tx) => {
+    await tx
+      .request()
+      .input("id", sql.Int, id)
+      .input("active", sql.Bit, isActive ? 1 : 0)
+      .input("user", sql.Int, userId || null)
+      .query(
+        `UPDATE [dbo].[${table}] SET IsActive=@active, UpdatedAt=SYSDATETIME() WHERE Id=@id`,
+      );
+  });
 }
 
 /* ---- Reasons (ข้อ5, AccTravelReason) ---- */
-export async function listReasons(activeOnly = false): Promise<TravelReasonOption[]> {
+export async function listReasons(
+  activeOnly = false,
+): Promise<TravelReasonOption[]> {
   return listSettings("reason", activeOnly);
 }
 export async function upsertReason(
-  row: { id?: number; name: string; isActive?: boolean; sortOrder?: number; requiresCustomReason?: boolean; icon?: string | null },
+  row: {
+    id?: number;
+    name: string;
+    isActive?: boolean;
+    sortOrder?: number;
+    requiresCustomReason?: boolean;
+    icon?: string | null;
+  },
   userId: number,
 ): Promise<void> {
   return upsertSettings("reason", row, userId);
@@ -127,7 +166,9 @@ export interface AccommodationUpsertInput {
   needsRoomBooking?: boolean;
 }
 
-export async function listAccommodations(activeOnly = false): Promise<Accommodation[]> {
+export async function listAccommodations(
+  activeOnly = false,
+): Promise<Accommodation[]> {
   const pool = await getAccPool();
   const r = await pool.request().query(`
     SELECT Id, Name, IsActive, SortOrder, RequiresCustomReason, Icon, NeedsRoomBooking
@@ -145,27 +186,34 @@ export async function listAccommodations(activeOnly = false): Promise<Accommodat
   }));
 }
 
-export async function upsertAccommodation(row: AccommodationUpsertInput, userId: number): Promise<void> {
-  const pool = await getAccPool();
-  const req = pool.request()
-    .input("name", sql.NVarChar, row.name)
-    .input("active", sql.Bit, row.isActive === false ? 0 : 1)
-    .input("sort", sql.Int, row.sortOrder ?? 0)
-    .input("icon", sql.NVarChar, row.icon?.trim() || null)
-    .input("needRoom", sql.Bit, row.needsRoomBooking ? 1 : 0)
-    .input("user", sql.Int, userId || null);
-  if (row.id) {
-    req.input("id", sql.Int, row.id);
-    await req.query(`UPDATE [dbo].[AccTravelAccommodation]
-      SET Name=@name, IsActive=@active, SortOrder=@sort, Icon=@icon, NeedsRoomBooking=@needRoom,
-          UpdatedAt=SYSDATETIME() WHERE Id=@id`);
-  } else {
-    await req.query(`INSERT INTO [dbo].[AccTravelAccommodation]
-      (Name,IsActive,SortOrder,Icon,NeedsRoomBooking,CreatedBy)
-      VALUES (@name,@active,@sort,@icon,@needRoom,@user)`);
-  }
+export async function upsertAccommodation(
+  row: AccommodationUpsertInput,
+  userId: number,
+): Promise<void> {
+  await writeBothPools(async (tx) => {
+    const req = tx
+      .request()
+      .input("name", sql.NVarChar, row.name)
+      .input("active", sql.Bit, row.isActive === false ? 0 : 1)
+      .input("sort", sql.Int, row.sortOrder ?? 0)
+      .input("icon", sql.NVarChar, row.icon?.trim() || null)
+      .input("needRoom", sql.Bit, row.needsRoomBooking ? 1 : 0)
+      .input("user", sql.Int, userId || null);
+    if (row.id) {
+      req.input("id", sql.Int, row.id);
+      await req.query(`UPDATE [dbo].[AccTravelAccommodation]
+        SET Name=@name, IsActive=@active, SortOrder=@sort, Icon=@icon, NeedsRoomBooking=@needRoom,
+            UpdatedAt=SYSDATETIME() WHERE Id=@id`);
+    } else {
+      await req.query(`INSERT INTO [dbo].[AccTravelAccommodation]
+        (Name,IsActive,SortOrder,Icon,NeedsRoomBooking,CreatedBy)
+        VALUES (@name,@active,@sort,@icon,@needRoom,@user)`);
+    }
+  });
 }
-export async function reorderAccommodations(orderedIds: number[]): Promise<void> {
+export async function reorderAccommodations(
+  orderedIds: number[],
+): Promise<void> {
   return reorderSettings("accommodation", orderedIds);
 }
 
@@ -186,7 +234,9 @@ export interface VehicleUpsertInput {
   places?: string[];
 }
 
-export async function listVehicles(activeOnly = false): Promise<VehicleOption[]> {
+export async function listVehicles(
+  activeOnly = false,
+): Promise<VehicleOption[]> {
   const pool = await getAccPool();
   const r = await pool.request().query(`
     SELECT Id, Name, IsActive, SortOrder, RequiresCustomReason, Icon,
@@ -215,7 +265,11 @@ export async function listVehicles(activeOnly = false): Promise<VehicleOption[]>
     const byVehicle = new Map<number, VehiclePlace[]>();
     for (const p of pr.recordset) {
       const list = byVehicle.get(p.VehicleOptionId as number) ?? [];
-      list.push({ id: p.Id as number, name: p.Name as string, sortOrder: p.SortOrder as number });
+      list.push({
+        id: p.Id as number,
+        name: p.Name as string,
+        sortOrder: p.SortOrder as number,
+      });
       byVehicle.set(p.VehicleOptionId as number, list);
     }
     for (const v of vehicles) v.places = byVehicle.get(v.id) ?? [];
@@ -223,13 +277,19 @@ export async function listVehicles(activeOnly = false): Promise<VehicleOption[]>
   return vehicles;
 }
 
-export async function upsertVehicle(row: VehicleUpsertInput, userId: number): Promise<void> {
-  const pool = await getAccPool();
-  const tx = pool.transaction();
-  await tx.begin();
-  try {
-    let vehicleId = row.id ?? 0;
-    const req = tx.request()
+export async function upsertVehicle(
+  row: VehicleUpsertInput,
+  userId: number,
+): Promise<void> {
+  // Set on the production pass and reused on the UAT one. AccTravelVehiclePlace
+  // rows reference this id, so the two databases must agree on it explicitly
+  // rather than each trusting its own identity counter.
+  let vehicleId = row.id ?? 0;
+
+  await writeBothPools(async (tx) => {
+    const isUatPass = !row.id && vehicleId !== 0;
+    const req = tx
+      .request()
       .input("name", sql.NVarChar, row.name)
       .input("active", sql.Bit, row.isActive === false ? 0 : 1)
       .input("sort", sql.Int, row.sortOrder ?? 0)
@@ -239,6 +299,7 @@ export async function upsertVehicle(row: VehicleUpsertInput, userId: number): Pr
       .input("needTime", sql.Bit, row.needsDepartTime ? 1 : 0)
       .input("needRent", sql.Bit, row.needsVehicleRent ? 1 : 0)
       .input("user", sql.Int, userId || null);
+
     if (row.id) {
       req.input("id", sql.Int, row.id);
       await req.query(`UPDATE [dbo].[AccTravelVehicleOption]
@@ -246,6 +307,13 @@ export async function upsertVehicle(row: VehicleUpsertInput, userId: number): Pr
             NeedsDepartureLocations=@needDep, NeedsTicketBooking=@needTicket,
             NeedsDepartTime=@needTime, NeedsVehicleRent=@needRent, UpdatedAt=SYSDATETIME()
         WHERE Id=@id`);
+    } else if (isUatPass) {
+      req.input("id", sql.Int, vehicleId);
+      await req.query(`SET IDENTITY_INSERT [dbo].[AccTravelVehicleOption] ON;
+        INSERT INTO [dbo].[AccTravelVehicleOption]
+        (Id,Name,IsActive,SortOrder,Icon,NeedsDepartureLocations,NeedsTicketBooking,NeedsDepartTime,NeedsVehicleRent,CreatedBy)
+        VALUES (@id,@name,@active,@sort,@icon,@needDep,@needTicket,@needTime,@needRent,@user);
+        SET IDENTITY_INSERT [dbo].[AccTravelVehicleOption] OFF;`);
     } else {
       const ins = await req.query(`INSERT INTO [dbo].[AccTravelVehicleOption]
         (Name,IsActive,SortOrder,Icon,NeedsDepartureLocations,NeedsTicketBooking,NeedsDepartTime,NeedsVehicleRent,CreatedBy)
@@ -253,24 +321,28 @@ export async function upsertVehicle(row: VehicleUpsertInput, userId: number): Pr
         VALUES (@name,@active,@sort,@icon,@needDep,@needTicket,@needTime,@needRent,@user)`);
       vehicleId = ins.recordset[0].Id as number;
     }
+
     // Replace the place list when the caller provided one (undefined = leave untouched).
     if (row.places !== undefined && vehicleId) {
-      await tx.request().input("vid", sql.Int, vehicleId)
-        .query(`DELETE FROM [dbo].[AccTravelVehiclePlace] WHERE VehicleOptionId=@vid`);
+      await tx
+        .request()
+        .input("vid", sql.Int, vehicleId)
+        .query(
+          `DELETE FROM [dbo].[AccTravelVehiclePlace] WHERE VehicleOptionId=@vid`,
+        );
       const places = row.places.map((s) => s.trim()).filter(Boolean);
       for (let i = 0; i < places.length; i++) {
-        await tx.request()
+        await tx
+          .request()
           .input("vid", sql.Int, vehicleId)
           .input("pname", sql.NVarChar, places[i])
           .input("psort", sql.Int, i)
-          .query(`INSERT INTO [dbo].[AccTravelVehiclePlace] (VehicleOptionId,Name,SortOrder) VALUES (@vid,@pname,@psort)`);
+          .query(
+            `INSERT INTO [dbo].[AccTravelVehiclePlace] (VehicleOptionId,Name,SortOrder) VALUES (@vid,@pname,@psort)`,
+          );
       }
     }
-    await tx.commit();
-  } catch (e) {
-    await tx.rollback();
-    throw e;
-  }
+  });
 }
 export async function reorderVehicles(orderedIds: number[]): Promise<void> {
   return reorderSettings("vehicle", orderedIds);
@@ -288,7 +360,9 @@ export interface RentVehicleUpsertInput {
   needsRentBooking?: boolean;
 }
 
-export async function listRentVehicles(activeOnly = false): Promise<RentVehicle[]> {
+export async function listRentVehicles(
+  activeOnly = false,
+): Promise<RentVehicle[]> {
   const pool = await getAccPool();
   const r = await pool.request().query(`
     SELECT Id, Name, IsActive, SortOrder, RequiresCustomReason, Icon, NeedsRentBooking
@@ -306,25 +380,30 @@ export async function listRentVehicles(activeOnly = false): Promise<RentVehicle[
   }));
 }
 
-export async function upsertRentVehicle(row: RentVehicleUpsertInput, userId: number): Promise<void> {
-  const pool = await getAccPool();
-  const req = pool.request()
-    .input("name", sql.NVarChar, row.name)
-    .input("active", sql.Bit, row.isActive === false ? 0 : 1)
-    .input("sort", sql.Int, row.sortOrder ?? 0)
-    .input("icon", sql.NVarChar, row.icon?.trim() || null)
-    .input("needRent", sql.Bit, row.needsRentBooking ? 1 : 0)
-    .input("user", sql.Int, userId || null);
-  if (row.id) {
-    req.input("id", sql.Int, row.id);
-    await req.query(`UPDATE [dbo].[AccTravelRentVehicle]
-      SET Name=@name, IsActive=@active, SortOrder=@sort, Icon=@icon, NeedsRentBooking=@needRent,
-          UpdatedAt=SYSDATETIME() WHERE Id=@id`);
-  } else {
-    await req.query(`INSERT INTO [dbo].[AccTravelRentVehicle]
-      (Name,IsActive,SortOrder,Icon,NeedsRentBooking,CreatedBy)
-      VALUES (@name,@active,@sort,@icon,@needRent,@user)`);
-  }
+export async function upsertRentVehicle(
+  row: RentVehicleUpsertInput,
+  userId: number,
+): Promise<void> {
+  await writeBothPools(async (tx) => {
+    const req = tx
+      .request()
+      .input("name", sql.NVarChar, row.name)
+      .input("active", sql.Bit, row.isActive === false ? 0 : 1)
+      .input("sort", sql.Int, row.sortOrder ?? 0)
+      .input("icon", sql.NVarChar, row.icon?.trim() || null)
+      .input("needRent", sql.Bit, row.needsRentBooking ? 1 : 0)
+      .input("user", sql.Int, userId || null);
+    if (row.id) {
+      req.input("id", sql.Int, row.id);
+      await req.query(`UPDATE [dbo].[AccTravelRentVehicle]
+        SET Name=@name, IsActive=@active, SortOrder=@sort, Icon=@icon, NeedsRentBooking=@needRent,
+            UpdatedAt=SYSDATETIME() WHERE Id=@id`);
+    } else {
+      await req.query(`INSERT INTO [dbo].[AccTravelRentVehicle]
+        (Name,IsActive,SortOrder,Icon,NeedsRentBooking,CreatedBy)
+        VALUES (@name,@active,@sort,@icon,@needRent,@user)`);
+    }
+  });
 }
 export async function reorderRentVehicles(orderedIds: number[]): Promise<void> {
   return reorderSettings("rentVehicle", orderedIds);

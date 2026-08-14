@@ -1,10 +1,13 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
+import { writeBothPools } from "@/lib/acc/dual-write";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import { getAllowedBrands } from "@/lib/acc/brand-options";
 
 async function assertClaimBrandAllowed(brandCode: string): Promise<void> {
   const allowed = await getAllowedBrands(AP1_FORM_CODE);
-  const ok = allowed.some((b) => b.brandCode.toUpperCase() === brandCode.toUpperCase());
+  const ok = allowed.some(
+    (b) => b.brandCode.toUpperCase() === brandCode.toUpperCase(),
+  );
   if (!ok) throw new Error("แบรนด์นี้ไม่ได้เปิดใช้ใน AP-1");
 }
 
@@ -25,7 +28,10 @@ const TABLE: Record<BrandAccountKind, string> = {
   bank: "AccBrandBankAccount",
 };
 
-function mapRow(kind: BrandAccountKind, x: Record<string, unknown>): BrandAccountRow {
+function mapRow(
+  kind: BrandAccountKind,
+  x: Record<string, unknown>,
+): BrandAccountRow {
   const row: BrandAccountRow = {
     id: x.Id as number,
     brandCode: x.BrandCode as string,
@@ -82,11 +88,13 @@ export async function upsertBrandAccount(
 
   const pool = await getAccPool();
   const table = TABLE[kind];
+  // Resolve the target row once, against production, so both databases update
+  // the same id rather than each picking its own "first row for this brand".
   let rowId = input.id;
   if (rowId == null) {
-    const existing = await pool.request()
-      .input("brand", sql.NVarChar, brandCode)
-      .query(`
+    const existing = await pool
+      .request()
+      .input("brand", sql.NVarChar, brandCode).query(`
         SELECT TOP 1 Id FROM [dbo].[${table}]
         WHERE BrandCode = @brand
         ORDER BY SortOrder, Id
@@ -94,22 +102,27 @@ export async function upsertBrandAccount(
     rowId = (existing.recordset[0] as { Id: number } | undefined)?.Id;
   }
 
-  const req = pool
-    .request()
-    .input("brand", sql.NVarChar, brandCode)
-    .input("accountNo", sql.NVarChar, accountNo)
-    .input("displayName", sql.NVarChar, input.displayName?.trim() || null)
-    .input("active", sql.Bit, input.isActive === false ? 0 : 1)
-    .input("sort", sql.Int, input.sortOrder ?? 0)
-    .input("user", sql.Int, userId || null);
+  await writeBothPools(async (tx) => {
+    const req = tx
+      .request()
+      .input("brand", sql.NVarChar, brandCode)
+      .input("accountNo", sql.NVarChar, accountNo)
+      .input("displayName", sql.NVarChar, input.displayName?.trim() || null)
+      .input("active", sql.Bit, input.isActive === false ? 0 : 1)
+      .input("sort", sql.Int, input.sortOrder ?? 0)
+      .input("user", sql.Int, userId || null);
 
-  if (kind === "gl") {
-    req.input("erpDescription", sql.NVarChar, input.erpDescription?.trim() || null);
-  }
+    if (kind === "gl") {
+      req.input(
+        "erpDescription",
+        sql.NVarChar,
+        input.erpDescription?.trim() || null,
+      );
+    }
 
-  if (rowId) {
-    req.input("id", sql.Int, rowId);
-    await req.query(`
+    if (rowId) {
+      req.input("id", sql.Int, rowId);
+      await req.query(`
       UPDATE [dbo].[${table}]
       SET BrandCode = @brand,
           AccountNo = @accountNo,
@@ -120,11 +133,12 @@ export async function upsertBrandAccount(
           UpdatedAt = SYSDATETIME()
       WHERE Id = @id
     `);
-  } else {
-    await req.query(`
+    } else {
+      await req.query(`
       INSERT INTO [dbo].[${table}]
         (BrandCode, AccountNo, DisplayName${kind === "gl" ? ", ErpDescription" : ""}, IsActive, SortOrder, CreatedBy)
       VALUES (@brand, @accountNo, @displayName${kind === "gl" ? ", @erpDescription" : ""}, @active, @sort, @user)
     `);
-  }
+    }
+  });
 }

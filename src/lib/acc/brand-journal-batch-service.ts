@@ -1,4 +1,5 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
+import { writeBothPools } from "@/lib/acc/dual-write";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import { getAllowedBrands } from "@/lib/acc/brand-options";
 import { isErpInterfaceBrandCode } from "@/lib/acc/erp-interface-brands";
@@ -70,9 +71,9 @@ export async function upsertBrandJournalBatch(
   const pool = await getAccPool();
   let rowId = input.id;
   if (rowId == null) {
-    const existing = await pool.request()
-      .input("brand", sql.NVarChar, brandCode)
-      .query(`
+    const existing = await pool
+      .request()
+      .input("brand", sql.NVarChar, brandCode).query(`
         SELECT TOP 1 Id FROM [dbo].[AccBrandJournalBatch]
         WHERE BrandCode = @brand
         ORDER BY SortOrder, Id
@@ -80,18 +81,19 @@ export async function upsertBrandJournalBatch(
     rowId = (existing.recordset[0] as { Id: number } | undefined)?.Id;
   }
 
-  const req = pool
-    .request()
-    .input("brand", sql.NVarChar, brandCode)
-    .input("batchName", sql.NVarChar, batchName)
-    .input("displayName", sql.NVarChar, input.displayName?.trim() || null)
-    .input("active", sql.Bit, input.isActive === false ? 0 : 1)
-    .input("sort", sql.Int, input.sortOrder ?? 0)
-    .input("user", sql.Int, userId || null);
+  await writeBothPools(async (tx) => {
+    const req = tx
+      .request()
+      .input("brand", sql.NVarChar, brandCode)
+      .input("batchName", sql.NVarChar, batchName)
+      .input("displayName", sql.NVarChar, input.displayName?.trim() || null)
+      .input("active", sql.Bit, input.isActive === false ? 0 : 1)
+      .input("sort", sql.Int, input.sortOrder ?? 0)
+      .input("user", sql.Int, userId || null);
 
-  if (rowId) {
-    req.input("id", sql.Int, rowId);
-    await req.query(`
+    if (rowId) {
+      req.input("id", sql.Int, rowId);
+      await req.query(`
       UPDATE [dbo].[AccBrandJournalBatch]
       SET BrandCode = @brand,
           BatchName = @batchName,
@@ -101,11 +103,12 @@ export async function upsertBrandJournalBatch(
           UpdatedAt = SYSDATETIME()
       WHERE Id = @id
     `);
-  } else {
-    await req.query(`
+    } else {
+      await req.query(`
       INSERT INTO [dbo].[AccBrandJournalBatch]
         (BrandCode, BatchName, DisplayName, IsActive, SortOrder, CreatedBy)
       VALUES (@brand, @batchName, @displayName, @active, @sort, @user)
     `);
-  }
+    }
+  });
 }

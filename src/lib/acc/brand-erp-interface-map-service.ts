@@ -1,4 +1,5 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
+import { writeBothPools } from "@/lib/acc/dual-write";
 import { isErpInterfaceBrandCode } from "@/lib/acc/erp-interface-brands";
 
 export interface BrandErpInterfaceMapRow {
@@ -16,7 +17,9 @@ function mapRow(x: Record<string, unknown>): BrandErpInterfaceMapRow {
 }
 
 /** All claim-brand → interface-brand mappings. */
-export async function listBrandErpInterfaceMaps(): Promise<BrandErpInterfaceMapRow[]> {
+export async function listBrandErpInterfaceMaps(): Promise<
+  BrandErpInterfaceMapRow[]
+> {
   const pool = await getAccPool();
   const r = await pool.request().query(`
     SELECT Id, BrandCode, InterfaceBrandCode
@@ -30,9 +33,9 @@ export async function getBrandErpInterfaceMap(
   claimBrandCode: string,
 ): Promise<BrandErpInterfaceMapRow | null> {
   const pool = await getAccPool();
-  const r = await pool.request()
-    .input("brand", sql.NVarChar, claimBrandCode.trim())
-    .query(`
+  const r = await pool
+    .request()
+    .input("brand", sql.NVarChar, claimBrandCode.trim()).query(`
       SELECT Id, BrandCode, InterfaceBrandCode
       FROM [dbo].[AccBrandErpInterface]
       WHERE BrandCode = @brand
@@ -58,38 +61,46 @@ export async function upsertBrandErpInterfaceMap(
   const existing = await getBrandErpInterfaceMap(claim);
 
   if (existing) {
-    await pool.request()
-      .input("id", sql.Int, existing.id)
-      .input("target", sql.NVarChar, target)
-      .query(`
-        UPDATE [dbo].[AccBrandErpInterface]
-        SET InterfaceBrandCode = @target, UpdatedAt = SYSDATETIME()
-        WHERE Id = @id
-      `);
+    await writeBothPools(async (tx) => {
+      await tx
+        .request()
+        .input("id", sql.Int, existing.id)
+        .input("target", sql.NVarChar, target).query(`
+          UPDATE [dbo].[AccBrandErpInterface]
+          SET InterfaceBrandCode = @target, UpdatedAt = SYSDATETIME()
+          WHERE Id = @id
+        `);
+    });
     return { ...existing, interfaceBrandCode: target };
   }
 
-  const ins = await pool.request()
-    .input("brand", sql.NVarChar, claim)
-    .input("target", sql.NVarChar, target)
-    .input("user", sql.Int, userId || null)
-    .query(`
-      INSERT INTO [dbo].[AccBrandErpInterface] (BrandCode, InterfaceBrandCode, CreatedBy)
-      OUTPUT INSERTED.Id, INSERTED.BrandCode, INSERTED.InterfaceBrandCode
-      VALUES (@brand, @target, @user)
-    `);
-  return mapRow(ins.recordset[0] as Record<string, unknown>);
+  // Production's OUTPUT is the return value; UAT runs the same INSERT and, with
+  // both identity counters in lockstep, lands on the same Id.
+  const inserted = await writeBothPools(async (tx) => {
+    const ins = await tx
+      .request()
+      .input("brand", sql.NVarChar, claim)
+      .input("target", sql.NVarChar, target)
+      .input("user", sql.Int, userId || null).query(`
+        INSERT INTO [dbo].[AccBrandErpInterface] (BrandCode, InterfaceBrandCode, CreatedBy)
+        OUTPUT INSERTED.Id, INSERTED.BrandCode, INSERTED.InterfaceBrandCode
+        VALUES (@brand, @target, @user)
+      `);
+    return ins.recordset[0] as Record<string, unknown>;
+  });
+  return mapRow(inserted);
 }
 
-export async function deleteBrandErpInterfaceMap(claimBrandCode: string): Promise<void> {
+export async function deleteBrandErpInterfaceMap(
+  claimBrandCode: string,
+): Promise<void> {
   const claim = claimBrandCode.trim().toUpperCase();
   if (!claim) throw new Error("กรุณาระบุแบรนด์เบิก");
 
-  const pool = await getAccPool();
-  await pool.request()
-    .input("brand", sql.NVarChar, claim)
-    .query(`
-      DELETE FROM [dbo].[AccBrandErpInterface]
-      WHERE BrandCode = @brand
-    `);
+  await writeBothPools(async (tx) => {
+    await tx.request().input("brand", sql.NVarChar, claim).query(`
+        DELETE FROM [dbo].[AccBrandErpInterface]
+        WHERE BrandCode = @brand
+      `);
+  });
 }

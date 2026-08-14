@@ -1,4 +1,5 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
+import { writeBothPools } from "@/lib/acc/dual-write";
 import { isErpInterfaceBrandCode } from "@/lib/acc/erp-interface-brands";
 import {
   allInterfaceBrandCodes,
@@ -42,7 +43,10 @@ export async function loadInterfaceBrandsByApproverIds(
     `);
 
     const byApprover = new Map<number, string[]>();
-    for (const row of r.recordset as { ApproverId: number; InterfaceBrandCode: string }[]) {
+    for (const row of r.recordset as {
+      ApproverId: number;
+      InterfaceBrandCode: string;
+    }[]) {
       const id = row.ApproverId;
       const list = byApprover.get(id) ?? [];
       list.push(row.InterfaceBrandCode.trim().toUpperCase());
@@ -56,7 +60,10 @@ export async function loadInterfaceBrandsByApproverIds(
     return map;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("AccApproverInterfaceBrand") || msg.includes("Invalid object name")) {
+    if (
+      msg.includes("AccApproverInterfaceBrand") ||
+      msg.includes("Invalid object name")
+    ) {
       for (const id of approverIds) map.set(id, null);
       return map;
     }
@@ -64,7 +71,9 @@ export async function loadInterfaceBrandsByApproverIds(
   }
 }
 
-export async function getApproverInterfaceBrandCodes(approverId: number): Promise<string[] | null> {
+export async function getApproverInterfaceBrandCodes(
+  approverId: number,
+): Promise<string[] | null> {
   const map = await loadInterfaceBrandsByApproverIds([approverId]);
   return map.get(approverId) ?? null;
 }
@@ -73,31 +82,27 @@ export async function setApproverInterfaceBrands(
   approverId: number,
   codes: string[] | null,
 ): Promise<void> {
-  const pool = await getAccPool();
-  const tx = pool.transaction();
-  await tx.begin();
-  try {
-    await tx.request()
+  await writeBothPools(async (tx) => {
+    await tx
+      .request()
       .input("aid", sql.Int, approverId)
-      .query(`DELETE FROM [dbo].[AccApproverInterfaceBrand] WHERE ApproverId = @aid`);
+      .query(
+        `DELETE FROM [dbo].[AccApproverInterfaceBrand] WHERE ApproverId = @aid`,
+      );
 
     if (codes != null && codes.length > 0) {
       const normalized = normalizeCodes(codes);
       for (const code of normalized) {
-        await tx.request()
+        await tx
+          .request()
           .input("aid", sql.Int, approverId)
-          .input("code", sql.NVarChar, code)
-          .query(`
+          .input("code", sql.NVarChar, code).query(`
             INSERT INTO [dbo].[AccApproverInterfaceBrand] (ApproverId, InterfaceBrandCode)
             VALUES (@aid, @code)
           `);
       }
     }
-    await tx.commit();
-  } catch (e) {
-    await tx.rollback();
-    throw e;
-  }
+  });
 }
 
 export async function resolveApproverInterfaceAccess(
@@ -110,9 +115,7 @@ export async function resolveApproverInterfaceAccess(
   }
 
   const pool = await getAccPool();
-  const r = await pool.request()
-    .input("email", sql.NVarChar, email)
-    .query(`
+  const r = await pool.request().input("email", sql.NVarChar, email).query(`
       SELECT a.Id
       FROM [dbo].[AccApprover] a
       WHERE LOWER(a.Email) = LOWER(@email) AND a.IsActive = 1
