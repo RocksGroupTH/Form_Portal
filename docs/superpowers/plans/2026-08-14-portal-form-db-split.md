@@ -20,24 +20,44 @@
 - `AccSequence` in PROD seeds to `TOF/2026/46` and `TRL/2026/9`; in UAT both prefixes seed to `9000`.
 - `AccSetting.ERP_INTERFACE_ENV` is `Production` in PROD and `Sandbox` in UAT — never copied verbatim.
 
-## Progress (2026-08-14)
+## Status: complete (2026-08-14)
 
 | Task | Status | Commit |
 |------|--------|--------|
 | 1 — Point the app at `Rocks_Portal_Form` | Done | `9e745f1` |
 | 2 — Baseline schema generator | Done — 43 tables, 15 checks, 112 keys/indexes, 26 FKs | `cb55429` |
 | 3 — Seed script | Done — guard rails exercised | `4616ecf` |
-| 6, steps 1–2 — Verification script | Done — exercised against `Fast_Form` | `0c5338f` |
-| 4 — Build `Rocks_Portal_Form` | **Blocked** — `Login failed for user 'saai'` | — |
-| 5 — Build `Rocks_Portal_Form_UAT` | **Blocked** — same | — |
-| 6, steps 3–6 — Cutover | Blocked behind Task 4 | — |
+| 4 — Build `Rocks_Portal_Form` | Done — baseline applied (196 batches), seeded, `PASS` | — |
+| 5 — Build `Rocks_Portal_Form_UAT` | Done — same, with UAT values, `PASS` | — |
+| 6 — Verification script and cutover | Done — `.env.local` switched, app boots | `0c5338f` |
 
-The baseline parses into 196 batches and reaches the server; the only failure is
-authentication. Nothing else stands between here and a working database.
+### Verification results
 
-## Blocker
+- `verify-059 --db Rocks_Portal_Form --env prod` → **PASS**
+- `verify-059 --db Rocks_Portal_Form_UAT --env uat` → **PASS**
+- Column-level schema diff against `Fast_Form`: **439 / 439 columns identical**
+  in both targets — same types, lengths, nullability and identity flags.
+- Row-level diff of the 18 copied master tables (60 rows), excluding datetime
+  columns: **identical**.
+- `AccSetting` differs by design: `ERP_INTERFACE_ENV` is `Production` in PROD
+  and `Sandbox` in UAT.
+- `Fast_Form` still reports its 52 `AccRequest` / 90 `AccApproval` / 202
+  `AccEmailQueue` rows — Rocks Fast was not touched.
 
-Tasks 4 and 5 cannot run until a DBA grants the `saai` login access to both databases. As of 2026-08-14 both fail with `Login failed for user 'saai'`. Tasks 1–3 and 6 have no such dependency; Task 6's verification step does.
+### Known cosmetic deviation
+
+`CreatedAt` / `UpdatedAt` on copied config rows drift by **up to 2 ms**. The
+`mssql` driver reads `datetime2(7)` into a millisecond-resolution JavaScript
+`Date`, so sub-millisecond precision is lost on the round trip. Column types are
+identical; only these audit timestamps differ, and no application logic compares
+them at that resolution. Accepted rather than worked around.
+
+### The blocker, for the record
+
+Tasks 4 and 5 were blocked until a DBA granted the `saai` login access to both
+databases. Before the grant, `apply-sql` parsed the baseline into 196 batches
+and reached the server, failing only with `Login failed for user 'saai'`. The
+grant landed on 2026-08-14 and both databases reported `CREATE TABLE = 1`.
 
 Required grant, run by someone with server-level rights:
 
