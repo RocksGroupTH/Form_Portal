@@ -2,9 +2,20 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { requireAuth } from "@/lib/api-auth";
 import { deleteFile } from "@/lib/storage";
-import { isSharePointConfigured, uploadFileToSharePoint, deleteFileFromSharePoint } from "@/lib/sharepoint";
-import { buildAccFolderPath, buildAccFileName } from "@/lib/acc/sharepoint-path";
-import { TRAVEL_ITEM_TYPE_LABEL_TH, type TravelItemType } from "@/features/accounting/constants";
+import {
+  isSharePointConfigured,
+  uploadFileToSharePoint,
+  deleteFileFromSharePoint,
+} from "@/lib/sharepoint";
+import {
+  buildAccFolderPath,
+  buildAccFileName,
+} from "@/lib/acc/sharepoint-path";
+import { resolveFormEnvironment } from "@/lib/form-environment";
+import {
+  TRAVEL_ITEM_TYPE_LABEL_TH,
+  type TravelItemType,
+} from "@/features/accounting/constants";
 import type { AccFileMeta } from "@/features/accounting/types";
 
 /* ── POST /api/request/accounting/requests/[id]/files ── */
@@ -65,7 +76,8 @@ export async function POST(
         .input("itemId", sql.Int, refId)
         .query(`SELECT ItemType FROM AccTravelExpenseItem WHERE Id = @itemId`);
       const it = itemRes.recordset[0]?.ItemType as TravelItemType | undefined;
-      if (it && TRAVEL_ITEM_TYPE_LABEL_TH[it]) typeLabel = TRAVEL_ITEM_TYPE_LABEL_TH[it];
+      if (it && TRAVEL_ITEM_TYPE_LABEL_TH[it])
+        typeLabel = TRAVEL_ITEM_TYPE_LABEL_TH[it];
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
@@ -99,19 +111,39 @@ export async function POST(
           "SharePoint storage is not configured (set SHAREPOINT_ACC_SITE / SHAREPOINT_ACC_FOLDER)",
         );
       }
-      const folderPath = buildAccFolderPath({ requestNo, requestId, year: null });
-      const filename = buildAccFileName({
-        typeLabel, requestNo, requestId, fileId: newId, originalName: file.name,
+      const folderPath = buildAccFolderPath({
+        requestNo,
+        requestId,
+        year: null,
+        environment: await resolveFormEnvironment(),
       });
-      const { itemId } = await uploadFileToSharePoint(folderPath, filename, buffer, contentType);
+      const filename = buildAccFileName({
+        typeLabel,
+        requestNo,
+        requestId,
+        fileId: newId,
+        originalName: file.name,
+      });
+      const { itemId } = await uploadFileToSharePoint(
+        folderPath,
+        filename,
+        buffer,
+        contentType,
+      );
       storagePath = itemId;
     } catch (storageErr) {
       // Roll back the placeholder row so we never keep an orphan record.
-      await pool.request().input("id", sql.Int, newId)
-        .query(`DELETE FROM AccRequestFile WHERE Id = @id`).catch(() => {});
+      await pool
+        .request()
+        .input("id", sql.Int, newId)
+        .query(`DELETE FROM AccRequestFile WHERE Id = @id`)
+        .catch(() => {});
       console.error("POST .../files storage error:", storageErr);
       return NextResponse.json(
-        { ok: false, error: "อัปโหลดไฟล์ขึ้น SharePoint ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง" },
+        {
+          ok: false,
+          error: "อัปโหลดไฟล์ขึ้น SharePoint ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง",
+        },
         { status: 502 },
       );
     }
@@ -121,7 +153,9 @@ export async function POST(
       .request()
       .input("id", sql.Int, newId)
       .input("storagePath", sql.NVarChar(1000), storagePath)
-      .query(`UPDATE AccRequestFile SET StoragePath = @storagePath, StorageBackend = 'sharepoint' WHERE Id = @id`);
+      .query(
+        `UPDATE AccRequestFile SET StoragePath = @storagePath, StorageBackend = 'sharepoint' WHERE Id = @id`,
+      );
 
     const meta: AccFileMeta = {
       id: newId,
@@ -133,7 +167,10 @@ export async function POST(
 
     return NextResponse.json({ ok: true, data: meta });
   } catch (err) {
-    console.error("POST /api/request/accounting/requests/[id]/files error:", err);
+    console.error(
+      "POST /api/request/accounting/requests/[id]/files error:",
+      err,
+    );
     return NextResponse.json(
       { ok: false, error: "Internal server error" },
       { status: 500 },
@@ -172,7 +209,10 @@ export async function DELETE(
       .input("requestId", sql.Int, requestId)
       .query(`SELECT Status FROM AccRequest WHERE Id = @requestId`);
     if (statusCheck.recordset.length === 0) {
-      return NextResponse.json({ ok: false, error: "Request not found" }, { status: 404 });
+      return NextResponse.json(
+        { ok: false, error: "Request not found" },
+        { status: 404 },
+      );
     }
     const status = statusCheck.recordset[0].Status as string;
     if (status !== "Draft" && status !== "Returned") {
@@ -214,7 +254,10 @@ export async function DELETE(
 
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error("DELETE /api/request/accounting/requests/[id]/files error:", err);
+    console.error(
+      "DELETE /api/request/accounting/requests/[id]/files error:",
+      err,
+    );
     return NextResponse.json(
       { ok: false, error: "Internal server error" },
       { status: 500 },

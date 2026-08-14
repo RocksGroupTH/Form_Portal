@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole } from "@/lib/api-auth";
-import { processQueue } from "@/lib/acc/email-queue";
+import { processQueueBoth } from "@/lib/acc/email-queue";
 
 /**
  * POST /api/request/accounting/email/process
  *
- * Drains the accounting email queue (AccEmailQueue).
+ * Drains AccEmailQueue in BOTH form databases. A form flagged UAT queues its
+ * mail in the UAT database, which a production-scoped drain would never see.
  * Mirrors the guard used by /api/forms/email/process:
  *   - Allows a valid CRON_SECRET header to bypass role check (for scheduled jobs).
  *   - Otherwise requires IT Admin or System Admin.
@@ -19,7 +20,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const result = await processQueue();
+    const result = await processQueueBoth();
     return NextResponse.json({ ok: true, data: result });
   } catch (err) {
     console.error("[api/request/accounting/email/process] POST", err);

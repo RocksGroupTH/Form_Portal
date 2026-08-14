@@ -19,11 +19,23 @@ export function buildAccFolderPath(opts: {
   year: number | null;
   /** Form's top-level SharePoint folder segment. Defaults to FORM_CODE ("AP-1"). */
   formCode?: string;
+  /**
+   * Which environment the request belongs to. UAT attachments go under a
+   * sibling "_UAT" folder so test files never mix with real ones — both
+   * environments share one SharePoint library.
+   */
+  environment?: "Production" | "UAT";
 }): string {
   const base = (env.SHAREPOINT_ACC_FOLDER ?? "").replace(/^\/+|\/+$/g, "");
-  const parts = [base, opts.formCode ?? FORM_CODE].filter(Boolean);
+  const parts = [
+    base,
+    opts.environment === "UAT" ? "_UAT" : "",
+    opts.formCode ?? FORM_CODE,
+  ].filter(Boolean);
   if (opts.requestNo) {
-    parts.push(String(opts.year ?? yearFromRequestNo(opts.requestNo) ?? "unknown"));
+    parts.push(
+      String(opts.year ?? yearFromRequestNo(opts.requestNo) ?? "unknown"),
+    );
     parts.push(sanitizeSegment(opts.requestNo));
   } else {
     parts.push(DRAFT_DIR);
@@ -41,7 +53,8 @@ export function buildAccFileName(opts: {
   originalName: string;
 }): string {
   const dotIdx = opts.originalName.lastIndexOf(".");
-  const ext = dotIdx > 0 ? opts.originalName.slice(dotIdx + 1).toLowerCase() : "bin";
+  const ext =
+    dotIdx > 0 ? opts.originalName.slice(dotIdx + 1).toLowerCase() : "bin";
   const ref = opts.requestNo ?? `draft${opts.requestId}`;
   const stem = sanitizeSegment(`${opts.typeLabel}_${ref}_${opts.fileId}`);
   return `${stem}.${sanitizeSegment(ext)}`;
