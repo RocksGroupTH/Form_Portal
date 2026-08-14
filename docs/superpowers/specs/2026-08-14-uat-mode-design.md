@@ -1,8 +1,16 @@
 # UAT mode — per-session environment switch with a per-form flag
 
 **Date:** 2026-08-14
-**Status:** Approved design, not yet implemented
+**Status:** SUPERSEDED, never implemented
+**Superseded by:** `docs/superpowers/specs/2026-08-14-per-form-environment-design.md`
 **Builds on:** `docs/superpowers/specs/2026-08-13-portal-form-db-split-design.md`
+
+> This design routed by session: a tester switched the whole application into
+> UAT mode. It was replaced the same day by per-form routing, which lets
+> production work continue uninterrupted while individual forms are under test.
+> Kept for the reasoning in "Why the mode is per-session and not per-form" —
+> the successor accepts those costs deliberately and mitigates them with an
+> explicit route table and a coverage check.
 
 ## Problem
 
