@@ -1,6 +1,11 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
+import { queryBothPools } from "@/lib/acc/query-both";
 import { hrEmployeeTable } from "@/lib/hr/constants";
-import { fmtTravelSpanLabel, fmtTravelDatesList, fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
+import {
+  fmtTravelSpanLabel,
+  fmtTravelDatesList,
+  fmtYmdDisplay,
+} from "@/features/accounting/lib/format-travel-dates";
 import { fmtReportVehicleNames } from "@/features/accounting/lib/travel-sections";
 import * as XLSX from "xlsx-js-style";
 
@@ -61,6 +66,12 @@ export interface ReportRow {
   managerEmail?: string | null;
   /** True when the signed-in user already approved the MANAGER step (My Work API). */
   viewerManagerApproved?: boolean;
+  /**
+   * Which database this row came from. Set by queryBothPools on the endpoints
+   * that merge; absent on single-database reads. UAT rows are test data and are
+   * badged as such in the UI.
+   */
+  environment?: "Production" | "UAT";
 }
 
 function ymd(d: Date): string {
@@ -206,9 +217,15 @@ function parseCsvList(raw: unknown): string[] | undefined {
   return raw.split(",").filter(Boolean);
 }
 
-function parseVehicleAmountField(raw: string | undefined, dayTotal: number): ReportTravelVehicleLine[] {
+function parseVehicleAmountField(
+  raw: string | undefined,
+  dayTotal: number,
+): ReportTravelVehicleLine[] {
   if (!raw?.trim()) return [];
-  const parts = raw.split(";").map((p) => p.trim()).filter(Boolean);
+  const parts = raw
+    .split(";")
+    .map((p) => p.trim())
+    .filter(Boolean);
   const out: ReportTravelVehicleLine[] = [];
   let hasAmounts = false;
   for (let i = 0; i < parts.length; i++) {
@@ -239,7 +256,9 @@ function parseVehicleAmountField(raw: string | undefined, dayTotal: number): Rep
   return out;
 }
 
-export function parseTravelDayLines(raw: unknown): ReportTravelDayLine[] | undefined {
+export function parseTravelDayLines(
+  raw: unknown,
+): ReportTravelDayLine[] | undefined {
   if (typeof raw !== "string" || !raw.trim()) return undefined;
   const lines: ReportTravelDayLine[] = [];
   const parts = raw.split(",");
@@ -263,26 +282,32 @@ export function parseTravelDayLines(raw: unknown): ReportTravelDayLine[] | undef
   return lines.length > 0 ? lines : undefined;
 }
 
-function mapRow(x: Record<string, unknown>, view: "request" | "day"): ReportRow {
+function mapRow(
+  x: Record<string, unknown>,
+  view: "request" | "day",
+): ReportRow {
   const travelDayLines =
     view === "request"
       ? parseTravelDayLines(x.TravelDaysCsv)
       : x.TravelDate
         ? (() => {
-            const totalAmount = x.TotalAmount === null || x.TotalAmount === undefined
-              ? 0
-              : Number(x.TotalAmount);
+            const totalAmount =
+              x.TotalAmount === null || x.TotalAmount === undefined
+                ? 0
+                : Number(x.TotalAmount);
             const vehicleName = (x.VehicleName as string)?.trim() || "";
             const vehicles = vehicleName
               ? [{ vehicleName, amount: totalAmount }]
               : [];
-            return [{
-              travelDate: ymd(x.TravelDate as Date),
-              totalAmount,
-              vehicleNames: vehicles.map((v) => v.vehicleName),
-              vehicles,
-              workDetail: (x.WorkDetail as string)?.trim() || null,
-            }];
+            return [
+              {
+                travelDate: ymd(x.TravelDate as Date),
+                totalAmount,
+                vehicleNames: vehicles.map((v) => v.vehicleName),
+                vehicles,
+                workDetail: (x.WorkDetail as string)?.trim() || null,
+              },
+            ];
           })()
         : undefined;
 
@@ -296,15 +321,24 @@ function mapRow(x: Record<string, unknown>, view: "request" | "day"): ReportRow 
     requesterDepartmentName: (x.RequesterDepartmentName as string) ?? null,
     brandCode: (x.BrandCode as string) ?? null,
     travelDate: x.TravelDate ? ymd(x.TravelDate as Date) : null,
-    travelDateTo: view === "request" && x.TravelDateTo ? ymd(x.TravelDateTo as Date) : null,
+    travelDateTo:
+      view === "request" && x.TravelDateTo ? ymd(x.TravelDateTo as Date) : null,
     dayCount: view === "request" ? Number(x.DayCount) || 0 : undefined,
-    travelDates: view === "request" ? parseCsvList(x.TravelDatesCsv) : undefined,
+    travelDates:
+      view === "request" ? parseCsvList(x.TravelDatesCsv) : undefined,
     travelDayLines,
     vehicleName: (x.VehicleName as string) ?? null,
-    vehicleNames: view === "request" ? parseCsvList(x.VehicleNamesCsv) : undefined,
+    vehicleNames:
+      view === "request" ? parseCsvList(x.VehicleNamesCsv) : undefined,
     workDetail: (x.WorkDetail as string) ?? null,
-    totalDistanceKm: x.TotalDistanceKm === null || x.TotalDistanceKm === undefined ? null : Number(x.TotalDistanceKm),
-    totalAmount: x.TotalAmount === null || x.TotalAmount === undefined ? null : Number(x.TotalAmount),
+    totalDistanceKm:
+      x.TotalDistanceKm === null || x.TotalDistanceKm === undefined
+        ? null
+        : Number(x.TotalDistanceKm),
+    totalAmount:
+      x.TotalAmount === null || x.TotalAmount === undefined
+        ? null
+        : Number(x.TotalAmount),
     status: x.Status as string,
     paymentDate: x.PaymentDate ? ymd(x.PaymentDate as Date) : null,
     submittedAt: x.SubmittedAt ? (x.SubmittedAt as Date).toISOString() : null,
@@ -315,7 +349,9 @@ function mapRow(x: Record<string, unknown>, view: "request" | "day"): ReportRow 
     managerStaffId: (x.ManagerStaffId as number) ?? null,
     managerEmail: (x.ManagerEmail as string) ?? null,
     viewerManagerApproved:
-      x.ViewerManagerApproved != null ? Number(x.ViewerManagerApproved) === 1 : undefined,
+      x.ViewerManagerApproved != null
+        ? Number(x.ViewerManagerApproved) === 1
+        : undefined,
   };
 }
 
@@ -344,22 +380,44 @@ function buildListQuery(
   `;
 }
 
+/**
+ * Sort a merged result the way the SQL used to.
+ *
+ * `buildListQuery` orders by `r.SubmittedAt DESC, r.Id DESC`, but that only
+ * orders within each database. Reapply it across the concatenation.
+ */
+function bySubmittedAtDesc(a: ReportRow, b: ReportRow): number {
+  const at = a.submittedAt ? new Date(a.submittedAt).getTime() : 0;
+  const bt = b.submittedAt ? new Date(b.submittedAt).getTime() : 0;
+  if (at !== bt) return bt - at;
+  return b.id - a.id;
+}
+
 /** Requests the user submitted/owns (excludes drafts) — aggregated per request. */
 export async function listMyRequestRows(userId: number): Promise<ReportRow[]> {
-  const pool = await getAccPool();
-  const res = await pool.request().input("uid", sql.Int, userId).query(
-    buildListQuery(
-      "request",
-      `r.Status <> 'Draft' AND (r.CreatedBy = @uid OR r.SubmittedBy = @uid)`,
-      "r.SubmittedAt DESC, r.Id DESC",
-    ),
-  );
-  return (res.recordset as Record<string, unknown>[]).map((x) => mapRow(x, "request"));
+  const rows = await queryBothPools(async (pool) => {
+    const res = await pool
+      .request()
+      .input("uid", sql.Int, userId)
+      .query(
+        buildListQuery(
+          "request",
+          `r.Status <> 'Draft' AND (r.CreatedBy = @uid OR r.SubmittedBy = @uid)`,
+          "r.SubmittedAt DESC, r.Id DESC",
+        ),
+      );
+    return (res.recordset as Record<string, unknown>[]).map((x) =>
+      mapRow(x, "request"),
+    );
+  });
+  return rows.sort(bySubmittedAtDesc);
 }
 
 /** Requests the user has a part in approving (manager or account) — aggregated per request. */
-export async function listMyWorkRows(staffId: number | null, email: string | null): Promise<ReportRow[]> {
-  const pool = await getAccPool();
+export async function listMyWorkRows(
+  staffId: number | null,
+  email: string | null,
+): Promise<ReportRow[]> {
   const viewerManagerSelect = `,
   (SELECT TOP 1 CASE WHEN a.Status = N'Approved' THEN 1 ELSE 0 END
    FROM [dbo].[AccApproval] a
@@ -373,13 +431,15 @@ export async function listMyWorkRows(staffId: number | null, email: string | nul
        )
      )
   ) AS ViewerManagerApproved`;
-  const res = await pool.request()
-    .input("staffId", sql.Int, staffId)
-    .input("email", sql.NVarChar, email ?? "")
-    .query(
-      buildListQuery(
-        "request",
-        `r.Status <> 'Draft' AND EXISTS (
+  const rows = await queryBothPools(async (pool) => {
+    const res = await pool
+      .request()
+      .input("staffId", sql.Int, staffId)
+      .input("email", sql.NVarChar, email ?? "")
+      .query(
+        buildListQuery(
+          "request",
+          `r.Status <> 'Draft' AND EXISTS (
           SELECT 1 FROM [dbo].[AccApproval] a
           WHERE a.RequestId = r.Id
             AND (
@@ -396,31 +456,56 @@ export async function listMyWorkRows(staffId: number | null, email: string | nul
               )
             )
         )`,
-        "r.SubmittedAt DESC, r.Id DESC",
-        viewerManagerSelect,
-      ),
+          "r.SubmittedAt DESC, r.Id DESC",
+          viewerManagerSelect,
+        ),
+      );
+    return (res.recordset as Record<string, unknown>[]).map((x) =>
+      mapRow(x, "request"),
     );
-  return (res.recordset as Record<string, unknown>[]).map((x) => mapRow(x, "request"));
+  });
+  return rows.sort(bySubmittedAtDesc);
 }
 
 export async function queryReport(f: ReportFilters): Promise<ReportRow[]> {
-  const pool = await getAccPool();
-  const req = pool.request();
   const view = f.view ?? "request";
-  const where: string[] = ["r.Status <> 'Draft'"];
+  const rows = await queryBothPools(async (pool) => {
+    const req = pool.request();
+    const where: string[] = ["r.Status <> 'Draft'"];
 
-  const dateCol =
-    f.dateBasis === "submit" ? "r.SubmittedAt" :
-    f.dateBasis === "payment" ? "r.PaymentDate" : "t.TravelDate";
-  if (f.from) { req.input("from", sql.Date, f.from); where.push(`${dateCol} >= @from`); }
-  if (f.to) { req.input("to", sql.Date, f.to); where.push(`${dateCol} <= @to`); }
-  if (f.brandCode) { req.input("brand", sql.NVarChar, f.brandCode); where.push("r.BrandCode = @brand"); }
-  if (f.status) { req.input("status", sql.NVarChar, f.status); where.push("r.Status = @status"); }
-  if (f.departmentName) { req.input("dept", sql.NVarChar, f.departmentName); where.push("r.RequesterDepartmentName = @dept"); }
-  if (f.staffId) { req.input("staff", sql.Int, f.staffId); where.push("r.StaffId = @staff"); }
-  if (f.vehicleName) {
-    req.input("veh", sql.NVarChar, f.vehicleName);
-    where.push(`EXISTS (
+    const dateCol =
+      f.dateBasis === "submit"
+        ? "r.SubmittedAt"
+        : f.dateBasis === "payment"
+          ? "r.PaymentDate"
+          : "t.TravelDate";
+    if (f.from) {
+      req.input("from", sql.Date, f.from);
+      where.push(`${dateCol} >= @from`);
+    }
+    if (f.to) {
+      req.input("to", sql.Date, f.to);
+      where.push(`${dateCol} <= @to`);
+    }
+    if (f.brandCode) {
+      req.input("brand", sql.NVarChar, f.brandCode);
+      where.push("r.BrandCode = @brand");
+    }
+    if (f.status) {
+      req.input("status", sql.NVarChar, f.status);
+      where.push("r.Status = @status");
+    }
+    if (f.departmentName) {
+      req.input("dept", sql.NVarChar, f.departmentName);
+      where.push("r.RequesterDepartmentName = @dept");
+    }
+    if (f.staffId) {
+      req.input("staff", sql.Int, f.staffId);
+      where.push("r.StaffId = @staff");
+    }
+    if (f.vehicleName) {
+      req.input("veh", sql.NVarChar, f.vehicleName);
+      where.push(`EXISTS (
       SELECT 1 FROM [dbo].[AccTravelExpense] te
       WHERE te.RequestId = r.Id AND (
         LTRIM(RTRIM(te.VehicleName)) = @veh
@@ -430,14 +515,25 @@ export async function queryReport(f: ReportFilters): Promise<ReportRow[]> {
         )
       )
     )`);
-  }
-  if (f.paymentDate) { req.input("pd", sql.Date, f.paymentDate); where.push("r.PaymentDate = @pd"); }
+    }
+    if (f.paymentDate) {
+      req.input("pd", sql.Date, f.paymentDate);
+      where.push("r.PaymentDate = @pd");
+    }
 
-  const res = await req.query(
-    buildListQuery(view, where.join(" AND "), "r.SubmittedAt DESC, r.Id DESC"),
-  );
+    const res = await req.query(
+      buildListQuery(
+        view,
+        where.join(" AND "),
+        "r.SubmittedAt DESC, r.Id DESC",
+      ),
+    );
 
-  return (res.recordset as Record<string, unknown>[]).map((x) => mapRow(x, view));
+    return (res.recordset as Record<string, unknown>[]).map((x) =>
+      mapRow(x, view),
+    );
+  });
+  return rows.sort(bySubmittedAtDesc);
 }
 
 export interface ReportMeta {
@@ -446,11 +542,20 @@ export interface ReportMeta {
   filterSummary?: string;
 }
 
-export function buildReportWorkbook(rows: ReportRow[], meta: ReportMeta): Buffer {
-  const headerStyle = { font: { bold: true }, alignment: { horizontal: "center" as const } };
+export function buildReportWorkbook(
+  rows: ReportRow[],
+  meta: ReportMeta,
+): Buffer {
+  const headerStyle = {
+    font: { bold: true },
+    alignment: { horizontal: "center" as const },
+  };
   const moneyStyle = { alignment: { horizontal: "right" as const } };
   // Total distance (km) — always show 2 decimal places in Excel.
-  const distanceStyle = { alignment: { horizontal: "right" as const }, numFmt: "#,##0.00" };
+  const distanceStyle = {
+    alignment: { horizontal: "right" as const },
+    numFmt: "#,##0.00",
+  };
 
   const aoa: (string | number | null)[][] = [];
   aoa.push([meta.companyName ?? "Rocks Group"]);
@@ -461,8 +566,18 @@ export function buildReportWorkbook(rows: ReportRow[], meta: ReportMeta): Buffer
 
   const headerRowIndex = aoa.length;
   const columns = [
-    "เลขที่", "รหัสพนักงาน", "ชื่อ-สกุล", "แผนก", "แบรนด์", "วันเดินทาง",
-    "พาหนะ", "ระยะทางรวม (กม.)", "ยอดรวม (บาท)", "สถานะ", "วันที่จ่าย", "วันที่ส่ง",
+    "เลขที่",
+    "รหัสพนักงาน",
+    "ชื่อ-สกุล",
+    "แผนก",
+    "แบรนด์",
+    "วันเดินทาง",
+    "พาหนะ",
+    "ระยะทางรวม (กม.)",
+    "ยอดรวม (บาท)",
+    "สถานะ",
+    "วันที่จ่าย",
+    "วันที่ส่ง",
   ];
   aoa.push(columns);
 
@@ -472,10 +587,21 @@ export function buildReportWorkbook(rows: ReportRow[], meta: ReportMeta): Buffer
         ? `${r.travelDates.length} วัน · ${fmtTravelDatesList(r.travelDates)}`
         : r.dayCount && r.dayCount > 1
           ? fmtTravelSpanLabel(r.travelDate, r.travelDateTo ?? null, r.dayCount)
-          : r.travelDate ? fmtYmdDisplay(r.travelDate) : null;
+          : r.travelDate
+            ? fmtYmdDisplay(r.travelDate)
+            : null;
     aoa.push([
-      r.requestNo, r.staffId, r.requesterFullName, r.requesterDepartmentName, r.brandCode,
-      travelDisplay, fmtReportVehicleNames(r), r.totalDistanceKm, r.totalAmount, r.status, r.paymentDate,
+      r.requestNo,
+      r.staffId,
+      r.requesterFullName,
+      r.requesterDepartmentName,
+      r.brandCode,
+      travelDisplay,
+      fmtReportVehicleNames(r),
+      r.totalDistanceKm,
+      r.totalAmount,
+      r.status,
+      r.paymentDate,
       r.submittedAt ? r.submittedAt.slice(0, 10) : null,
     ]);
   }

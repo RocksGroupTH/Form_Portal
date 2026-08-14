@@ -2,7 +2,7 @@
 --
 -- Per-form routing means a merged list (/my-request, /my-work, the reports) can
 -- hold rows from both databases at once, and an id in a URL has to identify its
--- own database. Starting UAT at 900001 makes both true: ids cannot collide, and
+-- own database. Starting UAT at 900000 makes both true: ids cannot collide, and
 -- id >= 900000 means UAT on sight.
 --
 -- The 19 master/config tables are deliberately absent. Their ids are kept
