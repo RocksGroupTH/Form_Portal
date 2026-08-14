@@ -20,6 +20,21 @@
 - `AccSequence` in PROD seeds to `TOF/2026/46` and `TRL/2026/9`; in UAT both prefixes seed to `9000`.
 - `AccSetting.ERP_INTERFACE_ENV` is `Production` in PROD and `Sandbox` in UAT — never copied verbatim.
 
+## Progress (2026-08-14)
+
+| Task | Status | Commit |
+|------|--------|--------|
+| 1 — Point the app at `Rocks_Portal_Form` | Done | `9e745f1` |
+| 2 — Baseline schema generator | Done — 43 tables, 15 checks, 112 keys/indexes, 26 FKs | `cb55429` |
+| 3 — Seed script | Done — guard rails exercised | `4616ecf` |
+| 6, steps 1–2 — Verification script | Done — exercised against `Fast_Form` | `0c5338f` |
+| 4 — Build `Rocks_Portal_Form` | **Blocked** — `Login failed for user 'saai'` | — |
+| 5 — Build `Rocks_Portal_Form_UAT` | **Blocked** — same | — |
+| 6, steps 3–6 — Cutover | Blocked behind Task 4 | — |
+
+The baseline parses into 196 batches and reaches the server; the only failure is
+authentication. Nothing else stands between here and a working database.
+
 ## Blocker
 
 Tasks 4 and 5 cannot run until a DBA grants the `saai` login access to both databases. As of 2026-08-14 both fail with `Login failed for user 'saai'`. Tasks 1–3 and 6 have no such dependency; Task 6's verification step does.
