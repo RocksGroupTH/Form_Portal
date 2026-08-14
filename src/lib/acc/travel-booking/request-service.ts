@@ -383,7 +383,7 @@ async function resolveSettingName(
   return (r.recordset[0]?.Name as string) ?? null;
 }
 
-/** Fast_Data.dbo.TravelProvince is cross-database from Fast_Form — resolved via its own pool. */
+/** Fast_Data.dbo.TravelProvince is cross-database from the form DB — resolved via its own pool. */
 async function resolveProvinceName(id: number | null): Promise<string | null> {
   if (!id) return null;
   const pool = await getDataPool();

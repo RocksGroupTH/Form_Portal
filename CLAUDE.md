@@ -18,11 +18,11 @@ npm run dev                   # http://localhost:3020
 | Database | Pool | Purpose |
 |----------|------|---------|
 | **Fast_Core** | `getCorePool()` | TeamMember (auth), config, brand/DB/BC connection settings |
-| **Fast_Form** | `getFormPool()` | Form definitions, submissions, approvals, files, logs |
+| **Rocks_Portal_Form** | `getFormPool()` | Form definitions, submissions, approvals, files, logs, and all `Acc*` Accounting tables. Form Portal's own database — `Rocks_Portal_Form_UAT` is the UAT twin, selected by `MSSQL_FORM_DATABASE` |
 | **Fast_Data** | `getDataPool()` | Used by Accounting and ERP sync — department maps, travel-booking province lookups, ERP account/dimension sync (`src/lib/acc/department-map-service.ts`, `src/lib/acc/travel-booking/province-service.ts`, `src/lib/acc/travel-booking/request-service.ts`, `src/lib/erp/account-sync.ts`, `src/lib/erp/dimension-sync.ts`). **Not** a BI/reporting database in this app. |
 | **Rocks_Portal_HR** | `getHrPool()` → `getAppPool("Rocks_Portal_HR")` | Employee master, manager chain, per-diem allowance history — cross-referenced by StaffId/email |
 | **Rocks_Codex** | (cross-DB query, e.g. `[Rocks_Codex].[dbo].[Holiday]`, `[Rocks_Codex].[dbo].[Brand]`) | Holiday calendar, company brand master |
-| **Fast_Form** (Acc* tables) | `getAccPool()` → `getFormPool()` | Accounting forms: travel expense (AP-1), travel booking (AP-17) |
+| **Rocks_Portal_Form** (Acc* tables) | `getAccPool()` → `getFormPool()` | Accounting forms: travel expense (AP-1), travel booking (AP-17) |
 
 **IMPORTANT**: Use `new sql.ConnectionPool(config).connect()` for isolated pools. Never use `sql.connect()` (global singleton — causes cross-DB bugs). Pool max is set to 30.
 
@@ -52,9 +52,9 @@ npm run dev                   # http://localhost:3020
 
 Form Portal was cloned from the Rocks Fast codebase and **still shares live infrastructure** with it. This is not a separate environment — treat both apps as one system when operating on shared resources:
 
-- **Same databases**: Fast_Core, Fast_Form, Fast_Data, Rocks_Portal_HR, Rocks_Codex are the exact same SQL Server databases used by Rocks Fast. There is no schema or data isolation between the two apps.
+- **Databases are no longer shared**: Form Portal owns `Rocks_Portal_Form` (plus `Rocks_Portal_Form_UAT`). `Fast_Form` belongs to Rocks Fast and this app must not read or write it. `Fast_Core`, `Fast_Data`, `Rocks_Portal_HR` and `Rocks_Codex` are still the same shared databases both apps use, in both environments.
 - **Same SharePoint folder**: Accounting file attachments (`SHAREPOINT_ACC_SITE` / `SHAREPOINT_ACC_FOLDER`) point at the same document library Rocks Fast uses.
-- **Same `AccEmailQueue`**: Both apps write to and drain the same email queue table in Fast_Form.
+- **`AccEmailQueue` is no longer shared** — each app drains the queue in its own database.
 - **⚠️ Both apps use port 3020** — Form Portal was moved off 3021 onto the same port Rocks Fast uses, so only one of them can run at a time on a given machine; the second to start fails with `EADDRINUSE`. This also removes the previous risk of both apps polling/draining the same `AccEmailQueue` concurrently and sending approval/payment emails twice.
 - **`UPLOAD_ROOT`** — local attachment storage env var. Points at the sibling Rocks Fast repo's `uploads/forms` directory (`c:/Users/PC/source/repos/Web/RocksFast/uploads/forms` in dev) so files already recorded in the shared DB stay downloadable from either app. Accounting attachments primarily use SharePoint now; local disk serves the Form Builder and older Accounting rows created before SharePoint storage existed. See `src/lib/storage.ts`.
 - **`ERP_SANDBOX_ALLOWED_HOSTS`** (`src/lib/acc/erp-environment-shared.ts`) — host-and-port matched allowlist (`["localhost:3020", "127.0.0.1:3020"]`) gating two things: the `devHostOnly` management/settings cards in `REQUEST_CARDS` (`src/lib/constants.ts`) and whether a System Admin can toggle the ERP interface into UAT/Sandbox mode. If this app's port ever changes, this list must be updated or both gates silently disappear.
@@ -110,7 +110,7 @@ Configurable form builder with approval workflows.
 
 Two live Accounting forms share a generic request/approval backbone, plus a Business Central ERP integration layer.
 
-**Storage:** Acc* tables live in **`Fast_Form`**, accessed via `getAccPool()` (= `getFormPool()`, `src/lib/acc/pool.ts`). Numbered migrations in `migrations/` (013 onward) build up the shared header tables, AP-1 detail tables, AP-17 detail tables, and settings. Apply with `npm run apply-sql -- --db Fast_Form --file <path>` (see `scripts/apply-sql.ts`).
+**Storage:** Acc* tables live in **`Rocks_Portal_Form`**, accessed via `getAccPool()` (= `getFormPool()`, `src/lib/acc/pool.ts`). Numbered migrations in `migrations/` (013 onward) built these up incrementally against the old `Fast_Form`; `059_portal_form_baseline.sql` is the generated full-schema baseline used to stand up a new database. Apply with `npm run apply-sql -- --db Rocks_Portal_Form --file <path>` (see `scripts/apply-sql.ts`), and run every new migration against `Rocks_Portal_Form_UAT` as well.
 
 **Generic header (shared by all Accounting forms):** `AccFormMaster` (form catalog), `AccRequest` (shared request header), `AccApproval`, `AccActivityLog`, `AccSequence`, `AccEmailQueue`, `AccRequestFile`.
 
@@ -218,7 +218,7 @@ MSSQL_PASSWORD=
 MSSQL_ENCRYPT=true
 MSSQL_TRUST_CERT=true
 MSSQL_CORE_DATABASE=Fast_Core
-MSSQL_FORM_DATABASE=Fast_Form
+MSSQL_FORM_DATABASE=Rocks_Portal_Form   # Rocks_Portal_Form_UAT on the UAT deployment
 MSSQL_DATA_DATABASE=Fast_Data
 
 # Email
@@ -249,5 +249,5 @@ Not yet done — Form Portal has no host of its own. Before it is deployed:
 - **`PRODUCTION_HOSTS` in `next.config.mjs` must be updated.** It currently lists only the Rocks Fast sibling's hosts (`fast.rocksgroup.com`, `test.m-group.com`, `www.test.m-group.com`) and feeds both `allowedDevOrigins` and `experimental.serverActions.allowedOrigins`. Server actions issued from an unlisted host are rejected as cross-origin, so a Form Portal host that is missing from this list fails at runtime, not at build.
 - **`NEXTAUTH_URL` and `NEXT_PUBLIC_APP_URL`** must both match the address users actually open, including port.
 - **`ERP_SANDBOX_ALLOWED_HOSTS`** (`src/lib/acc/erp-environment-shared.ts`) is `localhost:3020` / `127.0.0.1:3020` — the `devHostOnly` management cards and the ERP UAT toggle disappear on any other host, which is intended for production but worth knowing.
-- **`UPLOAD_ROOT`** must resolve on the target machine to the same files the shared `Fast_Form` rows point at (see "Shared with Rocks Fast").
+- **`UPLOAD_ROOT`** must resolve on the target machine to the files the `AccRequestFile` / `OfficeFormFiles` rows point at (see "Shared with Rocks Fast").
 - Liveness probe: `curl http://127.0.0.1:3020/api/health` → `{"ok":true,"data":{"service":"form-portal",…}}`.

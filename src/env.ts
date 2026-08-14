@@ -8,7 +8,7 @@ export const env = createEnv({
     MSSQL_PORT: z.coerce.number().default(1433),
     MSSQL_DATABASE: z.string().min(1),
     MSSQL_CORE_DATABASE: z.string().default("Fast_Core"),
-    MSSQL_FORM_DATABASE: z.string().default("Fast_Form"),
+    MSSQL_FORM_DATABASE: z.string().default("Rocks_Portal_Form"),
     MSSQL_DATA_DATABASE: z.string().default("Fast_Data"),
     MSSQL_USER: z.string().min(1),
     MSSQL_PASSWORD: z.string().min(1),
