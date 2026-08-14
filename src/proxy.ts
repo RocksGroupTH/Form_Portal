@@ -46,7 +46,15 @@ export default async function proxy(req: NextRequest) {
     return authResponse;
   }
 
-  const response = NextResponse.next();
+  // Forward the pathname to Node-side code. Per-form routing picks the database
+  // from the URL and getFormPool() has no argument to receive it, so the path
+  // has to arrive as a header — Next exposes request headers to server code but
+  // not the pathname. Set from nextUrl, never trusted from the client: .set()
+  // overwrites any x-pathname the caller supplied.
+  const requestHeaders = new Headers(req.headers);
+  requestHeaders.set("x-pathname", req.nextUrl.pathname);
+
+  const response = NextResponse.next({ request: { headers: requestHeaders } });
   applySecurityHeaders(response, isApiRoute);
   return response;
 }

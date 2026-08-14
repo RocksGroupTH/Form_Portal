@@ -64,9 +64,33 @@ export function getCorePool(): Promise<sql.ConnectionPool> {
   return getNamedPool(env.MSSQL_CORE_DATABASE);
 }
 
-/** Form DB — form definitions, submissions, approvals */
-export function getFormPool(): Promise<sql.ConnectionPool> {
+/**
+ * Form DB — form definitions, submissions, approvals, and all Acc* tables.
+ *
+ * Which physical database this is depends on the route: a form flagged UAT at
+ * Settings → Form Environment resolves to MSSQL_FORM_UAT_DATABASE, everything
+ * else to MSSQL_FORM_DATABASE. The signature stays argument-free so none of its
+ * call sites need to know.
+ *
+ * The dynamic import breaks a module cycle: form-environment imports its
+ * service, which imports this file.
+ */
+export async function getFormPool(): Promise<sql.ConnectionPool> {
+  const { resolveFormEnvironment } = await import("@/lib/form-environment");
+  const e = await resolveFormEnvironment();
+  return getNamedPool(
+    e === "UAT" ? env.MSSQL_FORM_UAT_DATABASE : env.MSSQL_FORM_DATABASE,
+  );
+}
+
+/** The production form database, whatever the current route resolves to. */
+export function getProductionFormPool(): Promise<sql.ConnectionPool> {
   return getNamedPool(env.MSSQL_FORM_DATABASE);
+}
+
+/** The UAT form database, whatever the current route resolves to. */
+export function getUatFormPool(): Promise<sql.ConnectionPool> {
+  return getNamedPool(env.MSSQL_FORM_UAT_DATABASE);
 }
 
 /** Data DB — reports, dashboards, BI */

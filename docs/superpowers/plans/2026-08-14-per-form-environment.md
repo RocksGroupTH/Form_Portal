@@ -29,7 +29,7 @@
 | `src/lib/form-environment/classify-path.test.ts` (create) | The route table as assertions |
 | `src/lib/form-environment/index.ts` (create) | `resolveFormEnvironment()` — header → classify → `Fast_Core` lookup, memoized |
 | `src/lib/form-environment/service.ts` (create) | `FormEnvironment` table reads and writes, on `getCorePool()` |
-| `src/middleware.ts` (create) | Injects `x-pathname`. Nothing else — it runs on Edge |
+| `src/proxy.ts` (modify) | Injects `x-pathname`. Nothing else — it runs on Edge |
 | `src/lib/db/mssql.ts` (modify) | `getFormPool()` picks the pool from the resolved environment |
 | `src/lib/acc/dual-write.ts` (create) | `writeBothPools()` — one transaction per database, commit only if both succeed |
 | `src/lib/acc/query-both.ts` (create) | `queryBothPools()` — same statement on both, rows tagged with their environment |
@@ -351,7 +351,7 @@ The change that makes routing live. After this task a form flagged UAT actually
 reads the UAT database.
 
 **Files:**
-- Create: `src/middleware.ts`
+- Modify: `src/proxy.ts` — **not** a new `src/middleware.ts`. Next.js 16 deprecates the `middleware` convention in favour of `proxy`, this repo already has `src/proxy.ts` doing auth and security headers, and having both files is a hard startup error: `Both middleware file "./src\middleware.ts" and proxy file "./src\proxy.ts" are detected`
 - Create: `src/lib/form-environment/index.ts`
 - Modify: `src/lib/db/mssql.ts:68-70`
 - Modify: `src/env.ts`
@@ -383,29 +383,27 @@ In `.env.example`, after `MSSQL_FORM_DATABASE`:
 MSSQL_FORM_UAT_DATABASE=Rocks_Portal_Form_UAT
 ```
 
-- [ ] **Step 2: Write the middleware**
+- [ ] **Step 2: Inject the pathname from the existing proxy**
 
-Create `src/middleware.ts`:
+In `src/proxy.ts`, replace the final `NextResponse.next()`:
 
 ```ts
-import { NextResponse, type NextRequest } from "next/server";
+  // Forward the pathname to Node-side code. Per-form routing picks the database
+  // from the URL and getFormPool() has no argument to receive it, so the path
+  // has to arrive as a header — Next exposes request headers to server code but
+  // not the pathname. Set from nextUrl, never trusted from the client: .set()
+  // overwrites any x-pathname the caller supplied.
+  const requestHeaders = new Headers(req.headers);
+  requestHeaders.set("x-pathname", req.nextUrl.pathname);
 
-/**
- * Copies the request path into a header so Node-side code can classify it.
- *
- * This runs on the Edge runtime and must not touch SQL — every decision that
- * needs the database happens in src/lib/form-environment/index.ts.
- */
-export function middleware(req: NextRequest) {
-  const headers = new Headers(req.headers);
-  headers.set("x-pathname", req.nextUrl.pathname);
-  return NextResponse.next({ request: { headers } });
-}
-
-export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|brandlogo).*)"],
-};
+  const response = NextResponse.next({ request: { headers: requestHeaders } });
+  applySecurityHeaders(response, isApiRoute);
+  return response;
 ```
+
+Leave the existing `config.matcher` alone. It already excludes `api/auth` and
+static assets, and NextAuth's routes use `getCorePool()`, never `getFormPool()`,
+so nothing outside the matcher can be affected by a client-supplied header.
 
 - [ ] **Step 3: Write the resolver**
 
