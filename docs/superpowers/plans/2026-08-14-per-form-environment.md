@@ -582,7 +582,10 @@ npm run apply-sql -- --db Rocks_Portal_Form_UAT --file migrations/061_uat_identi
 Expected: `applied 061_uat_identity_reseed.sql to Rocks_Portal_Form_UAT OK`.
 
 **Do not run this against `Rocks_Portal_Form`.** Doing so would push production
-ids to 900001 and destroy the property this migration exists to create.
+ids to 900001 and destroy the property this migration exists to create. The
+migration enforces this rather than relying on the warning: it opens with
+`IF DB_NAME() NOT LIKE '%[_]UAT'` and raises an error instead of running.
+Verified by applying it to `Rocks_Portal_Form` first and confirming it refused.
 
 - [ ] **Step 3: Verify the seed took**
 
