@@ -318,8 +318,10 @@ export function UatUserSettings() {
                   <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>ชื่อ</th>
                   <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>อีเมล</th>
                   <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>ผู้จัดการสำหรับ UAT</th>
+                  {/* Status and its control are one column: the badge *is* the
+                      switch, so there is nothing left for a separate action
+                      column to hold. */}
                   <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>สถานะ</th>
-                  <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>การดำเนินการ</th>
                 </tr>
               </thead>
               <tbody>
@@ -370,60 +372,58 @@ export function UatUserSettings() {
                       </div>
                     </td>
                     <td className="px-4 py-2.5">
-                      <span
-                        className="text-[10px] font-bold px-2 py-0.5 rounded"
+                      {/* The badge is the switch. It shows the state it is in
+                          and the icon shows what a click does — a disabled row
+                          offers the green "turn on", an active row the red
+                          "turn off" — so the row never needs a second column to
+                          say the same thing twice. */}
+                      <button
+                        type="button"
+                        disabled={busyId === t.id}
+                        onClick={() => {
+                          if (!t.isActive) {
+                            void doAction({ action: "setActive", id: t.id, isActive: true }, t.id);
+                            return;
+                          }
+                          const dependants = testers.filter(
+                            (d) => d.isActive && d.managerStaffId === t.staffId && d.id !== t.id,
+                          );
+                          const message =
+                            dependants.length > 0
+                              ? `ปิดสิทธิ์ผู้ทดสอบ UAT ของ ${t.name} (${t.email})? มีผู้ทดสอบอีก ${dependants.length} คนที่ตั้งให้คนนี้เป็นผู้จัดการสำหรับ UAT (${dependants
+                                  .map((d) => d.name)
+                                  .join(", ")}) — คำขอ UAT ของพวกเขาจะค้างที่ขั้นอนุมัติของผู้จัดการหลังปิดสิทธิ์`
+                              : `ปิดสิทธิ์ผู้ทดสอบ UAT ของ ${t.name} (${t.email})?`;
+                          setConfirmAction({
+                            title: "ปิดสิทธิ์ผู้ทดสอบ",
+                            message,
+                            danger: true,
+                            onConfirm: () => {
+                              setConfirmAction(null);
+                              void doAction({ action: "remove", id: t.id }, t.id);
+                            },
+                          });
+                        }}
+                        className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded border-none enabled:cursor-pointer disabled:cursor-default disabled:opacity-70"
                         style={
                           t.isActive
                             ? { background: "var(--status-ok-bg)", color: "var(--status-ok-text)" }
                             : { background: "var(--status-bad-bg)", color: "var(--status-bad-text)" }
                         }
+                        title={t.isActive ? "คลิกเพื่อปิดการใช้งาน" : "คลิกเพื่อเปิดใช้งาน"}
+                        aria-label={
+                          t.isActive ? `ปิดการใช้งาน ${t.name}` : `เปิดใช้งาน ${t.name}`
+                        }
                       >
+                        {busyId === t.id ? (
+                          <Loader2 size={11} className="animate-spin shrink-0" />
+                        ) : t.isActive ? (
+                          <UserX size={11} className="shrink-0" />
+                        ) : (
+                          <UserCheck size={11} className="shrink-0" />
+                        )}
                         {t.isActive ? "ใช้งาน" : "ปิด"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5">
-                      {busyId === t.id ? (
-                        <Loader2 size={13} className="animate-spin" style={{ color: "var(--text-muted)" }} />
-                      ) : t.isActive ? (
-                        <button
-                          onClick={() => {
-                            const dependants = testers.filter(
-                              (d) => d.isActive && d.managerStaffId === t.staffId && d.id !== t.id,
-                            );
-                            const message =
-                              dependants.length > 0
-                                ? `ปิดสิทธิ์ผู้ทดสอบ UAT ของ ${t.name} (${t.email})? มีผู้ทดสอบอีก ${dependants.length} คนที่ตั้งให้คนนี้เป็นผู้จัดการสำหรับ UAT (${dependants
-                                    .map((d) => d.name)
-                                    .join(", ")}) — คำขอ UAT ของพวกเขาจะค้างที่ขั้นอนุมัติของผู้จัดการหลังปิดสิทธิ์`
-                                : `ปิดสิทธิ์ผู้ทดสอบ UAT ของ ${t.name} (${t.email})?`;
-                            setConfirmAction({
-                              title: "ปิดสิทธิ์ผู้ทดสอบ",
-                              message,
-                              danger: true,
-                              onConfirm: () => {
-                                setConfirmAction(null);
-                                void doAction({ action: "remove", id: t.id }, t.id);
-                              },
-                            });
-                          }}
-                          className="cursor-pointer bg-transparent border-none p-1 rounded-lg"
-                          style={{ color: "var(--status-bad-text)" }}
-                          title="ปิดการใช้งาน"
-                          aria-label={`ปิดการใช้งาน ${t.name}`}
-                        >
-                          <UserX size={15} />
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => { void doAction({ action: "setActive", id: t.id, isActive: true }, t.id); }}
-                          className="cursor-pointer bg-transparent border-none p-1 rounded-lg"
-                          style={{ color: "var(--status-ok-text)" }}
-                          title="เปิดใช้งาน"
-                          aria-label={`เปิดใช้งาน ${t.name}`}
-                        >
-                          <UserCheck size={15} />
-                        </button>
-                      )}
+                      </button>
                     </td>
                   </tr>
                 ))}
