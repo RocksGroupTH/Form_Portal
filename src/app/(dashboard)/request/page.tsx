@@ -10,8 +10,8 @@ import { REQUEST_CARDS } from "@/lib/constants";
 import { travelExpenseEntryHref } from "@/features/accounting/lib/navigation";
 import { travelBookingEntryHref } from "@/features/travel-booking/lib/navigation";
 import { useErpSandboxDevHost } from "@/features/accounting/hooks/useErpSandboxDevHost";
-import { useFormEnvironments, type FormEnvironment } from "@/lib/hooks/useFormEnvironments";
-import { EnvironmentBadge } from "@/components/EnvironmentBadge";
+import { useFormEnvironments } from "@/lib/hooks/useFormEnvironments";
+import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
 import { withRequestReturn } from "@/lib/request-hub-nav";
 import {
   ClipboardList,
@@ -37,16 +37,22 @@ function requestCardHref(item: (typeof REQUEST_CARDS)[number]): string {
 function RequestHubCard({
   item,
   Icon,
-  environment,
   fromAdmin,
+  comingSoon,
 }: {
   item: (typeof REQUEST_CARDS)[number];
   Icon: React.ComponentType<{ size?: number; style?: React.CSSProperties }> | undefined;
-  environment: FormEnvironment;
   /** Tells the destination's Back button to return to the filtered admin view. */
   fromAdmin: boolean;
+  /**
+   * The form is open in UAT and closed in Production for this viewer. Renders
+   * the same not-yet-available card as the static `item.soon` flag, because to
+   * whoever is looking they mean the same thing: the form is real and it is not
+   * open yet.
+   */
+  comingSoon: boolean;
 }) {
-  const disabled = !!item.soon;
+  const disabled = !!item.soon || comingSoon;
   const base = requestCardHref(item);
   const href = fromAdmin ? withRequestReturn(base, "admin") : base;
 
@@ -84,7 +90,10 @@ function RequestHubCard({
           )}
         </div>
         <div className="flex items-center gap-2">
-          {!disabled && item.badge && <EnvironmentBadge environment={environment} />}
+          {/* `item.badge` doubles as the form code here — it is also what feeds
+              `visibleRequestCards`'s availability filter below. Don't rename or
+              repurpose it without updating both. */}
+          {!disabled && item.badge && <FormEnvironmentChip formCode={item.badge} />}
           {item.badge && (
             <span
               className="text-[10px] font-bold px-1.5 py-0.5 rounded"
@@ -116,17 +125,16 @@ function RequestHubCard({
   if (disabled) {
     return (
       <div
-        className="relative rounded-xl p-5 overflow-hidden cursor-not-allowed select-none"
+        className="relative rounded-xl p-5 overflow-hidden cursor-default select-none"
         style={{
           background: "color-mix(in srgb, var(--bg-card-alt) 88%, var(--text-muted))",
           borderWidth: 1,
           borderStyle: "solid",
           borderColor: "color-mix(in srgb, var(--border-card) 55%, var(--text-faint))",
           boxShadow: "none",
-          filter: "grayscale(1)",
         }}
-        aria-disabled
-        title="Coming soon"
+        aria-disabled="true"
+        title="ยังไม่เปิดให้ใช้งาน"
       >
         <div
           className="absolute inset-0 flex items-center justify-center pointer-events-none z-[2]"
@@ -140,6 +148,10 @@ function RequestHubCard({
           </span>
         </div>
         <div className="relative z-[1]">{body}</div>
+        {/* The watermark is decorative, so it is the only thing saying "not
+            yet" to a sighted reader. aria-disabled alone is inert on a plain
+            div, hence a real sentence for a screen reader. */}
+        <span className="sr-only">ยังไม่เปิดให้ใช้งาน</span>
       </div>
     );
   }
@@ -162,14 +174,41 @@ export default function RequestHubPage() {
    * surfaces of AP-1 and AP-17, and the request forms above them are noise for
    * someone who came to work a queue.
    */
-  const formEnvironments = useFormEnvironments();
+  const { data: formEnvData } = useFormEnvironments();
+  const viewer = formEnvData?.viewer;
+  const forms = formEnvData?.forms;
   const groupFilter = useSearchParams().get("group");
   const isGroupView = Boolean(groupFilter?.trim());
   const isAdminView = (groupFilter ?? "").trim().toLowerCase() === "settings";
 
+  // Unknown (still loading, or the payload failed to load) always counts as
+  // available — a fetch failure must never hide a card that would otherwise
+  // show. Only an explicit `available: false` filters a card out.
+  const isFormAvailable = (badge: string | undefined) =>
+    !badge || (forms?.[badge]?.available ?? true);
+  /**
+   * Unavailable, but visibly so: a form in its UAT pilot. Defaults to false
+   * for the same reason `isFormAvailable` defaults to true — a fetch failure
+   * must never invent a state, and here the safe invention is "no watermark".
+   */
+  const isFormComingSoon = (badge: string | undefined) =>
+    !!badge && (forms?.[badge]?.comingSoon ?? false);
+
   const visibleRequestCards = REQUEST_CARDS.filter(
     (item) =>
       (!item.devHostOnly || isDevHost) &&
+      // `available` answers "may I file a new one", not "may I work what
+      // already exists" — pickEnvironment draws that same line for a record's
+      // own id. A `manage: true` card is the approval queue / report /
+      // settings surface for a form, not the filing form itself, so it must
+      // stay reachable even when the form's switch that gates *filing* is
+      // off — otherwise turning off AP-1 filing for a pilot would also lock
+      // its own approvers out of the queue that clears the pilot's requests.
+      //
+      // `isFormComingSoon` widens the same filter rather than bypassing it: a
+      // form being piloted is still unavailable, it is just worth showing that
+      // it exists and is coming. RequestHubCard renders it dead.
+      (item.manage || isFormAvailable(item.badge) || isFormComingSoon(item.badge)) &&
       (!isGroupView ||
         (item.group ?? "General").toLowerCase() === (groupFilter ?? "").trim().toLowerCase()),
   );
@@ -264,10 +303,13 @@ export default function RequestHubPage() {
                       key={item.id}
                       item={item}
                       Icon={Icon}
-                      environment={
-                        (item.badge && formEnvironments[item.badge]) || "Production"
-                      }
                       fromAdmin={isAdminView}
+                      // A management card shares its form's badge but is
+                      // exempt from availability (see the filter above), so it
+                      // must not be greyed out by that form's pilot either —
+                      // the queue is exactly where a pilot's requests get
+                      // worked.
+                      comingSoon={!item.manage && isFormComingSoon(item.badge)}
                     />
                   );
                 })}
@@ -278,12 +320,23 @@ export default function RequestHubPage() {
       })()}
         </>
       ) : (
-        /* The management cards are devHostOnly, so this view is empty off
-           localhost. Say so rather than rendering a header over nothing. */
+        /* Empty for one of two reasons: the management cards are devHostOnly
+           so this view is empty off localhost, or every card's form was
+           filtered out by availability — most often a tester in UAT mode with
+           no form currently open for testing. Say which, rather than
+           rendering a header over nothing.
+
+           Gated on `isAdminView && !isDevHost` rather than `isAdminView`
+           alone: the management cards ignore `available` now (see the filter
+           above), so on a dev host the admin view can only be empty for the
+           UAT reason below, never the localhost one — and claiming "only on
+           localhost" while standing on localhost would be a lie. */
         <p className="text-[12px] py-8 text-center" style={{ color: "var(--text-muted)" }}>
-          {isAdminView
+          {isAdminView && !isDevHost
             ? "หน้าจัดการของ AP-1 / AP-17 เปิดได้เฉพาะตอนรัน dev ที่ localhost:3020"
-            : "ยังไม่มีคำขอที่เปิดให้ใช้งาน"}
+            : viewer?.uatMode
+              ? "คุณอยู่ในโหมด UAT แต่ยังไม่มีฟอร์มใดเปิดให้ทดสอบในขณะนี้"
+              : "ยังไม่มีคำขอที่เปิดให้ใช้งาน"}
         </p>
       )}
 

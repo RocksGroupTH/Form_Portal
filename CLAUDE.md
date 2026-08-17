@@ -18,7 +18,7 @@ npm run dev                   # http://localhost:3020
 | Database | Pool | Purpose |
 |----------|------|---------|
 | **Fast_Core** | `getCorePool()` | TeamMember (auth), config, brand/DB/BC connection settings |
-| **Rocks_Portal_Form** | `getFormPool()` | Form definitions, submissions, approvals, files, logs, and all `Acc*` Accounting tables. Form Portal's own database — `Rocks_Portal_Form_UAT` is the UAT twin, and which one `getFormPool()` returns depends on the form being used (see "Per-form Production/UAT routing") |
+| **Rocks_Portal_Form** | `getFormPool()` | Form definitions, submissions, approvals, files, logs, and all `Acc*` Accounting tables. Form Portal's own database — `Rocks_Portal_Form_UAT` is the UAT twin, and which one `getFormPool()` returns depends on the form **and on who is asking** (see "Parallel Production and UAT") |
 | **Fast_Data** | `getDataPool()` | Used by Accounting and ERP sync — department maps, travel-booking province lookups, ERP account/dimension sync (`src/lib/acc/department-map-service.ts`, `src/lib/acc/travel-booking/province-service.ts`, `src/lib/acc/travel-booking/request-service.ts`, `src/lib/erp/account-sync.ts`, `src/lib/erp/dimension-sync.ts`). **Not** a BI/reporting database in this app. |
 | **Rocks_Portal_HR** | `getHrPool()` → `getAppPool("Rocks_Portal_HR")` | Employee master, manager chain, per-diem allowance history — cross-referenced by StaffId/email |
 | **Rocks_Codex** | (cross-DB query, e.g. `[Rocks_Codex].[dbo].[Holiday]`, `[Rocks_Codex].[dbo].[Brand]`) | Holiday calendar, company brand master |
@@ -26,19 +26,36 @@ npm run dev                   # http://localhost:3020
 
 **IMPORTANT**: Use `new sql.ConnectionPool(config).connect()` for isolated pools. Never use `sql.connect()` (global singleton — causes cross-DB bugs). Pool max is set to 30.
 
-### Per-form Production/UAT routing
+### Parallel Production and UAT
 
-Each Accounting form is flagged Production or UAT independently at **Settings → Form Environment** (`/settings/form-environment`, System Admin only). A form flagged UAT reads and writes `Rocks_Portal_Form_UAT`; every other form keeps using `Rocks_Portal_Form`. There is no app-wide UAT mode and no separate deployment.
+Production and UAT run **side by side in one deployment**. There is no app-wide UAT mode, no separate host, and no build flag. Ordinary users work against `Rocks_Portal_Form` while configured testers work against `Rocks_Portal_Form_UAT` — at the same time, on the same server.
 
-- **The flag** lives in `Fast_Core.dbo.FormEnvironment` (`FormCode`, `Environment`, `UpdatedBy`, `UpdatedAt`), read through `src/lib/form-environment/service.ts`. A missing row means Production. It is in Fast_Core on purpose: resolving the flag must not depend on which form database is selected.
-- **Resolution** — the proxy injects `x-pathname`; `classifyPath` (`src/lib/form-environment/classify-path.ts`) maps that path to `AP-1 | AP-15 | AP-17 | "BOTH" | null` by longest matching prefix in `ROUTE_RULES`; `resolveFormEnvironment()` maps `BOTH` and `null` to Production; `getFormPool()` returns the matching pool. Code with no request scope (scripts, background work) resolves to Production.
-- **Every new route under `/api/request` needs a rule.** Without one it silently falls through to Production. The coverage panel on the settings page lists any route no rule covers — `matchRule` is what tells "no rule at all" apart from "a rule that deliberately says Production".
-- **Shared configuration is dual-written**, not duplicated by hand: `src/lib/acc/dual-write.ts` runs each master-table mutation against both databases in a transaction, and `npm run check:alignment` asserts the 19 shared tables still match.
-- **Business Central follows the same flag**: `resolveEffectiveErpEnvironment()` (`src/lib/acc/erp-environment.ts`) maps the form's environment to the BC instance — UAT → Sandbox, otherwise Production. There is no separate ERP toggle; the navbar chip and the global `AppSetting` switch that used to own this were removed on 2026-08-17. Which BC company and connection Sandbox uses is configured at Settings → ERP Interface Environment.
-- **ERP Prep is classified `AP-1`, not `BOTH`**: it is the only path that posts to BC, and the send reads its rows from a single pool. While AP-1 is flagged UAT the prep queue is the UAT queue, and real payments cannot be processed through it.
-- **Aggregate endpoints read both databases** through `src/lib/acc/query-both.ts` — My Requests, My Work and requesters, i.e. what a person owns or must act on, since they can hold live and test requests at once. Sorting and paging must happen after the merge, and each row carries an `environment` tag. **Reports do not merge**: a report is a statement about one set of books, so `/api/request/accounting/report` (and its Excel export) is classified `AP-1` and reads that form's database only.
-- **Ids never collide**: migration 061 seeds UAT transactional identities at 900000, so `isUatId` (`src/lib/form-environment/uat-identity.ts`) can badge a detail page that only has the row itself to go on.
-- **UAT side effects are contained**: mail is redirected to `UAT_MAIL_REDIRECT` with a `[UAT]` subject and the intended recipient named in the body, attachments land under `{SHAREPOINT_ACC_FOLDER}/_UAT/...`, and the email sweep endpoint drains the queue in both databases.
+**Two switches, one tester list, and a per-viewer toggle:**
+
+- **Each form has two independent switches** — `ProductionEnabled` and `UatEnabled` in `Fast_Core.dbo.FormEnvironment` (`FormCode`, `ProductionEnabled`, `UatEnabled`, `UpdatedBy`, `UpdatedAt`), set at **Settings → Form Environment** (`/settings/form-environment`, System Admin). **Both can be on at once** — that is the normal pilot state. UAT-only hides the form from everyone who is not testing it; both off closes it to new work entirely. A form with no row is `PRODUCTION_ONLY` (live, not open for testing). Read through `src/lib/form-environment/service.ts` (`getFormSwitchMap`, `setFormFlag`, `listFormEnvironments`). It lives in Fast_Core on purpose: resolving the switches must not depend on which form database is selected. *(The old single `Environment` string column was dropped by migration 065.)*
+- **UAT is visible only to configured testers.** `Fast_Core.dbo.UatTester` (migration 063) holds the list, managed at **Settings → UAT Users** (`/settings/uat-users`, System Admin, API `/api/settings/uat-users`). Each tester carries a UAT `ManagerStaffId`, which must itself be an active tester — a chain cannot leak out of the test group. Removing a tester is a soft delete (`IsActive = 0`). Service: `src/lib/uat-tester/service.ts`.
+- **A tester must also turn their own UAT mode on** with the **PRO/UAT switch** in the navbar (`src/components/layout/UatModeSwitch.tsx`), which renders only when they are already in UAT mode, or are an active tester *and* at least one form has `UatEnabled`. It POSTs `/api/uat-mode` — the only writer of the `form-portal-uat-mode` cookie (`src/lib/uat-mode.ts`), httpOnly, and 403 for anyone who is not an active tester.
+
+**Resolution order** (`src/lib/form-environment/`), in this order:
+
+1. **The record's id wins.** UAT transactional identities start at 900000 (`isUatId`, `uat-identity.ts`), so a bare id names its own database — that is what lets a non-tester manager open and approve a tester's UAT request. Bounded by `boundIdEnvironment`: a **UAT** id is honoured only while the form still has `UatEnabled`, or the viewer is a tester in UAT mode, so switching UAT off actually closes it. A **Production** id is never bounded.
+2. **The viewer's UAT mode** — cookie **and** live `getActiveUatTester()` membership, re-checked on every resolve (`viewerIsTesting`). The cookie alone is a forgeable hint.
+3. **The form's switches** — `pickEnvironment` picks the one switch that answers for this viewer.
+
+Identity comes from the proxy's `x-pathname` and `x-user-email` headers, **never `auth()`** — `getFormPool()` imports this module and `auth()` reads Fast_Core, so a session lookup would close the loop. Code with no request scope (scripts, background work) resolves to Production.
+
+- **Availability and writability are different questions.** `pickEnvironment().available` asks "may this person reach the form", and an id makes it unconditionally true so records stay readable and approvable. `environmentWritable` asks "is that database still taking new work". Use `resolveCurrentFormAccess()` + `resolveCurrentFormWritable()` on a form's own route, and `resolveFormAccess(formCode, requestId?)` + `resolveFormWritable(...)` to ask about a form from somewhere else (Home, the manager card). **`assertFormWritable()` (`src/lib/uat-tester/guards.ts`) has exactly four call sites** — the two `saveDraft` functions and the two submits, one pair per form.
+- **The manager differs by environment.** UAT routes to the requester's `UatTester.ManagerStaffId`, re-verified at submit time (still an active tester, still active in HR, not self); Production reads `Rocks_Portal_HR.Employee.ManagerStaffId`. **UAT refuses rather than falling back to HR** — a real manager must never find test data in their queue. Three resolvers, keyed on the *resolved environment* and never on the cookie: `resolveManagerInfo()` (the preview card, shared), and a separate `withUatManager` for each form's submit — `resolveRequesterForActor` in `src/lib/acc/employee-context.ts` (AP-1) and `resolveEmployeeForActor` in `src/lib/hr/employee-lookup.ts` (AP-17). `resolveManagerEmail()` is deliberately *not* overridden.
+- **Mail follows the resolved environment**, with one exception: a recipient who is an **active tester gets the mail at their real address** with a `[UAT] ` subject prefix. Everyone else is redirected to `UAT_MAIL_REDIRECT` (falling back to `GRAPH_MAIL_FROM`) with a banner naming the intended recipient. If neither is set, `applyUatRedirect` (`src/lib/acc/email-queue.ts`) throws and the row stays queued rather than mailing a real person. The sweep endpoint drains both databases (`processQueueBoth`); per-action drains are single-pool.
+- **Business Central follows the same resolution**: `resolveEffectiveErpEnvironment()` (`src/lib/acc/erp-environment.ts`) maps UAT → Sandbox, otherwise Production. No separate ERP toggle — the navbar chip and the global `AppSetting` switch were removed on 2026-08-17. Which BC company and connection Sandbox uses is set at Settings → ERP Interface Environment. **The send echoes and verifies both its environment and its batch**, answering 409 on either drift (`ENVIRONMENT_STALE_ERROR` in the route, `ErpQueueDriftError` from `src/lib/acc/erp-interface-send.ts`) so the client reloads instead of retrying something that cannot succeed.
+- **ERP Prep is classified `AP-1`, not `BOTH`**: it is the only path that posts to BC, and the send reads its rows from a single pool. While AP-1 resolves UAT for you, the prep queue you see is the UAT queue.
+- **Process-global caches are environment-keyed.** `src/lib/acc/acc-cache.ts` is a shared `Map`; anything derived from a form-pool read must carry the environment in its key — `acc:journal-ctx:{Production|Sandbox}` (`erp-journal-context.ts`) and `acc:prep-dept-ctx:{Production|UAT}` (`erp-prep-service.ts`). Request-scoped react `cache()` memos are not global and are unkeyed by design.
+- **The running number floor is a function of the environment.** `UAT_SEQUENCE_FLOOR = 9000` in `src/lib/acc/sequence.ts`: UAT's first number of a year is `09001`, Production's `00001`. Applied only when a `(Prefix, Year)` row is first created, so it never rewinds. The two series stay disjoint only while Production issues ≤ 9000 numbers per prefix per year.
+- **Ids never collide**: migration 061 seeds UAT transactional identities at 900000 across 23 transactional tables, and **migration 064 adds a `CHECK (Id >= 900000)`** so a restore or an ad-hoc reseed cannot silently break the property the id rule depends on.
+- **Attachments** land under `{SHAREPOINT_ACC_FOLDER}/_UAT/{formCode}/...` — the `_UAT` segment sits between the base folder and the form code (`buildAccFolderPath`, `src/lib/acc/sharepoint-path.ts`).
+- **Every new route under `/api/request` needs a rule** in `ROUTE_RULES` (`classify-path.ts`, longest matching prefix → `AP-1 | AP-15 | AP-17 | "BOTH" | null`). Without one it silently falls through to Production. The coverage panel on the settings page lists any route no rule covers — `matchRule` is what tells "no rule at all" apart from "a rule that deliberately says Production".
+- **Shared configuration is dual-written**, not duplicated by hand: `src/lib/acc/dual-write.ts` runs each master-table mutation against both databases in a transaction, and `npm run check:alignment` asserts the 19 shared tables still match. Those tables are deliberately absent from 061/064 — dual-write inserts production's id into UAT explicitly, so an identity floor there would reject every write.
+- **Only two endpoints merge both databases** through `src/lib/acc/query-both.ts`: `/api/request/accounting/requests/mine` and `/api/request/accounting/work` — what a person owns or must act on. Sorting and paging happen after the merge, each row carries an `environment` tag, and `keepRowsInCurrentEnvironment` (`current-rows.ts`) then drops rows whose database is not where that form resolves for this viewer today. Nothing is deleted; flipping the switch back brings the rows straight back. **Reports do not merge** — a report is a statement about one set of books, so `/api/request/accounting/report` and its Excel export read one database only.
 - **Switching a form does not move its existing requests.** They stay in the database they were written to and stay readable; only new writes go elsewhere.
 
 ### Auth
@@ -77,13 +94,18 @@ Form Portal was cloned from the Rocks Fast codebase and **still shares live infr
 
 ## Navigation
 
-Top bar and mobile tabs: **Home** · **Forms** · **My Requests** · **My Work** · **Settings** (Settings for IT Admin/System Admin only). Labels are English; in-page copy is Thai. Defined in `NAV` (`src/lib/constants.ts`).
+Top bar and mobile tabs: **Home** · **My Requests** · **My Work** · **Settings** (Settings for IT Admin/System Admin only). Labels are English; in-page copy is Thai.
 
-- **`Home`** (`/`) — a form catalogue: greeting, stat strip, search, resumable drafts, then forms grouped into **Accounting** (AP-1 travel expense, AP-17 travel booking) and **Form Builder**. It is a link surface only — it creates no API of its own and does not merge the two request systems (Office Forms and Accounting remain separate data models). `src/features/home/HomeCatalogue.tsx`.
-- **`Forms`** (`/forms`) — the Form Builder catalog + "My Submissions", back in the top nav after being orphaned in the Rocks Fast sibling.
+Only the middle two live in `NAV` (`src/lib/constants.ts`). Home and Settings are composed onto either side of it in `Navbar.tsx`'s `visibleNav` — Home as a literal, Settings behind `canAdmin` — so **adding an entry to `NAV` puts it between them**, not at the end.
+
+- **`Home`** (`/`) — a form catalogue: greeting and stat strip, search, "Continue where you left off" (resumable drafts and Returned requests), then the **Accounting** forms — AP-1 travel expense and AP-17 travel booking, filtered to the ones available to this viewer. It is a link surface only: it creates no API of its own beyond reading `/api/form-environment` for availability, and it does not merge the two request systems (Office Forms and Accounting remain separate data models). `src/features/home/HomeCatalogue.tsx`.
 - **`My Requests`** (`/my-request`) — requests you submitted and their status, across both Office Forms and Accounting.
 - **`My Work`** (`/my-work`) — requests awaiting your approval or otherwise involving you.
-- **`Settings`** (`/settings`, admin only) — hub linking to: Maps & Routing, Database Connections, Business Central, Brand Configuration, ERP Interface Environment, **Form Environment** (`/settings/form-environment`, System Admin only), **Users & Roles** (`/settings/users`, System Admin only), Manage Forms (`/forms/admin`), Accounting Admin (`/request/accounting`).
+- **`Settings`** (`/settings`, IT Admin+) — hub of `SETTINGS_CARDS`: Maps & Routing, Database Connections, Business Central, Brand Configuration, **ERP Interface Environment**, **Form Environment** (`/settings/form-environment`), **UAT Users** (`/settings/uat-users`), **Users & Roles** (`/settings/users`) — the bolded four are `systemAdminOnly` — and Accounting Admin, which points at `/request?group=Settings` rather than `/request/accounting`, because the AP-1 hub would leave out AP-17.
+
+**There is no Forms tab, and no Form Builder section on Home.** The feature is unused, so its three entry points — the nav tab, the Manage Forms settings card, and Home's general-forms group — were deliberately removed. The pages under `/forms` and all 16 `/api/forms` routes still exist and still work if reached by URL; see the doc comment above `NAV`. Do not describe Form Builder as reachable from the navigation.
+
+The navbar also carries the **PRO/UAT switch** (`src/components/layout/UatModeSwitch.tsx`) — see "Parallel Production and UAT" above for when it renders.
 
 Every dashboard route is also gated by `BrandGate` (`src/components/BrandGate.tsx`), a non-dismissable modal that blocks rendering until the user picks a company brand (PCTH / KSI / PCMY / UNO — `src/lib/brand.ts`). This brand cookie (`rocks-fast-brand`) is unrelated to Intelligence (which is gone); it scopes ERP/Business Central context for Accounting.
 
@@ -92,6 +114,8 @@ Every dashboard route is also gated by `BrandGate` (`src/components/BrandGate.ts
 ### 1. Office Forms (`/forms`)
 
 Configurable form builder with approval workflows.
+
+> **Unused, and unreachable from the navigation** — see "Navigation" above. Every page and route below still exists and still works when opened by URL; none of them is linked from the nav, Home or the Settings hub. Treat this section as a description of dormant code, not of a live feature.
 
 **Pages (8):**
 - `/forms` — Catalog + My Submissions
@@ -125,7 +149,7 @@ Configurable form builder with approval workflows.
 
 Two live Accounting forms share a generic request/approval backbone, plus a Business Central ERP integration layer.
 
-**Storage:** Acc* tables live in **`Rocks_Portal_Form`**, accessed via `getAccPool()` (= `getFormPool()`, `src/lib/acc/pool.ts`). Numbered migrations in `migrations/` (013 onward) built these up incrementally against the old `Fast_Form`; `059_portal_form_baseline.sql` is the generated full-schema baseline used to stand up a new database. Apply with `npm run apply-sql -- --db Rocks_Portal_Form --file <path>` (see `scripts/apply-sql.ts`), and run every new migration against `Rocks_Portal_Form_UAT` as well.
+**Storage:** Acc* tables live in **`Rocks_Portal_Form`**, accessed via `getAccPool()` (= `getFormPool()`, `src/lib/acc/pool.ts`). Numbered migrations in `migrations/` (013 onward) built these up incrementally against the old `Fast_Form`; `059_portal_form_baseline.sql` is the generated full-schema baseline used to stand up a new database. Apply with `npm run apply-sql -- --db Rocks_Portal_Form --file <path>` (see `scripts/apply-sql.ts`). **Every migration names its own target database in its header — read that before running it.** A new migration that changes an `Acc*` table does have to be applied to `Rocks_Portal_Form_UAT` as well, but the parallel-UAT batch is not that shape: **060, 062, 063 and 065 are Fast_Core only** (`FormEnvironment`, `UatTester`), and **061 and 064 are `Rocks_Portal_Form_UAT` only** — they refuse to run against a database whose name does not end in `_UAT`.
 
 **Generic header (shared by all Accounting forms):** `AccFormMaster` (form catalog), `AccRequest` (shared request header), `AccApproval`, `AccActivityLog`, `AccSequence`, `AccEmailQueue`, `AccRequestFile`.
 
@@ -234,12 +258,12 @@ MSSQL_ENCRYPT=true
 MSSQL_TRUST_CERT=true
 MSSQL_CORE_DATABASE=Fast_Core
 MSSQL_FORM_DATABASE=Rocks_Portal_Form
-MSSQL_FORM_UAT_DATABASE=Rocks_Portal_Form_UAT   # used by forms flagged UAT in Settings → Form Environment
+MSSQL_FORM_UAT_DATABASE=Rocks_Portal_Form_UAT   # served to configured testers in UAT mode; see "Parallel Production and UAT"
 MSSQL_DATA_DATABASE=Fast_Data
 
 # Email
 GRAPH_MAIL_FROM=noreply@rocksgroup.com
-UAT_MAIL_REDIRECT=                              # every mail from a UAT form goes here; falls back to GRAPH_MAIL_FROM
+UAT_MAIL_REDIRECT=                              # UAT mail for non-testers goes here (active testers get theirs); falls back to GRAPH_MAIL_FROM
 
 # SharePoint (Accounting file storage — shared with Rocks Fast)
 SHAREPOINT_ACC_SITE=
@@ -267,4 +291,6 @@ Not yet done — Form Portal has no host of its own. Before it is deployed:
 - **`NEXTAUTH_URL` and `NEXT_PUBLIC_APP_URL`** must both match the address users actually open, including port.
 - **`ERP_SANDBOX_ALLOWED_HOSTS`** (`src/lib/acc/erp-environment-shared.ts`) is `localhost:3020` / `127.0.0.1:3020` — the `devHostOnly` management cards and the manager-approval dev bypass (`src/lib/acc/manager-auth.ts`) disappear on any other host, which is intended for production but worth knowing.
 - **`UPLOAD_ROOT`** must resolve on the target machine to the files the `AccRequestFile` / `OfficeFormFiles` rows point at (see "Shared with Rocks Fast").
+- **Parallel UAT ships in three steps, in this order: apply 062 + 063 → deploy the code → apply 065.** All three are Fast_Core. 062 adds `ProductionEnabled` / `UatEnabled` beside the old `Environment` column and backfills them, leaving that column in place so the *currently running* app keeps working; 063 creates `UatTester`. Only once the new code is live does 065 drop `Environment`. Running 065 first takes the old build down — its `setFormFlag` names that column in the MERGE INSERT. (061 and 064 target `Rocks_Portal_Form_UAT` and are independent of the deploy; 061 must precede any UAT write.)
+- **065 is one-way.** After it has run, a `git revert` of the parallel-UAT branch restores a `setFormFlag` that writes to a column that no longer exists, so the first write to any form fails. Reverting past commit `54ff2d7` means re-adding `FormEnvironment.Environment` as **NULLable** first — the original was `NOT NULL` with no default, which cannot be added back to a table that already has rows without backfilling one.
 - Liveness probe: `curl http://127.0.0.1:3020/api/health` → `{"ok":true,"data":{"service":"form-portal",…}}`.

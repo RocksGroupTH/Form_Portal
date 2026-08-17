@@ -40,30 +40,34 @@ export function EnvironmentBadge({
  * The same chip, for a page that works with one form's data — it says which
  * database the rows on screen came from. Reads the flag itself so a page only
  * has to name its form.
+ *
+ * Renders nothing while the shared payload is still loading, failed to load,
+ * or has no entry for this code — guessing "Production" here is exactly the
+ * failure this component exists to avoid: a tester would see their UAT
+ * request labelled as if it were live.
  */
-export function FormEnvironmentChip({ formCode }: { formCode: string }) {
-  const environments = useFormEnvironments();
-  return <EnvironmentBadge environment={environments[formCode] ?? "Production"} />;
+export function FormEnvironmentChip({
+  formCode,
+  className = "",
+}: {
+  formCode: string;
+  className?: string;
+}) {
+  const { data, error } = useFormEnvironments();
+  const access = data?.forms[formCode];
+  if (error || !access) return null;
+  return <EnvironmentBadge environment={access.environment} className={className} />;
 }
 
 /**
- * For a page that reads both databases and merges them — My Requests and My
- * Work, which are about a person rather than a set of books. Naming one
- * environment there would be false, so it says both, and the rows carry their
- * own UAT mark.
+ * The viewer's own UAT marker, for a page that lists rows from more than one
+ * form (My Requests, My Work). Replaces the old `ListEnvironmentChips`: under
+ * per-viewer routing a form's chip is never honestly "PRO + UAT" at once — it
+ * is whichever one database this viewer's own actions land in right now. So
+ * there is exactly one thing worth saying here, and only when it's true.
  */
-export function BothEnvironmentsChip() {
-  return (
-    <span
-      className="text-[9.5px] font-extrabold px-1.5 py-0.5 shrink-0"
-      style={{
-        borderRadius: 6,
-        background: "var(--bg-badge)",
-        color: "var(--text-muted)",
-      }}
-      title="หน้านี้รวมข้อมูลจากทั้ง Production และ UAT — แถวที่มาจาก UAT มีป้ายกำกับไว้"
-    >
-      PRO + UAT
-    </span>
-  );
+export function ViewerUatBadge() {
+  const { data, error } = useFormEnvironments();
+  if (error || !data?.viewer.uatMode) return null;
+  return <EnvironmentBadge environment="UAT" />;
 }

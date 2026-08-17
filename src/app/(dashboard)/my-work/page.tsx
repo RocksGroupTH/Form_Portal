@@ -2,7 +2,7 @@
 
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
-import { BothEnvironmentsChip } from "@/components/EnvironmentBadge";
+import { ViewerUatBadge } from "@/components/EnvironmentBadge";
 import { MyRequestsCard } from "@/features/accounting/components/MyRequestsPanel";
 import { ClipboardCheck } from "lucide-react";
 
@@ -12,7 +12,7 @@ export default function MyWorkPage() {
       <PageHeaderBar
         icon={ClipboardCheck}
         title="My Work"
-        titleExtra={<BothEnvironmentsChip />}
+        titleExtra={<ViewerUatBadge />}
         subtitle="คำขอที่รอคุณอนุมัติหรือเกี่ยวข้อง"
         backHref="/"
       />

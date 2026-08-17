@@ -7,19 +7,35 @@ import {
 import { hrEmployeeTable } from "@/lib/hr/constants";
 import { ERP_SYNC_BRAND_CODE } from "@/lib/erp/dimension-sync";
 import { getRequest } from "@/lib/acc/request-service";
-import { getAccCached, putAccCached } from "@/lib/acc/acc-cache";
+import { getAccCached, putAccCached, deleteAccCachedByPrefix } from "@/lib/acc/acc-cache";
 import { parseTravelDayLines, TRAVEL_DAYS_CSV_SELECT, type ReportTravelDayLine } from "@/lib/acc/report-service";
+import { resolveFormEnvironment, type FormEnvironmentValue } from "@/lib/form-environment";
 import type { ErpPrepStatus, ErpInterfaceStatus } from "@/features/accounting/constants";
 import type { TravelExpenseItem } from "@/features/accounting/types";
 
 const PREP_DEPT_CTX_CACHE_TTL_MS = 30_000;
-// Not environment-keyed, unlike the journal-context cache next door
-// (erp-journal-context.ts). That is a deliberate difference, not an
-// oversight: this context is built from AccBrandErpInterface, which is one
-// of the 19 dual-written tables `npm run check:alignment` asserts is
-// identical across Production and UAT, so a single cache entry is correct
-// for either database.
-const PREP_DEPT_CTX_CACHE_KEY = "acc:prep-dept-ctx";
+const PREP_DEPT_CTX_CACHE_PREFIX = "acc:prep-dept-ctx:";
+
+/**
+ * Invariant: nothing derived from a form-pool read may live in a
+ * process-global cache (`src/lib/acc/acc-cache.ts`, a `globalThis` Map) under
+ * a key that omits the environment. Two viewers of one route can now resolve
+ * to different databases (Production vs UAT — see
+ * docs/superpowers/specs/2026-08-18-parallel-uat-design.md, "Caching"), and
+ * this context is built from an `AccBrandErpInterface` read via
+ * `getAccPool()`, which follows the resolved environment. A constant key
+ * would let one viewer's read serve the other viewer's database.
+ * `journalContextCacheKey` (erp-journal-context.ts) already follows this
+ * rule; this is the same fix applied here.
+ */
+function prepDeptCtxCacheKey(environment: FormEnvironmentValue): string {
+  return `${PREP_DEPT_CTX_CACHE_PREFIX}${environment}`;
+}
+
+/** Bust cached prep dept context after an ERP interface send or settings change. */
+export function invalidatePrepDeptContextCache(): void {
+  deleteAccCachedByPrefix(PREP_DEPT_CTX_CACHE_PREFIX);
+}
 
 export type { ErpPrepStatus };
 
@@ -201,10 +217,12 @@ export function interfaceByClaimMapToRecord(m: Map<string, string>): Record<stri
 }
 
 export async function loadPrepDeptContext(): Promise<PrepDeptContext> {
-  const cached = getAccCached<PrepDeptContext>(PREP_DEPT_CTX_CACHE_KEY, PREP_DEPT_CTX_CACHE_TTL_MS);
+  const environment = await resolveFormEnvironment();
+  const cacheKey = prepDeptCtxCacheKey(environment);
+  const cached = getAccCached<PrepDeptContext>(cacheKey, PREP_DEPT_CTX_CACHE_TTL_MS);
   if (cached) return cached;
   const ctx = await loadPrepDeptContextUncached();
-  putAccCached(PREP_DEPT_CTX_CACHE_KEY, ctx);
+  putAccCached(cacheKey, ctx);
   return ctx;
 }
 

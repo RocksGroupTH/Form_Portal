@@ -1,5 +1,10 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { queryBothPools } from "@/lib/acc/query-both";
+import {
+  resolveViewerEnvironmentMap,
+  type FormEnvironmentValue,
+} from "@/lib/form-environment";
+import { keepRowsInCurrentEnvironment } from "@/lib/form-environment/current-rows";
 import { hrEmployeeTable } from "@/lib/hr/constants";
 import {
   fmtTravelSpanLabel,
@@ -393,6 +398,35 @@ function bySubmittedAtDesc(a: ReportRow, b: ReportRow): number {
   return b.id - a.id;
 }
 
+/**
+ * The viewer's per-form environment map, or an empty one if Fast_Core cannot be
+ * read.
+ *
+ * `resolveViewerEnvironmentMap` is a Fast_Core read, and it is the only reason
+ * `/mine` and `/work` touch Fast_Core at all: `resolveCurrentFormAccess`
+ * short-circuits on the `BOTH` classification before `getFormSwitchMap`, and
+ * `queryBothPools` never goes near it. Letting a `FormEnvironment` hiccup reject
+ * would turn a working merged read into a 500 on two of the app's busiest lists.
+ *
+ * An empty map means every form reads as Production in
+ * `keepRowsInCurrentEnvironment`, so the degraded list is the ordinary user's
+ * list. Failing open toward Production is the right direction — the alternative
+ * is showing nothing at all, and no write happens here.
+ */
+async function viewerEnvironmentMapOrProduction(): Promise<
+  Record<string, FormEnvironmentValue>
+> {
+  try {
+    return await resolveViewerEnvironmentMap();
+  } catch (err) {
+    console.error(
+      "[acc/report-service] FormEnvironment read failed — listing Production rows only",
+      err,
+    );
+    return {};
+  }
+}
+
 /** Requests the user submitted/owns (excludes drafts) — aggregated per request. */
 export async function listMyRequestRows(userId: number): Promise<ReportRow[]> {
   const rows = await queryBothPools(async (pool) => {
@@ -410,7 +444,10 @@ export async function listMyRequestRows(userId: number): Promise<ReportRow[]> {
       mapRow(x, "request"),
     );
   });
-  return rows.sort(bySubmittedAtDesc);
+  return keepRowsInCurrentEnvironment(
+    rows,
+    await viewerEnvironmentMapOrProduction(),
+  ).sort(bySubmittedAtDesc);
 }
 
 /** Requests the user has a part in approving (manager or account) — aggregated per request. */
@@ -464,7 +501,10 @@ export async function listMyWorkRows(
       mapRow(x, "request"),
     );
   });
-  return rows.sort(bySubmittedAtDesc);
+  return keepRowsInCurrentEnvironment(
+    rows,
+    await viewerEnvironmentMapOrProduction(),
+  ).sort(bySubmittedAtDesc);
 }
 
 /**

@@ -1,7 +1,10 @@
 import { sql } from "@/lib/db/mssql";
+import { resolveFormAccess, resolveFormEnvironment } from "@/lib/form-environment";
 import { EMPLOYEE_STATUS_ACTIVE } from "@/lib/hr/constants";
 import { pickEmployeePhotoUrl } from "@/lib/hr/photo-url";
 import { getHrPool } from "@/lib/hr/pool";
+import { assertRequesterAllowedInUat } from "@/lib/uat-tester/guards";
+import { uatManagerFor, uatManagerStaffIdsFor } from "@/lib/uat-tester/service";
 import type {
   EmployeeContext,
   EmployeeLookupResult,
@@ -251,13 +254,102 @@ interface ColleagueRow {
   MgrPhotoOverrideUrl: string | null;
 }
 
+/** Active HR identities behind a set of manager StaffIds, keyed by StaffId. */
+async function listActiveManagersByStaffIds(
+  staffIds: number[],
+): Promise<Map<number, ColleagueManager>> {
+  const out = new Map<number, ColleagueManager>();
+  if (staffIds.length === 0) return out;
+
+  const pool = await getHrPool();
+  const req = pool.request().input("status", sql.NVarChar, EMPLOYEE_STATUS_ACTIVE);
+  const placeholders: string[] = [];
+  staffIds.forEach((id, i) => {
+    req.input(`m${i}`, sql.Int, id);
+    placeholders.push(`@m${i}`);
+  });
+
+  const r = await req.query<{
+    StaffId: number;
+    FullName: string | null;
+    FirstName: string | null;
+    LastName: string | null;
+    Email: string | null;
+    EmailCompBr: string | null;
+    Position: string | null;
+    PhotoUrl: string | null;
+    PhotoOverrideUrl: string | null;
+  }>(`
+    SELECT StaffId, FullName, FirstName, LastName, Email, EmailCompBr, Position,
+           PhotoUrl, PhotoOverrideUrl
+    FROM dbo.Employee
+    WHERE Status = @status AND StaffId IN (${placeholders.join(", ")})
+  `);
+
+  for (const row of r.recordset) {
+    out.set(row.StaffId, {
+      staffId: row.StaffId,
+      fullName:
+        [row.FirstName, row.LastName].filter(Boolean).join(" ") || row.FullName || null,
+      email: row.Email ?? row.EmailCompBr ?? null,
+      position: row.Position,
+      photoUrl: pickEmployeePhotoUrl(row.PhotoOverrideUrl, row.PhotoUrl),
+    });
+  }
+  return out;
+}
+
+/**
+ * Every colleague's manager replaced by their UAT manager — the person a UAT
+ * submit on their behalf will actually assign.
+ *
+ * Two queries for the whole department, never one chain per colleague: one against
+ * `UatTester` for the requester → manager pairs, one against HR for the manager
+ * rows. A colleague with no usable UAT manager comes back with `manager: null`,
+ * which is honest — filing for them in UAT is refused for the same reason.
+ */
+async function withUatColleagueManagers(
+  colleagues: DepartmentColleague[],
+): Promise<DepartmentColleague[]> {
+  const byRequester = await uatManagerStaffIdsFor(colleagues.map((c) => c.staffId));
+  if (byRequester.size === 0) return colleagues.map((c) => ({ ...c, manager: null }));
+
+  const managers = await listActiveManagersByStaffIds(
+    Array.from(new Set(Array.from(byRequester.values()))),
+  );
+  return colleagues.map((c) => {
+    const managerStaffId = byRequester.get(c.staffId);
+    return {
+      ...c,
+      manager: managerStaffId === undefined ? null : (managers.get(managerStaffId) ?? null),
+    };
+  });
+}
+
+/** Which form's picker this is, for callers whose route is not the form's own. */
+export interface ColleagueScope {
+  /**
+   * The form the picker belongs to. Both requesters routes are classified as
+   * aggregates, so without this the path resolves Production for everybody and a
+   * tester is shown colleagues' real HR managers.
+   */
+  formCode?: string | null;
+  /** The record being resumed, when there is one — same id rule as the submit. */
+  requestId?: number | null;
+}
+
 /**
  * Active employees in the given department (for the on-behalf requester picker), each with
  * their own manager resolved via a self-join so selecting a colleague can show who will
  * approve their request without another round-trip.
+ *
+ * In UAT that self-join is the wrong answer: the submit routes to the colleague's
+ * **UAT** manager, so the picker must too, or it asserts a real manager's name over
+ * a request that will never reach them.
  */
 export async function listDepartmentColleagues(
   departmentId: number,
+  scope?: ColleagueScope,
 ): Promise<DepartmentColleague[]> {
   if (!departmentId) return [];
   const pool = await getHrPool();
@@ -283,7 +375,7 @@ export async function listDepartmentColleagues(
       WHERE e.Status = @status AND e.DepartmentId = @dept
       ORDER BY e.FullName
     `);
-  return result.recordset.map((row) => ({
+  const colleagues: DepartmentColleague[] = result.recordset.map((row) => ({
     staffId: row.StaffId,
     fullName:
       [row.FirstName, row.LastName].filter(Boolean).join(" ") || row.FullName || null,
@@ -304,6 +396,11 @@ export async function listDepartmentColleagues(
         }
       : null,
   }));
+
+  const environment = scope?.formCode
+    ? (await resolveFormAccess(scope.formCode, scope.requestId ?? null)).environment
+    : await resolveFormEnvironment();
+  return environment === "UAT" ? withUatColleagueManagers(colleagues) : colleagues;
 }
 
 /** Find an active Employee by HR StaffId (used to resolve an on-behalf-of colleague). */
@@ -338,22 +435,70 @@ export async function findActiveEmployeeByStaffId(
 }
 
 /**
+ * The context's manager, swapped for the requester's UAT manager when this
+ * request resolves UAT.
+ *
+ * AP-17 does not share AP-1's resolver, so the override is duplicated rather
+ * than shared — see `withUatManager` in `src/lib/acc/employee-context.ts` for
+ * the same rule on the AP-1 side, and for why `resolveManagerEmail` must stay
+ * untouched. Keyed on the requester this context describes and on the resolved
+ * environment, never on the UAT-mode cookie.
+ *
+ * When there is no UAT manager the context comes back with `managerStaffId`
+ * null, and `submitTravelBookingGroup` refuses. AP-17's approve/reject/return
+ * routes gate on `staffId === AccRequest.ManagerStaffId` alone, so whatever
+ * lands here has to be a real active HR StaffId — `uatManagerFor` guarantees
+ * that or returns null.
+ */
+async function withUatManager(employee: EmployeeContext): Promise<EmployeeContext> {
+  if ((await resolveFormEnvironment()) !== "UAT") return employee;
+  const manager = await uatManagerFor(
+    employee.email ?? employee.emailCompBr ?? null,
+    employee.staffId ?? null,
+  );
+  return { ...employee, managerStaffId: manager ? manager.staffId : null };
+}
+
+/**
  * Resolve the full EmployeeContext for a save/submit. Without requesterStaffId -> the actor.
  * With requesterStaffId -> the colleague, but ONLY if Active and in the actor's department
  * (server-side authorization -- never trust the client). Returns the full context so callers
  * that need phone/allowance/brand (e.g. AP-17 snapshots) work unchanged.
+ *
+ * In UAT the manager is the requester's UAT manager (see `withUatManager`).
+ *
+ * `forWrite` opts into the UAT on-behalf refusal, and the AP-17 write choke
+ * points pass it — the two that file a request, plus the id-card consent POST,
+ * which persists a per-StaffId setting into the resolved form database. The rule
+ * is a write rule — nothing may be *written* in UAT for somebody outside the
+ * tester list — and this resolver is also the one behind four read-only GETs
+ * (allowance-log, date-ranges, id-card/previous and its download).
+ * Throwing there turned an expected selection into a 500 that every
+ * caller swallows: the per-diem estimate silently fell back to the flat rate,
+ * date-conflict locking silently switched off, and the allowance modal rendered
+ * "ยังไม่มีรายการ" — an affirmative false statement about HR data. The flag lives
+ * here rather than at the call sites because this is the only place the actor and
+ * the requester both exist, and the guard must not fire when they are the same
+ * person.
  */
 export async function resolveEmployeeForActor(
   loginEmail: string,
   requesterStaffId: number | null | undefined,
+  opts?: { forWrite?: boolean },
 ): Promise<EmployeeContext> {
   const actor = (await findActiveEmployeeByEmail(loginEmail)).employee;
   if (!actor) throw new Error("ไม่พบข้อมูลพนักงานของคุณในระบบ HR");
-  if (!requesterStaffId || requesterStaffId === actor.staffId) return actor;
+  if (!requesterStaffId || requesterStaffId === actor.staffId) return withUatManager(actor);
   const colleague = await findActiveEmployeeByStaffId(requesterStaffId);
   if (!colleague) throw new Error("ไม่พบข้อมูลพนักงานที่เลือก");
   if (actor.departmentId == null || colleague.departmentId !== actor.departmentId) {
     throw new Error("เลือกได้เฉพาะพนักงานในแผนกเดียวกันเท่านั้น");
   }
-  return colleague;
+  if (opts?.forWrite) {
+    await assertRequesterAllowedInUat(
+      colleague.email ?? colleague.emailCompBr ?? null,
+      colleague.staffId ?? null,
+    );
+  }
+  return withUatManager(colleague);
 }

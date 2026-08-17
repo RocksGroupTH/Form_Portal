@@ -12,6 +12,23 @@
 
 export type FormCode = "AP-1" | "AP-15" | "AP-17";
 
+/** Every form code, as values — the runtime half of the `FormCode` union. */
+export const FORM_CODES: readonly FormCode[] = ["AP-1", "AP-15", "AP-17"];
+
+/**
+ * Narrow caller-supplied text to a known form code.
+ *
+ * Anything reaching `getFormSwitchMap()`'s record with an arbitrary string is a
+ * lookup into an object the caller half-controls, so a `?form=` query value is
+ * checked here before it is used as a key. Unknown text is not an error — the
+ * caller drops the hint and falls back to path classification.
+ *
+ * Pure and client-safe.
+ */
+export function isFormCode(value: string | null | undefined): value is FormCode {
+  return !!value && FORM_CODES.indexOf(value as FormCode) !== -1;
+}
+
 /** "BOTH" = an aggregate endpoint that must read every database and merge. */
 export type PathClass = FormCode | "BOTH" | null;
 

@@ -5,6 +5,11 @@ import {
   resolveFormEnvironment,
   type FormEnvironmentValue,
 } from "@/lib/form-environment";
+import { listActiveUatTesterAddresses } from "@/lib/uat-tester/service";
+import {
+  isUatMailExempt,
+  type UatMailExemptRecord,
+} from "@/lib/acc/uat-mail-exempt";
 import { env } from "@/env";
 import { sendEmail } from "@/lib/graph";
 import { esc } from "@/lib/acc/email-templates";
@@ -30,18 +35,42 @@ export async function queueEmail(p: {
 }
 
 /**
- * Rewrite a queued message so a UAT-flagged form cannot email real people.
+ * Rewrite a queued message so a UAT-flagged form cannot email real people —
+ * with one exception, now that Production and UAT run side by side and a UAT
+ * request's approval chain stays inside the tester group (see
+ * docs/superpowers/specs/2026-08-18-parallel-uat-design.md, "Notifications").
+ * The old justification — "approval chains resolve against production HR in
+ * both environments" — is exactly the assumption that design removed: if
+ * every UAT message were still redirected, the configured UAT manager would
+ * never be told there is anything to approve, and a UAT request could never
+ * complete.
  *
- * Approval chains resolve against production Rocks_Portal_HR in both
- * environments, so a tester's fake request would otherwise ask a real manager
- * to approve it. The intended recipient stays visible in the body so routing
- * can still be checked.
+ * The exception: a recipient who holds an active `UatTester` row of their own
+ * gets the mail at their own address — still `[UAT]`-prefixed, so it is never
+ * mistaken for a production notification. Matched on either spelling of that
+ * address, the stored login one or HR's, because a queued recipient is always
+ * HR-sourced and the two are allowed to differ. A configured UAT manager is
+ * covered by the same rule rather than by a second one; see `isUatMailExempt`.
+ * `isUatMailExempt` is the pure predicate; the caller gathers the active
+ * testers once per drain cycle (not once per message) and passes them in.
+ * Everyone else keeps the rewrite, and the loud throw when `UAT_MAIL_REDIRECT`
+ * is unset still fires for them — this must fail closed, never fall back to
+ * the real recipient.
  */
-function applyUatRedirect(m: {
-  ToEmail: string;
-  Subject: string;
-  BodyHtml: string;
-}) {
+function applyUatRedirect(
+  m: { ToEmail: string; Subject: string; BodyHtml: string },
+  exemptTesters: readonly UatMailExemptRecord[],
+): { to: string; subject: string; bodyHtml: string } {
+  const exempt = isUatMailExempt(m.ToEmail, exemptTesters);
+
+  if (exempt) {
+    return {
+      to: m.ToEmail,
+      subject: `[UAT] ${m.Subject}`,
+      bodyHtml: m.BodyHtml,
+    };
+  }
+
   const to = env.UAT_MAIL_REDIRECT || env.GRAPH_MAIL_FROM;
   if (!to) {
     // Refuse rather than fall back to the real recipient. An unconfigured
@@ -88,13 +117,39 @@ export async function processQueueOn(
     BodyHtml: string;
   }[];
 
+  // Fetched once per drain cycle, not once per message — every row in this
+  // batch is judged against the same tester snapshot. Two reads, batched:
+  // Fast_Core for the tester list and Rocks_Portal_HR for the address the queue
+  // actually carries, because `UatTester.Email` is the login address and every
+  // recipient here is HR's `COALESCE(Email, EmailCompBr)` (see
+  // `listActiveUatTesterAddresses`).
+  //
+  // Its own try/catch, deliberately: neither read is the database being
+  // drained. Letting one reject would abort the whole drain, and in
+  // `processQueueBoth` it would reject the `Promise.all` *after* the Production
+  // half had already sent its mail and marked the rows Sent — turning a
+  // Fast_Core or HR hiccup into a 500 on a sweep that half succeeded. Falling
+  // back to an empty list fails closed: nobody is exempt, so every UAT message
+  // is redirected, which is the safe direction.
+  let exemptTesters: UatMailExemptRecord[] = [];
+  if (environment === "UAT" && rows.length > 0) {
+    try {
+      exemptTesters = await listActiveUatTesterAddresses();
+    } catch (err) {
+      console.error(
+        "[acc/email-queue] UatTester lookup failed — redirecting every UAT message in this batch",
+        err,
+      );
+    }
+  }
+
   let sent = 0,
     failed = 0;
   for (const m of rows) {
     try {
       const payload =
         environment === "UAT"
-          ? applyUatRedirect(m)
+          ? applyUatRedirect(m, exemptTesters)
           : { to: m.ToEmail, subject: m.Subject, bodyHtml: m.BodyHtml };
       await sendEmail(payload);
       await pool

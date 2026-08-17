@@ -1,5 +1,6 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { writeBothPools } from "@/lib/acc/dual-write";
+import { isEnvironmentSpecificSettingKey } from "@/lib/acc/setting-scope";
 import {
   loadInterfaceBrandsByApproverIds,
   setApproverInterfaceBrands,
@@ -221,22 +222,14 @@ const MERGE_ACC_SETTING = `MERGE [dbo].[AccSetting] AS t USING (SELECT @key AS S
             WHEN NOT MATCHED THEN INSERT (SettingKey, SettingValue, UpdatedBy)
             VALUES (@key, @value, @user);`;
 
-/**
- * Keys that are per-database by design and must never be dual-written.
- *
- * ERP_INTERFACE_ENV is a leftover: nothing reads AccSetting's copy any more —
- * the BC environment comes from the form's Form Environment flag
- * (src/lib/acc/erp-environment.ts). The guard stays so a stale value cannot
- * start propagating between the two databases if something reads it again.
- */
-const ENVIRONMENT_SPECIFIC_KEYS = new Set(["ERP_INTERFACE_ENV"]);
-
 export async function setSetting(
   key: string,
   value: string | null,
   userId: number,
 ): Promise<void> {
-  if (ENVIRONMENT_SPECIFIC_KEYS.has(key)) {
+  // Per-database by design — see `isEnvironmentSpecificSettingKey`. Everything
+  // else is shared configuration and is dual-written.
+  if (isEnvironmentSpecificSettingKey(key)) {
     const pool = await getAccPool();
     await pool
       .request()

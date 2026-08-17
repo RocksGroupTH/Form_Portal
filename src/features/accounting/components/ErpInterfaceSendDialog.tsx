@@ -19,6 +19,7 @@ import {
   collectGroupsRequestIds,
 } from "@/lib/acc/erp-ppap-payload";
 import type { ErpPrepRow } from "@/lib/acc/erp-prep-service";
+import type { FormEnvironmentValue } from "@/lib/form-environment";
 
 export interface ErpInterfaceSendTarget {
   interfaceTarget: string;
@@ -27,6 +28,22 @@ export interface ErpInterfaceSendTarget {
   journalBatchName: string | null;
   bcMeta: string | null;
   context: ErpJournalBuildContext;
+  /**
+   * The environment GET /api/request/accounting/erp-prep resolved to when this
+   * queue was loaded, echoed back verbatim on send so the server can refuse
+   * (409) a click bound to another database. Never recomputed client-side:
+   * recomputing would let the sender's own cookie decide again, exactly what
+   * this binding exists to stop.
+   */
+  queueEnvironment: FormEnvironmentValue | null;
+  /**
+   * The ids the send will actually push for this interface target, picked out
+   * of the loaded queue by `selectErpSendBatchRows` — the same predicate the
+   * server applies. Echoed on send so the server can refuse a click whose batch
+   * has moved. Not "every id the queue listed": that set changed on any
+   * approval anywhere in Accounting and 409'd sends that were perfectly valid.
+   */
+  batchRequestIds: number[];
 }
 
 type DialogPhase = "confirm" | "sending" | "success" | "error";
@@ -102,11 +119,18 @@ export function ErpInterfaceSendDialog({
   onOpenChange,
   target,
   onSuccess,
+  onStale,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   target: ErpInterfaceSendTarget | null;
   onSuccess: () => void;
+  /**
+   * The server answered 409: the page this dialog was opened from is out of
+   * date. The caller must reload the queue — the ids in `target` are a frozen
+   * copy taken at click time, so retrying with them can only 409 again.
+   */
+  onStale: () => void;
 }) {
   const [phase, setPhase] = useState<DialogPhase>("confirm");
   const [errorMessage, setErrorMessage] = useState("");
@@ -143,6 +167,14 @@ export function ErpInterfaceSendDialog({
 
   const handleSend = useCallback(async () => {
     if (!target) return;
+    if (!target.queueEnvironment) {
+      // Should not happen — the dialog only opens from a queue that already
+      // loaded — but fail closed rather than post with nothing to bind the
+      // click to.
+      setErrorMessage("โหลดคิวใหม่ก่อนส่ง — ไม่พบสภาพแวดล้อมของคิวที่แสดงอยู่");
+      setPhase("error");
+      return;
+    }
     setPhase("sending");
     setErrorMessage("");
 
@@ -152,9 +184,38 @@ export function ErpInterfaceSendDialog({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           interfaceTarget: target.interfaceTarget,
+          environment: target.queueEnvironment,
+          requestIds: target.batchRequestIds,
         }),
       });
       const json: { ok: boolean; error?: string } = await res.json();
+
+      if (res.status === 409) {
+        // Stale page — the viewer's database moved, or the batch changed under
+        // them. There is nothing to retry: `target` froze its id set at click
+        // time and `handleSend` would replay the same rejected body forever.
+        // Hand it back to the caller to reload, and never show "ลองส่งใหม่"
+        // under a message that tells the operator to reload.
+        //
+        // The reload promise is appended here rather than baked into the server's
+        // message: `onStale` below is what actually reloads, and it only exists
+        // on this path. A caller hitting the route directly gets the server's
+        // statement of fact and no promise nobody kept.
+        //
+        // The environment-stale message carries its own "โหลดหน้าใหม่" for those
+        // direct callers, so it is trimmed off first — appending the promise to
+        // an instruction reads as an order to reload followed by news that it is
+        // already done.
+        const fact = (json.error ?? "คิวเปลี่ยนไปแล้ว").replace(
+          /\s*—\s*โหลดหน้าใหม่\s*$/,
+          "",
+        );
+        toast.error(`${fact} — ระบบโหลดหน้ารายการใหม่ให้`);
+        onOpenChange(false);
+        onStale();
+        return;
+      }
+
       if (!json.ok) {
         setErrorMessage(json.error ?? "ส่งเข้า ERP ไม่สำเร็จ");
         setPhase("error");
@@ -168,7 +229,7 @@ export function ErpInterfaceSendDialog({
       setErrorMessage("เกิดข้อผิดพลาดในการเชื่อมต่อ — ลองใหม่หรือแจ้ง IT");
       setPhase("error");
     }
-  }, [target, onSuccess, onOpenChange]);
+  }, [target, onSuccess, onOpenChange, onStale]);
 
   if (!target || !summary) return null;
 

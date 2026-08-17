@@ -1,7 +1,9 @@
 import NextAuth from "next-auth";
+import { getToken } from "next-auth/jwt";
 import { authConfig } from "@/lib/auth.config";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { env } from "@/env";
 
 const { auth } = NextAuth(authConfig);
 
@@ -19,6 +21,9 @@ const SECURITY_HEADERS: Record<string, string> = {
 
 const PAGE_CSP = "frame-ancestors 'self'";
 
+/** The session-cookie name NextAuth uses once the app is served over https. */
+const SECURE_SESSION_COOKIE = "__Secure-authjs.session-token";
+
 function applySecurityHeaders(res: NextResponse | Response, isApiRoute: boolean) {
   for (const [key, value] of Object.entries(SECURITY_HEADERS)) {
     res.headers.set(key, value);
@@ -26,6 +31,11 @@ function applySecurityHeaders(res: NextResponse | Response, isApiRoute: boolean)
   if (!isApiRoute) {
     res.headers.set("Content-Security-Policy", PAGE_CSP);
   }
+}
+
+/** True when the auth middleware is deciding the request rather than passing it on. */
+function isAuthDecision(res: NextResponse | Response): boolean {
+  return res.status !== 200 || res.headers.has("location") || res.headers.has("x-middleware-rewrite");
 }
 
 export default async function proxy(req: NextRequest) {
@@ -41,7 +51,8 @@ export default async function proxy(req: NextRequest) {
     return redirect;
   }
 
-  if (authResponse) {
+  // A redirect or rewrite is auth turning the request away — its call, not ours.
+  if (authResponse && isAuthDecision(authResponse)) {
     applySecurityHeaders(authResponse, isApiRoute);
     return authResponse;
   }
@@ -51,10 +62,52 @@ export default async function proxy(req: NextRequest) {
   // has to arrive as a header — Next exposes request headers to server code but
   // not the pathname. Set from nextUrl, never trusted from the client: .set()
   // overwrites any x-pathname the caller supplied.
+  //
+  // This has to happen on the way through even when auth returned a response.
+  // NextAuth answers every allowed request with a pass-through 200, so an early
+  // `return authResponse` here means the header is never attached and every
+  // form resolves to Production — which is exactly what happened between
+  // 2026-08-14 and 2026-08-18.
   const requestHeaders = new Headers(req.headers);
   requestHeaders.set("x-pathname", req.nextUrl.pathname);
 
+  // Identity for the Node-side resolver. The proxy runs on Edge and cannot reach
+  // the database, so it publishes who is asking and the resolver does the
+  // UatTester lookup. .set() overwrites anything the client sent, same trust
+  // argument as x-pathname. A failed decode yields "", which resolves every
+  // form to Production — the safe direction for an unidentified viewer.
+  //
+  // NextAuth prefixes the session cookie with __Secure- on https and derives
+  // the JWE salt from that same name — decode with the wrong name and
+  // getToken returns null with no error, no throw. Read whichever one the
+  // browser actually sent instead of assuming based on our own config.
+  // startsWith (not an exact match) matters here: this app stores a base64
+  // photo data-URL in the JWT (src/lib/auth.ts), which chunks the cookie into
+  // …session-token.0 / .1, so an exact name match would miss it too.
+  let email = "";
+  try {
+    const cookieName = req.cookies
+      .getAll()
+      .some((c) => c.name.startsWith(SECURE_SESSION_COOKIE))
+      ? SECURE_SESSION_COOKIE
+      : "authjs.session-token";
+    const token = await getToken({ req, secret: env.AUTH_SECRET, cookieName });
+    email = typeof token?.email === "string" ? token.email : "";
+  } catch (err) {
+    if (process.env.NODE_ENV === "development") console.error("[Proxy] getToken error:", err);
+  }
+  requestHeaders.set("x-user-email", email);
+
   const response = NextResponse.next({ request: { headers: requestHeaders } });
+
+  // Keep whatever auth set on its pass-through — session rotation lives in
+  // those cookies, and dropping them logs people out.
+  if (authResponse) {
+    for (const cookie of authResponse.headers.getSetCookie()) {
+      response.headers.append("set-cookie", cookie);
+    }
+  }
+
   applySecurityHeaders(response, isApiRoute);
   return response;
 }

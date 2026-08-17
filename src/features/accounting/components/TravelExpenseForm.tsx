@@ -229,6 +229,8 @@ export function TravelExpenseForm({
     manager,
     managerReason,
     colleagues,
+    colleaguesLoading,
+    requesterEnvironment,
     requesterStaffId,
     setRequesterStaffId,
     selectedRequester,
@@ -349,8 +351,15 @@ export function TravelExpenseForm({
   const [requesterPickerOpen, setRequesterPickerOpen] = useState(false);
   // Manager shown in the card: the selected colleague's manager when opening on behalf, else self's.
   const shownManager = requesterStaffId ? (selectedRequester?.manager ?? null) : manager;
+  // In UAT the colleague's manager is their UAT manager, so the remedy for a
+  // missing one is the tester list, not HR — pointing at HR there would end with
+  // somebody asking HR to attach a real manager to test data.
   const shownManagerReason = requesterStaffId
-    ? (selectedRequester?.manager ? null : "เพื่อนที่เลือกยังไม่ได้กำหนดหัวหน้างานในระบบ HR")
+    ? selectedRequester?.manager
+      ? null
+      : requesterEnvironment === "UAT"
+        ? "โหมด UAT: เพื่อนที่เลือกยังไม่ได้กำหนดผู้จัดการสำหรับ UAT — ตั้งที่ Settings → UAT Users"
+        : "เพื่อนที่เลือกยังไม่ได้กำหนดหัวหน้างานในระบบ HR"
     : managerReason;
 
   /* ── Client-side completeness (mirrors server validateForSubmit) ── */
@@ -373,7 +382,10 @@ export function TravelExpenseForm({
     travelDays.length > 1 ? ` (${fmtDayTabLabel(travelDays[i], i)})` : "";
 
   const missing: { key: string; label: string }[] = [];
-  if (!employeeLoading && !manager) {
+  // `shownManager`, not `manager`: on behalf of a colleague the submit assigns
+  // *their* manager, so gating on the actor's would both block a submit that is
+  // fine and let one through whose requester has nobody to approve it.
+  if (!employeeLoading && !colleaguesLoading && !shownManager) {
     missing.push({ key: "manager", label: "ผู้จัดการ (ManagerStaffId)" });
   }
   if (!brandCode) missing.push({ key: "brand", label: "แบรนด์ที่เบิก" });

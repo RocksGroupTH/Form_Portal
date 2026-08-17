@@ -34,10 +34,14 @@ export function putAccCached(key: string, data: unknown): void {
   cache.set(key, { ts: Date.now(), data });
 }
 
-export function deleteAccCached(key: string): void {
-  cache.delete(key);
-}
-
+/**
+ * Every cache key in this map is environment-suffixed (`…:Production` /
+ * `…:UAT`), so an invalidator that knows only the logical name has no single
+ * key to delete — it deletes the prefix and busts both. A `deleteAccCached(key)`
+ * that took one exact key used to live here; it was removed once its last
+ * caller went away, because reaching for it again is how an invalidator ends up
+ * silently matching nothing.
+ */
 export function deleteAccCachedByPrefix(prefix: string): void {
   for (const key of Array.from(cache.keys())) {
     if (key.startsWith(prefix)) cache.delete(key);

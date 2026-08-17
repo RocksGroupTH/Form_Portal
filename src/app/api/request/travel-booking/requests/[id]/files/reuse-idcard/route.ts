@@ -8,6 +8,7 @@ import {
   downloadFileFromSharePoint,
 } from "@/lib/sharepoint";
 import { buildAccFolderPath, buildAccFileName } from "@/lib/acc/sharepoint-path";
+import { resolveFormEnvironment } from "@/lib/form-environment";
 import { AP17_FORM_CODE, FILE_REFTYPES } from "@/features/travel-booking/constants";
 import type { TravelBookingFileMeta } from "@/features/travel-booking/types";
 
@@ -124,6 +125,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
       const folderPath = buildAccFolderPath({
         requestNo: cur.RequestNo ?? null, requestId, year: null, formCode: AP17_FORM_CODE,
+        // Matches the sibling upload route. Without it a UAT request's ID-card
+        // copy was written into the live SharePoint tree while its
+        // AccRequestFile row went to Rocks_Portal_Form_UAT.
+        environment: await resolveFormEnvironment(),
       });
       const filename = buildAccFileName({
         typeLabel: FILE_REFTYPES.ID_CARD, requestNo: cur.RequestNo ?? null, requestId,

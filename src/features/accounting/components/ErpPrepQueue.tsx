@@ -36,6 +36,7 @@ import {
   type ErpPrepStatus,
 } from "@/features/accounting/constants";
 import type { ErpPrepRow } from "@/lib/acc/erp-prep-service";
+import type { FormEnvironmentValue } from "@/lib/form-environment";
 import type { AccRequest } from "@/features/accounting/types";
 import type { ErpJournalBuildContext } from "@/lib/acc/erp-journal-builder";
 import { ErpJournalPreview } from "@/features/accounting/components/ErpJournalPreview";
@@ -46,6 +47,7 @@ import {
   filterRowsByInterfaceTarget,
   ERP_INTERFACE_UNASSIGNED,
 } from "@/features/accounting/lib/erp-interface-target";
+import { selectErpSendBatchRows } from "@/features/accounting/lib/erp-send-batch";
 import { ErpPrepIssueLink } from "@/features/accounting/components/ErpPrepIssueLink";
 import type { ErpPrepIssueLinkContext } from "@/features/accounting/lib/erp-prep-issue-links";
 import {
@@ -238,6 +240,7 @@ export function ErpPrepQueue({
   showUnassignedTab?: boolean;
 }) {
   const [rows, setRows] = useState<ErpPrepRow[]>([]);
+  const [queueEnvironment, setQueueEnvironment] = useState<FormEnvironmentValue | null>(null);
   const [journalContext, setJournalContext] = useState<ErpJournalBuildContext | null>(null);
   const [listLoading, setListLoading] = useState(true);
   const [contextLoading, setContextLoading] = useState(true);
@@ -292,9 +295,17 @@ export function ErpPrepQueue({
           setForbidden(true);
           return;
         }
-        const listJson: { ok: boolean; data?: ErpPrepRow[]; error?: string } = await listRes.json();
-        if (listJson.ok && listJson.data) setRows(listJson.data);
-        else toast.error(listJson.error ?? "โหลดข้อมูลไม่สำเร็จ");
+        const listJson: {
+          ok: boolean;
+          data?: { environment: FormEnvironmentValue; rows: ErpPrepRow[] };
+          error?: string;
+        } = await listRes.json();
+        if (listJson.ok && listJson.data) {
+          setRows(listJson.data.rows);
+          setQueueEnvironment(listJson.data.environment);
+        } else {
+          toast.error(listJson.error ?? "โหลดข้อมูลไม่สำเร็จ");
+        }
       })
       .catch(() => toast.error("เกิดข้อผิดพลาดในการโหลดรายการ"))
       .finally(() => {
@@ -403,6 +414,21 @@ export function ErpPrepQueue({
     let list = filterRowsByInterfaceTarget(filteredRows, interfaceByClaim, interfaceTarget);
     return list;
   }, [filteredRows, interfaceByClaim, interfaceTarget]);
+
+  /**
+   * The ids POST …/send will actually put in the batch for this target, echoed
+   * on send so the server can refuse a click bound to a queue that has moved.
+   *
+   * Derived from `rows` — the unfiltered list GET returned — and NOT from
+   * `displayIfaceRows`. The operator's display filters change what is on screen
+   * but not what the send picks up (the dialog says so: "รวมเอกสารที่พร้อมส่ง
+   * ทั้งหมด"), so narrowing by them here would 409 a queue that is perfectly
+   * current. `selectErpSendBatchRows` is the same predicate the server applies.
+   */
+  const sendBatchRequestIds = useMemo(
+    () => selectErpSendBatchRows(rows, interfaceByClaim, interfaceTarget).map((r) => r.id),
+    [rows, interfaceByClaim, interfaceTarget],
+  );
 
   const sentMonthOptions = useMemo(() => {
     const set = new Set<string>();
@@ -691,6 +717,8 @@ export function ErpPrepQueue({
             interfaceTargetCode={interfaceTarget}
             onRequestSend={setSendTarget}
             sentMonthFilter={filters.sentMonth || undefined}
+            queueEnvironment={queueEnvironment}
+            batchRequestIds={sendBatchRequestIds}
           />
         </div>
       ) : (
@@ -893,6 +921,13 @@ export function ErpPrepQueue({
         onSuccess={() => {
           setSendTarget(null);
           fetchList({ silent: true });
+        }}
+        onStale={() => {
+          // A 409 means the page the operator confirmed is out of date, so the
+          // frozen ids in `sendTarget` can only 409 again. Reload the queue
+          // instead and let them re-select from what is actually there.
+          setSendTarget(null);
+          fetchList();
         }}
       />
     </div>

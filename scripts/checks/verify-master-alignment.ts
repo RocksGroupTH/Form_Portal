@@ -19,6 +19,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
+// Relative, and from a module with no imports of its own — the "@/" alias does
+// not resolve here, and a static import must not pull in anything that reads
+// env vars before loadDotEnvLocal() has run.
+import { isEnvironmentSpecificSettingKey } from "../../src/lib/acc/setting-scope";
 
 function loadDotEnvLocal() {
   const p = path.resolve(process.cwd(), ".env.local");
@@ -65,13 +69,6 @@ const MASTER_TABLES = [
 ];
 
 /**
- * AccSetting.ERP_INTERFACE_ENV is per-database by design — 'Production' in the
- * live database, 'Sandbox' in UAT. setSetting() excludes it from dual-write, so
- * this check must exclude it too.
- */
-const ENV_SPECIFIC_SETTING_KEYS = new Set(["ERP_INTERFACE_ENV"]);
-
-/**
  * Compare on business columns only. The mssql driver round-trips datetime2(7)
  * through a millisecond-resolution JavaScript Date, so audit timestamps drift by
  * up to 2ms on copy — a known, harmless artefact recorded in the 2026-08-13
@@ -80,8 +77,12 @@ const ENV_SPECIFIC_SETTING_KEYS = new Set(["ERP_INTERFACE_ENV"]);
 function normalise(table: string, rows: Record<string, unknown>[]): string[] {
   return rows
     .filter((r) => {
+      // AccSetting holds a handful of per-database keys that setSetting()
+      // deliberately does not dual-write — the ERP environment leftover and
+      // each requester's AP-17 ID-card reuse consent. One shared predicate, so
+      // an excluded key can never be reported here as drift.
       if (table !== "AccSetting") return true;
-      return !ENV_SPECIFIC_SETTING_KEYS.has(String(r.SettingKey));
+      return !isEnvironmentSpecificSettingKey(String(r.SettingKey));
     })
     .map((r) => {
       const out: Record<string, unknown> = {};
