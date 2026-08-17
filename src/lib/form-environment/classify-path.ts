@@ -40,8 +40,13 @@ export const ROUTE_RULES: RouteRule[] = [
   { prefix: "/api/request/accounting/requests/mine", result: "BOTH" },
   { prefix: "/api/request/accounting/work", result: "BOTH" },
   { prefix: "/api/request/accounting/report", result: "BOTH" },
-  { prefix: "/api/request/accounting/erp-prep", result: "BOTH" },
   { prefix: "/api/request/accounting/requesters", result: "BOTH" },
+
+  // ERP prep is not an aggregate. It is the only path that posts to Business
+  // Central, and the send reads its rows from one pool — so the queue, the
+  // journal and the BC target have to agree on a database. It follows AP-1,
+  // whose travel-expense claims are what the queue is made of.
+  { prefix: "/api/request/accounting/erp-prep", result: "AP-1" },
 
   // Settings read production; dual-write happens in the service layer.
   { prefix: "/api/request/accounting/settings", result: null },

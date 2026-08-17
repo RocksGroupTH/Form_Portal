@@ -30,9 +30,18 @@ test("aggregate endpoints span both databases", () => {
   assert.equal(classifyPath("/api/request/accounting/work"), "BOTH");
   assert.equal(classifyPath("/api/request/accounting/report"), "BOTH");
   assert.equal(classifyPath("/api/request/accounting/report/export"), "BOTH");
-  assert.equal(classifyPath("/api/request/accounting/erp-prep"), "BOTH");
-  assert.equal(classifyPath("/api/request/accounting/erp-prep/send"), "BOTH");
   assert.equal(classifyPath("/api/request/accounting/requesters"), "BOTH");
+});
+
+test("ERP prep is not an aggregate — it follows AP-1", () => {
+  // The prep queue reads rows, builds a journal from them and posts it to
+  // Business Central. Reading a merged list and sending from one pool would
+  // post whichever half the pool happened to hold.
+  assert.equal(classifyPath("/api/request/accounting/erp-prep"), "AP-1");
+  assert.equal(classifyPath("/api/request/accounting/erp-prep/send"), "AP-1");
+  assert.equal(classifyPath("/api/request/accounting/erp-prep/journal-context"), "AP-1");
+  assert.equal(classifyPath("/api/request/accounting/erp-prep/42"), "AP-1");
+  assert.equal(classifyPath("/request/accounting/erp-prep"), "AP-1");
 });
 
 test("settings read production; dual-write is handled in the service layer", () => {
