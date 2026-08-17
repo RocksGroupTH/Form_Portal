@@ -467,9 +467,17 @@ export async function listMyWorkRows(
   return rows.sort(bySubmittedAtDesc);
 }
 
+/**
+ * The AP-1 report reads one database — the one AP-1 is flagged to.
+ *
+ * Unlike "my requests" and "my work", which are about a person and merge, a
+ * report is a statement about one set of books: a production report with test
+ * rows folded in is wrong, and so is its Excel export.
+ */
 export async function queryReport(f: ReportFilters): Promise<ReportRow[]> {
   const view = f.view ?? "request";
-  const rows = await queryBothPools(async (pool) => {
+  const rows = await (async () => {
+    const pool = await getAccPool();
     const req = pool.request();
     const where: string[] = ["r.Status <> 'Draft'"];
 
@@ -532,7 +540,7 @@ export async function queryReport(f: ReportFilters): Promise<ReportRow[]> {
     return (res.recordset as Record<string, unknown>[]).map((x) =>
       mapRow(x, view),
     );
-  });
+  })();
   return rows.sort(bySubmittedAtDesc);
 }
 

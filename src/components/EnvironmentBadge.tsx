@@ -47,9 +47,10 @@ export function FormEnvironmentChip({ formCode }: { formCode: string }) {
 }
 
 /**
- * For a page that reads both databases and merges them — the reports. Naming
- * one environment there would be false, so it says both, and the rows carry
- * their own UAT mark.
+ * For a page that reads both databases and merges them — My Requests and My
+ * Work, which are about a person rather than a set of books. Naming one
+ * environment there would be false, so it says both, and the rows carry their
+ * own UAT mark.
  */
 export function BothEnvironmentsChip() {
   return (
@@ -60,7 +61,7 @@ export function BothEnvironmentsChip() {
         background: "var(--bg-badge)",
         color: "var(--text-muted)",
       }}
-      title="รายงานนี้รวมข้อมูลจากทั้ง Production และ UAT — แถวที่มาจาก UAT มีป้ายกำกับไว้"
+      title="หน้านี้รวมข้อมูลจากทั้ง Production และ UAT — แถวที่มาจาก UAT มีป้ายกำกับไว้"
     >
       PRO + UAT
     </span>

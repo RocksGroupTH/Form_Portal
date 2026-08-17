@@ -26,11 +26,19 @@ test("AP-1 routes", () => {
 });
 
 test("aggregate endpoints span both databases", () => {
+  // What a person owns or must act on spans both databases: they can have live
+  // requests in one and test requests in the other at the same time.
   assert.equal(classifyPath("/api/request/accounting/requests/mine"), "BOTH");
   assert.equal(classifyPath("/api/request/accounting/work"), "BOTH");
-  assert.equal(classifyPath("/api/request/accounting/report"), "BOTH");
-  assert.equal(classifyPath("/api/request/accounting/report/export"), "BOTH");
   assert.equal(classifyPath("/api/request/accounting/requesters"), "BOTH");
+});
+
+test("the AP-1 report follows AP-1, it does not merge", () => {
+  // A report is a statement about one set of books. Merging test rows into a
+  // production report — or into its Excel export — makes both untrue.
+  assert.equal(classifyPath("/api/request/accounting/report"), "AP-1");
+  assert.equal(classifyPath("/api/request/accounting/report/export"), "AP-1");
+  assert.equal(classifyPath("/request/accounting/report"), "AP-1");
 });
 
 test("ERP prep is not an aggregate — it follows AP-1", () => {
@@ -66,7 +74,8 @@ test("more specific rules beat less specific ones regardless of table order", ()
 });
 
 test("query strings and trailing slashes do not change the answer", () => {
-  assert.equal(classifyPath("/api/request/accounting/report?from=2026-01-01"), "BOTH");
+  assert.equal(classifyPath("/api/request/accounting/report?from=2026-01-01"), "AP-1");
+  assert.equal(classifyPath("/api/request/accounting/work?from=2026-01-01"), "BOTH");
   assert.equal(classifyPath("/request/accounting/travel-booking/"), "AP-17");
   assert.equal(classifyPath("/api/request/travel-booking/requests/5/"), "AP-17");
 });

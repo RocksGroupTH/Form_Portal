@@ -37,9 +37,10 @@ export const ROUTE_RULES: RouteRule[] = [
   { prefix: "/request/accounting/travel-booking-settings", result: "AP-17" },
 
   // Aggregate endpoints — more specific than the AP-1 catch-all further down.
+  // Only what a person owns or must act on merges: they can hold live requests
+  // in one database and test requests in the other at the same time.
   { prefix: "/api/request/accounting/requests/mine", result: "BOTH" },
   { prefix: "/api/request/accounting/work", result: "BOTH" },
-  { prefix: "/api/request/accounting/report", result: "BOTH" },
   { prefix: "/api/request/accounting/requesters", result: "BOTH" },
 
   // ERP prep is not an aggregate. It is the only path that posts to Business
