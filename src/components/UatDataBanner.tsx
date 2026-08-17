@@ -28,12 +28,24 @@ import { useFormEnvironments } from "@/lib/hooks/useFormEnvironments";
  * still in flight, matching `FormEnvironmentChip`: a marker that guesses is
  * worse than one that waits.
  *
- * While it waits it still occupies its own height. This sits directly above the
- * Cancel / Approve / Reject bar, so appearing a round trip after first paint
- * would push those buttons down under a cursor already on its way to one. An
- * invisible placeholder costs nothing and keeps the target still.
+ * While it waits it can hold its own height. On a detail page it must: the
+ * Cancel / Approve / Reject bar sits directly beneath, and a banner arriving a
+ * round trip after first paint would push those buttons down under a cursor
+ * already on its way to one. An invisible placeholder costs nothing there.
+ *
+ * On a fill page nothing sits directly beneath it, so the placeholder buys
+ * nothing and costs a jump: the common case is an ordinary viewer resuming an
+ * ordinary draft, where the payload resolves to "no banner" and ~70px collapses
+ * a moment after paint. Those call sites pass `holdSpace={false}`.
  */
-export function UatDataBanner({ requestId }: { requestId: number | null | undefined }) {
+export function UatDataBanner({
+  requestId,
+  holdSpace = true,
+}: {
+  requestId: number | null | undefined;
+  /** Reserve the banner's height while the viewer payload is in flight. */
+  holdSpace?: boolean;
+}) {
   const { data, isLoading } = useFormEnvironments();
 
   if (isUatId(requestId)) {
@@ -54,7 +66,7 @@ export function UatDataBanner({ requestId }: { requestId: number | null | undefi
   if (!isSavedRecord) return null;
 
   // Hold the space, say nothing, until the payload decides.
-  const waiting = isLoading && !data;
+  const waiting = holdSpace && isLoading && !data;
   if (!waiting && !data?.viewer.uatMode) return null;
 
   return (

@@ -6,6 +6,7 @@ import { AlertTriangle, Check, Circle, History, Info, Loader2, Mail, Phone, Plus
 import { Avatar } from "@/components/ui/Avatar";
 import { Dialog } from "@/components/ui/Dialog";
 import { RequesterPickerModal } from "@/components/RequesterPickerModal";
+import { UatDataBanner } from "@/components/UatDataBanner";
 import { AllowanceHistoryModal } from "./AllowanceHistoryModal";
 import { useUserPhoto } from "@/lib/hooks/useUserPhoto";
 import { fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
@@ -62,6 +63,7 @@ function scrollToField(key: string) {
 export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBookingFormProps) {
   const form = useTravelBookingForm(initial);
   const {
+    anchorRequestId,
     tabs, activeTabIndex, setActiveTabIndex, addTab, removeTab, updateTab,
     reasons, accommodations, vehicles, rentVehicles, provinces,
     employee, employeeHint, employeeEmail, employeeLoading, manager, managerReason,
@@ -158,6 +160,23 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
 
   return (
     <div className="w-full max-w-full mx-auto flex flex-col gap-4 min-w-0">
+      {/*
+        Which set of books this group belongs to, before anything a reader could
+        act on — ahead of the guidance box too, because guidance about the form
+        matters less than which database it writes to.
+
+        `anchorRequestId`, not the resumed prop: it starts as the resumed
+        group's first request id and picks up the id the server hands back on
+        first save, so a brand-new group is labelled from the moment it becomes
+        a row. A group with no id yet is blank and the banner renders nothing.
+      */}
+      {/* -mb-4 cancels the banner's own margin so the parent's gap-4 is the only
+          spacing; empty:hidden keeps the wrapper from becoming a phantom flex
+          child on every blank form, where the banner renders nothing. */}
+      <div className="-mb-4 empty:hidden">
+        <UatDataBanner requestId={anchorRequestId} holdSpace={false} />
+      </div>
+
       {/* คำแนะนำ */}
       <div
         className="rounded-2xl px-4 py-3.5 flex items-start gap-2.5"

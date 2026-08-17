@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Dialog } from "@/components/ui/Dialog";
 import { Button } from "@/components/ui/Button";
 import { useViewerUat } from "@/lib/hooks/useFormEnvironments";
+import { uatSwitchLeavesRecord, urlAfterUatSwitch } from "@/lib/form-environment/uat-switch-url";
 
 interface UatModeSwitchProps {
   /** Icon only, no PRO/UAT label — the mobile top bar's compact chips. */
@@ -35,6 +36,14 @@ export function UatModeSwitch({ compact = false }: UatModeSwitchProps) {
   const viewer = useViewerUat();
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  /**
+   * Whether confirming would also leave the record named by `?id=` behind.
+   * Read from `window.location` when the dialog opens rather than during
+   * render: the navbar is never server-rendered, but a click handler is the
+   * only place `window` is unambiguously there, and the answer cannot change
+   * between opening the dialog and confirming it.
+   */
+  const [leavingRecord, setLeavingRecord] = useState(false);
 
   if (!viewer) return null;
   const showControl = viewer.uatMode || (viewer.isTester && viewer.anyUatForm);
@@ -65,7 +74,13 @@ export function UatModeSwitch({ compact = false }: UatModeSwitchProps) {
       // which this app barely uses. Only a reload guarantees nothing is left
       // showing rows from the database the viewer just switched away from.
       await mutate("/api/form-environment");
-      window.location.reload();
+      // …except that a plain reload of a fill page re-opens the record in
+      // `?id=`, which is the one thing the switch was meant to leave. Drop that
+      // parameter when its record belongs to the other database; every other
+      // case reloads exactly as before.
+      const next = urlAfterUatSwitch(window.location.href, !uat);
+      if (next !== window.location.href) window.location.assign(next);
+      else window.location.reload();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "สลับโหมดไม่สำเร็จ");
       setSubmitting(false);
@@ -77,7 +92,10 @@ export function UatModeSwitch({ compact = false }: UatModeSwitchProps) {
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          setLeavingRecord(uatSwitchLeavesRecord(window.location.href, !uat));
+          setOpen(true);
+        }}
         className="flex items-center gap-1.5 px-2 py-1 rounded-lg cursor-pointer border-none transition-colors shrink-0"
         style={{
           background: uat ? "var(--status-bad-bg)" : "var(--bg-badge)",
@@ -104,6 +122,13 @@ export function UatModeSwitch({ compact = false }: UatModeSwitchProps) {
             ? "หลังจากสลับแล้ว คำขอที่คุณส่งหรือดำเนินการต่อจากนี้จะถูกบันทึกลงฐานข้อมูล Production (ข้อมูลจริง) แทนฐานข้อมูลทดสอบ UAT"
             : "หลังจากสลับแล้ว คำขอที่คุณส่งหรือดำเนินการต่อจากนี้จะถูกบันทึกลงฐานข้อมูล UAT (ข้อมูลทดสอบ) แทนฐานข้อมูล Production จนกว่าคุณจะสลับกลับ"}
         </p>
+        {leavingRecord && (
+          <p className="text-[13px] mb-4" style={{ color: "var(--text-primary)" }}>
+            {uat
+              ? "คำขอที่เปิดอยู่ในหน้านี้เป็นข้อมูล UAT ระบบจะปิดคำขอนี้และเปิดแบบฟอร์มเปล่าให้แทน (คำขอยังถูกบันทึกไว้ เปิดได้จากหน้าแรกหรือคำขอของฉัน)"
+              : "คำขอที่เปิดอยู่ในหน้านี้เป็นข้อมูลจริง (Production) ระบบจะปิดคำขอนี้และเปิดแบบฟอร์มเปล่าให้แทน (คำขอยังถูกบันทึกไว้ เปิดได้จากหน้าแรกหรือคำขอของฉัน)"}
+          </p>
+        )}
         <div className="flex justify-end gap-2">
           <Button variant="secondary" disabled={submitting} onClick={() => closeDialog(false)}>
             ยกเลิก
