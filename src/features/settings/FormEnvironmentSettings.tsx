@@ -9,7 +9,7 @@ import { Dialog } from "@/components/ui/Dialog";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
-/** Typed, not clicked: turning Production off hides a live form from everyone. */
+/** Typed, not clicked: turning Production off hides a live form from general users. */
 const CONFIRM_WORD = "Confirm";
 
 type SwitchField = "production" | "uat";
@@ -174,7 +174,8 @@ export function FormEnvironmentSettings() {
           ได้ ส่วน UAT คือฟอร์มที่ผู้ทดสอบซึ่งเปิดโหมด UAT ของตัวเองใช้งานได้เท่านั้น ไม่ว่าจะสลับสวิตช์ไหน{" "}
           <b>คำขอเดิมจะไม่ถูกย้ายฐานข้อมูล</b> — มีเพียงคำขอใหม่ของผู้ทดสอบในโหมด UAT เท่านั้นที่จะถูกเขียนลงฐาน UAT
           และส่งสมุดรายวันเข้า Business Central <b>Sandbox</b> แทน Production ส่วนการปิด Production จะ
-          <b>ซ่อนฟอร์มนี้จากผู้ใช้ทุกคนทันที</b>
+          <b>ซ่อนฟอร์มนี้จากผู้ใช้ทั่วไปทันที</b> — สวิตช์ UAT ไม่เกี่ยวข้องและไม่เปลี่ยนตาม ผู้ทดสอบในโหมด UAT
+          ยังใช้งานได้ตามปกติถ้า UAT ยังเปิดอยู่
         </p>
       </div>
 
@@ -210,7 +211,7 @@ export function FormEnvironmentSettings() {
                   <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Form</th>
                   <th className="text-right px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Production</th>
                   <th className="text-right px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>UAT</th>
-                  <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Environment</th>
+                  <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Switches</th>
                   <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Last changed</th>
                 </tr>
               </thead>
