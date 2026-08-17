@@ -18,13 +18,26 @@ npm run dev                   # http://localhost:3020
 | Database | Pool | Purpose |
 |----------|------|---------|
 | **Fast_Core** | `getCorePool()` | TeamMember (auth), config, brand/DB/BC connection settings |
-| **Rocks_Portal_Form** | `getFormPool()` | Form definitions, submissions, approvals, files, logs, and all `Acc*` Accounting tables. Form Portal's own database — `Rocks_Portal_Form_UAT` is the UAT twin, selected by `MSSQL_FORM_DATABASE` |
+| **Rocks_Portal_Form** | `getFormPool()` | Form definitions, submissions, approvals, files, logs, and all `Acc*` Accounting tables. Form Portal's own database — `Rocks_Portal_Form_UAT` is the UAT twin, and which one `getFormPool()` returns depends on the form being used (see "Per-form Production/UAT routing") |
 | **Fast_Data** | `getDataPool()` | Used by Accounting and ERP sync — department maps, travel-booking province lookups, ERP account/dimension sync (`src/lib/acc/department-map-service.ts`, `src/lib/acc/travel-booking/province-service.ts`, `src/lib/acc/travel-booking/request-service.ts`, `src/lib/erp/account-sync.ts`, `src/lib/erp/dimension-sync.ts`). **Not** a BI/reporting database in this app. |
 | **Rocks_Portal_HR** | `getHrPool()` → `getAppPool("Rocks_Portal_HR")` | Employee master, manager chain, per-diem allowance history — cross-referenced by StaffId/email |
 | **Rocks_Codex** | (cross-DB query, e.g. `[Rocks_Codex].[dbo].[Holiday]`, `[Rocks_Codex].[dbo].[Brand]`) | Holiday calendar, company brand master |
 | **Rocks_Portal_Form** (Acc* tables) | `getAccPool()` → `getFormPool()` | Accounting forms: travel expense (AP-1), travel booking (AP-17) |
 
 **IMPORTANT**: Use `new sql.ConnectionPool(config).connect()` for isolated pools. Never use `sql.connect()` (global singleton — causes cross-DB bugs). Pool max is set to 30.
+
+### Per-form Production/UAT routing
+
+Each Accounting form is flagged Production or UAT independently at **Settings → Form Environment** (`/settings/form-environment`, System Admin only). A form flagged UAT reads and writes `Rocks_Portal_Form_UAT`; every other form keeps using `Rocks_Portal_Form`. There is no app-wide UAT mode and no separate deployment.
+
+- **The flag** lives in `Fast_Core.dbo.FormEnvironment` (`FormCode`, `Environment`, `UpdatedBy`, `UpdatedAt`), read through `src/lib/form-environment/service.ts`. A missing row means Production. It is in Fast_Core on purpose: resolving the flag must not depend on which form database is selected.
+- **Resolution** — the proxy injects `x-pathname`; `classifyPath` (`src/lib/form-environment/classify-path.ts`) maps that path to `AP-1 | AP-15 | AP-17 | "BOTH" | null` by longest matching prefix in `ROUTE_RULES`; `resolveFormEnvironment()` maps `BOTH` and `null` to Production; `getFormPool()` returns the matching pool. Code with no request scope (scripts, background work) resolves to Production.
+- **Every new route under `/api/request` needs a rule.** Without one it silently falls through to Production. The coverage panel on the settings page lists any route no rule covers — `matchRule` is what tells "no rule at all" apart from "a rule that deliberately says Production".
+- **Shared configuration is dual-written**, not duplicated by hand: `src/lib/acc/dual-write.ts` runs each master-table mutation against both databases in a transaction, and `npm run check:alignment` asserts the 19 shared tables still match. `AccSetting.ERP_INTERFACE_ENV` is excluded on purpose — it is `Production` in the live database and `Sandbox` in UAT, which is how a UAT form reaches Sandbox Business Central.
+- **Aggregate endpoints read both databases** through `src/lib/acc/query-both.ts` (My Requests, My Work, report, ERP prep, requesters). Sorting and paging must happen after the merge, and each row carries an `environment` tag.
+- **Ids never collide**: migration 061 seeds UAT transactional identities at 900000, so `isUatId` (`src/lib/form-environment/uat-identity.ts`) can badge a detail page that only has the row itself to go on.
+- **UAT side effects are contained**: mail is redirected to `UAT_MAIL_REDIRECT` with a `[UAT]` subject and the intended recipient named in the body, attachments land under `{SHAREPOINT_ACC_FOLDER}/_UAT/...`, and the email sweep endpoint drains the queue in both databases.
+- **Switching a form does not move its existing requests.** They stay in the database they were written to and stay readable; only new writes go elsewhere.
 
 ### Auth
 
@@ -68,7 +81,7 @@ Top bar and mobile tabs: **Home** · **Forms** · **My Requests** · **My Work**
 - **`Forms`** (`/forms`) — the Form Builder catalog + "My Submissions", back in the top nav after being orphaned in the Rocks Fast sibling.
 - **`My Requests`** (`/my-request`) — requests you submitted and their status, across both Office Forms and Accounting.
 - **`My Work`** (`/my-work`) — requests awaiting your approval or otherwise involving you.
-- **`Settings`** (`/settings`, admin only) — hub linking to: Maps & Routing, Database Connections, Business Central, Brand Configuration, ERP Interface Environment, **Users & Roles** (`/settings/users`, System Admin only), Manage Forms (`/forms/admin`), Accounting Admin (`/request/accounting`).
+- **`Settings`** (`/settings`, admin only) — hub linking to: Maps & Routing, Database Connections, Business Central, Brand Configuration, ERP Interface Environment, **Form Environment** (`/settings/form-environment`, System Admin only), **Users & Roles** (`/settings/users`, System Admin only), Manage Forms (`/forms/admin`), Accounting Admin (`/request/accounting`).
 
 Every dashboard route is also gated by `BrandGate` (`src/components/BrandGate.tsx`), a non-dismissable modal that blocks rendering until the user picks a company brand (PCTH / KSI / PCMY / UNO — `src/lib/brand.ts`). This brand cookie (`rocks-fast-brand`) is unrelated to Intelligence (which is gone); it scopes ERP/Business Central context for Accounting.
 
@@ -218,11 +231,13 @@ MSSQL_PASSWORD=
 MSSQL_ENCRYPT=true
 MSSQL_TRUST_CERT=true
 MSSQL_CORE_DATABASE=Fast_Core
-MSSQL_FORM_DATABASE=Rocks_Portal_Form   # Rocks_Portal_Form_UAT on the UAT deployment
+MSSQL_FORM_DATABASE=Rocks_Portal_Form
+MSSQL_FORM_UAT_DATABASE=Rocks_Portal_Form_UAT   # used by forms flagged UAT in Settings → Form Environment
 MSSQL_DATA_DATABASE=Fast_Data
 
 # Email
 GRAPH_MAIL_FROM=noreply@rocksgroup.com
+UAT_MAIL_REDIRECT=                              # every mail from a UAT form goes here; falls back to GRAPH_MAIL_FROM
 
 # SharePoint (Accounting file storage — shared with Rocks Fast)
 SHAREPOINT_ACC_SITE=
