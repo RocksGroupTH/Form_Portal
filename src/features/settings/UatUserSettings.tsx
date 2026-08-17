@@ -321,7 +321,7 @@ export function UatUserSettings() {
                   {/* Status and its control are one column: the badge *is* the
                       switch, so there is nothing left for a separate action
                       column to hold. */}
-                  <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>สถานะ</th>
+                  <th className="text-center px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>สถานะ</th>
                 </tr>
               </thead>
               <tbody>
@@ -372,58 +372,82 @@ export function UatUserSettings() {
                       </div>
                     </td>
                     <td className="px-4 py-2.5">
-                      {/* The badge is the switch. It shows the state it is in
-                          and the icon shows what a click does — a disabled row
-                          offers the green "turn on", an active row the red
-                          "turn off" — so the row never needs a second column to
-                          say the same thing twice. */}
-                      <button
-                        type="button"
-                        disabled={busyId === t.id}
-                        onClick={() => {
-                          if (!t.isActive) {
-                            void doAction({ action: "setActive", id: t.id, isActive: true }, t.id);
-                            return;
+                      {/* One column, two jobs kept visually separate: the badge
+                          reports the state and is not clickable, the round
+                          button beside it does the one thing available — green
+                          "turn on" for a disabled row, red "turn off" for an
+                          active one. A badge that is also a button reads as
+                          neither. */}
+                      {/* Centred to match the centred column header — a centred
+                          heading over left-aligned cells reads as a mistake. */}
+                      <div className="flex items-center justify-center gap-2">
+                        <span
+                          className="text-[10px] font-bold px-2 py-0.5 rounded"
+                          style={
+                            t.isActive
+                              ? { background: "var(--status-ok-bg)", color: "var(--status-ok-text)" }
+                              : { background: "var(--bg-badge)", color: "var(--text-muted)" }
                           }
-                          const dependants = testers.filter(
-                            (d) => d.isActive && d.managerStaffId === t.staffId && d.id !== t.id,
-                          );
-                          const message =
-                            dependants.length > 0
-                              ? `ปิดสิทธิ์ผู้ทดสอบ UAT ของ ${t.name} (${t.email})? มีผู้ทดสอบอีก ${dependants.length} คนที่ตั้งให้คนนี้เป็นผู้จัดการสำหรับ UAT (${dependants
-                                  .map((d) => d.name)
-                                  .join(", ")}) — คำขอ UAT ของพวกเขาจะค้างที่ขั้นอนุมัติของผู้จัดการหลังปิดสิทธิ์`
-                              : `ปิดสิทธิ์ผู้ทดสอบ UAT ของ ${t.name} (${t.email})?`;
-                          setConfirmAction({
-                            title: "ปิดสิทธิ์ผู้ทดสอบ",
-                            message,
-                            danger: true,
-                            onConfirm: () => {
-                              setConfirmAction(null);
-                              void doAction({ action: "remove", id: t.id }, t.id);
-                            },
-                          });
-                        }}
-                        className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded border-none enabled:cursor-pointer disabled:cursor-default disabled:opacity-70"
-                        style={
-                          t.isActive
-                            ? { background: "var(--status-ok-bg)", color: "var(--status-ok-text)" }
-                            : { background: "var(--status-bad-bg)", color: "var(--status-bad-text)" }
-                        }
-                        title={t.isActive ? "คลิกเพื่อปิดการใช้งาน" : "คลิกเพื่อเปิดใช้งาน"}
-                        aria-label={
-                          t.isActive ? `ปิดการใช้งาน ${t.name}` : `เปิดใช้งาน ${t.name}`
-                        }
-                      >
-                        {busyId === t.id ? (
-                          <Loader2 size={11} className="animate-spin shrink-0" />
-                        ) : t.isActive ? (
-                          <UserX size={11} className="shrink-0" />
-                        ) : (
-                          <UserCheck size={11} className="shrink-0" />
-                        )}
-                        {t.isActive ? "ใช้งาน" : "ปิด"}
-                      </button>
+                        >
+                          {t.isActive ? "ใช้งาน" : "ปิด"}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={busyId === t.id}
+                          onClick={() => {
+                            if (!t.isActive) {
+                              void doAction({ action: "setActive", id: t.id, isActive: true }, t.id);
+                              return;
+                            }
+                            const dependants = testers.filter(
+                              (d) => d.isActive && d.managerStaffId === t.staffId && d.id !== t.id,
+                            );
+                            const message =
+                              dependants.length > 0
+                                ? `ปิดสิทธิ์ผู้ทดสอบ UAT ของ ${t.name} (${t.email})? มีผู้ทดสอบอีก ${dependants.length} คนที่ตั้งให้คนนี้เป็นผู้จัดการสำหรับ UAT (${dependants
+                                    .map((d) => d.name)
+                                    .join(", ")}) — คำขอ UAT ของพวกเขาจะค้างที่ขั้นอนุมัติของผู้จัดการหลังปิดสิทธิ์`
+                                : `ปิดสิทธิ์ผู้ทดสอบ UAT ของ ${t.name} (${t.email})?`;
+                            setConfirmAction({
+                              title: "ปิดสิทธิ์ผู้ทดสอบ",
+                              message,
+                              danger: true,
+                              onConfirm: () => {
+                                setConfirmAction(null);
+                                void doAction({ action: "remove", id: t.id }, t.id);
+                              },
+                            });
+                          }}
+                          className="inline-flex items-center justify-center rounded-full border-none shrink-0 enabled:cursor-pointer disabled:cursor-default disabled:opacity-70"
+                          style={
+                            t.isActive
+                              ? {
+                                  width: 24,
+                                  height: 24,
+                                  background: "var(--status-bad-bg)",
+                                  color: "var(--status-bad-text)",
+                                }
+                              : {
+                                  width: 24,
+                                  height: 24,
+                                  background: "var(--status-ok-bg)",
+                                  color: "var(--status-ok-text)",
+                                }
+                          }
+                          title={t.isActive ? "ปิดการใช้งาน" : "เปิดใช้งาน"}
+                          aria-label={
+                            t.isActive ? `ปิดการใช้งาน ${t.name}` : `เปิดใช้งาน ${t.name}`
+                          }
+                        >
+                          {busyId === t.id ? (
+                            <Loader2 size={13} className="animate-spin" />
+                          ) : t.isActive ? (
+                            <UserX size={13} />
+                          ) : (
+                            <UserCheck size={13} />
+                          )}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
