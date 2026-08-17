@@ -277,6 +277,12 @@ export function HomeCatalogue() {
                         {timeAgo(d.updatedAt)}
                       </span>
                     </span>
+                    {/* Drafts are read from their own form's database, so the
+                        form's flag is the row's environment. */}
+                    <EnvironmentBadge
+                      environment={formEnvironments[d.formCode] ?? "Production"}
+                      className="self-center"
+                    />
                     <span
                       className="text-[10px] font-bold px-2.5 py-1 shrink-0"
                       style={{
