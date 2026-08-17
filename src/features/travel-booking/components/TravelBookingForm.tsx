@@ -170,7 +170,12 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
         first save, so a brand-new group is labelled from the moment it becomes
         a row. A group with no id yet is blank and the banner renders nothing.
       */}
-      <UatDataBanner requestId={anchorRequestId} />
+      {/* -mb-4 cancels the banner's own margin so the parent's gap-4 is the only
+          spacing; empty:hidden keeps the wrapper from becoming a phantom flex
+          child on every blank form, where the banner renders nothing. */}
+      <div className="-mb-4 empty:hidden">
+        <UatDataBanner requestId={anchorRequestId} holdSpace={false} />
+      </div>
 
       {/* คำแนะนำ */}
       <div

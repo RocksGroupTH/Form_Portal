@@ -67,7 +67,23 @@ test("an unreadable id or URL leaves the reload alone", () => {
   assert.equal(urlAfterUatSwitch("not a url?id=900001", false), "not a url?id=900001");
 });
 
-test("an unchanged URL is returned by identity, so callers can compare", () => {
+test("an unchanged URL comes back equal, so the caller's !== picks reload", () => {
   const url = `${AP1}?id=42`;
   assert.equal(urlAfterUatSwitch(url, false), url);
+});
+
+test("the reload target can never leave this origin", () => {
+  // The input is window.location.href and the output is fed to location.assign,
+  // so a path or query that could move the origin would be a redirect anybody
+  // could aim by crafting a link.
+  const hostile = [
+    `${AP1}?id=900001`,
+    `https://portal.example.com//evil.example.net?id=900001`,
+    `https://portal.example.com/request/travel-expense?id=900001&next=https://evil.example.net`,
+    `https://portal.example.com/request/travel-expense?id=900001#//evil.example.net`,
+  ];
+  for (const input of hostile) {
+    const next = urlAfterUatSwitch(input, true);
+    assert.equal(new URL(next).origin, new URL(input).origin);
+  }
 });

@@ -902,7 +902,12 @@ export function TravelExpenseForm({
         draft is labelled from the moment it becomes a row. A form with no id
         yet is blank and the banner renders nothing.
       */}
-      <UatDataBanner requestId={requestId} />
+      {/* -mb-4 cancels the banner's own margin so the parent's gap-4 is the only
+          spacing; empty:hidden keeps the wrapper from becoming a phantom flex
+          child on every blank form, where the banner renders nothing. */}
+      <div className="-mb-4 empty:hidden">
+        <UatDataBanner requestId={requestId} holdSpace={false} />
+      </div>
 
       {requesterCard}
 

@@ -58,8 +58,10 @@ export function uatSwitchLeavesRecord(currentUrl: string, targetUatMode: boolean
  * case, or the same URL with its `id` removed when that record belongs to the
  * database being switched away from.
  *
- * Returns the input string itself when nothing changes, so a caller can compare
- * by identity to decide between `location.assign` and `location.reload`.
+ * Returns the input unchanged when nothing needs stripping, so a caller can
+ * compare with `!==` to decide between `location.assign` and `location.reload`.
+ * Value comparison, not identity — the early return happens to give the same
+ * string back, but nothing about JS strings would make identity meaningful.
  */
 export function urlAfterUatSwitch(currentUrl: string, targetUatMode: boolean): string {
   if (!uatSwitchLeavesRecord(currentUrl, targetUatMode)) return currentUrl;
