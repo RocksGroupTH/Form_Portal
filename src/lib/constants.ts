@@ -133,6 +133,14 @@ export const SETTINGS_CARDS: NavItem[] = [
     systemAdminOnly: true,
   },
   {
+    id: "form-environment",
+    label: "Form Environment",
+    icon: "FlaskConical",
+    desc: "กำหนดว่าฟอร์มไหนทำงานบน Production หรือ UAT",
+    href: "/settings/form-environment",
+    systemAdminOnly: true,
+  },
+  {
     id: "users",
     label: "Users & Roles",
     icon: "Shield",
