@@ -22,8 +22,6 @@ async function fetcher(url: string) {
   return json;
 }
 
-export type FormEnvironment = "Production" | "UAT";
-
 export interface ResumableGroup {
   /** Stable key for React lists. */
   key: string;
@@ -85,13 +83,6 @@ function isThisMonth(iso: string | null | undefined): boolean {
 export function useHomeData() {
   const mine = useSWR<{ ok: boolean; data?: Row[] }>("/api/request/accounting/requests/mine", fetcher);
   const work = useSWR<{ ok: boolean; data?: MyWorkRowInput[] }>("/api/request/accounting/work", fetcher);
-  // Which database each form writes to, for the badges on the form cards. Kept
-  // out of `summaryError` and `isLoading` on purpose: a missing badge is not
-  // worth blanking the page's numbers or holding its first paint.
-  const environments = useSWR<{ ok: boolean; data?: Record<string, FormEnvironment> }>(
-    "/api/form-environment",
-    fetcher,
-  );
   const ap1 = useSWR<{ ok: boolean; data?: Ap1Draft[] }>("/api/request/accounting/requests/drafts", fetcher);
   const ap17 = useSWR<{ ok: boolean; data?: Ap17Draft[] }>("/api/request/travel-booking/requests/drafts", fetcher);
   // Same viewer context /my-work uses to classify rows — see MyRequestsPanel.tsx:225-234.
@@ -154,8 +145,6 @@ export function useHomeData() {
     /** Editable rows — drafts **and** returned-for-revision. See `ResumableGroup.returnedCount`. */
     resumableCount: ap1Rows.length + ap17Rows.length,
     resumable,
-    /** Form code → environment. A form missing from the map is Production. */
-    formEnvironments: environments.data?.data ?? {},
     summaryError: Boolean(summaryError),
     isLoading:
       mine.isLoading ||

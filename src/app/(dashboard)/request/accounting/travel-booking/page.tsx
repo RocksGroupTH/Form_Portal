@@ -1,6 +1,8 @@
 "use client";
 
 import { useSession } from "next-auth/react";
+import { useSearchParams } from "next/navigation";
+import { requestBackHref } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { HoverCard } from "@/components/ui/HoverCard";
@@ -82,6 +84,7 @@ export default function TravelBookingHubPage() {
     if (c.accountOnly && !canAccount) return false;
     return true;
   });
+  const backHref = requestBackHref(useSearchParams().get("from"));
 
   return (
     <PageContainer className="acc-theme py-6 px-3 sm:px-0">
@@ -89,7 +92,7 @@ export default function TravelBookingHubPage() {
         icon={Luggage}
         title="จองที่พัก/ตั๋วโดยสาร · บัญชี"
         subtitle="คิวจอง รายงาน และตั้งค่าการจองที่พัก/ตั๋วโดยสาร (AP-17)"
-        backHref="/request"
+        backHref={backHref}
       />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

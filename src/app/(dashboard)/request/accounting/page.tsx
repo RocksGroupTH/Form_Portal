@@ -1,6 +1,8 @@
 "use client";
 
 import { useSession } from "next-auth/react";
+import { useSearchParams } from "next/navigation";
+import { requestBackHref } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { HoverCard } from "@/components/ui/HoverCard";
@@ -77,6 +79,7 @@ function AccountingHubCard({ card }: { card: HubCard }) {
 
 export default function AccountingHubPage() {
   const { data: session } = useSession();
+  const backHref = requestBackHref(useSearchParams().get("from"));
   const { loading: accessLoading, isApprover, canAccount } = useAccountingAccess();
   const role = session?.user?.role;
   const isAdmin = role === "IT Admin" || role === "System Admin";
@@ -98,7 +101,7 @@ export default function AccountingHubPage() {
         icon={Receipt}
         title="Accounting · บัญชี"
         subtitle="อนุมัติ รายงาน และตั้งค่าเบิกค่าเดินทาง (AP-1)"
-        backHref="/request"
+        backHref={backHref}
       />
 
       {/* Cards */}

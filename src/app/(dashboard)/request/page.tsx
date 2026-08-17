@@ -10,6 +10,9 @@ import { REQUEST_CARDS } from "@/lib/constants";
 import { travelExpenseEntryHref } from "@/features/accounting/lib/navigation";
 import { travelBookingEntryHref } from "@/features/travel-booking/lib/navigation";
 import { useErpSandboxDevHost } from "@/features/accounting/hooks/useErpSandboxDevHost";
+import { useFormEnvironments, type FormEnvironment } from "@/lib/hooks/useFormEnvironments";
+import { EnvironmentBadge } from "@/components/EnvironmentBadge";
+import { withRequestReturn } from "@/lib/request-hub-nav";
 import {
   ClipboardList,
   Luggage,
@@ -34,12 +37,18 @@ function requestCardHref(item: (typeof REQUEST_CARDS)[number]): string {
 function RequestHubCard({
   item,
   Icon,
+  environment,
+  fromAdmin,
 }: {
   item: (typeof REQUEST_CARDS)[number];
   Icon: React.ComponentType<{ size?: number; style?: React.CSSProperties }> | undefined;
+  environment: FormEnvironment;
+  /** Tells the destination's Back button to return to the filtered admin view. */
+  fromAdmin: boolean;
 }) {
   const disabled = !!item.soon;
-  const href = requestCardHref(item);
+  const base = requestCardHref(item);
+  const href = fromAdmin ? withRequestReturn(base, "admin") : base;
 
   const body = (
     <>
@@ -75,6 +84,7 @@ function RequestHubCard({
           )}
         </div>
         <div className="flex items-center gap-2">
+          {!disabled && item.badge && <EnvironmentBadge environment={environment} />}
           {item.badge && (
             <span
               className="text-[10px] font-bold px-1.5 py-0.5 rounded"
@@ -152,6 +162,7 @@ export default function RequestHubPage() {
    * surfaces of AP-1 and AP-17, and the request forms above them are noise for
    * someone who came to work a queue.
    */
+  const formEnvironments = useFormEnvironments();
   const groupFilter = useSearchParams().get("group");
   const isGroupView = Boolean(groupFilter?.trim());
   const isAdminView = (groupFilter ?? "").trim().toLowerCase() === "settings";
@@ -249,7 +260,15 @@ export default function RequestHubPage() {
                 {cards.map((item) => {
                   const Icon = ICON_MAP[item.icon];
                   return (
-                    <RequestHubCard key={item.id} item={item} Icon={Icon} />
+                    <RequestHubCard
+                      key={item.id}
+                      item={item}
+                      Icon={Icon}
+                      environment={
+                        (item.badge && formEnvironments[item.badge]) || "Production"
+                      }
+                      fromAdmin={isAdminView}
+                    />
                   );
                 })}
               </div>
