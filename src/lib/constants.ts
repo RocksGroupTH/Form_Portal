@@ -93,15 +93,17 @@ export const REQUEST_CARDS: NavItem[] = [
   },
 ];
 
-/** Sub-cards on the Settings hub (/settings) — IT Admin / System Admin only */
+/**
+ * Sub-cards on the Settings hub (/settings) — IT Admin / System Admin only.
+ *
+ * The hub renders these in array order, so this order is the page. It runs
+ * outward from the plumbing: the databases and Business Central connection, what
+ * each brand points at, the ERP's UAT side, then the one external API key; then
+ * the people — who may sign in, which forms are open in which environment, and
+ * who tests them; and last the Accounting hub, which is daily operating rather
+ * than configuration.
+ */
 export const SETTINGS_CARDS: NavItem[] = [
-  {
-    id: "maps",
-    label: "Maps & Routing",
-    icon: "Map",
-    desc: "Google Maps API Key (AP-1 · ฟอร์ม)",
-    href: "/settings/maps",
-  },
   {
     id: "connections",
     label: "Database Connections",
@@ -132,6 +134,21 @@ export const SETTINGS_CARDS: NavItem[] = [
     systemAdminOnly: true,
   },
   {
+    id: "maps",
+    label: "Maps & Routing",
+    icon: "Map",
+    desc: "Google Maps API Key (AP-1 · ฟอร์ม)",
+    href: "/settings/maps",
+  },
+  {
+    id: "users",
+    label: "Users & Roles",
+    icon: "Shield",
+    desc: "จัดการผู้ใช้ บทบาท และการซิงก์จาก Active Directory",
+    href: "/settings/users",
+    systemAdminOnly: true,
+  },
+  {
     id: "form-environment",
     label: "Form Environment",
     icon: "FlaskConical",
@@ -145,14 +162,6 @@ export const SETTINGS_CARDS: NavItem[] = [
     icon: "FlaskConical",
     desc: "รายชื่อผู้ทดสอบ และผู้จัดการสำหรับ UAT ของแต่ละคน",
     href: "/settings/uat-users",
-    systemAdminOnly: true,
-  },
-  {
-    id: "users",
-    label: "Users & Roles",
-    icon: "Shield",
-    desc: "จัดการผู้ใช้ บทบาท และการซิงก์จาก Active Directory",
-    href: "/settings/users",
     systemAdminOnly: true,
   },
   {
