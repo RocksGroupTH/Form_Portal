@@ -3,6 +3,9 @@ node_modules/
 out/
 .env
 .env*.local
+# Archived copies of the env file — same secrets, different extension
+.env*.zip
+.env*.bak
 uploads/
 .cache/
 .superpowers/

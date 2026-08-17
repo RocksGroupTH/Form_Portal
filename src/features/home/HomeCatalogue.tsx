@@ -10,7 +10,7 @@ import {
   replaceSearchParams,
   setBrandInSearchParams,
 } from "@/lib/brand-url";
-import { useHomeData } from "@/features/home/useHomeData";
+import { useHomeData, type FormEnvironment } from "@/features/home/useHomeData";
 import { Search, Route, Luggage, ClipboardCheck, FilePen, ArrowRight } from "lucide-react";
 
 const ACCOUNTING_FORMS = [
@@ -134,6 +134,29 @@ function PendingLink({ href, Icon, title, subtitle, count }: {
   );
 }
 
+/**
+ * Which database this form writes to, in the card's top-right corner.
+ *
+ * UAT is the one that has to be noticed — a request filed there is a test that
+ * no one will pay — so it gets the alert colours and Production stays quiet.
+ */
+function EnvironmentBadge({ environment }: { environment: FormEnvironment }) {
+  const uat = environment === "UAT";
+  return (
+    <span
+      className="text-[9.5px] font-extrabold px-1.5 py-0.5 shrink-0 self-start ml-auto"
+      style={{
+        borderRadius: 6,
+        background: uat ? "var(--status-bad-bg)" : "var(--bg-badge)",
+        color: uat ? "var(--status-bad-text)" : "var(--text-muted)",
+      }}
+      title={uat ? "ฟอร์มนี้กำลังเขียนลงฐานข้อมูล UAT (ข้อมูลทดสอบ)" : "ฟอร์มนี้ใช้งานจริงบน Production"}
+    >
+      {uat ? "UAT" : "PRO"}
+    </span>
+  );
+}
+
 function SectionLabel({ title, action }: { title: string; action?: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between mt-6 mb-2.5">
@@ -155,6 +178,7 @@ export function HomeCatalogue() {
     monthCount,
     resumableCount,
     resumable,
+    formEnvironments,
     summaryError,
     isLoading,
   } = useHomeData();
@@ -359,6 +383,7 @@ export function HomeCatalogue() {
                     {desc}
                   </span>
                 </span>
+                <EnvironmentBadge environment={formEnvironments[code] ?? "Production"} />
               </Link>
             ))}
           </div>
