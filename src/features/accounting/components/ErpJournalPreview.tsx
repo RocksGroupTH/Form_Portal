@@ -1025,7 +1025,7 @@ export function ErpJournalPreview({
   interfaceTargetCode?: string | null;
   onRequestSend?: (target: ErpInterfaceSendTarget) => void;
   sentMonthFilter?: string;
-  /** GET /api/request/accounting/erp-prep's resolved environment and the ids it listed — passed through unchanged to the send dialog. */
+  /** GET /api/request/accounting/erp-prep's resolved environment, and the ids of the batch this send would post — a client-side narrowing of the listed rows by `selectErpSendBatchRows`, not the full list the GET returned. Both are passed through to the send dialog. */
   queueEnvironment?: FormEnvironmentValue | null;
   batchRequestIds?: number[];
 }) {

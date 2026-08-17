@@ -244,8 +244,10 @@ async function withUatManager(snapshot: RequesterSnapshot): Promise<RequesterSna
  *
  * The on-behalf refusal is unconditional here because both callers are writes —
  * `saveDraft` and the submit route, and nothing else. AP-17's equivalent
- * (`resolveEmployeeForActor`) also backs five read-only GETs, so there the same
- * guard is opt-in.
+ * (`resolveEmployeeForActor`) also backs four read-only GETs — allowance-log,
+ * date-ranges, id-card/previous and its download — so there the same guard is
+ * opt-in, and its three writes (the two that file a request, plus the id-card
+ * consent POST) pass `forWrite`.
  */
 export async function resolveRequesterForActor(
   loginEmail: string,

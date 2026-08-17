@@ -11,6 +11,15 @@ const closed = { productionEnabled: false, uatEnabled: false };
  * The composition `resolveCurrentFormWritable` performs, as a pure function, so
  * the write rule can be exercised without a request scope: bound the id, pick the
  * environment, then judge that environment's own switch.
+ *
+ * **This helper is a copy, not a call.** It shadows `resolveCurrentFormWritable`
+ * in `./index.ts` — which cannot be imported here, because it reaches
+ * `next/headers` — by re-running the `boundIdEnvironment → pickEnvironment →
+ * environmentWritable` chain from `./pick-environment.ts` by hand. It is faithful
+ * as written, and nothing fails if the real one drifts. **Editing either
+ * `resolveCurrentFormWritable` or that chain means editing this helper in the
+ * same change**, or these tests keep passing against a rule the app no longer
+ * follows.
  */
 function writable(
   idEnvironment: "Production" | "UAT" | null,

@@ -102,12 +102,41 @@ a switched-off form; nothing new is written either way.
 
 ## Manager resolution
 
-`resolveManagerInfo()` and `resolveManagerEmail()` in
-`src/lib/acc/employee-context.ts` are the only two functions AP-1 and AP-17 use
-to find an approver, so the override lives there — **keyed on
-`resolveFormEnvironment()`, never on the cookie.** A tester in UAT mode opening
-their own production claim resolves Production by id, and must get their real HR
-manager; keying on the cookie would write a test manager onto a live claim.
+> **Correction (Task 10).** This section originally said `resolveManagerInfo()`
+> and `resolveManagerEmail()` in `src/lib/acc/employee-context.ts` were "the only
+> two functions AP-1 and AP-17 use to find an approver, so the override lives
+> there". That was wrong on both halves, and the shipped code does something
+> else. What follows describes what was built.
+
+There are **three** places an approver is resolved, not one, and the UAT override
+lives in two of them:
+
+- **The preview** — `resolveManagerInfo(loginEmail, formCode?, requestId?)`
+  (`src/lib/acc/employee-context.ts`), shared by AP-1 and AP-17 and called from
+  `/api/me/employee`, `/api/request/accounting/requesters` and
+  `/api/request/travel-booking/requesters`. This is the manager card. It swaps in
+  `uatManagerFor()` when the resolved environment is UAT, and returns
+  `hasManager: false` with `FORM_UNAVAILABLE_ERROR` when the form is not writable
+  — judged on `resolveFormWritable`, not `available`, so the card agrees with the
+  submit.
+- **AP-1's submit** — `resolveRequesterForActor()` → `withUatManager()`
+  (`src/lib/acc/employee-context.ts`), on a `RequesterSnapshot`.
+- **AP-17's submit** — `resolveEmployeeForActor()` → its own `withUatManager()`
+  (`src/lib/hr/employee-lookup.ts`), on an `EmployeeContext`. **AP-17 does not
+  share AP-1's resolver.** The two `withUatManager` helpers are deliberate
+  duplicates of one rule over two different snapshot types; changing the rule
+  means changing both.
+
+`resolveManagerEmail()` is the third function and is **deliberately not
+overridden**. It maps a StaffId to an email and nothing else. Overriding it too
+would pair the production manager's `AssignedTo` with the UAT manager's
+`AssignedEmail`, and `canActManagerStep` accepts either — so both people could
+act on the same row.
+
+All of the overrides are **keyed on `resolveFormEnvironment()`, never on the
+cookie.** A tester in UAT mode opening their own production claim resolves
+Production by id, and must get their real HR manager; keying on the cookie would
+write a test manager onto a live claim.
 
 - **Production** — `Rocks_Portal_HR.Employee.ManagerStaffId`, exactly as now.
 - **UAT** — `UatTester.ManagerStaffId` for the requester, then HR for that

@@ -21,9 +21,15 @@ import type { ErpInterfaceStatus } from "@/features/accounting/constants";
  * is no longer the one the operator confirmed. Distinct from the environment
  * message on purpose — nothing about the viewer's environment changed here, and
  * telling them it did sent them looking for a problem that does not exist.
+ *
+ * States what is true on the server and stops there. Reloading the queue is the
+ * client's doing — `ErpPrepQueue`'s `onStale` calls `fetchList()` — so the toast
+ * there may promise it, but this constant also reaches anyone calling
+ * `sendErpInterfaceBatch` directly or hitting the route, for whom nothing was
+ * reloaded.
  */
 export const ERP_QUEUE_DRIFT_ERROR =
-  "รายการที่พร้อมส่งเปลี่ยนไปตั้งแต่เปิดหน้านี้ — ระบบโหลดคิวใหม่ให้แล้ว กรุณาตรวจสอบแล้วส่งอีกครั้ง";
+  "รายการที่พร้อมส่งเปลี่ยนไปตั้งแต่เปิดหน้านี้ กรุณาตรวจสอบแล้วส่งอีกครั้ง";
 
 /** Thrown by `sendErpInterfaceBatch` alone, so the route can answer 409 rather than 400. */
 export class ErpQueueDriftError extends Error {
@@ -205,8 +211,14 @@ export async function sendErpInterfaceBatch(
     throw new ErpQueueDriftError();
   }
 
+  // Drift, not a bad request. An empty batch survives the check above only when
+  // the client echoed an empty set too — `sameRequestIdSet([], [])` is true — so
+  // what actually happened is that the queue emptied out from under a page that
+  // was already showing nothing. A plain Error 400s, and 400 is the dialog's
+  // retryable phase: the operator would be offered a retry that must 400 again
+  // forever. As an ErpQueueDriftError it 409s and the client reloads instead.
   if (queueRows.length === 0) {
-    throw new Error("ไม่มีเอกสารที่พร้อมส่งในรอบนี้");
+    throw new ErpQueueDriftError();
   }
 
   const built = buildErpJournalSections(queueRows, ctx);

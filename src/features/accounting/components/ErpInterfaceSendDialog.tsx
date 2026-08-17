@@ -196,7 +196,14 @@ export function ErpInterfaceSendDialog({
         // time and `handleSend` would replay the same rejected body forever.
         // Hand it back to the caller to reload, and never show "ลองส่งใหม่"
         // under a message that tells the operator to reload.
-        toast.error(json.error ?? "คิวเปลี่ยนไปแล้ว — ระบบโหลดหน้ารายการใหม่ให้");
+        //
+        // The reload promise is appended here rather than baked into the server's
+        // message: `onStale` below is what actually reloads, and it only exists
+        // on this path. A caller hitting the route directly gets the server's
+        // statement of fact and no promise nobody kept.
+        toast.error(
+          `${json.error ?? "คิวเปลี่ยนไปแล้ว"} — ระบบโหลดหน้ารายการใหม่ให้`,
+        );
         onOpenChange(false);
         onStale();
         return;

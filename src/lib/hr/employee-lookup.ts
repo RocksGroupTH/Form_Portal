@@ -467,11 +467,13 @@ async function withUatManager(employee: EmployeeContext): Promise<EmployeeContex
  *
  * In UAT the manager is the requester's UAT manager (see `withUatManager`).
  *
- * `forWrite` opts into the UAT on-behalf refusal, and only the two AP-17 write
- * choke points pass it. The rule is a write rule — a UAT request must not be
- * *filed* for somebody outside the tester list — and this resolver is also the
- * one behind five read-only GETs (allowance-log, date-ranges, the three id-card
- * routes). Throwing there turned an expected selection into a 500 that every
+ * `forWrite` opts into the UAT on-behalf refusal, and the AP-17 write choke
+ * points pass it — the two that file a request, plus the id-card consent POST,
+ * which persists a per-StaffId setting into the resolved form database. The rule
+ * is a write rule — nothing may be *written* in UAT for somebody outside the
+ * tester list — and this resolver is also the one behind four read-only GETs
+ * (allowance-log, date-ranges, id-card/previous and its download).
+ * Throwing there turned an expected selection into a 500 that every
  * caller swallows: the per-diem estimate silently fell back to the flat rate,
  * date-conflict locking silently switched off, and the allowance modal rendered
  * "ยังไม่มีรายการ" — an affirmative false statement about HR data. The flag lives

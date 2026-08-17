@@ -25,7 +25,10 @@ export async function POST(req: NextRequest) {
     const loginEmail = resolveLoginEmail(session.user, null, { email: session.user.email });
     if (!loginEmail) return NextResponse.json({ ok: false, error: "No login email" }, { status: 400 });
 
-    const emp = await resolveEmployeeForActor(loginEmail, requesterStaffId);
+    // `forWrite` because this POST persists: it is the only id-card route that
+    // writes, and without the flag a tester in UAT could record a consent keyed
+    // to a non-tester colleague's StaffId in the UAT AccSetting table.
+    const emp = await resolveEmployeeForActor(loginEmail, requesterStaffId, { forWrite: true });
     // Keyed on HR StaffId (matches AccRequest.StaffId) — NOT emp.id, which is the Employee GUID.
     await setSetting(idCardReuseConsentKey(emp.staffId), body.consent ? "true" : "false", Number(session.user.id));
     return NextResponse.json({ ok: true, data: { consent: body.consent } });

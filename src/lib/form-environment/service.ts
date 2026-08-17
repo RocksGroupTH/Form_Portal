@@ -79,12 +79,11 @@ export const getFormSwitchMap = cache(async (): Promise<Record<string, FormSwitc
  * `MERGE … WITH (HOLDLOCK)` makes the upsert atomic — the previous
  * UPDATE-then-INSERT could race two admins into a duplicate-key failure.
  *
- * The insert branch names `Environment` with a literal only because that legacy
- * column is still NOT NULL with no default (migrations/060_core_form_environment.sql:15)
- * and nothing reads it any more. `N'Production'` is one of the two values its
- * CK_FormEnvironment_Env check allows. **Delete `Environment` from this INSERT
- * list when migration 065 drops the column**, or the insert starts failing on a
- * column that no longer exists.
+ * The insert branch names only the switch being set; the other one takes its
+ * column default (migrations/062_core_form_environment_switches.sql — Production
+ * on, UAT off), which is `PRODUCTION_ONLY`, the same answer `toSwitches` gives a
+ * form with no row at all. The legacy `Environment` column this INSERT used to
+ * name was dropped by migrations/065_core_drop_form_environment_column.sql.
  */
 export async function setFormFlag(
   formCode: string,
@@ -106,8 +105,8 @@ export async function setFormFlag(
       MERGE [dbo].[FormEnvironment] WITH (HOLDLOCK) AS t
       USING (SELECT @code AS FormCode) AS s ON t.FormCode = s.FormCode
       WHEN MATCHED THEN UPDATE SET [${column}] = @value, UpdatedBy = @by, UpdatedAt = SYSDATETIME()
-      WHEN NOT MATCHED THEN INSERT (FormCode, Environment, [${column}], UpdatedBy)
-        VALUES (@code, N'Production', @value, @by);
+      WHEN NOT MATCHED THEN INSERT (FormCode, [${column}], UpdatedBy)
+        VALUES (@code, @value, @by);
     `);
 }
 
