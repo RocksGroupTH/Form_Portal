@@ -46,24 +46,49 @@ export function FormEnvironmentChip({ formCode }: { formCode: string }) {
   return <EnvironmentBadge environment={environments[formCode] ?? "Production"} />;
 }
 
+/** The forms that can appear together in a merged list. */
+const LIST_FORM_CODES = ["AP-1", "AP-17"] as const;
+
 /**
- * For a page that reads both databases and merges them — My Requests and My
- * Work, which are about a person rather than a set of books. Naming one
- * environment there would be false, so it says both, and the rows carry their
- * own UAT mark.
+ * For My Requests and My Work, which list more than one form.
+ *
+ * Those lists read both databases and then keep only the rows whose database
+ * matches each form's current flag, so the honest label is per form. When the
+ * forms agree it collapses to one chip — two identical chips say nothing.
  */
-export function BothEnvironmentsChip() {
+export function ListEnvironmentChips() {
+  const environments = useFormEnvironments();
+  const pairs = LIST_FORM_CODES.map(
+    (code) => [code, environments[code] ?? "Production"] as const,
+  );
+
+  if (pairs.every(([, env]) => env === pairs[0][1])) {
+    return <EnvironmentBadge environment={pairs[0][1]} />;
+  }
+
   return (
-    <span
-      className="text-[9.5px] font-extrabold px-1.5 py-0.5 shrink-0"
-      style={{
-        borderRadius: 6,
-        background: "var(--bg-badge)",
-        color: "var(--text-muted)",
-      }}
-      title="หน้านี้รวมข้อมูลจากทั้ง Production และ UAT — แถวที่มาจาก UAT มีป้ายกำกับไว้"
-    >
-      PRO + UAT
+    <span className="inline-flex items-center gap-1">
+      {pairs.map(([code, env]) => {
+        const uat = env === "UAT";
+        return (
+          <span
+            key={code}
+            className="text-[9.5px] font-extrabold px-1.5 py-0.5 shrink-0"
+            style={{
+              borderRadius: 6,
+              background: uat ? "var(--status-bad-bg)" : "var(--bg-badge)",
+              color: uat ? "var(--status-bad-text)" : "var(--text-muted)",
+            }}
+            title={
+              uat
+                ? `${code} อยู่บน UAT — รายการของฟอร์มนี้เป็นข้อมูลทดสอบ`
+                : `${code} ใช้งานจริงบน Production`
+            }
+          >
+            {code} {uat ? "UAT" : "PRO"}
+          </span>
+        );
+      })}
     </span>
   );
 }
