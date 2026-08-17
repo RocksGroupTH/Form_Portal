@@ -5,6 +5,8 @@ import {
   resolveFormEnvironment,
   type FormEnvironmentValue,
 } from "@/lib/form-environment";
+import { listUatTesters } from "@/lib/uat-tester/service";
+import { isUatMailExempt } from "@/lib/acc/uat-mail-exempt";
 import { env } from "@/env";
 import { sendEmail } from "@/lib/graph";
 import { esc } from "@/lib/acc/email-templates";
@@ -30,18 +32,39 @@ export async function queueEmail(p: {
 }
 
 /**
- * Rewrite a queued message so a UAT-flagged form cannot email real people.
+ * Rewrite a queued message so a UAT-flagged form cannot email real people —
+ * with one exception, now that Production and UAT run side by side and a UAT
+ * request's approval chain stays inside the tester group (see
+ * docs/superpowers/specs/2026-08-18-parallel-uat-design.md, "Notifications").
+ * The old justification — "approval chains resolve against production HR in
+ * both environments" — is exactly the assumption that design removed: if
+ * every UAT message were still redirected, the configured UAT manager would
+ * never be told there is anything to approve, and a UAT request could never
+ * complete.
  *
- * Approval chains resolve against production Rocks_Portal_HR in both
- * environments, so a tester's fake request would otherwise ask a real manager
- * to approve it. The intended recipient stays visible in the body so routing
- * can still be checked.
+ * The exception: a recipient who is themself an active `UatTester`, or is a
+ * configured UAT manager (`UatTester.ManagerEmail`), gets the mail at their
+ * own address — still `[UAT]`-prefixed, so it is never mistaken for a
+ * production notification. `isUatMailExempt` is the pure predicate; the
+ * caller gathers the active testers once per drain cycle (not once per
+ * message) and passes them in. Everyone else keeps the rewrite, and the loud
+ * throw when `UAT_MAIL_REDIRECT` is unset still fires for them — this must
+ * fail closed, never fall back to the real recipient.
  */
-function applyUatRedirect(m: {
-  ToEmail: string;
-  Subject: string;
-  BodyHtml: string;
-}) {
+function applyUatRedirect(
+  m: { ToEmail: string; Subject: string; BodyHtml: string },
+  exemptTesters: readonly { email: string; managerEmail: string | null }[],
+): { to: string; subject: string; bodyHtml: string } {
+  const exempt = isUatMailExempt(m.ToEmail, exemptTesters);
+
+  if (exempt) {
+    return {
+      to: m.ToEmail,
+      subject: `[UAT] ${m.Subject}`,
+      bodyHtml: m.BodyHtml,
+    };
+  }
+
   const to = env.UAT_MAIL_REDIRECT || env.GRAPH_MAIL_FROM;
   if (!to) {
     // Refuse rather than fall back to the real recipient. An unconfigured
@@ -88,13 +111,22 @@ export async function processQueueOn(
     BodyHtml: string;
   }[];
 
+  // Fetched once per drain cycle, not once per message — every row in this
+  // batch is judged against the same tester snapshot.
+  const exemptTesters =
+    environment === "UAT" && rows.length > 0
+      ? (await listUatTesters())
+          .filter((t) => t.isActive)
+          .map((t) => ({ email: t.email, managerEmail: t.managerEmail }))
+      : [];
+
   let sent = 0,
     failed = 0;
   for (const m of rows) {
     try {
       const payload =
         environment === "UAT"
-          ? applyUatRedirect(m)
+          ? applyUatRedirect(m, exemptTesters)
           : { to: m.ToEmail, subject: m.Subject, bodyHtml: m.BodyHtml };
       await sendEmail(payload);
       await pool

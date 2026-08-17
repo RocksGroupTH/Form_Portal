@@ -36,6 +36,7 @@ import {
   type ErpPrepStatus,
 } from "@/features/accounting/constants";
 import type { ErpPrepRow } from "@/lib/acc/erp-prep-service";
+import type { FormEnvironmentValue } from "@/lib/form-environment";
 import type { AccRequest } from "@/features/accounting/types";
 import type { ErpJournalBuildContext } from "@/lib/acc/erp-journal-builder";
 import { ErpJournalPreview } from "@/features/accounting/components/ErpJournalPreview";
@@ -238,6 +239,8 @@ export function ErpPrepQueue({
   showUnassignedTab?: boolean;
 }) {
   const [rows, setRows] = useState<ErpPrepRow[]>([]);
+  const [queueEnvironment, setQueueEnvironment] = useState<FormEnvironmentValue | null>(null);
+  const [queueRequestIds, setQueueRequestIds] = useState<number[]>([]);
   const [journalContext, setJournalContext] = useState<ErpJournalBuildContext | null>(null);
   const [listLoading, setListLoading] = useState(true);
   const [contextLoading, setContextLoading] = useState(true);
@@ -292,9 +295,18 @@ export function ErpPrepQueue({
           setForbidden(true);
           return;
         }
-        const listJson: { ok: boolean; data?: ErpPrepRow[]; error?: string } = await listRes.json();
-        if (listJson.ok && listJson.data) setRows(listJson.data);
-        else toast.error(listJson.error ?? "โหลดข้อมูลไม่สำเร็จ");
+        const listJson: {
+          ok: boolean;
+          data?: { environment: FormEnvironmentValue; requestIds: number[]; rows: ErpPrepRow[] };
+          error?: string;
+        } = await listRes.json();
+        if (listJson.ok && listJson.data) {
+          setRows(listJson.data.rows);
+          setQueueEnvironment(listJson.data.environment);
+          setQueueRequestIds(listJson.data.requestIds);
+        } else {
+          toast.error(listJson.error ?? "โหลดข้อมูลไม่สำเร็จ");
+        }
       })
       .catch(() => toast.error("เกิดข้อผิดพลาดในการโหลดรายการ"))
       .finally(() => {
@@ -691,6 +703,8 @@ export function ErpPrepQueue({
             interfaceTargetCode={interfaceTarget}
             onRequestSend={setSendTarget}
             sentMonthFilter={filters.sentMonth || undefined}
+            queueEnvironment={queueEnvironment}
+            queueRequestIds={queueRequestIds}
           />
         </div>
       ) : (

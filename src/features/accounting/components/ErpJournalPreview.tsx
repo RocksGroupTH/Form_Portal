@@ -17,6 +17,7 @@ import {
 } from "@/lib/acc/erp-journal-builder";
 import { ERP_INTERFACE_UNASSIGNED } from "@/features/accounting/lib/erp-interface-target";
 import type { ErpPrepRow } from "@/lib/acc/erp-prep-service";
+import type { FormEnvironmentValue } from "@/lib/form-environment";
 import {
   segmentSendState,
   type ErpInterfaceSendTarget,
@@ -289,6 +290,8 @@ function SegmentJournalPanel({
   onOpenDocument,
   onRequestSend,
   sentAt,
+  queueEnvironment,
+  queueRequestIds,
 }: {
   groups: ErpJournalGroup[];
   segment: JournalSegment;
@@ -300,6 +303,8 @@ function SegmentJournalPanel({
   onOpenDocument: (id: number) => void;
   onRequestSend?: (target: ErpInterfaceSendTarget) => void;
   sentAt?: string | null;
+  queueEnvironment?: FormEnvironmentValue | null;
+  queueRequestIds?: number[];
 }) {
   const isArchive = segment === "sent";
   const sendState = useMemo(() => segmentSendState(groups), [groups]);
@@ -374,6 +379,8 @@ function SegmentJournalPanel({
                 journalBatchName,
                 bcMeta,
                 context,
+                queueEnvironment: queueEnvironment ?? null,
+                queueRequestIds: queueRequestIds ?? [],
               })
             }
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold border-none cursor-pointer"
@@ -840,6 +847,8 @@ function InterfaceTargetJournalPanel({
   onOpenDocument,
   onRequestSend,
   sentMonthFilter,
+  queueEnvironment,
+  queueRequestIds,
 }: {
   target: string;
   isUnassigned: boolean;
@@ -850,6 +859,8 @@ function InterfaceTargetJournalPanel({
   onOpenDocument: (id: number) => void;
   onRequestSend?: (target: ErpInterfaceSendTarget) => void;
   sentMonthFilter?: string;
+  queueEnvironment?: FormEnvironmentValue | null;
+  queueRequestIds?: number[];
 }) {
   const [journalSegment, setJournalSegment] = useState<JournalSegment>("queue");
 
@@ -986,6 +997,8 @@ function InterfaceTargetJournalPanel({
               context={context}
               onOpenDocument={onOpenDocument}
               onRequestSend={isUnassigned || journalSegment !== "queue" ? undefined : onRequestSend}
+              queueEnvironment={queueEnvironment}
+              queueRequestIds={queueRequestIds}
             />
           )}
         </div>
@@ -1002,6 +1015,8 @@ export function ErpJournalPreview({
   interfaceTargetCode,
   onRequestSend,
   sentMonthFilter,
+  queueEnvironment,
+  queueRequestIds,
 }: {
   rows: ErpPrepRow[];
   context: ErpJournalBuildContext | null;
@@ -1010,6 +1025,9 @@ export function ErpJournalPreview({
   interfaceTargetCode?: string | null;
   onRequestSend?: (target: ErpInterfaceSendTarget) => void;
   sentMonthFilter?: string;
+  /** GET /api/request/accounting/erp-prep's resolved environment and the ids it listed — passed through unchanged to the send dialog. */
+  queueEnvironment?: FormEnvironmentValue | null;
+  queueRequestIds?: number[];
 }) {
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => new Set());
 
@@ -1055,6 +1073,8 @@ export function ErpJournalPreview({
         onOpenDocument={onOpenDocument}
         onRequestSend={onRequestSend}
         sentMonthFilter={sentMonthFilter}
+        queueEnvironment={queueEnvironment}
+        queueRequestIds={queueRequestIds}
       />
     );
   }

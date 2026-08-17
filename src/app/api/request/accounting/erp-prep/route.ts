@@ -11,6 +11,7 @@ import {
   loadPrepDeptContext,
   type ErpPrepFilters,
 } from "@/lib/acc/erp-prep-service";
+import { resolveFormEnvironment } from "@/lib/form-environment";
 import type { ErpPrepStatus } from "@/features/accounting/constants";
 import { ERP_PREP_STATUSES } from "@/features/accounting/constants";
 
@@ -43,7 +44,8 @@ export async function GET(req: NextRequest) {
       travelTo: sp.get("travelTo") ?? null,
     };
 
-    const [access, deptCtx] = await Promise.all([
+    const [environment, access, deptCtx] = await Promise.all([
+      resolveFormEnvironment(),
       resolveApproverInterfaceAccess(session.user.email, session.user.role),
       loadPrepDeptContext(),
     ]);
@@ -58,7 +60,20 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    return NextResponse.json({ ok: true, data });
+    // The environment this list resolved to, and the exact ids in it — POST
+    // …/send is required to echo both back unchanged. Under per-viewer UAT
+    // routing, two people can load this same route into different databases;
+    // without this, the sender's own cookie alone decided which Business
+    // Central instance a batch reached. See "ERP send" in
+    // docs/superpowers/specs/2026-08-18-parallel-uat-design.md.
+    return NextResponse.json({
+      ok: true,
+      data: {
+        environment,
+        requestIds: data.map((r) => r.id),
+        rows: data,
+      },
+    });
   } catch (err) {
     console.error("[api/request/accounting/erp-prep] GET", err);
     return NextResponse.json({ ok: false, error: "Internal server error" }, { status: 500 });

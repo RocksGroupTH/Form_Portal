@@ -19,6 +19,7 @@ import {
   collectGroupsRequestIds,
 } from "@/lib/acc/erp-ppap-payload";
 import type { ErpPrepRow } from "@/lib/acc/erp-prep-service";
+import type { FormEnvironmentValue } from "@/lib/form-environment";
 
 export interface ErpInterfaceSendTarget {
   interfaceTarget: string;
@@ -27,6 +28,15 @@ export interface ErpInterfaceSendTarget {
   journalBatchName: string | null;
   bcMeta: string | null;
   context: ErpJournalBuildContext;
+  /**
+   * The environment and request ids GET /api/request/accounting/erp-prep
+   * returned when this queue was loaded — echoed back verbatim on send so the
+   * server can refuse (409) a click bound to a queue that no longer matches
+   * its own resolve. Never recomputed client-side: recomputing would let the
+   * sender's own cookie decide again, exactly what this binding exists to stop.
+   */
+  queueEnvironment: FormEnvironmentValue | null;
+  queueRequestIds: number[];
 }
 
 type DialogPhase = "confirm" | "sending" | "success" | "error";
@@ -143,6 +153,14 @@ export function ErpInterfaceSendDialog({
 
   const handleSend = useCallback(async () => {
     if (!target) return;
+    if (!target.queueEnvironment) {
+      // Should not happen — the dialog only opens from a queue that already
+      // loaded — but fail closed rather than post with nothing to bind the
+      // click to.
+      setErrorMessage("โหลดคิวใหม่ก่อนส่ง — ไม่พบสภาพแวดล้อมของคิวที่แสดงอยู่");
+      setPhase("error");
+      return;
+    }
     setPhase("sending");
     setErrorMessage("");
 
@@ -152,6 +170,8 @@ export function ErpInterfaceSendDialog({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           interfaceTarget: target.interfaceTarget,
+          environment: target.queueEnvironment,
+          requestIds: target.queueRequestIds,
         }),
       });
       const json: { ok: boolean; error?: string } = await res.json();

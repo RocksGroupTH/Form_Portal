@@ -5,15 +5,12 @@ import {
   buildPpapJournalPayloadFromGroups,
   collectGroupsRequestIds,
 } from "@/lib/acc/erp-ppap-payload";
-import { listErpPrepRows } from "@/lib/acc/erp-prep-service";
+import { listErpPrepRows, invalidatePrepDeptContextCache } from "@/lib/acc/erp-prep-service";
 import { buildErpJournalSections } from "@/lib/acc/erp-journal-builder";
 import { resolveErpTargetProfile } from "@/lib/acc/erp-target-profile";
 import { filterRowsByInterfaceTarget } from "@/features/accounting/lib/erp-interface-target";
 import { postBcPpapJournalCreateFromJson } from "@/lib/bc/bc-odata";
 import type { ErpInterfaceStatus } from "@/features/accounting/constants";
-import { deleteAccCached } from "@/lib/acc/acc-cache";
-
-const PREP_DEPT_CTX_CACHE_KEY = "acc:prep-dept-ctx";
 
 export interface SendErpInterfaceBatchInput {
   interfaceTarget: string;
@@ -27,7 +24,7 @@ export interface SendErpInterfaceResult {
 }
 
 function invalidateAccPrepCaches(): void {
-  deleteAccCached(PREP_DEPT_CTX_CACHE_KEY);
+  invalidatePrepDeptContextCache();
   invalidateErpJournalBuildContextCache();
 }
 
