@@ -1,4 +1,6 @@
-import type { FormEnvironment } from "@/lib/hooks/useFormEnvironments";
+"use client";
+
+import { useFormEnvironments, type FormEnvironment } from "@/lib/hooks/useFormEnvironments";
 
 /**
  * Which database a form writes to, as a chip on the form's card.
@@ -32,4 +34,14 @@ export function EnvironmentBadge({
       {uat ? "UAT" : "PRO"}
     </span>
   );
+}
+
+/**
+ * The same chip, for a page that works with one form's data — it says which
+ * database the rows on screen came from. Reads the flag itself so a page only
+ * has to name its form.
+ */
+export function FormEnvironmentChip({ formCode }: { formCode: string }) {
+  const environments = useFormEnvironments();
+  return <EnvironmentBadge environment={environments[formCode] ?? "Production"} />;
 }

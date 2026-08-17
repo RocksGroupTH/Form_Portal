@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { backTo } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
+import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
 import { ApprovalsQueue } from "@/features/accounting/components/ApprovalsQueue";
 import { ErpPrepQueue } from "@/features/accounting/components/ErpPrepQueue";
 import { ErpEnvironmentBanner } from "@/features/accounting/components/ErpEnvironmentBanner";
@@ -104,6 +105,7 @@ function AccountingApprovalsContent() {
       <PageHeaderBar
         icon={ClipboardCheck}
         title="อนุมัติเบิกค่าเดินทาง (บัญชี)"
+        titleExtra={<FormEnvironmentChip formCode="AP-1" />}
         subtitle={tabMeta.subtitle}
         backHref={backTo("/request/accounting", searchParams.get("from"))}
       />

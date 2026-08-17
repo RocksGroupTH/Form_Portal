@@ -7,6 +7,7 @@ import { useSearchParams } from "next/navigation";
 import { backTo } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
+import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
 import { SidePanel, SidePanelClose } from "@/components/ui/SidePanel";
 import { useAccountingAccess } from "@/features/accounting/hooks/useAccountingAccess";
 import { fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
@@ -97,6 +98,7 @@ export default function TravelBookingAdminQueuePage() {
       <PageHeaderBar
         icon={ClipboardList}
         title="คิวจองที่พัก/ตั๋วโดยสาร (AP-17)"
+        titleExtra={<FormEnvironmentChip formCode="AP-17" />}
         subtitle="รายการที่ผู้จัดการอนุมัติแล้ว รอ Admin กรอกข้อมูลการจอง"
         backHref={backTo("/request/accounting/travel-booking", searchParams.get("from"))}
       />

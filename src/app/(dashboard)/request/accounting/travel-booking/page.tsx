@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { requestBackHref, withReturnTag } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
+import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
 import { HoverCard } from "@/components/ui/HoverCard";
 import { useAccountingAccess } from "@/features/accounting/hooks/useAccountingAccess";
 import { Luggage, ClipboardCheck, FileSpreadsheet, Settings } from "lucide-react";
@@ -92,6 +93,7 @@ export default function TravelBookingHubPage() {
       <PageHeaderBar
         icon={Luggage}
         title="จองที่พัก/ตั๋วโดยสาร · บัญชี"
+        titleExtra={<FormEnvironmentChip formCode="AP-17" />}
         subtitle="คิวจอง รายงาน และตั้งค่าการจองที่พัก/ตั๋วโดยสาร (AP-17)"
         backHref={backHref}
       />

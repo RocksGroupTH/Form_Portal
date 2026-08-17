@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { requestBackHref, withReturnTag } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
+import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
 import { HoverCard } from "@/components/ui/HoverCard";
 import { useAccountingAccess } from "@/features/accounting/hooks/useAccountingAccess";
 import {
@@ -101,6 +102,7 @@ export default function AccountingHubPage() {
       <PageHeaderBar
         icon={Receipt}
         title="Accounting · บัญชี"
+        titleExtra={<FormEnvironmentChip formCode="AP-1" />}
         subtitle="อนุมัติ รายงาน และตั้งค่าเบิกค่าเดินทาง (AP-1)"
         backHref={backHref}
       />
