@@ -13,6 +13,7 @@ import {
   Link2,
   CalendarDays,
 } from "lucide-react";
+import { backTo } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { ApproverSettings } from "@/features/accounting/components/settings/ApproverSettings";
@@ -117,7 +118,7 @@ function AccountingSettingsContent() {
         icon={Settings}
         title="ตั้งค่าเบิกค่าเดินทาง"
         subtitle="จัดการผู้อนุมัติบัญชี พาหนะ แบรนด์ และ Interface ERP"
-        backHref="/request/accounting"
+        backHref={backTo("/request/accounting", searchParams.get("from"))}
       />
 
       <div

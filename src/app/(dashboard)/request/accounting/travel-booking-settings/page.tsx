@@ -4,6 +4,8 @@ import { useState } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { Settings, Compass, Hotel, Car, Plane } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { backTo } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { TravelOptionSettings, type TravelOptionKind } from "@/features/travel-booking/components/settings/TravelOptionSettings";
@@ -52,6 +54,7 @@ const TAB_PANELS: Record<
 };
 
 export default function TravelBookingSettingsPage() {
+  const searchParams = useSearchParams();
   const { data: session, status } = useSession();
   const [activeTab, setActiveTab] = useState<TabKey>("reasons");
 
@@ -102,7 +105,7 @@ export default function TravelBookingSettingsPage() {
         icon={Settings}
         title="ตั้งค่าแบบฟอร์มขอเดินทาง (AP-17)"
         subtitle="จัดการเหตุผลการเดินทาง ที่พัก ยานพาหนะ และรายการเช่ายานพาหนะ"
-        backHref="/request/accounting/travel-booking"
+        backHref={backTo("/request/accounting/travel-booking", searchParams.get("from"))}
       />
 
       <div

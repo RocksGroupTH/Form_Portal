@@ -2,7 +2,7 @@
 
 import { useSession } from "next-auth/react";
 import { useSearchParams } from "next/navigation";
-import { requestBackHref } from "@/lib/request-hub-nav";
+import { requestBackHref, withReturnTag } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { HoverCard } from "@/components/ui/HoverCard";
@@ -42,9 +42,9 @@ const CARDS: HubCard[] = [
   },
 ];
 
-function TravelBookingHubCard({ card }: { card: HubCard }) {
+function TravelBookingHubCard({ card, href }: { card: HubCard; href: string }) {
   return (
-    <HoverCard href={card.href} className="p-5 block">
+    <HoverCard href={href} className="p-5 block">
       <div className="flex items-start justify-between mb-3">
         <div
           className="w-10 h-10 rounded-lg flex items-center justify-center"
@@ -84,7 +84,8 @@ export default function TravelBookingHubPage() {
     if (c.accountOnly && !canAccount) return false;
     return true;
   });
-  const backHref = requestBackHref(useSearchParams().get("from"));
+  const from = useSearchParams().get("from");
+  const backHref = requestBackHref(from);
 
   return (
     <PageContainer className="acc-theme py-6 px-3 sm:px-0">
@@ -97,7 +98,7 @@ export default function TravelBookingHubPage() {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {cards.map((card) => (
-          <TravelBookingHubCard key={card.href} card={card} />
+          <TravelBookingHubCard key={card.href} card={card} href={withReturnTag(card.href, from)} />
         ))}
       </div>
     </PageContainer>

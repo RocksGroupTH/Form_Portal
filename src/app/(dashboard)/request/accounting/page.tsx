@@ -2,7 +2,7 @@
 
 import { useSession } from "next-auth/react";
 import { useSearchParams } from "next/navigation";
-import { requestBackHref } from "@/lib/request-hub-nav";
+import { requestBackHref, withReturnTag } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { HoverCard } from "@/components/ui/HoverCard";
@@ -48,9 +48,9 @@ const CARDS: HubCard[] = [
   },
 ];
 
-function AccountingHubCard({ card }: { card: HubCard }) {
+function AccountingHubCard({ card, href }: { card: HubCard; href: string }) {
   return (
-    <HoverCard href={card.href} className="p-5 block">
+    <HoverCard href={href} className="p-5 block">
       <div className="flex items-start justify-between mb-3">
         <div
           className="w-10 h-10 rounded-lg flex items-center justify-center"
@@ -79,7 +79,8 @@ function AccountingHubCard({ card }: { card: HubCard }) {
 
 export default function AccountingHubPage() {
   const { data: session } = useSession();
-  const backHref = requestBackHref(useSearchParams().get("from"));
+  const from = useSearchParams().get("from");
+  const backHref = requestBackHref(from);
   const { loading: accessLoading, isApprover, canAccount } = useAccountingAccess();
   const role = session?.user?.role;
   const isAdmin = role === "IT Admin" || role === "System Admin";
@@ -107,7 +108,7 @@ export default function AccountingHubPage() {
       {/* Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {cards.map((card) => (
-          <AccountingHubCard key={card.href} card={card} />
+          <AccountingHubCard key={card.href} card={card} href={withReturnTag(card.href, from)} />
         ))}
       </div>
     </PageContainer>

@@ -1,6 +1,8 @@
 "use client";
 
 import { FileSpreadsheet } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { backTo } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { useAccountingAccess } from "@/features/accounting/hooks/useAccountingAccess";
@@ -13,6 +15,7 @@ import { TravelBookingReport } from "@/features/travel-booking/components/Travel
  * incorrectly hide this page from IT/System Admin viewers who aren't rows in `AccApprover`).
  */
 export default function TravelBookingReportPage() {
+  const searchParams = useSearchParams();
   const { loading: accessLoading, canAccount } = useAccountingAccess();
 
   return (
@@ -21,7 +24,7 @@ export default function TravelBookingReportPage() {
         icon={FileSpreadsheet}
         title="รายงานการจองที่พัก/ตั๋วโดยสาร (AP-17)"
         subtitle="ค้นหาและส่งออกรายการคำขอจองที่พัก/ตั๋วโดยสารสำหรับฝ่ายบุคคล"
-        backHref="/request/accounting/travel-booking"
+        backHref={backTo("/request/accounting/travel-booking", searchParams.get("from"))}
       />
 
       {accessLoading ? (

@@ -16,7 +16,24 @@ export function withRequestReturn(href: string, from: "admin"): string {
   return `${href}${href.includes("?") ? "&" : "?"}from=${from}`;
 }
 
-/** Back target for a page reached from the Request hub. */
+/**
+ * Carry the tag one level deeper.
+ *
+ * The tag has to survive every hop, not just the first: Accounting Admin →
+ * AP-1 → its approval queue is three pages, and Back from the queue has to
+ * walk the same three back. Each page passes the tag it was given to the links
+ * it renders, and reads it again to build its own Back.
+ */
+export function withReturnTag(href: string, from: string | null | undefined): string {
+  return from === "admin" ? withRequestReturn(href, "admin") : href;
+}
+
+/** Back target for a page reached directly from the Request hub. */
 export function requestBackHref(from: string | null | undefined): string {
   return from === "admin" ? REQUEST_ADMIN_HREF : "/request";
+}
+
+/** Back target for a page below the hub: its parent, tag intact. */
+export function backTo(parentPath: string, from: string | null | undefined): string {
+  return withReturnTag(parentPath, from);
 }

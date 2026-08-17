@@ -1,5 +1,7 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
+import { backTo } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { AccountingReport } from "@/features/accounting/components/AccountingReport";
@@ -7,6 +9,7 @@ import { ErpEnvironmentBanner } from "@/features/accounting/components/ErpEnviro
 import { FileSpreadsheet } from "lucide-react";
 
 export default function AccountingReportPage() {
+  const searchParams = useSearchParams();
   return (
     <PageContainer className="acc-theme py-6 px-3 sm:px-0">
       {/* Page heading */}
@@ -14,7 +17,7 @@ export default function AccountingReportPage() {
         icon={FileSpreadsheet}
         title="รายงานเบิกค่าเดินทาง"
         subtitle="ค้นหาและส่งออกรายการเบิกค่าเดินทางทั้งหมด"
-        backHref="/request/accounting"
+        backHref={backTo("/request/accounting", searchParams.get("from"))}
       />
 
       <ErpEnvironmentBanner />

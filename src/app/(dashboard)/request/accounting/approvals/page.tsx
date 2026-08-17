@@ -2,6 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { backTo } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { ApprovalsQueue } from "@/features/accounting/components/ApprovalsQueue";
@@ -104,7 +105,7 @@ function AccountingApprovalsContent() {
         icon={ClipboardCheck}
         title="อนุมัติเบิกค่าเดินทาง (บัญชี)"
         subtitle={tabMeta.subtitle}
-        backHref="/request/accounting"
+        backHref={backTo("/request/accounting", searchParams.get("from"))}
       />
 
       <div

@@ -3,6 +3,8 @@
 import { useCallback, useState } from "react";
 import useSWR from "swr";
 import { BedDouble, Car, ChevronRight, ClipboardList, Inbox, Loader2, Ticket } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { backTo } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { SidePanel, SidePanelClose } from "@/components/ui/SidePanel";
@@ -40,6 +42,7 @@ function NeedBadge({ icon, label }: { icon: React.ReactNode; label: string }) {
  * aren't also rows in `AccApprover`).
  */
 export default function TravelBookingAdminQueuePage() {
+  const searchParams = useSearchParams();
   const { loading: accessLoading, canAccount } = useAccountingAccess();
   const { data, error, isLoading, mutate } = useSWR(
     canAccount ? "/api/request/travel-booking/admin/queue" : null,
@@ -95,7 +98,7 @@ export default function TravelBookingAdminQueuePage() {
         icon={ClipboardList}
         title="คิวจองที่พัก/ตั๋วโดยสาร (AP-17)"
         subtitle="รายการที่ผู้จัดการอนุมัติแล้ว รอ Admin กรอกข้อมูลการจอง"
-        backHref="/request/accounting/travel-booking"
+        backHref={backTo("/request/accounting/travel-booking", searchParams.get("from"))}
       />
 
       <div className="rounded-2xl overflow-hidden" style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)" }}>
