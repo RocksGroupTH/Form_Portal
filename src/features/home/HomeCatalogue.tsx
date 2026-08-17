@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { useSearchParams } from "next/navigation";
@@ -11,7 +11,7 @@ import {
   setBrandInSearchParams,
 } from "@/lib/brand-url";
 import { useHomeData } from "@/features/home/useHomeData";
-import { Search, FileText, Route, Luggage, ClipboardCheck, FileCheck, FilePen, ArrowRight } from "lucide-react";
+import { Search, Route, Luggage, ClipboardCheck, FilePen, ArrowRight } from "lucide-react";
 
 const ACCOUNTING_FORMS = [
   {
@@ -151,14 +151,10 @@ export function HomeCatalogue() {
   const sp = useSearchParams();
   const [query, setQuery] = useState("");
   const {
-    accPendingCount,
-    formPendingCount,
     pendingCount,
     monthCount,
     resumableCount,
     resumable,
-    forms,
-    formsError,
     summaryError,
     isLoading,
   } = useHomeData();
@@ -175,11 +171,6 @@ export function HomeCatalogue() {
     q === "" || parts.some((p) => (p ?? "").toLowerCase().includes(q));
 
   const accounting = ACCOUNTING_FORMS.filter((f) => matches(f.code, f.name, f.desc));
-  const general = useMemo(
-    () => forms.filter((f) => matches(f.name, f.slug, f.description, f.category)),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [forms, q],
-  );
 
   const name = session?.user?.nickname || session?.user?.name || "";
 
@@ -296,25 +287,13 @@ export function HomeCatalogue() {
                   </Link>
                 ))}
 
-                {/* Accounting (AP-1 / AP-17) approvals and Form Builder approvals are
-                    separate systems with separate queues — one row each, never merged. */}
-                {accPendingCount > 0 && (
+                {pendingCount > 0 && (
                   <PendingLink
                     href={hrefWithBrand("/my-work")}
                     Icon={ClipboardCheck}
-                    title="รออนุมัติจากคุณ · บัญชี"
+                    title="รออนุมัติจากคุณ"
                     subtitle="ไปที่ My Work เพื่อตรวจและอนุมัติ"
-                    count={accPendingCount}
-                  />
-                )}
-
-                {formPendingCount > 0 && (
-                  <PendingLink
-                    href={hrefWithBrand("/forms/approvals")}
-                    Icon={FileCheck}
-                    title="รออนุมัติจากคุณ · ฟอร์มทั่วไป"
-                    subtitle="ไปที่ Forms → Approvals เพื่อตรวจและอนุมัติ"
-                    count={formPendingCount}
+                    count={pendingCount}
                   />
                 )}
               </div>
@@ -386,70 +365,7 @@ export function HomeCatalogue() {
         </>
       )}
 
-      {/* Form Builder catalogue failed to load — say so instead of silently
-          rendering a portal with no general forms in it. */}
-      {formsError && (
-        <>
-          <SectionLabel title="ฟอร์มทั่วไป" />
-          <LoadError>โหลดรายการฟอร์มไม่สำเร็จ — ลองรีเฟรชหน้าอีกครั้ง</LoadError>
-        </>
-      )}
-
-      {/* Form Builder forms — gated on isLoading too, same as the stat strip and
-          continue section, so it doesn't pop in after the rest of the page has settled. */}
-      {!isLoading && !formsError && general.length > 0 && (
-        <>
-          <SectionLabel
-            title="ฟอร์มทั่วไป"
-            action={
-              <Link
-                href={hrefWithBrand("/forms")}
-                className="text-[11.5px] font-medium no-underline flex items-center gap-1"
-                style={{ color: "var(--nav-active-text)" }}
-              >
-                ดูทั้งหมด <ArrowRight size={12} />
-              </Link>
-            }
-          />
-          <div className="grid gap-2.5 sm:grid-cols-2">
-            {general.map((f) => (
-              <Link
-                key={f.id}
-                href={hrefWithBrand(`/forms/${f.slug}`)}
-                className="flex gap-3 items-start p-3.5 no-underline"
-                style={{
-                  background: "var(--bg-card)",
-                  borderRadius: "var(--radius-card)",
-                  boxShadow: "var(--shadow-card)",
-                  border: "1px solid var(--border-card)",
-                }}
-              >
-                <span
-                  className="flex items-center justify-center shrink-0"
-                  style={{
-                    width: 34, height: 34,
-                    borderRadius: "var(--radius-tile)",
-                    background: "var(--status-ok-bg)",
-                    color: "var(--status-ok-text)",
-                  }}
-                >
-                  <FileText size={17} />
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-[13px] font-bold" style={{ color: "var(--text-primary)" }}>
-                    {f.name}
-                  </span>
-                  <span className="block text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-                    {f.description || f.category || "ฟอร์มทั่วไป"}
-                  </span>
-                </span>
-              </Link>
-            ))}
-          </div>
-        </>
-      )}
-
-      {q !== "" && !formsError && accounting.length === 0 && general.length === 0 && (
+      {q !== "" && accounting.length === 0 && (
         <p className="text-[12px] mt-8 text-center" style={{ color: "var(--text-muted)" }}>
           ไม่พบฟอร์มที่ตรงกับ &ldquo;{query}&rdquo;
         </p>

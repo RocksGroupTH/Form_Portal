@@ -22,14 +22,6 @@ async function fetcher(url: string) {
   return json;
 }
 
-export interface CatalogueForm {
-  id: number;
-  name: string;
-  slug: string;
-  description: string | null;
-  category: string | null;
-}
-
 export interface ResumableGroup {
   /** Stable key for React lists. */
   key: string;
@@ -83,15 +75,14 @@ function isThisMonth(iso: string | null | undefined): boolean {
   return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
 }
 
+/**
+ * Home reads Accounting only. Form Builder used to contribute a form catalogue
+ * and its own approval queue here; both were dropped when the feature's entry
+ * points were removed, so nothing on this page fetches /api/forms any more.
+ */
 export function useHomeData() {
-  const forms = useSWR<{ ok: boolean; data?: CatalogueForm[] }>("/api/forms", fetcher);
   const mine = useSWR<{ ok: boolean; data?: Row[] }>("/api/request/accounting/requests/mine", fetcher);
   const work = useSWR<{ ok: boolean; data?: MyWorkRowInput[] }>("/api/request/accounting/work", fetcher);
-  // Form Builder approvals are a separate system with its own queue at /forms/approvals.
-  // The route already returns only rows with `AssignedTo = me AND Status = 'Pending'`,
-  // so its length is the per-user pending count. Kept in its own variable — the two
-  // systems' rows are never merged.
-  const formApprovals = useSWR<{ ok: boolean; data?: unknown[] }>("/api/forms/approvals", fetcher);
   const ap1 = useSWR<{ ok: boolean; data?: Ap1Draft[] }>("/api/request/accounting/requests/drafts", fetcher);
   const ap17 = useSWR<{ ok: boolean; data?: Ap17Draft[] }>("/api/request/travel-booking/requests/drafts", fetcher);
   // Same viewer context /my-work uses to classify rows — see MyRequestsPanel.tsx:225-234.
@@ -141,30 +132,23 @@ export function useHomeData() {
   };
   const workRows = work.data?.data ?? [];
   const accPendingCount = workRows.filter((r) => getMyWorkStatusBucket(r, viewer) === "pending").length;
-  const formPendingCount = (formApprovals.data?.data ?? []).length;
 
   // Every fetch the greeting line and the stat strip read. `employee` / `access`
   // are in here too: without them the pending rule misclassifies rows, so a
   // number built on a failed context would be just as wrong as a missing one.
   const summaryError =
-    mine.error || work.error || formApprovals.error || ap1.error || ap17.error || employee.error || access.error;
+    mine.error || work.error || ap1.error || ap17.error || employee.error || access.error;
 
   return {
-    accPendingCount,
-    formPendingCount,
-    pendingCount: accPendingCount + formPendingCount,
+    pendingCount: accPendingCount,
     monthCount: (mine.data?.data ?? []).filter((r) => isThisMonth(r.submittedAt)).length,
     /** Editable rows — drafts **and** returned-for-revision. See `ResumableGroup.returnedCount`. */
     resumableCount: ap1Rows.length + ap17Rows.length,
     resumable,
-    forms: (forms.data?.data ?? []),
-    formsError: Boolean(forms.error),
     summaryError: Boolean(summaryError),
     isLoading:
-      forms.isLoading ||
       mine.isLoading ||
       work.isLoading ||
-      formApprovals.isLoading ||
       ap1.isLoading ||
       ap17.isLoading ||
       employee.isLoading ||

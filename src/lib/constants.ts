@@ -17,14 +17,13 @@ export type NavItem = {
   manage?: boolean;
 };
 
+/**
+ * Form Builder (`/forms`) is deliberately absent: the feature is unused, so its
+ * entry points — this tab, the Manage Forms settings card, and the Home
+ * catalogue's general-forms section — were removed. The pages and API routes
+ * still exist and still work if reached by URL.
+ */
 export const NAV: NavItem[] = [
-  {
-    id: "forms",
-    label: "Forms",
-    icon: "FileText",
-    desc: "ฟอร์มทั้งหมดและคำขอที่ส่งได้",
-    href: "/forms",
-  },
   {
     id: "my-request",
     label: "My Requests",
@@ -147,13 +146,6 @@ export const SETTINGS_CARDS: NavItem[] = [
     desc: "จัดการผู้ใช้ บทบาท และการซิงก์จาก Active Directory",
     href: "/settings/users",
     systemAdminOnly: true,
-  },
-  {
-    id: "manage-forms",
-    label: "Manage Forms",
-    icon: "FileText",
-    desc: "สร้างและแก้ไขฟอร์ม พร้อมตั้งค่าลำดับการอนุมัติ",
-    href: "/forms/admin",
   },
   {
     id: "accounting-admin",
