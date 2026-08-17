@@ -58,7 +58,7 @@ function directionLabel(next: boolean): string {
   return next ? "เปิด" : "ปิด";
 }
 
-/** The one transition that hides a live form from everyone — gated by typed Confirm. */
+/** The one transition that hides a live form from general users — gated by typed Confirm. */
 function isProductionOff(field: SwitchField, next: boolean): boolean {
   return field === "production" && !next;
 }
