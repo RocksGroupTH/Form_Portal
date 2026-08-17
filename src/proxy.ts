@@ -1,7 +1,9 @@
 import NextAuth from "next-auth";
+import { getToken } from "next-auth/jwt";
 import { authConfig } from "@/lib/auth.config";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { env } from "@/env";
 
 const { auth } = NextAuth(authConfig);
 
@@ -65,6 +67,20 @@ export default async function proxy(req: NextRequest) {
   // 2026-08-14 and 2026-08-18.
   const requestHeaders = new Headers(req.headers);
   requestHeaders.set("x-pathname", req.nextUrl.pathname);
+
+  // Identity for the Node-side resolver. The proxy runs on Edge and cannot reach
+  // the database, so it publishes who is asking and the resolver does the
+  // UatTester lookup. .set() overwrites anything the client sent, same trust
+  // argument as x-pathname. A failed decode yields "", which resolves every
+  // form to Production — the safe direction for an unidentified viewer.
+  let email = "";
+  try {
+    const token = await getToken({ req, secret: env.AUTH_SECRET });
+    email = typeof token?.email === "string" ? token.email : "";
+  } catch (err) {
+    if (process.env.NODE_ENV === "development") console.error("[Proxy] getToken error:", err);
+  }
+  requestHeaders.set("x-user-email", email);
 
   const response = NextResponse.next({ request: { headers: requestHeaders } });
 
