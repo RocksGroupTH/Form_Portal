@@ -10,7 +10,6 @@ import { Avatar } from "@/components/ui/Avatar";
 import { BrandSwitcher } from "@/components/BrandSwitcher";
 import { useBrand } from "@/components/BrandProvider";
 import { UserProfileModal } from "@/components/layout/UserProfileModal";
-import { ErpEnvironmentNavBadge } from "@/components/layout/ErpEnvironmentNavBadge";
 import { useUserPhoto } from "@/lib/hooks/useUserPhoto";
 import { getBrandFromSearchParams, replaceSearchParams, setBrandInSearchParams } from "@/lib/brand-url";
 import { TRAVEL_FROM_PARAM, resolveTravelReturnPath } from "@/features/accounting/lib/navigation";
@@ -179,9 +178,8 @@ export function Navbar() {
           ))}
         </div>
 
-        {/* Right: ERP env + Brand + Theme + User */}
+        {/* Right: Brand + Theme + User */}
         <div ref={rightRef} className="flex items-center gap-2 shrink-0">
-          <ErpEnvironmentNavBadge />
           <BrandSwitcher />
           <button
             onClick={toggleTheme}
@@ -243,9 +241,8 @@ export function Navbar() {
           </span>
         </Link>
 
-        {/* Right: ERP env + Brand + Theme toggle */}
+        {/* Right: Brand + Theme toggle */}
         <div className="flex items-center gap-1.5">
-          <ErpEnvironmentNavBadge compact />
           <BrandSwitcher compact />
           <button
             onClick={toggleTheme}
