@@ -28,6 +28,11 @@ function applySecurityHeaders(res: NextResponse | Response, isApiRoute: boolean)
   }
 }
 
+/** True when the auth middleware is deciding the request rather than passing it on. */
+function isAuthDecision(res: NextResponse | Response): boolean {
+  return res.status !== 200 || res.headers.has("location") || res.headers.has("x-middleware-rewrite");
+}
+
 export default async function proxy(req: NextRequest) {
   const isApiRoute = req.nextUrl.pathname.startsWith("/api/");
 
@@ -41,7 +46,8 @@ export default async function proxy(req: NextRequest) {
     return redirect;
   }
 
-  if (authResponse) {
+  // A redirect or rewrite is auth turning the request away — its call, not ours.
+  if (authResponse && isAuthDecision(authResponse)) {
     applySecurityHeaders(authResponse, isApiRoute);
     return authResponse;
   }
@@ -51,10 +57,25 @@ export default async function proxy(req: NextRequest) {
   // has to arrive as a header — Next exposes request headers to server code but
   // not the pathname. Set from nextUrl, never trusted from the client: .set()
   // overwrites any x-pathname the caller supplied.
+  //
+  // This has to happen on the way through even when auth returned a response.
+  // NextAuth answers every allowed request with a pass-through 200, so an early
+  // `return authResponse` here means the header is never attached and every
+  // form resolves to Production — which is exactly what happened between
+  // 2026-08-14 and 2026-08-18.
   const requestHeaders = new Headers(req.headers);
   requestHeaders.set("x-pathname", req.nextUrl.pathname);
 
   const response = NextResponse.next({ request: { headers: requestHeaders } });
+
+  // Keep whatever auth set on its pass-through — session rotation lives in
+  // those cookies, and dropping them logs people out.
+  if (authResponse) {
+    for (const cookie of authResponse.headers.getSetCookie()) {
+      response.headers.append("set-cookie", cookie);
+    }
+  }
+
   applySecurityHeaders(response, isApiRoute);
   return response;
 }
