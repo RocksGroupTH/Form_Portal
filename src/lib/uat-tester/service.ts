@@ -106,6 +106,20 @@ export interface UpsertUatTesterInput {
  * (`UQ_UatTester_StaffId`). Does not touch `IsActive` on update — reactivating
  * a removed tester is `setUatTesterActive`'s job, not an implicit side effect
  * of editing their manager.
+ *
+ * `MERGE ... WITH (HOLDLOCK)` in a single statement, not the previous
+ * `UPDATE WITH (UPDLOCK, HOLDLOCK)` then `IF @@ROWCOUNT = 0 INSERT` pair: in
+ * SQL Server autocommit, each statement in that pair is its own transaction,
+ * so the UPDATE's lock was released before the INSERT ran and two concurrent
+ * upserts for a StaffId with no existing row could both see zero rows updated
+ * and both attempt the INSERT, racing onto `UQ_UatTester_StaffId`. MERGE
+ * evaluates the match and applies the branch in one atomic statement, and
+ * `WITH (HOLDLOCK)` holds a serializable-equivalent lock on the StaffId for
+ * its duration, closing that window. Chosen over wrapping the original pair
+ * in an explicit `sql.Transaction` because `setFormFlag`
+ * (`src/lib/form-environment/service.ts`) already solved the identical
+ * problem this way — one idiom for "upsert with a unique key" in this
+ * codebase beats two, and MERGE needs no manual commit/rollback bookkeeping.
  */
 export async function upsertUatTester(input: UpsertUatTesterInput): Promise<void> {
   const staffId = input.staffId;
@@ -122,12 +136,11 @@ export async function upsertUatTester(input: UpsertUatTesterInput): Promise<void
     .input("managerEmail", sql.NVarChar, input.managerEmail)
     .input("by", sql.Int, input.updatedBy)
     .query(`
-      UPDATE [dbo].[UatTester] WITH (UPDLOCK, HOLDLOCK)
-      SET Email = @email, ManagerStaffId = @managerStaffId, ManagerEmail = @managerEmail,
+      MERGE [dbo].[UatTester] WITH (HOLDLOCK) AS t
+      USING (SELECT @staffId AS StaffId) AS s ON t.StaffId = s.StaffId
+      WHEN MATCHED THEN UPDATE SET Email = @email, ManagerStaffId = @managerStaffId, ManagerEmail = @managerEmail,
           UpdatedBy = @by, UpdatedAt = SYSDATETIME()
-      WHERE StaffId = @staffId;
-      IF @@ROWCOUNT = 0
-        INSERT INTO [dbo].[UatTester] (StaffId, Email, ManagerStaffId, ManagerEmail, IsActive, UpdatedBy)
+      WHEN NOT MATCHED THEN INSERT (StaffId, Email, ManagerStaffId, ManagerEmail, IsActive, UpdatedBy)
         VALUES (@staffId, @email, @managerStaffId, @managerEmail, 1, @by);
     `);
 }

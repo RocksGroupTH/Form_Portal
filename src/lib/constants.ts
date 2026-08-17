@@ -140,6 +140,14 @@ export const SETTINGS_CARDS: NavItem[] = [
     systemAdminOnly: true,
   },
   {
+    id: "uat-users",
+    label: "UAT Users",
+    icon: "FlaskConical",
+    desc: "รายชื่อผู้ทดสอบ และผู้จัดการสำหรับ UAT ของแต่ละคน",
+    href: "/settings/uat-users",
+    systemAdminOnly: true,
+  },
+  {
     id: "users",
     label: "Users & Roles",
     icon: "Shield",
