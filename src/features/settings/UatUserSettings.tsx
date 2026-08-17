@@ -179,6 +179,12 @@ export function UatUserSettings() {
   const accountApproverIsTester = data?.ok ? data.data.accountApproverIsTester : true;
   const loadError = data && !data.ok ? data.error ?? "โหลดข้อมูลไม่สำเร็จ" : null;
 
+  // Rule 2 ("a UAT manager must themselves be an active tester") is only
+  // enforced at upsert time. Deactivating the manager later reaches the same
+  // broken state without tripping that check, so surface it here: everyone
+  // currently pointing at a manager who is no longer an active tester.
+  const orphanedTesters = testers.filter((t) => t.isActive && t.managerStaffId !== null && !t.managerIsTester);
+
   const doAction = async (body: Record<string, unknown>, busy?: number) => {
     if (busy !== undefined) setBusyId(busy);
     try {
@@ -210,6 +216,20 @@ export function UatUserSettings() {
           <AlertTriangle size={15} className="shrink-0 mt-0.5" />
           <p className="text-[12px] leading-relaxed">
             ยังไม่มีผู้อนุมัติบัญชี (AccApprover) คนไหนอยู่ในรายชื่อ UAT — คำขอ UAT จะค้างที่ขั้นอนุมัติบัญชี
+          </p>
+        </div>
+      )}
+
+      {/* ── Warning: someone's UAT manager is no longer an active tester ── */}
+      {!isLoading && !loadError && orphanedTesters.length > 0 && (
+        <div
+          className="rounded-xl px-4 py-3 flex items-start gap-2.5"
+          style={{ background: "var(--status-bad-bg)", color: "var(--status-bad-text)" }}
+        >
+          <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+          <p className="text-[12px] leading-relaxed">
+            ผู้ทดสอบต่อไปนี้มีผู้จัดการสำหรับ UAT ที่ไม่ได้อยู่ในรายชื่อผู้ทดสอบที่เปิดใช้งาน — คำขอ UAT ของคนเหล่านี้จะค้างที่ขั้นอนุมัติของผู้จัดการ:{" "}
+            <b>{orphanedTesters.map((t) => t.name).join(", ")}</b>
           </p>
         </div>
       )}
@@ -338,9 +358,18 @@ export function UatUserSettings() {
                       ) : t.isActive ? (
                         <button
                           onClick={() => {
+                            const dependants = testers.filter(
+                              (d) => d.isActive && d.managerStaffId === t.staffId && d.id !== t.id,
+                            );
+                            const message =
+                              dependants.length > 0
+                                ? `ปิดสิทธิ์ผู้ทดสอบ UAT ของ ${t.name} (${t.email})? มีผู้ทดสอบอีก ${dependants.length} คนที่ตั้งให้คนนี้เป็นผู้จัดการสำหรับ UAT (${dependants
+                                    .map((d) => d.name)
+                                    .join(", ")}) — คำขอ UAT ของพวกเขาจะค้างที่ขั้นอนุมัติของผู้จัดการหลังปิดสิทธิ์`
+                                : `ปิดสิทธิ์ผู้ทดสอบ UAT ของ ${t.name} (${t.email})?`;
                             setConfirmAction({
                               title: "ปิดสิทธิ์ผู้ทดสอบ",
-                              message: `ปิดสิทธิ์ผู้ทดสอบ UAT ของ ${t.name} (${t.email})?`,
+                              message,
                               danger: true,
                               onConfirm: () => {
                                 setConfirmAction(null);
