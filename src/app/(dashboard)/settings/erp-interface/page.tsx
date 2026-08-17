@@ -33,7 +33,7 @@ export default function ErpInterfaceSettingsPage() {
       <PageHeaderBar
         icon={FlaskConical}
         title="ERP Interface Environment"
-        subtitle="สลับ Production / UAT สำหรับ Interface Business Central"
+        subtitle="ตั้งค่า BC company และ connection ของฝั่ง UAT (Sandbox)"
         backHref="/settings"
         backLabel="Back to Settings"
         right={

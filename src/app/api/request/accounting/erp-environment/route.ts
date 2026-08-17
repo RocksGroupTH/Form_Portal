@@ -5,7 +5,7 @@ import type { ErpEnvironmentInfo } from "@/lib/acc/erp-environment-shared";
 
 /**
  * GET /api/request/accounting/erp-environment
- * Effective BC environment for the current user (accounting UI banner).
+ * Effective BC environment for the current route/form (accounting UI banner).
  */
 export async function GET() {
   const session = await requireAuth();

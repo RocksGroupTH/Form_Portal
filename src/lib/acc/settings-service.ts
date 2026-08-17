@@ -224,10 +224,10 @@ const MERGE_ACC_SETTING = `MERGE [dbo].[AccSetting] AS t USING (SELECT @key AS S
 /**
  * Keys that are per-database by design and must never be dual-written.
  *
- * ERP_INTERFACE_ENV is 'Production' in the live database and 'Sandbox' in the
- * UAT one — that difference is what makes a UAT-flagged form target Business
- * Central's sandbox without any extra plumbing. Copying it across would point
- * UAT testing at the real ERP.
+ * ERP_INTERFACE_ENV is a leftover: nothing reads AccSetting's copy any more —
+ * the BC environment comes from the form's Form Environment flag
+ * (src/lib/acc/erp-environment.ts). The guard stays so a stale value cannot
+ * start propagating between the two databases if something reads it again.
  */
 const ENVIRONMENT_SPECIFIC_KEYS = new Set(["ERP_INTERFACE_ENV"]);
 

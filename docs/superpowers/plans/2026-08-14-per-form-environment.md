@@ -1286,7 +1286,7 @@ git commit -m "feat(env): mark UAT rows in lists and detail pages"
 | §7 System-Admin-only settings page | Task 8 |
 | §7 Route coverage check | Task 8, Step 1 |
 | §7 `FormEnvironment` table, absent row means Production | Task 2 |
-| §8 UAT forms reach Sandbox Business Central | No task needed — `AccSetting.ERP_INTERFACE_ENV` is already `Sandbox` in the UAT database and is read through the form's own pool, so Task 3 delivers it. Task 5, Step 4 protects it by excluding that key from dual-write |
+| §8 UAT forms reach Sandbox Business Central | **Superseded 2026-08-17** — the claim that `AccSetting.ERP_INTERFACE_ENV` delivers this was wrong; nothing read that row. See `2026-08-17-erp-environment-per-form-design.md` |
 
 **Type consistency:** `resolveFormEnvironment()` returns
 `FormEnvironmentValue = "Production" | "UAT"` throughout. `classifyPath()`

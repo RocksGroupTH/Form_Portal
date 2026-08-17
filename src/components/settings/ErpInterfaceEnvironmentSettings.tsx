@@ -354,7 +354,7 @@ export function ErpInterfaceEnvironmentSettings() {
             <p className="text-[11px] m-0 mt-0.5" style={{ color: "var(--text-muted)" }}>
               Production จาก Brand Configuration · UAT กรอกด้านล่าง · บันทึกอัตโนมัติ
             </p>
-            <p className="text-[12px] m-0 mt-1" style={{ color: "var(--text-muted)" }}>
+            <p className="text-[11px] m-0 mt-0.5" style={{ color: "var(--text-muted)" }}>
               ฟอร์มที่ตั้งเป็น UAT ที่ Settings → Form Environment จะใช้การตั้งค่า UAT ด้านล่างนี้
             </p>
           </div>
