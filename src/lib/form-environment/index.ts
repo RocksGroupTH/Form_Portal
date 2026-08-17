@@ -2,7 +2,12 @@ import { cache } from "react";
 import { cookies, headers } from "next/headers";
 import { classifyPath, type PathClass } from "./classify-path";
 import { getFormSwitchMap, type FormEnvironmentValue } from "./service";
-import { pickEnvironment, PRODUCTION_ONLY } from "./pick-environment";
+import {
+  boundIdEnvironment,
+  pickEnvironment,
+  PRODUCTION_ONLY,
+  type EnvironmentDecision,
+} from "./pick-environment";
 import { environmentFromPath } from "./request-id";
 import { UAT_MODE_COOKIE, isUatModeCookieOn } from "@/lib/uat-mode";
 
@@ -10,7 +15,7 @@ export { classifyPath, matchRule, ROUTE_RULES } from "./classify-path";
 export type { PathClass, FormCode, RouteRule } from "./classify-path";
 export type { FormEnvironmentValue, FormEnvironmentRow } from "./service";
 export type { FormSwitches, EnvironmentDecision } from "./pick-environment";
-export { pickEnvironment, PRODUCTION_ONLY } from "./pick-environment";
+export { pickEnvironment, boundIdEnvironment, PRODUCTION_ONLY } from "./pick-environment";
 export { requestIdFromPath, environmentFromPath } from "./request-id";
 export {
   getFormSwitchMap,
@@ -83,36 +88,64 @@ const viewerIsTesting = cache(async (): Promise<boolean> => {
 });
 
 /**
- * Which form database the current request should use.
+ * The current request's form: which database answers, and whether this viewer
+ * may write to it.
  *
  * Production and UAT run side by side, so this answers for one viewer on one
- * route: the record named in the path wins, then the viewer's UAT mode, then
- * the form's switches. Aggregate ("BOTH") routes and unclassified paths resolve
- * to Production here — they reach the UAT database deliberately, through
- * queryBothPools.
+ * route: the record named in the path wins (bounded — see `boundIdEnvironment`),
+ * then the viewer's UAT mode, then the form's switches. Aggregate ("BOTH")
+ * routes and unclassified paths resolve to Production — they reach the UAT
+ * database deliberately, through queryBothPools.
+ *
+ * This is the one to use at a write choke point, and it must be judged on the
+ * resolved environment rather than the cookie: a tester with UAT mode off
+ * editing a UAT draft is routed there by the id rule, and has to be allowed to
+ * save what they were just allowed to open.
+ *
+ * Safe with no request scope: `resolveFormClass()` returns null there, so this
+ * answers Production without touching the cookie, the header or the database.
+ */
+export const resolveCurrentFormAccess = cache(async (): Promise<EnvironmentDecision> => {
+  const cls = await resolveFormClass();
+  // An aggregate or unclassified route is not a form anyone files, so there is
+  // nothing to be shut out of: Production, and available.
+  if (cls === null || cls === "BOTH") return { environment: "Production", available: true };
+
+  const [switches, testing] = await Promise.all([getFormSwitchMap(), viewerIsTesting()]);
+  const form = switches[cls] ?? PRODUCTION_ONLY;
+  const idEnvironment = boundIdEnvironment(
+    environmentFromPath(await currentPath()),
+    form,
+    testing,
+  );
+
+  return pickEnvironment({ idEnvironment, viewerUatMode: testing, form });
+});
+
+/**
+ * Which form database the current request should use.
+ *
+ * Derived from `resolveCurrentFormAccess()` rather than recomputing, so the pool
+ * a record loads from can never disagree with the verdict on writing to it.
  *
  * Signature stays argument-free and the default stays Production: `getFormPool()`
  * depends on both, and every script and background job reaches it with no
  * request scope.
  */
 export const resolveFormEnvironment = cache(async (): Promise<FormEnvironmentValue> => {
-  const cls = await resolveFormClass();
-  if (cls === null || cls === "BOTH") return "Production";
-  const [switches, testing] = await Promise.all([getFormSwitchMap(), viewerIsTesting()]);
-  const form = switches[cls] ?? PRODUCTION_ONLY;
-
-  // The id rule is bounded: without this, an id >= 900000 would open the UAT
-  // database to anybody even after UAT is switched off.
-  const byId = environmentFromPath(await currentPath());
-  const idEnvironment = byId === "UAT" && !(form.uatEnabled || testing) ? null : byId;
-
-  return pickEnvironment({ idEnvironment, viewerUatMode: testing, form }).environment;
+  return (await resolveCurrentFormAccess()).environment;
 });
 
 /**
- * Where a named form answers for this viewer, and whether it is open to them at
- * all. Use this at the write choke points — a form switched off for a viewer's
- * half must refuse the draft, not silently file it in the other database.
+ * Where a named form answers for this viewer, and whether it is open to them.
+ *
+ * For asking about a form from somewhere else — Home asks about AP-1 and AP-17
+ * while sitting on `/`. It deliberately ignores the request id, because the id
+ * in the current path (if any) belongs to a different form than the one being
+ * asked about. At a write choke point on the form's own route, use
+ * `resolveCurrentFormAccess()` instead: that one honours the record's id, which
+ * is what lets a tester with UAT mode off still save the UAT draft they just
+ * opened.
  */
 export async function resolveFormAccess(formCode: string) {
   const [switches, testing] = await Promise.all([getFormSwitchMap(), viewerIsTesting()]);

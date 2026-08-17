@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { getCorePool, getAppPool, sql } from "@/lib/db/mssql";
 import { env } from "@/env";
 import { PRODUCTION_ONLY, type FormSwitches } from "./pick-environment";
@@ -46,8 +47,13 @@ function toSwitches(row: SwitchColumns | undefined | null): FormSwitches {
  *
  * Reads Fast_Core, which never varies by environment — this is what breaks the
  * circular dependency that per-form routing would otherwise have.
+ *
+ * Wrapped in react `cache()` like `getActiveUatTester`: the resolver, the write
+ * choke points and the merged-list filters all want it, so they share one read
+ * per request instead of one each. Outside a request there is no dispatcher and
+ * it simply reads through, which is what scripts want anyway.
  */
-export async function getFormSwitchMap(): Promise<Record<string, FormSwitches>> {
+export const getFormSwitchMap = cache(async (): Promise<Record<string, FormSwitches>> => {
   const pool = await getCorePool();
   const r = await pool.request().query<{ FormCode: string } & SwitchColumns>(
     `SELECT FormCode, ProductionEnabled, UatEnabled FROM [dbo].[FormEnvironment]`,
@@ -55,7 +61,7 @@ export async function getFormSwitchMap(): Promise<Record<string, FormSwitches>> 
   const out: Record<string, FormSwitches> = {};
   for (const row of r.recordset) out[row.FormCode] = toSwitches(row);
   return out;
-}
+});
 
 /**
  * Flip one switch on one form.
@@ -67,6 +73,13 @@ export async function getFormSwitchMap(): Promise<Record<string, FormSwitches>> 
  *
  * `MERGE … WITH (HOLDLOCK)` makes the upsert atomic — the previous
  * UPDATE-then-INSERT could race two admins into a duplicate-key failure.
+ *
+ * The insert branch names `Environment` with a literal only because that legacy
+ * column is still NOT NULL with no default (migrations/060_core_form_environment.sql:15)
+ * and nothing reads it any more. `N'Production'` is one of the two values its
+ * CK_FormEnvironment_Env check allows. **Delete `Environment` from this INSERT
+ * list when migration 065 drops the column**, or the insert starts failing on a
+ * column that no longer exists.
  */
 export async function setFormFlag(
   formCode: string,
@@ -88,7 +101,8 @@ export async function setFormFlag(
       MERGE [dbo].[FormEnvironment] WITH (HOLDLOCK) AS t
       USING (SELECT @code AS FormCode) AS s ON t.FormCode = s.FormCode
       WHEN MATCHED THEN UPDATE SET [${column}] = @value, UpdatedBy = @by, UpdatedAt = SYSDATETIME()
-      WHEN NOT MATCHED THEN INSERT (FormCode, [${column}], UpdatedBy) VALUES (@code, @value, @by);
+      WHEN NOT MATCHED THEN INSERT (FormCode, Environment, [${column}], UpdatedBy)
+        VALUES (@code, N'Production', @value, @by);
     `);
 }
 

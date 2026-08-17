@@ -57,3 +57,35 @@ export function pickEnvironment(input: PickEnvironmentInput): EnvironmentDecisio
     ? { environment: "UAT", available: form.uatEnabled }
     : { environment: "Production", available: form.productionEnabled };
 }
+
+/**
+ * The id environment, or null when this viewer may not follow it.
+ *
+ * An id outranks both switches, but not unconditionally: without a bound, an id
+ * >= 900000 would keep the UAT database open to anybody long after UAT was
+ * switched off, and turning the switch off would close nothing. A UAT id is
+ * honoured only while the form is still open for testing, or the viewer is a
+ * tester in UAT mode — a tester keeps reaching their own records even after an
+ * admin ends the pilot.
+ *
+ * A Production id is never bounded. It names the live database, which is where
+ * an ordinary viewer belongs anyway, and it is what stops a tester in UAT mode
+ * from being bounced out of a production record they opened deliberately.
+ *
+ * Shared by `resolveFormEnvironment` and `resolveCurrentFormAccess` so the
+ * database a record loads from and the verdict on writing to it are computed
+ * the same way — two copies of this rule is how a viewer ends up reading a
+ * record they are then refused permission to save.
+ *
+ * Pure: every input is supplied by the caller.
+ */
+export function boundIdEnvironment(
+  idEnvironment: FormEnvironmentValue | null | undefined,
+  form: FormSwitches | null,
+  viewerUatMode: boolean,
+): FormEnvironmentValue | null {
+  if (!idEnvironment) return null;
+  if (idEnvironment !== "UAT") return idEnvironment;
+  const switches = form ?? PRODUCTION_ONLY;
+  return switches.uatEnabled || viewerUatMode ? "UAT" : null;
+}
