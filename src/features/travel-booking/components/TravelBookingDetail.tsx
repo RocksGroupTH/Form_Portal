@@ -35,6 +35,7 @@ import { useTravelBookingOptionIcons } from "@/features/travel-booking/hooks/use
 import { InfoStrip, typeInfo } from "@/features/travel-booking/components/BookingInfoStrip";
 import { canActManagerStep } from "@/lib/acc/manager-auth";
 import { formatPayoutMonth } from "@/lib/acc/travel-booking/payment-month";
+import { UatDataBanner } from "@/components/UatDataBanner";
 import { AdminBookingPanel } from "./AdminBookingPanel";
 import { TravelBookingStatusBadge } from "./TravelBookingStatusBadge";
 import { REQUIRED_BOOKING_RULES } from "@/features/travel-booking/lib/booking-requirements";
@@ -488,6 +489,8 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
 
   return (
     <div>
+      <UatDataBanner requestId={request.id} />
+
       {/* ── Cancel bar ── */}
       {canCancel && (
         <div

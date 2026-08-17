@@ -471,6 +471,14 @@ function RequestRowList({
                   <span className="text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>
                     {row.requestNo ?? "—"}
                   </span>
+                  {row.environment === "UAT" && (
+                    <span
+                      className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                      style={{ background: "var(--status-bad-bg)", color: "var(--status-bad-text)" }}
+                    >
+                      UAT
+                    </span>
+                  )}
                   <StatusBadge status={row.status} workBucket={workBucket} />
                   {row.formCode && (
                     <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}>

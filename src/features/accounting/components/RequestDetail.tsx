@@ -25,6 +25,7 @@ import {
 import { Dialog } from "@/components/ui";
 import { Avatar } from "@/components/ui/Avatar";
 import { ImageLightbox } from "@/features/accounting/components/ImageLightbox";
+import { UatDataBanner } from "@/components/UatDataBanner";
 import { canActManagerStep } from "@/lib/acc/manager-auth";
 import { useErpSandboxDevHost } from "@/features/accounting/hooks/useErpSandboxDevHost";
 import { useRole } from "@/lib/hooks/useRole";
@@ -1247,6 +1248,8 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
 
   return (
     <div>
+      <UatDataBanner requestId={request.id} />
+
       {/* ── Cancel bar (top) — requester self-cancel + condition ── */}
       {!hideCancel && request.status === "Submitted" && (
         <div
