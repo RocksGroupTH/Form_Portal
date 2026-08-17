@@ -112,15 +112,22 @@ export function Navbar() {
         {/* Left: Logo */}
         <div ref={leftRef} className="flex items-center gap-3 shrink-0">
           <Link href={hrefWithBrand("/")} className="flex items-center gap-2 no-underline">
-            {/* The Rocks Group mark, same asset as the favicon and the login lockup. */}
+            {/* The Rocks Group mark, same asset as the favicon and the login
+                lockup. Sized 20×24 to match the file's own 74×91 aspect — a
+                square box letterboxed it and left the glyph looking small. */}
             <img
               src="/brandlogo/rocks.png"
               alt="Form Portal"
-              width={24}
+              width={20}
               height={24}
               className="shrink-0 object-contain"
             />
-            <span className="text-[14px] font-bold whitespace-nowrap" style={{ color: "var(--text-heading)" }}>
+            {/* leading-none: the font's half-leading is what makes a label look
+                like it sits below the mark it is centred against. */}
+            <span
+              className="text-[14px] font-bold leading-none whitespace-nowrap"
+              style={{ color: "var(--text-heading)" }}
+            >
               Form Portal
             </span>
           </Link>
@@ -225,11 +232,11 @@ export function Navbar() {
           <img
             src="/brandlogo/rocks.png"
             alt="Form Portal"
-            width={22}
+            width={18}
             height={22}
             className="shrink-0 object-contain"
           />
-          <span className="text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>
+          <span className="text-[13px] font-bold leading-none" style={{ color: "var(--text-heading)" }}>
             Form Portal
           </span>
         </Link>
