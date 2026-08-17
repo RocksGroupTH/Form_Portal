@@ -10,6 +10,7 @@ import { Avatar } from "@/components/ui/Avatar";
 import { BrandSwitcher } from "@/components/BrandSwitcher";
 import { useBrand } from "@/components/BrandProvider";
 import { UserProfileModal } from "@/components/layout/UserProfileModal";
+import { UatModeSwitch } from "@/components/layout/UatModeSwitch";
 import { useUserPhoto } from "@/lib/hooks/useUserPhoto";
 import { getBrandFromSearchParams, replaceSearchParams, setBrandInSearchParams } from "@/lib/brand-url";
 import { TRAVEL_FROM_PARAM, resolveTravelReturnPath } from "@/features/accounting/lib/navigation";
@@ -184,6 +185,7 @@ export function Navbar() {
 
         {/* Right: Brand + Theme + User */}
         <div ref={rightRef} className="flex items-center gap-2 shrink-0">
+          <UatModeSwitch />
           <BrandSwitcher />
           <button
             onClick={toggleTheme}
@@ -243,6 +245,7 @@ export function Navbar() {
 
         {/* Right: Brand + Theme toggle */}
         <div className="flex items-center gap-1.5">
+          <UatModeSwitch compact />
           <BrandSwitcher compact />
           <button
             onClick={toggleTheme}
