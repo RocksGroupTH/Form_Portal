@@ -24,12 +24,17 @@ import { useFormEnvironments } from "@/lib/hooks/useFormEnvironments";
  *    days, so "I thought I was in the test system" is the realistic mistake.
  *
  * Nothing renders for the ordinary case — a production record seen by somebody
- * in production mode — and nothing renders while the viewer payload is still in
- * flight, matching `FormEnvironmentChip`: a marker that guesses is worse than
- * one that waits.
+ * in production mode — and no *content* renders while the viewer payload is
+ * still in flight, matching `FormEnvironmentChip`: a marker that guesses is
+ * worse than one that waits.
+ *
+ * While it waits it still occupies its own height. This sits directly above the
+ * Cancel / Approve / Reject bar, so appearing a round trip after first paint
+ * would push those buttons down under a cursor already on its way to one. An
+ * invisible placeholder costs nothing and keeps the target still.
  */
 export function UatDataBanner({ requestId }: { requestId: number | null | undefined }) {
-  const { data } = useFormEnvironments();
+  const { data, isLoading } = useFormEnvironments();
 
   if (isUatId(requestId)) {
     return (
@@ -46,12 +51,21 @@ export function UatDataBanner({ requestId }: { requestId: number | null | undefi
   // A saved record only — a page with no id yet is a blank draft, and there is
   // no production row to warn about.
   const isSavedRecord = typeof requestId === "number" && Number.isFinite(requestId) && requestId > 0;
-  if (!isSavedRecord || !data?.viewer.uatMode) return null;
+  if (!isSavedRecord) return null;
+
+  // Hold the space, say nothing, until the payload decides.
+  const waiting = isLoading && !data;
+  if (!waiting && !data?.viewer.uatMode) return null;
 
   return (
     <div
       className="rounded-2xl px-4 py-2.5 mb-4 flex items-center gap-2"
-      style={{ background: "var(--status-draft-bg)", color: "var(--status-draft-text)" }}
+      aria-hidden={waiting}
+      style={{
+        background: "var(--status-draft-bg)",
+        color: "var(--status-draft-text)",
+        visibility: waiting ? "hidden" : "visible",
+      }}
     >
       <TriangleAlert size={15} className="shrink-0" />
       <p className="text-[12px] font-bold m-0">

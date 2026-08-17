@@ -185,6 +185,15 @@ export function UatUserSettings() {
   // currently pointing at a manager who is no longer an active tester.
   const orphanedTesters = testers.filter((t) => t.isActive && t.managerStaffId !== null && !t.managerIsTester);
 
+  // The other half of the same problem, and the one nothing used to say out
+  // loud: a tester with no UAT manager at all. `uatManagerFor` returns null and
+  // the submit refuses, but the person only finds out at the end of a form they
+  // have already filled in. Note the bootstrap trap this catches — a manager
+  // must themselves be an active tester and self-manager is refused, so a
+  // one-person list cannot be given a valid manager at all.
+  const managerlessTesters = testers.filter((t) => t.isActive && t.managerStaffId === null);
+  const activeTesterCount = testers.filter((t) => t.isActive).length;
+
   const doAction = async (body: Record<string, unknown>, busy?: number) => {
     if (busy !== undefined) setBusyId(busy);
     try {
@@ -230,6 +239,26 @@ export function UatUserSettings() {
           <p className="text-[12px] leading-relaxed">
             ผู้ทดสอบต่อไปนี้มีผู้จัดการสำหรับ UAT ที่ไม่ได้อยู่ในรายชื่อผู้ทดสอบที่เปิดใช้งาน — คำขอ UAT ของคนเหล่านี้จะค้างที่ขั้นอนุมัติของผู้จัดการ:{" "}
             <b>{orphanedTesters.map((t) => t.name).join(", ")}</b>
+          </p>
+        </div>
+      )}
+
+      {!isLoading && !loadError && managerlessTesters.length > 0 && (
+        <div
+          className="rounded-xl px-4 py-3 flex items-start gap-2.5"
+          style={{ background: "var(--status-pending-bg)", color: "var(--status-pending-text)" }}
+        >
+          <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+          <p className="text-[12px] leading-relaxed">
+            ผู้ทดสอบต่อไปนี้ยังไม่ได้กำหนดผู้จัดการสำหรับ UAT — จะกดส่งคำขอ UAT ไม่ได้จนกว่าจะกำหนด:{" "}
+            <b>{managerlessTesters.map((t) => t.name).join(", ")}</b>
+            {activeTesterCount < 2 && (
+              <>
+                {" "}
+                ผู้จัดการสำหรับ UAT ต้องเป็นผู้ทดสอบที่เปิดใช้งานอยู่ และตั้งตัวเองเป็นผู้จัดการไม่ได้
+                จึงต้องเพิ่มผู้ทดสอบอย่างน้อย 2 คนก่อน
+              </>
+            )}
           </p>
         </div>
       )}

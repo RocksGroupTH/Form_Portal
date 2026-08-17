@@ -1,7 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { isEnvironmentSpecificSettingKey } from "./setting-scope";
-import { idCardReuseConsentKey } from "@/features/travel-booking/constants";
+// Relative, not "@/": every other test file in the suite is, and `tsx --test`
+// resolving the alias is a tsconfig dependency this one test does not need.
+import { idCardReuseConsentKey } from "../../features/travel-booking/constants";
 
 test("ERP_INTERFACE_ENV keeps its exact-match behaviour", () => {
   assert.equal(isEnvironmentSpecificSettingKey("ERP_INTERFACE_ENV"), true);

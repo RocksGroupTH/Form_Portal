@@ -74,9 +74,16 @@ export function pickEnvironment(input: PickEnvironmentInput): EnvironmentDecisio
  *
  * So a form that is not open to this viewer where they stand falls back to
  * Production. A list is not a write choke point — it never files anything — and
- * the worst this can do is show somebody real rows that are genuinely theirs.
- * Availability is still enforced where it belongs, by `environmentWritable` at
+ * availability is still enforced where it belongs, by `environmentWritable` at
  * the submit.
+ *
+ * The fallback swaps rather than purely adds: in the one state it changes — a
+ * tester in UAT mode, on a form whose UAT switch is off — it lists that form's
+ * production rows and stops listing its UAT ones. So ending a pilot while a
+ * tester still has UAT mode on unlists their in-flight test requests. They are
+ * not lost: `boundIdEnvironment` still honours a UAT id for a viewer in UAT
+ * mode, so the records open by URL, and they list again the moment the switch
+ * goes back on.
  *
  * Pure: every input is supplied by the caller.
  */
