@@ -98,10 +98,12 @@ function RequestHubCard({
             <span
               className="text-[10px] font-bold px-1.5 py-0.5 rounded"
               style={{
+                // Recessed but legible — the code is what identifies the card,
+                // and --text-faint on this surface measures about 2:1.
                 background: disabled
-                  ? "color-mix(in srgb, var(--text-faint) 20%, transparent)"
+                  ? "color-mix(in srgb, var(--text-muted) 18%, transparent)"
                   : "var(--nav-active-bg)",
-                color: disabled ? "var(--text-faint)" : "var(--nav-active-text)",
+                color: disabled ? "var(--text-muted)" : "var(--nav-active-text)",
               }}
             >
               {item.badge}
@@ -111,11 +113,11 @@ function RequestHubCard({
       </div>
       <h3
         className="text-[14px] font-bold mb-1"
-        style={{ color: disabled ? "var(--text-faint)" : "var(--text-heading)" }}
+        style={{ color: disabled ? "var(--text-secondary)" : "var(--text-heading)" }}
       >
         {item.label}
       </h3>
-      <p className="text-[12px]" style={{ color: disabled ? "var(--text-faint)" : "var(--text-muted)" }}>
+      <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>
         {item.desc}
       </p>
     </>

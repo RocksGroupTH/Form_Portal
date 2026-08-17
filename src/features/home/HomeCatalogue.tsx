@@ -183,23 +183,27 @@ function AccountingFormCard({
           className="inline-block text-[9.5px] font-extrabold px-1.5 py-0.5 mb-1"
           style={{
             borderRadius: 6,
+            // Recessed, but still legible. The card already reads as inactive
+            // from its flat surface and the watermark; the form code is the one
+            // thing on it that has to survive that, because finding out AP-17
+            // is coming rather than missing is the whole point of the card.
             background: comingSoon
-              ? "color-mix(in srgb, var(--text-faint) 20%, transparent)"
+              ? "color-mix(in srgb, var(--text-muted) 18%, transparent)"
               : "var(--bg-badge)",
-            color: comingSoon ? "var(--text-faint)" : "var(--text-secondary)",
+            color: comingSoon ? "var(--text-muted)" : "var(--text-secondary)",
           }}
         >
           {code}
         </span>
         <span
           className="block text-[13px] font-bold"
-          style={{ color: comingSoon ? "var(--text-muted)" : "var(--text-primary)" }}
+          style={{ color: comingSoon ? "var(--text-secondary)" : "var(--text-primary)" }}
         >
           {name}
         </span>
         <span
           className="block text-[11px] mt-0.5"
-          style={{ color: comingSoon ? "var(--text-faint)" : "var(--text-muted)" }}
+          style={{ color: "var(--text-muted)" }}
         >
           {desc}
         </span>
@@ -230,7 +234,10 @@ function AccountingFormCard({
         <span className="absolute inset-0 flex items-center justify-center pointer-events-none" aria-hidden>
           <span
             className="text-[32px] sm:text-[38px] font-black uppercase tracking-[0.22em] -rotate-[16deg]"
-            style={{ color: "var(--text-muted)", opacity: 0.26 }}
+            // Heavier than the hub's 0.22: this mark is 32-38px against the
+            // hub's 52-64px, and at that size the same opacity reads as a
+            // smudge rather than a word.
+            style={{ color: "var(--text-muted)", opacity: 0.36 }}
           >
             Soon
           </span>
