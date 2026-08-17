@@ -27,9 +27,15 @@ export async function POST(req: NextRequest) {
 
     // `forWrite` because this POST persists: it is the only id-card route that
     // writes, and without the flag a tester in UAT could record a consent keyed
-    // to a non-tester colleague's StaffId in the UAT AccSetting table.
+    // to a non-tester colleague's StaffId.
     const emp = await resolveEmployeeForActor(loginEmail, requesterStaffId, { forWrite: true });
     // Keyed on HR StaffId (matches AccRequest.StaffId) — NOT emp.id, which is the Employee GUID.
+    //
+    // `ap17.idcard.reuse.` is excluded from AccSetting's dual-write
+    // (`isEnvironmentSpecificSettingKey`), so this lands in the actor's own
+    // database and nowhere else. It has to: the flag decides whether a booking
+    // re-attaches a stored national-ID scan, and a tester toggling it in UAT
+    // used to change that answer for their **real** bookings too.
     await setSetting(idCardReuseConsentKey(emp.staffId), body.consent ? "true" : "false", Number(session.user.id));
     return NextResponse.json({ ok: true, data: { consent: body.consent } });
   } catch (err) {

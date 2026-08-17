@@ -59,6 +59,36 @@ export function pickEnvironment(input: PickEnvironmentInput): EnvironmentDecisio
 }
 
 /**
+ * Which database a **merged list** shows this viewer for one form.
+ *
+ * `pickEnvironment` answers with two fields and a list filter needs one, so the
+ * fold has to be deliberate. Reading `environment` alone is wrong: that field
+ * says "UAT" for any viewer in UAT mode, whether or not the form's UAT switch is
+ * on — only `available` consults it. Folding on `environment` alone therefore
+ * filtered a tester in UAT mode onto UAT for *every* form, so a real AP-1 claim
+ * sitting at ACCOUNT vanished from the account approver's `/my-work` — and the
+ * design requires at least one `AccApprover` to be an active tester, so somebody
+ * always has that tester row. The `boundIdEnvironment` escape hatch could not
+ * save them either: the list that would have handed them the URL is the thing
+ * doing the filtering.
+ *
+ * So a form that is not open to this viewer where they stand falls back to
+ * Production. A list is not a write choke point — it never files anything — and
+ * the worst this can do is show somebody real rows that are genuinely theirs.
+ * Availability is still enforced where it belongs, by `environmentWritable` at
+ * the submit.
+ *
+ * Pure: every input is supplied by the caller.
+ */
+export function viewerListEnvironment(
+  form: FormSwitches | null,
+  viewerUatMode: boolean,
+): FormEnvironmentValue {
+  const decision = pickEnvironment({ viewerUatMode, form });
+  return decision.available ? decision.environment : "Production";
+}
+
+/**
  * The id environment, or null when this viewer may not follow it.
  *
  * An id outranks both switches, but not unconditionally: without a bound, an id

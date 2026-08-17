@@ -5,7 +5,7 @@ import {
   resolveFormEnvironment,
   type FormEnvironmentValue,
 } from "@/lib/form-environment";
-import { listUatTesters } from "@/lib/uat-tester/service";
+import { listActiveUatTesterAddresses } from "@/lib/uat-tester/service";
 import {
   isUatMailExempt,
   type UatMailExemptRecord,
@@ -47,8 +47,10 @@ export async function queueEmail(p: {
  *
  * The exception: a recipient who holds an active `UatTester` row of their own
  * gets the mail at their own address — still `[UAT]`-prefixed, so it is never
- * mistaken for a production notification. A configured UAT manager is covered
- * by the same rule rather than by a second one; see `isUatMailExempt`.
+ * mistaken for a production notification. Matched on either spelling of that
+ * address, the stored login one or HR's, because a queued recipient is always
+ * HR-sourced and the two are allowed to differ. A configured UAT manager is
+ * covered by the same rule rather than by a second one; see `isUatMailExempt`.
  * `isUatMailExempt` is the pure predicate; the caller gathers the active
  * testers once per drain cycle (not once per message) and passes them in.
  * Everyone else keeps the rewrite, and the loud throw when `UAT_MAIL_REDIRECT`
@@ -116,21 +118,23 @@ export async function processQueueOn(
   }[];
 
   // Fetched once per drain cycle, not once per message — every row in this
-  // batch is judged against the same tester snapshot.
+  // batch is judged against the same tester snapshot. Two reads, batched:
+  // Fast_Core for the tester list and Rocks_Portal_HR for the address the queue
+  // actually carries, because `UatTester.Email` is the login address and every
+  // recipient here is HR's `COALESCE(Email, EmailCompBr)` (see
+  // `listActiveUatTesterAddresses`).
   //
-  // Its own try/catch, deliberately: this read goes to Fast_Core, a different
-  // database from the one being drained. Letting it reject would abort the
-  // whole drain, and in `processQueueBoth` it would reject the `Promise.all`
-  // *after* the Production half had already sent its mail and marked the rows
-  // Sent — turning a Fast_Core hiccup into a 500 on a sweep that half
-  // succeeded. Falling back to an empty list fails closed: nobody is exempt,
-  // so every UAT message is redirected, which is the safe direction.
+  // Its own try/catch, deliberately: neither read is the database being
+  // drained. Letting one reject would abort the whole drain, and in
+  // `processQueueBoth` it would reject the `Promise.all` *after* the Production
+  // half had already sent its mail and marked the rows Sent — turning a
+  // Fast_Core or HR hiccup into a 500 on a sweep that half succeeded. Falling
+  // back to an empty list fails closed: nobody is exempt, so every UAT message
+  // is redirected, which is the safe direction.
   let exemptTesters: UatMailExemptRecord[] = [];
   if (environment === "UAT" && rows.length > 0) {
     try {
-      exemptTesters = (await listUatTesters())
-        .filter((t) => t.isActive)
-        .map((t) => ({ email: t.email }));
+      exemptTesters = await listActiveUatTesterAddresses();
     } catch (err) {
       console.error(
         "[acc/email-queue] UatTester lookup failed — redirecting every UAT message in this batch",

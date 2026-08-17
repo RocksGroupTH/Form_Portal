@@ -12,7 +12,22 @@ export function yearFromRequestNo(requestNo: string | null): number | null {
   return 2000 + Number(m[1]);
 }
 
-/** Drive-root-relative folder for a request's files. */
+/**
+ * Drive-root-relative folder for a request's files.
+ *
+ * `environment` is **required**, with no default. Both environments share one
+ * SharePoint library, so a caller that forgets it writes a UAT request's
+ * attachments — national-ID scans among them — into the live tree, under a
+ * request number no production row references, where nothing will ever clean
+ * them up. That failure is invisible: `StoragePath` holds a Graph driveItem id,
+ * so downloads keep working from either folder. Making the field mandatory is
+ * what turns "somebody has to remember" into a compile error; it caught three
+ * callers that had omitted it (`reuse-idcard`, and both submit routes' draft
+ * folder move).
+ *
+ * Pass `await resolveFormEnvironment()` from a route under `/api/request` — the
+ * path is classified, so it answers for the record being written.
+ */
 export function buildAccFolderPath(opts: {
   requestNo: string | null;
   requestId: number;
@@ -21,10 +36,9 @@ export function buildAccFolderPath(opts: {
   formCode?: string;
   /**
    * Which environment the request belongs to. UAT attachments go under a
-   * sibling "_UAT" folder so test files never mix with real ones — both
-   * environments share one SharePoint library.
+   * sibling "_UAT" folder so test files never mix with real ones.
    */
-  environment?: "Production" | "UAT";
+  environment: "Production" | "UAT";
 }): string {
   const base = (env.SHAREPOINT_ACC_FOLDER ?? "").replace(/^\/+|\/+$/g, "");
   const parts = [

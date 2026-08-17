@@ -6,6 +6,7 @@ import {
   boundIdEnvironment,
   environmentWritable,
   pickEnvironment,
+  viewerListEnvironment,
   PRODUCTION_ONLY,
   type EnvironmentDecision,
 } from "./pick-environment";
@@ -21,6 +22,7 @@ export {
   pickEnvironment,
   boundIdEnvironment,
   environmentWritable,
+  viewerListEnvironment,
   PRODUCTION_ONLY,
 } from "./pick-environment";
 export { requestIdFromPath, environmentFromPath } from "./request-id";
@@ -230,12 +232,16 @@ export async function resolveFormWritable(
  * A merged read shows a person rows from both databases; this map says which
  * database each form is theirs to see today, so `keepRowsInCurrentEnvironment`
  * can drop the other half.
+ *
+ * The per-form fold is `viewerListEnvironment`, which consults `available` and
+ * not just `environment` — see the reasoning there. Getting that wrong hides a
+ * tester's *real* work from them on every form whose UAT switch is off.
  */
 export async function resolveViewerEnvironmentMap(): Promise<Record<string, FormEnvironmentValue>> {
   const [switches, testing] = await Promise.all([getFormSwitchMap(), viewerIsTesting()]);
   const out: Record<string, FormEnvironmentValue> = {};
   for (const code of Object.keys(switches)) {
-    out[code] = pickEnvironment({ viewerUatMode: testing, form: switches[code] }).environment;
+    out[code] = viewerListEnvironment(switches[code], testing);
   }
   return out;
 }

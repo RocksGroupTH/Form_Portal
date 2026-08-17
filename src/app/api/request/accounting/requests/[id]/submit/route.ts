@@ -6,6 +6,7 @@ import { processQueue } from "@/lib/acc/email-queue";
 import { isSharePointConfigured, moveSharePointFolder } from "@/lib/sharepoint";
 import { buildAccFolderPath, yearFromRequestNo } from "@/lib/acc/sharepoint-path";
 import { resolveLoginEmail } from "@/lib/auth-email";
+import { resolveFormEnvironment } from "@/lib/form-environment";
 import { getAccPool } from "@/lib/acc/pool";
 import { sql } from "@/lib/db/mssql";
 
@@ -36,11 +37,15 @@ export async function POST(
     void processQueue().catch(() => {});
 
     // Move the draft's SharePoint folder into {year}/{requestNo} (best-effort).
+    // Both ends need the same environment: a UAT draft's files were uploaded
+    // under `_UAT`, so a move computed against the production tree would look
+    // for a folder that is not there and leave the draft folder behind.
     const requestNo = req.requestNo ?? null;
     if (isSharePointConfigured() && requestNo) {
-      const from = buildAccFolderPath({ requestNo: null, requestId: id, year: null });
+      const environment = await resolveFormEnvironment();
+      const from = buildAccFolderPath({ requestNo: null, requestId: id, year: null, environment });
       const to = buildAccFolderPath({
-        requestNo, requestId: id, year: yearFromRequestNo(requestNo),
+        requestNo, requestId: id, year: yearFromRequestNo(requestNo), environment,
       });
       void moveSharePointFolder(from, to);
     }

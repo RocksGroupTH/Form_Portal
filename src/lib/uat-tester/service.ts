@@ -262,6 +262,74 @@ export async function listUatTesters(): Promise<UatTesterRow[]> {
   return r.recordset.map(toRow);
 }
 
+/** Every address one active tester can legitimately be reached at. */
+export interface UatTesterAddresses {
+  staffId: number;
+  /** The **login** (Entra) address Settings stored on the tester row. */
+  email: string;
+  /** HR's `COALESCE(Email, EmailCompBr)` for the same StaffId, or null. */
+  hrEmail: string | null;
+}
+
+/**
+ * Active testers with both spellings of their address, in two reads total.
+ *
+ * The UAT mail exemption has to match what was actually queued, and **every
+ * address the queue carries is HR-sourced** — `resolveManagerEmail`,
+ * `AccRequest.RequesterEmail` and the UAT manager through `loadHrIdentity` all
+ * project `COALESCE(Email, EmailCompBr)`. `UatTester.Email` is the *login*
+ * address an admin picked in Settings, and this branch documents in two places
+ * that the two are allowed to differ for one person (see `getActiveUatTesterFor`
+ * above, and `/api/settings/uat-users`). Matching on the login address alone
+ * meant a tester whose two addresses disagree never got their own `[UAT]` mail:
+ * it went to `UAT_MAIL_REDIRECT` and their UAT request sat at MANAGER until
+ * somebody read the queue by hand.
+ *
+ * Batched on purpose — the caller runs this once per drain cycle, not once per
+ * message, so a queue of 20 costs one Fast_Core read and one HR read.
+ *
+ * A tester with no active HR row simply has `hrEmail: null`; their login address
+ * still exempts them.
+ */
+export async function listActiveUatTesterAddresses(): Promise<UatTesterAddresses[]> {
+  const active = (await listUatTesters()).filter((t) => t.isActive);
+  if (active.length === 0) return [];
+
+  const staffIds = Array.from(
+    new Set(
+      active.map((t) => t.staffId).filter((id) => Number.isInteger(id) && id > 0),
+    ),
+  );
+
+  const hrByStaffId = new Map<number, string | null>();
+  if (staffIds.length > 0) {
+    const pool = await getHrPool();
+    const req = pool.request().input("status", sql.NVarChar, EMPLOYEE_STATUS_ACTIVE);
+    const placeholders: string[] = [];
+    staffIds.forEach((id, i) => {
+      req.input(`s${i}`, sql.Int, id);
+      placeholders.push(`@s${i}`);
+    });
+    const r = await req.query<{ StaffId: number; Email: string | null }>(`
+      SELECT StaffId, COALESCE(Email, EmailCompBr) AS Email
+      FROM dbo.Employee
+      WHERE Status = @status AND StaffId IN (${placeholders.join(", ")})
+    `);
+    // First row wins per StaffId, matching `loadHrIdentity`'s TOP 1: nothing
+    // guarantees one active Employee row per StaffId, and taking both spellings
+    // would widen the exemption on the strength of a duplicate.
+    for (const row of r.recordset) {
+      if (!hrByStaffId.has(row.StaffId)) hrByStaffId.set(row.StaffId, row.Email ?? null);
+    }
+  }
+
+  return active.map((t) => ({
+    staffId: t.staffId,
+    email: t.email,
+    hrEmail: hrByStaffId.get(t.staffId) ?? null,
+  }));
+}
+
 export interface UpsertUatTesterInput {
   staffId: number;
   email: string;
