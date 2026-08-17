@@ -4,8 +4,12 @@ import { useState } from "react";
 import useSWR from "swr";
 import { AlertTriangle, CheckCircle2, Database, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { Dialog } from "@/components/ui/Dialog";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
+
+/** Typed, not clicked: the switch moves where live requests are written. */
+const CONFIRM_WORD = "Confirm";
 
 type EnvironmentValue = "Production" | "UAT";
 
@@ -53,6 +57,9 @@ export function FormEnvironmentSettings() {
   );
 
   const [saving, setSaving] = useState<string | null>(null);
+  /** The switch waits here until the word is typed. */
+  const [pending, setPending] = useState<{ row: FormEnvironmentRow; target: EnvironmentValue } | null>(null);
+  const [confirmText, setConfirmText] = useState("");
 
   const rows = data?.ok ? data.data ?? [] : [];
   const loadError = data && !data.ok ? data.error ?? "โหลดข้อมูลไม่สำเร็จ" : null;
@@ -69,6 +76,8 @@ export function FormEnvironmentSettings() {
       const json = await res.json();
       if (!json.ok) throw new Error(json.error ?? "บันทึกไม่สำเร็จ");
       toast.success(`${formCode} → ${environment}`);
+      setPending(null);
+      setConfirmText("");
       await mutate();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "บันทึกไม่สำเร็จ");
@@ -177,7 +186,10 @@ export function FormEnvironmentSettings() {
                             <button
                               key={value}
                               disabled={saving === row.formCode || active}
-                              onClick={() => setEnvironment(row.formCode, value)}
+                              onClick={() => {
+                                setConfirmText("");
+                                setPending({ row, target: value });
+                              }}
                               className="px-2.5 py-1 rounded-md text-[10px] font-bold border-none disabled:cursor-default enabled:cursor-pointer"
                               style={
                                 active
@@ -256,6 +268,83 @@ export function FormEnvironmentSettings() {
           </div>
         )}
       </div>
+
+      {/* ── Confirmation: the switch moves live traffic, so it is typed, not clicked ── */}
+      <Dialog
+        open={pending !== null}
+        onOpenChange={(open) => {
+          if (!open) setPending(null);
+        }}
+        title={pending ? `เปลี่ยน ${pending.row.formCode} เป็น ${pending.target}` : ""}
+        contentClassName="max-w-md"
+      >
+        {pending && (
+          <div className="px-5 pb-5 pt-1 flex flex-col gap-3">
+            <p className="text-[12px] leading-relaxed m-0" style={{ color: "var(--text-secondary)" }}>
+              <b>{pending.row.formCode}</b> · {pending.row.formNameTh || pending.row.formNameEn}
+              {" — "}
+              {pending.target === "UAT" ? (
+                <>
+                  คำขอที่สร้างหลังจากนี้จะถูกเขียนลงฐาน <b>UAT</b> สมุดรายวันจะถูกส่งเข้า Business Central{" "}
+                  <b>Sandbox</b> และคิว ERP Prep จะกลายเป็นคิวของ UAT — ใช้ประมวลผลการจ่ายเงินจริงไม่ได้
+                </>
+              ) : (
+                <>
+                  คำขอที่สร้างหลังจากนี้จะถูกเขียนลงฐาน <b>Production</b> และสมุดรายวันจะถูกส่งเข้า Business
+                  Central ตัวจริง
+                </>
+              )}
+            </p>
+            <p className="text-[12px] leading-relaxed m-0" style={{ color: "var(--text-muted)" }}>
+              คำขอเดิม {pending.row.productionCount.toLocaleString()} รายการใน Production และ{" "}
+              {pending.row.uatCount.toLocaleString()} รายการใน UAT <b>ไม่ย้ายตาม</b> — รายการที่อยู่คนละฝั่งกับ
+              ที่เลือกจะหายจากลิสต์จนกว่าจะสลับกลับ
+            </p>
+
+            <label className="text-[12px] font-medium" style={{ color: "var(--text-primary)" }}>
+              พิมพ์ <code className="font-bold">Confirm</code> เพื่อยืนยัน
+              <input
+                autoFocus
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && confirmText.trim() === CONFIRM_WORD) {
+                    void setEnvironment(pending.row.formCode, pending.target);
+                  }
+                }}
+                placeholder={CONFIRM_WORD}
+                className="mt-1.5 w-full rounded-lg px-3 py-2 text-[13px] outline-none"
+                style={{
+                  background: "var(--bg-input)",
+                  color: "var(--text-primary)",
+                  border: "1px solid var(--border-input)",
+                }}
+              />
+            </label>
+
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={() => setPending(null)}
+                className="flex-1 px-3 py-2 rounded-lg text-[12px] font-medium cursor-pointer border-none"
+                style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}
+              >
+                ยกเลิก
+              </button>
+              <button
+                disabled={confirmText.trim() !== CONFIRM_WORD || saving === pending.row.formCode}
+                onClick={() => void setEnvironment(pending.row.formCode, pending.target)}
+                className="flex-1 px-3 py-2 rounded-lg text-[12px] font-bold border-none text-white disabled:opacity-50 disabled:cursor-not-allowed enabled:cursor-pointer"
+                style={{
+                  background:
+                    pending.target === "UAT" ? "var(--color-danger)" : "var(--color-action)",
+                }}
+              >
+                {saving === pending.row.formCode ? "กำลังเปลี่ยน..." : `เปลี่ยนเป็น ${pending.target}`}
+              </button>
+            </div>
+          </div>
+        )}
+      </Dialog>
     </div>
   );
 }
