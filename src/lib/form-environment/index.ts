@@ -4,18 +4,25 @@ import { classifyPath, type PathClass } from "./classify-path";
 import { getFormSwitchMap, type FormEnvironmentValue } from "./service";
 import {
   boundIdEnvironment,
+  environmentWritable,
   pickEnvironment,
   PRODUCTION_ONLY,
   type EnvironmentDecision,
 } from "./pick-environment";
 import { environmentFromPath } from "./request-id";
+import { isUatId } from "./uat-identity";
 import { UAT_MODE_COOKIE, isUatModeCookieOn } from "@/lib/uat-mode";
 
-export { classifyPath, matchRule, ROUTE_RULES } from "./classify-path";
+export { classifyPath, matchRule, ROUTE_RULES, FORM_CODES, isFormCode } from "./classify-path";
 export type { PathClass, FormCode, RouteRule } from "./classify-path";
 export type { FormEnvironmentValue, FormEnvironmentRow } from "./service";
 export type { FormSwitches, EnvironmentDecision } from "./pick-environment";
-export { pickEnvironment, boundIdEnvironment, PRODUCTION_ONLY } from "./pick-environment";
+export {
+  pickEnvironment,
+  boundIdEnvironment,
+  environmentWritable,
+  PRODUCTION_ONLY,
+} from "./pick-environment";
 export { requestIdFromPath, environmentFromPath } from "./request-id";
 export {
   getFormSwitchMap,
@@ -123,6 +130,30 @@ export const resolveCurrentFormAccess = cache(async (): Promise<EnvironmentDecis
 });
 
 /**
+ * Whether the current request may **write** to the form it is on.
+ *
+ * `resolveCurrentFormAccess().available` cannot answer this. An id in the path
+ * makes it unconditionally true — that is what keeps a record readable and
+ * approvable after a switch is turned off — and every submit and every resumed
+ * draft carries one. Judging a write on it would mean `ProductionEnabled = 0`
+ * closed nothing but the brand-new-draft button.
+ *
+ * So the environment is decided exactly as everywhere else (the id rule first,
+ * via `resolveCurrentFormAccess`), and then that environment's own switch decides
+ * whether it is still taking work. One environment rule, two questions.
+ *
+ * An aggregate ("BOTH") or unclassified route is writable: it is not a form
+ * anyone files, so there is no switch that governs it.
+ */
+export const resolveCurrentFormWritable = cache(async (): Promise<boolean> => {
+  const cls = await resolveFormClass();
+  if (cls === null || cls === "BOTH") return true;
+
+  const [switches, access] = await Promise.all([getFormSwitchMap(), resolveCurrentFormAccess()]);
+  return environmentWritable(access.environment, switches[cls] ?? PRODUCTION_ONLY);
+});
+
+/**
  * Which form database the current request should use.
  *
  * Derived from `resolveCurrentFormAccess()` rather than recomputing, so the pool
@@ -140,16 +171,57 @@ export const resolveFormEnvironment = cache(async (): Promise<FormEnvironmentVal
  * Where a named form answers for this viewer, and whether it is open to them.
  *
  * For asking about a form from somewhere else — Home asks about AP-1 and AP-17
- * while sitting on `/`. It deliberately ignores the request id, because the id
- * in the current path (if any) belongs to a different form than the one being
- * asked about. At a write choke point on the form's own route, use
- * `resolveCurrentFormAccess()` instead: that one honours the record's id, which
- * is what lets a tester with UAT mode off still save the UAT draft they just
- * opened.
+ * while sitting on `/`, and the manager card is drawn by routes that are not the
+ * form's own. It ignores the request id *in the current path*, because that id
+ * belongs to whatever form the path is on, not to the form being asked about.
+ *
+ * `requestId` is a different thing: a record the caller deliberately names,
+ * knowing it belongs to `formCode`. Passing it routes the answer through the
+ * same `boundIdEnvironment` → `pickEnvironment` chain the write path uses, so a
+ * preview drawn off-route lands on the environment the submit will. Omit it and
+ * the answer is the id-blind one, unchanged.
+ *
+ * At a write choke point on the form's own route, use `resolveCurrentFormAccess()`
+ * plus `resolveCurrentFormWritable()` instead: the path already names the record.
  */
-export async function resolveFormAccess(formCode: string) {
+export async function resolveFormAccess(
+  formCode: string,
+  requestId?: number | null,
+): Promise<EnvironmentDecision> {
   const [switches, testing] = await Promise.all([getFormSwitchMap(), viewerIsTesting()]);
-  return pickEnvironment({ viewerUatMode: testing, form: switches[formCode] ?? null });
+  const form = switches[formCode] ?? null;
+  const named =
+    typeof requestId === "number" && Number.isSafeInteger(requestId) && requestId > 0
+      ? isUatId(requestId)
+        ? "UAT"
+        : "Production"
+      : null;
+
+  return pickEnvironment({
+    idEnvironment: boundIdEnvironment(named, form, testing),
+    viewerUatMode: testing,
+    form,
+  });
+}
+
+/**
+ * Whether a named form is taking work from this viewer — `resolveFormAccess`'s
+ * question asked the way a write asks it.
+ *
+ * Same split as `resolveCurrentFormWritable`, for callers that are not on the
+ * form's own route: the environment still comes from the id rule, the verdict
+ * from that environment's switch. What the manager card needs, because the card
+ * is a preview of a write and has to agree with what the submit will do.
+ */
+export async function resolveFormWritable(
+  formCode: string,
+  requestId?: number | null,
+): Promise<boolean> {
+  const [switches, access] = await Promise.all([
+    getFormSwitchMap(),
+    resolveFormAccess(formCode, requestId),
+  ]);
+  return environmentWritable(access.environment, switches[formCode] ?? PRODUCTION_ONLY);
 }
 
 /**

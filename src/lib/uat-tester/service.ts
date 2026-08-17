@@ -182,7 +182,13 @@ const loadHrIdentity = cache(async (staffId: number): Promise<UatManager | null>
  *    actor's HR StaffId against `AccRequest.ManagerStaffId` alone. A StaffId with
  *    no active HR row would pass neither.
  *
- * Any of the three failing returns null, which reads to the caller exactly like
+ * …and the manager must be somebody else. The settings API refuses a tester who
+ * points at themselves, but `UatTester` has no CHECK constraint behind it
+ * (migration 063: `StaffId` UNIQUE, `ManagerStaffId INT NULL`), so a row written
+ * by direct SQL would let a tester approve their own UAT request — and the pilot
+ * would never rehearse the two-party hop it exists to rehearse.
+ *
+ * Any of these failing returns null, which reads to the caller exactly like
  * "no UAT manager configured" — one refusal, one remedy (Settings → UAT Users).
  */
 export async function uatManagerFor(
@@ -192,11 +198,57 @@ export async function uatManagerFor(
   const requester = await getActiveUatTesterFor(requesterEmail, requesterStaffId);
   const managerStaffId = requester?.managerStaffId ?? null;
   if (!managerStaffId) return null;
+  if (requester && managerStaffId === requester.staffId) return null;
 
   const managerIsTester = await getActiveUatTesterByStaffId(managerStaffId);
   if (!managerIsTester) return null;
 
   return loadHrIdentity(managerStaffId);
+}
+
+/**
+ * The UAT manager StaffId for each of many requesters, in one round trip.
+ *
+ * The on-behalf colleague picker needs this for a whole department at once, and
+ * calling `uatManagerFor` per colleague would be three reads per row. The self
+ * join applies the same two membership rules that function checks one at a time:
+ * the requester is an active tester with a manager set, and that manager is an
+ * active tester too — plus the "not yourself" rule, which no constraint enforces.
+ *
+ * HR liveness is **not** checked here; the caller resolves the manager rows out
+ * of HR anyway, and a StaffId with no active row simply produces no manager.
+ * StaffIds absent from the result have no usable UAT manager.
+ */
+export async function uatManagerStaffIdsFor(
+  staffIds: number[],
+): Promise<Map<number, number>> {
+  const wanted = Array.from(
+    new Set(staffIds.filter((id) => Number.isInteger(id) && id > 0)),
+  );
+  const out = new Map<number, number>();
+  if (wanted.length === 0) return out;
+
+  const pool = await getCorePool();
+  const req = pool.request();
+  const placeholders: string[] = [];
+  wanted.forEach((id, i) => {
+    req.input(`s${i}`, sql.Int, id);
+    placeholders.push(`@s${i}`);
+  });
+
+  const r = await req.query<{ StaffId: number; ManagerStaffId: number }>(`
+    SELECT t.StaffId, t.ManagerStaffId
+    FROM [dbo].[UatTester] t
+    INNER JOIN [dbo].[UatTester] m
+      ON m.StaffId = t.ManagerStaffId AND m.IsActive = 1
+    WHERE t.IsActive = 1
+      AND t.ManagerStaffId IS NOT NULL
+      AND t.ManagerStaffId <> t.StaffId
+      AND t.StaffId IN (${placeholders.join(", ")})
+  `);
+
+  for (const row of r.recordset) out.set(row.StaffId, row.ManagerStaffId);
+  return out;
 }
 
 /** Every tester, active or not — the Settings → UAT Users table shows both. */

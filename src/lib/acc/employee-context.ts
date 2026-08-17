@@ -2,10 +2,17 @@ import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
 import { pickEmployeePhotoUrl } from "@/lib/hr/photo-url";
 import { getHrPool } from "@/lib/hr/pool";
 import { sql } from "@/lib/db/mssql";
-import { resolveFormAccess, resolveFormEnvironment } from "@/lib/form-environment";
+import {
+  resolveCurrentFormAccess,
+  resolveCurrentFormWritable,
+  resolveFormAccess,
+  resolveFormEnvironment,
+  resolveFormWritable,
+} from "@/lib/form-environment";
 import { uatManagerFor } from "@/lib/uat-tester/service";
 import {
   assertRequesterAllowedInUat,
+  FORM_UNAVAILABLE_ERROR,
   UAT_MANAGER_MISSING_ERROR,
 } from "@/lib/uat-tester/guards";
 
@@ -84,15 +91,25 @@ interface ManagerRow {
  * `formCode` is what makes the preview honest. This is a card on a form, but the
  * routes that serve it are not the form's own: `/api/me/employee` is
  * unclassified and `/api/request/accounting/requesters` is an aggregate, so both
- * resolve Production from the path no matter who is asking. Naming the form
- * asks `resolveFormAccess` instead — the same viewer/switch answer the submit
- * will reach, minus the id rule, which is right for a card that describes a
- * form rather than a record. Omit it and the current path decides, which is
- * correct for any caller that really is on the form's own route.
+ * resolve Production from the path no matter who is asking. Naming the form asks
+ * `resolveFormAccess` instead.
+ *
+ * `requestId` closes the rest of the gap. The submit posts to
+ * `/api/request/accounting/requests/<id>/submit`, where the id is a path segment
+ * and the id rule applies; the card is drawn from a route carrying no id at all.
+ * Without the id the two disagree in both directions — a tester in UAT mode
+ * resuming a production claim was previewed the UAT manager and assigned the real
+ * one, and with no UAT manager configured the card even blocked the resubmit of a
+ * real, money-bearing Returned claim. Pass it whenever an existing record is being
+ * resumed; omit it for a brand-new request, which has no record yet.
+ *
+ * Omit `formCode` too and the current path decides, which is correct for any
+ * caller that really is on the form's own route.
  */
 export async function resolveManagerInfo(
   loginEmail: string,
   formCode?: string | null,
+  requestId?: number | null,
 ): Promise<ManagerResolution> {
   const emp = await findActiveEmployeeByEmail(loginEmail);
   if (!emp?.employee) {
@@ -101,10 +118,21 @@ export async function resolveManagerInfo(
 
   // In UAT the card must preview the person the submit will actually assign —
   // the tester's configured UAT manager — never their real HR manager.
-  const environment = formCode
-    ? (await resolveFormAccess(formCode)).environment
-    : await resolveFormEnvironment();
-  const isUat = environment === "UAT";
+  const [access, writable] = formCode
+    ? await Promise.all([
+        resolveFormAccess(formCode, requestId),
+        resolveFormWritable(formCode, requestId),
+      ])
+    : await Promise.all([resolveCurrentFormAccess(), resolveCurrentFormWritable()]);
+  // A form the resolved environment is no longer taking work for has no manager
+  // to name. Judged on writability rather than `available` so the card agrees
+  // with the submit: `available` is unconditionally true once a record's id is in
+  // play, and the card is a preview of a write. Saying "no UAT manager" here
+  // would send the viewer to Settings → UAT Users to fix what is not the blocker.
+  if (!writable) {
+    return { hasManager: false, manager: null, reason: FORM_UNAVAILABLE_ERROR };
+  }
+  const isUat = access.environment === "UAT";
   const uatManager = isUat
     ? await uatManagerFor(loginEmail, emp.employee.staffId ?? null)
     : null;
@@ -213,6 +241,11 @@ async function withUatManager(snapshot: RequesterSnapshot): Promise<RequesterSna
  *
  * In UAT the manager is the requester's UAT manager (see `withUatManager`), and
  * an on-behalf request is refused outright unless the requester is a tester too.
+ *
+ * The on-behalf refusal is unconditional here because both callers are writes —
+ * `saveDraft` and the submit route, and nothing else. AP-17's equivalent
+ * (`resolveEmployeeForActor`) also backs five read-only GETs, so there the same
+ * guard is opt-in.
  */
 export async function resolveRequesterForActor(
   loginEmail: string,

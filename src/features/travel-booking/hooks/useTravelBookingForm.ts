@@ -374,19 +374,32 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
   const { data: settingsData } = useSWR<SettingsPayload>(
     "/api/request/travel-booking/options/settings", jsonFetcher, { revalidateOnFocus: false },
   );
+  // The record being resumed, when there is one. Both fetches below carry it so
+  // the manager they preview is resolved by the same id rule the submit will use:
+  // neither of these routes is AP-17's own, so without the id the card and the
+  // submit can land in different databases.
+  const resumedId = initial?.requests?.[0]?.id ?? null;
   const { data: employeeData, error: employeeError } = useSWR<EmployeeApiPayload>(
     // ?form=AP-17 so the manager card previews the person this form will actually
     // assign: /api/me/employee is not a form route, so without the hint a tester
     // in UAT mode is shown their real HR manager instead of their UAT one.
-    ["/api/me/employee?form=AP-17", "travel-booking-form"],
+    [`/api/me/employee?form=AP-17${resumedId ? `&id=${resumedId}` : ""}`, "travel-booking-form"],
     ([url]: [string, string]) => jsonFetcher(url),
     { revalidateOnFocus: false },
   );
   // Same-department colleagues, for the "open on behalf of" requester picker.
   // jsonFetcher already unwraps the { ok, data } envelope, so this resolves
   // straight to the `data` payload (matches the /api/me/employee SWR above).
-  const { data: requesterOptsData } = useSWR<{ colleagues: RequesterColleague[] }>(
-    ["/api/request/travel-booking/requesters", "travel-booking-form"],
+  const { data: requesterOptsData, error: requesterOptsError } = useSWR<{
+    colleagues: RequesterColleague[];
+    environment?: "Production" | "UAT";
+  }>(
+    [
+      resumedId
+        ? `/api/request/travel-booking/requesters?id=${resumedId}`
+        : "/api/request/travel-booking/requesters",
+      "travel-booking-form",
+    ],
     ([url]: [string, string]) => jsonFetcher(url),
     { revalidateOnFocus: false },
   );
@@ -406,6 +419,10 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
   const managerReason = employeeData?.managerReason ?? null;
 
   const colleagues = requesterOptsData?.colleagues ?? [];
+  // The on-behalf manager comes from this fetch, so the submit gate must not call
+  // it missing while it is still in flight.
+  const colleaguesLoading = !requesterOptsData && !requesterOptsError;
+  const requesterEnvironment: "Production" | "UAT" = requesterOptsData?.environment ?? "Production";
 
   // "Open on behalf of" — null means submitting as self.
   const [requesterStaffId, setRequesterStaffId] = useState<number | null>(null);
@@ -730,6 +747,8 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
 
     // on-behalf-of requester picker
     colleagues,
+    colleaguesLoading,
+    requesterEnvironment,
     existingRanges,
     requesterStaffId,
     setRequesterStaffId,

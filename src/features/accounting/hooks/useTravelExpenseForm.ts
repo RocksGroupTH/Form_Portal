@@ -115,6 +115,10 @@ interface UseTravelExpenseFormResult {
 
   /** Same-department colleagues this user may open a request "on behalf of". */
   colleagues: RequesterColleague[];
+  /** Colleague fetch in flight — their manager is not yet known. */
+  colleaguesLoading: boolean;
+  /** Which environment the colleague picker's managers were resolved in. */
+  requesterEnvironment: "Production" | "UAT";
   /** Selected on-behalf requester's StaffId, or null to submit as self. */
   requesterStaffId: number | null;
   setRequesterStaffId: (staffId: number | null) => void;
@@ -296,6 +300,11 @@ export function useTravelExpenseForm(
   // returns the raw { ok, data } envelope. SWR caches by key, so sharing the
   // string key would hand this hook the wrong shape (employee nested under .data).
   // A tuple key gives us an isolated cache entry with the unwrapped shape.
+  // The record being resumed, when there is one. Both fetches below carry it so
+  // the manager they preview is resolved by the same id rule the submit will use:
+  // the resume href puts the id in the query, which per-form routing strips, and
+  // neither of these routes is AP-1's own. A brand-new request has no id.
+  const resumedIdParam = initial?.id ? `&id=${initial.id}` : "";
   const { data: employeeApiData, error: employeeError } = useSWR<{
     email: string | null;
     employee: {
@@ -315,15 +324,23 @@ export function useTravelExpenseForm(
     // ?form=AP-1 so the manager card previews the person this form will actually
     // assign: /api/me/employee is not a form route, so without the hint a tester
     // in UAT mode is shown their real HR manager instead of their UAT one.
-    ["/api/me/employee?form=AP-1", "acc-travel-form"],
+    [`/api/me/employee?form=AP-1${resumedIdParam}`, "acc-travel-form"],
     ([url]: [string, string]) => jsonFetcher(url),
     { revalidateOnFocus: false }
   );
   // Same-department colleagues, for the "open on behalf of" requester picker.
   // jsonFetcher already unwraps the { ok, data } envelope, so this resolves
   // straight to the `data` payload (matches the /api/me/employee SWR above).
-  const { data: requesterOptsData } = useSWR<{ colleagues: RequesterColleague[] }>(
-    ["/api/request/accounting/requesters", "acc-travel-form"],
+  const { data: requesterOptsData, error: requesterOptsError } = useSWR<{
+    colleagues: RequesterColleague[];
+    environment?: "Production" | "UAT";
+  }>(
+    [
+      initial?.id
+        ? `/api/request/accounting/requesters?id=${initial.id}`
+        : "/api/request/accounting/requesters",
+      "acc-travel-form",
+    ],
     ([url]: [string, string]) => jsonFetcher(url),
     { revalidateOnFocus: false },
   );
@@ -342,6 +359,10 @@ export function useTravelExpenseForm(
   const employeeLoading = !employeeApiData && !employeeError;
 
   const colleagues = requesterOptsData?.colleagues ?? [];
+  // The on-behalf manager comes from this fetch, so the submit gate must not call
+  // it missing while it is still in flight.
+  const colleaguesLoading = !requesterOptsData && !requesterOptsError;
+  const requesterEnvironment = requesterOptsData?.environment ?? "Production";
 
   // "Open on behalf of" — null means submitting as self.
   const [requesterStaffId, setRequesterStaffId] = useState<number | null>(null);
@@ -646,6 +667,8 @@ export function useTravelExpenseForm(
     employeeLoading,
     loading,
     colleagues,
+    colleaguesLoading,
+    requesterEnvironment,
     requesterStaffId,
     setRequesterStaffId,
     selectedRequester,

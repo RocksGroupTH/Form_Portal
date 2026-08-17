@@ -65,7 +65,8 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
     tabs, activeTabIndex, setActiveTabIndex, addTab, removeTab, updateTab,
     reasons, accommodations, vehicles, rentVehicles, provinces,
     employee, employeeHint, employeeEmail, employeeLoading, manager, managerReason,
-    colleagues, existingRanges, requesterStaffId, setRequesterStaffId, selectedRequester,
+    colleagues, colleaguesLoading, requesterEnvironment,
+    existingRanges, requesterStaffId, setRequesterStaffId, selectedRequester,
     continuationFlags, perDiemEstimates, totalPerDiemEstimate,
     tabIssues, canSubmit,
     saving, submitting, submitPhase, saveDraft, submitAll, uploadIdCard, removeIdCardFile,
@@ -88,8 +89,15 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
   const onBehalfName = selectedRequester?.fullName ?? (requesterStaffId ? `#${requesterStaffId}` : "");
   // Manager shown in the card: the selected colleague's manager when opening on behalf, else self's.
   const shownManager = requesterStaffId ? (selectedRequester?.manager ?? null) : manager;
+  // In UAT the colleague's manager is their UAT manager, so the remedy for a
+  // missing one is the tester list, not HR — pointing at HR there would end with
+  // somebody asking HR to attach a real manager to test data.
   const shownManagerReason = requesterStaffId
-    ? (selectedRequester?.manager ? null : "เพื่อนที่เลือกยังไม่ได้กำหนดหัวหน้างานในระบบ HR")
+    ? selectedRequester?.manager
+      ? null
+      : requesterEnvironment === "UAT"
+        ? "โหมด UAT: เพื่อนที่เลือกยังไม่ได้กำหนดผู้จัดการสำหรับ UAT — ตั้งที่ Settings → UAT Users"
+        : "เพื่อนที่เลือกยังไม่ได้กำหนดหัวหน้างานในระบบ HR"
     : managerReason;
 
   // Days already booked (interiors of the requester's other trips + this group's other tabs) —
@@ -103,7 +111,11 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
     return Array.from(set);
   }, [existingRanges, tabs, activeTabIndex]);
 
-  const overallCanSubmit = canSubmit && (employeeLoading || !!manager);
+  // `shownManager`, not `manager`: on behalf of a colleague the submit assigns
+  // *their* manager, so gating on the actor's would both block a submit that is
+  // fine and let one through whose requester has nobody to approve it.
+  const overallCanSubmit =
+    canSubmit && (employeeLoading || colleaguesLoading || !!shownManager);
 
   const handleSaveDraft = useCallback(async () => {
     const saved = await saveDraft();

@@ -12,7 +12,7 @@
  * inside `viewerIsTesting`, and a static edge back would put the resolver's own
  * dependencies inside the module it lazily loads.
  */
-import { resolveCurrentFormAccess, resolveFormEnvironment } from "@/lib/form-environment";
+import { resolveCurrentFormWritable, resolveFormEnvironment } from "@/lib/form-environment";
 import { getActiveUatTesterFor } from "./service";
 
 /** A form switched off in the environment this request resolved to. */
@@ -36,17 +36,20 @@ export async function isUatRequest(): Promise<boolean> {
 }
 
 /**
- * Refuse a write to a form this viewer cannot use right now.
+ * Refuse a write to a form the environment this request resolved to is no longer
+ * taking work for.
  *
- * `resolveCurrentFormAccess()` rather than `resolveFormAccess(formCode)`: at a
- * write choke point the route is already the form's own, and the id rule is what
- * lets a tester with UAT mode off save the UAT draft they were just allowed to
- * open. A record named in the path is always available — reading and continuing
- * existing work is not the same as filing something new.
+ * `resolveCurrentFormWritable()` rather than `resolveCurrentFormAccess().available`:
+ * the id rule is what lets a tester with UAT mode off save the UAT draft they
+ * were just allowed to open, so a named record is always *available* — and every
+ * submit and every resumed draft names one. Judged on `available`, this guard
+ * fired only on brand-new drafts, and turning `ProductionEnabled` off left every
+ * request already in flight still submitting into production. The environment is
+ * still decided by the id; only the verdict on writing to it comes from that
+ * environment's own switch.
  */
 export async function assertFormWritable(): Promise<void> {
-  const access = await resolveCurrentFormAccess();
-  if (!access.available) throw new Error(FORM_UNAVAILABLE_ERROR);
+  if (!(await resolveCurrentFormWritable())) throw new Error(FORM_UNAVAILABLE_ERROR);
 }
 
 /**

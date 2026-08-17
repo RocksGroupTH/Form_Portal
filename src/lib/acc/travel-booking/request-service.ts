@@ -592,7 +592,12 @@ export async function saveTravelBookingDraft(
   await assertFormWritable();
 
   // Requester is the actor, or a same-department colleague when opening on behalf (server-authorized).
-  const emp = await resolveEmployeeForActor(loginEmail, input.requesterStaffId ?? null);
+  // `forWrite`: a draft already writes the requester's identity into a UAT row, so
+  // the on-behalf tester rule applies here and not on the read-only GETs that
+  // share this resolver.
+  const emp = await resolveEmployeeForActor(loginEmail, input.requesterStaffId ?? null, {
+    forWrite: true,
+  });
 
   const pool = await getAccPool();
 
@@ -973,7 +978,7 @@ export async function submitTravelBookingGroup(
             INNER JOIN [dbo].[AccRequest] r ON r.Id = t.RequestId
             WHERE t.GroupKey = @gk`);
   const savedStaffId = (savedStaffRes.recordset[0]?.StaffId as number | null) ?? null;
-  const emp = await resolveEmployeeForActor(loginEmail, savedStaffId);
+  const emp = await resolveEmployeeForActor(loginEmail, savedStaffId, { forWrite: true });
   // In UAT the remedy is the tester list, not HR — `resolveEmployeeForActor` has
   // already replaced the HR manager with the requester's UAT manager, or with
   // nothing at all when there is no usable one.

@@ -89,3 +89,28 @@ export function boundIdEnvironment(
   const switches = form ?? PRODUCTION_ONLY;
   return switches.uatEnabled || viewerUatMode ? "UAT" : null;
 }
+
+/**
+ * Whether a **write** may land in the environment that answered this request.
+ *
+ * Separate from `pickEnvironment().available` on purpose, because the two answer
+ * different questions. `available` is about the viewer: may this person reach
+ * the form at all — and an existing record always says yes, so that opening,
+ * reading and approving keep working after a switch is turned off. This one is
+ * about the books: is the database that answered still accepting new work for
+ * this form. An id decides *which* environment, never *whether* it is open.
+ *
+ * Without the split, turning a form's `ProductionEnabled` off would close only
+ * brand-new drafts: every draft already in flight carries its id in the path, so
+ * it would keep submitting into production, allocating running numbers and
+ * mailing real managers.
+ *
+ * Pure: every input is supplied by the caller.
+ */
+export function environmentWritable(
+  environment: FormEnvironmentValue,
+  form: FormSwitches | null,
+): boolean {
+  const switches = form ?? PRODUCTION_ONLY;
+  return environment === "UAT" ? switches.uatEnabled : switches.productionEnabled;
+}

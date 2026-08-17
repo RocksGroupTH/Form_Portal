@@ -45,6 +45,11 @@ function toSwitches(row: SwitchColumns | undefined | null): FormSwitches {
  * are absent from the result, and callers treat a missing entry as
  * `PRODUCTION_ONLY` — live, and not open for testing.
  *
+ * The map has a null prototype: callers index it with a form code, and some of
+ * those codes arrive from a query string. On a `{}` literal, `switches["constructor"]`
+ * would hand back an inherited function — truthy, and not a `FormSwitches` —
+ * instead of the `undefined` that makes the caller fall back to `PRODUCTION_ONLY`.
+ *
  * Reads Fast_Core, which never varies by environment — this is what breaks the
  * circular dependency that per-form routing would otherwise have.
  *
@@ -58,7 +63,7 @@ export const getFormSwitchMap = cache(async (): Promise<Record<string, FormSwitc
   const r = await pool.request().query<{ FormCode: string } & SwitchColumns>(
     `SELECT FormCode, ProductionEnabled, UatEnabled FROM [dbo].[FormEnvironment]`,
   );
-  const out: Record<string, FormSwitches> = {};
+  const out: Record<string, FormSwitches> = Object.create(null);
   for (const row of r.recordset) out[row.FormCode] = toSwitches(row);
   return out;
 });
