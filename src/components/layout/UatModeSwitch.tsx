@@ -8,6 +8,7 @@ import { Dialog } from "@/components/ui/Dialog";
 import { Button } from "@/components/ui/Button";
 import { useViewerUat } from "@/lib/hooks/useFormEnvironments";
 import { uatSwitchLeavesRecord, urlAfterUatSwitch } from "@/lib/form-environment/uat-switch-url";
+import { canSwitchEnvironment } from "@/lib/form-environment/viewer-controls";
 
 interface UatModeSwitchProps {
   /** Icon only, no PRO/UAT label — the mobile top bar's compact chips. */
@@ -45,9 +46,10 @@ export function UatModeSwitch({ compact = false }: UatModeSwitchProps) {
    */
   const [leavingRecord, setLeavingRecord] = useState(false);
 
-  if (!viewer) return null;
-  const showControl = viewer.uatMode || (viewer.isTester && viewer.anyUatForm);
-  if (!showControl) return null;
+  // The null check is separate so TypeScript narrows `viewer` below;
+  // `canSwitchEnvironment` stays a plain boolean rather than a type predicate,
+  // because a non-tester is a perfectly real viewer that it answers false for.
+  if (!viewer || !canSwitchEnvironment(viewer)) return null;
 
   const uat = viewer.uatMode;
 

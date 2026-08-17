@@ -1,6 +1,7 @@
 "use client";
 
 import { useFormEnvironments, type FormEnvironment } from "@/lib/hooks/useFormEnvironments";
+import { canSwitchEnvironment } from "@/lib/form-environment/viewer-controls";
 
 /**
  * Which database a form writes to, as a chip on the form's card.
@@ -45,6 +46,12 @@ export function EnvironmentBadge({
  * or has no entry for this code — guessing "Production" here is exactly the
  * failure this component exists to avoid: a tester would see their UAT
  * request labelled as if it were live.
+ *
+ * It also renders nothing for a viewer who has no PRO/UAT switch in the navbar.
+ * `pickEnvironment` only ever answers UAT for a viewer in UAT mode, so for
+ * everybody else this chip is a permanent "PRO" on every card — a label with
+ * nothing to contrast against, next to no control that could change it. The two
+ * decisions share `canSwitchEnvironment` so a chip can never outlive its switch.
  */
 export function FormEnvironmentChip({
   formCode,
@@ -56,6 +63,7 @@ export function FormEnvironmentChip({
   const { data, error } = useFormEnvironments();
   const access = data?.forms[formCode];
   if (error || !access) return null;
+  if (!canSwitchEnvironment(data?.viewer)) return null;
   return <EnvironmentBadge environment={access.environment} className={className} />;
 }
 
