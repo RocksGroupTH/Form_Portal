@@ -5,12 +5,14 @@ import { erpEnvironmentLabel } from "@/lib/acc/erp-environment-shared";
 import { useErpInterfaceEnvironment } from "@/features/accounting/hooks/useErpInterfaceEnvironment";
 
 /**
- * Shown when System Admin has enabled Sandbox — warns that Interface uses UAT data.
+ * Shown on accounting pages whose form is flagged UAT — their journals go to
+ * BC Sandbox. Everyone sees it, not just System Admin: the environment is a
+ * property of the form now, not of who is looking at it.
  */
 export function ErpEnvironmentBanner() {
   const { env, ready } = useErpInterfaceEnvironment();
 
-  if (!ready || !env.canUseSandbox || env.effectiveEnvironment !== "Sandbox") {
+  if (!ready || env.effectiveEnvironment !== "Sandbox") {
     return null;
   }
 
@@ -32,7 +34,7 @@ export function ErpEnvironmentBanner() {
           โหมด {erpEnvironmentLabel("Sandbox")}
         </p>
         <p className="text-[12px] m-0 mt-0.5" style={{ color: "var(--text-secondary)" }}>
-          คุณกำลังใช้ข้อมูล UAT/Sandbox สำหรับ Interface ERP — ผู้ใช้อื่นจะยังคงใช้ Production เสมอ
+          ฟอร์มนี้ถูกตั้งเป็น UAT — เอกสารที่ส่งจะเข้า Business Central Sandbox ไม่ใช่ตัวจริง
         </p>
       </div>
     </div>

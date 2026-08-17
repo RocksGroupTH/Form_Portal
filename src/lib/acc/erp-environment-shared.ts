@@ -9,13 +9,12 @@ export function isErpSandboxHostAllowed(host?: string | null): boolean {
 }
 
 export interface ErpEnvironmentInfo {
+  /**
+   * Which Business Central instance this route targets. Follows the form's
+   * Form Environment flag — there is no per-user or per-host component to it
+   * any more, so there is nothing else to report.
+   */
   effectiveEnvironment: ErpBcEnvironment;
-  /** Global toggle value (System Admin only sees Sandbox when set). */
-  globalEnvironment: ErpBcEnvironment;
-  canUseSandbox: boolean;
-  canConfigure: boolean;
-  /** True when current host allows UAT (localhost:3020). */
-  sandboxHostAllowed: boolean;
 }
 
 export function erpEnvironmentLabel(env: ErpBcEnvironment): string {
