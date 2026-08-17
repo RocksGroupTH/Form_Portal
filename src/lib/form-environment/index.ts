@@ -3,7 +3,7 @@ import { headers } from "next/headers";
 import { classifyPath, type PathClass } from "./classify-path";
 import { getFormEnvironmentMap, type FormEnvironmentValue } from "./service";
 
-export { classifyPath, ROUTE_RULES } from "./classify-path";
+export { classifyPath, matchRule, ROUTE_RULES } from "./classify-path";
 export type { PathClass, FormCode, RouteRule } from "./classify-path";
 export type { FormEnvironmentValue, FormEnvironmentRow } from "./service";
 export {

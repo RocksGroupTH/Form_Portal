@@ -46,6 +46,12 @@ export const ROUTE_RULES: RouteRule[] = [
   // Settings read production; dual-write happens in the service layer.
   { prefix: "/api/request/accounting/settings", result: null },
 
+  // New Item Inventory (AP-15) exists only as brand-scoped lookups so far, and
+  // those read Fast_Core, never the form database. Listed so the coverage check
+  // reports a decision rather than an omission. When the form itself lands and
+  // starts writing AccRequest rows, this becomes "AP-15".
+  { prefix: "/api/request/new-item-inventory", result: null },
+
   // AP-17 proper.
   { prefix: "/api/request/travel-booking", result: "AP-17" },
   { prefix: "/request/travel-booking", result: "AP-17" },
@@ -62,12 +68,15 @@ function matchesPrefix(path: string, prefix: string): boolean {
 }
 
 /**
- * Classify a request path.
+ * The rule that governs a path, or null when no rule covers it.
  *
- * Returns null when the path is not form-specific — Form Builder, settings,
- * dashboards, anything else. Callers treat null as Production.
+ * `classifyPath` collapses two different situations into null: a rule that
+ * deliberately says Production (the settings prefix) and a path nothing matches.
+ * Routing does not care about the difference, but the coverage check does —
+ * flagging the sixteen deliberate settings routes as "unclassified" would bury
+ * the one route that genuinely has no rule.
  */
-export function classifyPath(path: string | null | undefined): PathClass {
+export function matchRule(path: string | null | undefined): RouteRule | null {
   if (!path) return null;
 
   const p = path.split("?")[0].replace(/\/+$/, "") || "/";
@@ -78,5 +87,16 @@ export function classifyPath(path: string | null | undefined): PathClass {
       if (!best || rule.prefix.length > best.prefix.length) best = rule;
     }
   }
-  return best ? best.result : null;
+  return best;
+}
+
+/**
+ * Classify a request path.
+ *
+ * Returns null when the path is not form-specific — Form Builder, settings,
+ * dashboards, anything else. Callers treat null as Production.
+ */
+export function classifyPath(path: string | null | undefined): PathClass {
+  const rule = matchRule(path);
+  return rule ? rule.result : null;
 }

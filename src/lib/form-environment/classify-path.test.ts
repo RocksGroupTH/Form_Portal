@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { classifyPath } from "./classify-path";
+import { classifyPath, matchRule } from "./classify-path";
 
 test("AP-17 admin pages under the accounting prefix win over AP-1", () => {
   assert.equal(classifyPath("/request/accounting/travel-booking"), "AP-17");
@@ -60,6 +60,28 @@ test("query strings and trailing slashes do not change the answer", () => {
   assert.equal(classifyPath("/api/request/accounting/report?from=2026-01-01"), "BOTH");
   assert.equal(classifyPath("/request/accounting/travel-booking/"), "AP-17");
   assert.equal(classifyPath("/api/request/travel-booking/requests/5/"), "AP-17");
+});
+
+test("matchRule separates a deliberate Production rule from no rule at all", () => {
+  // classifyPath answers null for both of these; the coverage check must not.
+  const settings = matchRule("/api/request/accounting/settings/vehicles");
+  assert.equal(settings?.prefix, "/api/request/accounting/settings");
+  assert.equal(settings?.result, null);
+
+  const lookup = matchRule("/api/request/new-item-inventory/lookup/brands");
+  assert.equal(lookup?.prefix, "/api/request/new-item-inventory");
+  assert.equal(lookup?.result, null);
+
+  assert.equal(matchRule("/api/forms/submissions"), null);
+  assert.equal(matchRule("/api/request/something-nobody-classified"), null);
+});
+
+test("matchRule returns the longest matching rule, like classifyPath", () => {
+  assert.equal(matchRule("/api/request/accounting/requests/mine")?.result, "BOTH");
+  assert.equal(matchRule("/api/request/accounting/requests/123")?.prefix, "/api/request/accounting");
+  assert.equal(matchRule("/request/accounting/travel-booking/queue")?.result, "AP-17");
+  assert.equal(matchRule(null), null);
+  assert.equal(matchRule(""), null);
 });
 
 test("a prefix must match on a boundary, never mid-segment", () => {
