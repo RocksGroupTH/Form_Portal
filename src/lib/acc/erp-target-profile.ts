@@ -115,13 +115,11 @@ function collectConnectionIds(
 
 export async function resolveErpTargetProfile(
   interfaceBrandCode: string,
-  role: string | null | undefined,
-  host?: string | null,
 ): Promise<ErpTargetProfile | null> {
   const code = interfaceBrandCode.trim().toUpperCase();
   if (!isErpInterfaceBrandCode(code)) return null;
 
-  const environment = await resolveEffectiveErpEnvironment(role, host);
+  const environment = await resolveEffectiveErpEnvironment();
   const [erpPage, targetSettings, cfg] = await Promise.all([
     getBrandErpConfigPage(),
     listErpTargetSettings(),
@@ -138,12 +136,9 @@ export async function resolveErpTargetProfile(
   return buildErpTargetProfile(code, environment, erpPage, targetSettings, cfg, connById);
 }
 
-export async function resolveAllErpTargetProfiles(
-  role: string | null | undefined,
-  host?: string | null,
-): Promise<ErpTargetProfile[]> {
+export async function resolveAllErpTargetProfiles(): Promise<ErpTargetProfile[]> {
   const brandIds = ERP_INTERFACE_BRANDS.map((b) => b.id);
-  const environment = await resolveEffectiveErpEnvironment(role, host);
+  const environment = await resolveEffectiveErpEnvironment();
 
   const [erpPage, targetSettings, ...configs] = await Promise.all([
     getBrandErpConfigPage(),

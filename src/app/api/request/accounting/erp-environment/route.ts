@@ -23,7 +23,7 @@ export async function GET() {
     const sandboxHostAllowed = isErpSandboxHostAllowed(host);
     const canUseSandbox = canUseErpSandboxEnvironment(role, host);
     const [effectiveEnvironment, globalEnvironment] = await Promise.all([
-      resolveEffectiveErpEnvironment(role, host),
+      resolveEffectiveErpEnvironment(),
       canUseSandbox ? getGlobalErpInterfaceEnvironment() : Promise.resolve("Production" as const),
     ]);
 

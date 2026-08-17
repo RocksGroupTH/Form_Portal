@@ -20,15 +20,11 @@ const PREP_DEPT_CTX_CACHE_KEY = "acc:prep-dept-ctx";
 export interface SendErpPersonGroupInput {
   interfaceTarget: string;
   personGroupKey: string;
-  role: string | null | undefined;
-  host: string | null | undefined;
   userId: number;
 }
 
 export interface SendErpInterfaceBatchInput {
   interfaceTarget: string;
-  role: string | null | undefined;
-  host: string | null | undefined;
   userId: number;
 }
 
@@ -174,7 +170,7 @@ export async function sendErpPersonGroup(
   const target = input.interfaceTarget.trim().toUpperCase();
   const groupKey = input.personGroupKey.trim();
 
-  const profile = await resolveErpTargetProfile(target, input.role, input.host);
+  const profile = await resolveErpTargetProfile(target);
   if (!profile?.profileComplete) {
     throw new Error(`การตั้งค่า BC สำหรับ ${target} ยังไม่ครบ — ตรวจสอบที่ Settings → Interface ERP`);
   }
@@ -182,7 +178,7 @@ export async function sendErpPersonGroup(
     throw new Error(`ไม่พบการเชื่อมต่อ BC สำหรับ ${target}`);
   }
 
-  const ctx = await loadErpJournalBuildContext(input.role, input.host);
+  const ctx = await loadErpJournalBuildContext();
   const rows = await listErpPrepRows();
   const interfaceByClaim = ctx.interfaceByClaim;
   const filtered = filterRowsByInterfaceTarget(rows, interfaceByClaim, target);
@@ -282,7 +278,7 @@ export async function sendErpInterfaceBatch(
 ): Promise<SendErpPersonGroupResult> {
   const target = input.interfaceTarget.trim().toUpperCase();
 
-  const profile = await resolveErpTargetProfile(target, input.role, input.host);
+  const profile = await resolveErpTargetProfile(target);
   if (!profile?.profileComplete) {
     throw new Error(`การตั้งค่า BC สำหรับ ${target} ยังไม่ครบ — ตรวจสอบที่ Settings → Interface ERP`);
   }
@@ -290,7 +286,7 @@ export async function sendErpInterfaceBatch(
     throw new Error(`ไม่พบการเชื่อมต่อ BC สำหรับ ${target}`);
   }
 
-  const ctx = await loadErpJournalBuildContext(input.role, input.host);
+  const ctx = await loadErpJournalBuildContext();
   const rows = await listErpPrepRows();
   const interfaceByClaim = ctx.interfaceByClaim;
   const filtered = filterRowsByInterfaceTarget(rows, interfaceByClaim, target);

@@ -259,7 +259,6 @@ export function ErpPrepQueue({
       erpDeptCodesByTarget: data.erpDeptCodesByTarget ?? {},
       deptGlOverridesByTarget: data.deptGlOverridesByTarget ?? {},
       erpEnvironment: data.erpEnvironment ?? "Production",
-      canUseSandbox: data.canUseSandbox ?? false,
     });
   }, []);
 

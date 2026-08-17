@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { canAccessAccountArea } from "@/lib/acc/access";
 import { loadErpJournalBuildContext } from "@/lib/acc/erp-journal-context";
-import { getRequestHost } from "@/lib/acc/erp-environment";
 import { DEFAULT_ERP_JOURNAL_DESC_TEMPLATE } from "@/lib/acc/erp-journal-description";
 
 /**
@@ -18,8 +17,7 @@ export async function GET() {
   }
 
   try {
-    const host = await getRequestHost();
-    const ctx = await loadErpJournalBuildContext(session.user.role, host);
+    const ctx = await loadErpJournalBuildContext();
     return NextResponse.json({
       ok: true,
       data: {

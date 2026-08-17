@@ -33,8 +33,8 @@ export async function GET() {
     const [storedEnvironment, effectiveEnvironment, profiles, uatSettings, erpPage, bcConnections] =
       await Promise.all([
         getGlobalErpInterfaceEnvironment(),
-        resolveEffectiveErpEnvironment(role, host),
-        resolveAllErpTargetProfiles(role, host),
+        resolveEffectiveErpEnvironment(),
+        resolveAllErpTargetProfiles(),
         listErpTargetSettings(),
         getBrandErpConfigPage(),
         listBcConnections(),
@@ -109,8 +109,8 @@ export async function POST(req: NextRequest) {
     const sandboxHostAllowed = isErpSandboxHostAllowed(host);
     const [storedEnvironment, effectiveEnvironment, profiles, uatSettings] = await Promise.all([
       getGlobalErpInterfaceEnvironment(),
-      resolveEffectiveErpEnvironment(role, host),
-      resolveAllErpTargetProfiles(role, host),
+      resolveEffectiveErpEnvironment(),
+      resolveAllErpTargetProfiles(),
       listErpTargetSettings(),
     ]);
 

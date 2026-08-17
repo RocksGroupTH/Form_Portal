@@ -51,7 +51,6 @@ export interface ErpJournalBuildContext {
   erpDeptCodesByTarget: Record<string, string[]>;
   deptGlOverridesByTarget: Record<string, Record<string, { accountNo: string; description: string }>>;
   erpEnvironment: "Production" | "Sandbox";
-  canUseSandbox: boolean;
 }
 
 export interface ErpJournalLine {

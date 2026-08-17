@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { canAccessAccountArea } from "@/lib/acc/access";
 import { sendErpInterfaceBatch } from "@/lib/acc/erp-interface-send";
-import { getRequestHost } from "@/lib/acc/erp-environment";
 
 /**
  * POST /api/request/accounting/erp-prep/send
@@ -30,11 +29,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const host = await getRequestHost();
     const data = await sendErpInterfaceBatch({
       interfaceTarget,
-      role: session.user.role,
-      host,
       userId: Number(session.user.id),
     });
 

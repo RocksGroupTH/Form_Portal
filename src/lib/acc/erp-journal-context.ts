@@ -2,7 +2,8 @@ import { listBrandAccounts } from "@/lib/acc/brand-account-service";
 import { listBrandBranches } from "@/lib/acc/brand-branch-service";
 import { listBrandJournalBatches } from "@/lib/acc/brand-journal-batch-service";
 import { getBrandErpConfigPage } from "@/lib/acc/brand-erp-config-service";
-import { resolveEffectiveErpEnvironment, canUseErpSandboxEnvironment } from "@/lib/acc/erp-environment";
+import { resolveEffectiveErpEnvironment } from "@/lib/acc/erp-environment";
+import type { ErpBcEnvironment } from "@/lib/acc/erp-environment-shared";
 import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
 import { listErpDepartmentsForBrands } from "@/lib/erp/dimension-sync";
 import { loadDeptGlOverridesByTarget } from "@/lib/acc/department-map-service";
@@ -27,8 +28,8 @@ import { getAccCached, putAccCached, deleteAccCachedByPrefix } from "@/lib/acc/a
 const JOURNAL_CONTEXT_CACHE_PREFIX = "acc:journal-ctx:";
 const JOURNAL_CONTEXT_CACHE_TTL_MS = 60_000;
 
-function journalContextCacheKey(role: string | null | undefined, host: string | null | undefined): string {
-  return `${JOURNAL_CONTEXT_CACHE_PREFIX}${role ?? ""}:${host ?? ""}`;
+function journalContextCacheKey(environment: ErpBcEnvironment): string {
+  return `${JOURNAL_CONTEXT_CACHE_PREFIX}${environment}`;
 }
 
 /** Bust cached journal build context after ERP account / branch settings change. */
@@ -128,11 +129,9 @@ export async function saveErpJournalDescriptionTemplate(
 }
 
 /** Primary G/L, Bank, Branch, Journal Batch + Interface ERP group metadata. */
-export async function loadErpJournalBuildContext(
-  role?: string | null,
-  host?: string | null,
-): Promise<ErpJournalBuildContext> {
-  const cacheKey = journalContextCacheKey(role, host);
+export async function loadErpJournalBuildContext(): Promise<ErpJournalBuildContext> {
+  const erpEnvironment = await resolveEffectiveErpEnvironment();
+  const cacheKey = journalContextCacheKey(erpEnvironment);
   const cached = getAccCached<ErpJournalBuildContext>(cacheKey, JOURNAL_CONTEXT_CACHE_TTL_MS);
   if (cached) return cached;
 
@@ -143,7 +142,6 @@ export async function loadErpJournalBuildContext(
     bankRows,
     branchRows,
     journalRows,
-    erpEnvironment,
     profiles,
     erpDepartmentsByTarget,
   ] = await Promise.all([
@@ -153,8 +151,7 @@ export async function loadErpJournalBuildContext(
     listBrandAccounts("bank"),
     listBrandBranches(),
     listBrandJournalBatches(),
-    resolveEffectiveErpEnvironment(role, host),
-    resolveAllErpTargetProfiles(role, host),
+    resolveAllErpTargetProfiles(),
     listErpDepartmentsForBrands(ERP_INTERFACE_BRANDS.map((b) => b.id)),
   ]);
 
@@ -219,7 +216,6 @@ export async function loadErpJournalBuildContext(
     erpDeptCodesByTarget,
     deptGlOverridesByTarget,
     erpEnvironment,
-    canUseSandbox: canUseErpSandboxEnvironment(role, host),
   };
   putAccCached(cacheKey, result);
   return result;

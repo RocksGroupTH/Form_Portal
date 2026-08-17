@@ -38,7 +38,7 @@ async function main() {
     "../../src/lib/acc/erp-journal-context"
   );
 
-  const ctx = await loadErpJournalBuildContext("System Admin", null);
+  const ctx = await loadErpJournalBuildContext();
 
   const targets = Object.keys(ctx.deptGlOverridesByTarget);
   console.log(`deptGlOverridesByTarget: ${targets.length} target key(s)`);
