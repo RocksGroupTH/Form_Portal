@@ -47,6 +47,7 @@ import {
   filterRowsByInterfaceTarget,
   ERP_INTERFACE_UNASSIGNED,
 } from "@/features/accounting/lib/erp-interface-target";
+import { selectErpSendBatchRows } from "@/features/accounting/lib/erp-send-batch";
 import { ErpPrepIssueLink } from "@/features/accounting/components/ErpPrepIssueLink";
 import type { ErpPrepIssueLinkContext } from "@/features/accounting/lib/erp-prep-issue-links";
 import {
@@ -240,7 +241,6 @@ export function ErpPrepQueue({
 }) {
   const [rows, setRows] = useState<ErpPrepRow[]>([]);
   const [queueEnvironment, setQueueEnvironment] = useState<FormEnvironmentValue | null>(null);
-  const [queueRequestIds, setQueueRequestIds] = useState<number[]>([]);
   const [journalContext, setJournalContext] = useState<ErpJournalBuildContext | null>(null);
   const [listLoading, setListLoading] = useState(true);
   const [contextLoading, setContextLoading] = useState(true);
@@ -297,13 +297,12 @@ export function ErpPrepQueue({
         }
         const listJson: {
           ok: boolean;
-          data?: { environment: FormEnvironmentValue; requestIds: number[]; rows: ErpPrepRow[] };
+          data?: { environment: FormEnvironmentValue; rows: ErpPrepRow[] };
           error?: string;
         } = await listRes.json();
         if (listJson.ok && listJson.data) {
           setRows(listJson.data.rows);
           setQueueEnvironment(listJson.data.environment);
-          setQueueRequestIds(listJson.data.requestIds);
         } else {
           toast.error(listJson.error ?? "โหลดข้อมูลไม่สำเร็จ");
         }
@@ -415,6 +414,21 @@ export function ErpPrepQueue({
     let list = filterRowsByInterfaceTarget(filteredRows, interfaceByClaim, interfaceTarget);
     return list;
   }, [filteredRows, interfaceByClaim, interfaceTarget]);
+
+  /**
+   * The ids POST …/send will actually put in the batch for this target, echoed
+   * on send so the server can refuse a click bound to a queue that has moved.
+   *
+   * Derived from `rows` — the unfiltered list GET returned — and NOT from
+   * `displayIfaceRows`. The operator's display filters change what is on screen
+   * but not what the send picks up (the dialog says so: "รวมเอกสารที่พร้อมส่ง
+   * ทั้งหมด"), so narrowing by them here would 409 a queue that is perfectly
+   * current. `selectErpSendBatchRows` is the same predicate the server applies.
+   */
+  const sendBatchRequestIds = useMemo(
+    () => selectErpSendBatchRows(rows, interfaceByClaim, interfaceTarget).map((r) => r.id),
+    [rows, interfaceByClaim, interfaceTarget],
+  );
 
   const sentMonthOptions = useMemo(() => {
     const set = new Set<string>();
@@ -704,7 +718,7 @@ export function ErpPrepQueue({
             onRequestSend={setSendTarget}
             sentMonthFilter={filters.sentMonth || undefined}
             queueEnvironment={queueEnvironment}
-            queueRequestIds={queueRequestIds}
+            batchRequestIds={sendBatchRequestIds}
           />
         </div>
       ) : (
@@ -907,6 +921,13 @@ export function ErpPrepQueue({
         onSuccess={() => {
           setSendTarget(null);
           fetchList({ silent: true });
+        }}
+        onStale={() => {
+          // A 409 means the page the operator confirmed is out of date, so the
+          // frozen ids in `sendTarget` can only 409 again. Reload the queue
+          // instead and let them re-select from what is actually there.
+          setSendTarget(null);
+          fetchList();
         }}
       />
     </div>

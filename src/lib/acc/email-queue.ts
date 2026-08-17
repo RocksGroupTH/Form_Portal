@@ -6,7 +6,10 @@ import {
   type FormEnvironmentValue,
 } from "@/lib/form-environment";
 import { listUatTesters } from "@/lib/uat-tester/service";
-import { isUatMailExempt } from "@/lib/acc/uat-mail-exempt";
+import {
+  isUatMailExempt,
+  type UatMailExemptRecord,
+} from "@/lib/acc/uat-mail-exempt";
 import { env } from "@/env";
 import { sendEmail } from "@/lib/graph";
 import { esc } from "@/lib/acc/email-templates";
@@ -42,18 +45,19 @@ export async function queueEmail(p: {
  * never be told there is anything to approve, and a UAT request could never
  * complete.
  *
- * The exception: a recipient who is themself an active `UatTester`, or is a
- * configured UAT manager (`UatTester.ManagerEmail`), gets the mail at their
- * own address — still `[UAT]`-prefixed, so it is never mistaken for a
- * production notification. `isUatMailExempt` is the pure predicate; the
- * caller gathers the active testers once per drain cycle (not once per
- * message) and passes them in. Everyone else keeps the rewrite, and the loud
- * throw when `UAT_MAIL_REDIRECT` is unset still fires for them — this must
- * fail closed, never fall back to the real recipient.
+ * The exception: a recipient who holds an active `UatTester` row of their own
+ * gets the mail at their own address — still `[UAT]`-prefixed, so it is never
+ * mistaken for a production notification. A configured UAT manager is covered
+ * by the same rule rather than by a second one; see `isUatMailExempt`.
+ * `isUatMailExempt` is the pure predicate; the caller gathers the active
+ * testers once per drain cycle (not once per message) and passes them in.
+ * Everyone else keeps the rewrite, and the loud throw when `UAT_MAIL_REDIRECT`
+ * is unset still fires for them — this must fail closed, never fall back to
+ * the real recipient.
  */
 function applyUatRedirect(
   m: { ToEmail: string; Subject: string; BodyHtml: string },
-  exemptTesters: readonly { email: string; managerEmail: string | null }[],
+  exemptTesters: readonly UatMailExemptRecord[],
 ): { to: string; subject: string; bodyHtml: string } {
   const exempt = isUatMailExempt(m.ToEmail, exemptTesters);
 
@@ -113,12 +117,27 @@ export async function processQueueOn(
 
   // Fetched once per drain cycle, not once per message — every row in this
   // batch is judged against the same tester snapshot.
-  const exemptTesters =
-    environment === "UAT" && rows.length > 0
-      ? (await listUatTesters())
-          .filter((t) => t.isActive)
-          .map((t) => ({ email: t.email, managerEmail: t.managerEmail }))
-      : [];
+  //
+  // Its own try/catch, deliberately: this read goes to Fast_Core, a different
+  // database from the one being drained. Letting it reject would abort the
+  // whole drain, and in `processQueueBoth` it would reject the `Promise.all`
+  // *after* the Production half had already sent its mail and marked the rows
+  // Sent — turning a Fast_Core hiccup into a 500 on a sweep that half
+  // succeeded. Falling back to an empty list fails closed: nobody is exempt,
+  // so every UAT message is redirected, which is the safe direction.
+  let exemptTesters: UatMailExemptRecord[] = [];
+  if (environment === "UAT" && rows.length > 0) {
+    try {
+      exemptTesters = (await listUatTesters())
+        .filter((t) => t.isActive)
+        .map((t) => ({ email: t.email }));
+    } catch (err) {
+      console.error(
+        "[acc/email-queue] UatTester lookup failed — redirecting every UAT message in this batch",
+        err,
+      );
+    }
+  }
 
   let sent = 0,
     failed = 0;

@@ -60,17 +60,21 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // The environment this list resolved to, and the exact ids in it — POST
-    // …/send is required to echo both back unchanged. Under per-viewer UAT
-    // routing, two people can load this same route into different databases;
-    // without this, the sender's own cookie alone decided which Business
-    // Central instance a batch reached. See "ERP send" in
-    // docs/superpowers/specs/2026-08-18-parallel-uat-design.md.
+    // The environment this list resolved to — POST …/send is required to echo
+    // it back unchanged. Under per-viewer UAT routing, two people can load this
+    // same route into different databases; without this, the sender's own
+    // cookie alone decided which Business Central instance a batch reached. See
+    // "ERP send" in docs/superpowers/specs/2026-08-18-parallel-uat-design.md.
+    //
+    // No flat `requestIds` alongside it: what the send compares against is the
+    // *batch* — one interface target, ready, not already Sent — which the
+    // client narrows out of `rows` with `selectErpSendBatchRows`, the same
+    // predicate the send applies. A duplicate list of every id in `rows` was
+    // both redundant with `rows` and the wrong set to compare.
     return NextResponse.json({
       ok: true,
       data: {
         environment,
-        requestIds: data.map((r) => r.id),
         rows: data,
       },
     });

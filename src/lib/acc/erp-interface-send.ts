@@ -8,13 +8,40 @@ import {
 import { listErpPrepRows, invalidatePrepDeptContextCache } from "@/lib/acc/erp-prep-service";
 import { buildErpJournalSections } from "@/lib/acc/erp-journal-builder";
 import { resolveErpTargetProfile } from "@/lib/acc/erp-target-profile";
-import { filterRowsByInterfaceTarget } from "@/features/accounting/lib/erp-interface-target";
+import {
+  sameRequestIdSet,
+  selectErpSendBatchRows,
+} from "@/features/accounting/lib/erp-send-batch";
 import { postBcPpapJournalCreateFromJson } from "@/lib/bc/bc-odata";
 import type { ErpInterfaceStatus } from "@/features/accounting/constants";
+
+/**
+ * The queue moved between the GET that drew the page and the click: documents
+ * were approved, corrected or sent by someone else, so this target's ready set
+ * is no longer the one the operator confirmed. Distinct from the environment
+ * message on purpose — nothing about the viewer's environment changed here, and
+ * telling them it did sent them looking for a problem that does not exist.
+ */
+export const ERP_QUEUE_DRIFT_ERROR =
+  "รายการที่พร้อมส่งเปลี่ยนไปตั้งแต่เปิดหน้านี้ — ระบบโหลดคิวใหม่ให้แล้ว กรุณาตรวจสอบแล้วส่งอีกครั้ง";
+
+/** Thrown by `sendErpInterfaceBatch` alone, so the route can answer 409 rather than 400. */
+export class ErpQueueDriftError extends Error {
+  constructor() {
+    super(ERP_QUEUE_DRIFT_ERROR);
+    this.name = "ErpQueueDriftError";
+  }
+}
 
 export interface SendErpInterfaceBatchInput {
   interfaceTarget: string;
   userId: number;
+  /**
+   * The ids the operator's queue showed as ready-to-send for this target,
+   * echoed back from the client. Nothing is sent unless they still match the
+   * batch this call picks — see the drift check below.
+   */
+  expectedRequestIds: readonly number[];
 }
 
 export interface SendErpInterfaceResult {
@@ -160,9 +187,24 @@ export async function sendErpInterfaceBatch(
 
   const ctx = await loadErpJournalBuildContext();
   const rows = await listErpPrepRows();
-  const interfaceByClaim = ctx.interfaceByClaim;
-  const filtered = filterRowsByInterfaceTarget(rows, interfaceByClaim, target);
-  const queueRows = filtered.filter((r) => r.prepStatus === "ready" && r.erpInterfaceStatus !== "Sent");
+  const queueRows = selectErpSendBatchRows(rows, ctx.interfaceByClaim, target);
+
+  // Bind the click to the batch that was on screen. Checked here rather than in
+  // the route so it reuses the read the send already performs: `listErpPrepRows`
+  // is a GROUP BY with three correlated subqueries over the full Approved
+  // history, and the route used to run a second copy of it for this comparison
+  // alone. Checking it here also means the comparison is over the batch — this
+  // target, ready, not already Sent — instead of over every Approved row in
+  // Accounting, so an approval for another interface target no longer 409s a
+  // queue that is perfectly current.
+  //
+  // This is a staleness gate, not the double-send guard: two tabs sending the
+  // same unchanged batch both pass here, and the `st === "Sent"` check further
+  // down is what stops the second one.
+  if (!sameRequestIdSet(queueRows.map((r) => r.id), input.expectedRequestIds)) {
+    throw new ErpQueueDriftError();
+  }
+
   if (queueRows.length === 0) {
     throw new Error("ไม่มีเอกสารที่พร้อมส่งในรอบนี้");
   }

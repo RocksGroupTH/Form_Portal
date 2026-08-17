@@ -13,6 +13,16 @@ import { resolveFormEnvironment } from "@/lib/form-environment";
  * resolved environment here, instead of relying on a row that only exists for
  * one year, makes the separation structural — it holds for every year, not
  * just the one somebody remembered to seed.
+ *
+ * **Headroom, so the next person meets this as a documented bound rather than
+ * a surprise:** the running number is 5 digits, so UAT's first number for a
+ * year is `09001` and Production's is `00001`. The two series stay disjoint
+ * only while Production issues at most 9000 numbers for one Prefix in one year
+ * — 2026 is at TOF≈46, so the margin is wide, but it is a ceiling, not an
+ * invariant. Past it, a Production number would land inside UAT's band and the
+ * printed numbers would collide. **Row ids never collide regardless**: that
+ * separation is migration 061's 900000 identity offset, which is independent
+ * of this floor (see `isUatId`, `src/lib/form-environment/uat-identity.ts`).
  */
 const UAT_SEQUENCE_FLOOR = 9000;
 
