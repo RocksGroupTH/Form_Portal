@@ -560,6 +560,16 @@ html {
   color: var(--text-heading);
 }
 
+/* Settings → Form Environment switches — keyboard focus ring.
+   An inline style cannot express :focus-visible, and the ring has to follow the
+   theme, so the one rule that needs both lives here. Turning a form's
+   Production switch off is consequential; a keyboard user must be able to see
+   which of the two switches in a row they are about to press. */
+.env-switch:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-action);
+}
+
 /* ===== Accounting feature — Sky accent scope ===== */
 /* Overrides only the accent/action/nav-active tokens inside .acc-theme.
    All other pages are completely unaffected. */

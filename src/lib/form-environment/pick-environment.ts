@@ -151,3 +151,39 @@ export function environmentWritable(
   const switches = form ?? PRODUCTION_ONLY;
   return environment === "UAT" ? switches.uatEnabled : switches.productionEnabled;
 }
+
+/**
+ * Whether a catalogue should show this form as **not yet open** rather than not
+ * show it at all.
+ *
+ * A form whose UAT switch is on while Production is off is being piloted: it is
+ * real, someone is working on it, and it will open. Hiding it outright tells an
+ * ordinary user nothing — worse, searching its code returns "no results", which
+ * reads as "no such form" instead of "not yet". So the catalogue renders it,
+ * greyed and unclickable, and the card says what is true.
+ *
+ * Both exclusions are deliberate:
+ *
+ * - **Both switches off is not "soon".** That form is closed and nobody is
+ *   piloting it. "Soon" is a promise, and this predicate must not make one on
+ *   behalf of work that does not exist — it stays hidden.
+ * - **A tester in UAT mode never sees "soon".** The form they are piloting is
+ *   simply open to them; they are the pilot. And a prod-on/uat-off form is not
+ *   "soon" for them either — it is just not part of the test, and stays hidden
+ *   exactly as it was.
+ *
+ * Fail-open, like the rest of this module: a form with no row is PRODUCTION_ONLY
+ * and therefore available, never deferred. A caller with no payload at all
+ * should default to `false` for the same reason — a failed fetch must not put a
+ * watermark on a form that works.
+ *
+ * Says nothing about writing. `environmentWritable` remains the sole authority
+ * there, so a visible coming-soon card can never become a writable one.
+ *
+ * Pure: every input is supplied by the caller.
+ */
+export function isComingSoon(form: FormSwitches | null, viewerUatMode: boolean): boolean {
+  if (viewerUatMode) return false;
+  const switches = form ?? PRODUCTION_ONLY;
+  return !switches.productionEnabled && switches.uatEnabled;
+}

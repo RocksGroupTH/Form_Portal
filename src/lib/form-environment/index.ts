@@ -23,6 +23,7 @@ export {
   boundIdEnvironment,
   environmentWritable,
   viewerListEnvironment,
+  isComingSoon,
   PRODUCTION_ONLY,
 } from "./pick-environment";
 export { requestIdFromPath, environmentFromPath } from "./request-id";

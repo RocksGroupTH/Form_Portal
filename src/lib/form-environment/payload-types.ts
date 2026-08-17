@@ -15,6 +15,13 @@ export interface FormAccess {
   environment: FormEnvironment;
   /** Whether the viewer may use the form at all right now. */
   available: boolean;
+  /**
+   * Open for testing but not yet open in production, for a viewer who is not a
+   * tester in UAT mode: the catalogue renders it greyed and unclickable rather
+   * than hiding it. Never true at the same time as `available` — see
+   * `isComingSoon` in `./pick-environment` for why each exclusion is there.
+   */
+  comingSoon: boolean;
 }
 
 /**

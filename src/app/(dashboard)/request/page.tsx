@@ -38,13 +38,21 @@ function RequestHubCard({
   item,
   Icon,
   fromAdmin,
+  comingSoon,
 }: {
   item: (typeof REQUEST_CARDS)[number];
   Icon: React.ComponentType<{ size?: number; style?: React.CSSProperties }> | undefined;
   /** Tells the destination's Back button to return to the filtered admin view. */
   fromAdmin: boolean;
+  /**
+   * The form is open in UAT and closed in Production for this viewer. Renders
+   * the same not-yet-available card as the static `item.soon` flag, because to
+   * whoever is looking they mean the same thing: the form is real and it is not
+   * open yet.
+   */
+  comingSoon: boolean;
 }) {
-  const disabled = !!item.soon;
+  const disabled = !!item.soon || comingSoon;
   const base = requestCardHref(item);
   const href = fromAdmin ? withRequestReturn(base, "admin") : base;
 
@@ -117,17 +125,16 @@ function RequestHubCard({
   if (disabled) {
     return (
       <div
-        className="relative rounded-xl p-5 overflow-hidden cursor-not-allowed select-none"
+        className="relative rounded-xl p-5 overflow-hidden cursor-default select-none"
         style={{
           background: "color-mix(in srgb, var(--bg-card-alt) 88%, var(--text-muted))",
           borderWidth: 1,
           borderStyle: "solid",
           borderColor: "color-mix(in srgb, var(--border-card) 55%, var(--text-faint))",
           boxShadow: "none",
-          filter: "grayscale(1)",
         }}
-        aria-disabled
-        title="Coming soon"
+        aria-disabled="true"
+        title="ยังไม่เปิดให้ใช้งาน"
       >
         <div
           className="absolute inset-0 flex items-center justify-center pointer-events-none z-[2]"
@@ -141,6 +148,10 @@ function RequestHubCard({
           </span>
         </div>
         <div className="relative z-[1]">{body}</div>
+        {/* The watermark is decorative, so it is the only thing saying "not
+            yet" to a sighted reader. aria-disabled alone is inert on a plain
+            div, hence a real sentence for a screen reader. */}
+        <span className="sr-only">ยังไม่เปิดให้ใช้งาน</span>
       </div>
     );
   }
@@ -175,6 +186,13 @@ export default function RequestHubPage() {
   // show. Only an explicit `available: false` filters a card out.
   const isFormAvailable = (badge: string | undefined) =>
     !badge || (forms?.[badge]?.available ?? true);
+  /**
+   * Unavailable, but visibly so: a form in its UAT pilot. Defaults to false
+   * for the same reason `isFormAvailable` defaults to true — a fetch failure
+   * must never invent a state, and here the safe invention is "no watermark".
+   */
+  const isFormComingSoon = (badge: string | undefined) =>
+    !!badge && (forms?.[badge]?.comingSoon ?? false);
 
   const visibleRequestCards = REQUEST_CARDS.filter(
     (item) =>
@@ -186,7 +204,11 @@ export default function RequestHubPage() {
       // stay reachable even when the form's switch that gates *filing* is
       // off — otherwise turning off AP-1 filing for a pilot would also lock
       // its own approvers out of the queue that clears the pilot's requests.
-      (item.manage || isFormAvailable(item.badge)) &&
+      //
+      // `isFormComingSoon` widens the same filter rather than bypassing it: a
+      // form being piloted is still unavailable, it is just worth showing that
+      // it exists and is coming. RequestHubCard renders it dead.
+      (item.manage || isFormAvailable(item.badge) || isFormComingSoon(item.badge)) &&
       (!isGroupView ||
         (item.group ?? "General").toLowerCase() === (groupFilter ?? "").trim().toLowerCase()),
   );
@@ -282,6 +304,12 @@ export default function RequestHubPage() {
                       item={item}
                       Icon={Icon}
                       fromAdmin={isAdminView}
+                      // A management card shares its form's badge but is
+                      // exempt from availability (see the filter above), so it
+                      // must not be greyed out by that form's pilot either —
+                      // the queue is exactly where a pilot's requests get
+                      // worked.
+                      comingSoon={!item.manage && isFormComingSoon(item.badge)}
                     />
                   );
                 })}

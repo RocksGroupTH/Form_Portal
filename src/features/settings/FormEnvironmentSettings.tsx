@@ -89,8 +89,25 @@ function transitionDescription(field: SwitchField, next: boolean): ReactNode {
   );
 }
 
-/** A compact on/off pill for one switch — Toggle.tsx is too large for an 11px table cell. */
-function SwitchPill({
+/**
+ * One form's Production or UAT switch: a track with a knob that slides, the
+ * label beside it, and the Thai word for the state it is in.
+ *
+ * It replaced a dot-and-word pill that carried its state in fill colour alone.
+ * On a table of them that read as a row of status labels rather than controls,
+ * and its off state — a neutral grey — looked like a disabled button rather
+ * than a switch that is off. Hiding a live form from every user is not
+ * something to do by accident, so the state is now said three ways: knob
+ * position, `เปิด`/`ปิด`, and colour. A reader who cannot separate the green
+ * from the red from the grey still gets the first two.
+ *
+ * `ui/Toggle` is not reused: it is a full-width settings row with a 42px track,
+ * far too large for two switches in one 11px table cell, and it flips on click
+ * where this one must open the confirmation dialog instead. `aria-checked`
+ * therefore reports the saved state, which does not change until the dialog is
+ * confirmed — that is the honest reading of "is this form on right now".
+ */
+function EnvironmentSwitch({
   label,
   on,
   onBg,
@@ -108,13 +125,35 @@ function SwitchPill({
   return (
     <button
       type="button"
+      role="switch"
+      aria-checked={on}
       disabled={disabled}
       onClick={onClick}
-      className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold border-none disabled:cursor-default disabled:opacity-60 enabled:cursor-pointer"
+      className="env-switch inline-flex items-center gap-1.5 py-1 pl-1 pr-2.5 rounded-full text-[10px] whitespace-nowrap border-none transition-colors disabled:cursor-default disabled:opacity-60 enabled:cursor-pointer"
       style={{ background: on ? onBg : "var(--bg-badge)", color: on ? onText : "var(--text-muted)" }}
     >
-      <span className="inline-block rounded-full" style={{ width: 6, height: 6, background: "currentColor" }} />
-      {label}
+      {/* Track and knob are both currentColor, so they stay legible against
+          whichever of the three token pairs the caller passed without naming a
+          fourth colour that would have to be checked in two themes. */}
+      <span
+        aria-hidden
+        className="relative inline-block shrink-0 rounded-full"
+        style={{ width: 24, height: 14, background: "color-mix(in srgb, currentColor 25%, transparent)" }}
+      >
+        <span
+          className="absolute rounded-full transition-transform"
+          style={{
+            width: 10,
+            height: 10,
+            top: 2,
+            left: 2,
+            background: "currentColor",
+            transform: on ? "translateX(10px)" : "translateX(0)",
+          }}
+        />
+      </span>
+      <span className="font-bold">{label}</span>
+      <span className="font-medium">{on ? "เปิด" : "ปิด"}</span>
     </button>
   );
 }
@@ -251,9 +290,9 @@ export function FormEnvironmentSettings() {
                     <td className="px-4 py-2.5 text-right tabular-nums" style={{ color: "var(--text-muted)" }}>
                       {row.uatCount.toLocaleString()}
                     </td>
-                    <td className="px-4 py-2.5">
+                    <td className="px-4 py-2.5 whitespace-nowrap">
                       <div className="flex items-center gap-1.5">
-                        <SwitchPill
+                        <EnvironmentSwitch
                           label="Production"
                           on={row.productionEnabled}
                           onBg="var(--status-ok-bg)"
@@ -264,7 +303,7 @@ export function FormEnvironmentSettings() {
                             setPending({ row, field: "production", next: !row.productionEnabled });
                           }}
                         />
-                        <SwitchPill
+                        <EnvironmentSwitch
                           label="UAT"
                           on={row.uatEnabled}
                           onBg="var(--status-bad-bg)"

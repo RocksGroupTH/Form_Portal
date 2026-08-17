@@ -136,6 +136,128 @@ function PendingLink({ href, Icon, title, subtitle, count }: {
   );
 }
 
+/**
+ * One accounting form on the catalogue.
+ *
+ * A form still in its UAT pilot is rendered rather than hidden: recessed,
+ * watermarked `Soon`, and not a link. The state is "not yet", and a card that
+ * is simply missing cannot say that — someone searching "AP-17" would read the
+ * empty result as "no such form". The treatment matches the Request hub's
+ * not-yet-available card so the same form looks the same in both places.
+ */
+function AccountingFormCard({
+  code,
+  name,
+  desc,
+  href,
+  Icon,
+  comingSoon,
+}: {
+  code: string;
+  name: string;
+  desc: string;
+  href: string;
+  Icon: React.ComponentType<{ size?: number }>;
+  comingSoon: boolean;
+}) {
+  const body = (
+    <>
+      <span
+        className="flex items-center justify-center shrink-0"
+        style={{
+          width: 34, height: 34,
+          borderRadius: "var(--radius-tile)",
+          // Same two mixes the Request hub's not-yet-available card uses, so
+          // the icon tile and code chip read identically on both surfaces —
+          // plain --bg-badge would nearly vanish against the recessed card.
+          background: comingSoon
+            ? "color-mix(in srgb, var(--text-faint) 22%, var(--bg-card-alt))"
+            : "var(--status-pending-bg)",
+          color: comingSoon ? "var(--text-faint)" : "var(--status-pending-text)",
+        }}
+      >
+        <Icon size={17} />
+      </span>
+      <span className="min-w-0">
+        <span
+          className="inline-block text-[9.5px] font-extrabold px-1.5 py-0.5 mb-1"
+          style={{
+            borderRadius: 6,
+            background: comingSoon
+              ? "color-mix(in srgb, var(--text-faint) 20%, transparent)"
+              : "var(--bg-badge)",
+            color: comingSoon ? "var(--text-faint)" : "var(--text-secondary)",
+          }}
+        >
+          {code}
+        </span>
+        <span
+          className="block text-[13px] font-bold"
+          style={{ color: comingSoon ? "var(--text-muted)" : "var(--text-primary)" }}
+        >
+          {name}
+        </span>
+        <span
+          className="block text-[11px] mt-0.5"
+          style={{ color: comingSoon ? "var(--text-faint)" : "var(--text-muted)" }}
+        >
+          {desc}
+        </span>
+      </span>
+      {/* No environment chip while the form is coming soon: for this viewer the
+          resolver answers "Production", and stamping PRO on a card production
+          has not opened yet would contradict the watermark next to it. */}
+      {!comingSoon && <FormEnvironmentChip formCode={code} className="self-start ml-auto" />}
+    </>
+  );
+
+  if (comingSoon) {
+    return (
+      <div
+        className="relative overflow-hidden flex gap-3 items-start p-3.5 cursor-default select-none"
+        style={{
+          background: "color-mix(in srgb, var(--bg-card-alt) 88%, var(--text-muted))",
+          borderRadius: "var(--radius-card)",
+          borderWidth: 1,
+          borderStyle: "solid",
+          borderColor: "color-mix(in srgb, var(--border-card) 55%, var(--text-faint))",
+          boxShadow: "none",
+        }}
+        aria-disabled="true"
+        title="ยังไม่เปิดให้ใช้งาน"
+      >
+        {body}
+        <span className="absolute inset-0 flex items-center justify-center pointer-events-none" aria-hidden>
+          <span
+            className="text-[32px] sm:text-[38px] font-black uppercase tracking-[0.22em] -rotate-[16deg]"
+            style={{ color: "var(--text-muted)", opacity: 0.26 }}
+          >
+            Soon
+          </span>
+        </span>
+        {/* The watermark is decorative and aria-disabled is inert on a plain
+            div, so this sentence is the only thing a screen reader gets. */}
+        <span className="sr-only">ยังไม่เปิดให้ใช้งาน</span>
+      </div>
+    );
+  }
+
+  return (
+    <Link
+      href={href}
+      className="flex gap-3 items-start p-3.5 no-underline"
+      style={{
+        background: "var(--bg-card)",
+        borderRadius: "var(--radius-card)",
+        boxShadow: "var(--shadow-card)",
+        border: "1px solid var(--border-card)",
+      }}
+    >
+      {body}
+    </Link>
+  );
+}
+
 function SectionLabel({ title, action }: { title: string; action?: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between mt-6 mb-2.5">
@@ -167,6 +289,12 @@ export function HomeCatalogue() {
   // available — a fetch failure must never hide a form that would otherwise
   // show. Only an explicit `available: false` filters a form out.
   const isFormAvailable = (code: string) => forms?.[code]?.available ?? true;
+  /**
+   * Unavailable, but visibly so: a form in its UAT pilot. Defaults to false for
+   * the same reason `isFormAvailable` defaults to true — a fetch failure must
+   * never invent a state, and here the safe invention is "no watermark".
+   */
+  const isFormComingSoon = (code: string) => forms?.[code]?.comingSoon ?? false;
 
   const hrefWithBrand = (href: string) => {
     const current = new URLSearchParams(sp.toString());
@@ -179,12 +307,19 @@ export function HomeCatalogue() {
   const matches = (...parts: Array<string | null | undefined>) =>
     q === "" || parts.some((p) => (p ?? "").toLowerCase().includes(q));
 
-  // Kept separate from the search-filtered list below so the empty state can
-  // tell "nothing matches your search" apart from "nothing is available at
-  // all" — a tester in UAT mode who types anything into the search box must
-  // still see the UAT explanation, not a false "no match" for their query.
-  const availableAccounting = ACCOUNTING_FORMS.filter((f) => isFormAvailable(f.code));
-  const accounting = availableAccounting.filter((f) => matches(f.code, f.name, f.desc));
+  // Everything this viewer gets a card for — usable now, or visibly not yet.
+  // A coming-soon form is rendered, so it has to count as present here or the
+  // "nothing is available" line below would appear on a page that is plainly
+  // showing a card.
+  //
+  // Kept separate from the search-filtered list so the empty state can tell
+  // "nothing matches your search" apart from "nothing is here at all" — a
+  // tester in UAT mode who types anything into the search box must still see
+  // the UAT explanation, not a false "no match" for their query.
+  const shownAccounting = ACCOUNTING_FORMS.filter(
+    (f) => isFormAvailable(f.code) || isFormComingSoon(f.code),
+  );
+  const accounting = shownAccounting.filter((f) => matches(f.code, f.name, f.desc));
 
   const name = session?.user?.nickname || session?.user?.name || "";
 
@@ -336,66 +471,35 @@ export function HomeCatalogue() {
           />
           <div className="grid gap-2.5 sm:grid-cols-2">
             {accounting.map(({ code, name: formName, desc, href, Icon }) => (
-              <Link
+              <AccountingFormCard
                 key={code}
+                code={code}
+                name={formName}
+                desc={desc}
                 href={hrefWithBrand(href)}
-                className="flex gap-3 items-start p-3.5 no-underline"
-                style={{
-                  background: "var(--bg-card)",
-                  borderRadius: "var(--radius-card)",
-                  boxShadow: "var(--shadow-card)",
-                  border: "1px solid var(--border-card)",
-                }}
-              >
-                <span
-                  className="flex items-center justify-center shrink-0"
-                  style={{
-                    width: 34, height: 34,
-                    borderRadius: "var(--radius-tile)",
-                    background: "var(--status-pending-bg)",
-                    color: "var(--status-pending-text)",
-                  }}
-                >
-                  <Icon size={17} />
-                </span>
-                <span className="min-w-0">
-                  <span
-                    className="inline-block text-[9.5px] font-extrabold px-1.5 py-0.5 mb-1"
-                    style={{
-                      borderRadius: 6,
-                      background: "var(--bg-badge)",
-                      color: "var(--text-secondary)",
-                    }}
-                  >
-                    {code}
-                  </span>
-                  <span className="block text-[13px] font-bold" style={{ color: "var(--text-primary)" }}>
-                    {formName}
-                  </span>
-                  <span className="block text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-                    {desc}
-                  </span>
-                </span>
-                <FormEnvironmentChip formCode={code} className="self-start ml-auto" />
-              </Link>
+                Icon={Icon}
+                comingSoon={isFormComingSoon(code)}
+              />
             ))}
           </div>
         </>
       )}
 
-      {/* Branch on availableAccounting, not on q: a search that matches nothing
-          among the forms actually available to this viewer is a real "no
-          match" (search reason), but if nothing was available before the
-          search even ran, that's true regardless of what was typed — a
-          tester in UAT mode who types anything must still see why, not a
-          false "no match for your search". */}
-      {accounting.length === 0 && availableAccounting.length > 0 && (
+      {/* Branch on shownAccounting, not on q: a search that matches nothing
+          among the forms this viewer gets a card for is a real "no match"
+          (search reason), but if there was nothing to show before the search
+          even ran, that's true regardless of what was typed — a tester in UAT
+          mode who types anything must still see why, not a false "no match for
+          your search". A coming-soon form counts as shown, so searching
+          "AP-17" while it is being piloted finds the Soon card rather than
+          this line. */}
+      {accounting.length === 0 && shownAccounting.length > 0 && (
         <p className="text-[12px] mt-8 text-center" style={{ color: "var(--text-muted)" }}>
           ไม่พบฟอร์มที่ตรงกับ &ldquo;{query}&rdquo;
         </p>
       )}
 
-      {availableAccounting.length === 0 && (
+      {shownAccounting.length === 0 && (
         <p className="text-[12px] mt-8 text-center" style={{ color: "var(--text-muted)" }}>
           {viewer?.uatMode
             ? "คุณอยู่ในโหมด UAT แต่ยังไม่มีฟอร์มบัญชีใดเปิดให้ทดสอบในขณะนี้"
