@@ -112,17 +112,14 @@ export function Navbar() {
         {/* Left: Logo */}
         <div ref={leftRef} className="flex items-center gap-3 shrink-0">
           <Link href={hrefWithBrand("/")} className="flex items-center gap-2 no-underline">
-            <span
-              className="flex items-center justify-center rounded-[7px] font-extrabold text-white"
-              style={{
-                width: 22,
-                height: 22,
-                fontSize: 12,
-                background: "linear-gradient(140deg, var(--mark-from), var(--mark-to))",
-              }}
-            >
-              F
-            </span>
+            {/* The Rocks Group mark, same asset as the favicon and the login lockup. */}
+            <img
+              src="/brandlogo/rocks.png"
+              alt="Form Portal"
+              width={24}
+              height={24}
+              className="shrink-0 object-contain"
+            />
             <span className="text-[14px] font-bold whitespace-nowrap" style={{ color: "var(--text-heading)" }}>
               Form Portal
             </span>
@@ -225,17 +222,13 @@ export function Navbar() {
 
         {/* Center: Logo */}
         <Link href={hrefWithBrand("/")} className="flex items-center gap-1.5 no-underline">
-          <span
-            className="flex items-center justify-center rounded-[7px] font-extrabold text-white"
-            style={{
-              width: 20,
-              height: 20,
-              fontSize: 11,
-              background: "linear-gradient(140deg, var(--mark-from), var(--mark-to))",
-            }}
-          >
-            F
-          </span>
+          <img
+            src="/brandlogo/rocks.png"
+            alt="Form Portal"
+            width={22}
+            height={22}
+            className="shrink-0 object-contain"
+          />
           <span className="text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>
             Form Portal
           </span>
