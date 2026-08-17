@@ -33,7 +33,7 @@ export default function FormEnvironmentPage() {
       <PageHeaderBar
         icon={FlaskConical}
         title="Form Environment"
-        subtitle="กำหนดว่าฟอร์มไหนทำงานบน Production หรือ UAT"
+        subtitle="เปิด/ปิด Production และ UAT ของแต่ละฟอร์มแยกกัน"
         backHref="/settings"
       />
       <FormEnvironmentSettings />

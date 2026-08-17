@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { ReactNode } from "react";
 import useSWR from "swr";
 import { AlertTriangle, CheckCircle2, Database, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -8,16 +9,17 @@ import { Dialog } from "@/components/ui/Dialog";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
-/** Typed, not clicked: the switch moves where live requests are written. */
+/** Typed, not clicked: turning Production off hides a live form from everyone. */
 const CONFIRM_WORD = "Confirm";
 
-type EnvironmentValue = "Production" | "UAT";
+type SwitchField = "production" | "uat";
 
 interface FormEnvironmentRow {
   formCode: string;
   formNameEn: string;
   formNameTh: string;
-  environment: EnvironmentValue;
+  productionEnabled: boolean;
+  uatEnabled: boolean;
   updatedBy: number | null;
   updatedByName: string | null;
   updatedAt: string | null;
@@ -46,6 +48,77 @@ function formatStamp(raw: string | null): string {
   return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+/** "Production" / "UAT" — the label a switch shows and the toast names. */
+function fieldLabel(field: SwitchField): string {
+  return field === "production" ? "Production" : "UAT";
+}
+
+/** เปิด / ปิด — the direction a switch is moving. */
+function directionLabel(next: boolean): string {
+  return next ? "เปิด" : "ปิด";
+}
+
+/** The one transition that hides a live form from everyone — gated by typed Confirm. */
+function isProductionOff(field: SwitchField, next: boolean): boolean {
+  return field === "production" && !next;
+}
+
+/** What this specific transition does — shown in the confirmation dialog body. */
+function transitionDescription(field: SwitchField, next: boolean): ReactNode {
+  if (field === "production") {
+    return next ? (
+      <>
+        ผู้ใช้ทั่วไปจะเห็นและใช้งานฟอร์มนี้ได้ตามปกติ บนฐาน <b>Production</b>
+      </>
+    ) : (
+      <>
+        ฟอร์มนี้จะถูก<b>ซ่อนจากผู้ใช้ทั่วไปทั้งหมดทันที</b> จนกว่าจะเปิดกลับ — สวิตช์ UAT ไม่เกี่ยวข้องและไม่เปลี่ยนตาม
+      </>
+    );
+  }
+  return next ? (
+    <>
+      ผู้ทดสอบที่เปิดโหมด UAT ของตัวเองจะใช้งานฟอร์มนี้ได้ คำขอที่สร้างจะถูกเขียนลงฐาน <b>UAT</b> และสมุดรายวัน
+      จะถูกส่งเข้า Business Central <b>Sandbox</b> — ผู้ใช้ทั่วไปบน Production ไม่ได้รับผลกระทบ
+    </>
+  ) : (
+    <>
+      ผู้ทดสอบในโหมด UAT จะ<b>ใช้งานฟอร์มนี้ไม่ได้อีกต่อไป</b> ผู้ใช้ทั่วไปบน Production ไม่ได้รับผลกระทบ และคำขอ
+      เดิมใน UAT ยังอยู่เหมือนเดิม
+    </>
+  );
+}
+
+/** A compact on/off pill for one switch — Toggle.tsx is too large for an 11px table cell. */
+function SwitchPill({
+  label,
+  on,
+  onBg,
+  onText,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  on: boolean;
+  onBg: string;
+  onText: string;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold border-none disabled:cursor-default disabled:opacity-60 enabled:cursor-pointer"
+      style={{ background: on ? onBg : "var(--bg-badge)", color: on ? onText : "var(--text-muted)" }}
+    >
+      <span className="inline-block rounded-full" style={{ width: 6, height: 6, background: "currentColor" }} />
+      {label}
+    </button>
+  );
+}
+
 export function FormEnvironmentSettings() {
   const { data, mutate, isLoading } = useSWR<{ ok: boolean; data: FormEnvironmentRow[]; error?: string }>(
     "/api/settings/form-environment",
@@ -57,25 +130,27 @@ export function FormEnvironmentSettings() {
   );
 
   const [saving, setSaving] = useState<string | null>(null);
-  /** The switch waits here until the word is typed. */
-  const [pending, setPending] = useState<{ row: FormEnvironmentRow; target: EnvironmentValue } | null>(null);
+  /** The switch waits here until confirmed — typed, for Production off; clicked, otherwise. */
+  const [pending, setPending] = useState<{ row: FormEnvironmentRow; field: SwitchField; next: boolean } | null>(
+    null,
+  );
   const [confirmText, setConfirmText] = useState("");
 
   const rows = data?.ok ? data.data ?? [] : [];
   const loadError = data && !data.ok ? data.error ?? "โหลดข้อมูลไม่สำเร็จ" : null;
   const coverage = coverageRes?.ok ? coverageRes.data : null;
 
-  const setEnvironment = async (formCode: string, environment: EnvironmentValue) => {
+  const setFlag = async (formCode: string, field: SwitchField, next: boolean) => {
     setSaving(formCode);
     try {
       const res = await fetch("/api/settings/form-environment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ formCode, environment }),
+        body: JSON.stringify({ formCode, field, value: next }),
       });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error ?? "บันทึกไม่สำเร็จ");
-      toast.success(`${formCode} → ${environment}`);
+      toast.success(`${formCode} · ${fieldLabel(field)} ${directionLabel(next)}`);
       setPending(null);
       setConfirmText("");
       await mutate();
@@ -88,17 +163,18 @@ export function FormEnvironmentSettings() {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* ── Warning: switching does not move existing requests ── */}
+      {/* ── Info: what the two switches do ── */}
       <div
         className="rounded-xl px-4 py-3 flex items-start gap-2.5"
         style={{ background: "var(--status-pending-bg)", color: "var(--status-pending-text)" }}
       >
         <AlertTriangle size={15} className="shrink-0 mt-0.5" />
         <p className="text-[12px] leading-relaxed">
-          เปลี่ยนเป็น UAT แล้ว request เดิมที่อยู่ใน Production <b>ไม่ย้ายตาม</b> — ยังอยู่ที่เดิมและเปิดดูได้
-          ฟอร์มแค่เริ่มเขียนที่ใหม่ สลับกลับก็เช่นกัน request ที่ทำใน UAT จะค้างอยู่ใน UAT พร้อมป้าย UAT
-          การตั้งฟอร์มเป็น UAT ยังส่งผลไปถึง Business Central ด้วย — สมุดรายวันของฟอร์มนั้นจะถูกส่งไปที่ Sandbox แทน Production
-          และระหว่างที่ AP-1 เป็น UAT คิว ERP Prep ที่เห็นจะเป็นคิวของ UAT ทำให้ <b>ไม่สามารถใช้ประมวลผลการจ่ายเงินจริงได้</b>
+          Production และ UAT ของแต่ละฟอร์ม<b>เปิด/ปิดแยกจากกัน</b> — Production คือฟอร์มที่ผู้ใช้ทั่วไปเห็นและใช้งาน
+          ได้ ส่วน UAT คือฟอร์มที่ผู้ทดสอบซึ่งเปิดโหมด UAT ของตัวเองใช้งานได้เท่านั้น ไม่ว่าจะสลับสวิตช์ไหน{" "}
+          <b>คำขอเดิมจะไม่ถูกย้ายฐานข้อมูล</b> — มีเพียงคำขอใหม่ของผู้ทดสอบในโหมด UAT เท่านั้นที่จะถูกเขียนลงฐาน UAT
+          และส่งสมุดรายวันเข้า Business Central <b>Sandbox</b> แทน Production ส่วนการปิด Production จะ
+          <b>ซ่อนฟอร์มนี้จากผู้ใช้ทุกคนทันที</b>
         </p>
       </div>
 
@@ -175,36 +251,31 @@ export function FormEnvironmentSettings() {
                       {row.uatCount.toLocaleString()}
                     </td>
                     <td className="px-4 py-2.5">
-                      <div
-                        className="inline-flex rounded-lg p-0.5 gap-0.5"
-                        style={{ background: "var(--bg-badge)" }}
-                      >
-                        {(["Production", "UAT"] as EnvironmentValue[]).map((value) => {
-                          const active = row.environment === value;
-                          const isUat = value === "UAT";
-                          return (
-                            <button
-                              key={value}
-                              disabled={saving === row.formCode || active}
-                              onClick={() => {
-                                setConfirmText("");
-                                setPending({ row, target: value });
-                              }}
-                              className="px-2.5 py-1 rounded-md text-[10px] font-bold border-none disabled:cursor-default enabled:cursor-pointer"
-                              style={
-                                active
-                                  ? isUat
-                                    ? { background: "var(--status-bad-bg)", color: "var(--status-bad-text)" }
-                                    : { background: "var(--status-ok-bg)", color: "var(--status-ok-text)" }
-                                  : { background: "transparent", color: "var(--text-muted)" }
-                              }
-                            >
-                              {value}
-                            </button>
-                          );
-                        })}
+                      <div className="flex items-center gap-1.5">
+                        <SwitchPill
+                          label="Production"
+                          on={row.productionEnabled}
+                          onBg="var(--status-ok-bg)"
+                          onText="var(--status-ok-text)"
+                          disabled={saving === row.formCode}
+                          onClick={() => {
+                            setConfirmText("");
+                            setPending({ row, field: "production", next: !row.productionEnabled });
+                          }}
+                        />
+                        <SwitchPill
+                          label="UAT"
+                          on={row.uatEnabled}
+                          onBg="var(--status-bad-bg)"
+                          onText="var(--status-bad-text)"
+                          disabled={saving === row.formCode}
+                          onClick={() => {
+                            setConfirmText("");
+                            setPending({ row, field: "uat", next: !row.uatEnabled });
+                          }}
+                        />
                         {saving === row.formCode && (
-                          <Loader2 size={12} className="animate-spin self-center mx-1" style={{ color: "var(--text-muted)" }} />
+                          <Loader2 size={12} className="animate-spin" style={{ color: "var(--text-muted)" }} />
                         )}
                       </div>
                     </td>
@@ -269,13 +340,17 @@ export function FormEnvironmentSettings() {
         )}
       </div>
 
-      {/* ── Confirmation: the switch moves live traffic, so it is typed, not clicked ── */}
+      {/* ── Confirmation: Production off is typed, everything else is a plain confirm ── */}
       <Dialog
         open={pending !== null}
         onOpenChange={(open) => {
           if (!open) setPending(null);
         }}
-        title={pending ? `เปลี่ยน ${pending.row.formCode} เป็น ${pending.target}` : ""}
+        title={
+          pending
+            ? `${directionLabel(pending.next)} ${fieldLabel(pending.field)} — ${pending.row.formCode}`
+            : ""
+        }
         contentClassName="max-w-md"
       >
         {pending && (
@@ -283,65 +358,75 @@ export function FormEnvironmentSettings() {
             <p className="text-[12px] leading-relaxed m-0" style={{ color: "var(--text-secondary)" }}>
               <b>{pending.row.formCode}</b> · {pending.row.formNameTh || pending.row.formNameEn}
               {" — "}
-              {pending.target === "UAT" ? (
-                <>
-                  คำขอที่สร้างหลังจากนี้จะถูกเขียนลงฐาน <b>UAT</b> สมุดรายวันจะถูกส่งเข้า Business Central{" "}
-                  <b>Sandbox</b> และคิว ERP Prep จะกลายเป็นคิวของ UAT — ใช้ประมวลผลการจ่ายเงินจริงไม่ได้
-                </>
-              ) : (
-                <>
-                  คำขอที่สร้างหลังจากนี้จะถูกเขียนลงฐาน <b>Production</b> และสมุดรายวันจะถูกส่งเข้า Business
-                  Central ตัวจริง
-                </>
-              )}
+              {transitionDescription(pending.field, pending.next)}
             </p>
             <p className="text-[12px] leading-relaxed m-0" style={{ color: "var(--text-muted)" }}>
               คำขอเดิม {pending.row.productionCount.toLocaleString()} รายการใน Production และ{" "}
-              {pending.row.uatCount.toLocaleString()} รายการใน UAT <b>ไม่ย้ายตาม</b> — รายการที่อยู่คนละฝั่งกับ
-              ที่เลือกจะหายจากลิสต์จนกว่าจะสลับกลับ
+              {pending.row.uatCount.toLocaleString()} รายการใน UAT
             </p>
 
-            <label className="text-[12px] font-medium" style={{ color: "var(--text-primary)" }}>
-              พิมพ์ <code className="font-bold">Confirm</code> เพื่อยืนยัน
-              <input
-                autoFocus
-                value={confirmText}
-                onChange={(e) => setConfirmText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && confirmText.trim() === CONFIRM_WORD) {
-                    void setEnvironment(pending.row.formCode, pending.target);
-                  }
-                }}
-                placeholder={CONFIRM_WORD}
-                className="mt-1.5 w-full rounded-lg px-3 py-2 text-[13px] outline-none"
-                style={{
-                  background: "var(--bg-input)",
-                  color: "var(--text-primary)",
-                  border: "1px solid var(--border-input)",
-                }}
-              />
-            </label>
+            {isProductionOff(pending.field, pending.next) ? (
+              <>
+                <label className="text-[12px] font-medium" style={{ color: "var(--text-primary)" }}>
+                  พิมพ์ <code className="font-bold">Confirm</code> เพื่อยืนยัน
+                  <input
+                    autoFocus
+                    value={confirmText}
+                    onChange={(e) => setConfirmText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && confirmText.trim() === CONFIRM_WORD) {
+                        void setFlag(pending.row.formCode, pending.field, pending.next);
+                      }
+                    }}
+                    placeholder={CONFIRM_WORD}
+                    className="mt-1.5 w-full rounded-lg px-3 py-2 text-[13px] outline-none"
+                    style={{
+                      background: "var(--bg-input)",
+                      color: "var(--text-primary)",
+                      border: "1px solid var(--border-input)",
+                    }}
+                  />
+                </label>
 
-            <div className="flex gap-2 pt-1">
-              <button
-                onClick={() => setPending(null)}
-                className="flex-1 px-3 py-2 rounded-lg text-[12px] font-medium cursor-pointer border-none"
-                style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}
-              >
-                ยกเลิก
-              </button>
-              <button
-                disabled={confirmText.trim() !== CONFIRM_WORD || saving === pending.row.formCode}
-                onClick={() => void setEnvironment(pending.row.formCode, pending.target)}
-                className="flex-1 px-3 py-2 rounded-lg text-[12px] font-bold border-none text-white disabled:opacity-50 disabled:cursor-not-allowed enabled:cursor-pointer"
-                style={{
-                  background:
-                    pending.target === "UAT" ? "var(--color-danger)" : "var(--color-action)",
-                }}
-              >
-                {saving === pending.row.formCode ? "กำลังเปลี่ยน..." : `เปลี่ยนเป็น ${pending.target}`}
-              </button>
-            </div>
+                <div className="flex gap-2 pt-1">
+                  <button
+                    onClick={() => setPending(null)}
+                    className="flex-1 px-3 py-2 rounded-lg text-[12px] font-medium cursor-pointer border-none"
+                    style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}
+                  >
+                    ยกเลิก
+                  </button>
+                  <button
+                    disabled={confirmText.trim() !== CONFIRM_WORD || saving === pending.row.formCode}
+                    onClick={() => void setFlag(pending.row.formCode, pending.field, pending.next)}
+                    className="flex-1 px-3 py-2 rounded-lg text-[12px] font-bold border-none text-white disabled:opacity-50 disabled:cursor-not-allowed enabled:cursor-pointer"
+                    style={{ background: "var(--color-danger)" }}
+                  >
+                    {saving === pending.row.formCode ? "กำลังปิด..." : "ปิด Production"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={() => setPending(null)}
+                  className="flex-1 px-3 py-2 rounded-lg text-[12px] font-medium cursor-pointer border-none"
+                  style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  disabled={saving === pending.row.formCode}
+                  onClick={() => void setFlag(pending.row.formCode, pending.field, pending.next)}
+                  className="flex-1 px-3 py-2 rounded-lg text-[12px] font-bold border-none text-white disabled:opacity-50 disabled:cursor-not-allowed enabled:cursor-pointer"
+                  style={{ background: "var(--color-action)" }}
+                >
+                  {saving === pending.row.formCode
+                    ? "กำลังบันทึก..."
+                    : `${directionLabel(pending.next)} ${fieldLabel(pending.field)}`}
+                </button>
+              </div>
+            )}
           </div>
         )}
       </Dialog>

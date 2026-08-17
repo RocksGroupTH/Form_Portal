@@ -135,7 +135,7 @@ export const SETTINGS_CARDS: NavItem[] = [
     id: "form-environment",
     label: "Form Environment",
     icon: "FlaskConical",
-    desc: "กำหนดว่าฟอร์มไหนทำงานบน Production หรือ UAT",
+    desc: "เปิด/ปิด Production และ UAT ของแต่ละฟอร์มแยกกัน",
     href: "/settings/form-environment",
     systemAdminOnly: true,
   },
