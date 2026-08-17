@@ -21,6 +21,9 @@ const SECURITY_HEADERS: Record<string, string> = {
 
 const PAGE_CSP = "frame-ancestors 'self'";
 
+/** The session-cookie name NextAuth uses once the app is served over https. */
+const SECURE_SESSION_COOKIE = "__Secure-authjs.session-token";
+
 function applySecurityHeaders(res: NextResponse | Response, isApiRoute: boolean) {
   for (const [key, value] of Object.entries(SECURITY_HEADERS)) {
     res.headers.set(key, value);
@@ -73,9 +76,22 @@ export default async function proxy(req: NextRequest) {
   // UatTester lookup. .set() overwrites anything the client sent, same trust
   // argument as x-pathname. A failed decode yields "", which resolves every
   // form to Production — the safe direction for an unidentified viewer.
+  //
+  // NextAuth prefixes the session cookie with __Secure- on https and derives
+  // the JWE salt from that same name — decode with the wrong name and
+  // getToken returns null with no error, no throw. Read whichever one the
+  // browser actually sent instead of assuming based on our own config.
+  // startsWith (not an exact match) matters here: this app stores a base64
+  // photo data-URL in the JWT (src/lib/auth.ts), which chunks the cookie into
+  // …session-token.0 / .1, so an exact name match would miss it too.
   let email = "";
   try {
-    const token = await getToken({ req, secret: env.AUTH_SECRET });
+    const cookieName = req.cookies
+      .getAll()
+      .some((c) => c.name.startsWith(SECURE_SESSION_COOKIE))
+      ? SECURE_SESSION_COOKIE
+      : "authjs.session-token";
+    const token = await getToken({ req, secret: env.AUTH_SECRET, cookieName });
     email = typeof token?.email === "string" ? token.email : "";
   } catch (err) {
     if (process.env.NODE_ENV === "development") console.error("[Proxy] getToken error:", err);

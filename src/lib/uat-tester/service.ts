@@ -37,36 +37,50 @@ function toRow(r: UatTesterRecord): UatTesterRow {
 }
 
 /**
+ * Loads the active tester row for an already-normalized (trimmed, lower-cased)
+ * email. Kept separate from `getActiveUatTester` so `cache()`'s key is the
+ * normalized value: without this split, "A@x.com", "a@x.com" and " a@x.com "
+ * would each be a distinct cache entry and a distinct DB read within the same
+ * request.
+ *
+ * `IX_UatTester_Email` is not unique, so `ORDER BY Id` makes the pick
+ * deterministic — otherwise two active rows sharing an email could resolve to
+ * a different row (and a different UAT manager) on different requests.
+ */
+const load = cache(async (key: string): Promise<UatTesterRow | null> => {
+  const pool = await getCorePool();
+  const r = await pool
+    .request()
+    .input("email", sql.NVarChar, key)
+    .query<UatTesterRecord>(`
+      SELECT TOP (1) Id, StaffId, Email, ManagerStaffId, ManagerEmail, IsActive, UpdatedBy, UpdatedAt
+      FROM [dbo].[UatTester]
+      WHERE IsActive = 1
+        AND LOWER(LTRIM(RTRIM(Email))) = LOWER(LTRIM(RTRIM(@email)))
+      ORDER BY Id
+    `);
+  const row = r.recordset[0];
+  return row ? toRow(row) : null;
+});
+
+/**
  * The active tester row for an email, or null.
  *
  * Case- and whitespace-insensitive on both sides — `listMyWorkRows` already
  * burned on a raw `=` comparison, so this matches on
  * `LOWER(LTRIM(RTRIM(...)))` instead. A blank/missing email always resolves
- * to null rather than reaching the database, so callers with no viewer (a
+ * to null without reaching the database, so callers with no viewer (a
  * script, an unauthenticated request) get the safe answer for free.
  *
- * Wrapped in react `cache()` so the resolver, the layout and any API route
- * that also needs it share one read per request instead of one each.
+ * The DB-hitting half is wrapped in react `cache()` so the resolver, the
+ * layout and any API route that also needs it share one read per request
+ * instead of one each; normalizing here (before the cache key is formed)
+ * keeps differently-cased/spaced spellings of the same email as one entry.
  */
-export const getActiveUatTester = cache(
-  async (email: string | null): Promise<UatTesterRow | null> => {
-    const trimmed = (email ?? "").trim();
-    if (!trimmed) return null;
-
-    const pool = await getCorePool();
-    const r = await pool
-      .request()
-      .input("email", sql.NVarChar, trimmed)
-      .query<UatTesterRecord>(`
-        SELECT TOP (1) Id, StaffId, Email, ManagerStaffId, ManagerEmail, IsActive, UpdatedBy, UpdatedAt
-        FROM [dbo].[UatTester]
-        WHERE IsActive = 1
-          AND LOWER(LTRIM(RTRIM(Email))) = LOWER(LTRIM(RTRIM(@email)))
-      `);
-    const row = r.recordset[0];
-    return row ? toRow(row) : null;
-  },
-);
+export function getActiveUatTester(email: string | null): Promise<UatTesterRow | null> {
+  const key = (email ?? "").trim().toLowerCase();
+  return key ? load(key) : Promise.resolve(null);
+}
 
 /** Every tester, active or not — the Settings → UAT Users table shows both. */
 export async function listUatTesters(): Promise<UatTesterRow[]> {
@@ -95,7 +109,7 @@ export interface UpsertUatTesterInput {
  */
 export async function upsertUatTester(input: UpsertUatTesterInput): Promise<void> {
   const staffId = input.staffId;
-  if (!Number.isFinite(staffId)) throw new Error("staffId is required");
+  if (!Number.isInteger(staffId) || staffId <= 0) throw new Error("staffId is required");
   const email = (input.email ?? "").trim();
   if (!email) throw new Error("email is required");
 
@@ -108,7 +122,7 @@ export async function upsertUatTester(input: UpsertUatTesterInput): Promise<void
     .input("managerEmail", sql.NVarChar, input.managerEmail)
     .input("by", sql.Int, input.updatedBy)
     .query(`
-      UPDATE [dbo].[UatTester]
+      UPDATE [dbo].[UatTester] WITH (UPDLOCK, HOLDLOCK)
       SET Email = @email, ManagerStaffId = @managerStaffId, ManagerEmail = @managerEmail,
           UpdatedBy = @by, UpdatedAt = SYSDATETIME()
       WHERE StaffId = @staffId;
