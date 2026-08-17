@@ -312,7 +312,10 @@ export function useTravelExpenseForm(
     manager: ManagerData | null;
     managerReason: string | null;
   }>(
-    ["/api/me/employee", "acc-travel-form"],
+    // ?form=AP-1 so the manager card previews the person this form will actually
+    // assign: /api/me/employee is not a form route, so without the hint a tester
+    // in UAT mode is shown their real HR manager instead of their UAT one.
+    ["/api/me/employee?form=AP-1", "acc-travel-form"],
     ([url]: [string, string]) => jsonFetcher(url),
     { revalidateOnFocus: false }
   );

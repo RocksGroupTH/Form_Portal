@@ -13,6 +13,11 @@ import {
   serializeRouteWaypoints,
 } from "@/features/accounting/lib/route-waypoints";
 import { resolveManagerEmail, resolveRequesterForActor, type RequesterSnapshot } from "@/lib/acc/employee-context";
+import {
+  assertFormWritable,
+  isUatRequest,
+  UAT_MANAGER_MISSING_ERROR,
+} from "@/lib/uat-tester/guards";
 import { queueEmail } from "@/lib/acc/email-queue";
 import { buildEmail } from "@/lib/acc/email-templates";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
@@ -428,11 +433,16 @@ export async function validateForSubmit(
   const days = normalizeTravelDays(input);
   const dayLabel = (i: number) => (days.length > 1 ? ` (วันที่ ${i + 1})` : "");
 
+  // In UAT a missing manager is a UAT-list problem, not an HR one — pointing at
+  // HR would invite somebody to attach a real manager to test data.
+  const uat = await isUatRequest();
   if (!managerStaffId) {
-    errs.push("ยังไม่ได้กำหนดผู้จัดการ (ManagerStaffId) ในระบบ HR");
+    errs.push(uat ? UAT_MANAGER_MISSING_ERROR : "ยังไม่ได้กำหนดผู้จัดการ (ManagerStaffId) ในระบบ HR");
   } else {
     const mgrEmail = await resolveManagerEmail(managerStaffId);
-    if (!mgrEmail) errs.push("ไม่พบอีเมลผู้จัดการในระบบ HR — ไม่สามารถส่งอนุมัติได้");
+    if (!mgrEmail) {
+      errs.push(uat ? UAT_MANAGER_MISSING_ERROR : "ไม่พบอีเมลผู้จัดการในระบบ HR — ไม่สามารถส่งอนุมัติได้");
+    }
   }
   if (!input.brandCode) errs.push("กรุณาเลือกแบรนด์ที่ต้องการเบิก");
 
@@ -714,6 +724,7 @@ export async function saveDraft(
   userId: number,
   loginEmail: string,
 ): Promise<number> {
+  await assertFormWritable();
   const pool = await getAccPool();
   const days = normalizeTravelDays(input);
   const requester = await resolveRequesterForActor(loginEmail, input.requesterStaffId ?? null);
@@ -902,6 +913,7 @@ export async function deleteItem(requestId: number, itemId: number, userId: numb
 export async function submitRequest(
   id: number, requester: RequesterSnapshot, userId: number,
 ): Promise<AccRequest> {
+  await assertFormWritable();
   // Persist latest edits first (lenient), then validate.
   const current = await getRequest(id);
   if (!current) throw new Error("ไม่พบคำขอ");
@@ -921,7 +933,13 @@ export async function submitRequest(
   if (errors.length) throw new Error(errors.join("\n"));
 
   const managerEmail = await resolveManagerEmail(requester.managerStaffId);
-  if (!managerEmail) throw new Error("ไม่พบอีเมลผู้จัดการ (ManagerStaffId) — ไม่สามารถส่งอนุมัติได้");
+  if (!managerEmail) {
+    throw new Error(
+      (await isUatRequest())
+        ? UAT_MANAGER_MISSING_ERROR
+        : "ไม่พบอีเมลผู้จัดการ (ManagerStaffId) — ไม่สามารถส่งอนุมัติได้",
+    );
+  }
 
   const requestNo = await allocateRequestNo("TOF");
   const totalAmount = computeRequestTotalAmount(travelDays);

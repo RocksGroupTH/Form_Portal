@@ -6,6 +6,11 @@ import { resolveEmployeeForActor } from "@/lib/hr/employee-lookup";
 import type { EmployeeContext } from "@/lib/hr/types";
 import { deleteFile } from "@/lib/storage";
 import { resolveManagerEmail } from "@/lib/acc/employee-context";
+import {
+  assertFormWritable,
+  isUatRequest,
+  UAT_MANAGER_MISSING_ERROR,
+} from "@/lib/uat-tester/guards";
 import { allocateRequestNo } from "@/lib/acc/sequence";
 import { queueEmail } from "@/lib/acc/email-queue";
 import { buildTravelBookingEmail } from "@/lib/acc/travel-booking/email-templates";
@@ -584,6 +589,8 @@ export async function saveTravelBookingDraft(
     throw new Error("กรุณากรอกข้อมูลอย่างน้อย 1 คำขอ");
   }
 
+  await assertFormWritable();
+
   // Requester is the actor, or a same-department colleague when opening on behalf (server-authorized).
   const emp = await resolveEmployeeForActor(loginEmail, input.requesterStaffId ?? null);
 
@@ -941,6 +948,7 @@ export async function submitTravelBookingGroup(
   userId: number,
   loginEmail: string,
 ): Promise<TravelBookingRequest[]> {
+  await assertFormWritable();
   const pool = await getAccPool();
 
   // Ownership + status guard (mirrors saveTravelBookingDraft/deleteTravelBookingDraft in this file).
@@ -966,9 +974,17 @@ export async function submitTravelBookingGroup(
             WHERE t.GroupKey = @gk`);
   const savedStaffId = (savedStaffRes.recordset[0]?.StaffId as number | null) ?? null;
   const emp = await resolveEmployeeForActor(loginEmail, savedStaffId);
-  if (!emp.managerStaffId) throw new Error("ยังไม่ได้กำหนดผู้จัดการ (ManagerStaffId) ในระบบ HR");
+  // In UAT the remedy is the tester list, not HR — `resolveEmployeeForActor` has
+  // already replaced the HR manager with the requester's UAT manager, or with
+  // nothing at all when there is no usable one.
+  const uat = await isUatRequest();
+  if (!emp.managerStaffId) {
+    throw new Error(uat ? UAT_MANAGER_MISSING_ERROR : "ยังไม่ได้กำหนดผู้จัดการ (ManagerStaffId) ในระบบ HR");
+  }
   const managerEmail = await resolveManagerEmail(emp.managerStaffId);
-  if (!managerEmail) throw new Error("ไม่พบอีเมลผู้จัดการในระบบ HR — ไม่สามารถส่งอนุมัติได้");
+  if (!managerEmail) {
+    throw new Error(uat ? UAT_MANAGER_MISSING_ERROR : "ไม่พบอีเมลผู้จัดการในระบบ HR — ไม่สามารถส่งอนุมัติได้");
+  }
 
   const group = await getTravelBookingGroup(groupKey);
   const tabs = group.requests; // already ordered by SortOrder, Id (getTravelBookingGroup's own query)

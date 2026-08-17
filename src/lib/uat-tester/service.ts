@@ -1,5 +1,7 @@
 import { cache } from "react";
 import { getCorePool, sql } from "@/lib/db/mssql";
+import { EMPLOYEE_STATUS_ACTIVE } from "@/lib/hr/constants";
+import { getHrPool } from "@/lib/hr/pool";
 
 export interface UatTesterRow {
   id: number;
@@ -80,6 +82,121 @@ const load = cache(async (key: string): Promise<UatTesterRow | null> => {
 export function getActiveUatTester(email: string | null): Promise<UatTesterRow | null> {
   const key = (email ?? "").trim().toLowerCase();
   return key ? load(key) : Promise.resolve(null);
+}
+
+/**
+ * The active tester row for an HR StaffId, or null.
+ *
+ * `UQ_UatTester_StaffId` makes this the table's real identity key, so unlike the
+ * email lookup there is nothing to disambiguate. Wrapped in the same react
+ * `cache()` for the same reason: `uatManagerFor` reads the requester's row and
+ * then the manager's row, and a submit resolves the requester more than once.
+ */
+const loadByStaffId = cache(async (staffId: number): Promise<UatTesterRow | null> => {
+  const pool = await getCorePool();
+  const r = await pool
+    .request()
+    .input("staffId", sql.Int, staffId)
+    .query<UatTesterRecord>(`
+      SELECT TOP (1) Id, StaffId, Email, ManagerStaffId, ManagerEmail, IsActive, UpdatedBy, UpdatedAt
+      FROM [dbo].[UatTester]
+      WHERE IsActive = 1 AND StaffId = @staffId
+    `);
+  const row = r.recordset[0];
+  return row ? toRow(row) : null;
+});
+
+/** The active tester row for an HR StaffId, or null. */
+export function getActiveUatTesterByStaffId(
+  staffId: number | null | undefined,
+): Promise<UatTesterRow | null> {
+  return typeof staffId === "number" && Number.isInteger(staffId) && staffId > 0
+    ? loadByStaffId(staffId)
+    : Promise.resolve(null);
+}
+
+/**
+ * The active tester row for a person identified either way, or null.
+ *
+ * StaffId first, email second — and both are needed. `UatTester.Email` holds the
+ * **login** (Entra) address the admin picked in Settings, while the address a
+ * form snapshot carries is HR's `Employee.Email ?? EmailCompBr`; those are
+ * allowed to differ for one person, since `findActiveEmployeeByEmail` matches
+ * either column. Keying on StaffId first means a tester whose two addresses
+ * disagree is still recognised — and being unrecognised here would silently drop
+ * their UAT request back onto their real HR manager, the exact outcome parallel
+ * UAT exists to prevent.
+ */
+export async function getActiveUatTesterFor(
+  email: string | null,
+  staffId: number | null,
+): Promise<UatTesterRow | null> {
+  const byStaffId = await getActiveUatTesterByStaffId(staffId);
+  if (byStaffId) return byStaffId;
+  return getActiveUatTester(email);
+}
+
+/** A UAT manager, resolved from HR so it is shape-identical to a production one. */
+export interface UatManager {
+  staffId: number;
+  email: string | null;
+}
+
+/**
+ * The active HR identity behind a StaffId, or null — the same row and the same
+ * `COALESCE(Email, EmailCompBr)` projection `resolveManagerEmail` reads, so a
+ * UAT manager's `AssignedTo`/`AssignedEmail` pair cannot disagree with what that
+ * mapper would produce for the same StaffId.
+ */
+const loadHrIdentity = cache(async (staffId: number): Promise<UatManager | null> => {
+  const pool = await getHrPool();
+  const r = await pool
+    .request()
+    .input("sid", sql.Int, staffId)
+    .input("status", sql.NVarChar, EMPLOYEE_STATUS_ACTIVE)
+    .query<{ StaffId: number; Email: string | null }>(`
+      SELECT TOP 1 StaffId, COALESCE(Email, EmailCompBr) AS Email
+      FROM dbo.Employee WHERE StaffId = @sid AND Status = @status
+    `);
+  const row = r.recordset[0];
+  return row ? { staffId: row.StaffId, email: row.Email ?? null } : null;
+});
+
+/**
+ * The manager a UAT request routes to, or null when the requester is not a
+ * tester or has no usable UAT manager set. Callers must refuse the submit rather
+ * than fall back to HR — a real manager must never be handed test data.
+ *
+ * Three things have to hold, and all three are checked here rather than trusted
+ * from the `UatTester` row:
+ *
+ * 1. The **requester** (never the actor — an on-behalf submit routes to the
+ *    requester's manager) is an active tester with `ManagerStaffId` set.
+ * 2. That manager is **still** an active tester. Settings enforces this when the
+ *    manager is chosen, but nothing re-checks it when the manager is later
+ *    deactivated, and Settings is not consulted at submit time — without this
+ *    the approval chain would silently leave the tester group.
+ * 3. That manager is a real, active HR employee. Both approval gates read the
+ *    row this feeds: AP-1's `canActManagerStep` accepts `AssignedTo` **or**
+ *    `AssignedEmail`, while AP-17's approve/reject/return routes compare the
+ *    actor's HR StaffId against `AccRequest.ManagerStaffId` alone. A StaffId with
+ *    no active HR row would pass neither.
+ *
+ * Any of the three failing returns null, which reads to the caller exactly like
+ * "no UAT manager configured" — one refusal, one remedy (Settings → UAT Users).
+ */
+export async function uatManagerFor(
+  requesterEmail: string | null,
+  requesterStaffId: number | null,
+): Promise<UatManager | null> {
+  const requester = await getActiveUatTesterFor(requesterEmail, requesterStaffId);
+  const managerStaffId = requester?.managerStaffId ?? null;
+  if (!managerStaffId) return null;
+
+  const managerIsTester = await getActiveUatTesterByStaffId(managerStaffId);
+  if (!managerIsTester) return null;
+
+  return loadHrIdentity(managerStaffId);
 }
 
 /** Every tester, active or not — the Settings → UAT Users table shows both. */

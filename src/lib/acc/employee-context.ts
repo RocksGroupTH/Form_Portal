@@ -2,6 +2,12 @@ import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
 import { pickEmployeePhotoUrl } from "@/lib/hr/photo-url";
 import { getHrPool } from "@/lib/hr/pool";
 import { sql } from "@/lib/db/mssql";
+import { resolveFormAccess, resolveFormEnvironment } from "@/lib/form-environment";
+import { uatManagerFor } from "@/lib/uat-tester/service";
+import {
+  assertRequesterAllowedInUat,
+  UAT_MANAGER_MISSING_ERROR,
+} from "@/lib/uat-tester/guards";
 
 export interface RequesterSnapshot {
   employeeId: string | null;
@@ -72,18 +78,46 @@ interface ManagerRow {
   PhotoOverrideUrl: string | null;
 }
 
-/** Resolve the manager of the employee matched by login email (for the form). */
-export async function resolveManagerInfo(loginEmail: string): Promise<ManagerResolution> {
+/**
+ * Resolve the manager of the employee matched by login email (for the form).
+ *
+ * `formCode` is what makes the preview honest. This is a card on a form, but the
+ * routes that serve it are not the form's own: `/api/me/employee` is
+ * unclassified and `/api/request/accounting/requesters` is an aggregate, so both
+ * resolve Production from the path no matter who is asking. Naming the form
+ * asks `resolveFormAccess` instead — the same viewer/switch answer the submit
+ * will reach, minus the id rule, which is right for a card that describes a
+ * form rather than a record. Omit it and the current path decides, which is
+ * correct for any caller that really is on the form's own route.
+ */
+export async function resolveManagerInfo(
+  loginEmail: string,
+  formCode?: string | null,
+): Promise<ManagerResolution> {
   const emp = await findActiveEmployeeByEmail(loginEmail);
   if (!emp?.employee) {
     return { hasManager: false, manager: null, reason: "ไม่พบข้อมูลพนักงานของคุณในระบบ HR" };
   }
-  const managerStaffId = emp.employee.managerStaffId ?? null;
+
+  // In UAT the card must preview the person the submit will actually assign —
+  // the tester's configured UAT manager — never their real HR manager.
+  const environment = formCode
+    ? (await resolveFormAccess(formCode)).environment
+    : await resolveFormEnvironment();
+  const isUat = environment === "UAT";
+  const uatManager = isUat
+    ? await uatManagerFor(loginEmail, emp.employee.staffId ?? null)
+    : null;
+  const managerStaffId = isUat
+    ? (uatManager?.staffId ?? null)
+    : (emp.employee.managerStaffId ?? null);
   if (!managerStaffId) {
     return {
       hasManager: false,
       manager: null,
-      reason: "ยังไม่ได้กำหนดผู้จัดการ (ManagerStaffId) ในระบบ HR",
+      reason: isUat
+        ? UAT_MANAGER_MISSING_ERROR
+        : "ยังไม่ได้กำหนดผู้จัดการ (ManagerStaffId) ในระบบ HR",
     };
   }
 
@@ -148,9 +182,37 @@ interface EmployeeByStaffRow {
 }
 
 /**
+ * The snapshot's manager, swapped for the requester's UAT manager when this
+ * request resolves UAT.
+ *
+ * Keyed on the requester the snapshot describes, not on whoever is driving the
+ * browser: an on-behalf request routes to the requester's manager, and in UAT
+ * that has to be the requester's UAT manager. Keyed on the resolved environment,
+ * not the UAT-mode cookie, so a tester's own production claim keeps its real HR
+ * manager.
+ *
+ * No manager means no manager: the snapshot comes back with `managerStaffId`
+ * null and the existing manager-less path refuses the submit. Falling back to
+ * HR here would put test data in a real manager's queue.
+ *
+ * `resolveManagerEmail` is deliberately left alone — it maps a StaffId to an
+ * email and nothing else. Overriding it too would pair the production manager's
+ * `AssignedTo` with the UAT manager's `AssignedEmail`, and `canActManagerStep`
+ * accepts either, so both people could act on the same row.
+ */
+async function withUatManager(snapshot: RequesterSnapshot): Promise<RequesterSnapshot> {
+  if ((await resolveFormEnvironment()) !== "UAT") return snapshot;
+  const manager = await uatManagerFor(snapshot.email, snapshot.staffId);
+  return { ...snapshot, managerStaffId: manager ? manager.staffId : null };
+}
+
+/**
  * Requester snapshot for a save/submit. Without requesterStaffId -> the actor themselves.
  * With requesterStaffId -> the colleague, but ONLY if they are Active and in the actor's
  * department (server-side authorization -- never trust the client).
+ *
+ * In UAT the manager is the requester's UAT manager (see `withUatManager`), and
+ * an on-behalf request is refused outright unless the requester is a tester too.
  */
 export async function resolveRequesterForActor(
   loginEmail: string,
@@ -158,7 +220,7 @@ export async function resolveRequesterForActor(
 ): Promise<RequesterSnapshot> {
   const actor = await resolveRequester(loginEmail);
   if (!actor) throw new Error("ไม่พบข้อมูลพนักงานของคุณในระบบ HR");
-  if (!requesterStaffId || requesterStaffId === actor.staffId) return actor;
+  if (!requesterStaffId || requesterStaffId === actor.staffId) return withUatManager(actor);
 
   const pool = await getHrPool();
   const r = await pool
@@ -177,7 +239,7 @@ export async function resolveRequesterForActor(
   if (actor.departmentId == null || b.DepartmentId !== actor.departmentId) {
     throw new Error("เลือกได้เฉพาะพนักงานในแผนกเดียวกันเท่านั้น");
   }
-  return {
+  const colleague: RequesterSnapshot = {
     employeeId: b.Id ?? null,
     staffId: b.StaffId ?? null,
     firstName: b.FirstName ?? null,
@@ -191,4 +253,6 @@ export async function resolveRequesterForActor(
     managerStaffId: b.ManagerStaffId ?? null,
     companyName: actor.companyName,
   };
+  await assertRequesterAllowedInUat(colleague.email, colleague.staffId);
+  return withUatManager(colleague);
 }

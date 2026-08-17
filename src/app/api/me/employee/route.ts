@@ -1,14 +1,21 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { resolveLoginEmail } from "@/lib/auth-email";
 import { resolveManagerInfo } from "@/lib/acc/employee-context";
 import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
 
 /**
- * GET /api/me/employee
+ * GET /api/me/employee[?form=AP-1]
  * Active Employee from Rocks_Portal_HR matched by login email only.
+ *
+ * `form` names the form whose manager card is being drawn. This route is not
+ * form-specific, so per-form routing classifies it as Production for everyone —
+ * without the hint a tester in UAT mode would be previewed their real HR
+ * manager and then have the request assigned to their UAT manager. Callers that
+ * only want identity (the navbar photo, the profile modal) omit it and are
+ * unaffected.
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     const session = await requireAuth();
     if (session instanceof Response) return session;
@@ -27,7 +34,8 @@ export async function GET() {
     }
 
     const { employee, matchMethod } = await findActiveEmployeeByEmail(loginEmail);
-    const managerRes = await resolveManagerInfo(loginEmail);
+    const formCode = req.nextUrl.searchParams.get("form");
+    const managerRes = await resolveManagerInfo(loginEmail, formCode);
 
     return NextResponse.json({
       ok: true,

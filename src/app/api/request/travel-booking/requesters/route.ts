@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/api-auth";
 import { resolveLoginEmail } from "@/lib/auth-email";
 import { findActiveEmployeeByEmail, listDepartmentColleagues } from "@/lib/hr/employee-lookup";
 import { resolveManagerInfo } from "@/lib/acc/employee-context";
+import { AP17_FORM_CODE } from "@/features/travel-booking/constants";
 
 /** GET /api/request/travel-booking/requesters — self + same-department colleagues for the on-behalf picker. */
 export async function GET() {
@@ -16,7 +17,9 @@ export async function GET() {
     }
 
     const { employee } = await findActiveEmployeeByEmail(loginEmail);
-    const managerRes = await resolveManagerInfo(loginEmail);
+    // Named explicitly so the manager matches what a submit from this form will
+    // assign, rather than whatever the current path happens to classify as.
+    const managerRes = await resolveManagerInfo(loginEmail, AP17_FORM_CODE);
     const deptId = employee?.departmentId ?? null;
     const colleagues = deptId
       ? (await listDepartmentColleagues(deptId)).filter((c) => c.staffId !== employee?.staffId)

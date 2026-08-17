@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/api-auth";
 import { resolveLoginEmail } from "@/lib/auth-email";
 import { findActiveEmployeeByEmail, listDepartmentColleagues } from "@/lib/hr/employee-lookup";
 import { resolveManagerInfo } from "@/lib/acc/employee-context";
+import { AP1_FORM_CODE } from "@/features/accounting/constants";
 
 /** GET /api/request/accounting/requesters — self + same-department colleagues for the on-behalf picker. */
 export async function GET() {
@@ -16,7 +17,9 @@ export async function GET() {
     }
 
     const { employee } = await findActiveEmployeeByEmail(loginEmail);
-    const managerRes = await resolveManagerInfo(loginEmail);
+    // Named explicitly: this route is an aggregate ("BOTH"), so the path alone
+    // resolves Production and would preview a tester their real HR manager.
+    const managerRes = await resolveManagerInfo(loginEmail, AP1_FORM_CODE);
     const deptId = employee?.departmentId ?? null;
     const colleagues = deptId
       ? (await listDepartmentColleagues(deptId)).filter((c) => c.staffId !== employee?.staffId)

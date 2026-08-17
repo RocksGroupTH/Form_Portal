@@ -1,7 +1,10 @@
 import { sql } from "@/lib/db/mssql";
+import { resolveFormEnvironment } from "@/lib/form-environment";
 import { EMPLOYEE_STATUS_ACTIVE } from "@/lib/hr/constants";
 import { pickEmployeePhotoUrl } from "@/lib/hr/photo-url";
 import { getHrPool } from "@/lib/hr/pool";
+import { assertRequesterAllowedInUat } from "@/lib/uat-tester/guards";
+import { uatManagerFor } from "@/lib/uat-tester/service";
 import type {
   EmployeeContext,
   EmployeeLookupResult,
@@ -338,10 +341,38 @@ export async function findActiveEmployeeByStaffId(
 }
 
 /**
+ * The context's manager, swapped for the requester's UAT manager when this
+ * request resolves UAT.
+ *
+ * AP-17 does not share AP-1's resolver, so the override is duplicated rather
+ * than shared — see `withUatManager` in `src/lib/acc/employee-context.ts` for
+ * the same rule on the AP-1 side, and for why `resolveManagerEmail` must stay
+ * untouched. Keyed on the requester this context describes and on the resolved
+ * environment, never on the UAT-mode cookie.
+ *
+ * When there is no UAT manager the context comes back with `managerStaffId`
+ * null, and `submitTravelBookingGroup` refuses. AP-17's approve/reject/return
+ * routes gate on `staffId === AccRequest.ManagerStaffId` alone, so whatever
+ * lands here has to be a real active HR StaffId — `uatManagerFor` guarantees
+ * that or returns null.
+ */
+async function withUatManager(employee: EmployeeContext): Promise<EmployeeContext> {
+  if ((await resolveFormEnvironment()) !== "UAT") return employee;
+  const manager = await uatManagerFor(
+    employee.email ?? employee.emailCompBr ?? null,
+    employee.staffId ?? null,
+  );
+  return { ...employee, managerStaffId: manager ? manager.staffId : null };
+}
+
+/**
  * Resolve the full EmployeeContext for a save/submit. Without requesterStaffId -> the actor.
  * With requesterStaffId -> the colleague, but ONLY if Active and in the actor's department
  * (server-side authorization -- never trust the client). Returns the full context so callers
  * that need phone/allowance/brand (e.g. AP-17 snapshots) work unchanged.
+ *
+ * In UAT the manager is the requester's UAT manager (see `withUatManager`), and
+ * an on-behalf request is refused outright unless the requester is a tester too.
  */
 export async function resolveEmployeeForActor(
   loginEmail: string,
@@ -349,11 +380,15 @@ export async function resolveEmployeeForActor(
 ): Promise<EmployeeContext> {
   const actor = (await findActiveEmployeeByEmail(loginEmail)).employee;
   if (!actor) throw new Error("ไม่พบข้อมูลพนักงานของคุณในระบบ HR");
-  if (!requesterStaffId || requesterStaffId === actor.staffId) return actor;
+  if (!requesterStaffId || requesterStaffId === actor.staffId) return withUatManager(actor);
   const colleague = await findActiveEmployeeByStaffId(requesterStaffId);
   if (!colleague) throw new Error("ไม่พบข้อมูลพนักงานที่เลือก");
   if (actor.departmentId == null || colleague.departmentId !== actor.departmentId) {
     throw new Error("เลือกได้เฉพาะพนักงานในแผนกเดียวกันเท่านั้น");
   }
-  return colleague;
+  await assertRequesterAllowedInUat(
+    colleague.email ?? colleague.emailCompBr ?? null,
+    colleague.staffId ?? null,
+  );
+  return withUatManager(colleague);
 }
