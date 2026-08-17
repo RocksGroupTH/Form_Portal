@@ -152,6 +152,8 @@ export const SETTINGS_CARDS: NavItem[] = [
     label: "Accounting Admin",
     icon: "ClipboardList",
     desc: "คิวอนุมัติ รายงาน และตั้งค่าของ AP-1 / AP-17",
-    href: "/request/accounting",
+    // The Request hub narrowed to its management cards. /request/accounting is
+    // AP-1's own hub and would leave out AP-17, which this card promises.
+    href: "/request?group=Settings",
   },
 ];

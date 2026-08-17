@@ -1,5 +1,6 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { HoverCard } from "@/components/ui/HoverCard";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
@@ -144,8 +145,22 @@ export default function RequestHubPage() {
   const { brand } = useBrand();
   const currentBrand = getBrandById(brand);
   const isDevHost = useErpSandboxDevHost();
+
+  /**
+   * `?group=Settings` narrows the hub to one group's cards. Settings →
+   * Accounting Admin lands here that way: that card promises the management
+   * surfaces of AP-1 and AP-17, and the request forms above them are noise for
+   * someone who came to work a queue.
+   */
+  const groupFilter = useSearchParams().get("group");
+  const isGroupView = Boolean(groupFilter?.trim());
+  const isAdminView = (groupFilter ?? "").trim().toLowerCase() === "settings";
+
   const visibleRequestCards = REQUEST_CARDS.filter(
-    (item) => !item.devHostOnly || isDevHost,
+    (item) =>
+      (!item.devHostOnly || isDevHost) &&
+      (!isGroupView ||
+        (item.group ?? "General").toLowerCase() === (groupFilter ?? "").trim().toLowerCase()),
   );
 
   return (
@@ -153,10 +168,14 @@ export default function RequestHubPage() {
       {/* Header */}
       <PageHeaderBar
         icon={ClipboardList}
-        title="Request"
-        subtitle="Submit master-data requests — items, vendors, price changes"
-        backHref="/"
-        backLabel="Back to home"
+        title={isAdminView ? "Accounting Admin" : "Request"}
+        subtitle={
+          isAdminView
+            ? "คิวอนุมัติ รายงาน และตั้งค่าของ AP-1 / AP-17"
+            : "Submit master-data requests — items, vendors, price changes"
+        }
+        backHref={isAdminView ? "/settings" : "/"}
+        backLabel={isAdminView ? "Back to settings" : "Back to home"}
         right={
           currentBrand && (
             <div
@@ -175,10 +194,12 @@ export default function RequestHubPage() {
       {/* Section label */}
       <div className="flex items-center gap-2 mb-4">
         <h2 className="text-[14px] font-bold" style={{ color: "var(--text-heading)" }}>
-          Available requests
+          {isAdminView ? "การจัดการ" : "Available requests"}
         </h2>
         <span className="text-[10px]" style={{ color: "var(--text-faint)" }}>
-          Choose a category to start a request
+          {isAdminView
+            ? "เลือกฟอร์มเพื่อเข้าคิวอนุมัติ รายงาน และตั้งค่า"
+            : "Choose a category to start a request"}
         </span>
       </div>
 
@@ -202,24 +223,26 @@ export default function RequestHubPage() {
           const groupThLabel = cards[0].groupTh ? ` · ${cards[0].groupTh}` : "";
           return (
             <div key={groupName} className="mb-6">
-              {/* Group header */}
-              <div className="flex items-center gap-2 mb-3">
-                <span
-                  className="text-[11px] font-bold uppercase tracking-wider"
-                  style={{ color: "var(--text-muted)" }}
-                >
-                  {groupName}
-                </span>
-                {groupThLabel && (
-                  <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>
-                    {groupThLabel}
+              {/* Group header — pointless when the whole page is one group */}
+              {!isGroupView && (
+                <div className="flex items-center gap-2 mb-3">
+                  <span
+                    className="text-[11px] font-bold uppercase tracking-wider"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    {groupName}
                   </span>
-                )}
-                <div
-                  className="flex-1 h-px"
-                  style={{ background: "var(--border-card)" }}
-                />
-              </div>
+                  {groupThLabel && (
+                    <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>
+                      {groupThLabel}
+                    </span>
+                  )}
+                  <div
+                    className="flex-1 h-px"
+                    style={{ background: "var(--border-card)" }}
+                  />
+                </div>
+              )}
 
               {/* Cards grid */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -235,7 +258,15 @@ export default function RequestHubPage() {
         });
       })()}
         </>
-      ) : null}
+      ) : (
+        /* The management cards are devHostOnly, so this view is empty off
+           localhost. Say so rather than rendering a header over nothing. */
+        <p className="text-[12px] py-8 text-center" style={{ color: "var(--text-muted)" }}>
+          {isAdminView
+            ? "หน้าจัดการของ AP-1 / AP-17 เปิดได้เฉพาะตอนรัน dev ที่ localhost:3020"
+            : "ยังไม่มีคำขอที่เปิดให้ใช้งาน"}
+        </p>
+      )}
 
     </PageContainer>
   );
