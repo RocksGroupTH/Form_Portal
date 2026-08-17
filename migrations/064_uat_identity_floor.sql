@@ -79,7 +79,15 @@ BEGIN
     PRINT 'Identity floor already present on every listed table. Nothing to do.';
   ELSE
   BEGIN
+    -- All 23 ALTERs in one transaction. Without it, a table that turns out to
+    -- hold a sub-900000 row fails its own ALTER with 547 while the rest carry
+    -- on, leaving a half-floored database and 23 lines of output to read. The
+    -- migration is re-runnable either way; this just makes a bad run report one
+    -- error and change nothing.
+    SET XACT_ABORT ON;
+    BEGIN TRANSACTION;
     EXEC sp_executesql @sql;
+    COMMIT TRANSACTION;
 
     PRINT 'Added identity floor CHECK (>= 900000) to '
         + CAST((LEN(@sql) - LEN(REPLACE(@sql, 'ALTER', ''))) / 5 AS NVARCHAR(10))

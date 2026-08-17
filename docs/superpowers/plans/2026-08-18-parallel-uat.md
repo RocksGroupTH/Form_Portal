@@ -690,16 +690,20 @@ makes that floor load-bearing for writes and nothing currently asserts it.
 `065`, in this batch order — the named constraint first, or the drop fails:
 
 ```sql
-IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_FormEnvironment_Environment')
-  ALTER TABLE [dbo].[FormEnvironment] DROP CONSTRAINT [CK_FormEnvironment_Environment];
+IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_FormEnvironment_Env')
+  ALTER TABLE [dbo].[FormEnvironment] DROP CONSTRAINT [CK_FormEnvironment_Env];
 GO
 IF COL_LENGTH('dbo.FormEnvironment', 'Environment') IS NOT NULL
   ALTER TABLE [dbo].[FormEnvironment] DROP COLUMN [Environment];
 GO
 ```
 
-Read `migrations/060_core_form_environment.sql:15-16` for the real constraint
-name and use it verbatim.
+The constraint really is named `CK_FormEnvironment_Env` — verified against
+`migrations/060_core_form_environment.sql:15`.
+
+While here, delete the legacy `Environment` column from `setFormFlag`'s INSERT
+list in `src/lib/form-environment/service.ts` — Task 3 writes a literal
+`N'Production'` there only to satisfy the NOT NULL column this migration drops.
 
 - [ ] **Step 3: Correct the record**
 

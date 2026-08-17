@@ -201,9 +201,16 @@ export function ErpInterfaceSendDialog({
         // message: `onStale` below is what actually reloads, and it only exists
         // on this path. A caller hitting the route directly gets the server's
         // statement of fact and no promise nobody kept.
-        toast.error(
-          `${json.error ?? "คิวเปลี่ยนไปแล้ว"} — ระบบโหลดหน้ารายการใหม่ให้`,
+        //
+        // The environment-stale message carries its own "โหลดหน้าใหม่" for those
+        // direct callers, so it is trimmed off first — appending the promise to
+        // an instruction reads as an order to reload followed by news that it is
+        // already done.
+        const fact = (json.error ?? "คิวเปลี่ยนไปแล้ว").replace(
+          /\s*—\s*โหลดหน้าใหม่\s*$/,
+          "",
         );
+        toast.error(`${fact} — ระบบโหลดหน้ารายการใหม่ให้`);
         onOpenChange(false);
         onStale();
         return;
