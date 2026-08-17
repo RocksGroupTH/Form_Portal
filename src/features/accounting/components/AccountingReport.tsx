@@ -970,6 +970,15 @@ export function AccountingReport() {
                       >
                         {row.requestNo ?? "—"}
                       </button>
+                      {row.environment === "UAT" && (
+                        <span
+                          className="ml-1.5 text-[9px] font-bold px-1 py-0.5 rounded align-middle"
+                          style={{ background: "var(--status-bad-bg)", color: "var(--status-bad-text)" }}
+                          title="แถวนี้มาจากฐานข้อมูล UAT — เป็นข้อมูลทดสอบ"
+                        >
+                          UAT
+                        </span>
+                      )}
                       {travelDayCount > 1 ? (
                         <p className="text-[10px] m-0 mt-1 tabular-nums" style={{ color: "var(--text-faint)" }}>
                           {travelDayCount} วัน

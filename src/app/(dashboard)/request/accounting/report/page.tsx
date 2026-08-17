@@ -2,6 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { backTo } from "@/lib/request-hub-nav";
+import { BothEnvironmentsChip } from "@/components/EnvironmentBadge";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { AccountingReport } from "@/features/accounting/components/AccountingReport";
@@ -16,6 +17,7 @@ export default function AccountingReportPage() {
       <PageHeaderBar
         icon={FileSpreadsheet}
         title="รายงานเบิกค่าเดินทาง"
+        titleExtra={<BothEnvironmentsChip />}
         subtitle="ค้นหาและส่งออกรายการเบิกค่าเดินทางทั้งหมด"
         backHref={backTo("/request/accounting", searchParams.get("from"))}
       />

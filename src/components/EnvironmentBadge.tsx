@@ -45,3 +45,24 @@ export function FormEnvironmentChip({ formCode }: { formCode: string }) {
   const environments = useFormEnvironments();
   return <EnvironmentBadge environment={environments[formCode] ?? "Production"} />;
 }
+
+/**
+ * For a page that reads both databases and merges them — the reports. Naming
+ * one environment there would be false, so it says both, and the rows carry
+ * their own UAT mark.
+ */
+export function BothEnvironmentsChip() {
+  return (
+    <span
+      className="text-[9.5px] font-extrabold px-1.5 py-0.5 shrink-0"
+      style={{
+        borderRadius: 6,
+        background: "var(--bg-badge)",
+        color: "var(--text-muted)",
+      }}
+      title="รายงานนี้รวมข้อมูลจากทั้ง Production และ UAT — แถวที่มาจาก UAT มีป้ายกำกับไว้"
+    >
+      PRO + UAT
+    </span>
+  );
+}
