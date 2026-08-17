@@ -127,7 +127,7 @@ export const SETTINGS_CARDS: NavItem[] = [
     id: "erp-interface",
     label: "ERP Interface Environment",
     icon: "FlaskConical",
-    desc: "Production / UAT (Sandbox) toggle for Business Central Interface",
+    desc: "ตั้งค่า BC company และ connection ของฝั่ง UAT (Sandbox) — ฟอร์มไหนใช้ UAT กำหนดที่ Form Environment",
     href: "/settings/erp-interface",
     systemAdminOnly: true,
   },

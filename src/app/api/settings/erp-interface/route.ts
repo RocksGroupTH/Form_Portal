@@ -1,16 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole } from "@/lib/api-auth";
 import { getBrandErpConfigPage } from "@/lib/acc/brand-erp-config-service";
-import {
-  canUseErpSandboxEnvironment,
-  getGlobalErpInterfaceEnvironment,
-  getRequestHost,
-  normalizeErpBcEnvironment,
-  resolveEffectiveErpEnvironment,
-  setGlobalErpInterfaceEnvironment,
-} from "@/lib/acc/erp-environment";
-import type { ErpBcEnvironment } from "@/lib/acc/erp-environment-shared";
-import { isErpSandboxHostAllowed } from "@/lib/acc/erp-environment-shared";
+import { resolveEffectiveErpEnvironment } from "@/lib/acc/erp-environment";
 import { resolveAllErpTargetProfiles } from "@/lib/acc/erp-target-profile";
 import {
   listErpTargetSettings,
@@ -20,19 +11,15 @@ import { listBcConnections } from "@/lib/bc/bc-connection";
 
 /**
  * GET /api/settings/erp-interface
- * System Admin: global Production/UAT toggle + per-brand UAT profiles.
+ * System Admin: per-brand UAT profiles for the ERP Interface.
  */
 export async function GET() {
   const session = await requireRole(["System Admin"]);
   if (session instanceof Response) return session;
 
   try {
-    const role = session.user.role;
-    const host = await getRequestHost();
-    const sandboxHostAllowed = isErpSandboxHostAllowed(host);
-    const [storedEnvironment, effectiveEnvironment, profiles, uatSettings, erpPage, bcConnections] =
+    const [effectiveEnvironment, profiles, uatSettings, erpPage, bcConnections] =
       await Promise.all([
-        getGlobalErpInterfaceEnvironment(),
         resolveEffectiveErpEnvironment(),
         resolveAllErpTargetProfiles(),
         listErpTargetSettings(),
@@ -43,10 +30,7 @@ export async function GET() {
     return NextResponse.json({
       ok: true,
       data: {
-        globalEnvironment: sandboxHostAllowed ? storedEnvironment : "Production",
         effectiveEnvironment,
-        sandboxHostAllowed,
-        canUseSandbox: canUseErpSandboxEnvironment(role, host),
         profiles,
         uatSettings,
         prodTargets: erpPage.targetBrands,
@@ -65,7 +49,7 @@ export async function GET() {
 
 /**
  * POST /api/settings/erp-interface
- * System Admin: set global environment and/or UAT company per interface brand.
+ * System Admin: set UAT company per interface brand.
  */
 export async function POST(req: NextRequest) {
   const session = await requireRole(["System Admin"]);
@@ -74,12 +58,6 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const userId = Number(session.user.id);
-    const host = req.headers.get("host") ?? (await getRequestHost());
-
-    if (body.environment !== undefined) {
-      const env = normalizeErpBcEnvironment(body.environment as string) as ErpBcEnvironment;
-      await setGlobalErpInterfaceEnvironment(env, userId, host);
-    }
 
     const uatRows = body.uatSettings as
       | {
@@ -105,10 +83,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const role = session.user.role;
-    const sandboxHostAllowed = isErpSandboxHostAllowed(host);
-    const [storedEnvironment, effectiveEnvironment, profiles, uatSettings] = await Promise.all([
-      getGlobalErpInterfaceEnvironment(),
+    const [effectiveEnvironment, profiles, uatSettings] = await Promise.all([
       resolveEffectiveErpEnvironment(),
       resolveAllErpTargetProfiles(),
       listErpTargetSettings(),
@@ -117,9 +92,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       data: {
-        globalEnvironment: sandboxHostAllowed ? storedEnvironment : "Production",
         effectiveEnvironment,
-        sandboxHostAllowed,
         profiles,
         uatSettings,
       },
