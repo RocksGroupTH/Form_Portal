@@ -159,10 +159,6 @@
   --accent-subtle: rgba(76, 116, 196, 0.08);
   --color-info: #4c74c4;
 
-  /* Brand mark gradient */
-  --mark-from: #7fa0e0;
-  --mark-to: #5b7fc9;
-
   /* Status pills */
   --status-pending-bg: #e8effc;
   --status-pending-text: #4c74c4;
@@ -263,9 +259,6 @@
   --accent-hover: #9fb9e8;
   --accent-subtle: rgba(127, 160, 224, 0.14);
   --color-info: #7fa0e0;
-
-  --mark-from: #7fa0e0;
-  --mark-to: #5b7fc9;
 
   --status-pending-bg: #1c2739;
   --status-pending-text: #9fb9e8;

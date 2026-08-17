@@ -164,14 +164,6 @@ export function buildPpapJournalPayloadFromGroups(
   );
 }
 
-/** Build PPAP CreateFromJson inner payload for one person+dept group. */
-export function buildPpapJournalPayload(
-  group: ErpJournalGroup,
-  journalBatchName: string,
-): PpapJournalPayload {
-  return buildPpapJournalPayloadFromLines(collectReadyJournalLines(group), journalBatchName);
-}
-
 export function collectPersonGroupRequestIds(group: ErpJournalGroup): number[] {
   const ids = new Set<number>();
   for (const batch of group.paymentBatches) {
