@@ -27,6 +27,7 @@ import { Button } from "@/components/ui";
 import { Dialog } from "@/components/ui/Dialog";
 import { Avatar } from "@/components/ui/Avatar";
 import { RequesterPickerModal } from "@/components/RequesterPickerModal";
+import { UatDataBanner } from "@/components/UatDataBanner";
 import { useUserPhoto } from "@/lib/hooks/useUserPhoto";
 import { useGoogleMapsApiKey } from "@/lib/hooks/useGoogleMapsApiKey";
 import { useTravelExpenseForm } from "@/features/accounting/hooks/useTravelExpenseForm";
@@ -890,6 +891,19 @@ export function TravelExpenseForm({
   /* ── Render ── */
   return (
     <div className="w-full max-w-full mx-auto flex flex-col gap-4 min-w-0">
+      {/*
+        Which set of books this draft belongs to, before anything a reader could
+        act on. Editing is where getting this wrong costs the most — Save and
+        Submit below write for real — and until now the only hint was the
+        manager card failing to resolve a UAT manager.
+
+        `requestId`, not `initial?.id`: it starts as the resumed record's id and
+        picks up the id the server hands back on first save, so a brand-new
+        draft is labelled from the moment it becomes a row. A form with no id
+        yet is blank and the banner renders nothing.
+      */}
+      <UatDataBanner requestId={requestId} />
+
       {requesterCard}
 
       {/* ── รายละเอียดการเดินทาง (แบรนด์ + วันที่) ── */}

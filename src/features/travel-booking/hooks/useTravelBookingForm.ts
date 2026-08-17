@@ -756,6 +756,11 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
 
     // tabs
     groupKey,
+    // The group's first request id — the resumed record's, or the one the
+    // server hands back on first save. Exposed so the form can say which
+    // database the group on screen belongs to: a groupKey names no
+    // environment, but an id does (UAT identities start at 900000).
+    anchorRequestId,
     tabs,
     activeTabIndex,
     setActiveTabIndex,
