@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
-import { AlertTriangle, FlaskConical, Loader2, Plus, RotateCcw, Search, Trash2, X } from "lucide-react";
+import { AlertTriangle, FlaskConical, Loader2, Plus, Search, UserCheck, UserX, X } from "lucide-react";
 import { toast } from "sonner";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
@@ -378,7 +378,7 @@ export function UatUserSettings() {
                             : { background: "var(--status-bad-bg)", color: "var(--status-bad-text)" }
                         }
                       >
-                        {t.isActive ? "Active" : "Inactive"}
+                        {t.isActive ? "ใช้งาน" : "ปิด"}
                       </span>
                     </td>
                     <td className="px-4 py-2.5">
@@ -406,20 +406,22 @@ export function UatUserSettings() {
                               },
                             });
                           }}
-                          className="cursor-pointer bg-transparent border-none p-0.5"
-                          style={{ color: "var(--text-faint)" }}
-                          title="ปิดสิทธิ์ผู้ทดสอบ"
+                          className="cursor-pointer bg-transparent border-none p-1 rounded-lg"
+                          style={{ color: "var(--status-bad-text)" }}
+                          title="ปิดการใช้งาน"
+                          aria-label={`ปิดการใช้งาน ${t.name}`}
                         >
-                          <Trash2 size={13} />
+                          <UserX size={15} />
                         </button>
                       ) : (
                         <button
                           onClick={() => { void doAction({ action: "setActive", id: t.id, isActive: true }, t.id); }}
-                          className="flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg cursor-pointer border-none"
-                          style={{ background: "var(--status-ok-bg)", color: "var(--status-ok-text)" }}
-                          title="เปิดสิทธิ์ผู้ทดสอบอีกครั้ง"
+                          className="cursor-pointer bg-transparent border-none p-1 rounded-lg"
+                          style={{ color: "var(--status-ok-text)" }}
+                          title="เปิดใช้งาน"
+                          aria-label={`เปิดใช้งาน ${t.name}`}
                         >
-                          <RotateCcw size={11} /> เปิดใช้งาน
+                          <UserCheck size={15} />
                         </button>
                       )}
                     </td>
