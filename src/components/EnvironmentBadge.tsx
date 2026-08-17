@@ -40,55 +40,34 @@ export function EnvironmentBadge({
  * The same chip, for a page that works with one form's data — it says which
  * database the rows on screen came from. Reads the flag itself so a page only
  * has to name its form.
+ *
+ * Renders nothing while the shared payload is still loading, failed to load,
+ * or has no entry for this code — guessing "Production" here is exactly the
+ * failure this component exists to avoid: a tester would see their UAT
+ * request labelled as if it were live.
  */
-export function FormEnvironmentChip({ formCode }: { formCode: string }) {
-  const environments = useFormEnvironments();
-  return <EnvironmentBadge environment={environments[formCode] ?? "Production"} />;
+export function FormEnvironmentChip({
+  formCode,
+  className = "",
+}: {
+  formCode: string;
+  className?: string;
+}) {
+  const { data, error } = useFormEnvironments();
+  const access = data?.forms[formCode];
+  if (error || !access) return null;
+  return <EnvironmentBadge environment={access.environment} className={className} />;
 }
 
-/** The forms that can appear together in a merged list. */
-const LIST_FORM_CODES = ["AP-1", "AP-17"] as const;
-
 /**
- * For My Requests and My Work, which list more than one form.
- *
- * Those lists read both databases and then keep only the rows whose database
- * matches each form's current flag, so the honest label is per form. When the
- * forms agree it collapses to one chip — two identical chips say nothing.
+ * The viewer's own UAT marker, for a page that lists rows from more than one
+ * form (My Requests, My Work). Replaces the old `ListEnvironmentChips`: under
+ * per-viewer routing a form's chip is never honestly "PRO + UAT" at once — it
+ * is whichever one database this viewer's own actions land in right now. So
+ * there is exactly one thing worth saying here, and only when it's true.
  */
-export function ListEnvironmentChips() {
-  const environments = useFormEnvironments();
-  const pairs = LIST_FORM_CODES.map(
-    (code) => [code, environments[code] ?? "Production"] as const,
-  );
-
-  if (pairs.every(([, env]) => env === pairs[0][1])) {
-    return <EnvironmentBadge environment={pairs[0][1]} />;
-  }
-
-  return (
-    <span className="inline-flex items-center gap-1">
-      {pairs.map(([code, env]) => {
-        const uat = env === "UAT";
-        return (
-          <span
-            key={code}
-            className="text-[9.5px] font-extrabold px-1.5 py-0.5 shrink-0"
-            style={{
-              borderRadius: 6,
-              background: uat ? "var(--status-bad-bg)" : "var(--bg-badge)",
-              color: uat ? "var(--status-bad-text)" : "var(--text-muted)",
-            }}
-            title={
-              uat
-                ? `${code} อยู่บน UAT — รายการของฟอร์มนี้เป็นข้อมูลทดสอบ`
-                : `${code} ใช้งานจริงบน Production`
-            }
-          >
-            {code} {uat ? "UAT" : "PRO"}
-          </span>
-        );
-      })}
-    </span>
-  );
+export function ViewerUatBadge() {
+  const { data, error } = useFormEnvironments();
+  if (error || !data?.viewer.uatMode) return null;
+  return <EnvironmentBadge environment="UAT" />;
 }

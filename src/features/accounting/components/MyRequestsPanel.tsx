@@ -13,6 +13,7 @@ import { SidePanel, SidePanelClose } from "@/components/ui/SidePanel";
 import { RequestDetail } from "@/features/accounting/components/RequestDetail";
 import { TravelBookingDetail } from "@/features/travel-booking/components/TravelBookingDetail";
 import type { TravelBookingRequest } from "@/features/travel-booking/types";
+import { useFormEnvironments } from "@/lib/hooks/useFormEnvironments";
 import { toast } from "sonner";
 
 /* ── Helpers ── */
@@ -147,6 +148,15 @@ function RequestRowList({
     email: null,
     isAccountApprover: false,
   });
+  const { data: formEnvData } = useFormEnvironments();
+  const forms = formEnvData?.forms;
+  // Unknown (still loading, or the payload failed to load) always counts as
+  // available — a fetch failure must never hide a form filter option that
+  // would otherwise show.
+  const isFormAvailable = useCallback(
+    (code: string) => forms?.[code]?.available ?? true,
+    [forms],
+  );
 
   const loadRows = useCallback(() => {
     setLoading(true);
@@ -266,22 +276,26 @@ function RequestRowList({
   }, [rows, kind, rowWorkBucket]);
 
   const formOptions = useMemo(() => {
-    const fromCards = REQUEST_CARDS.filter((c) => !c.soon && c.badge).map((c) => c.badge as string);
+    // Seeded from available forms only — a form the viewer cannot use right
+    // now (e.g. a UAT-only form while not in UAT mode) shouldn't offer itself
+    // as a filter, though a row already on screen for it still counts below.
+    const fromCards = REQUEST_CARDS.filter((c) => !c.soon && c.badge && isFormAvailable(c.badge))
+      .map((c) => c.badge as string);
     const fromRows = rows.map((r) => r.formCode).filter(Boolean);
     return Array.from(new Set([...fromCards, ...fromRows])).sort();
-  }, [rows]);
+  }, [rows, isFormAvailable]);
 
   const formLabelByCode = useMemo(() => {
     const map: Record<string, string> = {};
     for (const c of REQUEST_CARDS) {
-      if (c.badge) map[c.badge] = c.badge;
+      if (c.badge && isFormAvailable(c.badge)) map[c.badge] = c.badge;
     }
     for (const r of rows) {
       if (!r.formCode) continue;
       map[r.formCode] = r.formName ? `${r.formCode} · ${r.formName}` : r.formCode;
     }
     return map;
-  }, [rows]);
+  }, [rows, isFormAvailable]);
 
   const hasExtraFilters = isMultiSelectActive(formFilter) || !!dateFrom || !!dateTo;
 

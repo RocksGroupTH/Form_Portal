@@ -12,7 +12,7 @@ import {
 } from "@/lib/brand-url";
 import { useHomeData } from "@/features/home/useHomeData";
 import { useFormEnvironments } from "@/lib/hooks/useFormEnvironments";
-import { EnvironmentBadge } from "@/components/EnvironmentBadge";
+import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
 import { Search, Route, Luggage, ClipboardCheck, FilePen, ArrowRight } from "lucide-react";
 
 const ACCOUNTING_FORMS = [
@@ -160,7 +160,13 @@ export function HomeCatalogue() {
     summaryError,
     isLoading,
   } = useHomeData();
-  const formEnvironments = useFormEnvironments();
+  const { data: formEnvData } = useFormEnvironments();
+  const viewer = formEnvData?.viewer;
+  const forms = formEnvData?.forms;
+  // Unknown (still loading, or the payload failed to load) always counts as
+  // available — a fetch failure must never hide a form that would otherwise
+  // show. Only an explicit `available: false` filters a form out.
+  const isFormAvailable = (code: string) => forms?.[code]?.available ?? true;
 
   const hrefWithBrand = (href: string) => {
     const current = new URLSearchParams(sp.toString());
@@ -173,7 +179,9 @@ export function HomeCatalogue() {
   const matches = (...parts: Array<string | null | undefined>) =>
     q === "" || parts.some((p) => (p ?? "").toLowerCase().includes(q));
 
-  const accounting = ACCOUNTING_FORMS.filter((f) => matches(f.code, f.name, f.desc));
+  const accounting = ACCOUNTING_FORMS.filter(
+    (f) => matches(f.code, f.name, f.desc) && isFormAvailable(f.code),
+  );
 
   const name = session?.user?.nickname || session?.user?.name || "";
 
@@ -279,10 +287,7 @@ export function HomeCatalogue() {
                     </span>
                     {/* Drafts are read from their own form's database, so the
                         form's flag is the row's environment. */}
-                    <EnvironmentBadge
-                      environment={formEnvironments[d.formCode] ?? "Production"}
-                      className="self-center"
-                    />
+                    <FormEnvironmentChip formCode={d.formCode} className="self-center" />
                     <span
                       className="text-[10px] font-bold px-2.5 py-1 shrink-0"
                       style={{
@@ -368,19 +373,27 @@ export function HomeCatalogue() {
                     {desc}
                   </span>
                 </span>
-                <EnvironmentBadge
-                  environment={formEnvironments[code] ?? "Production"}
-                  className="self-start ml-auto"
-                />
+                <FormEnvironmentChip formCode={code} className="self-start ml-auto" />
               </Link>
             ))}
           </div>
         </>
       )}
 
-      {q !== "" && accounting.length === 0 && (
+      {accounting.length === 0 && q !== "" && (
         <p className="text-[12px] mt-8 text-center" style={{ color: "var(--text-muted)" }}>
           ไม่พบฟอร์มที่ตรงกับ &ldquo;{query}&rdquo;
+        </p>
+      )}
+
+      {/* Every accounting form was filtered out by availability (not by search) —
+          say why instead of just not rendering the section. The common case is
+          a tester in UAT mode with no form currently open for testing. */}
+      {accounting.length === 0 && q === "" && (
+        <p className="text-[12px] mt-8 text-center" style={{ color: "var(--text-muted)" }}>
+          {viewer?.uatMode
+            ? "คุณอยู่ในโหมด UAT แต่ยังไม่มีฟอร์มบัญชีใดเปิดให้ทดสอบในขณะนี้"
+            : "ยังไม่มีฟอร์มบัญชีที่เปิดให้ใช้งาน"}
         </p>
       )}
     </div>

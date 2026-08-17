@@ -10,8 +10,8 @@ import { REQUEST_CARDS } from "@/lib/constants";
 import { travelExpenseEntryHref } from "@/features/accounting/lib/navigation";
 import { travelBookingEntryHref } from "@/features/travel-booking/lib/navigation";
 import { useErpSandboxDevHost } from "@/features/accounting/hooks/useErpSandboxDevHost";
-import { useFormEnvironments, type FormEnvironment } from "@/lib/hooks/useFormEnvironments";
-import { EnvironmentBadge } from "@/components/EnvironmentBadge";
+import { useFormEnvironments } from "@/lib/hooks/useFormEnvironments";
+import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
 import { withRequestReturn } from "@/lib/request-hub-nav";
 import {
   ClipboardList,
@@ -37,12 +37,10 @@ function requestCardHref(item: (typeof REQUEST_CARDS)[number]): string {
 function RequestHubCard({
   item,
   Icon,
-  environment,
   fromAdmin,
 }: {
   item: (typeof REQUEST_CARDS)[number];
   Icon: React.ComponentType<{ size?: number; style?: React.CSSProperties }> | undefined;
-  environment: FormEnvironment;
   /** Tells the destination's Back button to return to the filtered admin view. */
   fromAdmin: boolean;
 }) {
@@ -84,7 +82,10 @@ function RequestHubCard({
           )}
         </div>
         <div className="flex items-center gap-2">
-          {!disabled && item.badge && <EnvironmentBadge environment={environment} />}
+          {/* `item.badge` doubles as the form code here — it is also what feeds
+              `visibleRequestCards`'s availability filter below. Don't rename or
+              repurpose it without updating both. */}
+          {!disabled && item.badge && <FormEnvironmentChip formCode={item.badge} />}
           {item.badge && (
             <span
               className="text-[10px] font-bold px-1.5 py-0.5 rounded"
@@ -162,14 +163,23 @@ export default function RequestHubPage() {
    * surfaces of AP-1 and AP-17, and the request forms above them are noise for
    * someone who came to work a queue.
    */
-  const formEnvironments = useFormEnvironments();
+  const { data: formEnvData } = useFormEnvironments();
+  const viewer = formEnvData?.viewer;
+  const forms = formEnvData?.forms;
   const groupFilter = useSearchParams().get("group");
   const isGroupView = Boolean(groupFilter?.trim());
   const isAdminView = (groupFilter ?? "").trim().toLowerCase() === "settings";
 
+  // Unknown (still loading, or the payload failed to load) always counts as
+  // available — a fetch failure must never hide a card that would otherwise
+  // show. Only an explicit `available: false` filters a card out.
+  const isFormAvailable = (badge: string | undefined) =>
+    !badge || (forms?.[badge]?.available ?? true);
+
   const visibleRequestCards = REQUEST_CARDS.filter(
     (item) =>
       (!item.devHostOnly || isDevHost) &&
+      isFormAvailable(item.badge) &&
       (!isGroupView ||
         (item.group ?? "General").toLowerCase() === (groupFilter ?? "").trim().toLowerCase()),
   );
@@ -264,9 +274,6 @@ export default function RequestHubPage() {
                       key={item.id}
                       item={item}
                       Icon={Icon}
-                      environment={
-                        (item.badge && formEnvironments[item.badge]) || "Production"
-                      }
                       fromAdmin={isAdminView}
                     />
                   );
@@ -278,12 +285,17 @@ export default function RequestHubPage() {
       })()}
         </>
       ) : (
-        /* The management cards are devHostOnly, so this view is empty off
-           localhost. Say so rather than rendering a header over nothing. */
+        /* Empty for one of two reasons: the management cards are devHostOnly
+           so this view is empty off localhost, or every card's form was
+           filtered out by availability — most often a tester in UAT mode with
+           no form currently open for testing. Say which, rather than
+           rendering a header over nothing. */
         <p className="text-[12px] py-8 text-center" style={{ color: "var(--text-muted)" }}>
           {isAdminView
             ? "หน้าจัดการของ AP-1 / AP-17 เปิดได้เฉพาะตอนรัน dev ที่ localhost:3020"
-            : "ยังไม่มีคำขอที่เปิดให้ใช้งาน"}
+            : viewer?.uatMode
+              ? "คุณอยู่ในโหมด UAT แต่ยังไม่มีฟอร์มใดเปิดให้ทดสอบในขณะนี้"
+              : "ยังไม่มีคำขอที่เปิดให้ใช้งาน"}
         </p>
       )}
 

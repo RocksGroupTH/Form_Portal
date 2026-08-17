@@ -2,7 +2,7 @@
 
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
-import { ListEnvironmentChips } from "@/components/EnvironmentBadge";
+import { ViewerUatBadge } from "@/components/EnvironmentBadge";
 import { MyRequestsCard } from "@/features/accounting/components/MyRequestsPanel";
 import { Send } from "lucide-react";
 
@@ -12,7 +12,7 @@ export default function MyRequestPage() {
       <PageHeaderBar
         icon={Send}
         title="My Request"
-        titleExtra={<ListEnvironmentChips />}
+        titleExtra={<ViewerUatBadge />}
         subtitle="คำขอที่คุณส่งและสถานะ"
         backHref="/"
       />
