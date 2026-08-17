@@ -9,12 +9,12 @@ const rows = [
   { id: 4, formCode: "AP-17", environment: "UAT" as const },
 ];
 
-test("each form keeps only the database it is flagged to", () => {
+test("each form keeps only the database it resolves to for this viewer", () => {
   const kept = keepRowsInCurrentEnvironment(rows, { "AP-1": "UAT", "AP-17": "Production" });
   assert.deepEqual(kept.map((r) => r.id), [2, 3]);
 });
 
-test("a form with no flag row is Production", () => {
+test("a form absent from the viewer's map is Production", () => {
   const kept = keepRowsInCurrentEnvironment(rows, { "AP-1": "UAT" });
   assert.deepEqual(kept.map((r) => r.id), [2, 3]);
 });

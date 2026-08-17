@@ -1,5 +1,6 @@
 import { getCorePool, getAppPool, sql } from "@/lib/db/mssql";
 import { env } from "@/env";
+import { PRODUCTION_ONLY, type FormSwitches } from "./pick-environment";
 
 export type FormEnvironmentValue = "Production" | "UAT";
 
@@ -7,65 +8,97 @@ export interface FormEnvironmentRow {
   formCode: string;
   formNameEn: string;
   formNameTh: string;
-  environment: FormEnvironmentValue;
+  productionEnabled: boolean;
+  uatEnabled: boolean;
   updatedBy: number | null;
   updatedAt: Date | null;
 }
 
-function normalize(raw: string | null | undefined): FormEnvironmentValue {
-  return raw === "UAT" ? "UAT" : "Production";
+/** A row shape carrying the two switch columns, however the driver typed them. */
+interface SwitchColumns {
+  ProductionEnabled: boolean | number | null;
+  UatEnabled: boolean | number | null;
 }
 
 /**
- * Every configured flag, keyed by form code. Forms with no row are absent from
- * the result, and callers treat a missing entry as Production.
+ * One BIT column as a boolean, falling back when the column is absent.
+ *
+ * Both columns are NOT NULL (migration 062), but a row written before that
+ * migration ran — or a driver handing back 1/0 rather than true/false — must
+ * still land on a definite answer rather than a coincidentally falsy one.
+ */
+function bit(value: boolean | number | null | undefined, fallback: boolean): boolean {
+  return value === null || value === undefined ? fallback : !!value;
+}
+
+/** A FormEnvironment row's two switches; a missing row is PRODUCTION_ONLY. */
+function toSwitches(row: SwitchColumns | undefined | null): FormSwitches {
+  return {
+    productionEnabled: bit(row?.ProductionEnabled, PRODUCTION_ONLY.productionEnabled),
+    uatEnabled: bit(row?.UatEnabled, PRODUCTION_ONLY.uatEnabled),
+  };
+}
+
+/**
+ * Every configured form's two switches, keyed by form code. Forms with no row
+ * are absent from the result, and callers treat a missing entry as
+ * `PRODUCTION_ONLY` — live, and not open for testing.
  *
  * Reads Fast_Core, which never varies by environment — this is what breaks the
  * circular dependency that per-form routing would otherwise have.
  */
-export async function getFormEnvironmentMap(): Promise<Record<string, FormEnvironmentValue>> {
+export async function getFormSwitchMap(): Promise<Record<string, FormSwitches>> {
   const pool = await getCorePool();
-  const r = await pool.request().query<{ FormCode: string; Environment: string }>(
-    `SELECT FormCode, Environment FROM [dbo].[FormEnvironment]`,
+  const r = await pool.request().query<{ FormCode: string } & SwitchColumns>(
+    `SELECT FormCode, ProductionEnabled, UatEnabled FROM [dbo].[FormEnvironment]`,
   );
-  const out: Record<string, FormEnvironmentValue> = {};
-  for (const row of r.recordset) out[row.FormCode] = normalize(row.Environment);
+  const out: Record<string, FormSwitches> = {};
+  for (const row of r.recordset) out[row.FormCode] = toSwitches(row);
   return out;
 }
 
-export async function setFormEnvironment(
+/**
+ * Flip one switch on one form.
+ *
+ * Single-field on purpose: the two switches are independent, and a whole-row
+ * write would let a stale copy of the other switch travel back with the one the
+ * admin actually touched. `column` is picked from a two-value union, never
+ * interpolated from caller input.
+ *
+ * `MERGE … WITH (HOLDLOCK)` makes the upsert atomic — the previous
+ * UPDATE-then-INSERT could race two admins into a duplicate-key failure.
+ */
+export async function setFormFlag(
   formCode: string,
-  environment: FormEnvironmentValue,
+  field: "production" | "uat",
+  value: boolean,
   userId: number,
 ): Promise<void> {
-  if (environment !== "Production" && environment !== "UAT") {
-    throw new Error("Invalid environment");
-  }
   const code = (formCode ?? "").trim();
   if (!code) throw new Error("formCode is required");
+  const column = field === "production" ? "ProductionEnabled" : "UatEnabled";
 
   const pool = await getCorePool();
   await pool
     .request()
     .input("code", sql.NVarChar, code)
-    .input("env", sql.NVarChar, environment)
+    .input("value", sql.Bit, value ? 1 : 0)
     .input("by", sql.Int, userId)
     .query(`
-      UPDATE [dbo].[FormEnvironment]
-      SET Environment = @env, UpdatedBy = @by, UpdatedAt = SYSDATETIME()
-      WHERE FormCode = @code;
-      IF @@ROWCOUNT = 0
-        INSERT INTO [dbo].[FormEnvironment] (FormCode, Environment, UpdatedBy)
-        VALUES (@code, @env, @by);
+      MERGE [dbo].[FormEnvironment] WITH (HOLDLOCK) AS t
+      USING (SELECT @code AS FormCode) AS s ON t.FormCode = s.FormCode
+      WHEN MATCHED THEN UPDATE SET [${column}] = @value, UpdatedBy = @by, UpdatedAt = SYSDATETIME()
+      WHEN NOT MATCHED THEN INSERT (FormCode, [${column}], UpdatedBy) VALUES (@code, @value, @by);
     `);
 }
 
 /**
- * Every form in the catalogue with its flag.
+ * Every form in the catalogue with both of its switches.
  *
  * AccFormMaster lives in the form database, so this reads the production copy
  * explicitly rather than through getFormPool(): the settings page must show the
- * same catalogue no matter how the current route happens to route.
+ * same catalogue no matter how the current route happens to route, and no
+ * matter whether the admin looking at it is in UAT mode.
  */
 export async function listFormEnvironments(): Promise<FormEnvironmentRow[]> {
   const [core, form] = await Promise.all([
@@ -79,22 +112,27 @@ export async function listFormEnvironments(): Promise<FormEnvironmentRow[]> {
     FormNameTh: string;
   }>(`SELECT FormCode, FormNameEn, FormNameTh FROM [dbo].[AccFormMaster] ORDER BY SortOrder`);
 
-  const flags = await core.request().query<{
-    FormCode: string;
-    Environment: string;
-    UpdatedBy: number | null;
-    UpdatedAt: Date;
-  }>(`SELECT FormCode, Environment, UpdatedBy, UpdatedAt FROM [dbo].[FormEnvironment]`);
+  const flags = await core.request().query<
+    {
+      FormCode: string;
+      UpdatedBy: number | null;
+      UpdatedAt: Date;
+    } & SwitchColumns
+  >(
+    `SELECT FormCode, ProductionEnabled, UatEnabled, UpdatedBy, UpdatedAt FROM [dbo].[FormEnvironment]`,
+  );
 
   const byCode = new Map(flags.recordset.map((f) => [f.FormCode, f]));
 
   return forms.recordset.map((f) => {
     const flag = byCode.get(f.FormCode);
+    const switches = toSwitches(flag);
     return {
       formCode: f.FormCode,
       formNameEn: f.FormNameEn,
       formNameTh: f.FormNameTh,
-      environment: normalize(flag?.Environment),
+      productionEnabled: switches.productionEnabled,
+      uatEnabled: switches.uatEnabled,
       updatedBy: flag?.UpdatedBy ?? null,
       updatedAt: flag?.UpdatedAt ?? null,
     };

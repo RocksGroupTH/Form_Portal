@@ -10,30 +10,33 @@ export interface EnvironmentTaggedRow {
 }
 
 /**
- * Keep only the rows whose database still matches their form's flag.
+ * Keep only the rows whose database matches where their form resolves for the
+ * viewer looking at the list.
  *
  * Merging both databases shows a person everything with their name on it, from
- * whichever database it happens to live in. That includes rows a form left
- * behind when it was flagged the other way — test requests loitering in a
- * production list, or real ones surfacing mid-test. Filtering by each form's
- * current flag makes the list agree with what the form is doing today.
+ * whichever database it happens to live in. That includes the half that is not
+ * theirs to see right now — test requests loitering in an ordinary user's list,
+ * or production ones surfacing while a tester is in UAT mode. Filtering by what
+ * each form resolves to for this viewer makes the list agree with the database
+ * they are actually working in.
  *
- * Nothing is deleted: flag the form back and its rows return.
+ * Nothing is deleted: the other half returns for whoever it belongs to.
  *
  * Rows with no `environment` tag come from a single-pool read and are kept as
- * they are; a form with no flag row is Production, matching the rest of the
+ * they are; a form absent from the map is Production, matching the rest of the
  * system.
  *
- * Pure: the caller supplies the flags.
+ * Pure: the caller supplies the map, normally from
+ * `resolveViewerEnvironmentMap()`.
  */
 export function keepRowsInCurrentEnvironment<T extends EnvironmentTaggedRow>(
   rows: T[],
-  flags: Record<string, FormEnvironmentValue>,
+  resolved: Record<string, FormEnvironmentValue>,
 ): T[] {
   return rows.filter((row) => {
     if (!row.environment) return true;
     const code = (row.formCode ?? "").trim();
-    const current = flags[code] ?? "Production";
+    const current = resolved[code] ?? "Production";
     return row.environment === current;
   });
 }

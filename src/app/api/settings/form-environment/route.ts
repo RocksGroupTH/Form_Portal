@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireRole } from "@/lib/api-auth";
 import {
   listFormEnvironments,
-  setFormEnvironment,
+  setFormFlag,
 } from "@/lib/form-environment/service";
 import {
   getCorePool,
@@ -68,16 +68,29 @@ export async function GET() {
   }
 }
 
-/** POST { formCode, environment } — flip one form. */
+/**
+ * POST { formCode, field, value } — flip one switch on one form.
+ *
+ * One field at a time on purpose: the two switches are independent, and a
+ * whole-row write would let a stale copy of the switch the admin did not touch
+ * travel back with the one they did.
+ */
 export async function POST(req: NextRequest) {
   const session = await requireRole(["System Admin"]);
   if (session instanceof Response) return session;
   try {
     const body = await req.json();
-    if (body.environment !== "Production" && body.environment !== "UAT") {
-      return NextResponse.json({ ok: false, error: "Invalid environment" }, { status: 400 });
+    const formCode = typeof body.formCode === "string" ? body.formCode.trim() : "";
+    if (!formCode) {
+      return NextResponse.json({ ok: false, error: "formCode is required" }, { status: 400 });
     }
-    await setFormEnvironment(String(body.formCode), body.environment, Number(session.user.id));
+    if (body.field !== "production" && body.field !== "uat") {
+      return NextResponse.json({ ok: false, error: "Invalid field" }, { status: 400 });
+    }
+    if (typeof body.value !== "boolean") {
+      return NextResponse.json({ ok: false, error: "Invalid value" }, { status: 400 });
+    }
+    await setFormFlag(formCode, body.field, body.value, Number(session.user.id));
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("[api/settings/form-environment] POST", err);

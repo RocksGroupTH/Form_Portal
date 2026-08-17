@@ -1,6 +1,6 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { queryBothPools } from "@/lib/acc/query-both";
-import { getFormEnvironmentMap } from "@/lib/form-environment/service";
+import { resolveViewerEnvironmentMap } from "@/lib/form-environment";
 import { keepRowsInCurrentEnvironment } from "@/lib/form-environment/current-rows";
 import { hrEmployeeTable } from "@/lib/hr/constants";
 import {
@@ -412,7 +412,7 @@ export async function listMyRequestRows(userId: number): Promise<ReportRow[]> {
       mapRow(x, "request"),
     );
   });
-  return keepRowsInCurrentEnvironment(rows, await getFormEnvironmentMap()).sort(bySubmittedAtDesc);
+  return keepRowsInCurrentEnvironment(rows, await resolveViewerEnvironmentMap()).sort(bySubmittedAtDesc);
 }
 
 /** Requests the user has a part in approving (manager or account) — aggregated per request. */
@@ -466,7 +466,7 @@ export async function listMyWorkRows(
       mapRow(x, "request"),
     );
   });
-  return keepRowsInCurrentEnvironment(rows, await getFormEnvironmentMap()).sort(bySubmittedAtDesc);
+  return keepRowsInCurrentEnvironment(rows, await resolveViewerEnvironmentMap()).sort(bySubmittedAtDesc);
 }
 
 /**
