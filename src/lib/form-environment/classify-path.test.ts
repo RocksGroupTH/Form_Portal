@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { classifyPath, matchRule } from "./classify-path";
+import { classifyPath, matchRule, ROUTE_RULES } from "./classify-path";
 
 test("AP-17 admin pages under the accounting prefix win over AP-1", () => {
   assert.equal(classifyPath("/request/accounting/travel-booking"), "AP-17");
@@ -97,4 +97,18 @@ test("a prefix must match on a boundary, never mid-segment", () => {
   // /request/accounting-archive is not /request/accounting
   assert.equal(classifyPath("/request/accountingsomething"), null);
   assert.equal(classifyPath("/api/request/travel-bookingsomething"), null);
+});
+
+test("no BC-posting route may be an aggregate or unclassified", () => {
+  // The send builds a journal from rows read through one pool and posts it to
+  // one BC instance. BOTH would merge two databases into one journal; null
+  // would pin the queue to production while the form is flagged UAT.
+  for (const rule of ROUTE_RULES) {
+    if (rule.prefix.includes("/erp-prep")) {
+      assert.ok(rule.result !== "BOTH" && rule.result !== null,
+        `${rule.prefix} must resolve to a single form, got ${rule.result}`);
+    }
+  }
+  assert.ok(matchRule("/api/request/accounting/erp-prep/send"),
+    "the send path must be covered by a rule at all");
 });

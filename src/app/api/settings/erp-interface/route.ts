@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole } from "@/lib/api-auth";
 import { getBrandErpConfigPage } from "@/lib/acc/brand-erp-config-service";
-import { resolveEffectiveErpEnvironment } from "@/lib/acc/erp-environment";
-import { resolveAllErpTargetProfiles } from "@/lib/acc/erp-target-profile";
 import {
   listErpTargetSettings,
   upsertErpTargetUatSetting,
@@ -18,20 +16,15 @@ export async function GET() {
   if (session instanceof Response) return session;
 
   try {
-    const [effectiveEnvironment, profiles, uatSettings, erpPage, bcConnections] =
-      await Promise.all([
-        resolveEffectiveErpEnvironment(),
-        resolveAllErpTargetProfiles(),
-        listErpTargetSettings(),
-        getBrandErpConfigPage(),
-        listBcConnections(),
-      ]);
+    const [uatSettings, erpPage, bcConnections] = await Promise.all([
+      listErpTargetSettings(),
+      getBrandErpConfigPage(),
+      listBcConnections(),
+    ]);
 
     return NextResponse.json({
       ok: true,
       data: {
-        effectiveEnvironment,
-        profiles,
         uatSettings,
         prodTargets: erpPage.targetBrands,
         bcConnections: bcConnections.map((c) => ({
@@ -83,17 +76,11 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const [effectiveEnvironment, profiles, uatSettings] = await Promise.all([
-      resolveEffectiveErpEnvironment(),
-      resolveAllErpTargetProfiles(),
-      listErpTargetSettings(),
-    ]);
+    const uatSettings = await listErpTargetSettings();
 
     return NextResponse.json({
       ok: true,
       data: {
-        effectiveEnvironment,
-        profiles,
         uatSettings,
       },
     });

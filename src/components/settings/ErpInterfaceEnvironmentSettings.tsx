@@ -13,7 +13,6 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
-import type { ErpBcEnvironment } from "@/lib/acc/erp-environment-shared";
 import { SearchableSelect } from "@/features/accounting/components/settings/SearchableSelect";
 
 const API_URL = "/api/settings/erp-interface";
@@ -45,7 +44,6 @@ interface ProdTarget {
 }
 
 interface SettingsData {
-  effectiveEnvironment: ErpBcEnvironment;
   uatSettings: UatRow[];
   prodTargets: ProdTarget[];
   bcConnections: BcConnectionOption[];

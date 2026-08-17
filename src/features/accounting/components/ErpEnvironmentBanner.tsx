@@ -34,7 +34,7 @@ export function ErpEnvironmentBanner() {
           โหมด {erpEnvironmentLabel("Sandbox")}
         </p>
         <p className="text-[12px] m-0 mt-0.5" style={{ color: "var(--text-secondary)" }}>
-          ฟอร์มนี้ถูกตั้งเป็น UAT — เอกสารที่ส่งจะเข้า Business Central Sandbox ไม่ใช่ตัวจริง
+          ฟอร์มนี้ถูกตั้งเป็น UAT — พื้นที่งานบัญชีนี้กำลังอยู่ในโหมด Sandbox ของ Business Central ไม่ใช่ระบบจริง
         </p>
       </div>
     </div>

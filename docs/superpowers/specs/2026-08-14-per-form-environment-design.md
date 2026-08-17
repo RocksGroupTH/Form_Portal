@@ -235,6 +235,16 @@ point of this design.
 
 ## 8. Running UAT on the server
 
+**Superseded 2026-08-17** — see
+`docs/superpowers/specs/2026-08-17-erp-environment-per-form-design.md`. The
+mechanism this section describes — a form resolved to UAT reading
+`AccSetting.ERP_INTERFACE_ENV` through its own pool to reach Sandbox — was
+never implemented and never read by any code path. The section below is kept
+as the historical record of what was planned, not what shipped; the actual
+mechanism (`resolveEffectiveErpEnvironment()` mapping the form's environment
+flag directly to the BC instance) is described in the 2026-08-17 spec linked
+above.
+
 `ERP_SANDBOX_ALLOWED_HOSTS` in `src/lib/acc/erp-environment-shared.ts` restricts
 the ERP UAT toggle and the `devHostOnly` management cards to `localhost:3020`.
 That gate governs the Business Central target, not this feature, and it is left

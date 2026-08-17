@@ -13,6 +13,12 @@ import type { ErpPrepStatus, ErpInterfaceStatus } from "@/features/accounting/co
 import type { TravelExpenseItem } from "@/features/accounting/types";
 
 const PREP_DEPT_CTX_CACHE_TTL_MS = 30_000;
+// Not environment-keyed, unlike the journal-context cache next door
+// (erp-journal-context.ts). That is a deliberate difference, not an
+// oversight: this context is built from AccBrandErpInterface, which is one
+// of the 19 dual-written tables `npm run check:alignment` asserts is
+// identical across Production and UAT, so a single cache entry is correct
+// for either database.
 const PREP_DEPT_CTX_CACHE_KEY = "acc:prep-dept-ctx";
 
 export type { ErpPrepStatus };

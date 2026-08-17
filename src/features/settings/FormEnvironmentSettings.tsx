@@ -88,6 +88,8 @@ export function FormEnvironmentSettings() {
         <p className="text-[12px] leading-relaxed">
           เปลี่ยนเป็น UAT แล้ว request เดิมที่อยู่ใน Production <b>ไม่ย้ายตาม</b> — ยังอยู่ที่เดิมและเปิดดูได้
           ฟอร์มแค่เริ่มเขียนที่ใหม่ สลับกลับก็เช่นกัน request ที่ทำใน UAT จะค้างอยู่ใน UAT พร้อมป้าย UAT
+          การตั้งฟอร์มเป็น UAT ยังส่งผลไปถึง Business Central ด้วย — สมุดรายวันของฟอร์มนั้นจะถูกส่งไปที่ Sandbox แทน Production
+          และระหว่างที่ AP-1 เป็น UAT คิว ERP Prep ที่เห็นจะเป็นคิวของ UAT ทำให้ <b>ไม่สามารถใช้ประมวลผลการจ่ายเงินจริงได้</b>
         </p>
       </div>
 

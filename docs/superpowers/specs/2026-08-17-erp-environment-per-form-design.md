@@ -138,6 +138,17 @@ instead of two. What stands between a mistake and the ERP: the Form Environment
 page is System Admin only, the UAT pill and detail banner mark the data, and the
 accounting pages carry the Sandbox banner.
 
+The same change also inverts risk on `localhost:3020`. Before this change, a
+System Admin developing locally got Sandbox unconditionally — the old
+app-wide toggle read `Fast_Core.AppSetting.ERP_INTERFACE_ENV`, which is
+currently `Sandbox`, and the host gate meant only `localhost:3020` could even
+flip it. After this change, `localhost:3020` follows AP-1's own environment
+flag like any other host — Production unless someone has explicitly set AP-1
+to UAT — so a developer who has been safely testing ERP sends against
+Sandbox will start posting to the real Business Central the moment AP-1 is
+Production. Mitigation: flag AP-1 to UAT in the dev environment before
+exercising ERP sends locally.
+
 ## Testing
 
 - `classify-path.test.ts`: erp-prep is `AP-1`, not `BOTH` — update the aggregate
