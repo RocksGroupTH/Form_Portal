@@ -179,7 +179,14 @@ export default function RequestHubPage() {
   const visibleRequestCards = REQUEST_CARDS.filter(
     (item) =>
       (!item.devHostOnly || isDevHost) &&
-      isFormAvailable(item.badge) &&
+      // `available` answers "may I file a new one", not "may I work what
+      // already exists" — pickEnvironment draws that same line for a record's
+      // own id. A `manage: true` card is the approval queue / report /
+      // settings surface for a form, not the filing form itself, so it must
+      // stay reachable even when the form's switch that gates *filing* is
+      // off — otherwise turning off AP-1 filing for a pilot would also lock
+      // its own approvers out of the queue that clears the pilot's requests.
+      (item.manage || isFormAvailable(item.badge)) &&
       (!isGroupView ||
         (item.group ?? "General").toLowerCase() === (groupFilter ?? "").trim().toLowerCase()),
   );
@@ -289,9 +296,15 @@ export default function RequestHubPage() {
            so this view is empty off localhost, or every card's form was
            filtered out by availability — most often a tester in UAT mode with
            no form currently open for testing. Say which, rather than
-           rendering a header over nothing. */
+           rendering a header over nothing.
+
+           Gated on `isAdminView && !isDevHost` rather than `isAdminView`
+           alone: the management cards ignore `available` now (see the filter
+           above), so on a dev host the admin view can only be empty for the
+           UAT reason below, never the localhost one — and claiming "only on
+           localhost" while standing on localhost would be a lie. */
         <p className="text-[12px] py-8 text-center" style={{ color: "var(--text-muted)" }}>
-          {isAdminView
+          {isAdminView && !isDevHost
             ? "หน้าจัดการของ AP-1 / AP-17 เปิดได้เฉพาะตอนรัน dev ที่ localhost:3020"
             : viewer?.uatMode
               ? "คุณอยู่ในโหมด UAT แต่ยังไม่มีฟอร์มใดเปิดให้ทดสอบในขณะนี้"

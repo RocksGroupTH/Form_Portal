@@ -1,35 +1,16 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { requireAuth } from "@/lib/api-auth";
-import { getFormSwitchMap, resolveFormAccess, type EnvironmentDecision } from "@/lib/form-environment";
+import { getFormSwitchMap, resolveFormAccess } from "@/lib/form-environment";
+import type { FormAccess, FormEnvironmentPayload, ViewerUatStatus } from "@/lib/form-environment/payload-types";
 import { getActiveUatTester } from "@/lib/uat-tester/service";
 import { UAT_MODE_COOKIE, isUatModeCookieOn } from "@/lib/uat-mode";
-
-/**
- * The viewer's own UAT-tester standing — separate from any one form, and
- * what the navbar switch (see plan Task 7) renders from.
- */
-export interface ViewerUatStatus {
-  /** Has an active row in UatTester, whether or not UAT mode is on right now. */
-  isTester: boolean;
-  /** Cookie on AND an active tester — the effective mode every write choke point honours. */
-  uatMode: boolean;
-  /** Whether any form has its UAT switch on, for anybody — not just this viewer. */
-  anyUatForm: boolean;
-  /** The viewer's own tester row names a manager. */
-  hasUatManager: boolean;
-}
-
-export interface FormEnvironmentPayload {
-  viewer: ViewerUatStatus;
-  forms: Record<string, EnvironmentDecision>;
-}
+import { REQUEST_CARDS } from "@/lib/constants";
 
 /**
  * GET — everything the UI needs to render an environment chip or filter a
  * catalogue for *this* viewer: which database each form resolves to for them
- * (`forms`, one entry per code in the switch map, via `resolveFormAccess`),
- * and their own UAT-tester standing (`viewer`).
+ * (`forms`), and their own UAT-tester standing (`viewer`).
  *
  * Now that Production and UAT run side by side the answer is per-viewer: an
  * ordinary user sees Production for everything, a tester in UAT mode sees UAT
@@ -49,9 +30,23 @@ export async function GET() {
       cookies(),
     ]);
 
-    const codes = Object.keys(switches);
+    // Not just Object.keys(switches): a form with no FormEnvironment row is
+    // known-Production (PRODUCTION_ONLY), not unknown — but getFormSwitchMap()
+    // only returns forms that already have a row, and rows are created lazily
+    // (setFormFlag's MERGE is the only writer; nothing seeds them). Reading
+    // only the switch-map keys would drop the chip for an unconfigured form
+    // entirely, and — worse — a UAT-mode viewer's `isFormAvailable` fallback
+    // on the client defaults missing entries to `true`, which would offer a
+    // form the resolver actually refuses. So the codes list is the union of
+    // what has a row and every form code the UI can render a card for.
+    const codes = Array.from(
+      new Set([
+        ...Object.keys(switches),
+        ...REQUEST_CARDS.map((c) => c.badge).filter((b): b is string => !!b),
+      ]),
+    );
     const decisions = await Promise.all(codes.map((code) => resolveFormAccess(code)));
-    const forms: Record<string, EnvironmentDecision> = {};
+    const forms: Record<string, FormAccess> = {};
     codes.forEach((code, i) => {
       forms[code] = decisions[i];
     });

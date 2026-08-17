@@ -179,9 +179,12 @@ export function HomeCatalogue() {
   const matches = (...parts: Array<string | null | undefined>) =>
     q === "" || parts.some((p) => (p ?? "").toLowerCase().includes(q));
 
-  const accounting = ACCOUNTING_FORMS.filter(
-    (f) => matches(f.code, f.name, f.desc) && isFormAvailable(f.code),
-  );
+  // Kept separate from the search-filtered list below so the empty state can
+  // tell "nothing matches your search" apart from "nothing is available at
+  // all" — a tester in UAT mode who types anything into the search box must
+  // still see the UAT explanation, not a false "no match" for their query.
+  const availableAccounting = ACCOUNTING_FORMS.filter((f) => isFormAvailable(f.code));
+  const accounting = availableAccounting.filter((f) => matches(f.code, f.name, f.desc));
 
   const name = session?.user?.nickname || session?.user?.name || "";
 
@@ -380,16 +383,19 @@ export function HomeCatalogue() {
         </>
       )}
 
-      {accounting.length === 0 && q !== "" && (
+      {/* Branch on availableAccounting, not on q: a search that matches nothing
+          among the forms actually available to this viewer is a real "no
+          match" (search reason), but if nothing was available before the
+          search even ran, that's true regardless of what was typed — a
+          tester in UAT mode who types anything must still see why, not a
+          false "no match for your search". */}
+      {accounting.length === 0 && availableAccounting.length > 0 && (
         <p className="text-[12px] mt-8 text-center" style={{ color: "var(--text-muted)" }}>
           ไม่พบฟอร์มที่ตรงกับ &ldquo;{query}&rdquo;
         </p>
       )}
 
-      {/* Every accounting form was filtered out by availability (not by search) —
-          say why instead of just not rendering the section. The common case is
-          a tester in UAT mode with no form currently open for testing. */}
-      {accounting.length === 0 && q === "" && (
+      {availableAccounting.length === 0 && (
         <p className="text-[12px] mt-8 text-center" style={{ color: "var(--text-muted)" }}>
           {viewer?.uatMode
             ? "คุณอยู่ในโหมด UAT แต่ยังไม่มีฟอร์มบัญชีใดเปิดให้ทดสอบในขณะนี้"

@@ -1,33 +1,13 @@
 "use client";
 
 import useSWR from "swr";
+import type { FormAccess, FormEnvironment, FormEnvironmentPayload, ViewerUatStatus } from "@/lib/form-environment/payload-types";
 
-export type FormEnvironment = "Production" | "UAT";
-
-/** One form's resolution for the current viewer. Mirrors `EnvironmentDecision` server side. */
-export interface FormAccess {
-  /** Which database this form writes to for the current viewer. */
-  environment: FormEnvironment;
-  /** Whether the viewer may use the form at all right now. */
-  available: boolean;
-}
-
-/** The viewer's own UAT-tester standing. Mirrors `ViewerUatStatus` server side. */
-export interface ViewerUatStatus {
-  /** Has an active row in UatTester, whether or not UAT mode is on right now. */
-  isTester: boolean;
-  /** Cookie on AND an active tester — the effective mode every write choke point honours. */
-  uatMode: boolean;
-  /** Whether any form has its UAT switch on, for anybody — not just this viewer. */
-  anyUatForm: boolean;
-  /** The viewer's own tester row names a manager. */
-  hasUatManager: boolean;
-}
-
-export interface FormEnvironmentPayload {
-  viewer: ViewerUatStatus;
-  forms: Record<string, FormAccess>;
-}
+// Re-exported so existing call sites (`@/lib/hooks/useFormEnvironments`) keep
+// working unchanged. The shape itself lives in payload-types.ts — a
+// types-only module with no server-only imports — so the route handler and
+// this client hook read one declaration instead of two hand-kept copies.
+export type { FormAccess, FormEnvironment, FormEnvironmentPayload, ViewerUatStatus };
 
 const fetcher = async (url: string): Promise<FormEnvironmentPayload> => {
   const res = await fetch(url);
