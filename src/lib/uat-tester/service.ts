@@ -198,7 +198,9 @@ export async function uatManagerFor(
   const requester = await getActiveUatTesterFor(requesterEmail, requesterStaffId);
   const managerStaffId = requester?.managerStaffId ?? null;
   if (!managerStaffId) return null;
-  if (requester && managerStaffId === requester.staffId) return null;
+  // A tester may be their own UAT manager — that is how one person rehearses
+  // the whole submit-to-approve loop. It only ever applies to UAT requests;
+  // Production reads its manager from HR and never reaches this function.
 
   const managerIsTester = await getActiveUatTesterByStaffId(managerStaffId);
   if (!managerIsTester) return null;
@@ -213,7 +215,9 @@ export async function uatManagerFor(
  * calling `uatManagerFor` per colleague would be three reads per row. The self
  * join applies the same two membership rules that function checks one at a time:
  * the requester is an active tester with a manager set, and that manager is an
- * active tester too — plus the "not yourself" rule, which no constraint enforces.
+ * active tester too. A tester who is their own manager satisfies both and is
+ * returned — self-management is allowed in UAT on purpose, so one person can
+ * rehearse the whole loop.
  *
  * HR liveness is **not** checked here; the caller resolves the manager rows out
  * of HR anyway, and a StaffId with no active row simply produces no manager.
@@ -243,7 +247,6 @@ export async function uatManagerStaffIdsFor(
       ON m.StaffId = t.ManagerStaffId AND m.IsActive = 1
     WHERE t.IsActive = 1
       AND t.ManagerStaffId IS NOT NULL
-      AND t.ManagerStaffId <> t.StaffId
       AND t.StaffId IN (${placeholders.join(", ")})
   `);
 

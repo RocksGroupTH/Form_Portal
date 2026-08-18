@@ -113,9 +113,14 @@ export async function GET() {
  * by StaffId — not by string-comparing two differently-sourced emails) to
  * an already-active tester — otherwise a request's approval chain could
  * point outside the tester group and stall in a queue no tester can see.
- * Self-management is refused outright: with one tester in the table, "any
- * active tester" and "myself" are the same value, and letting that through
- * would make the manager approval step a self-approval.
+ * Self-management is **allowed**, and deliberately so. It makes the manager step
+ * a self-approval, which would be indefensible in production — but this list
+ * only ever routes UAT requests, where the point is to walk the whole
+ * submit-to-approve loop and see it work. One tester pointing at themselves can
+ * rehearse the entire flow alone; requiring two people to be enrolled before
+ * anything can be tested was a real obstacle and bought nothing, because a UAT
+ * approval approves test data. Production still resolves its manager from
+ * `Rocks_Portal_HR.Employee.ManagerStaffId` and never consults this table.
  */
 export async function POST(req: NextRequest) {
   const session = await requireRole(["System Admin"]);
@@ -167,12 +172,9 @@ export async function POST(req: NextRequest) {
             if (!managerEmployee) {
               return NextResponse.json({ ok: false, error: MANAGER_NOT_TESTER_ERROR }, { status: 400 });
             }
-            if (managerEmployee.staffId === employee.staffId) {
-              return NextResponse.json(
-                { ok: false, error: "ตั้งตัวเองเป็นผู้จัดการสำหรับ UAT ไม่ได้ — เพิ่มผู้ทดสอบอีกคนก่อน" },
-                { status: 400 },
-              );
-            }
+            // No self-check: a tester may be their own UAT manager, so one
+            // person can walk the full loop. See the docblock above.
+            //
             // Matched by StaffId, not by comparing the typed email string
             // against the stored one — the tester's own `Email` can differ
             // in source/casing from what was just typed here.
