@@ -14,6 +14,16 @@ import "@/lib/auth.config";
 const ROLE_CACHE_TTL_MS = 60 * 1000;
 const roleCache = new Map<string, { data: TeamMemberRow; expiresAt: number }>();
 
+/**
+ * When each email was last reported as having no TeamMember row.
+ *
+ * Only a throttle — see `warnTeamMemberMissing`. Kept beside `roleCache`
+ * because `clearTeamMemberRoleCache` has to drop both: an email that has just
+ * been added back to the roster should be allowed to complain again if it
+ * still cannot be found.
+ */
+const missingWarnedAt = new Map<string, number>();
+
 async function getCachedTeamMember(email: string): Promise<TeamMemberRow | null> {
   const key = email.toLowerCase();
   const now = Date.now();
@@ -35,12 +45,52 @@ async function getCachedTeamMember(email: string): Promise<TeamMemberRow | null>
   return member;
 }
 
+/**
+ * Forget cached roles so the next `auth()` re-reads them.
+ *
+ * Called by `/api/settings/users` after every roster change — without it a role
+ * change, a deactivation or a reactivation appears not to have worked for up to
+ * `ROLE_CACHE_TTL_MS`. In-process only: this is a plain Map, so it invalidates
+ * nothing on another instance.
+ */
 export function clearTeamMemberRoleCache(email?: string) {
   if (email) {
-    roleCache.delete(email.toLowerCase());
+    const key = email.toLowerCase();
+    roleCache.delete(key);
+    missingWarnedAt.delete(key);
   } else {
     roleCache.clear();
+    missingWarnedAt.clear();
   }
+}
+
+/**
+ * Report a signed-in email that has no TeamMember row, at most once per email
+ * per cache TTL.
+ *
+ * The jwt callback runs on every `auth()` call, so an unthrottled line here
+ * would print once per API request per affected person — loudest exactly when
+ * the database is unreachable and *everyone* is affected, which is when the log
+ * most needs to stay readable.
+ */
+function warnTeamMemberMissing(email: string) {
+  const key = email.toLowerCase();
+  const now = Date.now();
+
+  const last = missingWarnedAt.get(key);
+  if (last !== undefined && now - last < ROLE_CACHE_TTL_MS) return;
+
+  if (missingWarnedAt.size > 100) {
+    missingWarnedAt.forEach((at, k) => {
+      if (now - at >= ROLE_CACHE_TTL_MS) missingWarnedAt.delete(k);
+    });
+  }
+  missingWarnedAt.set(key, now);
+
+  console.error(
+    `[Auth] no TeamMember row for "${email}" — role downgraded to Staff, id kept.` +
+      " Either the row is gone, or the form database could not be read.",
+  );
 }
 
 function applyTeamMemberToToken(
@@ -104,6 +154,13 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
             // Give them a real TeamMember row: an empty user.id makes AccRequest.CreatedBy NULL,
             // which locks the user out of their own drafts (see provisionTeamMember).
+            //
+            // provisionTeamMember() swallows a database failure and returns null, so the
+            // login still completes — with user.id "" and role Staff, which is the same
+            // degraded session the outer catch produces. That is deliberate: a write that
+            // failed must not lock someone out. The reason is only ever visible in the
+            // "[TeamMember] provision failed" log line, so check there when a user reports
+            // that their own drafts have vanished.
             const provisioned = member
               ? null // inactive row exists — leave it alone, a System Admin owns that decision
               : await provisionTeamMember({
@@ -183,9 +240,63 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             const member = await getCachedTeamMember(token.email as string);
             if (member && member.IsActive) {
               applyTeamMemberToToken(t, member);
-            } else if (member && !member.IsActive) {
+            } else {
+              // Retired row, or no row at all: either way the roster no longer
+              // backs the role this token is carrying, so the token stops
+              // carrying it.
+              //
+              // Failing closed on the *role*. This token is the whole of what
+              // the `requireAuth()` / `requireRole()` gates in `src/app/api`
+              // see, so a grant the roster no longer confirms would otherwise
+              // keep working for the life of the session — JWT strategy with
+              // no maxAge set, i.e. 30 days — and leave nothing behind in any
+              // log.
+              //
+              // The downgrade is not a logout (`requireAuth()` gates on
+              // `session.user.email`, and the Edge proxy only checks that a
+              // token decodes) and it is not sticky (the next successful read
+              // runs `applyTeamMemberToToken` and restores role, id, nickname,
+              // colour and photo). It does cost real functionality while it
+              // lasts, and the cost lands hardest in an outage: the settings
+              // endpoints an admin role would have authorised — connections,
+              // bc-connections, brand-config, ors, google-maps and
+              // form-environment — are all Fast_Core-backed, so they are still
+              // up when the form database is not, and Form Environment is the
+              // page you would use to route a form away from a sick database.
+              // That cost is accepted deliberately; carrying an unconfirmed
+              // grant for up to 30 days is the worse trade.
+              //
+              // `userId` is *not* cleared on the same terms, because the two
+              // cases behind this branch are not the same and `null` conflates
+              // them — `findTeamMemberByEmail` swallows a database error and
+              // returns null, so `!member` means "row deleted" or "form
+              // database unreachable", with no way to tell which:
+              //   · inactive row — the roster positively confirms this person
+              //     is gone, so the id goes too;
+              //   · no row — keep it. `userId` authorises nothing; it only
+              //     selects or stamps the caller's own rows, so keeping it
+              //     fails closed on nothing. Blanking it instead does damage
+              //     that outlives the outage, because `Number("")` is 0:
+              //     `/api/forms/submissions` binds that into
+              //     `OfficeFormSubmissions.SubmittedBy` (int NOT NULL, no FK),
+              //     and the owner's own list — `WHERE s.SubmittedBy = @userId`
+              //     — can then never return the row. Both Accounting forms
+              //     coerce `userId || null` instead, writing the orphaned
+              //     `CreatedBy = NULL` rows migration 058 exists to repair and
+              //     is now marked DO NOT RE-RUN.
+              //
+              // Hence the warning on `!member` only, and hence the catch below
+              // almost never firing: the read has already handled its own
+              // error by the time we get here. A burst of the warning across
+              // many emails is an outage, or a form database with no
+              // TeamMember table because migration 066 was never applied; one
+              // email repeating is one person's row.
               t.role = "Staff";
-              t.userId = "";
+              if (member) {
+                t.userId = "";
+              } else {
+                warnTeamMemberMissing(token.email as string);
+              }
             }
           } catch (dbErr: unknown) {
             console.error("[Auth] jwt DB lookup:", dbErr instanceof Error ? dbErr.message : dbErr);

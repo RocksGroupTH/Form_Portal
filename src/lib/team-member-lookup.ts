@@ -1,4 +1,21 @@
-import { getCorePool, teamMemberTable, sql } from "@/lib/db/mssql";
+/**
+ * Login-time identity lookup — a thin adapter over `@/lib/team-member/service`.
+ *
+ * It holds no SQL of its own: the service owns every TeamMember statement and
+ * pins them to the production form database (see its docblock for why). What
+ * stays here is login behaviour the service deliberately does not have — the
+ * Graph mail/UPN retry, and swallowing a database failure so a login attempt
+ * fails closed with "no row" rather than throwing out of the NextAuth callback.
+ *
+ * The PascalCase row shape is the one `@/lib/auth` still reads.
+ */
+
+import {
+  findByEmail,
+  findById,
+  provision,
+  type TeamMemberRow as MemberRow,
+} from "@/lib/team-member/service";
 
 export interface TeamMemberRow {
   Id: number;
@@ -12,21 +29,27 @@ export interface TeamMemberRow {
   IsActive: boolean;
 }
 
+function toLegacyRow(member: MemberRow): TeamMemberRow {
+  return {
+    Id: member.id,
+    FullName: member.fullName,
+    Nickname: member.nickname,
+    Email: member.email,
+    AppRole: member.appRole,
+    Position: member.position ?? "",
+    Color: member.color,
+    Photo: member.photo,
+    IsActive: member.isActive,
+  };
+}
+
 export async function findTeamMemberByEmail(email: string): Promise<TeamMemberRow | null> {
   const trimmedEmail = email?.trim() ?? "";
   if (!trimmedEmail) return null;
 
   try {
-    const pool = await getCorePool();
-    const result = await pool
-      .request()
-      .input("email", sql.NVarChar, trimmedEmail)
-      .query<TeamMemberRow>(
-        `SELECT Id, FullName, Nickname, Email, AppRole, Position, Color, Photo, IsActive
-         FROM ${teamMemberTable()}
-         WHERE LOWER(LTRIM(RTRIM(Email))) = LOWER(LTRIM(RTRIM(@email)))`,
-      );
-    return result.recordset[0] ?? null;
+    const member = await findByEmail(trimmedEmail);
+    return member ? toLegacyRow(member) : null;
   } catch (err: unknown) {
     console.error("[TeamMember] DB lookup failed for", trimmedEmail, "—", err instanceof Error ? err.message : err);
     return null;
@@ -34,17 +57,9 @@ export async function findTeamMemberByEmail(email: string): Promise<TeamMemberRo
 }
 
 /**
- * Create the TeamMember row for an active HR employee who has never had one, then return it.
- *
- * Without a row the session carries no numeric `user.id`, and every ownership check that keys
- * on it (`AccRequest.CreatedBy` in AP-1 / AP-17 — draft listing, edit, submit, cancel, delete)
- * silently fails: the request is written with `CreatedBy = NULL`, which then matches nobody.
- * Provisioning at login keeps those users working without a System Admin having to add them by
- * hand first. `AppRole` is the lowest role, so this grants nothing beyond the Request forms;
- * any further gating (brand access, admin settings) is layered on top of it per-feature.
- *
- * Idempotent: the insert is guarded, and the row is re-read either way, so concurrent logins
- * can't create duplicates.
+ * Create the TeamMember row for an active HR employee who has never had one,
+ * then return it. See `provision()` for why a missing row breaks ownership
+ * checks; this wrapper only re-reads the row and keeps login from throwing.
  */
 export async function provisionTeamMember(input: {
   email: string;
@@ -56,25 +71,14 @@ export async function provisionTeamMember(input: {
   if (!email) return null;
 
   try {
-    const pool = await getCorePool();
-    const result = await pool
-      .request()
-      .input("email", sql.NVarChar, email)
-      .input("fullName", sql.NVarChar, input.fullName?.trim() || email)
-      .input("nickname", sql.NVarChar, input.nickname?.trim() || "")
-      .input("position", sql.NVarChar, input.position?.trim() || "")
-      .query<TeamMemberRow>(`
-        IF NOT EXISTS (
-          SELECT 1 FROM ${teamMemberTable()}
-          WHERE LOWER(LTRIM(RTRIM(Email))) = LOWER(LTRIM(RTRIM(@email)))
-        )
-        INSERT INTO ${teamMemberTable()} (FullName, Nickname, Email, AppRole, Position, Color, IsActive)
-        VALUES (@fullName, @nickname, @email, N'Staff', @position, N'#6c757d', 1);
-
-        SELECT Id, FullName, Nickname, Email, AppRole, Position, Color, Photo, IsActive
-        FROM ${teamMemberTable()}
-        WHERE LOWER(LTRIM(RTRIM(Email))) = LOWER(LTRIM(RTRIM(@email)))`);
-    return result.recordset[0] ?? null;
+    const id = await provision({
+      email,
+      fullName: input.fullName ?? "",
+      nickname: input.nickname ?? "",
+      position: input.position,
+    });
+    const member = await findById(id);
+    return member ? toLegacyRow(member) : null;
   } catch (err: unknown) {
     console.error("[TeamMember] provision failed for", email, "—", err instanceof Error ? err.message : err);
     return null;

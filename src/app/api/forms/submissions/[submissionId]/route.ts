@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getFormPool, sql, teamMemberTable } from "@/lib/db/mssql";
+import { getFormPool, sql } from "@/lib/db/mssql";
+import { teamMemberTableRef } from "@/lib/team-member/service";
 import { requireAuth, requireRole } from "@/lib/api-auth";
 import { updateSubmissionSchema } from "@/features/forms/schemas";
 
@@ -72,7 +73,7 @@ export async function GET(
       .request()
       .input("subId", sql.Int, Number(submissionId))
       .query(
-        "SELECT l.*, (SELECT tm.FullName FROM ${teamMemberTable()} tm WHERE tm.Id = l.AuthorId) as AuthorName FROM OfficeFormActivityLog l WHERE l.EntityType = 'Submission' AND l.EntityId = @subId ORDER BY l.CreatedAt DESC"
+        `SELECT l.*, (SELECT tm.FullName FROM ${teamMemberTableRef()} tm WHERE tm.Id = l.AuthorId) as AuthorName FROM OfficeFormActivityLog l WHERE l.EntityType = 'Submission' AND l.EntityId = @subId ORDER BY l.CreatedAt DESC`
       );
 
     // Get approval steps
@@ -80,14 +81,14 @@ export async function GET(
       .request()
       .input("subId", sql.Int, Number(submissionId))
       .query(
-        "SELECT a.Id, a.SubmissionId, a.WorkflowStepId, a.AssignedTo, a.Status, a.Comment, a.ActionAt, a.DueAt, a.CreatedAt, s.Name as StepName, s.StepOrder, (SELECT tm.FullName FROM ${teamMemberTable()} tm WHERE tm.Id = a.AssignedTo) as AssignedToName FROM OfficeFormApprovals a JOIN OfficeFormWorkflowSteps s ON a.WorkflowStepId = s.Id WHERE a.SubmissionId = @subId ORDER BY s.StepOrder, s.ParallelGroup"
+        `SELECT a.Id, a.SubmissionId, a.WorkflowStepId, a.AssignedTo, a.Status, a.Comment, a.ActionAt, a.DueAt, a.CreatedAt, s.Name as StepName, s.StepOrder, (SELECT tm.FullName FROM ${teamMemberTableRef()} tm WHERE tm.Id = a.AssignedTo) as AssignedToName FROM OfficeFormApprovals a JOIN OfficeFormWorkflowSteps s ON a.WorkflowStepId = s.Id WHERE a.SubmissionId = @subId ORDER BY s.StepOrder, s.ParallelGroup`
       );
 
     // Get submitter name
     const submitterResult = await pool
       .request()
       .input("uid", sql.Int, submission.SubmittedBy)
-      .query("SELECT FullName FROM ${teamMemberTable()} WHERE Id = @uid");
+      .query(`SELECT FullName FROM ${teamMemberTableRef()} WHERE Id = @uid`);
 
     const responseData = {
       submission: {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getFormPool, sql, teamMemberTable } from "@/lib/db/mssql";
+import { getFormPool, sql } from "@/lib/db/mssql";
+import { teamMemberTableRef } from "@/lib/team-member/service";
 import { requireAuth } from "@/lib/api-auth";
 
 /* ── GET /api/forms/approvals ── */
@@ -24,7 +25,7 @@ export async function GET(req: NextRequest) {
           f.Name AS FormName,
           sub.DataJson,
           sub.SubmittedAt,
-          (SELECT tm.FullName FROM ${teamMemberTable()} tm WHERE tm.Id = sub.SubmittedBy) AS SubmitterName
+          (SELECT tm.FullName FROM ${teamMemberTableRef()} tm WHERE tm.Id = sub.SubmittedBy) AS SubmitterName
         FROM OfficeFormApprovals a
         JOIN OfficeFormWorkflowSteps s ON a.WorkflowStepId = s.Id
         JOIN OfficeFormSubmissions sub ON a.SubmissionId = sub.Id
