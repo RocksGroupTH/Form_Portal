@@ -30,7 +30,9 @@
 -- pools reach it three-part; a second copy in UAT would be a second role list to
 -- keep in step, and the app would silently read whichever one the request's form
 -- happened to route to. The _UAT guard below is 061's and 064's guard inverted:
--- those two may only run on UAT, this one may only run off it.
+-- those two may only run on UAT, this one may only run off it. A second guard
+-- then requires the database to actually be a form database, so a mistyped --db
+-- cannot reach Fast_Core; see the comment on it for why that one matters most.
 
 SET NOCOUNT ON;
 
@@ -40,6 +42,22 @@ BEGIN
   RAISERROR (
     'Migration 066 must not be applied to the UAT form database. Identity lives only in production. Current database is %s.',
     16, 1, @wrongDb
+  );
+END
+-- Second guard, and the reason it is a positive test rather than a blocklist:
+-- every other statement in this migration no-ops when it is pointed at Fast_Core
+-- -- the table, all four indexes and the FK are already there under exactly these
+-- names, and the 17 rows make the copy skip -- but the reseed in batch 2 would
+-- still fire and push the LIVE shared identity to 100001, inverting the very
+-- collision-avoidance this migration exists to create. Requiring dbo.AccRequest,
+-- which only a form database has, refuses Fast_Core, Fast_Data, master and plain
+-- typos alike.
+ELSE IF OBJECT_ID('dbo.AccRequest', 'U') IS NULL
+BEGIN
+  DECLARE @notForm NVARCHAR(128) = DB_NAME();
+  RAISERROR (
+    'Migration 066 may only be applied to a Form Portal form database (no dbo.AccRequest here). Current database is %s.',
+    16, 1, @notForm
   );
 END
 ELSE
@@ -100,6 +118,14 @@ BEGIN
   RAISERROR (
     'Migration 066 must not be applied to the UAT form database. Identity lives only in production. Current database is %s.',
     16, 1, @wrongDb2
+  );
+END
+ELSE IF OBJECT_ID('dbo.AccRequest', 'U') IS NULL
+BEGIN
+  DECLARE @notForm2 NVARCHAR(128) = DB_NAME();
+  RAISERROR (
+    'Migration 066 may only be applied to a Form Portal form database (no dbo.AccRequest here). Current database is %s.',
+    16, 1, @notForm2
   );
 END
 ELSE
