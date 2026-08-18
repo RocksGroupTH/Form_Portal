@@ -130,6 +130,17 @@ BEGIN
 END
 ELSE
 BEGIN
+  -- Everything below runs in one transaction. The copy gets exactly one attempt:
+  -- the NOT EXISTS guard that makes it re-runnable also means a half-landed copy
+  -- would be skipped forever on the next run, leaving the roster permanently
+  -- short with nothing to signal it. XACT_ABORT plus an explicit transaction
+  -- makes that unreachable -- anything that fails in here leaves the table
+  -- exactly as empty as it found it, and the re-run copies the lot.
+  -- 064_uat_identity_floor.sql wraps its ALTERs the same way, for the same
+  -- reason: one error to read, and nothing half-applied to unpick.
+  SET XACT_ABORT ON;
+  BEGIN TRANSACTION;
+
   -- Indexes are Fast_Core's four, reproduced as they are. IX_TeamMember_Email is
   -- redundant against the unique constraint on the same column and would not be
   -- created from scratch today, but the copy is meant to match the original
@@ -159,6 +170,8 @@ BEGIN
   -- order to get wrong.
   IF NOT EXISTS (SELECT 1 FROM [dbo].[TeamMember])
   BEGIN
+    DECLARE @copiedRows INT;
+
     SET IDENTITY_INSERT [dbo].[TeamMember] ON;
 
     INSERT INTO [dbo].[TeamMember]
@@ -166,9 +179,16 @@ BEGIN
     SELECT Id, FullName, Nickname, Email, AppRole, Position, Color, Photo, ManagerId, IsActive, CreatedAt, UpdatedAt
     FROM [Fast_Core].[dbo].[TeamMember];
 
+    -- Captured on the very next line because @@ROWCOUNT is reset by whatever
+    -- statement runs after the INSERT -- including the SET IDENTITY_INSERT below.
+    -- It is also the reason this is not a COUNT(*): PRINT takes a scalar
+    -- expression and rejects an inline subquery at COMPILE time, which fails the
+    -- whole batch rather than just the PRINT.
+    SET @copiedRows = @@ROWCOUNT;
+
     SET IDENTITY_INSERT [dbo].[TeamMember] OFF;
 
-    PRINT 'Copied ' + CAST((SELECT COUNT(*) FROM [dbo].[TeamMember]) AS NVARCHAR(10))
+    PRINT 'Copied ' + CAST(@copiedRows AS NVARCHAR(10))
         + ' row(s) from [Fast_Core].[dbo].[TeamMember].';
   END
   ELSE
@@ -189,11 +209,18 @@ BEGIN
   -- makes this re-runnable: once the counter has moved past 100000 -- which it
   -- will, the moment a user is provisioned here -- the reseed is skipped rather
   -- than lowering a live counter back onto ids already handed out.
+  --
+  -- The scalar subquery is legal here, unlike in a PRINT: an IF predicate is one
+  -- of the contexts that does accept one.
   IF (SELECT IDENT_CURRENT('dbo.TeamMember')) < 100000
     DBCC CHECKIDENT ('dbo.TeamMember', RESEED, 100000) WITH NO_INFOMSGS;
 
-  -- IDENT_CURRENT returns sql_variant, which the add operator rejects outright,
-  -- hence the cast to BIGINT before the +1.
+  COMMIT TRANSACTION;
+
+  -- Reported after the COMMIT so it describes what is actually on disk.
+  -- IDENT_CURRENT is a function call, not a subquery, so it is fine in a PRINT;
+  -- it returns sql_variant, which the add operator rejects outright, hence the
+  -- cast to BIGINT before the +1.
   PRINT 'dbo.TeamMember next id: '
       + CAST(CAST(IDENT_CURRENT('dbo.TeamMember') AS BIGINT) + 1 AS NVARCHAR(20)) + '.';
 END
