@@ -79,7 +79,7 @@ Migration 066 copied all 17 rows out of `Fast_Core.dbo.TeamMember` — ids prese
 **What this bought, and what it did not:**
 
 - ✅ **Identity and roles are no longer shared with Rocks Fast.** A role change here no longer lands in that app, and vice versa.
-- ❌ **It did not remove the Fast_Core dependency.** `getCorePool()` still has 43 call sites across 12 modules, and two of them cannot move: `getFormSwitchMap()` (`src/lib/form-environment/service.ts`) and `getActiveUatTester()` (`src/lib/uat-tester/service.ts`) resolve *which* form database answers, so they must read a database that resolver never picks — see "Parallel Production and UAT". The app still cannot serve a request without Fast_Core.
+- ❌ **It did not remove the Fast_Core dependency.** `getCorePool()` still has more than forty call sites across a dozen modules, and two of them cannot move: `getFormSwitchMap()` (`src/lib/form-environment/service.ts`) and `getActiveUatTester()` (`src/lib/uat-tester/service.ts`) resolve *which* form database answers, so they must read a database that resolver never picks — see "Parallel Production and UAT". The app still cannot serve a request without Fast_Core.
 
 **The two rosters diverge from the cut onward. This was accepted, not solved:**
 

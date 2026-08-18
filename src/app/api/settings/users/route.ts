@@ -142,10 +142,16 @@ export async function POST(req: NextRequest) {
         for (const u of allUsers) {
           try {
             const adUser = await getADUserByEmail(u.email);
-            // A blank displayName is skipped: updateFullName() ignores it, so
-            // counting it as synced would report work that never happened.
-            if (adUser && adUser.displayName && adUser.displayName !== u.fullName) {
-              await updateFullName(u.id, adUser.displayName);
+            // Normalise before both the blank test and the comparison.
+            // `updateFullName()` trims and then ignores a blank, so testing the
+            // raw value would let a whitespace-only displayName through to a
+            // write that never happens and still count as synced — the very
+            // thing this guard exists to prevent. `u.fullName` arrives trimmed
+            // from the service, so comparing the trimmed AD value is like for
+            // like.
+            const displayName = (adUser?.displayName ?? "").trim();
+            if (displayName && displayName !== u.fullName) {
+              await updateFullName(u.id, displayName);
               synced++;
             }
           } catch { /* skip failed lookups */ }
