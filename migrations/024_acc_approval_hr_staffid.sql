@@ -12,7 +12,7 @@
 -- joins [Fast_Core].[dbo].[TeamMember], which since 066 is the Rocks Fast
 -- roster rather than this one. The two rosters share only the 17 rows 066
 -- copied -- everyone provisioned since exists in one and not the other (this
--- app allocates ids from 100001, Fast_Core from 18) -- so a re-run would
+-- app allocates ids from 100001, Fast_Core from 2009) -- so a re-run would
 -- silently skip every approval actioned by someone added after the cut, while
 -- reporting success. If AccApproval ever needs this backfill again, write a new
 -- migration against [Rocks_Portal_Form].[dbo].[TeamMember].

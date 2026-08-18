@@ -20,7 +20,7 @@
   The "re-run after they log in" instruction above, and the matching note further down, were
   written while identity lived in Fast_Core. Since 066 it lives in
   [Rocks_Portal_Form].[dbo].[TeamMember], and the two rosters share only the 17 rows 066 copied:
-  this app allocates new ids from 100001, Fast_Core carries on from 18, so an id minted in one is
+  this app allocates new ids from 100001, Fast_Core carries on from 2009, so an id minted in one is
   absent from the other. Re-running would therefore write a Fast_Core id into
   AccRequest.CreatedBy that matches no row here — which still locks the owner out, and does it
   worse than NULL did, because the guard above only rescues rows that are still NULL. A wrong id

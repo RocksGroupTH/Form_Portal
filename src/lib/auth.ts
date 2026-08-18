@@ -88,7 +88,7 @@ function warnTeamMemberMissing(email: string) {
   missingWarnedAt.set(key, now);
 
   console.error(
-    `[Auth] no TeamMember row for "${email}" — session downgraded to Staff with no id.` +
+    `[Auth] no TeamMember row for "${email}" — role downgraded to Staff, id kept.` +
       " Either the row is gone, or the form database could not be read.",
   );
 }
@@ -242,39 +242,61 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
               applyTeamMemberToToken(t, member);
             } else {
               // Retired row, or no row at all: either way the roster no longer
-              // backs the grant this token is carrying, so the token stops
+              // backs the role this token is carrying, so the token stops
               // carrying it.
               //
-              // Failing closed rather than keeping the last known role. This
-              // token is the whole of what the ~167 `requireAuth()` /
-              // `requireRole()` gates in `src/app/api` see, and `userId` is
-              // what every ownership check compares against, so a grant the
-              // roster no longer confirms would keep working for the life of
-              // the session — JWT strategy with no maxAge set, i.e. 30 days —
-              // and leave nothing behind in any log.
+              // Failing closed on the *role*. This token is the whole of what
+              // the `requireAuth()` / `requireRole()` gates in `src/app/api`
+              // see, so a grant the roster no longer confirms would otherwise
+              // keep working for the life of the session — JWT strategy with
+              // no maxAge set, i.e. 30 days — and leave nothing behind in any
+              // log.
               //
-              // The usual objection, that a database blip should not punish
-              // everyone, does not survive being priced:
-              //   · it is not a logout — `requireAuth()` gates on
-              //     `session.user.email` and the Edge proxy only checks that a
-              //     token decodes, and neither is touched here;
-              //   · it is not sticky — the next successful read runs
-              //     `applyTeamMemberToToken` and restores role, id, nickname,
-              //     colour and photo;
-              //   · it costs no working functionality, because every endpoint
-              //     the retained role would have authorised reads the same
-              //     database that just failed to answer.
+              // The downgrade is not a logout (`requireAuth()` gates on
+              // `session.user.email`, and the Edge proxy only checks that a
+              // token decodes) and it is not sticky (the next successful read
+              // runs `applyTeamMemberToToken` and restores role, id, nickname,
+              // colour and photo). It does cost real functionality while it
+              // lasts, and the cost lands hardest in an outage: the settings
+              // endpoints an admin role would have authorised — connections,
+              // bc-connections, brand-config, ors, google-maps and
+              // form-environment — are all Fast_Core-backed, so they are still
+              // up when the form database is not, and Form Environment is the
+              // page you would use to route a form away from a sick database.
+              // That cost is accepted deliberately; carrying an unconfirmed
+              // grant for up to 30 days is the worse trade.
               //
-              // `null` really does mean both things: `findTeamMemberByEmail`
-              // swallows a database error and returns null, so this branch
-              // cannot tell "row deleted" from "database unreachable" (and the
-              // catch below therefore almost never fires). Hence the warning —
-              // a burst of it across many emails is an outage, or a form
-              // database with no TeamMember table because migration 066 was
-              // never applied; one email repeating is one person's row.
-              if (!member) warnTeamMemberMissing(token.email as string);
+              // `userId` is *not* cleared on the same terms, because the two
+              // cases behind this branch are not the same and `null` conflates
+              // them — `findTeamMemberByEmail` swallows a database error and
+              // returns null, so `!member` means "row deleted" or "form
+              // database unreachable", with no way to tell which:
+              //   · inactive row — the roster positively confirms this person
+              //     is gone, so the id goes too;
+              //   · no row — keep it. `userId` authorises nothing; it only
+              //     selects or stamps the caller's own rows, so keeping it
+              //     fails closed on nothing. Blanking it instead does damage
+              //     that outlives the outage, because `Number("")` is 0:
+              //     `/api/forms/submissions` binds that into
+              //     `OfficeFormSubmissions.SubmittedBy` (int NOT NULL, no FK),
+              //     and the owner's own list — `WHERE s.SubmittedBy = @userId`
+              //     — can then never return the row. Both Accounting forms
+              //     coerce `userId || null` instead, writing the orphaned
+              //     `CreatedBy = NULL` rows migration 058 exists to repair and
+              //     is now marked DO NOT RE-RUN.
+              //
+              // Hence the warning on `!member` only, and hence the catch below
+              // almost never firing: the read has already handled its own
+              // error by the time we get here. A burst of the warning across
+              // many emails is an outage, or a form database with no
+              // TeamMember table because migration 066 was never applied; one
+              // email repeating is one person's row.
               t.role = "Staff";
-              t.userId = "";
+              if (member) {
+                t.userId = "";
+              } else {
+                warnTeamMemberMissing(token.email as string);
+              }
             }
           } catch (dbErr: unknown) {
             console.error("[Auth] jwt DB lookup:", dbErr instanceof Error ? dbErr.message : dbErr);

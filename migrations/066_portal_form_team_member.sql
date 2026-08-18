@@ -19,8 +19,12 @@
 -- -- AccRequest.CreatedBy, AccApproval.AssignedTo, the HR manager chain, and so
 -- on -- keeps pointing at the same person without a rewrite. The identity is
 -- then reseeded to 100000 (owner decision 2): Form Portal's new users get 100001
--- up while Fast_Core keeps allocating from 18, so an id says which app created
--- the row and the two lists can never collide.
+-- up while Fast_Core keeps allocating from 2009 -- its IDENT_CURRENT is 2008,
+-- the same 2008 the line above names as the highest copied id -- so an id says
+-- which app created the row and the two lists can never collide. The 17 copied
+-- ids are not contiguous (1-6, 1006-1013, 2006-2008): there is no low-water
+-- mark below which an id "came from Fast_Core", only the 100000 floor above
+-- which it did not.
 --
 -- Apply with:
 --   npm run apply-sql -- --db Rocks_Portal_Form --file migrations/066_portal_form_team_member.sql
@@ -31,8 +35,9 @@
 -- keep in step, and the app would silently read whichever one the request's form
 -- happened to route to. The _UAT guard below is 061's and 064's guard inverted:
 -- those two may only run on UAT, this one may only run off it. A second guard
--- then requires the database to actually be a form database, so a mistyped --db
--- cannot reach Fast_Core; see the comment on it for why that one matters most.
+-- then requires the database to be NAMED Rocks_Portal_Form... and to hold
+-- dbo.AccRequest, so a mistyped --db cannot reach Fast_Core or Fast_Form; see
+-- the comment on it for why that one matters most.
 
 SET NOCOUNT ON;
 
@@ -44,19 +49,30 @@ BEGIN
     16, 1, @wrongDb
   );
 END
--- Second guard, and the reason it is a positive test rather than a blocklist:
--- every other statement in this migration no-ops when it is pointed at Fast_Core
--- -- the table, all four indexes and the FK are already there under exactly these
--- names, and the 17 rows make the copy skip -- but the reseed in batch 2 would
--- still fire and push the LIVE shared identity to 100001, inverting the very
--- collision-avoidance this migration exists to create. Requiring dbo.AccRequest,
--- which only a form database has, refuses Fast_Core, Fast_Data, master and plain
--- typos alike.
-ELSE IF OBJECT_ID('dbo.AccRequest', 'U') IS NULL
+-- Second guard, and the reason it tests the database NAME and not only its
+-- contents: every other statement in this migration no-ops when it is pointed
+-- at Fast_Core -- the table, all four indexes and the FK are already there
+-- under exactly these names, and the 17 rows make the copy skip -- but the
+-- reseed in batch 2 would still fire and push the LIVE shared identity to
+-- 100001, inverting the very collision-avoidance this migration exists to
+-- create.
+--
+-- Requiring dbo.AccRequest on its own does not get there. It refuses
+-- Fast_Core, Fast_Data, master and plain typos, but it lets Fast_Form through
+-- -- the live Rocks Fast application database, which has dbo.AccRequest
+-- because 013 created it there and the sibling ships that same file. The
+-- literal string "--db Fast_Form" is written out in the apply line of 013, 024
+-- and 058, so it is one copy-paste away; and there the reseed would fire for
+-- real and the roster copy would land in a live production database this work
+-- must never write to. So the name test comes first and the AccRequest test
+-- stays on as a second condition: together they admit Rocks_Portal_Form and
+-- nothing else, the _UAT twin having already been refused above.
+ELSE IF DB_NAME() NOT LIKE 'Rocks[_]Portal[_]Form%'
+     OR OBJECT_ID('dbo.AccRequest', 'U') IS NULL
 BEGIN
   DECLARE @notForm NVARCHAR(128) = DB_NAME();
   RAISERROR (
-    'Migration 066 may only be applied to a Form Portal form database (no dbo.AccRequest here). Current database is %s.',
+    'Migration 066 may only be applied to a Form Portal form database: the name must start with Rocks_Portal_Form and dbo.AccRequest must exist. Current database is %s.',
     16, 1, @notForm
   );
 END
@@ -120,11 +136,12 @@ BEGIN
     16, 1, @wrongDb2
   );
 END
-ELSE IF OBJECT_ID('dbo.AccRequest', 'U') IS NULL
+ELSE IF DB_NAME() NOT LIKE 'Rocks[_]Portal[_]Form%'
+     OR OBJECT_ID('dbo.AccRequest', 'U') IS NULL
 BEGIN
   DECLARE @notForm2 NVARCHAR(128) = DB_NAME();
   RAISERROR (
-    'Migration 066 may only be applied to a Form Portal form database (no dbo.AccRequest here). Current database is %s.',
+    'Migration 066 may only be applied to a Form Portal form database: the name must start with Rocks_Portal_Form and dbo.AccRequest must exist. Current database is %s.',
     16, 1, @notForm2
   );
 END
