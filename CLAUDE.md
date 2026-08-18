@@ -17,8 +17,9 @@ npm run dev                   # http://localhost:3020
 
 | Database | Pool | Purpose |
 |----------|------|---------|
-| **Fast_Core** | `getCorePool()` | TeamMember (auth), config, brand/DB/BC connection settings |
+| **Fast_Core** | `getCorePool()` | Config, brand/DB/BC connection settings, `FormEnvironment`, `UatTester`. **No longer identity** — see "Auth" |
 | **Rocks_Portal_Form** | `getFormPool()` | Form definitions, submissions, approvals, files, logs, and all `Acc*` Accounting tables. Form Portal's own database — `Rocks_Portal_Form_UAT` is the UAT twin, and which one `getFormPool()` returns depends on the form **and on who is asking** (see "Parallel Production and UAT") |
+| **Rocks_Portal_Form** (`TeamMember`) | `getProductionFormPool()` via `@/lib/team-member/service` | User identity and roles (migration 066). **Production only** — never the UAT twin, and never `getFormPool()`; see "Auth" |
 | **Fast_Data** | `getDataPool()` | Used by Accounting and ERP sync — department maps, travel-booking province lookups, ERP account/dimension sync (`src/lib/acc/department-map-service.ts`, `src/lib/acc/travel-booking/province-service.ts`, `src/lib/acc/travel-booking/request-service.ts`, `src/lib/erp/account-sync.ts`, `src/lib/erp/dimension-sync.ts`). **Not** a BI/reporting database in this app. |
 | **Rocks_Portal_HR** | `getHrPool()` → `getAppPool("Rocks_Portal_HR")` | Employee master, manager chain, per-diem allowance history — cross-referenced by StaffId/email |
 | **Rocks_Codex** | (cross-DB query, e.g. `[Rocks_Codex].[dbo].[Holiday]`, `[Rocks_Codex].[dbo].[Brand]`) | Holiday calendar, company brand master |
@@ -42,7 +43,9 @@ Production and UAT run **side by side in one deployment**. There is no app-wide 
 2. **The viewer's UAT mode** — cookie **and** live `getActiveUatTester()` membership, re-checked on every resolve (`viewerIsTesting`). The cookie alone is a forgeable hint.
 3. **The form's switches** — `pickEnvironment` picks the one switch that answers for this viewer.
 
-Identity comes from the proxy's `x-pathname` and `x-user-email` headers, **never `auth()`** — `getFormPool()` imports this module and `auth()` reads Fast_Core, so a session lookup would close the loop. Code with no request scope (scripts, background work) resolves to Production.
+Who is asking comes from the proxy's `x-pathname` and `x-user-email` headers, **never `auth()`** — `getFormPool()` imports `src/lib/form-environment`, so a session lookup would close the loop `getFormPool → auth → jwt → getFormPool`. Code with no request scope (scripts, background work) resolves to Production.
+
+Since migration 066 that is a hard constraint, not a preference: `auth()` no longer reads Fast_Core, it reads `TeamMember` in the form database. Everything on the path that decides *which* form database answers must therefore come from a pool this resolver does not pick — `getFormSwitchMap()` and `getActiveUatTester()` from `getCorePool()`, identity from `getProductionFormPool()`. **`FormEnvironment` and `UatTester` must stay in Fast_Core**, and `@/lib/team-member/service` must never reach for `getFormPool()`.
 
 - **Availability and writability are different questions.** `pickEnvironment().available` asks "may this person reach the form", and an id makes it unconditionally true so records stay readable and approvable. `environmentWritable` asks "is that database still taking new work". Use `resolveCurrentFormAccess()` + `resolveCurrentFormWritable()` on a form's own route, and `resolveFormAccess(formCode, requestId?)` + `resolveFormWritable(...)` to ask about a form from somewhere else (Home, the manager card). **`assertFormWritable()` (`src/lib/uat-tester/guards.ts`) has exactly four call sites** — the two `saveDraft` functions and the two submits, one pair per form.
 - **The manager differs by environment.** UAT routes to the requester's `UatTester.ManagerStaffId`, re-verified at submit time (still an active tester, still active in HR, not self); Production reads `Rocks_Portal_HR.Employee.ManagerStaffId`. **UAT refuses rather than falling back to HR** — a real manager must never find test data in their queue. Three resolvers, keyed on the *resolved environment* and never on the cookie: `resolveManagerInfo()` (the preview card, shared), and a separate `withUatManager` for each form's submit — `resolveRequesterForActor` in `src/lib/acc/employee-context.ts` (AP-1) and `resolveEmployeeForActor` in `src/lib/hr/employee-lookup.ts` (AP-17). `resolveManagerEmail()` is deliberately *not* overridden.
@@ -63,9 +66,28 @@ Identity comes from the proxy's `x-pathname` and `x-user-email` headers, **never
 - Microsoft Entra ID (Azure AD) via NextAuth 5
 - Session: `{ user: { id, name, email, role, nickname, color, photo } }` — no `hasIntel` flag (Intelligence is gone)
 - Roles: `Staff | IT Admin | System Admin | Viewer`
-- TeamMember lookup from `Fast_Core.dbo.TeamMember`; a missing row is provisioned at login (`provisionTeamMember`) so drafts stay owned by their creator
+- TeamMember lookup from **`Rocks_Portal_Form.dbo.TeamMember`** (migration 066), never Fast_Core; a missing row is provisioned at login (`provisionTeamMember`) so drafts stay owned by their creator
 - Profile photo fetched via client credentials (`getADUserPhoto`) instead of delegated token
 - Role hierarchy: System Admin > IT Admin > Staff/Viewer
+- **The jwt callback caches the row for 60s** (`src/lib/auth.ts`). `/api/settings/users` clears that cache after `updateRole`, `addUser` and `deleteUser`, so a role change takes effect on the next request instead of a minute later. It is an in-process Map — it invalidates nothing on a second instance.
+- **A row that is retired, or missing, downgrades the token** to role `Staff` with a blank `userId`, and a missing one logs `[Auth] no TeamMember row for …` (throttled to once a minute per email). Not a logout — `requireAuth()` only needs the email — and the next successful read restores everything. `findTeamMemberByEmail` swallows database errors and returns null, so that log line means *either* the row is gone *or* the database could not be read.
+
+#### TeamMember lives in Form Portal's own database
+
+Migration 066 copied all 17 rows out of `Fast_Core.dbo.TeamMember` — ids preserved — into `Rocks_Portal_Form.dbo.TeamMember`, and left Fast_Core's copy untouched and in service for Rocks Fast. Every read and write goes through **`src/lib/team-member/service.ts`**, the single access point; no SQL elsewhere names the table. It uses `getProductionFormPool()`, never `getFormPool()` — identity must not vary with the route's environment, and 066 is deliberately **not** applied to `Rocks_Portal_Form_UAT`.
+
+**What this bought, and what it did not:**
+
+- ✅ **Identity and roles are no longer shared with Rocks Fast.** A role change here no longer lands in that app, and vice versa.
+- ❌ **It did not remove the Fast_Core dependency.** `getCorePool()` still has 43 call sites across 12 modules, and two of them cannot move: `getFormSwitchMap()` (`src/lib/form-environment/service.ts`) and `getActiveUatTester()` (`src/lib/uat-tester/service.ts`) resolve *which* form database answers, so they must read a database that resolver never picks — see "Parallel Production and UAT". The app still cannot serve a request without Fast_Core.
+
+**The two rosters diverge from the cut onward. This was accepted, not solved:**
+
+- Both apps provision at login independently (`provisionTeamMember` in each), so a new joiner gets an unrelated row in each database.
+- Form Portal's new ids start at **100001** (066 reseeds the identity to 100000); Fast_Core carries on from 18. An id therefore says which app created the row, and the two ranges can never collide — but an id minted in one app matches nothing in the other.
+- **Granting System Admin, or any role, has to be done in both apps.** `/settings/users` writes only `Rocks_Portal_Form`.
+- Deactivating someone in one app leaves them active in the other. Same for a name resync.
+- Anything that joins `[Fast_Core].[dbo].[TeamMember]` is now reading the other app's roster. Migrations `024` and `058` still do, which is why both carry a **do not re-run** header.
 
 ### Theme — Sky
 
@@ -85,6 +107,7 @@ Identity comes from the proxy's `x-pathname` and `x-user-email` headers, **never
 Form Portal was cloned from the Rocks Fast codebase and **still shares live infrastructure** with it. This is not a separate environment — treat both apps as one system when operating on shared resources:
 
 - **Databases are no longer shared**: Form Portal owns `Rocks_Portal_Form` (plus `Rocks_Portal_Form_UAT`). `Fast_Form` belongs to Rocks Fast and this app must not read or write it. `Fast_Core`, `Fast_Data`, `Rocks_Portal_HR` and `Rocks_Codex` are still the same shared databases both apps use, in both environments.
+- **Identity is no longer shared, but Fast_Core still is.** Migration 066 gave this app its own `TeamMember` in `Rocks_Portal_Form`; `Fast_Core.dbo.TeamMember` stays exactly as it is and stays in service for Rocks Fast. The two rosters now drift apart — see "TeamMember lives in Form Portal's own database" under Auth for what that costs. Fast_Core itself is still shared: `AppSetting`, brand configuration and the DB/BC connection rows are one set of rows both apps read and write, and `FormEnvironment` / `UatTester` are Form Portal's own tables that live there (Rocks Fast has no code for either). **A query in this app that names `[Fast_Core].[dbo].[TeamMember]` is a bug** — it is reading the sibling's user list.
 - **Same SharePoint folder**: Accounting file attachments (`SHAREPOINT_ACC_SITE` / `SHAREPOINT_ACC_FOLDER`) point at the same document library Rocks Fast uses.
 - **`AccEmailQueue` is no longer shared** — each app drains the queue in its own database.
 - **⚠️ Both apps use port 3020** — Form Portal was moved off 3021 onto the same port Rocks Fast uses, so only one of them can run at a time on a given machine; the second to start fails with `EADDRINUSE`. This also removes the previous risk of both apps polling/draining the same `AccEmailQueue` concurrently and sending approval/payment emails twice.
@@ -149,7 +172,9 @@ Configurable form builder with approval workflows.
 
 Two live Accounting forms share a generic request/approval backbone, plus a Business Central ERP integration layer.
 
-**Storage:** Acc* tables live in **`Rocks_Portal_Form`**, accessed via `getAccPool()` (= `getFormPool()`, `src/lib/acc/pool.ts`). Numbered migrations in `migrations/` (013 onward) built these up incrementally against the old `Fast_Form`; `059_portal_form_baseline.sql` is the generated full-schema baseline used to stand up a new database. Apply with `npm run apply-sql -- --db Rocks_Portal_Form --file <path>` (see `scripts/apply-sql.ts`). **Every migration names its own target database in its header — read that before running it.** A new migration that changes an `Acc*` table does have to be applied to `Rocks_Portal_Form_UAT` as well, but the parallel-UAT batch is not that shape: **060, 062, 063 and 065 are Fast_Core only** (`FormEnvironment`, `UatTester`), and **061 and 064 are `Rocks_Portal_Form_UAT` only** — they refuse to run against a database whose name does not end in `_UAT`.
+**Storage:** Acc* tables live in **`Rocks_Portal_Form`**, accessed via `getAccPool()` (= `getFormPool()`, `src/lib/acc/pool.ts`). Numbered migrations in `migrations/` (013 onward) built these up incrementally against the old `Fast_Form`; `059_portal_form_baseline.sql` is the generated full-schema baseline used to stand up a new database. Apply with `npm run apply-sql -- --db Rocks_Portal_Form --file <path>` (see `scripts/apply-sql.ts`). **Every migration names its own target database in its header — read that before running it.**
+
+**Standing up a production form database takes 059 *and* 066.** 059 was generated from `Fast_Form`, which never held `TeamMember`, so a database built from 059 alone has no identity table and **nobody can log in** — the first symptom is every session downgraded to Staff with a blank id and `[Auth] no TeamMember row for …` in the log. `066_portal_form_team_member.sql` creates the table and copies the roster out of Fast_Core; it refuses to run against a database with no `dbo.AccRequest`, so it goes *after* 059. It is the one migration that must **not** also be applied to `Rocks_Portal_Form_UAT` — identity lives in production only, and both pools reach it three-part. A new migration that changes an `Acc*` table does have to be applied to `Rocks_Portal_Form_UAT` as well, but the parallel-UAT batch is not that shape: **060, 062, 063 and 065 are Fast_Core only** (`FormEnvironment`, `UatTester`), and **061 and 064 are `Rocks_Portal_Form_UAT` only** — they refuse to run against a database whose name does not end in `_UAT`.
 
 **Generic header (shared by all Accounting forms):** `AccFormMaster` (form catalog), `AccRequest` (shared request header), `AccApproval`, `AccActivityLog`, `AccSequence`, `AccEmailQueue`, `AccRequestFile`.
 
@@ -212,7 +237,8 @@ src/
 │   ├── ui/                           # Button, Badge, Avatar, Dialog, DropdownMenu, SidePanel, FullScreenModal
 │   └── layout/                       # Navbar, RouteGuard, PageContainer
 ├── lib/
-│   ├── db/mssql.ts                   # Multi-DB pools (Core, Form, Data, generic getAppPool) + teamMemberTable(), pool max=30
+│   ├── db/mssql.ts                   # Multi-DB pools (Core, Form, Production/UAT Form, Data, generic getAppPool), pool max=30
+│   ├── team-member/                  # The only module that touches TeamMember — service.ts + mapping.ts
 │   ├── acc/                          # Accounting domain logic (see above)
 │   ├── erp/                          # Business Central sync
 │   ├── hr/                           # Rocks_Portal_HR cross-DB lookups
@@ -229,7 +255,7 @@ src/
 - **API response**: `{ ok: true, data: ... }` or `{ ok: false, error: "..." }`
 - **Auth**: `requireAuth()` / `requireRole(["IT Admin", "System Admin"])`
 - **SQL**: Parameterized queries only — `pool.request().input("name", sql.NVarChar, value).query(...)`
-- **Cross-DB**: Use `teamMemberTable()` helper for `[Fast_Core].[dbo].[TeamMember]` references
+- **TeamMember**: never write SQL against it. Call `src/lib/team-member/service.ts`, which owns every statement and pins them to `getProductionFormPool()`. To join it from a query running on another pool, use its `teamMemberTableRef()` → `[Rocks_Portal_Form].[dbo].[TeamMember]`. `service.ts` is the only file in `src/` holding SQL that names the table — keep it that way, because a stray query pointed at Fast_Core does not error, it returns the sibling app's roster.
 - **CSS**: Use `var(--variable)` — never raw hex. See `globals.css` for all tokens.
 - **Icons**: `lucide-react` only
 - **Toasts**: `sonner` — `toast.success()`, `toast.error()`
@@ -293,4 +319,5 @@ Not yet done — Form Portal has no host of its own. Before it is deployed:
 - **`UPLOAD_ROOT`** must resolve on the target machine to the files the `AccRequestFile` / `OfficeFormFiles` rows point at (see "Shared with Rocks Fast").
 - **Parallel UAT ships in three steps, in this order: apply 062 + 063 → deploy the code → apply 065.** All three are Fast_Core. 062 adds `ProductionEnabled` / `UatEnabled` beside the old `Environment` column and backfills them, leaving that column in place so the *currently running* app keeps working; 063 creates `UatTester`. Only once the new code is live does 065 drop `Environment`. Running 065 first takes the old build down — its `setFormFlag` names that column in the MERGE INSERT. (061 and 064 target `Rocks_Portal_Form_UAT` and are independent of the deploy; 061 must precede any UAT write.)
 - **065 is one-way.** After it has run, a `git revert` of the parallel-UAT branch restores a `setFormFlag` that writes to a column that no longer exists, so the first write to any form fails. Reverting past commit `54ff2d7` means re-adding `FormEnvironment.Environment` as **NULLable** first — the original was `NOT NULL` with no default, which cannot be added back to a table that already has rows without backfilling one.
+- **`066_portal_form_team_member.sql` must be applied to whichever database `MSSQL_FORM_DATABASE` names.** It is already applied to the live `Rocks_Portal_Form`; a fresh stand-up needs 059 then 066, or nobody can log in (see the Accounting storage note). Never apply it to `Rocks_Portal_Form_UAT`.
 - Liveness probe: `curl http://127.0.0.1:3020/api/health` → `{"ok":true,"data":{"service":"form-portal",…}}`.

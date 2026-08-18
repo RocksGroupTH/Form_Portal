@@ -15,12 +15,13 @@
  *
  * `getFormPool()` resolves per request URL: a form flagged UAT at
  * Settings → Form Environment answers from `Rocks_Portal_Form_UAT`. Identity
- * must not work that way. `requireAuth()` runs on ~285 endpoints, so the same
- * person would read their own id and role from `Rocks_Portal_Form` on one page
- * and from the UAT database on an AP-1 page — a different id, possibly a
- * different role, depending on where they happened to click. Migration 066 is
- * also deliberately never applied to the UAT database: identity lives in
- * exactly one place, so a UAT-routed pool would not find this table at all.
+ * must not work that way. There are ~167 `requireAuth()` / `requireRole()`
+ * gates in `src/app/api`, so the same person would read their own id and role
+ * from `Rocks_Portal_Form` on one page and from the UAT database on an AP-1
+ * page — a different id, possibly a different role, depending on where they
+ * happened to click. Migration 066 is also deliberately never applied to the
+ * UAT database: identity lives in exactly one place, so a UAT-routed pool would
+ * not find this table at all.
  *
  * The second reason is structural. `getFormPool()` dynamically imports
  * `@/lib/form-environment`, which resolves the viewer from the `x-user-email`

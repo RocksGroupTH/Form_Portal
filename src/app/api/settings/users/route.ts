@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getADUserByEmail } from "@/lib/graph";
 import { requireRole } from "@/lib/api-auth";
+import { clearTeamMemberRoleCache } from "@/lib/auth";
 import {
   addOrReactivate,
   isValidRole,
@@ -42,7 +43,20 @@ export async function GET() {
   }
 }
 
-/** POST /api/settings/users — actions: updateRole, addUser, deleteUser, resyncAll. */
+/**
+ * POST /api/settings/users — actions: updateRole, addUser, deleteUser, resyncAll.
+ *
+ * The three actions that change who is who clear the role cache in `@/lib/auth`
+ * on their way out. The jwt callback re-reads TeamMember at most once a minute
+ * per person, so without that a role change, a deactivation or a reactivation
+ * looks like it did not take until the entry expires — and the first person to
+ * test it reads that as the change having failed. `resyncAll` needs no clear:
+ * it only rewrites FullName, which the token does not carry.
+ *
+ * The whole map goes rather than one entry. It is keyed by email and two of the
+ * three actions carry only a target id, so being precise would cost a lookup to
+ * save a handful of single-row reads on a roster this size.
+ */
 export async function POST(req: NextRequest) {
   try {
     const session = await requireRole(["IT Admin", "System Admin"]);
@@ -69,6 +83,7 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ ok: false, error: "Cannot change your own role" }, { status: 400 });
         }
         await updateRole(targetUserId, newRole);
+        clearTeamMemberRoleCache();
         return NextResponse.json({ ok: true });
       }
 
@@ -105,6 +120,9 @@ export async function POST(req: NextRequest) {
             { status: 409 },
           );
         }
+        // A reactivation is the case that needs this: the deactivated row can
+        // already be sitting in the cache with `IsActive` false.
+        clearTeamMemberRoleCache();
         return NextResponse.json({ ok: true, data: { id, outcome } });
       }
 
@@ -114,6 +132,7 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ ok: false, error: "Cannot delete yourself" }, { status: 400 });
         }
         await setActive(targetUserId, false);
+        clearTeamMemberRoleCache();
         return NextResponse.json({ ok: true });
       }
 

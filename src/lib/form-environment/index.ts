@@ -67,8 +67,23 @@ const currentUatMode = cache(async (): Promise<string | null> => {
 /**
  * Who is asking, from the `x-user-email` header the proxy publishes, or null
  * when there is no request. Never `@/lib/auth` — `getFormPool()` dynamically
- * imports this module and `auth()` reads Fast_Core, so going through the
- * session would close the loop `getFormPool → auth → jwt → getFormPool`.
+ * imports this module, so resolving the viewer through the session would close
+ * the loop `getFormPool → auth → jwt → getFormPool`.
+ *
+ * Migration 066 turned that from tidiness into a hard constraint. `auth()` used
+ * to read identity out of Fast_Core, a database this resolver never picks; it
+ * now reads `TeamMember` out of the form database. Three things sit on the path
+ * that decides which form database answers, and not one of them may be reached
+ * through `getFormPool()`:
+ *
+ *   - `getFormSwitchMap()`   (`./service.ts`)              → `getCorePool()`
+ *   - `getActiveUatTester()` (`@/lib/uat-tester/service`)  → `getCorePool()`
+ *   - identity               (`@/lib/team-member/service`) → `getProductionFormPool()`
+ *
+ * So `FormEnvironment` and `UatTester` stay in Fast_Core, and identity stays
+ * pinned to the production form pool. Moving either of the first two into the
+ * form database, or letting the team-member service reach for `getFormPool()`,
+ * makes this resolver depend on its own answer.
  */
 const currentViewerEmail = cache(async (): Promise<string | null> => {
   try {

@@ -14,6 +14,16 @@ import "@/lib/auth.config";
 const ROLE_CACHE_TTL_MS = 60 * 1000;
 const roleCache = new Map<string, { data: TeamMemberRow; expiresAt: number }>();
 
+/**
+ * When each email was last reported as having no TeamMember row.
+ *
+ * Only a throttle — see `warnTeamMemberMissing`. Kept beside `roleCache`
+ * because `clearTeamMemberRoleCache` has to drop both: an email that has just
+ * been added back to the roster should be allowed to complain again if it
+ * still cannot be found.
+ */
+const missingWarnedAt = new Map<string, number>();
+
 async function getCachedTeamMember(email: string): Promise<TeamMemberRow | null> {
   const key = email.toLowerCase();
   const now = Date.now();
@@ -35,12 +45,52 @@ async function getCachedTeamMember(email: string): Promise<TeamMemberRow | null>
   return member;
 }
 
+/**
+ * Forget cached roles so the next `auth()` re-reads them.
+ *
+ * Called by `/api/settings/users` after every roster change — without it a role
+ * change, a deactivation or a reactivation appears not to have worked for up to
+ * `ROLE_CACHE_TTL_MS`. In-process only: this is a plain Map, so it invalidates
+ * nothing on another instance.
+ */
 export function clearTeamMemberRoleCache(email?: string) {
   if (email) {
-    roleCache.delete(email.toLowerCase());
+    const key = email.toLowerCase();
+    roleCache.delete(key);
+    missingWarnedAt.delete(key);
   } else {
     roleCache.clear();
+    missingWarnedAt.clear();
   }
+}
+
+/**
+ * Report a signed-in email that has no TeamMember row, at most once per email
+ * per cache TTL.
+ *
+ * The jwt callback runs on every `auth()` call, so an unthrottled line here
+ * would print once per API request per affected person — loudest exactly when
+ * the database is unreachable and *everyone* is affected, which is when the log
+ * most needs to stay readable.
+ */
+function warnTeamMemberMissing(email: string) {
+  const key = email.toLowerCase();
+  const now = Date.now();
+
+  const last = missingWarnedAt.get(key);
+  if (last !== undefined && now - last < ROLE_CACHE_TTL_MS) return;
+
+  if (missingWarnedAt.size > 100) {
+    missingWarnedAt.forEach((at, k) => {
+      if (now - at >= ROLE_CACHE_TTL_MS) missingWarnedAt.delete(k);
+    });
+  }
+  missingWarnedAt.set(key, now);
+
+  console.error(
+    `[Auth] no TeamMember row for "${email}" — session downgraded to Staff with no id.` +
+      " Either the row is gone, or the form database could not be read.",
+  );
 }
 
 function applyTeamMemberToToken(
@@ -190,7 +240,39 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             const member = await getCachedTeamMember(token.email as string);
             if (member && member.IsActive) {
               applyTeamMemberToToken(t, member);
-            } else if (member && !member.IsActive) {
+            } else {
+              // Retired row, or no row at all: either way the roster no longer
+              // backs the grant this token is carrying, so the token stops
+              // carrying it.
+              //
+              // Failing closed rather than keeping the last known role. This
+              // token is the whole of what the ~167 `requireAuth()` /
+              // `requireRole()` gates in `src/app/api` see, and `userId` is
+              // what every ownership check compares against, so a grant the
+              // roster no longer confirms would keep working for the life of
+              // the session — JWT strategy with no maxAge set, i.e. 30 days —
+              // and leave nothing behind in any log.
+              //
+              // The usual objection, that a database blip should not punish
+              // everyone, does not survive being priced:
+              //   · it is not a logout — `requireAuth()` gates on
+              //     `session.user.email` and the Edge proxy only checks that a
+              //     token decodes, and neither is touched here;
+              //   · it is not sticky — the next successful read runs
+              //     `applyTeamMemberToToken` and restores role, id, nickname,
+              //     colour and photo;
+              //   · it costs no working functionality, because every endpoint
+              //     the retained role would have authorised reads the same
+              //     database that just failed to answer.
+              //
+              // `null` really does mean both things: `findTeamMemberByEmail`
+              // swallows a database error and returns null, so this branch
+              // cannot tell "row deleted" from "database unreachable" (and the
+              // catch below therefore almost never fires). Hence the warning —
+              // a burst of it across many emails is an outage, or a form
+              // database with no TeamMember table because migration 066 was
+              // never applied; one email repeating is one person's row.
+              if (!member) warnTeamMemberMissing(token.email as string);
               t.role = "Staff";
               t.userId = "";
             }
