@@ -9,7 +9,7 @@ export type NavItem = {
   badge?: string;
   /** Hub card only — show Soon watermark, not clickable */
   soon?: boolean;
-  /** Visible only on localhost:3020 (local dev) */
+  /** Visible only on localhost:3081 (local dev) */
   devHostOnly?: boolean;
   /** Settings hub — visible only to System Admin */
   systemAdminOnly?: boolean;

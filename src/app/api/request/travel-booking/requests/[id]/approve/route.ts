@@ -42,7 +42,7 @@ export async function POST(
 
   const isManager = staffId != null && staffId === managerStaffId;
   const isAdmin = isAdminRole(session.user.role);
-  // Local dev (localhost:3020) — any logged-in user may action the manager step, same as AP-1.
+  // Local dev (localhost:3081) — any logged-in user may action the manager step, same as AP-1.
   const devBypass = isManagerDevBypassHost(await getRequestHost());
   if (!isManager && !isAdmin && !devBypass) {
     return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });

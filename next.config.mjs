@@ -17,6 +17,9 @@ const PRODUCTION_HOSTS = [
 const nextConfig = {
   allowedDevOrigins: PRODUCTION_HOSTS,
   experimental: {
+    // Build and static generation run on a single worker instead of one per
+    // core. Slower builds, but the app never takes more than one CPU.
+    cpus: 1,
     serverActions: {
       bodySizeLimit: "10mb",
       allowedOrigins: PRODUCTION_HOSTS,

@@ -8,7 +8,7 @@
 ```bash
 npm install
 cp .env.example .env.local   # Fill in credentials
-npm run dev                   # http://localhost:3020
+npm run dev                   # http://localhost:3081
 ```
 
 ## Architecture
@@ -110,11 +110,11 @@ Form Portal was cloned from the Rocks Fast codebase and **still shares live infr
 
 - **Databases are no longer shared**: Form Portal owns `Rocks_Portal_Form` (plus `Rocks_Portal_Form_UAT`). `Fast_Form` belongs to Rocks Fast and this app must not read or write it. `Fast_Core`, `Fast_Data`, `Rocks_Portal_HR` and `Rocks_Codex` are still the same shared databases both apps use, in both environments.
 - **Identity is no longer shared, but Fast_Core still is.** Migration 066 gave this app its own `TeamMember` in `Rocks_Portal_Form`; `Fast_Core.dbo.TeamMember` stays exactly as it is and stays in service for Rocks Fast. The two rosters now drift apart — see "TeamMember lives in Form Portal's own database" under Auth for what that costs. Fast_Core itself is still shared: `AppSetting`, brand configuration and the DB/BC connection rows are one set of rows both apps read and write, and `FormEnvironment` / `UatTester` are Form Portal's own tables that live there (Rocks Fast has no code for either). **A query in this app that names `[Fast_Core].[dbo].[TeamMember]` is a bug** — it is reading the sibling's user list.
-- **Same SharePoint folder**: Accounting file attachments (`SHAREPOINT_ACC_SITE` / `SHAREPOINT_ACC_FOLDER`) point at the same document library Rocks Fast uses.
+- **⚠️ Same SharePoint folder, and the two apps' paths collide**: Accounting file attachments (`SHAREPOINT_ACC_SITE` / `SHAREPOINT_ACC_FOLDER`) point at the same document library Rocks Fast uses. `buildAccFolderPath` / `buildAccFileName` (`src/lib/acc/sharepoint-path.ts`) carry **no per-app segment**, so since the database split — Form Portal numbering out of `Rocks_Portal_Form`, Rocks Fast out of `Fast_Form` — both apps independently mint the *same* `TOFyy-nnnn`, the same draft ids and the same `AccRequestFile` ids, and therefore write byte-identical paths. `AP-1/_DRAFT/{requestId}/{type}_draft{requestId}_{fileId}.ext` is the worst case: both id spaces start at 1, so overlap there is the norm, not the exception. Two mitigations are in place and neither is a fix: `uploadFileToSharePoint` passes `@microsoft.graph.conflictBehavior=rename` so a second upload no longer replaces the first app's bytes (Graph's default is *replace*, which also hands back the same driveItem id — one requester's ID-card scan served to the other's request), and `moveSharePointFolder` is best-effort so a submit that finds a foreign `_DRAFT` folder cannot throw. Files can still end up filed under the other app's request number. **A real fix needs a per-app folder segment plus a migration of existing rows** — do not add one casually.
 - **`AccEmailQueue` is no longer shared** — each app drains the queue in its own database.
-- **⚠️ Both apps use port 3020** — Form Portal was moved off 3021 onto the same port Rocks Fast uses, so only one of them can run at a time on a given machine; the second to start fails with `EADDRINUSE`. This also removes the previous risk of both apps polling/draining the same `AccEmailQueue` concurrently and sending approval/payment emails twice.
+- **Form Portal runs on port 3081**, Rocks Fast on 3020, so both can run at once on the same machine. (Form Portal was on 3021, then briefly shared 3020 with Rocks Fast — a period when only one of them could start.) Running them concurrently is safe **for mail** now that `AccEmailQueue` lives in each app's own database; while the queue was shared, two running apps could drain it and send approval/payment emails twice. It is **not** safe for SharePoint attachments — see the shared-folder bullet above; the port change makes simultaneous operation normal and so makes that path collision routine rather than rare.
 - **`UPLOAD_ROOT`** — local attachment storage env var. Points at the sibling Rocks Fast repo's `uploads/forms` directory (`c:/Users/PC/source/repos/Web/RocksFast/uploads/forms` in dev) so files already recorded in the shared DB stay downloadable from either app. Accounting attachments primarily use SharePoint now; local disk serves the Form Builder and older Accounting rows created before SharePoint storage existed. See `src/lib/storage.ts`.
-- **`ERP_SANDBOX_ALLOWED_HOSTS`** (`src/lib/acc/erp-environment-shared.ts`) — host-and-port matched allowlist (`["localhost:3020", "127.0.0.1:3020"]`) gating two things: the `devHostOnly` management/settings cards in `REQUEST_CARDS` (`src/lib/constants.ts`) and the manager-approval dev bypass in `src/lib/acc/manager-auth.ts` (`isManagerDevBypassHost`). If this app's port ever changes, this list must be updated or both gates silently disappear.
+- **`ERP_SANDBOX_ALLOWED_HOSTS`** (`src/lib/acc/erp-environment-shared.ts`) — host-and-port matched allowlist (`["localhost:3081", "127.0.0.1:3081"]`) gating two things: the `devHostOnly` management/settings cards in `REQUEST_CARDS` (`src/lib/constants.ts`) and the manager-approval dev bypass in `src/lib/acc/manager-auth.ts` (`isManagerDevBypassHost`). If this app's port ever changes, this list must be updated or both gates silently disappear.
 - **`src/lib/brand-config.ts` is deliberately frozen** — it still contains Dashboard-DB helper fields (`dashboardDbConnectionId`, `dashboardDatabaseName`) with no callers in this app; the Rocks Fast sibling reads them for its Intelligence dashboards. The Brand Configuration settings page hides those fields in the UI but still round-trips their values on save, so Rocks Fast keeps working. **Do not "clean up" these fields** — they are load-bearing for the sibling app even though nothing in Form Portal consumes them.
 
 ## Navigation
@@ -310,7 +310,7 @@ NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=
 UPLOAD_ROOT=
 
 # Client
-NEXT_PUBLIC_APP_URL=http://localhost:3020
+NEXT_PUBLIC_APP_URL=http://localhost:3081
 ```
 
 ## Deployment
@@ -319,9 +319,20 @@ Not yet done — Form Portal has no host of its own. Before it is deployed:
 
 - **`PRODUCTION_HOSTS` in `next.config.mjs` must be updated.** It currently lists only the Rocks Fast sibling's hosts (`fast.rocksgroup.com`, `test.m-group.com`, `www.test.m-group.com`) and feeds both `allowedDevOrigins` and `experimental.serverActions.allowedOrigins`. Server actions issued from an unlisted host are rejected as cross-origin, so a Form Portal host that is missing from this list fails at runtime, not at build.
 - **`NEXTAUTH_URL` and `NEXT_PUBLIC_APP_URL`** must both match the address users actually open, including port.
-- **`ERP_SANDBOX_ALLOWED_HOSTS`** (`src/lib/acc/erp-environment-shared.ts`) is `localhost:3020` / `127.0.0.1:3020` — the `devHostOnly` management cards and the manager-approval dev bypass (`src/lib/acc/manager-auth.ts`) disappear on any other host, which is intended for production but worth knowing.
+- **The Entra app registration must list the callback for every port and host the app answers on.** `auth.config.ts` sets `trustHost: true`, so NextAuth builds `redirect_uri` from the incoming `Host` header, not from `NEXTAUTH_URL` — the moment the port changes, sign-in posts a `redirect_uri` Entra has never seen and fails with `AADSTS50011` before any app code runs. Dev now needs `http://localhost:3081/api/auth/callback/microsoft-entra-id` (add `http://127.0.0.1:3081/...` too if anyone opens it that way); the deployed host needs its own.
+- **`ERP_SANDBOX_ALLOWED_HOSTS`** (`src/lib/acc/erp-environment-shared.ts`) is `localhost:3081` / `127.0.0.1:3081` — the `devHostOnly` management cards and the manager-approval dev bypass (`src/lib/acc/manager-auth.ts`) disappear on any other host, which is intended for production but worth knowing.
 - **`UPLOAD_ROOT`** must resolve on the target machine to the files the `AccRequestFile` / `OfficeFormFiles` rows point at (see "Shared with Rocks Fast").
 - **Parallel UAT ships in three steps, in this order: apply 062 + 063 → deploy the code → apply 065.** All three are Fast_Core. 062 adds `ProductionEnabled` / `UatEnabled` beside the old `Environment` column and backfills them, leaving that column in place so the *currently running* app keeps working; 063 creates `UatTester`. Only once the new code is live does 065 drop `Environment`. Running 065 first takes the old build down — its `setFormFlag` names that column in the MERGE INSERT. (061 and 064 target `Rocks_Portal_Form_UAT` and are independent of the deploy; 061 must precede any UAT write.)
 - **065 is one-way.** After it has run, a `git revert` of the parallel-UAT branch restores a `setFormFlag` that writes to a column that no longer exists, so the first write to any form fails. Reverting past commit `54ff2d7` means re-adding `FormEnvironment.Environment` as **NULLable** first — the original was `NOT NULL` with no default, which cannot be added back to a table that already has rows without backfilling one.
 - **`066_portal_form_team_member.sql` must be applied to whichever database `MSSQL_FORM_DATABASE` names.** It is already applied to the live `Rocks_Portal_Form`; a fresh stand-up needs 059 then 066, or every session degrades to `Staff` with a blank id and `/settings/users` becomes unreachable (see the Accounting storage note). Never apply it to `Rocks_Portal_Form_UAT`.
-- Liveness probe: `curl http://127.0.0.1:3020/api/health` → `{"ok":true,"data":{"service":"form-portal",…}}`.
+- Liveness probe: `curl http://127.0.0.1:3081/api/health` → `{"ok":true,"data":{"service":"form-portal",…}}`.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->
