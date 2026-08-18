@@ -24,6 +24,20 @@ function ymd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+/** Currencies supported by the FX source (ECB list via Frankfurter). Cached per process. */
+let currencyCache: { code: string; name: string }[] | null = null;
+export async function fetchSupportedCurrencies(): Promise<{ code: string; name: string }[]> {
+  if (currencyCache) return currencyCache;
+  const res = await fetch(`${FRANKFURTER_URL}/currencies`);
+  if (!res.ok) throw new Error(`FX currencies ${res.status}`);
+  const json = (await res.json()) as Record<string, string>;
+  const list = Object.entries(json)
+    .map(([code, name]) => ({ code, name }))
+    .sort((a, b) => a.code.localeCompare(b.code));
+  currencyCache = list;
+  return list;
+}
+
 interface BotDetail {
   period?: string;
   buying_transfer?: string;

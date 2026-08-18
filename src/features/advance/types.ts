@@ -26,6 +26,7 @@ export interface AdvanceDetail {
   exchangeRate: number | null;      // อัตราแลกเปลี่ยน (BOT) — THB=1
   baseAmount: number | null;        // ยอดเป็นบาท = amount × rate (ตัวที่ post journal)
   whtNote: string | null;           // หมายเหตุ WHT (manual — ไม่ post journal)
+  overThresholdReason: string | null; // เหตุผลเพิ่มเติมเมื่อยอด > 3,000 บาท
   files?: AccFileMeta[];
   /** Client-only: images chosen but not yet uploaded. */
   pendingFiles?: PendingFile[];
@@ -46,7 +47,7 @@ export interface AdvanceRequest {
   formCode: string;
   brandCode: string | null;
   status: RequestStatus;
-  currentStepCode: StepCode | null;
+  currentStepCode: string | null; // AP-2 StepType (HEAD_DEPT | HEAD_ACC | DIRECTOR | ACC_OFFICER)
   staffId: number | null;
   requesterFullName: string | null;
   requesterEmail: string | null;
@@ -63,7 +64,23 @@ export interface AdvanceRequest {
   createdAt: string;
   updatedAt: string;
   advance?: AdvanceDetail;
-  approvals?: AccApproval[];
+  approvals?: AdvanceApprovalRow[];
+}
+
+/** One row of AP-2's own approval chain (AccAdvanceApproval). */
+export interface AdvanceApprovalRow {
+  id: number;
+  stepOrder: number;
+  stepType: string;
+  stepLabel: string;
+  status: string;
+  comment: string | null;
+  isChecked: boolean | null;
+  paymentDate: string | null;
+  actionedByStaffId: number | null;
+  actionedByName: string | null;
+  assignedName: string | null;
+  actionedAt: string | null;
 }
 
 /** Lightweight row for the draft picker (no files). */

@@ -1,43 +1,160 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { UserPlus, Trash2 } from "lucide-react";
-import { Button } from "@/components/ui/Button";
+import { Plus, Search, Trash2 } from "lucide-react";
+import { Avatar } from "@/components/ui/Avatar";
+
+type Role = "HEAD_ACC" | "DIRECTOR" | "ACC_OFFICER";
+
+const ROLES: Role[] = ["HEAD_ACC", "DIRECTOR", "ACC_OFFICER"];
+const ROLE_LABEL: Record<Role, string> = {
+  HEAD_ACC: "Head Accounting",
+  DIRECTOR: "ผู้บริหาร",
+  ACC_OFFICER: "Accounting Officer",
+};
+const ROLE_HINT: Record<Role, string> = {
+  HEAD_ACC: "ผู้อนุมัติระดับบัญชี",
+  DIRECTOR: "ผู้บริหาร (สำหรับยอดสูง)",
+  ACC_OFFICER: "เลือกวันจ่าย + ตรวจสอบ (ขั้นสุดท้าย)",
+};
 
 interface Approver {
   id: number;
-  staffId: number | null;
   email: string;
   displayName: string | null;
+  approverRole: Role;
   isActive: boolean;
   photoUrl: string | null;
 }
+interface Candidate {
+  staffId: number;
+  email: string;
+  fullName: string;
+  departmentName: string | null;
+  position: string | null;
+  photoUrl: string | null;
+}
 
+/* ── Candidate search modal (AP-1-style, sourced from IT/Accounting) ── */
+function CandidateModal({
+  candidates, role, onRole, existing, onAdd, onClose, busy,
+}: {
+  candidates: Candidate[];
+  role: Role;
+  onRole: (r: Role) => void;
+  existing: Set<string>; // "email" already at the selected role (lowercased)
+  onAdd: (c: Candidate) => void;
+  onClose: () => void;
+  busy: boolean;
+}) {
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const results = candidates.filter((c) =>
+    !q ||
+    c.fullName.toLowerCase().includes(q) ||
+    c.email.toLowerCase().includes(q) ||
+    (c.departmentName ?? "").toLowerCase().includes(q),
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "var(--overlay-bg)" }}>
+      <div className="rounded-2xl w-[560px] max-w-[95vw] max-h-[80vh] flex flex-col overflow-hidden"
+        style={{ background: "var(--bg-card)", boxShadow: "var(--shadow-modal)", border: "1px solid var(--border-card)" }}>
+        {/* Header + role selector */}
+        <div className="px-5 py-4 flex items-center justify-between shrink-0" style={{ borderBottom: "1px solid var(--border-card)" }}>
+          <div>
+            <h2 className="text-[15px] font-bold" style={{ color: "var(--text-heading)" }}>เพิ่มผู้อนุมัติ</h2>
+            <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>เฉพาะพนักงานแผนกบัญชี / IT</p>
+          </div>
+          <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center cursor-pointer border-none"
+            style={{ background: "var(--bg-badge)", color: "var(--text-muted)" }}><span className="text-[14px]">✕</span></button>
+        </div>
+
+        <div className="px-5 pt-3 shrink-0 flex items-center gap-2">
+          <span className="text-[12px] font-semibold" style={{ color: "var(--text-secondary)" }}>เพิ่มเป็น:</span>
+          <select value={role} onChange={(e) => onRole(e.target.value as Role)}
+            className="text-[13px] px-3 py-1.5 rounded-lg outline-none"
+            style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-input)" }}>
+            {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
+          </select>
+        </div>
+
+        {/* Search */}
+        <div className="px-5 py-3 shrink-0">
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg" style={{ background: "var(--bg-input)", border: "1px solid var(--border-input)" }}>
+            <Search size={14} style={{ color: "var(--text-muted)" }} />
+            <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="พิมพ์ชื่อ / อีเมล / แผนก..."
+              className="flex-1 text-[13px] outline-none bg-transparent" style={{ color: "var(--text-primary)" }} />
+          </div>
+        </div>
+
+        {/* Results */}
+        <div className="flex-1 overflow-y-auto px-5 pb-4">
+          {results.length === 0 ? (
+            <div className="py-10 text-center"><p className="text-[12px]" style={{ color: "var(--text-muted)" }}>ไม่พบพนักงาน</p></div>
+          ) : (
+            <div className="flex flex-col gap-1.5">
+              <p className="text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color: "var(--text-faint)" }}>{results.length} รายการ</p>
+              {results.map((c) => {
+                const added = existing.has(c.email.toLowerCase());
+                return (
+                  <div key={c.staffId} className="flex items-center gap-3 px-3 py-2.5 rounded-xl"
+                    style={{ border: `1px solid ${added ? "#4fa37a30" : "var(--border-card)"}`, background: added ? "#e4f4ea08" : "var(--bg-card)" }}>
+                    <Avatar name={c.fullName || "?"} size={36} photo={c.photoUrl ?? undefined} color="var(--nav-active-text)" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[13px] font-bold truncate" style={{ color: "var(--text-heading)" }}>{c.fullName}</p>
+                      <p className="text-[11px] truncate" style={{ color: "var(--text-muted)" }}>
+                        {c.email}{c.departmentName ? ` · ${c.departmentName}` : ""}
+                      </p>
+                    </div>
+                    {added ? (
+                      <span className="text-[10px] font-bold px-2 py-1 rounded-lg" style={{ color: "#4fa37a", background: "#e4f4ea" }}>เพิ่มแล้ว</span>
+                    ) : (
+                      <button disabled={busy} onClick={() => onAdd(c)}
+                        className="text-[11px] font-bold px-3 py-1 rounded-lg cursor-pointer border-none"
+                        style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)" }}>+ เพิ่ม</button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Main ── */
 export function AdvanceApproverSettings() {
   const [rows, setRows] = useState<Approver[]>([]);
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState(true);
-  const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalRole, setModalRole] = useState<Role>("HEAD_ACC");
 
   const load = useCallback(() => {
     setLoading(true);
-    fetch("/api/request/advance/settings/approvers")
-      .then((r) => r.json())
-      .then((j: { ok: boolean; data?: Approver[] }) => setRows(j.ok && j.data ? j.data : []))
-      .catch(() => setRows([]))
+    Promise.all([
+      fetch("/api/request/advance/settings/approvers").then((r) => r.json()),
+      fetch("/api/request/advance/settings/approvers/candidates").then((r) => r.json()),
+    ])
+      .then(([ap, cand]: [{ ok: boolean; data?: Approver[] }, { ok: boolean; data?: Candidate[] }]) => {
+        setRows(ap.ok && ap.data ? ap.data : []);
+        setCandidates(cand.ok && cand.data ? cand.data : []);
+      })
+      .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
-
   useEffect(() => load(), [load]);
 
   async function post(body: unknown, okMsg?: string) {
     setBusy(true);
     try {
       const res = await fetch("/api/request/advance/settings/approvers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       });
       const j = (await res.json()) as { ok: boolean; error?: string };
       if (!j.ok) throw new Error(j.error ?? "บันทึกไม่สำเร็จ");
@@ -45,16 +162,7 @@ export function AdvanceApproverSettings() {
       load();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function add() {
-    const e = email.trim();
-    if (!e) return toast.error("กรุณากรอกอีเมล");
-    await post({ email: e }, "เพิ่มผู้อนุมัติแล้ว");
-    setEmail("");
+    } finally { setBusy(false); }
   }
 
   async function remove(id: number) {
@@ -68,87 +176,88 @@ export function AdvanceApproverSettings() {
       load();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "ลบไม่สำเร็จ");
-    } finally {
-      setBusy(false);
-    }
+    } finally { setBusy(false); }
   }
+
+  const existingAtModalRole = useMemo(
+    () => new Set(rows.filter((r) => r.approverRole === modalRole).map((r) => r.email.toLowerCase())),
+    [rows, modalRole],
+  );
+  const activeCount = rows.filter((r) => r.isActive).length;
 
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <h3 className="text-[14px] font-bold" style={{ color: "var(--text-heading)" }}>
-          ผู้อนุมัติบัญชี (ขั้นบัญชี · AP-2)
-        </h3>
+        <h3 className="text-[14px] font-bold" style={{ color: "var(--text-heading)" }}>ผู้อนุมัติบัญชี AP-2</h3>
         <p className="text-[12px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-          รายชื่อนี้ใช้เฉพาะ AP-2 · ขั้นผู้จัดการมาจากสายบังคับบัญชา (HR) อัตโนมัติ
+          ผู้อนุมัติแต่ละระดับ (Head Accounting / ผู้บริหาร / Accounting Officer) · จะใช้ระดับไหนบ้างขึ้นกับ <b>ขั้นตามเงิน</b> · เพิ่มได้จากแผนกบัญชี/IT
         </p>
       </div>
 
-      {/* Add */}
-      <div className="flex flex-wrap items-center gap-2">
-        <input
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && add()}
-          placeholder="อีเมลผู้อนุมัติ (@rocks-foods.com)"
-          className="flex-1 min-w-[220px] text-[13px] px-3 py-2 rounded-lg outline-none"
-          style={{ background: "var(--bg-card)", color: "var(--text-primary)", border: "1px solid var(--border-card)" }}
-        />
-        <Button variant="primary" onClick={add} loading={busy} icon={<UserPlus size={15} />}>
-          เพิ่ม
-        </Button>
+      {/* Header row: count + add button (AP-1 style) */}
+      <div className="flex items-center justify-between">
+        <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>
+          {activeCount} คนที่ใช้งานอยู่ / {rows.length} คนทั้งหมด
+        </p>
+        <button onClick={() => setModalOpen(true)}
+          className="flex items-center gap-1.5 text-[12px] font-medium px-3 py-2 rounded-lg cursor-pointer border-none"
+          style={{ background: "var(--color-action)", color: "#fff" }}>
+          <Plus size={13} /> เพิ่มผู้อนุมัติ
+        </button>
       </div>
 
-      {/* List */}
+      {/* Sections by role */}
       {loading ? (
         <p className="text-[12px] py-6 text-center" style={{ color: "var(--text-muted)" }}>กำลังโหลด...</p>
-      ) : rows.length === 0 ? (
-        <p className="text-[12px] py-6 text-center" style={{ color: "var(--text-muted)" }}>ยังไม่มีผู้อนุมัติ</p>
       ) : (
-        <div className="flex flex-col gap-2">
-          {rows.map((a) => (
-            <div
-              key={a.id}
-              className="flex items-center gap-3 px-3 py-2 rounded-xl"
-              style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)", opacity: a.isActive ? 1 : 0.55 }}
-            >
-              {a.photoUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={a.photoUrl} alt="" className="w-8 h-8 rounded-full object-cover" />
-              ) : (
-                <div className="w-8 h-8 rounded-full flex items-center justify-center text-[12px] font-bold"
-                  style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}>
-                  {(a.displayName ?? a.email).charAt(0).toUpperCase()}
-                </div>
-              )}
-              <div className="flex-1 min-w-0">
-                <p className="text-[13px] font-semibold truncate" style={{ color: "var(--text-primary)" }}>
-                  {a.displayName ?? a.email}
-                </p>
-                <p className="text-[11px] truncate" style={{ color: "var(--text-muted)" }}>{a.email}</p>
+        ROLES.map((lvl) => {
+          const list = rows.filter((r) => r.approverRole === lvl);
+          return (
+            <div key={lvl} className="flex flex-col gap-2">
+              <div className="flex items-baseline gap-2">
+                <h4 className="text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>{ROLE_LABEL[lvl]}</h4>
+                <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>{ROLE_HINT[lvl]}</span>
               </div>
-              <label className="flex items-center gap-1.5 text-[11px] cursor-pointer" style={{ color: "var(--text-secondary)" }}>
-                <input
-                  type="checkbox"
-                  checked={a.isActive}
-                  disabled={busy}
-                  onChange={(e) => post({ id: a.id, isActive: e.target.checked })}
-                />
-                ใช้งาน
-              </label>
-              <button
-                onClick={() => remove(a.id)}
-                disabled={busy}
-                className="p-1.5 rounded-lg cursor-pointer border-none bg-transparent"
-                style={{ color: "var(--text-danger, #dc2626)" }}
-                title="ลบ"
-              >
-                <Trash2 size={15} />
-              </button>
+              {list.length === 0 ? (
+                <p className="text-[12px] px-1" style={{ color: "var(--text-muted)" }}>— ยังไม่มี —</p>
+              ) : (
+                list.map((a) => (
+                  <div key={a.id} className="flex items-center gap-3 px-3 py-2.5 rounded-xl"
+                    style={{ border: "1px solid var(--border-card)", background: "var(--bg-card)", opacity: a.isActive ? 1 : 0.55 }}>
+                    <Avatar name={a.displayName || a.email} size={36} photo={a.photoUrl ?? undefined} color="var(--nav-active-text)" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[13px] font-bold truncate" style={{ color: "var(--text-heading)" }}>{a.displayName ?? a.email}</p>
+                      <p className="text-[11px] truncate" style={{ color: "var(--text-muted)" }}>{a.email}</p>
+                    </div>
+                    <label className="flex items-center gap-1.5 text-[11px] cursor-pointer" style={{ color: "var(--text-secondary)" }}>
+                      <input type="checkbox" checked={a.isActive} disabled={busy}
+                        onChange={(e) => post({ id: a.id, isActive: e.target.checked })} />
+                      ใช้งาน
+                    </label>
+                    <button onClick={() => remove(a.id)} disabled={busy}
+                      className="p-1.5 rounded-lg cursor-pointer border-none bg-transparent"
+                      style={{ color: "var(--text-danger, #dc2626)" }} title="ลบ"><Trash2 size={15} /></button>
+                  </div>
+                ))
+              )}
             </div>
-          ))}
-        </div>
+          );
+        })
+      )}
+
+      {modalOpen && (
+        <CandidateModal
+          candidates={candidates}
+          role={modalRole}
+          onRole={setModalRole}
+          existing={existingAtModalRole}
+          busy={busy}
+          onClose={() => setModalOpen(false)}
+          onAdd={async (c) => {
+            await post({ email: c.email, approverRole: modalRole }, "เพิ่มผู้อนุมัติแล้ว");
+            setModalOpen(false); // เด้งกลับหน้ารายการผู้อนุมัติหลังเพิ่มสำเร็จ
+          }}
+        />
       )}
     </div>
   );

@@ -4,17 +4,19 @@ import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Users, Landmark, Wallet } from "lucide-react";
+import { Users, Landmark, Wallet, SlidersHorizontal } from "lucide-react";
 import { backTo } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { AdvanceApproverSettings } from "@/features/advance/components/settings/AdvanceApproverSettings";
+import { AdvanceApprovalMatrixSettings } from "@/features/advance/components/settings/AdvanceApprovalMatrixSettings";
 import { AdvanceBankMasterSettings } from "@/features/advance/components/settings/AdvanceBankMasterSettings";
 
-type TabKey = "approvers" | "banks";
+type TabKey = "approvers" | "matrix" | "banks";
 
 const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: "approvers", label: "ผู้อนุมัติ", icon: <Users size={15} /> },
+  { key: "matrix", label: "ขั้นตามเงิน", icon: <SlidersHorizontal size={15} /> },
   { key: "banks", label: "ธนาคาร (Master)", icon: <Landmark size={15} /> },
 ];
 
@@ -72,8 +74,8 @@ function AdvanceSettingsContent() {
       <PageHeaderBar
         icon={Wallet}
         title="ตั้งค่าเบิกเงินทดรองจ่าย (AP-2)"
-        subtitle="ผู้อนุมัติบัญชี และธนาคาร (Master)"
-        backHref={backTo("/request/advance", searchParams.get("from"))}
+        subtitle="ผู้อนุมัติ · ขั้นตามเงิน · ธนาคาร (Master)"
+        backHref={backTo("/request/advance/admin", searchParams.get("from"))}
       />
 
       <div className="rounded-2xl overflow-hidden"
@@ -103,6 +105,7 @@ function AdvanceSettingsContent() {
 
         <div className="p-5">
           {activeTab === "approvers" && <AdvanceApproverSettings />}
+          {activeTab === "matrix" && <AdvanceApprovalMatrixSettings />}
           {activeTab === "banks" && <AdvanceBankMasterSettings />}
         </div>
       </div>

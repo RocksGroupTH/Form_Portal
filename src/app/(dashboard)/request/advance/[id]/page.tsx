@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { AdvanceForm } from "@/features/advance/components/AdvanceForm";
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
 import { statusLabelDisplay } from "@/features/accounting/constants";
+import { STEP_LABEL, type StepType } from "@/lib/adv/approval-steps";
 import { Wallet } from "lucide-react";
 import type { AdvanceRequest } from "@/features/advance/types";
 
@@ -34,6 +35,7 @@ function AdvanceDetailContent() {
   const [paymentDates, setPaymentDates] = useState<string[]>([]);
   const [paymentDate, setPaymentDate] = useState<string>("");
   const [checked, setChecked] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
 
   const fetchRequest = useCallback(() => {
     if (requestId == null || Number.isNaN(requestId)) {
@@ -58,7 +60,7 @@ function AdvanceDetailContent() {
   useEffect(() => fetchRequest(), [fetchRequest]);
 
   useEffect(() => {
-    if (request?.currentStepCode !== "ACCOUNT") return;
+    if (request?.currentStepCode !== "ACC_OFFICER") return;
     fetch("/api/request/advance/payment-dates")
       .then((r) => r.json())
       .then((json: { ok: boolean; data?: { dates: string[]; default: string } }) => {
@@ -90,7 +92,7 @@ function AdvanceDetailContent() {
   }
 
   function handleApprove() {
-    if (request?.currentStepCode === "ACCOUNT") {
+    if (request?.currentStepCode === "ACC_OFFICER") {
       if (!checked) return toast.error("ต้องกด Check ก่อนอนุมัติ");
       if (!paymentDate) return toast.error("กรุณาเลือกวันจ่าย");
       act("approve", { paymentDate, isChecked: checked });
@@ -99,14 +101,8 @@ function AdvanceDetailContent() {
     }
   }
   function handleReject() {
-    const comment = window.prompt("เหตุผลที่ไม่อนุมัติ:");
-    if (comment == null) return;
-    act("reject", { comment });
-  }
-  function handleReturn() {
-    const comment = window.prompt("สิ่งที่ต้องแก้ไข:");
-    if (comment == null) return;
-    act("return", { comment });
+    if (!rejectReason.trim()) return toast.error("กรุณาระบุเหตุผลที่ไม่อนุมัติ");
+    act("reject", { comment: rejectReason.trim() });
   }
 
   if (loading) {
@@ -122,7 +118,9 @@ function AdvanceDetailContent() {
   }
 
   const isEditable = request.status === "Draft" || request.status === "Returned";
-  const inApproval = request.currentStepCode === "MANAGER" || request.currentStepCode === "ACCOUNT";
+  const currentStep = (request.currentStepCode as StepType | null) ?? null;
+  const inApproval = request.status === "Submitted" && !!currentStep;
+  const currentStepLabel = currentStep ? STEP_LABEL[currentStep] ?? currentStep : "";
 
   return (
     <PageContainer className="acc-theme py-6 px-3 sm:px-0 flex flex-col gap-4">
@@ -159,8 +157,8 @@ function AdvanceDetailContent() {
           {request.approvals.map((a) => (
             <div key={a.id} className="flex items-center justify-between text-[12px]"
               style={{ color: "var(--text-secondary)" }}>
-              <span>{a.stepCode === "MANAGER" ? "ผู้จัดการ" : "บัญชี"}
-                {a.actionedByHrName ? ` · ${a.actionedByHrName}` : a.assignedToHrName ? ` · ${a.assignedToHrName}` : ""}</span>
+              <span>{a.stepLabel}
+                {a.actionedByName ? ` · ${a.actionedByName}` : a.assignedName ? ` · ${a.assignedName}` : ""}</span>
               <span className="font-bold">{a.status}{a.comment ? ` — ${a.comment}` : ""}</span>
             </div>
           ))}
@@ -172,9 +170,9 @@ function AdvanceDetailContent() {
         <div className="rounded-2xl p-4 flex flex-col gap-3"
           style={{ background: "var(--bg-card)", boxShadow: "var(--shadow-card)" }}>
           <h3 className="text-[13px] font-bold" style={{ color: "var(--text-primary)" }}>
-            การอนุมัติ ({request.currentStepCode === "MANAGER" ? "ผู้จัดการ" : "บัญชี"})
+            การอนุมัติ ({currentStepLabel})
           </h3>
-          {request.currentStepCode === "ACCOUNT" && (
+          {currentStep === "ACC_OFFICER" && (
             <div className="flex flex-wrap items-center gap-3">
               <label className="text-[12px] flex items-center gap-2" style={{ color: "var(--text-secondary)" }}>
                 วันจ่าย:
@@ -191,10 +189,16 @@ function AdvanceDetailContent() {
               </label>
             </div>
           )}
+          <div className="flex flex-col gap-1">
+            <label className="text-[12px]" style={{ color: "var(--text-secondary)" }}>
+              เหตุผล (กรอกก่อนกด &quot;ไม่อนุมัติ&quot;)
+            </label>
+            <textarea rows={2} value={rejectReason} onChange={(e) => setRejectReason(e.target.value)}
+              placeholder="ระบุเหตุผลที่ไม่อนุมัติ..."
+              className="text-[13px] px-3 py-2 rounded-lg outline-none"
+              style={{ background: "var(--bg-card)", color: "var(--text-primary)", border: "1px solid var(--border-card)" }} />
+          </div>
           <div className="flex items-center justify-end gap-2">
-            {request.currentStepCode === "MANAGER" && (
-              <Button variant="secondary" onClick={handleReturn} disabled={busy}>ส่งกลับแก้ไข</Button>
-            )}
             <Button variant="danger" onClick={handleReject} disabled={busy}>ไม่อนุมัติ</Button>
             <Button variant="primary" onClick={handleApprove} loading={busy}>อนุมัติ</Button>
           </div>

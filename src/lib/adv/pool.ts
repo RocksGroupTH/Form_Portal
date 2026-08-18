@@ -1,12 +1,18 @@
-import { getFormPool, sql } from "@/lib/db/mssql";
+import { getUatFormPool, sql } from "@/lib/db/mssql";
 
 /**
- * Pool for AP-2 (Advance) tables. Uses getFormPool so AP-2 resolves through the
- * same per-viewer routing as every other form: a tester in UAT mode (AP-2 is
- * UatEnabled) lands on the UAT database, and an id ≥ 900000 names the UAT
- * database directly. AP-2's tables live in the UAT form database today, so AP-2
- * is a UAT-only pilot (ProductionEnabled off); once they are mirrored into the
- * production form database it can be turned on for Production with no code change.
+ * Pool for AP-2 (Advance) — pinned to the UAT form database.
+ *
+ * AP-2 is a UAT-only pilot (FormEnvironment AP-2 = ProductionEnabled off,
+ * UatEnabled on) and every AP-2 table lives in the UAT form database. Pinning to
+ * getUatFormPool keeps AP-2 out of the per-form id/viewer routing entirely, which
+ * getFormPool applies from the URL: a settings route like
+ * /api/request/advance/settings/tiers/3 carries a config-row id (3), not an
+ * AccRequest id, and getFormPool would read it as one and route the request to
+ * Production (id < 900000) — where AP-2's UAT-only tables do not exist. Move back
+ * to getFormPool only once AP-2's tables are mirrored into the production form
+ * database AND its settings routes are excluded from request-id routing (compare
+ * AP-1's `"/api/request/accounting/settings" → null` rule in classify-path).
  */
-export const getAccPool = getFormPool;
+export const getAccPool = getUatFormPool;
 export { sql };

@@ -1,6 +1,9 @@
 import { getAccPool, sql } from "@/lib/adv/pool";
 import { hrEmployeeTable } from "@/lib/hr/constants";
 import { allocateAdvanceRequestNo } from "@/lib/adv/adv-config";
+import { listApproverEmailsByRole, isAdvanceApprover } from "@/lib/adv/advance-approver-service";
+import { findTierForAmount, buildApprovalChain } from "@/lib/adv/advance-tier-service";
+import { stepApproverRole, STEP_LABEL, type StepType } from "@/lib/adv/approval-steps";
 import {
   resolveManagerEmail,
   resolveRequesterForActor,
@@ -74,6 +77,7 @@ function mapAdvanceRow(r: Record<string, unknown>): AdvanceDetail {
     exchangeRate: num(r.ExchangeRate),
     baseAmount: num(r.BaseAmount),
     whtNote: (r.WhtNote as string) ?? null,
+    overThresholdReason: (r.OverThresholdReason as string) ?? null,
   };
 }
 
@@ -110,28 +114,29 @@ export async function getRequest(id: number): Promise<AdvanceRequest | null> {
   const aRes = await pool.request().input("id", sql.Int, id)
     .query(`SELECT a.*,
               COALESCE(NULLIF(LTRIM(RTRIM(CONCAT(e_action.FirstName, N' ', e_action.LastName))), N''), e_action.FullName) AS ActionedByHrName,
-              COALESCE(e_action.Email, e_action.EmailCompBr) AS ActionedByHrEmail,
-              COALESCE(NULLIF(LTRIM(RTRIM(CONCAT(e_assign.FirstName, N' ', e_assign.LastName))), N''), e_assign.FullName) AS AssignedToHrName,
-              COALESCE(e_assign.Email, e_assign.EmailCompBr) AS AssignedToHrEmail
-            FROM [dbo].[AccApproval] a
+              COALESCE(NULLIF(LTRIM(RTRIM(CONCAT(e_assign.FirstName, N' ', e_assign.LastName))), N''), e_assign.FullName) AS AssignedHrName
+            FROM [dbo].[AccAdvanceApproval] a
             LEFT JOIN ${hrEmployeeTable()} e_action ON e_action.StaffId = a.ActionedByStaffId AND e_action.Status = N'Active'
-            LEFT JOIN ${hrEmployeeTable()} e_assign ON e_assign.StaffId = a.AssignedTo AND e_assign.Status = N'Active'
+            LEFT JOIN ${hrEmployeeTable()} e_assign ON e_assign.StaffId = a.AssignedStaffId AND e_assign.Status = N'Active'
             WHERE a.RequestId = @id
             ORDER BY a.StepOrder, a.Id`);
-  req.approvals = (aRes.recordset as Record<string, unknown>[]).map((x) => ({
-    id: x.Id as number, requestId: x.RequestId as number,
-    stepCode: x.StepCode as AccApproval["stepCode"], stepOrder: x.StepOrder as number,
-    assignedTo: (x.AssignedTo as number) ?? null, assignedEmail: (x.AssignedEmail as string) ?? null,
-    status: x.Status as AccApproval["status"], comment: (x.Comment as string) ?? null,
-    isChecked: x.IsChecked === null || x.IsChecked === undefined ? null : !!x.IsChecked,
-    actionedByStaffId: (x.ActionedByStaffId as number) ?? null,
-    actionedAt: x.ActionedAt ? (x.ActionedAt as Date).toISOString() : null,
-    createdAt: x.CreatedAt ? (x.CreatedAt as Date).toISOString() : "",
-    actionedByHrName: (x.ActionedByHrName as string) ?? null,
-    actionedByHrEmail: (x.ActionedByHrEmail as string) ?? null,
-    assignedToHrName: (x.AssignedToHrName as string) ?? null,
-    assignedToHrEmail: (x.AssignedToHrEmail as string) ?? null,
-  }));
+  req.approvals = (aRes.recordset as Record<string, unknown>[]).map((x) => {
+    const stepType = x.StepType as StepType;
+    return {
+      id: x.Id as number,
+      stepOrder: x.StepOrder as number,
+      stepType,
+      stepLabel: STEP_LABEL[stepType] ?? String(x.StepType),
+      status: x.Status as string,
+      comment: (x.Comment as string) ?? null,
+      isChecked: x.IsChecked === null || x.IsChecked === undefined ? null : !!x.IsChecked,
+      paymentDate: x.PaymentDate ? toYmd(x.PaymentDate as Date) : null,
+      actionedByStaffId: (x.ActionedByStaffId as number) ?? null,
+      actionedByName: (x.ActionedByHrName as string) ?? null,
+      assignedName: (x.AssignedHrName as string) ?? null,
+      actionedAt: x.ActionedAt ? (x.ActionedAt as Date).toISOString() : null,
+    };
+  });
 
   return req;
 }
@@ -164,6 +169,71 @@ export async function listMyAdvanceDrafts(userId: number): Promise<AdvanceDraftS
   }));
 }
 
+export interface AdvanceInboxRow {
+  id: number;
+  requestNo: string | null;
+  brandCode: string | null;
+  requesterFullName: string | null;
+  totalAmount: number | null;
+  status: string;
+  currentStepCode: string | null;
+  stepLabel: string;
+  updatedAt: string;
+}
+
+/**
+ * AP-2 requests (Submitted) whose CURRENT step this viewer can act on:
+ *  - a role step (HEAD_ACC / DIRECTOR / ACC_OFFICER) they are an active approver of, or
+ *  - the HEAD_DEPT step when they are the requester's manager.
+ * Empty when neither applies.
+ */
+export async function listAdvanceApprovalInbox(
+  email: string | null,
+  staffId: number | null,
+): Promise<AdvanceInboxRow[]> {
+  const [isHead, isOfficer, isDirector] = await Promise.all([
+    isAdvanceApprover(email, "HEAD_ACC"),
+    isAdvanceApprover(email, "ACC_OFFICER"),
+    isAdvanceApprover(email, "DIRECTOR"),
+  ]);
+  const roleSteps: string[] = [];
+  if (isHead) roleSteps.push("HEAD_ACC");
+  if (isOfficer) roleSteps.push("ACC_OFFICER");
+  if (isDirector) roleSteps.push("DIRECTOR");
+  if (roleSteps.length === 0 && staffId == null) return [];
+
+  const conds: string[] = [];
+  // roleSteps values are fixed constants (never user input) — safe to inline.
+  if (roleSteps.length) conds.push(`r.CurrentStepCode IN ('${roleSteps.join("','")}')`);
+  if (staffId != null) conds.push("(r.CurrentStepCode = 'HEAD_DEPT' AND r.ManagerStaffId = @staff)");
+
+  const pool = await getAccPool();
+  const res = await pool.request()
+    .input("form", sql.NVarChar, AP2_FORM_CODE)
+    .input("staff", sql.Int, staffId)
+    .query(`
+      SELECT r.Id, r.RequestNo, r.BrandCode, r.RequesterFullName, r.TotalAmount,
+             r.Status, r.CurrentStepCode, r.UpdatedAt
+      FROM [dbo].[AccRequest] r
+      WHERE r.FormCode = @form AND r.Status = 'Submitted' AND (${conds.join(" OR ")})
+      ORDER BY r.UpdatedAt DESC
+    `);
+  return (res.recordset as Record<string, unknown>[]).map((row) => {
+    const step = (row.CurrentStepCode as StepType) ?? null;
+    return {
+      id: row.Id as number,
+      requestNo: (row.RequestNo as string) ?? null,
+      brandCode: (row.BrandCode as string) ?? null,
+      requesterFullName: (row.RequesterFullName as string) ?? null,
+      totalAmount: num(row.TotalAmount),
+      status: row.Status as string,
+      currentStepCode: (row.CurrentStepCode as string) ?? null,
+      stepLabel: step ? STEP_LABEL[step] ?? String(step) : "",
+      updatedAt: row.UpdatedAt ? (row.UpdatedAt as Date).toISOString() : "",
+    };
+  });
+}
+
 /* ─────────────────────────── validation ─────────────────────────── */
 
 /** Strict checks run at submit time. Returns Thai error messages (empty = valid). */
@@ -173,7 +243,8 @@ export function validateAdvanceForSubmit(
 ): string[] {
   const errs: string[] = [];
   const a = input.advance;
-  if (!requester.managerStaffId) errs.push("ยังไม่ได้กำหนดผู้จัดการใน HR");
+  // AP-2 has no line-manager step (approval is Head Accounting → Accounting
+  // Officer), so an HR manager is not required to submit.
   if (!input.brandCode) errs.push("กรุณาเลือกแบรนด์");
   if (!a.needByDate) errs.push("กรุณาระบุวันที่ต้องการเริ่มใช้เงิน");
   if (!a.expectedClearDate) errs.push("กรุณาระบุวันที่คาดว่าจะเคลียร์");
@@ -203,10 +274,10 @@ export function validateAdvanceForSubmit(
   if (!isThb && (!a.exchangeRate || a.exchangeRate <= 0))
     errs.push("กรุณาระบุอัตราแลกเปลี่ยน (สำหรับสกุลเงินต่างประเทศ)");
 
-  // Business rule (OQ-3): the THB base amount over the threshold goes through PR/PO.
+  // Business rule: over the threshold is allowed but must carry a reason.
   const base = computeBaseAmount(a);
-  if (base && base > AP2_PRPO_THRESHOLD)
-    errs.push(`ยอดเกิน ${AP2_PRPO_THRESHOLD.toLocaleString()} บาท ควรผ่าน PR/PO — กรุณาติดต่อฝ่ายจัดซื้อ`);
+  if (base && base > AP2_PRPO_THRESHOLD && !a.overThresholdReason?.trim())
+    errs.push(`ยอดเกิน ${AP2_PRPO_THRESHOLD.toLocaleString()} บาท — กรุณาระบุเหตุผลเพิ่มเติม`);
   return errs;
 }
 
@@ -235,7 +306,8 @@ async function persistAdvance(
       .input("amount", sql.Decimal(18, 2), a.amount ?? null)
       .input("rate", sql.Decimal(18, 6), rate)
       .input("base", sql.Decimal(18, 2), baseAmount)
-      .input("wht", sql.NVarChar, a.whtNote ?? null);
+      .input("wht", sql.NVarChar, a.whtNote ?? null)
+      .input("overReason", sql.NVarChar, a.overThresholdReason ?? null);
 
   const exists = await tx.request().input("rid", sql.Int, requestId)
     .query(`SELECT TOP 1 Id FROM [dbo].[AccAdvance] WHERE RequestId = @rid`);
@@ -246,15 +318,15 @@ async function persistAdvance(
         PayeeType=@payeeType, PayeeName=@payeeName, PayeeBankAccount=@bankAcct, PayeeBankCode=@bankCode,
         NeedByDate=@needBy, ExpectedClearDate=@clear, Purpose=@purpose,
         Currency=@currency, Amount=@amount, ExchangeRate=@rate, BaseAmount=@base,
-        WhtNote=@wht, UpdatedAt=SYSDATETIME()
+        WhtNote=@wht, OverThresholdReason=@overReason, UpdatedAt=SYSDATETIME()
       WHERE RequestId=@rid`);
   } else {
     await reqBind().query(`
       INSERT INTO [dbo].[AccAdvance]
         (RequestId, PayeeType, PayeeName, PayeeBankAccount, PayeeBankCode,
-         NeedByDate, ExpectedClearDate, Purpose, Currency, Amount, ExchangeRate, BaseAmount, WhtNote)
+         NeedByDate, ExpectedClearDate, Purpose, Currency, Amount, ExchangeRate, BaseAmount, WhtNote, OverThresholdReason)
       VALUES (@rid, @payeeType, @payeeName, @bankAcct, @bankCode,
-         @needBy, @clear, @purpose, @currency, @amount, @rate, @base, @wht)`);
+         @needBy, @clear, @purpose, @currency, @amount, @rate, @base, @wht, @overReason)`);
   }
 
   // Header total is the THB base amount (what the journal posts).
@@ -391,6 +463,7 @@ export async function submitRequest(
     payeeType: null, payeeName: null, payeeBankAccount: null, payeeBankCode: null,
     needByDate: null, expectedClearDate: null, purpose: null,
     currency: AP2_DEFAULT_CURRENCY, amount: null, exchangeRate: null, baseAmount: null, whtNote: null,
+    overThresholdReason: null,
   };
   const errors = validateAdvanceForSubmit(
     { id, brandCode: current.brandCode, staffId: current.staffId, advance },
@@ -398,11 +471,26 @@ export async function submitRequest(
   );
   if (errors.length) throw new Error(errors.join("\n"));
 
-  const managerEmail = await resolveManagerEmail(requester.managerStaffId);
-  if (!managerEmail) throw new Error("ไม่พบอีเมลผู้จัดการ (ManagerStaffId) — ไม่สามารถส่งอนุมัติได้");
-
   const requestNo = await allocateAdvanceRequestNo(AP2_SEQUENCE_PREFIX);
   const totalAmount = computeBaseAmount(advance) ?? 0;
+
+  // The amount matrix decides the approval chain for this request.
+  const tier = await findTierForAmount(totalAmount);
+  const steps: StepType[] = tier && tier.steps.length ? tier.steps : ["HEAD_DEPT", "ACC_OFFICER"];
+  const firstStep = steps[0];
+
+  // The department-head step routes to the requester's manager.
+  const managerEmail = await resolveManagerEmail(requester.managerStaffId);
+  if (steps.includes("HEAD_DEPT") && !requester.managerStaffId) {
+    throw new Error("ไม่พบหัวหน้าแผนกของผู้ขอ (ManagerStaffId) — ไม่สามารถส่งอนุมัติได้");
+  }
+  // Every role-based step must have at least one active approver, or it stalls.
+  for (const st of steps) {
+    const role = stepApproverRole(st);
+    if (role && (await listApproverEmailsByRole(role)).length === 0) {
+      throw new Error(`ยังไม่ได้กำหนดผู้อนุมัติระดับ ${STEP_LABEL[st]} — ตั้งที่ ตั้งค่า AP-2 › ผู้อนุมัติ`);
+    }
+  }
 
   const pool = await getAccPool();
   const tx = pool.transaction();
@@ -425,9 +513,10 @@ export async function submitRequest(
       .input("mgrEmail", sql.NVarChar, managerEmail)
       .input("company", sql.NVarChar, requester.companyName ?? null)
       .input("total", sql.Decimal(18, 2), totalAmount)
+      .input("step", sql.NVarChar, firstStep)
       .input("by", sql.Int, userId || null)
       .query(`UPDATE [dbo].[AccRequest] SET
-        RequestNo=@no, Status='Submitted', CurrentStepCode='MANAGER',
+        RequestNo=@no, Status='Submitted', CurrentStepCode=@step,
         EmployeeId=@empId, StaffId=@staffId, RequesterFirstName=@fname, RequesterLastName=@lname,
         RequesterFullName=@full, RequesterEmail=@email, RequesterPosition=@pos,
         RequesterDepartmentId=@deptId, RequesterDepartmentName=@deptName, RequesterDepartmentCode=@deptCode,
@@ -435,14 +524,10 @@ export async function submitRequest(
         TotalAmount=@total, SubmittedBy=@by, SubmittedAt=SYSDATETIME(), UpdatedAt=SYSDATETIME()
         WHERE Id=@id`);
 
+    // Rebuild AP-2's own approval chain from the matrix (idempotent on resubmit).
     await tx.request().input("id", sql.Int, id)
-      .query(`DELETE FROM [dbo].[AccApproval] WHERE RequestId=@id`);
-    await tx.request()
-      .input("id", sql.Int, id)
-      .input("mgrStaff", sql.Int, requester.managerStaffId ?? null)
-      .input("mgrEmail", sql.NVarChar, managerEmail)
-      .query(`INSERT INTO [dbo].[AccApproval] (RequestId, StepCode, StepOrder, AssignedTo, AssignedEmail, Status)
-              VALUES (@id, 'MANAGER', 1, @mgrStaff, @mgrEmail, 'Pending')`);
+      .query(`DELETE FROM [dbo].[AccAdvanceApproval] WHERE RequestId=@id`);
+    await buildApprovalChain(tx, id, steps, requester.managerStaffId ?? null, managerEmail);
 
     await tx.request().input("id", sql.Int, id).input("by", sql.Int, userId || null)
       .input("no", sql.NVarChar, requestNo)
@@ -457,16 +542,18 @@ export async function submitRequest(
 
   const updated = await getRequest(id);
   if (updated) {
-    // TODO(T9): replace with advance-specific HTML template (advance-email-templates.ts).
-    const subject = `เบิกเงินทดรองจ่าย ${requestNo} รออนุมัติ (ผู้จัดการ)`;
+    const firstRole = stepApproverRole(firstStep);
+    const notifyEmails = firstRole
+      ? await listApproverEmailsByRole(firstRole)
+      : managerEmail ? [managerEmail] : [];
+    const subject = `เบิกเงินทดรองจ่าย ${requestNo} รออนุมัติ (${STEP_LABEL[firstStep]})`;
     const bodyHtml =
-      `<p>มีคำขอเบิกเงินทดรองจ่ายเลขที่ <b>${requestNo}</b> รอการอนุมัติของท่าน</p>` +
+      `<p>มีคำขอเบิกเงินทดรองจ่ายเลขที่ <b>${requestNo}</b> รอการอนุมัติของท่าน (${STEP_LABEL[firstStep]})</p>` +
       `<p>ผู้ขอ: ${updated.requesterFullName ?? "-"} · จำนวนเงิน: ${(updated.totalAmount ?? 0).toLocaleString()} บาท</p>` +
       `<p><a href="/request/advance/${id}">เปิดคำขอ</a></p>`;
-    await queueEmail({
-      requestId: id, toEmail: managerEmail,
-      subject, bodyHtml, triggerType: "Submitted",
-    });
+    for (const toEmail of notifyEmails) {
+      await queueEmail({ requestId: id, toEmail, subject, bodyHtml, triggerType: "Submitted" });
+    }
   }
   return updated!;
 }

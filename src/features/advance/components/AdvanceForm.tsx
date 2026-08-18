@@ -2,14 +2,15 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import { Check, User, Mail, UserCog } from "lucide-react";
+import { Check, User, Mail, UserCog, Paperclip, Camera, X, FileText } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Avatar } from "@/components/ui/Avatar";
 import { RequesterPickerModal, type RequesterOption } from "@/components/RequesterPickerModal";
+import { CurrencyCombobox } from "@/features/advance/components/CurrencyCombobox";
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
 import type { AccBrandOption } from "@/features/accounting/types";
 import type { AdvancePayeeType, AdvanceRequest, AdvanceSaveInput } from "@/features/advance/types";
-import { AP2_DEFAULT_CURRENCY } from "@/features/advance/constants";
+import { AP2_DEFAULT_CURRENCY, AP2_PRPO_THRESHOLD } from "@/features/advance/constants";
 import type { BankOption } from "@/lib/adv/bank-master-service";
 
 interface Props {
@@ -38,9 +39,17 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
   const [colleagues, setColleagues] = useState<RequesterOption[]>([]);
   const [requesterStaffId, setRequesterStaffId] = useState<number | null>(null);
   const [requesterPickerOpen, setRequesterPickerOpen] = useState(false);
+  // First approval level: Head Accounting (a pool, not the requester's manager).
+  const [headApprovers, setHeadApprovers] = useState<
+    { staffId: number | null; email: string; displayName: string | null; position: string | null; photoUrl: string | null }[]
+  >([]);
+  // Attachments (image/PDF, ≤4MB) — need a saved request id.
+  const [files, setFiles] = useState<{ id: number; fileName: string; fileSize: number; contentType: string }[]>([]);
+  const [uploading, setUploading] = useState(false);
 
   const [brandCode, setBrandCode] = useState(initial?.brandCode ?? "");
-  const [payeeType, setPayeeType] = useState<AdvancePayeeType>(initial?.advance?.payeeType ?? "employee");
+  // Empty until chosen — the form reveals lower fields step by step (brand → โอนให้ → rest).
+  const [payeeType, setPayeeType] = useState<AdvancePayeeType | "">(initial?.advance?.payeeType ?? "");
   const [payeeName, setPayeeName] = useState(initial?.advance?.payeeName ?? "");
   const [payeeBankAccount, setPayeeBankAccount] = useState(initial?.advance?.payeeBankAccount ?? "");
   const [payeeBankCode, setPayeeBankCode] = useState(initial?.advance?.payeeBankCode ?? "");
@@ -50,8 +59,9 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
   const initialCurrency = initial?.advance?.currency ?? AP2_DEFAULT_CURRENCY;
   const [foreign, setForeign] = useState(initialCurrency.toUpperCase() !== AP2_DEFAULT_CURRENCY);
   const [currencyCode, setCurrencyCode] = useState(
-    initialCurrency.toUpperCase() === AP2_DEFAULT_CURRENCY ? "" : initialCurrency,
+    initialCurrency.toUpperCase() === AP2_DEFAULT_CURRENCY ? "USD" : initialCurrency,
   );
+  const [currencies, setCurrencies] = useState<{ code: string; name: string }[]>([]);
   const [amount, setAmount] = useState(initial?.advance?.amount != null ? String(initial.advance.amount) : "");
   const [exchangeRate, setExchangeRate] = useState(
     initial?.advance?.exchangeRate != null ? String(initial.advance.exchangeRate) : "",
@@ -59,11 +69,15 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
   const [fxLoading, setFxLoading] = useState(false);
   const [fxAsOf, setFxAsOf] = useState<string | null>(null);
   const [whtNote, setWhtNote] = useState(initial?.advance?.whtNote ?? "");
+  const [overReason, setOverReason] = useState(initial?.advance?.overThresholdReason ?? "");
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [ready, setReady] = useState(false);
 
-  const requestId = initial?.id ?? null;
+  // Tracked in state so an in-form auto-save (e.g. before attaching a file) makes
+  // the new id available immediately, without waiting for a parent reload.
+  const [savedId, setSavedId] = useState<number | null>(initial?.id ?? null);
+  const requestId = savedId;
   const readOnly = !!initial && initial.status !== "Draft" && initial.status !== "Returned";
 
   useEffect(() => {
@@ -73,11 +87,13 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
       fetch("/api/request/advance/options/banks").then((r) => r.json()),
       fetch("/api/me/employee").then((r) => r.json()),
       fetch("/api/request/advance/requesters").then((r) => r.json()),
+      fetch("/api/request/advance/first-approvers").then((r) => r.json()),
     ])
-      .then(([b, bk, m, rq]) => {
+      .then(([b, bk, m, rq, fa]) => {
         if (cancelled) return;
         if (b.ok) setBrands(b.data);
         if (bk.ok) setBanks(bk.data);
+        if (fa?.ok) setHeadApprovers(fa.data ?? []);
         // AP-1 logic: requester is the logged-in user, resolved from HR.
         const e = m?.data?.employee;
         if (e) setEmp({
@@ -122,6 +138,64 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
     }
   }
 
+  // Load existing attachments once the request is saved.
+  useEffect(() => {
+    if (!requestId) { setFiles([]); return; }
+    let cancelled = false;
+    fetch(`/api/request/advance/requests/${requestId}/files`)
+      .then((r) => r.json())
+      .then((j: { ok: boolean; data?: typeof files }) => { if (!cancelled && j.ok && j.data) setFiles(j.data); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [requestId]);
+
+  // Currency dropdown options from the FX source (default selection is USD).
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/request/advance/currencies")
+      .then((r) => r.json())
+      .then((j: { ok: boolean; data?: { code: string; name: string }[] }) => {
+        if (!cancelled && j.ok && j.data) setCurrencies(j.data.filter((c) => c.code !== AP2_DEFAULT_CURRENCY));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  async function uploadFiles(list: FileList | null) {
+    if (!list || list.length === 0) return;
+    for (const f of Array.from(list)) {
+      if (f.size > 4 * 1024 * 1024) return toast.error(`${f.name}: ไฟล์ใหญ่เกิน 4MB`);
+    }
+    const fd = new FormData();
+    Array.from(list).forEach((f) => fd.append("files", f));
+    setUploading(true);
+    try {
+      // Attaching on a brand-new form auto-saves the draft first, so the file has a request to attach to.
+      const id = requestId ?? (await persist());
+      const res = await fetch(`/api/request/advance/requests/${id}/files`, { method: "POST", body: fd });
+      const j = (await res.json()) as { ok: boolean; data?: typeof files; error?: string };
+      if (!j.ok) throw new Error(j.error ?? "อัปโหลดไม่สำเร็จ");
+      if (j.data) setFiles(j.data);
+      toast.success("แนบไฟล์แล้ว");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "อัปโหลดไม่สำเร็จ");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function removeFile(fileId: number) {
+    if (!window.confirm("ลบไฟล์นี้?")) return;
+    try {
+      const res = await fetch(`/api/request/advance/files/${fileId}`, { method: "DELETE" });
+      const j = (await res.json()) as { ok: boolean; error?: string };
+      if (!j.ok) throw new Error(j.error ?? "ลบไม่สำเร็จ");
+      setFiles((prev) => prev.filter((f) => f.id !== fileId));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "ลบไม่สำเร็จ");
+    }
+  }
+
   // Employee payee name mirrors the requester; vendor is typed in.
   // Requester display: a resumed request keeps its stamped requester; a new form
   // shows the logged-in user.
@@ -139,6 +213,17 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
 
   const effectivePayeeName = payeeType === "employee" ? reqName : payeeName;
 
+  // Common currencies (incl. MYR for the Malaysia entity) first, then the rest.
+  const orderedCurrencies = useMemo(() => {
+    const list = currencies.length ? currencies : [{ code: "USD", name: "US Dollar" }];
+    const priority = ["USD", "MYR", "SGD", "CNY", "EUR", "GBP", "JPY"];
+    const top = priority
+      .map((c) => list.find((x) => x.code === c))
+      .filter((x): x is { code: string; name: string } => !!x);
+    const rest = list.filter((x) => !priority.includes(x.code));
+    return [...top, ...rest];
+  }, [currencies]);
+
   const baseAmount = useMemo(() => {
     const amt = amount ? Number(amount) : 0;
     const rate = foreign ? (exchangeRate ? Number(exchangeRate) : 0) : 1;
@@ -151,7 +236,7 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
       brandCode: brandCode || null,
       staffId: requesterStaffId ?? null,
       advance: {
-        payeeType,
+        payeeType: payeeType || null,
         payeeName: effectivePayeeName || null,
         payeeBankAccount: payeeType === "vendor" ? payeeBankAccount || null : null,
         payeeBankCode: payeeType === "vendor" ? payeeBankCode || null : null,
@@ -163,6 +248,7 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
         exchangeRate: foreign ? (exchangeRate ? Number(exchangeRate) : null) : 1,
         baseAmount,
         whtNote: whtNote || null,
+        overThresholdReason: overReason || null,
       },
     };
   }
@@ -178,7 +264,9 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
     });
     const json = (await res.json()) as { ok: boolean; data?: { id: number }; error?: string };
     if (!json.ok) throw new Error(json.error ?? "บันทึกไม่สำเร็จ");
-    return json.data?.id ?? requestId!;
+    const id = json.data?.id ?? requestId!;
+    if (id !== requestId) setSavedId(id); // remember a freshly created draft's id
+    return id;
   }
 
   async function handleSave() {
@@ -249,34 +337,71 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
           value={requesterStaffId}
           onSelect={setRequesterStaffId}
         />
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="shrink-0 rounded-full overflow-hidden" style={{ boxShadow: "0 0 0 2px var(--nav-active-bg)" }}>
-            <Avatar name={reqName || "?"} size={48} photo={reqPhoto ?? undefined} color="var(--nav-active-text)" />
-          </div>
-          <div className="min-w-0 flex flex-col gap-0.5">
-            <div className="flex items-baseline gap-2 min-w-0">
-              <span className="text-[14px] font-bold truncate" style={{ color: "var(--text-primary)" }}>{reqName || "-"}</span>
-              {reqStaffId != null && (
-                <span className="text-[11px] shrink-0" style={{ color: "var(--text-muted)" }}>#{reqStaffId}</span>
-              )}
+        {/* ผู้ขอเบิก (ซ้าย) + ผู้อนุมัติ Head Accounting (ขวา) — layout เดียวกับ AP-1 */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
+          {/* ผู้ขอเบิก */}
+          <div className="flex flex-col gap-2.5 min-w-0">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="shrink-0 rounded-2xl overflow-hidden" style={{ boxShadow: "0 0 0 2px var(--nav-active-bg)" }}>
+                <Avatar name={reqName || "?"} size={48} photo={reqPhoto ?? undefined} color="var(--nav-active-text)" />
+              </div>
+              <div className="min-w-0 flex flex-col gap-0.5">
+                <div className="flex items-baseline gap-2 min-w-0">
+                  <span className="text-[14px] font-bold truncate" style={{ color: "var(--text-primary)" }}>{reqName || "-"}</span>
+                  {reqStaffId != null && (
+                    <span className="text-[11px] shrink-0" style={{ color: "var(--text-muted)" }}>#{reqStaffId}</span>
+                  )}
+                </div>
+                {(reqDept || reqPos) && (
+                  <span className="text-[12px] truncate" style={{ color: "var(--text-muted)" }}>
+                    {[reqDept, reqPos].filter(Boolean).join(" · ")}
+                  </span>
+                )}
+                {reqEmail && (
+                  <span className="inline-flex items-center gap-1 text-[12px] truncate" style={{ color: "var(--text-secondary)" }}>
+                    <Mail size={11} className="shrink-0" /> <span className="truncate">{reqEmail}</span>
+                  </span>
+                )}
+              </div>
             </div>
-            {(reqDept || reqPos) && (
-              <span className="text-[12px] truncate" style={{ color: "var(--text-muted)" }}>
-                {[reqDept, reqPos].filter(Boolean).join(" · ")}
+            {requesterStaffId != null && (
+              <span className="text-[12px] px-3 py-2 rounded-lg" style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}>
+                กำลังกรอกแทน {reqName || `#${requesterStaffId}`} — คำขอจะอยู่ใน "คำขอของฉัน" ของคุณ และเข้าอนุมัติที่ Head Accounting
               </span>
             )}
-            {reqEmail && (
-              <span className="inline-flex items-center gap-1 text-[12px] truncate" style={{ color: "var(--text-secondary)" }}>
-                <Mail size={11} className="shrink-0" /> <span className="truncate">{reqEmail}</span>
-              </span>
+          </div>
+
+          {/* ผู้อนุมัติขั้นแรก · Head Accounting (ขวา, border-left บน md) */}
+          <div className="flex flex-col gap-3 min-w-0 border-t md:border-t-0 md:border-l pt-4 md:pt-0 md:pl-6"
+            style={{ borderColor: "var(--border-card)" }}>
+            <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+              ผู้อนุมัติขั้นแรก · Head Accounting
+            </span>
+            {headApprovers.length > 0 ? (
+              headApprovers.map((a) => (
+                <div key={a.email} className="flex items-center gap-3 min-w-0">
+                  <div className="shrink-0 rounded-2xl overflow-hidden" style={{ boxShadow: "0 0 0 2px var(--nav-active-bg)" }}>
+                    <Avatar name={a.displayName || a.email} size={48} photo={a.photoUrl ?? undefined} color="var(--nav-active-text)" />
+                  </div>
+                  <div className="min-w-0 flex flex-col gap-0.5">
+                    <div className="flex items-baseline gap-2 min-w-0">
+                      <span className="text-[14px] font-bold truncate" style={{ color: "var(--text-primary)" }}>{a.displayName ?? a.email}</span>
+                      {a.staffId != null && <span className="text-[11px] shrink-0" style={{ color: "var(--text-muted)" }}>#{a.staffId}</span>}
+                    </div>
+                    {a.position && <span className="text-[12px] truncate" style={{ color: "var(--text-muted)" }}>{a.position}</span>}
+                    <span className="inline-flex items-center gap-1 text-[12px] truncate" style={{ color: "var(--text-secondary)" }}>
+                      <Mail size={11} className="shrink-0" /> <span className="truncate">{a.email}</span>
+                    </span>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="text-[12.5px] leading-relaxed m-0" style={{ color: "var(--text-muted)" }}>
+                ยังไม่ได้กำหนดผู้อนุมัติ Head Accounting — ตั้งที่ ตั้งค่า AP-2 › ผู้อนุมัติ
+              </p>
             )}
           </div>
         </div>
-        {requesterStaffId != null && (
-          <span className="text-[12px] px-3 py-2 rounded-lg" style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}>
-            กำลังกรอกแทน {reqName || `#${requesterStaffId}`} — คำขอจะอยู่ใน "คำขอของฉัน" ของคุณ และผู้อนุมัติจะเป็นหัวหน้าของผู้ขอเบิก
-          </span>
-        )}
 
         <div>
           <label className="text-[12px] font-bold" style={labelStyle}>แบรนด์ที่เบิก *</label>
@@ -315,12 +440,22 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
       {/* Payee (โอนให้) */}
       <div className="rounded-2xl p-4 sm:p-5 flex flex-col gap-3" style={box}>
         <Field label="โอนให้ *">
-          <select className={fieldClass} style={fieldStyle} value={payeeType} disabled={readOnly}
-            onChange={(e) => setPayeeType(e.target.value as AdvancePayeeType)}>
+          <select className={fieldClass} style={fieldStyle} value={payeeType} disabled={readOnly || !brandCode}
+            onChange={(e) => {
+              const v = e.target.value as AdvancePayeeType | "";
+              setPayeeType(v);
+              // สลับผู้รับโอน → เริ่มชื่อคู่ค้าใหม่ (ว่าง) และล้างข้อมูลบัญชีเมื่อไม่ใช่คู่ค้า
+              setPayeeName("");
+              if (v !== "vendor") { setPayeeBankAccount(""); setPayeeBankCode(""); }
+            }}>
+            <option value="">— เลือก —</option>
             <option value="employee">พนักงาน (ผู้ขอเบิก)</option>
             <option value="vendor">คู่ค้า</option>
           </select>
         </Field>
+        {!brandCode && (
+          <p className="text-[11px]" style={{ color: "var(--text-faint)" }}>เลือกแบรนด์ก่อน จึงจะเลือก "โอนให้" ได้</p>
+        )}
         {payeeType === "vendor" && (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="ชื่อคู่ค้า *">
@@ -347,8 +482,15 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
         )}
       </div>
 
-      {/* Advance detail */}
-      <div className="rounded-2xl p-4 sm:p-5 flex flex-col gap-4" style={box}>
+      {/* Advance detail — dimmed + disabled until โอนให้ is chosen */}
+      <fieldset disabled={readOnly || !payeeType}
+        className="rounded-2xl p-4 sm:p-5 flex flex-col gap-4 border-0 m-0 min-w-0 disabled:cursor-not-allowed"
+        style={{ ...box, minWidth: 0, opacity: payeeType ? 1 : 0.5 }}>
+        {!payeeType && (
+          <p className="text-[11px]" style={{ color: "var(--text-faint)" }}>
+            เลือก &quot;โอนให้&quot; ก่อน จึงจะกรอกรายละเอียดค่าใช้จ่าย จำนวนเงิน ฯลฯ ได้
+          </p>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Field label="วันที่ต้องการเริ่มใช้เงิน *">
             <input type="date" className={fieldClass} style={fieldStyle} value={needByDate}
@@ -366,17 +508,15 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
             สกุลเงิน
             <span className="flex items-center gap-1 font-normal">
               <input type="checkbox" checked={foreign} disabled={readOnly}
-                onChange={(e) => setForeign(e.target.checked)} />
+                onChange={(e) => { const on = e.target.checked; setForeign(on); if (on && currencyCode) fetchFxRate(currencyCode); }} />
               สกุลต่างประเทศ
             </span>
           </label>
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
             {foreign && (
               <Field label="สกุลเงิน *">
-                <input className={fieldClass} style={fieldStyle} value={currencyCode} disabled={readOnly}
-                  placeholder="USD" maxLength={3}
-                  onChange={(e) => setCurrencyCode(e.target.value.toUpperCase().replace(/[^A-Z]/g, ""))}
-                  onBlur={(e) => fetchFxRate(e.target.value)} />
+                <CurrencyCombobox options={orderedCurrencies} value={currencyCode} disabled={readOnly}
+                  onChange={(code) => { setCurrencyCode(code); fetchFxRate(code); }} />
               </Field>
             )}
             <Field label={foreign ? "จำนวนเงิน (สกุลนั้น) *" : "จำนวนเงิน (บาท) *"}>
@@ -406,9 +546,17 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
             </Field>
           </div>
           <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-            ยอดเกิน 3,000 บาท ควรผ่านกระบวนการ PR/PO · สกุลต่างประเทศใช้ rate ธปท. วันศุกร์ก่อนจ่าย
+            ยอดเกิน {AP2_PRPO_THRESHOLD.toLocaleString()} บาท ต้องระบุเหตุผลเพิ่มเติมด้านล่าง · สกุลต่างประเทศใช้ rate ธปท. วันศุกร์ก่อนจ่าย
           </span>
         </div>
+
+        {baseAmount != null && baseAmount > AP2_PRPO_THRESHOLD && (
+          <Field label={`เหตุผลเพิ่มเติม (ยอดเกิน ${AP2_PRPO_THRESHOLD.toLocaleString()} บาท) *`}>
+            <textarea rows={2} className={fieldClass} style={fieldStyle} value={overReason} disabled={readOnly}
+              onChange={(e) => setOverReason(e.target.value)}
+              placeholder="เหตุผลที่ขอเบิกเกินวงเงิน / เหตุใดจึงไม่ผ่านกระบวนการ PR-PO" />
+          </Field>
+        )}
 
         <Field label="รายละเอียดค่าใช้จ่าย *">
           <textarea rows={3} className={fieldClass} style={fieldStyle} value={purpose} disabled={readOnly}
@@ -422,12 +570,50 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
             placeholder="กรณีจ่ายค่าบริการเกิน 1,000 บาท ติดต่อบัญชีเพื่อออกหนังสือรับรองหัก ณ ที่จ่าย" />
         </Field>
 
-        {/* Attachment — quote/supporting doc. Upload wiring pending (files endpoint). */}
-        <Field label="แนบไฟล์ประกอบ (ใบเสนอราคา ฯลฯ)">
-          <input type="file" disabled className="text-[12px]" style={{ color: "var(--text-muted)" }} />
-          <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>ระบบอัปโหลดไฟล์กำลังพัฒนา</span>
+        {/* Attachment — รูปภาพ/PDF ≤4MB (เหมือน AP-17) */}
+        <Field label="แนบไฟล์ประกอบ (ใบเสนอราคา / รูปถ่าย)">
+            <div className="flex flex-col gap-2">
+              {!readOnly && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold cursor-pointer"
+                    style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", color: "var(--nav-active-text)" }}>
+                    <Paperclip size={14} /> แนบไฟล์
+                    <input type="file" hidden multiple accept="image/*,application/pdf" disabled={uploading}
+                      onChange={(e) => { uploadFiles(e.target.files); e.target.value = ""; }} />
+                  </label>
+                  <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold cursor-pointer"
+                    style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", color: "var(--nav-active-text)" }}>
+                    <Camera size={14} /> ถ่ายรูป
+                    <input type="file" hidden accept="image/*" capture="environment" disabled={uploading}
+                      onChange={(e) => { uploadFiles(e.target.files); e.target.value = ""; }} />
+                  </label>
+                  {uploading && <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>กำลังอัปโหลด...</span>}
+                </div>
+              )}
+              <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>รองรับรูปภาพ/PDF · ไม่เกิน 4MB ต่อไฟล์</span>
+              {files.length > 0 && (
+                <div className="flex flex-col gap-1">
+                  {files.map((f) => (
+                    <div key={f.id} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg"
+                      style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)" }}>
+                      <FileText size={14} className="shrink-0" style={{ color: "var(--text-muted)" }} />
+                      <a href={`/api/request/advance/files/${f.id}`} target="_blank" rel="noreferrer"
+                        className="flex-1 min-w-0 truncate text-[12px] no-underline" style={{ color: "var(--text-primary)" }}>
+                        {f.fileName}
+                      </a>
+                      <span className="text-[11px] shrink-0" style={{ color: "var(--text-faint)" }}>{Math.max(1, Math.round(f.fileSize / 1024))} KB</span>
+                      {!readOnly && (
+                        <button type="button" onClick={() => removeFile(f.id)}
+                          className="p-1 rounded cursor-pointer border-none bg-transparent shrink-0"
+                          style={{ color: "var(--text-danger, #dc2626)" }} title="ลบ"><X size={13} /></button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
         </Field>
-      </div>
+      </fieldset>
 
       {!readOnly && (
         <div className="flex items-center justify-end gap-2">
