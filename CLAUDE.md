@@ -11,6 +11,11 @@ cp .env.example .env.local   # Fill in credentials
 npm run dev                   # http://localhost:3081
 ```
 
+Two things about this build that look like faults and are not:
+
+- **`experimental.cpus: 1`** (`next.config.mjs`) holds build and static generation to a single worker instead of one per core — `next build` reports "using 1 worker". Builds are slower on purpose; raise or drop the key to get the cores back.
+- **`next-env.d.ts` flip-flops and will keep dirtying your tree.** `next dev` writes `./.next/dev/types/…`, `next build` writes `./.next/types/…`, so whichever you ran last shows as an uncommitted change. Nothing depends on it: `tsconfig.json` includes both paths, and `skipLibCheck` means an unresolved import inside a `.d.ts` never fails the typecheck. Commit it or leave it, but don't go hunting for the cause.
+
 ## Architecture
 
 ### 3-Database Architecture
