@@ -3,12 +3,15 @@ import { writeBothPools } from "@/lib/acc/dual-write";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import { getAllowedBrands } from "@/lib/acc/brand-options";
 
-async function assertClaimBrandAllowed(brandCode: string): Promise<void> {
-  const allowed = await getAllowedBrands(AP1_FORM_CODE);
+async function assertClaimBrandAllowed(
+  brandCode: string,
+  formCode: string = AP1_FORM_CODE,
+): Promise<void> {
+  const allowed = await getAllowedBrands(formCode);
   const ok = allowed.some(
     (b) => b.brandCode.toUpperCase() === brandCode.toUpperCase(),
   );
-  if (!ok) throw new Error("แบรนด์นี้ไม่ได้เปิดใช้ใน AP-1");
+  if (!ok) throw new Error(`แบรนด์นี้ไม่ได้เปิดใช้ใน ${formCode}`);
 }
 
 export type BrandAccountKind = "gl" | "bank";
@@ -49,15 +52,23 @@ function mapRow(
 export async function listBrandAccounts(
   kind: BrandAccountKind,
   brandCode?: string | null,
+  formCode?: string | null,
 ): Promise<BrandAccountRow[]> {
   const pool = await getAccPool();
   const table = TABLE[kind];
   const req = pool.request();
-  let where = "";
+  const conds: string[] = [];
   if (brandCode) {
     req.input("brand", sql.NVarChar, brandCode);
-    where = "WHERE BrandCode = @brand";
+    conds.push("BrandCode = @brand");
   }
+  // FormCode lives only on the G/L table (per-form config). Bank accounts are
+  // per-brand and shared across forms, so they are never filtered by form.
+  if (kind === "gl" && formCode) {
+    req.input("formCode", sql.NVarChar, formCode);
+    conds.push("FormCode = @formCode");
+  }
+  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
   const r = await req.query(`
     SELECT Id, BrandCode, AccountNo, DisplayName${kind === "gl" ? ", ErpDescription" : ""}, IsActive, SortOrder
     FROM [dbo].[${table}]
@@ -77,26 +88,31 @@ export async function upsertBrandAccount(
     erpDescription?: string | null;
     isActive?: boolean;
     sortOrder?: number;
+    /** G/L only — which form this account belongs to. Defaults to AP-1. */
+    formCode?: string;
   },
   userId: number,
 ): Promise<void> {
   const accountNo = input.accountNo.trim();
   const brandCode = input.brandCode.trim().toUpperCase();
   if (!brandCode) throw new Error("กรุณาเลือกแบรนด์");
-  await assertClaimBrandAllowed(brandCode);
+  // FormCode scopes G/L config per form; bank accounts are shared per-brand.
+  const formCode = kind === "gl" ? (input.formCode?.trim() || AP1_FORM_CODE) : null;
+  await assertClaimBrandAllowed(brandCode, formCode ?? AP1_FORM_CODE);
   if (!accountNo) throw new Error("กรุณาระบุเลขบัญชี");
 
   const pool = await getAccPool();
   const table = TABLE[kind];
   // Resolve the target row once, against production, so both databases update
   // the same id rather than each picking its own "first row for this brand".
+  // For G/L the row is scoped by form, so AP-2 never grabs AP-1's row.
   let rowId = input.id;
   if (rowId == null) {
-    const existing = await pool
-      .request()
-      .input("brand", sql.NVarChar, brandCode).query(`
+    const findReq = pool.request().input("brand", sql.NVarChar, brandCode);
+    if (formCode) findReq.input("formCode", sql.NVarChar, formCode);
+    const existing = await findReq.query(`
         SELECT TOP 1 Id FROM [dbo].[${table}]
-        WHERE BrandCode = @brand
+        WHERE BrandCode = @brand${formCode ? " AND FormCode = @formCode" : ""}
         ORDER BY SortOrder, Id
       `);
     rowId = (existing.recordset[0] as { Id: number } | undefined)?.Id;
@@ -118,6 +134,7 @@ export async function upsertBrandAccount(
         sql.NVarChar,
         input.erpDescription?.trim() || null,
       );
+      req.input("formCode", sql.NVarChar, formCode);
     }
 
     if (rowId) {
@@ -127,7 +144,7 @@ export async function upsertBrandAccount(
       SET BrandCode = @brand,
           AccountNo = @accountNo,
           DisplayName = @displayName,
-          ${kind === "gl" ? "ErpDescription = @erpDescription," : ""}
+          ${kind === "gl" ? "ErpDescription = @erpDescription, FormCode = @formCode," : ""}
           IsActive = @active,
           SortOrder = @sort,
           UpdatedAt = SYSDATETIME()
@@ -136,8 +153,8 @@ export async function upsertBrandAccount(
     } else {
       await req.query(`
       INSERT INTO [dbo].[${table}]
-        (BrandCode, AccountNo, DisplayName${kind === "gl" ? ", ErpDescription" : ""}, IsActive, SortOrder, CreatedBy)
-      VALUES (@brand, @accountNo, @displayName${kind === "gl" ? ", @erpDescription" : ""}, @active, @sort, @user)
+        (BrandCode, AccountNo, DisplayName${kind === "gl" ? ", ErpDescription, FormCode" : ""}, IsActive, SortOrder, CreatedBy)
+      VALUES (@brand, @accountNo, @displayName${kind === "gl" ? ", @erpDescription, @formCode" : ""}, @active, @sort, @user)
     `);
     }
   });

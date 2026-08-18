@@ -147,7 +147,7 @@ export async function loadErpJournalBuildContext(): Promise<ErpJournalBuildConte
   ] = await Promise.all([
     getErpJournalDescriptionTemplate(),
     getBrandErpConfigPage(),
-    listBrandAccounts("gl"),
+    listBrandAccounts("gl", undefined, "AP-1"),
     listBrandAccounts("bank"),
     listBrandBranches(),
     listBrandJournalBatches(),

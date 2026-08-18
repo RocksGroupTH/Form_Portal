@@ -70,6 +70,18 @@ export const REQUEST_CARDS: NavItem[] = [
     manage: true,
   },
   {
+    id: "advance",
+    label: "เบิกเงินทดรองจ่าย (ออฟฟิต)",
+    icon: "Wallet",
+    desc: "ฟอร์ม AP-2 · ผู้อนุมัติ · ธนาคาร (Master)",
+    href: "/request/advance/settings",
+    group: "Settings",
+    groupTh: "ตั้งค่า",
+    badge: "AP-2",
+    devHostOnly: true,
+    manage: true,
+  },
+  {
     id: "travel-booking-form",
     label: "จองที่พัก/ตั๋วโดยสาร",
     icon: "Luggage",

@@ -24,6 +24,13 @@ const ACCOUNTING_FORMS = [
     Icon: Route,
   },
   {
+    code: "AP-2",
+    name: "เบิกเงินทดรองจ่าย",
+    desc: "Advance · เงินทดรองจ่าย",
+    href: "/request/advance",
+    Icon: FilePen,
+  },
+  {
     code: "AP-17",
     name: "จองที่พัก/ตั๋วโดยสาร",
     desc: "ไปทำงานต่างจังหวัด",

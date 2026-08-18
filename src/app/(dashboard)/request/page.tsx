@@ -19,6 +19,7 @@ import {
   Package,
   Route,
   Settings,
+  Wallet,
 } from "lucide-react";
 
 const ICON_MAP: Record<string, React.ComponentType<{ size?: number; style?: React.CSSProperties }>> = {
@@ -26,6 +27,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ size?: number; style?: Reac
   ClipboardList,
   Route,
   Luggage,
+  Wallet,
 };
 
 function requestCardHref(item: (typeof REQUEST_CARDS)[number]): string {
@@ -223,7 +225,7 @@ export default function RequestHubPage() {
         title={isAdminView ? "Accounting Admin" : "Request"}
         subtitle={
           isAdminView
-            ? "คิวอนุมัติ รายงาน และตั้งค่าของ AP-1 / AP-17"
+            ? "คิวอนุมัติ รายงาน และตั้งค่าของ AP-1 / AP-2 / AP-17"
             : "Submit master-data requests — items, vendors, price changes"
         }
         backHref={isAdminView ? "/settings" : "/"}
@@ -335,7 +337,7 @@ export default function RequestHubPage() {
            localhost" while standing on localhost would be a lie. */
         <p className="text-[12px] py-8 text-center" style={{ color: "var(--text-muted)" }}>
           {isAdminView && !isDevHost
-            ? "หน้าจัดการของ AP-1 / AP-17 เปิดได้เฉพาะตอนรัน dev ที่ localhost:3020"
+            ? "หน้าจัดการของ AP-1 / AP-2 / AP-17 เปิดได้เฉพาะตอนรัน dev ที่ localhost:3020"
             : viewer?.uatMode
               ? "คุณอยู่ในโหมด UAT แต่ยังไม่มีฟอร์มใดเปิดให้ทดสอบในขณะนี้"
               : "ยังไม่มีคำขอที่เปิดให้ใช้งาน"}

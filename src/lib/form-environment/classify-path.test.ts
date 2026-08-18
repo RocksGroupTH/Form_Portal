@@ -16,6 +16,20 @@ test("AP-17 own routes", () => {
   assert.equal(classifyPath("/request/travel-booking/5"), "AP-17");
 });
 
+test("AP-2 (advance) own routes, including its BC-posting queue", () => {
+  assert.equal(classifyPath("/request/advance"), "AP-2");
+  assert.equal(classifyPath("/request/advance/5"), "AP-2");
+  assert.equal(classifyPath("/api/request/advance"), "AP-2");
+  assert.equal(classifyPath("/api/request/advance/5"), "AP-2");
+  assert.equal(classifyPath("/api/request/advance/work"), "AP-2");
+  // the advance erp-prep queue inherits AP-2 from the parent prefix — a single
+  // form, never BOTH/null, so the journal and BC target agree on one database.
+  assert.equal(classifyPath("/api/request/advance/erp-prep"), "AP-2");
+  assert.equal(classifyPath("/api/request/advance/erp-prep/send"), "AP-2");
+  // boundary: must not match mid-segment.
+  assert.equal(classifyPath("/request/advancesomething"), null);
+});
+
 test("AP-1 routes", () => {
   assert.equal(classifyPath("/api/request/accounting/requests/5"), "AP-1");
   assert.equal(classifyPath("/api/request/accounting/requests/drafts"), "AP-1");

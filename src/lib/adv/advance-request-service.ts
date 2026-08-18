@@ -1,0 +1,472 @@
+import { getAccPool, sql } from "@/lib/adv/pool";
+import { hrEmployeeTable } from "@/lib/hr/constants";
+import { allocateAdvanceRequestNo } from "@/lib/adv/adv-config";
+import {
+  resolveManagerEmail,
+  resolveRequesterForActor,
+  type RequesterSnapshot,
+} from "@/lib/acc/employee-context";
+import { queueEmail } from "@/lib/acc/email-queue";
+import type { AccApproval } from "@/features/accounting/types";
+import {
+  AP2_FORM_CODE,
+  AP2_SEQUENCE_PREFIX,
+  AP2_DEFAULT_CURRENCY,
+  AP2_MAX_CLEAR_DAYS,
+  AP2_PRPO_THRESHOLD,
+} from "@/features/advance/constants";
+import type {
+  AdvanceDetail,
+  AdvanceDraftSummary,
+  AdvanceRequest,
+  AdvanceSaveInput,
+} from "@/features/advance/types";
+
+/* ─────────────────────────── helpers ─────────────────────────── */
+
+function num(v: unknown): number | null {
+  return v === null || v === undefined ? null : Number(v);
+}
+
+/** Date column → YYYY-MM-DD using local getters (server is Thai time). */
+function toYmd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function mapRequestRow(r: Record<string, unknown>): AdvanceRequest {
+  return {
+    id: r.Id as number,
+    requestNo: (r.RequestNo as string) ?? null,
+    formCode: r.FormCode as string,
+    brandCode: (r.BrandCode as string) ?? null,
+    status: r.Status as AdvanceRequest["status"],
+    currentStepCode: (r.CurrentStepCode as AdvanceRequest["currentStepCode"]) ?? null,
+    staffId: (r.StaffId as number) ?? null,
+    requesterFullName: (r.RequesterFullName as string) ?? null,
+    requesterEmail: (r.RequesterEmail as string) ?? null,
+    requesterPosition: (r.RequesterPosition as string) ?? null,
+    requesterDepartmentName: (r.RequesterDepartmentName as string) ?? null,
+    requesterDepartmentCode: (r.RequesterDepartmentCode as string) ?? null,
+    managerStaffId: (r.ManagerStaffId as number) ?? null,
+    managerEmail: (r.ManagerEmail as string) ?? null,
+    companyName: (r.CompanyName as string) ?? null,
+    totalAmount: num(r.TotalAmount),
+    paymentDate: r.PaymentDate ? toYmd(r.PaymentDate as Date) : null,
+    submittedBy: (r.SubmittedBy as number) ?? null,
+    submittedAt: r.SubmittedAt ? (r.SubmittedAt as Date).toISOString() : null,
+    createdAt: r.CreatedAt ? (r.CreatedAt as Date).toISOString() : "",
+    updatedAt: r.UpdatedAt ? (r.UpdatedAt as Date).toISOString() : "",
+  };
+}
+
+function mapAdvanceRow(r: Record<string, unknown>): AdvanceDetail {
+  return {
+    id: r.Id as number,
+    payeeType: (r.PayeeType as AdvanceDetail["payeeType"]) ?? null,
+    payeeName: (r.PayeeName as string) ?? null,
+    payeeBankAccount: (r.PayeeBankAccount as string) ?? null,
+    payeeBankCode: (r.PayeeBankCode as string) ?? null,
+    needByDate: r.NeedByDate ? toYmd(r.NeedByDate as Date) : null,
+    expectedClearDate: r.ExpectedClearDate ? toYmd(r.ExpectedClearDate as Date) : null,
+    purpose: (r.Purpose as string) ?? null,
+    currency: (r.Currency as string) ?? AP2_DEFAULT_CURRENCY,
+    amount: num(r.Amount),
+    exchangeRate: num(r.ExchangeRate),
+    baseAmount: num(r.BaseAmount),
+    whtNote: (r.WhtNote as string) ?? null,
+  };
+}
+
+/** THB base = amount × rate (THB → rate 1). Used for the journal + header total. */
+function computeBaseAmount(a: AdvanceDetail): number | null {
+  if (a.amount == null) return null;
+  const isThb = !a.currency || a.currency.toUpperCase() === AP2_DEFAULT_CURRENCY;
+  const rate = isThb ? 1 : a.exchangeRate ?? 0;
+  return Math.round(a.amount * rate * 100) / 100;
+}
+
+async function loadAdvance(
+  pool: Awaited<ReturnType<typeof getAccPool>>,
+  requestId: number,
+): Promise<AdvanceDetail | null> {
+  const r = await pool.request().input("rid", sql.Int, requestId)
+    .query(`SELECT TOP 1 * FROM [dbo].[AccAdvance] WHERE RequestId = @rid`);
+  if (r.recordset.length === 0) return null;
+  return mapAdvanceRow(r.recordset[0] as Record<string, unknown>);
+}
+
+/* ─────────────────────────── reads ─────────────────────────── */
+
+export async function getRequest(id: number): Promise<AdvanceRequest | null> {
+  const pool = await getAccPool();
+  const head = await pool.request().input("id", sql.Int, id)
+    .query(`SELECT * FROM [dbo].[AccRequest] WHERE Id = @id`);
+  if (head.recordset.length === 0) return null;
+  const req = mapRequestRow(head.recordset[0] as Record<string, unknown>);
+
+  const advance = await loadAdvance(pool, id);
+  if (advance) req.advance = advance;
+
+  const aRes = await pool.request().input("id", sql.Int, id)
+    .query(`SELECT a.*,
+              COALESCE(NULLIF(LTRIM(RTRIM(CONCAT(e_action.FirstName, N' ', e_action.LastName))), N''), e_action.FullName) AS ActionedByHrName,
+              COALESCE(e_action.Email, e_action.EmailCompBr) AS ActionedByHrEmail,
+              COALESCE(NULLIF(LTRIM(RTRIM(CONCAT(e_assign.FirstName, N' ', e_assign.LastName))), N''), e_assign.FullName) AS AssignedToHrName,
+              COALESCE(e_assign.Email, e_assign.EmailCompBr) AS AssignedToHrEmail
+            FROM [dbo].[AccApproval] a
+            LEFT JOIN ${hrEmployeeTable()} e_action ON e_action.StaffId = a.ActionedByStaffId AND e_action.Status = N'Active'
+            LEFT JOIN ${hrEmployeeTable()} e_assign ON e_assign.StaffId = a.AssignedTo AND e_assign.Status = N'Active'
+            WHERE a.RequestId = @id
+            ORDER BY a.StepOrder, a.Id`);
+  req.approvals = (aRes.recordset as Record<string, unknown>[]).map((x) => ({
+    id: x.Id as number, requestId: x.RequestId as number,
+    stepCode: x.StepCode as AccApproval["stepCode"], stepOrder: x.StepOrder as number,
+    assignedTo: (x.AssignedTo as number) ?? null, assignedEmail: (x.AssignedEmail as string) ?? null,
+    status: x.Status as AccApproval["status"], comment: (x.Comment as string) ?? null,
+    isChecked: x.IsChecked === null || x.IsChecked === undefined ? null : !!x.IsChecked,
+    actionedByStaffId: (x.ActionedByStaffId as number) ?? null,
+    actionedAt: x.ActionedAt ? (x.ActionedAt as Date).toISOString() : null,
+    createdAt: x.CreatedAt ? (x.CreatedAt as Date).toISOString() : "",
+    actionedByHrName: (x.ActionedByHrName as string) ?? null,
+    actionedByHrEmail: (x.ActionedByHrEmail as string) ?? null,
+    assignedToHrName: (x.AssignedToHrName as string) ?? null,
+    assignedToHrEmail: (x.AssignedToHrEmail as string) ?? null,
+  }));
+
+  return req;
+}
+
+/** Editable advance drafts for the current user (by creator). */
+export async function listMyAdvanceDrafts(userId: number): Promise<AdvanceDraftSummary[]> {
+  const pool = await getAccPool();
+  const res = await pool.request()
+    .input("uid", sql.Int, userId)
+    .input("form", sql.NVarChar, AP2_FORM_CODE)
+    .query(`
+      SELECT r.Id, r.BrandCode, r.Status, r.UpdatedAt,
+             a.NeedByDate, a.ExpectedClearDate, a.Purpose, a.Amount
+      FROM [dbo].[AccRequest] r
+      LEFT JOIN [dbo].[AccAdvance] a ON a.RequestId = r.Id
+      WHERE r.FormCode = @form
+        AND r.Status IN ('Draft', 'Returned')
+        AND (r.CreatedBy = @uid OR r.SubmittedBy = @uid)
+      ORDER BY r.UpdatedAt DESC
+    `);
+  return (res.recordset as Record<string, unknown>[]).map((row) => ({
+    id: row.Id as number,
+    brandCode: (row.BrandCode as string) ?? null,
+    status: row.Status as AdvanceDraftSummary["status"],
+    needByDate: row.NeedByDate ? toYmd(row.NeedByDate as Date) : null,
+    expectedClearDate: row.ExpectedClearDate ? toYmd(row.ExpectedClearDate as Date) : null,
+    purpose: (row.Purpose as string) ?? null,
+    amount: num(row.Amount),
+    updatedAt: row.UpdatedAt ? (row.UpdatedAt as Date).toISOString() : "",
+  }));
+}
+
+/* ─────────────────────────── validation ─────────────────────────── */
+
+/** Strict checks run at submit time. Returns Thai error messages (empty = valid). */
+export function validateAdvanceForSubmit(
+  input: AdvanceSaveInput,
+  requester: Pick<RequesterSnapshot, "managerStaffId">,
+): string[] {
+  const errs: string[] = [];
+  const a = input.advance;
+  if (!requester.managerStaffId) errs.push("ยังไม่ได้กำหนดผู้จัดการใน HR");
+  if (!input.brandCode) errs.push("กรุณาเลือกแบรนด์");
+  if (!a.needByDate) errs.push("กรุณาระบุวันที่ต้องการเริ่มใช้เงิน");
+  if (!a.expectedClearDate) errs.push("กรุณาระบุวันที่คาดว่าจะเคลียร์");
+  if (a.needByDate && a.expectedClearDate) {
+    const need = new Date(a.needByDate);
+    const clear = new Date(a.expectedClearDate);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    if (need < today) errs.push("วันที่ต้องการเริ่มใช้เงินต้องไม่เป็นอดีต");
+    if (clear < need) errs.push("วันเคลียร์ต้องไม่ก่อนวันที่ต้องการใช้เงิน");
+    const diffDays = (clear.getTime() - need.getTime()) / 86_400_000;
+    if (diffDays > AP2_MAX_CLEAR_DAYS)
+      errs.push(`วันเคลียร์ต้องไม่เกิน ${AP2_MAX_CLEAR_DAYS} วันจากวันที่ต้องการใช้เงิน`);
+  }
+  if (!a.purpose?.trim()) errs.push("กรุณากรอกรายละเอียดค่าใช้จ่าย");
+  if (!a.amount || a.amount <= 0) errs.push("กรุณาระบุจำนวนเงินที่ถูกต้อง");
+
+  // Payee (โอนให้)
+  if (!a.payeeType) errs.push("กรุณาเลือกผู้รับโอน (โอนให้)");
+  if (a.payeeType === "vendor") {
+    if (!a.payeeName?.trim()) errs.push("กรุณากรอกชื่อคู่ค้า");
+    if (!a.payeeBankAccount?.trim()) errs.push("กรุณากรอกเลขที่บัญชีคู่ค้า");
+    if (!a.payeeBankCode?.trim()) errs.push("กรุณาเลือกธนาคารของคู่ค้า");
+  }
+
+  // Currency / FX — foreign currency needs a rate.
+  const isThb = !a.currency || a.currency.toUpperCase() === AP2_DEFAULT_CURRENCY;
+  if (!isThb && (!a.exchangeRate || a.exchangeRate <= 0))
+    errs.push("กรุณาระบุอัตราแลกเปลี่ยน (สำหรับสกุลเงินต่างประเทศ)");
+
+  // Business rule (OQ-3): the THB base amount over the threshold goes through PR/PO.
+  const base = computeBaseAmount(a);
+  if (base && base > AP2_PRPO_THRESHOLD)
+    errs.push(`ยอดเกิน ${AP2_PRPO_THRESHOLD.toLocaleString()} บาท ควรผ่าน PR/PO — กรุณาติดต่อฝ่ายจัดซื้อ`);
+  return errs;
+}
+
+/* ─────────────────────────── writes ─────────────────────────── */
+
+async function persistAdvance(
+  tx: Awaited<ReturnType<Awaited<ReturnType<typeof getAccPool>>["transaction"]>>,
+  requestId: number,
+  a: AdvanceDetail,
+): Promise<void> {
+  const isThb = !a.currency || a.currency.toUpperCase() === AP2_DEFAULT_CURRENCY;
+  const rate = isThb ? 1 : a.exchangeRate ?? null;
+  const baseAmount = computeBaseAmount(a);
+  // Employee payee name defaults to nothing here; the form/HR supplies it.
+  const reqBind = () =>
+    tx.request()
+      .input("rid", sql.Int, requestId)
+      .input("payeeType", sql.NVarChar, a.payeeType ?? null)
+      .input("payeeName", sql.NVarChar, a.payeeName ?? null)
+      .input("bankAcct", sql.NVarChar, a.payeeBankAccount ?? null)
+      .input("bankCode", sql.NVarChar, a.payeeBankCode ?? null)
+      .input("needBy", sql.Date, a.needByDate || null)
+      .input("clear", sql.Date, a.expectedClearDate || null)
+      .input("purpose", sql.NVarChar, a.purpose ?? null)
+      .input("currency", sql.NVarChar, a.currency || AP2_DEFAULT_CURRENCY)
+      .input("amount", sql.Decimal(18, 2), a.amount ?? null)
+      .input("rate", sql.Decimal(18, 6), rate)
+      .input("base", sql.Decimal(18, 2), baseAmount)
+      .input("wht", sql.NVarChar, a.whtNote ?? null);
+
+  const exists = await tx.request().input("rid", sql.Int, requestId)
+    .query(`SELECT TOP 1 Id FROM [dbo].[AccAdvance] WHERE RequestId = @rid`);
+
+  if (exists.recordset.length > 0) {
+    await reqBind().query(`
+      UPDATE [dbo].[AccAdvance] SET
+        PayeeType=@payeeType, PayeeName=@payeeName, PayeeBankAccount=@bankAcct, PayeeBankCode=@bankCode,
+        NeedByDate=@needBy, ExpectedClearDate=@clear, Purpose=@purpose,
+        Currency=@currency, Amount=@amount, ExchangeRate=@rate, BaseAmount=@base,
+        WhtNote=@wht, UpdatedAt=SYSDATETIME()
+      WHERE RequestId=@rid`);
+  } else {
+    await reqBind().query(`
+      INSERT INTO [dbo].[AccAdvance]
+        (RequestId, PayeeType, PayeeName, PayeeBankAccount, PayeeBankCode,
+         NeedByDate, ExpectedClearDate, Purpose, Currency, Amount, ExchangeRate, BaseAmount, WhtNote)
+      VALUES (@rid, @payeeType, @payeeName, @bankAcct, @bankCode,
+         @needBy, @clear, @purpose, @currency, @amount, @rate, @base, @wht)`);
+  }
+
+  // Header total is the THB base amount (what the journal posts).
+  await tx.request()
+    .input("rid", sql.Int, requestId)
+    .input("total", sql.Decimal(18, 2), baseAmount)
+    .query(`UPDATE [dbo].[AccRequest] SET TotalAmount=@total, UpdatedAt=SYSDATETIME() WHERE Id=@rid`);
+}
+
+/** Create or update a draft (lenient — no strict validation). Returns the request id. */
+export async function saveDraft(
+  input: AdvanceSaveInput,
+  userId: number,
+  loginEmail: string,
+): Promise<number> {
+  const pool = await getAccPool();
+  // The form supplies the employee code (staffId); self by default, a same-department
+  // colleague when different (resolveRequesterForActor enforces that authorization).
+  const requester = await resolveRequesterForActor(loginEmail, input.staffId ?? null);
+  const tx = pool.transaction();
+  await tx.begin();
+  try {
+    let requestId = input.id ?? 0;
+
+    if (!requestId) {
+      const ins = await tx.request()
+        .input("brand", sql.NVarChar, input.brandCode ?? null)
+        .input("user", sql.Int, userId || null)
+        .input("form", sql.NVarChar, AP2_FORM_CODE)
+        .input("empId", sql.UniqueIdentifier, requester.employeeId)
+        .input("staffId", sql.Int, requester.staffId)
+        .input("rFirst", sql.NVarChar, requester.firstName)
+        .input("rLast", sql.NVarChar, requester.lastName)
+        .input("rFull", sql.NVarChar, requester.fullName)
+        .input("rEmail", sql.NVarChar, requester.email)
+        .input("rPos", sql.NVarChar, requester.position)
+        .input("rDeptId", sql.Int, requester.departmentId)
+        .input("rDeptName", sql.NVarChar, requester.departmentName)
+        .input("rDeptCode", sql.NVarChar, requester.departmentCode)
+        .input("mgrStaff", sql.Int, requester.managerStaffId)
+        .query(`INSERT INTO [dbo].[AccRequest]
+                  (FormCode, BrandCode, Status, CreatedBy,
+                   EmployeeId, StaffId, RequesterFirstName, RequesterLastName, RequesterFullName,
+                   RequesterEmail, RequesterPosition, RequesterDepartmentId, RequesterDepartmentName,
+                   RequesterDepartmentCode, ManagerStaffId)
+                OUTPUT inserted.Id AS Id
+                VALUES (@form, @brand, 'Draft', @user,
+                   @empId, @staffId, @rFirst, @rLast, @rFull,
+                   @rEmail, @rPos, @rDeptId, @rDeptName, @rDeptCode, @mgrStaff)`);
+      requestId = ins.recordset[0].Id as number;
+    } else {
+      const own = await tx.request().input("id", sql.Int, requestId)
+        .query(`SELECT CreatedBy, Status FROM [dbo].[AccRequest] WHERE Id=@id`);
+      if (own.recordset.length === 0) throw new Error("ไม่พบคำขอ");
+      const ownerRow = own.recordset[0] as { CreatedBy: number | null; Status: string };
+      if (ownerRow.CreatedBy !== userId) throw new Error("ไม่มีสิทธิ์แก้ไขคำขอนี้");
+      if (ownerRow.Status !== "Draft" && ownerRow.Status !== "Returned") {
+        throw new Error("คำขอนี้ไม่สามารถแก้ไขได้ในสถานะปัจจุบัน");
+      }
+      await tx.request()
+        .input("id", sql.Int, requestId)
+        .input("brand", sql.NVarChar, input.brandCode ?? null)
+        .input("empId", sql.UniqueIdentifier, requester.employeeId)
+        .input("staffId", sql.Int, requester.staffId)
+        .input("rFirst", sql.NVarChar, requester.firstName)
+        .input("rLast", sql.NVarChar, requester.lastName)
+        .input("rFull", sql.NVarChar, requester.fullName)
+        .input("rEmail", sql.NVarChar, requester.email)
+        .input("rPos", sql.NVarChar, requester.position)
+        .input("rDeptId", sql.Int, requester.departmentId)
+        .input("rDeptName", sql.NVarChar, requester.departmentName)
+        .input("rDeptCode", sql.NVarChar, requester.departmentCode)
+        .input("mgrStaff", sql.Int, requester.managerStaffId)
+        .query(`UPDATE [dbo].[AccRequest] SET BrandCode=@brand,
+                  EmployeeId=@empId, StaffId=@staffId,
+                  RequesterFirstName=@rFirst, RequesterLastName=@rLast, RequesterFullName=@rFull,
+                  RequesterEmail=@rEmail, RequesterPosition=@rPos,
+                  RequesterDepartmentId=@rDeptId, RequesterDepartmentName=@rDeptName,
+                  RequesterDepartmentCode=@rDeptCode, ManagerStaffId=@mgrStaff,
+                  UpdatedAt=SYSDATETIME() WHERE Id=@id`);
+    }
+
+    await persistAdvance(tx, requestId, input.advance);
+
+    await tx.commit();
+    return requestId;
+  } catch (e) {
+    await tx.rollback();
+    throw e;
+  }
+}
+
+/** Permanently delete an editable draft (Draft/Returned) owned by the user. */
+export async function deleteDraft(id: number, userId: number): Promise<void> {
+  const pool = await getAccPool();
+  const tx = pool.transaction();
+  await tx.begin();
+  try {
+    const own = await tx.request().input("id", sql.Int, id)
+      .query(`SELECT CreatedBy, Status FROM [dbo].[AccRequest] WHERE Id=@id`);
+    if (own.recordset.length === 0) throw new Error("ไม่พบคำขอ");
+    const row = own.recordset[0] as { CreatedBy: number | null; Status: string };
+    if (row.CreatedBy !== userId) throw new Error("ไม่มีสิทธิ์ลบคำขอนี้");
+    if (row.Status !== "Draft" && row.Status !== "Returned") {
+      throw new Error("คำขอนี้ไม่สามารถลบได้ในสถานะปัจจุบัน");
+    }
+    await tx.request().input("id", sql.Int, id).query(`DELETE FROM [dbo].[AccActivityLog] WHERE RequestId=@id`);
+    await tx.request().input("id", sql.Int, id).query(`DELETE FROM [dbo].[AccApproval] WHERE RequestId=@id`);
+    await tx.request().input("id", sql.Int, id).query(`DELETE FROM [dbo].[AccAdvance] WHERE RequestId=@id`);
+    await tx.request().input("id", sql.Int, id).query(`DELETE FROM [dbo].[AccRequest] WHERE Id=@id`);
+    await tx.commit();
+  } catch (e) {
+    await tx.rollback();
+    throw e;
+  }
+}
+
+/**
+ * Validate, allocate the running no., flip the header to Submitted/MANAGER,
+ * create the MANAGER approval and queue the manager email. One transaction.
+ */
+export async function submitRequest(
+  id: number,
+  requester: RequesterSnapshot,
+  userId: number,
+): Promise<AdvanceRequest> {
+  const current = await getRequest(id);
+  if (!current) throw new Error("ไม่พบคำขอ");
+  if (current.status !== "Draft" && current.status !== "Returned") {
+    throw new Error("คำขอนี้ถูกส่งไปแล้ว");
+  }
+
+  const advance = current.advance ?? {
+    payeeType: null, payeeName: null, payeeBankAccount: null, payeeBankCode: null,
+    needByDate: null, expectedClearDate: null, purpose: null,
+    currency: AP2_DEFAULT_CURRENCY, amount: null, exchangeRate: null, baseAmount: null, whtNote: null,
+  };
+  const errors = validateAdvanceForSubmit(
+    { id, brandCode: current.brandCode, staffId: current.staffId, advance },
+    { managerStaffId: requester.managerStaffId ?? null },
+  );
+  if (errors.length) throw new Error(errors.join("\n"));
+
+  const managerEmail = await resolveManagerEmail(requester.managerStaffId);
+  if (!managerEmail) throw new Error("ไม่พบอีเมลผู้จัดการ (ManagerStaffId) — ไม่สามารถส่งอนุมัติได้");
+
+  const requestNo = await allocateAdvanceRequestNo(AP2_SEQUENCE_PREFIX);
+  const totalAmount = computeBaseAmount(advance) ?? 0;
+
+  const pool = await getAccPool();
+  const tx = pool.transaction();
+  await tx.begin();
+  try {
+    await tx.request()
+      .input("id", sql.Int, id)
+      .input("no", sql.NVarChar, requestNo)
+      .input("empId", sql.UniqueIdentifier, requester.employeeId ?? null)
+      .input("staffId", sql.Int, requester.staffId ?? null)
+      .input("fname", sql.NVarChar, requester.firstName ?? null)
+      .input("lname", sql.NVarChar, requester.lastName ?? null)
+      .input("full", sql.NVarChar, requester.fullName ?? null)
+      .input("email", sql.NVarChar, requester.email ?? null)
+      .input("pos", sql.NVarChar, requester.position ?? null)
+      .input("deptId", sql.Int, requester.departmentId ?? null)
+      .input("deptName", sql.NVarChar, requester.departmentName ?? null)
+      .input("deptCode", sql.NVarChar, requester.departmentCode ?? null)
+      .input("mgrStaff", sql.Int, requester.managerStaffId ?? null)
+      .input("mgrEmail", sql.NVarChar, managerEmail)
+      .input("company", sql.NVarChar, requester.companyName ?? null)
+      .input("total", sql.Decimal(18, 2), totalAmount)
+      .input("by", sql.Int, userId || null)
+      .query(`UPDATE [dbo].[AccRequest] SET
+        RequestNo=@no, Status='Submitted', CurrentStepCode='MANAGER',
+        EmployeeId=@empId, StaffId=@staffId, RequesterFirstName=@fname, RequesterLastName=@lname,
+        RequesterFullName=@full, RequesterEmail=@email, RequesterPosition=@pos,
+        RequesterDepartmentId=@deptId, RequesterDepartmentName=@deptName, RequesterDepartmentCode=@deptCode,
+        ManagerStaffId=@mgrStaff, ManagerEmail=@mgrEmail, CompanyName=@company,
+        TotalAmount=@total, SubmittedBy=@by, SubmittedAt=SYSDATETIME(), UpdatedAt=SYSDATETIME()
+        WHERE Id=@id`);
+
+    await tx.request().input("id", sql.Int, id)
+      .query(`DELETE FROM [dbo].[AccApproval] WHERE RequestId=@id`);
+    await tx.request()
+      .input("id", sql.Int, id)
+      .input("mgrStaff", sql.Int, requester.managerStaffId ?? null)
+      .input("mgrEmail", sql.NVarChar, managerEmail)
+      .query(`INSERT INTO [dbo].[AccApproval] (RequestId, StepCode, StepOrder, AssignedTo, AssignedEmail, Status)
+              VALUES (@id, 'MANAGER', 1, @mgrStaff, @mgrEmail, 'Pending')`);
+
+    await tx.request().input("id", sql.Int, id).input("by", sql.Int, userId || null)
+      .input("no", sql.NVarChar, requestNo)
+      .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note)
+              VALUES (@id, @by, 'submitted', @no)`);
+
+    await tx.commit();
+  } catch (e) {
+    await tx.rollback();
+    throw e;
+  }
+
+  const updated = await getRequest(id);
+  if (updated) {
+    // TODO(T9): replace with advance-specific HTML template (advance-email-templates.ts).
+    const subject = `เบิกเงินทดรองจ่าย ${requestNo} รออนุมัติ (ผู้จัดการ)`;
+    const bodyHtml =
+      `<p>มีคำขอเบิกเงินทดรองจ่ายเลขที่ <b>${requestNo}</b> รอการอนุมัติของท่าน</p>` +
+      `<p>ผู้ขอ: ${updated.requesterFullName ?? "-"} · จำนวนเงิน: ${(updated.totalAmount ?? 0).toLocaleString()} บาท</p>` +
+      `<p><a href="/request/advance/${id}">เปิดคำขอ</a></p>`;
+    await queueEmail({
+      requestId: id, toEmail: managerEmail,
+      subject, bodyHtml, triggerType: "Submitted",
+    });
+  }
+  return updated!;
+}
