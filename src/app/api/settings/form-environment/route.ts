@@ -4,12 +4,8 @@ import {
   listFormEnvironments,
   setFormFlag,
 } from "@/lib/form-environment/service";
-import {
-  getCorePool,
-  getProductionFormPool,
-  getUatFormPool,
-  sql,
-} from "@/lib/db/mssql";
+import { getProductionFormPool, getUatFormPool } from "@/lib/db/mssql";
+import { resolveNames as resolveMemberNames } from "@/lib/team-member/service";
 
 type FormPool = Awaited<ReturnType<typeof getProductionFormPool>>;
 
@@ -21,21 +17,21 @@ async function countByForm(pool: FormPool): Promise<{ FormCode: string; N: numbe
   return r.recordset;
 }
 
-/** Display names for the TeamMember ids that last flipped a flag. */
+/**
+ * Display names for the TeamMember ids that last flipped a flag.
+ *
+ * The ids come from Fast_Core.FormEnvironment.UpdatedBy, but they are resolved
+ * against this app's own roster — migration 066 copied it across with the ids
+ * preserved, so the same number still names the same person.
+ */
 async function resolveNames(ids: number[]): Promise<Record<number, string>> {
-  const unique = Array.from(new Set(ids.filter((id) => Number.isFinite(id) && id > 0)));
-  if (unique.length === 0) return {};
-  const pool = await getCorePool();
-  const req = pool.request();
-  const params = unique.map((id, i) => {
-    req.input(`id${i}`, sql.Int, id);
-    return `@id${i}`;
-  });
-  const r = await req.query<{ Id: number; FullName: string | null; Nickname: string | null }>(
-    `SELECT Id, FullName, Nickname FROM [dbo].[TeamMember] WHERE Id IN (${params.join(", ")})`,
-  );
+  const members = await resolveMemberNames(ids);
   const out: Record<number, string> = {};
-  for (const row of r.recordset) out[row.Id] = row.Nickname || row.FullName || `#${row.Id}`;
+  members.forEach((m, id) => {
+    // Nickname first: this is a compact "last changed by" column. The service
+    // trims nulls to "", so a blank falls through to the next candidate.
+    out[id] = m.nickname || m.fullName || `#${id}`;
+  });
   return out;
 }
 

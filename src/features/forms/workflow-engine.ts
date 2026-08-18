@@ -5,10 +5,11 @@
  * - Sequential steps (StepOrder 1 → 2 → 3)
  * - Parallel steps (same StepOrder, different ParallelGroup → all must approve)
  * - Auto-approve conditions (skip step if condition met)
- * - submitter_manager resolution (looks up ManagerId from TeamMember)
+ * - submitter_manager and role assignee resolution (@/lib/team-member/service)
  */
 
-import { getFormPool, getCorePool, sql } from "@/lib/db/mssql";
+import { getFormPool, sql } from "@/lib/db/mssql";
+import { firstActiveWithRole, managerIdOf } from "@/lib/team-member/service";
 import {
   queueNewApprovalEmail, queueApprovedEmail,
   queueRejectedEmail, queueReturnedEmail,
@@ -49,22 +50,14 @@ async function resolveAssignee(
   }
 
   if (step.AssigneeType === "submitter_manager") {
-    const corePool = await getCorePool();
-    const result = await corePool
-      .request()
-      .input("userId", sql.Int, submitterId)
-      .query("SELECT ManagerId FROM TeamMember WHERE Id = @userId AND IsActive = 1");
-    return result.recordset[0]?.ManagerId ?? null;
+    return managerIdOf(submitterId);
   }
 
   if (step.AssigneeType === "role" && step.AssigneeValue) {
-    // Find first active user with that role
-    const corePool = await getCorePool();
-    const result = await corePool
-      .request()
-      .input("role", sql.NVarChar, step.AssigneeValue)
-      .query("SELECT TOP 1 Id FROM TeamMember WHERE AppRole = @role AND IsActive = 1 ORDER BY Id");
-    return result.recordset[0]?.Id ?? null;
+    // AssigneeValue is free-text workflow configuration, not a validated Role,
+    // so an unrecognised spelling has to resolve to nobody rather than throw —
+    // firstActiveWithRole() is written that way for this call site.
+    return firstActiveWithRole(step.AssigneeValue);
   }
 
   return null;

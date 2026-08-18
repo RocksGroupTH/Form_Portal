@@ -104,6 +104,13 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
             // Give them a real TeamMember row: an empty user.id makes AccRequest.CreatedBy NULL,
             // which locks the user out of their own drafts (see provisionTeamMember).
+            //
+            // provisionTeamMember() swallows a database failure and returns null, so the
+            // login still completes — with user.id "" and role Staff, which is the same
+            // degraded session the outer catch produces. That is deliberate: a write that
+            // failed must not lock someone out. The reason is only ever visible in the
+            // "[TeamMember] provision failed" log line, so check there when a user reports
+            // that their own drafts have vanished.
             const provisioned = member
               ? null // inactive row exists — leave it alone, a System Admin owns that decision
               : await provisionTeamMember({
