@@ -3,7 +3,8 @@
  * Decouples email sending from the request/response cycle.
  */
 
-import { getFormPool, getCorePool, sql, teamMemberTable } from "@/lib/db/mssql";
+import { getFormPool, sql } from "@/lib/db/mssql";
+import { findById } from "@/lib/team-member/service";
 import {
   newApprovalEmail, approvedEmail, rejectedEmail,
   returnedEmail, submittedEmail, reminderEmail,
@@ -13,12 +14,10 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
 /* ── Helpers ── */
 
+/** Who to address an email to. Kept in the column shape the templates below read. */
 async function getTeamMember(userId: number): Promise<{ FullName: string; Email: string } | null> {
-  const pool = await getCorePool();
-  const result = await pool.request()
-    .input("id", sql.Int, userId)
-    .query(`SELECT FullName, Email FROM ${teamMemberTable()} WHERE Id = @id`);
-  return result.recordset[0] ?? null;
+  const member = await findById(userId);
+  return member ? { FullName: member.fullName, Email: member.email } : null;
 }
 
 async function getSubmissionContext(submissionId: number) {
