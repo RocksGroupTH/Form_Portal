@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { CircleAlert, Plus, Trash2 } from "lucide-react";
+import { fmtBaht } from "@/features/travel-booking/components/shared";
 import { sumReimburseItems } from "@/lib/acc/reimburse/calc";
 import { isBlankItemRow } from "@/lib/acc/reimburse/item-money";
 import type { ReimburseItem } from "@/features/reimburse/types";
@@ -70,7 +71,13 @@ function MoneyCell({
   useEffect(() => {
     setText((prev) => {
       if (prev === null) return null;
-      return parseMoneyText(prev) === (value ?? null) ? prev : null;
+      const parsed = parseMoneyText(prev);
+      // Text that is on its way to being a number — "12..", a lone "-" — parses
+      // to null, which the amount callback coerces to 0. Dropping the buffer on
+      // that reading empties the field mid-keystroke and makes a leading minus
+      // impossible to type. Hold it until it parses, or until blur clears it.
+      if (parsed === null && prev.trim() !== "") return prev;
+      return parsed === (value ?? null) ? prev : null;
     });
   }, [value]);
 
@@ -151,10 +158,6 @@ const HEAD_CLASS = "text-[11px] font-semibold uppercase tracking-wide";
 const MOBILE_LABEL_CLASS = "md:hidden text-[11px] font-semibold uppercase tracking-wide mb-1";
 const ROW_GRID =
   "grid grid-cols-1 md:grid-cols-[150px_minmax(0,1fr)_130px_120px_130px_36px] gap-2 md:items-center";
-
-function fmtBaht(n: number): string {
-  return n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
 
 export function ReimburseItemGrid({
   items,

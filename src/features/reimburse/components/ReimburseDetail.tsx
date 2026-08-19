@@ -21,6 +21,7 @@ import { Avatar } from "@/components/ui/Avatar";
 import { UatDataBanner } from "@/components/UatDataBanner";
 import { getBrandById } from "@/lib/brand";
 import { statusLabelDisplay } from "@/features/accounting/constants";
+import { fmtBaht } from "@/features/travel-booking/components/shared";
 import { sumReimburseItems } from "@/lib/acc/reimburse/calc";
 import type { ReimburseStepCode } from "@/features/reimburse/constants";
 import type {
@@ -63,9 +64,10 @@ function fmtDateOnly(raw: string | null | undefined): string {
   return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
 }
 
+/** The shared `fmtBaht`, plus the em-dash this page wants for an absent figure. */
 function fmtMoney(n: number | null | undefined): string {
   if (n == null) return "—";
-  return n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return fmtBaht(n);
 }
 
 async function jsonFetcher<T>(url: string): Promise<T> {

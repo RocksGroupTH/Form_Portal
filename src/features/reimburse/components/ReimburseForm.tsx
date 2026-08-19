@@ -24,12 +24,14 @@ import { useUserPhoto } from "@/lib/hooks/useUserPhoto";
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
 import {
   SectionCard,
+  fmtBaht,
   inputClass,
   inputStyle,
   labelClass,
   labelStyle,
   requiredStar,
 } from "@/features/travel-booking/components/shared";
+import { sumReimburseItems } from "@/lib/acc/reimburse/calc";
 import { isBlankItemRow } from "@/lib/acc/reimburse/item-money";
 import { AP4_FORM_CODE, REIMBURSE_FILE_REFTYPES } from "@/features/reimburse/constants";
 import type {
@@ -104,10 +106,6 @@ function seedItems(initial?: ReimburseDetail | null): ReimburseItem[] {
   return rows.length > 0 ? rows.map((it, i) => ({ ...it, sortOrder: i })) : [emptyItem(0)];
 }
 
-function fmtBaht(n: number): string {
-  return n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
 /* ─────────────────────────── props ─────────────────────────── */
 
 interface ReimburseFormProps {
@@ -153,11 +151,14 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
 
   /* ── server data ── */
 
-  const { data: rulesData, isLoading: rulesLoading } = useSWR<ReimburseRule[]>(
-    "/api/request/reimburse/settings/rules",
-    jsonFetcher,
-    { revalidateOnFocus: false },
-  );
+  const {
+    data: rulesData,
+    error: rulesError,
+    isLoading: rulesLoading,
+    mutate: reloadRules,
+  } = useSWR<ReimburseRule[]>("/api/request/reimburse/settings/rules", jsonFetcher, {
+    revalidateOnFocus: false,
+  });
   const rules = useMemo(() => rulesData ?? [], [rulesData]);
 
   // `?form=AP-4` and `&id=` so the manager previewed here is the one the submit
@@ -255,7 +256,17 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
   if (!hasReceipt) {
     missing.push({ key: "receipt", label: "หลักฐาน (ใบเสร็จ/ใบกำกับภาษี) อย่างน้อย 1 ไฟล์" });
   }
-  if (!allRulesAcked) {
+  // An errored or still-in-flight fetch leaves `rules` empty, and `[].every()`
+  // is `true` — so without these two branches the readiness panel goes green
+  // while the checklist has nothing to tick, and the submit earns a server-side
+  // ERR_RULES_NOT_ACKED the requester cannot act on. A genuinely empty list
+  // still passes vacuously, exactly as the server decides it; an *unknown* one
+  // must not.
+  if (rulesError) {
+    missing.push({ key: "rules", label: "ระเบียบการจ่าย Reimburse (โหลดไม่สำเร็จ — กดลองใหม่)" });
+  } else if (rulesLoading) {
+    missing.push({ key: "rules", label: "ระเบียบการจ่าย Reimburse (กำลังโหลด...)" });
+  } else if (!allRulesAcked) {
     missing.push({ key: "rules", label: "ระเบียบการจ่าย Reimburse (ยืนยันให้ครบทุกข้อ)" });
   }
 
@@ -263,8 +274,11 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
   const missingKeys = new Set(missing.map((m) => m.key));
   const showErr = (key: string) => triedSubmit && missingKeys.has(key);
 
+  // Keyed on the first missing entry, not on `missing` itself: that array is
+  // rebuilt on every render, so a `[missing]` dep list memoises nothing.
+  const firstMissingKey = missing[0]?.key ?? null;
   const focusFirstMissing = useCallback(() => {
-    const first = missing[0]?.key;
+    const first = firstMissingKey;
     if (!first) return;
     const el =
       first === "manager"
@@ -275,7 +289,7 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
             ? filesRef.current
             : rulesRef.current;
     el?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [missing]);
+  }, [firstMissingKey]);
 
   /* ── persistence ── */
 
@@ -474,9 +488,11 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
 
   /* ─────────────────────────── render ─────────────────────────── */
 
-  const totalLabel = fmtBaht(
-    filledItems.reduce((sum, it) => sum + (Number(it.amount) || 0), 0),
-  );
+  // `sumReimburseItems`, not a second sum: the grid's total uses it too, and a
+  // local reduce diverges from it whenever the float error crosses a half — a
+  // claim of 0.615 renders 0.62 under the grid and 0.61 here, which is worse
+  // than either figure being wrong on its own.
+  const totalLabel = fmtBaht(sumReimburseItems(filledItems));
 
   return (
     <div className="w-full max-w-full mx-auto flex flex-col gap-4 min-w-0">
@@ -627,8 +643,13 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
               {brand?.name ?? brandCode ?? "—"}
             </span>
           </div>
+          {/* A resumed record keeps its saved `brandCode` and the effect above
+              only fills a null one, so switching the navbar brand does nothing
+              to it — saying otherwise sends the requester off to try. */}
           <p className="text-[11.5px] mt-1.5 m-0" style={{ color: "var(--text-faint)" }}>
-            ใช้แบรนด์ที่เลือกไว้ในระบบ — เปลี่ยนได้จากตัวเลือกแบรนด์บนแถบด้านบน
+            {initial?.brandCode
+              ? "แบรนด์ที่บันทึกไว้กับคำขอนี้"
+              : "ใช้แบรนด์ที่เลือกไว้ในระบบ — เปลี่ยนได้จากตัวเลือกแบรนด์บนแถบด้านบน"}
           </p>
         </div>
 
@@ -685,6 +706,8 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
           <ReimburseRuleChecklist
             rules={rules}
             loading={rulesLoading}
+            failed={!!rulesError}
+            onRetry={() => void reloadRules()}
             checkedIds={ackedRuleIds}
             onToggle={toggleRule}
             onToggleAll={toggleAllRules}
@@ -725,15 +748,18 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
           className="rounded-xl px-4 py-3 flex flex-col gap-1.5"
           style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}
         >
-          {[
-            "เอกสารตัวจริง (ใบเสร็จ/ใบกำกับภาษี) ต้องนำส่งฝ่ายบัญชีภายใน 1 เดือนหลังจ่ายชำระ",
-            "ตัดรอบจ่ายจากคำขอที่อนุมัติแล้ววันจันทร์ 12.00 — จ่ายศุกร์ที่ 1 และ 3 ของทุกเดือน",
-            "หากติดวันหยุด จะเลื่อนการจ่ายเป็นวันทำการถัดไป",
-          ].map((note, i) => (
-            <p key={i} className="text-[12px] leading-relaxed m-0" style={{ color: "var(--text-muted)" }}>
-              • {note}
-            </p>
-          ))}
+          {/* A pointer to the notice, never a restatement of it.
+              `REIMBURSE_NOTICE` at the top of this page already carries the
+              one-month originals deadline and the payment cycle, verbatim from
+              the owner. A hand-written summary sitting beside it is a second,
+              unsourced rendering of the same compliance material: it drifts the
+              first time Accounting edit the notice, and nobody notices because
+              it does not look like a copy. This feature has already shipped one
+              such paraphrase, which moved a withholding-tax obligation from the
+              employee to the company. */}
+          <p className="text-[12px] leading-relaxed m-0" style={{ color: "var(--text-muted)" }}>
+            กรุณาอ่าน &quot;ข้อควรทราบก่อนเบิกค่าใช้จ่าย&quot; ด้านบนของหน้านี้ให้ครบก่อนส่งคำขอ
+          </p>
         </div>
       </SectionCard>
 

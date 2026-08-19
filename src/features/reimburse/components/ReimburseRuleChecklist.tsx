@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ListChecks } from "lucide-react";
+import { Check, CircleAlert, ListChecks, RotateCcw } from "lucide-react";
 import type { ReimburseRule } from "@/features/reimburse/types";
 
 /**
@@ -14,11 +14,16 @@ import type { ReimburseRule } from "@/features/reimburse/types";
  *
  * An empty list is not an error — a database with no active rule means there is
  * nothing to acknowledge, and the submit gate is satisfied vacuously, exactly
- * as the server's `activeRules.some(...)` check decides it.
+ * as the server's `activeRules.some(...)` check decides it. A *failed* fetch is
+ * a different thing entirely and says so: the rules are unknown, the form holds
+ * the submit, and there is a retry here to make that recoverable rather than
+ * leaving the requester to earn ERR_RULES_NOT_ACKED with nothing to tick.
  */
 export function ReimburseRuleChecklist({
   rules,
   loading,
+  failed,
+  onRetry,
   checkedIds,
   onToggle,
   onToggleAll,
@@ -26,6 +31,9 @@ export function ReimburseRuleChecklist({
 }: {
   rules: ReimburseRule[];
   loading: boolean;
+  /** The fetch errored — the rule list is unknown, not empty. */
+  failed?: boolean;
+  onRetry?: () => void;
   /** Rule ids ticked so far. */
   checkedIds: number[];
   onToggle: (ruleId: number, next: boolean) => void;
@@ -46,6 +54,40 @@ export function ReimburseRuleChecklist({
             style={{ background: "var(--bg-card-alt)" }}
           />
         ))}
+      </div>
+    );
+  }
+
+  if (failed) {
+    return (
+      <div
+        className="rounded-xl px-4 py-3 flex items-center justify-between gap-3 flex-wrap"
+        style={{
+          background: "var(--bg-card-alt)",
+          borderWidth: 1,
+          borderStyle: "solid",
+          borderColor: "var(--color-danger)",
+        }}
+      >
+        <p
+          className="text-[12.5px] m-0 flex items-start gap-1.5"
+          style={{ color: "var(--color-danger)" }}
+        >
+          <CircleAlert size={14} className="shrink-0 mt-px" />
+          โหลดระเบียบการจ่ายไม่สำเร็จ — ส่งคำขอไม่ได้จนกว่าจะโหลดรายการนี้ได้
+        </p>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="shrink-0 text-[12px] font-semibold px-2.5 py-1 rounded-lg cursor-pointer flex items-center gap-1.5"
+          style={{
+            background: "var(--bg-card)",
+            border: "1px solid var(--border-card)",
+            color: "var(--nav-active-text)",
+          }}
+        >
+          <RotateCcw size={13} /> ลองใหม่
+        </button>
       </div>
     );
   }

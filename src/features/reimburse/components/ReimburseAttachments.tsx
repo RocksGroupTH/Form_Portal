@@ -48,6 +48,25 @@ function isImage(contentType: string | null | undefined, name: string): boolean 
   return /\.(png|jpe?g|gif|webp|heic|heif)$/i.test(name);
 }
 
+/**
+ * A stable React key per pending `File`.
+ *
+ * A `File` carries no id, and keying these rows by array index hands row 2's
+ * DOM node to row 3 the moment row 2 is removed. Two picks of the same file are
+ * two distinct `File` objects, so identical names and sizes still key apart.
+ */
+let pendingKeySeq = 0;
+const pendingKeys = new WeakMap<File, string>();
+function pendingKeyOf(file: File): string {
+  let key = pendingKeys.get(file);
+  if (key === undefined) {
+    pendingKeySeq += 1;
+    key = "pending-" + pendingKeySeq;
+    pendingKeys.set(file, key);
+  }
+  return key;
+}
+
 /* ─────────────────────────── slot shell ─────────────────────────── */
 
 function SlotShell({
@@ -336,7 +355,7 @@ export function ReimburseAttachments({
             })}
             {pendingReceipts.map((f, i) => (
               <FileRow
-                key={`pending-${i}-${f.name}`}
+                key={pendingKeyOf(f)}
                 icon={
                   pendingReceiptUrls[i] ? <ImageIcon size={16} /> : <FileText size={16} />
                 }

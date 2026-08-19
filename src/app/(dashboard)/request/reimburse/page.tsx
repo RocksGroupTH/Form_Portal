@@ -8,6 +8,7 @@ import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { Dialog } from "@/components/ui";
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
 import { createTravelBackAction } from "@/features/accounting/lib/navigation";
+import { fmtBaht } from "@/features/travel-booking/components/shared";
 import { ReimburseForm } from "@/features/reimburse/components/ReimburseForm";
 import type { ReimburseDetail } from "@/features/reimburse/types";
 import { safeBack, safePush, safeReplace } from "@/lib/safe-router";
@@ -58,9 +59,10 @@ function fmtUpdatedAt(iso: string): string {
   return `${dd}/${mm}/${d.getFullYear()} ${hh}:${mi}`;
 }
 
-function fmtBaht(n: number | null): string {
+/** The shared `fmtBaht`, plus the em-dash a draft with nothing totalled wants. */
+function fmtDraftTotal(n: number | null): string {
   if (n == null || n === 0) return "—";
-  return n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return fmtBaht(n);
 }
 
 export default function ReimbursePage() {
@@ -207,7 +209,7 @@ function ReimburseContent() {
                 {draft.purpose?.trim() || (isReturned ? "คำขอที่ถูกส่งกลับ" : "แบบร่างคำขอเบิกเงินคืน")}
               </span>
               <span className="block text-[11px] truncate" style={{ color: "var(--text-muted)" }}>
-                {draft.itemCount} รายการ · ฿{fmtBaht(draft.totalAmount)} · แก้ไขล่าสุด {fmtUpdatedAt(draft.updatedAt)}
+                {draft.itemCount} รายการ · ฿{fmtDraftTotal(draft.totalAmount)} · แก้ไขล่าสุด {fmtUpdatedAt(draft.updatedAt)}
               </span>
             </span>
             <ChevronRight size={16} className="shrink-0" style={{ color: "var(--text-faint)" }} />
