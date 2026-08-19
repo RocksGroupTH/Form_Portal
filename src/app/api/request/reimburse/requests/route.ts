@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { saveReimburseDraft } from "@/lib/acc/reimburse/request-service";
+import { listActiveRules } from "@/lib/acc/reimburse/settings-service";
 import { authorizeAccRequest } from "@/lib/acc/request-acl";
 import { statusForAccError } from "@/lib/acc/request-errors";
-import { AP4_FORM_CODE } from "@/features/reimburse/constants";
+import {
+  AP4_FORM_CODE,
+  RULE_ACK_UNKNOWN_ERROR,
+  unknownRuleAckIds,
+} from "@/features/reimburse/constants";
 import type { SaveInput } from "@/features/reimburse/types";
 
 /**
@@ -51,7 +56,20 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const input: SaveInput = { ...body, ackedRuleIds: coerceRuleAckIds(body?.ackedRuleIds) };
+    const ackedRuleIds = coerceRuleAckIds(body?.ackedRuleIds);
+    // Checked here, before the save transaction, because the alternative is the
+    // FK answering — and it answers with an English constraint violation and a
+    // 500. A deactivated rule does not violate it at all, so this is the only
+    // layer that can refuse one. See `unknownRuleAckIds`.
+    if (ackedRuleIds.length > 0) {
+      const active = await listActiveRules();
+      const unknown = unknownRuleAckIds(ackedRuleIds, active.map((r) => r.id));
+      if (unknown.length > 0) {
+        return NextResponse.json({ ok: false, error: RULE_ACK_UNKNOWN_ERROR }, { status: 400 });
+      }
+    }
+
+    const input: SaveInput = { ...body, ackedRuleIds };
     const id = await saveReimburseDraft(input, Number(session.user.id));
     return NextResponse.json({ ok: true, data: { id } });
   } catch (e) {

@@ -23,6 +23,12 @@ import {
   isYmd,
   paymentDateError,
   rejectCommentOrError,
+  CANCEL_WINDOW_EXPIRED_ERROR,
+  RETURN_COMMENT_REQUIRED,
+  SELF_CANCEL_WINDOW_HOURS,
+  returnCommentOrError,
+  selfCancelDeadline,
+  selfCancelRefusal,
   stepTokenRefusal,
   upcomingPaymentRounds,
 } from "./approval-policy";
@@ -448,4 +454,155 @@ test("STEP_ORDER agrees with REIMBURSE_STEP_CODES, in that order", () => {
     assert.equal(STEP_ORDER[code], i + 1, code + " is not at position " + (i + 1));
   });
   assert.equal(Object.keys(STEP_ORDER).length, REIMBURSE_STEP_CODES.length);
+});
+
+/* ────────── the return-for-edit path (final review, finding 1) ────────── */
+
+/*
+ * AP-4 shipped with no correction path. `Status='Returned'` had exactly one
+ * writer — AP-1's `returnForEdit` — and pinning that route to `AP1_FORM_CODE`
+ * (correctly) removed AP-4's only way back, leaving a submitted claim that could
+ * only be approved or killed. A rejection is terminal, so the sole remedy was to
+ * re-key every line, re-upload every receipt and burn a second RBM number.
+ *
+ * Everything downstream of `Returned` had been built and was unreachable. These
+ * pin the parts of the route back that a future pin could remove again.
+ */
+
+test("a return demands a note, and asks for a different thing than a rejection", () => {
+  const empty = returnCommentOrError("   ");
+  assert.equal(empty.comment, null);
+  assert.equal(empty.error, RETURN_COMMENT_REQUIRED);
+
+  // A return with no note puts the request back in the requester's hands saying
+  // nothing about why — which is the entire purpose of the action.
+  assert.notEqual(RETURN_COMMENT_REQUIRED, REJECT_COMMENT_REQUIRED);
+
+  for (const bad of ["", "\n\t", null, undefined, 42, {}, []]) {
+    assert.equal(returnCommentOrError(bad).error, RETURN_COMMENT_REQUIRED);
+  }
+
+  const ok = returnCommentOrError("  แนบใบเสร็จไม่ครบ  ");
+  assert.equal(ok.error, null);
+  assert.equal(ok.comment, "แนบใบเสร็จไม่ครบ");
+});
+
+test("returnReimburse claims the transition and clears the payment date", () => {
+  const src = readSrc("lib/acc/reimburse/approval-service.ts");
+  const body = src.slice(src.indexOf("export async function returnReimburse"));
+  const fn = body.slice(0, body.indexOf("\n}\n") + 2);
+
+  assert.ok(fn.length > 0, "returnReimburse not found");
+  // Claimed, never read-then-written: `claimStep` is the conditional UPDATE that
+  // names FormCode, CurrentStepCode and Status together and checks rowsAffected.
+  assert.ok(fn.indexOf("claimStep(") > 0, "the return does not claim its transition");
+  assert.ok(fn.indexOf('status: "Returned"') > 0, "the return does not land on Returned");
+  assert.ok(fn.indexOf("stepCode: null") > 0, "the return leaves a CurrentStepCode behind");
+  // As the step-3 rejection does: otherwise a request the requester has to edit
+  // arrives carrying the date step 2 fixed for it.
+  assert.ok(fn.indexOf("paymentDate: null") > 0, "the return keeps step 2's payment date");
+  // The two-person rule is not weakened by adding a third action on that row.
+  assert.ok(
+    fn.indexOf("assertMayTakeFinalStep") > 0,
+    "the return skips the two-person rule at ACCOUNT_FINAL",
+  );
+});
+
+test("the return route is pinned to AP-4 and carries the step token", () => {
+  const src = readSrc("app/api/request/reimburse/requests/[id]/return/route.ts");
+
+  // Without the pin an AP-1 id reaching this URL is authorized by an ACL that
+  // was told nothing about which form it belongs to.
+  assert.ok(src.indexOf("AP4_FORM_CODE") > 0, "the return route is not pinned to AP-4");
+  assert.ok(src.indexOf("authorizeAccRequest") > 0, "the return route skips the object ACL");
+  // The same staleness guard approve and reject carry: `claimStep` asserts the
+  // state the record is in, never the state the actor was looking at.
+  assert.ok(src.indexOf("stepTokenRefusal") > 0, "the return route takes no step token");
+  // The step acted on comes from the record, not the body.
+  assert.ok(
+    src.indexOf("request.currentStepCode") > 0,
+    "the return route does not read the step off the record",
+  );
+});
+
+/* ────────── the requester's own cancel (final review, addendum) ────────── */
+
+test("the self-cancel window is inclusive at exactly 24 hours", () => {
+  const submitted = new Date(2026, 7, 20, 9, 30, 0, 0);
+  const deadline = selfCancelDeadline(submitted);
+  assert.ok(deadline);
+  assert.equal(deadline.getTime() - submitted.getTime(), SELF_CANCEL_WINDOW_HOURS * 3600 * 1000);
+  // Local getters, never toISOString: the server runs on Thai time.
+  assert.equal(deadline.getDate(), 21);
+  assert.equal(deadline.getHours(), 9);
+  assert.equal(deadline.getMinutes(), 30);
+
+  const open = (now: Date) =>
+    selfCancelRefusal({
+      isRequester: true,
+      status: "Submitted",
+      currentStepCode: "MANAGER",
+      submittedAt: submitted,
+      now,
+    });
+
+  assert.equal(open(new Date(deadline.getTime() - 1)), null, "one ms before the deadline");
+  assert.equal(open(deadline), null, "exactly on the deadline is still inside the window");
+  assert.equal(
+    open(new Date(deadline.getTime() + 1))?.reason,
+    "window_expired",
+    "one ms past the deadline",
+  );
+});
+
+test("the three refusals are told apart, and the strongest wins", () => {
+  const inTime = {
+    status: "Submitted",
+    currentStepCode: "MANAGER",
+    submittedAt: new Date(2026, 7, 20, 9, 0, 0, 0),
+    now: new Date(2026, 7, 20, 10, 0, 0, 0),
+  };
+
+  // Somebody else's claim: refused before anything about its state is consulted,
+  // and refused even when every other condition would have allowed it.
+  assert.equal(selfCancelRefusal({ ...inTime, isRequester: false })?.reason, "not_requester");
+
+  // The manager has already acted — a different remedy from the window one, so
+  // a different message.
+  const moved = selfCancelRefusal({
+    ...inTime,
+    isRequester: true,
+    status: "ManagerApproved",
+    currentStepCode: "ACCOUNT",
+  });
+  assert.equal(moved?.reason, "not_pending_manager");
+  assert.notEqual(moved?.error, CANCEL_WINDOW_EXPIRED_ERROR);
+
+  // A `Submitted` row with no SubmittedAt cannot be measured. "Cannot tell" is
+  // not "in time".
+  assert.equal(
+    selfCancelRefusal({ ...inTime, isRequester: true, submittedAt: null })?.reason,
+    "window_expired",
+  );
+
+  assert.equal(selfCancelRefusal({ ...inTime, isRequester: true }), null);
+});
+
+test("the cancel claim enforces the same three conditions the rule names", () => {
+  const src = readSrc("lib/acc/reimburse/approval-service.ts");
+  const claims = claimsOn(src, "[dbo].[AccRequest]");
+  const cancel = claims.filter((c) => c.indexOf("Status='Cancelled'") > 0);
+  assert.equal(cancel.length, 1, "expected exactly one cancel claim");
+
+  const c = cancel[0];
+  assert.ok(c.indexOf("FormCode=@form") > 0, "the cancel claim does not name the form");
+  assert.ok(c.indexOf("CreatedBy=@uid") > 0, "the cancel claim does not name the creator");
+  assert.ok(c.indexOf("CurrentStepCode='MANAGER'") > 0, "the cancel claim does not name the step");
+  // The window, evaluated by the database against its own clock — the process's
+  // `Date.now()` is a different clock read through none of the driver's date
+  // handling. `>=` so the boundary matches the pure rule's inclusive far end.
+  assert.ok(
+    c.indexOf("SubmittedAt >= DATEADD(HOUR, -@hours, SYSDATETIME())") > 0,
+    "the cancel claim does not enforce the window: " + c,
+  );
 });

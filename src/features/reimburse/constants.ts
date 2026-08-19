@@ -13,6 +13,27 @@ export const AP4_RUNNING_PREFIX = "RBM";
 export const REIMBURSE_STEP_CODES = ["MANAGER", "ACCOUNT", "ACCOUNT_FINAL"] as const;
 export type ReimburseStepCode = (typeof REIMBURSE_STEP_CODES)[number];
 
+/**
+ * What each step is called, in the one place both readers can reach.
+ *
+ * The detail timeline and My Work's "ลำดับถัดไป" line are seen by the same
+ * approver about the same request, and they used to disagree: this file's
+ * `ACCOUNT_FINAL` said "บัญชี (อนุมัติขั้นสุดท้าย)" while
+ * `src/lib/acc/approval-display.ts` said "บัญชี (ขั้นสุดท้าย)". The shorter
+ * wording won because My Work prefixes it with "อนุมัติ" — the longer one reads
+ * "อนุมัติบัญชี (อนุมัติขั้นสุดท้าย)" there.
+ *
+ * It lives here rather than in `approval-policy.ts` because `ReimburseDetail` may
+ * import that module as a **type** only (it reaches the holiday lookup, and with
+ * it `@/env`), and rather than in `approval-display.ts` because that one imports
+ * React types. This file imports nothing at all.
+ */
+export const REIMBURSE_STEP_LABEL: Record<ReimburseStepCode, string> = {
+  MANAGER: "ผู้จัดการ",
+  ACCOUNT: "บัญชี",
+  ACCOUNT_FINAL: "บัญชี (ขั้นสุดท้าย)",
+};
+
 /** `AccRequest.Status` values AP-4 uses — the shared Acc* status machine; AP-4 needed no new status (spec §3.2.1), only a third `CurrentStepCode`. */
 export const REIMBURSE_STATUSES = [
   "Draft",
@@ -53,6 +74,38 @@ export const RULE_TEXT_MAX = 1000;
 
 export const RULE_TEXT_REQUIRED = "กรุณากรอกข้อความระเบียบ";
 export const RULE_TEXT_TOO_LONG = `ข้อความระเบียบยาวเกิน ${RULE_TEXT_MAX} ตัวอักษร`;
+
+/**
+ * A tick against a rule that is not on the active checklist.
+ *
+ * `AccReimburseRuleAck.RuleId` has an FK to `AccReimburseRule`, so an id that
+ * does not exist reaches the user as a raw constraint-violation 500 from inside
+ * the save transaction — an English SQL Server message on a Thai form, and one
+ * that says nothing about which tick to clear. A soft-deleted rule fails the
+ * same way *without* violating the FK: the row is still there, so the insert
+ * succeeds and the request records agreement to a line that is no longer part
+ * of the checklist.
+ */
+export const RULE_ACK_UNKNOWN_ERROR =
+  "รายการระเบียบที่ยืนยันไม่ถูกต้องหรือถูกยกเลิกไปแล้ว — กรุณาโหลดหน้านี้ใหม่แล้วยืนยันอีกครั้ง";
+
+/**
+ * Which of `ackedIds` name no active rule, in the order they were sent.
+ *
+ * Pure so it can be tested without a pool: the route reads the active rules and
+ * asks this, rather than letting the database answer with a constraint.
+ */
+export function unknownRuleAckIds(
+  ackedIds: readonly number[],
+  activeRuleIds: readonly number[],
+): number[] {
+  const known = new Set(activeRuleIds);
+  const out: number[] = [];
+  for (const id of ackedIds) {
+    if (!known.has(id) && out.indexOf(id) < 0) out.push(id);
+  }
+  return out;
+}
 
 /**
  * The rule text as it will be stored, or the message refusing it.

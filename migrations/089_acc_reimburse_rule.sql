@@ -28,7 +28,11 @@ CREATE TABLE [dbo].[AccReimburseRuleAck] (
     REFERENCES [dbo].[AccReimburseRule]([Id])
 );
 GO
+-- The owner's own wording (REIMBURSE_NOTICE ¶6, minus its leading `**`). The
+-- text this originally seeded promised payment on any Friday and put the
+-- Monday-noon clock on the wrong party — corrected here for a fresh stand-up and
+-- by migration 094 for the databases that already have it.
 IF NOT EXISTS (SELECT 1 FROM [dbo].[AccReimburseRule])
   INSERT INTO [dbo].[AccReimburseRule] ([RuleText], [SortOrder])
-  VALUES (N'ส่งเอกสารตัวจริงให้บัญชีภายในวันจันทร์ 12.00 เพื่อรับเงินวันศุกร์', 1);
+  VALUES (N'ตัดรอบจ่ายจาก Request ที่อนุมัติแล้ววันจันทร์ 12.00 จ่ายเงินศุกร์ที่ 1 และ 3 ของทุกเดือน', 1);
 GO

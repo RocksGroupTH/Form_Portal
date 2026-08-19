@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import type { StepCode } from "@/features/accounting/constants";
+import { REIMBURSE_STEP_LABEL } from "@/features/reimburse/constants";
 import { isAssignedManager } from "@/lib/acc/manager-auth";
 
 export const APPROVAL_STEP_LABEL: Record<StepCode, string> = {
@@ -20,7 +21,7 @@ export const APPROVAL_STEP_LABEL: Record<StepCode, string> = {
  */
 const STEP_LABEL: Record<string, string> = {
   ...APPROVAL_STEP_LABEL,
-  ACCOUNT_FINAL: "บัญชี (ขั้นสุดท้าย)",
+  ACCOUNT_FINAL: REIMBURSE_STEP_LABEL.ACCOUNT_FINAL,
 };
 
 /** True for the steps whose assignee is a pool rather than one named person. */

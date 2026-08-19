@@ -36,11 +36,16 @@ interface FormBrandRow {
  */
 export function ReimburseBrandSettings() {
   const { data, error, mutate } = useSWR<{ ok: boolean; data: FormBrandRow[] }>(ENDPOINT, fetcher);
-  const { data: allData } = useSWR<{ ok: boolean; data: AccBrandOption[] }>(
+  const { data: allData, error: allError } = useSWR<{ ok: boolean; data: AccBrandOption[] }>(
     "/api/request/accounting/options/all-brands",
     fetcher,
   );
-  const allBrands = allData?.data ?? [];
+  // `allData?.data ?? []` on its own read a failed fetch as "there are no
+  // brands": zero checkboxes, no banner, and `loadFailed` tracking only the
+  // other endpoint — so the page said the brand master was empty when it had
+  // simply not answered.
+  const allBrands = allData?.ok ? (allData.data ?? []) : [];
+  const allBrandsFailed = !!allError || (!!allData && !allData.ok);
 
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [savedChecked, setSavedChecked] = useState<Set<string>>(new Set());
@@ -124,6 +129,19 @@ export function ReimburseBrandSettings() {
             แบรนด์ที่อนุญาตอยู่แต่ไม่มีในทะเบียนแบรนด์กลาง: <b>{orphanCodes.join(", ")}</b> —
             ผู้ขอเบิกจะเห็นเป็นตัวเลือกที่ไม่มีโลโก้และแสดงเป็นรหัสแทนชื่อบริษัท
             หากต้องการให้ระบุบริษัทที่จ่ายจริง ให้ติ๊กแบรนด์บริษัทด้านล่างเพิ่ม
+          </p>
+        </div>
+      )}
+
+      {allBrandsFailed && (
+        <div
+          className="rounded-xl px-4 py-3 flex items-start gap-2.5 mb-4"
+          style={{ background: "var(--status-pending-bg)", color: "var(--status-pending-text)" }}
+        >
+          <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+          <p className="text-[12px] leading-relaxed m-0">
+            โหลดทะเบียนแบรนด์กลางไม่สำเร็จ — รายการด้านล่างจึงว่างเปล่า ไม่ใช่เพราะไม่มีแบรนด์
+            กรุณารีเฟรชหน้านี้
           </p>
         </div>
       )}

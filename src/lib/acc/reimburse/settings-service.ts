@@ -41,7 +41,7 @@ export async function listReimburseApprovers(): Promise<ReimburseApprover[]> {
     .query(
       `SELECT Id, StaffId, Email, DisplayName, IsActive
        FROM [dbo].[AccReimburseApprover]
-       ORDER BY DisplayName`,
+       ORDER BY DisplayName, StaffId`,
     );
   return (r.recordset as Record<string, unknown>[]).map((x) => ({
     id: x.Id as number,

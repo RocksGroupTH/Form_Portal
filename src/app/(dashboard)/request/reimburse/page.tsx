@@ -98,6 +98,18 @@ function ReimburseContent() {
   /** Two-step discard inside the prompt — a nested confirm dialog reads worse than swapping the row. */
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [discarding, setDiscarding] = useState(false);
+  /**
+   * The resume lookup failed, as opposed to answering "nothing open".
+   *
+   * These were the same outcome: `json.ok && json.data ? json.data : null`
+   * turned a 500 into "no draft", the prompt was skipped, and a **new** draft
+   * was started beside the one that could not be read — manufacturing exactly
+   * the orphan the discard button exists to prevent, since an unlisted `Draft`
+   * appears in no list and no prompt once a newer one exists.
+   */
+  const [draftCheckFailed, setDraftCheckFailed] = useState(false);
+  /** Bumped by "ลองใหม่" — the only way to re-run a lookup whose inputs have not changed. */
+  const [draftCheckNonce, setDraftCheckNonce] = useState(0);
 
   /* Resume: one open request, or none. */
   useEffect(() => {
@@ -109,18 +121,25 @@ function ReimburseContent() {
 
     let cancelled = false;
     setCheckingDraft(true);
+    setDraftCheckFailed(false);
 
     fetch("/api/request/reimburse/requests/drafts")
       .then((r) => r.json())
       .then((json: { ok: boolean; data?: ReimburseDraftSummary | null }) => {
         if (cancelled) return;
-        const found = json.ok && json.data ? json.data : null;
+        if (!json.ok) {
+          // Not "no draft". Say so, and do not open a second claim behind the
+          // requester's back — the choice is theirs and it is offered below.
+          setDraftCheckFailed(true);
+          return;
+        }
+        const found = json.data ?? null;
         setDraft(found);
         if (found) setPromptOpen(true);
         else setReadyForForm(true);
       })
       .catch(() => {
-        if (!cancelled) setReadyForForm(true);
+        if (!cancelled) setDraftCheckFailed(true);
       })
       .finally(() => {
         if (!cancelled) setCheckingDraft(false);
@@ -129,7 +148,7 @@ function ReimburseContent() {
     return () => {
       cancelled = true;
     };
-  }, [requestId, skipPrompt]);
+  }, [requestId, skipPrompt, draftCheckNonce]);
 
   /* Load the request being resumed. */
   useEffect(() => {
@@ -210,6 +229,74 @@ function ReimburseContent() {
 
   if (checkingDraft) {
     return <TravelExpenseLoadingPopup label="กำลังตรวจสอบแบบร่าง..." subtitle={LOADING_SUBTITLE} />;
+  }
+
+  /* The resume lookup failed. Two honest choices, and neither of them is made
+     silently: retry, or start a new claim knowing an older one may exist. */
+  if (draftCheckFailed) {
+    return (
+      <Dialog
+        open
+        onOpenChange={(v) => {
+          if (!v) safeBack(router);
+        }}
+        title="ตรวจสอบแบบร่างไม่สำเร็จ"
+        description="ยังไม่ทราบว่ามีคำขอค้างอยู่หรือไม่ — หากเริ่มคำขอใหม่ตอนนี้ คำขอเดิม (ถ้ามี) จะยังค้างอยู่และเปิดจากหน้านี้ไม่ได้อีก"
+        contentClassName="max-w-md"
+        uniformSurface
+      >
+        <div className="flex flex-col gap-2">
+          <button
+            type="button"
+            onClick={() => setDraftCheckNonce((n) => n + 1)}
+            className="w-full text-left rounded-xl p-3.5 flex items-center gap-3 cursor-pointer border-none"
+            style={{ background: "var(--bg-card-alt)" }}
+          >
+            <span
+              className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+              style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}
+            >
+              <Loader2 size={16} />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>
+                ลองใหม่อีกครั้ง
+              </span>
+              <span className="block text-[11px]" style={{ color: "var(--text-muted)" }}>
+                ตรวจสอบว่ามีคำขอค้างอยู่หรือไม่อีกครั้ง
+              </span>
+            </span>
+            <ChevronRight size={16} className="shrink-0" style={{ color: "var(--text-faint)" }} />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setDraftCheckFailed(false);
+              setReadyForForm(true);
+              safeReplace(router, newHref(returnPath));
+            }}
+            className="w-full text-left rounded-xl p-3.5 flex items-center gap-3 cursor-pointer"
+            style={{ background: "transparent", border: "1px dashed var(--border-card)" }}
+          >
+            <span
+              className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+              style={{ background: "var(--bg-card-alt)", color: "var(--text-muted)" }}
+            >
+              <Plus size={16} />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>
+                เริ่มคำขอใหม่
+              </span>
+              <span className="block text-[11px]" style={{ color: "var(--text-muted)" }}>
+                ข้ามการตรวจสอบ และเริ่มกรอกคำขอใหม่
+              </span>
+            </span>
+          </button>
+        </div>
+      </Dialog>
+    );
   }
 
   if (promptOpen && draft) {

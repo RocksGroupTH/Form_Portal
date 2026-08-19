@@ -7,6 +7,7 @@ import { getRequestHost } from "@/lib/acc/erp-environment";
 import { getReimburseRequest } from "@/lib/acc/reimburse/request-service";
 import {
   getReimbursePaymentOptions,
+  getReimburseSelfCancelInfo,
   resolveReimburseApprover,
 } from "@/lib/acc/reimburse/approval-service";
 import {
@@ -56,6 +57,11 @@ export async function GET(
     }
 
     const step = request.currentStepCode;
+    // Computed before the branches below, because the one step where a
+    // withdrawal is possible — MANAGER — is also the branch that returns first,
+    // and because the answer is about the *requester*, who is not the person any
+    // of those branches is deciding about.
+    const selfCancel = await getReimburseSelfCancelInfo(id, Number(session.user.id));
     const empty: ReimburseApprovalContext = {
       step: step ?? null,
       canAct: false,
@@ -63,6 +69,7 @@ export async function GET(
       viaManagerDevBypass: false,
       paymentDates: [],
       defaultPaymentDate: null,
+      selfCancel,
     };
     if (!step) return NextResponse.json({ ok: true, data: empty });
 

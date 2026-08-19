@@ -44,6 +44,7 @@ import {
   NOT_ACCOUNT_APPROVER_ERROR,
   NOT_AT_STEP_ERROR,
   PAYMENT_DATE_NOT_A_ROUND,
+  SELF_CANCEL_WINDOW_HOURS,
   STATE_AFTER_APPROVE,
   STATUS_AT_STEP,
   STEP_ORDER,
@@ -52,8 +53,12 @@ import {
   isAccountStep,
   paymentDateError,
   rejectCommentOrError,
+  returnCommentOrError,
+  selfCancelDeadline,
+  selfCancelRefusal,
   upcomingPaymentRounds,
 } from "./approval-policy";
+import type { ReimburseSelfCancelInfo, SelfCancelState } from "./approval-policy";
 import type { ReimburseStepCode } from "@/features/reimburse/constants";
 import type { ReimburseApprover, ReimburseDetail } from "@/features/reimburse/types";
 
@@ -329,7 +334,7 @@ async function closeApprovalRow(
   tx: AccTx,
   requestId: number,
   step: ReimburseStepCode,
-  outcome: "Approved" | "Rejected",
+  outcome: "Approved" | "Rejected" | "Returned",
   actorStaffId: number,
   actorEmail: string | null,
   comment: string | null,
@@ -590,5 +595,235 @@ export async function rejectReimburse(
 
   await afterCommit(requestId, async (updated) => {
     await notifyQuietly(updated, updated.requesterEmail, "Rejected", "ไม่อนุมัติ", comment);
+  });
+}
+
+/* ─────────────────────────── returning for edit, at any step ─────────────────────────── */
+
+/**
+ * Send the claim back to the requester: `Returned`, `CurrentStepCode` cleared,
+ * what has to change stored on the approval row and shown on the timeline.
+ *
+ * This is the correction path, and until it existed AP-4 had none. A submitted
+ * claim could only be approved or rejected, and a rejection is terminal —
+ * `decideRequestMutate` allows `Draft`/`Returned` only — so the sole way to fix
+ * a typo was to re-key every line, re-upload every receipt and consume a second
+ * `RBM` number, leaving the rejected one in My Requests for good. Everything on
+ * the far side of `Returned` was already built and unreachable: the resume
+ * prompt, the "· ส่งกลับแก้ไข" label, the drafts query's `Status IN ('Draft',
+ * 'Returned')`, and `submitReimburseRequest`'s branch that keeps the existing
+ * `RequestNo` on a resubmit.
+ *
+ * Modelled on `rejectReimburse` rather than AP-1's `returnForEdit`, which is
+ * pinned to `AP1_FORM_CODE` and offers the manager step only. Three differences
+ * from a rejection, and no others:
+ *
+ *  - the request lands on `Returned`, so the requester may edit and resubmit it;
+ *  - the approval row closes `Returned`, which is what the timeline draws;
+ *  - the note is refused by `returnCommentOrError`, whose message asks for what
+ *    to change rather than for a reason to refuse.
+ *
+ * Available at **all three** steps. Spec §3.2.1 gives returning to the manager;
+ * an accounting checker or the final approver finding the same fixable mistake
+ * would otherwise have to reject a claim that is merely wrong rather than
+ * refused — which is the state this function exists to stop being the only one.
+ *
+ * The two-person rule applies to a return at `ACCOUNT_FINAL` exactly as it does
+ * to a rejection there. Not because returning authorises a payment — nothing
+ * downstream of it does, since a resubmit deletes every approval row and walks
+ * the chain again — but because the step-3 row is one the step-2 actor is
+ * refused, and `approval-context` already draws no action bar for them. A server
+ * path accepting what the page declines to offer is the weaker of two rules
+ * winning, which is how the by-id endpoints came to be unauthorized in the first
+ * place.
+ */
+export async function returnReimburse(
+  requestId: number,
+  actor: ReimburseActor,
+  step: ReimburseStepCode,
+  rawComment: unknown,
+): Promise<void> {
+  const { comment, error } = returnCommentOrError(rawComment);
+  if (error) throw new Error(error);
+
+  const staffId = isAccountStep(step)
+    ? await requireApproverStaffId(actor)
+    : requireActorStaffId(actor);
+
+  await inTransaction(async (tx) => {
+    if (step === "ACCOUNT_FINAL") await assertMayTakeFinalStep(tx, requestId, staffId);
+    // `paymentDate: null` for the reason the step-3 rejection gives: a return
+    // from `ACCOUNT_FINAL` would otherwise keep the date step 2 fixed, and the
+    // requester would open a request they have to edit with a payment date
+    // printed on it.
+    await claimStep(tx, requestId, step, { status: "Returned", stepCode: null, paymentDate: null });
+    await closeApprovalRow(tx, requestId, step, "Returned", staffId, actor.email, comment, false);
+    await logActivity(tx, requestId, actor.userId, "returned", comment);
+  });
+
+  await afterCommit(requestId, async (updated) => {
+    await notifyQuietly(updated, updated.requesterEmail, "Returned", "ส่งกลับแก้ไข", comment);
+  });
+}
+
+/* ─────────────────────────── the requester's own cancel ─────────────────────────── */
+
+/**
+ * The facts the self-cancel rule is decided on, read in one statement — the
+ * server's clock among them.
+ *
+ * `SYSDATETIME()` travels back in the same recordset as `SubmittedAt`, so the
+ * two are one clock read through one driver conversion; see
+ * `SelfCancelState.now`. Null when the id is not an AP-4 request.
+ */
+async function readSelfCancelState(
+  requestId: number,
+  userId: number,
+): Promise<SelfCancelState | null> {
+  const pool = await getAccPool();
+  const res = await pool
+    .request()
+    .input("id", sql.Int, requestId)
+    .input("form", sql.NVarChar, AP4_FORM_CODE)
+    .query(
+      `SELECT CreatedBy, Status, CurrentStepCode, SubmittedAt, SYSDATETIME() AS ServerNow
+       FROM [dbo].[AccRequest]
+       WHERE Id=@id AND FormCode=@form`,
+    );
+  const row = res.recordset[0] as
+    | {
+        CreatedBy: number | null;
+        Status: string | null;
+        CurrentStepCode: string | null;
+        SubmittedAt: Date | null;
+        ServerNow: Date;
+      }
+    | undefined;
+  if (!row) return null;
+
+  return {
+    // AP-4 has no on-behalf submission, so the creator is the requester. `> 0`
+    // because a session with no usable internal id stamps 0, and 0 must not
+    // match a row whose `CreatedBy` failed to write either.
+    isRequester: userId > 0 && row.CreatedBy === userId,
+    status: row.Status,
+    currentStepCode: row.CurrentStepCode,
+    submittedAt: row.SubmittedAt,
+    now: row.ServerNow,
+  };
+}
+
+/**
+ * What the detail page needs to draw the withdrawal bar, or null for anyone who
+ * did not file this request.
+ *
+ * The page is handed the verdict and the deadline rather than the ingredients:
+ * the window is measured on the server's clock, and AP-1's page evaluating
+ * `Date.now() - new Date(submittedAt)` in the browser is the second copy of the
+ * rule this deliberately does not make.
+ */
+export async function getReimburseSelfCancelInfo(
+  requestId: number,
+  userId: number,
+): Promise<ReimburseSelfCancelInfo | null> {
+  const state = await readSelfCancelState(requestId, userId);
+  if (!state || !state.isRequester) return null;
+
+  const refusal = selfCancelRefusal(state);
+  const until = selfCancelDeadline(state.submittedAt);
+  return {
+    allowed: refusal == null,
+    until: until ? until.toISOString() : null,
+    reason: refusal?.error ?? null,
+  };
+}
+
+/**
+ * Claim the request for withdrawal.
+ *
+ * `claimStep`'s three predicates (`FormCode`, `CurrentStepCode`, `Status`) plus
+ * the two only this action has: the creator, and the window — the same
+ * inequality `selfCancelRefusal` applies, evaluated by the database against its
+ * own `SYSDATETIME()` so that the check which *decides* and the check which
+ * *holds* cannot be separated by the round trip between them. `>=` because the
+ * window is inclusive at its far end, as the pure rule is.
+ *
+ * Not an extra parameter on `claimStep`: this one sets `CancelledBy` /
+ * `CancelledAt` as well, and widening the shared helper to carry another
+ * action's predicates is how a claim quietly stops asserting what its callers
+ * think it does. `STATUS_AT_STEP.MANAGER` rather than a literal `'Submitted'`,
+ * so the two claims cannot drift apart over what that step's status is.
+ */
+async function claimSelfCancel(tx: AccTx, requestId: number, userId: number): Promise<void> {
+  const res = await tx
+    .request()
+    .input("id", sql.Int, requestId)
+    .input("form", sql.NVarChar, AP4_FORM_CODE)
+    .input("uid", sql.Int, userId)
+    .input("status", sql.NVarChar, STATUS_AT_STEP.MANAGER)
+    .input("hours", sql.Int, SELF_CANCEL_WINDOW_HOURS)
+    .query(
+      `UPDATE [dbo].[AccRequest]
+       SET Status='Cancelled', CurrentStepCode=NULL, PaymentDate=NULL,
+           CancelledBy=@uid, CancelledAt=SYSDATETIME(), UpdatedAt=SYSDATETIME()
+       WHERE Id=@id AND FormCode=@form AND CreatedBy=@uid
+         AND Status=@status AND CurrentStepCode='MANAGER'
+         AND SubmittedAt IS NOT NULL
+         AND SubmittedAt >= DATEADD(HOUR, -@hours, SYSDATETIME())`,
+    );
+  if (res.rowsAffected[0] !== 1) throw new AccConflictError(NOT_AT_STEP_ERROR);
+}
+
+/**
+ * The requester withdraws their own claim: `Cancelled`, `CurrentStepCode`
+ * cleared, within `SELF_CANCEL_WINDOW_HOURS` of the submit and only while the
+ * manager still holds it (spec §5.3).
+ *
+ * Modelled on AP-1's `cancelByRequester` — same timestamp, same window, same
+ * "before the manager acts" — but written here, because that engine is pinned
+ * to `AP1_FORM_CODE` and moves nothing an AP-4 id names.
+ *
+ * Two passes over the same rule, deliberately. `selfCancelRefusal` runs first
+ * and names *which* of the three conditions failed, because "ยกเลิกไม่ได้" on
+ * its own does not tell the requester whether to wait, to ask the manager, or
+ * that the request was never theirs. The claim then re-asserts all three inside
+ * the transaction, so a manager approving between the two answers 409 rather
+ * than cancelling a request that has already moved. The first pass writes
+ * nothing; on the refusal path nothing is touched at all.
+ */
+export async function cancelReimburseByRequester(
+  requestId: number,
+  actor: ReimburseActor,
+): Promise<void> {
+  const state = await readSelfCancelState(requestId, actor.userId);
+  if (!state) throw new AccConflictError(NOT_AT_STEP_ERROR);
+
+  const refusal = selfCancelRefusal(state);
+  if (refusal) {
+    throw refusal.reason === "not_requester"
+      ? new AccForbiddenError(refusal.error)
+      : new AccConflictError(refusal.error);
+  }
+
+  const staffId = actor.staffId;
+
+  await inTransaction(async (tx) => {
+    await claimSelfCancel(tx, requestId, actor.userId);
+    // `Returned` because `CK_AccApproval_Status` permits only
+    // Pending/Approved/Rejected/Returned — an approval row has no `Cancelled`,
+    // and adding one would need a migration applied to both databases before
+    // this could ship. AP-1's cancel closes its pending rows the same way. The
+    // request's own status is what says it was withdrawn, the activity row
+    // below records it by name, and the timeline reads the request status so it
+    // does not call this a return.
+    await closeApprovalRow(
+      tx, requestId, "MANAGER", "Returned", staffId ?? 0, actor.email, null, false,
+    );
+    await logActivity(tx, requestId, actor.userId, "cancelled");
+  });
+
+  await afterCommit(requestId, async (updated) => {
+    // The manager is the one person holding a queue item that has just gone away.
+    await notifyQuietly(updated, updated.managerEmail, "Cancelled", "ผู้ขอยกเลิกคำขอ");
   });
 }

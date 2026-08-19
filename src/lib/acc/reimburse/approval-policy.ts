@@ -20,6 +20,17 @@ import type { ReimburseApproval, ReimburseApprover } from "@/features/reimburse/
 
 /** Every rejection carries a reason. The UI disables the button; this is the control. */
 export const REJECT_COMMENT_REQUIRED = "กรุณาระบุเหตุผลที่ไม่อนุมัติ";
+/**
+ * Every return carries what has to change — the same control, applied to the
+ * action whose entire purpose is telling the requester what to fix.
+ *
+ * A message of its own rather than sharing the rejection's: the two dialogs ask
+ * for different things, and "กรุณาระบุเหตุผลที่ไม่อนุมัติ" on a return names an
+ * outcome that is not happening. The wording is AP-1's — `returnForEdit`
+ * refuses an empty comment with exactly this.
+ */
+export const RETURN_COMMENT_REQUIRED = "กรุณาระบุสิ่งที่ต้องแก้ไข";
+
 
 /** Not on `AccReimburseApprover`, or on it but deactivated. */
 export const NOT_ACCOUNT_APPROVER_ERROR =
@@ -81,6 +92,26 @@ export interface ReimburseApprovalContext {
   /** Holiday-shifted rounds for the accounting check; empty on the other steps. */
   paymentDates: string[];
   defaultPaymentDate: string | null;
+  /**
+   * The requester's own withdrawal window (spec §5.3), or null for a viewer who
+   * did not file this request.
+   *
+   * Answered here rather than worked out in the browser because the deadline is
+   * a statement about the **server's** clock, and because AP-1's detail page
+   * does the opposite — `Date.now() - new Date(submittedAt) <= 24 * 3600 * 1000`
+   * is a second copy of the rule, evaluated against whatever time the viewer's
+   * machine believes it is. `reason` is populated only when `allowed` is false
+   * and there is something useful to say.
+   */
+  selfCancel: ReimburseSelfCancelInfo | null;
+}
+
+/** What the page needs to draw the withdrawal bar, and nothing more. */
+export interface ReimburseSelfCancelInfo {
+  allowed: boolean;
+  /** ISO, serialised like every other timestamp the API returns. Null when never submitted. */
+  until: string | null;
+  reason: string | null;
 }
 
 /* ─────────────────────────── the state machine ─────────────────────────── */
@@ -241,13 +272,35 @@ export function stepTokenRefusal(
   return null;
 }
 
+/** A trimmed, non-empty comment, or the given message refusing it. Never both. */
+function commentOrError(
+  raw: unknown,
+  missing: string,
+): { comment: string; error: null } | { comment: null; error: string } {
+  const comment = typeof raw === "string" ? raw.trim() : "";
+  if (!comment) return { comment: null, error: missing };
+  return { comment, error: null };
+}
+
 /** The rejection reason, or the message refusing an absent one. Never both. */
 export function rejectCommentOrError(
   raw: unknown,
 ): { comment: string; error: null } | { comment: null; error: string } {
-  const comment = typeof raw === "string" ? raw.trim() : "";
-  if (!comment) return { comment: null, error: REJECT_COMMENT_REQUIRED };
-  return { comment, error: null };
+  return commentOrError(raw, REJECT_COMMENT_REQUIRED);
+}
+
+/**
+ * What the requester has to change, or the message refusing an absent one.
+ *
+ * Same shape and same control as `rejectCommentOrError`, for a stronger reason:
+ * a rejection at least tells the requester the claim is over, while a return
+ * with no note puts the request back in their hands saying nothing about why it
+ * came back — and a return exists only to say that.
+ */
+export function returnCommentOrError(
+  raw: unknown,
+): { comment: string; error: null } | { comment: null; error: string } {
+  return commentOrError(raw, RETURN_COMMENT_REQUIRED);
 }
 
 /** `YYYY-MM-DD`, and a real calendar day — `2026-02-31` is neither. */
@@ -302,3 +355,113 @@ export function upcomingPaymentRounds(from: Date, months = 4): Date[] {
   out.sort((a, b) => a.getTime() - b.getTime());
   return out;
 }
+/* ─────────────────────────── the requester's own cancel ─────────────────────────── */
+
+/**
+ * How long after submitting a requester may still take their own claim back
+ * (spec §5.3), matching AP-1's `cancelByRequester`.
+ *
+ * Declared once, and both halves of the rule read it: the Thai message below
+ * interpolates it, and `claimSelfCancel` passes it to `DATEADD(HOUR, -@hours,
+ * SYSDATETIME())`. Changing the window here changes what the database enforces
+ * and what the page says, together.
+ */
+export const SELF_CANCEL_WINDOW_HOURS = 24;
+
+/** Somebody else's claim. Only the person who filed it may withdraw it. */
+export const CANCEL_NOT_REQUESTER_ERROR = "ยกเลิกได้เฉพาะผู้ที่ยื่นคำขอนี้เท่านั้น";
+
+/**
+ * The manager has already acted, or the request was never waiting for them.
+ * Names the remedy, because at this point there is one and it is not waiting:
+ * an approver can still send the request back for edit.
+ */
+export const CANCEL_NOT_PENDING_MANAGER_ERROR =
+  "ยกเลิกไม่ได้ — คำขอนี้ไม่ได้อยู่ระหว่างรอผู้จัดการอนุมัติแล้ว หากต้องการแก้ไข กรุณาขอให้ผู้อนุมัติส่งกลับแก้ไข";
+
+/**
+ * Inside the chain, past the window. A different remedy from the one above —
+ * here the manager still holds the request and can return it — so a different
+ * message, and neither of them is the bare "ยกเลิกไม่ได้" that leaves the
+ * requester unable to tell waiting from asking.
+ */
+export const CANCEL_WINDOW_EXPIRED_ERROR =
+  `ยกเลิกไม่ได้ — เกิน ${SELF_CANCEL_WINDOW_HOURS} ชั่วโมงนับจากเวลาที่ส่งคำขอ ` +
+  "กรุณาขอให้ผู้จัดการส่งกลับแก้ไขหรือไม่อนุมัติ";
+
+export type SelfCancelRefusalReason = "not_requester" | "not_pending_manager" | "window_expired";
+
+/**
+ * Everything the self-cancel rule is decided on. Every field is read from the
+ * database, `now` included — see below.
+ */
+export interface SelfCancelState {
+  /** `AccRequest.CreatedBy` is this actor. AP-4 has no on-behalf submission. */
+  isRequester: boolean;
+  status: string | null | undefined;
+  currentStepCode: string | null | undefined;
+  submittedAt: Date | string | null | undefined;
+  /**
+   * `SYSDATETIME()`, read in the same query as `submittedAt` — **not**
+   * `new Date()`.
+   *
+   * `SubmittedAt` is written by `SYSDATETIME()` and comes back through the
+   * driver's own date handling; a `Date.now()` taken in this process is a
+   * different clock read through none of it, and the two are comparable only by
+   * accident of configuration. Taking both from the same `SELECT` makes the
+   * subtraction below exact whatever that handling does, because whatever it
+   * does it does to both.
+   */
+  now: Date;
+}
+
+/** A `Date` from either of the two shapes a timestamp reaches this module in, or null. */
+function asDate(value: Date | string | null | undefined): Date | null {
+  if (value == null) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * The instant the self-cancel window shuts, or null when there is no submit to
+ * measure from.
+ *
+ * The one piece of arithmetic in the rule, so the page can print the deadline
+ * without owning a second copy of it — `approval-context` computes this and the
+ * detail page renders what it is given.
+ */
+export function selfCancelDeadline(submittedAt: Date | string | null | undefined): Date | null {
+  const from = asDate(submittedAt);
+  if (!from) return null;
+  return new Date(from.getTime() + SELF_CANCEL_WINDOW_HOURS * 3600 * 1000);
+}
+
+/**
+ * Why this actor may not withdraw this request, or null when they may.
+ *
+ * Three reasons, told apart on purpose: one of them is fixed by nothing, one by
+ * asking an approver, and one by neither. The claim in `approval-service.ts`
+ * enforces the same three conditions in a single conditional `UPDATE` — this is
+ * what turns the resulting zero row count into a sentence.
+ *
+ * The window is inclusive at its far end: exactly `SELF_CANCEL_WINDOW_HOURS`
+ * after the submit is still inside it, one millisecond later is not.
+ */
+export function selfCancelRefusal(
+  state: SelfCancelState,
+): { reason: SelfCancelRefusalReason; error: string } | null {
+  if (!state.isRequester) {
+    return { reason: "not_requester", error: CANCEL_NOT_REQUESTER_ERROR };
+  }
+  if (state.status !== "Submitted" || state.currentStepCode !== "MANAGER") {
+    return { reason: "not_pending_manager", error: CANCEL_NOT_PENDING_MANAGER_ERROR };
+  }
+  const deadline = selfCancelDeadline(state.submittedAt);
+  // No `SubmittedAt` on a request that says it is `Submitted` is a broken row,
+  // not an open window: refuse rather than treat "cannot tell" as "in time".
+  if (!deadline || state.now.getTime() > deadline.getTime()) {
+    return { reason: "window_expired", error: CANCEL_WINDOW_EXPIRED_ERROR };
+  }
+  return null;
+}
+

@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
 import {
+  Ban,
   CheckCircle,
   Clock,
   FileCheck,
@@ -29,7 +30,11 @@ import { statusLabelDisplay } from "@/features/accounting/constants";
 import { PaymentDatePicker } from "@/features/accounting/components/PaymentDatePicker";
 import { fmtBaht } from "@/features/travel-booking/components/shared";
 import { sumReimburseItems } from "@/lib/acc/reimburse/calc";
-import { REIMBURSE_STEP_CODES, type ReimburseStepCode } from "@/features/reimburse/constants";
+import {
+  REIMBURSE_STEP_CODES,
+  REIMBURSE_STEP_LABEL,
+  type ReimburseStepCode,
+} from "@/features/reimburse/constants";
 // Type-only: `approval-policy` imports `./payment-calendar`, which reaches the
 // holiday lookup through a dynamic import — a runtime import here would pull
 // `@/lib/db/mssql` and `@/env` into the browser bundle.
@@ -119,12 +124,15 @@ async function jsonFetcher<T>(url: string): Promise<T> {
   return json.data as T;
 }
 
-/** AP-4's three steps — the shared two-step vocabulary plus `ACCOUNT_FINAL` (migration 091). */
-const STEP_LABEL: Record<ReimburseStepCode, string> = {
-  MANAGER: "ผู้จัดการ",
-  ACCOUNT: "บัญชี",
-  ACCOUNT_FINAL: "บัญชี (อนุมัติขั้นสุดท้าย)",
-};
+/**
+ * AP-4's three steps — the shared two-step vocabulary plus `ACCOUNT_FINAL`
+ * (migration 091), read from the one declaration My Work reads too.
+ *
+ * The two used to hold separate copies and had already drifted: this page said
+ * "บัญชี (อนุมัติขั้นสุดท้าย)" where `approval-display.ts` said
+ * "บัญชี (ขั้นสุดท้าย)", to the same approver about the same request.
+ */
+const STEP_LABEL = REIMBURSE_STEP_LABEL;
 
 /**
  * The chain the request will walk, in order — the timeline's skeleton.
@@ -181,10 +189,18 @@ function approvalActorLabel(a: ReimburseApproval): string | null {
   return email ?? null;
 }
 
-function approvalActorPrefix(status: ReimburseApproval["status"]): string {
+/**
+ * `withdrawn` is the request being `Cancelled`, not the row saying so.
+ *
+ * A self-cancel closes the pending `MANAGER` row as `Returned`, because
+ * `CK_AccApproval_Status` has no `Cancelled` — see `cancelReimburseByRequester`.
+ * Left unqualified the timeline would then say the requester "ส่งกลับ" their own
+ * claim for editing, which is the one thing a cancel is not.
+ */
+function approvalActorPrefix(status: ReimburseApproval["status"], withdrawn = false): string {
   if (status === "Approved") return "อนุมัติโดย";
   if (status === "Rejected") return "ไม่อนุมัติโดย";
-  if (status === "Returned") return "ส่งกลับโดย";
+  if (status === "Returned") return withdrawn ? "ยกเลิกโดย" : "ส่งกลับโดย";
   return "รอดำเนินการโดย";
 }
 
@@ -195,7 +211,13 @@ function isImageFile(f: ReimburseFileMeta): boolean {
 
 /* ─────────────────────────── small pieces ─────────────────────────── */
 
-function ApprovalStatusBadge({ status }: { status: ReimburseApproval["status"] }) {
+function ApprovalStatusBadge({
+  status,
+  withdrawn = false,
+}: {
+  status: ReimburseApproval["status"];
+  withdrawn?: boolean;
+}) {
   const cfg: Record<
     ReimburseApproval["status"],
     { label: string; icon: React.ReactNode; bg: string; text: string; border: string }
@@ -229,7 +251,12 @@ function ApprovalStatusBadge({ status }: { status: ReimburseApproval["status"] }
       border: "var(--border-info-yellow)",
     },
   };
-  const c = cfg[status];
+  // Same colours, honest wording — see `approvalActorPrefix`.
+  const base = cfg[status];
+  const c =
+    withdrawn && status === "Returned"
+      ? { ...base, label: "ยกเลิกโดยผู้ขอ", icon: <Ban size={12} /> }
+      : base;
   return (
     <span
       className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full"
@@ -368,6 +395,7 @@ export function ReimburseDetail({
   // A rejection ends the request, so its unopened steps were not "not yet" —
   // they will never happen, and saying otherwise reads as a stuck workflow.
   const chainStopped = request.status === "Rejected" || request.status === "Cancelled";
+  const withdrawn = request.status === "Cancelled";
   const timeline: { key: string; stepCode: ReimburseStepCode; approval: ReimburseApproval | null }[] = [];
   for (const code of STEP_SEQUENCE) {
     const rows = approvals.filter((a) => a.stepCode === code);
@@ -381,10 +409,21 @@ export function ReimburseDetail({
   /* ── What this viewer may do, answered by the server ── */
 
   const [ctx, setCtx] = useState<ReimburseApprovalContext | null>(null);
-  const [action, setAction] = useState<"approve" | "reject" | null>(null);
+  /**
+   * The context fetch failed, as opposed to having answered "you may not act".
+   *
+   * Without this the two are the same picture. A 500 from `approval-context`
+   * leaves `ctx` null, so `canAct` is false *and* `ctx?.reason` is empty, and an
+   * approver who is entitled to act sees an approval section with no buttons and
+   * no explanation — the exact "a missing button reads as a bug" case that
+   * route's own `finalStepRefusal` reasoning exists to avoid.
+   */
+  const [ctxFailed, setCtxFailed] = useState(false);
+  const [action, setAction] = useState<"approve" | "reject" | "return" | null>(null);
   const [comment, setComment] = useState("");
   const [paymentDate, setPaymentDate] = useState("");
   const [busy, setBusy] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
   // Bumped when an action is refused. The payment rounds expire on a clock the
   // page does not watch — a round drops out of `getReimbursePaymentDates` once
   // its cut-off passes — so a refusal is the one moment the answers on screen
@@ -397,12 +436,17 @@ export function ReimburseDetail({
   useEffect(() => {
     let cancelled = false;
     setCtx(null);
+    setCtxFailed(false);
     fetch(`/api/request/reimburse/requests/${request.id}/approval-context`)
       .then((r) => r.json())
       .then((json: { ok: boolean; data?: ReimburseApprovalContext }) => {
-        if (!cancelled && json.ok && json.data) setCtx(json.data);
+        if (cancelled) return;
+        if (json.ok && json.data) setCtx(json.data);
+        else setCtxFailed(true);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled) setCtxFailed(true);
+      });
     return () => {
       cancelled = true;
     };
@@ -418,15 +462,32 @@ export function ReimburseDetail({
   const canAct = !!ctx?.canAct && step != null;
   const needsPaymentDate = step === "ACCOUNT";
 
+  /**
+   * The requester's own withdrawal window, as the **server** answered it.
+   *
+   * Not recomputed here from `submittedAt`: the deadline is a statement about
+   * the server's clock, and AP-1's detail page evaluating
+   * `Date.now() - new Date(submittedAt) <= 24 * 3600 * 1000` in the browser is a
+   * second copy of the rule that a wrong machine clock quietly disagrees with.
+   * `selfCancel` is null for anyone who did not file this request.
+   */
+  const selfCancel = ctx?.selfCancel ?? null;
+
   const closeDialog = useCallback(() => {
     setAction(null);
     setComment("");
   }, []);
 
-  async function submitAction(kind: "approve" | "reject") {
+  /** The two comment-carrying actions, and what each dialog is called. */
+  const NEEDS_COMMENT: Record<"reject" | "return", string> = {
+    reject: "กรุณาระบุเหตุผลที่ไม่อนุมัติ",
+    return: "กรุณาระบุสิ่งที่ต้องแก้ไข",
+  };
+
+  async function submitAction(kind: "approve" | "reject" | "return") {
     if (!step) return;
-    if (kind === "reject" && !comment.trim()) {
-      toast.error("กรุณาระบุเหตุผลที่ไม่อนุมัติ");
+    if (kind !== "approve" && !comment.trim()) {
+      toast.error(NEEDS_COMMENT[kind]);
       return;
     }
     if (kind === "approve" && needsPaymentDate && !paymentDate) {
@@ -444,7 +505,8 @@ export function ReimburseDetail({
         // match it. Without it a tab left open at the accounting check while
         // somebody else performs that check will, on the next click, take the
         // final approval instead — the step that authorises payment — and say
-        // "บันทึกการตรวจสอบแล้ว" while doing it.
+        // "บันทึกการตรวจสอบแล้ว" while doing it. The return route carries the
+        // same token for the same reason.
         body: JSON.stringify(
           kind === "approve"
             ? { step, paymentDate: needsPaymentDate ? paymentDate : undefined }
@@ -453,7 +515,13 @@ export function ReimburseDetail({
       });
       const json: { ok: boolean; error?: string } = await res.json();
       if (json.ok) {
-        toast.success(kind === "approve" ? APPROVE_DONE_LABEL[step] : "ไม่อนุมัติแล้ว");
+        toast.success(
+          kind === "approve"
+            ? APPROVE_DONE_LABEL[step]
+            : kind === "return"
+              ? "ส่งกลับให้ผู้ขอแก้ไขแล้ว"
+              : "ไม่อนุมัติแล้ว",
+        );
         closeDialog();
         onChanged?.();
       } else {
@@ -477,9 +545,87 @@ export function ReimburseDetail({
     }
   }
 
+  /**
+   * The requester withdraws their own claim.
+   *
+   * No body and no step token: there is one state this is possible from, and the
+   * server claims it. A refusal is shown as sent — the three reasons a cancel
+   * can fail each name their own remedy, and flattening them into
+   * "ยกเลิกไม่สำเร็จ" is what leaves the requester unable to tell waiting from
+   * asking the manager.
+   */
+  async function handleCancel() {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/request/reimburse/requests/${request.id}/cancel`, {
+        method: "POST",
+      });
+      const json: { ok: boolean; error?: string } = await res.json();
+      if (json.ok) {
+        toast.success("ยกเลิกคำขอแล้ว");
+        setCancelOpen(false);
+        onChanged?.();
+      } else {
+        toast.error(actionErrorMessage(json.error));
+        setCtxNonce((n) => n + 1);
+        onChanged?.();
+      }
+    } catch {
+      toast.error("เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div>
       <UatDataBanner requestId={request.id} />
+
+      {/* ── ยกเลิกคำขอ — the requester's own 24-hour window (spec §5.3) ──
+          Drawn only for the person who filed it: `selfCancel` is null for
+          everyone else, so a manager or an approver never sees the bar at all.
+          Whether the window is still open, and when it shuts, are both the
+          server's answers — see `selfCancel` above. */}
+      {request.status === "Submitted" && selfCancel && (
+        <div
+          className="rounded-2xl p-4 mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5"
+          style={{
+            background: "var(--bg-card)",
+            border: "1px solid var(--border-card)",
+            boxShadow: "var(--shadow-sm)",
+          }}
+        >
+          <div className="flex items-start gap-2.5 min-w-0">
+            <Ban size={16} style={{ color: "var(--color-danger)", marginTop: 2 }} className="shrink-0" />
+            <div className="min-w-0">
+              <p className="text-[13px] font-semibold m-0" style={{ color: "var(--text-heading)" }}>
+                ยกเลิกคำขอ
+              </p>
+              <p className="text-[11px] leading-relaxed m-0" style={{ color: "var(--text-muted)" }}>
+                {selfCancel.allowed
+                  ? selfCancel.until
+                    ? `ยกเลิกเองได้ถึง ${fmtDateTime(selfCancel.until)} และก่อนผู้จัดการอนุมัติ`
+                    : "ยกเลิกเองได้ก่อนผู้จัดการอนุมัติ"
+                  : (selfCancel.reason ?? "ยกเลิกเองไม่ได้แล้ว กรุณาติดต่อผู้จัดการหรือฝ่ายบัญชี")}
+              </p>
+            </div>
+          </div>
+          {selfCancel.allowed && (
+            <button
+              type="button"
+              onClick={() => setCancelOpen(true)}
+              className="shrink-0 inline-flex items-center gap-2 text-[13px] font-semibold px-4 py-2 rounded-lg cursor-pointer transition-colors"
+              style={{
+                color: "var(--color-danger)",
+                border: "1px solid rgba(220,38,38,0.3)",
+                background: "rgba(220,38,38,0.06)",
+              }}
+            >
+              <Ban size={14} /> ยกเลิกคำขอ
+            </button>
+          )}
+        </div>
+      )}
 
       {/* ── ขั้นตอนการอนุมัติ ── */}
       {approvals.length > 0 && (
@@ -510,6 +656,24 @@ export function ReimburseDetail({
                   <ThumbsUp size={14} />
                   {APPROVE_LABEL[step]}
                 </button>
+                {/* Return, not reject: the claim is fixable rather than
+                    refused. Available at all three steps — see `returnReimburse`
+                    — and it is what makes a mistake survivable at all, since a
+                    rejection is terminal and the requester cannot edit,
+                    resubmit or even discard afterwards. */}
+                <button
+                  type="button"
+                  onClick={() => { setAction("return"); setComment(""); }}
+                  className="inline-flex items-center gap-2 text-[13px] font-medium px-4 py-2 rounded-lg transition-colors cursor-pointer"
+                  style={{
+                    background: "var(--bg-info-yellow)",
+                    color: "var(--text-info-yellow)",
+                    border: "1px solid var(--border-info-yellow)",
+                  }}
+                >
+                  <RotateCcw size={14} />
+                  ส่งกลับแก้ไข
+                </button>
                 <button
                   type="button"
                   onClick={() => { setAction("reject"); setComment(""); }}
@@ -524,6 +688,22 @@ export function ReimburseDetail({
                   ไม่อนุมัติ
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* The context could not be fetched. Distinct from "you may not act",
+              which is the block below: with no message at all an approver who is
+              entitled to act sees an approval section with no buttons and no
+              reason, and reads it as a broken page. */}
+          {ctxFailed && (
+            <div
+              className="mb-4 pb-4 flex items-start gap-2"
+              style={{ borderBottom: "1px solid var(--border-light)" }}
+            >
+              <Info size={14} className="shrink-0 mt-0.5" style={{ color: "var(--text-info-yellow)" }} />
+              <p className="text-[12px] m-0" style={{ color: "var(--text-secondary)" }}>
+                ตรวจสอบสิทธิ์การอนุมัติไม่สำเร็จ — ปุ่มดำเนินการจึงยังไม่แสดง กรุณาโหลดหน้านี้ใหม่
+              </p>
             </div>
           )}
 
@@ -609,7 +789,7 @@ export function ReimburseDetail({
 
                   <div className="flex-1 pb-4 min-w-0">
                     <div className="mb-1 flex items-center gap-2 flex-wrap">
-                      <ApprovalStatusBadge status={a.status} />
+                      <ApprovalStatusBadge status={a.status} withdrawn={withdrawn} />
                       {request.currentStepCode === a.stepCode && a.status === "Pending" && (
                         <span
                           className="text-[10px] font-bold px-2 py-0.5 rounded-full"
@@ -626,7 +806,7 @@ export function ReimburseDetail({
                     </div>
                     {actor && (
                       <p className="text-[11px] m-0" style={{ color: "var(--text-muted)" }}>
-                        {approvalActorPrefix(a.status)} {actor}
+                        {approvalActorPrefix(a.status, withdrawn)} {actor}
                       </p>
                     )}
                     {a.comment && (
@@ -959,6 +1139,113 @@ export function ReimburseDetail({
             }}
           >
             {busy ? "กำลังดำเนินการ..." : "ยืนยัน ไม่อนุมัติ"}
+          </button>
+        </div>
+      </Dialog>
+
+      {/* ── Return for edit: what has to change is required, here and on the server ── */}
+      <Dialog
+        open={action === "return"}
+        onOpenChange={(open) => { if (!open) closeDialog(); }}
+        title="ส่งกลับแก้ไข — ระบุสิ่งที่ต้องแก้"
+        uniformSurface
+      >
+        <div className="flex flex-col gap-3 mb-5">
+          <p className="text-[13px] m-0" style={{ color: "var(--text-secondary)" }}>
+            คำขอเลขที่{" "}
+            <strong style={{ color: "var(--text-heading)" }}>{request.requestNo ?? "ฉบับร่าง"}</strong>{" "}
+            จะกลับไปให้ผู้ขอแก้ไข โดยยังใช้เลขที่คำขอเดิม
+          </p>
+          <textarea
+            rows={3}
+            className="w-full rounded-lg px-3 py-2 text-[13px] outline-none"
+            style={{
+              background: "var(--bg-input)",
+              color: "var(--text-primary)",
+              border: "1px solid var(--border-input)",
+            }}
+            placeholder="ระบุสิ่งที่ต้องแก้ไข..."
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+          />
+        </div>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={closeDialog}
+            disabled={busy}
+            className="text-[13px] font-medium px-4 py-2 rounded-lg"
+            style={{
+              color: "var(--text-secondary)",
+              background: "var(--bg-card-alt)",
+              border: "1px solid var(--border-card)",
+            }}
+          >
+            ยกเลิก
+          </button>
+          <button
+            type="button"
+            onClick={() => submitAction("return")}
+            disabled={busy || !comment.trim()}
+            className="inline-flex items-center gap-1.5 text-[13px] font-medium px-4 py-2 rounded-lg"
+            style={{
+              background: "var(--bg-info-yellow)",
+              color: "var(--text-info-yellow)",
+              border: "1px solid var(--border-info-yellow)",
+              opacity: busy || !comment.trim() ? 0.7 : 1,
+            }}
+          >
+            {busy ? "กำลังดำเนินการ..." : "ยืนยัน ส่งกลับแก้ไข"}
+          </button>
+        </div>
+      </Dialog>
+
+      {/* ── The requester's own withdrawal. No comment: nobody downstream has to
+             act on it, and the request keeps its number and its rows. ── */}
+      <Dialog
+        open={cancelOpen}
+        onOpenChange={(open) => { if (!open) setCancelOpen(false); }}
+        title="ยกเลิกคำขอ"
+        uniformSurface
+      >
+        <div className="flex flex-col gap-3 mb-5">
+          <p className="text-[13px] m-0" style={{ color: "var(--text-secondary)" }}>
+            ยกเลิกคำขอเลขที่{" "}
+            <strong style={{ color: "var(--text-heading)" }}>{request.requestNo ?? "ฉบับร่าง"}</strong>{" "}
+            ยอดรวม{" "}
+            <strong style={{ color: "var(--text-heading)" }}>฿{fmtMoney(request.totalAmount ?? itemsTotal)}</strong>
+          </p>
+          <p className="text-[12px] m-0" style={{ color: "var(--text-muted)" }}>
+            คำขอจะถูกยกเลิกและไม่ส่งต่อให้ผู้จัดการ — ยกเลิกแล้วจะกลับมาแก้ไขคำขอนี้ไม่ได้
+            หากต้องการเบิกใหม่ ต้องสร้างคำขอใหม่
+          </p>
+        </div>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setCancelOpen(false)}
+            disabled={busy}
+            className="text-[13px] font-medium px-4 py-2 rounded-lg"
+            style={{
+              color: "var(--text-secondary)",
+              background: "var(--bg-card-alt)",
+              border: "1px solid var(--border-card)",
+            }}
+          >
+            ไม่ยกเลิก
+          </button>
+          <button
+            type="button"
+            onClick={handleCancel}
+            disabled={busy}
+            className="inline-flex items-center gap-1.5 text-[13px] font-medium px-4 py-2 rounded-lg"
+            style={{
+              background: "var(--color-danger)",
+              color: "#ffffff",
+              opacity: busy ? 0.7 : 1,
+            }}
+          >
+            {busy ? "กำลังดำเนินการ..." : "ยืนยัน ยกเลิกคำขอ"}
           </button>
         </div>
       </Dialog>

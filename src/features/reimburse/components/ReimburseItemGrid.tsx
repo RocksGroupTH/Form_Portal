@@ -4,7 +4,12 @@ import { useEffect, useState } from "react";
 import { CircleAlert, Plus, Trash2 } from "lucide-react";
 import { fmtBaht } from "@/features/travel-booking/components/shared";
 import { sumReimburseItems } from "@/lib/acc/reimburse/calc";
-import { isBlankItemRow } from "@/lib/acc/reimburse/item-money";
+import {
+  amountNotPositiveMsg,
+  dateMissingMsg,
+  isBlankItemRow,
+  rowLabel,
+} from "@/lib/acc/reimburse/item-money";
 import type { ReimburseItem } from "@/features/reimburse/types";
 
 /**
@@ -128,25 +133,28 @@ export interface ItemRowProblem {
  * server's `prepareReimburseItemsForSave`, which throws its own named Thai
  * messages; these are the friendly preview of the same two rules.
  *
- * Rows are labelled by their position in the grid, not by their position among
- * the rows that survive the blank filter — a blank row above a filled one would
- * otherwise make the number point at a different, valid row.
+ * Rows are **numbered as the server numbers them** — by position among the rows
+ * that survive the blank filter, through `item-money`'s own `rowLabel` — and the
+ * two messages are that module's own. They used to be hand-copied here and
+ * counted every grid row instead, so a blank row above a filled one made the
+ * preview say "แถวที่ 3" where the save came back saying "แถวที่ 2" about the
+ * same row. `index` stays the **grid** position, because that is what the caller
+ * highlights.
  */
 export function findItemRowProblems(items: ReimburseItem[]): ItemRowProblem[] {
   const problems: ItemRowProblem[] = [];
+  const keptCount = items.filter((it) => !isBlankItemRow(it)).length;
+  let kept = 0;
   items.forEach((it, index) => {
     if (isBlankItemRow(it)) return;
-    const label = items.length > 1 ? ` (แถวที่ ${index + 1})` : "";
+    const label = rowLabel(kept, keptCount);
+    kept++;
     if (!it.expenseDate || it.expenseDate.trim() === "") {
-      problems.push({ index, kind: "date", label: `กรุณาระบุวันที่ของรายการ${label}` });
+      problems.push({ index, kind: "date", label: dateMissingMsg(label) });
     }
     const amount = Number(it.amount);
     if (!Number.isFinite(amount) || amount <= 0) {
-      problems.push({
-        index,
-        kind: "amount",
-        label: `กรุณาระบุจำนวนเงินให้ถูกต้อง (มากกว่า 0)${label}`,
-      });
+      problems.push({ index, kind: "amount", label: amountNotPositiveMsg(label) });
     }
   });
   return problems;

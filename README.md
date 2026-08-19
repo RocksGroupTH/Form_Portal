@@ -1,8 +1,9 @@
 # Form Portal
 
 Internal request and forms portal for Rocks Group — travel expense reimbursement
-(AP-1) and travel booking (AP-17), with a Microsoft Entra ID sign-in, a shared
-approval backbone and a Dynamics 365 Business Central posting path.
+(AP-1), travel booking (AP-17) and staff reimbursement (AP-4), with a Microsoft
+Entra ID sign-in, a shared approval backbone and a Dynamics 365 Business Central
+posting path. Only AP-1 reaches Business Central; AP-4 is paid, not posted.
 
 Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS 4 · MSSQL.
 
@@ -43,7 +44,7 @@ re-run; a stale build directory outlives a branch switch.
 
 ```
 src/app/          Routes — (auth), (dashboard), api/
-src/features/     Feature UI — accounting (AP-1), travel-booking (AP-17), home, settings
+src/features/     Feature UI — accounting (AP-1), travel-booking (AP-17), reimburse (AP-4), home, settings
 src/components/   Shared ui/ primitives and layout/ chrome
 src/lib/          Domain logic — acc/, db/, team-member/, erp/, bc/, hr/, form-environment/
 src/env.ts        Type-safe environment schema — a key absent from it is read by nothing

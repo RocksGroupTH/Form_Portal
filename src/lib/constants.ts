@@ -103,12 +103,17 @@ export const REQUEST_CARDS: NavItem[] = [
     group: "Settings",
     groupTh: "ตั้งค่า",
     badge: "AP-4",
-    // `devHostOnly` to match its two neighbours, not because AP-4 is less
-    // finished than they are: the whole management group is dev-host-only and a
-    // single card breaking that rule would be the surprise. The page itself is
-    // reachable by URL on any host and gates on role, which is how an admin
-    // seeds `AccReimburseApprover` in production.
-    devHostOnly: true,
+    // Deliberately **not** `devHostOnly`, unlike its two neighbours.
+    //
+    // For AP-1 and AP-17 that flag is cosmetic — their approver and brand tables
+    // are populated, so hiding the card off localhost hides a page nobody needs.
+    // AP-4 ships with `AccReimburseApprover` empty, so until a System Admin adds
+    // somebody every claim stops dead at the ACCOUNT step, and migration 092
+    // seeds `AccFormBrand` with `ROCKS`, which is not one of the four brands in
+    // `src/lib/brand.ts`. Both are fixed here and nowhere else. The card was
+    // hiding the one page needed to commission the form, on the only host where
+    // commissioning happens, while the page itself is `requireRole`-gated
+    // server-side and was therefore authorized anyway.
     manage: true,
   },
   {

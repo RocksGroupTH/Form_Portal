@@ -341,7 +341,11 @@ export function checkAttachment(input: {
     if (looksLikeSvg(bytes)) {
       return { ok: false, status: 400, error: "ไม่รองรับไฟล์ SVG — กรุณาใช้ไฟล์ภาพถ่ายหรือ PDF" };
     }
-    if (looksLikeEncryptedWorkbook(bytes)) {
+    // Only where a workbook is a legal answer. An encrypted OLE container is
+    // also what a password-protected .doc looks like, and telling AP-1's image
+    // slot that its *Excel* file is protected names a file type the slot does
+    // not take in the first place.
+    if (allowedKinds.includes("spreadsheet") && looksLikeEncryptedWorkbook(bytes)) {
       return {
         ok: false,
         status: 400,
