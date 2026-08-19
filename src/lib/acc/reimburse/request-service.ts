@@ -15,8 +15,10 @@
  *    and this module resolves everything itself from `userId` via
  *    `TeamMember.Id -> Email -> HR`.
  *
- * 2. Item money is validated in two layers, not one — see the block comment
- *    above `prepareReimburseItemsForSave`.
+ * 2. Item money is validated in two layers, not one, and both of them live in
+ *    `./item-money.ts` — a module with no runtime imports, so the rules that
+ *    decide what reaches a payout figure are unit-testable without a database.
+ *    See that file's header.
  */
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { hrEmployeeTable } from "@/lib/hr/constants";
@@ -33,6 +35,7 @@ import { esc } from "@/lib/acc/email-templates";
 import { AccConflictError, SUBMIT_ALREADY_CLAIMED } from "@/lib/acc/request-errors";
 import { env } from "@/env";
 import { sumReimburseItems } from "./calc";
+import { prepareReimburseItemsForSave, validateItemMoney } from "./item-money";
 import { listActiveRules } from "./settings-service";
 import {
   AP4_FORM_CODE,
@@ -171,10 +174,19 @@ async function loadAttachments(
 
   let excelFile: ReimburseFileMeta | null = null;
   if (excelFileId) {
+    // Scoped to this request, not just to the file id. `AccReimburse.ExcelFileId`
+    // is a plain int with no guarantee it still points at a file belonging here:
+    // a stale or foreign id would otherwise render another request's filename
+    // and — worse — satisfy the `!current.excelFile` submit gate, letting a
+    // request with no workbook of its own pass the check that exists to demand one.
     const er = await pool
       .request()
       .input("id", sql.Int, excelFileId)
-      .query(`SELECT Id, FileName, FileSize, ContentType FROM [dbo].[AccRequestFile] WHERE Id=@id`);
+      .input("rid", sql.Int, requestId)
+      .query(
+        `SELECT Id, FileName, FileSize, ContentType
+         FROM [dbo].[AccRequestFile] WHERE Id=@id AND RequestId=@rid`,
+      );
     const row = er.recordset[0] as Record<string, unknown> | undefined;
     if (row) excelFile = mapFileRow(row);
   }
@@ -245,57 +257,6 @@ export async function getReimburseRequest(id: number): Promise<ReimburseDetail |
 
 /* ─────────────────────────── writes: draft / resume ─────────────────────────── */
 
-/**
- * Two-layer defense against malformed money, because Task 3's review flagged
- * that `sumReimburseItems` is a pure sum with no validation — `Number(x) || 0`
- * there cannot tell a coerced-away typo from a genuine zero.
- *
- * Layer 1 (here): `AccReimburseItem.Amount`/`VatAmount`/`WhtAmount` are
- * DECIMAL columns that cannot hold NaN/Infinity at all — something has to
- * reject or coerce a non-finite value before it ever reaches the SQL driver.
- * This rejects, with a named Thai message, rather than silently coercing with
- * `|| 0`: a malformed value can then never enter storage in the first place,
- * so it can never later be read back and mistaken for a deliberate zero. Only
- * *finiteness* is checked here — zero and negative amounts are still accepted
- * (a draft is allowed to be incomplete); the ">0" floor is a submit-time
- * business rule, not a storage-format one, and is enforced again in
- * `validateItemMoney` below, right before the total that determines payout is
- * computed. `vatAmount`/`whtAmount`, when present, must also be finite — "when
- * present" because null/undefined legitimately means "not specified", and a
- * non-finite value there is a bug, not a zero (it does not feed the total at
- * all — see calc.ts — so this check is about data integrity, not payout).
- *
- * Layer 2 (`validateItemMoney`, in the submit path below): re-checked against
- * whatever is actually in the database at submit time, so a row written by
- * some future/other caller of this table is not trusted either.
- *
- * A row with no `expenseDate` is not a row yet — the column is NOT NULL, and a
- * freshly-added, not-yet-dated grid row is UI state, not something to
- * warehouse; it is silently dropped rather than defaulted to today's date or
- * failing the whole draft save.
- */
-function prepareReimburseItemsForSave(items: ReimburseItem[]): ReimburseItem[] {
-  const dated = items.filter((it) => !!it.expenseDate);
-  return dated.map((it, i) => {
-    const lbl = rowLabel(i, dated.length);
-    const amount = Number(it.amount);
-    if (!Number.isFinite(amount)) throw new Error(amountMalformedMsg(lbl));
-
-    let vatAmount: number | null = null;
-    if (it.vatAmount !== null && it.vatAmount !== undefined) {
-      vatAmount = Number(it.vatAmount);
-      if (!Number.isFinite(vatAmount)) throw new Error(vatInvalidMsg(lbl));
-    }
-    let whtAmount: number | null = null;
-    if (it.whtAmount !== null && it.whtAmount !== undefined) {
-      whtAmount = Number(it.whtAmount);
-      if (!Number.isFinite(whtAmount)) throw new Error(whtInvalidMsg(lbl));
-    }
-
-    return { ...it, sortOrder: it.sortOrder ?? i, amount, vatAmount, whtAmount };
-  });
-}
-
 /** Wholesale replace: delete then insert. The grid has no stable client-side row identity, so a diff would be more code with more ways to be wrong. Callers must pass already-`prepareReimburseItemsForSave`d items. */
 async function persistReimburseItems(tx: AccTx, requestId: number, items: ReimburseItem[]): Promise<void> {
   await tx.request().input("rid", sql.Int, requestId).query(`DELETE FROM [dbo].[AccReimburseItem] WHERE RequestId=@rid`);
@@ -339,13 +300,15 @@ async function persistRuleAcks(tx: AccTx, requestId: number, ruleIds: number[]):
 }
 
 /**
- * Create or update a draft. Lenient about completeness — missing brand,
- * missing files, an unticked rule, an undated item row are all fine here and
- * caught only at submit — but not about item money well-formedness, which
- * `prepareReimburseItemsForSave` enforces (see its comment for why that one
- * dimension cannot wait for submit). Upserts `AccRequest` (FormCode `AP-4`)
- * and `AccReimburse`, and replaces `AccReimburseItem` / `AccReimburseRuleAck`
- * wholesale, inside one transaction. Returns the request id.
+ * Create or update a draft. Lenient about completeness — a missing brand,
+ * missing files and an unticked rule are all fine here and caught only at
+ * submit — but not about an item row, which `prepareReimburseItemsForSave`
+ * either drops (only when entirely empty) or refuses by name: a row the
+ * requester filled in must carry a date and a well-formed amount, or the save
+ * fails rather than persisting less money than was entered. See
+ * `./item-money.ts` for why neither can wait for submit. Upserts `AccRequest`
+ * (FormCode `AP-4`) and `AccReimburse`, and replaces `AccReimburseItem` /
+ * `AccReimburseRuleAck` wholesale, inside one transaction. Returns the request id.
  */
 export async function saveReimburseDraft(input: SaveInput, userId: number): Promise<number> {
   await assertFormWritable();
@@ -379,16 +342,21 @@ export async function saveReimburseDraft(input: SaveInput, userId: number): Prom
         .input("rDeptName", sql.NVarChar, requester.departmentName)
         .input("rDeptCode", sql.NVarChar, requester.departmentCode)
         .input("mgrStaff", sql.Int, requester.managerStaffId)
+        // TotalAmount is written on the insert as well as the update: every
+        // list surface reads AccRequest.TotalAmount, and omitting it here left
+        // a brand-new draft showing a null total until it happened to be saved
+        // a second time.
+        .input("total", sql.Decimal(18, 2), totalAmount)
         .query(
           `INSERT INTO [dbo].[AccRequest]
              (FormCode, BrandCode, Status, CreatedBy,
               EmployeeId, StaffId, RequesterFirstName, RequesterLastName, RequesterFullName,
               RequesterEmail, RequesterPosition, RequesterDepartmentId, RequesterDepartmentName,
-              RequesterDepartmentCode, ManagerStaffId)
+              RequesterDepartmentCode, ManagerStaffId, TotalAmount)
            OUTPUT inserted.Id AS Id
            VALUES (@form, @brand, 'Draft', @user,
               @empId, @staffId, @rFirst, @rLast, @rFull,
-              @rEmail, @rPos, @rDeptId, @rDeptName, @rDeptCode, @mgrStaff)`,
+              @rEmail, @rPos, @rDeptId, @rDeptName, @rDeptCode, @mgrStaff, @total)`,
         );
       requestId = ins.recordset[0].Id as number;
 
@@ -468,44 +436,6 @@ const ERR_NO_ITEMS = "กรุณาเพิ่มรายการค่า�
 const ERR_NO_EXCEL = "กรุณาแนบไฟล์ Excel สรุปรายการ (AP-4.1)";
 const ERR_NO_RECEIPT = "กรุณาแนบหลักฐาน (ใบเสร็จ/ใบกำกับภาษี) อย่างน้อย 1 ไฟล์";
 const ERR_RULES_NOT_ACKED = "กรุณายืนยันระเบียบการจ่าย Reimburse ให้ครบทุกข้อ";
-
-function rowLabel(index: number, total: number): string {
-  return total > 1 ? ` (แถวที่ ${index + 1})` : "";
-}
-function amountMalformedMsg(lbl: string): string {
-  return `จำนวนเงินไม่ถูกต้อง${lbl}`;
-}
-function amountNotPositiveMsg(lbl: string): string {
-  return `กรุณาระบุจำนวนเงินให้ถูกต้อง (มากกว่า 0)${lbl}`;
-}
-function vatInvalidMsg(lbl: string): string {
-  return `จำนวนภาษีมูลค่าเพิ่ม (VAT) ไม่ถูกต้อง${lbl}`;
-}
-function whtInvalidMsg(lbl: string): string {
-  return `จำนวนหัก ณ ที่จ่ายไม่ถูกต้อง${lbl}`;
-}
-
-/**
- * Layer 2 of the money check (see `prepareReimburseItemsForSave`) — run again
- * here, against whatever is actually persisted, right before the total that
- * determines payout is computed. `amount` must be a finite number greater
- * than zero; `vatAmount`/`whtAmount`, when present, must be finite.
- */
-function validateItemMoney(items: ReimburseItem[]): string[] {
-  const errs: string[] = [];
-  items.forEach((it, i) => {
-    const lbl = rowLabel(i, items.length);
-    const amount = Number(it.amount);
-    if (!Number.isFinite(amount) || amount <= 0) errs.push(amountNotPositiveMsg(lbl));
-    if (it.vatAmount !== null && it.vatAmount !== undefined && !Number.isFinite(Number(it.vatAmount))) {
-      errs.push(vatInvalidMsg(lbl));
-    }
-    if (it.whtAmount !== null && it.whtAmount !== undefined && !Number.isFinite(Number(it.whtAmount))) {
-      errs.push(whtInvalidMsg(lbl));
-    }
-  });
-  return errs;
-}
 
 /**
  * Submit-time validation (spec §5.2: fields 3, 4, 4b, 5 and every rule in 6

@@ -11,7 +11,7 @@ export interface ReimburseItem {
   /** AccReimburseItem.Id — present after save/load, absent for a row not yet persisted. */
   id?: number;
   sortOrder: number;
-  /** YYYY-MM-DD. NOT NULL in the database — a row without one is not yet a real row (see request-service.ts). */
+  /** YYYY-MM-DD. Nullable only while the grid row is still being typed: NOT NULL in the database, and a row with any other content but no date is refused at save (see lib/acc/reimburse/item-money.ts). */
   expenseDate: string | null;
   description: string;
   /** VAT-inclusive. */
