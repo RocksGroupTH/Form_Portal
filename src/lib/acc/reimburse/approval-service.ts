@@ -43,6 +43,7 @@ import { listReimburseApprovers } from "./settings-service";
 import {
   NOT_ACCOUNT_APPROVER_ERROR,
   NOT_AT_STEP_ERROR,
+  PAYMENT_DATE_NOT_A_ROUND,
   STATE_AFTER_APPROVE,
   STATUS_AT_STEP,
   STEP_ORDER,
@@ -197,6 +198,56 @@ async function notify(
     bodyHtml: mail.html,
     triggerType: trigger,
   });
+}
+
+/**
+ * A queued notification that can never fail the action that queued it.
+ *
+ * These calls sit after the commit. Left unguarded, a failed `AccEmailQueue`
+ * write propagates out of an approval that has already happened:
+ * `statusForAccError` maps the unrecognised error to 400 — the client's
+ * retryable phase — and the retry then gets the 409 the claim rightly answers
+ * with, so the user is told their approval failed and then told it is stale.
+ * Per call rather than per action, so one unreachable recipient does not cost
+ * the others their mail.
+ */
+async function notifyQuietly(
+  req: ReimburseDetail,
+  toEmail: string | null | undefined,
+  trigger: string,
+  headline: string,
+  note?: string | null,
+): Promise<void> {
+  try {
+    await notify(req, toEmail, trigger, headline, note);
+  } catch (e) {
+    console.error(
+      `[acc/reimburse/approval] queueing "${trigger}" mail for request ${req.id} failed`,
+      e,
+    );
+  }
+}
+
+/**
+ * Everything after the commit, with the same guarantee: the reads it needs
+ * (`getReimburseRequest`, the approver roster) are post-commit too, and a
+ * failure in one of those must not report the committed approval as failed
+ * either.
+ */
+async function afterCommit(
+  requestId: number,
+  fn: (req: ReimburseDetail) => Promise<void>,
+): Promise<void> {
+  try {
+    const updated = await getReimburseRequest(requestId);
+    if (!updated) return;
+    await fn(updated);
+  } catch (e) {
+    console.error(
+      `[acc/reimburse/approval] post-commit notification for request ${requestId} failed`,
+      e,
+    );
+  }
 }
 
 /** Every active approver's address, optionally minus the person who just acted. */
@@ -366,11 +417,11 @@ export async function approveReimburseManager(
     await logActivity(tx, requestId, actor.userId, "manager_approved");
   });
 
-  const updated = await getReimburseRequest(requestId);
-  if (!updated) return;
-  for (const email of await approverEmails()) {
-    await notify(updated, email, "ManagerApproved", "รอฝ่ายบัญชีตรวจสอบ");
-  }
+  await afterCommit(requestId, async (updated) => {
+    for (const email of await approverEmails()) {
+      await notifyQuietly(updated, email, "ManagerApproved", "รอฝ่ายบัญชีตรวจสอบ");
+    }
+  });
 }
 
 /* ─────────────────────────── step 2 — the accounting check ─────────────────────────── */
@@ -398,7 +449,16 @@ export async function approveReimburseAccountCheck(
 
   const validDates = await getReimbursePaymentDates();
   const dateError = paymentDateError(paymentDate, validDates);
-  if (dateError) throw new Error(dateError);
+  if (dateError) {
+    // The round list is a moving target: `getReimbursePaymentDates` drops a
+    // round once its own cut-off has passed, so a dialog left open across
+    // midnight offers a date that is no longer offered. That is staleness — the
+    // same date can never become valid again — and 400 is the client's
+    // retryable phase, which would invite a retry that cannot succeed. A missing
+    // or malformed date is a genuine bad request and keeps its 400.
+    if (dateError === PAYMENT_DATE_NOT_A_ROUND) throw new AccConflictError(dateError);
+    throw new Error(dateError);
+  }
   const chosen = paymentDate as string;
 
   const after = STATE_AFTER_APPROVE.ACCOUNT;
@@ -413,13 +473,13 @@ export async function approveReimburseAccountCheck(
     await logActivity(tx, requestId, actor.userId, "account_checked", chosen);
   });
 
-  const updated = await getReimburseRequest(requestId);
-  if (!updated) return;
-  // Everyone in the pool except the person who just checked — they are the one
-  // person the two-person rule will refuse at the final step.
-  for (const email of await approverEmails(staffId)) {
-    await notify(updated, email, "AccountChecked", "รออนุมัติขั้นสุดท้าย (บัญชี)");
-  }
+  await afterCommit(requestId, async (updated) => {
+    // Everyone in the pool except the person who just checked — they are the one
+    // person the two-person rule will refuse at the final step.
+    for (const email of await approverEmails(staffId)) {
+      await notifyQuietly(updated, email, "AccountChecked", "รออนุมัติขั้นสุดท้าย (บัญชี)");
+    }
+  });
 }
 
 /* ─────────────────────────── step 3 — the final approval ─────────────────────────── */
@@ -452,10 +512,10 @@ export async function approveReimburseFinal(
     await logActivity(tx, requestId, actor.userId, "account_final_approved");
   });
 
-  const updated = await getReimburseRequest(requestId);
-  if (!updated) return;
-  await notify(updated, updated.requesterEmail, "Approved", "อนุมัติแล้ว");
-  await notify(updated, updated.managerEmail, "Approved", "อนุมัติแล้ว");
+  await afterCommit(requestId, async (updated) => {
+    await notifyQuietly(updated, updated.requesterEmail, "Approved", "อนุมัติแล้ว");
+    await notifyQuietly(updated, updated.managerEmail, "Approved", "อนุมัติแล้ว");
+  });
 }
 
 /**
@@ -519,12 +579,16 @@ export async function rejectReimburse(
 
   await inTransaction(async (tx) => {
     if (step === "ACCOUNT_FINAL") await assertMayTakeFinalStep(tx, requestId, staffId);
-    await claimStep(tx, requestId, step, { status: "Rejected", stepCode: null });
+    // `paymentDate: null`, not omitted: `claimStep` writes the column only when
+    // the key is present, and a step-3 rejection would otherwise keep the date
+    // step 2 fixed — the rejection mail and the detail page both print
+    // "วันที่จ่าย" underneath the refusal.
+    await claimStep(tx, requestId, step, { status: "Rejected", stepCode: null, paymentDate: null });
     await closeApprovalRow(tx, requestId, step, "Rejected", staffId, actor.email, comment, false);
     await logActivity(tx, requestId, actor.userId, "rejected", comment);
   });
 
-  const updated = await getReimburseRequest(requestId);
-  if (!updated) return;
-  await notify(updated, updated.requesterEmail, "Rejected", "ไม่อนุมัติ", comment);
+  await afterCommit(requestId, async (updated) => {
+    await notifyQuietly(updated, updated.requesterEmail, "Rejected", "ไม่อนุมัติ", comment);
+  });
 }

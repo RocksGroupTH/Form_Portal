@@ -483,13 +483,40 @@ export async function listMyWorkRows(
             AND (
               (@staffId IS NOT NULL AND a.AssignedTo = @staffId)
               OR (@email <> '' AND a.AssignedEmail = @email)
+              /* AP-1's accounting queue. [dbo].[AccApprover] is AP-1's roster
+                 and every Acc* form shares this table, so without the form pin
+                 an AP-1 accountant is handed every other form's pending
+                 accounting step — and clicking one opened it over an AP-1 URL. */
               OR (
-                @staffId IS NOT NULL
+                r.FormCode = 'AP-1'
+                AND @staffId IS NOT NULL
                 AND a.StepCode = 'ACCOUNT'
                 AND a.Status = 'Pending'
                 AND EXISTS (
                   SELECT 1 FROM [dbo].[AccApprover] ap
                   WHERE ap.StaffId = @staffId AND ap.IsActive = 1
+                )
+              )
+              /* AP-4's, which answers to its own pool and has two accounting
+                 steps rather than one. Matched on StaffId first and login email
+                 second, the same two ways findActiveApprover() resolves an
+                 actor — an approver with no Rocks_Portal_HR.Employee row may
+                 act, so their queue has to find them too. */
+              OR (
+                r.FormCode = 'AP-4'
+                AND a.StepCode IN ('ACCOUNT', 'ACCOUNT_FINAL')
+                AND a.Status = 'Pending'
+                AND EXISTS (
+                  SELECT 1 FROM [dbo].[AccReimburseApprover] ra
+                  WHERE ra.IsActive = 1
+                    AND (
+                      (@staffId IS NOT NULL AND ra.StaffId = @staffId)
+                      OR (
+                        @email <> N''
+                        AND LOWER(LTRIM(RTRIM(COALESCE(ra.Email, N''))))
+                          = LOWER(LTRIM(RTRIM(@email)))
+                      )
+                    )
                 )
               )
             )

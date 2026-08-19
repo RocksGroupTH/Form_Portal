@@ -13,6 +13,8 @@ import { SidePanel, SidePanelClose } from "@/components/ui/SidePanel";
 import { RequestDetail } from "@/features/accounting/components/RequestDetail";
 import { TravelBookingDetail } from "@/features/travel-booking/components/TravelBookingDetail";
 import type { TravelBookingRequest } from "@/features/travel-booking/types";
+import { ReimburseDetail } from "@/features/reimburse/components/ReimburseDetail";
+import type { ReimburseDetail as ReimburseDetailData } from "@/features/reimburse/types";
 import { useFormEnvironments } from "@/lib/hooks/useFormEnvironments";
 import { toast } from "sonner";
 
@@ -134,6 +136,7 @@ function RequestRowList({
   const [drawerId, setDrawerId] = useState<number | null>(null);
   const [drawerDetail, setDrawerDetail] = useState<AccRequest | null>(null);
   const [tbDetail, setTbDetail] = useState<TravelBookingRequest | null>(null);
+  const [rbDetail, setRbDetail] = useState<ReimburseDetailData | null>(null);
   const [drawerFormCode, setDrawerFormCode] = useState<string | null>(null);
   const [loadingDrawer, setLoadingDrawer] = useState(false);
   const [q, setQ] = useState("");
@@ -186,19 +189,26 @@ function RequestRowList({
   }, [loadRows]);
 
   /* Detail drawer — open in a SidePanel (same view as the report/approval queue). */
-  const loadDrawer = useCallback((id: number, ap17: boolean) => {
+  // Each form's detail lives in its own tables behind its own API, and its own
+  // URL prefix is what routes the read to that form's database
+  // (`ROUTE_RULES`). Opening an AP-4 or AP-17 row over AP-1's URL would read the
+  // wrong shape and, on the action routes, run the wrong workflow.
+  const loadDrawer = useCallback((id: number, formCode: string | null) => {
     let cancelled = false;
     setLoadingDrawer(true);
-    // AP-17 (travel booking) detail lives in a different table + API than AP-1 travel expense.
-    const url = ap17
-      ? `/api/request/travel-booking/requests/${id}`
-      : `/api/request/accounting/requests/${id}`;
+    const url =
+      formCode === "AP-17"
+        ? `/api/request/travel-booking/requests/${id}`
+        : formCode === "AP-4"
+          ? `/api/request/reimburse/requests/${id}`
+          : `/api/request/accounting/requests/${id}`;
     fetch(url)
-      .then((r) => readApiJson<{ ok: boolean; data?: AccRequest | TravelBookingRequest; error?: string }>(r))
+      .then((r) => readApiJson<{ ok: boolean; data?: AccRequest | TravelBookingRequest | ReimburseDetailData; error?: string }>(r))
       .then((json) => {
         if (cancelled) return;
         if (json.ok && json.data) {
-          if (ap17) setTbDetail(json.data as TravelBookingRequest);
+          if (formCode === "AP-17") setTbDetail(json.data as TravelBookingRequest);
+          else if (formCode === "AP-4") setRbDetail(json.data as ReimburseDetailData);
           else setDrawerDetail(json.data as AccRequest);
         } else {
           toast.error(json.error ?? "โหลดรายละเอียดไม่สำเร็จ");
@@ -217,16 +227,18 @@ function RequestRowList({
     if (drawerId == null) {
       setDrawerDetail(null);
       setTbDetail(null);
+      setRbDetail(null);
       return;
     }
     setDrawerDetail(null);
     setTbDetail(null);
-    return loadDrawer(drawerId, drawerFormCode === "AP-17");
+    setRbDetail(null);
+    return loadDrawer(drawerId, drawerFormCode);
   }, [drawerId, drawerFormCode, loadDrawer]);
 
   const handleDrawerChanged = useCallback(() => {
     void loadRows();
-    if (drawerId != null) loadDrawer(drawerId, drawerFormCode === "AP-17");
+    if (drawerId != null) loadDrawer(drawerId, drawerFormCode);
   }, [loadRows, drawerId, drawerFormCode, loadDrawer]);
 
   useEffect(() => {
@@ -534,7 +546,7 @@ function RequestRowList({
         >
           <div className="min-w-0">
             <p className="text-[14px] font-bold truncate m-0" style={{ color: "var(--text-heading)" }}>
-              {drawerDetail?.requestNo ?? tbDetail?.requestNo ?? "รายละเอียดคำขอ"}
+              {drawerDetail?.requestNo ?? tbDetail?.requestNo ?? rbDetail?.requestNo ?? "รายละเอียดคำขอ"}
             </p>
             <p className="text-[11px] m-0 mt-0.5" style={{ color: "var(--text-muted)" }}>
               ตรวจสอบรายละเอียดและเอกสารแนบ
@@ -550,7 +562,9 @@ function RequestRowList({
             </div>
           ) : drawerFormCode === "AP-17" && tbDetail ? (
             <TravelBookingDetail request={tbDetail} onChanged={handleDrawerChanged} readOnlyBooking />
-          ) : drawerDetail ? (
+          ) : drawerFormCode === "AP-4" && rbDetail ? (
+            <ReimburseDetail request={rbDetail} onChanged={handleDrawerChanged} />
+          ) : drawerFormCode !== "AP-4" && drawerDetail ? (
             <RequestDetail
               request={drawerDetail}
               onChanged={handleDrawerChanged}

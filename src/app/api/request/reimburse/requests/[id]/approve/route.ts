@@ -12,7 +12,7 @@ import {
   approveReimburseFinal,
   approveReimburseManager,
 } from "@/lib/acc/reimburse/approval-service";
-import { NOT_AT_STEP_ERROR } from "@/lib/acc/reimburse/approval-policy";
+import { NOT_AT_STEP_ERROR, stepTokenRefusal } from "@/lib/acc/reimburse/approval-policy";
 import { AP4_FORM_CODE } from "@/features/reimburse/constants";
 
 /* ── POST /api/request/reimburse/requests/[id]/approve ── */
@@ -21,8 +21,13 @@ import { AP4_FORM_CODE } from "@/features/reimburse/constants";
  * Approve whichever of AP-4's three steps is currently pending.
  *
  * One endpoint rather than three, as AP-1 does: the request itself says which
- * step it is at, and letting the client name the step would make "approve the
- * step I think you are at" a thing it could get wrong — or lie about.
+ * step it is at, and the dispatch below reads that, never the body.
+ *
+ * The body does carry a `step`, and it is not the step that gets acted on — it
+ * is an optimistic-concurrency token. A client that lies about it can only ever
+ * refuse itself; a client that is merely **stale** is the real hazard, and the
+ * only one `claimStep` cannot see, because a claim asserts the state the record
+ * is in and not the state the actor was looking at. See `stepTokenRefusal`.
  *
  * The URL prefix is what routes this to AP-4's database. `ROUTE_RULES` maps
  * `/api/request/reimburse` to AP-4 and `/api/request/accounting/**` to AP-1, so
@@ -57,6 +62,17 @@ export async function POST(
     return NextResponse.json({ ok: false, error: "not found" }, { status: 404 });
   }
 
+  // Read once, after the record is authorized — an unauthorized path still
+  // parses nothing — and check the token before anything is dispatched.
+  const body = (await req.json().catch(() => ({}))) as {
+    step?: unknown;
+    paymentDate?: unknown;
+  };
+  const stale = stepTokenRefusal(body?.step, request.currentStepCode);
+  if (stale) {
+    return NextResponse.json({ ok: false, error: stale.error }, { status: stale.status });
+  }
+
   const actor = await buildAccActor(Number(session.user.id), session.user.email ?? null);
 
   try {
@@ -87,9 +103,6 @@ export async function POST(
       );
       await approveReimburseManager(id, actionActor);
     } else if (request.currentStepCode === "ACCOUNT") {
-      // The body is read only on the step that needs it, and only after the
-      // record has been authorized — an unauthorized path parses nothing.
-      const body = (await req.json().catch(() => ({}))) as { paymentDate?: unknown };
       await approveReimburseAccountCheck(id, actor, body?.paymentDate);
     } else if (request.currentStepCode === "ACCOUNT_FINAL") {
       await approveReimburseFinal(id, actor);

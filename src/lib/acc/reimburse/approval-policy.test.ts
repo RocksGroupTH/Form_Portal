@@ -1,13 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { defaultPaymentRound } from "./payment-calendar";
 import { FINAL_SAME_PERSON_ERROR } from "./two-person";
 import {
   ACCOUNT_ACTOR_UNKNOWN_ERROR,
   NOT_ACCOUNT_APPROVER_ERROR,
+  NOT_AT_STEP_ERROR,
   PAYMENT_DATE_NOT_A_ROUND,
   PAYMENT_DATE_REQUIRED,
   REJECT_COMMENT_REQUIRED,
+  STEP_TOKEN_REQUIRED,
   STATE_AFTER_APPROVE,
   STATUS_AT_STEP,
   STEP_ORDER,
@@ -19,6 +23,7 @@ import {
   isYmd,
   paymentDateError,
   rejectCommentOrError,
+  stepTokenRefusal,
   upcomingPaymentRounds,
 } from "./approval-policy";
 import type { ReimburseApproval, ReimburseApprover } from "@/features/reimburse/types";
@@ -206,4 +211,156 @@ test("the default off the real round list is the first one still in time", () =>
   assert.equal(ymd(defaultPaymentRound(new Date(2026, 7, 3, 11, 0), rounds)!), "2026-08-07");
   // Monday 13:00 — past that round's own Monday noon, so the next round.
   assert.equal(ymd(defaultPaymentRound(new Date(2026, 7, 3, 13, 0), rounds)!), "2026-08-21");
+});
+
+/* ─────────────────────── the step the actor saw (finding 2) ─────────────────────── */
+
+test("the posted step matching the record's is no refusal at all", () => {
+  assert.equal(stepTokenRefusal("MANAGER", "MANAGER"), null);
+  assert.equal(stepTokenRefusal("ACCOUNT", "ACCOUNT"), null);
+  assert.equal(stepTokenRefusal("ACCOUNT_FINAL", "ACCOUNT_FINAL"), null);
+});
+
+test("the stale accounting-check click is refused before it can take the final approval", () => {
+  // A holds the page at the check; B performs it; the record is now at
+  // ACCOUNT_FINAL. A clicks the check bar. Dispatching on the record alone would
+  // run the final approval — A is a different person, so the two-person rule
+  // passes — and record A's consent to a step A never saw.
+  assert.deepEqual(stepTokenRefusal("ACCOUNT", "ACCOUNT_FINAL"), {
+    error: NOT_AT_STEP_ERROR,
+    status: 409,
+  });
+});
+
+test("a finished request refuses any step, rather than falling through", () => {
+  assert.deepEqual(stepTokenRefusal("ACCOUNT_FINAL", null), {
+    error: NOT_AT_STEP_ERROR,
+    status: 409,
+  });
+  assert.deepEqual(stepTokenRefusal("MANAGER", undefined), {
+    error: NOT_AT_STEP_ERROR,
+    status: 409,
+  });
+});
+
+test("a missing or unrecognised token is a bad request, not a stale one", () => {
+  // 400 and a different message: NOT_AT_STEP_ERROR tells the reader to reload,
+  // which would be a lie when the body simply never carried a step.
+  for (const bad of [undefined, null, "", "account", "ACCOUNT ", 2, {}, ["ACCOUNT"]]) {
+    assert.deepEqual(
+      stepTokenRefusal(bad, "ACCOUNT"),
+      { error: STEP_TOKEN_REQUIRED, status: 400 },
+      `expected a 400 for ${JSON.stringify(bad)}`,
+    );
+  }
+});
+
+test("the token cannot widen anything — a valid step still has to be the current one", () => {
+  // The hazard the route header warns about is a client that lies. It cannot
+  // gain by it: naming a step the record is not at only refuses the caller.
+  assert.equal(stepTokenRefusal("ACCOUNT_FINAL", "ACCOUNT")?.status, 409);
+  assert.equal(stepTokenRefusal("MANAGER", "ACCOUNT")?.status, 409);
+});
+
+/* ─────────────────── AP-1's claims stay on AP-1 (finding 1) ─────────────────── */
+
+/**
+ * Source-level, because there is no other pure way to pin it.
+ *
+ * AP-4 parks a request at (Status='ManagerApproved', CurrentStepCode='ACCOUNT')
+ * — byte for byte the tuple AP-1's account approval claims. AP-1's engine and
+ * its action routes reach AccRequest by id alone, so before the pin an active
+ * AccApprover who is on no AP-4 roster could finalize an AP-4 claim through
+ * AP-1's URL: ACCOUNT_FINAL never opened, the two-person rule never run, and an
+ * AP-1 2nd/4th-Friday payment date instead of AP-4's 1st/3rd.
+ *
+ * Anything that would prove this at runtime needs a pool, and "@/lib/acc/pool"
+ * reaches "@/env", which validates the whole environment at import time — the
+ * reason this whole module is import-free. Reading the source is what is left,
+ * and the invariant is worth more than the elegance of the check.
+ */
+const SRC_ROOT = path.resolve(__dirname, "..", "..", "..");
+
+function readSrc(relative: string): string {
+  return readFileSync(path.join(SRC_ROOT, relative), "utf8");
+}
+
+/** Each "UPDATE <table> … WHERE …" in `source`, cut at the statement separator. */
+function claimsOn(source: string, table: string): string[] {
+  const opener = "UPDATE " + table;
+  const out: string[] = [];
+  let from = source.indexOf(opener);
+  while (from >= 0) {
+    const rest = source.slice(from);
+    // A claim ends at the SQL statement separator, or at the end of the
+    // template literal holding it when it is the last statement.
+    const ends = [rest.indexOf(";"), rest.indexOf(String.fromCharCode(96))].filter((i) => i >= 0);
+    out.push(rest.slice(0, ends.length ? Math.min.apply(null, ends) : rest.length));
+    from = source.indexOf(opener, from + opener.length);
+  }
+  return out;
+}
+
+test("every claim approval-engine makes on AccRequest names its FormCode", () => {
+  const engine = readSrc("lib/acc/approval-engine.ts");
+  const claims = claimsOn(engine, "[dbo].[AccRequest]");
+  // approveManager, approveAccount, reject, returnForEdit, cancelByRequester.
+  assert.equal(claims.length, 5, "approval-engine should hold five AccRequest claims");
+  for (const claim of claims) {
+    assert.ok(claim.indexOf("WHERE") > 0, "an AccRequest UPDATE with no WHERE at all");
+    assert.ok(
+      claim.indexOf("FormCode=@form") > 0,
+      "an AccRequest claim with no FormCode predicate: " + claim,
+    );
+  }
+});
+
+test("AP-1's action routes authorize against an AP-1 row, not any row", () => {
+  for (const route of ["approve", "reject", "return", "submit"]) {
+    const src = readSrc("app/api/request/accounting/requests/[id]/" + route + "/route.ts");
+    const opener = "authorizeAccRequest(";
+    let from = src.indexOf(opener);
+    assert.ok(from > 0, route + "/route.ts calls no object ACL at all");
+    while (from >= 0) {
+      const call = src.slice(from, src.indexOf(")", from) + 1);
+      assert.ok(
+        call.indexOf("AP1_FORM_CODE") > 0,
+        route + "/route.ts: unpinned gate " + call,
+      );
+      from = src.indexOf(opener, from + opener.length);
+    }
+  }
+});
+
+/* ───────────── the accounting queues do not cross forms (finding 3) ───────────── */
+
+test("My Work asks each form's own approver roster", () => {
+  const report = readSrc("lib/acc/report-service.ts");
+  const start = report.indexOf("export async function listMyWorkRows");
+  const end = report.indexOf("export async function queryReport");
+  assert.ok(start > 0 && end > start, "could not locate listMyWorkRows");
+  const myWork = report.slice(start, end);
+
+  // AP-1's roster answers for AP-1 only. It used to answer for every form, so
+  // an AP-1 accountant was handed every pending AP-4 accounting step — and
+  // clicking one opened it over an AP-1 URL, which is the id handover the pin
+  // above closes.
+  const ap1 = myWork.indexOf("r.FormCode = 'AP-1'");
+  assert.ok(ap1 > 0, "the AccApprover sub-select is not pinned to AP-1");
+  assert.ok(
+    myWork.indexOf("[dbo].[AccApprover]", ap1) > ap1,
+    "the AP-1 pin does not sit in front of the AccApprover sub-select",
+  );
+
+  // …and AP-4's own pool answers for AP-4, at both of its accounting steps.
+  const ap4 = myWork.indexOf("r.FormCode = 'AP-4'");
+  assert.ok(ap4 > 0, "My Work has no AP-4 clause");
+  assert.ok(
+    myWork.indexOf("[dbo].[AccReimburseApprover]", ap4) > ap4,
+    "the AP-4 clause does not consult AccReimburseApprover",
+  );
+  assert.ok(
+    myWork.indexOf("'ACCOUNT', 'ACCOUNT_FINAL'", ap4) > ap4,
+    "the AP-4 clause leaves ACCOUNT_FINAL in nobody's queue",
+  );
 });

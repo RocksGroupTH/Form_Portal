@@ -5,6 +5,7 @@ import { returnForEdit } from "@/lib/acc/approval-engine";
 import { buildAccActor, resolveAccActorForAction } from "@/lib/acc/actor-context";
 import { canActManagerApi, MANAGER_AUTH_ERROR } from "@/lib/acc/manager-auth";
 import { authorizeAccRequest } from "@/lib/acc/request-acl";
+import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import { getRequestHost } from "@/lib/acc/erp-environment";
 import { processQueue } from "@/lib/acc/email-queue";
 
@@ -25,7 +26,9 @@ export async function POST(
 
   // Reaching the record at all: owner, assigned manager or accounting area —
   // and, on a UAT id, an active tester. See `request-acl-policy`.
-  const gate = await authorizeAccRequest(session, id, "read");
+  // AP-1 only — a foreign form's id 404s rather than being actioned through
+  // AP-1's workflow. See the approve route for why.
+  const gate = await authorizeAccRequest(session, id, "read", AP1_FORM_CODE);
   if (gate instanceof Response) return gate;
 
   const accReq = await getRequest(id);

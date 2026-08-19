@@ -8,7 +8,11 @@ import { processQueue } from "@/lib/acc/email-queue";
 import { statusForAccError } from "@/lib/acc/request-errors";
 import { getReimburseRequest } from "@/lib/acc/reimburse/request-service";
 import { rejectReimburse } from "@/lib/acc/reimburse/approval-service";
-import { NOT_AT_STEP_ERROR, isReimburseStepCode } from "@/lib/acc/reimburse/approval-policy";
+import {
+  NOT_AT_STEP_ERROR,
+  isReimburseStepCode,
+  stepTokenRefusal,
+} from "@/lib/acc/reimburse/approval-policy";
 import { AP4_FORM_CODE } from "@/features/reimburse/constants";
 
 /* ── POST /api/request/reimburse/requests/[id]/reject ── */
@@ -17,10 +21,15 @@ import { AP4_FORM_CODE } from "@/features/reimburse/constants";
  * Reject at whichever of AP-4's three steps is pending. A rejection ends the
  * request: `Rejected`, `CurrentStepCode` cleared, the reason on the timeline.
  *
- * The step comes from the record, never from the body, for the same reason the
- * approve route works that way. The **reason** does come from the body, and the
- * service refuses an empty one — see `rejectReimburse`; the dialog's disabled
- * button is a courtesy, not the control.
+ * The step acted on comes from the record, never from the body, for the same
+ * reason the approve route works that way. The body's `step` is a staleness
+ * token and nothing else (`stepTokenRefusal`): the outcome of a stale rejection
+ * is harmless — the request ends either way — but the step it is *recorded*
+ * against would be the wrong one, and the timeline is the audit trail.
+ *
+ * The **reason** does come from the body, and the service refuses an empty one —
+ * see `rejectReimburse`; the dialog's disabled button is a courtesy, not the
+ * control.
  */
 export async function POST(
   req: NextRequest,
@@ -48,6 +57,12 @@ export async function POST(
     return NextResponse.json({ ok: false, error: NOT_AT_STEP_ERROR }, { status: 409 });
   }
 
+  const body = (await req.json().catch(() => ({}))) as { step?: unknown; comment?: unknown };
+  const stale = stepTokenRefusal(body?.step, step);
+  if (stale) {
+    return NextResponse.json({ ok: false, error: stale.error }, { status: stale.status });
+  }
+
   const actor = await buildAccActor(Number(session.user.id), session.user.email ?? null);
 
   if (step === "MANAGER") {
@@ -70,7 +85,6 @@ export async function POST(
   }
 
   try {
-    const body = (await req.json().catch(() => ({}))) as { comment?: unknown };
     const actionActor =
       step === "MANAGER"
         ? await resolveAccActorForAction(actor, session.user.role, request.managerStaffId)

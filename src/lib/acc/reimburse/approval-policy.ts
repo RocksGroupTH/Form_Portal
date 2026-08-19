@@ -29,6 +29,14 @@ export const NOT_ACCOUNT_APPROVER_ERROR =
 export const NOT_AT_STEP_ERROR =
   "คำขอนี้ไม่ได้อยู่ในขั้นตอนที่ดำเนินการได้แล้ว — กรุณาโหลดหน้านี้ใหม่";
 
+/**
+ * The body carried no usable step token. A malformed request, not a stale one —
+ * so it is 400 and says something different from `NOT_AT_STEP_ERROR`, which
+ * tells the user to reload and would be a lie here.
+ */
+export const STEP_TOKEN_REQUIRED =
+  "คำขอไม่ถูกต้อง — ไม่ได้ระบุขั้นตอนที่ต้องการดำเนินการ";
+
 export const PAYMENT_DATE_REQUIRED = "กรุณาเลือกวันที่จ่าย";
 
 /** A date the picker would never have offered — see `getReimbursePaymentDates`. */
@@ -197,6 +205,41 @@ export function finalStepRefusal(
 }
 
 /* ─────────────────────────── inputs off the wire ─────────────────────────── */
+
+/**
+ * Whether the step the client acted on is still the step the record is at.
+ *
+ * This is **not** trusting a client-named step: the route still dispatches on
+ * the record's own `CurrentStepCode`, and `claimStep` still claims it inside the
+ * transaction. What the posted value adds is the one thing neither of those can
+ * supply — `claimStep` claims the state the record *is in*, never the state the
+ * actor *saw*, so a durable staleness is invisible to it.
+ *
+ * The failure it closes: AP-4's manager approval mails the whole active approver
+ * pool, so two approvers holding the same request open at `ACCOUNT` is the
+ * designed flow, and the detail page fetches on mount and on demand only — no
+ * polling, no focus revalidation. B performs the accounting check; the record
+ * moves to `ACCOUNT_FINAL`. A's tab still shows the check bar. A clicks it,
+ * confirms a payment date, and the route dispatches on the *current* step —
+ * taking the final approval that authorises payment. A is entitled to it and the
+ * audit row names A truthfully; what is missing is A's consent to that step. A's
+ * payment date is discarded unread and the toast tells A they recorded a check.
+ *
+ * Answered as an optimistic-concurrency token: 409 on mismatch, before anything
+ * is dispatched and before anything is written.
+ */
+export function stepTokenRefusal(
+  postedStep: unknown,
+  currentStep: unknown,
+): { error: string; status: 400 | 409 } | null {
+  if (!isReimburseStepCode(postedStep)) {
+    return { error: STEP_TOKEN_REQUIRED, status: 400 };
+  }
+  if (postedStep !== currentStep) {
+    return { error: NOT_AT_STEP_ERROR, status: 409 };
+  }
+  return null;
+}
 
 /** The rejection reason, or the message refusing an absent one. Never both. */
 export function rejectCommentOrError(

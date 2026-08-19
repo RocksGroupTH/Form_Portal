@@ -9,6 +9,7 @@ import { resolveLoginEmail } from "@/lib/auth-email";
 import { resolveFormEnvironment } from "@/lib/form-environment";
 import { getAccPool } from "@/lib/acc/pool";
 import { authorizeAccRequest } from "@/lib/acc/request-acl";
+import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import { statusForAccError } from "@/lib/acc/request-errors";
 import { sql } from "@/lib/db/mssql";
 
@@ -31,7 +32,10 @@ export async function POST(
   // used to submit whatever id it was handed: `submitRequest` checked the
   // status but never `CreatedBy`, so any authenticated session could submit
   // somebody else's draft — under that person's name, to that person's manager.
-  const gate = await authorizeAccRequest(session, id, "mutate");
+  // AP-1 only — see the approve route. Without it an AP-4 draft could be
+  // submitted through AP-1's route, taking an AP-1 running number and skipping
+  // AP-4's own submit validation.
+  const gate = await authorizeAccRequest(session, id, "mutate", AP1_FORM_CODE);
   if (gate instanceof Response) return gate;
 
   try {

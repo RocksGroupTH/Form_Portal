@@ -87,6 +87,31 @@ function fmtMoney(n: number | null | undefined): string {
   return fmtBaht(n);
 }
 
+/**
+ * What to show for an error the action routes returned.
+ *
+ * Their named refusals are Thai and worth showing as-is — "the request already
+ * moved", "you are the same person who checked it". The generic ones are not:
+ * `not found` and `Internal server error` are the framework's English and reach
+ * a Thai UI as a toast the reader cannot act on.
+ */
+const ACTION_ERROR_TH: Record<string, string> = {
+  "not found": "ไม่พบคำขอนี้ — อาจถูกลบหรือเปลี่ยนสถานะไปแล้ว กรุณาโหลดหน้านี้ใหม่",
+  "Invalid id": "เลขที่คำขอไม่ถูกต้อง",
+  "Internal server error": "เกิดข้อผิดพลาดในระบบ กรุณาลองใหม่อีกครั้ง",
+};
+
+function actionErrorMessage(raw: string | null | undefined): string {
+  const msg = raw?.trim();
+  if (!msg) return "ดำเนินการไม่สำเร็จ";
+  const named = ACTION_ERROR_TH[msg];
+  if (named) return named;
+  // No Thai in it at all means it did not come from one of the named refusals
+  // this page exists to relay.
+  if (!/[\u0E00-\u0E7F]/.test(msg)) return "ดำเนินการไม่สำเร็จ — กรุณาโหลดหน้านี้ใหม่";
+  return msg;
+}
+
 async function jsonFetcher<T>(url: string): Promise<T> {
   const res = await fetch(url);
   const json = await res.json();
@@ -100,6 +125,18 @@ const STEP_LABEL: Record<ReimburseStepCode, string> = {
   ACCOUNT: "บัญชี",
   ACCOUNT_FINAL: "บัญชี (อนุมัติขั้นสุดท้าย)",
 };
+
+/**
+ * The chain the request will walk, in order — the timeline's skeleton.
+ *
+ * `AccApproval` rows are opened one step at a time, so drawing only the rows
+ * that exist shows all three steps only once the request has reached the last
+ * of them. The brief asks for the three steps; the rows are overlaid onto this.
+ *
+ * Declared here rather than derived from `approval-policy`'s `STEP_ORDER`: that
+ * module may only be imported as a type from this file (see the import above).
+ */
+const STEP_SEQUENCE: readonly ReimburseStepCode[] = ["MANAGER", "ACCOUNT", "ACCOUNT_FINAL"];
 
 /**
  * What approving is called at each step. The accounting check is not simply "an
@@ -318,6 +355,22 @@ export function ReimburseDetail({
   // figure below the table cannot drift from the stored header total.
   const itemsTotal = sumReimburseItems(request.items);
   const approvals = (request.approvals ?? []).slice().sort((a, b) => a.stepOrder - b.stepOrder);
+  // The three steps in order, each carrying its row if one has been opened yet.
+  // A step with no row is still drawn — greyed, with no actor — so the chain the
+  // request has to walk is visible from the first approval rather than only
+  // after the last one.
+  // A rejection ends the request, so its unopened steps were not "not yet" —
+  // they will never happen, and saying otherwise reads as a stuck workflow.
+  const chainStopped = request.status === "Rejected" || request.status === "Cancelled";
+  const timeline: { key: string; stepCode: ReimburseStepCode; approval: ReimburseApproval | null }[] = [];
+  for (const code of STEP_SEQUENCE) {
+    const rows = approvals.filter((a) => a.stepCode === code);
+    if (rows.length === 0) {
+      timeline.push({ key: `step-${code}`, stepCode: code, approval: null });
+    } else {
+      for (const a of rows) timeline.push({ key: `row-${a.id}`, stepCode: code, approval: a });
+    }
+  }
 
   /* ── What this viewer may do, answered by the server ── */
 
@@ -326,6 +379,12 @@ export function ReimburseDetail({
   const [comment, setComment] = useState("");
   const [paymentDate, setPaymentDate] = useState("");
   const [busy, setBusy] = useState(false);
+  // Bumped when an action is refused. The payment rounds expire on a clock the
+  // page does not watch — a round drops out of `getReimbursePaymentDates` once
+  // its cut-off passes — so a refusal is the one moment the answers on screen
+  // are known to be out of date, and `request` has not changed to trigger the
+  // refetch below.
+  const [ctxNonce, setCtxNonce] = useState(0);
 
   // Re-asked whenever the request moves, not just on mount: after an approval
   // the step has changed and the previous answer describes a step that is over.
@@ -341,7 +400,7 @@ export function ReimburseDetail({
     return () => {
       cancelled = true;
     };
-  }, [request.id, request.currentStepCode, request.status, request.updatedAt]);
+  }, [request.id, request.currentStepCode, request.status, request.updatedAt, ctxNonce]);
 
   // The picker opens on the round the server chose with `defaultPaymentRound`,
   // and the approver may pick any other valid round instead (spec §3.4).
@@ -374,8 +433,16 @@ export function ReimburseDetail({
       const res = await fetch(`/api/request/reimburse/requests/${request.id}/${kind}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        // `step` is an optimistic-concurrency token, not an instruction: the
+        // route dispatches on the record's own step and 409s when this does not
+        // match it. Without it a tab left open at the accounting check while
+        // somebody else performs that check will, on the next click, take the
+        // final approval instead — the step that authorises payment — and say
+        // "บันทึกการตรวจสอบแล้ว" while doing it.
         body: JSON.stringify(
-          kind === "approve" ? { paymentDate: needsPaymentDate ? paymentDate : undefined } : { comment: comment.trim() },
+          kind === "approve"
+            ? { step, paymentDate: needsPaymentDate ? paymentDate : undefined }
+            : { step, comment: comment.trim() },
         ),
       });
       const json: { ok: boolean; error?: string } = await res.json();
@@ -384,9 +451,11 @@ export function ReimburseDetail({
         closeDialog();
         onChanged?.();
       } else {
-        // The route's message is the named one — "the request already moved",
-        // "you are the same person who checked it" — and is worth showing as-is.
-        toast.error(json.error ?? "ดำเนินการไม่สำเร็จ");
+        // The route's named refusals are Thai and shown as-is; the framework's
+        // English ones are translated. Either way the context is re-asked: what
+        // the page is offering is now known to be stale.
+        toast.error(actionErrorMessage(json.error));
+        setCtxNonce((n) => n + 1);
       }
     } catch {
       toast.error("เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง");
@@ -460,8 +529,40 @@ export function ReimburseDetail({
           )}
 
           <div className="flex flex-col gap-0">
-            {approvals.map((a, idx) => {
-              const isLast = idx === approvals.length - 1;
+            {timeline.map((entry, idx) => {
+              const isLast = idx === timeline.length - 1;
+              const a = entry.approval;
+              if (!a) {
+                return (
+                  <div key={entry.key} className="flex gap-3">
+                    <div className="flex flex-col items-center">
+                      <div
+                        className="w-7 h-7 rounded-full flex items-center justify-center shrink-0"
+                        style={{
+                          background: "var(--bg-badge)",
+                          color: "var(--text-faint)",
+                          border: "1px dashed var(--border-card)",
+                        }}
+                      >
+                        <Clock size={13} />
+                      </div>
+                      {!isLast && (
+                        <div className="w-px flex-1 my-1" style={{ background: "var(--border-light)", minHeight: 16 }} />
+                      )}
+                    </div>
+                    <div className="flex-1 pb-4 min-w-0">
+                      <div className="mb-0.5">
+                        <span className="text-[13px] font-medium" style={{ color: "var(--text-faint)" }}>
+                          {STEP_LABEL[entry.stepCode]}
+                        </span>
+                      </div>
+                      <p className="text-[11px] m-0" style={{ color: "var(--text-faint)" }}>
+                        {chainStopped ? "ไม่ได้ดำเนินการ" : "ยังไม่ถึงขั้นตอนนี้"}
+                      </p>
+                    </div>
+                  </div>
+                );
+              }
               const dot =
                 a.status === "Approved"
                   ? { background: "var(--bg-info-green)", color: "var(--text-info-green)", border: "1px solid var(--border-info-green)" }
@@ -472,7 +573,7 @@ export function ReimburseDetail({
                       : { background: "var(--bg-badge)", color: "var(--text-muted)", border: "1px solid var(--border-card)" };
               const actor = approvalActorLabel(a);
               return (
-                <div key={a.id} className="flex gap-3">
+                <div key={entry.key} className="flex gap-3">
                   <div className="flex flex-col items-center">
                     <div
                       className="w-7 h-7 rounded-full flex items-center justify-center shrink-0"

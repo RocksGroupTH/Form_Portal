@@ -33,6 +33,8 @@ export interface MyWorkRowInput extends NextApprovalInput {
   managerStaffId?: number | null;
   managerEmail?: string | null;
   viewerManagerApproved?: boolean;
+  /** Which form the row belongs to — AP-4's accounting steps bucket differently. */
+  formCode?: string | null;
 }
 
 function viewerIsRequestManager(
@@ -69,6 +71,19 @@ export function getMyWorkStatusBucket(
   if (status === "ManagerApproved") {
     if (row.viewerManagerApproved || viewerIsRequestManager(row, viewer)) {
       return "Approved";
+    }
+    // AP-4 answers to its own approver pool (`AccReimburseApprover`), not the
+    // `AccApprover` roster `viewer.isAccountApprover` reports on, and it has two
+    // accounting steps rather than one. `listMyWorkRows` hands a viewer an AP-4
+    // row with a pending accounting step only when they are on that pool, so the
+    // list query is the authority here — the same way `viewerManagerApproved`
+    // above is trusted rather than recomputed. Inert for the other two forms:
+    // neither is FormCode 'AP-4', and neither ever produces ACCOUNT_FINAL.
+    if (
+      row.formCode === "AP-4" &&
+      (pending === "ACCOUNT" || pending === "ACCOUNT_FINAL")
+    ) {
+      return "pending";
     }
     if (pending === "ACCOUNT" && viewer.isAccountApprover) {
       return "pending";
