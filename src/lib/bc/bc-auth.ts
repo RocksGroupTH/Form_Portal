@@ -1,5 +1,7 @@
 /** Business Central OAuth2 token requests (server-only). */
 
+import { assertApiDestination, assertOAuthDestination } from "@/lib/bc/bc-destination";
+
 export interface BcTokenResult {
   accessToken: string;
   refreshToken?: string;
@@ -45,10 +47,14 @@ export async function requestBcOAuthToken(input: BcTokenRequest): Promise<BcToke
     body.set("scope", input.scope.trim());
   }
 
-  const res = await fetch(input.oauthUrl.trim(), {
+  // The body above carries the client secret, and on the password grant a real
+  // account password. Prove the destination is an approved one before it goes
+  // anywhere, and refuse to follow a redirect off it.
+  const res = await fetch(assertOAuthDestination(input.oauthUrl), {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
+    redirect: "error",
   });
 
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
@@ -78,10 +84,13 @@ export async function refreshBcOAuthToken(input: {
   body.set("refresh_token", input.refreshToken);
   if (input.scope?.trim()) body.set("scope", input.scope.trim());
 
-  const res = await fetch(input.oauthUrl.trim(), {
+  // Same destination rule as the initial grant — this body carries the client
+  // secret and a refresh token.
+  const res = await fetch(assertOAuthDestination(input.oauthUrl), {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
+    redirect: "error",
   });
 
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
@@ -150,13 +159,16 @@ function formatBcApiError(status: number, text: string): string {
 
 /** Probe BC API with Bearer token (GET companies on resolved BaseUrl). */
 export async function testBcApiAccess(baseUrl: string, accessToken: string): Promise<void> {
-  const url = resolveBcTestUrl(baseUrl);
+  // `resolveBcTestUrl` ends with a bare `return url` for anything it does not
+  // recognise, so the bearer token used to go wherever `baseUrl` pointed.
+  const url = assertApiDestination(resolveBcTestUrl(baseUrl));
   const res = await fetch(url, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${accessToken}`,
       Accept: "application/json",
     },
+    redirect: "error",
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");

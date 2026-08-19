@@ -253,6 +253,14 @@ export interface TravelBookingDraftSummary {
  * save-draft/submit. Server-derived fields (names resolved from ids, requester
  * snapshot, isContinuation, perDiem*, paymentDate, submittedAt, requestNo, status,
  * approvals, bookingDetails) are omitted; the server fills those in.
+ *
+ * **The `needs*` booleans below are sent but ignored.** They are still on the
+ * type because the form computes them to drive its own conditional inputs, and
+ * because the same object shape round-trips through the draft. The server
+ * re-derives every one of them from the selected accommodation, vehicle and
+ * rent-vehicle rows on each save — see `@/lib/acc/travel-booking/derive-flags`
+ * for what they decide and why trusting them let a request with a hotel booking
+ * auto-complete without one.
  */
 export interface SaveTravelBookingInput {
   /** AccRequest.Id — present when updating an existing tab within a draft group. */

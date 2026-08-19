@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start -p 3081",
     "apply-sql": "tsx scripts/apply-sql.ts",
-    "test": "tsx --test src/lib/form-environment/classify-path.test.ts src/lib/form-environment/uat-identity.test.ts src/lib/form-environment/current-rows.test.ts src/lib/form-environment/pick-environment.test.ts src/lib/form-environment/coming-soon.test.ts src/lib/form-environment/viewer-list-environment.test.ts src/lib/form-environment/environment-writable.test.ts src/lib/form-environment/request-id.test.ts src/lib/form-environment/uat-switch-url.test.ts src/lib/form-environment/viewer-controls.test.ts src/lib/uat-mode.test.ts src/lib/acc/uat-mail-exempt.test.ts src/lib/acc/setting-scope.test.ts src/features/accounting/lib/erp-send-batch.test.ts src/lib/team-member/service.test.ts",
+    "test": "tsx scripts/run-tests.ts",
     "check:alignment": "tsx scripts/checks/verify-master-alignment.ts"
   },
   "dependencies": {

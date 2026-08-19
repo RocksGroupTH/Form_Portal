@@ -1,15 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { resolveLoginEmail } from "@/lib/auth-email";
-import { resolveEmployeeForActor } from "@/lib/hr/employee-lookup";
+import { findActiveEmployeeByEmail, resolveEmployeeForActor } from "@/lib/hr/employee-lookup";
 import { setSetting } from "@/lib/acc/settings-service";
+import { decideIdCardConsentWrite } from "@/lib/acc/travel-booking/id-card-access";
 import { idCardReuseConsentKey } from "@/features/travel-booking/constants";
 
 /**
  * POST /api/request/travel-booking/id-card/consent  body: { requesterStaffId?, consent: boolean }
- * Records whether the requester (ผู้ขอเบิก — self, or a same-department colleague) allows their ID
- * card to be reused on future requests. Stored per requester HR StaffId — no saved request needed,
- * so it can be answered the moment a card is picked on a brand-new trip.
+ *
+ * Records whether the **signed-in employee** allows their own ID card to be
+ * reused on their future requests. Stored per HR StaffId — no saved request
+ * needed, so it can be answered the moment a card is picked on a brand-new trip.
+ *
+ * `requesterStaffId` is still accepted, because the form posts it, but it may
+ * now only name the caller. It used to be resolved through
+ * `resolveEmployeeForActor`, which authorizes an on-behalf target by shared
+ * department — so a colleague could record consent for someone else's national-
+ * ID scan and then, through `id-card/previous`, read it. Consent given by
+ * another person is not consent; see `@/lib/acc/travel-booking/id-card-access`.
  */
 export async function POST(req: NextRequest) {
   const session = await requireAuth();
@@ -25,10 +34,28 @@ export async function POST(req: NextRequest) {
     const loginEmail = resolveLoginEmail(session.user, null, { email: session.user.email });
     if (!loginEmail) return NextResponse.json({ ok: false, error: "No login email" }, { status: 400 });
 
-    // `forWrite` because this POST persists: it is the only id-card route that
-    // writes, and without the flag a tester in UAT could record a consent keyed
-    // to a non-tester colleague's StaffId.
-    const emp = await resolveEmployeeForActor(loginEmail, requesterStaffId, { forWrite: true });
+    const actor = (await findActiveEmployeeByEmail(loginEmail)).employee;
+    if (!actor) {
+      return NextResponse.json(
+        { ok: false, error: "ไม่พบข้อมูลพนักงานของคุณในระบบ HR" },
+        { status: 403 },
+      );
+    }
+
+    const verdict = decideIdCardConsentWrite({
+      actorStaffId: actor.staffId,
+      subjectStaffId: requesterStaffId,
+    });
+    if (!verdict.ok) {
+      return NextResponse.json({ ok: false, error: verdict.error }, { status: verdict.status });
+    }
+
+    // `forWrite` because this POST persists: without the flag a tester in UAT
+    // could record a consent into the UAT database for a StaffId outside the
+    // tester list. The target is the caller themself, so the on-behalf branch
+    // of this resolver never runs — it is here for the UAT membership check.
+    const emp = await resolveEmployeeForActor(loginEmail, null, { forWrite: true });
+
     // Keyed on HR StaffId (matches AccRequest.StaffId) — NOT emp.id, which is the Employee GUID.
     //
     // `ap17.idcard.reuse.` is excluded from AccSetting's dual-write

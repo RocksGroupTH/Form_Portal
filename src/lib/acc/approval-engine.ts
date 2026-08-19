@@ -11,6 +11,19 @@ export interface Actor {
   userId: number;
   email: string | null;
   staffId: number | null;
+  /**
+   * Set when an IT/System Admin is actioning AP-17's manager step in place of
+   * the assigned manager, carrying that manager's HR StaffId.
+   *
+   * AP-17's approve/reject/return routes permit an admin to action the manager
+   * step (AP-1's shared guard deliberately does not). That is kept, but it used
+   * to leave no trace of itself: the approval row and the activity log recorded
+   * an approval by somebody who is not the assigned manager, with nothing to say
+   * why, so the audit trail read as an unexplained anomaly. When this is set the
+   * engine writes an extra activity-log line naming the real actor and the
+   * manager they stood in for.
+   */
+  onBehalfOfManagerStaffId?: number | null;
 }
 
 /** Queue an email built from the current request state to one recipient. */

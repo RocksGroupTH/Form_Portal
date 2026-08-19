@@ -11,6 +11,12 @@ cp .env.example .env.local   # Fill in credentials
 npm run dev                   # http://localhost:3081
 ```
 
+`npm test` **discovers** its own files: `scripts/run-tests.ts` walks `src/` for
+`*.test.ts` and hands them to `tsx --test`. `package.json` used to list every
+file by hand, so adding a test and forgetting to list it produced a green run
+that had never executed it. Pass paths to run a subset:
+`npm test -- src/lib/storage.test.ts`.
+
 Two things about this build that look like faults and are not:
 
 - **`experimental.cpus: 1`** (`next.config.mjs`) holds build and static generation to a single worker instead of one per core — `next build` reports "using 1 worker". Builds are slower on purpose; raise or drop the key to get the cores back.
@@ -44,7 +50,8 @@ Production and UAT run **side by side in one deployment**. There is no app-wide 
 
 **Resolution order** (`src/lib/form-environment/`), in this order:
 
-1. **The record's id wins.** UAT transactional identities start at 900000 (`isUatId`, `uat-identity.ts`), so a bare id names its own database — that is what lets a non-tester manager open and approve a tester's UAT request. Bounded by `boundIdEnvironment`: a **UAT** id is honoured only while the form still has `UatEnabled`, or the viewer is a tester in UAT mode, so switching UAT off actually closes it. A **Production** id is never bounded.
+1. **The record's id wins.** UAT transactional identities start at 900000 (`isUatId`, `uat-identity.ts`), so a bare id names its own database. Bounded by `boundIdEnvironment`: a **UAT** id is honoured only while the form still has `UatEnabled`, or the viewer is a tester in UAT mode, so switching UAT off actually closes it. A **Production** id is never bounded.
+   **Selecting a database is not authorization.** An id ≥ 900000 routes the request to `Rocks_Portal_Form_UAT`; whether the person asking may read or act on what it finds is then decided separately by `decideRequestRead` / `decideRequestMutate` (`src/lib/acc/request-acl-policy.ts`), which refuse **anyone who is not an active `UatTester`** on a UAT record — with a 404, so the record's existence is not confirmed either. That restores the rule the design spec states and the routes did not enforce: *the whole approval chain of a UAT request stays inside the tester group* (`docs/superpowers/specs/2026-08-18-parallel-uat-design.md`). Nothing legitimate is lost — a tester's UAT manager is already required to be an active tester — but at least one `AccApprover` must be on the tester list or UAT requests stall at the ACCOUNT step, which the UAT Users page says out loud. It is **membership, not the cookie**: a tester with UAT mode off still reaches a UAT record by id, which is what makes their own test work openable from a link.
 2. **The viewer's UAT mode** — cookie **and** live `getActiveUatTester()` membership, re-checked on every resolve (`viewerIsTesting`). The cookie alone is a forgeable hint.
 3. **The form's switches** — `pickEnvironment` picks the one switch that answers for this viewer.
 
@@ -56,6 +63,9 @@ Since migration 066 that is a hard constraint, not a preference: `auth()` no lon
 - **The manager differs by environment.** UAT routes to the requester's `UatTester.ManagerStaffId`, re-verified at submit time (still an active tester, still active in HR — self is allowed); Production reads `Rocks_Portal_HR.Employee.ManagerStaffId`. **UAT refuses rather than falling back to HR** — a real manager must never find test data in their queue. Three resolvers, keyed on the *resolved environment* and never on the cookie: `resolveManagerInfo()` (the preview card, shared), and a separate `withUatManager` for each form's submit — `resolveRequesterForActor` in `src/lib/acc/employee-context.ts` (AP-1) and `resolveEmployeeForActor` in `src/lib/hr/employee-lookup.ts` (AP-17). `resolveManagerEmail()` is deliberately *not* overridden.
 - **Mail follows the resolved environment**, with one exception: a recipient who is an **active tester gets the mail at their real address** with a `[UAT] ` subject prefix. Everyone else is redirected to `UAT_MAIL_REDIRECT` (falling back to `GRAPH_MAIL_FROM`) with a banner naming the intended recipient. If neither is set, `applyUatRedirect` (`src/lib/acc/email-queue.ts`) throws and the row stays queued rather than mailing a real person. The sweep endpoint drains both databases (`processQueueBoth`); per-action drains are single-pool.
 - **Business Central follows the same resolution**: `resolveEffectiveErpEnvironment()` (`src/lib/acc/erp-environment.ts`) maps UAT → Sandbox, otherwise Production. No separate ERP toggle — the navbar chip and the global `AppSetting` switch were removed on 2026-08-17. Which BC company and connection Sandbox uses is set at Settings → ERP Interface Environment. **The send echoes and verifies both its environment and its batch**, answering 409 on either drift (`ENVIRONMENT_STALE_ERROR` in the route, `ErpQueueDriftError` from `src/lib/acc/erp-interface-send.ts`) so the client reloads instead of retrying something that cannot succeed.
+- **The send claims the batch atomically, and an unknown remote outcome is never retried.** Both properties were missing until 2026-08-19 and either one costs duplicated financial journals:
+  - `claimRequestsForSend` takes the whole exact id set in one conditional `UPDATE` inside a transaction and requires `rowsAffected === requestIds.length`; a partial or zero claim rolls back and answers 409 **before** any external I/O. What it replaces read the statuses, then marked rows Pending one at a time with a conditional predicate whose row count was discarded — so two clicks on the same ready batch both passed and both posted.
+  - the outcome is classified rather than assumed. `BcJournalPostError.definitelyRejected` (4xx — BC refused, nothing created) releases the claim to retryable `Failed`. A 5xx, a timeout or a dropped connection, and a BC success whose local `Sent` write then fails, both go to `holdForReconciliation`: the rows stay **`Pending`** with the reason in `ErpInterfaceError` and an `erp_interface_unknown` activity row, and the pre-send check refuses `Pending` outright, so nothing posts them again until a person has looked in BC. The route answers 409 (`ErpReconciliationRequiredError`) rather than 400's retry affordance. `Pending` is used as the reconciliation state because `CK_AccRequest_ErpInterfaceStatus` permits only Pending/Sent/Failed — a new value would need a migration applied to both databases before the code could ship.
 - **ERP Prep is classified `AP-1`, not `BOTH`**: it is the only path that posts to BC, and the send reads its rows from a single pool. While AP-1 resolves UAT for you, the prep queue you see is the UAT queue.
 - **Process-global caches are environment-keyed.** `src/lib/acc/acc-cache.ts` is a shared `Map`; anything derived from a form-pool read must carry the environment in its key — `acc:journal-ctx:{Production|Sandbox}` (`erp-journal-context.ts`) and `acc:prep-dept-ctx:{Production|UAT}` (`erp-prep-service.ts`). Request-scoped react `cache()` memos are not global and are unkeyed by design.
 - **The running number floor is a function of the environment.** `UAT_SEQUENCE_FLOOR = 9000` in `src/lib/acc/sequence.ts`: UAT's first number of a year is `09001`, Production's `00001`. Applied only when a `(Prefix, Year)` row is first created, so it never rewinds. The two series stay disjoint only while Production issues ≤ 9000 numbers per prefix per year.
@@ -72,6 +82,11 @@ Since migration 066 that is a hard constraint, not a preference: `auth()` no lon
 - Session: `{ user: { id, name, email, role, nickname, color, photo } }` — no `hasIntel` flag (Intelligence is gone)
 - Roles: `Staff | IT Admin | System Admin | Viewer`
 - TeamMember lookup from **`Rocks_Portal_Form.dbo.TeamMember`** (migration 066), never Fast_Core; a missing row is provisioned at login (`provisionTeamMember`) so drafts stay owned by their creator
+- **Sign-in fails closed, and a session without a positive internal id is not a session.** Three things changed on 2026-08-19:
+  - `lookupTeamMemberForLogin` (`src/lib/team-member-lookup.ts`) returns `found | not_found | unavailable` instead of collapsing a database error to `null`. `signIn` denies on `unavailable`. The old `null` was read as "not a TeamMember", which sent the callback on to ask HR — and if *that* threw too, the outer catch granted a `Staff` session and returned `true`. An enabled Entra account in neither roster signed in successfully whenever the authorization source was down.
+  - the HR lookup is wrapped in its own `try`, and the outer catch no longer grants anything. Entra proves *who* someone is; whether they may use this app is a question only the roster and HR answer, and that branch runs when neither could be asked. Graph photo/display-name enrichment keeps its own inner `catch`, so it stays optional.
+  - provisioning failure denies the login instead of completing it with `user.id = ""`, and an existing **inactive** row denies rather than being provisioned around.
+  - `requireAuth()` / `requireRole()` now require a positive integer `session.user.id` (`isUsableUserId`, `src/lib/auth-identity.ts`), answering 401 with a sign-in-again message otherwise. `Number("")` is 0, so such a session owns nothing and stamps 0 or NULL into whatever it writes. Tokens minted before this live for 30 days, hence the check at the gate as well as at the source. A *retired* row (jwt clears `userId`) now ends in that 401, which is the intent.
 - Profile photo fetched via client credentials (`getADUserPhoto`) instead of delegated token
 - Role hierarchy: System Admin > IT Admin > Staff/Viewer
 - **The jwt callback caches the row for 60s** (`src/lib/auth.ts`). `/api/settings/users` clears that cache after `updateRole`, `addUser` and `deleteUser`, so a role change takes effect on the next request instead of a minute later. It is an in-process Map — it invalidates nothing on a second instance.
@@ -94,7 +109,60 @@ Migration 066 copied all 17 rows out of `Fast_Core.dbo.TeamMember` — ids prese
 - **Granting System Admin, or any role, has to be done in both apps.** `/settings/users` writes only `Rocks_Portal_Form`.
 - Deactivating someone in one app leaves them active in the other. Same for a name resync.
 - Anything that joins `[Fast_Core].[dbo].[TeamMember]` is now reading the other app's roster. Migrations `024` and `058` still do, and `001` creates and seeds that table outright, which is why `001`, `024` and `058` all carry a **do not re-run** header. `001` is the dangerous one: its first batch is nothing but `USE [Fast_Core];`, and `apply-sql.ts` splits on `GO` and runs every batch on one pool, so the `USE` carries into the later batches whenever the pool hands back the same connection and `--db` is quietly ignored. Its last batch seeds a **System Admin** row, a no-op today only because of an `IF NOT EXISTS` on one hard-coded email.
-- **`ManagerId` is unmaintained here, and the split makes that permanent.** Nothing in this app writes it — `provision()` and `addOrReactivate()` both omit the column — and 066 copied exactly one populated row out of 17. Form Builder's `submitter_manager` step therefore resolves to null for the other 16 and for every future joiner, inserting an approval with `AssignedTo = NULL, Status = 'Pending'` and no email (`createApprovalRows`, `src/features/forms/workflow-engine.ts`; grep `[Workflow] Could not resolve assignee`). **This is not a regression** — the null path is byte-for-byte the pre-branch behaviour — but a DBA curating `ManagerId` by hand in Fast_Core no longer reaches this app at all. `managerIdOf()` (`src/lib/team-member/service.ts`) is the only reader, and it is reading a column only a migration has ever filled. AP-1 is unaffected: its manager comes from `Rocks_Portal_HR.Employee.ManagerStaffId`.
+- **`ManagerId` is unmaintained here, and now unread.** Nothing in this app writes it — `provision()` and `addOrReactivate()` both omit the column — and 066 copied exactly one populated row out of 17. Its only reader was Form Builder's `submitter_manager` workflow step, which is gone with that feature, so `managerIdOf()` and `firstActiveWithRole()` were removed from `src/lib/team-member/service.ts` along with it. A DBA curating `ManagerId` by hand in Fast_Core reaches nothing here. AP-1 and AP-17 are unaffected: their manager comes from `Rocks_Portal_HR.Employee.ManagerStaffId`, or from `UatTester.ManagerStaffId` in UAT.
+
+### Authorization — one policy per question
+
+Added 2026-08-19 in response to a security review. Before it, authorization on
+the Accounting routes was per-route and, on the direct-by-id paths, absent:
+`GET /api/request/accounting/requests/[id]` returned a full claim to any
+authenticated session, `GET .../files/[fileId]` streamed any numeric file id,
+`POST .../requests/[id]/files` attached to anyone's request, and
+`POST .../submit` submitted it. The list endpoints were scoped, so the data was
+reachable only by guessing a small integer — which is not a control.
+
+Five shared modules now answer five distinct questions. **Route handlers must
+call them rather than inventing a weaker local rule**, and each has a pure,
+import-free half so it is unit-tested without a database (`@/env` validates the
+whole environment at import time, so anything reachable from a pool drags a live
+configuration into the test run):
+
+| Question | Module | Notes |
+|----------|--------|-------|
+| May this person see / change this request? | `src/lib/acc/request-acl-policy.ts` (pure) + `request-acl.ts` (pools) | `authorizeAccRequest(session, id, "read" \| "mutate")` is the two-line route helper. Read: owner, on-behalf requester, assigned manager, or account area. Mutate: creator only, `Draft`/`Returned` only. Plus the UAT tester barrier — see "Parallel Production and UAT". |
+| Are these bytes actually a receipt? | `src/lib/acc/attachment-guard.ts` | Magic-byte allowlist (PNG/JPEG/GIF/WEBP/HEIC/PDF); `File.type` is a hint only. `attachmentResponseHeaders` re-sniffs on download and serves anything non-raster as `attachment` with `nosniff` and a `sandbox` CSP. AP-1 passes `allowedKinds: ["image"]`, AP-17 also takes PDF. |
+| Whose national-ID scan is this? | `src/lib/acc/travel-booking/id-card-access.ts` | Data subject only, for granting consent, listing, downloading and reusing. Sharing a department is not consent. |
+| Are these books this approver's? | `src/lib/acc/approver-interface-access-shared.ts` (`canActOnInterfaceTarget` / `canActOnClaimBrand`) | Called on the prep detail, the report export (including its `ids=` form), the ERP send and the ACCOUNT approve/reject — every path that previously relied on the list's row filter. |
+| Does this booking need an Admin? | `src/lib/acc/travel-booking/derive-flags.ts` | The `needs*` flags are derived from the selected option rows, never from the posted DTO. |
+
+Two supporting pieces:
+
+- **`src/lib/acc/request-errors.ts`** — `AccConflictError` (409) and
+  `AccForbiddenError` (403), and `statusForAccError`. The Accounting routes
+  answered 400 for everything a service threw, which turned "somebody else
+  already submitted this" into the dialog's retryable phase.
+- **`src/lib/acc/stored-file.ts`** — `deleteStoredFile` dispatches on
+  `StorageBackend`. Three delete paths selected `StoragePath` alone and passed
+  SharePoint driveItem ids to `fs.unlink`, then deleted the only row recording
+  where the bytes were.
+
+**Response semantics**, used consistently: `400` invalid input, `401`
+unauthenticated or no internal id, `403` unauthorized, `404` unauthorized where
+confirming existence is itself the leak (UAT records, another person's ID card),
+`409` stale or already processed, `413` too large, `502/503` upstream. An
+unauthorized or stale path must not mutate the database, storage, mail or ERP.
+
+**The Host header is not an authorization input.** `isManagerDevBypassHost`
+(`src/lib/acc/manager-auth.ts`) used to let any signed-in user action the AP-1 /
+AP-17 manager step whenever the request arrived with `Host: localhost:3081` —
+and `trustHost: true` means Next takes that header as given. It now also requires
+a non-production build *and* `ACC_MANAGER_DEV_BYPASS=1`, default off.
+
+**AP-17 still lets an admin action the manager step** (AP-1 deliberately does
+not), but it is now recorded: `Actor.onBehalfOfManagerStaffId` makes
+`logManagerOnBehalf` write a `manager_acted_on_behalf` activity row naming the
+real actor and the manager they stood in for, inside the same transaction as the
+approval.
 
 ### Theme — Sky
 
@@ -118,7 +186,7 @@ Form Portal was cloned from the Rocks Fast codebase and **still shares live infr
 - **⚠️ Same SharePoint folder, and the two apps' paths collide**: Accounting file attachments (`SHAREPOINT_ACC_SITE` / `SHAREPOINT_ACC_FOLDER`) point at the same document library Rocks Fast uses. `buildAccFolderPath` / `buildAccFileName` (`src/lib/acc/sharepoint-path.ts`) carry **no per-app segment**, so since the database split — Form Portal numbering out of `Rocks_Portal_Form`, Rocks Fast out of `Fast_Form` — both apps independently mint the *same* `TOFyy-nnnn`, the same draft ids and the same `AccRequestFile` ids, and therefore write byte-identical paths. `AP-1/_DRAFT/{requestId}/{type}_draft{requestId}_{fileId}.ext` is the worst case: both id spaces start at 1, so overlap there is the norm, not the exception. Two mitigations are in place and neither is a fix: `uploadFileToSharePoint` passes `@microsoft.graph.conflictBehavior=rename` so a second upload no longer replaces the first app's bytes (Graph's default is *replace*, which also hands back the same driveItem id — one requester's ID-card scan served to the other's request), and `moveSharePointFolder` is best-effort so a submit that finds a foreign `_DRAFT` folder cannot throw. Files can still end up filed under the other app's request number. **A real fix needs a per-app folder segment plus a migration of existing rows** — do not add one casually.
 - **`AccEmailQueue` is no longer shared** — each app drains the queue in its own database.
 - **Form Portal runs on port 3081**, Rocks Fast on 3020, so both can run at once on the same machine. (Form Portal was on 3021, then briefly shared 3020 with Rocks Fast — a period when only one of them could start.) Running them concurrently is safe **for mail** now that `AccEmailQueue` lives in each app's own database; while the queue was shared, two running apps could drain it and send approval/payment emails twice. It is **not** safe for SharePoint attachments — see the shared-folder bullet above; the port change makes simultaneous operation normal and so makes that path collision routine rather than rare.
-- **`UPLOAD_ROOT`** — local attachment storage env var. Points at the sibling Rocks Fast repo's `uploads/forms` directory (`c:/Users/PC/source/repos/Web/RocksFast/uploads/forms` in dev) so files already recorded in the shared DB stay downloadable from either app. Accounting attachments primarily use SharePoint now; local disk serves the Form Builder and older Accounting rows created before SharePoint storage existed. See `src/lib/storage.ts`.
+- **`UPLOAD_ROOT`** — local attachment storage env var. Points at the sibling Rocks Fast repo's `uploads/forms` directory (`c:/Users/PC/source/repos/Web/RocksFast/uploads/forms` in dev) so files already recorded in the shared DB stay downloadable from either app. Accounting attachments go to SharePoint now; local disk only serves Accounting rows created before SharePoint storage existed. **Every path is containment-checked**: `resolveStoragePath` (`src/lib/storage.ts`) resolves against the root and compares with `path.relative`, so a stored `StoragePath` that escapes it raises `StoragePathError` on read, write *and* delete rather than being followed. `path.join` alone normalised `..` away and resolved happily outside the root.
 - **`ERP_SANDBOX_ALLOWED_HOSTS`** (`src/lib/acc/erp-environment-shared.ts`) — host-and-port matched allowlist (`["localhost:3081", "127.0.0.1:3081"]`) gating two things: the `devHostOnly` management/settings cards in `REQUEST_CARDS` (`src/lib/constants.ts`) and the manager-approval dev bypass in `src/lib/acc/manager-auth.ts` (`isManagerDevBypassHost`). If this app's port ever changes, this list must be updated or both gates silently disappear.
 - **`src/lib/brand-config.ts` is deliberately frozen** — it still contains Dashboard-DB helper fields (`dashboardDbConnectionId`, `dashboardDatabaseName`) with no callers in this app; the Rocks Fast sibling reads them for its Intelligence dashboards. The Brand Configuration settings page hides those fields in the UI but still round-trips their values on save, so Rocks Fast keeps working. **Do not "clean up" these fields** — they are load-bearing for the sibling app even though nothing in Form Portal consumes them.
 
@@ -128,12 +196,12 @@ Top bar and mobile tabs: **Home** · **My Requests** · **My Work** · **Setting
 
 Only the middle two live in `NAV` (`src/lib/constants.ts`). Home and Settings are composed onto either side of it in `Navbar.tsx`'s `visibleNav` — Home as a literal, Settings behind `canAdmin` — so **adding an entry to `NAV` puts it between them**, not at the end.
 
-- **`Home`** (`/`) — a form catalogue: greeting and stat strip, search, "Continue where you left off" (resumable drafts and Returned requests), then the **Accounting** forms — AP-1 travel expense and AP-17 travel booking, filtered to the ones available to this viewer. It is a link surface only: it creates no API of its own beyond reading `/api/form-environment` for availability, and it does not merge the two request systems (Office Forms and Accounting remain separate data models). `src/features/home/HomeCatalogue.tsx`.
-- **`My Requests`** (`/my-request`) — requests you submitted and their status, across both Office Forms and Accounting.
+- **`Home`** (`/`) — a form catalogue: greeting and stat strip, search, "Continue where you left off" (resumable drafts and Returned requests), then the **Accounting** forms — AP-1 travel expense and AP-17 travel booking, filtered to the ones available to this viewer. It is a link surface only: it creates no API of its own beyond reading `/api/form-environment` for availability. `src/features/home/HomeCatalogue.tsx`.
+- **`My Requests`** (`/my-request`) — the Accounting requests you submitted and their status (AP-1 and AP-17, merged by `src/lib/acc/query-both.ts`).
 - **`My Work`** (`/my-work`) — requests awaiting your approval or otherwise involving you.
 - **`Settings`** (`/settings`, IT Admin+) — hub of `SETTINGS_CARDS`: Maps & Routing, Database Connections, Business Central, Brand Configuration, **ERP Interface Environment**, **Form Environment** (`/settings/form-environment`), **UAT Users** (`/settings/uat-users`), **Users & Roles** (`/settings/users`) — the bolded four are `systemAdminOnly` — and Accounting Admin, which points at `/request?group=Settings` rather than `/request/accounting`, because the AP-1 hub would leave out AP-17.
 
-**There is no Forms tab, and no Form Builder section on Home.** The feature is unused, so its three entry points — the nav tab, the Manage Forms settings card, and Home's general-forms group — were deliberately removed. The pages under `/forms` and all 16 `/api/forms` routes still exist and still work if reached by URL; see the doc comment above `NAV`. Do not describe Form Builder as reachable from the navigation.
+**Form Builder is gone.** Its three entry points were removed first (the nav tab, the Manage Forms settings card, Home's general-forms group), and on 2026-08-19 the feature itself was deleted: the eight pages under `/forms`, all sixteen `/api/forms` routes, and `src/features/forms`. It had never been used here — `/api/forms/[formId]/workflow/steps` writes `OfficeFormWorkflows.CreatedBy` and `OfficeFormWorkflowSteps.UpdatedAt`, neither of which exists in migration `002` or `059`, so configuring a workflow always threw — while carrying an unauthenticated-in-practice upload path, an approval-claim that failed open on a null assignee, and no server-side payload validation. Nothing else in the app referenced it: `my-request`, `my-work` and Home are Accounting-only. The `OfficeForm*` tables are **left in place and unread**; no migration drops them.
 
 The navbar also carries the **PRO/UAT switch** (`src/components/layout/UatModeSwitch.tsx`) — see "Parallel Production and UAT" above for when it renders.
 
@@ -141,39 +209,29 @@ Every dashboard route is also gated by `BrandGate` (`src/components/BrandGate.ts
 
 ## Features
 
-### 1. Office Forms (`/forms`)
+### 1. Office Forms (`/forms`) — deleted
 
-Configurable form builder with approval workflows.
+The configurable form builder is **gone**, along with its eight pages, its
+sixteen `/api/forms` routes and `src/features/forms`. See "Navigation" above for
+why. The `OfficeForm*` tables remain in `Rocks_Portal_Form` and nothing reads
+them; `src/lib/graph.ts` and `src/lib/storage.ts` survive because Accounting uses
+both.
 
-> **Unused, and unreachable from the navigation** — see "Navigation" above. Every page and route below still exists and still works when opened by URL; none of them is linked from the nav, Home or the Settings hub. Treat this section as a description of dormant code, not of a live feature.
+If it is ever revived, these are the things that were wrong with it, all of them
+still true of the deleted code in git history:
 
-**Pages (8):**
-- `/forms` — Catalog + My Submissions
-- `/forms/[slug]` — Fill & submit form
-- `/forms/submissions/[id]` — View submission + approval timeline
-- `/forms/approvals` — Approver queue
-- `/forms/admin` — Manage forms (IT Admin+)
-- `/forms/admin/new` — Create form
-- `/forms/admin/[formId]` — Drag-and-drop form builder
-- `/forms/admin/[formId]/workflow` — Configure approval workflow
-
-**API Routes (16):** `/api/forms/*`
-
-**Key files:**
-- `src/features/forms/workflow-engine.ts` — Sequential + parallel approval engine
-- `src/features/forms/email-queue.ts` — Async email notification queue
-- `src/features/forms/email-templates.ts` — HTML email templates (XSS-safe with `esc()`)
-- `src/lib/graph.ts` — Microsoft Graph API (token cached with promise lock): `searchADUsers`, `getADUserByEmail`, `getADUserPhoto`, `sendEmail` (with attachments)
-- `src/lib/storage.ts` — File storage abstraction (local backend, rooted at `UPLOAD_ROOT`)
-
-**Field types:** text, textarea, number, date, select, radio, checkbox, file, route (Google Maps), section, info
-
-**Approval flow:**
-- Sequential: Step 1 → Step 2 → Step 3
-- Parallel: Same StepOrder, different ParallelGroup → all must approve
-- Actions: Approve, Reject, Return (request changes)
-- Auto-approve conditions (JSON rules)
-- Email notifications via Microsoft Graph API (queued, async)
+- the upload route authenticated but never authorized — no parent-submission ACL
+  on upload, list or download, and it built the storage path out of a
+  client-supplied `fieldKey` and file name;
+- `processApprovalAction` checked the actor only when `AssignedTo` was truthy, and
+  `createApprovalRows` inserted `Status='Pending', AssignedTo=NULL` whenever the
+  assignee did not resolve — so any authenticated session could action those;
+- submissions stored arbitrary JSON: required, min/max and file constraints lived
+  only in `FormFiller.tsx`;
+- workflow advancement scanned *all* historical approvals, so one `Returned` row
+  stopped the workflow permanently after a resubmit;
+- `/api/forms/[formId]/workflow/steps` wrote two columns that exist in no
+  migration, so workflow configuration threw on first use.
 
 ### 2. Request → Accounting (`/request/accounting`)
 
@@ -181,7 +239,7 @@ Two live Accounting forms share a generic request/approval backbone, plus a Busi
 
 **Storage:** Acc* tables live in **`Rocks_Portal_Form`**, accessed via `getAccPool()` (= `getFormPool()`, `src/lib/acc/pool.ts`). Numbered migrations in `migrations/` (013 onward) built these up incrementally against the old `Fast_Form`; `059_portal_form_baseline.sql` is the generated full-schema baseline used to stand up a new database. Apply with `npm run apply-sql -- --db Rocks_Portal_Form --file <path>` (see `scripts/apply-sql.ts`). **Every migration names its own target database in its header — read that before running it.**
 
-**Standing up a production form database takes 059 *and* 066.** 059 was generated from `Fast_Form`, which never held `TeamMember`, so a database built from 059 alone has no identity table. That does **not** lock everybody out, which is what makes it easy to miss: anyone with an active `Rocks_Portal_HR.Employee` row logs in **successfully**, downgraded to role `Staff` with a blank id — so `/settings/users` (System Admin) is unreachable and the roster cannot be repaired from the UI. Anyone *without* an active HR row is refused outright at the `signIn` callback (`src/lib/auth.ts`). Grep for `[Auth] no TeamMember row for …` and `[TeamMember] provision failed for …`.
+**Standing up a production form database takes 059 *and* 066.** 059 was generated from `Fast_Form`, which never held `TeamMember`, so a database built from 059 alone has no identity table. Since the fail-closed change this now **locks everybody out** rather than degrading them: provisioning fails, `signIn` returns false, and every login lands on `/unauthorized`. That is louder than the old behaviour — which let anyone with an active `Rocks_Portal_HR.Employee` row in as `Staff` with a blank id, leaving `/settings/users` unreachable and the roster unrepairable from the UI — but it is still a stand-up mistake with no in-app remedy, so apply 066. Grep for `[Auth] blocked login (could not provision a TeamMember row)` and `[TeamMember] provision failed for …`.
 
 `066_portal_form_team_member.sql` creates the table and copies the roster out of Fast_Core, so it goes *after* 059. It refuses to run unless the database is named `Rocks_Portal_Form…` **and** has `dbo.AccRequest`: the name test is what keeps a mistyped `--db` out of `Fast_Form`, which has `AccRequest` too and belongs to the live sibling. **066 is a copy, not a seed** — its `INSERT` reads `[Fast_Core].[dbo].[TeamMember]`, so that table must exist and still hold the roster when 066 runs. If it did not, batch 1 would commit the empty table and batch 2 roll back under `XACT_ABORT`, leaving no indexes, no FK and identity at 1; and once anyone logs in and is provisioned, the empty-table guard on the copy blocks the re-run permanently while new ids start at 1 — straight into the range 066 exists to keep clear. **Post-apply check:** `SELECT COUNT(*) FROM dbo.TeamMember` = 17 and `SELECT IDENT_CURRENT('dbo.TeamMember')` = 100000. It is the one migration that must **not** also be applied to `Rocks_Portal_Form_UAT` — identity lives in production only, and both pools reach it three-part. A new migration that changes an `Acc*` table does have to be applied to `Rocks_Portal_Form_UAT` as well, but the parallel-UAT batch is not that shape: **060, 062, 063 and 065 are Fast_Core only** (`FormEnvironment`, `UatTester`), and **061 and 064 are `Rocks_Portal_Form_UAT` only** — they refuse to run against a database whose name does not end in `_UAT`.
 
@@ -224,21 +282,18 @@ src/
 ├── app/
 │   ├── (auth)/login, unauthorized
 │   ├── (dashboard)/
-│   │   ├── forms/                    # Form Builder — 8 pages
 │   │   ├── my-request/, my-work/     # Personal request tracking
 │   │   ├── request/                  # Accounting hub, AP-1, AP-17, ERP prep
 │   │   ├── settings/                 # Admin settings hub — connections, BC, brand config, ERP, users
 │   │   └── page.tsx                  # Home — form catalogue
 │   ├── api/
 │   │   ├── auth/                     # NextAuth
-│   │   ├── forms/                    # 16 routes
 │   │   ├── request/accounting/       # AP-1, AP-17, ERP prep API routes
 │   │   ├── settings/                 # Connections, BC, brand-config, ORS, Google Maps, users
 │   │   └── users/                    # AD user search
 │   ├── loading.tsx                   # Global loading screen
 │   └── layout.tsx                    # Root layout — theme no-flash script, providers
 ├── features/
-│   ├── forms/                        # Types, schemas, constants, workflow-engine, email, components, hooks
 │   ├── accounting/                   # AP-1 form, approvals, report, settings UI
 │   ├── travel-booking/               # AP-17 form, admin queue, report, settings UI
 │   └── home/                         # Home catalogue
@@ -249,11 +304,18 @@ src/
 │   ├── db/mssql.ts                   # Multi-DB pools (Core, Form, Production/UAT Form, Data, generic getAppPool), pool max=30
 │   ├── team-member/                  # The only module that touches TeamMember — service.ts + mapping.ts
 │   ├── acc/                          # Accounting domain logic (see above)
+│   │   ├── request-acl-policy.ts      # Pure object ACL — decideRequestRead/Mutate
+│   │   ├── request-acl.ts             # Pool/request-scoped half + authorizeAccRequest()
+│   │   ├── attachment-guard.ts        # Magic-byte upload admission + safe download headers
+│   │   ├── stored-file.ts             # Backend-dispatching delete (local vs SharePoint)
+│   │   ├── request-errors.ts          # AccConflictError / AccForbiddenError -> 409 / 403
+│   │   └── travel-booking/            # + derive-flags.ts, id-card-access.ts
 │   ├── erp/                          # Business Central sync
 │   ├── hr/                           # Rocks_Portal_HR cross-DB lookups
 │   ├── graph.ts                      # Microsoft Graph API (searchADUsers, getADUserByEmail, getADUserPhoto, sendEmail)
 │   ├── storage.ts                    # Local file storage (UPLOAD_ROOT)
-│   ├── auth.ts, auth.config.ts, api-auth.ts
+│   ├── bc/                           # Business Central OData + bc-destination.ts allowlist
+│   ├── auth.ts, auth.config.ts, api-auth.ts, auth-identity.ts
 │   └── hooks/
 ├── env.ts                            # Type-safe env validation
 ```
@@ -265,6 +327,10 @@ src/
 - **Auth**: `requireAuth()` / `requireRole(["IT Admin", "System Admin"])`
 - **SQL**: Parameterized queries only — `pool.request().input("name", sql.NVarChar, value).query(...)`
 - **TeamMember**: never write SQL against it. Call `src/lib/team-member/service.ts`, which owns every statement and pins them to `getProductionFormPool()`. To join it from a query running on another pool, use its `teamMemberTableRef()` → `[Rocks_Portal_Form].[dbo].[TeamMember]`. `service.ts` is the only file in `src/` holding SQL that names the table — keep it that way, because a stray query pointed at Fast_Core does not error, it returns the sibling app's roster.
+- **Object authorization**: any route reaching an `AccRequest` by id calls `authorizeAccRequest()` (`src/lib/acc/request-acl.ts`) before it reads or writes. `requireAuth()` proves *a* session, not a right to *this* record.
+- **Attachments**: validate with `checkAttachment()` / `checkAttachmentBatch()` and serve with `attachmentResponseHeaders()`. Never trust `File.type`, never echo the stored `ContentType`, never serve an attachment `inline` without re-sniffing.
+- **Storage paths**: only through `src/lib/storage.ts` (containment-checked) or `deleteStoredFile()` (backend-dispatching). Never `path.join(UPLOAD_ROOT, …)` by hand.
+- **State transitions**: claim with a conditional `UPDATE … WHERE <expected state>` inside the transaction and check `rowsAffected`. Never read-then-write. Allocate a running number *after* the claim, not before.
 - **CSS**: Use `var(--variable)` — never raw hex. See `globals.css` for all tokens.
 - **Icons**: `lucide-react` only
 - **Toasts**: `sonner` — `toast.success()`, `toast.error()`
@@ -314,6 +380,15 @@ NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=
 # Local attachment storage — point at the Rocks Fast sibling's uploads folder
 UPLOAD_ROOT=
 
+# Business Central destination allowlists (optional, additive to the built-in
+# Microsoft defaults — see src/lib/bc/bc-destination.ts). Comma-separated hosts.
+BC_ALLOWED_OAUTH_HOSTS=
+BC_ALLOWED_API_HOSTS=
+
+# Local dev only, default off — lets any signed-in user action the AP-1/AP-17
+# manager step on a non-production build served from localhost:3081.
+ACC_MANAGER_DEV_BYPASS=
+
 # Client
 NEXT_PUBLIC_APP_URL=http://localhost:3081
 ```
@@ -326,11 +401,12 @@ Not yet done — Form Portal has no host of its own. Before it is deployed:
 - **`NEXTAUTH_URL` and `NEXT_PUBLIC_APP_URL`** must both match the address users actually open, including port.
 - **The Entra app registration must list the callback for every port and host the app answers on.** `auth.config.ts` sets `trustHost: true`, so NextAuth builds `redirect_uri` from the incoming `Host` header, not from `NEXTAUTH_URL` — the moment the port changes, sign-in posts a `redirect_uri` Entra has never seen and fails with `AADSTS50011` before any app code runs. Dev now needs `http://localhost:3081/api/auth/callback/microsoft-entra-id` (add `http://127.0.0.1:3081/...` too if anyone opens it that way); the deployed host needs its own.
 - **`ERP_SANDBOX_ALLOWED_HOSTS`** (`src/lib/acc/erp-environment-shared.ts`) is `localhost:3081` / `127.0.0.1:3081` — the `devHostOnly` management cards and the manager-approval dev bypass (`src/lib/acc/manager-auth.ts`) disappear on any other host, which is intended for production but worth knowing.
-- **`UPLOAD_ROOT`** must resolve on the target machine to the files the `AccRequestFile` / `OfficeFormFiles` rows point at (see "Shared with Rocks Fast").
+- **`UPLOAD_ROOT`** must resolve on the target machine to the files the pre-SharePoint `AccRequestFile` rows point at (see "Shared with Rocks Fast").
 - **Parallel UAT ships in three steps, in this order: apply 062 + 063 → deploy the code → apply 065.** All three are Fast_Core. 062 adds `ProductionEnabled` / `UatEnabled` beside the old `Environment` column and backfills them, leaving that column in place so the *currently running* app keeps working; 063 creates `UatTester`. Only once the new code is live does 065 drop `Environment`. Running 065 first takes the old build down — its `setFormFlag` names that column in the MERGE INSERT. (061 and 064 target `Rocks_Portal_Form_UAT` and are independent of the deploy; 061 must precede any UAT write.)
 - **065 is one-way.** After it has run, a `git revert` of the parallel-UAT branch restores a `setFormFlag` that writes to a column that no longer exists, so the first write to any form fails. Reverting past commit `54ff2d7` means re-adding `FormEnvironment.Environment` as **NULLable** first — the original was `NOT NULL` with no default, which cannot be added back to a table that already has rows without backfilling one.
-- **`066_portal_form_team_member.sql` must be applied to whichever database `MSSQL_FORM_DATABASE` names.** It is already applied to the live `Rocks_Portal_Form`; a fresh stand-up needs 059 then 066, or every session degrades to `Staff` with a blank id and `/settings/users` becomes unreachable (see the Accounting storage note). Never apply it to `Rocks_Portal_Form_UAT`.
+- **`066_portal_form_team_member.sql` must be applied to whichever database `MSSQL_FORM_DATABASE` names.** It is already applied to the live `Rocks_Portal_Form`; a fresh stand-up needs 059 then 066, or nobody can sign in at all (see the Accounting storage note). Never apply it to `Rocks_Portal_Form_UAT`.
 - Liveness probe: `curl http://127.0.0.1:3081/api/health` → `{"ok":true,"data":{"service":"form-portal",…}}`.
+- **`/api/health/db` no longer publishes the topology.** `auth.config.ts` exempts every `/api/health*` path from authentication, and that endpoint was returning the MSSQL host, port, service-account username, database name and the raw driver error text to anyone who asked. It now answers `database: "reachable" | "unreachable"` plus a 200/503, and includes the detail only for a System Admin. The diagnostic line goes to the server log unconditionally, which is where an operator should read it.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

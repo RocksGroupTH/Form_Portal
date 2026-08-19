@@ -26,10 +26,30 @@ import { resolveFormEnvironment } from "@/lib/form-environment";
  */
 const UAT_SEQUENCE_FLOOR = 9000;
 
-/** Allocate the next running number, e.g. TOF26-00001. Resets per calendar year. */
-export async function allocateRequestNo(prefix: string, when: Date = new Date()): Promise<string> {
+/** Anything that can hand out a `Request` — a pool, or a caller's transaction. */
+interface SqlRequestSource {
+  request(): { input: (...args: never[]) => unknown };
+}
+
+/**
+ * Allocate the next running number, e.g. TOF26-00001. Resets per calendar year.
+ *
+ * `tx` runs the MERGE inside the caller's transaction instead of on the pool.
+ * `submitRequest` passes it so a number is issued only after the submit has
+ * claimed the row: allocated on the pool, a submit that then lost the claim
+ * still consumed a number, leaving a gap in a sequence people read as a ledger.
+ */
+export async function allocateRequestNo(
+  prefix: string,
+  when: Date = new Date(),
+  tx?: SqlRequestSource,
+): Promise<string> {
   const year = when.getFullYear(); // local; server is Thai time
-  const [pool, environment] = await Promise.all([getAccPool(), resolveFormEnvironment()]);
+  const [poolOrTx, environment] = await Promise.all([
+    tx ?? getAccPool(),
+    resolveFormEnvironment(),
+  ]);
+  const pool = poolOrTx as Awaited<ReturnType<typeof getAccPool>>;
   // Only used the one time a Prefix+Year has never been seen: an existing row
   // (seeded or not) is always incremented from where it left off, so this
   // never rewinds a database's numbering once it has started for the year.

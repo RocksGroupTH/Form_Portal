@@ -2,16 +2,29 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { requireAuth } from "@/lib/api-auth";
 import { resolveLoginEmail } from "@/lib/auth-email";
-import { resolveEmployeeForActor } from "@/lib/hr/employee-lookup";
+import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
+import { getSetting } from "@/lib/acc/settings-service";
 import { downloadFile } from "@/lib/storage";
 import { downloadFileFromSharePoint } from "@/lib/sharepoint";
-import { AP17_FORM_CODE, FILE_REFTYPES } from "@/features/travel-booking/constants";
+import { attachmentResponseHeaders } from "@/lib/acc/attachment-guard";
+import {
+  decideIdCardRead,
+  parseConsentSetting,
+} from "@/lib/acc/travel-booking/id-card-access";
+import { AP17_FORM_CODE, FILE_REFTYPES, idCardReuseConsentKey } from "@/features/travel-booking/constants";
 
 /**
  * GET /api/request/travel-booking/id-card/previous/download?requesterStaffId=&fileId=
- * Streams the bytes of a previously-stored ID card so it can be re-attached to a brand-new trip
- * (held as a pending file, uploaded on save — same as picking a fresh card). Authorized by the
- * requester (ผู้ขอเบิก): the file must be an ID card belonging to that requester's own AP-17 request.
+ *
+ * Streams the bytes of the caller's own previously-stored ID card so it can be
+ * re-attached to a brand-new trip.
+ *
+ * Two things changed here. It is self-only — it used to accept any
+ * `requesterStaffId` in the caller's department and stream that colleague's
+ * national-ID scan. And it checks the consent flag itself: it previously relied
+ * on the caller having gone through `id-card/previous` first, which is not a
+ * control, so a known or guessed file id worked whatever the subject had
+ * answered. See `@/lib/acc/travel-booking/id-card-access`.
  */
 export async function GET(req: NextRequest) {
   const session = await requireAuth();
@@ -27,8 +40,22 @@ export async function GET(req: NextRequest) {
     const loginEmail = resolveLoginEmail(session.user, null, { email: session.user.email });
     if (!loginEmail) return NextResponse.json({ ok: false, error: "No login email" }, { status: 400 });
 
-    const emp = await resolveEmployeeForActor(loginEmail, requesterStaffId);
-    const staffId = emp.staffId; // HR StaffId (matches AccRequest.StaffId) — NOT emp.id (Employee GUID)
+    const actor = (await findActiveEmployeeByEmail(loginEmail)).employee;
+    const staffId = actor?.staffId ?? null; // HR StaffId (matches AccRequest.StaffId)
+
+    const consent =
+      staffId == null ? null : parseConsentSetting(await getSetting(idCardReuseConsentKey(staffId)));
+
+    // `requesterStaffId ?? staffId`: the form omits it when filing for
+    // yourself, and naming anyone else is refused rather than resolved.
+    const verdict = decideIdCardRead({
+      actorStaffId: staffId,
+      subjectStaffId: requesterStaffId ?? staffId,
+      consent,
+    });
+    if (!verdict.ok) {
+      return NextResponse.json({ ok: false, error: verdict.error }, { status: verdict.status });
+    }
 
     const pool = await getAccPool();
     const res = await pool
@@ -52,15 +79,10 @@ export async function GET(req: NextRequest) {
       row.StorageBackend === "sharepoint"
         ? await downloadFileFromSharePoint(row.StoragePath)
         : await downloadFile(row.StoragePath);
-    const contentType = row.ContentType || "application/octet-stream";
 
     return new NextResponse(new Uint8Array(buffer), {
       status: 200,
-      headers: {
-        "Content-Type": contentType,
-        "Content-Disposition": `inline; filename="${encodeURIComponent(row.FileName)}"`,
-        "Cache-Control": "no-store",
-      },
+      headers: attachmentResponseHeaders({ bytes: buffer, fileName: row.FileName }),
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Internal server error";

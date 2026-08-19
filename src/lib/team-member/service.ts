@@ -33,9 +33,9 @@
  * ## Why the table is addressed three-part
  *
  * `teamMemberTableRef()` returns `[<form db>].[dbo].[TeamMember]` so it can be
- * joined from a query running on any pool — `/api/forms/approvals` joins it on
- * `getFormPool()`, which may resolve to UAT. A bare `TeamMember` there would
- * miss the table entirely (or, if a copy ever appeared, read the wrong roster).
+ * joined from a query running on any pool, including `getFormPool()`, which may
+ * resolve to UAT. A bare `TeamMember` there would miss the table entirely (or,
+ * if a copy ever appeared, read the wrong roster).
  *
  * Functions here return plain data and throw on database failure; HTTP shaping
  * and login-time resilience belong to their callers.
@@ -157,40 +157,6 @@ export async function resolveNames(
   return out;
 }
 
-/** The manager this person reports to, or null. Retired people report to nobody. */
-export async function managerIdOf(userId: number): Promise<number | null> {
-  if (!Number.isFinite(userId) || userId <= 0) return null;
-
-  const pool = await getProductionFormPool();
-  const result = await pool
-    .request()
-    .input("userId", sql.Int, userId)
-    .query<{ ManagerId: number | null }>(
-      `SELECT ManagerId FROM ${teamMemberTableRef()} WHERE Id = @userId AND IsActive = 1`,
-    );
-  return result.recordset[0]?.ManagerId ?? null;
-}
-
-/**
- * The lowest-numbered active holder of a role, for workflow steps assigned to a
- * role rather than a person. `appRole` is workflow configuration text, so an
- * unrecognised value matches nobody instead of throwing.
- */
-export async function firstActiveWithRole(appRole: string): Promise<number | null> {
-  const role = (appRole ?? "").trim();
-  if (!role) return null;
-
-  const pool = await getProductionFormPool();
-  const result = await pool
-    .request()
-    .input("role", sql.NVarChar, role)
-    .query<{ Id: number }>(
-      `SELECT TOP 1 Id FROM ${teamMemberTableRef()}
-       WHERE AppRole = @role AND IsActive = 1 ORDER BY Id`,
-    );
-  return result.recordset[0]?.Id ?? null;
-}
-
 /* ── Writes ── */
 
 /**
@@ -257,8 +223,7 @@ export type AddOutcome = "created" | "exists" | "reactivated";
  * three distinct outcomes: the caller has to be able to say "already active".
  *
  * Reactivating rather than inserting a second row also protects history. The id
- * is referenced across both apps (`AccRequest.CreatedBy` / `SubmittedBy`,
- * `OfficeFormSubmissions.SubmittedBy`, `OfficeFormApprovals.AssignedTo`), so a
+ * is referenced across both apps (`AccRequest.CreatedBy` / `SubmittedBy`), so a
  * duplicate would orphan everything the first row owns.
  *
  * Only `IsActive`, `FullName`, `AppRole` and a blank `Nickname` are written on

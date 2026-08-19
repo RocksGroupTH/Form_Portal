@@ -8,6 +8,8 @@ import { buildAccFolderPath, yearFromRequestNo } from "@/lib/acc/sharepoint-path
 import { resolveLoginEmail } from "@/lib/auth-email";
 import { resolveFormEnvironment } from "@/lib/form-environment";
 import { getAccPool } from "@/lib/acc/pool";
+import { authorizeAccRequest } from "@/lib/acc/request-acl";
+import { statusForAccError } from "@/lib/acc/request-errors";
 import { sql } from "@/lib/db/mssql";
 
 /* ── POST /api/request/accounting/requests/[id]/submit ── */
@@ -24,6 +26,13 @@ export async function POST(
   if (Number.isNaN(id)) {
     return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
   }
+
+  // Owner and editable state, before the requester is even resolved. The route
+  // used to submit whatever id it was handed: `submitRequest` checked the
+  // status but never `CreatedBy`, so any authenticated session could submit
+  // somebody else's draft — under that person's name, to that person's manager.
+  const gate = await authorizeAccRequest(session, id, "mutate");
+  if (gate instanceof Response) return gate;
 
   try {
     const loginEmail = resolveLoginEmail(session.user, null, { email: session.user.email }) ?? "";
@@ -53,6 +62,8 @@ export async function POST(
     return NextResponse.json({ ok: true, data: req });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Internal server error";
-    return NextResponse.json({ ok: false, error: message }, { status: 400 });
+    // 409 when the in-transaction claim found the row already submitted, so the
+    // client reloads instead of being offered a retry that cannot succeed.
+    return NextResponse.json({ ok: false, error: message }, { status: statusForAccError(e) });
   }
 }

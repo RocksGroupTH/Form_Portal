@@ -18,10 +18,13 @@ export type NavItem = {
 };
 
 /**
- * Form Builder (`/forms`) is deliberately absent: the feature is unused, so its
- * entry points — this tab, the Manage Forms settings card, and the Home
- * catalogue's general-forms section — were removed. The pages and API routes
- * still exist and still work if reached by URL.
+ * Form Builder (`/forms`) is gone. Its entry points were removed first (this
+ * tab, the Manage Forms settings card, the Home catalogue's general-forms
+ * section), and the pages, the sixteen `/api/forms` routes and
+ * `src/features/forms` were then deleted outright — an unused subsystem whose
+ * upload, approval-claim and payload-validation paths were unauthenticated
+ * enough to be worth removing rather than repairing. The `OfficeForm*` tables
+ * are left in place; nothing reads them.
  */
 export const NAV: NavItem[] = [
   {
