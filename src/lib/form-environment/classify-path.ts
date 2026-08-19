@@ -79,7 +79,23 @@ export const ROUTE_RULES: RouteRule[] = [
   { prefix: "/api/request/travel-booking", result: "AP-17" },
   { prefix: "/request/travel-booking", result: "AP-17" },
 
-  // AP-4 proper.
+  // AP-4 proper — including its settings, which do NOT take the `null`
+  // Production treatment AP-1's settings take above. This looks like an
+  // inconsistency and is not one; do not "fix" it.
+  //
+  // The reason is not the one first recorded (that AP-4's rule and approver
+  // tables are not dual-written — they are, and they are two of the 21 tables
+  // `npm run check:alignment` covers). It is that
+  // `/api/request/reimburse/settings/rules` with no query string is the *form's
+  // own* checklist source: the requester's ticks become `AccReimburseRuleAck`
+  // rows with an FK into whichever database the form resolved to. Production
+  // treatment would have a UAT tester's form read production's rule ids while
+  // writing acknowledgements into UAT — an FK pointing at a row that is not
+  // there, and a compliance record naming the wrong text.
+  //
+  // Dual-write is unaffected either way: `writeBothPools` opens its own
+  // production and UAT pools and never consults the caller's resolved pool, so
+  // an AP-4-classified settings route still writes each database exactly once.
   { prefix: "/api/request/reimburse", result: "AP-4" },
   { prefix: "/request/reimburse", result: "AP-4" },
 

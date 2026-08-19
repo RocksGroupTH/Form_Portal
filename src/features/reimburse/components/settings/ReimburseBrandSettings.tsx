@@ -35,7 +35,7 @@ interface FormBrandRow {
  * and this page is where it is made, so the state is named rather than hidden.
  */
 export function ReimburseBrandSettings() {
-  const { data, mutate } = useSWR<{ ok: boolean; data: FormBrandRow[] }>(ENDPOINT, fetcher);
+  const { data, error, mutate } = useSWR<{ ok: boolean; data: FormBrandRow[] }>(ENDPOINT, fetcher);
   const { data: allData } = useSWR<{ ok: boolean; data: AccBrandOption[] }>(
     "/api/request/accounting/options/all-brands",
     fetcher,
@@ -97,6 +97,14 @@ export function ReimburseBrandSettings() {
   const knownCodes = new Set(allBrands.map((b) => b.brandCode));
   const orphanCodes = Array.from(savedChecked).filter((c) => !knownCodes.has(c));
 
+  // Three states, not two. `checked` is empty while the list is loading, when
+  // the fetch failed, and when nothing is genuinely ticked — and the banner
+  // below tells the admin their configuration is broken, which during an outage
+  // is false and points them at the wrong repair. `error` is a thrown fetch;
+  // `data.ok === false` is the route answering with a reason.
+  const loadFailed = !!error || (!!data && !data.ok);
+  const loaded = !!data && data.ok;
+
   return (
     <div>
       {allBrands.length > 0 && orphanCodes.length > 0 && (
@@ -113,7 +121,20 @@ export function ReimburseBrandSettings() {
         </div>
       )}
 
-      {checked.size === 0 && (
+      {loadFailed && (
+        <div
+          className="rounded-xl px-4 py-3 flex items-start gap-2.5 mb-4"
+          style={{ background: "var(--status-pending-bg)", color: "var(--status-pending-text)" }}
+        >
+          <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+          <p className="text-[12px] leading-relaxed m-0">
+            โหลดรายการแบรนด์ที่ตั้งค่าไว้ไม่สำเร็จ — ที่เห็นด้านล่างจึงยังไม่ใช่ค่าที่บันทึกไว้จริง
+            กรุณารีเฟรชหน้านี้ก่อนแก้ไข การกดบันทึกตอนนี้จะเขียนทับค่าเดิมทั้งหมด
+          </p>
+        </div>
+      )}
+
+      {loaded && checked.size === 0 && (
         <div
           className="rounded-xl px-4 py-3 flex items-start gap-2.5 mb-4"
           style={{ background: "var(--status-bad-bg)", color: "var(--status-bad-text)" }}

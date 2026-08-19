@@ -6,6 +6,7 @@
  */
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { writeBothPools } from "@/lib/acc/dual-write";
+import { RULE_TEXT_MAX } from "@/features/reimburse/constants";
 import type { ReimburseApprover, ReimburseRule } from "@/features/reimburse/types";
 
 /** Every currently-active rule a requester must tick before submitting (spec §5.2 field 6), in display order. */
@@ -71,25 +72,13 @@ export async function listReimburseApprovers(): Promise<ReimburseApprover[]> {
  * is what asserts it.
  */
 
-/** Longest `AccReimburseRule.RuleText` the column will take (migration 089). */
-export const RULE_TEXT_MAX = 1000;
-
-export const RULE_TEXT_REQUIRED = "กรุณากรอกข้อความระเบียบ";
-export const RULE_TEXT_TOO_LONG = `ข้อความระเบียบยาวเกิน ${RULE_TEXT_MAX} ตัวอักษร`;
-
-/**
- * The rule text as it will be stored, or the message refusing it.
- *
- * Pure and exported so the boundary and the tests can share one answer — the
- * column is `NVARCHAR(1000)` and SQL Server truncates silently on some paths,
- * which would publish a compliance line missing its last clause.
+/*
+ * `RULE_TEXT_MAX` and `validateRuleText` used to live here. They moved to
+ * `@/features/reimburse/constants` — which imports nothing, so the
+ * 1,000-character boundary can be unit-tested; this module's `getAccPool`
+ * import pulls in `@/env` and a live configuration at module scope. The bound
+ * is still used below, to size the `NVarChar` parameters.
  */
-export function validateRuleText(raw: unknown): { text: string; error: null } | { text: null; error: string } {
-  const text = typeof raw === "string" ? raw.trim() : "";
-  if (!text) return { text: null, error: RULE_TEXT_REQUIRED };
-  if (text.length > RULE_TEXT_MAX) return { text: null, error: RULE_TEXT_TOO_LONG };
-  return { text, error: null };
-}
 
 /** The whole checklist, active and inactive, in display order — the Settings view. */
 export async function listAllRules(): Promise<ReimburseRule[]> {

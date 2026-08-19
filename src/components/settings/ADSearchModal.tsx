@@ -6,14 +6,25 @@ import { Search, X } from "lucide-react";
 /**
  * Pick a person out of Microsoft Entra ID.
  *
- * The same modal four settings surfaces already draw — Users & Roles, AP-1's
- * `ApproverSettings`, `SameDayBrandSettings` and `UatUserSettings` — each with
- * its own private copy. This is that modal with a home rather than a fifth copy
- * of it; it is lifted from the `UatUserSettings` version, which is the richest
- * (title, subtitle, already-added marking) and the one AP-4's approver table is
- * modelled on. The four existing copies are deliberately left alone: their prop
- * shapes differ slightly and rewriting live settings pages is not what the
- * change that needed this was about.
+ * Lifted from `UatUserSettings`'s private copy — the richest of the four the
+ * settings surfaces each carried (title, subtitle, already-added marking) — and
+ * the one AP-4's approver table is modelled on. `UatUserSettings` now imports
+ * this instead, so extracting it removed a copy rather than adding one.
+ *
+ * The other three are deliberately left alone, because they are not the same
+ * component wearing different formatting:
+ *
+ * - **Users & Roles** (`app/(dashboard)/settings/users/page.tsx`) is the
+ *   English-language variant — English placeholder, empty and error copy, a
+ *   hardcoded English subtitle with no prop to override it, `title` optional,
+ *   and a text `✕` rather than the `X` icon. Adopting this one would translate
+ *   that page's dialog into Thai.
+ * - **AP-1's `ApproverSettings`** and **`SameDayBrandSettings`** both call
+ *   `onSelect(user)` with the whole result row, and `ApproverSettings` reads
+ *   `user.photo` off it to seed `AccApprover.PhotoUrl`. This modal's
+ *   `onSelect(email, name)` cannot carry that, so migrating either means
+ *   widening the shared signature — a change to a live approver-management
+ *   path, which is worth doing on its own terms and not as a drive-by.
  */
 
 export interface ADSearchResult {

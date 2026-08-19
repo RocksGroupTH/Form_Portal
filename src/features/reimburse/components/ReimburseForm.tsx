@@ -155,11 +155,13 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
    * something joins the two, and wrong per spec from the first save. The list is
    * an admin's to set at Settings → ตั้งค่าขอเบิกเงินคืนพนักงาน → แบรนด์ที่เบิกได้.
    */
-  const { data: allowedBrands, isLoading: brandsLoading } = useSWR<AccBrandOption[]>(
-    "/api/request/reimburse/options/brands",
-    jsonFetcher,
-    { revalidateOnFocus: false },
-  );
+  const {
+    data: allowedBrands,
+    error: brandsError,
+    isLoading: brandsLoading,
+  } = useSWR<AccBrandOption[]>("/api/request/reimburse/options/brands", jsonFetcher, {
+    revalidateOnFocus: false,
+  });
 
   const {
     data: rulesData,
@@ -289,13 +291,37 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
   if (!employeeLoading && !manager) {
     missing.push({ key: "manager", label: "ผู้จัดการ (ManagerStaffId)" });
   }
-  // The server has always refused a submit with no brand (`ERR_NO_BRAND`), and
-  // until the picker existed that could not happen — the cookie always had one.
-  // It can now: an empty `AccFormBrand` allowlist leaves nothing to pick. Named
-  // here rather than discovered on a failed round trip, like the manager above,
-  // and only once the list has answered.
-  if (!brandsLoading && !brandCode) {
+  // Five states, one of which is ready. The server refuses a submit whose
+  // `BrandCode` is not an active `AccFormBrand` row for AP-4, so every way of
+  // failing that is named here rather than discovered on a failed round trip —
+  // the convention the manager above and the rules checklist below both follow.
+  //
+  // `!brandCode` on its own is not the test. `brandCode` is seeded from the
+  // BrandGate cookie, which always holds one of the four company codes, so it is
+  // truthy before the allowlist has said anything: with an empty allowlist or a
+  // failed fetch the old check passed and the form submitted a code matching
+  // **zero** `AccFormBrand` rows — the defect the picker was added to remove.
+  // The allowlist has to be what is tested, and an outage has to be told apart
+  // from an allowlist that is genuinely empty, because the remedies differ
+  // (refresh vs. ask an admin to configure the form).
+  if (brandsError) {
+    missing.push({ key: "brand", label: "แบรนด์ที่เบิก (โหลดไม่สำเร็จ — กรุณารีเฟรชหน้านี้)" });
+  } else if (brandsLoading) {
+    missing.push({ key: "brand", label: "แบรนด์ที่เบิก (กำลังโหลด...)" });
+  } else if (brandOptions.length === 0) {
+    missing.push({ key: "brand", label: "แบรนด์ที่เบิก (ยังไม่ได้ตั้งค่าแบรนด์ที่เบิกได้สำหรับ AP-4)" });
+  } else if (!brandCode) {
     missing.push({ key: "brand", label: "แบรนด์ที่เบิก" });
+  } else if (!(allowedBrands ?? []).some((b) => b.brandCode === brandCode)) {
+    // A resumed request whose saved code has since been dropped from the
+    // allowlist. It is kept and still offered — re-pointing a claim at a
+    // different company behind the requester's back is the thing retention
+    // exists to prevent — but it is not something this claim may be *submitted*
+    // against, and the submit route refuses it too. Named, not silently fixed.
+    missing.push({
+      key: "brand",
+      label: "แบรนด์ที่เบิก (แบรนด์เดิมไม่อยู่ในรายการที่อนุญาตแล้ว — กรุณาเลือกใหม่)",
+    });
   }
   if (filledItems.length === 0) {
     missing.push({ key: "items", label: "รายการค่าใช้จ่ายอย่างน้อย 1 รายการ" });
@@ -704,7 +730,19 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
             แบรนด์ที่เบิก{requiredStar}
           </label>
 
-          {brandsLoading ? (
+          {brandsError ? (
+            /* An outage, not a misconfiguration. Saying "no brands are set up"
+               here would send the requester to an admin who has nothing to fix,
+               and would have the admin looking at a settings page that is
+               correct. */
+            <p
+              className="text-[12.5px] leading-relaxed m-0 rounded-xl px-4 py-3"
+              style={{ background: "var(--status-bad-bg)", color: "var(--status-bad-text)" }}
+            >
+              โหลดรายการแบรนด์ที่เบิกได้ไม่สำเร็จ — กรุณารีเฟรชหน้านี้อีกครั้ง
+              หากยังไม่ได้ กรุณาแจ้งผู้ดูแลระบบ
+            </p>
+          ) : brandsLoading ? (
             <div className="h-9 w-40 rounded-xl animate-pulse" style={{ background: "var(--bg-card-alt)" }} />
           ) : brandOptions.length === 0 ? (
             <p
@@ -759,11 +797,15 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
           {/* The picker is over `AccFormBrand`, so what it offers is a setting,
               not the navbar brand. A resumed request whose saved code has since
               been removed from that list keeps it and is told why — changing it
-              silently would move the claim to a different company. */}
-          {!brandsLoading && brandOptions.length > 0 && (
+              silently would move the claim to a different company — but it can
+              no longer be submitted against, so the copy asks for a new choice
+              rather than implying the old one still works. Suppressed entirely
+              when the list failed to load: "no longer allowed" is a statement
+              about the allowlist, and during an outage there is none to read. */}
+          {!brandsError && !brandsLoading && brandOptions.length > 0 && (
             <p className="text-[11.5px] mt-1.5 m-0" style={{ color: "var(--text-faint)" }}>
               {selectedBrand && !(allowedBrands ?? []).some((b) => b.brandCode === selectedBrand.brandCode)
-                ? "แบรนด์ที่บันทึกไว้กับคำขอนี้ ปัจจุบันไม่อยู่ในรายการที่อนุญาตแล้ว — ยังคงไว้ตามเดิม เลือกใหม่ได้จากรายการข้างต้น"
+                ? "แบรนด์ที่บันทึกไว้กับคำขอนี้ ปัจจุบันไม่อยู่ในรายการที่อนุญาตแล้ว — กรุณาเลือกแบรนด์ใหม่จากรายการข้างต้นก่อนส่งคำขอ"
                 : "รายการแบรนด์ที่อนุญาตให้เบิกในแบบฟอร์ม AP-4 (ตั้งค่าโดยผู้ดูแลระบบ)"}
             </p>
           )}

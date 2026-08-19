@@ -37,6 +37,42 @@ export const REIMBURSE_FILE_REFTYPES = {
 export type ReimburseFileRefType =
   (typeof REIMBURSE_FILE_REFTYPES)[keyof typeof REIMBURSE_FILE_REFTYPES];
 
+/* ─────────────────────── the acknowledgement checklist ─────────────────────── */
+
+/**
+ * Longest `AccReimburseRule.RuleText` the column will take (migration 089:
+ * `NVARCHAR(1000)`).
+ *
+ * This is the **only** declaration of that bound. It used to exist three times
+ * — the migration's column, `settings-service.ts`, and a hand-copied `1000` in
+ * `ReimburseRuleSettings.tsx` — and the copies could drift apart without
+ * anything failing: a server that grew the limit would keep a `maxLength`
+ * attribute silently clamping the editor below it.
+ */
+export const RULE_TEXT_MAX = 1000;
+
+export const RULE_TEXT_REQUIRED = "กรุณากรอกข้อความระเบียบ";
+export const RULE_TEXT_TOO_LONG = `ข้อความระเบียบยาวเกิน ${RULE_TEXT_MAX} ตัวอักษร`;
+
+/**
+ * The rule text as it will be stored, or the message refusing it.
+ *
+ * Pure, and here rather than in `settings-service.ts` so it can be tested:
+ * that module imports `getAccPool` at module scope, which reaches `@/env` and
+ * validates the whole environment at import time, so the boundary this function
+ * guards had no test at all. The boundary is worth one — the column truncates
+ * silently on some paths, and a compliance line that loses its last clause is
+ * published looking complete.
+ */
+export function validateRuleText(
+  raw: unknown,
+): { text: string; error: null } | { text: null; error: string } {
+  const text = typeof raw === "string" ? raw.trim() : "";
+  if (!text) return { text: null, error: RULE_TEXT_REQUIRED };
+  if (text.length > RULE_TEXT_MAX) return { text: null, error: RULE_TEXT_TOO_LONG };
+  return { text, error: null };
+}
+
 /**
  * The read-only notice panel rendered before any input on the form (spec
  * §5.1), one entry per paragraph. It is business copy, not configuration — it

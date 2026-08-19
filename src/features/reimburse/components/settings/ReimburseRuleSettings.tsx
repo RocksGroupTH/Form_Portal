@@ -29,6 +29,7 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { RULE_TEXT_MAX } from "@/features/reimburse/constants";
 import type { ReimburseRule } from "@/features/reimburse/types";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
@@ -36,9 +37,6 @@ const fetcher = (url: string) => fetch(url).then((r) => r.json());
 /** Admin view: retired rules included, so they can be brought back. */
 const ENDPOINT = "/api/request/reimburse/settings/rules?includeInactive=1";
 const WRITE_ENDPOINT = "/api/request/reimburse/settings/rules";
-
-/** `AccReimburseRule.RuleText` is NVARCHAR(1000) — the server refuses past this too. */
-const RULE_TEXT_MAX = 1000;
 
 /* ─────────────────────────── one row ─────────────────────────── */
 

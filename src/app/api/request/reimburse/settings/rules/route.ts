@@ -7,8 +7,8 @@ import {
   reorderRules,
   setRuleActive,
   updateRuleText,
-  validateRuleText,
 } from "@/lib/acc/reimburse/settings-service";
+import { validateRuleText } from "@/features/reimburse/constants";
 
 /**
  * The acknowledgement checklist — read by every requester, edited by admins.

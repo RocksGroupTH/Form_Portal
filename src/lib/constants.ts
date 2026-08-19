@@ -111,6 +111,16 @@ export const REQUEST_CARDS: NavItem[] = [
     devHostOnly: true,
     manage: true,
   },
+  {
+    id: "reimburse-form",
+    label: "ขอเบิกเงินคืนพนักงาน",
+    icon: "Receipt",
+    desc: "เบิกเงินที่สำรองจ่ายไปก่อน / ฉบับร่างของฉัน",
+    href: "/request/reimburse",
+    group: "Accounting",
+    groupTh: "บัญชี",
+    badge: "AP-4",
+  },
 ];
 
 /**

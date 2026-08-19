@@ -62,7 +62,7 @@ Who is asking comes from the proxy's `x-pathname` and `x-user-email` headers, **
 
 Since migration 066 that is a hard constraint, not a preference: `auth()` no longer reads Fast_Core, it reads `TeamMember` in the form database. Everything on the path that decides *which* form database answers must therefore come from a pool this resolver does not pick — `getFormSwitchMap()` and `getActiveUatTester()` from `getCorePool()`, identity from `getProductionFormPool()`. **`FormEnvironment` and `UatTester` must stay in Fast_Core**, and `@/lib/team-member/service` must never reach for `getFormPool()`.
 
-- **Availability and writability are different questions.** `pickEnvironment().available` asks "may this person reach the form", and an id makes it unconditionally true so records stay readable and approvable. `environmentWritable` asks "is that database still taking new work". Use `resolveCurrentFormAccess()` + `resolveCurrentFormWritable()` on a form's own route, and `resolveFormAccess(formCode, requestId?)` + `resolveFormWritable(...)` to ask about a form from somewhere else (Home, the manager card). **`assertFormWritable()` (`src/lib/uat-tester/guards.ts`) has exactly four call sites** — the two `saveDraft` functions and the two submits, one pair per form.
+- **Availability and writability are different questions.** `pickEnvironment().available` asks "may this person reach the form", and an id makes it unconditionally true so records stay readable and approvable. `environmentWritable` asks "is that database still taking new work". Use `resolveCurrentFormAccess()` + `resolveCurrentFormWritable()` on a form's own route, and `resolveFormAccess(formCode, requestId?)` + `resolveFormWritable(...)` to ask about a form from somewhere else (Home, the manager card). **`assertFormWritable()` (`src/lib/uat-tester/guards.ts`) has exactly six call sites** — a `saveDraft` and a submit for each of AP-1, AP-17 and AP-4, in the three `request-service.ts` files. AP-4's `delete-service.ts` deliberately has none, and says why: the guard asks whether the database is still taking *new work*, and withdrawing a draft from a closed form is not that.
 - **The manager differs by environment.** UAT routes to the requester's `UatTester.ManagerStaffId`, re-verified at submit time (still an active tester, still active in HR — self is allowed); Production reads `Rocks_Portal_HR.Employee.ManagerStaffId`. **UAT refuses rather than falling back to HR** — a real manager must never find test data in their queue. Three resolvers, keyed on the *resolved environment* and never on the cookie: `resolveManagerInfo()` (the preview card, shared), and a separate `withUatManager` for each form's submit — `resolveRequesterForActor` in `src/lib/acc/employee-context.ts` (AP-1) and `resolveEmployeeForActor` in `src/lib/hr/employee-lookup.ts` (AP-17). `resolveManagerEmail()` is deliberately *not* overridden.
 - **Mail follows the resolved environment**, with one exception: a recipient who is an **active tester gets the mail at their real address** with a `[UAT] ` subject prefix. Everyone else is redirected to `UAT_MAIL_REDIRECT` (falling back to `GRAPH_MAIL_FROM`) with a banner naming the intended recipient. If neither is set, `applyUatRedirect` (`src/lib/acc/email-queue.ts`) throws and the row stays queued rather than mailing a real person. The sweep endpoint drains both databases (`processQueueBoth`); per-action drains are single-pool.
 - **Business Central follows the same resolution**: `resolveEffectiveErpEnvironment()` (`src/lib/acc/erp-environment.ts`) maps UAT → Sandbox, otherwise Production. No separate ERP toggle — the navbar chip and the global `AppSetting` switch were removed on 2026-08-17. Which BC company and connection Sandbox uses is set at Settings → ERP Interface Environment. **The send echoes and verifies both its environment and its batch**, answering 409 on either drift (`ENVIRONMENT_STALE_ERROR` in the route, `ErpQueueDriftError` from `src/lib/acc/erp-interface-send.ts`) so the client reloads instead of retrying something that cannot succeed.
@@ -73,9 +73,15 @@ Since migration 066 that is a hard constraint, not a preference: `auth()` no lon
 - **Process-global caches are environment-keyed.** `src/lib/acc/acc-cache.ts` is a shared `Map`; anything derived from a form-pool read must carry the environment in its key — `acc:journal-ctx:{Production|Sandbox}` (`erp-journal-context.ts`) and `acc:prep-dept-ctx:{Production|UAT}` (`erp-prep-service.ts`). Request-scoped react `cache()` memos are not global and are unkeyed by design.
 - **The running number floor is a function of the environment.** `UAT_SEQUENCE_FLOOR = 9000` in `src/lib/acc/sequence.ts`: UAT's first number of a year is `09001`, Production's `00001`. Applied only when a `(Prefix, Year)` row is first created, so it never rewinds. The two series stay disjoint only while Production issues ≤ 9000 numbers per prefix per year.
 - **Ids never collide**: migration 061 seeds UAT transactional identities at 900000 across 23 transactional tables, and **migration 064 adds a `CHECK (Id >= 900000)`** so a restore or an ad-hoc reseed cannot silently break the property the id rule depends on.
+  - **AP-4's three transactional tables are deliberately not among them, and do not need to be.** `AccReimburse`, `AccReimburseItem` and `AccReimburseRuleAck` (migration 088) start at 1 in both databases. The floor exists so that *an id in a URL* names its own database, and none of theirs ever appears in one — every AP-4 route is keyed on `AccRequest.Id` or `AccRequestFile.Id`, both of which 061 and 064 do cover. Adding a floor here would buy nothing and would have to be applied to a database that already holds rows.
 - **Attachments** land under `{SHAREPOINT_ACC_FOLDER}/_UAT/{formCode}/...` — the `_UAT` segment sits between the base folder and the form code (`buildAccFolderPath`, `src/lib/acc/sharepoint-path.ts`).
-- **Every new route under `/api/request` needs a rule** in `ROUTE_RULES` (`classify-path.ts`, longest matching prefix → `AP-1 | AP-15 | AP-17 | "BOTH" | null`). Without one it silently falls through to Production. The coverage panel on the settings page lists any route no rule covers — `matchRule` is what tells "no rule at all" apart from "a rule that deliberately says Production".
-- **Shared configuration is dual-written**, not duplicated by hand: `src/lib/acc/dual-write.ts` runs each master-table mutation against both databases in a transaction, and `npm run check:alignment` asserts the 19 shared tables still match. Those tables are deliberately absent from 061/064 — dual-write inserts production's id into UAT explicitly, so an identity floor there would reject every write.
+- **Every new route under `/api/request` needs a rule** in `ROUTE_RULES` (`classify-path.ts`, longest matching prefix → `AP-1 | AP-4 | AP-15 | AP-17 | "BOTH" | null`). Without one it silently falls through to Production. The coverage panel on the settings page lists any route no rule covers — `matchRule` is what tells "no rule at all" apart from "a rule that deliberately says Production".
+  - **AP-4's settings routes classify `AP-4`, not `null`** — the opposite of `/api/request/accounting/settings`, deliberately. `/api/request/reimburse/settings/rules` with no query string is the **form's own** checklist source, and the ticks it produces become `AccReimburseRuleAck` rows with an FK into whichever database the form resolved to. Production treatment would have a UAT tester's form read production's rule ids while writing acknowledgements into UAT. The reason first recorded for this — that AP-4's rule and approver tables are not dual-written — is **false**; they are, and they are the two tables that took the shared list from 19 to 21. The conclusion survives the premise, which is why the real reason is written down here and in `classify-path.ts`: the next person to notice the inconsistency will otherwise remove it.
+- **Shared configuration is dual-written**, not duplicated by hand: `src/lib/acc/dual-write.ts` runs each master-table mutation against both databases in a transaction, and `npm run check:alignment` asserts the **21** shared tables still match (`scripts/checks/verify-master-alignment.ts` holds the list; AP-4 added `AccReimburseRule` and `AccReimburseApprover` to the 19 that were there before). Those tables are deliberately absent from 061/064: they are not transactional, their ids must be **identical** in both databases rather than disjoint, and a floor of 900000 in UAT would reject every write.
+  - **Nothing copies production's id into UAT.** `writeBothPools` runs the *same* statement against each database and reads no id back — the only `OUTPUT INSERTED.Id` on this path is `brand-erp-interface-map-service.ts`, using it as its own return value on the production side. Matching ids rest entirely on **the two identity counters staying in lockstep**: both databases were seeded from the same script with identity preserved, and every insert since has arrived through here.
+  - **That lockstep can break with no hand-editing and no error, and it is not transactional.** SQL Server allocates an identity value outside the transaction. If the production INSERT succeeds and the UAT one throws, `writeBothPools` rolls both back correctly — but production's counter has already advanced and UAT's has not. Every id allocated afterwards differs by one, permanently and silently. `check:alignment` is what detects it, and only when somebody runs it; run it after any dual-write failure, not just when approvers or vehicles look wrong.
+  - **AP-4 raised the cost of that drift.** `AccReimburseRuleAck` records which rule a requester ticked *by id*, so drifted counters re-point an acknowledgement at **different rule text** — a compliance record attributing an agreement the person never made. The other shared tables' worst case is a mismatched vehicle or approver row; this one is materially worse.
+  - **Dual-writing `AccReimburseApprover` means the AP-4 approver pool is not per-environment.** Adding someone so they can rehearse the accounting steps in UAT also makes them a production approver of real reimbursement payments. `AccApprover` has had exactly this property all along and it is accepted rather than a defect — recorded here so it is read rather than discovered.
 - **Only two endpoints merge both databases** through `src/lib/acc/query-both.ts`: `/api/request/accounting/requests/mine` and `/api/request/accounting/work` — what a person owns or must act on. Sorting and paging happen after the merge, each row carries an `environment` tag, and `keepRowsInCurrentEnvironment` (`current-rows.ts`) then drops rows whose database is not where that form resolves for this viewer today. Nothing is deleted; flipping the switch back brings the rows straight back. **Reports do not merge** — a report is a statement about one set of books, so `/api/request/accounting/report` and its Excel export read one database only.
 - **Switching a form does not move its existing requests.** They stay in the database they were written to and stay readable; only new writes go elsewhere.
 
@@ -199,10 +205,12 @@ Top bar and mobile tabs: **Home** · **My Requests** · **My Work** · **Setting
 
 Only the middle two live in `NAV` (`src/lib/constants.ts`). Home and Settings are composed onto either side of it in `Navbar.tsx`'s `visibleNav` — Home as a literal, Settings behind `canAdmin` — so **adding an entry to `NAV` puts it between them**, not at the end.
 
-- **`Home`** (`/`) — a form catalogue: greeting and stat strip, search, "Continue where you left off" (resumable drafts and Returned requests), then the **Accounting** forms — AP-1 travel expense and AP-17 travel booking, filtered to the ones available to this viewer. It is a link surface only: it creates no API of its own beyond reading `/api/form-environment` for availability. `src/features/home/HomeCatalogue.tsx`.
-- **`My Requests`** (`/my-request`) — the Accounting requests you submitted and their status (AP-1 and AP-17, merged by `src/lib/acc/query-both.ts`).
+- **`Home`** (`/`) — a form catalogue: greeting and stat strip, search, "Continue where you left off" (resumable drafts and Returned requests), then the **Accounting** forms — AP-1 travel expense, AP-17 travel booking and AP-4 staff reimbursement, filtered to the ones available to this viewer. It is a link surface only: it creates no API of its own beyond reading `/api/form-environment` for availability. `src/features/home/HomeCatalogue.tsx`.
+  - **Home's card list is its own, not a filter over `REQUEST_CARDS`.** `ACCOUNTING_FORMS` in `HomeCatalogue.tsx` and `REQUEST_CARDS` in `src/lib/constants.ts` are two hand-kept lists, and a form added to one alone appears on only one surface. Environment filtering needs nothing extra either way: `/api/form-environment` resolves every code any `REQUEST_CARDS` badge names.
+  - **"Continue where you left off" is still AP-1 and AP-17 only.** `useHomeData` fetches those two drafts endpoints and `ResumableGroup.formCode` is typed to the pair; `/api/request/reimburse/requests/drafts` exists and is not read, so an AP-4 draft is resumable from the form page but is not offered here.
+- **`My Requests`** (`/my-request`) — the Accounting requests you submitted and their status. Form-agnostic: `listMyRequestRows` filters on ownership, not `FormCode`, so AP-4 rows appear alongside AP-1's and AP-17's, merged across both databases by `src/lib/acc/query-both.ts`.
 - **`My Work`** (`/my-work`) — requests awaiting your approval or otherwise involving you.
-- **`Settings`** (`/settings`, IT Admin+) — hub of `SETTINGS_CARDS`: Maps & Routing, Database Connections, Business Central, Brand Configuration, **ERP Interface Environment**, **Form Environment** (`/settings/form-environment`), **UAT Users** (`/settings/uat-users`), **Users & Roles** (`/settings/users`) — the bolded four are `systemAdminOnly` — and Accounting Admin, which points at `/request?group=Settings` rather than `/request/accounting`, because the AP-1 hub would leave out AP-17.
+- **`Settings`** (`/settings`, IT Admin+) — hub of `SETTINGS_CARDS`: Maps & Routing, Database Connections, Business Central, Brand Configuration, **ERP Interface Environment**, **Form Environment** (`/settings/form-environment`), **UAT Users** (`/settings/uat-users`), **Users & Roles** (`/settings/users`) — the bolded four are `systemAdminOnly` — and Accounting Admin, which points at `/request?group=Settings` rather than `/request/accounting`, because the AP-1 hub would leave out AP-17 and AP-4.
 
 **Form Builder is gone.** Its three entry points were removed first (the nav tab, the Manage Forms settings card, Home's general-forms group), and on 2026-08-19 the feature itself was deleted: the eight pages under `/forms`, all sixteen `/api/forms` routes, and `src/features/forms`. It had never been used here — `/api/forms/[formId]/workflow/steps` writes `OfficeFormWorkflows.CreatedBy` and `OfficeFormWorkflowSteps.UpdatedAt`, neither of which exists in migration `002` or `059`, so configuring a workflow always threw — while carrying an unauthenticated-in-practice upload path, an approval-claim that failed open on a null assignee, and no server-side payload validation. Nothing else in the app referenced it: `my-request`, `my-work` and Home are Accounting-only. The `OfficeForm*` tables are **left in place and unread**; no migration drops them.
 
@@ -238,7 +246,7 @@ still true of the deleted code in git history:
 
 ### 2. Request → Accounting (`/request/accounting`)
 
-Two live Accounting forms share a generic request/approval backbone, plus a Business Central ERP integration layer.
+Three live Accounting forms share a generic request/approval backbone, plus a Business Central ERP integration layer. **Only AP-1 reaches Business Central** — see AP-4 below.
 
 **Storage:** Acc* tables live in **`Rocks_Portal_Form`**, accessed via `getAccPool()` (= `getFormPool()`, `src/lib/acc/pool.ts`). Numbered migrations in `migrations/` (013 onward) built these up incrementally against the old `Fast_Form`; `059_portal_form_baseline.sql` is the generated full-schema baseline used to stand up a new database. Apply with `npm run apply-sql -- --db Rocks_Portal_Form --file <path>` (see `scripts/apply-sql.ts`). **Every migration names its own target database in its header — read that before running it.**
 
@@ -270,13 +278,27 @@ Accommodation/ticket booking requests for provincial work travel — supports mu
 - **Feature code:** `src/features/travel-booking/`; service/lib code under `src/lib/acc/travel-booking/`
 - Uses `Rocks_Portal_HR.EmployeeAllowanceLog` for effective-dated per-diem history and `Fast_Data` for province lookups (`province-service.ts`)
 
+#### AP-4 — Staff Reimbursement (`/request/reimburse`)
+
+An employee itemises money they spent out of pocket, attaches the AP-4.1 Excel summary and the receipts, ticks every line of a compliance checklist, and three approvals later the company pays them back.
+
+- **Pages:** `/request/reimburse` (fill/resume draft), `/request/reimburse/[id]` (detail + timeline), `/request/reimburse/settings` (approvers, the checklist, the brand allowlist)
+- **Tables (five, migrations 088–090):** `AccReimburse` + `AccReimburseItem` (the claim and its lines), `AccReimburseRuleAck` (which checklist line this requester ticked, by rule id) — all three transactional — plus `AccReimburseRule` and `AccReimburseApprover`, which are **shared configuration and dual-written**. 091 widened `AccApproval`'s step CHECK for the third step; 092 registers the form; 093 is its `FormEnvironment` row.
+- **Feature code:** `src/features/reimburse/`; services under `src/lib/acc/reimburse/`. `src/features/reimburse/constants.ts` imports nothing and is the home for anything pure that needs a test — the form code, the step and status vocabulary, the notice copy, and `validateRuleText`'s 1,000-character bound.
+- **Three approval steps**, not AP-1's two: **Manager** (`Rocks_Portal_HR.Employee.ManagerStaffId`, or `UatTester.ManagerStaffId` in UAT) → **Accounting check** (`ACCOUNT`, from `AccReimburseApprover`), which is the step that sets `PaymentDate` → **Accounting final** (`ACCOUNT_FINAL`), from the same pool but **necessarily a different person** — `canActFinalStep` (`two-person.ts`) refuses a match, and refuses when either StaffId is absent, because a missing id is not evidence of a different person.
+- **Payment rounds are the 1st and 3rd Friday** of the month — *not* AP-1's 2nd and 4th, which is why `reimburse/payment-calendar.ts` exists rather than a branch in the shared one; the pure building blocks are shared by import through `payment-calendar-core.ts`. Each round has **its own Monday-noon cutoff**, not one cutoff shared across rounds: a check at Monday 13:00 misses that week's Friday and is then measured against the *next* round's own Monday noon. Dates are shifted forward past `Rocks_Codex.Holiday` like AP-1's.
+- **Running numbers are `RBMyy-xxxxx`** — the shared `AccSequence` allocator, keyed on `(Prefix, Year)`, so the series **resets each year**. UAT's first number of a year is `RBMyy-09001` (the `UAT_SEQUENCE_FLOOR`), production's `RBMyy-00001`.
+- **AP-4 never reaches Business Central, deliberately.** It is absent from AP-1's report and from the ERP prep queue because both pin `AP1_FORM_CODE` (`report-service.ts`, `erp-prep-service.ts`) — reimbursements are paid, not posted as travel journals. Adding AP-4 to either is a decision, not a bug fix.
+- **AP-4 parks at `(ManagerApproved, ACCOUNT)` — the same status/step tuple AP-1 uses.** This is why **every claim in `approval-engine.ts` is pinned to `FormCode='AP-1'`** and every claim in `reimburse/approval-service.ts` is pinned to `AP-4`. Without the pins, AP-1's engine will happily claim an AP-4 request sitting on that tuple and drive it through AP-1's workflow. Removing a pin re-opens a Critical; two reviews have now spent effort rediscovering this.
+- **`BrandCode` is validated against `AccFormBrand` at submit** (the submit route, before the service claims anything). The picker offers only granted brands, but a draft can hold any code — including the BrandGate cookie value every request written before the allowlist existed carries — and a client-enforced invariant is not one. A resumed request keeps a code the allowlist has since dropped rather than being silently re-pointed at another company, and is told to pick a new one before submitting.
+
 #### Business Central / ERP integration
 
 Accounting requests can be pushed into Dynamics 365 Business Central. Configuration lives under **Settings**: Database Connections, Business Central (OAuth2 connection), Brand Configuration (per-brand BC + ERP SQL target), ERP Interface Environment (per-brand Sandbox company and connection, System Admin only — which forms use it is set at Settings → Form Environment). Sync logic in `src/lib/erp/account-sync.ts` and `src/lib/erp/dimension-sync.ts` (both query `Fast_Data`), OData client in `src/lib/bc/`.
 
-**Key libs (`src/lib/acc/`):** `pool`, `sequence`, `payment-calendar`, `employee-context`, `brand-options`, `access`, `settings-service`, `request-service`, `approval-engine`, `report-service`, `email-queue`, `email-templates`, `calc`, `erp-environment-shared`, plus `travel-booking/*`.
+**Key libs (`src/lib/acc/`):** `pool`, `sequence`, `payment-calendar`, `payment-calendar-core`, `employee-context`, `brand-options`, `access`, `settings-service`, `request-service`, `approval-engine`, `report-service`, `email-queue`, `email-templates`, `calc`, `erp-environment-shared`, plus `travel-booking/*` and `reimburse/*`.
 
-**Feature UI:** `src/features/accounting/` (AP-1) and `src/features/travel-booking/` (AP-17) — form components, approval queues, report tables, settings panels.
+**Feature UI:** `src/features/accounting/` (AP-1), `src/features/travel-booking/` (AP-17) and `src/features/reimburse/` (AP-4) — form components, approval queues, report tables, settings panels.
 
 ## Project Structure
 
@@ -301,12 +323,13 @@ src/
 │   ├── (auth)/login, unauthorized
 │   ├── (dashboard)/
 │   │   ├── my-request/, my-work/     # Personal request tracking
-│   │   ├── request/                  # Accounting hub, AP-1, AP-17, ERP prep
+│   │   ├── request/                  # Accounting hub, AP-1, AP-17, AP-4, ERP prep
 │   │   ├── settings/                 # Admin settings hub — connections, BC, brand config, ERP, users
 │   │   └── page.tsx                  # Home — form catalogue
 │   ├── api/
 │   │   ├── auth/                     # NextAuth
 │   │   ├── request/accounting/       # AP-1, AP-17, ERP prep API routes
+│   │   ├── request/reimburse/        # AP-4 API routes (its own prefix, not under accounting/)
 │   │   ├── settings/                 # Connections, BC, brand-config, ORS, Google Maps, users
 │   │   ├── form-environment/         # Per-form availability for Home
 │   │   ├── uat-mode/                 # The only writer of the UAT-mode cookie
@@ -318,6 +341,7 @@ src/
 ├── features/
 │   ├── accounting/                   # AP-1 form, approvals, report, settings UI
 │   ├── travel-booking/               # AP-17 form, admin queue, report, settings UI
+│   ├── reimburse/                    # AP-4 form, detail, settings UI + constants.ts (pure, tested)
 │   ├── home/                         # Home catalogue
 │   ├── settings/                     # Settings panels
 │   └── new-item-inventory/           # WIP — see the note below the tree
@@ -333,7 +357,8 @@ src/
 │   │   ├── attachment-guard.ts        # Magic-byte upload admission + safe download headers
 │   │   ├── stored-file.ts             # Backend-dispatching delete (local vs SharePoint)
 │   │   ├── request-errors.ts          # AccConflictError / AccForbiddenError -> 409 / 403
-│   │   └── travel-booking/            # + derive-flags.ts, id-card-access.ts
+│   │   ├── travel-booking/            # + derive-flags.ts, id-card-access.ts
+│   │   └── reimburse/                 # AP-4 — two-person.ts, payment-calendar.ts, approval-policy.ts
 │   ├── form-environment/             # Which database answers — resolver + classify-path
 │   ├── uat-tester/                   # UatTester membership + assertFormWritable guards
 │   ├── new-item-inventory/           # WIP — lookup + sequence, no UI yet
@@ -440,7 +465,18 @@ NEXT_PUBLIC_APP_URL=http://localhost:3081
 reads it, and it only asserts the string is non-empty — every pool in
 `src/lib/db/mssql.ts` opens an explicitly named database. It still has to name
 something the login can open, because it is the connection's default catalogue.
-`Rocks_Codex` is the value here and it is reachable (measured 2026-08-19).
+
+**This repo's own `.env.local` had the broken value, and nobody noticed.** It
+named **`Rocks_Codex_UAT`** — the database the next paragraph records as dropped
+on 2026-06-20 — and connecting to it answers `Login failed for user 'saai'`.
+Measured and changed to `Rocks_Codex` on 2026-08-19; that one is reachable. The
+trap the next paragraph warns about had already been walked into here, and it
+cost nothing only because `MSSQL_DATABASE` is inert and every pool names its
+database explicitly. Two things follow. Being inert is *why* it stayed wrong for
+months — there is no failure to notice, so it has to be read to be caught. And
+**`.env.local` is gitignored, so this correction does not travel**: production's
+environment holds its own copy and must be checked separately, as must any
+developer machine set up before that date.
 
 **Do not copy env values from the Rocks Fast sibling on the assumption they are
 proven.** `RocksFast/.env.local` is a months-old local snapshot, not a live

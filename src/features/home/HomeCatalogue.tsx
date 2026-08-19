@@ -13,8 +13,20 @@ import {
 import { useHomeData } from "@/features/home/useHomeData";
 import { useFormEnvironments } from "@/lib/hooks/useFormEnvironments";
 import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
-import { Search, Route, Luggage, ClipboardCheck, FilePen, ArrowRight } from "lucide-react";
+import { Search, Route, Luggage, Receipt, ClipboardCheck, FilePen, ArrowRight } from "lucide-react";
 
+/**
+ * The Accounting forms Home offers, in catalogue order.
+ *
+ * Deliberately its own list rather than a filter over `REQUEST_CARDS`: Home
+ * renders a different card (its own `Icon` component, a short one-line `desc`)
+ * and never shows the management variants. The two lists must be kept in step
+ * by hand — adding a form to `REQUEST_CARDS` alone puts it on `/request` and
+ * *not* here. The `code` is the whole wiring: it feeds `isFormAvailable`,
+ * `isFormComingSoon` and `FormEnvironmentChip`, and `/api/form-environment`
+ * resolves every code any `REQUEST_CARDS` badge names, so a form already
+ * carrying a management card needs nothing further to be filtered correctly.
+ */
 const ACCOUNTING_FORMS = [
   {
     code: "AP-1",
@@ -29,6 +41,13 @@ const ACCOUNTING_FORMS = [
     desc: "ไปทำงานต่างจังหวัด",
     href: "/request/travel-booking",
     Icon: Luggage,
+  },
+  {
+    code: "AP-4",
+    name: "ขอเบิกเงินคืนพนักงาน",
+    desc: "เบิกเงินที่สำรองจ่ายไปก่อน",
+    href: "/request/reimburse",
+    Icon: Receipt,
   },
 ];
 
