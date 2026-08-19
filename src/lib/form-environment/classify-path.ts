@@ -10,10 +10,10 @@
  * Pure: no I/O, no request context. Exhaustively tested in classify-path.test.ts.
  */
 
-export type FormCode = "AP-1" | "AP-15" | "AP-17";
+export type FormCode = "AP-1" | "AP-4" | "AP-15" | "AP-17";
 
 /** Every form code, as values — the runtime half of the `FormCode` union. */
-export const FORM_CODES: readonly FormCode[] = ["AP-1", "AP-15", "AP-17"];
+export const FORM_CODES: readonly FormCode[] = ["AP-1", "AP-4", "AP-15", "AP-17"];
 
 /**
  * Narrow caller-supplied text to a known form code.
@@ -78,6 +78,10 @@ export const ROUTE_RULES: RouteRule[] = [
   // AP-17 proper.
   { prefix: "/api/request/travel-booking", result: "AP-17" },
   { prefix: "/request/travel-booking", result: "AP-17" },
+
+  // AP-4 proper.
+  { prefix: "/api/request/reimburse", result: "AP-4" },
+  { prefix: "/request/reimburse", result: "AP-4" },
 
   // AP-1 proper.
   { prefix: "/api/request/accounting", result: "AP-1" },

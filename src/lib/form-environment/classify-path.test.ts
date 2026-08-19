@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { classifyPath, matchRule, ROUTE_RULES } from "./classify-path";
+import { classifyPath, isFormCode, matchRule, ROUTE_RULES } from "./classify-path";
 
 test("AP-17 admin pages under the accounting prefix win over AP-1", () => {
   assert.equal(classifyPath("/request/accounting/travel-booking"), "AP-17");
@@ -120,4 +120,14 @@ test("no BC-posting route may be an aggregate or unclassified", () => {
   }
   assert.ok(matchRule("/api/request/accounting/erp-prep/send"),
     "the send path must be covered by a rule at all");
+});
+
+test("AP-4's own paths classify to AP-4, not to AP-1's catch-all", () => {
+  assert.equal(classifyPath("/request/reimburse"), "AP-4");
+  assert.equal(classifyPath("/request/reimburse/123"), "AP-4");
+  assert.equal(classifyPath("/api/request/reimburse/requests/123/submit"), "AP-4");
+});
+
+test("AP-4 is a known form code", () => {
+  assert.equal(isFormCode("AP-4"), true);
 });
