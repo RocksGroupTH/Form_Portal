@@ -19,8 +19,12 @@
 --      rounds and `paymentDateError` refuses everything else, so the rule was
 --      making a promise the code cannot keep, to a requester who has to tick it.
 --
--- The replacement is the owner's own paragraph 6, verbatim minus its leading
--- `**` marker, so this reconciles the two texts without inventing a third.
+-- The replacement is the owner's own paragraph 6, so this reconciles the two
+-- texts without inventing a third. It is not quite verbatim: the leading `**`
+-- marker is dropped, and ¶6's space in `จ่ายเงิน ศุกร์ที่` is closed up to
+-- `จ่ายเงินศุกร์ที่` — 88 characters against ¶6's 89. Both databases already
+-- hold the closed-up form and 089's seed matches it, so this is recorded rather
+-- than corrected: a 095 to insert one space would cost more than it buys.
 --
 -- Only a row still holding 089's exact text is touched. An administrator who has
 -- already reworded it at Settings has said something deliberate, and a migration
