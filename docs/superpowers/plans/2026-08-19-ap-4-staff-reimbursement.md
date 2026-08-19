@@ -305,6 +305,19 @@ Expected: FAIL — the module does not exist.
 subtlety: find the Monday noon at or before `checkedAt`, then take the first
 round strictly after it.
 
+> **⚠️ The pseudocode below is WRONG. It is kept, annotated, so the record
+> shows what was corrected rather than reading as though it had been right.**
+>
+> A single cut-off relative to `checkedAt` is always behind the current week's
+> Friday, so "first round strictly after the cut-off" can never exclude that
+> week once its own deadline has passed. A check on Monday 13:00 returns that
+> Friday, where the test four blocks above requires the next round.
+>
+> **The correct rule is a per-round deadline:** each round carries the Monday
+> noon of its own week, and missing it drops you to the next round. Task 2's
+> implementer caught this and built the per-round version — the six tests, not
+> this sample, were the authority.
+
 ```ts
 /** Monday 12:00 at or before `at` — the cut-off that decides the round. */
 function cutoffBefore(at: Date): Date {
