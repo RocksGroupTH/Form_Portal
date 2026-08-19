@@ -2,10 +2,12 @@
 
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { toast } from "sonner";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { Button } from "@/components/ui/Button";
+import { Dialog } from "@/components/ui/Dialog";
 import { AdvanceForm } from "@/features/advance/components/AdvanceForm";
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
 import { statusLabelDisplay } from "@/features/accounting/constants";
@@ -24,12 +26,14 @@ export default function AdvanceDetailPage() {
 function AdvanceDetailContent() {
   const params = useParams();
   const router = useRouter();
+  const { data: session } = useSession();
   const requestId = params?.id ? Number(String(params.id)) : null;
 
   const [request, setRequest] = useState<AdvanceRequest | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
 
   // Account-step approval inputs.
   const [paymentDates, setPaymentDates] = useState<string[]>([]);
@@ -104,6 +108,10 @@ function AdvanceDetailContent() {
     if (!rejectReason.trim()) return toast.error("กรุณาระบุเหตุผลที่ไม่อนุมัติ");
     act("reject", { comment: rejectReason.trim() });
   }
+  function handleReturn() {
+    if (!rejectReason.trim()) return toast.error("กรุณาระบุสิ่งที่ต้องแก้ไข");
+    act("return", { comment: rejectReason.trim() });
+  }
 
   if (loading) {
     return <TravelExpenseLoadingPopup label="กำลังโหลดคำขอ..." subtitle="แบบฟอร์มขอเบิกเงินทดรองจ่าย (AP-2)" />;
@@ -122,6 +130,18 @@ function AdvanceDetailContent() {
   const inApproval = request.status === "Submitted" && !!currentStep;
   const currentStepLabel = currentStep ? STEP_LABEL[currentStep] ?? currentStep : "";
 
+  // Requester may withdraw while still within 24h AND Head Accounting hasn't approved.
+  const myId = session?.user?.id != null ? Number(session.user.id) : null;
+  const isOwner = myId != null && request.submittedBy === myId;
+  const headAccApproved = (request.approvals ?? []).some((a) => a.stepType === "HEAD_ACC" && a.status === "Approved");
+  const within24h = request.submittedAt
+    ? Date.now() - new Date(request.submittedAt).getTime() <= 24 * 60 * 60 * 1000
+    : false;
+  const canCancel =
+    isOwner &&
+    (request.status === "Submitted" || request.status === "ManagerApproved") &&
+    within24h && !headAccApproved;
+
   return (
     <PageContainer className="acc-theme py-6 px-3 sm:px-0 flex flex-col gap-4">
       <PageHeaderBar
@@ -138,11 +158,18 @@ function AdvanceDetailContent() {
         }
       />
 
-      {isEditable && (
-        <div className="flex justify-end">
-          <Button variant="secondary" onClick={() => router.push(`/request/advance?id=${request.id}`)}>
-            แก้ไขแบบร่าง
-          </Button>
+      {(isEditable || canCancel) && (
+        <div className="flex justify-end gap-2">
+          {isEditable && (
+            <Button variant="secondary" onClick={() => router.push(`/request/advance?id=${request.id}`)}>
+              แก้ไขแบบร่าง
+            </Button>
+          )}
+          {canCancel && (
+            <Button variant="danger" onClick={() => setCancelOpen(true)} disabled={busy}>
+              ยกเลิกคำขอ
+            </Button>
+          )}
         </div>
       )}
 
@@ -191,19 +218,39 @@ function AdvanceDetailContent() {
           )}
           <div className="flex flex-col gap-1">
             <label className="text-[12px]" style={{ color: "var(--text-secondary)" }}>
-              เหตุผล (กรอกก่อนกด &quot;ไม่อนุมัติ&quot;)
+              เหตุผล / สิ่งที่ต้องแก้ไข (กรอกก่อนกด &quot;ไม่อนุมัติ&quot; หรือ &quot;ส่งกลับแก้ไข&quot;)
             </label>
             <textarea rows={2} value={rejectReason} onChange={(e) => setRejectReason(e.target.value)}
-              placeholder="ระบุเหตุผลที่ไม่อนุมัติ..."
+              placeholder="ระบุเหตุผลที่ไม่อนุมัติ หรือสิ่งที่ต้องการให้แก้ไข..."
               className="text-[13px] px-3 py-2 rounded-lg outline-none"
               style={{ background: "var(--bg-card)", color: "var(--text-primary)", border: "1px solid var(--border-card)" }} />
           </div>
           <div className="flex items-center justify-end gap-2">
+            <Button variant="secondary" onClick={handleReturn} disabled={busy}>ส่งกลับแก้ไข</Button>
             <Button variant="danger" onClick={handleReject} disabled={busy}>ไม่อนุมัติ</Button>
             <Button variant="primary" onClick={handleApprove} loading={busy}>อนุมัติ</Button>
           </div>
         </div>
       )}
+
+      {/* cancel-request confirm popup */}
+      <Dialog
+        open={cancelOpen}
+        onOpenChange={(o) => { if (!busy) setCancelOpen(o); }}
+        title="ยืนยันยกเลิกคำขอ"
+        contentClassName="max-w-[400px]"
+      >
+        <div className="flex flex-col gap-3 p-1">
+          <p className="text-[13px] m-0" style={{ color: "var(--text-secondary)" }}>
+            ยกเลิกคำขอ <b>{request.requestNo ?? ""}</b> ใช่ไหม? ระบบจะแจ้งเตือน <b>Head Accounting</b> และสำเนาถึงคุณทางอีเมล
+          </p>
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="secondary" onClick={() => setCancelOpen(false)} disabled={busy}>ไม่ยกเลิก</Button>
+            <Button variant="danger" loading={busy}
+              onClick={async () => { await act("cancel"); setCancelOpen(false); }}>ยืนยันยกเลิก</Button>
+          </div>
+        </div>
+      </Dialog>
     </PageContainer>
   );
 }

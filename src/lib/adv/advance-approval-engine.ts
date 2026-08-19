@@ -167,15 +167,19 @@ export async function cancelByRequester(requestId: number, actor: Actor): Promis
   const tx = pool.transaction();
   await tx.begin();
   try {
+    // Cancel window: within 24h of submit AND Head Accounting has not approved
+    // yet (Status still Submitted/ManagerApproved, no HEAD_ACC step Approved).
     const upd = await tx.request().input("rid", sql.Int, requestId).input("by", sql.Int, actor.userId)
       .query(`UPDATE [dbo].[AccRequest] SET Status='Cancelled', CurrentStepCode=NULL,
                 CancelledBy=@by, CancelledAt=SYSDATETIME(), UpdatedAt=SYSDATETIME()
-              WHERE Id=@rid AND Status='Submitted'
-                AND SubmittedAt IS NOT NULL AND DATEDIFF(HOUR, SubmittedAt, SYSDATETIME()) <= 24;
+              WHERE Id=@rid AND Status IN ('Submitted','ManagerApproved')
+                AND SubmittedAt IS NOT NULL AND DATEDIFF(HOUR, SubmittedAt, SYSDATETIME()) <= 24
+                AND NOT EXISTS (SELECT 1 FROM [dbo].[AccAdvanceApproval]
+                                WHERE RequestId=@rid AND StepType='HEAD_ACC' AND Status='Approved');
               SELECT @@ROWCOUNT AS n`);
     if ((upd.recordset[0].n as number) === 0) {
       await tx.rollback();
-      throw new Error("ไม่สามารถยกเลิกได้ — เกิน 1 วันหลังส่ง หรือสถานะไม่ถูกต้อง");
+      throw new Error("ไม่สามารถยกเลิกได้ — เกิน 1 วันหลังส่ง หรือ Head Accounting อนุมัติไปแล้ว");
     }
     await tx.request().input("rid", sql.Int, requestId)
       .query(`UPDATE [dbo].[AccAdvanceApproval] SET Status='Returned', ActionedAt=SYSDATETIME()
@@ -184,6 +188,28 @@ export async function cancelByRequester(requestId: number, actor: Actor): Promis
       .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action) VALUES (@rid, @by, 'cancelled')`);
     await tx.commit();
   } catch (e) { await tx.rollback().catch(() => {}); throw e; }
+
+  // Notify Head Accounting + cc the requester that the request was withdrawn
+  // (best-effort — never fail the cancel over an email).
+  try {
+    const info = await pool.request().input("rid", sql.Int, requestId)
+      .query(`SELECT RequestNo, RequesterEmail, RequesterFullName FROM [dbo].[AccRequest] WHERE Id=@rid`);
+    const row = info.recordset[0] as { RequestNo: string | null; RequesterEmail: string | null; RequesterFullName: string | null } | undefined;
+    const requestNo = row?.RequestNo || `#${requestId}`;
+    const headEmails = await listApproverEmailsByRole("HEAD_ACC");
+    const recipients = Array.from(new Set([
+      ...headEmails.filter((e): e is string => !!e),
+      ...(row?.RequesterEmail ? [row.RequesterEmail] : []),
+    ]));
+    const subject = `ยกเลิกคำขอเบิกเงินทดรองจ่าย ${requestNo}`;
+    const bodyHtml =
+      `<p>คำขอเบิกเงินทดรองจ่าย <b>${requestNo}</b> ถูก<b>ยกเลิก</b>โดยผู้ขอ` +
+      `${row?.RequesterFullName ? ` (${row.RequesterFullName})` : ""} ก่อนการอนุมัติของ Head Accounting</p>` +
+      `<p>ไม่ต้องดำเนินการอนุมัติคำขอนี้อีก</p>`;
+    for (const toEmail of recipients) {
+      await queueEmail({ requestId, toEmail, subject, bodyHtml, triggerType: "Cancelled" });
+    }
+  } catch { /* email is best-effort */ }
 }
 
 /** Return the current step to the requester for edits. */

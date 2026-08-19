@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { X, ExternalLink, Paperclip } from "lucide-react";
+import { X, ExternalLink, Paperclip, FileText } from "lucide-react";
 import { statusLabelDisplay } from "@/features/accounting/constants";
 import type { AdvanceRequest } from "@/features/advance/types";
 
@@ -141,15 +141,35 @@ export function AdvanceDetailPanel({ requestId, onClose }: { requestId: number |
                 {files.length === 0 ? (
                   <p className="text-[12px] m-0" style={{ color: "var(--text-muted)" }}>— ไม่มีเอกสารแนบ</p>
                 ) : (
-                  <div className="flex flex-col gap-1.5">
-                    {files.map((f) => (
-                      <a key={f.id} href={`/api/request/advance/files/${f.id}`} target="_blank" rel="noopener noreferrer"
-                        className="flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] no-underline"
-                        style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)", color: "var(--text-primary)" }}>
-                        <ExternalLink size={13} style={{ color: "var(--nav-active-text)" }} />
-                        <span className="truncate flex-1">{f.fileName}</span>
-                      </a>
-                    ))}
+                  <div className="grid grid-cols-3 gap-2">
+                    {files.map((f) => {
+                      const href = `/api/request/advance/files/${f.id}`;
+                      const isImg = (f.contentType ?? "").toLowerCase().startsWith("image/");
+                      const ext = (f.fileName.split(".").pop() ?? "").toUpperCase().slice(0, 4);
+                      return (
+                        <a key={f.id} href={href} target="_blank" rel="noopener noreferrer" title={f.fileName}
+                          className="group flex flex-col rounded-lg overflow-hidden no-underline"
+                          style={{ border: "1px solid var(--border-card)", background: "var(--bg-card-alt)" }}>
+                          <div className="relative w-full aspect-square flex items-center justify-center overflow-hidden"
+                            style={{ background: "var(--bg-badge)" }}>
+                            {isImg ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={href} alt={f.fileName} loading="lazy" className="w-full h-full object-cover" />
+                            ) : (
+                              <div className="flex flex-col items-center gap-1">
+                                <FileText size={22} style={{ color: "var(--nav-active-text)" }} />
+                                <span className="text-[9px] font-bold" style={{ color: "var(--text-muted)" }}>{ext || "FILE"}</span>
+                              </div>
+                            )}
+                            <span className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity rounded p-0.5"
+                              style={{ background: "rgba(0,0,0,0.55)" }}>
+                              <ExternalLink size={11} color="#fff" />
+                            </span>
+                          </div>
+                          <span className="text-[10px] px-1.5 py-1 truncate" style={{ color: "var(--text-secondary)" }}>{f.fileName}</span>
+                        </a>
+                      );
+                    })}
                   </div>
                 )}
               </div>

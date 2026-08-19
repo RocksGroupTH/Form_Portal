@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Check, User, Mail, UserCog, Paperclip, Camera, X, FileText } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { Dialog } from "@/components/ui/Dialog";
 import { Avatar } from "@/components/ui/Avatar";
 import { RequesterPickerModal, type RequesterOption } from "@/components/RequesterPickerModal";
 import { CurrencyCombobox } from "@/features/advance/components/CurrencyCombobox";
@@ -46,6 +47,8 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
   // Attachments (image/PDF, ≤4MB) — need a saved request id.
   const [files, setFiles] = useState<{ id: number; fileName: string; fileSize: number; contentType: string }[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [deleteFileId, setDeleteFileId] = useState<number | null>(null);
+  const [deletingFile, setDeletingFile] = useState(false);
 
   const [brandCode, setBrandCode] = useState(initial?.brandCode ?? "");
   // Empty until chosen — the form reveals lower fields step by step (brand → โอนให้ → rest).
@@ -184,15 +187,20 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
     }
   }
 
-  async function removeFile(fileId: number) {
-    if (!window.confirm("ลบไฟล์นี้?")) return;
+  async function confirmRemoveFile() {
+    if (deleteFileId == null) return;
+    const fileId = deleteFileId;
+    setDeletingFile(true);
     try {
       const res = await fetch(`/api/request/advance/files/${fileId}`, { method: "DELETE" });
       const j = (await res.json()) as { ok: boolean; error?: string };
       if (!j.ok) throw new Error(j.error ?? "ลบไม่สำเร็จ");
       setFiles((prev) => prev.filter((f) => f.id !== fileId));
+      setDeleteFileId(null);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "ลบไม่สำเร็จ");
+    } finally {
+      setDeletingFile(false);
     }
   }
 
@@ -592,23 +600,40 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
               )}
               <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>รองรับรูปภาพ/PDF · ไม่เกิน 4MB ต่อไฟล์</span>
               {files.length > 0 && (
-                <div className="flex flex-col gap-1">
-                  {files.map((f) => (
-                    <div key={f.id} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg"
-                      style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)" }}>
-                      <FileText size={14} className="shrink-0" style={{ color: "var(--text-muted)" }} />
-                      <a href={`/api/request/advance/files/${f.id}`} target="_blank" rel="noreferrer"
-                        className="flex-1 min-w-0 truncate text-[12px] no-underline" style={{ color: "var(--text-primary)" }}>
-                        {f.fileName}
-                      </a>
-                      <span className="text-[11px] shrink-0" style={{ color: "var(--text-faint)" }}>{Math.max(1, Math.round(f.fileSize / 1024))} KB</span>
-                      {!readOnly && (
-                        <button type="button" onClick={() => removeFile(f.id)}
-                          className="p-1 rounded cursor-pointer border-none bg-transparent shrink-0"
-                          style={{ color: "var(--text-danger, #dc2626)" }} title="ลบ"><X size={13} /></button>
-                      )}
-                    </div>
-                  ))}
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                  {files.map((f) => {
+                    const href = `/api/request/advance/files/${f.id}`;
+                    const isImg = (f.contentType ?? "").toLowerCase().startsWith("image/");
+                    const ext = (f.fileName.split(".").pop() ?? "").toUpperCase().slice(0, 4);
+                    return (
+                      <div key={f.id} className="group relative flex flex-col rounded-lg overflow-hidden"
+                        style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)" }}>
+                        <a href={href} target="_blank" rel="noreferrer" title={f.fileName} className="block">
+                          <div className="w-full aspect-square flex items-center justify-center overflow-hidden"
+                            style={{ background: "var(--bg-badge)" }}>
+                            {isImg ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={href} alt={f.fileName} loading="lazy" className="w-full h-full object-cover" />
+                            ) : (
+                              <div className="flex flex-col items-center gap-1">
+                                <FileText size={22} style={{ color: "var(--nav-active-text)" }} />
+                                <span className="text-[9px] font-bold" style={{ color: "var(--text-muted)" }}>{ext || "FILE"}</span>
+                              </div>
+                            )}
+                          </div>
+                        </a>
+                        <div className="flex items-center gap-1 px-1.5 py-1">
+                          <span className="flex-1 min-w-0 truncate text-[10px]" style={{ color: "var(--text-primary)" }} title={f.fileName}>{f.fileName}</span>
+                          <span className="text-[9px] shrink-0" style={{ color: "var(--text-faint)" }}>{Math.max(1, Math.round(f.fileSize / 1024))}KB</span>
+                        </div>
+                        {!readOnly && (
+                          <button type="button" onClick={() => setDeleteFileId(f.id)} title="ลบ"
+                            className="absolute top-1 right-1 p-0.5 rounded cursor-pointer border-none opacity-0 group-hover:opacity-100 transition-opacity"
+                            style={{ background: "rgba(220,38,38,0.9)", color: "#fff" }}><X size={12} /></button>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -621,6 +646,31 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
           <Button variant="primary" onClick={handleSubmit} loading={submitting} disabled={saving}>ส่งคำขอ</Button>
         </div>
       )}
+
+      {/* delete-attachment confirm popup */}
+      <Dialog
+        open={deleteFileId != null}
+        onOpenChange={(o) => { if (!o && !deletingFile) setDeleteFileId(null); }}
+        title="ลบไฟล์แนบ"
+        contentClassName="max-w-[380px]"
+      >
+        <div className="flex flex-col gap-3 p-1">
+          <p className="text-[13px] m-0" style={{ color: "var(--text-secondary)" }}>ต้องการลบไฟล์แนบนี้ใช่ไหม?</p>
+          {(() => {
+            const f = files.find((x) => x.id === deleteFileId);
+            return f ? (
+              <div className="text-[12px] px-3 py-2 rounded-lg truncate" title={f.fileName}
+                style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)", color: "var(--text-primary)" }}>
+                {f.fileName}
+              </div>
+            ) : null;
+          })()}
+          <div className="flex items-center justify-end gap-2 mt-1">
+            <Button variant="secondary" onClick={() => setDeleteFileId(null)} disabled={deletingFile}>ยกเลิก</Button>
+            <Button variant="primary" onClick={confirmRemoveFile} loading={deletingFile}>ลบ</Button>
+          </div>
+        </div>
+      </Dialog>
     </div>
   );
 }
