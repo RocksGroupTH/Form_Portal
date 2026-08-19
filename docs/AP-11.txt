@@ -1,0 +1,46 @@
+เพิ่ม Request ใน group Accounting
+Form Code : AP-11
+Form Name TH : แลกของรางวัล
+Form Name EN : Reward
+ช่วยวางแผน และ Design และ Plan mode หน้า web ให้ใช้งานง่าย
+
+Running ของ แค่ละ Request TOPyy-xxxxx เช่น (TOP26-00001) แล้วเมื่อเริ่มต้นปีใหม่ต้องเริ่ม 00001 ให่ เช่น (TOP27-00001)
+Message: ใช้สำหรับเบิกของรางวัลสำหรับทีม OP
+ตัดรอบการเบิก(คำขอที่ผ่านการอนุมัติ) ทุกวันศุกร์ 16.00 
+
+รับของรางวัลที่บัญชีทุกวันจันทร์ หลัง 13.00 เป็นต้นไป		
+					
+1.รหัสพนักงาน มาจาก Staff ID 
+2.ชื่อ-สกุล มาจาก Rocks_Portal_HR.dbo.Employee (FirstName  LastName)
+3.แสดง Reward ที่สามาถเบิกและแสดงจำนวนที่เหลือและราคาของ Reward นั้นด้วยเป็นแบบ card ให้เลือกแล้วจะไปอยู่ในข้อที่ 4
+4.แสดงจำนวนคงเหลือและต้องกรอกจำนวนที่ขอเบิก ไม่เกินจำนวนคงเหลือ Balance Qty (จำนวนคงเหลือ -กับจำนวนที่ถูกล๊อก)
+5.เอกสารในการเบิก เช่น Screen ของกิจกรรมที่จัด/Screen Token Redeem Attachment file
+เมื่อ Submit จำนวนคงเหลือต้องถูกล๊อกไว้ก่อน นอกจากจะมีการ Reject ถึงจะคืนจำนวน
+
+Step การ Approve
+1.Manager Approve Rocks_Portal_HR.dbo.Employee.ManagerStaffId ?? OR Setting user approve สามารถ Approve Or Reject ได้ แต่การ Reject จะต้องใส่เหตุผล
+2.Assist AP ถ้าจัดเตรียมของเรียบร้อยแล้วให้กด approve สามารถ Approve Or Reject ได้ แต่การ Reject จะต้องใส่เหตุผล
+
+หน้าทำงานของ Assist AP
+1.เมื่อเตรียมของเสร็จให้กด Ready บันทึกวันและเวลาด้วย
+2.หลังจาก user รับของแล้วให้กด Received บันทึกวันและเวลาด้วย
+
+หน้า Setting Reward
+1.Code
+2.Name
+3.Qty
+4.Request //Auto cal
+5.Expire //Auto cal
+6.Blance //Auto cal
+7.มูลค่าจริงตาม Reward ต่อหน่วย
+8.มูลค่าจริงตาม Voucher
+9.มูลค่าตามบัญชีต่อหน่วย
+10.มูลค่าตามบัญชี
+12.Start date
+11.Expire date
+12.PO No
+13.PIN No
+14.Prepayment No
+15.สถานะใช้งาน หรือ ปิด
+
+หน้า Report แสดงข้อมูลการขอทั้งหมดพร้อม filter
