@@ -19,6 +19,13 @@ module.exports = {
       autorestart: true,
       max_restarts: 10,
       min_uptime: "10s",
+      // The host runs a dozen other Node apps and sits around 82% RAM, so a
+      // leak here starves its neighbours rather than just itself. The PM2 entry
+      // that has been serving this site carries the same 1.2 GB cap, set from
+      // the CLI rather than from this file — declaring it here means a deploy
+      // that recreates the process from ecosystem.config.cjs does not silently
+      // drop the guard.
+      max_memory_restart: "1200M",
       env: {
         NODE_ENV: "production",
         PORT: "3081",
