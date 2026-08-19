@@ -13,11 +13,15 @@ import { ReimburseDetail } from "@/features/reimburse/components/ReimburseDetail
 import type { ReimburseDetail as ReimburseDetailData } from "@/features/reimburse/types";
 
 /**
- * AP-4 detail — the request, its attachments and its approval timeline.
+ * AP-4 detail — the request, its attachments, its approval timeline and the
+ * approve / reject bar for whoever the pending step belongs to.
  *
- * Read-only: approve / reject / return are Task 7's. The one action here is
- * the edit link, shown only while the request is still editable — a `Returned`
- * request re-opens in the form and keeps its running number.
+ * The page owns the fetch, so `ReimburseDetail` gets an `onChanged` that re-runs
+ * it: an approval moves the step, and the action bar it just used describes a
+ * step that is over.
+ *
+ * The other action here is the edit link, shown only while the request is still
+ * editable — a `Returned` request re-opens in the form and keeps its number.
  */
 
 const LOADING_SUBTITLE = "ขอเบิกเงินคืนพนักงาน (AP-4)";
@@ -46,6 +50,10 @@ function ReimburseDetailContent() {
   const [request, setRequest] = useState<ReimburseDetailData | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  // Bumped by `onChanged` to re-run the fetch below after an approval or a
+  // rejection, rather than duplicating the request-loading logic.
+  const [reloadKey, setReloadKey] = useState(0);
+  const handleChanged = useCallback(() => setReloadKey((n) => n + 1), []);
 
   useEffect(() => {
     if (requestId == null || Number.isNaN(requestId)) {
@@ -75,7 +83,7 @@ function ReimburseDetailContent() {
     return () => {
       cancelled = true;
     };
-  }, [requestId]);
+  }, [requestId, reloadKey]);
 
   if (loading) {
     return <TravelExpenseLoadingPopup label="กำลังโหลดคำขอ..." subtitle={LOADING_SUBTITLE} />;
@@ -146,7 +154,7 @@ function ReimburseDetailContent() {
         }
       />
 
-      <ReimburseDetail request={request} />
+      <ReimburseDetail request={request} onChanged={handleChanged} />
     </PageContainer>
   );
 }

@@ -1,7 +1,8 @@
 "use client";
 
-import React from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import useSWR from "swr";
+import { toast } from "sonner";
 import {
   CheckCircle,
   Clock,
@@ -9,21 +10,30 @@ import {
   FileSpreadsheet,
   FileText,
   ImageIcon,
+  Info,
   ListChecks,
   Mail,
   Paperclip,
   Receipt,
   RotateCcw,
+  ThumbsDown,
+  ThumbsUp,
   User,
   XCircle,
 } from "lucide-react";
+import { Dialog } from "@/components/ui";
 import { Avatar } from "@/components/ui/Avatar";
 import { UatDataBanner } from "@/components/UatDataBanner";
 import { getBrandById } from "@/lib/brand";
 import { statusLabelDisplay } from "@/features/accounting/constants";
+import { PaymentDatePicker } from "@/features/accounting/components/PaymentDatePicker";
 import { fmtBaht } from "@/features/travel-booking/components/shared";
 import { sumReimburseItems } from "@/lib/acc/reimburse/calc";
 import type { ReimburseStepCode } from "@/features/reimburse/constants";
+// Type-only: `approval-policy` imports `./payment-calendar`, which reaches the
+// holiday lookup through a dynamic import — a runtime import here would pull
+// `@/lib/db/mssql` and `@/env` into the browser bundle.
+import type { ReimburseApprovalContext } from "@/lib/acc/reimburse/approval-policy";
 import type {
   ReimburseApproval,
   ReimburseDetail as ReimburseDetailData,
@@ -32,10 +42,17 @@ import type {
 } from "@/features/reimburse/types";
 
 /**
- * AP-4 detail — the request as it stands, plus its approval timeline.
+ * AP-4 detail — the request as it stands, its approval timeline, and the one
+ * action the viewer may take on it.
  *
- * Read-only by design: approve / reject / return are Task 7's, so this page
- * shows the current step and who it sits with and offers no way to act on it.
+ * The action bar is drawn from `/api/request/reimburse/requests/[id]/approval-context`
+ * and nothing else. Whether somebody is on `AccReimburseApprover`, which payment
+ * rounds exist (they need `Rocks_Codex.Holiday`), and whether the two-person rule
+ * lets this person take the final step are all server facts; asking the server
+ * once is both the only way to know them and the only honest way to draw them.
+ * The buttons are a convenience — every one of those answers is recomputed by
+ * the approve / reject routes before anything is written.
+ *
  * Laid out like AP-1's `RequestDetail` so the two forms read the same.
  */
 
@@ -83,6 +100,25 @@ const STEP_LABEL: Record<ReimburseStepCode, string> = {
   ACCOUNT: "บัญชี",
   ACCOUNT_FINAL: "บัญชี (อนุมัติขั้นสุดท้าย)",
 };
+
+/**
+ * What approving is called at each step. The accounting check is not simply "an
+ * approval" — it is where the payment date is fixed, and the button says so.
+ */
+const APPROVE_LABEL: Record<ReimburseStepCode, string> = {
+  MANAGER: "อนุมัติ",
+  ACCOUNT: "ตรวจสอบและกำหนดวันที่จ่าย",
+  ACCOUNT_FINAL: "อนุมัติขั้นสุดท้าย",
+};
+
+const APPROVE_DONE_LABEL: Record<ReimburseStepCode, string> = {
+  MANAGER: "อนุมัติแล้ว",
+  ACCOUNT: "บันทึกการตรวจสอบแล้ว",
+  ACCOUNT_FINAL: "อนุมัติขั้นสุดท้ายแล้ว",
+};
+
+/** AP-4's rounds, not AP-1's — see `src/lib/acc/reimburse/payment-calendar.ts`. */
+const AP4_ROUNDS_HINT = "วันจ่าย: ศุกร์ที่ 1 และ 3 ของเดือน (เลื่อนกลับ 1 วันถ้าตรงวันหยุด)";
 
 function approvalActorLabel(a: ReimburseApproval): string | null {
   if (a.status === "Pending") {
@@ -257,7 +293,14 @@ function FileLink({ file }: { file: ReimburseFileMeta }) {
 
 /* ─────────────────────────── main ─────────────────────────── */
 
-export function ReimburseDetail({ request }: { request: ReimburseDetailData }) {
+export function ReimburseDetail({
+  request,
+  onChanged,
+}: {
+  request: ReimburseDetailData;
+  /** Called after an approval or a rejection lands, so the page can re-read it. */
+  onChanged?: () => void;
+}) {
   // Rule text for the ids this request acknowledged. Only active rules are
   // listed, so a rule retired since the acknowledgement shows as a count
   // rather than silently disappearing from the total.
@@ -276,6 +319,82 @@ export function ReimburseDetail({ request }: { request: ReimburseDetailData }) {
   const itemsTotal = sumReimburseItems(request.items);
   const approvals = (request.approvals ?? []).slice().sort((a, b) => a.stepOrder - b.stepOrder);
 
+  /* ── What this viewer may do, answered by the server ── */
+
+  const [ctx, setCtx] = useState<ReimburseApprovalContext | null>(null);
+  const [action, setAction] = useState<"approve" | "reject" | null>(null);
+  const [comment, setComment] = useState("");
+  const [paymentDate, setPaymentDate] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  // Re-asked whenever the request moves, not just on mount: after an approval
+  // the step has changed and the previous answer describes a step that is over.
+  useEffect(() => {
+    let cancelled = false;
+    setCtx(null);
+    fetch(`/api/request/reimburse/requests/${request.id}/approval-context`)
+      .then((r) => r.json())
+      .then((json: { ok: boolean; data?: ReimburseApprovalContext }) => {
+        if (!cancelled && json.ok && json.data) setCtx(json.data);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [request.id, request.currentStepCode, request.status, request.updatedAt]);
+
+  // The picker opens on the round the server chose with `defaultPaymentRound`,
+  // and the approver may pick any other valid round instead (spec §3.4).
+  useEffect(() => {
+    setPaymentDate(ctx?.defaultPaymentDate ?? "");
+  }, [ctx?.defaultPaymentDate]);
+
+  const step = ctx?.step ?? null;
+  const canAct = !!ctx?.canAct && step != null;
+  const needsPaymentDate = step === "ACCOUNT";
+
+  const closeDialog = useCallback(() => {
+    setAction(null);
+    setComment("");
+  }, []);
+
+  async function submitAction(kind: "approve" | "reject") {
+    if (!step) return;
+    if (kind === "reject" && !comment.trim()) {
+      toast.error("กรุณาระบุเหตุผลที่ไม่อนุมัติ");
+      return;
+    }
+    if (kind === "approve" && needsPaymentDate && !paymentDate) {
+      toast.error("กรุณาเลือกวันที่จ่าย");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/request/reimburse/requests/${request.id}/${kind}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          kind === "approve" ? { paymentDate: needsPaymentDate ? paymentDate : undefined } : { comment: comment.trim() },
+        ),
+      });
+      const json: { ok: boolean; error?: string } = await res.json();
+      if (json.ok) {
+        toast.success(kind === "approve" ? APPROVE_DONE_LABEL[step] : "ไม่อนุมัติแล้ว");
+        closeDialog();
+        onChanged?.();
+      } else {
+        // The route's message is the named one — "the request already moved",
+        // "you are the same person who checked it" — and is worth showing as-is.
+        toast.error(json.error ?? "ดำเนินการไม่สำเร็จ");
+      }
+    } catch {
+      toast.error("เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div>
       <UatDataBanner requestId={request.id} />
@@ -283,6 +402,63 @@ export function ReimburseDetail({ request }: { request: ReimburseDetailData }) {
       {/* ── ขั้นตอนการอนุมัติ ── */}
       {approvals.length > 0 && (
         <Section title="ขั้นตอนการอนุมัติ" icon={<CheckCircle size={15} />}>
+          {/* The action bar: only the step that is pending, only for someone
+              the server says may act on it. */}
+          {canAct && step && (
+            <div
+              className="mb-4 pb-4 flex flex-col gap-3"
+              style={{ borderBottom: "1px solid var(--border-light)" }}
+            >
+              {ctx?.viaManagerDevBypass && (
+                <p className="text-[10px] m-0" style={{ color: "var(--text-faint)" }}>
+                  โหมดทดสอบ (localhost:3081) — ผู้ใช้ที่ล็อกอินกดอนุมัติแทนผู้จัดการได้
+                </p>
+              )}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setAction("approve"); setComment(""); }}
+                  className="inline-flex items-center gap-2 text-[13px] font-medium px-4 py-2 rounded-lg transition-colors cursor-pointer"
+                  style={{
+                    background: "var(--bg-info-green)",
+                    color: "var(--text-info-green)",
+                    border: "1px solid var(--border-info-green)",
+                  }}
+                >
+                  <ThumbsUp size={14} />
+                  {APPROVE_LABEL[step]}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setAction("reject"); setComment(""); }}
+                  className="inline-flex items-center gap-2 text-[13px] font-medium px-4 py-2 rounded-lg transition-colors cursor-pointer"
+                  style={{
+                    color: "var(--color-danger)",
+                    border: "1px solid rgba(220,38,38,0.25)",
+                    background: "rgba(220,38,38,0.06)",
+                  }}
+                >
+                  <ThumbsDown size={14} />
+                  ไม่อนุมัติ
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* A refusal that needs explaining: the viewer *is* an approver, so a
+              missing button with no reason would read as a broken page. */}
+          {!canAct && ctx?.reason && (
+            <div
+              className="mb-4 pb-4 flex items-start gap-2"
+              style={{ borderBottom: "1px solid var(--border-light)" }}
+            >
+              <Info size={14} className="shrink-0 mt-0.5" style={{ color: "var(--text-info-yellow)" }} />
+              <p className="text-[12px] m-0" style={{ color: "var(--text-secondary)" }}>
+                {ctx.reason}
+              </p>
+            </div>
+          )}
+
           <div className="flex flex-col gap-0">
             {approvals.map((a, idx) => {
               const isLast = idx === approvals.length - 1;
@@ -562,6 +738,116 @@ export function ReimburseDetail({ request }: { request: ReimburseDetailData }) {
           </div>
         )}
       </Section>
+
+      {/* ── Approve: a confirmation, plus the payment-date picker on the check ── */}
+      <Dialog
+        open={action === "approve"}
+        onOpenChange={(open) => { if (!open) closeDialog(); }}
+        title={step === "ACCOUNT" ? "ตรวจสอบและกำหนดวันที่จ่าย" : "ยืนยันการอนุมัติ"}
+        uniformSurface
+      >
+        <div className="flex flex-col gap-4 mb-6">
+          <p className="text-[13px] m-0" style={{ color: "var(--text-secondary)" }}>
+            คำขอเลขที่{" "}
+            <strong style={{ color: "var(--text-heading)" }}>{request.requestNo ?? "ฉบับร่าง"}</strong>{" "}
+            ยอดรวม{" "}
+            <strong style={{ color: "var(--text-heading)" }}>฿{fmtMoney(request.totalAmount ?? itemsTotal)}</strong>
+          </p>
+          {needsPaymentDate && (
+            <PaymentDatePicker
+              dates={ctx?.paymentDates ?? []}
+              value={paymentDate}
+              onChange={setPaymentDate}
+              loading={ctx == null}
+              hint={AP4_ROUNDS_HINT}
+            />
+          )}
+        </div>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={closeDialog}
+            disabled={busy}
+            className="text-[13px] font-medium px-4 py-2 rounded-lg"
+            style={{
+              color: "var(--text-secondary)",
+              background: "var(--bg-card-alt)",
+              border: "1px solid var(--border-card)",
+            }}
+          >
+            ยกเลิก
+          </button>
+          <button
+            type="button"
+            onClick={() => submitAction("approve")}
+            disabled={busy || (needsPaymentDate && !paymentDate)}
+            className="inline-flex items-center gap-1.5 text-[13px] font-medium px-4 py-2 rounded-lg"
+            style={{
+              background: "var(--bg-info-green)",
+              color: "var(--text-info-green)",
+              border: "1px solid var(--border-info-green)",
+              opacity: busy || (needsPaymentDate && !paymentDate) ? 0.7 : 1,
+            }}
+          >
+            {busy ? "กำลังดำเนินการ..." : "ยืนยัน"}
+          </button>
+        </div>
+      </Dialog>
+
+      {/* ── Reject: the reason is required, here and on the server ── */}
+      <Dialog
+        open={action === "reject"}
+        onOpenChange={(open) => { if (!open) closeDialog(); }}
+        title="ไม่อนุมัติ — ระบุเหตุผล"
+        uniformSurface
+      >
+        <div className="flex flex-col gap-3 mb-5">
+          <p className="text-[13px] m-0" style={{ color: "var(--text-secondary)" }}>
+            คำขอเลขที่{" "}
+            <strong style={{ color: "var(--text-heading)" }}>{request.requestNo ?? "ฉบับร่าง"}</strong>
+          </p>
+          <textarea
+            rows={3}
+            className="w-full rounded-lg px-3 py-2 text-[13px] outline-none"
+            style={{
+              background: "var(--bg-input)",
+              color: "var(--text-primary)",
+              border: "1px solid var(--border-input)",
+            }}
+            placeholder="ระบุเหตุผลที่ไม่อนุมัติ..."
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+          />
+        </div>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={closeDialog}
+            disabled={busy}
+            className="text-[13px] font-medium px-4 py-2 rounded-lg"
+            style={{
+              color: "var(--text-secondary)",
+              background: "var(--bg-card-alt)",
+              border: "1px solid var(--border-card)",
+            }}
+          >
+            ยกเลิก
+          </button>
+          <button
+            type="button"
+            onClick={() => submitAction("reject")}
+            disabled={busy || !comment.trim()}
+            className="inline-flex items-center gap-1.5 text-[13px] font-medium px-4 py-2 rounded-lg"
+            style={{
+              background: "var(--color-danger)",
+              color: "#ffffff",
+              opacity: busy || !comment.trim() ? 0.7 : 1,
+            }}
+          >
+            {busy ? "กำลังดำเนินการ..." : "ยืนยัน ไม่อนุมัติ"}
+          </button>
+        </div>
+      </Dialog>
     </div>
   );
 }
