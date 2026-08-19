@@ -7,6 +7,27 @@ export const APPROVAL_STEP_LABEL: Record<StepCode, string> = {
   ACCOUNT: "บัญชี",
 };
 
+/**
+ * Every step this module can label, AP-4's third one included.
+ *
+ * `APPROVAL_STEP_LABEL` is typed `Record<StepCode, string>` and `StepCode` is
+ * AP-1's two-value union, so `ACCOUNT_FINAL` cannot go in it without widening a
+ * type two other forms depend on. It is added here instead, and the effect is
+ * the one that was missing: an AP-4 row sitting at its final approval used to
+ * fall through `!(step in APPROVAL_STEP_LABEL)` and render no "ลำดับถัดไป" line
+ * at all in My Work — the one place the list is supposed to say what it is
+ * waiting for.
+ */
+const STEP_LABEL: Record<string, string> = {
+  ...APPROVAL_STEP_LABEL,
+  ACCOUNT_FINAL: "บัญชี (ขั้นสุดท้าย)",
+};
+
+/** True for the steps whose assignee is a pool rather than one named person. */
+function isAccountingStep(step: string): boolean {
+  return step === "ACCOUNT" || step === "ACCOUNT_FINAL";
+}
+
 export interface NextApprovalInput {
   status: string;
   currentStepCode?: string | null;
@@ -157,16 +178,18 @@ export function formatNextApprovalDetail(input: NextApprovalInput & { viewerMana
     return "ลำดับถัดไป: แก้ไขและส่งคำขอใหม่";
   }
 
-  const step = (input.pendingStepCode ?? input.currentStepCode) as StepCode | null;
-  if (!step || !(step in APPROVAL_STEP_LABEL)) return null;
+  const step = input.pendingStepCode ?? input.currentStepCode ?? null;
+  if (!step || !(step in STEP_LABEL)) return null;
 
-  if (status === "ManagerApproved" && step === "ACCOUNT" && input.viewerManagerApproved) {
+  if (status === "ManagerApproved" && isAccountingStep(step) && input.viewerManagerApproved) {
     return "คุณอนุมัติแล้ว · รอบัญชีดำเนินการต่อ";
   }
 
-  const stepLabel = APPROVAL_STEP_LABEL[step as StepCode];
+  const stepLabel = STEP_LABEL[step];
   let actor = input.pendingApproverName?.trim() || input.pendingApproverEmail?.trim() || null;
-  if (step === "ACCOUNT" && !actor) actor = "ฝ่ายบัญชี";
+  // Both accounting steps are assigned to a pool, not a person, so "ฝ่ายบัญชี"
+  // is the honest name for whoever is next when no row names one.
+  if (isAccountingStep(step) && !actor) actor = "ฝ่ายบัญชี";
 
   if (actor) return `ลำดับถัดไป: อนุมัติ${stepLabel} · ${actor}`;
   return `ลำดับถัดไป: อนุมัติ${stepLabel}`;

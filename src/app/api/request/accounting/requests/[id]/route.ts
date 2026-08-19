@@ -4,6 +4,7 @@ import { getRequest, saveDraft, deleteDraft } from "@/lib/acc/request-service";
 import type { SaveInput } from "@/lib/acc/request-service";
 import { resolveLoginEmail } from "@/lib/auth-email";
 import { authorizeAccRequest } from "@/lib/acc/request-acl";
+import { AP1_FORM_CODE } from "@/features/accounting/constants";
 
 /* ── GET /api/request/accounting/requests/[id] ── */
 
@@ -54,6 +55,16 @@ export async function PUT(
     return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
   }
 
+  // The object ACL, which this route did not call at all. It adds two things
+  // `saveDraft`'s own creator + `Draft`/`Returned` checks cannot: the UAT tester
+  // barrier, and the form pin — without which a Draft the caller created under
+  // AP-4 or AP-17 was rewritten here through AP-1's `resolveRequesterForActor`,
+  // with `TotalAmount` replaced by AP-1's sum. On an AP-1 row owned by the
+  // caller and still editable the verdict is `{ ok: true }`, so nothing that
+  // used to succeed stops succeeding.
+  const gate = await authorizeAccRequest(session, id, "mutate", AP1_FORM_CODE);
+  if (gate instanceof Response) return gate;
+
   try {
     const body = (await req.json()) as SaveInput;
     body.id = id;
@@ -80,6 +91,13 @@ export async function DELETE(
   if (Number.isNaN(id)) {
     return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
   }
+
+  // Same gate as PUT, and here it is the one standing between an AP-4 draft and
+  // a cascading delete of `AccReimburse` / `AccReimburseItem` logged as an AP-1
+  // deleteDraft. `deleteDraft` is pinned to `AP1_FORM_CODE` as well, so the two
+  // agree rather than one relying on the other.
+  const gate = await authorizeAccRequest(session, id, "mutate", AP1_FORM_CODE);
+  if (gate instanceof Response) return gate;
 
   try {
     await deleteDraft(id, Number(session.user.id));

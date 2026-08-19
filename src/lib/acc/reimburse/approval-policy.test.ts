@@ -26,6 +26,8 @@ import {
   stepTokenRefusal,
   upcomingPaymentRounds,
 } from "./approval-policy";
+import { AP1_FORM_CODE } from "@/features/accounting/constants";
+import { AP4_FORM_CODE, REIMBURSE_STEP_CODES } from "@/features/reimburse/constants";
 import type { ReimburseApproval, ReimburseApprover } from "@/features/reimburse/types";
 
 const ymd = (d: Date) =>
@@ -363,4 +365,87 @@ test("My Work asks each form's own approver roster", () => {
     myWork.indexOf("'ACCOUNT', 'ACCOUNT_FINAL'", ap4) > ap4,
     "the AP-4 clause leaves ACCOUNT_FINAL in nobody's queue",
   );
+});
+
+/* ────────── the constant every pin is written against (task 8a, step 8) ────────── */
+
+test("AP1_FORM_CODE is exactly the string stored in AccRequest.FormCode", () => {
+  // Every pin above — the five engine claims, the four action routes, the two
+  // write routes below — is spelled `AP1_FORM_CODE` rather than 'AP-1', so all
+  // of them are only as good as this one value. `AccFormMaster` seeds 'AP-1'
+  // (migration 013) and `AccRequest.FormCode` has a foreign key to it, so a
+  // typo here would not fail loudly: the pinned predicates would simply match
+  // nothing and every claim would silently stop working.
+  assert.equal(AP1_FORM_CODE, "AP-1");
+  assert.equal(AP4_FORM_CODE, "AP-4");
+  assert.notEqual(AP1_FORM_CODE, AP4_FORM_CODE);
+});
+
+/* ────────── AP-1's own write routes stay on AP-1 (task 8a, step 6) ────────── */
+
+/** The body of `export async function NAME`, to the next such opener or EOF. */
+function exportedFunction(source: string, name: string): string {
+  const opener = "export async function " + name;
+  const from = source.indexOf(opener);
+  assert.ok(from > 0, "no " + name + " in the source read");
+  const next = source.indexOf("export async function ", from + opener.length);
+  return source.slice(from, next > 0 ? next : source.length);
+}
+
+test("PUT and DELETE on an AP-1 request authorize against an AP-1 row", () => {
+  // Task 7 pinned the five engine claims and the four action routes; these two
+  // called `authorizeAccRequest` not at all. On an AP-4 Draft the caller owns,
+  // PUT rewrote the shared header through AP-1's `resolveRequesterForActor` and
+  // clobbered TotalAmount, and DELETE removed the AccRequest row — taking
+  // AccReimburse and AccReimburseItem with it through ON DELETE CASCADE — while
+  // logging an AP-1 deleteDraft.
+  const src = readSrc("app/api/request/accounting/requests/[id]/route.ts");
+  for (const method of ["PUT", "DELETE"]) {
+    const body = exportedFunction(src, method);
+    const from = body.indexOf("authorizeAccRequest(");
+    assert.ok(from > 0, method + " calls no object ACL at all");
+    const call = body.slice(from, body.indexOf(")", from) + 1);
+    assert.ok(call.indexOf('"mutate"') > 0, method + ": gate is not a mutate gate — " + call);
+    assert.ok(call.indexOf("AP1_FORM_CODE") > 0, method + ": unpinned gate — " + call);
+  }
+});
+
+test("saveDraft and deleteDraft read the row they are about to write by form as well as by id", () => {
+  // The route gate above and this predicate are two independent answers to the
+  // same question, deliberately: `POST /api/request/accounting/requests` takes a
+  // body-supplied `id` into the very same `saveDraft` and has no gate of its
+  // own, so the SQL is what closes that path.
+  const src = readSrc("lib/acc/request-service.ts");
+  const opener = "SELECT CreatedBy, Status FROM [dbo].[AccRequest]";
+  const found: string[] = [];
+  let from = src.indexOf(opener);
+  while (from >= 0) {
+    found.push(src.slice(from, src.indexOf(String.fromCharCode(96), from)));
+    from = src.indexOf(opener, from + opener.length);
+  }
+  // saveDraft's update branch, deleteDraft, and deleteItem — the third was
+  // found by this assertion rather than by the review that asked for the first
+  // two, which is the whole point of counting them.
+  assert.equal(found.length, 3, "request-service should hold three ownership reads");
+  for (const read of found) {
+    assert.ok(
+      read.indexOf("FormCode=@form") > 0,
+      "an ownership read with no FormCode predicate: " + read,
+    );
+  }
+});
+
+/* ────────── one source for the step sequence (task 8a, step 8) ────────── */
+
+test("STEP_ORDER agrees with REIMBURSE_STEP_CODES, in that order", () => {
+  // `ReimburseDetail` draws its timeline skeleton straight off
+  // `REIMBURSE_STEP_CODES` rather than keeping a third copy of the sequence. It
+  // may only import `approval-policy` as a type, so it cannot read `STEP_ORDER`
+  // — which is the authority on the persisted `AccApproval.StepOrder`. This is
+  // what makes reading the order off the constants array a checked fact.
+  assert.deepEqual(Array.from(REIMBURSE_STEP_CODES), ["MANAGER", "ACCOUNT", "ACCOUNT_FINAL"]);
+  REIMBURSE_STEP_CODES.forEach((code, i) => {
+    assert.equal(STEP_ORDER[code], i + 1, code + " is not at position " + (i + 1));
+  });
+  assert.equal(Object.keys(STEP_ORDER).length, REIMBURSE_STEP_CODES.length);
 });

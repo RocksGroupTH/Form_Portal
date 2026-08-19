@@ -29,7 +29,7 @@ import { statusLabelDisplay } from "@/features/accounting/constants";
 import { PaymentDatePicker } from "@/features/accounting/components/PaymentDatePicker";
 import { fmtBaht } from "@/features/travel-booking/components/shared";
 import { sumReimburseItems } from "@/lib/acc/reimburse/calc";
-import type { ReimburseStepCode } from "@/features/reimburse/constants";
+import { REIMBURSE_STEP_CODES, type ReimburseStepCode } from "@/features/reimburse/constants";
 // Type-only: `approval-policy` imports `./payment-calendar`, which reaches the
 // holiday lookup through a dynamic import — a runtime import here would pull
 // `@/lib/db/mssql` and `@/env` into the browser bundle.
@@ -133,10 +133,16 @@ const STEP_LABEL: Record<ReimburseStepCode, string> = {
  * that exist shows all three steps only once the request has reached the last
  * of them. The brief asks for the three steps; the rows are overlaid onto this.
  *
- * Declared here rather than derived from `approval-policy`'s `STEP_ORDER`: that
- * module may only be imported as a type from this file (see the import above).
+ * `REIMBURSE_STEP_CODES` rather than a fourth hand-written `["MANAGER",
+ * "ACCOUNT", "ACCOUNT_FINAL"]`. It cannot be `approval-policy`'s `STEP_ORDER`,
+ * which is the authority on the `StepOrder` column: that module may only be
+ * imported as a **type** from here (see the import above), and `STEP_ORDER` is
+ * a value. `@/features/reimburse/constants` imports nothing at all, so it is
+ * safe from the browser, and `approval-policy.test.ts` asserts that `STEP_ORDER`
+ * agrees with this array's order — which is what makes reading the sequence off
+ * it a checked fact rather than a coincidence.
  */
-const STEP_SEQUENCE: readonly ReimburseStepCode[] = ["MANAGER", "ACCOUNT", "ACCOUNT_FINAL"];
+const STEP_SEQUENCE: readonly ReimburseStepCode[] = REIMBURSE_STEP_CODES;
 
 /**
  * What approving is called at each step. The accounting check is not simply "an
@@ -456,6 +462,13 @@ export function ReimburseDetail({
         // the page is offering is now known to be stale.
         toast.error(actionErrorMessage(json.error));
         setCtxNonce((n) => n + 1);
+        // …and so is the record behind it. `ctxNonce` only refetched the action
+        // bar, so after a 409 the buttons corrected themselves while the
+        // timeline underneath still showed the step somebody else had already
+        // taken — the page then disagreed with itself about where the request
+        // was. `onChanged` re-runs the page's own fetch; it does not close the
+        // dialog (only a success does that), so the reason stays on screen.
+        onChanged?.();
       }
     } catch {
       toast.error("เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง");

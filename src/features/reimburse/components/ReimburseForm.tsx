@@ -19,8 +19,8 @@ import { Button } from "@/components/ui";
 import { Avatar } from "@/components/ui/Avatar";
 import { UatDataBanner } from "@/components/UatDataBanner";
 import { useBrand } from "@/components/BrandProvider";
-import { getBrandById } from "@/lib/brand";
 import { useUserPhoto } from "@/lib/hooks/useUserPhoto";
+import type { AccBrandOption } from "@/features/accounting/types";
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
 import {
   SectionCard,
@@ -142,14 +142,24 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
   const filesRef = useRef<HTMLDivElement>(null);
   const rulesRef = useRef<HTMLDivElement>(null);
   const managerRef = useRef<HTMLDivElement>(null);
-
-  // The brand cookie is server-rendered, so it is normally set on first paint;
-  // this only covers the case where BrandGate resolves it a beat later.
-  useEffect(() => {
-    if (!brandCode && appBrand) setBrandCode(appBrand);
-  }, [appBrand, brandCode]);
+  const brandRef = useRef<HTMLDivElement>(null);
 
   /* ── server data ── */
+
+  /**
+   * The brands AP-4 may be claimed against — `AccFormBrand`, not the navbar.
+   *
+   * This form used to record whatever the app-level BrandGate cookie held,
+   * because no allowed-brands endpoint existed for AP-4. That made every AP-4
+   * request carry a code matching zero `AccFormBrand` rows: harmless only until
+   * something joins the two, and wrong per spec from the first save. The list is
+   * an admin's to set at Settings → ตั้งค่าขอเบิกเงินคืนพนักงาน → แบรนด์ที่เบิกได้.
+   */
+  const { data: allowedBrands, isLoading: brandsLoading } = useSWR<AccBrandOption[]>(
+    "/api/request/reimburse/options/brands",
+    jsonFetcher,
+    { revalidateOnFocus: false },
+  );
 
   const {
     data: rulesData,
@@ -192,7 +202,42 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
       : employee.fullName
     : "";
 
-  const brand = getBrandById(brandCode);
+  /**
+   * What the picker offers: the allowlist, plus the code this request was
+   * already saved with when that code is no longer on it.
+   *
+   * Dropping it instead would silently re-point a saved claim at a different
+   * company the next time it is opened — a Returned AP-4 request written before
+   * the allowlist existed carries a BrandGate code (`PCTH`…) that matches no
+   * `AccFormBrand` row at all. It is kept, and the picker says so.
+   */
+  const brandOptions = useMemo<AccBrandOption[]>(() => {
+    const list = allowedBrands ?? [];
+    const saved = initial?.brandCode ?? null;
+    if (!saved || list.some((b) => b.brandCode === saved)) return list;
+    return list.concat([{ brandCode: saved, brandName: saved, brandLogo: null }]);
+  }, [allowedBrands, initial?.brandCode]);
+
+  const selectedBrand = brandOptions.find((b) => b.brandCode === brandCode) ?? null;
+
+  /**
+   * Settle on a brand once the allowlist has actually answered.
+   *
+   * Nothing is decided while it is loading or after it failed: the initial state
+   * is still the BrandGate cookie, which is what this form used before there was
+   * a list, so a fetch failure degrades to the old behaviour rather than to no
+   * brand at all. A resumed request keeps its own code either way.
+   */
+  useEffect(() => {
+    if (!allowedBrands || allowedBrands.length === 0) return;
+    setBrandCode((prev) => {
+      if (prev && allowedBrands.some((b) => b.brandCode === prev)) return prev;
+      if (initial?.brandCode) return prev;
+      const fromNavbar =
+        appBrand && allowedBrands.some((b) => b.brandCode === appBrand) ? appBrand : null;
+      return fromNavbar ?? allowedBrands[0].brandCode;
+    });
+  }, [allowedBrands, appBrand, initial?.brandCode]);
 
   /* ── item editing ── */
 
@@ -244,6 +289,14 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
   if (!employeeLoading && !manager) {
     missing.push({ key: "manager", label: "ผู้จัดการ (ManagerStaffId)" });
   }
+  // The server has always refused a submit with no brand (`ERR_NO_BRAND`), and
+  // until the picker existed that could not happen — the cookie always had one.
+  // It can now: an empty `AccFormBrand` allowlist leaves nothing to pick. Named
+  // here rather than discovered on a failed round trip, like the manager above,
+  // and only once the list has answered.
+  if (!brandsLoading && !brandCode) {
+    missing.push({ key: "brand", label: "แบรนด์ที่เบิก" });
+  }
   if (filledItems.length === 0) {
     missing.push({ key: "items", label: "รายการค่าใช้จ่ายอย่างน้อย 1 รายการ" });
   }
@@ -283,11 +336,13 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
     const el =
       first === "manager"
         ? managerRef.current
-        : first === "items" || first.startsWith("item-")
-          ? itemsRef.current
-          : first === "excel" || first === "receipt"
-            ? filesRef.current
-            : rulesRef.current;
+        : first === "brand"
+          ? brandRef.current
+          : first === "items" || first.startsWith("item-")
+            ? itemsRef.current
+            : first === "excel" || first === "receipt"
+              ? filesRef.current
+              : rulesRef.current;
     el?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [firstMissingKey]);
 
@@ -343,13 +398,30 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
         }
       };
 
+      // Clear only what was actually sent, never the whole slot.
+      //
+      // This callback closes over the files that were pending when it was
+      // created, and it awaits a Graph round trip per slot — seconds, on a first
+      // save that flushes the workbook and every receipt. `setPendingReceipts([])`
+      // therefore discarded anything added during that window **without ever
+      // uploading it**: the reload then dropped the row, and because the
+      // readiness gate counts pending files, `handleSubmit`'s silent save could
+      // go on to submit without a document the requester had watched themselves
+      // attach. The functional updates below subtract the uploaded set from
+      // whatever the slot holds now, so a late addition survives to the next
+      // save. `File` identity is by reference and `addReceipts` concatenates the
+      // same instances, so `indexOf` is the right test.
       if (pendingExcel) {
-        if (await post(REIMBURSE_FILE_REFTYPES.EXCEL, [pendingExcel])) setPendingExcel(null);
-        else ok = false;
+        const sent = pendingExcel;
+        if (await post(REIMBURSE_FILE_REFTYPES.EXCEL, [sent])) {
+          setPendingExcel((cur) => (cur === sent ? null : cur));
+        } else ok = false;
       }
       if (pendingReceipts.length > 0) {
-        if (await post(REIMBURSE_FILE_REFTYPES.RECEIPT, pendingReceipts)) setPendingReceipts([]);
-        else ok = false;
+        const sent = pendingReceipts;
+        if (await post(REIMBURSE_FILE_REFTYPES.RECEIPT, sent)) {
+          setPendingReceipts((cur) => cur.filter((f) => sent.indexOf(f) === -1));
+        } else ok = false;
       }
       return ok;
     },
@@ -616,41 +688,85 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
 
       {/* ── รายละเอียดการเบิก ── */}
       <SectionCard icon={<Receipt size={15} />} title="รายละเอียดการเบิก">
-        <div>
-          <label className={labelClass} style={labelStyle}>
+        {/* ── แบรนด์ที่เบิก — the AccFormBrand allowlist, not the navbar ── */}
+        <div
+          ref={brandRef}
+          style={
+            showErr("brand")
+              ? { boxShadow: "0 0 0 1px var(--color-danger)", borderRadius: 10, padding: 12 }
+              : {}
+          }
+        >
+          <label
+            className={labelClass}
+            style={showErr("brand") ? { ...labelStyle, color: "var(--color-danger)" } : labelStyle}
+          >
             แบรนด์ที่เบิก{requiredStar}
           </label>
-          <div
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl"
-            style={{
-              borderWidth: 1,
-              borderStyle: "solid",
-              borderColor: "var(--border-card)",
-              background: "var(--bg-card-alt)",
-            }}
-          >
-            {brand?.logo && (
-              <img
-                src={brand.logo}
-                alt=""
-                className="h-5 w-auto object-contain"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = "none";
-                }}
-              />
-            )}
-            <span className="text-[14px] font-semibold" style={{ color: "var(--text-primary)" }}>
-              {brand?.name ?? brandCode ?? "—"}
-            </span>
-          </div>
-          {/* A resumed record keeps its saved `brandCode` and the effect above
-              only fills a null one, so switching the navbar brand does nothing
-              to it — saying otherwise sends the requester off to try. */}
-          <p className="text-[11.5px] mt-1.5 m-0" style={{ color: "var(--text-faint)" }}>
-            {initial?.brandCode
-              ? "แบรนด์ที่บันทึกไว้กับคำขอนี้"
-              : "ใช้แบรนด์ที่เลือกไว้ในระบบ — เปลี่ยนได้จากตัวเลือกแบรนด์บนแถบด้านบน"}
-          </p>
+
+          {brandsLoading ? (
+            <div className="h-9 w-40 rounded-xl animate-pulse" style={{ background: "var(--bg-card-alt)" }} />
+          ) : brandOptions.length === 0 ? (
+            <p
+              className="text-[12.5px] leading-relaxed m-0 rounded-xl px-4 py-3"
+              style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)" }}
+            >
+              ยังไม่ได้กำหนดแบรนด์ที่เบิกได้สำหรับ AP-4 — กรุณาแจ้งผู้ดูแลระบบให้ตั้งค่าที่
+              ตั้งค่าขอเบิกเงินคืนพนักงาน → แบรนด์ที่เบิกได้
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {brandOptions.map((opt) => {
+                const active = opt.brandCode === brandCode;
+                return (
+                  <button
+                    key={opt.brandCode}
+                    type="button"
+                    onClick={() => setBrandCode(opt.brandCode)}
+                    aria-pressed={active}
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer transition-colors"
+                    style={{
+                      borderWidth: 1,
+                      borderStyle: "solid",
+                      borderColor: active
+                        ? "color-mix(in srgb, var(--nav-active-text) 45%, var(--border-card))"
+                        : "var(--border-card)",
+                      background: active ? "var(--nav-active-bg)" : "var(--bg-card-alt)",
+                    }}
+                  >
+                    {opt.brandLogo && (
+                      <img
+                        src={opt.brandLogo}
+                        alt=""
+                        className="h-5 w-auto object-contain"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = "none";
+                        }}
+                      />
+                    )}
+                    <span
+                      className="text-[14px] font-semibold"
+                      style={{ color: active ? "var(--nav-active-text)" : "var(--text-primary)" }}
+                    >
+                      {opt.brandName}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* The picker is over `AccFormBrand`, so what it offers is a setting,
+              not the navbar brand. A resumed request whose saved code has since
+              been removed from that list keeps it and is told why — changing it
+              silently would move the claim to a different company. */}
+          {!brandsLoading && brandOptions.length > 0 && (
+            <p className="text-[11.5px] mt-1.5 m-0" style={{ color: "var(--text-faint)" }}>
+              {selectedBrand && !(allowedBrands ?? []).some((b) => b.brandCode === selectedBrand.brandCode)
+                ? "แบรนด์ที่บันทึกไว้กับคำขอนี้ ปัจจุบันไม่อยู่ในรายการที่อนุญาตแล้ว — ยังคงไว้ตามเดิม เลือกใหม่ได้จากรายการข้างต้น"
+                : "รายการแบรนด์ที่อนุญาตให้เบิกในแบบฟอร์ม AP-4 (ตั้งค่าโดยผู้ดูแลระบบ)"}
+            </p>
+          )}
         </div>
 
         <div>
@@ -812,9 +928,21 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
         </p>
       )}
 
-      {submitting ? (
+      {/* The overlay covers saving as well as submitting, and that is the fix
+          for a data-loss window rather than a nicety.
+          `handleSaveDraft` runs POST → `uploadPending` → `reloadFromServer`, and
+          the reload hard-sets `purpose`, `items` and `ackedRuleIds` from the
+          snapshot the server had *before* the save. On a first save that window
+          is seconds, because every attachment goes to SharePoint through Graph
+          inside it — long enough that typing the next line, or attaching the
+          next receipt, is the natural thing to do. Only the two buttons used to
+          be disabled, so those edits were replaced under a "บันทึกร่างแล้ว"
+          success toast with nothing telling the requester.
+          Blocking input for the whole round trip is the honest answer: the form
+          is not editable while its state is being replaced. */}
+      {submitting || saving ? (
         <TravelExpenseLoadingPopup
-          label="กำลังส่งคำขอ..."
+          label={submitting ? "กำลังส่งคำขอ..." : "กำลังบันทึกร่าง..."}
           subtitle="กรุณารอสักครู่ อย่าปิดหน้านี้"
         />
       ) : null}

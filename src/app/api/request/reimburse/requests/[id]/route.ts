@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { getReimburseRequest } from "@/lib/acc/reimburse/request-service";
+import { deleteReimburseDraft } from "@/lib/acc/reimburse/delete-service";
 import { authorizeAccRequest } from "@/lib/acc/request-acl";
+import { statusForAccError } from "@/lib/acc/request-errors";
 import { AP4_FORM_CODE } from "@/features/reimburse/constants";
 
 /* ── GET /api/request/reimburse/requests/[id] ── */
@@ -38,5 +40,42 @@ export async function GET(
     const message = e instanceof Error ? e.message : "Internal server error";
     console.error("[api/request/reimburse/requests/[id]] GET", message);
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
+
+/* ── DELETE /api/request/reimburse/requests/[id] — discard an editable draft ── */
+
+/**
+ * Creator-only, `Draft`/`Returned` only, through the same object ACL every other
+ * by-id path uses — and pinned to AP-4, so an AP-1 or AP-17 id answers 404 here
+ * rather than being deleted by AP-4's code.
+ *
+ * The gate is not the whole control: `deleteReimburseDraft` claims the state
+ * again with a conditional `UPDATE` inside its transaction, because the ACL read
+ * and the delete are two round trips and a submit can land between them.
+ */
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const session = await requireAuth();
+  if (session instanceof Response) return session;
+
+  const { id: rawId } = await params;
+  const id = Number(rawId);
+  if (!Number.isInteger(id) || id <= 0) {
+    return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
+  }
+
+  const gate = await authorizeAccRequest(session, id, "mutate", AP4_FORM_CODE);
+  if (gate instanceof Response) return gate;
+
+  try {
+    await deleteReimburseDraft(id, Number(session.user.id));
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Internal server error";
+    console.error("[api/request/reimburse/requests/[id]] DELETE", message);
+    return NextResponse.json({ ok: false, error: message }, { status: statusForAccError(e) });
   }
 }

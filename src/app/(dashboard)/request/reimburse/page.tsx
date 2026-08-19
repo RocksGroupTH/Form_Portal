@@ -2,7 +2,8 @@
 
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { FileText, Plus, ChevronRight } from "lucide-react";
+import { FileText, Loader2, Plus, ChevronRight, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { Dialog } from "@/components/ui";
@@ -94,6 +95,9 @@ function ReimburseContent() {
   const [draft, setDraft] = useState<ReimburseDraftSummary | null>(null);
   const [promptOpen, setPromptOpen] = useState(false);
   const [readyForForm, setReadyForForm] = useState(requestId !== null || skipPrompt);
+  /** Two-step discard inside the prompt — a nested confirm dialog reads worse than swapping the row. */
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
 
   /* Resume: one open request, or none. */
   useEffect(() => {
@@ -167,6 +171,43 @@ function ReimburseContent() {
     [router, returnPath],
   );
 
+  /**
+   * Discard the open draft, then start a fresh one.
+   *
+   * Only offered for a `Draft`, and offered rather than implied. Starting a new
+   * request used to leave the old draft in the database and in SharePoint with
+   * nothing able to reach it again: `listMyRequestRows` excludes `Draft`, and
+   * this prompt asks about `TOP 1 … ORDER BY UpdatedAt DESC`, so the moment a
+   * newer draft exists the older one is in no list, no prompt and no link.
+   *
+   * A `Returned` request is a different case and is deliberately left alone —
+   * it carries a running number and an approval history, and it *is* listed in
+   * My Requests, so nothing is lost by starting a new claim beside it.
+   *
+   * A failed delete does not proceed: silently starting a new draft anyway would
+   * recreate the orphan the button exists to prevent.
+   */
+  const handleDiscardDraft = useCallback(async () => {
+    if (!draft) return;
+    setDiscarding(true);
+    try {
+      const res = await fetch(`/api/request/reimburse/requests/${draft.id}`, { method: "DELETE" });
+      const json = (await res.json()) as { ok: boolean; error?: string };
+      if (!json.ok) {
+        toast.error(json.error ?? "ลบแบบร่างไม่สำเร็จ");
+        return;
+      }
+      toast.success("ลบแบบร่างแล้ว");
+      setPromptOpen(false);
+      setReadyForForm(true);
+      safeReplace(router, newHref(returnPath));
+    } catch {
+      toast.error("ลบแบบร่างไม่สำเร็จ");
+    } finally {
+      setDiscarding(false);
+    }
+  }, [draft, router, returnPath]);
+
   if (checkingDraft) {
     return <TravelExpenseLoadingPopup label="กำลังตรวจสอบแบบร่าง..." subtitle={LOADING_SUBTITLE} />;
   }
@@ -215,26 +256,90 @@ function ReimburseContent() {
             <ChevronRight size={16} className="shrink-0" style={{ color: "var(--text-faint)" }} />
           </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              setPromptOpen(false);
-              setReadyForForm(true);
-              safeReplace(router, newHref(returnPath));
-            }}
-            className="w-full text-left rounded-xl p-3.5 flex items-center gap-3 cursor-pointer"
-            style={{ background: "transparent", border: "1px dashed var(--border-card)" }}
-          >
-            <span
-              className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
-              style={{ background: "var(--bg-card-alt)", color: "var(--text-muted)" }}
+          {/* A Returned request is listed in My Requests, so starting a new one
+              beside it loses nothing and it is left where it is. A Draft is
+              not listed anywhere, so "start a new one" has to mean "and discard
+              this", or the old draft — and its SharePoint attachments — become
+              unreachable for good. */}
+          {isReturned ? (
+            <button
+              type="button"
+              onClick={() => {
+                setPromptOpen(false);
+                setReadyForForm(true);
+                safeReplace(router, newHref(returnPath));
+              }}
+              className="w-full text-left rounded-xl p-3.5 flex items-center gap-3 cursor-pointer"
+              style={{ background: "transparent", border: "1px dashed var(--border-card)" }}
             >
-              <Plus size={16} />
-            </span>
-            <span className="text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>
-              เริ่มคำขอใหม่
-            </span>
-          </button>
+              <span
+                className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+                style={{ background: "var(--bg-card-alt)", color: "var(--text-muted)" }}
+              >
+                <Plus size={16} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>
+                  เริ่มคำขอใหม่
+                </span>
+                <span className="block text-[11px]" style={{ color: "var(--text-muted)" }}>
+                  คำขอที่ถูกส่งกลับยังอยู่ในหน้า &quot;คำขอของฉัน&quot;
+                </span>
+              </span>
+            </button>
+          ) : confirmDiscard ? (
+            <div
+              className="w-full rounded-xl p-3.5 flex flex-col gap-2.5"
+              style={{ background: "var(--status-bad-bg)", border: "1px solid var(--border-card)" }}
+            >
+              <p className="text-[12px] leading-relaxed m-0" style={{ color: "var(--status-bad-text)" }}>
+                ลบแบบร่างเดิมทิ้งถาวร รวมถึงไฟล์ที่แนบไว้ทั้งหมด แล้วเริ่มคำขอใหม่?
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={discarding}
+                  onClick={() => setConfirmDiscard(false)}
+                  className="flex-1 px-3 py-2 rounded-lg text-[12px] font-medium border-none enabled:cursor-pointer disabled:opacity-60"
+                  style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="button"
+                  disabled={discarding}
+                  onClick={() => void handleDiscardDraft()}
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-bold border-none text-white enabled:cursor-pointer disabled:opacity-60"
+                  style={{ background: "var(--color-danger)" }}
+                >
+                  {discarding ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                  ลบแล้วเริ่มใหม่
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmDiscard(true)}
+              className="w-full text-left rounded-xl p-3.5 flex items-center gap-3 cursor-pointer"
+              style={{ background: "transparent", border: "1px dashed var(--border-card)" }}
+            >
+              <span
+                className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+                style={{ background: "var(--bg-card-alt)", color: "var(--text-muted)" }}
+              >
+                <Plus size={16} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>
+                  เริ่มคำขอใหม่
+                </span>
+                <span className="block text-[11px]" style={{ color: "var(--text-muted)" }}>
+                  ลบแบบร่างเดิมและไฟล์ที่แนบไว้ทิ้ง
+                </span>
+              </span>
+            </button>
+          )}
         </div>
       </Dialog>
     );

@@ -45,7 +45,16 @@ function loadDotEnvLocal() {
   }
 }
 
-/** The 19 tables dual-write keeps in step. */
+/**
+ * The 21 tables dual-write keeps in step.
+ *
+ * The last two are AP-4's, added with its settings page: `AccReimburseApprover`
+ * decides who may take either accounting step and `AccReimburseRule` is the
+ * checklist `AccReimburseRuleAck` stores tick-by-id against — so both have to
+ * carry the same rows *and the same ids* in each database, or a UAT tester's
+ * AP-4 request stalls at ACCOUNT with an empty pool and a submitted claim
+ * renders somebody else's rule text.
+ */
 const MASTER_TABLES = [
   "AccFormMaster",
   "AccFormBrand",
@@ -66,6 +75,8 @@ const MASTER_TABLES = [
   "AccBrandErpTargetSetting",
   "AccSameDayBrandStaff",
   "AccSetting",
+  "AccReimburseApprover",
+  "AccReimburseRule",
 ];
 
 /**

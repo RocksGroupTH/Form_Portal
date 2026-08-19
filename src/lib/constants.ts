@@ -94,6 +94,23 @@ export const REQUEST_CARDS: NavItem[] = [
     devHostOnly: true,
     manage: true,
   },
+  {
+    id: "reimburse-settings",
+    label: "ขอเบิกเงินคืนพนักงาน (ออฟฟิต)",
+    icon: "Receipt",
+    desc: "ฟอร์ม AP-4 · ผู้อนุมัติบัญชี · ระเบียบการจ่าย · แบรนด์",
+    href: "/request/reimburse/settings",
+    group: "Settings",
+    groupTh: "ตั้งค่า",
+    badge: "AP-4",
+    // `devHostOnly` to match its two neighbours, not because AP-4 is less
+    // finished than they are: the whole management group is dev-host-only and a
+    // single card breaking that rule would be the surprise. The page itself is
+    // reachable by URL on any host and gates on role, which is how an admin
+    // seeds `AccReimburseApprover` in production.
+    devHostOnly: true,
+    manage: true,
+  },
 ];
 
 /**
@@ -171,7 +188,7 @@ export const SETTINGS_CARDS: NavItem[] = [
     id: "accounting-admin",
     label: "Accounting Admin",
     icon: "ClipboardList",
-    desc: "คิวอนุมัติ รายงาน และตั้งค่าของ AP-1 / AP-17",
+    desc: "คิวอนุมัติ รายงาน และตั้งค่าของ AP-1 / AP-4 / AP-17",
     // The Request hub narrowed to its management cards. /request/accounting is
     // AP-1's own hub and would leave out AP-17, which this card promises.
     href: "/request?group=Settings",
