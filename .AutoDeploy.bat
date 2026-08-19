@@ -16,6 +16,14 @@ set "APP_NAME=form-portal"
 set "APP_PORT=3081"
 set "BRANCH=master"
 
+rem The host's PM2 already carries an entry called `form.portal` (a dot), created
+rem before ecosystem.config.cjs existed -- that file declares `form-portal` (a
+rem hyphen). Deleting only one name leaves the other registered, so `pm2 list`
+rem grows a second, permanently stopped row and `pm2 save` persists it. Both
+rem names are cleaned up below; `form-portal` from the ecosystem file is the one
+rem that survives.
+set "LEGACY_NAME=form.portal"
+
 cd /d "%SITE_DIR%" || goto :nodir
 
 if not exist logs mkdir logs
@@ -27,6 +35,7 @@ git reset --hard origin/%BRANCH% || goto :fail
 
 echo [deploy] stop app (brief downtime)...
 call pm2 stop %APP_NAME% 2>nul
+call pm2 stop %LEGACY_NAME% 2>nul
 
 echo [deploy] install deps...
 call npm ci || goto :recover
@@ -36,6 +45,7 @@ call npm run build || goto :recover
 
 echo [deploy] start app...
 call pm2 delete %APP_NAME% 2>nul
+call pm2 delete %LEGACY_NAME% 2>nul
 call pm2 start ecosystem.config.cjs --update-env || goto :recover
 
 call pm2 save
@@ -58,6 +68,7 @@ exit /b 0
 echo [deploy] FAILED during install/build - attempting to bring the app back...
 if exist .next (
   call pm2 delete %APP_NAME% 2>nul
+  call pm2 delete %LEGACY_NAME% 2>nul
   call pm2 start ecosystem.config.cjs --update-env
   call pm2 save
   echo [deploy] App restart attempted. Check: pm2 logs %APP_NAME%
