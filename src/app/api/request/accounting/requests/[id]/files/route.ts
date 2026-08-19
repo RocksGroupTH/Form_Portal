@@ -12,6 +12,8 @@ import {
   buildAccFileName,
 } from "@/lib/acc/sharepoint-path";
 import { resolveFormEnvironment } from "@/lib/form-environment";
+import { authorizeAccRequest } from "@/lib/acc/request-acl";
+import { checkAttachment, checkAttachmentBatch } from "@/lib/acc/attachment-guard";
 import {
   TRAVEL_ITEM_TYPE_LABEL_TH,
   type TravelItemType,
@@ -31,6 +33,12 @@ export async function POST(
   const { id } = await params;
   const requestId = Number(id);
 
+  // Owner + editable state, before anything is read off the wire. The route
+  // used to check only that the AccRequest row existed, so any authenticated
+  // session could attach a file to anyone's request in any status.
+  const gate = await authorizeAccRequest(session, requestId, "mutate");
+  if (gate instanceof Response) return gate;
+
   try {
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
@@ -42,46 +50,63 @@ export async function POST(
       );
     }
 
-    if (!file.type.startsWith("image/")) {
+    const batchRejection = checkAttachmentBatch([file]);
+    if (batchRejection) {
       return NextResponse.json(
-        { ok: false, error: "แนบได้เฉพาะไฟล์รูปภาพเท่านั้น" },
-        { status: 400 },
+        { ok: false, error: batchRejection.error },
+        { status: batchRejection.status },
       );
     }
+
+    const buffer = Buffer.from(await file.arrayBuffer());
+
+    // The bytes decide, not `file.type` — see `attachment-guard`. AP-1 stores
+    // receipt photos only, so PDFs are out here even though AP-17 takes them.
+    const check = checkAttachment({
+      fileName: file.name,
+      declaredType: file.type,
+      bytes: buffer,
+      allowedKinds: ["image"],
+    });
+    if (!check.ok) {
+      return NextResponse.json({ ok: false, error: check.error }, { status: check.status });
+    }
+    const contentType = check.type.contentType;
 
     const refIdRaw = formData.get("refId") as string | null;
     const refId = refIdRaw ? Number(refIdRaw) || null : null;
 
-    // Verify the AccRequest row exists
     const pool = await getAccPool();
-    const reqCheck = await pool
+    const requestNo: string | null = await pool
       .request()
       .input("requestId", sql.Int, requestId)
-      .query(`SELECT Id, RequestNo FROM AccRequest WHERE Id = @requestId`);
+      .query(`SELECT RequestNo FROM AccRequest WHERE Id = @requestId`)
+      .then((r) => r.recordset[0]?.RequestNo ?? null);
 
-    if (reqCheck.recordset.length === 0) {
-      return NextResponse.json(
-        { ok: false, error: "Request not found" },
-        { status: 404 },
-      );
-    }
-
-    const requestNo: string | null = reqCheck.recordset[0].RequestNo ?? null;
-
-    // Resolve the expense type label for the filename (best-effort).
+    // Resolve the expense type label for the filename — and, more importantly,
+    // prove the item belongs to *this* request. The old query looked the item
+    // up by id alone, so a refId from someone else's claim was accepted and
+    // stored on the row, silently filing the attachment against a foreign item.
     let typeLabel = "เอกสาร";
     if (refId != null) {
       const itemRes = await pool
         .request()
         .input("itemId", sql.Int, refId)
-        .query(`SELECT ItemType FROM AccTravelExpenseItem WHERE Id = @itemId`);
+        .input("requestId", sql.Int, requestId)
+        .query(`SELECT i.ItemType
+                FROM [dbo].[AccTravelExpenseItem] i
+                INNER JOIN [dbo].[AccTravelExpense] e ON e.Id = i.TravelExpenseId
+                WHERE i.Id = @itemId AND e.RequestId = @requestId`);
+      if (itemRes.recordset.length === 0) {
+        return NextResponse.json(
+          { ok: false, error: "ไม่พบรายการค่าใช้จ่ายในคำขอนี้" },
+          { status: 400 },
+        );
+      }
       const it = itemRes.recordset[0]?.ItemType as TravelItemType | undefined;
       if (it && TRAVEL_ITEM_TYPE_LABEL_TH[it])
         typeLabel = TRAVEL_ITEM_TYPE_LABEL_TH[it];
     }
-
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const contentType = file.type || "application/octet-stream";
 
     // 1) Insert a placeholder row to allocate the file id (used in the SharePoint filename).
     const insertRes = await pool
@@ -90,7 +115,7 @@ export async function POST(
       .input("refType", sql.NVarChar(50), "travel_item")
       .input("refId", sql.Int, refId)
       .input("fileName", sql.NVarChar(500), file.name)
-      .input("fileSize", sql.Int, file.size)
+      .input("fileSize", sql.Int, buffer.length)
       .input("contentType", sql.NVarChar(200), contentType)
       .input("uploadedBy", sql.Int, userId)
       .query(
@@ -123,6 +148,7 @@ export async function POST(
         requestId,
         fileId: newId,
         originalName: file.name,
+        extension: check.type.extension,
       });
       const { itemId } = await uploadFileToSharePoint(
         folderPath,
@@ -149,19 +175,31 @@ export async function POST(
     }
 
     // 3) Finalize the row (SharePoint backend, StoragePath = Graph driveItem id).
-    await pool
-      .request()
-      .input("id", sql.Int, newId)
-      .input("storagePath", sql.NVarChar(1000), storagePath)
-      .query(
-        `UPDATE AccRequestFile SET StoragePath = @storagePath, StorageBackend = 'sharepoint' WHERE Id = @id`,
-      );
+    //    A failure here would leave a stored object no row points at, so the
+    //    object is removed before the error is reported.
+    try {
+      await pool
+        .request()
+        .input("id", sql.Int, newId)
+        .input("storagePath", sql.NVarChar(1000), storagePath)
+        .query(
+          `UPDATE AccRequestFile SET StoragePath = @storagePath, StorageBackend = 'sharepoint' WHERE Id = @id`,
+        );
+    } catch (finalizeErr) {
+      await deleteFileFromSharePoint(storagePath).catch(() => {});
+      await pool
+        .request()
+        .input("id", sql.Int, newId)
+        .query(`DELETE FROM AccRequestFile WHERE Id = @id`)
+        .catch(() => {});
+      throw finalizeErr;
+    }
 
     const meta: AccFileMeta = {
       id: newId,
       fileName: file.name,
-      fileSize: file.size,
-      contentType: file.type || "application/octet-stream",
+      fileSize: buffer.length,
+      contentType,
       url: `/api/request/accounting/files/${newId}`,
     };
 
@@ -200,27 +238,13 @@ export async function DELETE(
     );
   }
 
+  // Editable state was already checked here; ownership was not, so anyone could
+  // delete the attachments off anyone else's draft.
+  const gate = await authorizeAccRequest(session, requestId, "mutate");
+  if (gate instanceof Response) return gate;
+
   try {
     const pool = await getAccPool();
-
-    // Files may only be removed while the request is still editable (Draft/Returned).
-    const statusCheck = await pool
-      .request()
-      .input("requestId", sql.Int, requestId)
-      .query(`SELECT Status FROM AccRequest WHERE Id = @requestId`);
-    if (statusCheck.recordset.length === 0) {
-      return NextResponse.json(
-        { ok: false, error: "Request not found" },
-        { status: 404 },
-      );
-    }
-    const status = statusCheck.recordset[0].Status as string;
-    if (status !== "Draft" && status !== "Returned") {
-      return NextResponse.json(
-        { ok: false, error: "ลบรูปได้เฉพาะคำขอที่เป็นฉบับร่างเท่านั้น" },
-        { status: 400 },
-      );
-    }
 
     const result = await pool
       .request()

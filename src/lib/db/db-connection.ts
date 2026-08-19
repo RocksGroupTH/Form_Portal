@@ -378,7 +378,28 @@ export async function testStoredConnection(id: number): Promise<{ ok: boolean; m
   return testStoredConnectionWithOverrides(id);
 }
 
-/** Test saved connection; optional overrides use form values but keep stored password if password omitted */
+/**
+ * Test a saved connection, optionally against edited form values.
+ *
+ * ## The stored password stays with its stored destination
+ *
+ * The settings UI omits the password when it has not been retyped, so a "Test"
+ * on an edited form arrived here as host + username with no secret, and this
+ * function decrypted the *stored* password and dialled the *supplied* host. An
+ * IT Admin — a role that is not supposed to be able to read these credentials —
+ * could therefore point a saved production SQL account at any host they liked
+ * and read the password off the wire, or off a listener they control. The
+ * username override was the same problem in miniature: the stored secret sent
+ * under a name it does not belong to.
+ *
+ * So a stored secret may only be reused with the identity and destination it was
+ * stored against. Changing host, port or username means retyping the password,
+ * which is the point at which the person doing it must already know it.
+ *
+ * `databaseName`, `encrypt` and `trustServerCert` stay overridable: none of them
+ * changes who the credential is sent to. (`trustServerCert` weakens how the
+ * channel is verified, but only for the host already on file.)
+ */
 export async function testStoredConnectionWithOverrides(
   id: number,
   overrides?: Partial<TestConnectionInput>,
@@ -387,9 +408,32 @@ export async function testStoredConnectionWithOverrides(
   if (!row) return { ok: false, message: "Connection not found" };
   if (!row.IsActive) return { ok: false, message: "Connection is inactive" };
 
+  const suppliedPassword = overrides?.password?.trim() ? overrides.password : null;
+
+  if (!suppliedPassword) {
+    const changed: string[] = [];
+    const storedHost = row.Host.trim().toLowerCase();
+    const storedUser = row.Username.trim().toLowerCase();
+    if (overrides?.host != null && overrides.host.trim().toLowerCase() !== storedHost) {
+      changed.push("host");
+    }
+    if (overrides?.port != null && overrides.port !== row.Port) {
+      changed.push("port");
+    }
+    if (overrides?.username != null && overrides.username.trim().toLowerCase() !== storedUser) {
+      changed.push("username");
+    }
+    if (changed.length > 0) {
+      return {
+        ok: false,
+        message: `Enter the SQL password before testing a changed ${changed.join(" / ")} — the stored password is only ever used with the stored server and username.`,
+      };
+    }
+  }
+
   let password: string;
   try {
-    password = overrides?.password?.trim() ? overrides.password : decryptPassword(row.PasswordEnc);
+    password = suppliedPassword ?? decryptPassword(row.PasswordEnc);
   } catch {
     return {
       ok: false,
@@ -405,11 +449,14 @@ export async function testStoredConnectionWithOverrides(
     };
   }
 
+  // With a supplied password the caller may aim anywhere they are entitled to;
+  // without one, the destination and identity are pinned to the stored row, so
+  // the checks above have already refused any change to these three.
   const result = await testMssqlConnection({
-    host: (overrides?.host ?? row.Host).trim(),
-    port: overrides?.port != null ? overrides.port : row.Port,
+    host: (suppliedPassword ? (overrides?.host ?? row.Host) : row.Host).trim(),
+    port: suppliedPassword && overrides?.port != null ? overrides.port : row.Port,
     databaseName: overrides?.databaseName !== undefined ? overrides.databaseName : row.DatabaseName,
-    username: (overrides?.username ?? row.Username).trim(),
+    username: (suppliedPassword ? (overrides?.username ?? row.Username) : row.Username).trim(),
     password,
     encrypt: overrides?.encrypt ?? row.Encrypt,
     trustServerCert: overrides?.trustServerCert ?? row.TrustServerCert,

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
+import { uatActorGate } from "@/lib/acc/travel-booking/uat-gate";
 import { resolveLoginEmail } from "@/lib/auth-email";
 import { isAdminRole } from "@/lib/roles";
 import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
@@ -34,6 +35,11 @@ export async function GET(
   if (Number.isNaN(id)) {
     return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
   }
+
+  // A UAT record is invisible outside the tester group — the id selected the
+  // database, membership decides who may touch what it found.
+  const uatGate = await uatActorGate(session);
+  if (uatGate) return uatGate;
 
   try {
     const data = await getTravelBookingRequest(id);
@@ -88,6 +94,11 @@ export async function PUT(
     return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
   }
 
+  // A UAT record is invisible outside the tester group — the id selected the
+  // database, membership decides who may touch what it found.
+  const uatGate = await uatActorGate(session);
+  if (uatGate) return uatGate;
+
   try {
     const groupKey = await resolveGroupKey(id);
     if (!groupKey) {
@@ -119,6 +130,11 @@ export async function DELETE(
   if (Number.isNaN(id)) {
     return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
   }
+
+  // A UAT record is invisible outside the tester group — the id selected the
+  // database, membership decides who may touch what it found.
+  const uatGate = await uatActorGate(session);
+  if (uatGate) return uatGate;
 
   try {
     const groupKey = await resolveGroupKey(id);

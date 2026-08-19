@@ -3,6 +3,15 @@ import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { canAccessAccountArea } from "@/lib/acc/access";
 import { queryReport, buildReportWorkbook, type ReportFilters } from "@/lib/acc/report-service";
+import {
+  canActOnClaimBrand,
+  INTERFACE_SCOPE_ERROR,
+  resolveApproverInterfaceAccess,
+} from "@/lib/acc/approver-interface-access";
+import {
+  interfaceByClaimMapToRecord,
+  loadPrepDeptContext,
+} from "@/lib/acc/erp-prep-service";
 
 /**
  * GET /api/request/accounting/report/export
@@ -50,6 +59,19 @@ export async function GET(req: NextRequest) {
         paymentDate: sp.get("paymentDate") ?? null,
       };
       rows = await queryReport(filters);
+    }
+
+    // Scope the rows, whichever way they were selected. `ids=` is the important
+    // half: it names an explicit list, so it bypassed every row filter by
+    // construction — the export was a way to read any interface group's claims
+    // in full, including requester names and amounts, straight out of Excel.
+    const [access, deptCtx] = await Promise.all([
+      resolveApproverInterfaceAccess(session.user.email, session.user.role),
+      loadPrepDeptContext(),
+    ]);
+    if (!access.allAccess) {
+      const byClaim = interfaceByClaimMapToRecord(deptCtx.interfaceByClaim);
+      rows = rows.filter((r) => canActOnClaimBrand(access, byClaim, r.brandCode));
     }
 
     const generatedAt = new Date().toLocaleString("th-TH");

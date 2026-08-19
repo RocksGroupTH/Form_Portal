@@ -5,7 +5,8 @@ out/
 .env*.local
 # Archived copies of the env file — same secrets, different extension
 .env*.zip
-.env*.bak
+.env*.bak*
+.env*.backup
 uploads/
 .cache/
 .superpowers/

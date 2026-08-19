@@ -67,6 +67,36 @@ async function requireTravelBookingRequest(id: number): Promise<TravelBookingReq
  * Admin work to queue, so it closes straight to `Completed` — only the per-diem payout is
  * left, and that is already carried by `PaymentDate`.
  */
+/**
+ * Write the "acted for the assigned manager" line, when that is what happened.
+ *
+ * Inside the caller's transaction, so an admin action is either fully recorded
+ * with its explanation or not recorded at all — an approval whose audit line was
+ * rolled back separately would be worse than none.
+ */
+async function logManagerOnBehalf(
+  tx: ReturnType<Awaited<ReturnType<typeof getAccPool>>["transaction"]>,
+  requestId: number,
+  actor: Actor,
+  actionLabel: string,
+): Promise<void> {
+  const onBehalf = actor.onBehalfOfManagerStaffId;
+  if (onBehalf == null) return;
+
+  const note =
+    `${actionLabel} โดยผู้ดูแลระบบแทนผู้จัดการ` +
+    ` — ผู้ดำเนินการจริง: ${actor.email ?? "(unknown)"}` +
+    ` (StaffId ${actor.staffId ?? "-"}), แทน ManagerStaffId ${onBehalf}`;
+
+  await tx
+    .request()
+    .input("rid", sql.Int, requestId)
+    .input("by", sql.Int, actor.userId)
+    .input("note", sql.NVarChar, note.slice(0, 2000))
+    .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note)
+            VALUES (@rid, @by, 'manager_acted_on_behalf', @note)`);
+}
+
 export async function approveByManager(requestId: number, actor: Actor): Promise<TravelBookingRequest> {
   const staffId = requireActorStaffId(actor);
   const pool = await getAccPool();
@@ -114,6 +144,7 @@ export async function approveByManager(requestId: number, actor: Actor): Promise
         .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note)
                 VALUES (@rid, @by, 'completed', N'ไม่มีรายการที่ต้องจอง — ปิดงานอัตโนมัติ')`);
     }
+    await logManagerOnBehalf(tx, requestId, actor, "อนุมัติ");
     await tx.commit();
   } catch (e) {
     await tx.rollback().catch(() => {});
@@ -164,6 +195,7 @@ export async function rejectRequest(requestId: number, actor: Actor, comment: st
     await tx.request().input("rid", sql.Int, requestId).input("by", sql.Int, actor.userId)
       .input("c", sql.NVarChar, comment)
       .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note) VALUES (@rid, @by, 'rejected', @c)`);
+    await logManagerOnBehalf(tx, requestId, actor, "ไม่อนุมัติ");
     await tx.commit();
   } catch (e) {
     await tx.rollback().catch(() => {});
@@ -204,6 +236,7 @@ export async function returnRequest(requestId: number, actor: Actor, comment: st
     await tx.request().input("rid", sql.Int, requestId).input("by", sql.Int, actor.userId)
       .input("c", sql.NVarChar, comment)
       .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note) VALUES (@rid, @by, 'returned', @c)`);
+    await logManagerOnBehalf(tx, requestId, actor, "ส่งกลับแก้ไข");
     await tx.commit();
   } catch (e) {
     await tx.rollback().catch(() => {});

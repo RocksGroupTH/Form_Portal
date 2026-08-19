@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
+import { uatActorGate } from "@/lib/acc/travel-booking/uat-gate";
 import { resolveLoginEmail } from "@/lib/auth-email";
 import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
 import { isAdminRole } from "@/lib/roles";
@@ -28,6 +29,11 @@ export async function POST(
     return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
   }
 
+  // A UAT record is invisible outside the tester group — the id selected the
+  // database, membership decides who may touch what it found.
+  const uatGate = await uatActorGate(session);
+  if (uatGate) return uatGate;
+
   const pool = await getAccPool();
   const own = await pool.request()
     .input("id", sql.Int, id)
@@ -46,7 +52,9 @@ export async function POST(
 
   const isManager = staffId != null && staffId === managerStaffId;
   const isAdmin = isAdminRole(session.user.role);
-  // Local dev (localhost:3020) — any logged-in user may action the manager step, same as AP-1.
+  // Local dev only, and only when ACC_MANAGER_DEV_BYPASS=1 on a non-production
+  // build — see `isManagerDevBypassHost`. The Host header alone no longer opens
+  // this, on any host.
   const devBypass = isManagerDevBypassHost(await getRequestHost());
   const allowed = atAdminStage
     ? await canAccessAccountArea(loginEmail, session.user.role)
@@ -66,7 +74,16 @@ export async function POST(
     }
     // Acting on behalf without an HR record: fall back to the assigned manager's StaffId.
     const actorStaffId = staffId ?? (devBypass ? managerStaffId : null);
-    const actor: Actor = { staffId: actorStaffId, userId: Number(session.user.id), email: loginEmail };
+    const actor: Actor = {
+      staffId: actorStaffId,
+      userId: Number(session.user.id),
+      email: loginEmail,
+      // Recorded when an admin stands in for the assigned manager. Not set at
+      // the Admin stage, where acting is the actor's own role rather than
+      // somebody else's. See `Actor.onBehalfOfManagerStaffId`.
+      onBehalfOfManagerStaffId:
+        !atAdminStage && !isManager && managerStaffId != null ? managerStaffId : null,
+    };
     const updated = atAdminStage
       ? await returnByAdmin(id, actor, comment)
       : await returnRequest(id, actor, comment);

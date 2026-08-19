@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { requireAuth } from "@/lib/api-auth";
+import { uatActorGate } from "@/lib/acc/travel-booking/uat-gate";
 import { resolveLoginEmail } from "@/lib/auth-email";
 import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
 import { canAccessAccountArea } from "@/lib/acc/access";
 import { downloadFile } from "@/lib/storage";
 import { downloadFileFromSharePoint } from "@/lib/sharepoint";
+import { attachmentResponseHeaders } from "@/lib/acc/attachment-guard";
 import { AP17_FORM_CODE } from "@/features/travel-booking/constants";
 
 /* ── GET /api/request/travel-booking/files/[fileId] ──
@@ -19,6 +21,10 @@ export async function GET(
 ) {
   const session = await requireAuth();
   if (session instanceof Response) return session;
+
+  // Tester-only on a UAT record, before any of it is read. See `uatActorGate`.
+  const uatGate = await uatActorGate(session);
+  if (uatGate) return uatGate;
 
   const { fileId } = await params;
 
@@ -70,14 +76,11 @@ export async function GET(
         ? await downloadFileFromSharePoint(file.StoragePath)
         : await downloadFile(file.StoragePath);
 
-    const contentType: string =
-      file.ContentType || "application/octet-stream";
-
+    // The stored ContentType is whatever the uploader declared, and rows
+    // written before the attachment guard existed may claim anything. Derive
+    // the type from the bytes and serve non-image formats as a download.
     return new Response(new Uint8Array(buffer), {
-      headers: {
-        "Content-Type": contentType,
-        "Content-Disposition": `inline; filename="${file.FileName}"`,
-      },
+      headers: attachmentResponseHeaders({ bytes: buffer, fileName: file.FileName }),
     });
   } catch (err) {
     console.error("GET /api/request/travel-booking/files/[fileId] error:", err);

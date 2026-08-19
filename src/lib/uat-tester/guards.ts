@@ -69,3 +69,37 @@ export async function assertRequesterAllowedInUat(
   const tester = await getActiveUatTesterFor(requesterEmail, requesterStaffId);
   if (!tester) throw new Error(UAT_ON_BEHALF_ERROR);
 }
+
+/** A UAT record reached by someone outside the tester group. */
+export const UAT_ACTOR_ERROR = "not found";
+
+/**
+ * Refuse any access to a record that resolved to UAT when the *actor* is not an
+ * active tester.
+ *
+ * The companion to `assertRequesterAllowedInUat`, which guards who a UAT request
+ * may be filed *for*. This one guards who may touch one that already exists.
+ *
+ * The design spec's rule is that the whole approval chain of a UAT request stays
+ * inside the tester group, because a production user must never see or act on
+ * test data. That was enforced at the two ends — a tester's UAT manager must be a
+ * tester, and an on-behalf write refuses a non-tester requester — but not in the
+ * middle: an id ≥ 900000 selects the UAT database on its own, so any active
+ * `AccApprover` or IT/System Admin could open and action a test document by
+ * typing its number.
+ *
+ * Membership, never the cookie: a tester whose UAT mode is off still resolves UAT
+ * for a UAT id, and must stay authorized — that is what makes their own test work
+ * openable from a link.
+ *
+ * The message is "not found" on purpose. Telling somebody outside the test group
+ * that request 900123 exists is itself the disclosure.
+ */
+export async function assertUatActorAllowed(
+  actorEmail: string | null,
+  actorStaffId: number | null,
+): Promise<void> {
+  if (!(await isUatRequest())) return;
+  const tester = await getActiveUatTesterFor(actorEmail, actorStaffId);
+  if (!tester) throw new Error(UAT_ACTOR_ERROR);
+}

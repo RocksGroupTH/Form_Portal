@@ -78,7 +78,7 @@ function isThisMonth(iso: string | null | undefined): boolean {
 /**
  * Home reads Accounting only. Form Builder used to contribute a form catalogue
  * and its own approval queue here; both were dropped when the feature's entry
- * points were removed, so nothing on this page fetches /api/forms any more.
+ * points were removed, and the feature itself has since been deleted.
  */
 export function useHomeData() {
   const mine = useSWR<{ ok: boolean; data?: Row[] }>("/api/request/accounting/requests/mine", fetcher);

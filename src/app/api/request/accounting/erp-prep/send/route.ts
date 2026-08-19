@@ -3,8 +3,14 @@ import { requireAuth } from "@/lib/api-auth";
 import { canAccessAccountArea } from "@/lib/acc/access";
 import {
   ErpQueueDriftError,
+  ErpReconciliationRequiredError,
   sendErpInterfaceBatch,
 } from "@/lib/acc/erp-interface-send";
+import {
+  canActOnInterfaceTarget,
+  INTERFACE_SCOPE_ERROR,
+  resolveApproverInterfaceAccess,
+} from "@/lib/acc/approver-interface-access";
 import { resolveFormEnvironment } from "@/lib/form-environment";
 
 /**
@@ -62,6 +68,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Scope, not just area. `canAccessAccountArea` above says "you work in
+    // accounting"; this says "these books are yours". The list endpoint already
+    // filtered its rows by interface brand, but this route accepted any target
+    // an accounting actor named — so a KSI-only approver could send PCTH's
+    // journals to PCTH's Business Central company.
+    const access = await resolveApproverInterfaceAccess(session.user.email, session.user.role);
+    if (!canActOnInterfaceTarget(access, interfaceTarget)) {
+      return NextResponse.json({ ok: false, error: INTERFACE_SCOPE_ERROR }, { status: 403 });
+    }
+
     // The server's own resolve. The click must be bound to the database that
     // was actually displayed, not to whichever one the sender's cookie happens
     // to resolve to now: a tester in UAT mode and an ordinary user hitting this
@@ -90,6 +106,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, data });
   } catch (err) {
     if (err instanceof ErpQueueDriftError) {
+      return NextResponse.json({ ok: false, error: err.message }, { status: 409 });
+    }
+    // The documents may be in Business Central. 409 so the client reloads and
+    // shows the held batch, rather than 400's retry affordance — a retry here is
+    // the one thing that must not happen.
+    if (err instanceof ErpReconciliationRequiredError) {
+      console.error("[api/request/accounting/erp-prep/send] unresolved remote outcome:", err.detail);
       return NextResponse.json({ ok: false, error: err.message }, { status: 409 });
     }
     const message = err instanceof Error ? err.message : "ส่งเข้า ERP ไม่สำเร็จ";
