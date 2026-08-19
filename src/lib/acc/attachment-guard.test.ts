@@ -6,6 +6,7 @@ import {
   attachmentResponseHeaders,
   checkAttachment,
   checkAttachmentBatch,
+  looksLikeMacroWorkbook,
   looksLikeSvg,
   sanitizeDownloadName,
   sniffAttachment,
@@ -39,6 +40,30 @@ const PDF_BYTES = bytes("%PDF-1.7", PAD);
  */
 const SVG_BYTES = bytes('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
 const HTML_BYTES = bytes("<!DOCTYPE html><html><body><script>alert(1)</script></body></html>");
+
+/* ── Container fixtures (AP-4's workbook slot) ──
+   Both formats keep their part / stream names in the clear, so a fixture only
+   needs the signature plus the name the sniffer looks for. */
+
+/** UTF-16LE, the encoding OLE2 stores directory entry names in. */
+function utf16(text: string): number[] {
+  const out: number[] = [];
+  for (const c of text) {
+    out.push(c.charCodeAt(0) & 0xff, c.charCodeAt(0) >> 8);
+  }
+  return out;
+}
+
+const ZIP = [0x50, 0x4b, 0x03, 0x04];
+const OLE2 = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
+
+const XLSX_BYTES = bytes(ZIP, PAD, "[Content_Types].xml", PAD, "xl/workbook.xml", PAD);
+const XLSM_BYTES = bytes(ZIP, PAD, "xl/workbook.xml", PAD, "xl/vbaProject.bin", PAD);
+const DOCX_BYTES = bytes(ZIP, PAD, "word/document.xml", PAD);
+const ZIP_BYTES = bytes(ZIP, PAD, "holiday-photos/DSC0001.JPG", PAD);
+const XLS_BYTES = bytes(OLE2, PAD, utf16("Workbook"), PAD);
+const XLS_MACRO_BYTES = bytes(OLE2, PAD, utf16("Workbook"), PAD, utf16("_VBA_PROJECT"), PAD);
+const DOC_BYTES = bytes(OLE2, PAD, utf16("WordDocument"), PAD);
 
 /* ── Sniffing ── */
 
@@ -107,6 +132,76 @@ test("AP-1 takes photos only — a PDF is refused there and accepted for AP-17",
 
   const ap17 = checkAttachment({ fileName: "a.pdf", bytes: PDF_BYTES, allowedKinds: ["image", "pdf"] });
   assert.equal(ap17.ok, true);
+});
+
+/* ── AP-4's workbook slot ── */
+
+test("a workbook is recognised by its part name, not by its container signature", () => {
+  assert.equal(
+    sniffAttachment(XLSX_BYTES)?.contentType,
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  );
+  assert.equal(sniffAttachment(XLS_BYTES)?.contentType, "application/vnd.ms-excel");
+  // Same ZIP / OLE2 signature, no workbook inside: still nothing on the list.
+  assert.equal(sniffAttachment(DOCX_BYTES), null);
+  assert.equal(sniffAttachment(ZIP_BYTES), null);
+  assert.equal(sniffAttachment(DOC_BYTES), null);
+});
+
+test("a workbook never renders inline on the app origin", () => {
+  assert.equal(sniffAttachment(XLSX_BYTES)?.inlineSafe, false);
+  assert.equal(sniffAttachment(XLS_BYTES)?.inlineSafe, false);
+  const headers = attachmentResponseHeaders({ bytes: XLSX_BYTES, fileName: "AP-4.1.xlsx" });
+  assert.match(headers["Content-Disposition"], /^attachment;/);
+});
+
+test("a macro workbook is refused, and the message names the fix", () => {
+  assert.equal(looksLikeMacroWorkbook(XLSM_BYTES), true);
+  assert.equal(looksLikeMacroWorkbook(XLS_MACRO_BYTES), true);
+  assert.equal(looksLikeMacroWorkbook(XLSX_BYTES), false);
+  assert.equal(sniffAttachment(XLSM_BYTES), null);
+
+  const result = checkAttachment({
+    fileName: "summary.xlsm",
+    bytes: XLSM_BYTES,
+    allowedKinds: ["spreadsheet"],
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.ok === false ? result.error : "", /\.xlsx/);
+});
+
+test("the workbook slot does not widen the receipt slot, and vice versa", () => {
+  // The whole point of adding a kind rather than loosening the sniffer: each
+  // AP-4 slot names what it takes, and neither can be posted the other's file.
+  const workbookToReceipts = checkAttachment({
+    fileName: "AP-4.1.xlsx",
+    declaredType: "application/vnd.ms-excel",
+    bytes: XLSX_BYTES,
+    allowedKinds: ["image", "pdf"],
+  });
+  assert.equal(workbookToReceipts.ok, false);
+
+  const receiptToWorkbook = checkAttachment({
+    fileName: "receipt.jpg",
+    bytes: JPEG_BYTES,
+    allowedKinds: ["spreadsheet"],
+  });
+  assert.equal(receiptToWorkbook.ok, false);
+  assert.match(receiptToWorkbook.ok === false ? receiptToWorkbook.error : "", /Excel/);
+
+  const workbookToItsOwnSlot = checkAttachment({
+    fileName: "AP-4.1.xlsx",
+    bytes: XLSX_BYTES,
+    allowedKinds: ["spreadsheet"],
+  });
+  assert.equal(workbookToItsOwnSlot.ok, true);
+});
+
+test("omitting allowedKinds still means images and PDFs only", () => {
+  // AP-1 and AP-17 were not widened by AP-4's kind existing.
+  assert.equal(checkAttachment({ fileName: "a.xlsx", bytes: XLSX_BYTES }).ok, false);
+  assert.equal(checkAttachment({ fileName: "a.png", bytes: PNG_BYTES }).ok, true);
+  assert.equal(checkAttachment({ fileName: "a.pdf", bytes: PDF_BYTES }).ok, true);
 });
 
 test("a zero-byte file is refused rather than stored as an empty attachment", () => {
