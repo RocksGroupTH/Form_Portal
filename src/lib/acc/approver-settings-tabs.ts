@@ -1,0 +1,84 @@
+import { getAccPool, sql } from "@/lib/acc/pool";
+import { writeBothPools } from "@/lib/acc/dual-write";
+import { filterGrantableTabKeys } from "@/lib/acc/settings-tabs";
+
+/**
+ * Per-approver AP-1 settings-tab grants, stored in `AccApproverSettingsTab`.
+ *
+ * That table has existed in both form databases since migration 059 and is one
+ * of the dual-written master tables — ACC Portal, which shares this database,
+ * has been its only writer until now. No migration is needed here.
+ *
+ * The rows ARE the granted set: no rows means no grants, never "all".
+ */
+export async function loadSettingsTabsByApproverIds(
+  approverIds: number[],
+): Promise<Map<number, string[]>> {
+  const map = new Map<number, string[]>();
+  if (approverIds.length === 0) return map;
+
+  const pool = await getAccPool();
+  const placeholders = approverIds.map((_, i) => `@id${i}`).join(", ");
+  const req = pool.request();
+  approverIds.forEach((id, i) => req.input(`id${i}`, sql.Int, id));
+  const r = await req.query(`
+    SELECT ApproverId, TabKey FROM [dbo].[AccApproverSettingsTab]
+    WHERE ApproverId IN (${placeholders}) ORDER BY TabKey
+  `);
+
+  const byApprover = new Map<number, string[]>();
+  for (const row of r.recordset as { ApproverId: number; TabKey: string }[]) {
+    const list = byApprover.get(row.ApproverId) ?? [];
+    list.push(row.TabKey);
+    byApprover.set(row.ApproverId, list);
+  }
+  for (const id of approverIds) {
+    map.set(id, filterGrantableTabKeys(byApprover.get(id) ?? []));
+  }
+  return map;
+}
+
+export async function getApproverSettingsTabs(approverId: number): Promise<string[]> {
+  const map = await loadSettingsTabsByApproverIds([approverId]);
+  return map.get(approverId) ?? [];
+}
+
+/** Replace an approver's granted tabs. The list IS the granted set — [] clears it. */
+export async function setApproverSettingsTabs(
+  approverId: number,
+  keys: string[],
+): Promise<void> {
+  const wanted = filterGrantableTabKeys(keys);
+  await writeBothPools(async (tx) => {
+    await tx
+      .request()
+      .input("aid", sql.Int, approverId)
+      .query(`DELETE FROM [dbo].[AccApproverSettingsTab] WHERE ApproverId = @aid`);
+    for (const key of wanted) {
+      await tx
+        .request()
+        .input("aid", sql.Int, approverId)
+        .input("key", sql.NVarChar(40), key)
+        .query(
+          `INSERT INTO [dbo].[AccApproverSettingsTab] (ApproverId, TabKey) VALUES (@aid, @key)`,
+        );
+    }
+  });
+}
+
+/** Tabs this email may open; [] when they are not an active approver. */
+export async function resolveApproverSettingsTabsByEmail(
+  email: string | null | undefined,
+): Promise<string[]> {
+  if (!email) return [];
+  const pool = await getAccPool();
+  const r = await pool
+    .request()
+    .input("email", sql.NVarChar, email)
+    .query(
+      `SELECT Id FROM [dbo].[AccApprover] WHERE LOWER(Email) = LOWER(@email) AND IsActive = 1`,
+    );
+  const approverId = r.recordset[0]?.Id as number | undefined;
+  if (!approverId) return [];
+  return getApproverSettingsTabs(approverId);
+}
