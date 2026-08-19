@@ -6,6 +6,7 @@ import { downloadFileFromSharePoint } from "@/lib/sharepoint";
 import { authorizeAccRequest } from "@/lib/acc/request-acl";
 import { attachmentResponseHeaders } from "@/lib/acc/attachment-guard";
 import { deleteStoredFiles } from "@/lib/acc/stored-file";
+import { setReimburseWorkbook } from "@/lib/acc/reimburse/request-service";
 import { AP4_FORM_CODE, REIMBURSE_FILE_REFTYPES } from "@/features/reimburse/constants";
 
 /* ── /api/request/reimburse/files/[fileId] ──
@@ -13,8 +14,9 @@ import { AP4_FORM_CODE, REIMBURSE_FILE_REFTYPES } from "@/features/reimburse/con
 
    Both authorize on the file's **parent request**, never on the file id: a
    numeric file id is a small sequential integer and guessing one is not a
-   control. The lookup is pinned to AP-4 as well, so a file id belonging to
-   another form 404s here rather than being served out of whichever database
+   control. `loadFile` itself has no form filter — it is `authorizeAccRequest`
+   that is pinned, by `AP4_FORM_CODE`, so a file whose parent is not an AP-4
+   request 404s here rather than being served out of whichever database
    `/api/request/reimburse/**` happens to resolve to. */
 
 interface AccFileRow {
@@ -108,14 +110,7 @@ export async function DELETE(
     // reads the workbook through `ExcelFileId` — never satisfies the submit
     // gate with one either.
     if (file.RefType === REIMBURSE_FILE_REFTYPES.EXCEL) {
-      await pool
-        .request()
-        .input("rid", sql.Int, requestId)
-        .input("fid", sql.Int, id)
-        .query(
-          `UPDATE [dbo].[AccReimburse] SET ExcelFileId = NULL
-           WHERE RequestId = @rid AND ExcelFileId = @fid`,
-        );
+      await setReimburseWorkbook(requestId, null, { onlyIfCurrentFileId: id });
     }
 
     await pool

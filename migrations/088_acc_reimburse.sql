@@ -16,7 +16,13 @@ CREATE TABLE [dbo].[AccReimburse] (
 GO
 -- ExcelFileId is deliberately NOT a foreign key to AccRequestFile: a file row is
 -- deleted when the user swaps the workbook, and a FK would either block that or
--- cascade into the request. The service nulls it instead.
+-- cascade into the request.
+--
+-- setReimburseWorkbook() in src/lib/acc/reimburse/request-service.ts is the only
+-- writer of this column: it points the request at the new file before the row it
+-- replaces is deleted, and clears the pointer when the workbook itself is
+-- deleted. Anything else that removes an AccRequestFile row must go through it,
+-- or the AP-4 submit gate is left reading a dangling id.
 IF OBJECT_ID('dbo.AccReimburseItem', 'U') IS NULL
 CREATE TABLE [dbo].[AccReimburseItem] (
   [Id]          INT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_AccReimburseItem] PRIMARY KEY,

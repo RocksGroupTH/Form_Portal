@@ -15,6 +15,7 @@ import {
   type AttachmentKind,
 } from "@/lib/acc/attachment-guard";
 import { deleteStoredFiles } from "@/lib/acc/stored-file";
+import { setReimburseWorkbook } from "@/lib/acc/reimburse/request-service";
 import { AP4_FORM_CODE, REIMBURSE_FILE_REFTYPES } from "@/features/reimburse/constants";
 import type { ReimburseFileMeta } from "@/features/reimburse/types";
 
@@ -35,10 +36,24 @@ import type { ReimburseFileMeta } from "@/features/reimburse/types";
    not off an expense line the way AP-1's receipts hang off an item. */
 
 /** Which kinds each slot admits. The workbook kind exists nowhere else. */
-const ALLOWED_KINDS_BY_REFTYPE: Record<string, readonly AttachmentKind[]> = {
-  [REIMBURSE_FILE_REFTYPES.EXCEL]: ["spreadsheet"],
-  [REIMBURSE_FILE_REFTYPES.RECEIPT]: ["image", "pdf"],
-};
+const EXCEL_KINDS: readonly AttachmentKind[] = ["spreadsheet"];
+const RECEIPT_KINDS: readonly AttachmentKind[] = ["image", "pdf"];
+
+/**
+ * The two `refType` values this route takes, and nothing else.
+ *
+ * Deliberately not an object literal indexed by the posted string. `refType` is
+ * caller-written, and indexing a plain object with `__proto__` — likewise
+ * `constructor` or `toString` — yields a truthy *inherited* value. It would pass
+ * a `!allowedKinds` guard and then throw on `.includes`, answering 500 for what
+ * is a malformed request. Comparing against the two known constants cannot
+ * inherit anything.
+ */
+function allowedKindsFor(refType: string | null): readonly AttachmentKind[] | null {
+  if (refType === REIMBURSE_FILE_REFTYPES.EXCEL) return EXCEL_KINDS;
+  if (refType === REIMBURSE_FILE_REFTYPES.RECEIPT) return RECEIPT_KINDS;
+  return null;
+}
 
 export async function POST(
   req: NextRequest,
@@ -63,8 +78,9 @@ export async function POST(
   try {
     const formData = await req.formData();
 
-    const refType = formData.get("refType") as string | null;
-    const allowedKinds = refType ? ALLOWED_KINDS_BY_REFTYPE[refType] : undefined;
+    const refTypeRaw = formData.get("refType");
+    const refType = typeof refTypeRaw === "string" ? refTypeRaw : null;
+    const allowedKinds = allowedKindsFor(refType);
     if (!refType || !allowedKinds) {
       return NextResponse.json({ ok: false, error: "Invalid refType" }, { status: 400 });
     }
@@ -226,22 +242,28 @@ export async function POST(
       //    that it still belongs to this request. Point it at the new file
       //    before the old one is removed.
       if (isExcel) {
-        await pool
-          .request()
-          .input("rid", sql.Int, requestId)
-          .input("fid", sql.Int, newId)
-          .query(`UPDATE [dbo].[AccReimburse] SET ExcelFileId = @fid WHERE RequestId = @rid`);
+        await setReimburseWorkbook(requestId, newId);
 
         const stale = supersededExcel.filter((r) => Number(r.Id) !== newId);
         if (stale.length > 0) {
-          await pool
+          // Exactly the rows read at the top, which are exactly the rows whose
+          // bytes are removed below. "Every excel row but the new one" is a
+          // wider set: a row created in between would lose its database row and
+          // keep its SharePoint object, orphaned and unlogged. The request and
+          // refType predicates add nothing to the set — the ids were read under
+          // them — and are kept so the statement is confined on its own terms.
+          const del = pool
             .request()
             .input("rid", sql.Int, requestId)
-            .input("t", sql.NVarChar(50), REIMBURSE_FILE_REFTYPES.EXCEL)
-            .input("keep", sql.Int, newId)
-            .query(
-              `DELETE FROM AccRequestFile WHERE RequestId = @rid AND RefType = @t AND Id <> @keep`,
-            );
+            .input("t", sql.NVarChar(50), REIMBURSE_FILE_REFTYPES.EXCEL);
+          const placeholders = stale.map((r, i) => {
+            del.input(`s${i}`, sql.Int, Number(r.Id));
+            return `@s${i}`;
+          });
+          await del.query(
+            `DELETE FROM AccRequestFile
+             WHERE RequestId = @rid AND RefType = @t AND Id IN (${placeholders.join(", ")})`,
+          );
           // After the rows are gone: `deleteStoredFile` dispatches on the
           // backend (a driveItem id is not a filesystem path) and reports what
           // it could not remove instead of swallowing it.

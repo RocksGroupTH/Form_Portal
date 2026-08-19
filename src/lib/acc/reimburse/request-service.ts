@@ -96,9 +96,12 @@ function mapFileRow(x: Record<string, unknown>): ReimburseFileMeta {
     fileName: x.FileName as string,
     fileSize: (x.FileSize as number) ?? null,
     contentType: (x.ContentType as string) ?? null,
-    // AccRequestFile is a shared table; this download route authorizes on the
-    // file's own RequestId and is not scoped to AP-1 (see request-acl.ts).
-    url: `/api/request/accounting/files/${x.Id as number}`,
+    // AccRequestFile is a shared table, but the URL is not: `ROUTE_RULES`
+    // classifies by path prefix, so `/api/request/accounting/**` resolves
+    // **AP-1's** environment. With AP-4 piloted in UAT and AP-1 in Production
+    // that opens the wrong database and the attachment is not there. AP-4's own
+    // route authorizes on the file's parent request, pinned to AP-4.
+    url: `/api/request/reimburse/files/${x.Id as number}`,
   };
 }
 
@@ -253,6 +256,40 @@ export async function getReimburseRequest(id: number): Promise<ReimburseDetail |
   const detail = mapReimburseRow(row, items, ackedRuleIds, attachments.excelFile, attachments.receiptFiles);
   detail.approvals = approvals;
   return detail;
+}
+
+/* ─────────────────────── writes: the workbook pointer ─────────────────────── */
+
+/**
+ * Point `AccReimburse.ExcelFileId` at `fileId`, or clear it with `null`.
+ *
+ * This column is AP-4's unconditional submit gate: `validateReimburseForSubmit`
+ * refuses without a workbook, and `loadAttachments` re-checks that the id still
+ * names a file belonging to this request. It is deliberately **not** a foreign
+ * key (migration 088) — swapping the workbook deletes the old `AccRequestFile`
+ * row, which a FK would either block or cascade into the request.
+ *
+ * That makes it a rule every future writer of `AccRequestFile` has to know, so
+ * it lives here rather than as two `UPDATE`s inside the route handlers that
+ * happened to need it (upload and delete).
+ *
+ * `onlyIfCurrentFileId` makes the write conditional. The delete route clears the
+ * pointer only while it still names the file being removed, so deleting a
+ * superseded workbook cannot un-point the one that replaced it.
+ */
+export async function setReimburseWorkbook(
+  requestId: number,
+  fileId: number | null,
+  opts?: { onlyIfCurrentFileId?: number },
+): Promise<void> {
+  const pool = await getAccPool();
+  const req = pool.request().input("rid", sql.Int, requestId).input("fid", sql.Int, fileId);
+  let guard = "";
+  if (opts?.onlyIfCurrentFileId !== undefined) {
+    req.input("cur", sql.Int, opts.onlyIfCurrentFileId);
+    guard = " AND ExcelFileId = @cur";
+  }
+  await req.query(`UPDATE [dbo].[AccReimburse] SET ExcelFileId = @fid WHERE RequestId = @rid${guard}`);
 }
 
 /* ─────────────────────────── writes: draft / resume ─────────────────────────── */

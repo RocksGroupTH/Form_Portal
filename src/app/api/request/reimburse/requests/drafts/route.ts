@@ -12,7 +12,8 @@ import { AP4_FORM_CODE } from "@/features/reimburse/constants";
  * offer. Where AP-1 keys its drafts on `CreatedBy = @uid OR SubmittedBy = @uid`
  * — it can be filed for somebody else — AP-4 is always the signed-in user's
  * own, so the creator alone answers. The newest edit wins if an older draft is
- * somehow still open.
+ * somehow still open, and the higher id breaks a tie on the timestamp so the
+ * answer is the same on every call.
  */
 
 interface ReimburseDraftSummary {
@@ -43,7 +44,7 @@ export async function GET() {
         WHERE r.FormCode = @form
           AND r.Status IN ('Draft', 'Returned')
           AND r.CreatedBy = @uid
-        ORDER BY r.UpdatedAt DESC
+        ORDER BY r.UpdatedAt DESC, r.Id DESC
       `);
 
     const row = res.recordset[0] as Record<string, unknown> | undefined;
