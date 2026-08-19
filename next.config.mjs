@@ -1,13 +1,16 @@
 /**
  * Origins allowed to invoke server actions (and permitted as dev origins).
  *
- * ⚠️ These are inherited from the Rocks Fast sibling — Form Portal has no host of
- * its own yet. Deployment is out of scope for this branch, so nothing has been
- * invented here: whoever deploys Form Portal MUST add its hostname to this list
- * first, or every server action from that host is rejected as a cross-origin
- * request. See CLAUDE.md → Deployment.
+ * A host missing from this list has every server action from it rejected as a
+ * cross-origin request — at runtime, not at build time, so the build stays green
+ * and the failure only shows up once someone submits something.
+ *
+ * form.portal.rocksgroup.com is this app's own deployed host, added 2026-08-19
+ * when it went live. The rest are inherited from the Rocks Fast sibling and are
+ * kept because both apps are built from this config lineage.
  */
 const PRODUCTION_HOSTS = [
+  "form.portal.rocksgroup.com",
   "fast.rocksgroup.com",
   "test.m-group.com",
   "www.test.m-group.com",

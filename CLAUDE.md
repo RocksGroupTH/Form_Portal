@@ -453,11 +453,51 @@ the app URL that must differ.
 
 ## Deployment
 
-Not yet done — Form Portal has no host of its own. Before it is deployed:
+**Live at `https://form.portal.rocksgroup.com`** since 2026-08-19. The chain is
+**Cloudflare → IIS + ARR 3.0 → `next start`** (`x-powered-by: ARR/3.0`, `Server:
+cloudflare`). `/api/health` reports `nodeEnv: production`.
 
-- **`PRODUCTION_HOSTS` in `next.config.mjs` must be updated.** It currently lists only the Rocks Fast sibling's hosts (`fast.rocksgroup.com`, `test.m-group.com`, `www.test.m-group.com`) and feeds both `allowedDevOrigins` and `experimental.serverActions.allowedOrigins`. Server actions issued from an unlisted host are rejected as cross-origin, so a Form Portal host that is missing from this list fails at runtime, not at build.
-- **`NEXTAUTH_URL` and `NEXT_PUBLIC_APP_URL`** must both match the address users actually open, including port.
-- **The Entra app registration must list the callback for every port and host the app answers on.** `auth.config.ts` sets `trustHost: true`, so NextAuth builds `redirect_uri` from the incoming `Host` header, not from `NEXTAUTH_URL` — the moment the port changes, sign-in posts a `redirect_uri` Entra has never seen and fails with `AADSTS50011` before any app code runs. Dev now needs `http://localhost:3081/api/auth/callback/microsoft-entra-id` (add `http://127.0.0.1:3081/...` too if anyone opens it that way); the deployed host needs its own.
+### ⚠️ ARR must not rewrite the `Location` header
+
+**`reverseRewriteHostInResponseHeaders` must be `false` on the ARR proxy.** It
+defaults to **true**, and while true it rewrites the host of every `Location`
+response header to the public host — including the redirect that starts sign-in.
+Measured on the live host 2026-08-19:
+
+```
+app sends → Location: https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize?...
+client got → Location: https://form.portal.rocksgroup.com/{tenant}/oauth2/v2.0/authorize?...
+```
+
+The path and every query parameter (`redirect_uri` included) survive untouched —
+only the origin is replaced — so the browser never reaches Microsoft and sign-in
+dies on a 404 at our own host. **This looks exactly like a broken app and is not
+one:** the same commit serving `next start` locally with no proxy emits the
+correct host, in both development and production mode. Microsoft's own ARR
+reference configuration disables this setting for precisely this reason ("ARR
+must return the location headers as set by the application in case of
+redirects"), and pairs it with `preserveHostHeader = true`, which this app also
+needs because `trustHost: true` reads the `Host` header.
+
+Fix it in IIS Manager → server node → *Application Request Routing Cache* →
+*Server Proxy Settings* → untick **Reverse rewrite host in response headers**, or
+in `applicationHost.config`:
+
+```xml
+<system.webServer>
+  <proxy reverseRewriteHostInResponseHeaders="false" preserveHostHeader="true" />
+</system.webServer>
+```
+
+Note that `web.config` is **gitignored**, so no proxy configuration lives in this
+repo — it exists only on the server, and a rebuilt server loses it.
+
+### The rest of the deployment checklist
+
+- **`PRODUCTION_HOSTS` in `next.config.mjs`** feeds both `allowedDevOrigins` and `experimental.serverActions.allowedOrigins`. `form.portal.rocksgroup.com` was added 2026-08-19; it was missing at first deploy, which would have rejected every server action from the live host as cross-origin — at runtime, so the build stays green and only a submit reveals it.
+- **`NEXTAUTH_URL` and `NEXT_PUBLIC_APP_URL`** must both match the address users actually open, including port. Both are set to `https://form.portal.rocksgroup.com` in production.
+- **The Entra app registration must list the callback for every host the app answers on.** Production needs `https://form.portal.rocksgroup.com/api/auth/callback/microsoft-entra-id`; dev needs `http://localhost:3081/api/auth/callback/microsoft-entra-id` (add `http://127.0.0.1:3081/...` too if anyone opens it that way). A `redirect_uri` Entra has never seen fails with `AADSTS50011` before any app code runs.
+  **Which value is sent depends on whether `NEXTAUTH_URL` is set.** `auth.config.ts` sets `trustHost: true`, but that only makes the `Host` header the *fallback*: when `NEXTAUTH_URL`/`AUTH_URL` is present it wins outright. Verified 2026-08-19 — a build served on port 3082 with `NEXTAUTH_URL=http://localhost:3081` still sent `redirect_uri=http://localhost:3081/...`. So an unset `NEXTAUTH_URL` makes the registration port-sensitive, and a set one makes it env-sensitive; either way both must agree with what Entra lists.
 - **`ERP_SANDBOX_ALLOWED_HOSTS`** (`src/lib/acc/erp-environment-shared.ts`) is `localhost:3081` / `127.0.0.1:3081` — the `devHostOnly` management cards and the manager-approval dev bypass (`src/lib/acc/manager-auth.ts`) disappear on any other host, which is intended for production but worth knowing.
 - **`UPLOAD_ROOT`** must resolve on the target machine to the files the pre-SharePoint `AccRequestFile` rows point at (see "Shared with Rocks Fast").
 - **Parallel UAT ships in three steps, in this order: apply 062 + 063 → deploy the code → apply 065.** All three are Fast_Core. 062 adds `ProductionEnabled` / `UatEnabled` beside the old `Environment` column and backfills them, leaving that column in place so the *currently running* app keeps working; 063 creates `UatTester`. Only once the new code is live does 065 drop `Environment`. Running 065 first takes the old build down — its `setFormFlag` names that column in the MERGE INSERT. (061 and 064 target `Rocks_Portal_Form_UAT` and are independent of the deploy; 061 must precede any UAT write.)

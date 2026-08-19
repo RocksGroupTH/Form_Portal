@@ -98,7 +98,13 @@ The full set, and the reasoning behind each, is in
 
 ## Deployment
 
-Not yet deployed — Form Portal has no host of its own. The prerequisites, and
-the ordering constraints on the parallel-UAT migrations, are listed in
-[CLAUDE.md → Deployment](CLAUDE.md#deployment). Liveness probe:
-`GET /api/health`.
+Live at **https://form.portal.rocksgroup.com**, behind Cloudflare → IIS/ARR →
+`next start`. Liveness probe: `GET /api/health`.
+
+**The ARR proxy must have `reverseRewriteHostInResponseHeaders="false"`.** On
+its default (`true`) it rewrites the host of every `Location` header to the
+public host, including the one that starts Microsoft sign-in — so sign-in breaks
+in a way that looks like an app fault but reproduces nowhere except behind the
+proxy. Details, the measured evidence and the fix are in
+[CLAUDE.md → Deployment](CLAUDE.md#deployment), along with the rest of the
+checklist and the ordering constraints on the parallel-UAT migrations.
