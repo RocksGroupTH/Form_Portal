@@ -4,7 +4,7 @@ import { getProductionFormPool, getUatFormPool } from "@/lib/db/mssql";
 /**
  * Run the same mutation against the production and UAT form databases.
  *
- * The 19 shared configuration tables exist in both, and per-form routing means
+ * The 21 shared configuration tables exist in both, and per-form routing means
  * AP-1 may read one copy while AP-17 reads the other. A setting saved to only
  * one database shows up later as an approver who exists for one form and not
  * the other, so both commit or neither does.
@@ -21,10 +21,22 @@ import { getProductionFormPool, getUatFormPool } from "@/lib/db/mssql";
  *     identity counters stay in lockstep and a new row is assigned the same id
  *     in both.
  *
- * That second property is an invariant, not a guarantee — a manual SQL edit
- * against one database alone would break it silently. `npm run check:alignment`
- * (scripts/checks/verify-master-alignment.ts) asserts it, and is the thing to
- * run if approvers or vehicles ever look different between forms.
+ * There is exactly one deliberate exception to the first bullet, and it is not
+ * dead code: `upsertVehicle` (src/lib/acc/travel-booking/settings-service.ts)
+ * captures `OUTPUT INSERTED.Id` on the production pass and replays it on the
+ * UAT pass under `SET IDENTITY_INSERT`, because AccTravelVehiclePlace holds a
+ * foreign key to that id and the child rows are written on both passes. It is
+ * the only IDENTITY_INSERT in src/. Everything else, new AccReimburseRule rows
+ * included, relies on the counters alone.
+ *
+ * That lockstep is an invariant, not a guarantee, and breaking it needs no
+ * manual SQL: identity allocation is not transactional, so a production INSERT
+ * that succeeds followed by a UAT one that throws rolls both rows back while
+ * leaving production's counter advanced and UAT's not — every later id then
+ * differs by one, permanently and silently. `npm run check:alignment`
+ * (scripts/checks/verify-master-alignment.ts) compares ids along with the
+ * business columns and is what detects it; run it after any failure here, not
+ * only when approvers or vehicles look different between forms.
  */
 export async function writeBothPools<T>(
   fn: (tx: Transaction) => Promise<T>,

@@ -10,7 +10,7 @@ import { buildAccFolderPath, yearFromRequestNo } from "@/lib/acc/sharepoint-path
 import { resolveFormEnvironment } from "@/lib/form-environment";
 import { authorizeAccRequest } from "@/lib/acc/request-acl";
 import { statusForAccError } from "@/lib/acc/request-errors";
-import { getAllowedBrands } from "@/lib/acc/brand-options";
+import { isBrandAllowedForForm } from "@/lib/acc/brand-options";
 import { AP4_FORM_CODE } from "@/features/reimburse/constants";
 
 /**
@@ -51,8 +51,12 @@ export async function POST(
     // invariant is not one: the draft routes accept whatever `brandCode` they
     // are handed, so a request written before the allowlist existed — or by
     // anything that is not this form — carries a BrandGate cookie value
-    // matching zero rows. `getAllowedBrands` reads through `getAccPool()`, so
-    // it asks the same database this request resolved to.
+    // matching zero rows. `isBrandAllowedForForm` reads through `getAccPool()`,
+    // so it asks the same database this request resolved to — and only
+    // `AccFormBrand`, deliberately. The obvious call here is `getAllowedBrands`,
+    // but that enriches each row from the brand master in `Rocks_Codex` over
+    // `getCorePool()`, which would put a second database's availability on the
+    // submit path for display data this check never reads.
     //
     // Checked here rather than inside `validateReimburseForSubmit`: that
     // function's module is settled, and this is the only submit path. It runs
@@ -68,8 +72,8 @@ export async function POST(
     // the requester back for one thing at a time.
     const current = await getReimburseRequest(id);
     if (current?.brandCode) {
-      const allowed = await getAllowedBrands(AP4_FORM_CODE);
-      if (!allowed.some((b) => b.brandCode === current.brandCode)) {
+      const allowed = await isBrandAllowedForForm(AP4_FORM_CODE, current.brandCode);
+      if (!allowed) {
         return NextResponse.json(
           { ok: false, error: ERR_BRAND_NOT_ALLOWED },
           { status: 400 },

@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 /**
- * Assert the 19 shared configuration tables are identical in Rocks_Portal_Form
+ * Assert the 21 shared configuration tables are identical in Rocks_Portal_Form
  * and Rocks_Portal_Form_UAT.
  *
  * Per-form routing means AP-1 may read one copy while AP-17 reads the other, so

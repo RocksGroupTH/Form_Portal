@@ -105,6 +105,13 @@ export function ReimburseBrandSettings() {
   const loadFailed = !!error || (!!data && !data.ok);
   const loaded = !!data && data.ok;
 
+  // Saving while the load failed writes `checked` — which is whatever was left
+  // on screen, not the saved set — over every allowed brand for AP-4, and an
+  // empty result is the one that stops requesters submitting at all. Warning
+  // about that and leaving the button live only documents the mistake, so the
+  // button is refused until a successful load gives us something to diff.
+  const canSave = !saving && !loadFailed;
+
   return (
     <div>
       {allBrands.length > 0 && orphanCodes.length > 0 && (
@@ -129,7 +136,7 @@ export function ReimburseBrandSettings() {
           <AlertTriangle size={15} className="shrink-0 mt-0.5" />
           <p className="text-[12px] leading-relaxed m-0">
             โหลดรายการแบรนด์ที่ตั้งค่าไว้ไม่สำเร็จ — ที่เห็นด้านล่างจึงยังไม่ใช่ค่าที่บันทึกไว้จริง
-            กรุณารีเฟรชหน้านี้ก่อนแก้ไข การกดบันทึกตอนนี้จะเขียนทับค่าเดิมทั้งหมด
+            ปุ่มบันทึกถูกปิดไว้เพื่อไม่ให้เขียนทับค่าเดิมทั้งหมด กรุณารีเฟรชหน้านี้ก่อนแก้ไข
           </p>
         </div>
       )}
@@ -201,9 +208,15 @@ export function ReimburseBrandSettings() {
 
       <button
         onClick={() => void handleSave()}
-        disabled={saving}
-        className="flex items-center gap-2 px-5 py-2.5 rounded-xl cursor-pointer border-none text-[13px] font-bold"
-        style={{ background: "var(--color-action)", color: "var(--btn-primary-text)", opacity: saving ? 0.6 : 1 }}
+        disabled={!canSave}
+        title={loadFailed ? "โหลดค่าที่บันทึกไว้ไม่สำเร็จ — กรุณารีเฟรชหน้านี้ก่อนบันทึก" : undefined}
+        className="flex items-center gap-2 px-5 py-2.5 rounded-xl border-none text-[13px] font-bold"
+        style={{
+          background: "var(--color-action)",
+          color: "var(--btn-primary-text)",
+          opacity: canSave ? 1 : 0.6,
+          cursor: canSave ? "pointer" : "not-allowed",
+        }}
       >
         <Save size={14} />
         {saving ? "กำลังบันทึก..." : "บันทึก"}
