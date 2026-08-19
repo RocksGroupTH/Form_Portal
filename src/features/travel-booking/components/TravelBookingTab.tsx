@@ -122,7 +122,7 @@ export function TravelBookingTab({
   return (
     <div className="w-full max-w-full mx-auto flex flex-col gap-4 min-w-0">
       {/* เหตุผล + รายละเอียด + จังหวัด/สถานที่ */}
-      <SectionCard icon={<Briefcase size={15} />} title="เหตุผลและรายละเอียดการเดินทาง">
+      <SectionCard dataTour="ap17-trip" icon={<Briefcase size={15} />} title="เหตุผลและรายละเอียดการเดินทาง">
         <div data-field="reason">
           <label className={labelClass} style={errLabelStyle(hasErr("reason"))}>
             เหตุผลการเดินทาง{requiredStar}
@@ -208,7 +208,7 @@ export function TravelBookingTab({
       </SectionCard>
 
       {/* วันเดินทาง + ที่พัก */}
-      <SectionCard icon={<Calendar size={15} />} title="วันเดินทางและที่พัก">
+      <SectionCard dataTour="ap17-schedule" icon={<Calendar size={15} />} title="วันเดินทางและที่พัก">
         <div data-field="dateRange">
           <DateRangeField
             label="วันเดินทาง (ไป–กลับ)"
@@ -253,7 +253,7 @@ export function TravelBookingTab({
       </SectionCard>
 
       {/* ยานพาหนะ (ไป-กลับ ตัวเดียว) + จุดขึ้น/เวลา แยกทิศ + เช่ารถ */}
-      <SectionCard icon={<Car size={15} />} title="ยานพาหนะ">
+      <SectionCard dataTour="ap17-vehicle" icon={<Car size={15} />} title="ยานพาหนะ">
         <div data-field="goVehicle">
           <label className={labelClass} style={errLabelStyle(hasErr("goVehicle"))}>
             เลือกยานพาหนะ (ใช้ทั้งขาไป–ขากลับ){requiredStar}
@@ -353,7 +353,7 @@ export function TravelBookingTab({
       </SectionCard>
 
       {/* เอกสารแนบ */}
-      <SectionCard icon={<FileCheck size={15} />} title="เอกสารแนบ">
+      <SectionCard dataTour="ap17-idcard" icon={<FileCheck size={15} />} title="เอกสารแนบ">
         <div data-field="idCard">
           <IdCardUpload
             files={tab.idCardFiles}

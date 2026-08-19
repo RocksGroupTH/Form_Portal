@@ -179,6 +179,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
 
       {/* คำแนะนำ */}
       <div
+        data-tour="ap17-notice"
         className="rounded-2xl px-4 py-3.5 flex items-start gap-2.5"
         style={{
           background: "color-mix(in srgb, var(--color-action) 8%, var(--bg-card))",
@@ -197,6 +198,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
 
       {/* ผู้ขอเบิก (read-only) */}
       <SectionCard
+        dataTour="ap17-requester"
         icon={<User size={15} />}
         title="ผู้ขอเบิก"
         extra={colleagues.length > 0 ? (
@@ -350,6 +352,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
 
       {/* แท็บคำขอ */}
       <div
+        data-tour="ap17-tabs"
         className="sticky top-14 md:top-12 z-30 rounded-2xl overflow-hidden"
         style={{
           background: "color-mix(in srgb, var(--bg-card) 92%, transparent)",
@@ -441,6 +444,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
 
       {/* Footer: สรุปรวม + ปุ่มบันทึก/ส่ง */}
       <div
+        data-tour="ap17-submit"
         className="sticky bottom-3 rounded-2xl px-4 py-3.5 flex items-center justify-between gap-3 flex-wrap"
         style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", boxShadow: "var(--shadow-lg)" }}
       >
