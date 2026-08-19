@@ -44,10 +44,3 @@ export async function listApproverCandidates(): Promise<ApproverCandidate[]> {
     photoUrl: (x.PhotoUrl as string) ?? null,
   }));
 }
-
-/** True if this email belongs to an eligible IT/Accounting employee. */
-export async function isApproverCandidateEmail(email: string): Promise<boolean> {
-  const list = await listApproverCandidates();
-  const e = email.trim().toLowerCase();
-  return list.some((c) => c.email.toLowerCase() === e);
-}

@@ -38,9 +38,10 @@ interface Candidate {
 
 /* ── Candidate search modal (AP-1-style, sourced from IT/Accounting) ── */
 function CandidateModal({
-  candidates, role, onRole, existing, onAdd, onClose, busy,
+  candidates, loading, role, onRole, existing, onAdd, onClose, busy,
 }: {
   candidates: Candidate[];
+  loading: boolean;
   role: Role;
   onRole: (r: Role) => void;
   existing: Set<string>; // "email" already at the selected role (lowercased)
@@ -91,7 +92,9 @@ function CandidateModal({
 
         {/* Results */}
         <div className="flex-1 overflow-y-auto px-5 pb-4">
-          {results.length === 0 ? (
+          {loading && candidates.length === 0 ? (
+            <div className="py-10 text-center"><p className="text-[12px]" style={{ color: "var(--text-muted)" }}>กำลังโหลดรายชื่อ...</p></div>
+          ) : results.length === 0 ? (
             <div className="py-10 text-center"><p className="text-[12px]" style={{ color: "var(--text-muted)" }}>ไม่พบพนักงาน</p></div>
           ) : (
             <div className="flex flex-col gap-1.5">
@@ -130,6 +133,7 @@ function CandidateModal({
 export function AdvanceApproverSettings() {
   const [rows, setRows] = useState<Approver[]>([]);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [candidatesLoading, setCandidatesLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -146,17 +150,21 @@ export function AdvanceApproverSettings() {
   }, []);
 
   useEffect(() => {
+    // The approver list is what the page shows — render it as soon as it lands.
     setLoading(true);
-    Promise.all([
-      fetch("/api/request/advance/settings/approvers").then((r) => r.json()),
-      fetch("/api/request/advance/settings/approvers/candidates").then((r) => r.json()),
-    ])
-      .then(([ap, cand]: [{ ok: boolean; data?: Approver[] }, { ok: boolean; data?: Candidate[] }]) => {
-        setRows(ap.ok && ap.data ? ap.data : []);
-        setCandidates(cand.ok && cand.data ? cand.data : []);
-      })
+    fetch("/api/request/advance/settings/approvers")
+      .then((r) => r.json())
+      .then((ap: { ok: boolean; data?: Approver[] }) => setRows(ap.ok && ap.data ? ap.data : []))
       .catch(() => {})
       .finally(() => setLoading(false));
+    // Candidate picker (HR query) is only needed when the "add" modal opens —
+    // load it in the background so it never blocks the list.
+    setCandidatesLoading(true);
+    fetch("/api/request/advance/settings/approvers/candidates")
+      .then((r) => r.json())
+      .then((cand: { ok: boolean; data?: Candidate[] }) => setCandidates(cand.ok && cand.data ? cand.data : []))
+      .catch(() => {})
+      .finally(() => setCandidatesLoading(false));
   }, []);
 
   async function post(body: unknown, okMsg?: string) {
@@ -257,6 +265,7 @@ export function AdvanceApproverSettings() {
       {modalOpen && (
         <CandidateModal
           candidates={candidates}
+          loading={candidatesLoading}
           role={modalRole}
           onRole={setModalRole}
           existing={existingAtModalRole}
