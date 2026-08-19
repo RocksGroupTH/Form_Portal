@@ -379,19 +379,34 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
     [request.approvals],
   );
   /* Same gate as AP-1 (`canActManagerStep`): assigned StaffId / assigned email, plus the
-     localhost:3081 dev bypass that lets any logged-in user action the step while testing. */
+     localhost:3081 dev bypass that lets any logged-in user action the step while testing.
+     The two are kept apart because only the second one is worth announcing — for a UAT
+     request the assigned manager IS the requester's configured UAT manager, written into
+     the approval at submit, so matching it is acting on your own authority. */
   const isDevHost = useErpSandboxDevHost();
-  const canActManager =
-    request.status === "Submitted" &&
-    managerApproval?.status === "Pending" &&
+  const isStepPending =
+    request.status === "Submitted" && managerApproval?.status === "Pending";
+  const isAssignedManagerViewer =
+    isStepPending &&
     canActManagerStep(
       viewerStaffId,
       viewerEmail,
       managerApproval?.assignedTo ?? null,
       managerApproval,
       null,
-      isDevHost,
+      false,
     );
+  const canActManager =
+    isAssignedManagerViewer ||
+    (isStepPending &&
+      canActManagerStep(
+        viewerStaffId,
+        viewerEmail,
+        managerApproval?.assignedTo ?? null,
+        managerApproval,
+        null,
+        isDevHost,
+      ));
 
   const canCancel =
     isOwner &&
@@ -536,7 +551,8 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
       <Section title="ขั้นตอนการอนุมัติ" icon={<CheckCircle size={15} />}>
         {canActManager && (
           <div className="mb-4 pb-4 flex flex-col gap-3" style={{ borderBottom: "1px solid var(--border-light)" }}>
-            {isDevHost ? (
+            {/* Only when the bypass is what grants this — see the gate above. */}
+            {isDevHost && !isAssignedManagerViewer ? (
               <p className="text-[10px] m-0" style={{ color: "var(--text-faint)" }}>
                 โหมดทดสอบ (localhost:3081) — ผู้ใช้ที่ล็อกอินกดอนุมัติแทนผู้จัดการได้
               </p>

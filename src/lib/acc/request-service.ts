@@ -978,16 +978,28 @@ export async function submitRequest(
       .input("uid", sql.Int, userId || null)
       .query(`UPDATE [dbo].[AccRequest]
               SET Status='Submitted', CurrentStepCode='MANAGER', UpdatedAt=SYSDATETIME()
+              OUTPUT INSERTED.RequestNo AS RequestNo
               WHERE Id=@id AND CreatedBy=@uid AND Status IN ('Draft','Returned')`);
     if (claim.rowsAffected[0] !== 1) {
       throw new AccConflictError(SUBMIT_ALREADY_CLAIMED);
     }
 
-    // Inside the claim's transaction, so the number is issued only to the
-    // winner. `AccSequence`'s MERGE takes HOLDLOCK; holding it to commit
-    // serialises concurrent submits of the same prefix, which is what the
-    // running number needs anyway.
-    const requestNo = await allocateRequestNo("TOF", new Date(), tx);
+    // A returned request keeps the number it was already given.
+    //
+    // This is the same row: the claim above accepts `Returned` as well as
+    // `Draft`, so a request sent back for revision is edited and resubmitted in
+    // place. Allocating unconditionally renumbered it every time — TOF26-09004
+    // came back as TOF26-09005 — which breaks the one thing a running number is
+    // for. Everyone who has already seen the request (the approver who returned
+    // it, the requester's own email, anything written down) is holding the old
+    // number, and the old one is then attached to nothing at all.
+    //
+    // Only a first submit allocates, and it still allocates inside the claim's
+    // transaction so a tab that lost the race never consumes one. `AccSequence`'s
+    // MERGE takes HOLDLOCK; holding it to commit serialises concurrent submits
+    // of the same prefix, which is what the running number needs anyway.
+    const existingNo = ((claim.recordset?.[0]?.RequestNo as string | null) ?? "").trim();
+    const requestNo = existingNo || (await allocateRequestNo("TOF", new Date(), tx));
 
     await tx.request()
       .input("id", sql.Int, id)

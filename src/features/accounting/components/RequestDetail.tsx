@@ -1077,7 +1077,16 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
     [request.approvals],
   );
 
-  const canActManager =
+  /**
+   * Whether the viewer is the manager this request was actually assigned to —
+   * no host bypass involved.
+   *
+   * For a UAT request that means the requester's configured UAT manager: the
+   * submit resolves `UatTester.ManagerStaffId` and writes it into
+   * `request.managerStaffId`, so the snapshot compared here already *is* the
+   * UAT manager. A tester who is their own manager matches it too.
+   */
+  const isAssignedManagerViewer =
     request.currentStepCode === "MANAGER" &&
     canActManagerStep(
       viewerStaffId,
@@ -1085,8 +1094,20 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
       request.managerStaffId,
       pendingManagerApproval,
       role,
-      isDevHost,
+      false,
     );
+
+  const canActManager =
+    isAssignedManagerViewer ||
+    (request.currentStepCode === "MANAGER" &&
+      canActManagerStep(
+        viewerStaffId,
+        viewerEmail,
+        request.managerStaffId,
+        pendingManagerApproval,
+        role,
+        isDevHost,
+      ));
 
   const [mgAction, setMgAction] = useState<"approve" | "return" | "reject" | null>(null);
   const [mgComment, setMgComment] = useState("");
@@ -1289,7 +1310,13 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
               className="mb-4 pb-4 flex flex-col gap-3"
               style={{ borderBottom: "1px solid var(--border-light)" }}
             >
-              {isDevHost ? (
+              {/* Only when the dev bypass is what is granting this, not merely
+                  when the page happens to be served from a dev host. Somebody
+                  who IS the assigned manager — including a UAT tester who is
+                  their own UAT manager — is acting on their own authority, and
+                  telling them they are approving "on behalf of the manager"
+                  says the wrong thing about a real approval. */}
+              {isDevHost && !isAssignedManagerViewer ? (
                 <p className="text-[10px] m-0" style={{ color: "var(--text-faint)" }}>
                   โหมดทดสอบ (localhost:3081) — ผู้ใช้ที่ล็อกอินกดอนุมัติแทนผู้จัดการได้
                 </p>

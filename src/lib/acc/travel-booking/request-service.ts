@@ -1166,20 +1166,30 @@ export async function submitTravelBookingGroup(
                 ManagerStaffId=@mgrStaff, ManagerEmail=@mgrEmail, TotalAmount=@total,
                 SubmittedBy=@by, SubmittedAt=SYSDATETIME(), UpdatedAt=SYSDATETIME()
                 WHERE Id=@id AND CreatedBy=@uid AND Status IN ('Draft','Returned');
-                SELECT @@ROWCOUNT AS n`);
+                DECLARE @n INT = @@ROWCOUNT;
+                SELECT @n AS n,
+                       (SELECT RequestNo FROM [dbo].[AccRequest] WHERE Id=@id) AS requestNo`);
       if ((upd.recordset[0].n as number) === 0) {
         throw new AccConflictError(SUBMIT_ALREADY_CLAIMED);
       }
 
-      // Allocated after the claim and inside the transaction, so a tab that lost
-      // the race never consumes a running number. This used to run for every tab
-      // before the transaction opened, on the reasoning that AP-1 did the same;
-      // AP-1 no longer does.
-      const requestNo = await allocateRequestNo(RUNNING_PREFIX, new Date(), tx);
-      await tx.request()
-        .input("id", sql.Int, requestId)
-        .input("no", sql.NVarChar, requestNo)
-        .query(`UPDATE [dbo].[AccRequest] SET RequestNo=@no WHERE Id=@id`);
+      // A returned request keeps the number it was already given — the claim
+      // above accepts `Returned`, so this is the same row being resubmitted in
+      // place, and renumbering it would strand every reference anyone already
+      // holds. Same rule as AP-1.
+      //
+      // A first submit still allocates after the claim and inside the
+      // transaction, so a tab that lost the race never consumes a running
+      // number. That much used to run for every tab before the transaction
+      // opened, on the reasoning that AP-1 did the same; AP-1 no longer does.
+      const existingNo = ((upd.recordset[0].requestNo as string | null) ?? "").trim();
+      const requestNo = existingNo || (await allocateRequestNo(RUNNING_PREFIX, new Date(), tx));
+      if (!existingNo) {
+        await tx.request()
+          .input("id", sql.Int, requestId)
+          .input("no", sql.NVarChar, requestNo)
+          .query(`UPDATE [dbo].[AccRequest] SET RequestNo=@no WHERE Id=@id`);
+      }
 
       await tx.request()
         .input("id", sql.Int, requestId)
