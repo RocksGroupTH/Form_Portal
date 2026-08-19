@@ -188,11 +188,9 @@ export function UatUserSettings() {
   // The other half of the same problem, and the one nothing used to say out
   // loud: a tester with no UAT manager at all. `uatManagerFor` returns null and
   // the submit refuses, but the person only finds out at the end of a form they
-  // have already filled in. Note the bootstrap trap this catches — a manager
-  // must themselves be an active tester and self-manager is refused, so a
-  // one-person list cannot be given a valid manager at all.
+  // have already filled in. There is no bootstrap trap any more — a tester may
+  // be their own manager — so the warning names the fix rather than a blocker.
   const managerlessTesters = testers.filter((t) => t.isActive && t.managerStaffId === null);
-  const activeTesterCount = testers.filter((t) => t.isActive).length;
 
   const doAction = async (body: Record<string, unknown>, busy?: number) => {
     if (busy !== undefined) setBusyId(busy);
@@ -251,14 +249,9 @@ export function UatUserSettings() {
           <AlertTriangle size={15} className="shrink-0 mt-0.5" />
           <p className="text-[12px] leading-relaxed">
             ผู้ทดสอบต่อไปนี้ยังไม่ได้กำหนดผู้จัดการสำหรับ UAT — จะกดส่งคำขอ UAT ไม่ได้จนกว่าจะกำหนด:{" "}
-            <b>{managerlessTesters.map((t) => t.name).join(", ")}</b>
-            {activeTesterCount < 2 && (
-              <>
-                {" "}
-                ผู้จัดการสำหรับ UAT ต้องเป็นผู้ทดสอบที่เปิดใช้งานอยู่ และตั้งตัวเองเป็นผู้จัดการไม่ได้
-                จึงต้องเพิ่มผู้ทดสอบอย่างน้อย 2 คนก่อน
-              </>
-            )}
+            <b>{managerlessTesters.map((t) => t.name).join(", ")}</b>{" "}
+            ผู้จัดการสำหรับ UAT ต้องเป็นผู้ทดสอบที่เปิดใช้งานอยู่ และตั้งตัวเองได้
+            หากต้องการทดสอบครบวงจรด้วยคนเดียว
           </p>
         </div>
       )}

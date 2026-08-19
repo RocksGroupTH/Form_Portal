@@ -2,19 +2,34 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { requireAuth } from "@/lib/api-auth";
 import { resolveLoginEmail } from "@/lib/auth-email";
-import { resolveEmployeeForActor } from "@/lib/hr/employee-lookup";
+import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
 import { getSetting } from "@/lib/acc/settings-service";
+import {
+  decideIdCardRead,
+  parseConsentSetting,
+} from "@/lib/acc/travel-booking/id-card-access";
 import { AP17_FORM_CODE, FILE_REFTYPES, idCardReuseConsentKey } from "@/features/travel-booking/constants";
 
 /**
  * GET /api/request/travel-booking/id-card/previous?requesterStaffId=&excludeRequestId=
- * For the requester (ผู้ขอเบิก — self, or a same-department colleague via requesterStaffId),
- * returns their reuse-consent state and — only when consent was granted — the most recent ID-card
- * file from an earlier AP-17 request (so a brand-new trip can reuse it before it's ever saved).
+ *
+ * The signed-in employee's own reuse-consent state and — only when they granted
+ * it — the most recent ID-card file from an earlier AP-17 request of theirs, so
+ * a brand-new trip can reuse it before it is ever saved.
+ *
+ * Self only. This used to resolve `requesterStaffId` through
+ * `resolveEmployeeForActor`, which lets anyone in the same department name
+ * anyone else, and then handed back that colleague's card id. See
+ * `@/lib/acc/travel-booking/id-card-access`.
+ *
+ * Filing on behalf of a colleague still works; it just comes back with nothing
+ * to reuse, and the panel offers a fresh upload instead of a stranger's card.
  */
 export async function GET(req: NextRequest) {
   const session = await requireAuth();
   if (session instanceof Response) return session;
+
+  const empty = { consent: null as boolean | null, card: null };
 
   try {
     const params = new URL(req.url).searchParams;
@@ -23,17 +38,23 @@ export async function GET(req: NextRequest) {
     const excludeRequestId = Number(params.get("excludeRequestId")) || 0;
 
     const loginEmail = resolveLoginEmail(session.user, null, { email: session.user.email });
-    if (!loginEmail) return NextResponse.json({ ok: true, data: { consent: null, card: null } });
+    if (!loginEmail) return NextResponse.json({ ok: true, data: empty });
 
-    // Resolves self (requesterStaffId null) or a same-department colleague; throws if not authorized.
-    const emp = await resolveEmployeeForActor(loginEmail, requesterStaffId);
-    const staffId = emp.staffId; // HR StaffId (matches AccRequest.StaffId) — NOT emp.id (Employee GUID)
+    const actor = (await findActiveEmployeeByEmail(loginEmail)).employee;
+    const staffId = actor?.staffId ?? null; // HR StaffId (matches AccRequest.StaffId)
+    if (staffId == null) return NextResponse.json({ ok: true, data: empty });
 
-    const consentRaw = await getSetting(idCardReuseConsentKey(staffId));
-    const consent = consentRaw === "true" ? true : consentRaw === "false" ? false : null;
+    // Naming somebody else is answered as "nothing here" rather than a
+    // refusal — the panel simply shows no reuse option, and the response
+    // confirms nothing about whether that colleague has a stored card.
+    if (requesterStaffId != null && requesterStaffId !== staffId) {
+      return NextResponse.json({ ok: true, data: empty });
+    }
+
+    const consent = parseConsentSetting(await getSetting(idCardReuseConsentKey(staffId)));
 
     let card: { fileId: number; requestId: number; fileName: string; contentType: string; uploadedAt: string } | null = null;
-    if (consent === true) {
+    if (decideIdCardRead({ actorStaffId: staffId, subjectStaffId: staffId, consent }).ok) {
       const pool = await getAccPool();
       const prev = await pool
         .request()

@@ -12,7 +12,7 @@ import {
   sameRequestIdSet,
   selectErpSendBatchRows,
 } from "@/features/accounting/lib/erp-send-batch";
-import { postBcPpapJournalCreateFromJson } from "@/lib/bc/bc-odata";
+import { BcJournalPostError, postBcPpapJournalCreateFromJson } from "@/lib/bc/bc-odata";
 import type { ErpInterfaceStatus } from "@/features/accounting/constants";
 
 /**
@@ -36,6 +36,28 @@ export class ErpQueueDriftError extends Error {
   constructor() {
     super(ERP_QUEUE_DRIFT_ERROR);
     this.name = "ErpQueueDriftError";
+  }
+}
+
+/**
+ * What an operator is told when the batch is held for reconciliation.
+ *
+ * Deliberately not a failure message: the documents may be in Business Central.
+ * The rows stay `Pending`, which the pre-send check refuses, so nothing posts
+ * them again until someone has looked.
+ */
+export const ERP_RECONCILE_ERROR =
+  "ส่งเข้า ERP แล้วไม่ทราบผล — กรุณาตรวจสอบใน Business Central ก่อนส่งซ้ำ (รอบนี้ถูกพักไว้)";
+
+/**
+ * The remote outcome is unknown, so the batch was left claimed rather than
+ * released. Distinct from `ErpQueueDriftError`: nothing about this is
+ * retryable, and the route must not present it as such.
+ */
+export class ErpReconciliationRequiredError extends Error {
+  constructor(readonly detail: string) {
+    super(ERP_RECONCILE_ERROR);
+    this.name = "ErpReconciliationRequiredError";
   }
 }
 
@@ -178,6 +200,104 @@ async function logInterfaceActivity(
   }
 }
 
+/**
+ * Take exclusive ownership of the whole batch, or nothing.
+ *
+ * One conditional UPDATE over the exact id set inside one transaction, and the
+ * affected-row count has to equal the batch size. What it replaces was a read
+ * (`loadRequestInterfaceStatuses`) followed by a per-row `markRequestsInterfaceStatus`
+ * whose predicate *was* conditional but whose row count was discarded — so two
+ * clicks on the same ready batch both passed the read, both "claimed", and both
+ * went on to post the same journal to Business Central. Duplicated financial
+ * documents, from a double-click.
+ *
+ * Returns false when any row was already Pending or Sent; the transaction rolls
+ * back, so a partial claim is never left behind.
+ */
+async function claimRequestsForSend(requestIds: number[]): Promise<boolean> {
+  if (requestIds.length === 0) return false;
+
+  const pool = await getAccPool();
+  const tx = pool.transaction();
+  await tx.begin();
+  try {
+    const req = tx.request();
+    const placeholders: string[] = [];
+    requestIds.forEach((id, i) => {
+      req.input(`id${i}`, sql.Int, id);
+      placeholders.push(`@id${i}`);
+    });
+
+    const res = await req.query(`
+      UPDATE [dbo].[AccRequest]
+      SET ErpInterfaceStatus = 'Pending',
+          ErpInterfaceError = NULL,
+          UpdatedAt = SYSDATETIME()
+      WHERE Id IN (${placeholders.join(", ")})
+        AND (ErpInterfaceStatus IS NULL OR ErpInterfaceStatus = 'Failed')
+    `);
+
+    if (res.rowsAffected[0] !== requestIds.length) {
+      await tx.rollback();
+      return false;
+    }
+    await tx.commit();
+    return true;
+  } catch (err) {
+    await tx.rollback().catch(() => {});
+    throw err;
+  }
+}
+
+/**
+ * Give the claim back, so the batch can be corrected and sent again.
+ *
+ * Only ever called when the remote call definitely did not create anything —
+ * before it, or after a 4xx. A 5xx or a transport error goes to
+ * `holdForReconciliation` instead.
+ */
+async function releaseClaim(requestIds: number[], message: string): Promise<void> {
+  await markRequestsInterfaceStatus(requestIds, "Failed", { error: message });
+}
+
+/**
+ * Leave the batch claimed and record why.
+ *
+ * `Pending` is the reconciliation state. It is not a value this code will move
+ * on its own — the pre-send check refuses a Pending row outright — so the batch
+ * stays out of every future send until a person decides what happened. Using
+ * the existing status keeps this to a code change: `CK_AccRequest_ErpInterfaceStatus`
+ * permits only Pending/Sent/Failed, and a new value would need a migration
+ * applied to both databases before the code could ship.
+ */
+async function holdForReconciliation(
+  requestIds: number[],
+  userId: number,
+  detail: string,
+): Promise<void> {
+  const pool = await getAccPool();
+  for (const id of requestIds) {
+    await pool
+      .request()
+      .input("id", sql.Int, id)
+      .input("error", sql.NVarChar, detail.slice(0, 2000))
+      .query(`
+        UPDATE [dbo].[AccRequest]
+        SET ErpInterfaceStatus = 'Pending',
+            ErpInterfaceError = @error,
+            UpdatedAt = SYSDATETIME()
+        WHERE Id = @id
+      `)
+      .catch(() => {});
+  }
+  await logInterfaceActivity(
+    requestIds,
+    userId,
+    "erp_interface_unknown",
+    `ผลการส่งไม่แน่ชัด — ต้องตรวจสอบใน BC: ${detail}`,
+  ).catch(() => {});
+}
+
 export async function sendErpInterfaceBatch(
   input: SendErpInterfaceBatchInput,
 ): Promise<SendErpInterfaceResult> {
@@ -243,6 +363,9 @@ export async function sendErpInterfaceBatch(
     throw new Error("ไม่พบเอกสารอ้างอิงในรอบนี้");
   }
 
+  // A friendlier message than the claim's 409 for the two states an operator
+  // meets routinely. The claim below is what actually decides — this read is
+  // advisory and can be stale by the time it returns.
   const statuses = await loadRequestInterfaceStatuses(requestIds);
   for (const id of requestIds) {
     const st = statuses.get(id);
@@ -264,52 +387,85 @@ export async function sendErpInterfaceBatch(
     throw new Error("ไม่มีบรรทัด Journal ที่พร้อมส่ง");
   }
 
-  await markRequestsInterfaceStatus(requestIds, "Pending");
+  // Everything above is a read or a pure build, so nothing has been written
+  // yet and a failure there needs no unwinding. From here on the batch is
+  // owned: claim it in one statement, and only then talk to Business Central.
+  if (!(await claimRequestsForSend(requestIds))) {
+    invalidateAccPrepCaches();
+    throw new ErpQueueDriftError();
+  }
 
+  let bcResponse: unknown;
   try {
-    const bcResponse = await postBcPpapJournalCreateFromJson(
+    bcResponse = await postBcPpapJournalCreateFromJson(
       profile.bcConnectionId,
       profile.bcId,
       profile.environment,
       profile.baseUrl,
       payload as unknown as Record<string, unknown>,
     );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "ส่งเข้า ERP ไม่สำเร็จ";
 
-    const sentAt = new Date();
+    // A 4xx is Business Central refusing the payload: nothing was created, so
+    // the claim goes back and the operator may correct and resend.
+    if (err instanceof BcJournalPostError && err.definitelyRejected) {
+      await releaseClaim(requestIds, message);
+      await logInterfaceActivity(
+        requestIds,
+        input.userId,
+        "erp_interface_failed",
+        message.slice(0, 2000),
+      );
+      invalidateAccPrepCaches();
+      throw new Error(message);
+    }
+
+    // A 5xx, a timeout, a dropped connection: the journal may exist. Marking
+    // this `Failed` — which is what happened before — put it straight back in
+    // the ready queue, so the next click posted the same financial document a
+    // second time. Hold it instead.
+    await holdForReconciliation(requestIds, input.userId, message);
+    invalidateAccPrepCaches();
+    throw new ErpReconciliationRequiredError(message);
+  }
+
+  // BC accepted. From here the documents exist remotely and must never be
+  // posted again, whatever goes wrong locally.
+  try {
     await markRequestsInterfaceStatus(requestIds, "Sent", {
       userId: input.userId,
       environment: profile.environment,
-      sentAt,
+      sentAt: new Date(),
     });
-
-    const envLabel = profile.environment === "Sandbox" ? "UAT" : "PROD";
-    await logInterfaceActivity(
+  } catch (persistErr) {
+    const message = persistErr instanceof Error ? persistErr.message : String(persistErr);
+    await holdForReconciliation(
       requestIds,
       input.userId,
-      "erp_interface_sent",
-      `ส่งเข้า ERP ${envLabel} · ${target} · ${requestIds.length} เอกสาร`,
-    );
-
-    invalidateAccPrepCaches();
-
-    return {
-      requestIds,
-      environment: profile.environment,
-      bcResponse,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "ส่งเข้า ERP ไม่สำเร็จ";
-    await markRequestsInterfaceStatus(requestIds, "Failed", {
-      error: message,
-      environment: profile.environment,
-    });
-    await logInterfaceActivity(
-      requestIds,
-      input.userId,
-      "erp_interface_failed",
-      message.slice(0, 2000),
+      `BC รับเอกสารแล้ว แต่บันทึกสถานะไม่สำเร็จ: ${message}`,
     );
     invalidateAccPrepCaches();
-    throw new Error(message);
+    throw new ErpReconciliationRequiredError(message);
   }
+
+  const envLabel = profile.environment === "Sandbox" ? "UAT" : "PROD";
+  // Best-effort: the send is already durable in both systems, so a logging
+  // failure must not be reported as a send failure.
+  await logInterfaceActivity(
+    requestIds,
+    input.userId,
+    "erp_interface_sent",
+    `ส่งเข้า ERP ${envLabel} · ${target} · ${requestIds.length} เอกสาร`,
+  ).catch((logErr) => {
+    console.error("[erp-interface-send] activity log after a successful send:", logErr);
+  });
+
+  invalidateAccPrepCaches();
+
+  return {
+    requestIds,
+    environment: profile.environment,
+    bcResponse,
+  };
 }

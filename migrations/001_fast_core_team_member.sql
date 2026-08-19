@@ -3,6 +3,28 @@
 -- Database: Fast_Core
 -- Run this on the Fast_Core database
 -- =============================================
+--
+-- HISTORICAL -- already applied. DO NOT RE-RUN after migration 066.
+--
+-- Since 066, Form Portal's roster is [Rocks_Portal_Form].[dbo].[TeamMember] and
+-- nothing else. The table this file creates and seeds is Fast_Core's, which is
+-- now the LIVE Rocks Fast roster: anything this file does lands in the sibling
+-- app, not in this one.
+--
+-- It is more dangerous than the other two historical migrations (024, 058):
+--
+--   1. --db does not protect you. The first batch below is nothing but
+--      USE [Fast_Core]. apply-sql.ts splits on GO and runs every batch on one
+--      pool, so that USE carries into the later batches whenever the pool hands
+--      back the same connection -- the normal case for sequential requests --
+--      and whatever --db said is quietly ignored.
+--   2. The last batch seeds a System Admin row into that shared roster. It is a
+--      no-op today only because of the IF NOT EXISTS on one hard-coded email,
+--      and the seed comment invites you to change exactly that email.
+--
+-- To create TeamMember for a NEW Form Portal database, use
+-- 066_portal_form_team_member.sql instead. There is no supported reason to run
+-- this file again.
 
 USE [Fast_Core];
 GO

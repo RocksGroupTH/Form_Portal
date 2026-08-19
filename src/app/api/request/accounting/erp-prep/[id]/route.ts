@@ -2,6 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { canAccessAccountArea } from "@/lib/acc/access";
 import { getErpPrepDetail } from "@/lib/acc/erp-prep-service";
+import {
+  canActOnClaimBrand,
+  INTERFACE_SCOPE_ERROR,
+  resolveApproverInterfaceAccess,
+} from "@/lib/acc/approver-interface-access";
+import {
+  interfaceByClaimMapToRecord,
+  loadPrepDeptContext,
+} from "@/lib/acc/erp-prep-service";
 
 /**
  * GET /api/request/accounting/erp-prep/[id]
@@ -29,6 +38,19 @@ export async function GET(
     if (!data) {
       return NextResponse.json({ ok: false, error: "not found" }, { status: 404 });
     }
+
+    // The list this detail is opened from filters by interface brand; opening a
+    // row by id skipped that filter entirely, so an out-of-scope approver could
+    // read another interface group's payload preview — accounts, dimensions,
+    // amounts and requester names — by incrementing the number in the URL.
+    const [access, deptCtx] = await Promise.all([
+      resolveApproverInterfaceAccess(session.user.email, session.user.role),
+      loadPrepDeptContext(),
+    ]);
+    if (!canActOnClaimBrand(access, interfaceByClaimMapToRecord(deptCtx.interfaceByClaim), data.brandCode)) {
+      return NextResponse.json({ ok: false, error: INTERFACE_SCOPE_ERROR }, { status: 403 });
+    }
+
     return NextResponse.json({ ok: true, data });
   } catch (err) {
     console.error("[api/request/accounting/erp-prep/[id]] GET", err);

@@ -5,6 +5,7 @@ import {
   loadErpDeptDisplayNamesByTargetBrand,
 } from "@/lib/acc/department-map-service";
 import { hrEmployeeTable } from "@/lib/hr/constants";
+import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import { ERP_SYNC_BRAND_CODE } from "@/lib/erp/dimension-sync";
 import { getRequest } from "@/lib/acc/request-service";
 import { getAccCached, putAccCached, deleteAccCachedByPrefix } from "@/lib/acc/acc-cache";
@@ -233,7 +234,16 @@ export async function listErpPrepRows(
 ): Promise<ErpPrepRow[]> {
   const pool = await getAccPool();
   const req = pool.request();
-  const where: string[] = ["r.Status = 'Approved'"];
+  // AP-1 only, and the filter has to be here rather than left to the caller:
+  // every Acc* form writes to the same AccRequest table, so `Status = 'Approved'`
+  // alone hands this queue every approved request in Accounting. The rest of
+  // this query is travel-expense-specific — it LEFT JOINs AccTravelExpense and
+  // the journal builder downstream assumes those rows — so another form's
+  // request arrives with an empty day count and a journal built from nothing,
+  // and is then posted to Business Central. Both the queue and the send read
+  // through this function, so one predicate closes both.
+  req.input("formCode", sql.NVarChar, AP1_FORM_CODE);
+  const where: string[] = ["r.Status = 'Approved'", "r.FormCode = @formCode"];
 
   if (f.brandCode) {
     req.input("brand", sql.NVarChar, f.brandCode);

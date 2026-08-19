@@ -1,4 +1,9 @@
 import { getCorePool, sql as mssqlSql } from "@/lib/db/mssql";
+import {
+  assertApiDestination,
+  assertOAuthDestination,
+  bcSecretRebindRequired,
+} from "@/lib/bc/bc-destination";
 import { decryptPassword, encryptPassword } from "@/lib/db/connection-crypto";
 import { normalizeConnectionCode, validateConnectionCode } from "@/lib/db/connection-code";
 import {
@@ -374,6 +379,20 @@ export async function createBcConnection(
   return mapBcPublic(row);
 }
 
+/**
+ * Update a BC connection.
+ *
+ * Two destination rules, both enforced here rather than at the route so a second
+ * caller cannot skip them:
+ *
+ *  - `oauthUrl` and `baseUrl` must name approved Business Central hosts — they
+ *    are the addresses the stored client secret and bearer token get sent to;
+ *  - moving the token endpoint or renaming the client requires the client secret
+ *    to be supplied again, and changing the username on a password-grant
+ *    connection requires the password. The form omits both fields when they have
+ *    not been retyped, so without this an edit could repoint the destination and
+ *    leave the stored secret behind to be sent to it. See `@/lib/bc/bc-destination`.
+ */
 export async function updateBcConnection(
   id: number,
   input: BcConnectionInput,
@@ -385,6 +404,29 @@ export async function updateBcConnection(
   const code = normalizeConnectionCode(input.code);
   const codeErr = validateConnectionCode(code);
   if (codeErr) throw new Error(codeErr);
+
+  assertOAuthDestination(input.oauthUrl);
+  assertApiDestination(input.baseUrl);
+
+  const rebind = bcSecretRebindRequired({
+    stored: {
+      oauthUrl: existing.OAuthUrl,
+      clientId: existing.ClientId,
+      username: existing.Username,
+    },
+    next: {
+      oauthUrl: input.oauthUrl,
+      clientId: input.clientId,
+      username: input.username,
+    },
+    clientSecretSupplied: !!input.clientSecret?.trim(),
+    passwordSupplied: !!input.password?.trim(),
+  });
+  if (rebind.length > 0) {
+    throw new Error(
+      `Re-enter the ${rebind.includes("username") ? "password" : "client secret"} before changing ${rebind.join(" / ")} — a stored secret is only ever sent to the destination and client it was stored against.`,
+    );
+  }
 
   const pool = await getCorePool();
   const req = pool.request().input("id", mssqlSql.Int, id);

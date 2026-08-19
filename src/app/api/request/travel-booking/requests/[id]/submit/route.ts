@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
+import { statusForAccError } from "@/lib/acc/request-errors";
+import { uatActorGate } from "@/lib/acc/travel-booking/uat-gate";
 import { resolveLoginEmail } from "@/lib/auth-email";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { submitTravelBookingGroup } from "@/lib/acc/travel-booking/request-service";
@@ -31,6 +33,10 @@ export async function POST(
   if (Number.isNaN(id)) {
     return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
   }
+
+  // Tester-only on a UAT record. See `uatActorGate`.
+  const uatGate = await uatActorGate(session);
+  if (uatGate) return uatGate;
 
   try {
     const groupKey = await resolveGroupKey(id);
@@ -64,6 +70,8 @@ export async function POST(
     return NextResponse.json({ ok: true, data: submitted });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Internal server error";
-    return NextResponse.json({ ok: false, error: message }, { status: 400 });
+    // 409 when the in-transaction claim found a tab already submitted, so the
+    // client reloads instead of being offered a retry that cannot succeed.
+    return NextResponse.json({ ok: false, error: message }, { status: statusForAccError(e) });
   }
 }

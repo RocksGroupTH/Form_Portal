@@ -7,12 +7,12 @@ import { processQueueBoth } from "@/lib/acc/email-queue";
  *
  * Drains AccEmailQueue in BOTH form databases. A form flagged UAT queues its
  * mail in the UAT database, which a production-scoped drain would never see.
- * Mirrors the guard used by /api/forms/email/process:
+ * Guard:
  *   - Allows a valid CRON_SECRET header to bypass role check (for scheduled jobs).
  *   - Otherwise requires IT Admin or System Admin.
  */
 export async function POST(req: NextRequest) {
-  // Auth: admin role OR cron secret header (mirrors forms email/process guard)
+  // Auth: admin role OR cron secret header
   const cronSecret = req.headers.get("x-cron-secret");
   if (cronSecret !== process.env.CRON_SECRET) {
     const session = await requireRole(["IT Admin", "System Admin"]);

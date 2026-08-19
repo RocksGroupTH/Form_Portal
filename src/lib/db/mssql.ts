@@ -59,7 +59,14 @@ function getNamedPool(database: string): Promise<sql.ConnectionPool> {
 
 /* ── Public pool accessors ── */
 
-/** Core DB — TeamMember, config, shared lookups */
+/**
+ * Core DB — configuration and shared lookups.
+ *
+ * User identity is no longer here: it moved to the form database and is reached
+ * only through `@/lib/team-member/service`. Fast_Core still holds the copy the
+ * Rocks Fast sibling serves from, so a query pointed here would read that app's
+ * roster without erroring.
+ */
 export function getCorePool(): Promise<sql.ConnectionPool> {
   return getNamedPool(env.MSSQL_CORE_DATABASE);
 }
@@ -118,11 +125,6 @@ if (typeof process !== "undefined") {
   };
   process.on("SIGTERM", cleanup);
   process.on("SIGINT", cleanup);
-}
-
-/** Cross-DB reference: Fast_Core.dbo.TeamMember */
-export function teamMemberTable(): string {
-  return `[${env.MSSQL_CORE_DATABASE}].[dbo].[TeamMember]`;
 }
 
 export { sql };

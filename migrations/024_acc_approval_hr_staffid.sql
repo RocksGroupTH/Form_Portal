@@ -4,6 +4,18 @@
 -- Apply: npm run apply-sql -- --db Fast_Form --file migrations/024_acc_approval_hr_staffid.sql
 -- AssignedTo / ActionedByStaffId = HR Employee.StaffId
 -- =============================================
+--
+-- HISTORICAL -- already applied. DO NOT RE-RUN after migration 066.
+--
+-- Two things below are no longer true of this app. It targets Fast_Form, which
+-- belongs to Rocks Fast and Form Portal must not touch; and the second UPDATE
+-- joins [Fast_Core].[dbo].[TeamMember], which since 066 is the Rocks Fast
+-- roster rather than this one. The two rosters share only the 17 rows 066
+-- copied -- everyone provisioned since exists in one and not the other (this
+-- app allocates ids from 100001, Fast_Core from 2009) -- so a re-run would
+-- silently skip every approval actioned by someone added after the cut, while
+-- reporting success. If AccApproval ever needs this backfill again, write a new
+-- migration against [Rocks_Portal_Form].[dbo].[TeamMember].
 
 -- Backfill manager assignment (HR StaffId)
 UPDATE a

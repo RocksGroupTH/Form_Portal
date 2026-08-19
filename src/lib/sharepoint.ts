@@ -98,8 +98,20 @@ export async function uploadFileToSharePoint(
   const token = await getGraphToken();
   await ensureFolderPath(driveId, token, folderPath);
   const fullPath = `${folderPath}/${filename}`;
+  // conflictBehavior=rename, NOT Graph's default (replace).
+  //
+  // This library is shared with the Rocks Fast sibling, and since the database
+  // split the two apps number their requests, drafts and files from separate
+  // AccSequence / identity columns. Both therefore build byte-identical paths —
+  // most densely under `AP-1/_DRAFT/{requestId}/{type}_draft{id}_{fileId}.ext`,
+  // where both id spaces start at 1. With the default, whichever app uploads
+  // second silently replaces the other's bytes and Graph hands back the SAME
+  // driveItem id, so both apps' AccRequestFile rows point at one item and one
+  // requester's ID-card scan is served to the other's request. Renaming costs a
+  // suffixed filename (nothing reads it back — StoragePath is the item id) and
+  // keeps both files intact.
   const res = await fetch(
-    `${GRAPH_BASE}/drives/${driveId}/root:/${encodePath(fullPath)}:/content`,
+    `${GRAPH_BASE}/drives/${driveId}/root:/${encodePath(fullPath)}:/content?@microsoft.graph.conflictBehavior=rename`,
     {
       method: "PUT",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": contentType },

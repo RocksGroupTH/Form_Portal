@@ -4,13 +4,14 @@ import { hrEmployeeTable } from "@/lib/hr/constants";
 import { pickEmployeePhotoUrl } from "@/lib/hr/photo-url";
 import { resolveEmployeeForActor } from "@/lib/hr/employee-lookup";
 import type { EmployeeContext } from "@/lib/hr/types";
-import { deleteFile } from "@/lib/storage";
+import { deleteStoredFiles, type StoredFileRef } from "@/lib/acc/stored-file";
 import { resolveManagerEmail } from "@/lib/acc/employee-context";
 import {
   assertFormWritable,
   isUatRequest,
   UAT_MANAGER_MISSING_ERROR,
 } from "@/lib/uat-tester/guards";
+import { AccConflictError, SUBMIT_ALREADY_CLAIMED } from "@/lib/acc/request-errors";
 import { allocateRequestNo } from "@/lib/acc/sequence";
 import { queueEmail } from "@/lib/acc/email-queue";
 import { buildTravelBookingEmail } from "@/lib/acc/travel-booking/email-templates";
@@ -22,6 +23,12 @@ import {
   listReasons,
   listVehicles,
 } from "@/lib/acc/travel-booking/settings-service";
+import {
+  deriveBookingFlags,
+  firstInvalidOption,
+  invalidOptionMessage,
+  type DerivedBookingFlags,
+} from "@/lib/acc/travel-booking/derive-flags";
 import { AP17_FORM_CODE, FILE_REFTYPES, RUNNING_PREFIX } from "@/features/travel-booking/constants";
 import type {
   Accommodation,
@@ -376,16 +383,70 @@ const NAME_TABLES = {
   rentVehicle: "AccTravelRentVehicle",
 } as const;
 
-async function resolveSettingName(
+/**
+ * The flag columns each option table carries. Selected by name rather than `*`
+ * so a table gaining a column does not silently change what is derived.
+ */
+const NAME_TABLE_FLAGS: Record<keyof typeof NAME_TABLES, string[]> = {
+  reason: [],
+  accommodation: ["NeedsRoomBooking"],
+  vehicle: [
+    "NeedsDepartureLocations",
+    "NeedsTicketBooking",
+    "NeedsDepartTime",
+    "NeedsVehicleRent",
+  ],
+  rentVehicle: ["NeedsRentBooking"],
+};
+
+/** One settings-option row: its display name, whether it is still offered, and its flags. */
+export interface SettingOptionRow {
+  id: number;
+  name: string | null;
+  isActive: boolean;
+  needsRoomBooking: boolean;
+  needsDepartureLocations: boolean;
+  needsTicketBooking: boolean;
+  needsDepartTime: boolean;
+  needsVehicleRent: boolean;
+  needsRentBooking: boolean;
+}
+
+/**
+ * Load a settings option, or null when the id names nothing.
+ *
+ * This replaced a name-only lookup. The booking flags used to arrive from the
+ * client and be written as posted; they now come from here, and `IsActive` comes
+ * with them so a deleted or retired option is refused rather than stored as a
+ * null name with no flags — which read downstream as "nothing to book". See
+ * `./derive-flags`.
+ */
+async function resolveSettingOption(
   pool: AccPool,
   kind: keyof typeof NAME_TABLES,
   id: number | null,
-): Promise<string | null> {
+): Promise<SettingOptionRow | null> {
   if (!id) return null;
   const table = NAME_TABLES[kind];
+  const flagCols = NAME_TABLE_FLAGS[kind];
+  const cols = ["Id", "Name", "IsActive", ...flagCols].join(", ");
   const r = await pool.request().input("id", sql.Int, id)
-    .query(`SELECT TOP 1 Name FROM [dbo].[${table}] WHERE Id=@id`);
-  return (r.recordset[0]?.Name as string) ?? null;
+    .query(`SELECT TOP 1 ${cols} FROM [dbo].[${table}] WHERE Id=@id`);
+  const row = r.recordset[0] as Record<string, unknown> | undefined;
+  if (!row) return null;
+
+  const flag = (name: string) => !!row[name];
+  return {
+    id: Number(row.Id),
+    name: (row.Name as string) ?? null,
+    isActive: !!row.IsActive,
+    needsRoomBooking: flag("NeedsRoomBooking"),
+    needsDepartureLocations: flag("NeedsDepartureLocations"),
+    needsTicketBooking: flag("NeedsTicketBooking"),
+    needsDepartTime: flag("NeedsDepartTime"),
+    needsVehicleRent: flag("NeedsVehicleRent"),
+    needsRentBooking: flag("NeedsRentBooking"),
+  };
 }
 
 /** Fast_Data.dbo.TravelProvince is cross-database from the form DB — resolved via its own pool. */
@@ -405,6 +466,11 @@ interface ResolvedNames {
   rentVehicleName: string | null;
   provinceName: string | null;
   isContinuation: boolean;
+  /**
+   * Server-derived, never taken from the posted tab. `bindBookingInputs` reads
+   * these instead of `tab.needs*`.
+   */
+  flags: DerivedBookingFlags;
 }
 
 /** Bind every AccTravelBooking column (except Id/RequestId/CreatedAt/UpdatedAt/PerDiem*) for insert/update. */
@@ -429,7 +495,7 @@ function bindBooking(
     .input("accommodationId", sql.Int, tab.accommodationId ?? null)
     .input("accommodationName", sql.NVarChar, names.accommodationName)
     .input("accommodationCustom", sql.NVarChar(500), tab.accommodationCustomText ?? null)
-    .input("needsRoom", sql.Bit, tab.needsRoomBooking ? 1 : 0)
+    .input("needsRoom", sql.Bit, names.flags.needsRoomBooking ? 1 : 0)
     .input("departDate", sql.Date, tab.departDate || null)
     .input("returnDate", sql.Date, tab.returnDate || null)
     .input("departTime", sql.NVarChar(20), tab.departTime ?? null)
@@ -437,21 +503,21 @@ function bindBooking(
     .input("goVehicleId", sql.Int, tab.goVehicleId ?? null)
     .input("goVehicleName", sql.NVarChar, names.goVehicleName)
     .input("goVehicleCustom", sql.NVarChar(500), tab.goVehicleCustomText ?? null)
-    .input("goNeedsDep", sql.Bit, tab.goNeedsDepartureLocations ? 1 : 0)
-    .input("goNeedsTicket", sql.Bit, tab.goNeedsTicketBooking ? 1 : 0)
-    .input("goNeedsTime", sql.Bit, tab.goNeedsDepartTime ? 1 : 0)
-    .input("goNeedsRent", sql.Bit, tab.goNeedsVehicleRent ? 1 : 0)
+    .input("goNeedsDep", sql.Bit, names.flags.goNeedsDepartureLocations ? 1 : 0)
+    .input("goNeedsTicket", sql.Bit, names.flags.goNeedsTicketBooking ? 1 : 0)
+    .input("goNeedsTime", sql.Bit, names.flags.goNeedsDepartTime ? 1 : 0)
+    .input("goNeedsRent", sql.Bit, names.flags.goNeedsVehicleRent ? 1 : 0)
     .input("returnVehicleId", sql.Int, tab.returnVehicleId ?? null)
     .input("returnVehicleName", sql.NVarChar, names.returnVehicleName)
     .input("returnVehicleCustom", sql.NVarChar(500), tab.returnVehicleCustomText ?? null)
-    .input("returnNeedsDep", sql.Bit, tab.returnNeedsDepartureLocations ? 1 : 0)
-    .input("returnNeedsTicket", sql.Bit, tab.returnNeedsTicketBooking ? 1 : 0)
-    .input("returnNeedsTime", sql.Bit, tab.returnNeedsDepartTime ? 1 : 0)
-    .input("returnNeedsRent", sql.Bit, tab.returnNeedsVehicleRent ? 1 : 0)
+    .input("returnNeedsDep", sql.Bit, names.flags.returnNeedsDepartureLocations ? 1 : 0)
+    .input("returnNeedsTicket", sql.Bit, names.flags.returnNeedsTicketBooking ? 1 : 0)
+    .input("returnNeedsTime", sql.Bit, names.flags.returnNeedsDepartTime ? 1 : 0)
+    .input("returnNeedsRent", sql.Bit, names.flags.returnNeedsVehicleRent ? 1 : 0)
     .input("rentVehicleId", sql.Int, tab.rentVehicleId ?? null)
     .input("rentVehicleName", sql.NVarChar, names.rentVehicleName)
     .input("rentVehicleCustom", sql.NVarChar(500), tab.rentVehicleCustomText ?? null)
-    .input("needsRent", sql.Bit, tab.needsRentBooking ? 1 : 0)
+    .input("needsRent", sql.Bit, names.flags.needsRentBooking ? 1 : 0)
     .input("rentStart", sql.Date, tab.rentStartDate || null)
     .input("rentEnd", sql.Date, tab.rentEndDate || null)
     .input("notes", sql.NVarChar(sql.MAX), tab.notes ?? null)
@@ -550,13 +616,20 @@ async function persistDepartureLocations(
 /**
  * Delete one tab's AccRequest + AccTravelBooking (cascades work/departure locations
  * and admin booking details via FK) + AccRequestFile/AccApproval/AccActivityLog rows.
- * Returns the StoragePath of every deleted AccRequestFile row for best-effort cleanup
- * by the caller (after the transaction commits).
+ * Returns a `StoredFileRef` for every deleted AccRequestFile row so the caller can
+ * clean storage up after the transaction commits.
+ *
+ * `StorageBackend` is selected alongside the path, and that is the fix: this used
+ * to return paths alone and both callers passed them to the local `deleteFile`,
+ * so a SharePoint driveItem id went to `fs.unlink` and missed — after the only
+ * row pointing at the file had been deleted. See `@/lib/acc/stored-file`.
  */
-async function collectAndDeleteRequestArtifacts(tx: AccTx, requestId: number): Promise<string[]> {
+async function collectAndDeleteRequestArtifacts(tx: AccTx, requestId: number): Promise<StoredFileRef[]> {
   const filesRes = await tx.request().input("rid", sql.Int, requestId)
-    .query(`SELECT StoragePath FROM [dbo].[AccRequestFile] WHERE RequestId=@rid`);
-  const paths = (filesRes.recordset as { StoragePath: string }[]).map((r) => r.StoragePath);
+    .query(`SELECT StoragePath, StorageBackend FROM [dbo].[AccRequestFile] WHERE RequestId=@rid`);
+  const paths = (filesRes.recordset as { StoragePath: string; StorageBackend: string | null }[]).map(
+    (r) => ({ storagePath: r.StoragePath, storageBackend: r.StorageBackend }),
+  );
 
   await tx.request().input("rid", sql.Int, requestId)
     .query(`DELETE FROM [dbo].[AccRequestFile] WHERE RequestId=@rid`);
@@ -603,14 +676,17 @@ export async function saveTravelBookingDraft(
 
   // Resolve *Name fields + IsContinuation for every tab up front (small in-run cache
   // to dedupe repeated lookups when multiple tabs share the same reason/province/etc.).
-  const settingNameCache = new Map<string, string | null>();
-  async function cachedSettingName(kind: keyof typeof NAME_TABLES, id: number | null): Promise<string | null> {
+  const settingOptionCache = new Map<string, SettingOptionRow | null>();
+  async function cachedSettingOption(
+    kind: keyof typeof NAME_TABLES,
+    id: number | null,
+  ): Promise<SettingOptionRow | null> {
     if (!id) return null;
     const key = `${kind}:${id}`;
-    if (settingNameCache.has(key)) return settingNameCache.get(key)!;
-    const name = await resolveSettingName(pool, kind, id);
-    settingNameCache.set(key, name);
-    return name;
+    if (settingOptionCache.has(key)) return settingOptionCache.get(key)!;
+    const option = await resolveSettingOption(pool, kind, id);
+    settingOptionCache.set(key, option);
+    return option;
   }
   const provinceNameCache = new Map<number, string | null>();
   async function cachedProvinceName(id: number | null): Promise<string | null> {
@@ -624,20 +700,53 @@ export async function saveTravelBookingDraft(
   const resolvedTabs: { tab: SaveTravelBookingInput; names: ResolvedNames }[] = [];
   for (let i = 0; i < input.tabs.length; i++) {
     const tab = input.tabs[i];
-    const [reasonName, accommodationName, goVehicleName, returnVehicleName, rentVehicleName, provinceName] =
+    const [reason, accommodation, goVehicle, returnVehicle, rentVehicle, provinceName] =
       await Promise.all([
-        cachedSettingName("reason", tab.reasonId),
-        cachedSettingName("accommodation", tab.accommodationId),
-        cachedSettingName("vehicle", tab.goVehicleId),
-        cachedSettingName("vehicle", tab.returnVehicleId),
-        cachedSettingName("rentVehicle", tab.rentVehicleId),
+        cachedSettingOption("reason", tab.reasonId),
+        cachedSettingOption("accommodation", tab.accommodationId),
+        cachedSettingOption("vehicle", tab.goVehicleId),
+        cachedSettingOption("vehicle", tab.returnVehicleId),
+        cachedSettingOption("rentVehicle", tab.rentVehicleId),
         cachedProvinceName(tab.provinceId),
       ]);
+
+    // Every selected id has to name a row that still exists and is still
+    // offered. Refused at save, not only at submit: the flags derived below are
+    // what decide whether an Admin ever sees this request, so storing a draft
+    // built on a retired option would carry the wrong answer forward.
+    const invalid = firstInvalidOption([
+      { field: "reasonId", id: tab.reasonId, option: reason },
+      { field: "accommodationId", id: tab.accommodationId, option: accommodation },
+      { field: "goVehicleId", id: tab.goVehicleId, option: goVehicle },
+      { field: "returnVehicleId", id: tab.returnVehicleId, option: returnVehicle },
+      { field: "rentVehicleId", id: tab.rentVehicleId, option: rentVehicle },
+    ]);
+    if (invalid) throw new Error(invalidOptionMessage(invalid));
+    if (tab.provinceId != null && !provinceName) {
+      throw new Error(invalidOptionMessage({ field: "provinceId", id: tab.provinceId, option: null }));
+    }
+
     const prev = i > 0 ? input.tabs[i - 1] : null;
     const isContinuation = !!(prev && tab.departDate && prev.returnDate && tab.departDate === prev.returnDate);
     resolvedTabs.push({
       tab,
-      names: { reasonName, accommodationName, goVehicleName, returnVehicleName, rentVehicleName, provinceName, isContinuation },
+      names: {
+        reasonName: reason?.name ?? null,
+        accommodationName: accommodation?.name ?? null,
+        goVehicleName: goVehicle?.name ?? null,
+        returnVehicleName: returnVehicle?.name ?? null,
+        rentVehicleName: rentVehicle?.name ?? null,
+        provinceName,
+        isContinuation,
+        // Derived from the rows just loaded — the posted `tab.needs*` values are
+        // ignored entirely. See `./derive-flags` for what they decide.
+        flags: deriveBookingFlags({
+          accommodation,
+          goVehicle,
+          returnVehicle,
+          rentVehicle,
+        }),
+      },
     });
   }
 
@@ -650,7 +759,7 @@ export async function saveTravelBookingDraft(
 
   const tx = pool.transaction();
   await tx.begin();
-  let removedFilePaths: string[] = [];
+  let removedFilePaths: StoredFileRef[] = [];
   const requestIds: number[] = [];
   try {
     // Existing tabs in this group (if editing) — guard ownership + status.
@@ -747,9 +856,9 @@ export async function saveTravelBookingDraft(
     throw e;
   }
 
-  for (const p of removedFilePaths) {
-    await deleteFile(p).catch(() => {});
-  }
+  // After the commit, and reported rather than swallowed — the rows that named
+  // these objects are already gone, so the log is the only remaining record.
+  await deleteStoredFiles(removedFilePaths, "AP-17 saveTravelBookingGroup removed tabs");
 
   return { groupKey, requestIds };
 }
@@ -776,7 +885,7 @@ export async function deleteTravelBookingDraft(groupKey: string, userId: number)
 
   const tx = pool.transaction();
   await tx.begin();
-  let allPaths: string[] = [];
+  let allPaths: StoredFileRef[] = [];
   try {
     for (const row of rows) {
       const paths = await collectAndDeleteRequestArtifacts(tx, row.RequestId);
@@ -788,9 +897,7 @@ export async function deleteTravelBookingDraft(groupKey: string, userId: number)
     throw e;
   }
 
-  for (const p of allPaths) {
-    await deleteFile(p).catch(() => {});
-  }
+  await deleteStoredFiles(allPaths, "AP-17 deleteTravelBookingDraft");
 }
 
 /* ─────────────────────────── validation + submit (Task 5) ─────────────────────────── */
@@ -1035,14 +1142,6 @@ export async function submitTravelBookingGroup(
     perDiems.push(computePerDiem(tabs[i].departDate as string, tabs[i].returnDate as string, isContinuation, log));
   }
 
-  // Allocate one running number per tab up front (mirrors AP-1's submitRequest — allocation
-  // happens outside the transaction; a rolled-back transaction burns the allocated number(s),
-  // the same tradeoff AP-1 already makes rather than reusing skipped numbers).
-  const requestNos: string[] = [];
-  for (let i = 0; i < tabs.length; i++) {
-    requestNos.push(await allocateRequestNo(RUNNING_PREFIX));
-  }
-
   const tx = pool.transaction();
   await tx.begin();
   try {
@@ -1050,25 +1149,37 @@ export async function submitTravelBookingGroup(
       const tab = tabs[i];
       const requestId = tab.id;
       if (requestId == null) throw new Error("ไม่พบคำขอ");
-      const requestNo = requestNos[i];
 
+      // `CreatedBy=@uid` in the predicate, not only in the ownership read above:
+      // the read cannot bind the write, and this claim is what the concurrency
+      // guarantee rests on. Same shape as AP-1's `submitRequest`.
       const upd = await tx.request()
         .input("id", sql.Int, requestId)
-        .input("no", sql.NVarChar, requestNo)
+        .input("uid", sql.Int, userId || null)
         .input("mgrStaff", sql.Int, emp.managerStaffId)
         .input("mgrEmail", sql.NVarChar, managerEmail)
         .input("by", sql.Int, userId || null)
         // Surface the per-diem (เบี้ยเลี้ยง) total as the request's amount so it shows in list rows.
         .input("total", sql.Decimal(18, 2), perDiems[i].total)
         .query(`UPDATE [dbo].[AccRequest] SET
-                RequestNo=@no, Status='Submitted', CurrentStepCode='MANAGER',
+                Status='Submitted', CurrentStepCode='MANAGER',
                 ManagerStaffId=@mgrStaff, ManagerEmail=@mgrEmail, TotalAmount=@total,
                 SubmittedBy=@by, SubmittedAt=SYSDATETIME(), UpdatedAt=SYSDATETIME()
-                WHERE Id=@id AND Status IN ('Draft','Returned');
+                WHERE Id=@id AND CreatedBy=@uid AND Status IN ('Draft','Returned');
                 SELECT @@ROWCOUNT AS n`);
       if ((upd.recordset[0].n as number) === 0) {
-        throw new Error("คำขอนี้ถูกส่งไปแล้ว");
+        throw new AccConflictError(SUBMIT_ALREADY_CLAIMED);
       }
+
+      // Allocated after the claim and inside the transaction, so a tab that lost
+      // the race never consumes a running number. This used to run for every tab
+      // before the transaction opened, on the reasoning that AP-1 did the same;
+      // AP-1 no longer does.
+      const requestNo = await allocateRequestNo(RUNNING_PREFIX, new Date(), tx);
+      await tx.request()
+        .input("id", sql.Int, requestId)
+        .input("no", sql.NVarChar, requestNo)
+        .query(`UPDATE [dbo].[AccRequest] SET RequestNo=@no WHERE Id=@id`);
 
       await tx.request()
         .input("id", sql.Int, requestId)

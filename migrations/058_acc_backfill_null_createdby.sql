@@ -14,6 +14,20 @@
   row yet are left alone; re-run after they log in once.
 
   Apply:  npm run apply-sql -- --db Fast_Form --file migrations/058_acc_backfill_null_createdby.sql
+
+  ── HISTORICAL — already applied. DO NOT RE-RUN after migration 066. ──
+
+  The "re-run after they log in" instruction above, and the matching note further down, were
+  written while identity lived in Fast_Core. Since 066 it lives in
+  [Rocks_Portal_Form].[dbo].[TeamMember], and the two rosters share only the 17 rows 066 copied:
+  this app allocates new ids from 100001, Fast_Core carries on from 2009, so an id minted in one is
+  absent from the other. Re-running would therefore write a Fast_Core id into
+  AccRequest.CreatedBy that matches no row here — which still locks the owner out, and does it
+  worse than NULL did, because the guard above only rescues rows that are still NULL. A wrong id
+  is invisible to every later attempt to fix it.
+
+  If requests are still stranded, write a new migration that joins
+  [Rocks_Portal_Form].[dbo].[TeamMember] instead.
 */
 
 SET NOCOUNT ON;
@@ -43,7 +57,8 @@ INNER JOIN #Fix f ON f.RequestId = r.Id;
 
 SELECT CONCAT('Backfilled: ', @@ROWCOUNT) AS Info;
 
--- Anything still stranded (owner has no TeamMember row yet — have them log in, then re-run).
+-- Anything still stranded (owner had no TeamMember row when this ran). Do NOT re-run this file
+-- to pick them up — see the HISTORICAL note in the header.
 SELECT r.Id, r.FormCode, r.Status, r.StaffId, r.RequesterFullName
 FROM [dbo].[AccRequest] r
 WHERE r.CreatedBy IS NULL;

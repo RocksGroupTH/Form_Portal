@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/api-auth";
 import { getRequest, saveDraft, deleteDraft } from "@/lib/acc/request-service";
 import type { SaveInput } from "@/lib/acc/request-service";
 import { resolveLoginEmail } from "@/lib/auth-email";
+import { authorizeAccRequest } from "@/lib/acc/request-acl";
 
 /* ── GET /api/request/accounting/requests/[id] ── */
 
@@ -18,6 +19,12 @@ export async function GET(
   if (Number.isNaN(id)) {
     return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
   }
+
+  // The record carries the requester's name, department, travel detail, amounts
+  // and the ids of their attachments, and the id is a small sequential integer.
+  // Authorize the object before reading it, not just the session.
+  const gate = await authorizeAccRequest(session, id, "read");
+  if (gate instanceof Response) return gate;
 
   try {
     const req = await getRequest(id);

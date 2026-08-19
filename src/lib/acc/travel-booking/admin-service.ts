@@ -4,8 +4,7 @@ import { queueEmail, processQueue } from "@/lib/acc/email-queue";
 import { buildTravelBookingEmail } from "@/lib/acc/travel-booking/email-templates";
 import { getRequesterEmail } from "@/lib/acc/travel-booking/approval";
 import { getTravelBookingRequest } from "@/lib/acc/travel-booking/request-service";
-import { deleteFile } from "@/lib/storage";
-import { deleteFileFromSharePoint } from "@/lib/sharepoint";
+import { deleteStoredFiles, type StoredFileRef } from "@/lib/acc/stored-file";
 import { AP17_FORM_CODE, BOOKING_TYPE_REFTYPE } from "@/features/travel-booking/constants";
 import type { BookingType, TravelBookingRequest } from "@/features/travel-booking/types";
 
@@ -104,12 +103,33 @@ function mapSavedRow(row: SavedRow): SavedBookingDetail {
   };
 }
 
-/** Resolve the request's AccTravelBooking id, guarding that Admin may still edit its bookings. */
-async function requireEditableBooking(pool: AccPool, requestId: number): Promise<number> {
-  const tbRes = await pool.request().input("rid", sql.Int, requestId)
+type AccTx = ReturnType<AccPool["transaction"]>;
+
+/** Either a pool or a transaction — both expose `request()`. */
+type SqlRunner = Pick<AccPool, "request"> | Pick<AccTx, "request">;
+
+/**
+ * Resolve the request's `AccTravelBooking` id, guarding that Admin may still
+ * edit its bookings, and — inside a transaction — holding the parent row until
+ * that transaction ends.
+ *
+ * `UPDLOCK, HOLDLOCK` on `AccRequest` is what serialises a booking mutation
+ * against completion. `completeRequest` used to validate the booking children
+ * with a read taken before its transaction even opened, while `saveBookingDetail`
+ * and `deleteBookingDetail` ran with no transaction at all: a delete landing
+ * between that read and the commit produced a `Completed` request missing the
+ * booking number, price and attachment its own rules require it to have. Both
+ * sides now contend for the same row lock, so one of them waits and then sees
+ * the other's outcome.
+ *
+ * On a pool (no transaction) the hint is harmless — the lock is released with
+ * the statement — so the signature stays usable for the read-only callers.
+ */
+async function requireEditableBooking(runner: SqlRunner, requestId: number): Promise<number> {
+  const tbRes = await runner.request().input("rid", sql.Int, requestId)
     .query(`SELECT t.Id AS TravelBookingId, r.Status
             FROM [dbo].[AccTravelBooking] t
-            INNER JOIN [dbo].[AccRequest] r ON r.Id = t.RequestId
+            INNER JOIN [dbo].[AccRequest] r WITH (UPDLOCK, HOLDLOCK) ON r.Id = t.RequestId
             WHERE t.RequestId = @rid`);
   const tbRow = tbRes.recordset[0] as { TravelBookingId: number; Status: string } | undefined;
   if (!tbRow) throw new Error("ไม่พบคำขอนี้");
@@ -134,32 +154,45 @@ export async function saveBookingDetail(
   actor: Actor,
 ): Promise<SavedBookingDetail> {
   const pool = await getAccPool();
-  const travelBookingId = await requireEditableBooking(pool, requestId);
+  const tx = pool.transaction();
+  await tx.begin();
+  try {
+    // The guard takes an UPDLOCK on the parent inside this transaction, so a
+    // concurrent `completeRequest` either waits for this row or finds the
+    // request no longer at the Admin step.
+    const travelBookingId = await requireEditableBooking(tx, requestId);
 
-  const bind = (r: ReturnType<typeof pool.request>) =>
-    r.input("tbid", sql.Int, travelBookingId)
-      .input("type", sql.NVarChar(20), bookingType)
-      .input("no", sql.NVarChar(100), input.bookingNo?.trim() || null)
-      .input("price", sql.Decimal(18, 2), input.priceExVat ?? null);
+    const bind = (r: ReturnType<typeof tx.request>) =>
+      r.input("tbid", sql.Int, travelBookingId)
+        .input("type", sql.NVarChar(20), bookingType)
+        .input("no", sql.NVarChar(100), input.bookingNo?.trim() || null)
+        .input("price", sql.Decimal(18, 2), input.priceExVat ?? null);
 
-  const OUTPUT_COLS = `OUTPUT inserted.Id AS Id, inserted.TravelBookingId AS TravelBookingId,
-             inserted.BookingType AS BookingType, inserted.BookingNo AS BookingNo, inserted.PriceExVat AS PriceExVat`;
+    const OUTPUT_COLS = `OUTPUT inserted.Id AS Id, inserted.TravelBookingId AS TravelBookingId,
+               inserted.BookingType AS BookingType, inserted.BookingNo AS BookingNo, inserted.PriceExVat AS PriceExVat`;
 
-  if (input.detailId != null) {
-    const upd = await bind(pool.request()).input("did", sql.Int, input.detailId)
-      .query(`UPDATE [dbo].[AccTravelBookingDetail] SET BookingNo = @no, PriceExVat = @price
-              ${OUTPUT_COLS}
-              WHERE Id = @did AND TravelBookingId = @tbid AND BookingType = @type`);
-    const row = upd.recordset[0] as SavedRow | undefined;
-    if (!row) throw new Error("ไม่พบรายการจองที่ระบุ");
-    return mapSavedRow(row);
+    let saved: SavedRow | undefined;
+    if (input.detailId != null) {
+      const upd = await bind(tx.request()).input("did", sql.Int, input.detailId)
+        .query(`UPDATE [dbo].[AccTravelBookingDetail] SET BookingNo = @no, PriceExVat = @price
+                ${OUTPUT_COLS}
+                WHERE Id = @did AND TravelBookingId = @tbid AND BookingType = @type`);
+      saved = upd.recordset[0] as SavedRow | undefined;
+      if (!saved) throw new Error("ไม่พบรายการจองที่ระบุ");
+    } else {
+      const ins = await bind(tx.request()).input("user", sql.Int, actor.userId || null)
+        .query(`INSERT INTO [dbo].[AccTravelBookingDetail] (TravelBookingId, BookingType, BookingNo, PriceExVat, CreatedBy)
+                ${OUTPUT_COLS}
+                VALUES (@tbid, @type, @no, @price, @user)`);
+      saved = ins.recordset[0] as SavedRow;
+    }
+
+    await tx.commit();
+    return mapSavedRow(saved);
+  } catch (e) {
+    await tx.rollback().catch(() => {});
+    throw e;
   }
-
-  const ins = await bind(pool.request()).input("user", sql.Int, actor.userId || null)
-    .query(`INSERT INTO [dbo].[AccTravelBookingDetail] (TravelBookingId, BookingType, BookingNo, PriceExVat, CreatedBy)
-            ${OUTPUT_COLS}
-            VALUES (@tbid, @type, @no, @price, @user)`);
-  return mapSavedRow(ins.recordset[0] as SavedRow);
 }
 
 /**
@@ -168,38 +201,49 @@ export async function saveBookingDetail(
  */
 export async function deleteBookingDetail(requestId: number, detailId: number): Promise<void> {
   const pool = await getAccPool();
-  const travelBookingId = await requireEditableBooking(pool, requestId);
+  const tx = pool.transaction();
+  let storedFiles: StoredFileRef[] = [];
+  await tx.begin();
+  try {
+    // Same parent lock as `saveBookingDetail`, for the same reason: a delete
+    // must not land between `completeRequest`'s evidence check and its commit.
+    const travelBookingId = await requireEditableBooking(tx, requestId);
 
-  const detRes = await pool.request()
-    .input("did", sql.Int, detailId)
-    .input("tbid", sql.Int, travelBookingId)
-    .query(`SELECT BookingType FROM [dbo].[AccTravelBookingDetail] WHERE Id = @did AND TravelBookingId = @tbid`);
-  const detRow = detRes.recordset[0] as { BookingType: string } | undefined;
-  if (!detRow) throw new Error("ไม่พบรายการจองที่ระบุ");
-  const refType = BOOKING_TYPE_REFTYPE[detRow.BookingType as BookingType];
+    const detRes = await tx.request()
+      .input("did", sql.Int, detailId)
+      .input("tbid", sql.Int, travelBookingId)
+      .query(`SELECT BookingType FROM [dbo].[AccTravelBookingDetail] WHERE Id = @did AND TravelBookingId = @tbid`);
+    const detRow = detRes.recordset[0] as { BookingType: string } | undefined;
+    if (!detRow) throw new Error("ไม่พบรายการจองที่ระบุ");
+    const refType = BOOKING_TYPE_REFTYPE[detRow.BookingType as BookingType];
 
-  const fileRes = await pool.request()
-    .input("rid", sql.Int, requestId)
-    .input("ref", sql.NVarChar(50), refType)
-    .input("did", sql.Int, detailId)
-    .query(`SELECT Id, StoragePath, StorageBackend FROM [dbo].[AccRequestFile]
-            WHERE RequestId = @rid AND RefType = @ref AND RefId = @did`);
-  for (const f of fileRes.recordset as { StoragePath: string; StorageBackend: string }[]) {
-    try {
-      if (f.StorageBackend === "sharepoint") await deleteFileFromSharePoint(f.StoragePath);
-      else await deleteFile(f.StoragePath);
-    } catch {
-      // Storage cleanup is best-effort — never block removing the row.
-    }
+    const fileRes = await tx.request()
+      .input("rid", sql.Int, requestId)
+      .input("ref", sql.NVarChar(50), refType)
+      .input("did", sql.Int, detailId)
+      .query(`SELECT Id, StoragePath, StorageBackend FROM [dbo].[AccRequestFile]
+              WHERE RequestId = @rid AND RefType = @ref AND RefId = @did`);
+    storedFiles = (fileRes.recordset as { StoragePath: string; StorageBackend: string | null }[]).map(
+      (f) => ({ storagePath: f.StoragePath, storageBackend: f.StorageBackend }),
+    );
+
+    await tx.request()
+      .input("rid", sql.Int, requestId)
+      .input("ref", sql.NVarChar(50), refType)
+      .input("did", sql.Int, detailId)
+      .query(`DELETE FROM [dbo].[AccRequestFile] WHERE RequestId = @rid AND RefType = @ref AND RefId = @did`);
+    await tx.request().input("did", sql.Int, detailId)
+      .query(`DELETE FROM [dbo].[AccTravelBookingDetail] WHERE Id = @did`);
+
+    await tx.commit();
+  } catch (e) {
+    await tx.rollback().catch(() => {});
+    throw e;
   }
 
-  await pool.request()
-    .input("rid", sql.Int, requestId)
-    .input("ref", sql.NVarChar(50), refType)
-    .input("did", sql.Int, detailId)
-    .query(`DELETE FROM [dbo].[AccRequestFile] WHERE RequestId = @rid AND RefType = @ref AND RefId = @did`);
-  await pool.request().input("did", sql.Int, detailId)
-    .query(`DELETE FROM [dbo].[AccTravelBookingDetail] WHERE Id = @did`);
+  // Storage after the commit, and never before it: removing the bytes first
+  // meant a rolled-back delete left a row pointing at nothing.
+  await deleteStoredFiles(storedFiles, `AP-17 deleteBookingDetail request ${requestId} detail ${detailId}`);
 }
 
 /* ─────────────────────────── completion ─────────────────────────── */
@@ -210,6 +254,62 @@ const REQUIRED_BOOKINGS: { type: BookingType; label: string; needed: (req: Trave
   { type: "ticket", label: "การจองตั๋วโดยสาร", needed: (req) => req.goNeedsTicketBooking || req.returnNeedsTicketBooking },
   { type: "rent", label: "การจองรถเช่า", needed: (req) => req.needsRentBooking },
 ];
+
+/**
+ * Which required booking types are not yet complete.
+ *
+ * `runner` is a transaction when this is the safe re-check inside
+ * `completeRequest`, and the flags come from the request header that was read
+ * before it — those are server-derived (`@/lib/acc/travel-booking/derive-flags`)
+ * and the locked UPDATE has already proved the header did not move.
+ *
+ * A type is complete when it has at least one row and *every* row carries a
+ * booking number, a price and at least one file. A half-filled extra row blocks
+ * completion on purpose: Admin either finishes it or removes it.
+ */
+async function missingRequiredBookings(
+  runner: SqlRunner,
+  requestId: number,
+  req: TravelBookingRequest,
+): Promise<string[]> {
+  const needed = REQUIRED_BOOKINGS.filter((rule) => rule.needed(req));
+  if (needed.length === 0) return [];
+
+  // The BookingType -> RefType mapping is bound from `BOOKING_TYPE_REFTYPE`
+  // rather than spelled out in SQL, so the constant stays the only place it
+  // lives — the file routes already key their inserts off it.
+  const sqlReq = runner.request().input("rid", sql.Int, requestId);
+  const cases: string[] = [];
+  // `Array.from` rather than spreading the iterator — ES5 target (see CLAUDE.md).
+  Array.from(Object.entries(BOOKING_TYPE_REFTYPE)).forEach(([type, refType], index) => {
+    sqlReq.input(`type${index}`, sql.NVarChar(20), type);
+    sqlReq.input(`ref${index}`, sql.NVarChar(50), refType);
+    cases.push(`WHEN @type${index} THEN @ref${index}`);
+  });
+
+  const res = await sqlReq.query(`
+    SELECT d.Id, d.BookingType, d.BookingNo, d.PriceExVat,
+           (SELECT COUNT(*) FROM [dbo].[AccRequestFile] f
+             WHERE f.RequestId = @rid AND f.RefId = d.Id
+               AND f.RefType = CASE d.BookingType ${cases.join(" ")} END) AS FileCount
+    FROM [dbo].[AccTravelBookingDetail] d
+    INNER JOIN [dbo].[AccTravelBooking] t ON t.Id = d.TravelBookingId
+    WHERE t.RequestId = @rid
+  `);
+  const rows = res.recordset as {
+    BookingType: string; BookingNo: string | null; PriceExVat: number | null; FileCount: number;
+  }[];
+
+  const missing: string[] = [];
+  for (const rule of needed) {
+    const forType = rows.filter((r) => r.BookingType === rule.type);
+    const complete =
+      forType.length > 0 &&
+      forType.every((r) => !!r.BookingNo?.trim() && r.PriceExVat != null && r.FileCount > 0);
+    if (!complete) missing.push(rule.label);
+  }
+  return missing;
+}
 
 /**
  * Admin closes the request — ManagerApproved → Completed — once every required booking type
@@ -251,6 +351,20 @@ export async function completeRequest(requestId: number, actor: Actor): Promise<
     if ((upd.recordset[0].n as number) === 0) {
       await tx.rollback();
       throw new Error("คำขอไม่อยู่ในขั้นตอนที่สามารถปิดงานได้ หรือถูกดำเนินการไปแล้ว");
+    }
+
+    // Re-check the evidence with the parent row now exclusively locked by the
+    // UPDATE above. The check before the transaction is kept because it gives
+    // the operator the useful "which booking is missing" message; this one is
+    // the one that is actually safe. Without it, a `deleteBookingDetail` landing
+    // between the two produced a Completed request with no booking number, no
+    // price and no attachment — the exact state the rules exist to prevent.
+    const stillMissing = await missingRequiredBookings(tx, requestId, req);
+    if (stillMissing.length > 0) {
+      await tx.rollback();
+      throw new Error(
+        `ข้อมูลการจองถูกแก้ไขระหว่างปิดงาน — กรุณาตรวจสอบแล้วลองใหม่: ${stillMissing.join(", ")}`,
+      );
     }
     await tx.request().input("rid", sql.Int, requestId).input("by", sql.Int, actor.userId)
       .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action) VALUES (@rid, @by, 'completed')`);

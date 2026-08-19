@@ -10,8 +10,11 @@ export type { ApproverInterfaceAccess } from "@/lib/acc/approver-interface-acces
 export {
   allInterfaceBrandCodes,
   buildInterfaceByClaimRecord,
+  canActOnClaimBrand,
+  canActOnInterfaceTarget,
   filterInterfaceBrandCodes,
   filterRowsForInterfaceAccess,
+  INTERFACE_SCOPE_ERROR,
 } from "@/lib/acc/approver-interface-access-shared";
 
 function normalizeCodes(codes: string[]): string[] {

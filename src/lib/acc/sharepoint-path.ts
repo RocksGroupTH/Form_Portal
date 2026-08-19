@@ -58,17 +58,31 @@ export function buildAccFolderPath(opts: {
   return parts.join("/");
 }
 
-/** Deterministic filename: "{type}_{reqNoOrDraftId}_{fileId}.{ext}". */
+/**
+ * Deterministic filename: "{type}_{reqNoOrDraftId}_{fileId}.{ext}".
+ *
+ * Every component is server-derived. The original name never reaches the path —
+ * it is kept as metadata in `AccRequestFile.FileName` and nowhere else — which
+ * is what keeps a caller-chosen name out of both the SharePoint path and the
+ * local one.
+ *
+ * `extension` overrides the extension taken from `originalName`, and the upload
+ * routes pass the one `checkAttachment` derived from the bytes. Without it the
+ * extension was the last client-controlled component of the path, and it also
+ * disagreed with the stored `ContentType` whenever the two did not match.
+ */
 export function buildAccFileName(opts: {
   typeLabel: string;
   requestNo: string | null;
   requestId: number;
   fileId: number;
   originalName: string;
+  extension?: string;
 }): string {
   const dotIdx = opts.originalName.lastIndexOf(".");
   const ext =
-    dotIdx > 0 ? opts.originalName.slice(dotIdx + 1).toLowerCase() : "bin";
+    opts.extension ??
+    (dotIdx > 0 ? opts.originalName.slice(dotIdx + 1).toLowerCase() : "bin");
   const ref = opts.requestNo ?? `draft${opts.requestId}`;
   const stem = sanitizeSegment(`${opts.typeLabel}_${ref}_${opts.fileId}`);
   return `${stem}.${sanitizeSegment(ext)}`;

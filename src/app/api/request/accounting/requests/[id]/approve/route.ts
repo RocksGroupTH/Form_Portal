@@ -4,6 +4,16 @@ import { getRequest } from "@/lib/acc/request-service";
 import { approveManager, approveAccount } from "@/lib/acc/approval-engine";
 import { buildAccActor, resolveAccActorForAction } from "@/lib/acc/actor-context";
 import { canAccessAccountArea } from "@/lib/acc/access";
+import {
+  canActOnClaimBrand,
+  INTERFACE_SCOPE_ERROR,
+  resolveApproverInterfaceAccess,
+} from "@/lib/acc/approver-interface-access";
+import {
+  interfaceByClaimMapToRecord,
+  loadPrepDeptContext,
+} from "@/lib/acc/erp-prep-service";
+import { authorizeAccRequest } from "@/lib/acc/request-acl";
 import { canActManagerApi, MANAGER_AUTH_ERROR } from "@/lib/acc/manager-auth";
 import { getRequestHost } from "@/lib/acc/erp-environment";
 import { processQueue } from "@/lib/acc/email-queue";
@@ -22,6 +32,12 @@ export async function POST(
   if (Number.isNaN(id)) {
     return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
   }
+
+  // Reaching the record at all: owner, assigned manager or accounting area —
+  // and, on a UAT id, an active tester. Without this a real accountant could
+  // approve test data by typing its number. See `request-acl-policy`.
+  const gate = await authorizeAccRequest(session, id, "read");
+  if (gate instanceof Response) return gate;
 
   const accReq = await getRequest(id);
   if (!accReq) {
@@ -57,6 +73,17 @@ export async function POST(
       if (!(await canAccessAccountArea(actor.email, session.user.role))) {
         return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
       }
+    // Interface scope, not just "works in accounting". A KSI-only approver
+    // could approve and reject PCTH's claims — the ERP-prep list filtered rows
+    // by interface brand but these workflow actions never did, and approving is
+    // what puts a document in the send queue in the first place.
+    const [access, deptCtx] = await Promise.all([
+      resolveApproverInterfaceAccess(actor.email, session.user.role),
+      loadPrepDeptContext(),
+    ]);
+    if (!canActOnClaimBrand(access, interfaceByClaimMapToRecord(deptCtx.interfaceByClaim), accReq.brandCode)) {
+      return NextResponse.json({ ok: false, error: INTERFACE_SCOPE_ERROR }, { status: 403 });
+    }
       const body = (await req.json()) as { paymentDate: string; isChecked: boolean };
       const actionActor = await resolveAccActorForAction(actor, session.user.role, null);
       await approveAccount(id, actionActor, body.paymentDate, body.isChecked);

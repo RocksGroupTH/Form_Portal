@@ -28,6 +28,7 @@ import {
   sortJournalLinesForPpap,
 } from "@/lib/acc/erp-ppap-payload";
 import { useErpSandboxDevHost } from "@/features/accounting/hooks/useErpSandboxDevHost";
+import { EnvironmentBadge } from "@/components/EnvironmentBadge";
 
 const BANK_COLOR = "#dc2626";
 
@@ -365,6 +366,13 @@ function SegmentJournalPanel({
             {fmtMoney(totalAmount)} บาท · {sources.length} เอกสาร
           </p>
         </div>
+        {/* Which set of books this batch posts to, next to the button that
+            posts it. The page header carries the same chip, but it is a long
+            scroll away by the time anyone reaches a send bar — and this is the
+            one control in the app that writes to Business Central. Both values
+            are worth saying here: UAT means the Sandbox company, Production
+            means the real one. */}
+        {queueEnvironment && <EnvironmentBadge environment={queueEnvironment} />}
         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={segmentStatusStyle(sendState.kind)}>
           {sendState.label}
         </span>
