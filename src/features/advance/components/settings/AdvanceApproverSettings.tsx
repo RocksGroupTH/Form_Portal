@@ -135,7 +135,17 @@ export function AdvanceApproverSettings() {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalRole, setModalRole] = useState<Role>("HEAD_ACC");
 
-  const load = useCallback(() => {
+  // Reload just the approver list — used after add / remove. The candidate list
+  // (an HR query) is static for the session, so it is fetched once on mount and
+  // never re-queried on every mutation (that was the slow part).
+  const loadApprovers = useCallback(() => {
+    return fetch("/api/request/advance/settings/approvers")
+      .then((r) => r.json())
+      .then((ap: { ok: boolean; data?: Approver[] }) => setRows(ap.ok && ap.data ? ap.data : []))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
     setLoading(true);
     Promise.all([
       fetch("/api/request/advance/settings/approvers").then((r) => r.json()),
@@ -148,7 +158,6 @@ export function AdvanceApproverSettings() {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
-  useEffect(() => load(), [load]);
 
   async function post(body: unknown, okMsg?: string) {
     setBusy(true);
@@ -159,7 +168,7 @@ export function AdvanceApproverSettings() {
       const j = (await res.json()) as { ok: boolean; error?: string };
       if (!j.ok) throw new Error(j.error ?? "บันทึกไม่สำเร็จ");
       if (okMsg) toast.success(okMsg);
-      load();
+      loadApprovers();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ");
     } finally { setBusy(false); }
@@ -173,7 +182,7 @@ export function AdvanceApproverSettings() {
       const j = (await res.json()) as { ok: boolean; error?: string };
       if (!j.ok) throw new Error(j.error ?? "ลบไม่สำเร็จ");
       toast.success("ลบแล้ว");
-      load();
+      loadApprovers();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "ลบไม่สำเร็จ");
     } finally { setBusy(false); }

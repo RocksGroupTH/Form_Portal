@@ -5,6 +5,7 @@ import { buildAccFolderPath, buildAccFileName } from "@/lib/acc/sharepoint-path"
 import { isSharePointConfigured, uploadFileToSharePoint } from "@/lib/sharepoint";
 import { uploadFile } from "@/lib/storage";
 import { AP2_FORM_CODE } from "@/features/advance/constants";
+import { resolveFormEnvironment } from "@/lib/form-environment";
 import {
   AP2_FILE_REFTYPE,
   AP2_MAX_FILE_BYTES,
@@ -86,7 +87,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const newId = Number(ins.recordset[0].Id);
 
       const folderPath = buildAccFolderPath({
-        requestNo: reqRow.RequestNo, requestId, year: null, formCode: AP2_FORM_CODE, environment: "UAT",
+        requestNo: reqRow.RequestNo, requestId, year: null, formCode: AP2_FORM_CODE,
+        environment: await resolveFormEnvironment(),
       });
       const filename = buildAccFileName({
         typeLabel: AP2_FILE_REFTYPE, requestNo: reqRow.RequestNo, requestId, fileId: newId, originalName: file.name,

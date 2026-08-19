@@ -1,46 +1,76 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useMemo } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
+import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
 import { Button } from "@/components/ui/Button";
-import { Wallet, Plus, Settings, Inbox } from "lucide-react";
+import { AdvanceApproveQueue } from "@/features/advance/components/AdvanceApproveQueue";
+import { AdvanceErpQueue } from "@/features/advance/components/AdvanceErpQueue";
+import { Wallet, Plus, Settings, ClipboardCheck, Upload } from "lucide-react";
 
-interface InboxRow {
-  id: number;
-  requestNo: string | null;
-  brandCode: string | null;
-  requesterFullName: string | null;
-  totalAmount: number | null;
-  status: string;
-  stepLabel: string;
-  updatedAt: string;
+type TabKey = "approve" | "interface";
+
+const TABS: { key: TabKey; label: string; icon: React.ReactNode; subtitle: string }[] = [
+  {
+    key: "approve",
+    label: "รออนุมัติ",
+    icon: <ClipboardCheck size={15} />,
+    subtitle: "เลือกหลายรายการ ตรวจสอบ แล้วอนุมัติพร้อมกัน — คลิกไอคอนตาเพื่อดูรายละเอียดเต็ม",
+  },
+  {
+    key: "interface",
+    label: "Interface ERP",
+    icon: <Upload size={15} />,
+    subtitle: "รายการที่อนุมัติแล้ว — ตรวจสอบข้อมูลก่อนส่ง Interface ไป Business Central",
+  },
+];
+
+function parseTab(raw: string | null): TabKey {
+  return raw === "interface" ? "interface" : "approve";
 }
 
 export default function AdvanceInboxPage() {
+  return (
+    <Suspense
+      fallback={
+        <PageContainer className="acc-theme py-6 px-3 sm:px-0">
+          <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>กำลังโหลด...</p>
+        </PageContainer>
+      }
+    >
+      <AdvanceInboxContent />
+    </Suspense>
+  );
+}
+
+function AdvanceInboxContent() {
   const router = useRouter();
-  const [rows, setRows] = useState<InboxRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const searchParams = useSearchParams();
+  const activeTab = useMemo(() => parseTab(searchParams.get("tab")), [searchParams]);
 
-  const load = useCallback(() => {
-    setLoading(true);
-    fetch("/api/request/advance/inbox")
-      .then((r) => r.json())
-      .then((j: { ok: boolean; data?: InboxRow[] }) => setRows(j.ok && j.data ? j.data : []))
-      .catch(() => setRows([]))
-      .finally(() => setLoading(false));
-  }, []);
+  const setTab = useCallback(
+    (tab: TabKey) => {
+      const q = new URLSearchParams(searchParams.toString());
+      if (tab === "approve") q.delete("tab");
+      else q.set("tab", tab);
+      const qs = q.toString();
+      router.replace(qs ? `/request/advance/inbox?${qs}` : "/request/advance/inbox", { scroll: false });
+    },
+    [router, searchParams],
+  );
 
-  useEffect(() => load(), [load]);
+  const tabMeta = TABS.find((t) => t.key === activeTab) ?? TABS[0];
 
   return (
-    <PageContainer className="acc-theme py-6 px-3 sm:px-0 flex flex-col gap-4">
+    <PageContainer className="acc-theme py-6 px-3 sm:px-0">
       <PageHeaderBar
         icon={Wallet}
         title="เบิกเงินทดรองจ่าย (AP-2)"
-        subtitle="รายการที่รอคุณอนุมัติ"
+        titleExtra={<FormEnvironmentChip formCode="AP-2" />}
+        subtitle={tabMeta.subtitle}
         backHref="/request/advance/admin"
         right={
           <div className="flex items-center gap-2">
@@ -54,47 +84,39 @@ export default function AdvanceInboxPage() {
         }
       />
 
-      <div className="rounded-2xl p-4" style={{ background: "var(--bg-card)", boxShadow: "var(--shadow-card)" }}>
-        <div className="flex items-center gap-2 mb-3">
-          <Inbox size={16} style={{ color: "var(--nav-active-text)" }} />
-          <h2 className="text-[14px] font-bold" style={{ color: "var(--text-heading)" }}>รอฉันอนุมัติ</h2>
-          {!loading && <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>{rows.length} รายการ</span>}
+      <div
+        className="rounded-2xl overflow-hidden"
+        style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)" }}
+      >
+        <div
+          className="flex gap-1 px-4 pt-4 pb-0 overflow-x-auto overflow-y-hidden no-scrollbar"
+          style={{ borderBottom: "1px solid var(--border-card)" }}
+        >
+          {TABS.map((tab) => {
+            const active = activeTab === tab.key;
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setTab(tab.key)}
+                className="flex items-center gap-1.5 px-4 py-2.5 text-[13px] font-semibold cursor-pointer border-none rounded-t-lg transition-colors shrink-0"
+                style={{
+                  background: active ? "var(--bg-card)" : "transparent",
+                  color: active ? "var(--nav-active-text)" : "var(--text-muted)",
+                  borderBottom: active ? "2px solid var(--nav-active-text)" : "2px solid transparent",
+                  marginBottom: "-1px",
+                }}
+              >
+                {tab.icon}
+                {tab.label}
+              </button>
+            );
+          })}
         </div>
 
-        {loading ? (
-          <p className="text-[12px] py-8 text-center" style={{ color: "var(--text-muted)" }}>กำลังโหลด...</p>
-        ) : rows.length === 0 ? (
-          <p className="text-[12px] py-8 text-center" style={{ color: "var(--text-muted)" }}>
-            ไม่มีรายการรออนุมัติ (แสดงเฉพาะขั้นที่คุณเป็นผู้อนุมัติ)
-          </p>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {rows.map((r) => (
-              <button
-                key={r.id}
-                onClick={() => router.push(`/request/advance/${r.id}`)}
-                className="flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer border text-left"
-                style={{ background: "var(--bg-card-alt)", borderColor: "var(--border-card)" }}
-              >
-                <div className="flex-1 min-w-0">
-                  <p className="text-[13px] font-bold truncate" style={{ color: "var(--text-primary)" }}>
-                    {r.requestNo ?? `#${r.id}`}
-                    <span className="ml-2 text-[11px] font-semibold px-2 py-0.5 rounded-full"
-                      style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}>
-                      {r.stepLabel}
-                    </span>
-                  </p>
-                  <p className="text-[11px] truncate" style={{ color: "var(--text-muted)" }}>
-                    {r.requesterFullName ?? "-"}{r.brandCode ? ` · ${r.brandCode}` : ""}
-                  </p>
-                </div>
-                <span className="text-[13px] font-bold shrink-0" style={{ color: "var(--text-heading)" }}>
-                  {(r.totalAmount ?? 0).toLocaleString()} ฿
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
+        <div className="p-5">
+          {activeTab === "approve" ? <AdvanceApproveQueue /> : <AdvanceErpQueue />}
+        </div>
       </div>
     </PageContainer>
   );

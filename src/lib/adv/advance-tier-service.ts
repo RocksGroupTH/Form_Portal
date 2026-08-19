@@ -1,4 +1,5 @@
 import { getAccPool, sql } from "@/lib/adv/pool";
+import { writeBothPools } from "@/lib/acc/dual-write";
 import { parseSteps, stepsToCsv, type StepType } from "@/lib/adv/approval-steps";
 import type { Transaction } from "mssql";
 
@@ -83,27 +84,30 @@ export async function upsertTier(t: {
   isActive?: boolean;
   sortOrder?: number;
 }): Promise<void> {
-  const pool = await getAccPool();
-  const req = pool
-    .request()
-    .input("min", sql.Decimal(18, 2), t.minAmount)
-    .input("max", sql.Decimal(18, 2), t.maxAmount)
-    .input("steps", sql.NVarChar, stepsToCsv(t.steps))
-    .input("active", sql.Bit, t.isActive === undefined ? 1 : t.isActive ? 1 : 0)
-    .input("sort", sql.Int, t.sortOrder ?? 0);
-  if (t.id) {
-    req.input("id", sql.Int, t.id);
-    await req.query(`UPDATE [dbo].[AccAdvanceApprovalTier] SET
-      MinAmount=@min, MaxAmount=@max, Steps=@steps, IsActive=@active, SortOrder=@sort,
-      UpdatedAt=SYSDATETIME() WHERE Id=@id`);
-  } else {
-    await req.query(`INSERT INTO [dbo].[AccAdvanceApprovalTier] (MinAmount, MaxAmount, Steps, IsActive, SortOrder)
-      VALUES (@min, @max, @steps, @active, @sort)`);
-  }
+  // Config table — dual-write so Production and UAT stay aligned (like AP-1).
+  await writeBothPools(async (tx) => {
+    const req = tx
+      .request()
+      .input("min", sql.Decimal(18, 2), t.minAmount)
+      .input("max", sql.Decimal(18, 2), t.maxAmount)
+      .input("steps", sql.NVarChar, stepsToCsv(t.steps))
+      .input("active", sql.Bit, t.isActive === undefined ? 1 : t.isActive ? 1 : 0)
+      .input("sort", sql.Int, t.sortOrder ?? 0);
+    if (t.id) {
+      req.input("id", sql.Int, t.id);
+      await req.query(`UPDATE [dbo].[AccAdvanceApprovalTier] SET
+        MinAmount=@min, MaxAmount=@max, Steps=@steps, IsActive=@active, SortOrder=@sort,
+        UpdatedAt=SYSDATETIME() WHERE Id=@id`);
+    } else {
+      await req.query(`INSERT INTO [dbo].[AccAdvanceApprovalTier] (MinAmount, MaxAmount, Steps, IsActive, SortOrder)
+        VALUES (@min, @max, @steps, @active, @sort)`);
+    }
+  });
 }
 
 export async function deleteTier(id: number): Promise<void> {
-  const pool = await getAccPool();
-  await pool.request().input("id", sql.Int, id)
-    .query(`DELETE FROM [dbo].[AccAdvanceApprovalTier] WHERE Id=@id`);
+  await writeBothPools(async (tx) => {
+    await tx.request().input("id", sql.Int, id)
+      .query(`DELETE FROM [dbo].[AccAdvanceApprovalTier] WHERE Id=@id`);
+  });
 }

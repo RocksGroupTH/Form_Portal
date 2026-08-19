@@ -110,7 +110,7 @@ async function fetchBcJsonCollection<T extends Record<string, unknown>>(
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       throw new Error(
-        `${errorLabel} ${res.status}${text ? `: ${text.slice(0, 400)}` : ""}`,
+        `${errorLabel} ${res.status} [${url}]${text ? `: ${text.slice(0, 400)}` : ""}`,
       );
     }
 

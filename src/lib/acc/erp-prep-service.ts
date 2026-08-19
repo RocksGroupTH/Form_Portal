@@ -233,7 +233,8 @@ export async function listErpPrepRows(
 ): Promise<ErpPrepRow[]> {
   const pool = await getAccPool();
   const req = pool.request();
-  const where: string[] = ["r.Status = 'Approved'"];
+  // AP-2 (advance) has its own ERP path — keep it out of the AP-1 ERP prep queue.
+  const where: string[] = ["r.Status = 'Approved'", "r.FormCode <> 'AP-2'"];
 
   if (f.brandCode) {
     req.input("brand", sql.NVarChar, f.brandCode);

@@ -519,7 +519,9 @@ export async function queryReport(f: ReportFilters): Promise<ReportRow[]> {
   const rows = await (async () => {
     const pool = await getAccPool();
     const req = pool.request();
-    const where: string[] = ["r.Status <> 'Draft'"];
+    // AP-2 (advance) has its own header rows in AccRequest but its own approval,
+    // inbox and report — it must never leak into the AP-1 accounting report/queue.
+    const where: string[] = ["r.Status <> 'Draft'", "r.FormCode <> 'AP-2'"];
 
     const dateCol =
       f.dateBasis === "submit"

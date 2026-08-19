@@ -1,18 +1,20 @@
-import { getUatFormPool, sql } from "@/lib/db/mssql";
+import { getFormPool, sql } from "@/lib/db/mssql";
 
 /**
- * Pool for AP-2 (Advance) — pinned to the UAT form database.
+ * Pool for AP-2 (Advance) — per-form routing, same as AP-1 / AP-17.
  *
- * AP-2 is a UAT-only pilot (FormEnvironment AP-2 = ProductionEnabled off,
- * UatEnabled on) and every AP-2 table lives in the UAT form database. Pinning to
- * getUatFormPool keeps AP-2 out of the per-form id/viewer routing entirely, which
- * getFormPool applies from the URL: a settings route like
- * /api/request/advance/settings/tiers/3 carries a config-row id (3), not an
- * AccRequest id, and getFormPool would read it as one and route the request to
- * Production (id < 900000) — where AP-2's UAT-only tables do not exist. Move back
- * to getFormPool only once AP-2's tables are mirrored into the production form
- * database AND its settings routes are excluded from request-id routing (compare
- * AP-1's `"/api/request/accounting/settings" → null` rule in classify-path).
+ * AP-2 ran as a UAT-only pilot pinned to getUatFormPool while its tables existed
+ * only in the UAT form database. Both conditions to un-pin are now met:
+ *
+ *   1. AP-2's tables are mirrored into the production form database
+ *      (migrations 073-090 applied to Rocks_Portal_Form).
+ *   2. Its settings routes are excluded from request-id routing — the
+ *      `"/api/request/advance/settings" → null` rule in classify-path keeps a
+ *      config-row id (tier/approver id) from being read as an AccRequest id.
+ *
+ * So getAccPool now follows getFormPool: request routes resolve by the record's
+ * id (UAT id ≥ 900000 → UAT, else Production), settings routes read Production,
+ * and config services dual-write both databases via writeBothPools.
  */
-export const getAccPool = getUatFormPool;
+export const getAccPool = getFormPool;
 export { sql };

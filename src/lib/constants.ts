@@ -58,6 +58,16 @@ export const REQUEST_CARDS: NavItem[] = [
     badge: "AP-1",
   },
   {
+    id: "advance-form",
+    label: "กรอกคำขอเบิกเงินทดรองจ่าย",
+    icon: "Wallet",
+    desc: "สร้างคำขอใหม่ / ฉบับร่างของฉัน",
+    href: "/request/advance",
+    group: "Accounting",
+    groupTh: "บัญชี",
+    badge: "AP-2",
+  },
+  {
     id: "travel-expense",
     label: "เบิกค่าเดินทาง (ออฟฟิต)",
     icon: "Route",

@@ -115,11 +115,14 @@ function collectConnectionIds(
 
 export async function resolveErpTargetProfile(
   interfaceBrandCode: string,
+  environmentOverride?: ErpBcEnvironment,
 ): Promise<ErpTargetProfile | null> {
   const code = interfaceBrandCode.trim().toUpperCase();
   if (!isErpInterfaceBrandCode(code)) return null;
 
-  const environment = await resolveEffectiveErpEnvironment();
+  // Callers on a route that doesn't classify to the target form (e.g. a settings
+  // route → Production) can pass the form's real environment explicitly.
+  const environment = environmentOverride ?? await resolveEffectiveErpEnvironment();
   const [erpPage, targetSettings, cfg] = await Promise.all([
     getBrandErpConfigPage(),
     listErpTargetSettings(),

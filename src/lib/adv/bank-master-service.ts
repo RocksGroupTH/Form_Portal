@@ -1,4 +1,5 @@
 import { getAccPool, sql } from "@/lib/adv/pool";
+import { writeBothPools } from "@/lib/acc/dual-write";
 
 export interface BankOption {
   bankCode: string;
@@ -53,33 +54,36 @@ export async function upsertBank(b: {
   isActive?: boolean;
   sortOrder?: number;
 }): Promise<void> {
-  const pool = await getAccPool();
-  const req = pool
-    .request()
-    .input("code", sql.NVarChar, b.bankCode ?? null)
-    .input("name", sql.NVarChar, b.bankName ?? null)
-    .input("active", sql.Bit, b.isActive === undefined ? null : b.isActive ? 1 : 0)
-    .input("sort", sql.Int, b.sortOrder ?? null);
-  if (b.id) {
-    req.input("id", sql.Int, b.id);
-    await req.query(`UPDATE [dbo].[AccBankMaster] SET
-      BankCode = COALESCE(@code, BankCode),
-      BankName = COALESCE(@name, BankName),
-      IsActive = COALESCE(@active, IsActive),
-      SortOrder = COALESCE(@sort, SortOrder),
-      UpdatedAt = SYSDATETIME() WHERE Id=@id`);
-  } else {
-    await req.query(`MERGE [dbo].[AccBankMaster] AS t USING (SELECT @code AS BankCode) AS s ON t.BankCode=s.BankCode
-      WHEN MATCHED THEN UPDATE SET BankName=COALESCE(@name,t.BankName), IsActive=COALESCE(@active,t.IsActive),
-        SortOrder=COALESCE(@sort,t.SortOrder), UpdatedAt=SYSDATETIME()
-      WHEN NOT MATCHED THEN INSERT (BankCode,BankName,IsActive,SortOrder)
-      VALUES (@code,@name,COALESCE(@active,1),COALESCE(@sort,999));`);
-  }
+  // Config table — dual-write so Production and UAT stay aligned (like AP-1).
+  await writeBothPools(async (tx) => {
+    const req = tx
+      .request()
+      .input("code", sql.NVarChar, b.bankCode ?? null)
+      .input("name", sql.NVarChar, b.bankName ?? null)
+      .input("active", sql.Bit, b.isActive === undefined ? null : b.isActive ? 1 : 0)
+      .input("sort", sql.Int, b.sortOrder ?? null);
+    if (b.id) {
+      req.input("id", sql.Int, b.id);
+      await req.query(`UPDATE [dbo].[AccBankMaster] SET
+        BankCode = COALESCE(@code, BankCode),
+        BankName = COALESCE(@name, BankName),
+        IsActive = COALESCE(@active, IsActive),
+        SortOrder = COALESCE(@sort, SortOrder),
+        UpdatedAt = SYSDATETIME() WHERE Id=@id`);
+    } else {
+      await req.query(`MERGE [dbo].[AccBankMaster] AS t USING (SELECT @code AS BankCode) AS s ON t.BankCode=s.BankCode
+        WHEN MATCHED THEN UPDATE SET BankName=COALESCE(@name,t.BankName), IsActive=COALESCE(@active,t.IsActive),
+          SortOrder=COALESCE(@sort,t.SortOrder), UpdatedAt=SYSDATETIME()
+        WHEN NOT MATCHED THEN INSERT (BankCode,BankName,IsActive,SortOrder)
+        VALUES (@code,@name,COALESCE(@active,1),COALESCE(@sort,999));`);
+    }
+  });
 }
 
 /** Hard-remove a bank row. */
 export async function deleteBank(id: number): Promise<void> {
-  const pool = await getAccPool();
-  await pool.request().input("id", sql.Int, id)
-    .query(`DELETE FROM [dbo].[AccBankMaster] WHERE Id=@id`);
+  await writeBothPools(async (tx) => {
+    await tx.request().input("id", sql.Int, id)
+      .query(`DELETE FROM [dbo].[AccBankMaster] WHERE Id=@id`);
+  });
 }

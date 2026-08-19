@@ -1,4 +1,5 @@
 import { getAccPool, sql } from "@/lib/adv/pool";
+import { writeBothPools } from "@/lib/acc/dual-write";
 import { hrEmployeeTable } from "@/lib/hr/constants";
 
 /**
@@ -112,40 +113,43 @@ export async function upsertAdvanceApprover(
   },
   userId: number,
 ): Promise<void> {
-  const pool = await getAccPool();
-  const req = pool
-    .request()
-    .input("staff", sql.Int, a.staffId ?? null)
-    .input("email", sql.NVarChar, a.email ?? null)
-    .input("name", sql.NVarChar, a.displayName ?? null)
-    .input("role", sql.NVarChar, a.approverRole ?? null)
-    .input("photo", sql.NVarChar, a.photoUrl ?? null)
-    .input("active", sql.Bit, a.isActive === undefined ? null : a.isActive ? 1 : 0)
-    .input("user", sql.Int, userId || null);
-  if (a.id) {
-    req.input("id", sql.Int, a.id);
-    await req.query(`UPDATE [dbo].[AccAdvanceApprover] SET
-      StaffId = COALESCE(@staff, StaffId),
-      Email = COALESCE(@email, Email),
-      DisplayName = COALESCE(@name, DisplayName),
-      ApproverRole = COALESCE(@role, ApproverRole),
-      PhotoUrl = COALESCE(@photo, PhotoUrl),
-      IsActive = COALESCE(@active, IsActive),
-      UpdatedAt = SYSDATETIME() WHERE Id=@id`);
-  } else {
-    await req.query(`MERGE [dbo].[AccAdvanceApprover] AS t
-      USING (SELECT @email AS Email, COALESCE(@role,'ACC_OFFICER') AS ApproverRole) AS s
-        ON t.Email=s.Email AND t.ApproverRole=s.ApproverRole
-      WHEN MATCHED THEN UPDATE SET StaffId=COALESCE(@staff,t.StaffId), DisplayName=COALESCE(@name,t.DisplayName),
-        PhotoUrl=COALESCE(@photo,t.PhotoUrl), IsActive=COALESCE(@active,t.IsActive), UpdatedAt=SYSDATETIME()
-      WHEN NOT MATCHED THEN INSERT (StaffId,Email,DisplayName,ApproverRole,PhotoUrl,IsActive,CreatedBy)
-      VALUES (@staff,@email,@name,s.ApproverRole,@photo,COALESCE(@active,1),@user);`);
-  }
+  // Config table — dual-write so Production and UAT stay aligned (like AP-1).
+  await writeBothPools(async (tx) => {
+    const req = tx
+      .request()
+      .input("staff", sql.Int, a.staffId ?? null)
+      .input("email", sql.NVarChar, a.email ?? null)
+      .input("name", sql.NVarChar, a.displayName ?? null)
+      .input("role", sql.NVarChar, a.approverRole ?? null)
+      .input("photo", sql.NVarChar, a.photoUrl ?? null)
+      .input("active", sql.Bit, a.isActive === undefined ? null : a.isActive ? 1 : 0)
+      .input("user", sql.Int, userId || null);
+    if (a.id) {
+      req.input("id", sql.Int, a.id);
+      await req.query(`UPDATE [dbo].[AccAdvanceApprover] SET
+        StaffId = COALESCE(@staff, StaffId),
+        Email = COALESCE(@email, Email),
+        DisplayName = COALESCE(@name, DisplayName),
+        ApproverRole = COALESCE(@role, ApproverRole),
+        PhotoUrl = COALESCE(@photo, PhotoUrl),
+        IsActive = COALESCE(@active, IsActive),
+        UpdatedAt = SYSDATETIME() WHERE Id=@id`);
+    } else {
+      await req.query(`MERGE [dbo].[AccAdvanceApprover] AS t
+        USING (SELECT @email AS Email, COALESCE(@role,'ACC_OFFICER') AS ApproverRole) AS s
+          ON t.Email=s.Email AND t.ApproverRole=s.ApproverRole
+        WHEN MATCHED THEN UPDATE SET StaffId=COALESCE(@staff,t.StaffId), DisplayName=COALESCE(@name,t.DisplayName),
+          PhotoUrl=COALESCE(@photo,t.PhotoUrl), IsActive=COALESCE(@active,t.IsActive), UpdatedAt=SYSDATETIME()
+        WHEN NOT MATCHED THEN INSERT (StaffId,Email,DisplayName,ApproverRole,PhotoUrl,IsActive,CreatedBy)
+        VALUES (@staff,@email,@name,s.ApproverRole,@photo,COALESCE(@active,1),@user);`);
+    }
+  });
 }
 
 /** Hard-remove an approver row. */
 export async function deleteAdvanceApprover(id: number): Promise<void> {
-  const pool = await getAccPool();
-  await pool.request().input("id", sql.Int, id)
-    .query(`DELETE FROM [dbo].[AccAdvanceApprover] WHERE Id=@id`);
+  await writeBothPools(async (tx) => {
+    await tx.request().input("id", sql.Int, id)
+      .query(`DELETE FROM [dbo].[AccAdvanceApprover] WHERE Id=@id`);
+  });
 }

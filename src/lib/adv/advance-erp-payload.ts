@@ -24,9 +24,17 @@ export function buildAdvanceJournalPayload(
   // Post the THB base amount (foreign-currency advances convert via exchangeRate).
   const amount = advance.baseAmount ?? advance.amount ?? 0;
   const postingDate = req.paymentDate;
-  const description = `เงินทดรองจ่าย ${req.requestNo ?? ""} ${req.requesterFullName ?? ""}`.trim();
-  const employeeCode = req.staffId != null ? String(req.staffId) : "";
+  // BC journal Description = the expense detail (รายละเอียดค่าใช้จ่าย); fall back to
+  // request no + requester when blank. BC's Description caps at 100 chars.
+  const description = (
+    advance.purpose?.trim() || `เงินทดรองจ่าย ${req.requestNo ?? ""} ${req.requesterFullName ?? ""}`.trim()
+  ).slice(0, 100);
+  // The CU maps payload.employeeCode → BC "External Document No." (APJournalCreate.al,
+  // CopyStr 1..35), so carry the request no (ADV26-xxxxx) there.
+  const employeeCode = (req.requestNo ?? "").slice(0, 35);
   const branch = branchCode ?? "";
+  // departmentCode is already the resolved ERP dept (HR→ERP mapped or fixed) —
+  // see resolveAdvanceErpDept in advance-erp-context.ts.
 
   return {
     journalBatchName,
@@ -60,4 +68,30 @@ export function buildAdvanceJournalPayload(
       },
     ],
   };
+}
+
+/**
+ * Combine several advances into ONE Gen. Journal payload for a single BC post —
+ * all lines share one group (G1), so BC assigns ONE document No. Series for the
+ * whole batch (same "1 payload = 1 number" model as AP-1). Entries must belong
+ * to one Company and share one Journal Batch.
+ */
+export function buildAdvanceBatchPayload(
+  entries: { req: AdvanceRequest; advance: AdvanceDetail; config: BrandErpAccountConfig; departmentCode: string }[],
+): PpapJournalPayload {
+  if (entries.length === 0) throw new Error("ไม่มีรายการสำหรับส่ง");
+
+  const batchNames = new Set(entries.map((e) => e.config.journalBatchName?.trim() || ""));
+  if (batchNames.size > 1) {
+    throw new Error("Journal Batch ของแบรนด์ในบริษัทนี้ไม่ตรงกัน — ตั้งให้เหมือนกันก่อนส่งรวม");
+  }
+  const journalBatchName = entries[0].config.journalBatchName;
+  if (!journalBatchName) throw new Error("ยังไม่ได้ตั้งค่า Journal Batch");
+
+  const lines: PpapJournalPayload["lines"] = [];
+  for (const e of entries) {
+    const single = buildAdvanceJournalPayload(e.req, e.advance, e.config, e.departmentCode);
+    for (const line of single.lines) lines.push({ ...line, groupNo: "G1" });
+  }
+  return { journalBatchName, lines };
 }

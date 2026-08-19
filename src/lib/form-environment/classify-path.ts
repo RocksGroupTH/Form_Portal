@@ -79,6 +79,11 @@ export const ROUTE_RULES: RouteRule[] = [
   { prefix: "/api/request/travel-booking", result: "AP-17" },
   { prefix: "/request/travel-booking", result: "AP-17" },
 
+  // AP-2 settings — like AP-1's, these carry a config-row id (tier/approver id),
+  // not an AccRequest id, so they must NOT be request-id routed. Read Production;
+  // the service layer dual-writes to both databases.
+  { prefix: "/api/request/advance/settings", result: null },
+
   // AP-2 proper (เบิกเงินทดรองจ่าย / Advance). Its own top-level prefix, so the
   // whole subtree — form, API, and the erp-prep queue that posts to BC — resolves
   // to a single form. No /erp-prep rule of its own is needed: it sits under the

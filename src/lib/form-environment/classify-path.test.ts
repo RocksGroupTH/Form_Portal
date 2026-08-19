@@ -70,6 +70,9 @@ test("settings read production; dual-write is handled in the service layer", () 
   assert.equal(classifyPath("/api/request/accounting/settings/vehicles"), null);
   assert.equal(classifyPath("/api/request/accounting/settings/approvers"), null);
   assert.equal(classifyPath("/api/request/travel-booking/settings/reason"), "AP-17");
+  // AP-2 settings carry a config-row id, not an AccRequest id — Production + dual-write.
+  assert.equal(classifyPath("/api/request/advance/settings/tiers"), null);
+  assert.equal(classifyPath("/api/request/advance/settings/erp-interface"), null);
 });
 
 test("Form Builder and everything else is production", () => {
