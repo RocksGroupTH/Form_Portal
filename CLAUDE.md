@@ -11,11 +11,14 @@ cp .env.example .env.local   # Fill in credentials
 npm run dev                   # http://localhost:3081
 ```
 
+`README.md` carries the same quick start plus the script table and the repo
+layout; it is the file to hand someone who has never seen this app.
+
 `npm test` **discovers** its own files: `scripts/run-tests.ts` walks `src/` for
 `*.test.ts` and hands them to `tsx --test`. `package.json` used to list every
 file by hand, so adding a test and forgetting to list it produced a green run
 that had never executed it. Pass paths to run a subset:
-`npm test -- src/lib/storage.test.ts`.
+`npm test -- src/lib/storage.test.ts`. `npm run typecheck` is `tsc --noEmit`.
 
 Two things about this build that look like faults and are not:
 
@@ -277,7 +280,22 @@ Accounting requests can be pushed into Dynamics 365 Business Central. Configurat
 
 ## Project Structure
 
+`README.md` is the front door — what the app is, quick start, scripts, layout.
+This file is the developer guide it points at. `docs/README.md` indexes the
+specs, plans and archived reviews, and explains that they are dated history
+rather than current state.
+
 ```
+README.md                             # Entry point — start here, then this file
+CLAUDE.md                             # This guide
+docs/
+├── README.md                         # Index + how to read specs/plans as history
+├── UI-GUIDE.md                       # The Sky design system, portable to other apps
+├── superpowers/specs/                # Design specs, written before the work
+├── superpowers/plans/                # Implementation plans
+└── reviews/                          # Completed reviews, kept as remediation record
+migrations/                           # Numbered SQL — each names its target DB in its header
+scripts/                              # apply-sql, run-tests, seed, and checks/ verifiers
 src/
 ├── app/
 │   ├── (auth)/login, unauthorized
@@ -290,13 +308,19 @@ src/
 │   │   ├── auth/                     # NextAuth
 │   │   ├── request/accounting/       # AP-1, AP-17, ERP prep API routes
 │   │   ├── settings/                 # Connections, BC, brand-config, ORS, Google Maps, users
-│   │   └── users/                    # AD user search
+│   │   ├── form-environment/         # Per-form availability for Home
+│   │   ├── uat-mode/                 # The only writer of the UAT-mode cookie
+│   │   ├── health/                   # Liveness (+ /db, detail for System Admin only)
+│   │   ├── me/, users/               # Own profile; AD user search
+│   │   └── ors/, maps/, weather/     # Routing, Google Maps, Home weather strip
 │   ├── loading.tsx                   # Global loading screen
 │   └── layout.tsx                    # Root layout — theme no-flash script, providers
 ├── features/
 │   ├── accounting/                   # AP-1 form, approvals, report, settings UI
 │   ├── travel-booking/               # AP-17 form, admin queue, report, settings UI
-│   └── home/                         # Home catalogue
+│   ├── home/                         # Home catalogue
+│   ├── settings/                     # Settings panels
+│   └── new-item-inventory/           # WIP — see the note below the tree
 ├── components/
 │   ├── ui/                           # Button, Badge, Avatar, Dialog, DropdownMenu, SidePanel, FullScreenModal
 │   └── layout/                       # Navbar, RouteGuard, PageContainer
@@ -310,6 +334,9 @@ src/
 │   │   ├── stored-file.ts             # Backend-dispatching delete (local vs SharePoint)
 │   │   ├── request-errors.ts          # AccConflictError / AccForbiddenError -> 409 / 403
 │   │   └── travel-booking/            # + derive-flags.ts, id-card-access.ts
+│   ├── form-environment/             # Which database answers — resolver + classify-path
+│   ├── uat-tester/                   # UatTester membership + assertFormWritable guards
+│   ├── new-item-inventory/           # WIP — lookup + sequence, no UI yet
 │   ├── erp/                          # Business Central sync
 │   ├── hr/                           # Rocks_Portal_HR cross-DB lookups
 │   ├── graph.ts                      # Microsoft Graph API (searchADUsers, getADUserByEmail, getADUserPhoto, sendEmail)
@@ -319,6 +346,22 @@ src/
 │   └── hooks/
 ├── env.ts                            # Type-safe env validation
 ```
+
+Unit tests sit beside the code they cover as `*.test.ts`; `npm test` discovers
+them. `npm run typecheck` is `tsc --noEmit`.
+
+**`new-item-inventory` is a half-built feature, not dead code.** It has a live
+lookup route (`/api/request/new-item-inventory/lookup/[resource]`), a service and
+a sequence allocator under `src/lib/new-item-inventory/`, a `ROUTE_RULES` entry
+pinning it to Production (it reads Fast_Core, so no request id of its own), and
+test coverage in `classify-path.test.ts` / `request-id.test.ts` — but only
+`constants.ts` and `types.ts` in `src/features/`, and no page. Leave the route
+rule alone if you touch `classify-path.ts`.
+
+**`/api/map-preview` was deleted on 2026-08-19.** It was a Locations remnant —
+Locations was removed when this app was cloned — with zero callers anywhere in
+`src/`, and it proxied Google Static Maps on the server key and cached PNGs into
+`.cache/`. Recoverable from git history if the feature ever returns.
 
 ## Conventions
 
@@ -352,7 +395,7 @@ AZURE_AD_TENANT_ID=
 # Database
 MSSQL_HOST=
 MSSQL_PORT=1433
-MSSQL_DATABASE=
+MSSQL_DATABASE=Rocks_Codex                      # default catalogue only — see the note below
 MSSQL_USER=
 MSSQL_PASSWORD=
 MSSQL_ENCRYPT=true
@@ -392,6 +435,21 @@ ACC_MANAGER_DEV_BYPASS=
 # Client
 NEXT_PUBLIC_APP_URL=http://localhost:3081
 ```
+
+**`MSSQL_DATABASE` is inert.** `src/env.ts` is the only file in the repo that
+reads it, and it only asserts the string is non-empty — every pool in
+`src/lib/db/mssql.ts` opens an explicitly named database. It still has to name
+something the login can open, because it is the connection's default catalogue.
+`Rocks_Codex` is the value here and it is reachable (measured 2026-08-19).
+
+**Do not copy env values from the Rocks Fast sibling on the assumption they are
+proven.** `RocksFast/.env.local` is a months-old local snapshot, not a live
+config: until 2026-08-19 it still named **`Rocks_Codex_UAT`**, a database
+**dropped 2026-06-20** that now answers `Login failed for user 'saai'`. Because
+`MSSQL_DATABASE` is inert, nothing failed and no test caught it. The credentials
+themselves (`AUTH_SECRET`, the Azure AD trio, `MSSQL_HOST`/`USER`/`PASSWORD`,
+Google Maps) *are* shared and identical — it is the database names, the port and
+the app URL that must differ.
 
 ## Deployment
 

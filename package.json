@@ -9,6 +9,7 @@
     "start": "next start -p 3081",
     "apply-sql": "tsx scripts/apply-sql.ts",
     "test": "tsx scripts/run-tests.ts",
+    "typecheck": "tsc --noEmit",
     "check:alignment": "tsx scripts/checks/verify-master-alignment.ts"
   },
   "dependencies": {
