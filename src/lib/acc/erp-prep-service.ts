@@ -29,18 +29,24 @@ const PREP_DEPT_CTX_CACHE_PREFIX = "acc:prep-dept-ctx:";
  * `journalContextCacheKey` (erp-journal-context.ts) already follows this
  * rule; this is the same fix applied here.
  *
- * **The same argument now applies to the form, and the key does not carry
- * one — deliberately.** Since migration 097/098 the configuration this context
- * is built from resolves per form, but `loadPrepDeptContextUncached` resolves
- * it for the module constant `AP1_FORM_CODE` and nothing can ask it for another
- * form: this whole service is AP-1 only, pinned by `r.FormCode = @formCode` in
- * `listErpPrepRows`. One cached value per environment is therefore always AP-1's
- * and always correct. **The moment the form becomes a parameter, this key must
- * carry it** — otherwise AP-1's department map is served to another form's
- * queue, and the wrong ERP dimension is what a journal posts to.
+ * **The form is now in the key, because the form is now a parameter.** The
+ * previous version of this note said the key could omit it only for as long as
+ * nothing could ask for another form, and named the cost of getting that wrong:
+ * AP-1's department map served to another form's queue, and the wrong ERP
+ * dimension is what a journal posts to. `loadPrepDeptContext` takes a form code
+ * as of the ERP send-path work, because the approve and reject routes reach an
+ * `AccRequest` by id and are not AP-1-specific, so that condition no longer
+ * holds and the key carries `{formCode}` after the environment.
+ *
+ * Both arms are closed enums or module constants, never user input — a form
+ * code reaching here comes from `AccRequest.FormCode` or a feature constant —
+ * so the `:` separator cannot be forged into a colliding key.
  */
-function prepDeptCtxCacheKey(environment: FormEnvironmentValue): string {
-  return `${PREP_DEPT_CTX_CACHE_PREFIX}${environment}`;
+function prepDeptCtxCacheKey(
+  environment: FormEnvironmentValue,
+  formCode: string,
+): string {
+  return `${PREP_DEPT_CTX_CACHE_PREFIX}${environment}:${formCode}`;
 }
 
 /** Bust cached prep dept context after an ERP interface send or settings change. */
@@ -202,15 +208,18 @@ function toPrepRow(
 }
 
 /**
- * The configuration behind every ERP dimension this service resolves — read
- * for **AP-1**, because AP-1 is the only form this service is about.
+ * The configuration behind every ERP dimension this service resolves, read for
+ * `formCode`.
  *
- * The form code is not a new source of truth and must not become one. It is
- * the same `AP1_FORM_CODE` that `listErpPrepRows` pins on `r.FormCode`, so the
- * requests in the queue and the configuration that decides where they post
- * agree by construction. Reading configuration for one form and rows for
- * another is the failure this whole feature exists to prevent, and it would not
- * error — it would just post to the wrong dimension.
+ * The form code is not a new source of truth and must not become one. Every
+ * caller takes it from something that already knows the form: the ERP prep
+ * queue and its detail pass the same `AP1_FORM_CODE` that `listErpPrepRows`
+ * pins on `r.FormCode`, so the requests in the queue and the configuration that
+ * decides where they post agree by construction, and the approve and reject
+ * routes pass the loaded request's own `FormCode`. Reading configuration for
+ * one form and rows for another is the failure this whole feature exists to
+ * prevent, and it would not error — it would just post to the wrong dimension,
+ * or scope an approver against the wrong form's brand mapping.
  *
  * Two reads take it:
  *
@@ -225,21 +234,21 @@ function toPrepRow(
  *
  * Every row in both tables is a default today (migrations 097/098 backfilled
  * them), so this resolves exactly what it resolved before. It stops being a
- * no-op the first time somebody gives AP-1 a row of its own.
+ * no-op the first time somebody gives a form a row of its own.
  */
-async function loadPrepDeptContextUncached(): Promise<PrepDeptContext> {
-  const interfaceMaps = await listBrandErpInterfaceMaps(AP1_FORM_CODE);
+async function loadPrepDeptContextUncached(formCode: string): Promise<PrepDeptContext> {
+  const interfaceMaps = await listBrandErpInterfaceMaps(formCode);
   const interfaceByClaim = new Map(
     interfaceMaps.map((m) => [m.brandCode.toUpperCase(), m.interfaceBrandCode.toUpperCase()]),
   );
   const [deptMapsByTarget, erpNamesByTarget] = await Promise.all([
-    loadDepartmentErpMapsByTarget(interfaceByClaim, AP1_FORM_CODE),
+    loadDepartmentErpMapsByTarget(interfaceByClaim, formCode),
     loadErpDeptDisplayNamesByTargetBrand(),
   ]);
   return { deptMapsByTarget, erpNamesByTarget, interfaceByClaim };
 }
 
-/** **AP-1's** configuration — see `loadPrepDeptContextUncached`. */
+/** One form's configuration — see `loadPrepDeptContextUncached`. */
 export interface PrepDeptContext {
   deptMapsByTarget: Map<string, Map<string, string>>;
   erpNamesByTarget: Map<string, Map<string, string>>;
@@ -254,12 +263,25 @@ export function interfaceByClaimMapToRecord(m: Map<string, string>): Record<stri
   return out;
 }
 
-export async function loadPrepDeptContext(): Promise<PrepDeptContext> {
+/**
+ * `formCode` is required, and the two routes that are not AP-1-specific must
+ * pass the request's own.
+ *
+ * `interfaceByClaim` out of this context is not a lookup, it is an
+ * authorization input: `/api/request/accounting/requests/[id]/approve` and
+ * `.../reject` feed it to `canActOnClaimBrand` to decide whether this approver
+ * may act on this claim brand's books. Those routes reach an `AccRequest` by
+ * id, so the request need not be AP-1 — and resolving AP-1's interface map for
+ * an AP-17 request would authorize it against another form's brand scoping the
+ * moment a form-specific `AccBrandErpInterface` row exists. They already load
+ * the request, so `accReq.formCode` is free.
+ */
+export async function loadPrepDeptContext(formCode: string): Promise<PrepDeptContext> {
   const environment = await resolveFormEnvironment();
-  const cacheKey = prepDeptCtxCacheKey(environment);
+  const cacheKey = prepDeptCtxCacheKey(environment, formCode);
   const cached = getAccCached<PrepDeptContext>(cacheKey, PREP_DEPT_CTX_CACHE_TTL_MS);
   if (cached) return cached;
-  const ctx = await loadPrepDeptContextUncached();
+  const ctx = await loadPrepDeptContextUncached(formCode);
   putAccCached(cacheKey, ctx);
   return ctx;
 }
@@ -311,7 +333,7 @@ export async function listErpPrepRows(
 
   const deptCtxPromise = options?.deptCtx
     ? Promise.resolve(options.deptCtx)
-    : loadPrepDeptContext();
+    : loadPrepDeptContext(AP1_FORM_CODE);
 
   const [queryRes, deptCtx] = await Promise.all([
     req.query(`
@@ -375,7 +397,7 @@ function buildLineItems(items: TravelExpenseItem[]): ErpPrepLineItem[] {
 /** Full prep detail for the accounting preview panel. */
 export async function getErpPrepDetail(id: number): Promise<ErpPrepDetail | null> {
   const [deptCtx, accReq] = await Promise.all([
-    loadPrepDeptContext(),
+    loadPrepDeptContext(AP1_FORM_CODE),
     getRequest(id),
   ]);
   if (!accReq || accReq.status !== "Approved") return null;

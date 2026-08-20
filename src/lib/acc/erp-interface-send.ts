@@ -6,6 +6,7 @@ import {
   collectGroupsRequestIds,
 } from "@/lib/acc/erp-ppap-payload";
 import { listErpPrepRows, invalidatePrepDeptContextCache } from "@/lib/acc/erp-prep-service";
+import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import { buildErpJournalSections } from "@/lib/acc/erp-journal-builder";
 import { resolveErpTargetProfile } from "@/lib/acc/erp-target-profile";
 import {
@@ -303,7 +304,12 @@ export async function sendErpInterfaceBatch(
 ): Promise<SendErpInterfaceResult> {
   const target = input.interfaceTarget.trim().toUpperCase();
 
-  const profile = await resolveErpTargetProfile(target);
+  // AP-1, taken from the same constant `listErpPrepRows` pins on `r.FormCode`
+  // below — not a second source of truth. The batch this send posts is AP-1's
+  // by construction, so the BC profile and the journal context it posts through
+  // must resolve for AP-1 too. Reading configuration for one form and rows for
+  // another would not error; it would post to the wrong company or dimension.
+  const profile = await resolveErpTargetProfile(target, AP1_FORM_CODE);
   if (!profile?.profileComplete) {
     throw new Error(`การตั้งค่า BC สำหรับ ${target} ยังไม่ครบ — ตรวจสอบที่ Settings → Interface ERP`);
   }
@@ -311,7 +317,7 @@ export async function sendErpInterfaceBatch(
     throw new Error(`ไม่พบการเชื่อมต่อ BC สำหรับ ${target}`);
   }
 
-  const ctx = await loadErpJournalBuildContext();
+  const ctx = await loadErpJournalBuildContext(AP1_FORM_CODE);
   const rows = await listErpPrepRows();
   const queueRows = selectErpSendBatchRows(rows, ctx.interfaceByClaim, target);
 

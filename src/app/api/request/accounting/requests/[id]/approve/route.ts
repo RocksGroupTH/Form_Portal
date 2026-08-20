@@ -77,9 +77,18 @@ export async function POST(
     // could approve and reject PCTH's claims — the ERP-prep list filtered rows
     // by interface brand but these workflow actions never did, and approving is
     // what puts a document in the send queue in the first place.
+    //
+    // Scoped to *this request's* form, not AP-1. This route reaches an
+    // `AccRequest` by id and every Accounting form writes to that table, so the
+    // record here need not be AP-1's. The interface map it resolves is an
+    // authorization input — `canActOnClaimBrand` reads it to decide whose books
+    // these are — so resolving AP-1's map for an AP-17 request would authorize
+    // the approval against another form's brand scoping the moment a
+    // form-specific `AccBrandErpInterface` row exists. Identical today, because
+    // every row in that table is still a default.
     const [access, deptCtx] = await Promise.all([
       resolveApproverInterfaceAccess(actor.email, session.user.role),
-      loadPrepDeptContext(),
+      loadPrepDeptContext(accReq.formCode),
     ]);
     if (!canActOnClaimBrand(access, interfaceByClaimMapToRecord(deptCtx.interfaceByClaim), accReq.brandCode)) {
       return NextResponse.json({ ok: false, error: INTERFACE_SCOPE_ERROR }, { status: 403 });
