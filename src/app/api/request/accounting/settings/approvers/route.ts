@@ -8,6 +8,7 @@ import {
 } from "@/lib/acc/settings-service";
 import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
 import { isErpInterfaceBrandCode } from "@/lib/acc/erp-interface-brands";
+import { setApproverSettingsTabs } from "@/lib/acc/approver-settings-tabs";
 
 /**
  * GET /api/request/accounting/settings/approvers
@@ -30,8 +31,12 @@ export async function GET() {
 /**
  * POST /api/request/accounting/settings/approvers
  * Upserts an approver record.
- * Body: { id?, staffId?, email, displayName?, isActive?, interfaceBrandCodes? }
+ * Body: { id?, staffId?, email, displayName?, isActive?, interfaceBrandCodes?,
+ *         settingsTabs? }
  * interfaceBrandCodes: null | omitted = all groups; string[] = explicit subset
+ * settingsTabs: omitted = leave the grants alone; string[] = the granted set,
+ *   so [] revokes everything. Unknown keys — `approvers` above all — are
+ *   dropped by setApproverSettingsTabs, never stored.
  * Requires IT Admin or System Admin.
  */
 export async function POST(req: NextRequest) {
@@ -70,6 +75,19 @@ export async function POST(req: NextRequest) {
             .filter((c) => isErpInterfaceBrandCode(c));
           await setApproverInterfaceBrands(approverId, codes.length > 0 ? codes : []);
         }
+      }
+    }
+
+    if (Array.isArray(body.settingsTabs)) {
+      const approverId =
+        typeof body.id === "number"
+          ? body.id
+          : await getApproverIdByEmail(String(body.email ?? ""));
+      if (approverId) {
+        await setApproverSettingsTabs(
+          approverId,
+          (body.settingsTabs as unknown[]).map((k) => String(k)),
+        );
       }
     }
 

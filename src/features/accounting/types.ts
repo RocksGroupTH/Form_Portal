@@ -121,6 +121,11 @@ export interface AccApproverRow {
   photoUrl: string | null;
   /** null = all Interface ERP groups; string[] = explicit subset */
   interfaceBrandCodes: string[] | null;
+  /**
+   * Granted AP-1 settings tabs. The list IS the granted set — [] means none,
+   * never all. Only keys in `GRANTABLE_SETTINGS_TABS` ever appear here.
+   */
+  settingsTabs: string[];
 }
 export interface AccSameDayBrandRow {
   id: number;
