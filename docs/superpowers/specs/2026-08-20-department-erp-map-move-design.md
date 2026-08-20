@@ -142,8 +142,11 @@ design.** It destroys the only copy of the data. It must refuse to run unless
 `[Rocks_Portal_Form].[dbo].[DepartmentErpMap]` exists **as a table** and holds
 the same number of rows as the table about to be dropped — checked inside the
 same transaction as the drop, so a failed check leaves `Fast_Core` untouched.
-Both migrations name their target database in their header, and 099 must refuse
-a database whose name does not begin `Rocks_Portal_Form`.
+Both migrations name their target database in their header. **099 must refuse
+`%_UAT` first and only then test the name**, in that order, exactly as migration
+066 does — a lone "name begins `Rocks_Portal_Form`" test admits
+`Rocks_Portal_Form_UAT`, which is the one database this table must never be
+created in, since a second copy is precisely what §3 exists to prevent.
 
 **The cutover is deploy-order-independent.** Old code reaches the table through
 `getCorePool()` and a two-part name, which the synonym answers; new code reaches
