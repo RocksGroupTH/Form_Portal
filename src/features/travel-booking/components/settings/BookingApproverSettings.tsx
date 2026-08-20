@@ -94,7 +94,12 @@ function ConfirmModal({
  * the history of who could see what stays readable.
  */
 export function BookingApproverSettings() {
-  const { data, mutate, isLoading } = useSWR<{
+  const {
+    data,
+    error: fetchError,
+    mutate,
+    isLoading,
+  } = useSWR<{
     ok: boolean;
     data: BookingApproverRow[];
     error?: string;
@@ -110,7 +115,19 @@ export function BookingApproverSettings() {
   const [busyStaffId, setBusyStaffId] = useState<number | null>(null);
 
   const rows = data?.ok ? data.data ?? [] : [];
-  const loadError = data && !data.ok ? data.error ?? "โหลดข้อมูลไม่สำเร็จ" : null;
+  // A rejected fetch has to reach `loadError` too, not just an `ok: false` body.
+  // Without it SWR leaves `data` undefined and `isLoading` false, `rows` is []
+  // and the standing notice below announces "ยังไม่มีผู้มีสิทธิ์เข้าถึง — คิวจอง
+  // และรายงานจะไม่แสดงกับใครเลย" on the strength of knowing nothing. An empty
+  // roster and an unreadable one look identical from here and mean opposite
+  // things, and once the gate is wired that banner is an alarm people act on.
+  const loadError = fetchError
+    ? fetchError instanceof Error
+      ? fetchError.message
+      : "โหลดข้อมูลไม่สำเร็จ"
+    : data && !data.ok
+      ? data.error ?? "โหลดข้อมูลไม่สำเร็จ"
+      : null;
   const activeCount = rows.filter((r) => r.isActive).length;
 
   const call = async (

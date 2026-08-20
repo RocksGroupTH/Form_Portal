@@ -81,7 +81,7 @@ export async function setBookingApproverActive(
   updatedBy?: number | null,
 ): Promise<void> {
   await writeBothPools(async (tx) => {
-    await tx
+    const r = await tx
       .request()
       .input("staffId", sql.Int, staffId)
       .input("active", sql.Bit, isActive)
@@ -91,5 +91,13 @@ export async function setBookingApproverActive(
         SET IsActive = @active, UpdatedBy = @by, UpdatedAt = SYSDATETIME()
         WHERE StaffId = @staffId
       `);
+    // Check the row count rather than reporting success on a no-op. A PATCH for
+    // a StaffId that is not on the roster would otherwise answer ok, and the
+    // caller would believe access had been revoked when nothing was written.
+    // Throwing inside writeBothPools rolls both databases back, which is also
+    // what should happen if the two ever disagree about who is on the list.
+    if (r.rowsAffected[0] !== 1) {
+      throw new Error(`ไม่พบผู้มีสิทธิ์เข้าถึงรหัสพนักงาน ${staffId}`);
+    }
   });
 }
