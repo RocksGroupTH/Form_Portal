@@ -3,24 +3,36 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
-import { Settings, Compass, Hotel, Car, Plane } from "lucide-react";
+import { Settings, Compass, Hotel, Car, Plane, ShieldCheck } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { backTo } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { TravelOptionSettings, type TravelOptionKind } from "@/features/travel-booking/components/settings/TravelOptionSettings";
+import { BookingApproverSettings } from "@/features/travel-booking/components/settings/BookingApproverSettings";
 
-type TabKey = TravelOptionKind;
+/**
+ * Four of the five tabs are option tables driven by `TravelOptionSettings`.
+ * The fifth, `access`, is AP-17's own approver roster and renders its own
+ * panel — hence the union rather than a bare `TravelOptionKind`.
+ *
+ * Every tab sits behind the page's single IT Admin / System Admin guard below.
+ * AP-17 has no per-tab grants the way AP-1 does; that mirrors ACC Portal and is
+ * deliberate, and it matters most for this tab, which is where access is handed
+ * out in the first place.
+ */
+type TabKey = TravelOptionKind | "access";
 
 const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: "reasons", label: "เหตุผลการเดินทาง", icon: <Compass size={15} /> },
   { key: "accommodations", label: "ที่พัก", icon: <Hotel size={15} /> },
   { key: "vehicles", label: "การเดินทาง", icon: <Plane size={15} /> },
   { key: "rent-vehicles", label: "เช่ายานพาหนะ", icon: <Car size={15} /> },
+  { key: "access", label: "สิทธิ์เข้าถึง", icon: <ShieldCheck size={15} /> },
 ];
 
 const TAB_PANELS: Record<
-  TabKey,
+  TravelOptionKind,
   { label: string; addLabel: string; namePlaceholder: string; emptyIcon: string; emptyLabel: string }
 > = {
   reasons: {
@@ -97,14 +109,14 @@ export default function TravelBookingSettingsPage() {
     );
   }
 
-  const panel = TAB_PANELS[activeTab];
+  const panel = activeTab === "access" ? null : TAB_PANELS[activeTab];
 
   return (
     <PageContainer className="acc-theme py-6 px-3 sm:px-0">
       <PageHeaderBar
         icon={Settings}
         title="ตั้งค่าแบบฟอร์มขอเดินทาง (AP-17)"
-        subtitle="จัดการเหตุผลการเดินทาง ที่พัก ยานพาหนะ และรายการเช่ายานพาหนะ"
+        subtitle="จัดการเหตุผลการเดินทาง ที่พัก ยานพาหนะ รายการเช่ายานพาหนะ และสิทธิ์เข้าถึง"
         backHref={backTo("/request/accounting/travel-booking", searchParams.get("from"))}
       />
 
@@ -138,15 +150,19 @@ export default function TravelBookingSettingsPage() {
         </div>
 
         <div className="p-5">
-          <TravelOptionSettings
-            key={activeTab}
-            kind={activeTab}
-            label={panel.label}
-            addLabel={panel.addLabel}
-            namePlaceholder={panel.namePlaceholder}
-            emptyIcon={panel.emptyIcon}
-            emptyLabel={panel.emptyLabel}
-          />
+          {activeTab === "access" || panel === null ? (
+            <BookingApproverSettings />
+          ) : (
+            <TravelOptionSettings
+              key={activeTab}
+              kind={activeTab}
+              label={panel.label}
+              addLabel={panel.addLabel}
+              namePlaceholder={panel.namePlaceholder}
+              emptyIcon={panel.emptyIcon}
+              emptyLabel={panel.emptyLabel}
+            />
+          )}
         </div>
       </div>
     </PageContainer>

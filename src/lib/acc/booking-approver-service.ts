@@ -66,19 +66,29 @@ export async function upsertBookingApprover(a: {
   });
 }
 
-/** Soft delete / restore. Rows are never removed — history stays readable. */
+/**
+ * Soft delete / restore. Rows are never removed — history stays readable.
+ *
+ * `updatedBy` is stamped alongside `UpdatedAt`: turning access off is the one
+ * write on this table with a real audit question behind it, and recording
+ * *when* without *who* answers half of it. Optional only so a future
+ * non-interactive caller (a script, a reconciliation sweep) can honestly say it
+ * had no acting user rather than borrow one; every route call passes it.
+ */
 export async function setBookingApproverActive(
   staffId: number,
   isActive: boolean,
+  updatedBy?: number | null,
 ): Promise<void> {
   await writeBothPools(async (tx) => {
     await tx
       .request()
       .input("staffId", sql.Int, staffId)
       .input("active", sql.Bit, isActive)
+      .input("by", sql.Int, updatedBy ?? null)
       .query(`
         UPDATE [dbo].[AccBookingApprover]
-        SET IsActive = @active, UpdatedAt = SYSDATETIME()
+        SET IsActive = @active, UpdatedBy = @by, UpdatedAt = SYSDATETIME()
         WHERE StaffId = @staffId
       `);
   });
