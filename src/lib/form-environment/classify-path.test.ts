@@ -16,6 +16,32 @@ test("AP-17 own routes", () => {
   assert.equal(classifyPath("/request/travel-booking/5"), "AP-17");
 });
 
+test("AP-11 back-office pages under the accounting prefix win over AP-1", () => {
+  assert.equal(classifyPath("/request/accounting/reward"), "AP-11");
+  assert.equal(classifyPath("/request/accounting/reward/queue"), "AP-11");
+  // The two hyphenated siblings are separate rules, not children of /reward.
+  // Without their own entries they would still match /request/accounting and
+  // route the Assist AP report and settings to AP-1's database.
+  assert.equal(classifyPath("/request/accounting/reward-report"), "AP-11");
+  assert.equal(classifyPath("/request/accounting/reward-settings"), "AP-11");
+});
+
+test("AP-11 own routes", () => {
+  assert.equal(classifyPath("/api/request/reward/requests/5"), "AP-11");
+  assert.equal(classifyPath("/api/request/reward/admin/queue"), "AP-11");
+  assert.equal(classifyPath("/api/request/reward/options/rewards"), "AP-11");
+  assert.equal(classifyPath("/request/reward"), "AP-11");
+  assert.equal(classifyPath("/request/reward/5"), "AP-11");
+});
+
+test("AP-11 settings follow the form, unlike AP-1's", () => {
+  // AP-1's /settings prefix resolves to null because its masters are
+  // dual-written. AP-11's reward catalogue is per-database — Qty is inventory,
+  // not configuration — so a tester in UAT mode must reach the UAT copy.
+  assert.equal(classifyPath("/api/request/reward/settings/rewards"), "AP-11");
+  assert.equal(classifyPath("/api/request/reward/settings/officers"), "AP-11");
+});
+
 test("AP-1 routes", () => {
   assert.equal(classifyPath("/api/request/accounting/requests/5"), "AP-1");
   assert.equal(classifyPath("/api/request/accounting/requests/drafts"), "AP-1");

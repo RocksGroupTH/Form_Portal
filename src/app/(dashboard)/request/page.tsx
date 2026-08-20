@@ -15,6 +15,7 @@ import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
 import { withRequestReturn } from "@/lib/request-hub-nav";
 import {
   ClipboardList,
+  Gift,
   Luggage,
   Package,
   Route,
@@ -26,6 +27,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ size?: number; style?: Reac
   ClipboardList,
   Route,
   Luggage,
+  Gift,
 };
 
 function requestCardHref(item: (typeof REQUEST_CARDS)[number]): string {

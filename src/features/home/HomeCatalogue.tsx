@@ -13,7 +13,7 @@ import {
 import { useHomeData } from "@/features/home/useHomeData";
 import { useFormEnvironments } from "@/lib/hooks/useFormEnvironments";
 import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
-import { Search, Route, Luggage, ClipboardCheck, FilePen, ArrowRight } from "lucide-react";
+import { Search, Route, Luggage, Gift, ArrowRight } from "lucide-react";
 
 const ACCOUNTING_FORMS = [
   {
@@ -30,6 +30,13 @@ const ACCOUNTING_FORMS = [
     href: "/request/travel-booking",
     Icon: Luggage,
   },
+  {
+    code: "AP-11",
+    name: "แลกของรางวัล",
+    desc: "สำหรับทีม OP · ตัดรอบทุกศุกร์ 16.00 น.",
+    href: "/request/reward",
+    Icon: Gift,
+  },
 ];
 
 function greeting(): string {
@@ -37,16 +44,6 @@ function greeting(): string {
   if (h < 12) return "สวัสดีตอนเช้า";
   if (h < 17) return "สวัสดีตอนบ่าย";
   return "สวัสดีตอนเย็น";
-}
-
-function timeAgo(iso: string | null): string {
-  if (!iso) return "";
-  const diffMin = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
-  if (diffMin < 1) return "เมื่อสักครู่";
-  if (diffMin < 60) return `${diffMin} นาทีที่แล้ว`;
-  const h = Math.floor(diffMin / 60);
-  if (h < 24) return `${h} ชม.ที่แล้ว`;
-  return `${Math.floor(h / 24)} วันที่แล้ว`;
 }
 
 function StatCard({ value, label, tone }: { value: number; label: string; tone: string }) {
@@ -81,58 +78,6 @@ function LoadError({ children }: { children: React.ReactNode }) {
     <p className="text-[12px] mt-0.5" style={{ color: "var(--color-danger)" }}>
       {children}
     </p>
-  );
-}
-
-/** One "waiting on you" row. Each approval system gets its own row and its own queue link. */
-function PendingLink({ href, Icon, title, subtitle, count }: {
-  href: string;
-  Icon: React.ComponentType<{ size?: number }>;
-  title: string;
-  subtitle: string;
-  count: number;
-}) {
-  return (
-    <Link
-      href={href}
-      className="flex items-center gap-3 px-3.5 py-3 no-underline"
-      style={{
-        background: "var(--bg-card)",
-        borderRadius: "var(--radius-card)",
-        boxShadow: "var(--shadow-card)",
-        border: "1px solid var(--border-card)",
-      }}
-    >
-      <span
-        className="flex items-center justify-center shrink-0"
-        style={{
-          width: 30, height: 30,
-          borderRadius: 10,
-          background: "var(--status-ok-bg)",
-          color: "var(--status-ok-text)",
-        }}
-      >
-        <Icon size={15} />
-      </span>
-      <span className="flex-1 min-w-0">
-        <span className="block text-[12.5px] font-bold" style={{ color: "var(--text-primary)" }}>
-          {title}
-        </span>
-        <span className="block text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-          {subtitle}
-        </span>
-      </span>
-      <span
-        className="text-[10px] font-bold px-2.5 py-1 shrink-0"
-        style={{
-          borderRadius: 999,
-          background: "var(--status-pending-bg)",
-          color: "var(--status-pending-text)",
-        }}
-      >
-        {count} รายการ
-      </span>
-    </Link>
   );
 }
 
@@ -285,7 +230,6 @@ export function HomeCatalogue() {
     pendingCount,
     monthCount,
     resumableCount,
-    resumable,
     summaryError,
     isLoading,
   } = useHomeData();
@@ -341,8 +285,8 @@ export function HomeCatalogue() {
           <LoadError>โหลดข้อมูลสรุปไม่สำเร็จ — ลองรีเฟรชหน้าอีกครั้ง</LoadError>
         ) : isLoading ? null : (
           // "คำขอที่ยังทำไม่เสร็จ" covers both statuses the drafts endpoints return
-          // (Draft and Returned) — AP-17 cannot tell them apart, so the wording must
-          // be true for either. See ResumableGroup.returnedCount.
+          // (Draft and Returned) — AP-17 cannot tell them apart, so the wording
+          // must be true for either.
           <p className="text-[12px] mt-0.5" style={{ color: "var(--text-muted)" }}>
             มีงานรออนุมัติ {pendingCount} รายการ และคำขอที่ยังทำไม่เสร็จ {resumableCount} รายการ
           </p>
@@ -384,80 +328,12 @@ export function HomeCatalogue() {
             <StatCard value={resumableCount} label="ร่าง / ตีกลับ" tone="var(--status-draft-text)" />
           </div>
 
-          {/* Continue where you left off */}
-          {(resumable.length > 0 || pendingCount > 0) && (
-            <>
-              <SectionLabel title="ทำต่อจากที่ค้างไว้" />
-              <div className="flex flex-col gap-2">
-                {resumable.map((d) => (
-                  <Link
-                    key={d.key}
-                    href={hrefWithBrand(d.href)}
-                    className="flex items-center gap-3 px-3.5 py-3 no-underline"
-                    style={{
-                      background: "var(--bg-card)",
-                      borderRadius: "var(--radius-card)",
-                      boxShadow: "var(--shadow-card)",
-                      border: "1px solid var(--border-card)",
-                    }}
-                  >
-                    <span
-                      className="flex items-center justify-center shrink-0"
-                      style={{
-                        width: 30, height: 30,
-                        borderRadius: 10,
-                        background: "var(--status-draft-bg)",
-                        color: "var(--status-draft-text)",
-                      }}
-                    >
-                      <FilePen size={15} />
-                    </span>
-                    <span className="flex-1 min-w-0">
-                      <span className="block text-[12.5px] font-bold" style={{ color: "var(--text-primary)" }}>
-                        {d.formCode} · {d.label}
-                      </span>
-                      <span className="block text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-                        {/* AP-1 knows the split; AP-17 does not, so it says the neutral
-                            thing rather than calling returned requests drafts. */}
-                        {d.returnedCount === null
-                          ? `${d.count} รายการ`
-                          : d.returnedCount === 0
-                            ? `${d.count} ฉบับร่าง`
-                            : d.returnedCount === d.count
-                              ? `${d.count} รายการที่ถูกตีกลับ`
-                              : `${d.count - d.returnedCount} ฉบับร่าง · ${d.returnedCount} ตีกลับ`}
-                        {" · แก้ไขล่าสุด "}
-                        {timeAgo(d.updatedAt)}
-                      </span>
-                    </span>
-                    {/* Drafts are read from their own form's database, so the
-                        form's flag is the row's environment. */}
-                    <FormEnvironmentChip formCode={d.formCode} className="self-center" />
-                    <span
-                      className="text-[10px] font-bold px-2.5 py-1 shrink-0"
-                      style={{
-                        borderRadius: 999,
-                        background: d.returnedCount ? "var(--status-bad-bg)" : "var(--status-draft-bg)",
-                        color: d.returnedCount ? "var(--status-bad-text)" : "var(--status-draft-text)",
-                      }}
-                    >
-                      {d.returnedCount ? "ตีกลับ" : d.returnedCount === null ? "ทำต่อ" : "ฉบับร่าง"}
-                    </span>
-                  </Link>
-                ))}
-
-                {pendingCount > 0 && (
-                  <PendingLink
-                    href={hrefWithBrand("/my-work")}
-                    Icon={ClipboardCheck}
-                    title="รออนุมัติจากคุณ"
-                    subtitle="ไปที่ My Work เพื่อตรวจและอนุมัติ"
-                    count={pendingCount}
-                  />
-                )}
-              </div>
-            </>
-          )}
+          {/* Neither "ทำต่อจากที่ค้างไว้" nor "งานที่รอคุณ" lives here any more.
+              Home is the greeting, the numbers and the form catalogue; the two
+              lists it used to carry are each one tap away and owned by the page
+              that can keep them right — drafts by each form's own picker,
+              approvals by My Work. The stat strip above still links nowhere and
+              still counts both. */}
         </>
       )}
 

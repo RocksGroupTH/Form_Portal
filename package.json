@@ -10,7 +10,8 @@
     "apply-sql": "tsx scripts/apply-sql.ts",
     "test": "tsx scripts/run-tests.ts",
     "typecheck": "tsc --noEmit",
-    "check:alignment": "tsx scripts/checks/verify-master-alignment.ts"
+    "check:alignment": "tsx scripts/checks/verify-master-alignment.ts",
+    "check:reward-stock": "tsx scripts/checks/verify-reward-stock.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

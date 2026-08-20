@@ -94,6 +94,28 @@ export const REQUEST_CARDS: NavItem[] = [
     devHostOnly: true,
     manage: true,
   },
+  {
+    id: "reward-form",
+    label: "แลกของรางวัล",
+    icon: "Gift",
+    desc: "เบิกของรางวัลสำหรับทีม OP · ตัดรอบทุกศุกร์ 16.00 น.",
+    href: "/request/reward",
+    group: "Accounting",
+    groupTh: "บัญชี",
+    badge: "AP-11",
+  },
+  {
+    id: "reward",
+    label: "แลกของรางวัล (ออฟฟิต)",
+    icon: "Gift",
+    desc: "ฟอร์ม AP-11 · คิวจัดของ · รายงาน · ตั้งค่าคลังของรางวัล",
+    href: "/request/accounting/reward",
+    group: "Settings",
+    groupTh: "ตั้งค่า",
+    badge: "AP-11",
+    devHostOnly: true,
+    manage: true,
+  },
 ];
 
 /**

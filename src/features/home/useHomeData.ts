@@ -22,26 +22,6 @@ async function fetcher(url: string) {
   return json;
 }
 
-export interface ResumableGroup {
-  /** Stable key for React lists. */
-  key: string;
-  formCode: "AP-1" | "AP-17";
-  label: string;
-  href: string;
-  /** Rows the user can still edit — `Draft` **and** `Returned` (see below). */
-  count: number;
-  /**
-   * How many of `count` are `Returned` (sent back for revision) rather than
-   * never-submitted drafts, or `null` when the endpoint cannot tell them apart.
-   * Both drafts endpoints select `Status IN ('Draft','Returned')`, but only the
-   * AP-1 mapper carries `Status` through; the AP-17 mapper groups by `GroupKey`
-   * and drops it. `null` therefore means "unknown", not "zero".
-   */
-  returnedCount: number | null;
-  /** ISO string of the most recently touched row in this group. */
-  updatedAt: string | null;
-}
-
 interface Row {
   status?: string;
   submittedAt?: string | null;
@@ -58,6 +38,13 @@ interface Ap1Draft {
 interface Ap17Draft {
   groupKey: string;
   updatedAt: string;
+}
+
+/** AP-11 draft row — `listMyRewardDrafts` in src/lib/acc/reward/request-service.ts. */
+interface Ap11Draft {
+  id: number;
+  status?: string;
+  updatedAt: string | null;
 }
 
 function latest(items: Array<{ updatedAt: string }>): string | null {
@@ -85,6 +72,7 @@ export function useHomeData() {
   const work = useSWR<{ ok: boolean; data?: MyWorkRowInput[] }>("/api/request/accounting/work", fetcher);
   const ap1 = useSWR<{ ok: boolean; data?: Ap1Draft[] }>("/api/request/accounting/requests/drafts", fetcher);
   const ap17 = useSWR<{ ok: boolean; data?: Ap17Draft[] }>("/api/request/travel-booking/requests/drafts", fetcher);
+  const ap11 = useSWR<{ ok: boolean; data?: Ap11Draft[] }>("/api/request/reward/requests/drafts", fetcher);
   // Same viewer context /my-work uses to classify rows — see MyRequestsPanel.tsx:225-234.
   const employee = useSWR<{ ok: boolean; data?: { email?: string | null; employee?: { staffId?: number | null } | null } }>(
     "/api/me/employee",
@@ -97,31 +85,7 @@ export function useHomeData() {
 
   const ap1Rows = ap1.data?.data ?? [];
   const ap17Rows = ap17.data?.data ?? [];
-
-  const resumable: ResumableGroup[] = [];
-  if (ap1Rows.length > 0) {
-    resumable.push({
-      key: "ap1",
-      formCode: "AP-1",
-      label: "เบิกค่าเดินทาง",
-      href: "/request/travel-expense",
-      count: ap1Rows.length,
-      // Same distinction AP-1's own resume dialog makes (TravelDraftPickerDialog.tsx:146).
-      returnedCount: ap1Rows.filter((r) => r.status === "Returned").length,
-      updatedAt: latest(ap1Rows),
-    });
-  }
-  if (ap17Rows.length > 0) {
-    resumable.push({
-      key: "ap17",
-      formCode: "AP-17",
-      label: "จองที่พัก/ตั๋วโดยสาร",
-      href: "/request/travel-booking",
-      count: ap17Rows.length,
-      returnedCount: null,
-      updatedAt: latest(ap17Rows),
-    });
-  }
+  const ap11Rows = ap11.data?.data ?? [];
 
   // Same "pending" rule /my-work uses (src/features/accounting/components/MyRequestsPanel.tsx:253-257),
   // not raw row count — a viewer can have a role in a request without it still being pending on them.
@@ -137,20 +101,25 @@ export function useHomeData() {
   // are in here too: without them the pending rule misclassifies rows, so a
   // number built on a failed context would be just as wrong as a missing one.
   const summaryError =
-    mine.error || work.error || ap1.error || ap17.error || employee.error || access.error;
+    mine.error || work.error || ap1.error || ap17.error || ap11.error || employee.error || access.error;
 
   return {
     pendingCount: accPendingCount,
     monthCount: (mine.data?.data ?? []).filter((r) => isThisMonth(r.submittedAt)).length,
-    /** Editable rows — drafts **and** returned-for-revision. See `ResumableGroup.returnedCount`. */
-    resumableCount: ap1Rows.length + ap17Rows.length,
-    resumable,
+    /**
+     * Editable rows — drafts **and** returned-for-revision, across all three
+     * forms. AP-11 was missing from this sum while the "ทำต่อจากที่ค้างไว้"
+     * strip listed it separately; with that strip gone this stat is the only
+     * thing on Home that counts them, so it has to count all of them.
+     */
+    resumableCount: ap1Rows.length + ap17Rows.length + ap11Rows.length,
     summaryError: Boolean(summaryError),
     isLoading:
       mine.isLoading ||
       work.isLoading ||
       ap1.isLoading ||
       ap17.isLoading ||
+      ap11.isLoading ||
       employee.isLoading ||
       access.isLoading,
   };

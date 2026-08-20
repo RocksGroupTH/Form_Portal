@@ -14,6 +14,9 @@ import { RequestDetail } from "@/features/accounting/components/RequestDetail";
 import { TravelBookingDetail } from "@/features/travel-booking/components/TravelBookingDetail";
 import type { TravelBookingRequest } from "@/features/travel-booking/types";
 import { useFormEnvironments } from "@/lib/hooks/useFormEnvironments";
+import { AP11_FORM_CODE } from "@/features/reward/constants";
+import { safePush } from "@/lib/safe-router";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 /* ── Helpers ── */
@@ -129,6 +132,7 @@ function RequestRowList({
   showRequester: boolean;
   kind: "mine" | "work";
 }) {
+  const router = useRouter();
   const [rows, setRows] = useState<ReportRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [drawerId, setDrawerId] = useState<number | null>(null);
@@ -223,6 +227,28 @@ function RequestRowList({
     setTbDetail(null);
     return loadDrawer(drawerId, drawerFormCode === "AP-17");
   }, [drawerId, drawerFormCode, loadDrawer]);
+
+  /**
+   * Open one row.
+   *
+   * The drawer handles AP-1 and AP-17, whose detail shapes this component
+   * already carries. AP-11 has its own detail page with its own actions
+   * (approve, Ready, Received), so it navigates there rather than becoming a
+   * third variant threaded through the drawer's state and body — the panel is
+   * built around a binary split, and a third branch would touch every part of
+   * it for no gain over the page that already exists.
+   */
+  const openRow = useCallback(
+    (id: number, formCode: string | null) => {
+      if (formCode === AP11_FORM_CODE) {
+        safePush(router, `/request/reward/${id}`);
+        return;
+      }
+      setDrawerId(id);
+      setDrawerFormCode(formCode);
+    },
+    [router],
+  );
 
   const handleDrawerChanged = useCallback(() => {
     void loadRows();
@@ -476,7 +502,7 @@ function RequestRowList({
             <button
               key={row.id}
               type="button"
-              onClick={() => { setDrawerId(row.id); setDrawerFormCode(row.formCode ?? null); }}
+              onClick={() => openRow(row.id, row.formCode ?? null)}
               className="w-full text-left rounded-xl p-3 flex items-center gap-3 cursor-pointer transition-colors"
               style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}
             >

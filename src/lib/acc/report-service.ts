@@ -492,6 +492,24 @@ export async function listMyWorkRows(
                   WHERE ap.StaffId = @staffId AND ap.IsActive = 1
                 )
               )
+              -- AP-11's second step, the same shape as ACCOUNT above and for
+              -- the same reason: the REWARD approval row is inserted with a
+              -- null AssignedTo/AssignedEmail because any active officer may
+              -- action it, so it is reached through roster membership rather
+              -- than assignment. Matched on email as well as StaffId — an
+              -- officer added by address may have no HR StaffId on the row.
+              OR (
+                a.StepCode = 'REWARD'
+                AND a.Status = 'Pending'
+                AND EXISTS (
+                  SELECT 1 FROM [dbo].[AccRewardOfficer] ro
+                  WHERE ro.IsActive = 1
+                    AND (
+                      (@staffId IS NOT NULL AND ro.StaffId = @staffId)
+                      OR (@email <> '' AND LOWER(ro.Email) = LOWER(@email))
+                    )
+                )
+              )
             )
         )`,
           "r.SubmittedAt DESC, r.Id DESC",

@@ -560,12 +560,14 @@ html {
   color: var(--text-heading);
 }
 
-/* Settings → Form Environment switches — keyboard focus ring.
+/* Switch keyboard focus ring — Settings → Form Environment, and the shared
+   `Switch` in components/ui.
    An inline style cannot express :focus-visible, and the ring has to follow the
    theme, so the one rule that needs both lives here. Turning a form's
    Production switch off is consequential; a keyboard user must be able to see
-   which of the two switches in a row they are about to press. */
-.env-switch:focus-visible {
+   which of the two switches in a row they are about to press, and the same goes
+   for a row of them down a table. */
+.ui-switch:focus-visible {
   outline: none;
   box-shadow: var(--ring-action);
 }
@@ -596,6 +598,34 @@ html {
   display: none;
   width: 0;
   height: 0;
+}
+
+/* ...and opt back in, per element.
+   The rule above is right for the page as a whole, but a table wider than its
+   container needs a bar somebody can drag: with no horizontal wheel tilt and no
+   trackpad, the columns past the right edge are simply unreachable. Must stay
+   *after* the hiding rules — both selectors carry the same specificity, so
+   source order is what decides. */
+.acc-scroll-x {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-input) transparent;
+  -ms-overflow-style: auto;
+}
+.acc-scroll-x::-webkit-scrollbar {
+  display: block;
+  height: 10px;
+  width: 10px;
+}
+.acc-scroll-x::-webkit-scrollbar-track {
+  background: var(--bg-subtle);
+  border-radius: 999px;
+}
+.acc-scroll-x::-webkit-scrollbar-thumb {
+  background: var(--border-input);
+  border-radius: 999px;
+}
+.acc-scroll-x::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
 }
 
 /* Hide native number spinners inside accounting UI */

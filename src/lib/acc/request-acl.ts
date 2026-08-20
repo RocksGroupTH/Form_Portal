@@ -9,6 +9,8 @@
 
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { canAccessAccountArea } from "@/lib/acc/access";
+import { canAccessRewardArea } from "@/lib/acc/reward/access";
+import { AP11_FORM_CODE } from "@/features/reward/constants";
 import { resolveFormEnvironment } from "@/lib/form-environment";
 import { getActiveUatTesterFor } from "@/lib/uat-tester/service";
 import {
@@ -74,10 +76,25 @@ export async function buildAccAclViewer(input: {
   email: string | null;
   staffId: number | null;
   role: string | null;
+  /**
+   * The form the request belongs to, when it is known.
+   *
+   * Only AP-11 changes the answer. Its back-office step is actioned by
+   * `AccRewardOfficer`, a deliberately different roster from `AccApprover` —
+   * the people who hand out rewards are not the people who approve travel
+   * claims. Without this, every AP-1 approver would read as "account area" on a
+   * reward request and gain read access to all of them.
+   *
+   * Left undefined the check stays exactly as it was, so AP-1 and AP-17 are
+   * untouched.
+   */
+  formCode?: string | null;
 }): Promise<AccAclViewer> {
   const environment = await resolveFormEnvironment();
   const [isAccountArea, tester] = await Promise.all([
-    canAccessAccountArea(input.email, input.role),
+    input.formCode === AP11_FORM_CODE
+      ? canAccessRewardArea(input.email, input.role)
+      : canAccessAccountArea(input.email, input.role),
     environment === "UAT"
       ? getActiveUatTesterFor(input.email, input.staffId)
       : Promise.resolve(null),
@@ -128,6 +145,9 @@ export async function authorizeAccRequest(
     email,
     staffId: actor.staffId,
     role: session.user.role ?? null,
+    // The row's own FormCode, not the caller's hint: the roster that counts as
+    // "account area" is a property of the request being opened.
+    formCode: row.formCode,
   });
 
   const verdict = mode === "read" ? decideRequestRead(row, viewer) : decideRequestMutate(row, viewer);

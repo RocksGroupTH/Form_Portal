@@ -62,7 +62,7 @@ Who is asking comes from the proxy's `x-pathname` and `x-user-email` headers, **
 
 Since migration 066 that is a hard constraint, not a preference: `auth()` no longer reads Fast_Core, it reads `TeamMember` in the form database. Everything on the path that decides *which* form database answers must therefore come from a pool this resolver does not pick — `getFormSwitchMap()` and `getActiveUatTester()` from `getCorePool()`, identity from `getProductionFormPool()`. **`FormEnvironment` and `UatTester` must stay in Fast_Core**, and `@/lib/team-member/service` must never reach for `getFormPool()`.
 
-- **Availability and writability are different questions.** `pickEnvironment().available` asks "may this person reach the form", and an id makes it unconditionally true so records stay readable and approvable. `environmentWritable` asks "is that database still taking new work". Use `resolveCurrentFormAccess()` + `resolveCurrentFormWritable()` on a form's own route, and `resolveFormAccess(formCode, requestId?)` + `resolveFormWritable(...)` to ask about a form from somewhere else (Home, the manager card). **`assertFormWritable()` (`src/lib/uat-tester/guards.ts`) has exactly four call sites** — the two `saveDraft` functions and the two submits, one pair per form.
+- **Availability and writability are different questions.** `pickEnvironment().available` asks "may this person reach the form", and an id makes it unconditionally true so records stay readable and approvable. `environmentWritable` asks "is that database still taking new work". Use `resolveCurrentFormAccess()` + `resolveCurrentFormWritable()` on a form's own route, and `resolveFormAccess(formCode, requestId?)` + `resolveFormWritable(...)` to ask about a form from somewhere else (Home, the manager card). **`assertFormWritable()` (`src/lib/uat-tester/guards.ts`) has exactly six call sites** — the three `saveDraft` functions and the three submits, one pair per form (AP-1, AP-11, AP-17).
 - **The manager differs by environment.** UAT routes to the requester's `UatTester.ManagerStaffId`, re-verified at submit time (still an active tester, still active in HR — self is allowed); Production reads `Rocks_Portal_HR.Employee.ManagerStaffId`. **UAT refuses rather than falling back to HR** — a real manager must never find test data in their queue. Three resolvers, keyed on the *resolved environment* and never on the cookie: `resolveManagerInfo()` (the preview card, shared), and a separate `withUatManager` for each form's submit — `resolveRequesterForActor` in `src/lib/acc/employee-context.ts` (AP-1) and `resolveEmployeeForActor` in `src/lib/hr/employee-lookup.ts` (AP-17). `resolveManagerEmail()` is deliberately *not* overridden.
 - **Mail follows the resolved environment**, with one exception: a recipient who is an **active tester gets the mail at their real address** with a `[UAT] ` subject prefix. Everyone else is redirected to `UAT_MAIL_REDIRECT` (falling back to `GRAPH_MAIL_FROM`) with a banner naming the intended recipient. If neither is set, `applyUatRedirect` (`src/lib/acc/email-queue.ts`) throws and the row stays queued rather than mailing a real person. The sweep endpoint drains both databases (`processQueueBoth`); per-action drains are single-pool.
 - **Business Central follows the same resolution**: `resolveEffectiveErpEnvironment()` (`src/lib/acc/erp-environment.ts`) maps UAT → Sandbox, otherwise Production. No separate ERP toggle — the navbar chip and the global `AppSetting` switch were removed on 2026-08-17. Which BC company and connection Sandbox uses is set at Settings → ERP Interface Environment. **The send echoes and verifies both its environment and its batch**, answering 409 on either drift (`ENVIRONMENT_STALE_ERROR` in the route, `ErpQueueDriftError` from `src/lib/acc/erp-interface-send.ts`) so the client reloads instead of retrying something that cannot succeed.
@@ -74,7 +74,7 @@ Since migration 066 that is a hard constraint, not a preference: `auth()` no lon
 - **The running number floor is a function of the environment.** `UAT_SEQUENCE_FLOOR = 9000` in `src/lib/acc/sequence.ts`: UAT's first number of a year is `09001`, Production's `00001`. Applied only when a `(Prefix, Year)` row is first created, so it never rewinds. The two series stay disjoint only while Production issues ≤ 9000 numbers per prefix per year.
 - **Ids never collide**: migration 061 seeds UAT transactional identities at 900000 across 23 transactional tables, and **migration 064 adds a `CHECK (Id >= 900000)`** so a restore or an ad-hoc reseed cannot silently break the property the id rule depends on.
 - **Attachments** land under `{SHAREPOINT_ACC_FOLDER}/_UAT/{formCode}/...` — the `_UAT` segment sits between the base folder and the form code (`buildAccFolderPath`, `src/lib/acc/sharepoint-path.ts`).
-- **Every new route under `/api/request` needs a rule** in `ROUTE_RULES` (`classify-path.ts`, longest matching prefix → `AP-1 | AP-15 | AP-17 | "BOTH" | null`). Without one it silently falls through to Production. The coverage panel on the settings page lists any route no rule covers — `matchRule` is what tells "no rule at all" apart from "a rule that deliberately says Production".
+- **Every new route under `/api/request` needs a rule** in `ROUTE_RULES` (`classify-path.ts`, longest matching prefix → `AP-1 | AP-11 | AP-15 | AP-17 | "BOTH" | null`). Without one it silently falls through to Production. The coverage panel on the settings page lists any route no rule covers — `matchRule` is what tells "no rule at all" apart from "a rule that deliberately says Production".
 - **Shared configuration is dual-written**, not duplicated by hand: `src/lib/acc/dual-write.ts` runs each master-table mutation against both databases in a transaction, and `npm run check:alignment` asserts the 19 shared tables still match. Those tables are deliberately absent from 061/064 — dual-write inserts production's id into UAT explicitly, so an identity floor there would reject every write.
 - **Only two endpoints merge both databases** through `src/lib/acc/query-both.ts`: `/api/request/accounting/requests/mine` and `/api/request/accounting/work` — what a person owns or must act on. Sorting and paging happen after the merge, each row carries an `environment` tag, and `keepRowsInCurrentEnvironment` (`current-rows.ts`) then drops rows whose database is not where that form resolves for this viewer today. Nothing is deleted; flipping the switch back brings the rows straight back. **Reports do not merge** — a report is a statement about one set of books, so `/api/request/accounting/report` and its Excel export read one database only.
 - **Switching a form does not move its existing requests.** They stay in the database they were written to and stay readable; only new writes go elsewhere.
@@ -199,7 +199,7 @@ Top bar and mobile tabs: **Home** · **My Requests** · **My Work** · **Setting
 
 Only the middle two live in `NAV` (`src/lib/constants.ts`). Home and Settings are composed onto either side of it in `Navbar.tsx`'s `visibleNav` — Home as a literal, Settings behind `canAdmin` — so **adding an entry to `NAV` puts it between them**, not at the end.
 
-- **`Home`** (`/`) — a form catalogue: greeting and stat strip, search, "Continue where you left off" (resumable drafts and Returned requests), then the **Accounting** forms — AP-1 travel expense and AP-17 travel booking, filtered to the ones available to this viewer. It is a link surface only: it creates no API of its own beyond reading `/api/form-environment` for availability. `src/features/home/HomeCatalogue.tsx`.
+- **`Home`** (`/`) — a form catalogue: greeting and stat strip, search, "Continue where you left off" (resumable drafts and Returned requests), then the **Accounting** forms — AP-1 travel expense, AP-11 reward redemption and AP-17 travel booking, filtered to the ones available to this viewer. It is a link surface only: it creates no API of its own beyond reading `/api/form-environment` for availability. `src/features/home/HomeCatalogue.tsx`.
 - **`My Requests`** (`/my-request`) — the Accounting requests you submitted and their status (AP-1 and AP-17, merged by `src/lib/acc/query-both.ts`).
 - **`My Work`** (`/my-work`) — requests awaiting your approval or otherwise involving you.
 - **`Settings`** (`/settings`, IT Admin+) — hub of `SETTINGS_CARDS`: Maps & Routing, Database Connections, Business Central, Brand Configuration, **ERP Interface Environment**, **Form Environment** (`/settings/form-environment`), **UAT Users** (`/settings/uat-users`), **Users & Roles** (`/settings/users`) — the bolded four are `systemAdminOnly` — and Accounting Admin, which points at `/request?group=Settings` rather than `/request/accounting`, because the AP-1 hub would leave out AP-17.
@@ -238,13 +238,39 @@ still true of the deleted code in git history:
 
 ### 2. Request → Accounting (`/request/accounting`)
 
-Two live Accounting forms share a generic request/approval backbone, plus a Business Central ERP integration layer.
+Three live Accounting forms share a generic request/approval backbone, plus a Business Central ERP integration layer that only AP-1 uses.
 
 **Storage:** Acc* tables live in **`Rocks_Portal_Form`**, accessed via `getAccPool()` (= `getFormPool()`, `src/lib/acc/pool.ts`). Numbered migrations in `migrations/` (013 onward) built these up incrementally against the old `Fast_Form`; `059_portal_form_baseline.sql` is the generated full-schema baseline used to stand up a new database. Apply with `npm run apply-sql -- --db Rocks_Portal_Form --file <path>` (see `scripts/apply-sql.ts`). **Every migration names its own target database in its header — read that before running it.**
 
 **Standing up a production form database takes 059 *and* 066.** 059 was generated from `Fast_Form`, which never held `TeamMember`, so a database built from 059 alone has no identity table. Since the fail-closed change this now **locks everybody out** rather than degrading them: provisioning fails, `signIn` returns false, and every login lands on `/unauthorized`. That is louder than the old behaviour — which let anyone with an active `Rocks_Portal_HR.Employee` row in as `Staff` with a blank id, leaving `/settings/users` unreachable and the roster unrepairable from the UI — but it is still a stand-up mistake with no in-app remedy, so apply 066. Grep for `[Auth] blocked login (could not provision a TeamMember row)` and `[TeamMember] provision failed for …`.
 
-`066_portal_form_team_member.sql` creates the table and copies the roster out of Fast_Core, so it goes *after* 059. It refuses to run unless the database is named `Rocks_Portal_Form…` **and** has `dbo.AccRequest`: the name test is what keeps a mistyped `--db` out of `Fast_Form`, which has `AccRequest` too and belongs to the live sibling. **066 is a copy, not a seed** — its `INSERT` reads `[Fast_Core].[dbo].[TeamMember]`, so that table must exist and still hold the roster when 066 runs. If it did not, batch 1 would commit the empty table and batch 2 roll back under `XACT_ABORT`, leaving no indexes, no FK and identity at 1; and once anyone logs in and is provisioned, the empty-table guard on the copy blocks the re-run permanently while new ids start at 1 — straight into the range 066 exists to keep clear. **Post-apply check:** `SELECT COUNT(*) FROM dbo.TeamMember` = 17 and `SELECT IDENT_CURRENT('dbo.TeamMember')` = 100000. It is the one migration that must **not** also be applied to `Rocks_Portal_Form_UAT` — identity lives in production only, and both pools reach it three-part. A new migration that changes an `Acc*` table does have to be applied to `Rocks_Portal_Form_UAT` as well, but the parallel-UAT batch is not that shape: **060, 062, 063 and 065 are Fast_Core only** (`FormEnvironment`, `UatTester`), and **061 and 064 are `Rocks_Portal_Form_UAT` only** — they refuse to run against a database whose name does not end in `_UAT`.
+`066_portal_form_team_member.sql` creates the table and copies the roster out of Fast_Core, so it goes *after* 059. It refuses to run unless the database is named `Rocks_Portal_Form…` **and** has `dbo.AccRequest`: the name test is what keeps a mistyped `--db` out of `Fast_Form`, which has `AccRequest` too and belongs to the live sibling. **066 is a copy, not a seed** — its `INSERT` reads `[Fast_Core].[dbo].[TeamMember]`, so that table must exist and still hold the roster when 066 runs. If it did not, batch 1 would commit the empty table and batch 2 roll back under `XACT_ABORT`, leaving no indexes, no FK and identity at 1; and once anyone logs in and is provisioned, the empty-table guard on the copy blocks the re-run permanently while new ids start at 1 — straight into the range 066 exists to keep clear. **Post-apply check:** `SELECT COUNT(*) FROM dbo.TeamMember` = 17 and `SELECT IDENT_CURRENT('dbo.TeamMember')` = 100000. It is the one migration that must **not** also be applied to `Rocks_Portal_Form_UAT` — identity lives in production only, and both pools reach it three-part. A new migration that changes an `Acc*` table does have to be applied to `Rocks_Portal_Form_UAT` as well, but the parallel-UAT batch is not that shape: **060, 062, 063 and 065 are Fast_Core only** (`FormEnvironment`, `UatTester`), and **061, 064 and 068 are `Rocks_Portal_Form_UAT` only** — they refuse to run against a database whose name does not end in `_UAT`.
+
+**AP-11 (migrations 067 + 068 + 069).** `067_portal_form_reward.sql` creates
+`AccReward`, `AccRewardRequest` and `AccRewardOfficer`, extends
+`CK_AccRequest_Status` with `Ready` and `Received` (the same drop-and-recreate
+shape as 050), and seeds the `AccFormMaster` row. It goes to **both** form
+databases and guards on the name prefix `Rocks_Portal_Form%` plus the presence of
+`dbo.AccRequest`, so a mistyped `--db` cannot reach `Fast_Form` — which has
+`AccRequest` too and belongs to the live sibling. `068_uat_reward_identity_floor.sql`
+then gives `AccRewardRequest` the 900000 reseed and `CHECK` that 061/064 gave
+every other transactional table, **`_UAT` only**. `AccReward` and
+`AccRewardOfficer` are deliberately absent from 068: they are per-database
+configuration whose ids are never compared across the two.
+
+`069_acc_approval_reward_step.sql` is what 067 missed, and it goes to **both**
+form databases. 067 extended `CK_AccRequest_Status` with the two new header
+statuses and stopped there, but AP-11 also adds an approval *step*: the manager's
+approval inserts `AccApproval.StepCode = 'REWARD'`, and `CK_AccApproval_Step`
+allowed only the three codes AP-1 and AP-17 use. So a request could be filed and
+could reach the manager, and died on `The INSERT statement conflicted with the
+CHECK constraint "CK_AccApproval_Step"` the moment they pressed approve — one
+step later than the change that caused it, because the submit inserts `MANAGER`,
+which was always allowed. Nothing needed backfilling: the approval runs in a
+transaction, so every failure rolled back whole. **`REWARD` is a distinct code,
+not a reuse of `ACCOUNT`** — the step is actioned by `AccRewardOfficer` rather
+than `AccApprover`, and `approveReward` / `rejectReward` select their pending row
+by `StepCode`.
 
 **Generic header (shared by all Accounting forms):** `AccFormMaster` (form catalog), `AccRequest` (shared request header), `AccApproval`, `AccActivityLog`, `AccSequence`, `AccEmailQueue`, `AccRequestFile`.
 
@@ -270,13 +296,81 @@ Accommodation/ticket booking requests for provincial work travel — supports mu
 - **Feature code:** `src/features/travel-booking/`; service/lib code under `src/lib/acc/travel-booking/`
 - Uses `Rocks_Portal_HR.EmployeeAllowanceLog` for effective-dated per-diem history and `Fast_Data` for province lookups (`province-service.ts`)
 
+#### AP-11 — Reward Redemption (`/request/reward`)
+
+Reward redemption for the OP team. **The only form on this backbone whose submit
+consumes a finite resource**, which is what most of its design is about.
+
+- **Pages:** `/request/reward` (fill/resume draft), `/request/reward/[id]`
+  (detail + timeline + approval/fulfilment actions), plus the back office under
+  `/request/accounting/reward` (Assist AP queue), `reward-report`,
+  `reward-settings`
+- **Detail tables:** `AccReward` (the brand-scoped catalogue, carrying the stock
+  counters), `AccRewardRequest` (one row per request — AP-11 is one reward per
+  request — with a value snapshot and the Ready/Received stamps),
+  `AccRewardOfficer` (the Assist AP roster)
+- **Feature code:** `src/features/reward/`; service/lib code under
+  `src/lib/acc/reward/`
+- **Workflow:** Manager (from `Rocks_Portal_HR.Employee.ManagerStaffId`, step
+  `MANAGER`) → Assist AP (from `AccRewardOfficer`, step `REWARD`) → `Ready` →
+  `Received`. Reject and Return both require a reason. Running number `TOPyy-nnnnn`.
+- **No Business Central.** AP-11 posts nothing to ERP.
+- **No self-cancel**, unlike AP-1's ≤24h window — see the stock rules below.
+
+**The stock lock is the thing to understand before touching this form.**
+
+- `AccReward.Qty` is stock received and typed by an admin. `LockedQty` and
+  `IssuedQty` are counters nobody edits, and **`src/lib/acc/reward/stock-ledger.ts`
+  is the only file in `src/` that writes them** — keep it that way.
+- **`AccRewardRequest` carries two pairs of quantity columns and they are not
+  interchangeable.** `RewardId`/`Qty` are what the request is *asking for*, and
+  stay editable on a draft and on a `Returned` request.
+  `LockedRewardId`/`LockedQty` are what it is *actually holding*. They diverge
+  the moment a Returned request is edited, because a Return keeps its hold.
+  Every release and every issue reads the **held** pair; reading the hold back
+  out of `Qty` makes the two always equal, so a resubmit that changed 5 to 8
+  adjusts the lock by zero and under-locks the reward by 3 — which
+  `CK_AccReward_Stock` cannot catch, because the counters stay internally
+  consistent while no longer describing the requests.
+- The three derived numbers on the settings page and the reward cards
+  (`Request` / `Expire` / `Balance`) come from one pure function,
+  `src/lib/acc/reward/stock.ts`, unit-tested without a database.
+  `requestQty = Locked + Issued`, so `balanceQty` is directly "what you may still
+  ask for" — the card, the quantity cap and the settings column are the same
+  number. Expiry is derived from `ExpireDate` on read, so there is no job to run
+  and no window where an expired reward is still requestable.
+- **Submit order is load-bearing:** claim the request row, *then* take stock with
+  a conditional `UPDATE … WHERE Qty - LockedQty - IssuedQty >= @qty`, *then*
+  allocate the running number inside the same transaction. Two people racing for
+  the last item resolve to one winner and one **409**. Never read the counters and
+  write them back.
+- `CK_AccReward_Stock` (`Locked + Issued <= Qty`) makes an oversell impossible at
+  the schema level even if a code path is wrong. `npm run check:reward-stock`
+  re-derives both counters from `AccRewardRequest` and reports drift.
+- **Stock returns on Reject only.** Not on Return (the request is still alive and
+  keeps its hold; a resubmit adjusts by the delta), and not on expiry (which
+  never touches `LockedQty`). That rule is why AP-11 has no self-cancel button:
+  a submit-then-cancel loop would burn stock permanently.
+- **`AccReward` and `AccRewardOfficer` are per-database, not dual-written.** The
+  19 dual-written masters are settings; `Qty` is inventory, and mirroring it
+  would mean a UAT test draining the production count or a production edit
+  resetting a tester's stock. Hence `/api/request/reward/settings` is classified
+  `AP-11` in `ROUTE_RULES` rather than left to resolve Production the way AP-1's
+  settings prefix is.
+- **The Assist AP roster is not `AccApprover`.** `buildAccAclViewer` takes the
+  row's `FormCode` and computes `isAccountArea` from `canAccessRewardArea` for
+  AP-11; without that, every AP-1 approver would gain read access to every reward
+  request.
+- The Friday 16:00 cut-off and Monday 13:00 pickup are **copy, not logic** —
+  nothing computes a pickup date from them.
+
 #### Business Central / ERP integration
 
 Accounting requests can be pushed into Dynamics 365 Business Central. Configuration lives under **Settings**: Database Connections, Business Central (OAuth2 connection), Brand Configuration (per-brand BC + ERP SQL target), ERP Interface Environment (per-brand Sandbox company and connection, System Admin only — which forms use it is set at Settings → Form Environment). Sync logic in `src/lib/erp/account-sync.ts` and `src/lib/erp/dimension-sync.ts` (both query `Fast_Data`), OData client in `src/lib/bc/`.
 
 **Key libs (`src/lib/acc/`):** `pool`, `sequence`, `payment-calendar`, `employee-context`, `brand-options`, `access`, `settings-service`, `request-service`, `approval-engine`, `report-service`, `email-queue`, `email-templates`, `calc`, `erp-environment-shared`, plus `travel-booking/*`.
 
-**Feature UI:** `src/features/accounting/` (AP-1) and `src/features/travel-booking/` (AP-17) — form components, approval queues, report tables, settings panels.
+**Feature UI:** `src/features/accounting/` (AP-1), `src/features/reward/` (AP-11) and `src/features/travel-booking/` (AP-17) — form components, approval queues, report tables, settings panels.
 
 ## Project Structure
 
@@ -317,6 +411,7 @@ src/
 │   └── layout.tsx                    # Root layout — theme no-flash script, providers
 ├── features/
 │   ├── accounting/                   # AP-1 form, approvals, report, settings UI
+│   ├── reward/                       # AP-11 form, Assist AP queue, report, settings UI
 │   ├── travel-booking/               # AP-17 form, admin queue, report, settings UI
 │   ├── home/                         # Home catalogue
 │   ├── settings/                     # Settings panels
@@ -328,6 +423,7 @@ src/
 │   ├── db/mssql.ts                   # Multi-DB pools (Core, Form, Production/UAT Form, Data, generic getAppPool), pool max=30
 │   ├── team-member/                  # The only module that touches TeamMember — service.ts + mapping.ts
 │   ├── acc/                          # Accounting domain logic (see above)
+│   │   ├── reward/                    # AP-11 — stock.ts (pure) + stock-ledger.ts own every counter write
 │   │   ├── request-acl-policy.ts      # Pure object ACL — decideRequestRead/Mutate
 │   │   ├── request-acl.ts             # Pool/request-scoped half + authorizeAccRequest()
 │   │   ├── attachment-guard.ts        # Magic-byte upload admission + safe download headers

@@ -10,10 +10,10 @@
  * Pure: no I/O, no request context. Exhaustively tested in classify-path.test.ts.
  */
 
-export type FormCode = "AP-1" | "AP-15" | "AP-17";
+export type FormCode = "AP-1" | "AP-11" | "AP-15" | "AP-17";
 
 /** Every form code, as values — the runtime half of the `FormCode` union. */
-export const FORM_CODES: readonly FormCode[] = ["AP-1", "AP-15", "AP-17"];
+export const FORM_CODES: readonly FormCode[] = ["AP-1", "AP-11", "AP-15", "AP-17"];
 
 /**
  * Narrow caller-supplied text to a known form code.
@@ -41,9 +41,9 @@ export interface RouteRule {
  * Longest matching prefix wins, so the order below is documentation rather
  * than behaviour — it is kept in specificity order to stay readable.
  *
- * The three AP-17 entries under /request/accounting/ are the subtle ones:
- * AP-17's admin pages live underneath AP-1's prefix, and without them those
- * pages route to the wrong database.
+ * The AP-17 and AP-11 entries under /request/accounting/ are the subtle ones:
+ * both forms' back-office pages live underneath AP-1's prefix, and without them
+ * those pages route to the wrong database.
  */
 export const ROUTE_RULES: RouteRule[] = [
   // AP-17 admin pages that sit under AP-1's prefix. Listed individually rather
@@ -52,6 +52,14 @@ export const ROUTE_RULES: RouteRule[] = [
   { prefix: "/request/accounting/travel-booking", result: "AP-17" },
   { prefix: "/request/accounting/travel-booking-report", result: "AP-17" },
   { prefix: "/request/accounting/travel-booking-settings", result: "AP-17" },
+
+  // AP-11's back-office pages, same arrangement and for the same reason. Note
+  // these are three distinct prefixes, not one plus two children: longest match
+  // wins, so /request/accounting/reward-report resolves on its own entry rather
+  // than falling back to /request/accounting and landing on AP-1.
+  { prefix: "/request/accounting/reward", result: "AP-11" },
+  { prefix: "/request/accounting/reward-report", result: "AP-11" },
+  { prefix: "/request/accounting/reward-settings", result: "AP-11" },
 
   // Aggregate endpoints — more specific than the AP-1 catch-all further down.
   // Only what a person owns or must act on merges: they can hold live requests
@@ -78,6 +86,13 @@ export const ROUTE_RULES: RouteRule[] = [
   // AP-17 proper.
   { prefix: "/api/request/travel-booking", result: "AP-17" },
   { prefix: "/request/travel-booking", result: "AP-17" },
+
+  // AP-11 proper. Its settings routes are NOT excluded the way AP-1's are:
+  // AccReward and AccRewardOfficer are per-database rather than dual-written
+  // (Qty is inventory, not configuration — see the AP-11 design spec), so a
+  // tester editing the reward catalogue must reach the UAT copy.
+  { prefix: "/api/request/reward", result: "AP-11" },
+  { prefix: "/request/reward", result: "AP-11" },
 
   // AP-1 proper.
   { prefix: "/api/request/accounting", result: "AP-1" },

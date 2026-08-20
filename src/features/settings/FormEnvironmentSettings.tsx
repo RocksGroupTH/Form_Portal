@@ -129,7 +129,7 @@ function EnvironmentSwitch({
       aria-checked={on}
       disabled={disabled}
       onClick={onClick}
-      className="env-switch inline-flex items-center gap-1.5 py-1 pl-1 pr-2.5 rounded-full text-[10px] whitespace-nowrap border-none transition-colors disabled:cursor-default disabled:opacity-60 enabled:cursor-pointer"
+      className="ui-switch inline-flex items-center gap-1.5 py-1 pl-1 pr-2.5 rounded-full text-[10px] whitespace-nowrap border-none transition-colors disabled:cursor-default disabled:opacity-60 enabled:cursor-pointer"
       style={{ background: on ? onBg : "var(--bg-badge)", color: on ? onText : "var(--text-muted)" }}
     >
       {/* Track and knob are both currentColor, so they stay legible against
