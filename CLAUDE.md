@@ -391,7 +391,77 @@ grant is safe only because nobody holds it.
 
 Accounting requests can be pushed into Dynamics 365 Business Central. Configuration lives under **Settings**: Database Connections, Business Central (OAuth2 connection), Brand Configuration (per-brand BC + ERP SQL target), ERP Interface Environment (per-brand Sandbox company and connection, System Admin only — which forms use it is set at Settings → Form Environment). Sync logic in `src/lib/erp/account-sync.ts` and `src/lib/erp/dimension-sync.ts` (both query `Fast_Data`), OData client in `src/lib/bc/`.
 
-**Key libs (`src/lib/acc/`):** `pool`, `sequence`, `payment-calendar`, `employee-context`, `brand-options`, `access`, `settings-service`, `request-service`, `approval-engine`, `report-service`, `email-queue`, `email-templates`, `calc`, `erp-environment-shared`, plus `travel-booking/*`.
+##### Per-form ERP configuration — the default and override rule
+
+Seven brand-keyed configuration tables carry a `FormCode NVARCHAR(20) NULL`
+column: `AccBrandGlAccount`, `AccBrandBankAccount`, `AccBrandJournalBatch`,
+`AccBrandBranchCode`, `AccBrandErpInterface` and `AccBrandErpTargetSetting` in
+the form databases, plus **`Fast_Core.dbo.DepartmentErpMap`**, which is the same
+kind of table living in the shared database. **`FormCode NULL` is the default
+and answers every form; a row naming a form overrides the default for that form
+alone.** Most configuration is the same for every form, so a second or third
+form needs no rows at all until somebody wants it to differ — which is what this
+replaces, the old answer having been a whole new table per form.
+
+**The rule lives in exactly one place — `src/lib/acc/per-form-config.ts`**:
+`perFormPredicate(alias?)`, `perFormOrderBy(alias?)`, `pickForForm`,
+`pickAllForForm`, `defaultsOnly` and `perFormWriteMatch`. It **imports nothing**,
+so the rule is unit-tested without a database (`per-form-config.test.ts`).
+Hand-writing the predicate is how one copy loses the `IS NULL` arm and silently
+reads another form's configuration, and these tables decide where money posts.
+Six services consume it: `brand-account-service` (G/L and bank, whose table name
+is interpolated — a sweep by literal table name misses it), `brand-branch-service`,
+`brand-journal-batch-service`, `brand-erp-interface-map-service`,
+`erp-target-setting-service` and `department-map-service`.
+
+Three things about it that are not obvious. All three were found in code that
+already existed:
+
+- **Absent `formCode` means defaults-only, never all rows.** Every read takes
+  `formCode` as an optional last parameter; without it the query is
+  `WHERE FormCode IS NULL`. That is the fail-safe direction — a caller with no
+  form in hand cannot be handed another form's row. `perFormOrderBy` sorts, it
+  does not pick, so a read that applies the predicate and stops gets the
+  override *and* the default: reduce with `TOP 1`, `pickForForm`, or
+  `pickAllForForm` keyed on the unique index minus `FormCode`.
+- **A value filter belongs after the pick, not in the `WHERE`.** The two
+  money-path loaders in `department-map-service.ts` filtered on non-blank
+  `ErpCode` / `FixedGlAccountNo` in the `WHERE`, which removes a form's
+  *deliberately blank* override before the pick — so the default answers and the
+  claim posts to a dimension or G/L account the form had explicitly cleared.
+  Both now filter after the pick.
+- **`FormCode = @formCode` never matches `NULL`.** A write bounded that way
+  cannot touch the default, and a write bounded on `BrandCode` alone sweeps the
+  default *and* every override for that brand together, in one statement, with
+  no error. Use `perFormWriteMatch(formCode)`, which renders `FormCode IS NULL`
+  for the default. Statements bounded on `BrandCode` alone were found and closed
+  on `AccBrandErpInterface` (`DELETE`), `AccBrandErpTargetSetting` (`UPDATE`) and
+  `DepartmentErpMap` (`purgeLegacyClaimMappings`), along with the `SELECT TOP 1
+  Id` probes that pick the row a settings `UPDATE` then rewrites.
+
+**Migrations 097 (both form databases) and 098 (`Fast_Core`).** They add the
+column, **backfill every existing row to `NULL`**, and rebuild each table's
+unique index to lead with `FormCode`. SQL Server treats `NULL`s as equal in a
+unique index, so one brand keeps exactly one default plus at most one row per
+form, with no filtered index and no extra constraint. `AccBrandGlAccount`'s
+three rows already read `AP-1` and were rewritten to `NULL`: left form-specific
+they would answer AP-1 and nothing else, which is the failure the rule exists to
+prevent. All seven `UQ_*` objects were originally unique **constraints**, not
+indexes, so `DROP INDEX` alone raises Msg 3723 — each drop reads
+`sys.indexes.is_unique_constraint` and uses the verb that matches what it finds,
+and all seven are plain unique indexes afterwards. 098 widens a table three
+applications share; that is safe because the column is nullable with no default,
+no sibling selects `*`, and both siblings upsert through a `MERGE` with an
+explicit column list, so every row they write is a default.
+
+**It ships inert, and there is no UI to add an override.** Every row in all
+seven tables is a default, so every form resolves exactly what AP-1 resolved
+before and nothing behaves differently on day one. The settings editors have no
+form selector: their reads are defaults-only and every write is
+`perFormWriteMatch(null)`. **Creating an override today means a hand-written SQL
+`INSERT`.**
+
+**Key libs (`src/lib/acc/`):** `pool`, `sequence`, `payment-calendar`, `employee-context`, `brand-options`, `access`, `settings-service`, `request-service`, `approval-engine`, `report-service`, `email-queue`, `email-templates`, `calc`, `erp-environment-shared`, `per-form-config`, plus `travel-booking/*`.
 
 **Feature UI:** `src/features/accounting/` (AP-1) and `src/features/travel-booking/` (AP-17) — form components, approval queues, report tables, settings panels.
 
@@ -638,15 +708,20 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 Measured 2026-08-20, and **not caused by the access-rights work**; the new
 `AccBookingApprover` passes. Recorded because the verifier is now part of the
-routine and its red output should not be mistaken for a fresh break:
+routine and its red output should not be mistaken for a fresh break. Migration
+097 has since closed the schema half, taking the count **from four mismatching
+tables to two**:
 
-- **Schema.** `AccBrandBankAccount` and `AccBrandJournalBatch` carry a
-  `FormCode` column in `Rocks_Portal_Form_UAT` that does **not** exist in
-  `Rocks_Portal_Form`, so every row of both compares unequal despite identical
-  data.
-- **Data.** `Rocks_Portal_Form_UAT` holds an entire extra form, **AP-3**, in
-  `AccFormMaster`, plus its five `AccFormBrand` rows (AP-3 with KSI, PCMY,
-  PCTH, ROCKS, UNO). Production has neither.
+- **Schema — closed by migration 097.** `AccBrandBankAccount` and
+  `AccBrandJournalBatch` carried a `FormCode` column in `Rocks_Portal_Form_UAT`
+  that did not exist in `Rocks_Portal_Form`, so every row of both compared
+  unequal despite identical data. 097 added the column to both databases, so the
+  two tables now match. This was a side effect, not the migration's purpose —
+  see "Per-form ERP configuration" above.
+- **Data — still open.** `Rocks_Portal_Form_UAT` holds an entire extra form,
+  **AP-3**, in `AccFormMaster` (production 6 rows, UAT 7), plus its five
+  `AccFormBrand` rows (AP-3 with KSI, PCMY, PCTH, ROCKS, UNO — production 18,
+  UAT 23). Production has neither.
 
-Fixing either needs a decision that is not a developer's to make: which side of
-the `FormCode` column is right, and whether AP-3 belongs in production.
+What is left is data, not schema, and fixing it needs a decision that is not a
+developer's to make: whether AP-3 belongs in production.
