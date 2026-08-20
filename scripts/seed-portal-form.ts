@@ -9,8 +9,8 @@
  * because copying them would restart running numbers already issued and would
  * leave production pointed at the ERP sandbox.
  *
- * AccBookingApprover is the one shared master table this script does not copy
- * — see the note in MASTER_TABLES below.
+ * AccBookingApprover and AccBookingApproverTab are the two shared master tables
+ * this script does not copy — see the notes in MASTER_TABLES below.
  *
  * Requires migrations/059_portal_form_baseline.sql to be applied first — this
  * copies rows, it does not create tables.
@@ -68,6 +68,14 @@ const MASTER_TABLES = [
   // no such table: AP-17's roster is Form Portal's own, created by
   // migrations/095_acc_booking_approver.sql. Listing it here would fail the
   // copy on a missing source table. Seed it from Settings after migrating.
+  //
+  // AccBookingApproverTab is deliberately absent for the same reason. It is
+  // the 21st shared master table and npm run check:alignment covers it, but
+  // it is created by migrations/096_acc_booking_approver_tab.sql and SOURCE_DB
+  // (Fast_Form) has never had it. copyTable() opens with an unguarded
+  // SELECT *, so an entry here would abort the seed partway. Its rows key on
+  // AccBookingApprover.Id, which is not copied either, so there would be
+  // nothing coherent to point them at. Grant tabs from Settings after migrating.
   "AccVehicle",
   "AccTravelReason",
   "AccTravelAccommodation",
