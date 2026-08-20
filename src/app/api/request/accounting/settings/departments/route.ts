@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
-import { requireRole } from "@/lib/api-auth";
+import { requireSettingsTab } from "@/lib/acc/require-settings-tab";
 import { getMultiBrandDepartmentMappingPage } from "@/lib/acc/department-map-service";
 
 /** GET /api/request/accounting/settings/departments */
 export async function GET() {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireSettingsTab("departments");
   if (session instanceof Response) return session;
 
   try {

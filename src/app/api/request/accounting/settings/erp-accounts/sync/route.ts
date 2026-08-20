@@ -12,7 +12,20 @@ import {
   syncBrandDimensionValues,
 } from "@/lib/erp/dimension-sync";
 
-/** POST /api/request/accounting/settings/erp-accounts/sync — optional { brandCode } */
+/**
+ * POST /api/request/accounting/settings/erp-accounts/sync — optional { brandCode }
+ *
+ * **Admin only, whatever settings tabs the caller holds.** The rest of the
+ * Interface ERP tab is opened by the `erpInterface` grant; this one is not. Every
+ * phase it can run — `account-sync`'s G/L, bank-card and journal-batch MERGEs
+ * and `dimension-sync`'s branch values — opens the ERP reporting pool and writes
+ * `ErpAccounts`, `ErpBankAccountCard`, `ErpGeneralJournalBatch`,
+ * `ErpDimensionValue` and `ErpSyncLog`, in a database shared with the Rocks Fast
+ * sibling application. A tab grant must not become write access to another app's
+ * data, so this stays on `requireRole`. Recorded in `SETTINGS_ROUTE_TABS`
+ * (`@/lib/acc/settings-tabs`), and the panel hides the Sync button for a
+ * non-admin rather than offering a control that is then refused.
+ */
 export async function POST(req: NextRequest) {
   const session = await requireRole(["IT Admin", "System Admin"]);
   if (session instanceof Response) return session;

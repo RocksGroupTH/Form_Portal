@@ -15,6 +15,7 @@ import {
   type ErpSyncPopupState,
 } from "@/features/accounting/components/settings/ErpAccountSyncPopup";
 import { useAccSettingsDeepLink } from "@/features/accounting/lib/use-acc-settings-deep-link";
+import { useAccountingAccess } from "@/features/accounting/hooks/useAccountingAccess";
 import { DepartmentMappingDialog } from "./DepartmentMappingDialog";
 import {
   isBrandMapDirty,
@@ -232,6 +233,15 @@ export function DepartmentMappingSettings() {
   const [savedErpByTarget, setSavedErpByTarget] = useState<Record<string, Record<string, string>>>({});
   const [initialized, setInitialized] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  /**
+   * The `departments` grant opens the list and the save, but not
+   * `settings/departments/sync` — that pulls DEPT dimension values out of
+   * Business Central into the ERP reporting database shared with the Rocks Fast
+   * sibling, so it stayed admin-only. Hide the control rather than offer it and
+   * answer 403. Same SWR key the settings page already loaded, so this is a
+   * cache hit and nothing flashes.
+   */
+  const { isAdmin: canSyncErp } = useAccountingAccess();
   const [syncPopup, setSyncPopup] = useState<ErpSyncPopupState>({
     open: false,
     brandCode: "",
@@ -437,17 +447,23 @@ export function DepartmentMappingSettings() {
             ตั้งค่าครบ {completeGroups}/{groups.length} กลุ่ม · {totalClaimBrands} แบรนด์เบิก · Dimension {page.dimensionCode}
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <Button
-            type="button"
-            variant="secondary"
-            icon={<RefreshCw size={15} className={syncing ? "animate-spin" : ""} />}
-            onClick={() => void handleSync()}
-            loading={syncing}
-          >
-            Sync ERP
-          </Button>
-        </div>
+        {canSyncErp ? (
+          <div className="flex items-center gap-2 shrink-0">
+            <Button
+              type="button"
+              variant="secondary"
+              icon={<RefreshCw size={15} className={syncing ? "animate-spin" : ""} />}
+              onClick={() => void handleSync()}
+              loading={syncing}
+            >
+              Sync ERP
+            </Button>
+          </div>
+        ) : (
+          <p className="text-[10px] m-0 shrink-0 max-w-[190px]" style={{ color: "var(--text-faint)" }}>
+            การ Sync ข้อมูลจาก Business Central สงวนไว้สำหรับผู้ดูแลระบบ
+          </p>
+        )}
       </div>
 
       <div className="flex flex-wrap gap-3 mb-4 text-[11px]">

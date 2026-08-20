@@ -10,6 +10,18 @@ import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
 import { isErpInterfaceBrandCode } from "@/lib/acc/erp-interface-brands";
 import { setApproverSettingsTabs } from "@/lib/acc/approver-settings-tabs";
 
+/*
+ * **Admin only, and never opened by a settings-tab grant.**
+ *
+ * Every other route under `settings/` moved to `requireSettingsTab` so a
+ * granted approver can use the tab they were given. This one cannot: it is the
+ * สิทธิ์เข้าถึง tab, the place the grants are handed out. A non-admin who could
+ * POST here would grant themselves every other tab, which is why `approvers` is
+ * absent from `GRANTABLE_SETTINGS_TABS` and why `decideSettingsTabAccess`
+ * refuses it for a non-admin even if a row for it exists. Recorded in
+ * `SETTINGS_ROUTE_TABS` (`@/lib/acc/settings-tabs`).
+ */
+
 /**
  * GET /api/request/accounting/settings/approvers
  * Returns the full list of approvers (including inactive).

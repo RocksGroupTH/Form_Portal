@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/api-auth";
+import { requireSettingsTab } from "@/lib/acc/require-settings-tab";
 import { listBrandBranches, upsertBrandBranch } from "@/lib/acc/brand-branch-service";
 
 export async function GET(req: NextRequest) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireSettingsTab("erpInterface");
   if (session instanceof Response) return session;
 
   try {
@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireSettingsTab("erpInterface");
   if (session instanceof Response) return session;
 
   try {

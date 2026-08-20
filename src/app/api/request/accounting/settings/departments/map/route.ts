@@ -1,13 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/api-auth";
+import { requireSettingsTab } from "@/lib/acc/require-settings-tab";
 import {
   saveDepartmentMappings,
   type SaveDepartmentMappingInput,
 } from "@/lib/acc/department-map-service";
 
-/** PUT /api/request/accounting/settings/departments — save HR ↔ ERP mappings */
+/**
+ * PUT /api/request/accounting/settings/departments — save HR ↔ ERP mappings.
+ *
+ * Requires an admin, or the `departments` settings-tab grant.
+ *
+ * ⚠️ This is the one granted settings route that writes outside the form
+ * database: `saveDepartmentMappings` opens the core pool and upserts
+ * `DepartmentErpMap`, which lives in the configuration database shared with the
+ * Rocks Fast sibling. The plan grants it deliberately — a แผนก tab that lists
+ * mappings but cannot save one is the grant-that-grants-nothing this change
+ * exists to remove — but it is the mapping to revisit first if that shared
+ * database ever has to be closed to non-admins. The two `sync` POSTs, which
+ * write the ERP reporting database, stayed on `requireRole` for exactly that
+ * reason.
+ */
 export async function PUT(req: NextRequest) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireSettingsTab("departments");
   if (session instanceof Response) return session;
 
   try {

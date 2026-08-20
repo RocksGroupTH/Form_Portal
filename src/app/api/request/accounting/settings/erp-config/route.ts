@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/api-auth";
+import { requireSettingsTab } from "@/lib/acc/require-settings-tab";
 import {
   clearBrandErpInterfaceTarget,
   getBrandErpConfigPage,
@@ -7,7 +7,7 @@ import {
 } from "@/lib/acc/brand-erp-config-service";
 
 export async function GET() {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireSettingsTab("erpInterface");
   if (session instanceof Response) return session;
 
   try {
@@ -20,7 +20,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireSettingsTab("erpInterface");
   if (session instanceof Response) return session;
 
   try {
@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireSettingsTab("erpInterface");
   if (session instanceof Response) return session;
 
   try {

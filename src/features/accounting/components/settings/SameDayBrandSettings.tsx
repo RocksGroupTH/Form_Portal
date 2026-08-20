@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { Plus, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import type { AccSameDayBrandRow } from "@/features/accounting/types";
+import { useAccountingAccess } from "@/features/accounting/hooks/useAccountingAccess";
 
 const fetcher = async (url: string) => {
   const res = await fetch(url);
@@ -114,6 +115,15 @@ export function SameDayBrandSettings() {
   );
   const [showModal, setShowModal] = useState(false);
   const rows = data?.data ?? [];
+  /**
+   * Adding a name needs the Entra ID directory search at `/api/users/search`,
+   * which is a global admin endpoint — not an AP-1 route — and was deliberately
+   * left alone: widening it for a `sameDayBrand` holder would hand a non-admin
+   * directory search across the whole app. So a granted approver can list,
+   * enable, disable and remove rows, but not add one. The button is hidden
+   * rather than left to fail, and the copy below says so.
+   */
+  const { isAdmin } = useAccountingAccess();
 
   const post = async (body: Record<string, unknown>) => {
     const res = await fetch("/api/request/accounting/settings/same-day-brand", {
@@ -135,14 +145,25 @@ export function SameDayBrandSettings() {
     <div>
       <div className="flex items-center justify-between mb-1">
         <h3 className="text-[14px] font-bold" style={{ color: "var(--text-heading)" }}>เบิกวันซ้ำข้ามแบรนด์</h3>
-        <button onClick={() => setShowModal(true)}
-          className="flex items-center gap-1.5 text-[12px] font-medium px-3 py-2 rounded-lg cursor-pointer border-none"
-          style={{ background: "var(--color-action)", color: "#fff" }}>
-          <Plus size={13} /> เพิ่มรายชื่อ
-        </button>
+        {isAdmin && (
+          <button onClick={() => setShowModal(true)}
+            className="flex items-center gap-1.5 text-[12px] font-medium px-3 py-2 rounded-lg cursor-pointer border-none"
+            style={{ background: "var(--color-action)", color: "#fff" }}>
+            <Plus size={13} /> เพิ่มรายชื่อ
+          </button>
+        )}
       </div>
       <p className="text-[11px] mb-4" style={{ color: "var(--text-muted)" }}>
         คนในรายชื่อนี้เบิกวันเดียวกันได้หลายรายการ ตราบใดที่เป็นคนละแบรนด์
+        {!isAdmin && (
+          <>
+            {" · "}
+            <span style={{ color: "var(--text-faint)" }}>
+              สิทธิ์ที่ได้รับสำหรับแท็บนี้ แก้ไขสถานะและลบรายชื่อได้ แต่การเพิ่มรายชื่อใหม่ต้องใช้การค้นหาผู้ใช้จาก Entra ID
+              ซึ่งสงวนไว้สำหรับผู้ดูแลระบบ
+            </span>
+          </>
+        )}
       </p>
 
       {isLoading ? (

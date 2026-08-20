@@ -26,6 +26,7 @@ import { erpDescriptionFromGlOption } from "@/lib/acc/erp-description";
 import { ErpJournalTemplateSettings } from "@/features/accounting/components/settings/ErpJournalTemplateSettings";
 import { ErpDeptFixDialog } from "@/features/accounting/components/settings/ErpDeptFixDialog";
 import { useAccSettingsDeepLink } from "@/features/accounting/lib/use-acc-settings-deep-link";
+import { useAccountingAccess } from "@/features/accounting/hooks/useAccountingAccess";
 import type {
   AccBrandAccountRow,
   AccBrandBranchRow,
@@ -1715,6 +1716,14 @@ export function BrandErpInterfaceSettings() {
   const [editTargetCode, setEditTargetCode] = useState<string | null>(null);
   const [editUnassignedClaim, setEditUnassignedClaim] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  /**
+   * The `erpInterface` grant opens every route on this tab except
+   * `settings/erp-accounts/sync`, which writes the ERP reporting database shared
+   * with the Rocks Fast sibling and so stayed admin-only. Hide the control
+   * rather than offer it and answer 403. Same SWR key the settings page already
+   * loaded, so this is a cache hit and nothing flashes.
+   */
+  const { isAdmin: canSyncErp } = useAccountingAccess();
   const [erpDeptPick, setErpDeptPick] = useState<{
     targetCode: string;
     branchCode: string;
@@ -2622,72 +2631,80 @@ export function BrandErpInterfaceSettings() {
           <p className="text-[10px] m-0 mt-1" style={{ color: "var(--text-faint)" }}>
             ตั้งค่าครบ {completeCount}/{brands.length} แบรนด์เบิก · {targetGroups.length} กลุ่ม
           </p>
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-2.5">
-            <span className="text-[10px] font-semibold shrink-0" style={{ color: "var(--text-muted)" }}>
-              Sync:
-            </span>
-            <label
-              className="inline-flex items-center gap-1.5 cursor-pointer select-none"
-              style={{
-                color: allSyncSelected || someSyncSelected
-                  ? "var(--text-secondary)"
-                  : "var(--text-faint)",
-              }}
-            >
-              <input
-                ref={(el) => {
-                  if (el) el.indeterminate = someSyncSelected;
+          {canSyncErp && (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-2.5">
+              <span className="text-[10px] font-semibold shrink-0" style={{ color: "var(--text-muted)" }}>
+                Sync:
+              </span>
+              <label
+                className="inline-flex items-center gap-1.5 cursor-pointer select-none"
+                style={{
+                  color: allSyncSelected || someSyncSelected
+                    ? "var(--text-secondary)"
+                    : "var(--text-faint)",
                 }}
-                type="checkbox"
-                checked={allSyncSelected}
-                disabled={syncing}
-                onChange={(e) => setAllSyncPhases(e.target.checked)}
-                className="rounded cursor-pointer"
-                style={{ accentColor: "var(--nav-active-text)" }}
+              >
+                <input
+                  ref={(el) => {
+                    if (el) el.indeterminate = someSyncSelected;
+                  }}
+                  type="checkbox"
+                  checked={allSyncSelected}
+                  disabled={syncing}
+                  onChange={(e) => setAllSyncPhases(e.target.checked)}
+                  className="rounded cursor-pointer"
+                  style={{ accentColor: "var(--nav-active-text)" }}
+                />
+                <span className="text-[11px] font-bold">All</span>
+              </label>
+              <span
+                className="w-px h-3.5 shrink-0"
+                style={{ background: "var(--border-card)" }}
+                aria-hidden
               />
-              <span className="text-[11px] font-bold">All</span>
-            </label>
-            <span
-              className="w-px h-3.5 shrink-0"
-              style={{ background: "var(--border-card)" }}
-              aria-hidden
-            />
-            {SYNC_PHASES.map(({ phase, label }) => {
-              const checked = syncPhasesSelected[phase];
-              return (
-                <label
-                  key={phase}
-                  className="inline-flex items-center gap-1.5 cursor-pointer select-none"
-                  style={{ color: checked ? "var(--text-secondary)" : "var(--text-faint)" }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    disabled={syncing}
-                    onChange={(e) =>
-                      setSyncPhasesSelected((prev) => ({ ...prev, [phase]: e.target.checked }))
-                    }
-                    className="rounded cursor-pointer"
-                    style={{ accentColor: "var(--nav-active-text)" }}
-                  />
-                  <span className="text-[11px] font-medium">{label}</span>
-                </label>
-              );
-            })}
+              {SYNC_PHASES.map(({ phase, label }) => {
+                const checked = syncPhasesSelected[phase];
+                return (
+                  <label
+                    key={phase}
+                    className="inline-flex items-center gap-1.5 cursor-pointer select-none"
+                    style={{ color: checked ? "var(--text-secondary)" : "var(--text-faint)" }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={syncing}
+                      onChange={(e) =>
+                        setSyncPhasesSelected((prev) => ({ ...prev, [phase]: e.target.checked }))
+                      }
+                      className="rounded cursor-pointer"
+                      style={{ accentColor: "var(--nav-active-text)" }}
+                    />
+                    <span className="text-[11px] font-medium">{label}</span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        {canSyncErp ? (
+          <div className="flex items-center gap-2 shrink-0">
+            <Button
+              type="button"
+              variant="secondary"
+              icon={<RefreshCw size={15} className={syncing ? "animate-spin" : ""} />}
+              onClick={() => void syncErp()}
+              loading={syncing}
+              disabled={activeSyncPhases.length === 0}
+            >
+              Sync ERP
+            </Button>
           </div>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <Button
-            type="button"
-            variant="secondary"
-            icon={<RefreshCw size={15} className={syncing ? "animate-spin" : ""} />}
-            onClick={() => void syncErp()}
-            loading={syncing}
-            disabled={activeSyncPhases.length === 0}
-          >
-            Sync ERP
-          </Button>
-        </div>
+        ) : (
+          <p className="text-[10px] m-0 shrink-0 max-w-[190px]" style={{ color: "var(--text-faint)" }}>
+            การ Sync ข้อมูลจาก Business Central สงวนไว้สำหรับผู้ดูแลระบบ
+          </p>
+        )}
       </div>
 
       <p className="text-[11px] mb-4 m-0 flex flex-wrap items-center gap-x-3 gap-y-1" style={{ color: "var(--text-faint)" }}>
