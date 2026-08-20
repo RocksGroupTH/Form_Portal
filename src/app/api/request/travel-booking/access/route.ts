@@ -32,7 +32,22 @@ export async function GET(_req: NextRequest) {
     const admin = isAdminRole(session.user.role);
     const approver = await isBookingApprover(email);
     // Admins see every tab; the grant list only governs non-admin approvers.
-    const settingsTabs = admin ? [] : await resolveBookingTabsByEmail(email);
+    //
+    // The grant read is caught separately so it cannot take the rest of the
+    // answer with it. A roster member who holds no grants still needs
+    // `account` to see the queue and the report, and failing the whole endpoint
+    // over a table they do not use would deny them work they are entitled to.
+    // Unresolvable grants degrade to none — the fail-closed direction for the
+    // settings half — while the area half is answered from a read that
+    // succeeded.
+    let settingsTabs: string[] = [];
+    if (!admin) {
+      try {
+        settingsTabs = await resolveBookingTabsByEmail(email);
+      } catch (err) {
+        console.error("[travel-booking/access] grant read failed — reporting no grants", err);
+      }
+    }
     const canSettings = admin || settingsTabs.length > 0;
     return NextResponse.json({
       ok: true,
