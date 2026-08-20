@@ -109,14 +109,6 @@ ELSE IF EXISTS (
 CREATE UNIQUE INDEX [UQ_DepartmentErpMap_Dept]
   ON [dbo].[DepartmentErpMap] ([FormCode], [BrandCode], [DepartmentCode]);
 
-IF NOT EXISTS (
-  SELECT 1 FROM sys.indexes
-  WHERE name = 'IX_DepartmentErpMap_FormCode'
-    AND object_id = OBJECT_ID('dbo.DepartmentErpMap')
-)
-  CREATE INDEX [IX_DepartmentErpMap_FormCode]
-    ON [dbo].[DepartmentErpMap] ([FormCode], [BrandCode]);
-
 PRINT 'DepartmentErpMap: rows defaulted to NULL; UQ_DepartmentErpMap_Dept now (FormCode, BrandCode, DepartmentCode).';
 GO
 
