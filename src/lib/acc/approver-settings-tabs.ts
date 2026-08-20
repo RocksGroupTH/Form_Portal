@@ -33,12 +33,29 @@ export async function loadSettingsTabsByApproverIds(
       byApprover.set(row.ApproverId, list);
     }
   } catch (err) {
-    // Degrade to NO grants, never to all. This decides whether a non-admin
-    // approver sees the settings page at all, so a permissive default would
-    // open it to every approver the moment the table or the database is
-    // unreachable. Under-granting is recoverable; over-granting is not.
-    console.error("[approver-settings-tabs] read failed — treating as no grants", err);
-    byApprover.clear();
+    const msg = err instanceof Error ? err.message : String(err);
+    // A MISSING TABLE degrades to no grants — never to all. That decides
+    // whether a non-admin approver sees the settings page, so a permissive
+    // default would open it to every approver the moment the schema is behind.
+    //
+    // ANY OTHER FAILURE rethrows, and the difference matters because this read
+    // feeds two callers that want opposite things. `/access` wants an answer
+    // and treats a missing one as "no grants". `listApprovers` feeds the
+    // admin's EDITING grid, where an empty result is indistinguishable from
+    // "this person has no grants" — so the admin's next tick would POST a
+    // one-element set, and `setApproverSettingsTabs` replaces rather than
+    // merges, silently deleting the rest in both databases. Rethrowing turns
+    // that into the panel's error state. The fail-closed guarantee on
+    // `/access` is provided independently by its own catch, which 500s, and
+    // by the hook defaulting to no grants.
+    //
+    // Matches `loadInterfaceBrandsByApproverIds`, which is read beside this one.
+    if (msg.includes("AccApproverSettingsTab") || msg.includes("Invalid object name")) {
+      console.error("[approver-settings-tabs] table unavailable — treating as no grants", err);
+      byApprover.clear();
+    } else {
+      throw err;
+    }
   }
 
   for (const id of approverIds) {
