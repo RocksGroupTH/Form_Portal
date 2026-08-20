@@ -5,6 +5,9 @@ import useSWR from "swr";
 interface AccountingAccessData {
   account: boolean;
   approver: boolean;
+  admin: boolean;
+  settingsTabs: string[];
+  canSettings: boolean;
 }
 
 const fetcher = async (url: string) => {
@@ -27,5 +30,11 @@ export function useAccountingAccess() {
     isApprover: access?.approver ?? false,
     /** Approver or IT/System Admin — report & account APIs */
     canAccount: access?.account ?? false,
+    /** IT Admin or System Admin. */
+    isAdmin: access?.admin ?? false,
+    /** Grantable tabs this non-admin approver may open; [] for admins. */
+    settingsTabs: access?.settingsTabs ?? [],
+    /** admin OR at least one granted tab. */
+    canSettings: access?.canSettings ?? false,
   };
 }
