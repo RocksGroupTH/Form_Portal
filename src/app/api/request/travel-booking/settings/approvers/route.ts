@@ -1,21 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole } from "@/lib/api-auth";
 import {
+  getBookingApproverIdByStaffId,
   listBookingApprovers,
   setBookingApproverActive,
   upsertBookingApprover,
 } from "@/lib/acc/booking-approver-service";
 import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
+import { setBookingApproverTabs } from "@/lib/acc/travel-booking/booking-approver-tabs";
+import { filterGrantableBookingTabKeys } from "@/lib/acc/travel-booking/settings-tabs";
 
 /*
  * AP-17's สิทธิ์เข้าถึง tab — the roster that decides who sees the booking
  * queue and the booking report.
  *
- * **Admin only, and deliberately not openable by a grant.** AP-1's settings
- * tabs can be handed to an individual approver; AP-17 has no per-tab grants at
- * all, which mirrors ACC Portal. The same reasoning applies either way: this is
- * the page where access is handed out, so anyone who could POST here could
- * write themselves in.
+ * **Admin only, and deliberately not openable by a grant.** The other four
+ * AP-17 settings tabs can now be handed to an individual booking approver
+ * (`requireBookingSettingsTab`); this one cannot, and never will be. It is
+ * where the grants are handed out, so anyone who could POST here could write
+ * themselves in and then grant themselves the rest — which is why `access` is
+ * absent from `GRANTABLE_BOOKING_TABS` and why `decideBookingTabAccess` refuses
+ * it for a non-admin even if a row for it exists.
  *
  * The path matters. `/api/request/travel-booking` is mapped to AP-17 in
  * `ROUTE_RULES` (`@/lib/form-environment/classify-path`), so the URL prefix is
@@ -31,7 +36,8 @@ const HR_UNAVAILABLE =
 
 /**
  * GET /api/request/travel-booking/settings/approvers
- * Returns the full roster, inactive rows included, for the admin panel.
+ * Returns the full roster, inactive rows included, for the admin panel — each
+ * row carrying its `settingsTabs` grants so the panel can render the ticks.
  * Requires IT Admin or System Admin.
  */
 export async function GET() {
@@ -49,12 +55,19 @@ export async function GET() {
 
 /**
  * POST /api/request/travel-booking/settings/approvers
- * Body: { email, displayName?, isActive? }
+ * Body: { email, displayName?, isActive?, settingsTabs? }
  *
  * `StaffId` is the natural key of the table and is resolved **here**, from HR,
  * by email — the client never supplies one. AD search returns an Entra
  * identity, which knows nothing about staff numbers, and a client-supplied id
  * would let a caller point a roster row at somebody else's employee record.
+ *
+ * `settingsTabs`: **omitted leaves the grants alone**; an array is the whole
+ * granted set, so `[]` revokes everything. The distinction is the point — the
+ * add-approver call and any future partial save send no tabs, and treating that
+ * as an empty set would silently revoke every grant the person held. Unknown
+ * keys — `access` above all — are dropped by `filterGrantableBookingTabKeys`
+ * before the write: the client's list is a request, not a decision.
  * Requires IT Admin or System Admin.
  */
 export async function POST(req: NextRequest) {
@@ -103,6 +116,26 @@ export async function POST(req: NextRequest) {
       createdBy: Number(session.user.id),
     });
 
+    // `Array.isArray` is what makes "omitted" different from "[]". Without it a
+    // save that carries no tabs — adding someone from the AD modal, or any
+    // later partial edit — would clear every grant they hold, and
+    // `setBookingApproverTabs` replaces rather than merges, in both databases.
+    if (Array.isArray(body.settingsTabs)) {
+      // Resolved from the StaffId this route derived from HR, never from a
+      // posted id: the grants hang off `AccBookingApprover.Id`, and letting the
+      // client name that row would let one caller rewrite another's grants.
+      // The upsert above has just run, so the row exists.
+      const approverId = await getBookingApproverIdByStaffId(employee.staffId);
+      if (approverId) {
+        await setBookingApproverTabs(
+          approverId,
+          filterGrantableBookingTabKeys(
+            (body.settingsTabs as unknown[]).map((k) => String(k)),
+          ),
+        );
+      }
+    }
+
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("[api/request/travel-booking/settings/approvers] POST", err);
@@ -114,6 +147,10 @@ export async function POST(req: NextRequest) {
  * PATCH /api/request/travel-booking/settings/approvers
  * Body: { staffId, isActive }
  * Soft delete / restore — the row stays so history keeps reading.
+ *
+ * It sends no `settingsTabs` and must not: `resolveBookingTabsByEmail` tests
+ * `IsActive = 1`, so deactivating already revokes every tab without deleting a
+ * grant row, and restoring brings back exactly what the person had.
  * Requires IT Admin or System Admin.
  */
 export async function PATCH(req: NextRequest) {
