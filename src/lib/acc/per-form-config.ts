@@ -13,7 +13,16 @@
  */
 
 /** Bind `@formCode` alongside `@brandCode`. Both arms, always. */
-export const PER_FORM_PREDICATE = "(FormCode = @formCode OR FormCode IS NULL)";
+export function perFormPredicate(alias?: string): string {
+  const col = alias ? `${alias}.FormCode` : "FormCode";
+  return `(${col} = @formCode OR ${col} IS NULL)`;
+}
+
+/**
+ * @deprecated Use `perFormPredicate()`. Kept so an unaliased caller reads the
+ * same either way; a joined query must call the function with its alias.
+ */
+export const PER_FORM_PREDICATE = perFormPredicate();
 
 /** Form-specific rows sort before the default. */
 export function perFormOrderBy(alias?: string): string {

@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { pickForForm, defaultsOnly, PER_FORM_PREDICATE, perFormOrderBy } from "./per-form-config";
+import {
+  pickForForm,
+  defaultsOnly,
+  PER_FORM_PREDICATE,
+  perFormPredicate,
+  perFormOrderBy,
+} from "./per-form-config";
 
 const DEFAULT_ROW = { formCode: null, v: "default" };
 const AP1_ROW = { formCode: "AP-1", v: "ap1" };
@@ -36,4 +42,12 @@ test("the predicate names both arms, so a caller cannot half-apply it", () => {
 test("the order by puts the form-specific row first", () => {
   assert.ok(perFormOrderBy().indexOf("IS NULL THEN 1 ELSE 0") !== -1);
   assert.ok(perFormOrderBy("t").indexOf("t.FormCode") !== -1);
+});
+
+test("the predicate takes an alias, so a joined query need not hand-write it", () => {
+  assert.equal(perFormPredicate(), "(FormCode = @formCode OR FormCode IS NULL)");
+  assert.equal(perFormPredicate("t"), "(t.FormCode = @formCode OR t.FormCode IS NULL)");
+  // Both arms carry the alias — aliasing one and not the other is the mistake
+  // this replaces, and it reads as valid SQL right up until it is ambiguous.
+  assert.equal(perFormPredicate("m").indexOf("(FormCode"), -1);
 });
