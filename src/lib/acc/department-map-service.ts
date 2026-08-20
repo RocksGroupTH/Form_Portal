@@ -8,6 +8,13 @@ import {
   legacyClaimPurgeError,
 } from "@/lib/acc/department-map-guard";
 import { ERP_INTERFACE_BRANDS, isErpInterfaceBrandCode } from "@/lib/acc/erp-interface-brands";
+import {
+  defaultsOnly,
+  perFormOrderBy,
+  perFormPredicate,
+  perFormWriteMatch,
+  pickAllForForm,
+} from "@/lib/acc/per-form-config";
 import { getCorePool, getDataPool, sql } from "@/lib/db/mssql";
 import { getBrandConfig } from "@/lib/brand-config";
 import {
@@ -97,43 +104,110 @@ export interface DepartmentMappingPageData {
   lastSync: ErpSyncLogSummary | null;
 }
 
-async function loadMappings(storageBrandCode: string): Promise<DepartmentMappingRow[]> {
+/**
+ * A `DepartmentErpMap` row as stored, before the default/override rule reduces
+ * it to the one row that answers for a form.
+ *
+ * Migration 098 gave the table a `FormCode`, so a brand can now hold a default
+ * row (`NULL`) *and* one row per form for the same department. Every read has
+ * to say which of them it wants; none of them may simply take what the driver
+ * hands back first.
+ */
+interface StoredDepartmentMappingRow extends DepartmentMappingRow {
+  /** `null` is the default, which answers every form. Never left absent. */
+  formCode: string | null;
+}
+
+/**
+ * Drop `formCode` on the way out.
+ *
+ * The pick has already happened, so the surviving row's own form code carries
+ * no information the caller can act on — and the editor renders these rows, so
+ * a field that is always `null` there would read as "no form", not "default".
+ */
+function withoutFormCode(row: StoredDepartmentMappingRow): DepartmentMappingRow {
+  return {
+    departmentCode: row.departmentCode,
+    departmentName: row.departmentName,
+    erpDimensionCode: row.erpDimensionCode,
+    erpCode: row.erpCode,
+    erpDisplayName: row.erpDisplayName,
+    mappedAt: row.mappedAt,
+    fixedGlAccountNo: row.fixedGlAccountNo,
+    fixedGlDescription: row.fixedGlDescription,
+  };
+}
+
+/**
+ * One brand's department mappings, resolved for `formCode`.
+ *
+ * `formCode` is required rather than optional: this is the read behind the
+ * settings editor *and* the shape every future caller will copy, and an
+ * omitted argument here is the one that silently returns another form's row.
+ * `null` means the default — what an editor with no form selector edits.
+ */
+async function loadMappings(
+  storageBrandCode: string,
+  formCode: string | null,
+): Promise<DepartmentMappingRow[]> {
   const pool = await getCorePool();
-  const res = await pool
+  const req = pool
     .request()
-    .input("brand", sql.NVarChar, storageBrandCode.trim().toUpperCase())
-    .query(`
+    .input("brand", sql.NVarChar, storageBrandCode.trim().toUpperCase());
+  let formWhere = "AND FormCode IS NULL";
+  if (formCode) {
+    req.input("formCode", sql.NVarChar(20), formCode);
+    formWhere = `AND ${perFormPredicate()}`;
+  }
+  const res = await req.query(`
       SELECT DepartmentCode, HrDepartmentName AS DepartmentName, ErpDimensionCode, ErpCode,
-        FixedGlAccountNo, FixedGlDescription, MappedAt
+        FixedGlAccountNo, FixedGlDescription, MappedAt, FormCode
       FROM [dbo].[DepartmentErpMap]
-      WHERE BrandCode = @brand
+      WHERE BrandCode = @brand ${formWhere}
+      ORDER BY ${perFormOrderBy()}
     `);
 
-  return (res.recordset as Record<string, unknown>[]).map((r) => ({
-    departmentCode: r.DepartmentCode as string,
-    departmentName: (r.DepartmentName as string) ?? null,
-    erpDimensionCode: r.ErpDimensionCode as string,
-    erpCode: r.ErpCode as string,
-    erpDisplayName: null,
-    mappedAt: r.MappedAt ? (r.MappedAt as Date).toISOString() : null,
-    fixedGlAccountNo: (r.FixedGlAccountNo as string) ?? null,
-    fixedGlDescription: (r.FixedGlDescription as string) ?? null,
-  }));
+  const rows: StoredDepartmentMappingRow[] = (res.recordset as Record<string, unknown>[]).map(
+    (r) => ({
+      departmentCode: r.DepartmentCode as string,
+      departmentName: (r.DepartmentName as string) ?? null,
+      erpDimensionCode: r.ErpDimensionCode as string,
+      erpCode: r.ErpCode as string,
+      erpDisplayName: null,
+      mappedAt: r.MappedAt ? (r.MappedAt as Date).toISOString() : null,
+      fixedGlAccountNo: (r.FixedGlAccountNo as string) ?? null,
+      fixedGlDescription: (r.FixedGlDescription as string) ?? null,
+      // SQL NULL becomes `null`, never `undefined`: an absent property is
+      // invisible to both pickAllForForm and defaultsOnly, which would drop
+      // this brand's entire default mapping without an error.
+      formCode: (r.FormCode as string | null) ?? null,
+    }),
+  );
+
+  // The unique index is (FormCode, BrandCode, DepartmentCode) and BrandCode is
+  // already pinned by the WHERE, so the pick unit is the department code.
+  // Trimmed, because SQL Server compares trailing blanks as equal and the index
+  // therefore cannot hold 'IT' and 'IT ' side by side.
+  const picked = formCode
+    ? pickAllForForm(rows, formCode, (row) => row.departmentCode.trim())
+    : defaultsOnly(rows);
+  return picked.map(withoutFormCode);
 }
 
 /** Load mappings stored under target brand, with legacy fallback from claim-brand rows. */
 async function loadMappingsForTarget(
   targetBrandCode: string,
   legacyClaimCodes: string[],
+  formCode: string | null,
 ): Promise<DepartmentMappingRow[]> {
   const target = targetBrandCode.trim().toUpperCase();
-  const primary = await loadMappings(target);
+  const primary = await loadMappings(target, formCode);
   if (primary.length > 0) return primary;
 
   for (const claim of legacyClaimCodes) {
     const code = claim.trim().toUpperCase();
     if (!code || code === target) continue;
-    const legacy = await loadMappings(code);
+    const legacy = await loadMappings(code, formCode);
     if (legacy.length > 0) return legacy;
   }
   return [];
@@ -145,13 +219,24 @@ async function loadMappingsForTarget(
  * `codes` must already have come through `boundLegacyClaimCodes` — this
  * function does no filtering of its own, deliberately, so there is one place
  * that decides what may be deleted rather than two that disagree.
+ *
+ * There are now *two* bounds and they compose: `codes` says which brands, and
+ * `formCode` says which of each brand's rows. The second is not optional —
+ * unbounded, clearing the default for a claim brand takes every form's override
+ * for that brand with it, in one statement, with no error.
  */
-async function purgeLegacyClaimMappings(codes: string[]): Promise<void> {
+async function purgeLegacyClaimMappings(
+  codes: string[],
+  formCode: string | null,
+): Promise<void> {
   const pool = await getCorePool();
   for (const code of codes) {
-    await pool.request()
-      .input("brand", sql.NVarChar, code)
-      .query(`DELETE FROM [dbo].[DepartmentErpMap] WHERE BrandCode = @brand`);
+    const req = pool.request().input("brand", sql.NVarChar, code);
+    if (formCode) req.input("formCode", sql.NVarChar(20), formCode);
+    await req.query(`
+      DELETE FROM [dbo].[DepartmentErpMap]
+      WHERE BrandCode = @brand AND ${perFormWriteMatch(formCode)}
+    `);
   }
 }
 
@@ -194,6 +279,19 @@ export async function isBrandBcDeptConfigReady(brandCode: string): Promise<boole
   }
 }
 
+/**
+ * The settings editor's view of the department map — **the defaults, always.**
+ *
+ * Deliberately not per-form, and deliberately without a `formCode` parameter.
+ * The แผนก tab has no form selector, so the only honest thing it can show is
+ * the shared configuration: a merged per-form view would let an admin edit
+ * AP-4's override believing it was the default. `saveDepartmentMappings` is
+ * given the matching `null` by its route, so what this page reads is exactly
+ * what that page writes.
+ *
+ * `listBrandErpInterfaceMaps()` is called with no form code for the same
+ * reason — the groups on this page are the default claim → target mapping.
+ */
 export async function getMultiBrandDepartmentMappingPage(): Promise<MultiBrandDepartmentMappingPageData> {
   const dimensionCode = HR_DEPARTMENT_DIMENSION_CODE;
   const [departmentCodes, allowedBrands, interfaceMaps] = await Promise.all([
@@ -233,7 +331,7 @@ export async function getMultiBrandDepartmentMappingPage(): Promise<MultiBrandDe
       const legacyClaimCodes = claimBrands.map((c) => c.claimBrandCode);
 
       const [savedMappings, erpOptions, glAccounts, lastSync, bcConfigReady, targetCfg] = await Promise.all([
-        loadMappingsForTarget(targetBrandCode, legacyClaimCodes),
+        loadMappingsForTarget(targetBrandCode, legacyClaimCodes, null),
         listErpDimensionOptions(targetBrandCode, dimensionCode),
         listErpGlAccountOptions(targetBrandCode),
         getLastDimensionSync(targetBrandCode),
@@ -313,11 +411,26 @@ export interface SaveDepartmentMappingInput {
   fixedGlDescription?: string | null;
 }
 
+/**
+ * Write one target brand's department mappings for one form.
+ *
+ * `formCode` is required and has no default. `null` is the shared default row —
+ * what the admin editor saves — and a form code writes that form's override
+ * alone. Every statement below is bounded by it through `perFormWriteMatch`,
+ * including the two deletes: `FormCode = @formCode` never matches `NULL`, and
+ * an unbounded `WHERE BrandCode = …` sweeps the default and every override for
+ * the brand together, silently and in one statement.
+ *
+ * The parameter is last rather than beside `targetBrandCode` so the existing
+ * argument order is undisturbed; `legacyClaimCodes` lost its `= []` default in
+ * exchange, since a default it can never use only hides the decision.
+ */
 export async function saveDepartmentMappings(
   targetBrandCode: string,
   items: SaveDepartmentMappingInput[],
   userId: number,
-  legacyClaimCodes: string[] = [],
+  legacyClaimCodes: string[],
+  formCode: string | null,
 ): Promise<void> {
   const brandCode = targetBrandCode.trim().toUpperCase();
   if (!brandCode) throw new DepartmentMapBoundsError("กรุณาระบุแบรนด์ปลายทาง");
@@ -341,11 +454,17 @@ export async function saveDepartmentMappings(
   // every claim brand, so it would leave one PUT able to empty the table for
   // every brand but the target, which is the whole thing this bound exists to
   // stop.
+  //
+  // Since migration 097 that set is itself per-form, so the interface map is
+  // read for *this* save's form. The purge deletes this form's rows; the brands
+  // it may delete them for must be the brands this form's interface map points
+  // at the target, not another form's. `formCode === null` reads the defaults,
+  // which is what the admin editor saves and is byte-for-byte today's answer.
   let purgeCodes: string[] = [];
   const requestedPurge = Array.isArray(legacyClaimCodes) ? legacyClaimCodes : [];
   if (requestedPurge.length > 0) {
     const purgeable = claimCodesForInterfaceTarget(
-      await listBrandErpInterfaceMaps(),
+      await listBrandErpInterfaceMaps(formCode ?? undefined),
       brandCode,
     );
     const bounds = boundLegacyClaimCodes(requestedPurge, brandCode, purgeable);
@@ -365,13 +484,19 @@ export async function saveDepartmentMappings(
     const fixedGlDescription = item.fixedGlDescription?.trim() || null;
 
     if (!erpCode && !fixedGlAccountNo) {
-      await pool
+      // Bounded to this save's own row. Clearing a department on the default
+      // means "no shared mapping"; without the form bound it also deletes every
+      // form's override of that department, which is not what the editor asked
+      // for and leaves no trace that it happened.
+      const del = pool
         .request()
         .input("brand", sql.NVarChar, brandCode)
-        .input("code", sql.NVarChar, departmentCode)
-        .query(`
+        .input("code", sql.NVarChar, departmentCode);
+      if (formCode) del.input("formCode", sql.NVarChar(20), formCode);
+      await del.query(`
           DELETE FROM [dbo].[DepartmentErpMap]
           WHERE BrandCode = @brand AND DepartmentCode = @code
+            AND ${perFormWriteMatch(formCode)}
         `);
       continue;
     }
@@ -383,6 +508,10 @@ export async function saveDepartmentMappings(
       .input("code", sql.NVarChar, departmentCode)
       .input("deptName", sql.NVarChar, item.departmentName?.trim() || null)
       .input("erpDim", sql.NVarChar, erpDim)
+      // Always bound, even when null: `perFormWriteMatch(null)` renders
+      // `FormCode IS NULL` and never names the parameter, but the INSERT arm
+      // still has to write it, so it is bound unconditionally.
+      .input("formCode", sql.NVarChar(20), formCode)
       // ErpCode remains NVARCHAR(50) NOT NULL on DepartmentErpMap (migration 045 only
       // added FixedGl* columns) — persist "" rather than NULL for a GL-only override row.
       // Every downstream reader already treats "" as absent (falsy checks / <> '' filters).
@@ -396,10 +525,19 @@ export async function saveDepartmentMappings(
       // null them out. Current sole caller (dept-mapping dialog) always sends the
       // full per-row draft (ERP dept + Fixed G/L + description together) and only
       // includes rows that actually changed, so this is safe today.
+      //
+      // The form bound belongs in the ON clause, not in a WHEN MATCHED AND: one
+      // source row matching several target rows updates all of them, so an ON
+      // of (BrandCode, DepartmentCode) alone would rewrite the default and every
+      // form's override of that department with this one payload. It is also
+      // correct for the NOT MATCHED arm — FormCode is the leading column of
+      // UQ_DepartmentErpMap_Dept, so inserting the default beside an existing
+      // override is a legal row, not a duplicate.
       .query(`
         MERGE [dbo].[DepartmentErpMap] AS t
         USING (SELECT @brand AS BrandCode, @code AS DepartmentCode) AS s
         ON t.BrandCode = s.BrandCode AND t.DepartmentCode = s.DepartmentCode
+           AND ${perFormWriteMatch(formCode, "t")}
         WHEN MATCHED THEN
           UPDATE SET
             HrDepartmentName = @deptName,
@@ -411,18 +549,18 @@ export async function saveDepartmentMappings(
             MappedAt = SYSDATETIME()
         WHEN NOT MATCHED THEN
           INSERT (
-            BrandCode, DepartmentCode, HrDepartmentName, ErpDimensionCode, ErpCode,
+            BrandCode, DepartmentCode, FormCode, HrDepartmentName, ErpDimensionCode, ErpCode,
             FixedGlAccountNo, FixedGlDescription, MappedBy
           )
           VALUES (
-            @brand, @code, @deptName, @erpDim, @erpCode,
+            @brand, @code, @formCode, @deptName, @erpDim, @erpCode,
             @fixedGlAccountNo, @fixedGlDescription, @by
           );
       `);
   }
 
   if (purgeCodes.length > 0) {
-    await purgeLegacyClaimMappings(purgeCodes);
+    await purgeLegacyClaimMappings(purgeCodes, formCode);
   }
 
   invalidateErpJournalBuildContextCache();
@@ -470,22 +608,69 @@ export async function syncBrandDepartmentDimension(
   return syncBrandDimensionValues(brandCode, HR_DEPARTMENT_DIMENSION_CODE, triggeredBy);
 }
 
-/** Load HR dept → ERP code maps keyed by target (interface) brand. */
+/**
+ * Load HR dept → ERP code maps keyed by target (interface) brand.
+ *
+ * **This is the read that decides which ERP dimension an approved claim posts
+ * to.** With `formCode`, it resolves that form's configuration: the form's own
+ * row for a department where it has one, the default otherwise. Without, the
+ * defaults alone — the safe answer for a caller with no form in hand, since it
+ * can never return another form's mapping.
+ *
+ * The value filter (`ErpCode` non-blank) runs **after** the pick, not in the
+ * WHERE. Filtering first is a fallback in disguise: a form whose own row maps a
+ * department to no dimension code — which `saveDepartmentMappings` stores as
+ * `''` for a G/L-only row — would be filtered out of its own group and inherit
+ * the default's dimension code instead of overriding it away. Today every row
+ * is a default, so the two orders agree exactly; they stop agreeing the moment
+ * anyone adds an override, and by then the money has a dimension on it.
+ */
 export async function loadDepartmentErpMapsByTarget(
   interfaceByClaim: Map<string, string>,
+  formCode?: string,
 ): Promise<Map<string, Map<string, string>>> {
   const pool = await getCorePool();
-  const res = await pool.request().query(`
-    SELECT BrandCode, DepartmentCode, ErpCode
+  const req = pool.request();
+  let formWhere = "WHERE FormCode IS NULL";
+  if (formCode) {
+    req.input("formCode", sql.NVarChar(20), formCode);
+    formWhere = `WHERE ${perFormPredicate()}`;
+  }
+  const res = await req.query(`
+    SELECT BrandCode, DepartmentCode, ErpCode, FormCode
     FROM [dbo].[DepartmentErpMap]
-    WHERE ErpCode IS NOT NULL AND LTRIM(RTRIM(ErpCode)) <> ''
+    ${formWhere}
+    ORDER BY BrandCode, DepartmentCode, ${perFormOrderBy()}
   `);
 
+  const rows = (
+    res.recordset as {
+      BrandCode: string;
+      DepartmentCode: string;
+      ErpCode: string | null;
+      FormCode: string | null;
+    }[]
+  ).map((r) => ({
+    brandCode: r.BrandCode.toUpperCase(),
+    departmentCode: r.DepartmentCode.trim(),
+    erpCode: r.ErpCode,
+    // Never `undefined` — see the note in `loadMappings`.
+    formCode: r.FormCode ?? null,
+  }));
+
+  // One row per (BrandCode, DepartmentCode): the unique index minus FormCode.
+  // JSON.stringify rather than a separator character, so no ERP code can forge
+  // a key collision.
+  const resolved = formCode
+    ? pickAllForForm(rows, formCode, (row) => JSON.stringify([row.brandCode, row.departmentCode]))
+    : defaultsOnly(rows);
+
   const rawByKey = new Map<string, Map<string, string>>();
-  for (const r of res.recordset as { BrandCode: string; DepartmentCode: string; ErpCode: string }[]) {
-    const key = r.BrandCode.toUpperCase();
-    if (!rawByKey.has(key)) rawByKey.set(key, new Map());
-    rawByKey.get(key)!.set(r.DepartmentCode.trim(), r.ErpCode);
+  for (const r of resolved) {
+    const erpCode = (r.erpCode ?? "").trim();
+    if (!erpCode) continue;
+    if (!rawByKey.has(r.brandCode)) rawByKey.set(r.brandCode, new Map());
+    rawByKey.get(r.brandCode)!.set(r.departmentCode, r.erpCode as string);
   }
 
   const claimsByTarget = new Map<string, string[]>();
@@ -524,29 +709,69 @@ export interface DeptGlOverride {
   description: string;
 }
 
-/** Load HR dept → Fixed G/L override maps keyed by target (interface) brand. */
+/**
+ * Load HR dept → Fixed G/L override maps keyed by target (interface) brand.
+ *
+ * Same rule and same ordering trap as `loadDepartmentErpMapsByTarget`: the
+ * `FixedGlAccountNo` filter runs after the pick, so a form's own row that
+ * carries no fixed G/L overrides the default *away* rather than falling through
+ * to it. Whether a claim posts to the department's G/L account or the default
+ * one turns on exactly that.
+ *
+ * Its only caller today is `erp-journal-context.ts`, which has no form code to
+ * give and therefore reads the defaults — identical to its previous behaviour,
+ * because before this the read had no `FormCode` predicate at all and every row
+ * is still a default. Threading a form code into the Business Central send is a
+ * separate piece of work; the parameter is here so that work is a call-site
+ * change rather than another rewrite of this function.
+ */
 export async function loadDeptGlOverridesByTarget(
   interfaceByClaim: Map<string, string>,
+  formCode?: string,
 ): Promise<Map<string, Map<string, DeptGlOverride>>> {
   const pool = await getCorePool();
-  const res = await pool.request().query(`
-    SELECT BrandCode, DepartmentCode, FixedGlAccountNo, FixedGlDescription
+  const req = pool.request();
+  let formWhere = "WHERE FormCode IS NULL";
+  if (formCode) {
+    req.input("formCode", sql.NVarChar(20), formCode);
+    formWhere = `WHERE ${perFormPredicate()}`;
+  }
+  const res = await req.query(`
+    SELECT BrandCode, DepartmentCode, FixedGlAccountNo, FixedGlDescription, FormCode
     FROM [dbo].[DepartmentErpMap]
-    WHERE FixedGlAccountNo IS NOT NULL AND LTRIM(RTRIM(FixedGlAccountNo)) <> ''
+    ${formWhere}
+    ORDER BY BrandCode, DepartmentCode, ${perFormOrderBy()}
   `);
 
+  const rows = (
+    res.recordset as {
+      BrandCode: string;
+      DepartmentCode: string;
+      FixedGlAccountNo: string | null;
+      FixedGlDescription: string | null;
+      FormCode: string | null;
+    }[]
+  ).map((r) => ({
+    brandCode: r.BrandCode.toUpperCase(),
+    departmentCode: r.DepartmentCode.trim(),
+    fixedGlAccountNo: r.FixedGlAccountNo,
+    fixedGlDescription: r.FixedGlDescription,
+    // Never `undefined` — see the note in `loadMappings`.
+    formCode: r.FormCode ?? null,
+  }));
+
+  const resolved = formCode
+    ? pickAllForForm(rows, formCode, (row) => JSON.stringify([row.brandCode, row.departmentCode]))
+    : defaultsOnly(rows);
+
   const rawByKey = new Map<string, Map<string, DeptGlOverride>>();
-  for (const r of res.recordset as {
-    BrandCode: string;
-    DepartmentCode: string;
-    FixedGlAccountNo: string;
-    FixedGlDescription: string | null;
-  }[]) {
-    const key = r.BrandCode.toUpperCase();
-    if (!rawByKey.has(key)) rawByKey.set(key, new Map());
-    rawByKey.get(key)!.set(r.DepartmentCode.trim(), {
-      accountNo: r.FixedGlAccountNo.trim(),
-      description: (r.FixedGlDescription ?? "").trim(),
+  for (const r of resolved) {
+    const accountNo = (r.fixedGlAccountNo ?? "").trim();
+    if (!accountNo) continue;
+    if (!rawByKey.has(r.brandCode)) rawByKey.set(r.brandCode, new Map());
+    rawByKey.get(r.brandCode)!.set(r.departmentCode, {
+      accountNo,
+      description: (r.fixedGlDescription ?? "").trim(),
     });
   }
 
@@ -581,13 +806,23 @@ export async function loadDeptGlOverridesByTarget(
   return out;
 }
 
-/** @deprecated use loadDepartmentErpMapsByTarget */
+/**
+ * @deprecated use loadDepartmentErpMapsByTarget
+ *
+ * Zero callers as of 2026-08-20, and kept only because it is exported. It is
+ * bounded to the defaults rather than left unfiltered: an unbounded read of
+ * this table now returns the default *and* every form's override for the same
+ * department, and this function's `Map.set` would silently let whichever the
+ * driver returned last decide the ERP dimension. Defaults-only is the honest
+ * answer for a function with no way to say which form is asking.
+ */
 export async function loadAllDepartmentErpMaps(): Promise<Map<string, Map<string, string>>> {
   const pool = await getCorePool();
   const res = await pool.request().query(`
     SELECT BrandCode, DepartmentCode, ErpCode
     FROM [dbo].[DepartmentErpMap]
     WHERE ErpCode IS NOT NULL AND LTRIM(RTRIM(ErpCode)) <> ''
+      AND FormCode IS NULL
   `);
 
   const out = new Map<string, Map<string, string>>();

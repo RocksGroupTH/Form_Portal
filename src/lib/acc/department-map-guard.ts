@@ -29,6 +29,30 @@
  * that can reach a pool drags `@/env` into the test run, which validates the
  * whole environment at import time. `claimCodesForInterfaceTarget` therefore
  * takes the rows rather than fetching them.
+ *
+ * ---------------------------------------------------------------------------
+ * **Nothing in this module takes a `formCode`, and that is the design.**
+ *
+ * Migrations 097/098 made both `AccBrandErpInterface` and `DepartmentErpMap`
+ * per-form: a brand keeps a default row (`FormCode NULL`) plus at most one row
+ * per form. A purge therefore now has *two* bounds, and they are answered in
+ * two different places:
+ *
+ * - **which brands** may be cleared — this module, and the form does not change
+ *   the answer. It is a question about the claim → target relationship, and it
+ *   is asked of whatever set of relationships the caller hands over;
+ * - **which of each brand's rows** — `perFormWriteMatch(formCode)` in
+ *   `saveDepartmentMappings`, in the `DELETE` itself. That is where the form
+ *   belongs, because that is the only place it changes an outcome.
+ *
+ * Adding a `formCode` parameter here would be worse than useless: it would be
+ * read by nothing, or — worse — it would tempt a second implementation of the
+ * default/override rule inside the guard, competing with the single copy in
+ * `per-form-config.ts` that exists precisely so there is only one.
+ *
+ * The one obligation this pushes onto the caller is written on
+ * `claimCodesForInterfaceTarget` below: hand it rows already resolved for the
+ * form being saved.
  */
 
 /**
@@ -60,6 +84,16 @@ export interface ClaimToInterfaceTarget {
  * row maps it to itself (a brand may be its own interface target); it is
  * `boundLegacyClaimCodes` that skips the target, and it does so whether or not
  * such a row exists.
+ *
+ * **`maps` must already be resolved for the form being saved — one row per
+ * brand.** `listBrandErpInterfaceMaps` guarantees that: it reduces through
+ * `pickAllForForm` when given a form code and `defaultsOnly` when not, so
+ * neither answer can contain a brand twice. This function takes no form code
+ * and applies no default/override rule of its own (see the module header), so
+ * handing it the raw table — a default *and* an override for the same brand —
+ * would widen the purge to the union of both rows' targets. The bound would
+ * still hold against brands that point somewhere else entirely; it would just
+ * be looser than the save intends, which is not a property worth having.
  */
 export function claimCodesForInterfaceTarget(
   maps: ClaimToInterfaceTarget[],

@@ -28,6 +28,16 @@ const PREP_DEPT_CTX_CACHE_PREFIX = "acc:prep-dept-ctx:";
  * would let one viewer's read serve the other viewer's database.
  * `journalContextCacheKey` (erp-journal-context.ts) already follows this
  * rule; this is the same fix applied here.
+ *
+ * **The same argument now applies to the form, and the key does not carry
+ * one — deliberately.** Since migration 097/098 the configuration this context
+ * is built from resolves per form, but `loadPrepDeptContextUncached` resolves
+ * it for the module constant `AP1_FORM_CODE` and nothing can ask it for another
+ * form: this whole service is AP-1 only, pinned by `r.FormCode = @formCode` in
+ * `listErpPrepRows`. One cached value per environment is therefore always AP-1's
+ * and always correct. **The moment the form becomes a parameter, this key must
+ * carry it** — otherwise AP-1's department map is served to another form's
+ * queue, and the wrong ERP dimension is what a journal posts to.
  */
 function prepDeptCtxCacheKey(environment: FormEnvironmentValue): string {
   return `${PREP_DEPT_CTX_CACHE_PREFIX}${environment}`;
@@ -191,18 +201,45 @@ function toPrepRow(
   };
 }
 
+/**
+ * The configuration behind every ERP dimension this service resolves — read
+ * for **AP-1**, because AP-1 is the only form this service is about.
+ *
+ * The form code is not a new source of truth and must not become one. It is
+ * the same `AP1_FORM_CODE` that `listErpPrepRows` pins on `r.FormCode`, so the
+ * requests in the queue and the configuration that decides where they post
+ * agree by construction. Reading configuration for one form and rows for
+ * another is the failure this whole feature exists to prevent, and it would not
+ * error — it would just post to the wrong dimension.
+ *
+ * Two reads take it:
+ *
+ * - `listBrandErpInterfaceMaps` — which target brand a claim brand's books
+ *   belong to, and therefore which brand's department map answers below.
+ * - `loadDepartmentErpMapsByTarget` — HR department → ERP dimension code.
+ *
+ * `loadErpDeptDisplayNamesByTargetBrand` takes none: it reads
+ * `Fast_Data.ErpDimensionValue`, which is the ERP's own list of dimension
+ * values and has no `FormCode` — a display name for a code, not a choice of
+ * code.
+ *
+ * Every row in both tables is a default today (migrations 097/098 backfilled
+ * them), so this resolves exactly what it resolved before. It stops being a
+ * no-op the first time somebody gives AP-1 a row of its own.
+ */
 async function loadPrepDeptContextUncached(): Promise<PrepDeptContext> {
-  const interfaceMaps = await listBrandErpInterfaceMaps();
+  const interfaceMaps = await listBrandErpInterfaceMaps(AP1_FORM_CODE);
   const interfaceByClaim = new Map(
     interfaceMaps.map((m) => [m.brandCode.toUpperCase(), m.interfaceBrandCode.toUpperCase()]),
   );
   const [deptMapsByTarget, erpNamesByTarget] = await Promise.all([
-    loadDepartmentErpMapsByTarget(interfaceByClaim),
+    loadDepartmentErpMapsByTarget(interfaceByClaim, AP1_FORM_CODE),
     loadErpDeptDisplayNamesByTargetBrand(),
   ]);
   return { deptMapsByTarget, erpNamesByTarget, interfaceByClaim };
 }
 
+/** **AP-1's** configuration — see `loadPrepDeptContextUncached`. */
 export interface PrepDeptContext {
   deptMapsByTarget: Map<string, Map<string, string>>;
   erpNamesByTarget: Map<string, Map<string, string>>;

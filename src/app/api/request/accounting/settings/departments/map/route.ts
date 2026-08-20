@@ -26,6 +26,15 @@ import {
  * the first write. An admin should not be able to empty three applications'
  * department mappings by accident either. See
  * `src/lib/acc/department-map-guard.ts`.
+ *
+ * **This route edits the default (`FormCode NULL`), and says so out loud.**
+ * Since migration 098 the table can hold a shared default plus one row per form
+ * for the same department, but the แผนก tab has no form selector — it reads the
+ * defaults (`getMultiBrandDepartmentMappingPage`) and so it must write them.
+ * The `null` below is passed explicitly rather than left to a parameter default
+ * or to the column's nullability, because it is the difference between saving
+ * the shared mapping and rewriting some form's override, and that decision
+ * belongs in the code rather than in whatever the callee happens to assume.
  */
 export async function PUT(req: NextRequest) {
   const session = await requireRole(["IT Admin", "System Admin"]);
@@ -62,6 +71,9 @@ export async function PUT(req: NextRequest) {
       mappings,
       Number(session.user.id),
       legacyClaimCodes ?? [],
+      // The default row. Not "no form" — the row every form resolves unless it
+      // has one of its own.
+      null,
     );
     return NextResponse.json({ ok: true });
   } catch (err) {
