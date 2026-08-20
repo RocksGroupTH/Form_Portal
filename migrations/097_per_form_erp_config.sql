@@ -130,14 +130,6 @@ ELSE IF EXISTS (
 CREATE UNIQUE INDEX [UQ_AccBrandErpInterface_Brand]
   ON [dbo].[AccBrandErpInterface] ([FormCode], [BrandCode]);
 
-IF NOT EXISTS (
-  SELECT 1 FROM sys.indexes
-  WHERE name = 'IX_AccBrandErpInterface_FormCode'
-    AND object_id = OBJECT_ID('dbo.AccBrandErpInterface')
-)
-  CREATE INDEX [IX_AccBrandErpInterface_FormCode]
-    ON [dbo].[AccBrandErpInterface] ([FormCode], [BrandCode]);
-
 PRINT 'AccBrandErpInterface: rows defaulted to NULL; UQ_AccBrandErpInterface_Brand now (FormCode, BrandCode).';
 GO
 
@@ -174,14 +166,6 @@ ELSE IF EXISTS (
 
 CREATE UNIQUE INDEX [UQ_AccBrandErpTargetSetting_Brand]
   ON [dbo].[AccBrandErpTargetSetting] ([FormCode], [BrandCode]);
-
-IF NOT EXISTS (
-  SELECT 1 FROM sys.indexes
-  WHERE name = 'IX_AccBrandErpTargetSetting_FormCode'
-    AND object_id = OBJECT_ID('dbo.AccBrandErpTargetSetting')
-)
-  CREATE INDEX [IX_AccBrandErpTargetSetting_FormCode]
-    ON [dbo].[AccBrandErpTargetSetting] ([FormCode], [BrandCode]);
 
 PRINT 'AccBrandErpTargetSetting: rows defaulted to NULL; UQ_AccBrandErpTargetSetting_Brand now (FormCode, BrandCode).';
 GO
