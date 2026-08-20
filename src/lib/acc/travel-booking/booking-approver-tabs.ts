@@ -56,7 +56,11 @@ export async function loadBookingTabsByApproverIds(
     // turns it into the panel's error state instead.
     //
     // Matches `loadSettingsTabsByApproverIds` in @/lib/acc/approver-settings-tabs.
-    if (msg.includes("AccBookingApproverTab") || msg.includes("Invalid object name")) {
+    // Both halves must hold: the missing-object error, about this object. ORing
+    // them would let any error merely *naming* the table — permission denied, a
+    // deadlock, a timeout — degrade to no grants, which is the silent-revoke
+    // path this catch exists to close.
+    if (msg.includes("Invalid object name") && msg.includes("AccBookingApproverTab")) {
       console.error("[booking-approver-tabs] table unavailable — treating as no grants", err);
       byApprover.clear();
     } else {
