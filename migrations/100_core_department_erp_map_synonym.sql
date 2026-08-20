@@ -7,9 +7,15 @@
 -- THIS MIGRATION DESTROYS THE ONLY COPY OF THE DATA IF 099 HAS NOT RUN.
 --
 -- Everything before the DROP is the guard against that: the target must exist
--- as a TABLE, and it must hold the same number of rows, counted under TABLOCKX
--- inside the same transaction as the drop so no sibling can insert between the
--- count and the drop.
+-- as a TABLE, it must hold the same number of rows as the source, counted
+-- under TABLOCKX inside the same transaction as the drop so no sibling can
+-- insert between the count and the drop, AND every source row must actually
+-- be present in the target -- matching counts alone cannot tell "099 copied
+-- everything" from "099's batch 2 found the target already non-empty, printed
+-- a message and copied nothing, and the target happens to hold as many rows
+-- as the source by coincidence." A LOCK_TIMEOUT keeps a conflicting sibling
+-- lock from queuing past node-mssql's request timeout, which would leave the
+-- transaction open uncommitted rather than cleanly failing it.
 --
 -- Why a synonym rather than editing the siblings: all three applications name
 -- the table two-part, [dbo].[DepartmentErpMap], on a pool opened against
@@ -52,10 +58,18 @@ END
 ELSE
 BEGIN
   SET XACT_ABORT ON;
+  -- Set before the transaction starts, so a sibling holding a conflicting
+  -- lock on this table becomes a clean server-side error the server itself
+  -- rolls back -- rather than node-mssql's request timeout (15s default;
+  -- makeConfig sets no requestTimeout, src/lib/db/mssql.ts:30-41) sending an
+  -- attention that cancels the statement but leaves the transaction open,
+  -- which XACT_ABORT does not cover.
+  SET LOCK_TIMEOUT 5000;
   BEGIN TRANSACTION;
 
-  -- TABLOCKX holds the source against inserts for the rest of the transaction,
-  -- so the count that authorises the drop is still true when the drop runs.
+  -- TABLOCKX holds the source against inserts for the rest of the
+  -- transaction, so both the content check and the count check below stay
+  -- true when the drop runs.
   DECLARE @here INT = (
     SELECT COUNT(*) FROM [dbo].[DepartmentErpMap] WITH (TABLOCKX)
   );
@@ -63,7 +77,24 @@ BEGIN
     SELECT COUNT(*) FROM [Rocks_Portal_Form].[dbo].[DepartmentErpMap]
   );
 
-  IF @here <> @there
+  -- Content check, ahead of the count check: two tables can hold the same
+  -- number of rows without holding the same rows -- see the header. This
+  -- catches that case even though the counts alone would not.
+  IF EXISTS (
+    SELECT [Id],[BrandCode],[DepartmentCode],[ErpDimensionCode],[ErpCode],[FormCode]
+    FROM [dbo].[DepartmentErpMap]
+    EXCEPT
+    SELECT [Id],[BrandCode],[DepartmentCode],[ErpDimensionCode],[ErpCode],[FormCode]
+    FROM [Rocks_Portal_Form].[dbo].[DepartmentErpMap]
+  )
+  BEGIN
+    ROLLBACK TRANSACTION;
+    RAISERROR (
+      'Migration 100: Rocks_Portal_Form.dbo.DepartmentErpMap does not hold every row Fast_Core does, even though the row counts agree. Re-run migration 099 (its batch 2 is an id-keyed top-up) and retry. Refusing to drop the only copy of data that has not actually all been copied.',
+      16, 1
+    );
+  END
+  ELSE IF @here <> @there
   BEGIN
     ROLLBACK TRANSACTION;
     RAISERROR (

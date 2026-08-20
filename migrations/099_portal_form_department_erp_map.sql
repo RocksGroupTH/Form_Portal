@@ -15,10 +15,20 @@
 -- department mapping with nothing actually wrong. See
 -- docs/superpowers/specs/2026-08-20-department-erp-map-move-design.md, section 3.
 --
--- The shape below reproduces Fast_Core's exactly as measured 2026-08-20,
--- including that UQ_DepartmentErpMap_Dept is a plain unique INDEX and not a
--- unique constraint -- migration 098 converted it, and CREATE UNIQUE INDEX is
--- what reproduces what is actually there.
+-- The shape below matches Fast_Core's as measured 2026-08-20, with one
+-- deliberate difference: MappedAt's default is named DF_DepartmentErpMap_MappedAt
+-- here, where the live table carries a system-generated name
+-- (DF__Departmen__Mappe__...) because migration 021 declared the default
+-- inline with no CONSTRAINT clause. Functionally identical, and nothing
+-- anywhere references either name -- the deterministic name is just better.
+-- UQ_DepartmentErpMap_Dept is reproduced exactly: a plain unique INDEX and
+-- not a unique constraint -- migration 098 converted it, and CREATE UNIQUE
+-- INDEX is what matches what is actually there.
+--
+-- Batch 2 below is an id-keyed TOP-UP, not a one-time copy: it inserts
+-- whatever Fast_Core ids are missing here, so a re-run after a sibling wrote
+-- to Fast_Core between 099 and 100 fills the gap instead of silently doing
+-- nothing. A clean re-run finds nothing missing and is a no-op.
 -- ---------------------------------------------------------------------------
 
 SET NOCOUNT ON;
@@ -105,10 +115,6 @@ BEGIN
     16, 1
   );
 END
-ELSE IF EXISTS (SELECT 1 FROM [dbo].[DepartmentErpMap])
-BEGIN
-  PRINT 'dbo.DepartmentErpMap already holds rows -- the copy is skipped.';
-END
 ELSE IF OBJECT_ID('[Fast_Core].[dbo].[DepartmentErpMap]', 'U') IS NULL
 BEGIN
   RAISERROR (
@@ -123,15 +129,22 @@ BEGIN
 
   SET IDENTITY_INSERT [dbo].[DepartmentErpMap] ON;
 
+  -- Top-up, not a one-time copy: id-keyed so a re-run -- whether because a
+  -- sibling wrote to Fast_Core in the window between 099 and 100, or because
+  -- this batch is simply run twice -- inserts only what is missing. A clean
+  -- re-run inserts nothing, which is what keeps this batch idempotent.
   INSERT INTO [dbo].[DepartmentErpMap]
     ([Id], [BrandCode], [DepartmentCode], [HrDepartmentName], [ErpDimensionCode],
      [ErpCode], [MappedBy], [MappedAt], [FixedGlAccountNo], [FixedGlDescription],
      [FormCode])
   SELECT
-     [Id], [BrandCode], [DepartmentCode], [HrDepartmentName], [ErpDimensionCode],
-     [ErpCode], [MappedBy], [MappedAt], [FixedGlAccountNo], [FixedGlDescription],
-     [FormCode]
-  FROM [Fast_Core].[dbo].[DepartmentErpMap];
+     s.[Id], s.[BrandCode], s.[DepartmentCode], s.[HrDepartmentName], s.[ErpDimensionCode],
+     s.[ErpCode], s.[MappedBy], s.[MappedAt], s.[FixedGlAccountNo], s.[FixedGlDescription],
+     s.[FormCode]
+  FROM [Fast_Core].[dbo].[DepartmentErpMap] s
+  WHERE NOT EXISTS (
+    SELECT 1 FROM [dbo].[DepartmentErpMap] t WHERE t.[Id] = s.[Id]
+  );
 
   SET IDENTITY_INSERT [dbo].[DepartmentErpMap] OFF;
 
@@ -142,14 +155,14 @@ BEGIN
   BEGIN
     ROLLBACK TRANSACTION;
     RAISERROR (
-      'Migration 099: copied %d rows but Fast_Core holds %d. Rolled back.',
+      'Migration 099: holds %d rows after the top-up but Fast_Core holds %d. Rolled back.',
       16, 1, @dst, @src
     );
   END
   ELSE
   BEGIN
     COMMIT TRANSACTION;
-    PRINT 'Rows copied from Fast_Core with their ids preserved.';
+    PRINT 'Missing rows (if any) topped up from Fast_Core with their ids preserved.';
   END
 END
 GO
