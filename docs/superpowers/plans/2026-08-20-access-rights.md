@@ -464,6 +464,98 @@ git commit -m "feat(access): the AP-1 สิทธิ์เข้าถึง ta
 
 ---
 
+## Task 3b: make the grants real — a per-tab server gate
+
+**Added mid-execution.** Task 3's implementer found that all 16 routes under
+`/api/request/accounting/settings/**` are `requireRole(["IT Admin","System
+Admin"])`, so a granted non-admin sees the tab and then gets 403 on its data.
+**ACC Portal has the identical hole** — its `ADMIN_ROLES` is `["System
+Admin","Super Admin"]` and "Account Admin" is excluded — so copying it
+faithfully would have shipped a grant that grants nothing. The owner ruled on
+2026-08-20 that grants must work.
+
+This is a real privilege expansion: a non-admin approver will be able to change
+vehicle rates, brands, the same-day rule, department mappings and the ERP
+interface configuration.
+
+**Files:** create `src/lib/acc/require-settings-tab.ts`; modify the route files
+in the table below and `src/lib/acc/settings-tabs.ts`.
+
+**Interfaces produced:** `requireSettingsTab(tab: string): Promise<Session | Response>`
+
+- [ ] **Step 1: The guard**
+
+Beside `request-acl.ts`, one helper. Pass when `isAdminRole(session.user.role)`;
+otherwise resolve the caller's grants **server-side** with
+`resolveApproverSettingsTabsByEmail(session.user.email)` and test membership;
+403 otherwise. It must never take the tab name from a header, a query parameter
+or a body — the caller passes a literal.
+
+`resolveApproverSettingsTabsByEmail` already matches only `IsActive = 1`
+approvers, so deactivating someone revokes their grants without touching a
+grant row. Keep that.
+
+- [ ] **Step 2: Apply it, per route**
+
+| Route | Tab | Note |
+|---|---|---|
+| `settings/brands` | `brands` | |
+| `settings/same-day-brand` | `sameDayBrand` | |
+| `settings/vehicles` | `vehicles` | |
+| `settings/vehicles/reorder` | `vehicles` | |
+| `settings/departments` | `departments` | |
+| `settings/departments/map` | `departments` | |
+| `settings/erp-config` | `erpInterface` | repoints where financial journals land |
+| `settings/gl-accounts` | `erpInterface` | |
+| `settings/bank-accounts` | `erpInterface` | |
+| `settings/journal-batches` | `erpInterface` | |
+| `settings/branch-codes` | `erpInterface` | |
+| `settings/erp-accounts` | `erpInterface` | GET only |
+| `settings/erp-journal-template` | `erpInterface` | owner is not readable from the path: it renders inside `BrandErpInterfaceSettings`, not as its own tab. Say so in a comment. |
+| `settings/approvers` | — | **stays `requireRole`.** Never grantable. |
+| `settings/departments/sync` | — | **stays `requireRole`.** Writes `Fast_Core`. |
+| `settings/erp-accounts/sync` | — | **stays `requireRole`.** Writes `Fast_Data`. |
+
+The two `sync` POSTs write the databases **shared with Rocks Fast**
+(`department-map-service.ts` writes Fast_Core; `erp/account-sync.ts` and
+`erp/dimension-sync.ts` write Fast_Data). Granting a tab must not hand a
+non-admin write access to the sibling app's data. Hide the sync buttons for a
+granted non-admin so the control is not offered and then refused.
+
+- [ ] **Step 3: Leave `/api/users/search` alone**
+
+`SameDayBrandSettings` and `ApproverSettings` both call it, and it is the global
+Azure AD directory search at `requireRole(["IT Admin","System Admin"])` — not an
+AP-1 route at all. Widening it for a `sameDayBrand` holder would hand a
+non-admin directory search across the whole app. **Do not touch it.** A granted
+approver can list and remove same-day rows but not add new ones; record that
+limitation in the panel's copy.
+
+- [ ] **Step 4: Make an unmapped route detectable**
+
+Encode the route-prefix→tab mapping in `settings-tabs.ts` and export a helper
+that reports any `settings/**` route with no entry, the way `ROUTE_RULES` makes
+an unclassified path visible. A new settings route that nobody maps must be
+noticeable, not silently admin-only forever.
+
+- [ ] **Step 5: Test the guard**
+
+The membership decision is pure — extract it (`decideSettingsTabAccess(isAdmin,
+grantedTabs, tab)`) into the import-free module and pin: admin passes for every
+tab including `approvers`; a non-admin with `["vehicles"]` passes `vehicles` and
+fails `brands`; a non-admin with `[]` fails everything; `approvers` fails for
+every non-admin regardless of what the grant list says.
+
+- [ ] **Step 6: Commit**
+
+```bash
+npx tsc --noEmit && npm test
+git add src/lib/acc/require-settings-tab.ts src/lib/acc/settings-tabs.ts src/lib/acc/settings-tabs.test.ts src/app/api/request/accounting/settings/
+git commit -m "feat(access): a per-tab server gate so grants actually work"
+```
+
+---
+
 ## Task 4: AP-1 hub gating
 
 **Files:**
