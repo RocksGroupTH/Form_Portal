@@ -417,9 +417,12 @@ is interpolated — a sweep by literal table name misses it), `brand-branch-serv
 Three things about it that are not obvious. All three were found in code that
 already existed:
 
-- **Absent `formCode` means defaults-only, never all rows.** Every read takes
-  `formCode` as an optional last parameter; without it the query is
-  `WHERE FormCode IS NULL`. That is the fail-safe direction — a caller with no
+- **Where `formCode` is optional, absent means defaults-only, never all
+  rows** — without it the query is `WHERE FormCode IS NULL`. It is *not*
+  optional everywhere: `loadMappings`, `loadPrepDeptContext`,
+  `loadErpJournalBuildContext`, `resolveErpTargetProfile` and
+  `resolveAllErpTargetProfiles` require it, because each is on a path that
+  knows its form and must not silently read another one's. That is the fail-safe direction — a caller with no
   form in hand cannot be handed another form's row. `perFormOrderBy` sorts, it
   does not pick, so a read that applies the predicate and stops gets the
   override *and* the default: reduce with `TOP 1`, `pickForForm`, or
@@ -457,9 +460,12 @@ explicit column list, so every row they write is a default.
 **It ships inert, and there is no UI to add an override.** Every row in all
 seven tables is a default, so every form resolves exactly what AP-1 resolved
 before and nothing behaves differently on day one. The settings editors have no
-form selector: their reads are defaults-only and every write is
-`perFormWriteMatch(null)`. **Creating an override today means a hand-written SQL
-`INSERT`.**
+form selector: their reads are defaults-only, and their writes are bounded to the default —
+most by `perFormWriteMatch(null)`, and the three id-bounded UPDATEs by that
+same predicate alongside the id, because the id arrives in the request body. **Creating an override today means a hand-written SQL
+`INSERT` — and six of the seven tables are in `MASTER_TABLES`, so it must go
+into `Rocks_Portal_Form` AND `Rocks_Portal_Form_UAT` with the same `Id`, or
+`npm run check:alignment` reds and the two environments resolve differently.**
 
 **Key libs (`src/lib/acc/`):** `pool`, `sequence`, `payment-calendar`, `employee-context`, `brand-options`, `access`, `settings-service`, `request-service`, `approval-engine`, `report-service`, `email-queue`, `email-templates`, `calc`, `erp-environment-shared`, `per-form-config`, plus `travel-booking/*`.
 

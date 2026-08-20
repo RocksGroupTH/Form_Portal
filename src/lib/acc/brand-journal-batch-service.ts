@@ -133,7 +133,10 @@ export async function upsertBrandJournalBatch(
           IsActive = @active,
           SortOrder = @sort,
           UpdatedAt = SYSDATETIME()
-      WHERE Id = @id
+      -- Bounded to the default as well as the id. The row id arrives from the
+      -- request body, and this editor only ever edits the default, so an id
+      -- naming an override must not be updatable through it.
+      WHERE Id = @id AND ${perFormWriteMatch(null)}
     `);
     } else {
       await req.query(`

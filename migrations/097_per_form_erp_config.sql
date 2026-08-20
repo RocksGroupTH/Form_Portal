@@ -89,10 +89,10 @@
 -- established on AccBrandGlAccount: IX_<T>_FormCode on
 -- (FormCode, BrandCode, IsActive, SortOrder) for the four tables that have
 -- IsActive and SortOrder, and on (FormCode, BrandCode) for AccBrandErpInterface
--- and AccBrandErpTargetSetting, which have neither column. On those two it
--- duplicates the key of the unique index; it is created anyway so all six
--- tables carry the same index under the same name, and both hold one row per
--- brand, so the duplication costs nothing measurable.
+-- and AccBrandErpTargetSetting, which have neither column -- EXCEPT that on
+-- those two it would duplicate the key of the unique index created a statement
+-- earlier, so it is NOT created there. Only the four tables with IsActive and
+-- SortOrder get a lookup index; theirs is genuinely a different shape.
 SET XACT_ABORT ON;
 GO
 
