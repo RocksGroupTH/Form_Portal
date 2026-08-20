@@ -1,5 +1,6 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { writeBothPools } from "@/lib/acc/dual-write";
+import { loadBookingTabsByApproverIds } from "@/lib/acc/travel-booking/booking-approver-tabs";
 
 export interface BookingApproverRow {
   id: number;
@@ -7,6 +8,12 @@ export interface BookingApproverRow {
   email: string;
   displayName: string;
   isActive: boolean;
+  /**
+   * The grantable AP-17 settings tabs this person holds, from
+   * `AccBookingApproverTab`. `[]` means none — the rows ARE the granted set,
+   * never "all". An admin's own tabs do not come from here; they see every one.
+   */
+  settingsTabs: string[];
 }
 
 /**
@@ -26,7 +33,7 @@ export async function listBookingApprovers(
     ${activeOnly ? "WHERE IsActive = 1" : ""}
     ORDER BY DisplayName, StaffId
   `);
-  return (r.recordset as Array<{
+  const rows = (r.recordset as Array<{
     Id: number; StaffId: number; Email: string; DisplayName: string; IsActive: boolean;
   }>).map((x) => ({
     id: x.Id,
@@ -35,6 +42,34 @@ export async function listBookingApprovers(
     displayName: x.DisplayName,
     isActive: !!x.IsActive,
   }));
+  // One batch read for the whole page, the same shape AP-1's `listApprovers`
+  // uses. `loadBookingTabsByApproverIds` degrades a *missing table* to no
+  // grants and rethrows everything else on purpose — the admin grid this feeds
+  // must show its error state rather than render an unreadable grant list as
+  // every box unticked, because the next tick would then POST a one-element set
+  // and revoke the rest.
+  const tabMap = await loadBookingTabsByApproverIds(rows.map((row) => row.id));
+  return rows.map((row) => ({ ...row, settingsTabs: tabMap.get(row.id) ?? [] }));
+}
+
+/**
+ * The roster row's id for a StaffId, or null.
+ *
+ * `AccBookingApproverTab` hangs off `AccBookingApprover.Id`, but StaffId is the
+ * table's natural key and the only identifier this app's routes derive
+ * themselves (from HR, by email). Resolving here keeps a client-supplied id off
+ * the path that decides whose grants are being replaced.
+ */
+export async function getBookingApproverIdByStaffId(
+  staffId: number,
+): Promise<number | null> {
+  const pool = await getAccPool();
+  const r = await pool
+    .request()
+    .input("staffId", sql.Int, staffId)
+    .query(`SELECT Id FROM [dbo].[AccBookingApprover] WHERE StaffId = @staffId`);
+  const id = r.recordset[0]?.Id as number | undefined;
+  return id ?? null;
 }
 
 /** Add or update by StaffId — the natural key, so both databases agree. */

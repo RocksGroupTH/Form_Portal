@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import useSWR from "swr";
-import { AlertTriangle, Loader2, Plus, ShieldCheck, UserCheck, UserX } from "lucide-react";
+import { AlertTriangle, Check, Loader2, Plus, ShieldCheck, UserCheck, UserX } from "lucide-react";
 import { toast } from "sonner";
 import { ADSearchModal, type ADResult } from "@/components/settings/ADSearchModal";
+import { GRANTABLE_BOOKING_TABS } from "@/lib/acc/travel-booking/settings-tabs";
 
 const ENDPOINT = "/api/request/travel-booking/settings/approvers";
 
@@ -16,6 +17,7 @@ interface BookingApproverRow {
   email: string;
   displayName: string;
   isActive: boolean;
+  settingsTabs: string[];
 }
 
 /* ── Confirm Modal — same shape as the UAT Users panel's ── */
@@ -77,6 +79,123 @@ function ConfirmModal({
   );
 }
 
+/* ── Per-tab grants ──
+ *
+ * One checkbox per entry in `GRANTABLE_BOOKING_TABS`, which is also what the
+ * settings page builds its tab strip from — so the columns and the tabs cannot
+ * drift, and the tab that hands out access (`access`) can never appear among
+ * them. A non-admin who could open it would grant themselves the rest.
+ */
+function TabGrantCheckbox({
+  checked,
+  saving,
+  onChange,
+  ariaLabel,
+}: {
+  checked: boolean;
+  saving: boolean;
+  onChange: () => void;
+  ariaLabel: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      aria-disabled={saving}
+      aria-label={ariaLabel}
+      disabled={saving}
+      onClick={() => {
+        if (!saving) onChange();
+      }}
+      className="w-[18px] h-[18px] rounded-[5px] flex items-center justify-center mx-auto border-none p-0 transition-all"
+      style={{
+        background: checked ? "var(--text-info-green)" : "var(--bg-card)",
+        boxShadow: checked
+          ? "0 0 0 2px color-mix(in srgb, var(--text-info-green) 28%, transparent)"
+          : "inset 0 0 0 1.5px var(--border-card)",
+        opacity: saving ? 0.6 : 1,
+        cursor: saving ? "not-allowed" : "pointer",
+      }}
+    >
+      {saving ? (
+        <Loader2 size={10} className="animate-spin" style={{ color: "var(--text-muted)" }} />
+      ) : checked ? (
+        <Check size={11} strokeWidth={3} style={{ color: "var(--bg-card)" }} />
+      ) : null}
+    </button>
+  );
+}
+
+function TabGrantCells({
+  row,
+  onSaved,
+}: {
+  row: BookingApproverRow;
+  onSaved: () => void;
+}) {
+  const [checked, setChecked] = useState<Set<string>>(() => new Set(row.settingsTabs));
+  const [saving, setSaving] = useState(false);
+
+  // The server's answer is the truth; re-seed whenever SWR brings a new one.
+  useEffect(() => {
+    setChecked(new Set(row.settingsTabs));
+  }, [row.id, row.settingsTabs]);
+
+  const toggle = async (key: string) => {
+    const next = new Set(checked);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    setChecked(next);
+    setSaving(true);
+    try {
+      const res = await fetch(ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          // The roster row is keyed on StaffId, which the server resolves from
+          // HR by this email — never posted from here. `displayName` and
+          // `isActive` are echoed back so the upsert behind this save cannot
+          // rename the person or flip their state as a side effect of a tick.
+          email: row.email,
+          displayName: row.displayName,
+          isActive: row.isActive,
+          // Posted in GRANTABLE_BOOKING_TABS order, so what is stored never
+          // depends on the order the boxes happened to be ticked.
+          settingsTabs: GRANTABLE_BOOKING_TABS.filter((t) => next.has(t.key)).map((t) => t.key),
+        }),
+      });
+      const json = await res.json();
+      if (json.ok) {
+        onSaved();
+      } else {
+        toast.error(json.error ?? "บันทึกไม่สำเร็จ");
+        setChecked(new Set(row.settingsTabs));
+      }
+    } catch {
+      toast.error("บันทึกไม่สำเร็จ");
+      setChecked(new Set(row.settingsTabs));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
+      {GRANTABLE_BOOKING_TABS.map((tab) => (
+        <td key={tab.key} className="px-3 py-2.5 text-center">
+          <TabGrantCheckbox
+            checked={checked.has(tab.key)}
+            saving={saving}
+            onChange={() => void toggle(tab.key)}
+            ariaLabel={`${row.displayName || row.email} — ${tab.label}`}
+          />
+        </td>
+      ))}
+    </>
+  );
+}
+
 /**
  * AP-17's สิทธิ์เข้าถึง tab — who may see the booking queue and the booking
  * report.
@@ -92,6 +211,11 @@ function ConfirmModal({
  * reports the state and the round button beside it performs the single
  * available action. Deactivation is a soft delete — rows are never removed, so
  * the history of who could see what stays readable.
+ *
+ * Between the two sit the four per-tab grant columns. They are only offered on
+ * an **active** row: the save behind a tick is the same upsert that adds a
+ * person, so ticking a box on a deactivated row would quietly restore them, and
+ * their grants are inert while they are off anyway.
  */
 export function BookingApproverSettings() {
   const {
@@ -227,8 +351,12 @@ export function BookingApproverSettings() {
             ยังไม่มีรายชื่อ — กด &quot;เพิ่มผู้มีสิทธิ์เข้าถึง&quot; เพื่อเริ่มต้น
           </p>
         ) : (
+          <>
+          <p className="text-[11px] mb-2" style={{ color: "var(--text-muted)" }}>
+            ผู้อนุมัติที่ไม่ใช่แอดมินจะเห็นเฉพาะแท็บที่ติ๊กให้
+          </p>
           <div className="overflow-x-auto">
-            <table className="w-full text-[11px]">
+            <table className="w-full text-[11px] min-w-[820px]">
               <thead>
                 <tr
                   style={{
@@ -254,6 +382,18 @@ export function BookingApproverSettings() {
                   >
                     รหัสพนักงาน
                   </th>
+                  {/* The grantable settings tabs, in the settings page's own
+                      order — both lists are built from GRANTABLE_BOOKING_TABS,
+                      so a fifth tab appears in both or in neither. */}
+                  {GRANTABLE_BOOKING_TABS.map((tab) => (
+                    <th
+                      key={tab.key}
+                      className="text-center px-3 py-2 font-semibold whitespace-nowrap"
+                      style={{ color: "var(--text-muted)" }}
+                    >
+                      {tab.label}
+                    </th>
+                  ))}
                   {/* Status and its control share one column: the badge reports,
                       the button acts. A badge that is also a button reads as
                       neither. */}
@@ -284,6 +424,18 @@ export function BookingApproverSettings() {
                     <td className="px-4 py-2.5" style={{ color: "var(--text-muted)" }}>
                       {r.staffId}
                     </td>
+                    {r.isActive ? (
+                      <TabGrantCells row={r} onSaved={() => void mutate()} />
+                    ) : (
+                      <td
+                        className="px-3 py-2.5 text-center"
+                        colSpan={GRANTABLE_BOOKING_TABS.length}
+                      >
+                        <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>
+                          เปิดใช้งานเพื่อกำหนดสิทธิ์แท็บ
+                        </span>
+                      </td>
+                    )}
                     <td className="px-4 py-2.5">
                       <div className="flex items-center justify-center gap-2">
                         <span
@@ -362,6 +514,7 @@ export function BookingApproverSettings() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </div>
 

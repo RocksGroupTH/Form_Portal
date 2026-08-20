@@ -65,9 +65,21 @@ export async function loadInterfaceBrandsByApproverIds(
     return map;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    // `null` here means UNRESTRICTED, not "no access" — `resolveApproverInterfaceAccess`
+    // maps it to `{ allAccess: true }`, because for this table no rows is the
+    // intended "not scoped to any brand". That inverts the usual fail-closed
+    // reading, so the catch has to be exact.
+    //
+    // Both halves must hold: the missing-object error, about THIS object.
+    // The OR that was here degraded on any error merely *naming* the table —
+    // a deadlock, a timeout, a permission failure — and on any `Invalid object
+    // name` about some *other* table. Each of those escalated an approver to
+    // every interface brand on the ERP send, the prep detail, the ACCOUNT
+    // approve/reject and the report export, which is the opposite of what a
+    // failed authorization read should do.
     if (
-      msg.includes("AccApproverInterfaceBrand") ||
-      msg.includes("Invalid object name")
+      msg.includes("Invalid object name") &&
+      msg.includes("AccApproverInterfaceBrand")
     ) {
       for (const id of approverIds) map.set(id, null);
       return map;
