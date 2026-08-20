@@ -8,6 +8,13 @@ import {
   listErpDimensionOptions,
   HR_DEPARTMENT_DIMENSION_CODE,
 } from "@/lib/erp/dimension-sync";
+import {
+  defaultsOnly,
+  perFormOrderBy,
+  perFormPredicate,
+  perFormWriteMatch,
+  pickAllForForm,
+} from "@/lib/acc/per-form-config";
 
 async function assertClaimBrandAllowed(brandCode: string): Promise<void> {
   const allowed = await getAllowedBrands(AP1_FORM_CODE);
@@ -17,6 +24,12 @@ async function assertClaimBrandAllowed(brandCode: string): Promise<void> {
   if (!ok) throw new Error("แบรนด์นี้ไม่ได้เปิดใช้ใน AP-1");
 }
 
+/**
+ * A second read of `AccBrandErpInterface`, living here rather than in the
+ * interface-map service. It validates the Fix Dept an editor is saving, so it
+ * resolves the default — the same row the editor's own target dropdown shows.
+ * Reduced by `TOP 1`; bounded, so an override cannot answer for the default.
+ */
 async function resolveInterfaceBrandForClaim(
   brandCode: string,
 ): Promise<string | null> {
@@ -24,9 +37,10 @@ async function resolveInterfaceBrandForClaim(
   const r = await pool
     .request()
     .input("brand", sql.NVarChar, brandCode.trim().toUpperCase()).query(`
-      SELECT InterfaceBrandCode
+      SELECT TOP 1 InterfaceBrandCode
       FROM [dbo].[AccBrandErpInterface]
-      WHERE BrandCode = @brand
+      WHERE BrandCode = @brand AND ${perFormWriteMatch(null)}
+      ORDER BY ${perFormOrderBy()}
     `);
   const row = r.recordset[0] as { InterfaceBrandCode: string } | undefined;
   return row?.InterfaceBrandCode?.trim().toUpperCase() ?? null;
@@ -41,6 +55,8 @@ export interface BrandBranchRow {
   fixedErpDeptCode: string | null;
   isActive: boolean;
   sortOrder: number;
+  /** `null` is the default, which answers every form. */
+  formCode: string | null;
 }
 
 function mapRow(x: Record<string, unknown>): BrandBranchRow {
@@ -53,26 +69,47 @@ function mapRow(x: Record<string, unknown>): BrandBranchRow {
     fixedErpDeptCode: (x.FixedErpDeptCode as string) ?? null,
     isActive: !!x.IsActive,
     sortOrder: x.SortOrder as number,
+    // Never absent — see the note in brand-erp-interface-map-service.
+    formCode: (x.FormCode as string | null) ?? null,
   };
 }
 
+/**
+ * With `formCode`, this form's branch codes; without, the defaults alone.
+ * Picked per `(BrandCode, BranchCode)` — the unique index minus `FormCode`.
+ */
 export async function listBrandBranches(
   brandCode?: string | null,
+  formCode?: string,
 ): Promise<BrandBranchRow[]> {
   const pool = await getAccPool();
   const req = pool.request();
-  let where = "";
+  const conditions: string[] = [];
   if (brandCode) {
     req.input("brand", sql.NVarChar, brandCode);
-    where = "WHERE BrandCode = @brand";
+    conditions.push("BrandCode = @brand");
+  }
+  if (formCode) {
+    req.input("formCode", sql.NVarChar(20), formCode);
+    conditions.push(perFormPredicate());
+  } else {
+    conditions.push("FormCode IS NULL");
   }
   const r = await req.query(`
-    SELECT Id, BrandCode, BranchCode, DisplayName, DeptAsBranch, FixedErpDeptCode, IsActive, SortOrder
+    SELECT Id, BrandCode, BranchCode, DisplayName, DeptAsBranch, FixedErpDeptCode, IsActive, SortOrder, FormCode
     FROM [dbo].[AccBrandBranchCode]
-    ${where}
-    ORDER BY BrandCode, SortOrder, BranchCode
+    WHERE ${conditions.join(" AND ")}
+    ORDER BY BrandCode, SortOrder, BranchCode, ${perFormOrderBy()}
   `);
-  return r.recordset.map(mapRow);
+  const rows = r.recordset.map(mapRow);
+  return formCode
+    ? pickAllForForm(
+        rows,
+        formCode,
+        // See brand-account-service for why the key is JSON.
+        (row) => JSON.stringify([row.brandCode.toUpperCase(), row.branchCode]),
+      )
+    : defaultsOnly(rows);
 }
 
 async function assertFixedErpDeptInErp(
@@ -123,13 +160,15 @@ export async function upsertBrandBranch(
   }
 
   const pool = await getAccPool();
+  // Bounded to the default — the editor has no form selector, and an unbounded
+  // probe could land on an override and rewrite another form's branch code.
   let rowId = input.id;
   if (rowId == null) {
     const existing = await pool
       .request()
       .input("brand", sql.NVarChar, brandCode).query(`
         SELECT TOP 1 Id FROM [dbo].[AccBrandBranchCode]
-        WHERE BrandCode = @brand
+        WHERE BrandCode = @brand AND ${perFormWriteMatch(null)}
         ORDER BY SortOrder, Id
       `);
     rowId = (existing.recordset[0] as { Id: number } | undefined)?.Id;
@@ -168,8 +207,8 @@ export async function upsertBrandBranch(
     } else {
       await req.query(`
       INSERT INTO [dbo].[AccBrandBranchCode]
-        (BrandCode, BranchCode, DisplayName, DeptAsBranch, FixedErpDeptCode, IsActive, SortOrder, CreatedBy)
-      VALUES (@brand, @branchCode, @displayName, @deptAsBranch, @fixedErpDept, @active, @sort, @user)
+        (BrandCode, BranchCode, DisplayName, DeptAsBranch, FixedErpDeptCode, IsActive, SortOrder, FormCode, CreatedBy)
+      VALUES (@brand, @branchCode, @displayName, @deptAsBranch, @fixedErpDept, @active, @sort, NULL, @user)
     `);
     }
   });

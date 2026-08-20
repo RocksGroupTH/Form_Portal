@@ -3,6 +3,13 @@ import { writeBothPools } from "@/lib/acc/dual-write";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import { getAllowedBrands } from "@/lib/acc/brand-options";
 import { isErpInterfaceBrandCode } from "@/lib/acc/erp-interface-brands";
+import {
+  defaultsOnly,
+  perFormOrderBy,
+  perFormPredicate,
+  perFormWriteMatch,
+  pickAllForForm,
+} from "@/lib/acc/per-form-config";
 
 async function assertJournalBrandAllowed(brandCode: string): Promise<void> {
   const code = brandCode.trim().toUpperCase();
@@ -19,6 +26,8 @@ export interface BrandJournalBatchRow {
   displayName: string | null;
   isActive: boolean;
   sortOrder: number;
+  /** `null` is the default, which answers every form. */
+  formCode: string | null;
 }
 
 function mapRow(x: Record<string, unknown>): BrandJournalBatchRow {
@@ -29,26 +38,47 @@ function mapRow(x: Record<string, unknown>): BrandJournalBatchRow {
     displayName: (x.DisplayName as string) ?? null,
     isActive: !!x.IsActive,
     sortOrder: x.SortOrder as number,
+    // Never absent — see the note in brand-erp-interface-map-service.
+    formCode: (x.FormCode as string | null) ?? null,
   };
 }
 
+/**
+ * With `formCode`, this form's journal batches; without, the defaults alone.
+ * Picked per `(BrandCode, BatchName)` — the unique index minus `FormCode`.
+ */
 export async function listBrandJournalBatches(
   brandCode?: string | null,
+  formCode?: string,
 ): Promise<BrandJournalBatchRow[]> {
   const pool = await getAccPool();
   const req = pool.request();
-  let where = "";
+  const conditions: string[] = [];
   if (brandCode) {
     req.input("brand", sql.NVarChar, brandCode);
-    where = "WHERE BrandCode = @brand";
+    conditions.push("BrandCode = @brand");
+  }
+  if (formCode) {
+    req.input("formCode", sql.NVarChar(20), formCode);
+    conditions.push(perFormPredicate());
+  } else {
+    conditions.push("FormCode IS NULL");
   }
   const r = await req.query(`
-    SELECT Id, BrandCode, BatchName, DisplayName, IsActive, SortOrder
+    SELECT Id, BrandCode, BatchName, DisplayName, IsActive, SortOrder, FormCode
     FROM [dbo].[AccBrandJournalBatch]
-    ${where}
-    ORDER BY BrandCode, SortOrder, BatchName
+    WHERE ${conditions.join(" AND ")}
+    ORDER BY BrandCode, SortOrder, BatchName, ${perFormOrderBy()}
   `);
-  return r.recordset.map(mapRow);
+  const rows = r.recordset.map(mapRow);
+  return formCode
+    ? pickAllForForm(
+        rows,
+        formCode,
+        // See brand-account-service for why the key is JSON.
+        (row) => JSON.stringify([row.brandCode.toUpperCase(), row.batchName]),
+      )
+    : defaultsOnly(rows);
 }
 
 export async function upsertBrandJournalBatch(
@@ -69,13 +99,15 @@ export async function upsertBrandJournalBatch(
   if (!batchName) throw new Error("กรุณาเลือก Journal Batch");
 
   const pool = await getAccPool();
+  // Bounded to the default — the editor has no form selector, and an unbounded
+  // probe could land on an override and rewrite another form's batch.
   let rowId = input.id;
   if (rowId == null) {
     const existing = await pool
       .request()
       .input("brand", sql.NVarChar, brandCode).query(`
         SELECT TOP 1 Id FROM [dbo].[AccBrandJournalBatch]
-        WHERE BrandCode = @brand
+        WHERE BrandCode = @brand AND ${perFormWriteMatch(null)}
         ORDER BY SortOrder, Id
       `);
     rowId = (existing.recordset[0] as { Id: number } | undefined)?.Id;
@@ -106,8 +138,8 @@ export async function upsertBrandJournalBatch(
     } else {
       await req.query(`
       INSERT INTO [dbo].[AccBrandJournalBatch]
-        (BrandCode, BatchName, DisplayName, IsActive, SortOrder, CreatedBy)
-      VALUES (@brand, @batchName, @displayName, @active, @sort, @user)
+        (BrandCode, BatchName, DisplayName, IsActive, SortOrder, FormCode, CreatedBy)
+      VALUES (@brand, @batchName, @displayName, @active, @sort, NULL, @user)
     `);
     }
   });

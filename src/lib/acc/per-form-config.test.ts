@@ -2,10 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   pickForForm,
+  pickAllForForm,
   defaultsOnly,
   PER_FORM_PREDICATE,
   perFormPredicate,
   perFormOrderBy,
+  perFormWriteMatch,
 } from "./per-form-config";
 
 const DEFAULT_ROW = { formCode: null, v: "default" };
@@ -50,4 +52,78 @@ test("the predicate takes an alias, so a joined query need not hand-write it", (
   // Both arms carry the alias — aliasing one and not the other is the mistake
   // this replaces, and it reads as valid SQL right up until it is ambiguous.
   assert.equal(perFormPredicate("m").indexOf("(FormCode"), -1);
+});
+
+// --- pickAllForForm: the list form of the same rule ------------------------
+
+const keyOf = (r: { key: string }) => r.key;
+
+test("a list keeps one row per key, the override winning its own key", () => {
+  const rows = [
+    { key: "PCTH 540100", formCode: null, v: "default-540100" },
+    { key: "PCTH 540100", formCode: "AP-4", v: "ap4-540100" },
+    { key: "PCTH 540200", formCode: null, v: "default-540200" },
+  ];
+  assert.deepEqual(
+    pickAllForForm(rows, "AP-4", keyOf).map((r) => r.v),
+    ["ap4-540100", "default-540200"],
+  );
+  // A form with no override of its own sees the defaults untouched.
+  assert.deepEqual(
+    pickAllForForm(rows, "AP-1", keyOf).map((r) => r.v),
+    ["default-540100", "default-540200"],
+  );
+});
+
+test("a key that only another form defines is dropped, not leaked", () => {
+  const rows = [
+    { key: "PCTH 540100", formCode: "AP-4", v: "ap4-only" },
+    { key: "PCTH 540200", formCode: null, v: "shared" },
+  ];
+  assert.deepEqual(
+    pickAllForForm(rows, "AP-1", keyOf).map((r) => r.v),
+    ["shared"],
+  );
+});
+
+test("the output keeps each key's first appearance, so the SQL order survives", () => {
+  const rows = [
+    { key: "b", formCode: null, v: "b" },
+    { key: "a", formCode: null, v: "a" },
+    { key: "b", formCode: "AP-4", v: "b-override" },
+  ];
+  assert.deepEqual(
+    pickAllForForm(rows, "AP-4", keyOf).map((r) => r.v),
+    ["b-override", "a"],
+  );
+});
+
+test("grouping does not depend on the override arriving first", () => {
+  const ap4First = [
+    { key: "k", formCode: "AP-4", v: "override" },
+    { key: "k", formCode: null, v: "default" },
+  ];
+  const defaultFirst = [ap4First[1], ap4First[0]];
+  assert.equal(pickAllForForm(ap4First, "AP-4", keyOf)[0].v, "override");
+  assert.equal(pickAllForForm(defaultFirst, "AP-4", keyOf)[0].v, "override");
+});
+
+test("an empty list yields an empty list", () => {
+  assert.deepEqual(pickAllForForm([] as { key: string; formCode: string | null }[], "AP-1", keyOf), []);
+});
+
+// --- perFormWriteMatch: the bound on an UPDATE or DELETE -------------------
+
+test("the default is matched with IS NULL, because = never matches NULL", () => {
+  assert.equal(perFormWriteMatch(null), "FormCode IS NULL");
+  assert.equal(perFormWriteMatch(null, "t"), "t.FormCode IS NULL");
+});
+
+test("a named form is matched by equality, and is never the unbounded form", () => {
+  assert.equal(perFormWriteMatch("AP-4"), "FormCode = @formCode");
+  assert.equal(perFormWriteMatch("AP-4", "t"), "t.FormCode = @formCode");
+  // A write bound must never widen to the read predicate: that would let one
+  // statement sweep the default and every override for the brand together.
+  assert.equal(perFormWriteMatch("AP-4").indexOf(" OR "), -1);
+  assert.equal(perFormWriteMatch(null).indexOf(" OR "), -1);
 });
