@@ -424,18 +424,15 @@ export function BookingApproverSettings() {
                     <td className="px-4 py-2.5" style={{ color: "var(--text-muted)" }}>
                       {r.staffId}
                     </td>
-                    {r.isActive ? (
-                      <TabGrantCells row={r} onSaved={() => void mutate()} />
-                    ) : (
-                      <td
-                        className="px-3 py-2.5 text-center"
-                        colSpan={GRANTABLE_BOOKING_TABS.length}
-                      >
-                        <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>
-                          เปิดใช้งานเพื่อกำหนดสิทธิ์แท็บ
-                        </span>
-                      </td>
-                    )}
+                    {/* Ticks render on every row, active or not. Deactivating
+                        does not delete grant rows — `resolveBookingTabsByEmail`
+                        filters `IsActive = 1`, so access stops immediately and
+                        comes back exactly as it was on reactivation. Hiding the
+                        ticks would leave an admin unable to see what a
+                        deactivated person still holds, or to set it up before
+                        switching them on. The save cannot flip the status: the
+                        payload echoes `isActive` back unchanged. */}
+                    <TabGrantCells row={r} onSaved={() => void mutate()} />
                     <td className="px-4 py-2.5">
                       <div className="flex items-center justify-center gap-2">
                         <span
