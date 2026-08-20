@@ -26,7 +26,6 @@ import { erpDescriptionFromGlOption } from "@/lib/acc/erp-description";
 import { ErpJournalTemplateSettings } from "@/features/accounting/components/settings/ErpJournalTemplateSettings";
 import { ErpDeptFixDialog } from "@/features/accounting/components/settings/ErpDeptFixDialog";
 import { useAccSettingsDeepLink } from "@/features/accounting/lib/use-acc-settings-deep-link";
-import { useAccountingAccess } from "@/features/accounting/hooks/useAccountingAccess";
 import type {
   AccBrandAccountRow,
   AccBrandBranchRow,
@@ -1664,7 +1663,25 @@ function AccountField({
   );
 }
 
-export function BrandErpInterfaceSettings() {
+export interface BrandErpInterfaceSettingsProps {
+  /**
+   * IT Admin or System Admin, resolved by the settings page — which ORs the
+   * access endpoint's answer with the session's own role, so an unreachable
+   * endpoint cannot strip a real admin's controls. Do not re-read it from
+   * `useAccountingAccess()` here; that arm is the fragile one.
+   *
+   * What it gates: `settings/erp-accounts/sync`, which pulls accounts, bank
+   * cards, journal batches and branches out of Business Central into the ERP
+   * reporting database shared with the Rocks Fast sibling, and so stayed
+   * admin-only. Every other route on this tab is opened by the `erpInterface`
+   * grant — though a scoped approver is held to their own interface brands on
+   * the ones that repoint where journals land; the route enforces that, not
+   * this flag.
+   */
+  isAdmin: boolean;
+}
+
+export function BrandErpInterfaceSettings({ isAdmin }: BrandErpInterfaceSettingsProps) {
   const { data, mutate, isLoading } = useSWR<{ ok: boolean; data?: PageData; error?: string }>(
     "/api/request/accounting/settings/erp-config",
     fetcher,
@@ -1716,14 +1733,8 @@ export function BrandErpInterfaceSettings() {
   const [editTargetCode, setEditTargetCode] = useState<string | null>(null);
   const [editUnassignedClaim, setEditUnassignedClaim] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
-  /**
-   * The `erpInterface` grant opens every route on this tab except
-   * `settings/erp-accounts/sync`, which writes the ERP reporting database shared
-   * with the Rocks Fast sibling and so stayed admin-only. Hide the control
-   * rather than offer it and answer 403. Same SWR key the settings page already
-   * loaded, so this is a cache hit and nothing flashes.
-   */
-  const { isAdmin: canSyncErp } = useAccountingAccess();
+  /** Hide the Sync control rather than offer it and answer 403. */
+  const canSyncErp = isAdmin;
   const [erpDeptPick, setErpDeptPick] = useState<{
     targetCode: string;
     branchCode: string;

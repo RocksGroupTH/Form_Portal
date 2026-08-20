@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import {
   ChevronRight,
+  Eye,
   Pencil,
   RefreshCw,
 } from "lucide-react";
@@ -15,7 +16,6 @@ import {
   type ErpSyncPopupState,
 } from "@/features/accounting/components/settings/ErpAccountSyncPopup";
 import { useAccSettingsDeepLink } from "@/features/accounting/lib/use-acc-settings-deep-link";
-import { useAccountingAccess } from "@/features/accounting/hooks/useAccountingAccess";
 import { DepartmentMappingDialog } from "./DepartmentMappingDialog";
 import {
   isBrandMapDirty,
@@ -103,12 +103,15 @@ function TargetDeptSummaryCard({
   erpByCode,
   savedErpByCode,
   disabled,
+  canEdit,
   onClick,
 }: {
   group: TargetGroup;
   erpByCode: Record<string, string>;
   savedErpByCode: Record<string, string>;
   disabled: boolean;
+  /** False for a granted non-admin: the dialog opens read-only, so say so. */
+  canEdit: boolean;
   onClick: () => void;
 }) {
   const codes = group.mappings.map((m) => m.departmentCode);
@@ -194,8 +197,8 @@ function TargetDeptSummaryCard({
             className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-lg"
             style={{ color: "var(--nav-active-text)", background: "var(--nav-active-bg)" }}
           >
-            <Pencil size={12} />
-            แก้ไข
+            {canEdit ? <Pencil size={12} /> : <Eye size={12} />}
+            {canEdit ? "แก้ไข" : "ดู"}
           </span>
           <ChevronRight size={16} style={{ color: "var(--text-muted)" }} />
         </div>
@@ -219,7 +222,26 @@ function TargetDeptSummaryCard({
   );
 }
 
-export function DepartmentMappingSettings() {
+export interface DepartmentMappingSettingsProps {
+  /**
+   * IT Admin or System Admin, resolved by the settings page — which ORs the
+   * access endpoint's answer with the session's own role, so an unreachable
+   * endpoint cannot strip a real admin's controls. Do not re-read it from
+   * `useAccountingAccess()` here; that arm is the fragile one.
+   *
+   * What it gates: **everything that writes on this tab.** The `departments`
+   * grant is read-only as of 2026-08-20 — `settings/departments/map` (the save)
+   * writes `DepartmentErpMap` in the configuration database two sibling
+   * applications read to prepare financial journal postings, and
+   * `settings/departments/sync` pulls DEPT dimension values out of Business
+   * Central into the ERP reporting database shared with Rocks Fast. Both are
+   * admin-only, so both controls are hidden rather than offered and answered
+   * 403.
+   */
+  isAdmin: boolean;
+}
+
+export function DepartmentMappingSettings({ isAdmin }: DepartmentMappingSettingsProps) {
   const { data, mutate, isLoading } = useSWR<{ ok: boolean; data?: PageData; error?: string }>(
     "/api/request/accounting/settings/departments",
     fetcher,
@@ -233,15 +255,6 @@ export function DepartmentMappingSettings() {
   const [savedErpByTarget, setSavedErpByTarget] = useState<Record<string, Record<string, string>>>({});
   const [initialized, setInitialized] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  /**
-   * The `departments` grant opens the list and the save, but not
-   * `settings/departments/sync` — that pulls DEPT dimension values out of
-   * Business Central into the ERP reporting database shared with the Rocks Fast
-   * sibling, so it stayed admin-only. Hide the control rather than offer it and
-   * answer 403. Same SWR key the settings page already loaded, so this is a
-   * cache hit and nothing flashes.
-   */
-  const { isAdmin: canSyncErp } = useAccountingAccess();
   const [syncPopup, setSyncPopup] = useState<ErpSyncPopupState>({
     open: false,
     brandCode: "",
@@ -441,13 +454,15 @@ export function DepartmentMappingSettings() {
             Map แผนก HR ↔ ERP
           </p>
           <p className="text-[11px] m-0 mt-1" style={{ color: "var(--text-muted)" }}>
-            กำหนดแผนก HR → ERP ตามกลุ่มแบรนด์ปลายทาง — คลิกกลุ่มเพื่อแก้ไข · Sync ERP ก่อนเลือกแผนก
+            {isAdmin
+              ? "กำหนดแผนก HR → ERP ตามกลุ่มแบรนด์ปลายทาง — คลิกกลุ่มเพื่อแก้ไข · Sync ERP ก่อนเลือกแผนก"
+              : "แผนก HR → ERP ตามกลุ่มแบรนด์ปลายทาง — คลิกกลุ่มเพื่อดูรายละเอียด"}
           </p>
           <p className="text-[10px] m-0 mt-1" style={{ color: "var(--text-faint)" }}>
             ตั้งค่าครบ {completeGroups}/{groups.length} กลุ่ม · {totalClaimBrands} แบรนด์เบิก · Dimension {page.dimensionCode}
           </p>
         </div>
-        {canSyncErp ? (
+        {isAdmin ? (
           <div className="flex items-center gap-2 shrink-0">
             <Button
               type="button"
@@ -460,8 +475,8 @@ export function DepartmentMappingSettings() {
             </Button>
           </div>
         ) : (
-          <p className="text-[10px] m-0 shrink-0 max-w-[190px]" style={{ color: "var(--text-faint)" }}>
-            การ Sync ข้อมูลจาก Business Central สงวนไว้สำหรับผู้ดูแลระบบ
+          <p className="text-[10px] m-0 shrink-0 max-w-[210px]" style={{ color: "var(--text-faint)" }}>
+            แท็บนี้ดูได้อย่างเดียว — การแก้ไข mapping และการ Sync จาก Business Central สงวนไว้สำหรับผู้ดูแลระบบ
           </p>
         )}
       </div>
@@ -501,6 +516,7 @@ export function DepartmentMappingSettings() {
               erpByCode={erpByTarget[group.targetBrandCode] ?? {}}
               savedErpByCode={savedErpByTarget[group.targetBrandCode] ?? {}}
               disabled={syncing}
+              canEdit={isAdmin}
               onClick={() => setEditTargetCode(group.targetBrandCode)}
             />
           ))}
@@ -530,6 +546,7 @@ export function DepartmentMappingSettings() {
         }}
         targetBrandCode={editTargetCode}
         initialMapFilter={deptDialogMapFilter}
+        canSave={isAdmin}
         onSaved={() => setInitialized(false)}
       />
     </div>

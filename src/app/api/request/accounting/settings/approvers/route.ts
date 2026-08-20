@@ -13,8 +13,8 @@ import { setApproverSettingsTabs } from "@/lib/acc/approver-settings-tabs";
 /*
  * **Admin only, and never opened by a settings-tab grant.**
  *
- * Every other route under `settings/` moved to `requireSettingsTab` so a
- * granted approver can use the tab they were given. This one cannot: it is the
+ * Most routes under `settings/` moved to `requireSettingsTab` so a granted
+ * approver can use the tab they were given. This one cannot: it is the
  * สิทธิ์เข้าถึง tab, the place the grants are handed out. A non-admin who could
  * POST here would grant themselves every other tab, which is why `approvers` is
  * absent from `GRANTABLE_SETTINGS_TABS` and why `decideSettingsTabAccess`

@@ -1,27 +1,33 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireSettingsTab } from "@/lib/acc/require-settings-tab";
+import { requireRole } from "@/lib/api-auth";
+import { DepartmentMapBoundsError } from "@/lib/acc/department-map-guard";
 import {
   saveDepartmentMappings,
   type SaveDepartmentMappingInput,
 } from "@/lib/acc/department-map-service";
 
 /**
- * PUT /api/request/accounting/settings/departments — save HR ↔ ERP mappings.
+ * PUT /api/request/accounting/settings/departments/map — save HR ↔ ERP mappings.
  *
- * Requires an admin, or the `departments` settings-tab grant.
+ * **Admin-only, and deliberately not covered by the `departments` grant.** The
+ * read beside it (`settings/departments`, GET) is granted; this write is not.
  *
- * ⚠️ This is the one granted settings route that writes outside the form
- * database: `saveDepartmentMappings` opens the core pool and upserts
+ * `saveDepartmentMappings` opens the core pool and writes
  * `DepartmentErpMap`, which lives in the configuration database shared with the
- * Rocks Fast sibling. The plan grants it deliberately — a แผนก tab that lists
- * mappings but cannot save one is the grant-that-grants-nothing this change
- * exists to remove — but it is the mapping to revisit first if that shared
- * database ever has to be closed to non-admins. The two `sync` POSTs, which
- * write the ERP reporting database, stayed on `requireRole` for exactly that
- * reason.
+ * Rocks Fast and ACC Portal siblings — both read it from their own
+ * `erp-prep-service.ts`, the path that prepares financial journal postings. A
+ * mapping changed here decides where two other applications post money, which
+ * is more than a settings-tab grant should carry. Ruled 2026-08-20; recorded in
+ * `SETTINGS_ROUTE_TABS` as `tab: null`.
+ *
+ * The service bounds the payload regardless of who is calling — the target must
+ * be a real ERP interface brand and every `legacyClaimCodes` entry must name a
+ * brand enabled in AP-1, both checked before the first write. An admin should
+ * not be able to empty three applications' department mappings by accident
+ * either. See `src/lib/acc/department-map-guard.ts`.
  */
 export async function PUT(req: NextRequest) {
-  const session = await requireSettingsTab("departments");
+  const session = await requireRole(["IT Admin", "System Admin"]);
   if (session instanceof Response) return session;
 
   try {
@@ -35,6 +41,13 @@ export async function PUT(req: NextRequest) {
     if (!targetBrandCode) {
       return NextResponse.json({ ok: false, error: "กรุณาระบุแบรนด์ปลายทาง" }, { status: 400 });
     }
+    const legacyClaimCodes = body.legacyClaimCodes;
+    if (legacyClaimCodes !== undefined && !Array.isArray(legacyClaimCodes)) {
+      return NextResponse.json(
+        { ok: false, error: "legacyClaimCodes ต้องเป็นรายการรหัสแบรนด์" },
+        { status: 400 },
+      );
+    }
     const mappings: SaveDepartmentMappingInput[] = (body.mappings ?? []).map((m) => ({
       departmentCode: m.departmentCode,
       departmentName: m.departmentName ?? null,
@@ -43,17 +56,20 @@ export async function PUT(req: NextRequest) {
       fixedGlAccountNo: m.fixedGlAccountNo ?? null,
       fixedGlDescription: m.fixedGlDescription ?? null,
     }));
-    const legacyClaimCodes = body.legacyClaimCodes ?? [];
     await saveDepartmentMappings(
       targetBrandCode,
       mappings,
       Number(session.user.id),
-      legacyClaimCodes,
+      legacyClaimCodes ?? [],
     );
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error("[api/.../departments] PUT", err);
+    console.error("[api/.../departments/map] PUT", err);
+    // A bounds refusal is a rejected body — an unknown target brand, or a purge
+    // list naming a brand that is not enabled in AP-1 — and it is thrown before
+    // the first write, so nothing has changed. Anything else is a fault.
     const message = err instanceof Error ? err.message : "Internal server error";
-    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+    const status = err instanceof DepartmentMapBoundsError ? err.status : 500;
+    return NextResponse.json({ ok: false, error: message }, { status });
   }
 }

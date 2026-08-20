@@ -83,22 +83,46 @@ test("whitespace around the tab does not change the answer", () => {
 
 /* ── SETTINGS_ROUTE_TABS ─────────────────────────────────────────────────── */
 
-test("every settings route on disk is mapped", async () => {
+const SETTINGS_ROOT = "../../app/api/request/accounting/settings";
+
+/** Every settings route on disk, as a path relative to the settings prefix. */
+async function walkSettingsRoutes(): Promise<string[]> {
   const fs = await import("node:fs/promises");
   const path = await import("node:path");
-  const root = path.resolve(__dirname, "../../app/api/request/accounting/settings");
+  const root = path.resolve(__dirname, SETTINGS_ROOT);
 
   const walk = async (dir: string, rel: string): Promise<string[]> => {
     const out: string[] = [];
     for (const e of await fs.readdir(dir, { withFileTypes: true })) {
       const next = rel ? `${rel}/${e.name}` : e.name;
       if (e.isDirectory()) out.push(...(await walk(path.join(dir, e.name), next)));
-      else if (e.name === "route.ts") out.push(rel);
+      // `.tsx` too: a route file is still a route file, and matching only
+      // `route.ts` would let one slip past every check below.
+      else if (e.name === "route.ts" || e.name === "route.tsx") out.push(rel);
     }
     return out;
   };
 
-  const routes = await walk(root, "");
+  return walk(root, "");
+}
+
+/** The `route.ts`/`route.tsx` source for a mapped route. */
+async function readRouteFile(route: string): Promise<string> {
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const root = path.resolve(__dirname, SETTINGS_ROOT);
+  for (const name of ["route.ts", "route.tsx"]) {
+    try {
+      return await fs.readFile(path.join(root, route, name), "utf8");
+    } catch {
+      /* try the other extension */
+    }
+  }
+  throw new Error(`SETTINGS_ROUTE_TABS maps "${route}", which is not a route on disk`);
+}
+
+test("every settings route on disk is mapped", async () => {
+  const routes = await walkSettingsRoutes();
   assert.ok(routes.length >= 16, `expected the settings route tree, found ${routes.length}`);
   assert.deepEqual(
     unmappedSettingsRoutes(routes),
@@ -108,21 +132,119 @@ test("every settings route on disk is mapped", async () => {
 });
 
 test("SETTINGS_ROUTE_TABS maps nothing that is not a real route", async () => {
-  const fs = await import("node:fs/promises");
-  const path = await import("node:path");
-  const root = path.resolve(__dirname, "../../app/api/request/accounting/settings");
-
+  // Without this the loop below passes vacuously on an empty table.
+  assert.ok(
+    SETTINGS_ROUTE_TABS.length >= 16,
+    `expected the settings route table, found ${SETTINGS_ROUTE_TABS.length}`,
+  );
   for (const rule of SETTINGS_ROUTE_TABS) {
-    const file = path.join(root, rule.route, "route.ts");
-    await fs.access(file);
+    await readRouteFile(rule.route);
   }
 });
 
-test("the three admin-only routes are the ones that must never be granted", () => {
+test("the admin-only routes are the ones that must never be granted", () => {
   const adminOnly = SETTINGS_ROUTE_TABS.filter((r) => r.tab === null).map((r) => r.route);
-  assert.deepEqual(adminOnly, ["approvers", "departments/sync", "erp-accounts/sync"]);
+  assert.deepEqual(adminOnly, [
+    // Ruled 2026-08-20: the `departments` grant is read-only. This write
+    // reaches `DepartmentErpMap` in the shared configuration database, which
+    // two sibling applications read to prepare financial journal postings.
+    "departments/map",
+    "approvers",
+    "departments/sync",
+    "erp-accounts/sync",
+  ]);
   for (const rule of SETTINGS_ROUTE_TABS) {
     if (rule.tab === null) assert.ok(rule.note, `${rule.route} must say why it is admin-only`);
+  }
+});
+
+/* ── …and the table is a control, not a parallel copy ────────────────────── */
+
+/**
+ * The first gate call in a handler body: `requireSettingsTab("<tab>")`, or
+ * `requireRole(` for an admin-only route.
+ */
+const GATE = /await (requireSettingsTab\(\s*"([A-Za-z]+)"\s*\)|requireRole\()/;
+
+/** Each exported HTTP handler in a route file, as `[method, body-from-here]`. */
+function splitHandlers(source: string): { method: string; body: string }[] {
+  const decl = /export async function (GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s*\(/g;
+  const starts: { method: string; at: number }[] = [];
+  let m = decl.exec(source);
+  while (m) {
+    starts.push({ method: m[1], at: m.index });
+    m = decl.exec(source);
+  }
+  return starts.map((s, i) => ({
+    method: s.method,
+    body: source.slice(s.at, i + 1 < starts.length ? starts[i + 1].at : source.length),
+  }));
+}
+
+test("every settings handler opens with the gate its table entry names", async () => {
+  // `SETTINGS_ROUTE_TABS` used to be documentation: the tab that governs a
+  // route was declared in the route's own literal and copied here, so the
+  // detector caught a *new unmapped file* and nothing else — not a route gated
+  // with the wrong tab, and not one left ungated. This reads the source and
+  // makes the table answer for what each route actually does.
+  let handlerCount = 0;
+
+  for (const rule of SETTINGS_ROUTE_TABS) {
+    const source = await readRouteFile(rule.route);
+    const handlers = splitHandlers(source);
+    assert.ok(handlers.length > 0, `${rule.route} exports no HTTP handler`);
+
+    for (const h of handlers) {
+      handlerCount += 1;
+      const found = GATE.exec(h.body);
+      assert.ok(found, `${rule.route} ${h.method} is not gated at all`);
+
+      if (rule.tab === null) {
+        assert.ok(
+          found[1].indexOf("requireRole(") === 0,
+          `${rule.route} ${h.method} is admin-only in the table but does not call requireRole`,
+        );
+      } else {
+        assert.equal(
+          found[2],
+          rule.tab,
+          `${rule.route} ${h.method} is gated on "${found[2]}" but the table says "${rule.tab}"`,
+        );
+      }
+
+      // The gate must be the handler's first `await`: a check that runs after
+      // the work is not a gate. `requireAuth`/`requireRole` inside
+      // `requireSettingsTab` is what proves the session, so nothing legitimate
+      // needs to precede it.
+      assert.equal(
+        h.body.indexOf("await "),
+        found.index,
+        `${rule.route} ${h.method} does something before its gate`,
+      );
+    }
+  }
+
+  // The review enumerated these by hand. Pinning the count means a new handler
+  // on an existing route has to be looked at rather than merged on the strength
+  // of the file already having an entry.
+  assert.equal(
+    handlerCount,
+    28,
+    "the settings routes gained or lost a handler — check its gate, then update this number",
+  );
+});
+
+test("no settings route mixes the two gates in one handler", async () => {
+  for (const rule of SETTINGS_ROUTE_TABS) {
+    const source = await readRouteFile(rule.route);
+    for (const h of splitHandlers(source)) {
+      const tabbed = h.body.indexOf("requireSettingsTab(") !== -1;
+      const roled = h.body.indexOf("requireRole(") !== -1;
+      assert.ok(
+        tabbed !== roled,
+        `${rule.route} ${h.method} calls both gates, or neither`,
+      );
+    }
   }
 });
 

@@ -27,11 +27,17 @@ import { decideSettingsTabAccess, type GrantableSettingsTabKey } from "@/lib/acc
  *   without touching a grant row;
  * - **the tab is a literal**, typed as `GrantableSettingsTabKey` so it cannot be
  *   built from a header, a query parameter or a body. Which tab governs a route
- *   is a property of the route, declared once in `SETTINGS_ROUTE_TABS`.
+ *   is a property of the route, and `SETTINGS_ROUTE_TABS` records which — not as
+ *   documentation but as a control: `settings-tabs.test.ts` reads every
+ *   `route.ts` under the settings tree and fails unless each exported handler
+ *   opens with the gate its table entry names.
  *
- * Three routes do not use this at all and stay on `requireRole` — `approvers`
- * (it hands out the grants) and the two `sync` POSTs (they write the databases
- * shared with the Rocks Fast sibling). `SETTINGS_ROUTE_TABS` records that.
+ * Four routes do not use this at all and stay on `requireRole` — `approvers`
+ * (it hands out the grants), the two `sync` POSTs (they write the ERP reporting
+ * database shared with the Rocks Fast sibling) and `departments/map` (it writes
+ * the shared configuration database that two sibling applications read to
+ * prepare financial journal postings). `SETTINGS_ROUTE_TABS` records that, and
+ * `departments` stays granted for reading.
  *
  * Returns the session, or the `Response` to return — the same shape
  * `requireAuth()` uses, so a handler stays two lines:

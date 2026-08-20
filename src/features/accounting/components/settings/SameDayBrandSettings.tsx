@@ -5,7 +5,6 @@ import useSWR from "swr";
 import { Plus, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import type { AccSameDayBrandRow } from "@/features/accounting/types";
-import { useAccountingAccess } from "@/features/accounting/hooks/useAccountingAccess";
 
 const fetcher = async (url: string) => {
   const res = await fetch(url);
@@ -109,21 +108,28 @@ function ADSearchModal({
   );
 }
 
-export function SameDayBrandSettings() {
+export interface SameDayBrandSettingsProps {
+  /**
+   * IT Admin or System Admin, resolved by the settings page — which ORs the
+   * access endpoint's answer with the session's own role, so an unreachable
+   * endpoint cannot strip a real admin's controls. Do not re-read it from
+   * `useAccountingAccess()` here; that arm is the fragile one.
+   *
+   * What it gates: the **Add** button opens an Entra ID directory search
+   * against `/api/users/search`, a global admin endpoint and not an AP-1 route.
+   * It was deliberately left alone — widening it for a `sameDayBrand` holder
+   * would hand a non-admin directory search across the whole app — so the
+   * modal, not the underlying POST, is what a granted approver cannot use.
+   */
+  isAdmin: boolean;
+}
+
+export function SameDayBrandSettings({ isAdmin }: SameDayBrandSettingsProps) {
   const { data, error, isLoading, mutate } = useSWR<{ ok: boolean; data: AccSameDayBrandRow[] }>(
     "/api/request/accounting/settings/same-day-brand", fetcher,
   );
   const [showModal, setShowModal] = useState(false);
   const rows = data?.data ?? [];
-  /**
-   * Adding a name needs the Entra ID directory search at `/api/users/search`,
-   * which is a global admin endpoint — not an AP-1 route — and was deliberately
-   * left alone: widening it for a `sameDayBrand` holder would hand a non-admin
-   * directory search across the whole app. So a granted approver can list,
-   * enable, disable and remove rows, but not add one. The button is hidden
-   * rather than left to fail, and the copy below says so.
-   */
-  const { isAdmin } = useAccountingAccess();
 
   const post = async (body: Record<string, unknown>) => {
     const res = await fetch("/api/request/accounting/settings/same-day-brand", {
@@ -155,12 +161,19 @@ export function SameDayBrandSettings() {
       </div>
       <p className="text-[11px] mb-4" style={{ color: "var(--text-muted)" }}>
         คนในรายชื่อนี้เบิกวันเดียวกันได้หลายรายการ ตราบใดที่เป็นคนละแบรนด์
+        {/*
+          Says only what is true. The earlier wording promised that adding a
+          name was admin-only; the server does not enforce that at all —
+          `POST …/same-day-brand` takes `{ staffId }`, or an `{ email }` it
+          resolves against HR, and `/api/users/search` is nowhere on that path.
+          What a granted approver actually cannot use is the Entra ID search
+          the Add button opens.
+        */}
         {!isAdmin && (
           <>
             {" · "}
             <span style={{ color: "var(--text-faint)" }}>
-              สิทธิ์ที่ได้รับสำหรับแท็บนี้ แก้ไขสถานะและลบรายชื่อได้ แต่การเพิ่มรายชื่อใหม่ต้องใช้การค้นหาผู้ใช้จาก Entra ID
-              ซึ่งสงวนไว้สำหรับผู้ดูแลระบบ
+              ปุ่มเพิ่มรายชื่อใช้การค้นหาผู้ใช้จาก Entra ID ซึ่งสงวนไว้สำหรับผู้ดูแลระบบ
             </span>
           </>
         )}

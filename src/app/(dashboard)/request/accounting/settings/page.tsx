@@ -119,8 +119,16 @@ function AccountingSettingsContent() {
   // The endpoint's `admin` is the same `isAdminRole(session.user.role)` this
   // page has always computed locally, so keeping the local arm means an
   // unreachable /access endpoint cannot lock an admin out of a page they could
-  // open before. It cannot over-grant: every settings route enforces
-  // requireRole(["IT Admin", "System Admin"]) for itself.
+  // open before.
+  //
+  // It cannot over-grant, but not for the reason this comment used to give:
+  // thirteen of the sixteen settings routes no longer call
+  // requireRole(["IT Admin", "System Admin"]) at all. What makes the local arm
+  // safe is that it is not the grant — every route re-derives the role from the
+  // session itself (`isAdminRole` inside `requireSettingsTab`, `requireRole` on
+  // the four admin-only ones), so a browser that asserts `isAdmin` here reaches
+  // nothing it would otherwise be refused. This value only decides what is
+  // *offered*, and the panels below take it as a prop for the same reason.
   const role = session?.user?.role;
   const isAdmin = accessIsAdmin || role === "IT Admin" || role === "System Admin";
   if (!isAdmin && !canSettings) return <NoAccessState />;
@@ -183,11 +191,19 @@ function AccountingSettingsContent() {
         </div>
 
         <div className="p-5">
+          {/*
+            `isAdmin` is passed down rather than re-read from
+            `useAccountingAccess()` inside each panel: the resilient value is
+            the one computed above, which survives an unreachable /access
+            endpoint. A panel asking the hook on its own would hand a real
+            admin สงวนไว้สำหรับผู้ดูแลระบบ and no Sync button in exactly the
+            failure this page already defends against.
+          */}
           {effectiveTab === "brands" && <BrandSettings />}
-          {effectiveTab === "sameDayBrand" && <SameDayBrandSettings />}
+          {effectiveTab === "sameDayBrand" && <SameDayBrandSettings isAdmin={isAdmin} />}
           {effectiveTab === "vehicles" && <VehicleSettings />}
-          {effectiveTab === "departments" && <DepartmentMappingSettings />}
-          {effectiveTab === "erpInterface" && <BrandErpInterfaceSettings />}
+          {effectiveTab === "departments" && <DepartmentMappingSettings isAdmin={isAdmin} />}
+          {effectiveTab === "erpInterface" && <BrandErpInterfaceSettings isAdmin={isAdmin} />}
           {effectiveTab === "approvers" && <ApproverSettings />}
         </div>
       </div>

@@ -12,9 +12,11 @@ export {
   buildInterfaceByClaimRecord,
   canActOnClaimBrand,
   canActOnInterfaceTarget,
+  canRetargetClaimBrand,
   filterInterfaceBrandCodes,
   filterRowsForInterfaceAccess,
   INTERFACE_SCOPE_ERROR,
+  INTERFACE_TARGET_SCOPE_ERROR,
 } from "@/lib/acc/approver-interface-access-shared";
 
 function normalizeCodes(codes: string[]): string[] {

@@ -107,18 +107,20 @@ export const SETTINGS_ROUTE_TABS: readonly SettingsRouteTabRule[] = [
   { route: "same-day-brand", tab: "sameDayBrand" },
   { route: "vehicles", tab: "vehicles" },
   { route: "vehicles/reorder", tab: "vehicles" },
-  { route: "departments", tab: "departments" },
+  { route: "departments", tab: "departments", note: "the read half; the write below is not granted" },
   {
     route: "departments/map",
-    tab: "departments",
-    // NOTE: this is the one granted route that writes outside the form
-    // database — `saveDepartmentMappings` opens the core pool and writes
-    // `DepartmentErpMap`, which lives in the database shared with the Rocks
-    // Fast sibling. The plan's table grants it deliberately (a `departments`
-    // tab that cannot save is the grant-that-grants-nothing this whole task
-    // exists to remove), but it is the entry to revisit first if the shared
-    // database ever needs protecting from a non-admin.
-    note: "writes DepartmentErpMap in the shared core database — see the report",
+    tab: null,
+    // The `departments` grant is read-only, ruled 2026-08-20. This was the one
+    // granted route that wrote outside the form database, and what it writes is
+    // not ours alone: `saveDepartmentMappings` opens the core pool and writes
+    // `DepartmentErpMap`, which the Rocks Fast and ACC Portal siblings both read
+    // from their own `erp-prep-service.ts` — the path that prepares financial
+    // journal postings. A settings-tab grant should not decide where two other
+    // applications post money, so the tab lists mappings and an admin saves them.
+    note:
+      "writes DepartmentErpMap in the shared configuration database, which two sibling "
+      + "applications read to prepare financial journal postings",
   },
   { route: "erp-config", tab: "erpInterface", note: "repoints where financial journals land" },
   { route: "gl-accounts", tab: "erpInterface" },
@@ -153,7 +155,22 @@ export const SETTINGS_ROUTE_TABS: readonly SettingsRouteTabRule[] = [
   },
 ];
 
-/** Strip the query, any trailing slash and the settings prefix. */
+/**
+ * A route path reduced to the form `SETTINGS_ROUTE_TABS` keys on, or `null` if
+ * it names nothing under the settings prefix.
+ *
+ * Two input shapes, deliberately:
+ *
+ * - **absolute** — anything starting with `/` must be `SETTINGS_ROUTE_PREFIX`
+ *   or below it, and everything else answers `null`. That is what lets a caller
+ *   hand over the whole route tree;
+ * - **relative** — anything else is taken as *already* below the prefix, which
+ *   is the shape the filesystem walk in `settings-tabs.test.ts` produces
+ *   (`"vehicles/reorder"`). It is not validated further: a relative path this
+ *   module has never heard of is exactly what `unmappedSettingsRoutes` is for.
+ *
+ * The query string and any trailing slash are stripped from both.
+ */
 function normalizeSettingsRoute(routePath: string): string | null {
   const p = String(routePath).split("?")[0].replace(/\/+$/, "");
   if (p === SETTINGS_ROUTE_PREFIX) return "";
@@ -177,8 +194,10 @@ export function settingsTabRuleForRoute(routePath: string): SettingsRouteTabRule
  * Of the given route paths, the ones under `SETTINGS_ROUTE_PREFIX` that
  * `SETTINGS_ROUTE_TABS` says nothing about.
  *
- * Paths outside the prefix are not this module's business and are ignored, so
- * a caller can hand it the whole route tree.
+ * An **absolute** path outside the prefix is not this module's business and is
+ * ignored, so a caller can hand it the whole route tree. A **relative** path is
+ * taken as already being below the prefix — see `normalizeSettingsRoute` — so
+ * `"something-new"` is reported rather than skipped.
  */
 export function unmappedSettingsRoutes(routePaths: string[]): string[] {
   const out: string[] = [];
