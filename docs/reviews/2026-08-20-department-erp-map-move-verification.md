@@ -155,11 +155,44 @@ Every check the shipped script performs — table shape and row count (3),
 `[Rocks_Portal_Form].[dbo].[DepartmentErpMap]`, a read through the synonym
 returning 3 rows, a rolled-back write through the synonym (the siblings'
 `MERGE` shape) succeeding, and no `DepartmentErpMap` object existing in
-`Rocks_Portal_Form_UAT` — passed. **Recommendation for whoever next touches
-`scripts/checks/verify-department-erp-map-move.ts`: bracket the alias on line
-62 (`AS [rowCount]`) so `npm run check:dept-map-home` reports `OK` instead of
-crashing.** That one-line fix was intentionally left out of this task, whose
-scope is limited to `docs/reviews/**`.
+`Rocks_Portal_Form_UAT` — passed.
+
+The record above is kept rather than deleted: it is the fact that this script
+had been written and reviewed twice, in Task 1, without ever once being
+executed against a live database — the syntax error was there from the first
+draft and nothing caught it until this task actually ran the gate.
+
+### The fix, and the real gate
+
+Authorized as a follow-up correction to this same task (the "no source
+changes" constraint had been a mistake — a task that leaves Step 5's gate
+unrunnable is not finished). `scripts/checks/verify-department-erp-map-move.ts`
+line 62 now reads `AS [rowCount]`, with a comment at the fix site explaining
+why the brackets are load-bearing: `ROWCOUNT` is a reserved T-SQL keyword, so
+an unbracketed alias turns the whole batch into a syntax error rather than a
+failed assertion, which is what made this look like the migration had broken
+when it had not. The rest of the file's aliases (`identCurrent`, `tableId`,
+`colName`, `n`, `tgt`, `src`, `oid`) were each probed individually
+(`SELECT 1 AS <alias>;`) and none collide with a reserved word — only
+`rowCount` needed the fix.
+
+Command as run: `npm run check:dept-map-home`
+
+Output verbatim:
+
+```
+> form-portal@1.0.0 check:dept-map-home
+> tsx scripts/checks/verify-department-erp-map-move.ts
+
+OK: DepartmentErpMap lives in Rocks_Portal_Form and Fast_Core reaches it by synonym
+```
+
+The actual npm script now reports `OK`, matching the brief exactly. This
+supersedes the scratch run above as the authoritative Step 5 result;
+`npx tsc --noEmit` (clean under `src/` and `scripts/`; unrelated pre-existing
+`.next/types/validator.ts` errors about a `reimburse` route not present in
+this branch's `src/`) and `npm test` (`pass 285, fail 0`) were also re-run
+clean after the fix.
 
 ## Step 6 — `check:alignment` unchanged
 
@@ -188,5 +221,10 @@ reference it either.
 - `Rocks_Portal_Form_UAT`: no `DepartmentErpMap` object, as required.
 - `check:alignment`: only the pre-existing AP-3 data drift, unchanged by this
   work.
-- `check:dept-map-home`: the shipped script crashes on a pre-existing alias
-  bug; the same checks, run manually with that one alias bracketed, all pass.
+- `check:dept-map-home`: the shipped script originally crashed on a
+  pre-existing unbracketed-`rowCount`-alias bug (`ROWCOUNT` is a reserved
+  T-SQL keyword). Fixed in `scripts/checks/verify-department-erp-map-move.ts`
+  and re-run for real: `OK: DepartmentErpMap lives in Rocks_Portal_Form and
+  Fast_Core reaches it by synonym`.
+- `npx tsc --noEmit`: clean under `src/` and `scripts/`.
+- `npm test`: `pass 285, fail 0`.

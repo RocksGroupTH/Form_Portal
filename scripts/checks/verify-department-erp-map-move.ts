@@ -57,9 +57,16 @@ async function main() {
   const problems: string[] = [];
 
   // 1. the table, its rows and its shape
+  //
+  // rowCount is bracketed -- ROWCOUNT is a reserved T-SQL keyword (SET ROWCOUNT),
+  // so an unbracketed alias makes the whole batch a syntax error rather than a
+  // failed assertion. That is a worse failure than it looks: it happened here
+  // once, and the error ("Incorrect syntax near the keyword 'rowCount'") reads
+  // like the migration broke, when in fact this script had never actually run
+  // to completion against a live database.
   const shape = await form.request().query(`
     SELECT
-      (SELECT COUNT(*) FROM [dbo].[DepartmentErpMap]) AS rowCount,
+      (SELECT COUNT(*) FROM [dbo].[DepartmentErpMap]) AS [rowCount],
       IDENT_CURRENT('dbo.DepartmentErpMap') AS identCurrent,
       OBJECT_ID('dbo.DepartmentErpMap', 'U') AS tableId;
   `);
