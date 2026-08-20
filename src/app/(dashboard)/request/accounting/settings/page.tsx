@@ -122,7 +122,7 @@ function AccountingSettingsContent() {
   // open before.
   //
   // It cannot over-grant, but not for the reason this comment used to give:
-  // thirteen of the sixteen settings routes no longer call
+  // twelve of the sixteen settings routes no longer call
   // requireRole(["IT Admin", "System Admin"]) at all. What makes the local arm
   // safe is that it is not the grant — every route re-derives the role from the
   // session itself (`isAdminRole` inside `requireSettingsTab`, `requireRole` on

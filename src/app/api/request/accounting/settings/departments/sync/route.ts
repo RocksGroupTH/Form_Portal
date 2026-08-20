@@ -8,8 +8,9 @@ import {
 /**
  * POST /api/request/accounting/settings/departments/sync — optional { brandCode }
  *
- * **Admin only, whatever settings tabs the caller holds.** Every other route on
- * the แผนก (HR ↔ ERP) tab is opened by the `departments` grant; this one is not.
+ * **Admin only, whatever settings tabs the caller holds.** The `departments`
+ * grant on the แผนก (HR ↔ ERP) tab is read-only: it opens the GET beside this
+ * route and nothing else — not this sync, and not `departments/map`.
  * It pulls the DEPT dimension out of Business Central through
  * `syncBrandDimensionValues`, which opens the ERP reporting pool and writes
  * `ErpDimensionValue` and `ErpSyncLog` — a database shared with the Rocks Fast

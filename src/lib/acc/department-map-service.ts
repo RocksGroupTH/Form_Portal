@@ -4,6 +4,7 @@ import { listBrandErpInterfaceMaps } from "@/lib/acc/brand-erp-interface-map-ser
 import {
   DepartmentMapBoundsError,
   boundLegacyClaimCodes,
+  claimCodesForInterfaceTarget,
   legacyClaimPurgeError,
 } from "@/lib/acc/department-map-guard";
 import { ERP_INTERFACE_BRANDS, isErpInterfaceBrandCode } from "@/lib/acc/erp-interface-brands";
@@ -333,15 +334,21 @@ export async function saveDepartmentMappings(
   // `DepartmentErpMap` in the shared configuration database; validating it
   // after the writes would leave a refused request half-applied. See
   // `department-map-guard.ts` for what the list is and why it is dangerous.
+  //
+  // The bound is this target's own claim brands, read from
+  // `AccBrandErpInterface` — the same set `getMultiBrandDepartmentMappingPage`
+  // groups by and the dialog sends back. Not the AP-1 allowlist: that contains
+  // every claim brand, so it would leave one PUT able to empty the table for
+  // every brand but the target, which is the whole thing this bound exists to
+  // stop.
   let purgeCodes: string[] = [];
   const requestedPurge = Array.isArray(legacyClaimCodes) ? legacyClaimCodes : [];
   if (requestedPurge.length > 0) {
-    const allowed = await getAllowedBrands(AP1_FORM_CODE);
-    const bounds = boundLegacyClaimCodes(
-      requestedPurge,
+    const purgeable = claimCodesForInterfaceTarget(
+      await listBrandErpInterfaceMaps(),
       brandCode,
-      allowed.map((b) => b.brandCode),
     );
+    const bounds = boundLegacyClaimCodes(requestedPurge, brandCode, purgeable);
     if (bounds.rejected.length > 0) {
       throw new DepartmentMapBoundsError(legacyClaimPurgeError(bounds.rejected));
     }

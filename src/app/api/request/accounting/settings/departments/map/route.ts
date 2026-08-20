@@ -21,10 +21,11 @@ import {
  * `SETTINGS_ROUTE_TABS` as `tab: null`.
  *
  * The service bounds the payload regardless of who is calling — the target must
- * be a real ERP interface brand and every `legacyClaimCodes` entry must name a
- * brand enabled in AP-1, both checked before the first write. An admin should
- * not be able to empty three applications' department mappings by accident
- * either. See `src/lib/acc/department-map-guard.ts`.
+ * be a real ERP interface brand, and every `legacyClaimCodes` entry must be a
+ * claim brand whose ERP interface target *is* that target, both checked before
+ * the first write. An admin should not be able to empty three applications'
+ * department mappings by accident either. See
+ * `src/lib/acc/department-map-guard.ts`.
  */
 export async function PUT(req: NextRequest) {
   const session = await requireRole(["IT Admin", "System Admin"]);

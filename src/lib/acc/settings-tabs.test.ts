@@ -221,6 +221,15 @@ test("every settings handler opens with the gate its table entry names", async (
         found.index,
         `${rule.route} ${h.method} does something before its gate`,
       );
+
+      // …and the refusal must be returned. Both gates answer with *either* a
+      // session or the `Response` to send, so a handler that calls the gate and
+      // drops its result is ungated while looking gated — and every assertion
+      // above would still pass. All 28 check it today.
+      assert.ok(
+        h.body.indexOf("instanceof Response) return") !== -1,
+        `${rule.route} ${h.method} calls its gate but never returns the refusal`,
+      );
     }
   }
 
