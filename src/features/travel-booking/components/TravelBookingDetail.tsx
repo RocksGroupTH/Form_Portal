@@ -29,7 +29,7 @@ import { Dialog } from "@/components/ui";
 import { Avatar } from "@/components/ui/Avatar";
 import { ImageLightbox } from "@/features/accounting/components/ImageLightbox";
 import { fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
-import { useAccountingAccess } from "@/features/accounting/hooks/useAccountingAccess";
+import { useBookingAccess } from "@/features/travel-booking/hooks/useBookingAccess";
 import { useErpSandboxDevHost } from "@/features/accounting/hooks/useErpSandboxDevHost";
 import { useTravelBookingOptionIcons } from "@/features/travel-booking/hooks/useOptionIcons";
 import { InfoStrip, typeInfo } from "@/features/travel-booking/components/BookingInfoStrip";
@@ -344,7 +344,7 @@ interface TravelBookingDetailProps {
 }
 
 export function TravelBookingDetail({ request, onChanged, readOnlyBooking = false }: TravelBookingDetailProps) {
-  const { canAccount, loading: accessLoading } = useAccountingAccess();
+  const { canAccount, loading: accessLoading } = useBookingAccess();
 
   /* ── Viewer identity — mirrors AP-1 RequestDetail.tsx's `/api/me/employee` lookup ── */
   const [viewerStaffId, setViewerStaffId] = useState<number | null>(null);

@@ -7,7 +7,7 @@ import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
 import { HoverCard } from "@/components/ui/HoverCard";
-import { useAccountingAccess } from "@/features/accounting/hooks/useAccountingAccess";
+import { useBookingAccess } from "@/features/travel-booking/hooks/useBookingAccess";
 import { Luggage, ClipboardCheck, FileSpreadsheet, Settings } from "lucide-react";
 
 interface HubCard {
@@ -73,7 +73,7 @@ function TravelBookingHubCard({ card, href }: { card: HubCard; href: string }) {
 /** AP-17 admin hub — its own management area (queue + report + settings), separate from AP-1. */
 export default function TravelBookingHubPage() {
   const { data: session } = useSession();
-  const { loading: accessLoading, canAccount } = useAccountingAccess();
+  const { loading: accessLoading, canAccount } = useBookingAccess();
   const role = session?.user?.role;
   const isAdmin = role === "IT Admin" || role === "System Admin";
   const cards = CARDS.filter((c) => {

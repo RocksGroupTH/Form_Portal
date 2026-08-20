@@ -9,7 +9,7 @@ import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
 import { SidePanel, SidePanelClose } from "@/components/ui/SidePanel";
-import { useAccountingAccess } from "@/features/accounting/hooks/useAccountingAccess";
+import { useBookingAccess } from "@/features/travel-booking/hooks/useBookingAccess";
 import { fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
 import { TravelBookingDetail } from "@/features/travel-booking/components/TravelBookingDetail";
 import type { TravelBookingAdminQueueItem, TravelBookingRequest } from "@/features/travel-booking/types";
@@ -35,16 +35,20 @@ function NeedBadge({ icon, label }: { icon: React.ReactNode; label: string }) {
 
 /**
  * AP-17 admin work queue (spec §8.1) — requests that finished Manager approval and are
- * waiting on Admin to fill room/ticket/rent booking details. Gated on `canAccount` (approver
- * OR IT/System Admin), matching `canAccessAccountArea` — the same gate the backing
- * `admin/queue`, `admin/requests/[id]/booking`, and `admin/requests/[id]/complete` routes
- * enforce — rather than `AccountApproverGuard` (AP-1's guard, which only checks
- * `isApprover` and would incorrectly hide this page from IT/System Admin viewers who
- * aren't also rows in `AccApprover`).
+ * waiting on Admin to fill room/ticket/rent booking details. Gated on `canAccount` from
+ * `useBookingAccess`, which is AP-17's own `AccBookingApprover` roster alone — not AP-1's
+ * `AccApprover`, and not admin-inclusive.
+ *
+ * That is deliberately *narrower* than what the backing `admin/queue`,
+ * `admin/requests/[id]/booking` and `admin/requests/[id]/complete` routes enforce: they
+ * authorize with `canAccessBookingArea`, which reads the same roster but keeps an admin arm
+ * so an admin can always operate the system. So an admin who is not on the roster is hidden
+ * from this page while the routes would still serve them — menu visibility and authorization
+ * are separate questions, and hiding a card was never the control.
  */
 export default function TravelBookingAdminQueuePage() {
   const searchParams = useSearchParams();
-  const { loading: accessLoading, canAccount } = useAccountingAccess();
+  const { loading: accessLoading, canAccount } = useBookingAccess();
   const { data, error, isLoading, mutate } = useSWR(
     canAccount ? "/api/request/travel-booking/admin/queue" : null,
     fetcher,
@@ -115,7 +119,7 @@ export default function TravelBookingAdminQueuePage() {
               ไม่มีสิทธิ์เข้าถึง
             </h2>
             <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>
-              หน้านี้สำหรับผู้อนุมัติฝ่ายบัญชี / IT Admin / System Admin เท่านั้น
+              หน้านี้สำหรับผู้ที่อยู่ในรายชื่อสิทธิ์เข้าถึงของ AP-17 เท่านั้น (ตั้งค่า → สิทธิ์เข้าถึง)
             </p>
           </div>
         ) : isLoading ? (

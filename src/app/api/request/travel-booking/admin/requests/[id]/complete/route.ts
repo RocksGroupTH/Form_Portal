@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
-import { canAccessAccountArea } from "@/lib/acc/access";
+import { canAccessBookingArea } from "@/lib/acc/booking-access";
 import { buildAccActor } from "@/lib/acc/actor-context";
 import { completeRequest } from "@/lib/acc/travel-booking/admin-service";
 import { processQueue } from "@/lib/acc/email-queue";
@@ -18,7 +18,7 @@ export async function POST(
   const session = await requireAuth();
   if (session instanceof Response) return session;
 
-  if (!(await canAccessAccountArea(session.user.email, session.user.role))) {
+  if (!(await canAccessBookingArea(session.user.email, session.user.role))) {
     return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
   }
 
