@@ -47,11 +47,18 @@ Migrations 099 (`Rocks_Portal_Form`) and 100 (`Fast_Core`) moved
 `DepartmentErpMap` off the shared configuration database and into this app's
 own. `Fast_Core.dbo.DepartmentErpMap` is now
 `CREATE SYNONYM ... FOR [Rocks_Portal_Form].[dbo].[DepartmentErpMap]`, and the
-synonym is **permanent**, not a migration aid: no code anywhere — in this app
-or in the Rocks Fast and ACC Portal siblings — was rewritten, because all three
-still name the table two-part (`[dbo].[DepartmentErpMap]`) against a pool
-opened on `Fast_Core`. **The move did not unshare the rows.** Who reads and
-writes them did not change, only which database physically holds them — see
+synonym is **permanent** — but not because this app still needs it. This app's
+own `department-map-service.ts` was repointed straight at the new home
+(`getProductionFormPool()`, never `getCorePool()`, at all six call sites) and
+no longer goes through `Fast_Core` or the synonym at all. The synonym exists,
+and stays, for the **two sibling repositories, which were never touched**:
+Rocks Fast and ACC Portal still open a pool on `Fast_Core` and name the table
+two-part, `[dbo].[DepartmentErpMap]`, from their own `erp-prep-service.ts` —
+the synonym is what lets that code go on resolving to the real rows with no
+change on their side. Dropping the synonym today would break the two
+siblings and nothing in this app. **The move did not unshare the rows.**
+Which applications read and write them did not change — only this app's own
+path to them did; the two siblings' path is exactly what it always was — see
 "สิทธิ์เข้าถึง" below for why `settings/departments/map` stays admin-only
 regardless.
 
@@ -207,7 +214,7 @@ approval.
 
 Form Portal was cloned from the Rocks Fast codebase and **still shares live infrastructure** with it. This is not a separate environment — treat both apps as one system when operating on shared resources.
 
-**There is a third app, and it shares more than Rocks Fast does.** `ACC_Portal` points at the same `MSSQL_HOST` and the same **`Rocks_Portal_Form`** — measured 2026-08-19 from both `.env.local` files, where its `RF_FORM_DATABASE` defaults to that name. So `AccApprover` and `AccApproverSettingsTab` rows are **the same rows** in both applications, not copies: adding or deactivating an approver here changes who can act there, and vice versa. That is intended — one roster, one source of truth — but both apps' settings pages edit those rows with no locking, so a simultaneous edit is last-write-wins. Acceptable for a roster changed a few times a year; worth knowing before assuming a change was lost. ACC Portal also reads `Fast_Core.dbo.DepartmentErpMap` from its own `erp-prep-service.ts`, which is why the department-mapping write stays admin-only — see "สิทธิ์เข้าถึง" above.
+**There is a third app, and it shares more than Rocks Fast does.** `ACC_Portal` points at the same `MSSQL_HOST` and the same **`Rocks_Portal_Form`** — measured 2026-08-19 from both `.env.local` files, where its `RF_FORM_DATABASE` defaults to that name. So `AccApprover` and `AccApproverSettingsTab` rows are **the same rows** in both applications, not copies: adding or deactivating an approver here changes who can act there, and vice versa. That is intended — one roster, one source of truth — but both apps' settings pages edit those rows with no locking, so a simultaneous edit is last-write-wins. Acceptable for a roster changed a few times a year; worth knowing before assuming a change was lost. ACC Portal also reads these `DepartmentErpMap` rows from its own `erp-prep-service.ts` to prepare financial journal postings — still against a pool opened on `Fast_Core`, which has reached the real rows in `Rocks_Portal_Form` through a permanent synonym since migrations 099/100 — which is why the department-mapping write stays admin-only regardless of which database holds the table — see "สิทธิ์เข้าถึง" above.
 
 The rest of this section is about Rocks Fast:
 

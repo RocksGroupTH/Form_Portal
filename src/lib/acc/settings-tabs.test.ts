@@ -146,8 +146,9 @@ test("the admin-only routes are the ones that must never be granted", () => {
   const adminOnly = SETTINGS_ROUTE_TABS.filter((r) => r.tab === null).map((r) => r.route);
   assert.deepEqual(adminOnly, [
     // Ruled 2026-08-20: the `departments` grant is read-only. This write
-    // reaches `DepartmentErpMap` in the shared configuration database, which
-    // two sibling applications read to prepare financial journal postings.
+    // reaches `DepartmentErpMap`, rows two sibling applications read to
+    // prepare financial journal postings — shared rows, whichever database
+    // holds the table.
     "departments/map",
     "approvers",
     "departments/sync",

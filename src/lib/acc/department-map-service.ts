@@ -449,8 +449,9 @@ export async function saveDepartmentMappings(
 
   // Bound the purge *before* the first upsert. `legacyClaimCodes` is
   // client-supplied and each entry becomes a whole-brand DELETE against
-  // `DepartmentErpMap` in the shared configuration database; validating it
-  // after the writes would leave a refused request half-applied. See
+  // `DepartmentErpMap` — rows the Rocks Fast and ACC Portal siblings also
+  // read to prepare financial journal postings; validating it after the
+  // writes would leave a refused request half-applied. See
   // `department-map-guard.ts` for what the list is and why it is dangerous.
   //
   // The bound is this target's own claim brands, read from
