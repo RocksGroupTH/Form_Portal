@@ -49,12 +49,10 @@ export async function loadSettingsTabsByApproverIds(
     // `/access` is provided independently by its own catch, which 500s, and
     // by the hook defaulting to no grants.
     //
-    // Matches `loadInterfaceBrandsByApproverIds`, which is read beside this one,
-    // except for the conjunction: that one ORs the two tests, so any error
-    // merely *naming* the table — permission denied, a deadlock, a timeout —
-    // also degrades to no grants, which is the silent-revoke path this catch was
-    // narrowed to close. Both halves must hold: the missing-object error, about
-    // this object.
+    // The sibling read beside this one, `loadInterfaceBrandsByApproverIds`,
+    // needed the same narrowing for a WORSE reason: its `null` means
+    // UNRESTRICTED, so its OR escalated an approver to every interface brand
+    // on any error naming the table. Fixed alongside this one.
     if (msg.includes("Invalid object name") && msg.includes("AccApproverSettingsTab")) {
       console.error("[approver-settings-tabs] table unavailable — treating as no grants", err);
       byApprover.clear();

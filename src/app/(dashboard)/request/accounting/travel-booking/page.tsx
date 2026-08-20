@@ -36,7 +36,7 @@ const CARDS: HubCard[] = [
   },
   {
     title: "ตั้งค่า",
-    desc: "เหตุผลการเดินทาง · ที่พักค้างคืน · ยานพาหนะ · เช่ายานพาหนะ",
+    desc: "เหตุผลการเดินทาง · ที่พัก · การเดินทาง · เช่ายานพาหนะ · สิทธิ์เข้าถึง",
     href: "/request/accounting/travel-booking-settings",
     icon: <Settings size={20} />,
     adminOnly: true,
@@ -73,11 +73,20 @@ function TravelBookingHubCard({ card, href }: { card: HubCard; href: string }) {
 /** AP-17 admin hub — its own management area (queue + report + settings), separate from AP-1. */
 export default function TravelBookingHubPage() {
   const { data: session } = useSession();
-  const { loading: accessLoading, canAccount, error: accessError } = useBookingAccess();
+  const {
+    loading: accessLoading,
+    canAccount,
+    canSettings,
+    error: accessError,
+  } = useBookingAccess();
   const role = session?.user?.role;
   const isAdmin = role === "IT Admin" || role === "System Admin";
   const cards = CARDS.filter((c) => {
-    if (c.adminOnly && !isAdmin) return false;
+    // `adminOnly` now means "admin, or holding at least one settings-tab
+    // grant" — matching AP-1's hub. Without `canSettings` a granted non-admin
+    // could open the settings page and pass its routes, but had no menu path
+    // to it: the grant worked and was unreachable.
+    if (c.adminOnly && !isAdmin && !canSettings) return false;
     if (accessLoading) {
       if (c.accountOnly) return false;
       return true;
