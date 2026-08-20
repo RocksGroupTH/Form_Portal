@@ -12,6 +12,7 @@ import {
   interfaceByClaimMapToRecord,
   loadPrepDeptContext,
 } from "@/lib/acc/erp-prep-service";
+import { AP1_FORM_CODE } from "@/features/accounting/constants";
 
 /**
  * GET /api/request/accounting/report/export
@@ -67,7 +68,10 @@ export async function GET(req: NextRequest) {
     // in full, including requester names and amounts, straight out of Excel.
     const [access, deptCtx] = await Promise.all([
       resolveApproverInterfaceAccess(session.user.email, session.user.role),
-      loadPrepDeptContext(),
+      // AP-1: `queryReport` pins `r.FormCode` to the same constant, so every
+      // row this filters is AP-1's and AP-1's interface mapping is the one that
+      // decides whose books they are.
+      loadPrepDeptContext(AP1_FORM_CODE),
     ]);
     if (!access.allAccess) {
       const byClaim = interfaceByClaimMapToRecord(deptCtx.interfaceByClaim);

@@ -99,12 +99,39 @@ function toClaimRow(
   };
 }
 
-/** One row per AP-1 claimable brand; map each to a Brand Config target. */
-export async function getBrandErpConfigPage(): Promise<BrandErpConfigPageData> {
+/**
+ * One row per claimable brand, each mapped to a Brand Config target.
+ *
+ * With `formCode`, this form's claim brands and this form's interface mapping;
+ * without, AP-1's claim brands and the default mapping alone — what the
+ * settings editors edit, and what every caller got before this parameter
+ * existed.
+ *
+ * **`interfaceBrandCode` on each row is a send-path value, not page dressing.**
+ * `loadErpJournalBuildContext` rebuilds its `interfaceByClaim` out of it, and
+ * that map decides which target brand's books a claim posts to. Reading it
+ * defaults-only while the rest of the journal context resolved per form was the
+ * one remaining way a form's own configuration could be assembled around
+ * another form's target mapping. Neither Task 3 nor Task 4 reached it, because
+ * the read is two calls down: this function calls
+ * `listBrandErpInterfaceMaps`, which is where the `AccBrandErpInterface`
+ * predicate lives.
+ *
+ * The two form codes are not the same kind of thing and must not be collapsed.
+ * `listBrandErpInterfaceMaps` follows the default/override rule, where absent
+ * means the `FormCode IS NULL` rows. `getAllowedBrands` reads `AccFormBrand`,
+ * which is not one of the seven per-form configuration tables: it has no NULL
+ * default row, so `FormCode = @form` with nothing to bind returns no brands at
+ * all rather than a default set. AP-1 therefore stays the claim-brand roster
+ * this page is about when no form is named.
+ */
+export async function getBrandErpConfigPage(
+  formCode?: string,
+): Promise<BrandErpConfigPageData> {
   const [claimBrands, configs, ifaceMaps] = await Promise.all([
-    getAllowedBrands(AP1_FORM_CODE),
+    getAllowedBrands(formCode ?? AP1_FORM_CODE),
     listBrandConfigs(0),
-    listBrandErpInterfaceMaps(),
+    listBrandErpInterfaceMaps(formCode),
   ]);
 
   const connById = new Map<number, { code: string; name: string }>();
