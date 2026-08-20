@@ -13,15 +13,26 @@ import {
   ClipboardCheck,
   FileBarChart,
   Settings,
+  Lock,
 } from "lucide-react";
+
+/** What each card's `show` rule is allowed to ask about the viewer. */
+interface HubAccess {
+  /** Active row in AccApprover — the roster alone, admins are not included. */
+  canAccount: boolean;
+  /** IT Admin or System Admin, resilient to an unreachable /access endpoint. */
+  isAdmin: boolean;
+  /** Admin, or an approver holding at least one settings-tab grant. */
+  canSettings: boolean;
+}
+
 interface HubCard {
   title: string;
   desc: string;
   href: string;
   icon: React.ReactNode;
-  adminOnly?: boolean;
-  approverOnly?: boolean;
-  accountOnly?: boolean;
+  /** The rule lives beside the card rather than in the filter below. */
+  show: (a: HubAccess) => boolean;
   badge?: string;
 }
 
@@ -31,21 +42,21 @@ const CARDS: HubCard[] = [
     desc: "คิวรออนุมัติ · กำหนดวันจ่าย · เตรียมข้อมูลส่ง Interface ERP",
     href: "/request/accounting/approvals",
     icon: <ClipboardCheck size={20} />,
-    approverOnly: true,
+    show: (a) => a.canAccount,
   },
   {
     title: "รายงาน",
     desc: "รายงานการเบิกค่าเดินทาง พร้อมตัวกรอง + ส่งออก Excel",
     href: "/request/accounting/report",
     icon: <FileBarChart size={20} />,
-    accountOnly: true,
+    show: (a) => a.canAccount,
   },
   {
     title: "ตั้งค่า",
     desc: "ผู้อนุมัติบัญชี · พาหนะ & เรท · แบรนด์ · G/L & Bank · Interface ERP",
     href: "/request/accounting/settings",
     icon: <Settings size={20} />,
-    adminOnly: true,
+    show: (a) => a.isAdmin || a.canSettings,
   },
 ];
 
@@ -78,23 +89,50 @@ function AccountingHubCard({ card, href }: { card: HubCard; href: string }) {
   );
 }
 
+function NoAccessNotice() {
+  return (
+    <div
+      className="rounded-2xl py-14 px-5 text-center"
+      style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)" }}
+    >
+      <div className="flex justify-center mb-3" style={{ color: "var(--text-muted)" }}>
+        <Lock size={28} />
+      </div>
+      <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>
+        ไม่มีสิทธิ์เข้าถึงโมดูลนี้ — กรุณาติดต่อผู้ดูแลระบบเพื่อขอสิทธิ์ผู้อนุมัติบัญชี
+      </p>
+    </div>
+  );
+}
+
 export default function AccountingHubPage() {
   const { data: session } = useSession();
   const from = useSearchParams().get("from");
   const backHref = requestBackHref(from);
-  const { loading: accessLoading, isApprover, canAccount } = useAccountingAccess();
+  const {
+    loading: accessLoading,
+    canAccount,
+    isAdmin: accessIsAdmin,
+    canSettings,
+  } = useAccountingAccess();
+
+  // Same shape as /request/accounting/settings, deliberately: the endpoint's
+  // `admin` is the very role test this page used to compute locally, so keeping
+  // the local arm means an unreachable /access endpoint cannot hide the ตั้งค่า
+  // card from an admin who could open it a moment ago — and the page behind the
+  // card would still let them in, so dropping the arm here would only disagree
+  // with it. It cannot over-grant: the literal test is a strict subset of the
+  // isAdminRole the server ran over the same session value, and it decides only
+  // what is *offered* — every settings route re-derives the role itself.
   const role = session?.user?.role;
-  const isAdmin = role === "IT Admin" || role === "System Admin";
-  const cards = CARDS.filter((c) => {
-    if (c.adminOnly && !isAdmin) return false;
-    if (accessLoading) {
-      if (c.approverOnly || c.accountOnly) return false;
-      return true;
-    }
-    if (c.approverOnly && !isApprover) return false;
-    if (c.accountOnly && !canAccount) return false;
-    return true;
-  });
+  const isAdmin = accessIsAdmin || role === "IT Admin" || role === "System Admin";
+
+  // Nothing is rendered until the roster has answered. All three rules depend on
+  // it, so filtering early would flash cards that then vanish.
+  const cards = accessLoading
+    ? []
+    : CARDS.filter((c) => c.show({ canAccount, isAdmin, canSettings }));
+  const showNoAccess = !accessLoading && cards.length === 0;
 
   return (
     <PageContainer className="acc-theme py-6 px-3 sm:px-0">
@@ -108,11 +146,15 @@ export default function AccountingHubPage() {
       />
 
       {/* Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {cards.map((card) => (
-          <AccountingHubCard key={card.href} card={card} href={withReturnTag(card.href, from)} />
-        ))}
-      </div>
+      {showNoAccess ? (
+        <NoAccessNotice />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {cards.map((card) => (
+            <AccountingHubCard key={card.href} card={card} href={withReturnTag(card.href, from)} />
+          ))}
+        </div>
+      )}
     </PageContainer>
   );
 }
