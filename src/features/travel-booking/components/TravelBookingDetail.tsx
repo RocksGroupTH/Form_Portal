@@ -344,7 +344,7 @@ interface TravelBookingDetailProps {
 }
 
 export function TravelBookingDetail({ request, onChanged, readOnlyBooking = false }: TravelBookingDetailProps) {
-  const { canAccount, loading: accessLoading } = useBookingAccess();
+  const { canAccount, loading: accessLoading, error: accessError } = useBookingAccess();
 
   /* ── Viewer identity — mirrors AP-1 RequestDetail.tsx's `/api/me/employee` lookup ── */
   const [viewerStaffId, setViewerStaffId] = useState<number | null>(null);
@@ -496,6 +496,13 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
   const bookingRules = useMemo(() => REQUIRED_BOOKING_RULES.filter((r) => r.needed(request)), [request]);
   const showAdminPanel =
     !readOnlyBooking && request.status === "ManagerApproved" && canAccount && request.id != null;
+  /* A rejected /access fetch leaves `canAccount` false, which is indistinguishable
+     from a genuine refusal. The panel still fails closed, but the banner below is
+     then addressed to someone we never established is not an operator, so it gets
+     a variant that adds the caveat instead. Only the operator-facing view is
+     affected: in `readOnlyBooking` the viewer is the requester, who is waiting for
+     Admin whatever the roster says. */
+  const bookingAreaUnknown = !readOnlyBooking && Boolean(accessError);
   const showBookingSummary =
     !showAdminPanel &&
     (readOnlyBooking || !accessLoading) &&
@@ -534,8 +541,21 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
         </div>
       )}
 
+      {/* ── ManagerApproved, permission check unavailable ── */}
+      {request.status === "ManagerApproved" && bookingAreaUnknown && (
+        <div
+          className="rounded-2xl p-4 mb-4 flex items-start gap-2.5"
+          style={{ background: "var(--bg-info-yellow)", border: "1px solid var(--border-info-yellow)" }}
+        >
+          <AlertCircle size={16} style={{ color: "var(--text-info-yellow)", marginTop: 2 }} className="shrink-0" />
+          <p className="text-[13px] m-0" style={{ color: "var(--text-info-yellow)" }}>
+            รอ Admin กรอกข้อมูลการจอง — ตรวจสอบสิทธิ์ของคุณไม่สำเร็จ หากคุณเป็นผู้ดูแลการจอง กรุณาลองโหลดหน้านี้ใหม่อีกครั้ง
+          </p>
+        </div>
+      )}
+
       {/* ── ManagerApproved, not-account-area banner ── */}
-      {request.status === "ManagerApproved" && !accessLoading && !canAccount && (
+      {request.status === "ManagerApproved" && !accessLoading && !canAccount && !bookingAreaUnknown && (
         <div
           className="rounded-2xl p-4 mb-4 flex items-start gap-2.5"
           style={{ background: "var(--bg-info-yellow)", border: "1px solid var(--border-info-yellow)" }}
