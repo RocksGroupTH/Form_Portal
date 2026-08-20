@@ -6,6 +6,8 @@ interface BookingAccessData {
   account: boolean;
   approver: boolean;
   admin: boolean;
+  settingsTabs: string[];
+  canSettings: boolean;
 }
 
 const fetcher = async (url: string) => {
@@ -39,5 +41,12 @@ export function useBookingAccess() {
     canAccount: access?.account ?? false,
     /** IT Admin or System Admin. */
     isAdmin: access?.admin ?? false,
+    /**
+     * Grantable AP-17 settings tabs this non-admin booking approver may open;
+     * `[]` for admins, who see every tab.
+     */
+    settingsTabs: access?.settingsTabs ?? [],
+    /** admin OR at least one granted tab. */
+    canSettings: access?.canSettings ?? false,
   };
 }
