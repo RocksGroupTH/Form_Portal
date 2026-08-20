@@ -17,21 +17,30 @@ export async function loadSettingsTabsByApproverIds(
   const map = new Map<number, string[]>();
   if (approverIds.length === 0) return map;
 
-  const pool = await getAccPool();
-  const placeholders = approverIds.map((_, i) => `@id${i}`).join(", ");
-  const req = pool.request();
-  approverIds.forEach((id, i) => req.input(`id${i}`, sql.Int, id));
-  const r = await req.query(`
-    SELECT ApproverId, TabKey FROM [dbo].[AccApproverSettingsTab]
-    WHERE ApproverId IN (${placeholders}) ORDER BY TabKey
-  `);
-
   const byApprover = new Map<number, string[]>();
-  for (const row of r.recordset as { ApproverId: number; TabKey: string }[]) {
-    const list = byApprover.get(row.ApproverId) ?? [];
-    list.push(row.TabKey);
-    byApprover.set(row.ApproverId, list);
+  try {
+    const pool = await getAccPool();
+    const placeholders = approverIds.map((_, i) => `@id${i}`).join(", ");
+    const req = pool.request();
+    approverIds.forEach((id, i) => req.input(`id${i}`, sql.Int, id));
+    const r = await req.query(`
+      SELECT ApproverId, TabKey FROM [dbo].[AccApproverSettingsTab]
+      WHERE ApproverId IN (${placeholders}) ORDER BY TabKey
+    `);
+    for (const row of r.recordset as { ApproverId: number; TabKey: string }[]) {
+      const list = byApprover.get(row.ApproverId) ?? [];
+      list.push(row.TabKey);
+      byApprover.set(row.ApproverId, list);
+    }
+  } catch (err) {
+    // Degrade to NO grants, never to all. This decides whether a non-admin
+    // approver sees the settings page at all, so a permissive default would
+    // open it to every approver the moment the table or the database is
+    // unreachable. Under-granting is recoverable; over-granting is not.
+    console.error("[approver-settings-tabs] read failed — treating as no grants", err);
+    byApprover.clear();
   }
+
   for (const id of approverIds) {
     map.set(id, filterGrantableTabKeys(byApprover.get(id) ?? []));
   }
