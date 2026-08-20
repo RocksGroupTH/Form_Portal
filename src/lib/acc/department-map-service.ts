@@ -1,7 +1,13 @@
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import { getAllowedBrands } from "@/lib/acc/brand-options";
 import { listBrandErpInterfaceMaps } from "@/lib/acc/brand-erp-interface-map-service";
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import {
+  DepartmentMapBoundsError,
+  boundLegacyClaimCodes,
+  claimCodesForInterfaceTarget,
+  legacyClaimPurgeError,
+} from "@/lib/acc/department-map-guard";
+import { ERP_INTERFACE_BRANDS, isErpInterfaceBrandCode } from "@/lib/acc/erp-interface-brands";
 import { getCorePool, getDataPool, sql } from "@/lib/db/mssql";
 import { getBrandConfig } from "@/lib/brand-config";
 import {
@@ -133,15 +139,16 @@ async function loadMappingsForTarget(
   return [];
 }
 
-async function purgeLegacyClaimMappings(
-  legacyClaimCodes: string[],
-  targetBrandCode: string,
-): Promise<void> {
-  const target = targetBrandCode.trim().toUpperCase();
+/**
+ * Delete the legacy rows for a bounded set of claim brands.
+ *
+ * `codes` must already have come through `boundLegacyClaimCodes` — this
+ * function does no filtering of its own, deliberately, so there is one place
+ * that decides what may be deleted rather than two that disagree.
+ */
+async function purgeLegacyClaimMappings(codes: string[]): Promise<void> {
   const pool = await getCorePool();
-  for (const claim of legacyClaimCodes) {
-    const code = claim.trim().toUpperCase();
-    if (!code || code === target) continue;
+  for (const code of codes) {
     await pool.request()
       .input("brand", sql.NVarChar, code)
       .query(`DELETE FROM [dbo].[DepartmentErpMap] WHERE BrandCode = @brand`);
@@ -313,7 +320,41 @@ export async function saveDepartmentMappings(
   legacyClaimCodes: string[] = [],
 ): Promise<void> {
   const brandCode = targetBrandCode.trim().toUpperCase();
-  if (!brandCode) throw new Error("กรุณาระบุแบรนด์ปลายทาง");
+  if (!brandCode) throw new DepartmentMapBoundsError("กรุณาระบุแบรนด์ปลายทาง");
+  // The target names which brand's rows this whole call writes and deletes, so
+  // it is bounded to the four brands that can actually be an ERP interface
+  // target — the same test `upsertBrandErpInterfaceMap` applies when the
+  // claim → target map is written, so every real target already passes.
+  if (!isErpInterfaceBrandCode(brandCode)) {
+    throw new DepartmentMapBoundsError("แบรนด์ปลายทางต้องเป็น PCTH, KSI, PCMY หรือ UNO");
+  }
+
+  // Bound the purge *before* the first upsert. `legacyClaimCodes` is
+  // client-supplied and each entry becomes a whole-brand DELETE against
+  // `DepartmentErpMap` in the shared configuration database; validating it
+  // after the writes would leave a refused request half-applied. See
+  // `department-map-guard.ts` for what the list is and why it is dangerous.
+  //
+  // The bound is this target's own claim brands, read from
+  // `AccBrandErpInterface` — the same set `getMultiBrandDepartmentMappingPage`
+  // groups by and the dialog sends back. Not the AP-1 allowlist: that contains
+  // every claim brand, so it would leave one PUT able to empty the table for
+  // every brand but the target, which is the whole thing this bound exists to
+  // stop.
+  let purgeCodes: string[] = [];
+  const requestedPurge = Array.isArray(legacyClaimCodes) ? legacyClaimCodes : [];
+  if (requestedPurge.length > 0) {
+    const purgeable = claimCodesForInterfaceTarget(
+      await listBrandErpInterfaceMaps(),
+      brandCode,
+    );
+    const bounds = boundLegacyClaimCodes(requestedPurge, brandCode, purgeable);
+    if (bounds.rejected.length > 0) {
+      throw new DepartmentMapBoundsError(legacyClaimPurgeError(bounds.rejected));
+    }
+    purgeCodes = bounds.codes;
+  }
+
   const dimensionCode = HR_DEPARTMENT_DIMENSION_CODE;
   const pool = await getCorePool();
 
@@ -380,8 +421,8 @@ export async function saveDepartmentMappings(
       `);
   }
 
-  if (legacyClaimCodes.length > 0) {
-    await purgeLegacyClaimMappings(legacyClaimCodes, brandCode);
+  if (purgeCodes.length > 0) {
+    await purgeLegacyClaimMappings(purgeCodes);
   }
 
   invalidateErpJournalBuildContextCache();

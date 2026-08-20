@@ -108,7 +108,23 @@ function ADSearchModal({
   );
 }
 
-export function SameDayBrandSettings() {
+export interface SameDayBrandSettingsProps {
+  /**
+   * IT Admin or System Admin, resolved by the settings page — which ORs the
+   * access endpoint's answer with the session's own role, so an unreachable
+   * endpoint cannot strip a real admin's controls. Do not re-read it from
+   * `useAccountingAccess()` here; that arm is the fragile one.
+   *
+   * What it gates: the **Add** button opens an Entra ID directory search
+   * against `/api/users/search`, a global admin endpoint and not an AP-1 route.
+   * It was deliberately left alone — widening it for a `sameDayBrand` holder
+   * would hand a non-admin directory search across the whole app — so the
+   * modal, not the underlying POST, is what a granted approver cannot use.
+   */
+  isAdmin: boolean;
+}
+
+export function SameDayBrandSettings({ isAdmin }: SameDayBrandSettingsProps) {
   const { data, error, isLoading, mutate } = useSWR<{ ok: boolean; data: AccSameDayBrandRow[] }>(
     "/api/request/accounting/settings/same-day-brand", fetcher,
   );
@@ -135,14 +151,32 @@ export function SameDayBrandSettings() {
     <div>
       <div className="flex items-center justify-between mb-1">
         <h3 className="text-[14px] font-bold" style={{ color: "var(--text-heading)" }}>เบิกวันซ้ำข้ามแบรนด์</h3>
-        <button onClick={() => setShowModal(true)}
-          className="flex items-center gap-1.5 text-[12px] font-medium px-3 py-2 rounded-lg cursor-pointer border-none"
-          style={{ background: "var(--color-action)", color: "#fff" }}>
-          <Plus size={13} /> เพิ่มรายชื่อ
-        </button>
+        {isAdmin && (
+          <button onClick={() => setShowModal(true)}
+            className="flex items-center gap-1.5 text-[12px] font-medium px-3 py-2 rounded-lg cursor-pointer border-none"
+            style={{ background: "var(--color-action)", color: "#fff" }}>
+            <Plus size={13} /> เพิ่มรายชื่อ
+          </button>
+        )}
       </div>
       <p className="text-[11px] mb-4" style={{ color: "var(--text-muted)" }}>
         คนในรายชื่อนี้เบิกวันเดียวกันได้หลายรายการ ตราบใดที่เป็นคนละแบรนด์
+        {/*
+          Says only what is true. The earlier wording promised that adding a
+          name was admin-only; the server does not enforce that at all —
+          `POST …/same-day-brand` takes `{ staffId }`, or an `{ email }` it
+          resolves against HR, and `/api/users/search` is nowhere on that path.
+          What a granted approver actually cannot use is the Entra ID search
+          the Add button opens.
+        */}
+        {!isAdmin && (
+          <>
+            {" · "}
+            <span style={{ color: "var(--text-faint)" }}>
+              ปุ่มเพิ่มรายชื่อใช้การค้นหาผู้ใช้จาก Entra ID ซึ่งสงวนไว้สำหรับผู้ดูแลระบบ
+            </span>
+          </>
+        )}
       </p>
 
       {isLoading ? (

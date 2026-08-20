@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/api-auth";
+import { requireSettingsTab } from "@/lib/acc/require-settings-tab";
 import { listVehicles, upsertVehicle } from "@/lib/acc/settings-service";
 
 /**
  * GET /api/request/accounting/settings/vehicles
  * Returns the full list of vehicles (including inactive).
- * Requires IT Admin or System Admin.
+ * Requires an admin, or the `vehicles` settings-tab grant.
  */
 export async function GET() {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireSettingsTab("vehicles");
   if (session instanceof Response) return session;
 
   try {
@@ -24,11 +24,11 @@ export async function GET() {
  * POST /api/request/accounting/settings/vehicles
  * Upserts a vehicle record.
  * Body: { id?, name, ratePerKm?, isManualEntry, isActive?, sortOrder? }
- * Requires IT Admin or System Admin.
+ * Requires an admin, or the `vehicles` settings-tab grant.
  * Returns 400 if validation fails (e.g. ratePerKm < 1 and not manual).
  */
 export async function POST(req: NextRequest) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireSettingsTab("vehicles");
   if (session instanceof Response) return session;
 
   try {

@@ -33,7 +33,7 @@ a matching registration fails with `AADSTS50011` before any app code runs.
 | `npm test` | Unit suite — `scripts/run-tests.ts` **discovers** `src/**/*.test.ts` |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run apply-sql -- --db <name> --file <path>` | Apply one migration |
-| `npm run check:alignment` | Assert the 19 dual-written master tables match across Production and UAT |
+| `npm run check:alignment` | Assert the 20 dual-written master tables match across Production and UAT |
 
 `npm test` discovers its own files — adding a test needs no registration step.
 If `tsc` reports phantom `TS2307` errors from `.next/types`, delete `.next` and

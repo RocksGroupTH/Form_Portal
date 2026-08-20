@@ -118,6 +118,14 @@ function TravelBookingDetailContent() {
         }
       />
 
+      {/* Deliberately not `readOnlyBooking`, the same call the queue's SidePanel makes.
+          A roster member reaching a request here by link is the same operator they are
+          two clicks away in the queue, and the panel's own routes —
+          admin/requests/[id]/booking and /complete — already authorize with
+          `canAccessBookingArea`. Making this page read-only would hide work the server
+          grants, which is the epic's complaint pointed the other way. The panel stays
+          gated inside the component on `canAccount` + ManagerApproved, so an owner or
+          manager opening the same URL still gets the read-only summary. */}
       <TravelBookingDetail request={request} onChanged={fetchRequest} />
     </PageContainer>
   );

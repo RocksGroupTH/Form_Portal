@@ -75,7 +75,7 @@ Since migration 066 that is a hard constraint, not a preference: `auth()` no lon
 - **Ids never collide**: migration 061 seeds UAT transactional identities at 900000 across 23 transactional tables, and **migration 064 adds a `CHECK (Id >= 900000)`** so a restore or an ad-hoc reseed cannot silently break the property the id rule depends on.
 - **Attachments** land under `{SHAREPOINT_ACC_FOLDER}/_UAT/{formCode}/...` — the `_UAT` segment sits between the base folder and the form code (`buildAccFolderPath`, `src/lib/acc/sharepoint-path.ts`).
 - **Every new route under `/api/request` needs a rule** in `ROUTE_RULES` (`classify-path.ts`, longest matching prefix → `AP-1 | AP-15 | AP-17 | "BOTH" | null`). Without one it silently falls through to Production. The coverage panel on the settings page lists any route no rule covers — `matchRule` is what tells "no rule at all" apart from "a rule that deliberately says Production".
-- **Shared configuration is dual-written**, not duplicated by hand: `src/lib/acc/dual-write.ts` runs each master-table mutation against both databases in a transaction, and `npm run check:alignment` asserts the 19 shared tables still match. Those tables are deliberately absent from 061/064 — dual-write inserts production's id into UAT explicitly, so an identity floor there would reject every write.
+- **Shared configuration is dual-written**, not duplicated by hand: `src/lib/acc/dual-write.ts` runs each master-table mutation against both databases in a transaction, and `npm run check:alignment` asserts the 20 shared tables still match. Those tables are deliberately absent from 061/064 — dual-write inserts production's id into UAT explicitly, so an identity floor there would reject every write.
 - **Only two endpoints merge both databases** through `src/lib/acc/query-both.ts`: `/api/request/accounting/requests/mine` and `/api/request/accounting/work` — what a person owns or must act on. Sorting and paging happen after the merge, each row carries an `environment` tag, and `keepRowsInCurrentEnvironment` (`current-rows.ts`) then drops rows whose database is not where that form resolves for this viewer today. Nothing is deleted; flipping the switch back brings the rows straight back. **Reports do not merge** — a report is a statement about one set of books, so `/api/request/accounting/report` and its Excel export read one database only.
 - **Switching a form does not move its existing requests.** They stay in the database they were written to and stay readable; only new writes go elsewhere.
 
@@ -180,9 +180,13 @@ approval.
 - Status pills: `--status-{pending,ok,draft,bad}-{bg,text}`
 - The `.acc-theme` scope on Accounting pages (`src/app/globals.css`) was retuned from the original's rose accent to Sky; its non-colour rules (hidden scrollbars, suppressed number spinners, `overflow-x: clip`) are unchanged
 
-## Shared with Rocks Fast
+## Shared with Rocks Fast — and with ACC Portal
 
-Form Portal was cloned from the Rocks Fast codebase and **still shares live infrastructure** with it. This is not a separate environment — treat both apps as one system when operating on shared resources:
+Form Portal was cloned from the Rocks Fast codebase and **still shares live infrastructure** with it. This is not a separate environment — treat both apps as one system when operating on shared resources.
+
+**There is a third app, and it shares more than Rocks Fast does.** `ACC_Portal` points at the same `MSSQL_HOST` and the same **`Rocks_Portal_Form`** — measured 2026-08-19 from both `.env.local` files, where its `RF_FORM_DATABASE` defaults to that name. So `AccApprover` and `AccApproverSettingsTab` rows are **the same rows** in both applications, not copies: adding or deactivating an approver here changes who can act there, and vice versa. That is intended — one roster, one source of truth — but both apps' settings pages edit those rows with no locking, so a simultaneous edit is last-write-wins. Acceptable for a roster changed a few times a year; worth knowing before assuming a change was lost. ACC Portal also reads `Fast_Core.dbo.DepartmentErpMap` from its own `erp-prep-service.ts`, which is why the department-mapping write stays admin-only — see "สิทธิ์เข้าถึง" above.
+
+The rest of this section is about Rocks Fast:
 
 - **Databases are no longer shared**: Form Portal owns `Rocks_Portal_Form` (plus `Rocks_Portal_Form_UAT`). `Fast_Form` belongs to Rocks Fast and this app must not read or write it. `Fast_Core`, `Fast_Data`, `Rocks_Portal_HR` and `Rocks_Codex` are still the same shared databases both apps use, in both environments.
 - **Identity is no longer shared, but Fast_Core still is.** Migration 066 gave this app its own `TeamMember` in `Rocks_Portal_Form`; `Fast_Core.dbo.TeamMember` stays exactly as it is and stays in service for Rocks Fast. The two rosters now drift apart — see "TeamMember lives in Form Portal's own database" under Auth for what that costs. Fast_Core itself is still shared: `AppSetting`, brand configuration and the DB/BC connection rows are one set of rows both apps read and write, and `FormEnvironment` / `UatTester` are Form Portal's own tables that live there (Rocks Fast has no code for either). **A query in this app that names `[Fast_Core].[dbo].[TeamMember]` is a bug** — it is reading the sibling's user list.
@@ -269,6 +273,119 @@ Accommodation/ticket booking requests for provincial work travel — supports mu
 - **Pages:** `/request/travel-booking` (fill/resume draft, multi-row), `/request/travel-booking/[id]` (detail), plus office/admin views under `/request/accounting/travel-booking*` (queue, report, settings)
 - **Feature code:** `src/features/travel-booking/`; service/lib code under `src/lib/acc/travel-booking/`
 - Uses `Rocks_Portal_HR.EmployeeAllowanceLog` for effective-dated per-diem history and `Fast_Data` for province lookups (`province-service.ts`)
+
+#### สิทธิ์เข้าถึง — who sees, and who may
+
+Added 2026-08-20. Two questions that look alike and are not: **who sees a menu**
+and **who may act**. Getting them the same way round is what this section is
+for.
+
+- **`canAccessAccountArea` (`src/lib/acc/access.ts`) did not change and must
+  not.** It is still `isAdminRole(role) || isAccApprover(email)`, and it is the
+  server-side gate for the shared object ACL (`request-acl.ts`), every ERP
+  route and every AP-1 account-area route — 10 call sites, and 28 mentions once
+  its definition and the comments naming it are counted.
+- **What changed is what `/api/request/accounting/access` *reports*.** Its
+  `account` flag is now the approver roster **alone**. An IT/System Admin who
+  is not an `AccApprover` no longer sees AP-1's queue or report. They keep
+  ตั้งค่า, so nobody can lock themselves out — an admin can always grant
+  themselves.
+- **`canAccessBookingArea` (`src/lib/acc/booking-access.ts`) is AP-17's
+  counterpart** and keeps its admin arm for the same reason. Its endpoint,
+  `/api/request/travel-booking/access`, likewise reports the roster alone.
+
+**AP-1's settings tabs, in ACC Portal's order:** แบรนด์ที่เบิก ·
+เบิกวันซ้ำข้ามแบรนด์ · พาหนะ & เรท · แผนก (HR ↔ ERP) · Interface ERP ·
+**สิทธิ์เข้าถึง** — the last being the former `ผู้อนุมัติบัญชี`, moved to the end
+and renamed. The `TabKey` union kept its member names, so bookmarked `?tab=`
+links still work.
+
+**Five of the six are grantable to an individual approver**, through
+`AccApproverSettingsTab`. `approvers` is deliberately not one of them: it is the
+tab that hands out access, so granting it would let a non-admin grant
+themselves the rest. It is unrepresentable in `requireSettingsTab`'s parameter
+type, not merely filtered.
+
+**`AccApproverSettingsTab` needed no migration.** Migration 059 created it in
+both form databases and it was already one of the dual-written master tables —
+ACC Portal had been its only writer anywhere.
+
+**A grant is real, not cosmetic.** `requireSettingsTab`
+(`src/lib/acc/require-settings-tab.ts`) gates the settings routes per tab:
+**23 of the 28 handlers** across the 16 route files under
+`/api/request/accounting/settings/**` are tab-gated, and **5 stay
+`requireRole`**:
+
+| Admin-only | Why |
+|---|---|
+| `settings/approvers` | the tab that hands out access |
+| `settings/departments/map` | writes `Fast_Core.dbo.DepartmentErpMap` — see below |
+| `settings/departments/sync` | writes `Fast_Data` |
+| `settings/erp-accounts/sync` | writes `Fast_Data` |
+
+*(ACC Portal has the grant feature and not this gate — its settings routes are
+`requireRole([...ADMIN_ROLES])` with "Account Admin" excluded, so a granted
+approver there sees a tab whose data 403s. We deliberately did not copy that.)*
+
+**`departments` is grantable for reading only.** The read
+(`settings/departments`) is tab-gated; the write (`settings/departments/map`) is
+not, because `saveDepartmentMappings` opens `getCorePool()` and writes
+`Fast_Core.dbo.DepartmentErpMap` — and **both `RocksFast` and `ACC_Portal` read
+that table from their own `erp-prep-service.ts`**, the path that prepares
+financial journal postings. A tab grant must not become write access to another
+application's posting configuration.
+
+That route also takes a client-supplied `legacyClaimCodes` list into a
+`DELETE … WHERE BrandCode = @brand` loop. It is bounded by
+`claimCodesForInterfaceTarget` (`src/lib/acc/department-map-guard.ts`) to the
+claim brands whose interface target is *this* target — not to every allowed
+brand, which would still have let one request purge the table.
+
+**`/api/users/search` is not part of any tab.** Two settings panels call it, but
+it is the global Azure AD directory search and stays `requireRole`. A granted
+approver can use the whole same-day tab, including its POST, which takes a
+staff id directly or resolves an email against HR. What they cannot use is the
+**Add button**, because that opens the directory search. (An earlier draft of
+this sentence said adding a row needs an admin. It does not — that is the same
+false claim this branch deleted from the panel itself.)
+
+**AP-17 has its own roster: `AccBookingApprover`, migration 095**, applied to
+both form databases. Numbered 095 rather than 067 because 088–094 belong to the
+unmerged AP-4 branch — and 073 upward to the unmerged feat/ap-2-advance
+branch, so master having only 066 is not the number to reason from. `MASTER_TABLES` in
+`scripts/checks/verify-master-alignment.ts` went 19 → 20 with it.
+
+`scripts/seed-portal-form.ts` deliberately does **not** list it, and the note in
+the slot where the entry would go says why: that script copies from
+`SOURCE_DB = "Fast_Form"`, the Rocks Fast sibling, which has no such table, and
+`copyTable()` opens with an unguarded `SELECT *` — a list entry would abort the
+seed partway. Migration 095 is what creates it.
+
+ACC Portal gates both forms with AP-1's `AccApprover`. **We deliberately do
+not**: someone who arranges hotel bookings should not thereby gain the
+travel-expense approval queue, or the reverse.
+
+**Do not grant `erpInterface` to a non-admin yet.** `gl-accounts`,
+`bank-accounts`, `journal-batches` and `branch-codes` are tab-gated but **not**
+brand-scoped: they apply only `assertClaimBrandAllowed`, which asks whether the
+brand is enabled in AP-1, not whether this approver may act on it. `erp-config`
+*is* scoped, through `AccApproverInterfaceBrand`. So a KSI-scoped approver
+holding that grant could set PCTH's G/L account, bank account, journal batch
+and branch code — the values every journal line carries — while being properly
+brand-scoped when approving, sending or exporting a single PCTH claim.
+`refuseOutOfInterfaceScope` drops into all four unchanged; until it does, the
+grant is safe only because nobody holds it.
+
+**Commissioning — both tables ship empty, so the feature arrives switched off.**
+
+- No non-admin sees an AP-1 settings tab until an admin ticks one at
+  Settings → สิทธิ์เข้าถึง.
+- **AP-17's booking queue and report are hidden from every non-admin** until
+  someone is added at Settings → ตั้งค่าแบบฟอร์มขอเดินทาง → สิทธิ์เข้าถึง. The
+  panel says so on the page while the roster is empty.
+- **Migration 095 must be applied to both form databases before this code
+  deploys.**
+
 
 #### Business Central / ERP integration
 
@@ -516,3 +633,20 @@ This version has breaking changes — APIs, conventions, and file structure may 
 This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
 
 <!-- END:nextjs-agent-rules -->
+
+### Known pre-existing drift — `npm run check:alignment` is red
+
+Measured 2026-08-20, and **not caused by the access-rights work**; the new
+`AccBookingApprover` passes. Recorded because the verifier is now part of the
+routine and its red output should not be mistaken for a fresh break:
+
+- **Schema.** `AccBrandBankAccount` and `AccBrandJournalBatch` carry a
+  `FormCode` column in `Rocks_Portal_Form_UAT` that does **not** exist in
+  `Rocks_Portal_Form`, so every row of both compares unequal despite identical
+  data.
+- **Data.** `Rocks_Portal_Form_UAT` holds an entire extra form, **AP-3**, in
+  `AccFormMaster`, plus its five `AccFormBrand` rows (AP-3 with KSI, PCMY,
+  PCTH, ROCKS, UNO). Production has neither.
+
+Fixing either needs a decision that is not a developer's to make: which side of
+the `FormCode` column is right, and whether AP-3 belongs in production.

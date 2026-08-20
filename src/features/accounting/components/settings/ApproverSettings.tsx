@@ -2,10 +2,11 @@
 
 import { useState, useEffect, useRef } from "react";
 import useSWR from "swr";
-import { Plus, Search } from "lucide-react";
+import { Check, Loader2, Plus, Search } from "lucide-react";
 import { toast } from "sonner";
 import { SettingsFilterBar } from "./SettingsFilterBar";
 import { ApproverInterfaceBrandTable } from "./ApproverInterfaceBrandTable";
+import { GRANTABLE_SETTINGS_TABS } from "@/lib/acc/settings-tabs";
 import type { AccApproverRow } from "@/features/accounting/types";
 
 const fetcher = async (url: string) => {
@@ -234,6 +235,208 @@ function ADSearchModal({
   );
 }
 
+/* ── Settings-tab grants ──
+ *
+ * One row per approver, one column per grantable tab. The columns come from
+ * GRANTABLE_SETTINGS_TABS rather than from a list retyped here, so the tab that
+ * hands out access (`approvers`) can never appear among them — a non-admin who
+ * could open it would grant themselves the rest.
+ */
+function TabGrantCheckbox({
+  checked,
+  saving,
+  onChange,
+  ariaLabel,
+}: {
+  checked: boolean;
+  saving: boolean;
+  onChange: () => void;
+  ariaLabel: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      aria-disabled={saving}
+      aria-label={ariaLabel}
+      disabled={saving}
+      onClick={() => {
+        if (!saving) onChange();
+      }}
+      className="w-[18px] h-[18px] rounded-[5px] flex items-center justify-center mx-auto border-none p-0 transition-all"
+      style={{
+        background: checked ? "var(--text-info-green)" : "var(--bg-card)",
+        boxShadow: checked
+          ? "0 0 0 2px color-mix(in srgb, var(--text-info-green) 28%, transparent)"
+          : "inset 0 0 0 1.5px var(--border-card)",
+        opacity: saving ? 0.6 : 1,
+        cursor: saving ? "not-allowed" : "pointer",
+      }}
+    >
+      {saving ? (
+        <Loader2 size={10} className="animate-spin" style={{ color: "var(--text-muted)" }} />
+      ) : checked ? (
+        <Check size={11} strokeWidth={3} style={{ color: "var(--bg-card)" }} />
+      ) : null}
+    </button>
+  );
+}
+
+function ApproverTabGrantCells({
+  approver,
+  onSaved,
+}: {
+  approver: AccApproverRow;
+  onSaved: () => void;
+}) {
+  const [checked, setChecked] = useState<Set<string>>(() => new Set(approver.settingsTabs));
+  const [saving, setSaving] = useState(false);
+
+  // The server's answer is the truth; re-seed whenever SWR brings a new one.
+  useEffect(() => {
+    setChecked(new Set(approver.settingsTabs));
+  }, [approver.id, approver.settingsTabs]);
+
+  const toggle = async (key: string) => {
+    const next = new Set(checked);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    setChecked(next);
+    setSaving(true);
+    try {
+      const res = await fetch("/api/request/accounting/settings/approvers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: approver.id,
+          email: approver.email,
+          // Posted in GRANTABLE_SETTINGS_TABS order, so what is stored never
+          // depends on the order the boxes happened to be ticked.
+          settingsTabs: GRANTABLE_SETTINGS_TABS.filter((t) => next.has(t.key)).map((t) => t.key),
+        }),
+      });
+      const json = await res.json();
+      if (json.ok) {
+        onSaved();
+      } else {
+        toast.error(json.error ?? "บันทึกไม่สำเร็จ");
+        setChecked(new Set(approver.settingsTabs));
+      }
+    } catch {
+      toast.error("บันทึกไม่สำเร็จ");
+      setChecked(new Set(approver.settingsTabs));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
+      {GRANTABLE_SETTINGS_TABS.map((tab) => (
+        <td key={tab.key} className="px-3 py-2.5 text-center">
+          <TabGrantCheckbox
+            checked={checked.has(tab.key)}
+            saving={saving}
+            onChange={() => void toggle(tab.key)}
+            ariaLabel={`${approver.displayName ?? approver.email} — ${tab.label}`}
+          />
+        </td>
+      ))}
+    </>
+  );
+}
+
+function ApproverTabGrantTable({
+  approvers,
+  onSaved,
+}: {
+  approvers: AccApproverRow[];
+  onSaved: () => void;
+}) {
+  return (
+    <div className="mt-5">
+      <h3 className="text-[13px] font-bold mb-2" style={{ color: "var(--text-heading)" }}>
+        สิทธิ์เข้าถึงแท็บตั้งค่า
+      </h3>
+      <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border-card)" }}>
+        <p
+          className="text-[11px] px-4 py-2.5 m-0"
+          style={{ color: "var(--text-muted)", background: "var(--bg-card-alt)" }}
+        >
+          ผู้อนุมัติที่ไม่ใช่แอดมินจะเห็นเฉพาะแท็บที่ติ๊กให้
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-[12px] min-w-[860px]">
+            <thead>
+              <tr
+                style={{
+                  background: "var(--bg-card-alt)",
+                  borderBottom: "1px solid var(--border-light)",
+                }}
+              >
+                <th
+                  className="text-left px-4 py-2.5 font-semibold whitespace-nowrap min-w-[220px]"
+                  style={{ color: "var(--text-secondary)" }}
+                >
+                  ผู้อนุมัติ
+                </th>
+                {GRANTABLE_SETTINGS_TABS.map((tab) => (
+                  <th
+                    key={tab.key}
+                    className="text-center px-3 py-2.5 font-semibold whitespace-nowrap"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    {tab.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {approvers.map((a) => (
+                <tr
+                  key={a.id}
+                  style={{
+                    borderBottom: "1px solid var(--border-light)",
+                    opacity: a.isActive ? 1 : 0.55,
+                  }}
+                >
+                  <td className="px-4 py-2.5">
+                    <p
+                      className="text-[13px] font-semibold m-0 truncate"
+                      style={{ color: "var(--text-heading)" }}
+                    >
+                      {a.displayName ?? "—"}
+                    </p>
+                    <p
+                      className="text-[10px] m-0 mt-0.5 truncate"
+                      style={{ color: "var(--text-muted)" }}
+                    >
+                      {a.email}
+                    </p>
+                  </td>
+                  {a.isActive ? (
+                    <ApproverTabGrantCells approver={a} onSaved={onSaved} />
+                  ) : (
+                    <td
+                      className="px-3 py-2.5 text-center"
+                      colSpan={GRANTABLE_SETTINGS_TABS.length}
+                    >
+                      <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>
+                        เปิดใช้งานเพื่อกำหนดสิทธิ์แท็บ
+                      </span>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── Main Component ── */
 export function ApproverSettings() {
   const { data, error, isLoading, mutate } = useSWR<{ ok: boolean; data: AccApproverRow[] }>(
@@ -358,20 +561,18 @@ export function ApproverSettings() {
             กด "เพิ่มผู้อนุมัติ" เพื่อเพิ่มรายชื่อ
           </p>
         </div>
-      ) : filtered.length === 0 ? (
-        <ApproverInterfaceBrandTable
-          approvers={[]}
-          savingId={saving}
-          onSaved={() => mutate()}
-          onToggleActive={handleToggleActive}
-        />
       ) : (
-        <ApproverInterfaceBrandTable
-          approvers={filtered}
-          savingId={saving}
-          onSaved={() => mutate()}
-          onToggleActive={handleToggleActive}
-        />
+        <>
+          <ApproverInterfaceBrandTable
+            approvers={filtered}
+            savingId={saving}
+            onSaved={() => mutate()}
+            onToggleActive={handleToggleActive}
+          />
+          {filtered.length > 0 && (
+            <ApproverTabGrantTable approvers={filtered} onSaved={() => mutate()} />
+          )}
+        </>
       )}
 
       {/* AD Modal */}

@@ -1,10 +1,18 @@
 import { NextResponse } from "next/server";
-import { requireRole } from "@/lib/api-auth";
+import { requireSettingsTab } from "@/lib/acc/require-settings-tab";
 import { getMultiBrandDepartmentMappingPage } from "@/lib/acc/department-map-service";
 
-/** GET /api/request/accounting/settings/departments */
+/**
+ * GET /api/request/accounting/settings/departments — the HR ↔ ERP mapping list.
+ *
+ * The read half of the `departments` grant, and the whole of it: the save
+ * (`departments/map`, PUT) went back to admin-only on 2026-08-20 because it
+ * writes the configuration database two sibling applications read to prepare
+ * financial journal postings. A granted approver sees the mappings; an admin
+ * changes them.
+ */
 export async function GET() {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireSettingsTab("departments");
   if (session instanceof Response) return session;
 
   try {

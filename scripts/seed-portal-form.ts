@@ -9,6 +9,9 @@
  * because copying them would restart running numbers already issued and would
  * leave production pointed at the ERP sandbox.
  *
+ * AccBookingApprover is the one shared master table this script does not copy
+ * — see the note in MASTER_TABLES below.
+ *
  * Requires migrations/059_portal_form_baseline.sql to be applied first — this
  * copies rows, it does not create tables.
  *
@@ -60,6 +63,11 @@ const MASTER_TABLES = [
   "AccApprover",
   "AccApproverInterfaceBrand",
   "AccApproverSettingsTab",
+  // AccBookingApprover is deliberately absent. It is the 20th shared master
+  // table and npm run check:alignment covers it, but SOURCE_DB (Fast_Form) has
+  // no such table: AP-17's roster is Form Portal's own, created by
+  // migrations/095_acc_booking_approver.sql. Listing it here would fail the
+  // copy on a missing source table. Seed it from Settings after migrating.
   "AccVehicle",
   "AccTravelReason",
   "AccTravelAccommodation",

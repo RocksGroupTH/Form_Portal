@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 /**
- * Assert the 19 shared configuration tables are identical in Rocks_Portal_Form
+ * Assert the 20 shared configuration tables are identical in Rocks_Portal_Form
  * and Rocks_Portal_Form_UAT.
  *
  * Per-form routing means AP-1 may read one copy while AP-17 reads the other, so
@@ -45,13 +45,14 @@ function loadDotEnvLocal() {
   }
 }
 
-/** The 19 tables dual-write keeps in step. */
+/** The 20 tables dual-write keeps in step. */
 const MASTER_TABLES = [
   "AccFormMaster",
   "AccFormBrand",
   "AccApprover",
   "AccApproverInterfaceBrand",
   "AccApproverSettingsTab",
+  "AccBookingApprover",
   "AccVehicle",
   "AccTravelReason",
   "AccTravelAccommodation",

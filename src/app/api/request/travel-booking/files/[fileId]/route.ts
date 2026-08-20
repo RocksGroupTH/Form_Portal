@@ -4,7 +4,7 @@ import { requireAuth } from "@/lib/api-auth";
 import { uatActorGate } from "@/lib/acc/travel-booking/uat-gate";
 import { resolveLoginEmail } from "@/lib/auth-email";
 import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
-import { canAccessAccountArea } from "@/lib/acc/access";
+import { canAccessBookingArea } from "@/lib/acc/booking-access";
 import { downloadFile } from "@/lib/storage";
 import { downloadFileFromSharePoint } from "@/lib/sharepoint";
 import { attachmentResponseHeaders } from "@/lib/acc/attachment-guard";
@@ -60,7 +60,7 @@ export async function GET(
     let isAccountArea = false;
     if (!isOwner) {
       const loginEmail = resolveLoginEmail(session.user, null, { email: session.user.email });
-      isAccountArea = await canAccessAccountArea(loginEmail, session.user.role);
+      isAccountArea = await canAccessBookingArea(loginEmail, session.user.role);
       if (!isAccountArea && loginEmail) {
         const { employee } = await findActiveEmployeeByEmail(loginEmail);
         const staffId = employee?.staffId ?? null;
