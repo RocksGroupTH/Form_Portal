@@ -28,7 +28,11 @@ export function useAccountingAccess() {
     error,
     /** Active row in AccApprover */
     isApprover: access?.approver ?? false,
-    /** Approver or IT/System Admin — report & account APIs */
+    /**
+     * Active row in AccApprover — **no longer admin-inclusive**. Menu
+     * visibility only: the server still authorizes with
+     * `canAccessAccountArea`, which does include admins. See `isAdmin`.
+     */
     canAccount: access?.account ?? false,
     /** IT Admin or System Admin. */
     isAdmin: access?.admin ?? false,
