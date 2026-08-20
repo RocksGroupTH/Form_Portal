@@ -8,10 +8,12 @@
  * and it arrives in the request body, unvalidated. Nothing bounded it, so one
  * `PUT` naming every brand code emptied the table for *every* brand.
  *
- * That table is not this app's alone: `DepartmentErpMap` lives in the shared
- * configuration database, and both the Rocks Fast and ACC Portal siblings read
- * it from their own `erp-prep-service.ts` — the path that prepares financial
- * journal postings. Parameterized SQL made it not an injection; it was an
+ * That table is not this app's alone. Since migrations 099/100 it lives in
+ * `Rocks_Portal_Form` and `Fast_Core` reaches it by synonym — which moved the
+ * rows and shared them no less: both the Rocks Fast and ACC Portal siblings
+ * still read exactly these rows from their own `erp-prep-service.ts`, the path
+ * that prepares financial journal postings. The file cabinet changed, the
+ * ownership did not. Parameterized SQL made it not an injection; it was an
  * unbounded delete against targets the caller was never authorized for. This
  * module is the bound, and it applies to an admin too: nobody should be able to
  * wipe three applications' department mappings by sending the wrong array.

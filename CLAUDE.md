@@ -32,7 +32,7 @@ Two things about this build that look like faults and are not:
 | Database | Pool | Purpose |
 |----------|------|---------|
 | **Fast_Core** | `getCorePool()` | Config, brand/DB/BC connection settings, `FormEnvironment`, `UatTester`. **No longer identity** — see "Auth" |
-| **Rocks_Portal_Form** | `getFormPool()` | Form definitions, submissions, approvals, files, logs, and all `Acc*` Accounting tables. Form Portal's own database — `Rocks_Portal_Form_UAT` is the UAT twin, and which one `getFormPool()` returns depends on the form **and on who is asking** (see "Parallel Production and UAT") |
+| **Rocks_Portal_Form** | `getFormPool()` | Form definitions, submissions, approvals, files, logs, all `Acc*` Accounting tables, and `DepartmentErpMap` (moved here by migrations 099/100 — `Fast_Core` keeps a permanent synonym so the Rocks Fast and ACC Portal siblings still reach the same rows). Form Portal's own database — `Rocks_Portal_Form_UAT` is the UAT twin, and which one `getFormPool()` returns depends on the form **and on who is asking** (see "Parallel Production and UAT") |
 | **Rocks_Portal_Form** (`TeamMember`) | `getProductionFormPool()` via `@/lib/team-member/service` | User identity and roles (migration 066). **Production only** — never the UAT twin, and never `getFormPool()`; see "Auth" |
 | **Fast_Data** | `getDataPool()` | Used by Accounting and ERP sync — department maps, travel-booking province lookups, ERP account/dimension sync (`src/lib/acc/department-map-service.ts`, `src/lib/acc/travel-booking/province-service.ts`, `src/lib/acc/travel-booking/request-service.ts`, `src/lib/erp/account-sync.ts`, `src/lib/erp/dimension-sync.ts`). **Not** a BI/reporting database in this app. |
 | **Rocks_Portal_HR** | `getHrPool()` → `getAppPool("Rocks_Portal_HR")` | Employee master, manager chain, per-diem allowance history — cross-referenced by StaffId/email |
@@ -40,6 +40,29 @@ Two things about this build that look like faults and are not:
 | **Rocks_Portal_Form** (Acc* tables) | `getAccPool()` → `getFormPool()` | Accounting forms: travel expense (AP-1), travel booking (AP-17) |
 
 **IMPORTANT**: Use `new sql.ConnectionPool(config).connect()` for isolated pools. Never use `sql.connect()` (global singleton — causes cross-DB bugs). Pool max is set to 30.
+
+#### DepartmentErpMap moved out of Fast_Core
+
+Migrations 099 (`Rocks_Portal_Form`) and 100 (`Fast_Core`) moved
+`DepartmentErpMap` off the shared configuration database and into this app's
+own. `Fast_Core.dbo.DepartmentErpMap` is now
+`CREATE SYNONYM ... FOR [Rocks_Portal_Form].[dbo].[DepartmentErpMap]`, and the
+synonym is **permanent**, not a migration aid: no code anywhere — in this app
+or in the Rocks Fast and ACC Portal siblings — was rewritten, because all three
+still name the table two-part (`[dbo].[DepartmentErpMap]`) against a pool
+opened on `Fast_Core`. **The move did not unshare the rows.** Who reads and
+writes them did not change, only which database physically holds them — see
+"สิทธิ์เข้าถึง" below for why `settings/departments/map` stays admin-only
+regardless.
+
+There is deliberately **exactly one copy**. A synonym names one database, so a
+sibling's write through it can only ever land in `Rocks_Portal_Form` — it could
+never reach `Rocks_Portal_Form_UAT`, which holds no `DepartmentErpMap` object
+at all. A second copy in the UAT twin could therefore never be kept aligned
+with what the siblings write, so the table is deliberately absent from
+`src/lib/acc/dual-write.ts` and from `MASTER_TABLES`
+(`scripts/checks/verify-master-alignment.ts`) — there is no second side to
+dual-write or align against.
 
 ### Parallel Production and UAT
 
@@ -319,7 +342,7 @@ ACC Portal had been its only writer anywhere.
 | Admin-only | Why |
 |---|---|
 | `settings/approvers` | the tab that hands out access |
-| `settings/departments/map` | writes `Fast_Core.dbo.DepartmentErpMap` — see below |
+| `settings/departments/map` | writes `DepartmentErpMap`, rows shared with two sibling applications — see below |
 | `settings/departments/sync` | writes `Fast_Data` |
 | `settings/erp-accounts/sync` | writes `Fast_Data` |
 
@@ -329,11 +352,14 @@ approver there sees a tab whose data 403s. We deliberately did not copy that.)*
 
 **`departments` is grantable for reading only.** The read
 (`settings/departments`) is tab-gated; the write (`settings/departments/map`) is
-not, because `saveDepartmentMappings` opens `getCorePool()` and writes
-`Fast_Core.dbo.DepartmentErpMap` — and **both `RocksFast` and `ACC_Portal` read
-that table from their own `erp-prep-service.ts`**, the path that prepares
-financial journal postings. A tab grant must not become write access to another
-application's posting configuration.
+not, because `saveDepartmentMappings` writes `DepartmentErpMap` — and **both
+`RocksFast` and `ACC_Portal` read those same rows from their own
+`erp-prep-service.ts`**, the path that prepares financial journal postings.
+Since migrations 099/100 the table itself lives in `Rocks_Portal_Form`, reached
+from `Fast_Core` by a permanent synonym; the siblings still read exactly what
+they always read, which is the whole reason the rule below did not move with
+the table. A tab grant must not become write access to another application's
+posting configuration.
 
 That route also takes a client-supplied `legacyClaimCodes` list into a
 `DELETE … WHERE BrandCode = @brand` loop. It is bounded by
@@ -395,13 +421,18 @@ Accounting requests can be pushed into Dynamics 365 Business Central. Configurat
 
 Seven brand-keyed configuration tables carry a `FormCode NVARCHAR(20) NULL`
 column: `AccBrandGlAccount`, `AccBrandBankAccount`, `AccBrandJournalBatch`,
-`AccBrandBranchCode`, `AccBrandErpInterface` and `AccBrandErpTargetSetting` in
-the form databases, plus **`Fast_Core.dbo.DepartmentErpMap`**, which is the same
-kind of table living in the shared database. **`FormCode NULL` is the default
-and answers every form; a row naming a form overrides the default for that form
-alone.** Most configuration is the same for every form, so a second or third
-form needs no rows at all until somebody wants it to differ — which is what this
-replaces, the old answer having been a whole new table per form.
+`AccBrandBranchCode`, `AccBrandErpInterface`, `AccBrandErpTargetSetting` and
+`DepartmentErpMap` — **all seven now live in the form database.** The seventh
+is still the odd one out, in two ways rather than one: it is the table
+`Fast_Core` reaches by a permanent synonym so the Rocks Fast and ACC Portal
+siblings can keep writing it (see "DepartmentErpMap moved out of Fast_Core"
+above), and it is the only one of the seven with **no UAT twin** —
+`Rocks_Portal_Form_UAT` has no `DepartmentErpMap` object at all. **`FormCode
+NULL` is the default and answers every form; a row naming a form overrides the
+default for that form alone.** Most configuration is the same for every form,
+so a second or third form needs no rows at all until somebody wants it to
+differ — which is what this replaces, the old answer having been a whole new
+table per form.
 
 **The rule lives in exactly one place — `src/lib/acc/per-form-config.ts`**:
 `perFormPredicate(alias?)`, `perFormOrderBy(alias?)`, `pickForForm`,
@@ -455,7 +486,11 @@ indexes, so `DROP INDEX` alone raises Msg 3723 — each drop reads
 and all seven are plain unique indexes afterwards. 098 widens a table three
 applications share; that is safe because the column is nullable with no default,
 no sibling selects `*`, and both siblings upsert through a `MERGE` with an
-explicit column list, so every row they write is a default.
+explicit column list, so every row they write is a default. **098's target,
+`Fast_Core`, is historical**: migrations 099/100 subsequently moved that table
+into `Rocks_Portal_Form`, so the widened column and the rebuilt unique index
+098 describes now live there, reached from `Fast_Core` by synonym — see
+"DepartmentErpMap moved out of Fast_Core" above.
 
 **It ships inert, and there is no UI to add an override.** Every row in all
 seven tables is a default, so every form resolves exactly what AP-1 resolved

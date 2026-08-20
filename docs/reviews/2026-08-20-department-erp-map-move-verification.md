@@ -11,9 +11,15 @@ preserved (1004, 1005, 1006), reseeding the identity to 2004 to match
 `Fast_Core`'s `IDENT_CURRENT` at the time of the move. Migration 100 then
 dropped the original table in `Fast_Core` and replaced it with
 `CREATE SYNONYM [dbo].[DepartmentErpMap] FOR [Rocks_Portal_Form].[dbo].[DepartmentErpMap]`,
-inside a transaction guarded by a row-count check and a full content check
-(`EXCEPT` on both directions) so the drop could not run unless every source
-row was confirmed present in the target. **The synonym is permanent** — all
+inside a transaction guarded by a row-count check and a content check — one
+`EXCEPT` (`Fast_Core` rows `EXCEPT` form-database rows,
+`migrations/100_core_department_erp_map_synonym.sql:83-89`), not both
+directions. One-directional `EXCEPT` alone would not prove the two tables
+match — the target could hold extra rows the source lacks and still pass — but
+paired with the count-equality check it does: two Id-keyed row sets of equal
+size, one of which is a subset of the other by content, must be the same set.
+That pairing is what let the drop run only once every source row was confirmed
+present in the target. **The synonym is permanent** — all
 three applications (this app, Rocks Fast, ACC Portal) keep naming the table
 two-part, `[dbo].[DepartmentErpMap]`, against a pool opened on `Fast_Core`,
 and it is not a migration aid to be removed later. `DepartmentErpMap` is
