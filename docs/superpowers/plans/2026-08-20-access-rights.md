@@ -513,14 +513,26 @@ grant row. Keep that.
 | `settings/erp-accounts` | `erpInterface` | GET only |
 | `settings/erp-journal-template` | `erpInterface` | owner is not readable from the path: it renders inside `BrandErpInterfaceSettings`, not as its own tab. Say so in a comment. |
 | `settings/approvers` | — | **stays `requireRole`.** Never grantable. |
-| `settings/departments/sync` | — | **stays `requireRole`.** Writes `Fast_Core`. |
+| `settings/departments/sync` | — | **stays `requireRole`.** Writes `Fast_Data` (not Fast_Core — corrected 2026-08-20). |
 | `settings/erp-accounts/sync` | — | **stays `requireRole`.** Writes `Fast_Data`. |
 
-The two `sync` POSTs write the databases **shared with Rocks Fast**
-(`department-map-service.ts` writes Fast_Core; `erp/account-sync.ts` and
-`erp/dimension-sync.ts` write Fast_Data). Granting a tab must not hand a
-non-admin write access to the sibling app's data. Hide the sync buttons for a
-granted non-admin so the control is not offered and then refused.
+**CORRECTED 2026-08-20 — the sentence that was here named the wrong databases,
+and it named the wrong route as the dangerous one.** Measured: `account-sync.ts`
+and `dimension-sync.ts` open `getDataPool` and nothing else, so both `sync`
+POSTs write **Fast_Data** only. They stay admin-only anyway.
+
+The route that actually reaches **Fast_Core** is `settings/departments/map`,
+which this table **grants**: `saveDepartmentMappings` opens `getCorePool` and
+writes `Fast_Core.dbo.DepartmentErpMap`. And that table is not Form Portal's
+alone — both `RocksFast` and `ACC_Portal` read it, including from their own
+`erp-prep-service.ts`, the path that prepares financial journal postings. So a
+`departments` grant lets a non-admin approver change a mapping two other
+applications use to decide where money is posted. Awaiting the owner's ruling
+on whether `departments` stays grantable, becomes read-only for grantees, or
+returns to admin-only.
+
+Hide the sync buttons for a granted non-admin so the control is not offered and
+then refused.
 
 - [ ] **Step 3: Leave `/api/users/search` alone**
 
