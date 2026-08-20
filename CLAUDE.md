@@ -75,7 +75,7 @@ Since migration 066 that is a hard constraint, not a preference: `auth()` no lon
 - **Ids never collide**: migration 061 seeds UAT transactional identities at 900000 across 23 transactional tables, and **migration 064 adds a `CHECK (Id >= 900000)`** so a restore or an ad-hoc reseed cannot silently break the property the id rule depends on.
 - **Attachments** land under `{SHAREPOINT_ACC_FOLDER}/_UAT/{formCode}/...` — the `_UAT` segment sits between the base folder and the form code (`buildAccFolderPath`, `src/lib/acc/sharepoint-path.ts`).
 - **Every new route under `/api/request` needs a rule** in `ROUTE_RULES` (`classify-path.ts`, longest matching prefix → `AP-1 | AP-15 | AP-17 | "BOTH" | null`). Without one it silently falls through to Production. The coverage panel on the settings page lists any route no rule covers — `matchRule` is what tells "no rule at all" apart from "a rule that deliberately says Production".
-- **Shared configuration is dual-written**, not duplicated by hand: `src/lib/acc/dual-write.ts` runs each master-table mutation against both databases in a transaction, and `npm run check:alignment` asserts the 19 shared tables still match. Those tables are deliberately absent from 061/064 — dual-write inserts production's id into UAT explicitly, so an identity floor there would reject every write.
+- **Shared configuration is dual-written**, not duplicated by hand: `src/lib/acc/dual-write.ts` runs each master-table mutation against both databases in a transaction, and `npm run check:alignment` asserts the 20 shared tables still match. Those tables are deliberately absent from 061/064 — dual-write inserts production's id into UAT explicitly, so an identity floor there would reject every write.
 - **Only two endpoints merge both databases** through `src/lib/acc/query-both.ts`: `/api/request/accounting/requests/mine` and `/api/request/accounting/work` — what a person owns or must act on. Sorting and paging happen after the merge, each row carries an `environment` tag, and `keepRowsInCurrentEnvironment` (`current-rows.ts`) then drops rows whose database is not where that form resolves for this viewer today. Nothing is deleted; flipping the switch back brings the rows straight back. **Reports do not merge** — a report is a statement about one set of books, so `/api/request/accounting/report` and its Excel export read one database only.
 - **Switching a form does not move its existing requests.** They stay in the database they were written to and stay readable; only new writes go elsewhere.
 
@@ -283,7 +283,8 @@ for.
 - **`canAccessAccountArea` (`src/lib/acc/access.ts`) did not change and must
   not.** It is still `isAdminRole(role) || isAccApprover(email)`, and it is the
   server-side gate for the shared object ACL (`request-acl.ts`), every ERP
-  route and every AP-1 account-area route — 28 mentions across 16 files.
+  route and every AP-1 account-area route — 10 call sites, and 28 mentions once
+  its definition and the comments naming it are counted.
 - **What changed is what `/api/request/accounting/access` *reports*.** Its
   `account` flag is now the approver roster **alone**. An IT/System Admin who
   is not an `AccApprover` no longer sees AP-1's queue or report. They keep
@@ -342,11 +343,16 @@ brand, which would still have let one request purge the table.
 
 **`/api/users/search` is not part of any tab.** Two settings panels call it, but
 it is the global Azure AD directory search and stays `requireRole`. A granted
-approver can list and remove same-day rows; adding one needs an admin.
+approver can use the whole same-day tab, including its POST, which takes a
+staff id directly or resolves an email against HR. What they cannot use is the
+**Add button**, because that opens the directory search. (An earlier draft of
+this sentence said adding a row needs an admin. It does not — that is the same
+false claim this branch deleted from the panel itself.)
 
 **AP-17 has its own roster: `AccBookingApprover`, migration 095**, applied to
 both form databases. Numbered 095 rather than 067 because 088–094 belong to the
-unmerged AP-4 branch. `MASTER_TABLES` in
+unmerged AP-4 branch — and 073 upward to the unmerged feat/ap-2-advance
+branch, so master having only 066 is not the number to reason from. `MASTER_TABLES` in
 `scripts/checks/verify-master-alignment.ts` went 19 → 20 with it.
 
 `scripts/seed-portal-form.ts` deliberately does **not** list it, and the note in
@@ -358,6 +364,17 @@ seed partway. Migration 095 is what creates it.
 ACC Portal gates both forms with AP-1's `AccApprover`. **We deliberately do
 not**: someone who arranges hotel bookings should not thereby gain the
 travel-expense approval queue, or the reverse.
+
+**Do not grant `erpInterface` to a non-admin yet.** `gl-accounts`,
+`bank-accounts`, `journal-batches` and `branch-codes` are tab-gated but **not**
+brand-scoped: they apply only `assertClaimBrandAllowed`, which asks whether the
+brand is enabled in AP-1, not whether this approver may act on it. `erp-config`
+*is* scoped, through `AccApproverInterfaceBrand`. So a KSI-scoped approver
+holding that grant could set PCTH's G/L account, bank account, journal batch
+and branch code — the values every journal line carries — while being properly
+brand-scoped when approving, sending or exporting a single PCTH claim.
+`refuseOutOfInterfaceScope` drops into all four unchanged; until it does, the
+grant is safe only because nobody holds it.
 
 **Commissioning — both tables ship empty, so the feature arrives switched off.**
 
