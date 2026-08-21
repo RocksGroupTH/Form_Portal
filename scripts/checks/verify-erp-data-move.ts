@@ -9,12 +9,21 @@
  *     kept pace with the highest id actually in the table (IDENT_CURRENT >=
  *     MAX(Id), not the row count, which under-estimates MAX(Id) the moment
  *     ids have a gap), and carries the expected indexes -- name, whether each
- *     is a unique CONSTRAINT (as migration 101 creates the four UQ_*, versus
- *     a plain index for PK_* / IX_*), and key column order
+ *     is a unique CONSTRAINT (true only for the four UQ_*), whether each is
+ *     the PRIMARY KEY (true only for the five PK_*, so a PK_* silently
+ *     recreated as a plain non-unique index is caught the same way a UQ_*
+ *     recreated as a plain index is), and key column order (including DESC
+ *     where the source has it)
  *   - Fast_Data holds a synonym of the same name for each, pointing at the
  *     Rocks_ERP_Data copy
  *   - a direct count in Rocks_ERP_Data and a count read through the Fast_Data
- *     synonym agree, both taken at run time
+ *     synonym agree, both taken in ONE query / ONE round-trip -- not two
+ *     separate reads against two pools. After 102 both name the same
+ *     physical object, so two separate reads can only disagree if a sync
+ *     lands in the gap between them: a healthy system reporting red because
+ *     of ordinary network latency is the same class of flakiness the literal
+ *     row counts were removed for, just a millisecond-scale window instead
+ *     of a day-scale one
  *   - a write through the synonym succeeds, in the siblings' own MERGE shape
  *     (rolled back, so no data moves)
  *   - Fast_Data.dbo.TravelProvince -- a table the move must not touch -- is
@@ -70,33 +79,37 @@ function loadDotEnvLocal() {
 // name-list comparison), whether it is a unique CONSTRAINT rather than a
 // plain unique index -- name alone can't tell UQ_ErpAccounts-as-constraint
 // apart from UQ_ErpAccounts-as-plain-index, and DROP INDEX against the
-// former raises Msg 3723, which is what caught migration 097 -- and the key
-// column order. INCLUDE columns are NOT checked here. No rows/ident fields
+// former raises Msg 3723, which is what caught migration 097 -- whether it
+// IS the PRIMARY KEY (the same hole one object over: a PK_* silently
+// recreated as a plain non-unique index has the right name and passes the
+// unique-constraint check too, since a PK is never a UNIQUE CONSTRAINT
+// either), and the key column order, DESC-qualified where the source index
+// is descending. INCLUDE columns are NOT checked here. No rows/ident fields
 // on this constant on purpose -- see the header.
 const EXPECTED = [
   { table: "ErpAccounts", indexes: [
-      { name: "IX_ErpAccounts_BrandCategory", uniqueConstraint: false, keyCols: ["BrandCode", "AccountCategory"] },
-      { name: "PK_ErpAccounts", uniqueConstraint: false, keyCols: ["Id"] },
-      { name: "UQ_ErpAccounts", uniqueConstraint: true, keyCols: ["BrandCode", "AccountCategory", "AccountNo"] },
+      { name: "IX_ErpAccounts_BrandCategory", uniqueConstraint: false, primaryKey: false, keyCols: ["BrandCode", "AccountCategory"] },
+      { name: "PK_ErpAccounts", uniqueConstraint: false, primaryKey: true, keyCols: ["Id"] },
+      { name: "UQ_ErpAccounts", uniqueConstraint: true, primaryKey: false, keyCols: ["BrandCode", "AccountCategory", "AccountNo"] },
     ] },
   { table: "ErpDimensionValue", indexes: [
-      { name: "IX_ErpDimensionValue_BrandDim", uniqueConstraint: false, keyCols: ["BrandCode", "DimensionCode"] },
-      { name: "PK_ErpDimensionValue", uniqueConstraint: false, keyCols: ["Id"] },
-      { name: "UQ_ErpDimensionValue", uniqueConstraint: true, keyCols: ["BrandCode", "DimensionCode", "Code"] },
+      { name: "IX_ErpDimensionValue_BrandDim", uniqueConstraint: false, primaryKey: false, keyCols: ["BrandCode", "DimensionCode"] },
+      { name: "PK_ErpDimensionValue", uniqueConstraint: false, primaryKey: true, keyCols: ["Id"] },
+      { name: "UQ_ErpDimensionValue", uniqueConstraint: true, primaryKey: false, keyCols: ["BrandCode", "DimensionCode", "Code"] },
     ] },
   { table: "ErpGeneralJournalBatch", indexes: [
-      { name: "IX_ErpGeneralJournalBatch_Brand", uniqueConstraint: false, keyCols: ["BrandCode"] },
-      { name: "PK_ErpGeneralJournalBatch", uniqueConstraint: false, keyCols: ["Id"] },
-      { name: "UQ_ErpGeneralJournalBatch", uniqueConstraint: true, keyCols: ["BrandCode", "BatchName"] },
+      { name: "IX_ErpGeneralJournalBatch_Brand", uniqueConstraint: false, primaryKey: false, keyCols: ["BrandCode"] },
+      { name: "PK_ErpGeneralJournalBatch", uniqueConstraint: false, primaryKey: true, keyCols: ["Id"] },
+      { name: "UQ_ErpGeneralJournalBatch", uniqueConstraint: true, primaryKey: false, keyCols: ["BrandCode", "BatchName"] },
     ] },
   { table: "ErpBankAccountCard", indexes: [
-      { name: "IX_ErpBankAccountCard_Brand", uniqueConstraint: false, keyCols: ["BrandCode"] },
-      { name: "PK_ErpBankAccountCard", uniqueConstraint: false, keyCols: ["Id"] },
-      { name: "UQ_ErpBankAccountCard", uniqueConstraint: true, keyCols: ["BrandCode", "AccountNo"] },
+      { name: "IX_ErpBankAccountCard_Brand", uniqueConstraint: false, primaryKey: false, keyCols: ["BrandCode"] },
+      { name: "PK_ErpBankAccountCard", uniqueConstraint: false, primaryKey: true, keyCols: ["Id"] },
+      { name: "UQ_ErpBankAccountCard", uniqueConstraint: true, primaryKey: false, keyCols: ["BrandCode", "AccountNo"] },
     ] },
   { table: "ErpSyncLog", indexes: [
-      { name: "IX_ErpSyncLog_BrandStarted", uniqueConstraint: false, keyCols: ["BrandCode", "StartedAt"] },
-      { name: "PK_ErpSyncLog", uniqueConstraint: false, keyCols: ["Id"] },
+      { name: "IX_ErpSyncLog_BrandStarted", uniqueConstraint: false, primaryKey: false, keyCols: ["BrandCode", "StartedAt DESC"] },
+      { name: "PK_ErpSyncLog", uniqueConstraint: false, primaryKey: true, keyCols: ["Id"] },
     ] },
 ];
 
@@ -138,9 +151,11 @@ async function main() {
     }
 
     // the indexes: the name set (structural, checked against a literal), then
-    // per index whether it is a unique CONSTRAINT and its key column order.
+    // per index whether it is a unique CONSTRAINT, whether it IS the PRIMARY
+    // KEY, and its key column order.
     const idx = await erp.request().query(`
-      SELECT name, is_unique_constraint AS [uniqueConstraint] FROM sys.indexes
+      SELECT name, is_unique_constraint AS [uniqueConstraint], is_primary_key AS [primaryKey]
+      FROM sys.indexes
       WHERE object_id = OBJECT_ID('dbo.${e.table}') AND type > 0 ORDER BY name;`);
     const gotNames = idx.recordset.map((x: { name: string }) => x.name).join(",");
     const expectedNames = e.indexes.map((i) => i.name).join(",");
@@ -155,15 +170,26 @@ async function main() {
           `${e.table}: ${expIdx.name} is_unique_constraint=${found.uniqueConstraint}, expected ${expIdx.uniqueConstraint}`,
         );
       }
+      if (Boolean(found.primaryKey) !== expIdx.primaryKey) {
+        problems.push(
+          `${e.table}: ${expIdx.name} is_primary_key=${found.primaryKey}, expected ${expIdx.primaryKey}`,
+        );
+      }
+      // is_descending_key rides along for free -- IX_ErpSyncLog_BrandStarted
+      // is (BrandCode, StartedAt DESC) in the source, and without this the
+      // DESC would be unverified. Rendered as a " DESC" suffix on the column
+      // name so EXPECTED can spell it the same way migration 101 does.
       const cols = await erp.request().query(`
-        SELECT c.name AS [colName]
+        SELECT c.name AS [colName], ic.is_descending_key AS [isDesc]
         FROM sys.index_columns ic
         JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
         WHERE ic.object_id = OBJECT_ID('dbo.${e.table}')
           AND ic.index_id = (SELECT index_id FROM sys.indexes WHERE object_id = OBJECT_ID('dbo.${e.table}') AND name = '${expIdx.name}')
           AND ic.is_included_column = 0
         ORDER BY ic.key_ordinal;`);
-      const gotCols = cols.recordset.map((x: { colName: string }) => x.colName).join(",");
+      const gotCols = cols.recordset
+        .map((x: { colName: string; isDesc: boolean }) => x.colName + (x.isDesc ? " DESC" : ""))
+        .join(",");
       const expCols = expIdx.keyCols.join(",");
       if (gotCols !== expCols) {
         problems.push(`${e.table}: ${expIdx.name} key columns are ${gotCols}, expected ${expCols}`);
@@ -183,14 +209,25 @@ async function main() {
     }
 
     // 3. the direct count (Rocks_ERP_Data) and the count read through the
-    //    Fast_Data synonym agree, both taken right now. This is a tautology
-    //    about routing, not a fact about the data -- Fast_Data.dbo.${e.table}
-    //    IS the synonym, so "direct" and "through the synonym" hit the same
-    //    object. What it actually proves is that the synonym resolves and
-    //    answers a query at all, which is worth catching on its own.
-    const thru = await data.request().query(`SELECT COUNT(*) AS [n] FROM [dbo].[${e.table}];`);
-    if (thru.recordset[0].n !== row.rowCnt) {
-      problems.push(`${e.table}: read through the synonym returned ${thru.recordset[0].n}, direct count is ${row.rowCnt}`);
+    //    Fast_Data synonym agree -- taken in ONE query, ONE round-trip, from
+    //    the Fast_Data connection referencing Rocks_ERP_Data three-part
+    //    (both databases are on the same instance, same as migration 102's
+    //    own guard does it). NOT two separate .query() calls: after 102 both
+    //    sides name the same physical object, so two round-trips can only
+    //    disagree if a sync lands in the gap between them -- a healthy
+    //    system reporting red because of network latency, the same class of
+    //    flakiness the literal row counts were removed for, just
+    //    milliseconds instead of a day. This is a tautology about routing,
+    //    not a fact about the data -- Fast_Data.dbo.${e.table} IS the
+    //    synonym, so "direct" and "through the synonym" hit the same object.
+    //    What it actually proves is that the synonym resolves and answers a
+    //    query at all, which is worth catching on its own.
+    const both = await data.request().query(`
+      SELECT (SELECT COUNT(*) FROM [dbo].[${e.table}]) AS [viaSynonym],
+             (SELECT COUNT(*) FROM [Rocks_ERP_Data].[dbo].[${e.table}]) AS [direct];`);
+    const bothRow = both.recordset[0];
+    if (bothRow.viaSynonym !== bothRow.direct) {
+      problems.push(`${e.table}: read through the synonym returned ${bothRow.viaSynonym}, direct count is ${bothRow.direct}`);
     }
   }
 
