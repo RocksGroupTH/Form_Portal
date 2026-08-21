@@ -1,7 +1,9 @@
 import { listAllBrands } from "@/lib/acc/brand-options";
+import type { ErpBcEnvironment } from "@/lib/acc/erp-environment";
 import { loadErpJournalBuildContext } from "@/lib/acc/erp-journal-context";
 import { resolveErpTargetProfile } from "@/lib/acc/erp-target-profile";
 import { listAdvanceInterfaceConfig } from "@/lib/adv/advance-interface-config-service";
+import { resolveFormAccess } from "@/lib/form-environment";
 
 /**
  * One brand's AP-2 Interface ERP configuration for the settings screen.
@@ -36,11 +38,16 @@ export interface AdvanceInterfaceConfigView {
 }
 
 export async function listAdvanceInterfaceConfigView(): Promise<AdvanceInterfaceConfigView[]> {
-  const [allBrands, ctx, ap2] = await Promise.all([
+  const [allBrands, ctx, ap2, ap2Access] = await Promise.all([
     listAllBrands(),
     loadErpJournalBuildContext(),
     listAdvanceInterfaceConfig(),
+    // The settings route is Production-pinned for DB reads, so resolve AP-2's OWN
+    // form environment here — the label (and BC target profile) then matches what
+    // the send actually uses: UAT mode → Sandbox, otherwise Production.
+    resolveFormAccess("AP-2"),
   ]);
+  const ap2Environment: ErpBcEnvironment = ap2Access.environment === "UAT" ? "Sandbox" : "Production";
   const brandByCode = new Map(allBrands.map((b) => [b.brandCode.toUpperCase(), b]));
 
   // Claim brands that can post = those mapped in AP-1 ∪ those AP-2 has overridden.
@@ -57,7 +64,7 @@ export async function listAdvanceInterfaceConfigView(): Promise<AdvanceInterface
 
       const targetFromAp2 = !!cfg?.interfaceBrandCode;
       const target = (cfg?.interfaceBrandCode ?? ctx.interfaceByClaim[code] ?? code).toUpperCase();
-      const profile = await resolveErpTargetProfile(target);
+      const profile = await resolveErpTargetProfile(target, ap2Environment);
 
       const glAccountNo = cfg?.glAccountNo ?? base?.glAccountNo ?? null;
       const bankAccountNo = cfg?.bankAccountNo ?? base?.bankAccountNo ?? null;
