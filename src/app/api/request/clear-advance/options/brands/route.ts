@@ -1,0 +1,18 @@
+import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/api-auth";
+import { getAllowedBrands } from "@/lib/acc/brand-options";
+import { AP3_FORM_CODE } from "@/features/clear-advance/constants";
+
+export async function GET() {
+  const session = await requireAuth();
+  if (session instanceof Response) return session;
+  try {
+    const data = await getAllowedBrands(AP3_FORM_CODE);
+    return NextResponse.json({ ok: true, data });
+  } catch (e) {
+    return NextResponse.json(
+      { ok: false, error: e instanceof Error ? e.message : "error" },
+      { status: 500 },
+    );
+  }
+}

@@ -17,6 +17,7 @@ import {
   ClipboardList,
   Luggage,
   Package,
+  ReceiptText,
   Route,
   Settings,
   Wallet,
@@ -28,6 +29,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ size?: number; style?: Reac
   Route,
   Luggage,
   Wallet,
+  ReceiptText,
 };
 
 function requestCardHref(item: (typeof REQUEST_CARDS)[number]): string {

@@ -10,10 +10,10 @@
  * Pure: no I/O, no request context. Exhaustively tested in classify-path.test.ts.
  */
 
-export type FormCode = "AP-1" | "AP-15" | "AP-17" | "AP-2";
+export type FormCode = "AP-1" | "AP-15" | "AP-17" | "AP-2" | "AP-3";
 
 /** Every form code, as values — the runtime half of the `FormCode` union. */
-export const FORM_CODES: readonly FormCode[] = ["AP-1", "AP-15", "AP-17", "AP-2"];
+export const FORM_CODES: readonly FormCode[] = ["AP-1", "AP-15", "AP-17", "AP-2", "AP-3"];
 
 /**
  * Narrow caller-supplied text to a known form code.
@@ -90,6 +90,12 @@ export const ROUTE_RULES: RouteRule[] = [
   // advance prefix and inherits AP-2.
   { prefix: "/api/request/advance", result: "AP-2" },
   { prefix: "/request/advance", result: "AP-2" },
+
+  // AP-3 proper (เคลียร์คืนเงินทดรองจ่าย / Clear Advance). Its own top-level
+  // prefix. Phase 1 has no ERP posting; the pending-advance dropdown reads the
+  // approved AP-2 rows that share this form database.
+  { prefix: "/api/request/clear-advance", result: "AP-3" },
+  { prefix: "/request/clear-advance", result: "AP-3" },
 
   // AP-1 proper.
   { prefix: "/api/request/accounting", result: "AP-1" },

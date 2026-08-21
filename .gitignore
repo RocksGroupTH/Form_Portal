@@ -19,3 +19,7 @@ tsconfig.tsbuildinfo
 web.config
 .DS_Store
 Thumbs.db
+# Tesseract lang data — auto-downloaded from CDN at runtime, not needed in repo
+*.traineddata
+# Codex CLI workspace
+.codex/
