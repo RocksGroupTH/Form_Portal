@@ -216,19 +216,29 @@ function AdvanceDetailContent() {
               </label>
             </div>
           )}
-          <div className="flex flex-col gap-1">
-            <label className="text-[12px]" style={{ color: "var(--text-secondary)" }}>
-              เหตุผล / สิ่งที่ต้องแก้ไข (กรอกก่อนกด &quot;ไม่อนุมัติ&quot; หรือ &quot;ส่งกลับแก้ไข&quot;)
-            </label>
-            <textarea rows={2} value={rejectReason} onChange={(e) => setRejectReason(e.target.value)}
-              placeholder="ระบุเหตุผลที่ไม่อนุมัติ หรือสิ่งที่ต้องการให้แก้ไข..."
-              className="text-[13px] px-3 py-2 rounded-lg outline-none"
-              style={{ background: "var(--bg-card)", color: "var(--text-primary)", border: "1px solid var(--border-card)" }} />
-          </div>
+          {/* ACC_OFFICER is the final ERP-posting step — only "ดำเนินการ", no
+              reject/return (and hence no reason box). Earlier approvers keep all three. */}
+          {currentStep !== "ACC_OFFICER" && (
+            <div className="flex flex-col gap-1">
+              <label className="text-[12px]" style={{ color: "var(--text-secondary)" }}>
+                เหตุผล / สิ่งที่ต้องแก้ไข (กรอกก่อนกด &quot;ไม่อนุมัติ&quot; หรือ &quot;ส่งกลับแก้ไข&quot;)
+              </label>
+              <textarea rows={2} value={rejectReason} onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="ระบุเหตุผลที่ไม่อนุมัติ หรือสิ่งที่ต้องการให้แก้ไข..."
+                className="text-[13px] px-3 py-2 rounded-lg outline-none"
+                style={{ background: "var(--bg-card)", color: "var(--text-primary)", border: "1px solid var(--border-card)" }} />
+            </div>
+          )}
           <div className="flex items-center justify-end gap-2">
-            <Button variant="secondary" onClick={handleReturn} disabled={busy}>ส่งกลับแก้ไข</Button>
-            <Button variant="danger" onClick={handleReject} disabled={busy}>ไม่อนุมัติ</Button>
-            <Button variant="primary" onClick={handleApprove} loading={busy}>อนุมัติ</Button>
+            {currentStep !== "ACC_OFFICER" && (
+              <>
+                <Button variant="secondary" onClick={handleReturn} disabled={busy}>ส่งกลับแก้ไข</Button>
+                <Button variant="danger" onClick={handleReject} disabled={busy}>ไม่อนุมัติ</Button>
+              </>
+            )}
+            <Button variant="primary" onClick={handleApprove} loading={busy}>
+              {currentStep === "ACC_OFFICER" ? "ดำเนินการ" : "อนุมัติ"}
+            </Button>
           </div>
         </div>
       )}
