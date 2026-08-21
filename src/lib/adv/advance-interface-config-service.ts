@@ -106,13 +106,16 @@ export function saveAdvanceBatch(brandCode: string, batchName: string, userId: n
   return mergeConfig(brandCode, [{ col: "JournalBatchName", value: batchName.trim() || null }], userId);
 }
 
-/** Save AP-2's G/L + Bank + Branch + Journal Batch for one claim brand in a single write. */
+/** Save AP-2's target Company + G/L + Bank + Branch + Journal Batch for one claim
+ *  brand in a single write. InterfaceBrandCode makes AP-2 resolve its OWN target
+ *  Company instead of falling back to AP-1's brand→Company mapping. */
 export function saveAdvanceInterface(
   brandCode: string,
-  values: { glAccountNo: string; bankAccountNo: string; branchCode: string; journalBatchName: string },
+  values: { interfaceBrandCode: string; glAccountNo: string; bankAccountNo: string; branchCode: string; journalBatchName: string },
   userId: number,
 ) {
   return mergeConfig(brandCode, [
+    { col: "InterfaceBrandCode", value: values.interfaceBrandCode.trim().toUpperCase() || null },
     { col: "GlAccountNo", value: values.glAccountNo.trim() || null },
     { col: "BankAccountNo", value: values.bankAccountNo.trim() || null },
     { col: "BranchCode", value: values.branchCode.trim() || null },
