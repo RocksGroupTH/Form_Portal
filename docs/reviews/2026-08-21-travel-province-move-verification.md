@@ -61,9 +61,12 @@ rows: 77
 Exactly the count the brief predicted — no drift between the brief being
 written and this task executing (unlike the sibling ERP-data-move task, whose
 snapshot had already gone stale). First and last rows of the snapshot are
-ordinary Thai province rows (`Id 1` = Bangkok / กรุงเทพมหานคร, `Id 2` = Krabi
-/ กระบี่), confirming the read hit real data, not an empty or malformed
-result.
+ordinary Thai province rows (`Id 1` = Bangkok / กรุงเทพมหานคร, `Id 77` = Ubon
+Ratchathani / อุบลราชธานี), confirming the read reached all the way to the
+end, not an empty, truncated, or otherwise malformed result. Checked twice:
+against the snapshot file itself, and independently with a live
+`ORDER BY [Id] ASC` / `DESC` query against the post-move table in
+`Rocks_Portal_Form`, both agreeing.
 
 ## Step 2 — apply 104 to `Rocks_Portal_Form`
 
