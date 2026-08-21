@@ -16,6 +16,7 @@
 - **Parameterized SQL only** — `pool.request().input("name", sql.NVarChar, value).query(...)`. Never `sql.connect()` (global singleton).
 - **One physical copy each.** Never create these tables in any `_UAT` database. Never add them to `src/lib/acc/dual-write.ts`. Never add them to `MASTER_TABLES` in `scripts/checks/verify-master-alignment.ts`.
 - **Only the five sync tables move.** `TravelProvince` and the department lookups stay in `Fast_Data`, and `getDataPool()` keeps every other caller it has today.
+  > **Correction (2026-08-21, final review).** "The department lookups" is wrong and was transcribed from the spec. `Fast_Data` holds no department lookups: `DepartmentErpMap` was in `Fast_Core` and moved to `Rocks_Portal_Form` in migrations 099/100. `TravelProvince` is the only table this app reads there. Left in place because plans are dated history; `CLAUDE.md` is the current statement.
 - **`AccBrandJournalBatch`, `AccBrandGlAccount`, `AccBrandBankAccount`, `AccBrandBranchCode` and `AccBrandErpInterface` do not move.** They are this app's per-form configuration, not sync output — see the spec's §1. Touching them is out of scope and would drop a UAT twin.
 - **Every migration names its target database in its header** and guards on `DB_NAME()`.
 - **Do not start the dev server.** Do not run `npm run build`.

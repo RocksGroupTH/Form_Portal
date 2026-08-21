@@ -45,6 +45,14 @@ and write the same physical rows through a synonym, exactly as before. This
 application still needs `Fast_Data` for other tables (`TravelProvince`, the
 department lookups).
 
+> **Correction (2026-08-21, final review).** "The department lookups" is wrong
+> wherever it appears in this document (also §4 and §8) and in the plan. This
+> app reads exactly one table in `Fast_Data`: `TravelProvince`. The department
+> map is `DepartmentErpMap`, which lived in **`Fast_Core`**, never in
+> `Fast_Data`, and migrations 099/100 moved it to `Rocks_Portal_Form` leaving
+> its synonym in `Fast_Core`. Left in place because specs are dated history;
+> `CLAUDE.md`'s `Fast_Data` row is the current statement.
+
 ## 2. Measured starting state (2026-08-21)
 
 `Rocks_ERP_Data` exists, is **empty** (0 tables), is `Thai_CI_AS` — the same
@@ -132,6 +140,11 @@ open it instead of `getDataPool()`, keeping their two-part table names.
 
 Everything else that uses `getDataPool()` stays on it — `Fast_Data` still holds
 `TravelProvince` and the department lookups, and this move does not touch them.
+
+> **Correction (2026-08-21, final review).** Only `TravelProvince` — see the
+> note in §1. After this move the sole `getDataPool()` callers left in `src/`
+> are `travel-booking/province-service.ts` and
+> `travel-booking/request-service.ts`.
 
 **Rocks Fast and ACC Portal.** Unchanged. They open `Fast_Data` and name the
 tables two-part; the synonyms resolve. After this, the synonyms exist purely for
@@ -237,6 +250,9 @@ shares the `Fast_Data` pool and must not have been disturbed.
   `AccBrandBranchCode` or `AccBrandErpInterface`.** §1 is the record of why.
 - **`TravelProvince` and the department lookups** stay in `Fast_Data`. They are
   AP-17 reference data and HR-facing lookups, not sync output.
+
+  > **Correction (2026-08-21, final review).** There are no department lookups
+  > in `Fast_Data` — only `TravelProvince`. See the note in §1.
 - **Repointing the siblings' code.** They are separate repositories and the
   synonyms make it unnecessary. The synonyms are permanent, not a migration aid.
 - **Giving these tables UAT twins**, now or later.

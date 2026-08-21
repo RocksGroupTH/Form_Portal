@@ -42,6 +42,16 @@
  *
  * Read-only except for the rolled-back write probe in part 4.
  *
+ * IT REDS ON A FRESH STAND-UP, BY DESIGN -- the run itself is harmless, but
+ * the verdict is not usable there. "holds more than zero rows" is an
+ * assertion about a system that has already synced Business Central at least
+ * once, so a database built by migration 101 against an empty (or newly
+ * restored and never-synced) source reds here on all five tables. That is the
+ * intended trade -- an empty ErpAccounts in a live deployment means the sync
+ * has stopped and the ERP prep queue is resolving nothing -- but on a stand-up
+ * it means "no sync has run yet", not "the move is broken". Run one sync from
+ * Settings first, then this.
+ *
  * Usage:
  *   npx tsx scripts/checks/verify-erp-data-move.ts
  *
@@ -115,9 +125,19 @@ const EXPECTED = [
 
 async function main() {
   loadDotEnvLocal();
-  const { getDataPool, getAppPool } = await import("../../src/lib/db/mssql");
+  const { getDataPool, getErpDataPool } = await import("../../src/lib/db/mssql");
   const data = await getDataPool();
-  const erp = await getAppPool("Rocks_ERP_Data");
+  // getErpDataPool(), never getAppPool("Rocks_ERP_Data"). The literal made this
+  // gate report on the migration's target while the app read wherever
+  // MSSQL_ERP_DATA_DATABASE pointed -- the one disagreement it exists to catch.
+  const erp = await getErpDataPool();
+  const erpDb = String(
+    (await erp.request().query("SELECT DB_NAME() AS [db];")).recordset[0].db,
+  );
+  if (!/^[A-Za-z0-9_]+$/.test(erpDb)) {
+    console.error(`refusing to interpolate an unexpected database name: ${erpDb}`);
+    process.exit(1);
+  }
   const problems: string[] = [];
 
   for (const e of EXPECTED) {
@@ -130,7 +150,7 @@ async function main() {
     //     script instead of naming which table was missing.
     const idOnly = await erp.request().query(`SELECT OBJECT_ID('dbo.${e.table}', 'U') AS [tableId];`);
     if (idOnly.recordset[0].tableId === null) {
-      problems.push(`${e.table}: not a table in Rocks_ERP_Data`);
+      problems.push(`${e.table}: not a table in ${erpDb} (the database this app reads)`);
       continue;
     }
 
@@ -196,15 +216,24 @@ async function main() {
       }
     }
 
-    // 2. the Fast_Data object is a synonym pointing at the new home
+    // 2. the Fast_Data object is a synonym pointing at the new home -- and
+    //    specifically at the SAME database this app resolves through
+    //    MSSQL_ERP_DATA_DATABASE, not merely at some database called
+    //    Rocks_ERP_Data. Migration 102 hard-codes [Rocks_ERP_Data] as every
+    //    synonym's base object; repointing the env var makes this app read a
+    //    different mirror than the one Rocks Fast writes through Fast_Data,
+    //    with no error anywhere, on the path that builds Business Central
+    //    journal lines. Comparing the two here is what makes that loud.
     const syn = await data.request().query(`
       SELECT base_object_name AS [base] FROM sys.synonyms WHERE name = '${e.table}';`);
     if (syn.recordset.length !== 1) {
       problems.push(`${e.table}: Fast_Data has no synonym of that name`);
     } else {
       const base = String(syn.recordset[0].base);
-      if (base.indexOf("Rocks_ERP_Data") < 0 || base.indexOf(e.table) < 0) {
-        problems.push(`${e.table}: synonym points at ${base}`);
+      if (base.indexOf(`[${erpDb}].`) < 0 || base.indexOf(e.table) < 0) {
+        problems.push(
+          `${e.table}: synonym points at ${base}, but this app reads ${erpDb} (MSSQL_ERP_DATA_DATABASE)`,
+        );
       }
     }
 
@@ -224,7 +253,7 @@ async function main() {
     //    query at all, which is worth catching on its own.
     const both = await data.request().query(`
       SELECT (SELECT COUNT(*) FROM [dbo].[${e.table}]) AS [viaSynonym],
-             (SELECT COUNT(*) FROM [Rocks_ERP_Data].[dbo].[${e.table}]) AS [direct];`);
+             (SELECT COUNT(*) FROM [${erpDb}].[dbo].[${e.table}]) AS [direct];`);
     const bothRow = both.recordset[0];
     if (bothRow.viaSynonym !== bothRow.direct) {
       problems.push(`${e.table}: read through the synonym returned ${bothRow.viaSynonym}, direct count is ${bothRow.direct}`);
@@ -260,7 +289,7 @@ async function main() {
     for (const p of problems) console.error("  - " + p);
     process.exit(1);
   }
-  console.log("OK: the five ERP sync tables live in Rocks_ERP_Data and Fast_Data reaches them by synonym");
+  console.log(`OK: the five ERP sync tables live in ${erpDb} and Fast_Data reaches them by synonym`);
   process.exit(0);
 }
 

@@ -3,6 +3,25 @@
 -- Database: Fast_Data
 -- Apply: npm run apply-sql -- --db Fast_Data --file migrations/034_fast_data_erp_general_journal_batch.sql
 -- =============================================
+--
+-- HISTORICAL -- already applied. DO NOT RE-RUN: the target moved to
+-- Rocks_ERP_Data (migrations 101/102).
+--
+-- Fast_Data.dbo.ErpGeneralJournalBatch is now a SYNONYM for
+-- [Rocks_ERP_Data].[dbo].[ErpGeneralJournalBatch]. A synonym does not appear in
+-- sys.tables, so the guard below
+-- (IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ErpGeneralJournalBatch'))
+-- passes and the CREATE TABLE then fails with Msg 2714, because the synonym
+-- already owns the name. Measured 2026-08-21 against the cut-over Fast_Data:
+-- "There is already an object named 'ErpGeneralJournalBatch' in the database".
+-- Nothing was created.
+--
+-- Note this file creates ErpGeneralJournalBatch, the mirror of every journal
+-- batch Business Central has. It is not AccBrandJournalBatch, which records
+-- which of those a brand's claims post to and stays in Rocks_Portal_Form.
+--
+-- If ErpGeneralJournalBatch ever has to be created again, 101 is the file that
+-- does it, against Rocks_ERP_Data.
 
 USE [Fast_Data];
 GO

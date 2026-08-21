@@ -6,7 +6,7 @@
 -- ---------------------------------------------------------------------------
 -- THIS MIGRATION DESTROYS THE ONLY COPY OF THE DATA IF 101 HAS NOT RUN --
 -- 5,858 rows as at 2026-08-21, and larger by the time this actually runs:
--- three applications sync into these tables continuously, so do not chase
+-- Business Central syncs land in these tables continuously, so do not chase
 -- this number with a fresher one the next time this file is read.
 --
 -- Everything before the DROPs is the guard, and it runs in two stages. The
@@ -21,8 +21,8 @@
 -- WHAT THE CONTENT CHECK DOES AND DOES NOT PROVE. Every one of the five has an
 -- nvarchar(MAX) column -- RawJson on four, ErrorMessage on ErpSyncLog. Dragging
 -- thousands of JSON payloads (4,793 as at 2026-08-21, and growing) through a
--- set comparison while holding an exclusive lock on tables three applications
--- write is the wrong trade, so the EXCEPT compares every NON-LOB column plus
+-- set comparison while holding an exclusive lock on tables a live sync writes
+-- is the wrong trade, so the EXCEPT compares every NON-LOB column plus
 -- DATALENGTH of the LOB. A payload edited to exactly the same byte length
 -- would pass. That is a deliberate weakening and it is stated here rather
 -- than described as a whole-row check.
@@ -83,12 +83,30 @@ BEGIN
   DECLARE @problem NVARCHAR(400) = NULL;
 
   -- TABLOCKX is taken on the Fast_Data side only, not on the Rocks_ERP_Data
-  -- side below -- deliberately, not an oversight. Fast_Data is the side that
-  -- can move: ACC Portal, RocksFast and this app all write it continuously,
-  -- so the lock is what stops one of them inserting between this count and
-  -- the DROP. Nothing writes Rocks_ERP_Data at all until Task 3 repoints this
-  -- app's code at it, and the two siblings never name that database, so
-  -- there is nothing on that side for a lock to guard against yet.
+  -- side below -- deliberately, and NOT because the target is quiet.
+  -- Fast_Data is the side this migration DESTROYS, so the lock is what stops
+  -- a writer slipping a row in between this count and the DROP, where it
+  -- would be lost with no trace. A row that lands in Rocks_ERP_Data during
+  -- the window is not lost by anything here: it makes the guard disagree and
+  -- refuse, which is the correct outcome.
+  --
+  -- BEFORE ANY FUTURE RUN OF THE 101/102 PAIR -- a fresh stand-up, a DR
+  -- rebuild -- THE WINDOW MUST BE QUIET ON BOTH SIDES, and the two sides have
+  -- different writers. Measured 2026-08-21 across the three checked-out
+  -- repositories: RocksFast's src/lib/erp/{account,dimension}-sync.ts write
+  -- these tables on getDataPool(), i.e. Fast_Data; ACC_Portal only reads them
+  -- (erp-options-service.ts, department-map-service.ts, all SELECT); and THIS
+  -- app's two sync modules write Rocks_ERP_Data directly through
+  -- getErpDataPool(). This app is therefore exactly the writer the TABLOCKX
+  -- above cannot reach.
+  --
+  -- That matters because a sync UPDATEs as well as INSERTs -- SyncedAt on
+  -- every match, plus UPDATE ... SET IsActive = 0 for the rows BC stopped
+  -- returning -- so an update-only run leaves the counts equal and trips
+  -- 'contents differ' instead. Re-running 101 then overwrites those newer
+  -- target rows with the older Fast_Data values, because its MERGE's
+  -- WHEN MATCHED sets every column from the source. Stop the sync on both
+  -- sides before starting, not just on Fast_Data.
   IF @problem IS NULL AND (SELECT COUNT(*) FROM [dbo].[ErpAccounts] WITH (TABLOCKX))
                        <> (SELECT COUNT(*) FROM [Rocks_ERP_Data].[dbo].[ErpAccounts])
     SET @problem = 'ErpAccounts row counts differ';
@@ -158,8 +176,15 @@ BEGIN
   IF @problem IS NOT NULL
   BEGIN
     ROLLBACK TRANSACTION;
+    -- Two different failures, and only one of them has a mechanical remedy.
+    -- Re-running 101 fixes a target that is BEHIND the source, because its
+    -- batch 3 MERGEs new and changed rows in by id. It cannot fix a target
+    -- that is AHEAD: that MERGE has no WHEN NOT MATCHED BY SOURCE (see 101's
+    -- comment on batch 3 -- deleting rows unilaterally is exactly what this
+    -- guard exists to prevent), so it inserts nothing, changes no count, and
+    -- the operator loops. Say both, so nobody retries the wrong one.
     RAISERROR (
-      'Migration 102 refuses to drop: %s. The likeliest cause is a sync run between 101 and 102. Re-run 101 (its batch 3 is a MERGE that reconciles both new and changed rows by id), then retry this.',
+      'Migration 102 refuses to drop: %s. If Rocks_ERP_Data is BEHIND Fast_Data, or the contents differ, the likeliest cause is a sync run between 101 and 102: re-run 101 (its batch 3 is a MERGE that reconciles both new and changed rows by id), then retry this. If Rocks_ERP_Data holds MORE rows than Fast_Data, re-running 101 CANNOT fix it -- it has no WHEN NOT MATCHED BY SOURCE, so it inserts nothing and no count changes. Do not loop: that path needs a person to establish where the extra rows came from before anything is dropped.',
       16, 1, @problem
     );
   END

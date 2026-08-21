@@ -13,29 +13,76 @@ per table followed by a content check per table, dropped the five originals in
 `Fast_Data` and replaced them with
 `CREATE SYNONYM [dbo].[<name>] FOR [Rocks_ERP_Data].[dbo].[<name>]`. **The
 synonyms are permanent** — not a migration aid to be removed later. All three
-applications (this app, Rocks Fast, ACC Portal) that sync Business Central
-data continue to name these tables two-part (`[dbo].[ErpAccounts]` etc.)
-against a pool opened on `Fast_Data`; the synonym resolves every `INSERT`,
-`MERGE`, `UPDATE` and `SELECT` those sync jobs issue. Nothing writes
-`Rocks_ERP_Data` directly until a later task repoints this app's own sync code
-at it.
+applications (this app, Rocks Fast, ACC Portal) named these tables two-part
+(`[dbo].[ErpAccounts]` etc.) against a pool opened on `Fast_Data` when this was
+written; the synonym resolves every `INSERT`, `MERGE`, `UPDATE` and `SELECT`
+they issue.
+
+**As at the state recorded here, before Task 3 landed**, nothing wrote
+`Rocks_ERP_Data` directly. That stopped being true within the same branch: Task
+3 repointed this app's `account-sync.ts`, `dimension-sync.ts` and
+`loadErpDeptDisplayNamesByTargetBrand()` at `getErpDataPool()`, so with the
+merged code deployed this app writes `Rocks_ERP_Data` and only Rocks Fast still
+writes through the `Fast_Data` synonyms (ACC Portal only ever read them —
+`erp-options-service.ts` and `department-map-service.ts` are all `SELECT`,
+measured 2026-08-21). Anyone re-running the 101/102 pair must therefore quiet
+the sync on **both** sides, not just `Fast_Data`; migration 102's own comment at
+the `TABLOCKX` counts says so.
 
 **What the content guard proves and does not.** Each of the five tables has
 an `nvarchar(MAX)` column (`RawJson` on four, `ErrorMessage` on
 `ErpSyncLog`). Dragging thousands of JSON payloads through a full-row `EXCEPT`
-while holding `TABLOCKX` on tables three applications write continuously was
+while holding `TABLOCKX` on tables a live Business Central sync writes was
 judged the wrong trade, so migration 102's content check compares every
 non-LOB column plus `DATALENGTH` of the LOB column, not the LOB's bytes
 themselves. A payload edited to exactly the same byte length would pass. That
 weakening is deliberate and stated in the migration's own header rather than
 described as a whole-row check. `TABLOCKX` is taken on the `Fast_Data` side
-only — the side three applications can still write during the migration
-window — not on `Rocks_ERP_Data`, which nothing writes yet.
+only — the side the migration destroys, where an uncounted insert would be
+lost — and not on `Rocks_ERP_Data`, where a row arriving in the window is not
+lost but simply makes the guard refuse. That asymmetry is about which side is
+being dropped, **not** a claim that the target is quiet: see the paragraph
+above.
 
-Single copy, as designed: neither table exists in any `_UAT` database, neither
-is in `src/lib/acc/dual-write.ts`, and neither is in `MASTER_TABLES`
+Single copy, as designed: **none of the five** exists in any `_UAT` database,
+none is in `src/lib/acc/dual-write.ts`, and none is in `MASTER_TABLES`
 (`scripts/checks/verify-master-alignment.ts`). `Fast_Data` has no UAT twin and
-there is no second copy of what Business Central holds to test against.
+there is no second copy of what Business Central holds to test against. (This
+paragraph previously said "neither", of five tables, and asserted all three
+halves with nothing beside them; the commands are below.)
+
+UAT databases, and whether this app's UAT twin holds any of the five — one
+query, run against `Fast_Data` on 2026-08-21:
+
+```sql
+SELECT (SELECT STRING_AGG(name, ', ') FROM sys.databases WHERE name LIKE '%[_]UAT') AS uatDatabases,
+       (SELECT COUNT(*) FROM [Rocks_Portal_Form_UAT].sys.tables
+         WHERE name IN ('ErpAccounts','ErpDimensionValue','ErpGeneralJournalBatch',
+                        'ErpBankAccountCard','ErpSyncLog')) AS fiveInFormUat;
+```
+
+```
+{"uatDatabases":"Rocks_PCTH_UAT, Rocks_UNO_UAT, Rocks_Portal_Form_UAT, Rocks_UNO_Interface_UAT","fiveInFormUat":0}
+```
+
+Four `_UAT` databases exist on the instance and **neither `Fast_Data_UAT` nor
+`Rocks_ERP_Data_UAT` is among them**, so there is no twin of either database for
+a copy to live in; and this app's own twin, `Rocks_Portal_Form_UAT`, holds none
+of the five. Two of the four (`Rocks_PCTH_UAT`, `Rocks_UNO_Interface_UAT`) are
+other brands' databases that the `saai` login cannot open at all — recorded here
+rather than glossed, because "not visible to this login" is not the same
+statement as "proven absent", and neither is reachable from this app in any
+case.
+
+The code halves, run in the repository root the same day:
+
+```
+$ grep -nE 'ErpAccounts|ErpDimensionValue|ErpGeneralJournalBatch|ErpBankAccountCard|ErpSyncLog' \n    src/lib/acc/dual-write.ts scripts/checks/verify-master-alignment.ts
+$ echo $?
+1
+```
+
+No output, exit 1 — not one of the five names appears in either file.
 
 ## Step 1 — confirm no sync is running, snapshot the row counts
 

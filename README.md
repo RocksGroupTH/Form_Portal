@@ -63,7 +63,7 @@ Six databases, one isolated pool each — never the global `sql.connect()`.
 | `Rocks_Portal_Form` | This app's own data: forms, requests, approvals, files, `Acc*` tables, **and `TeamMember` identity** |
 | `Rocks_Portal_Form_UAT` | The UAT twin, served to configured testers |
 | `Fast_Core` | Shared config, brand/connection settings, plus this app's `FormEnvironment` and `UatTester` |
-| `Fast_Data` | AP-17 province lookups (`TravelProvince`) only — the department map (migrations 099/100) and the Business Central sync tables (migrations 101/102) have both moved out |
+| `Fast_Data` | `TravelProvince`, the AP-17 province lookup — the only table this app still reads here, since the Business Central sync tables moved to `Rocks_ERP_Data` (migrations 101/102). The database also holds Rocks Fast's Intelligence tables, which this app never touches. (The department map moved out of `Fast_Core`, not out of here — migrations 099/100.) |
 | `Rocks_ERP_Data` | Business Central sync mirror — `ErpAccounts`, `ErpDimensionValue`, `ErpGeneralJournalBatch`, `ErpBankAccountCard`, `ErpSyncLog` (migrations 101/102). `Fast_Data` keeps a synonym per table for the two sibling apps |
 | `Rocks_Portal_HR` | Employee master and manager chain |
 

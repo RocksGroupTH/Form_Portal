@@ -196,7 +196,7 @@ SET NOCOUNT ON;
 -- returning. An insert-only top-up would touch neither: if a sync ran between
 -- 101 and 102, 102's content check would keep finding SyncedAt or IsActive
 -- different and REFUSE forever, looping while holding TABLOCKX on five tables
--- three applications write -- and if that sync found no new BC objects, the
+-- a live sync writes -- and if that sync found no new BC objects, the
 -- row counts would even stay equal, so it would not look like anything needed
 -- topping up. Matched on [Id] alone, updating every non-key column, so a
 -- re-run reconciles both new and changed rows.
