@@ -51,6 +51,11 @@
 
 **ข้อเสนอเบื้องต้น:** ถ้าจะทำจริงในอนาคต ให้เอียงไป **แนวทาง A (void + re-issue)** มากกว่า delete-overwrite ตรงๆ เพราะ ERP ให้คุณค่าเรื่อง audit trail
 
+> ✅ **เลือกแล้ว (2026-08-21): แนวทาง A — Void + Re-issue** เป็น direction ที่ผู้ใช้ต้องการเมื่อ activate.
+> ยัง **Deferred** — ยังไม่ build ในเฟสนี้. ตอน activate ให้ออกแบบตาม A: ไม่ลบ record, เพิ่มสถานะ `Voided`,
+> ยิงใหม่เป็นเอกสารใหม่ผูก `PrevErpDocumentNo`, และ (ถ้า posted) ใช้ reverse ไม่ใช่ delete.
+> ยังต้องเปิดกับ Nova/Scout ก่อนเขียนโค้ด เพื่อยืนยัน CU post-vs-stage + accounting policy.
+
 ---
 
 ## 4. Decision for now
