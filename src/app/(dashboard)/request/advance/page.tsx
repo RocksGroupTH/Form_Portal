@@ -31,6 +31,9 @@ function AdvanceContent() {
   // Draft resume picker (only on a fresh form, i.e. no ?id).
   const [drafts, setDrafts] = useState<AdvanceDraftSummary[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // P2.2 — gate the fresh form until the draft lookup finishes, so it never
+  // flashes (and can't be filled) before the resume dialog gets a chance to open.
+  const [draftsChecked, setDraftsChecked] = useState(requestId !== null);
 
   useEffect(() => {
     if (requestId !== null) return; // resuming a specific request — no picker
@@ -42,7 +45,8 @@ function AdvanceContent() {
         setDrafts(j.data);
         setPickerOpen(true);
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setDraftsChecked(true); });
     return () => { cancelled = true; };
   }, [requestId]);
 
@@ -98,8 +102,8 @@ function AdvanceContent() {
         onBack={() => router.back()}
         backLabel="กลับ"
       />
-      {loading ? (
-        <TravelExpenseLoadingPopup label="กำลังโหลดแบบร่าง..." subtitle="แบบฟอร์มขอเบิกเงินทดรองจ่าย (AP-2)" />
+      {loading || (requestId === null && !draftsChecked) ? (
+        <TravelExpenseLoadingPopup label="กำลังตรวจสอบแบบร่าง..." subtitle="แบบฟอร์มขอเบิกเงินทดรองจ่าย (AP-2)" />
       ) : notFound ? (
         <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>ไม่พบคำขอนี้</p>
       ) : (

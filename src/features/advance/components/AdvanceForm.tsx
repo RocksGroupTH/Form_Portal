@@ -80,6 +80,7 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
   // Tracked in state so an in-form auto-save (e.g. before attaching a file) makes
   // the new id available immediately, without waiting for a parent reload.
   const [savedId, setSavedId] = useState<number | null>(initial?.id ?? null);
+  const [savedAt, setSavedAt] = useState<Date | null>(null); // P2.3 — last successful save time
   const requestId = savedId;
   const readOnly = !!initial && initial.status !== "Draft" && initial.status !== "Returned";
 
@@ -99,7 +100,7 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
   const purposeRef = useRef<HTMLTextAreaElement>(null);
 
   // P1.2 — unsaved-change guard: snapshot of the last saved form payload.
-  const savedSnapshotRef = useRef<string>("");
+  const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
 
   // Clear a single field's error (called from each input's onChange).
   const clearError = (key: string) =>
@@ -297,11 +298,12 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
   // resume/initial change), so a freshly loaded form is not considered dirty.
   useEffect(() => {
     if (!ready) return;
-    savedSnapshotRef.current = JSON.stringify(buildInput());
+    setSavedSnapshot(JSON.stringify(buildInput()));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, initial]);
 
-  const dirty = ready && !readOnly && JSON.stringify(buildInput()) !== savedSnapshotRef.current;
+  // dirty only once a baseline snapshot exists (state, so seeding re-renders the guard).
+  const dirty = ready && !readOnly && savedSnapshot !== null && JSON.stringify(buildInput()) !== savedSnapshot;
 
   // Warn on refresh / tab-close / hard navigation while there are unsaved edits.
   // In-app route interception via the Next App Router is out of scope here —
@@ -397,7 +399,8 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
     setSaving(true);
     try {
       const id = await persist();
-      savedSnapshotRef.current = JSON.stringify(buildInput()); // no longer dirty
+      setSavedSnapshot(JSON.stringify(buildInput())); // no longer dirty
+      setSavedAt(new Date());
       toast.success("บันทึกแบบร่างแล้ว");
       onSaved(id);
     } catch (e) {
@@ -439,11 +442,13 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
       const res = await fetch(`/api/request/advance/requests/${id}/submit`, { method: "POST" });
       const json = (await res.json()) as { ok: boolean; error?: string };
       if (!json.ok) throw new Error(json.error ?? "ส่งคำขอไม่สำเร็จ");
-      savedSnapshotRef.current = JSON.stringify(buildInput()); // submitted → not dirty
+      setSavedSnapshot(JSON.stringify(buildInput())); // submitted → not dirty
+      setSavedAt(new Date());
       toast.success("ส่งคำขอแล้ว");
       onSubmitted(id);
     } catch (e) {
-      savedSnapshotRef.current = JSON.stringify(buildInput()); // draft persisted — not dirty
+      setSavedSnapshot(JSON.stringify(buildInput())); // draft persisted — not dirty
+      setSavedAt(new Date());
       onSaved(id); // draft persisted — reflect its id in the URL so it can be resumed
       const detail = e instanceof Error ? e.message : "";
       toast.error(`บันทึกแบบร่างแล้ว แต่ส่งคำขอไม่สำเร็จ: ${detail || "กรุณาลองส่งอีกครั้ง"}`);
@@ -789,7 +794,7 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
                           <span className="text-[9px] shrink-0" style={{ color: "var(--text-faint)" }}>{Math.max(1, Math.round(f.fileSize / 1024))}KB</span>
                         </div>
                         {!readOnly && (
-                          <button type="button" onClick={() => setDeleteFileId(f.id)} title="ลบ"
+                          <button type="button" onClick={() => setDeleteFileId(f.id)} title="ลบ" aria-label={`ลบไฟล์แนบ ${f.fileName}`}
                             className="absolute top-1 right-1 p-0.5 rounded cursor-pointer border-none opacity-0 group-hover:opacity-100 transition-opacity"
                             style={{ background: "rgba(220,38,38,0.9)", color: "#fff" }}><X size={12} /></button>
                         )}
@@ -811,11 +816,27 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
             boxShadow: "0 -4px 12px rgba(0,0,0,0.06)",
           }}
         >
-          <div className="flex items-baseline gap-2">
-            <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>ยอดที่เบิก:</span>
-            <span className="text-[15px] font-bold" style={{ color: "var(--text-primary)" }}>
-              {baseAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ฿
-            </span>
+          <div className="flex flex-col gap-0.5">
+            <div className="flex items-baseline gap-2">
+              <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>ยอดที่เบิก:</span>
+              <span className="text-[15px] font-bold" style={{ color: "var(--text-primary)" }}>
+                {baseAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ฿
+              </span>
+            </div>
+            {/* P2.3 — saved-state indicator */}
+            {saving || submitting ? (
+              <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>กำลังบันทึก...</span>
+            ) : dirty ? (
+              <span className="text-[11px] font-semibold" style={{ color: "var(--text-info-yellow)" }}>● ยังไม่บันทึก</span>
+            ) : savedAt ? (
+              <span className="text-[11px] font-semibold" style={{ color: "var(--text-info-green)" }}>
+                ✓ บันทึกแล้ว {String(savedAt.getHours()).padStart(2, "0")}:{String(savedAt.getMinutes()).padStart(2, "0")}
+              </span>
+            ) : initial ? (
+              <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>✓ แบบร่างที่บันทึกไว้</span>
+            ) : (
+              <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>แบบร่างใหม่</span>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <Button variant="secondary" onClick={handleSave} loading={saving} disabled={submitting}>บันทึกแบบร่าง</Button>
@@ -868,7 +889,7 @@ function Field({
       <label className="text-[12px] font-bold" style={labelStyle}>{label}</label>
       {children}
       {error && (
-        <p id={errorId} className="text-[11px] mt-0.5 m-0" style={{ color: "#dc2626" }}>{error}</p>
+        <p id={errorId} role="alert" className="text-[11px] mt-0.5 m-0" style={{ color: "#dc2626" }}>{error}</p>
       )}
     </div>
   );
