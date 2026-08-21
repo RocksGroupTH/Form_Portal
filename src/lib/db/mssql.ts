@@ -101,8 +101,10 @@ export function getUatFormPool(): Promise<sql.ConnectionPool> {
 }
 
 /**
- * Fast_Data — AP-17 province lookups and the HR department lookups. Not a
- * BI or reporting database in this app, whatever the name suggests.
+ * Fast_Data — AP-17 province lookups (TravelProvince), read by
+ * src/lib/acc/travel-booking/province-service.ts and
+ * src/lib/acc/travel-booking/request-service.ts. Not a BI or reporting
+ * database in this app, whatever the name suggests.
  *
  * The five Business Central sync tables are no longer here: migrations 101/102
  * moved them to Rocks_ERP_Data and left synonyms behind for the two sibling
