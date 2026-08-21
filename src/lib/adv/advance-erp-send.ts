@@ -5,6 +5,7 @@ import { postBcPpapJournalCreateFromJson } from "@/lib/bc/bc-odata";
 import { getRequest } from "@/lib/adv/advance-request-service";
 import { loadAdvanceErpContext } from "@/lib/adv/advance-erp-context";
 import { buildAdvanceJournalPayload, buildAdvanceBatchPayload } from "@/lib/adv/advance-erp-payload";
+import { recordSentAttempt } from "@/lib/adv/advance-erp-attempt-service";
 import type { AdvanceErpTarget } from "@/lib/adv/advance-erp-context";
 import type { AdvanceRequest, AdvanceDetail } from "@/features/advance/types";
 import type { BrandErpAccountConfig } from "@/lib/acc/erp-journal-builder";
@@ -308,6 +309,7 @@ export async function sendAdvanceErpBatch(ids: number[], userId: number): Promis
       const docNo = extractBcDocumentNo(bcResponse);
       for (const e of entries) {
         await markInterfaceStatus(e.req.id, "Sent", { userId, environment: target.environment, documentNo: docNo });
+        await recordSentAttempt(e.req.id, docNo, target.environment, target.interfaceTarget, userId);
         await logInterfaceActivity(e.req.id, userId, "erp_interface_sent",
           `ส่งเข้า ERP ${envLabel} · ${target.interfaceTarget} · ${e.req.requestNo ?? e.req.id} · Doc: ${docNo ?? "—"} · BCResp: ${resp}`);
         results.push({ id: e.req.id, ok: true });
