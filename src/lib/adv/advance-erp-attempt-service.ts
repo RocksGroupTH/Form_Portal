@@ -44,19 +44,31 @@ export async function recordSentAttempt(
  *  clear the request's interface fields so it re-enters the "รอส่ง" queue. */
 export async function markResent(requestId: number, userId: number): Promise<void> {
   const pool = await getAccPool();
-  await pool.request()
-    .input("rid", sql.Int, requestId)
-    .input("by", sql.Int, userId)
-    .query(`
-      UPDATE [dbo].[AccAdvanceErpAttempt]
-      SET Status='Resent', ResentBy=@by, ResentAt=SYSDATETIME(), UpdatedAt=SYSDATETIME()
-      WHERE RequestId=@rid AND Status='Sent';
-
-      UPDATE [dbo].[AccRequest]
-      SET ErpInterfaceStatus=NULL, ErpDocumentNo=NULL, ErpInterfaceError=NULL,
-          ErpInterfaceSentAt=NULL, ErpInterfaceSentBy=NULL, ErpInterfaceEnvironment=NULL,
-          UpdatedAt=SYSDATETIME()
-      WHERE Id=@rid`);
+  const tx = pool.transaction();
+  await tx.begin();
+  try {
+    await tx.request()
+      .input("rid", sql.Int, requestId)
+      .input("by", sql.Int, userId)
+      .query(`
+        UPDATE [dbo].[AccAdvanceErpAttempt]
+        SET Status='Resent', ResentBy=@by, ResentAt=SYSDATETIME(), UpdatedAt=SYSDATETIME()
+        WHERE RequestId=@rid AND Status='Sent'`);
+    await tx.request()
+      .input("rid", sql.Int, requestId)
+      .query(`
+        UPDATE [dbo].[AccRequest]
+        SET ErpInterfaceStatus=NULL, ErpDocumentNo=NULL, ErpInterfaceError=NULL,
+            ErpInterfaceSentAt=NULL, ErpInterfaceSentBy=NULL, ErpInterfaceEnvironment=NULL,
+            UpdatedAt=SYSDATETIME()
+        WHERE Id=@rid`);
+    await tx.request()
+      .input("rid", sql.Int, requestId)
+      .input("by", sql.Int, userId)
+      .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note)
+              VALUES (@rid, @by, 'erp_interface_pullback', N'ดึงกลับเพื่อยิงใหม่ (Resent)')`);
+    await tx.commit();
+  } catch (e) { await tx.rollback().catch(() => {}); throw e; }
 }
 
 /** All send attempts for a request, oldest first (for the mapping display). */

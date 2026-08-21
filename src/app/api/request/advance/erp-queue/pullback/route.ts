@@ -40,12 +40,6 @@ export async function POST(req: NextRequest) {
   }
 
   await markResent(id, actor.userId);
-  await pool.request()
-    .input("rid", sql.Int, id).input("by", sql.Int, actor.userId)
-    .input("action", sql.NVarChar, "erp_interface_pullback")
-    .input("note", sql.NVarChar, "ดึงกลับเพื่อยิงใหม่ (Resent)")
-    .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note)
-            VALUES (@rid, @by, @action, @note)`);
 
   return NextResponse.json({ ok: true });
 }
