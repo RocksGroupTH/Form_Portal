@@ -1,4 +1,5 @@
-import { getAllowedBrands, listAllBrands } from "@/lib/acc/brand-options";
+import { listAllBrands } from "@/lib/acc/brand-options";
+import { listFormBrands } from "@/lib/acc/settings-service";
 import type { ErpBcEnvironment } from "@/lib/acc/erp-environment";
 import { loadErpJournalBuildContext } from "@/lib/acc/erp-journal-context";
 import { resolveErpTargetProfile } from "@/lib/acc/erp-target-profile";
@@ -36,6 +37,9 @@ export interface AdvanceInterfaceConfigView {
 
   /** true when everything needed to post this brand to BC is present. */
   ready: boolean;
+
+  /** AccFormBrand.IsActive — whether the brand is selectable in the request forms. */
+  active: boolean;
 }
 
 export async function listAdvanceInterfaceConfigView(): Promise<AdvanceInterfaceConfigView[]> {
@@ -49,8 +53,9 @@ export async function listAdvanceInterfaceConfigView(): Promise<AdvanceInterface
     resolveFormAccess("AP-2"),
     // The card list is AP-2's OWN brand set (AccFormBrand FormCode='AP-2'),
     // not AP-1's — same convention as the AP-2 request-form brand picker.
-    getAllowedBrands(AP2_FORM_CODE),
+    listFormBrands(AP2_FORM_CODE), // ALL rows incl. inactive → disabled cards stay visible
   ]);
+  const activeByCode = new Map(ap2Brands.map((b) => [b.brandCode.toUpperCase(), b.isActive]));
   const ap2Environment: ErpBcEnvironment = ap2Access.environment === "UAT" ? "Sandbox" : "Production";
   const brandByCode = new Map(allBrands.map((b) => [b.brandCode.toUpperCase(), b]));
 
@@ -103,6 +108,7 @@ export async function listAdvanceInterfaceConfigView(): Promise<AdvanceInterface
         bankAccountNo,
         journalBatchName,
         ready,
+        active: activeByCode.get(code) ?? false,
       } satisfies AdvanceInterfaceConfigView;
     }),
   );
