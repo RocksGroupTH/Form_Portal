@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
 import { CheckCircle2, Circle, Link2, Save, RefreshCw } from "lucide-react";
-import { Button } from "@/components/ui";
+import { Button, Toggle } from "@/components/ui";
 import { SearchableSelect } from "@/features/accounting/components/settings/SearchableSelect";
 
 interface ConfigRow {
@@ -22,6 +22,7 @@ interface ConfigRow {
   bankAccountNo: string | null;
   journalBatchName: string | null;
   ready: boolean;
+  active: boolean;
 }
 
 type SelectOption = { value: string; label: string; subLabel?: string };
@@ -150,6 +151,25 @@ function BrandCard({ row, erpByCompany, onSaved }: {
   const branchDirty = branch.trim() !== (row.branchCode ?? "").trim();
   const batchDirty = batch.trim() !== (row.journalBatchName ?? "").trim();
 
+  const [activeBusy, setActiveBusy] = useState(false);
+  async function toggleActive(next: boolean) {
+    setActiveBusy(true);
+    try {
+      const res = await fetch("/api/request/advance/settings/brand-active", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ brandCode: row.brandCode, active: next }),
+      });
+      const j = (await res.json()) as { ok: boolean; error?: string };
+      if (!j.ok) { toast.error(j.error ?? "อัปเดตสถานะไม่สำเร็จ"); return; }
+      toast.success(next ? `เปิดใช้งาน ${row.brandName}` : `ปิด ${row.brandName}`);
+      onSaved();
+    } catch {
+      toast.error("อัปเดตสถานะไม่สำเร็จ");
+    } finally {
+      setActiveBusy(false);
+    }
+  }
+
   async function saveAll() {
     if (!targetSel.trim()) return toast.error("กรุณาเลือก Company ปลายทาง");
     if (!gl.trim()) return toast.error("กรุณาเลือก G/L Account");
@@ -188,6 +208,7 @@ function BrandCard({ row, erpByCompany, onSaved }: {
       style={{
         background: anyDirty ? "var(--bg-info-yellow)" : "var(--bg-card-alt)",
         border: `1px solid ${anyDirty ? "var(--border-info-yellow)" : row.ready ? "var(--border-info-green)" : "var(--border-card)"}`,
+        opacity: row.active ? 1 : 0.6,
       }}>
       {/* header */}
       <div className="flex items-center gap-3 mb-3">
@@ -203,6 +224,17 @@ function BrandCard({ row, erpByCompany, onSaved }: {
           </p>
         </div>
         <StatusBadge ready={row.ready} />
+      </div>
+
+      {/* shared Active toggle — turns the brand on/off in AP-2 + AP-3 pickers */}
+      <div className="mb-3">
+        <Toggle
+          checked={row.active}
+          onChange={toggleActive}
+          disabled={activeBusy}
+          label="เปิดใช้งานแบรนด์นี้ (Active)"
+          description="ปิดแล้วแบรนด์จะหายจากตัวเลือกในฟอร์มขอเบิก AP-2 และเคลียร์ AP-3"
+        />
       </div>
 
       {/* AP-2's own target Company (was inherited from AP-1) */}
