@@ -402,6 +402,8 @@ If it refuses, read the reason. `contents differ` or a short target means re-run
 
 `scripts/checks/verify-erp-data-move.ts` asserts `Fast_Data.dbo.TravelProvince` is still a real table, as its evidence that the ERP move touched nothing outside its five. That is now false by design. Change it to assert `Fast_Data` still has the table **reachable** — as a synonym after this migration — and update the comment to say the ERP move's blast radius is now proven by the `Intel_*` tables plus this synonym rather than by a base table. Do not weaken it to "exists in any form"; name what it should be.
 
+> **Correction (2026-08-22, final whole-branch review).** "The `Intel_*` tables" were not in `verify-erp-data-move.ts` to be cited — that file had no `sys.tables` query at all, and `Intel` appeared nowhere in it. The count lives in `verify-travel-province-move.ts` (part 5). Following this step as written therefore produced a header comment that justified the gate by evidence the gate did not gather, and the sentence propagated into `docs/reviews/2026-08-21-travel-province-move-verification.md`. Closed on 2026-08-22 by copying the `Intel[_]%` / `IntelMkt%` count assertion into `verify-erp-data-move.ts` as part 5a, making the claim true rather than rewording it. Left in place because plans are dated history; the script itself and its header are the current statement.
+
 - [ ] **Step 6: Run every gate**
 
 - `npm run check:travel-province-home` → `OK`

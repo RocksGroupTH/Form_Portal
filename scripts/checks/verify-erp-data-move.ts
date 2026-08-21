@@ -26,15 +26,20 @@
  *     of a day-scale one
  *   - a write through the synonym succeeds, in the siblings' own MERGE shape
  *     (rolled back, so no data moves)
+ *   - Fast_Data still holds Rocks Fast's Intel_* / IntelMkt* tables, which
+ *     this app never touches. This is half of what proves the move's blast
+ *     radius stayed inside its five, and it is asserted in part 5a below --
+ *     until 2026-08-22 this header cited it while the check itself lived
+ *     only in verify-travel-province-move.ts
  *   - Fast_Data.dbo.TravelProvince -- a table this move must not touch -- is
- *     still reachable. It is no longer a base table: migration 105
- *     (2026-08-21, a separate and later move) converted it into a synonym
- *     pointing at Rocks_Portal_Form, so asserting "is a table" here would be
- *     permanently and uninformatively red rather than catching a real fault.
- *     This move's blast radius is now proven by the Intel_* / IntelMkt*
- *     tables above plus this synonym specifically -- not "exists in any form",
- *     which would also pass if something had dropped it and left an
- *     unrelated view or table of the same name behind
+ *     still reachable, the other half. It is no longer a base table:
+ *     migration 105 (2026-08-21, a separate and later move) converted it
+ *     into a synonym pointing at Rocks_Portal_Form, so asserting "is a
+ *     table" here would be permanently and uninformatively red rather than
+ *     catching a real fault. Checked by type ('SN') and not "exists in any
+ *     form", which would also pass if something had dropped it and left an
+ *     unrelated view or table of the same name behind. Where that synonym
+ *     POINTS is deliberately not checked here -- see part 5b
  *
  * Deliberately NOT checked: a literal row count or IDENT_CURRENT value.
  * These five tables are written on a sync schedule by two applications -- this
@@ -289,16 +294,43 @@ async function main() {
   }
 
   // 5. Fast_Data still holds what it is supposed to hold. The move must not
-  //    have reached anything outside its five. TravelProvince itself moved
-  //    out from under this assertion by a separate, later, deliberate
-  //    migration (104/105, 2026-08-21): Fast_Data.dbo.TravelProvince is no
-  //    longer a base table, so checking OBJECT_ID(..., 'U') here would be
-  //    permanently red by design, not a signal of anything wrong. What this
-  //    move must not have disturbed is now the synonym 105 left behind --
-  //    checked by type ('SN'), not an unqualified OBJECT_ID, so a same-named
-  //    view or table left by some unrelated accident would still fail this.
+  //    have reached anything outside its five.
+  //
+  // 5a. Rocks Fast's Intelligence tables are still there. This is the check
+  //     the header calls the blast-radius proof, and until 2026-08-22 this
+  //     file cited it without containing it: the sentence was written for
+  //     verify-travel-province-move.ts (part 5 there) and pasted here, where
+  //     no sys.tables query existed at all. Copied rather than shared,
+  //     because each gate has to stand on its own evidence -- running one
+  //     must not depend on someone also running the other. Measured
+  //     2026-08-22, Fast_Data holds 20 tables and every one matches this
+  //     pattern, so "more than zero" is a floor with a wide margin, not a
+  //     tight assertion that will drift.
+  const intel = await data.request().query(`
+    SELECT COUNT(*) AS [intelCount] FROM sys.tables WHERE name LIKE 'Intel[_]%' OR name LIKE 'IntelMkt%';`);
+  if (!(intel.recordset[0].intelCount > 0)) {
+    problems.push("Fast_Data: no Intel_* / IntelMkt* tables found -- the move may have reached tables it should not have");
+  }
+
+  // 5b. TravelProvince itself moved out from under this assertion by a
+  //     separate, later, deliberate migration (104/105, 2026-08-21):
+  //     Fast_Data.dbo.TravelProvince is no longer a base table, so checking
+  //     OBJECT_ID(..., 'U') here would be permanently red by design, not a
+  //     signal of anything wrong. What this move must not have disturbed is
+  //     now the synonym 105 left behind -- checked by type ('SN'), not an
+  //     unqualified OBJECT_ID, so a same-named view or table left by some
+  //     unrelated accident would still fail this.
+  //
+  //     The probe reads OBJECT_ID and never base_object_name, so the failure
+  //     message says only what is actually tested. Where the synonym points
+  //     is verify-travel-province-move.ts's assertion (its part 2), and that
+  //     gate compares base_object_name against the database
+  //     getProductionFormPool() actually resolves. Re-asserting it here
+  //     against a hard-coded "Rocks_Portal_Form" would be the same literal-
+  //     vs-env-var bug this file already had once and fixed -- see the
+  //     getErpDataPool() note above.
   const tp = await data.request().query(`SELECT OBJECT_ID('dbo.TravelProvince', 'SN') AS [oid];`);
-  if (tp.recordset[0].oid === null) problems.push("Fast_Data.dbo.TravelProvince is not reachable as a synonym (expected one pointing at Rocks_Portal_Form after migration 105)");
+  if (tp.recordset[0].oid === null) problems.push("Fast_Data.dbo.TravelProvince is not a synonym (migration 105 made it one; where it points is checked by npm run check:travel-province-home)");
 
   if (problems.length) {
     console.error("FAIL");

@@ -160,6 +160,23 @@ updated the header comment to say the blast-radius proof is now the
 `Intel_*` / `IntelMkt*` tables plus this synonym rather than a base table.
 Diff as committed:
 
+> **Correction (2026-08-22, final whole-branch review).** That last sentence
+> described a check the file did not contain. `verify-erp-data-move.ts` had no
+> `sys.tables` query at all, and `grep -n "Intel"` over it returned exactly one
+> line — the comment itself. The `Intel_*` / `IntelMkt*` count lives in
+> **`verify-travel-province-move.ts`** (its part 5); the sentence was written
+> for that file and pasted into this one, so the header cited evidence that was
+> only ever gathered by the *other* gate. Fixed on 2026-08-22 by making the
+> claim true rather than by rewording it: the `SELECT COUNT(*) FROM sys.tables
+> WHERE name LIKE 'Intel[_]%' OR name LIKE 'IntelMkt%'` assertion was copied
+> into `verify-erp-data-move.ts` as part 5a, so the gate now really does prove
+> what its header says. Both gates re-run green afterwards. Copied rather than
+> shared between the two scripts on purpose: each gate must stand on its own
+> evidence, so running one does not silently depend on someone also running the
+> other. The sentence originated at step 5 of
+> `docs/superpowers/plans/2026-08-21-travel-province-move.md`, which carries its
+> own dated note; it did not reach `CLAUDE.md` or `README.md`.
+
 ```diff
 - *   - Fast_Data.dbo.TravelProvince -- a table the move must not touch -- is
 - *     still a table
@@ -186,10 +203,30 @@ slash). That forms the literal substring `*/`, which closed the surrounding
 `/** ... */` block comment early and left the rest of the comment's text to
 be parsed as code — `npm run check:erp-data-home` failed immediately with an
 esbuild transform error (`Expected ";" but found "plus"`) rather than
-producing a false pass. The original file had always spaced it
-`Intel_* / IntelMkt*` for exactly this reason; the fix was to match that
-spacing. Caught and fixed before anything was committed — see Step 6 for the
-clean re-run.
+producing a false pass. The fix was to space it `Intel_* / IntelMkt*`. Caught
+and fixed before anything was committed — see Step 6 for the clean re-run.
+
+> **Correction (2026-08-22, final whole-branch review).** "The original file
+> had always spaced it `Intel_* / IntelMkt*` for exactly this reason" was
+> wrong, and wrong in the same way as the sentence above: `Intel` appears
+> nowhere in `verify-erp-data-move.ts` before this edit. The file that had
+> always spaced it is `verify-travel-province-move.ts` (lines 28 and 247). The
+> hazard and the spacing rule are real; the attribution was not.
+
+> **Also corrected 2026-08-22 — the failure message on line 197 of the diff
+> above.** It promised `expected one pointing at Rocks_Portal_Form`, but the
+> probe is `OBJECT_ID(..., 'SN')` and never reads `base_object_name`, so the
+> message described a check that was not being run. Resolved by making the
+> message match the check rather than the reverse: it now reads
+> `Fast_Data.dbo.TravelProvince is not a synonym (migration 105 made it one;
+> where it points is checked by npm run check:travel-province-home)`.
+> Strengthening the check instead would have meant a second, hard-coded
+> `Rocks_Portal_Form` literal in a gate whose whole point is that
+> `verify-travel-province-move.ts` already compares that synonym's
+> `base_object_name` against the database `getProductionFormPool()` actually
+> resolves — the same literal-versus-env-var trap this file was fixed for once
+> before, when it opened `getAppPool("Rocks_ERP_Data")` instead of
+> `getErpDataPool()`.
 
 ## Step 6 — run every gate
 

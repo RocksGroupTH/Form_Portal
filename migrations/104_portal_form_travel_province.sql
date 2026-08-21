@@ -17,7 +17,9 @@
 --
 -- This is the third application of the pattern, after 099/100 (DepartmentErpMap
 -- out of Fast_Core) and 101/102 (the five ERP sync tables out of Fast_Data).
--- With it, no code in this application reads Fast_Data at all.
+-- With it, no code in src/ reads Fast_Data at all. (Two scripts under
+-- scripts/checks/ still do, deliberately: they read through the synonyms to
+-- prove those still resolve.)
 --
 -- TWO DELIBERATE DEPARTURES FROM THE SOURCE SHAPE:
 --   1. UQ_TravelProvince_NameTh is a UNIQUE CONSTRAINT in Fast_Data, not a
@@ -55,11 +57,34 @@
 -- Rocks_Portal_Form, 049 acts on Fast_Data instead -- not on the database
 -- recovery actually needs.
 --
+-- AND THAT IS THE WEAKER OF THE TWO REASONS, because it is contingent on
+-- apply-sql's pool handing back the same connection. THE SECOND IS NOT
+-- CONTINGENT: 049 cannot restore the IDS. Its seed INSERT names only
+-- (NameTh, NameEn) and the file contains no SET IDENTITY_INSERT anywhere
+-- (049:29), so ids are allocated by the identity, not restored from the
+-- source. That reproduces 1..77 only against a virgin identity. Once the
+-- identity has been raised -- batch 2's own SET IDENTITY_INSERT raises it to
+-- 77 on the run that populates this table, and batch 3's floor sets it to 77
+-- too -- 049 writes 78..154 instead, silently repointing every
+-- AccTravelBooking.ProvinceId, which names a province by id.
+-- 049's own guard does not save it either: IF NOT EXISTS (SELECT 1 FROM
+-- [dbo].[TravelProvince]) (049:27) skips only a NON-empty table, and empty is
+-- exactly the state recovery is in. (On the one narrow path this note opens
+-- with -- batch 1 commits, batch 2 raises, batch 3 never runs, identity still
+-- at its seed -- 049 would happen to land on 1..77. "Happens to" is not a
+-- recovery procedure, and any other way of emptying the table after 104
+-- succeeded leaves the identity at 77.)
+--
 -- Recovery is manual: restore the 77 rows into
 -- [Rocks_Portal_Form].[dbo].[TravelProvince] from a backup or from whatever
 -- snapshot was taken before applying (Task 2's own working copy, not part of
--- this repository), then reseed the identity to the restored MAX(Id) -- batch
--- 3 below, or a direct DBCC CHECKIDENT, once the rows are back.
+-- this repository), ids included, under SET IDENTITY_INSERT -- which raises
+-- the identity to the highest id inserted by itself, so nothing further is
+-- needed in the ordinary case. Batch 3 below is NOT "reseed to the restored
+-- MAX(Id)": it reseeds to a hard-coded 77, and only when IDENT_CURRENT is
+-- below that, so after an IDENTITY_INSERT restore of the 77 rows it is inert.
+-- If the rows come back some other way and leave the identity low, run
+-- DBCC CHECKIDENT ('dbo.TravelProvince', RESEED, <restored MAX(Id)>) directly.
 -- ---------------------------------------------------------------------------
 
 SET NOCOUNT ON;
