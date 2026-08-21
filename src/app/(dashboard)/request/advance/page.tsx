@@ -8,6 +8,8 @@ import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { AdvanceForm } from "@/features/advance/components/AdvanceForm";
 import { AdvanceDraftPicker } from "@/features/advance/components/AdvanceDraftPicker";
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
+import { Dialog } from "@/components/ui/Dialog";
+import { Button } from "@/components/ui/Button";
 import { Wallet } from "lucide-react";
 import type { AdvanceRequest, AdvanceDraftSummary } from "@/features/advance/types";
 
@@ -34,6 +36,14 @@ function AdvanceContent() {
   // P2.2 — gate the fresh form until the draft lookup finishes, so it never
   // flashes (and can't be filled) before the resume dialog gets a chance to open.
   const [draftsChecked, setDraftsChecked] = useState(requestId !== null);
+  // Unsaved-change guard (P1.2): the form reports dirty; the in-app Back button
+  // then confirms before leaving (refresh/close is handled by the form's beforeunload).
+  const [dirty, setDirty] = useState(false);
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  function handleBack() {
+    if (dirty) setConfirmLeave(true);
+    else router.back();
+  }
 
   useEffect(() => {
     if (requestId !== null) return; // resuming a specific request — no picker
@@ -99,7 +109,7 @@ function AdvanceContent() {
         icon={Wallet}
         title="ขอเบิกเงินทดรองจ่าย (Advance)"
         subtitle="AP-2 · กรอกข้อมูลให้ครบถ้วนก่อนส่งคำขอ"
-        onBack={() => router.back()}
+        onBack={handleBack}
         backLabel="กลับ"
       />
       {loading || (requestId === null && !draftsChecked) ? (
@@ -107,8 +117,23 @@ function AdvanceContent() {
       ) : notFound ? (
         <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>ไม่พบคำขอนี้</p>
       ) : (
-        <AdvanceForm initial={initial} onSaved={handleSaved} onSubmitted={handleSubmitted} />
+        <AdvanceForm initial={initial} onSaved={handleSaved} onSubmitted={handleSubmitted} onDirtyChange={setDirty} />
       )}
+
+      <Dialog
+        open={confirmLeave}
+        onOpenChange={(v) => { if (!v) setConfirmLeave(false); }}
+        title="ออกจากหน้านี้?"
+        description="มีข้อมูลที่แก้ไขแต่ยังไม่ได้บันทึก หากออกตอนนี้ข้อมูลที่ยังไม่บันทึกจะหายไป"
+        contentClassName="max-w-sm"
+      >
+        <div className="flex flex-col sm:flex-row gap-2 sm:justify-end pt-1">
+          <Button type="button" variant="secondary" onClick={() => setConfirmLeave(false)}>อยู่ต่อ</Button>
+          <Button type="button" variant="danger" onClick={() => { setConfirmLeave(false); router.back(); }}>
+            ออกโดยไม่บันทึก
+          </Button>
+        </div>
+      </Dialog>
 
       <AdvanceDraftPicker
         open={pickerOpen}

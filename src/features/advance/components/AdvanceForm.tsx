@@ -18,6 +18,8 @@ interface Props {
   initial: AdvanceRequest | null;
   onSaved: (id: number) => void;
   onSubmitted: (id: number) => void;
+  /** Reports unsaved-edit state so the page can guard the in-app Back button (P1.2). */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 const labelStyle = { color: "var(--text-secondary)" } as const;
@@ -28,7 +30,7 @@ const fieldStyle = {
   border: "1px solid var(--border-card)",
 } as const;
 
-export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
+export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Props) {
   const [brands, setBrands] = useState<AccBrandOption[]>([]);
   const [banks, setBanks] = useState<BankOption[]>([]);
   // Requester = the logged-in user (auto from HR), same as AP-1's ผู้ขอเบิก part.
@@ -304,6 +306,9 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
 
   // dirty only once a baseline snapshot exists (state, so seeding re-renders the guard).
   const dirty = ready && !readOnly && savedSnapshot !== null && JSON.stringify(buildInput()) !== savedSnapshot;
+
+  // Report dirty state up so the page can guard the in-app Back button (P1.2).
+  useEffect(() => { onDirtyChange?.(dirty); }, [dirty]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Warn on refresh / tab-close / hard navigation while there are unsaved edits.
   // In-app route interception via the Next App Router is out of scope here —
