@@ -15,7 +15,7 @@ import {
   perFormWriteMatch,
   pickAllForForm,
 } from "@/lib/acc/per-form-config";
-import { getDataPool, getProductionFormPool, sql } from "@/lib/db/mssql";
+import { getErpDataPool, getProductionFormPool, sql } from "@/lib/db/mssql";
 import { getBrandConfig } from "@/lib/brand-config";
 import {
   HR_DEPARTMENT_DIMENSION_CODE,
@@ -842,7 +842,7 @@ export async function loadAllDepartmentErpMaps(): Promise<Map<string, Map<string
 
 /** ERP dept display names keyed by target (interface) brand. */
 export async function loadErpDeptDisplayNamesByTargetBrand(): Promise<Map<string, Map<string, string>>> {
-  const pool = await getDataPool();
+  const pool = await getErpDataPool();
   const targetBrands = ERP_INTERFACE_BRANDS.map((b) => b.id);
   const out = new Map<string, Map<string, string>>();
 

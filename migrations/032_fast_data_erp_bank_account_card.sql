@@ -3,6 +3,21 @@
 -- Database: Fast_Data
 -- Apply: npm run apply-sql -- --db Fast_Data --file migrations/032_fast_data_erp_bank_account_card.sql
 -- =============================================
+--
+-- HISTORICAL -- already applied. DO NOT RE-RUN: the target moved to
+-- Rocks_ERP_Data (migrations 101/102).
+--
+-- Fast_Data.dbo.ErpBankAccountCard is now a SYNONYM for
+-- [Rocks_ERP_Data].[dbo].[ErpBankAccountCard]. A synonym does not appear in
+-- sys.tables, so the guard below
+-- (IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ErpBankAccountCard'))
+-- passes and the CREATE TABLE then fails with Msg 2714, because the synonym
+-- already owns the name. Measured 2026-08-21 against the cut-over Fast_Data:
+-- "There is already an object named 'ErpBankAccountCard' in the database".
+-- Nothing was created.
+--
+-- If ErpBankAccountCard ever has to be created again, 101 is the file that does
+-- it, against Rocks_ERP_Data.
 
 USE [Fast_Data];
 GO

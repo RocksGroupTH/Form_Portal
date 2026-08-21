@@ -1,6 +1,6 @@
 /**
  * Sync BC G/L (API v2 accounts) & Bank Account Card (OData BankAccountCard)
- * per Brand Config brand → Fast_Data.ErpAccounts + ErpBankAccountCard
+ * per Brand Config brand → Rocks_ERP_Data.ErpAccounts + ErpBankAccountCard
  */
 
 import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
@@ -12,7 +12,7 @@ import {
 } from "@/lib/bc/bc-odata";
 import { getBcConnectionById } from "@/lib/bc/bc-connection";
 import { getBrandConfig } from "@/lib/brand-config";
-import { getDataPool, sql } from "@/lib/db/mssql";
+import { getErpDataPool, sql } from "@/lib/db/mssql";
 
 export const ERP_ACCOUNT_SYNC_TYPE = "ACCOUNTS";
 export const BC_BANK_ACCOUNT_CARD_ENTITY = "BankAccountCard";
@@ -232,7 +232,10 @@ async function insertSyncLog(
   triggeredBy: number | null,
   startedAt: Date,
 ): Promise<void> {
-  const pool = await getDataPool();
+  // The five Business Central sync tables moved to Rocks_ERP_Data in migrations
+  // 101/102; Fast_Data keeps synonyms for the two sibling applications. This app
+  // names the new home directly.
+  const pool = await getErpDataPool();
   await pool
     .request()
     .input("syncType", sql.NVarChar, ERP_ACCOUNT_SYNC_TYPE)
@@ -255,7 +258,7 @@ async function upsertGlAccounts(
   rawRows: BcGlAccountRow[],
   startedAt: Date,
 ): Promise<number> {
-  const pool = await getDataPool();
+  const pool = await getErpDataPool();
   let count = 0;
 
   for (const raw of rawRows) {
@@ -321,7 +324,7 @@ async function upsertBankAccountCards(
   rawRows: BcBankAccountCardRow[],
   startedAt: Date,
 ): Promise<number> {
-  const pool = await getDataPool();
+  const pool = await getErpDataPool();
   let count = 0;
 
   for (const raw of rawRows) {
@@ -389,7 +392,7 @@ async function upsertGeneralJournalBatches(
   rawRows: BcGeneralJournalBatchRow[],
   startedAt: Date,
 ): Promise<number> {
-  const pool = await getDataPool();
+  const pool = await getErpDataPool();
   let count = 0;
 
   for (const raw of rawRows) {
@@ -565,7 +568,7 @@ export async function syncAllBrandErpAccounts(
 export async function listErpGlAccountOptions(
   brandCode: string,
 ): Promise<ErpAccountOption[]> {
-  const pool = await getDataPool();
+  const pool = await getErpDataPool();
   const res = await pool
     .request()
     .input("brand", sql.NVarChar, brandCode.trim().toUpperCase())
@@ -589,7 +592,7 @@ export async function listErpGlAccountOptions(
 export async function listErpJournalBatchOptions(
   brandCode: string,
 ): Promise<ErpJournalBatchOption[]> {
-  const pool = await getDataPool();
+  const pool = await getErpDataPool();
   const res = await pool
     .request()
     .input("brand", sql.NVarChar, brandCode.trim().toUpperCase())
@@ -612,7 +615,7 @@ export async function listErpJournalBatchOptions(
 export async function listErpBankAccountCardOptions(
   brandCode: string,
 ): Promise<ErpAccountOption[]> {
-  const pool = await getDataPool();
+  const pool = await getErpDataPool();
   const res = await pool
     .request()
     .input("brand", sql.NVarChar, brandCode.trim().toUpperCase())
@@ -670,7 +673,7 @@ export async function listErpAccountsForBrands(
 export async function getLastAccountSync(
   brandCode: string,
 ): Promise<{ syncedAt: string; rowsUpserted: number; status: string } | null> {
-  const pool = await getDataPool();
+  const pool = await getErpDataPool();
   const res = await pool
     .request()
     .input("brand", sql.NVarChar, brandCode.trim().toUpperCase())

@@ -1,8 +1,8 @@
 /**
- * Sync BC dimension values for PCTH → Fast_Data.ErpDimensionValue
+ * Sync BC dimension values for PCTH → Rocks_ERP_Data.ErpDimensionValue
  */
 
-import { getDataPool, sql } from "@/lib/db/mssql";
+import { getErpDataPool, sql } from "@/lib/db/mssql";
 import { getBrandConfig } from "@/lib/brand-config";
 import { getBcConnectionById } from "@/lib/bc/bc-connection";
 import {
@@ -152,7 +152,10 @@ async function insertSyncLog(
   triggeredBy: number | null,
   startedAt: Date,
 ): Promise<void> {
-  const pool = await getDataPool();
+  // The five Business Central sync tables moved to Rocks_ERP_Data in migrations
+  // 101/102; Fast_Data keeps synonyms for the two sibling applications. This app
+  // names the new home directly.
+  const pool = await getErpDataPool();
   await pool
     .request()
     .input("syncType", sql.NVarChar, "DIMENSION_VALUES")
@@ -187,7 +190,7 @@ export async function syncBrandDimensionValues(
       ctx.odataUrl,
     );
 
-    const pool = await getDataPool();
+    const pool = await getErpDataPool();
 
     for (const raw of rawRows) {
       const norm = normalizeRow(raw);
@@ -268,7 +271,7 @@ export async function listErpDimensionOptions(
   brandCode: string,
   dimensionCode: string,
 ): Promise<ErpDimensionOption[]> {
-  const pool = await getDataPool();
+  const pool = await getErpDataPool();
   const res = await pool
     .request()
     .input("brand", sql.NVarChar, brandCode.trim().toUpperCase())
@@ -336,7 +339,7 @@ export interface ErpSyncLogSummary {
 export async function getLastDimensionSync(
   brandCode: string,
 ): Promise<ErpSyncLogSummary | null> {
-  const pool = await getDataPool();
+  const pool = await getErpDataPool();
   const res = await pool
     .request()
     .input("brand", sql.NVarChar, brandCode)

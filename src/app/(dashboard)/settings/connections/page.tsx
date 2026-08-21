@@ -47,7 +47,11 @@ interface AppMssqlInfo {
   port: number;
   coreDatabase: string;
   formDatabase: string;
+  /** Optional so an older cached bundle rendering a newer payload — or the
+   *  reverse — degrades to a shorter list rather than printing undefined. */
+  formUatDatabase?: string;
   dataDatabase: string;
+  erpDataDatabase?: string;
 }
 
 interface FormState {
@@ -388,7 +392,17 @@ function TestBadge({ c }: { c: Connection }) {
 }
 
 function AppMssqlInfoCard({ app }: { app: AppMssqlInfo }) {
-  const databases = [app.coreDatabase, app.formDatabase, app.dataDatabase].join(", ");
+  const databases = [
+    app.coreDatabase,
+    app.formDatabase,
+    app.formUatDatabase,
+    app.dataDatabase,
+    app.erpDataDatabase,
+  ]
+    .filter(function (d): d is string {
+      return Boolean(d);
+    })
+    .join(", ");
 
   return (
     <div

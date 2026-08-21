@@ -35,7 +35,8 @@ Two things about this build that look like faults and are not:
 | **Rocks_Portal_Form** | `getFormPool()` | Form definitions, submissions, approvals, files, logs, and all `Acc*` Accounting tables. Form Portal's own database — `Rocks_Portal_Form_UAT` is the UAT twin, and which one `getFormPool()` returns depends on the form **and on who is asking** (see "Parallel Production and UAT") |
 | **Rocks_Portal_Form** (`TeamMember`) | `getProductionFormPool()` via `@/lib/team-member/service` | User identity and roles (migration 066). **Production only** — never the UAT twin, and never `getFormPool()`; see "Auth" |
 | **Rocks_Portal_Form** (`DepartmentErpMap`) | `getProductionFormPool()` via `@/lib/acc/department-map-service` | HR department → ERP dimension mapping (migrations 099/100). **One physical copy, production only** — never the UAT twin, and never `getFormPool()`, which resolves `Rocks_Portal_Form_UAT` for a tester in UAT mode where the object does not exist. `Fast_Core` keeps a permanent synonym so the Rocks Fast and ACC Portal siblings still reach the same rows. See "DepartmentErpMap moved out of Fast_Core" below |
-| **Fast_Data** | `getDataPool()` | Used by Accounting and ERP sync — department maps, travel-booking province lookups, ERP account/dimension sync (`src/lib/acc/department-map-service.ts`, `src/lib/acc/travel-booking/province-service.ts`, `src/lib/acc/travel-booking/request-service.ts`, `src/lib/erp/account-sync.ts`, `src/lib/erp/dimension-sync.ts`). **Not** a BI/reporting database in this app. |
+| **Fast_Data** | `getDataPool()` | AP-17 province lookups — `TravelProvince` (migration 049), read by `src/lib/acc/travel-booking/province-service.ts` and `src/lib/acc/travel-booking/request-service.ts`. **That is the only table this app still reads here**, now that the five Business Central sync tables have moved to `Rocks_ERP_Data` (migrations 101/102, see below) — neither `department-map-service.ts` nor either `src/lib/erp/*-sync.ts` has a `getDataPool()` call left. The *database* is not nearly empty: measured 2026-08-21 it holds 21 tables, twenty of them Rocks Fast's Intelligence tables (`Intel_*`, `IntelMkt*`) which this app never touches, beside the five synonyms 102 left behind. `DepartmentErpMap` was never in `Fast_Data` — it went `Fast_Core` → `Rocks_Portal_Form` (099/100) and its synonym stayed in `Fast_Core`, see the row above. **Not** a BI/reporting database in this app. |
+| **Rocks_ERP_Data** | `getErpDataPool()` | Mirror of Business Central: `ErpAccounts`, `ErpDimensionValue`, `ErpGeneralJournalBatch`, `ErpBankAccountCard`, `ErpSyncLog` (migrations 101/102). Read/written by `src/lib/erp/account-sync.ts` and `src/lib/erp/dimension-sync.ts`, plus `loadErpDeptDisplayNamesByTargetBrand()` in `src/lib/acc/department-map-service.ts`. **One physical copy, no UAT twin** — `Fast_Data` keeps a permanent synonym per table so the Rocks Fast and ACC Portal siblings still reach the same rows two-part, unchanged. See "The ERP sync tables moved out of Fast_Data" below |
 | **Rocks_Portal_HR** | `getHrPool()` → `getAppPool("Rocks_Portal_HR")` | Employee master, manager chain, per-diem allowance history — cross-referenced by StaffId/email |
 | **Rocks_Codex** | (cross-DB query, e.g. `[Rocks_Codex].[dbo].[Holiday]`, `[Rocks_Codex].[dbo].[Brand]`) | Holiday calendar, company brand master |
 | **Rocks_Portal_Form** (Acc* tables) | `getAccPool()` → `getFormPool()` | Accounting forms: travel expense (AP-1), travel booking (AP-17) |
@@ -83,6 +84,63 @@ resolves `env.MSSQL_FORM_DATABASE` (`src/lib/db/mssql.ts:94-96`) while migration
 (`migrations/100_core_department_erp_map_synonym.sql:126-127`), so repointing
 that env var makes this app and the two siblings read different tables — with no
 error anywhere, because both names resolve to something real.
+
+#### The ERP sync tables moved out of Fast_Data
+
+`ErpAccounts`, `ErpDimensionValue`, `ErpGeneralJournalBatch`, `ErpBankAccountCard`
+and `ErpSyncLog` are a **mirror of Business Central** — what G/L accounts,
+dimension values, journal batches and bank account cards exist over there, plus
+the log of each sync run. Nothing in them is a decision anybody here made, which
+is the line migrations 101 (`Rocks_ERP_Data`) and 102 (`Fast_Data`) draw: data
+**synced from** Business Central now lives in its own database, `Rocks_ERP_Data`,
+reached through `getErpDataPool()` (`src/lib/db/mssql.ts`). The per-brand and
+per-form **choices this app makes** about where money posts —
+`AccBrandGlAccount`, `AccBrandJournalBatch`, `AccBrandBankAccount`,
+`AccBrandBranchCode`, `AccBrandErpInterface` — are a different thing and stay in
+`Rocks_Portal_Form`; there are two journal-batch tables and that distinction is
+the whole point.
+
+`Fast_Data` keeps a synonym per table pointing at `Rocks_ERP_Data`, and the
+synonyms are **permanent, not a migration aid** — Rocks Fast and ACC Portal keep
+opening a pool on `Fast_Data` and naming the tables two-part, exactly as before,
+with no code change on their side. **One physical copy, no UAT twin**: not
+dual-written (`src/lib/acc/dual-write.ts` does not name them) and not in
+`MASTER_TABLES` (`scripts/checks/verify-master-alignment.ts`) — there is no
+second version of what Business Central holds to test against.
+
+**What migration 102's content guard proves, and what it does not.** Before
+dropping the five `Fast_Data` tables and replacing them with synonyms, 102 checks
+row counts, then compares **every non-LOB column plus `DATALENGTH` of the LOB**
+column each table carries (`RawJson` on four of the five, `ErrorMessage` on
+`ErpSyncLog`) — not a whole-row comparison. A payload edited to exactly the same
+byte length would pass. That is a stated trade against holding an exclusive lock
+on five tables a live Business Central sync writes while diffing thousands of
+JSON payloads byte-for-byte.
+
+**Standing up a new `Rocks_ERP_Data` needs migration 101 — and 101 cannot
+bootstrap once 102 has already run.** Its batch 3 tops up `Rocks_ERP_Data` by id
+from `Fast_Data` under `SET IDENTITY_INSERT`, reading `Fast_Data` three-part, and
+it only works while `Fast_Data` still holds the five as real tables: it raises
+when `OBJECT_ID('[Fast_Data].[dbo].[ErpAccounts]', 'U')` is `NULL`, which is
+exactly what that expression evaluates to once 102 has turned the name into a
+synonym instead of a table. So a fresh `Rocks_ERP_Data` cannot be bootstrapped
+from a `Fast_Data` that has already been cut over — there is nothing left there
+to copy from.
+
+**`MSSQL_ERP_DATA_DATABASE` and the synonyms must agree.** `getErpDataPool()`
+resolves `env.MSSQL_ERP_DATA_DATABASE` (`src/lib/db/mssql.ts:125-127`) while
+migration 102 hard-codes `[Rocks_ERP_Data]` as every synonym's base object
+(`migrations/102_fast_data_erp_synonyms.sql:199-203`), so repointing that env var
+makes this app resolve G/L accounts, bank accounts, journal batches and the DEPT
+dimension from a different mirror than the one the siblings reach through
+`Fast_Data` — with no error anywhere, because both names resolve to something
+real, and on the path that builds journal lines for Business Central. Same shape
+as the `MSSQL_FORM_DATABASE` hazard above. **`npm run check:erp-data-home` is
+what catches it**: `scripts/checks/verify-erp-data-move.ts` opens
+`getErpDataPool()`, so it looks exactly where the app looks, and then asserts
+each `Fast_Data` synonym's `base_object_name` names that same database. It used
+to open `getAppPool("Rocks_ERP_Data")` — a literal, which reported on the
+migration's target no matter where the app was pointed.
 
 ### Parallel Production and UAT
 
@@ -365,8 +423,8 @@ ACC Portal had been its only writer anywhere.
 |---|---|
 | `settings/approvers` | the tab that hands out access |
 | `settings/departments/map` | writes `DepartmentErpMap`, rows shared with two sibling applications — see below |
-| `settings/departments/sync` | writes `Fast_Data` |
-| `settings/erp-accounts/sync` | writes `Fast_Data` |
+| `settings/departments/sync` | writes `Rocks_ERP_Data`, the Business Central mirror two sibling applications also read through `Fast_Data`'s synonyms — see "The ERP sync tables moved out of Fast_Data" above |
+| `settings/erp-accounts/sync` | writes `Rocks_ERP_Data`, the Business Central mirror two sibling applications also read through `Fast_Data`'s synonyms — see "The ERP sync tables moved out of Fast_Data" above |
 
 *(ACC Portal has the grant feature and not this gate — its settings routes are
 `requireRole([...ADMIN_ROLES])` with "Account Admin" excluded, so a granted
@@ -437,7 +495,7 @@ grant is safe only because nobody holds it.
 
 #### Business Central / ERP integration
 
-Accounting requests can be pushed into Dynamics 365 Business Central. Configuration lives under **Settings**: Database Connections, Business Central (OAuth2 connection), Brand Configuration (per-brand BC + ERP SQL target), ERP Interface Environment (per-brand Sandbox company and connection, System Admin only — which forms use it is set at Settings → Form Environment). Sync logic in `src/lib/erp/account-sync.ts` and `src/lib/erp/dimension-sync.ts` (both query `Fast_Data`), OData client in `src/lib/bc/`.
+Accounting requests can be pushed into Dynamics 365 Business Central. Configuration lives under **Settings**: Database Connections, Business Central (OAuth2 connection), Brand Configuration (per-brand BC + ERP SQL target), ERP Interface Environment (per-brand Sandbox company and connection, System Admin only — which forms use it is set at Settings → Form Environment). Sync logic in `src/lib/erp/account-sync.ts` and `src/lib/erp/dimension-sync.ts` (both query `Rocks_ERP_Data`, not `Fast_Data` — migrations 101/102, see "The ERP sync tables moved out of Fast_Data" above), OData client in `src/lib/bc/`. Data **synced from** Business Central lives in `Rocks_ERP_Data`; the per-brand and per-form **choices this app makes** about where money posts — `AccBrandGlAccount`, `AccBrandJournalBatch`, `AccBrandBankAccount`, `AccBrandBranchCode`, `AccBrandErpInterface` — stay in the form database.
 
 ##### Per-form ERP configuration — the default and override rule
 
@@ -660,6 +718,7 @@ MSSQL_CORE_DATABASE=Fast_Core
 MSSQL_FORM_DATABASE=Rocks_Portal_Form
 MSSQL_FORM_UAT_DATABASE=Rocks_Portal_Form_UAT   # served to configured testers in UAT mode; see "Parallel Production and UAT"
 MSSQL_DATA_DATABASE=Fast_Data
+MSSQL_ERP_DATA_DATABASE=Rocks_ERP_Data          # BC sync mirror; Fast_Data keeps synonyms for the two siblings
 
 # Email
 GRAPH_MAIL_FROM=noreply@rocksgroup.com

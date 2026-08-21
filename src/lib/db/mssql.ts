@@ -100,9 +100,30 @@ export function getUatFormPool(): Promise<sql.ConnectionPool> {
   return getNamedPool(env.MSSQL_FORM_UAT_DATABASE);
 }
 
-/** Data DB — reports, dashboards, BI */
+/**
+ * Fast_Data — AP-17 province lookups (TravelProvince), read by
+ * src/lib/acc/travel-booking/province-service.ts and
+ * src/lib/acc/travel-booking/request-service.ts. Not a BI or reporting
+ * database in this app, whatever the name suggests.
+ *
+ * The five Business Central sync tables are no longer here: migrations 101/102
+ * moved them to Rocks_ERP_Data and left synonyms behind for the two sibling
+ * applications. Use getErpDataPool() for those.
+ */
 export function getDataPool(): Promise<sql.ConnectionPool> {
   return getNamedPool(env.MSSQL_DATA_DATABASE);
+}
+
+/**
+ * Rocks_ERP_Data — the mirror of Business Central: ErpAccounts,
+ * ErpDimensionValue, ErpGeneralJournalBatch, ErpBankAccountCard and ErpSyncLog.
+ *
+ * Sync output only. The per-brand and per-form choices this app makes about
+ * where money posts — AccBrandGlAccount, AccBrandJournalBatch and the rest —
+ * stay in the form database and are reached through getFormPool().
+ */
+export function getErpDataPool(): Promise<sql.ConnectionPool> {
+  return getNamedPool(env.MSSQL_ERP_DATA_DATABASE);
 }
 
 /**
