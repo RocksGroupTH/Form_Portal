@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
       ? all.filter((r) => idSet.has(r.id))
       : all.filter((r) => r.erpInterfaceStatus === "Sent" || r.erpInterfaceStatus === "Pending" || r.erpInterfaceStatus === "Failed");
 
-    const buf = buildAdvanceErpWorkbook(rows);
+    const buf = await buildAdvanceErpWorkbook(rows);
     const filename = `advance-erp-${new Date().toISOString().slice(0, 10)}.xlsx`;
     return new NextResponse(new Uint8Array(buf), {
       headers: {

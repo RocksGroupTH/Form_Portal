@@ -167,8 +167,30 @@ export async function listAdvanceErpQueue(): Promise<AdvanceQueueRow[]> {
 
 const ERP_STATUS_TH: Record<string, string> = { Sent: "ส่งแล้ว", Pending: "กำลังส่ง", Failed: "ล้มเหลว" };
 
+/** Superseded (Resent) PV numbers per request, so the export can show them. */
+export async function listResentDocNos(requestIds: number[]): Promise<Map<number, string[]>> {
+  const map = new Map<number, string[]>();
+  if (requestIds.length === 0) return map;
+  const pool = await getAccPool();
+  const ph = requestIds.map((_, i) => `@r${i}`).join(",");
+  const req = pool.request();
+  requestIds.forEach((id, i) => req.input(`r${i}`, sql.Int, id));
+  const r = await req.query(`
+    SELECT RequestId, ErpDocumentNo FROM [dbo].[AccAdvanceErpAttempt]
+    WHERE Status='Resent' AND RequestId IN (${ph}) ORDER BY AttemptNo`);
+  for (const row of r.recordset as Record<string, unknown>[]) {
+    const id = row.RequestId as number;
+    const doc = (row.ErpDocumentNo as string) ?? null;
+    if (!doc) continue;
+    const list = map.get(id) ?? [];
+    list.push(doc);
+    map.set(id, list);
+  }
+  return map;
+}
+
 /** Excel (.xlsx) of AP-2 ERP-interface rows — mirrors the "ส่งแล้ว" table columns. */
-export function buildAdvanceErpWorkbook(rows: AdvanceQueueRow[]): Buffer {
+export async function buildAdvanceErpWorkbook(rows: AdvanceQueueRow[]): Promise<Buffer> {
   const headerStyle = { font: { bold: true }, alignment: { horizontal: "center" as const } };
   const moneyStyle = { alignment: { horizontal: "right" as const }, numFmt: "#,##0.00" };
 
@@ -178,8 +200,10 @@ export function buildAdvanceErpWorkbook(rows: AdvanceQueueRow[]): Buffer {
   aoa.push([`สร้างเมื่อ: ${new Date().toLocaleString("th-TH")}`]);
   aoa.push([]);
 
+  const resent = await listResentDocNos(rows.map((r) => r.id));
+
   const headerRowIndex = aoa.length;
-  const columns = ["เลขที่", "Company", "ผู้รับเงิน", "รายละเอียดค่าใช้จ่าย", "วันจ่าย", "จำนวน", "External Doc.", "Doc No. (ERP)", "วันที่ส่ง", "สถานะ"];
+  const columns = ["เลขที่", "Company", "ผู้รับเงิน", "รายละเอียดค่าใช้จ่าย", "วันจ่าย", "จำนวน", "External Doc.", "Doc No. (ERP)", "PV เดิม (Resent)", "วันที่ส่ง", "สถานะ"];
   aoa.push(columns);
 
   for (const r of rows) {
@@ -192,6 +216,7 @@ export function buildAdvanceErpWorkbook(rows: AdvanceQueueRow[]): Buffer {
       r.baseAmount ?? r.amount ?? 0,
       r.requestNo,
       r.erpDocumentNo,
+      (resent.get(r.id) ?? []).join(", ") || "—",
       r.erpInterfaceSentAt ? new Date(r.erpInterfaceSentAt).toLocaleString("th-TH") : null,
       r.erpInterfaceStatus ? (ERP_STATUS_TH[r.erpInterfaceStatus] ?? r.erpInterfaceStatus) : "พร้อมส่ง",
     ]);
