@@ -7,9 +7,9 @@ import { getMultiBrandDepartmentMappingPage } from "@/lib/acc/department-map-ser
  *
  * The read half of the `departments` grant, and the whole of it: the save
  * (`departments/map`, PUT) went back to admin-only on 2026-08-20 because it
- * writes the configuration database two sibling applications read to prepare
- * financial journal postings. A granted approver sees the mappings; an admin
- * changes them.
+ * writes `DepartmentErpMap`, rows two sibling applications read to prepare
+ * financial journal postings — shared rows, whichever database holds them.
+ * A granted approver sees the mappings; an admin changes them.
  */
 export async function GET() {
   const session = await requireSettingsTab("departments");

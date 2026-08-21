@@ -37,11 +37,11 @@ export interface DepartmentMappingDialogProps {
    * Whether this viewer may write the mappings — an admin, in practice.
    *
    * `PUT settings/departments/map` went back to `requireRole` on 2026-08-20:
-   * it writes `DepartmentErpMap` in the configuration database that two sibling
-   * applications read to prepare financial journal postings, which is more than
-   * a settings-tab grant should carry. The `departments` grant still opens the
-   * list, so this dialog stays reachable — read-only. Defaults to `true` so the
-   * admin-only callers do not have to say so.
+   * it writes `DepartmentErpMap`, rows two sibling applications read to prepare
+   * financial journal postings — shared rows, whichever database holds them,
+   * which is more than a settings-tab grant should carry. The `departments`
+   * grant still opens the list, so this dialog stays reachable — read-only.
+   * Defaults to `true` so the admin-only callers do not have to say so.
    *
    * The affordance is *hidden*, not disabled-on-click: a control that is
    * offered and then answered 403 is worse than one that is absent. This is a

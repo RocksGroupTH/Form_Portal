@@ -9,13 +9,25 @@
 -- Everything before the DROP is the guard against that: the target must exist
 -- as a TABLE, it must hold the same number of rows as the source, counted
 -- under TABLOCKX inside the same transaction as the drop so no sibling can
--- insert between the count and the drop, AND every source row must actually
--- be present in the target -- matching counts alone cannot tell "099 copied
--- everything" from "099's batch 2 found the target already non-empty, printed
--- a message and copied nothing, and the target happens to hold as many rows
--- as the source by coincidence." A LOCK_TIMEOUT keeps a conflicting sibling
--- lock from queuing past node-mssql's request timeout, which would leave the
--- transaction open uncommitted rather than cleanly failing it.
+-- insert between the count and the drop, AND every source row must be present
+-- in the target with EVERY ONE OF ITS ELEVEN COLUMNS equal -- an EXCEPT over
+-- the whole row, not over a projection of it. Matching counts alone cannot
+-- tell "099 copied everything" from "099's batch 2 found the target already
+-- non-empty, printed a message and copied nothing, and the target happens to
+-- hold as many rows as the source by coincidence"; and a narrower projection
+-- could not tell either apart from "a sibling MERGE in the window between 099
+-- and 100 changed a column the projection omits" -- FixedGlAccountNo, say,
+-- the fixed G/L account a claim posts to, which one live row carries. Counts
+-- and ids would still agree and the newer value would be destroyed by the
+-- DROP.
+--
+-- A LOCK_TIMEOUT keeps a conflicting sibling lock from queuing past
+-- node-mssql's request timeout, which would leave the transaction open
+-- uncommitted rather than cleanly failing it.
+--
+-- Against the live databases this file now PRINT-skips at the first branch --
+-- Fast_Core.dbo.DepartmentErpMap is already a synonym -- so the guard above is
+-- what a future stand-up inherits, not something that runs here again.
 --
 -- Why a synonym rather than editing the siblings: all three applications name
 -- the table two-part, [dbo].[DepartmentErpMap], on a pool opened against
@@ -78,13 +90,18 @@ BEGIN
   );
 
   -- Content check, ahead of the count check: two tables can hold the same
-  -- number of rows without holding the same rows -- see the header. This
-  -- catches that case even though the counts alone would not.
+  -- number of rows without holding the same rows -- see the header. All
+  -- eleven columns are projected on both sides, so a source row that differs
+  -- from its target twin in ANY column -- including one no key or index
+  -- covers, such as FixedGlAccountNo, the fixed G/L account a claim posts to
+  -- -- fails the check even though counts and ids agree.
   IF EXISTS (
-    SELECT [Id],[BrandCode],[DepartmentCode],[ErpDimensionCode],[ErpCode],[FormCode]
+    SELECT [Id],[BrandCode],[DepartmentCode],[HrDepartmentName],[ErpDimensionCode],
+           [ErpCode],[MappedBy],[MappedAt],[FixedGlAccountNo],[FixedGlDescription],[FormCode]
     FROM [dbo].[DepartmentErpMap]
     EXCEPT
-    SELECT [Id],[BrandCode],[DepartmentCode],[ErpDimensionCode],[ErpCode],[FormCode]
+    SELECT [Id],[BrandCode],[DepartmentCode],[HrDepartmentName],[ErpDimensionCode],
+           [ErpCode],[MappedBy],[MappedAt],[FixedGlAccountNo],[FixedGlDescription],[FormCode]
     FROM [Rocks_Portal_Form].[dbo].[DepartmentErpMap]
   )
   BEGIN

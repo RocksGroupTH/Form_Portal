@@ -13,18 +13,45 @@ dropped the original table in `Fast_Core` and replaced it with
 `CREATE SYNONYM [dbo].[DepartmentErpMap] FOR [Rocks_Portal_Form].[dbo].[DepartmentErpMap]`,
 inside a transaction guarded by a row-count check and a content check — one
 `EXCEPT` (`Fast_Core` rows `EXCEPT` form-database rows,
-`migrations/100_core_department_erp_map_synonym.sql:83-89`), not both
-directions. One-directional `EXCEPT` alone would not prove the two tables
-match — the target could hold extra rows the source lacks and still pass — but
-paired with the count-equality check it does: two Id-keyed row sets of equal
-size, one of which is a subset of the other by content, must be the same set.
-That pairing is what let the drop run only once every source row was confirmed
-present in the target. **The synonym is permanent** — all
-three applications (this app, Rocks Fast, ACC Portal) keep naming the table
-two-part, `[dbo].[DepartmentErpMap]`, against a pool opened on `Fast_Core`,
-and it is not a migration aid to be removed later. `DepartmentErpMap` is
+`migrations/100_core_department_erp_map_synonym.sql:98-106`), not both
+directions, and it compares **all eleven columns** on each side. One-directional
+`EXCEPT` alone would not prove the two tables match — the target could hold
+extra rows the source lacks and still pass — but paired with the count-equality
+check it does: two row sets of equal size, one of which is a whole-row subset of
+the other, must be the same set. It takes the two checks *together*; neither
+proves set equality on its own. That pairing is what let the drop run only once
+every source row was confirmed present in the target. **The synonym is
+permanent** — it is not a migration aid to be removed later. At the time this
+record was written all three applications reached the table two-part,
+`[dbo].[DepartmentErpMap]`, against a pool opened on `Fast_Core`; the later
+commit `d5e08c3` on this branch repointed *this* app's
+`department-map-service.ts` onto `getProductionFormPool()`, so the synonym is
+now load-bearing for the two siblings alone. `DepartmentErpMap` is
 deliberately a single copy: it was not created in `Rocks_Portal_Form_UAT`, it
 is not in `dual-write.ts`, and it is not in `MASTER_TABLES`.
+
+**Two corrections to this paragraph, both made after the fact — the history is
+the point.** The first draft said the guard used "`EXCEPT` on both directions";
+there is one `EXCEPT`, and the sentence above is the repair. The repair then
+argued set equality from a *six*-column projection (`Id`, `BrandCode`,
+`DepartmentCode`, `ErpDimensionCode`, `ErpCode`, `FormCode`) as though it were
+the whole row — so the run that actually happened on 2026-08-20 would not have
+noticed a sibling `MERGE` in the 099→100 window that changed only, say,
+`FixedGlAccountNo`, the fixed G/L account a claim posts to, which one of the
+three live rows carries. Nothing suggests such a write occurred — the window
+was minutes and the siblings edit this mapping a few times a year — but the
+guard could not have caught it, and neither can Steps 1-5 below: they check
+counts, ids, `IDENT_CURRENT`, indexes and the synonym, never the non-key column
+values. The `EXCEPT` was widened to all eleven columns on 2026-08-21, which is
+what the sentence above now describes; migration 100 PRINT-skips against the
+live `Fast_Core` because the object is already a synonym, so the widened guard
+is inherited by a future stand-up rather than re-run here. The widened
+statement was nonetheless *executed* read-only against the live pair before
+being committed — the same eleven-column projection, `Fast_Core` connection on
+the left and `[Rocks_Portal_Form]` three-part on the right — to prove it
+compiles and that no column type refuses `EXCEPT`. That run proves syntax only,
+not data equality: post-100 the left-hand name is the synonym, so it compares
+the table with itself.
 
 ## Step 1 — snapshot before touching anything
 

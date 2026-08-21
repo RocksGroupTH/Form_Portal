@@ -28,7 +28,19 @@
 -- Batch 2 below is an id-keyed TOP-UP, not a one-time copy: it inserts
 -- whatever Fast_Core ids are missing here, so a re-run after a sibling wrote
 -- to Fast_Core between 099 and 100 fills the gap instead of silently doing
--- nothing. A clean re-run finds nothing missing and is a no-op.
+-- nothing.
+--
+-- ONCE 100 HAS RUN, THIS FILE IS NO LONGER RE-RUNNABLE. Batch 2 raises on
+-- OBJECT_ID('[Fast_Core].[dbo].[DepartmentErpMap]', 'U') IS NULL, and that is
+-- exactly what a synonym gives back (measured 2026-08-21 against the live
+-- Fast_Core: OBJECT_ID(...,'U') is NULL, OBJECT_ID(...,'SN') is not) -- so
+-- apply-sql stops with exit 1 and batch 3, the DBCC CHECKIDENT reseed to 2004,
+-- never runs. Nothing is destroyed by that, and the raised message says so.
+-- But if the form database is being stood up fresh, batch 1 will have created
+-- an EMPTY table with its identity still at 1, which allocates ids straight
+-- back into the 1004-1006 range the reseed exists to keep clear. Restore the
+-- rows and reseed by hand; see CLAUDE.md, "Standing up a production form
+-- database".
 -- ---------------------------------------------------------------------------
 
 SET NOCOUNT ON;

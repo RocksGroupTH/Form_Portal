@@ -32,8 +32,9 @@ Two things about this build that look like faults and are not:
 | Database | Pool | Purpose |
 |----------|------|---------|
 | **Fast_Core** | `getCorePool()` | Config, brand/DB/BC connection settings, `FormEnvironment`, `UatTester`. **No longer identity** — see "Auth" |
-| **Rocks_Portal_Form** | `getFormPool()` | Form definitions, submissions, approvals, files, logs, all `Acc*` Accounting tables, and `DepartmentErpMap` (moved here by migrations 099/100 — `Fast_Core` keeps a permanent synonym so the Rocks Fast and ACC Portal siblings still reach the same rows). Form Portal's own database — `Rocks_Portal_Form_UAT` is the UAT twin, and which one `getFormPool()` returns depends on the form **and on who is asking** (see "Parallel Production and UAT") |
+| **Rocks_Portal_Form** | `getFormPool()` | Form definitions, submissions, approvals, files, logs, and all `Acc*` Accounting tables. Form Portal's own database — `Rocks_Portal_Form_UAT` is the UAT twin, and which one `getFormPool()` returns depends on the form **and on who is asking** (see "Parallel Production and UAT") |
 | **Rocks_Portal_Form** (`TeamMember`) | `getProductionFormPool()` via `@/lib/team-member/service` | User identity and roles (migration 066). **Production only** — never the UAT twin, and never `getFormPool()`; see "Auth" |
+| **Rocks_Portal_Form** (`DepartmentErpMap`) | `getProductionFormPool()` via `@/lib/acc/department-map-service` | HR department → ERP dimension mapping (migrations 099/100). **One physical copy, production only** — never the UAT twin, and never `getFormPool()`, which resolves `Rocks_Portal_Form_UAT` for a tester in UAT mode where the object does not exist. `Fast_Core` keeps a permanent synonym so the Rocks Fast and ACC Portal siblings still reach the same rows. See "DepartmentErpMap moved out of Fast_Core" below |
 | **Fast_Data** | `getDataPool()` | Used by Accounting and ERP sync — department maps, travel-booking province lookups, ERP account/dimension sync (`src/lib/acc/department-map-service.ts`, `src/lib/acc/travel-booking/province-service.ts`, `src/lib/acc/travel-booking/request-service.ts`, `src/lib/erp/account-sync.ts`, `src/lib/erp/dimension-sync.ts`). **Not** a BI/reporting database in this app. |
 | **Rocks_Portal_HR** | `getHrPool()` → `getAppPool("Rocks_Portal_HR")` | Employee master, manager chain, per-diem allowance history — cross-referenced by StaffId/email |
 | **Rocks_Codex** | (cross-DB query, e.g. `[Rocks_Codex].[dbo].[Holiday]`, `[Rocks_Codex].[dbo].[Brand]`) | Holiday calendar, company brand master |
@@ -48,8 +49,13 @@ Migrations 099 (`Rocks_Portal_Form`) and 100 (`Fast_Core`) moved
 own. `Fast_Core.dbo.DepartmentErpMap` is now
 `CREATE SYNONYM ... FOR [Rocks_Portal_Form].[dbo].[DepartmentErpMap]`, and the
 synonym is **permanent** — but not because this app still needs it. This app's
-own `department-map-service.ts` was repointed straight at the new home
-(`getProductionFormPool()`, never `getCorePool()`, at all six call sites) and
+own `department-map-service.ts` was repointed straight at the new home —
+`getProductionFormPool()` at all six call sites, and **never `getFormPool()`**.
+That is the hazard worth naming, and it is not `getCorePool()`: a `getCorePool()`
+read would still find the rows through the synonym, whereas `getFormPool()`
+resolves `Rocks_Portal_Form_UAT` for a tester in UAT mode, where the object does
+not exist at all — an `Invalid object name` on the path that builds the journal
+context for a Business Central posting. Repointed, the service
 no longer goes through `Fast_Core` or the synonym at all. The synonym exists,
 and stays, for the **two sibling repositories, which were never touched**:
 Rocks Fast and ACC Portal still open a pool on `Fast_Core` and name the table
@@ -70,6 +76,13 @@ with what the siblings write, so the table is deliberately absent from
 `src/lib/acc/dual-write.ts` and from `MASTER_TABLES`
 (`scripts/checks/verify-master-alignment.ts`) — there is no second side to
 dual-write or align against.
+
+**`MSSQL_FORM_DATABASE` and the synonym must agree.** `getProductionFormPool()`
+resolves `env.MSSQL_FORM_DATABASE` (`src/lib/db/mssql.ts:94-96`) while migration
+100 hard-codes `[Rocks_Portal_Form]` as the synonym's base object
+(`migrations/100_core_department_erp_map_synonym.sql:126-127`), so repointing
+that env var makes this app and the two siblings read different tables — with no
+error anywhere, because both names resolve to something real.
 
 ### Parallel Production and UAT
 
@@ -276,9 +289,11 @@ Two live Accounting forms share a generic request/approval backbone, plus a Busi
 
 **Storage:** Acc* tables live in **`Rocks_Portal_Form`**, accessed via `getAccPool()` (= `getFormPool()`, `src/lib/acc/pool.ts`). Numbered migrations in `migrations/` (013 onward) built these up incrementally against the old `Fast_Form`; `059_portal_form_baseline.sql` is the generated full-schema baseline used to stand up a new database. Apply with `npm run apply-sql -- --db Rocks_Portal_Form --file <path>` (see `scripts/apply-sql.ts`). **Every migration names its own target database in its header — read that before running it.**
 
-**Standing up a production form database takes 059 *and* 066.** 059 was generated from `Fast_Form`, which never held `TeamMember`, so a database built from 059 alone has no identity table. Since the fail-closed change this now **locks everybody out** rather than degrading them: provisioning fails, `signIn` returns false, and every login lands on `/unauthorized`. That is louder than the old behaviour — which let anyone with an active `Rocks_Portal_HR.Employee` row in as `Staff` with a blank id, leaving `/settings/users` unreachable and the roster unrepairable from the UI — but it is still a stand-up mistake with no in-app remedy, so apply 066. Grep for `[Auth] blocked login (could not provision a TeamMember row)` and `[TeamMember] provision failed for …`.
+**Standing up a production form database takes 059, 066 *and* 099.** 059 was generated from `Fast_Form`, which never held `TeamMember`, so a database built from 059 alone has no identity table. Since the fail-closed change this now **locks everybody out** rather than degrading them: provisioning fails, `signIn` returns false, and every login lands on `/unauthorized`. That is louder than the old behaviour — which let anyone with an active `Rocks_Portal_HR.Employee` row in as `Staff` with a blank id, leaving `/settings/users` unreachable and the roster unrepairable from the UI — but it is still a stand-up mistake with no in-app remedy, so apply 066. Grep for `[Auth] blocked login (could not provision a TeamMember row)` and `[TeamMember] provision failed for …`.
 
 `066_portal_form_team_member.sql` creates the table and copies the roster out of Fast_Core, so it goes *after* 059. It refuses to run unless the database is named `Rocks_Portal_Form…` **and** has `dbo.AccRequest`: the name test is what keeps a mistyped `--db` out of `Fast_Form`, which has `AccRequest` too and belongs to the live sibling. **066 is a copy, not a seed** — its `INSERT` reads `[Fast_Core].[dbo].[TeamMember]`, so that table must exist and still hold the roster when 066 runs. If it did not, batch 1 would commit the empty table and batch 2 roll back under `XACT_ABORT`, leaving no indexes, no FK and identity at 1; and once anyone logs in and is provisioned, the empty-table guard on the copy blocks the re-run permanently while new ids start at 1 — straight into the range 066 exists to keep clear. **Post-apply check:** `SELECT COUNT(*) FROM dbo.TeamMember` = 17 and `SELECT IDENT_CURRENT('dbo.TeamMember')` = 100000. It is the one migration that must **not** also be applied to `Rocks_Portal_Form_UAT` — identity lives in production only, and both pools reach it three-part. A new migration that changes an `Acc*` table does have to be applied to `Rocks_Portal_Form_UAT` as well, but the parallel-UAT batch is not that shape: **060, 062, 063 and 065 are Fast_Core only** (`FormEnvironment`, `UatTester`), and **061 and 064 are `Rocks_Portal_Form_UAT` only** — they refuse to run against a database whose name does not end in `_UAT`.
+
+**099 is the third, and it cannot repair a rebuilt database.** `Fast_Core.dbo.DepartmentErpMap` is a permanent synonym for `[Rocks_Portal_Form].[dbo].[DepartmentErpMap]` (migration 100), so the object resolves *into* whatever database is stood up — a form database without `DepartmentErpMap` leaves all three applications' department→ERP-dimension mapping pointing at nothing. `099_portal_form_department_erp_map.sql` is what creates it. **But 099 only works while `Fast_Core` still holds the original table**, which after 100 it never does again: its batch 2 raises on `OBJECT_ID('[Fast_Core].[dbo].[DepartmentErpMap]', 'U') IS NULL` — and `OBJECT_ID(…, 'U')` is NULL for a synonym (measured 2026-08-21 against the live `Fast_Core`: `'U'` → NULL, `'SN'` → 2114106572) — so `apply-sql` stops there and **batch 3, the `DBCC CHECKIDENT` reseed, never runs**. The result is an empty table with identity at 1, allocating ids straight back into the 1004-1006 range 099's reseed to 2004 exists to keep clear. Standing one up again means creating the table (batch 1 alone succeeds), restoring the rows from a backup with their ids, and reseeding by hand — or repointing the synonym.
 
 **Generic header (shared by all Accounting forms):** `AccFormMaster` (form catalog), `AccRequest` (shared request header), `AccApproval`, `AccActivityLog`, `AccSequence`, `AccEmailQueue`, `AccRequestFile`.
 
@@ -497,7 +512,13 @@ explicit column list, so every row they write is a default. **098's target,
 `Fast_Core`, is historical**: migrations 099/100 subsequently moved that table
 into `Rocks_Portal_Form`, so the widened column and the rebuilt unique index
 098 describes now live there, reached from `Fast_Core` by synonym — see
-"DepartmentErpMap moved out of Fast_Core" above.
+"DepartmentErpMap moved out of Fast_Core" above. **Do not re-run 098.** Its
+`ALTER TABLE` cannot resolve the synonym and fails, but its next batch opens
+with `UPDATE [dbo].[DepartmentErpMap] SET [FormCode] = NULL` — and `UPDATE`
+*does* resolve synonyms, so in SSMS, which carries on past a failed batch by
+default, it reaches the live form-database rows and clears every per-form
+override. `021`, `045` and `046` name the same old target and all four now
+carry a "do not re-run" header saying so.
 
 **It ships inert, and there is no UI to add an override.** Every row in all
 seven tables is a default, so every form resolves exactly what AP-1 resolved

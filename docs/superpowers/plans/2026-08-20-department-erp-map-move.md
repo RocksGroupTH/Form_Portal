@@ -61,7 +61,7 @@
 - Consumes: nothing from earlier tasks.
 - Produces: `npm run check:dept-map-home` — the verification entry point Task 2 runs. Exits 0 on success, 1 with a printed reason on failure.
 
-**Nothing in this task touches a database except the read-only probe in Step 1.** Do not run `apply-sql`. Task 2 applies these files, after a reviewer has looked at the guard in 100 — that guard is what stands between this work and deleting the only copy of the data.
+**Nothing in this task applies a migration.** Do not run `apply-sql`. Task 2 applies these files, after a reviewer has looked at the guard in 100 — that guard is what stands between this work and deleting the only copy of the data. Step 1 below is not a read-only probe, despite an earlier draft of this line calling it one: it runs `CREATE TABLE`, `DROP TABLE` and `CREATE SYNONYM` against the live shared `Fast_Core`, inside a transaction it then rolls back. That is DDL on a production database three applications use, on a throwaway object name, and the rollback is the only thing that makes it safe.
 
 - [ ] **Step 1: Prove that DROP TABLE and CREATE SYNONYM can share one transaction**
 

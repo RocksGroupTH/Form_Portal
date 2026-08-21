@@ -1,7 +1,9 @@
 /* eslint-disable no-console */
 /**
  * Verify migrations 046/047:
- *   - Fast_Core.dbo.DepartmentErpMap.HrDepartmentId was renamed to DepartmentCode
+ *   - DepartmentErpMap.HrDepartmentId was renamed to DepartmentCode. The table
+ *     lives in Rocks_Portal_Form since migrations 099/100; Fast_Core reaches it
+ *     by synonym, and this check reads the real table directly.
  *   - Fast_Form.dbo.AccRequest.RequesterDepartmentCode exists
  *
  * Usage: npx tsx scripts/checks/verify-046.ts
@@ -41,23 +43,24 @@ async function main() {
   const { getAppPool } = await import("../../src/lib/db/mssql");
 
   // DepartmentErpMap moved to the form database (migrations 099/100). Fast_Core
-  // now holds a synonym, and COL_LENGTH does not resolve synonyms — pointed at
-  // Fast_Core this check would fail on a table that is perfectly healthy.
+  // now holds a synonym, and COL_LENGTH does not resolve synonyms — measured
+  // 2026-08-21, it returns NULL for every column of the Fast_Core name — so
+  // pointed there this check would fail on a table that is perfectly healthy.
   const deptMapPool = await getAppPool("Rocks_Portal_Form");
-  const coreResult = await deptMapPool.request().query(`
+  const deptMapResult = await deptMapPool.request().query(`
     SELECT COL_LENGTH('dbo.DepartmentErpMap','DepartmentCode') AS departmentCode,
            COL_LENGTH('dbo.DepartmentErpMap','HrDepartmentId') AS hrDepartmentId
   `);
-  const coreRow = coreResult.recordset[0] as {
+  const deptMapRow = deptMapResult.recordset[0] as {
     departmentCode: number | null;
     hrDepartmentId: number | null;
   };
-  console.log("verify-046 Fast_Core result:", coreRow);
+  console.log("verify-046 Rocks_Portal_Form result:", deptMapRow);
 
-  if (coreRow.departmentCode == null) {
+  if (deptMapRow.departmentCode == null) {
     throw new Error("DepartmentErpMap.DepartmentCode does not exist");
   }
-  if (coreRow.hrDepartmentId != null) {
+  if (deptMapRow.hrDepartmentId != null) {
     throw new Error("DepartmentErpMap.HrDepartmentId still exists (rename did not happen)");
   }
 
