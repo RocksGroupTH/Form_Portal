@@ -254,9 +254,14 @@ async function main() {
   if (!(intel.recordset[0].intelCount > 0)) {
     problems.push("Fast_Data: no Intel_*/IntelMkt* tables found -- the move may have reached tables it should not have");
   }
+  // The IN list is derived from EXPECTED_ERP_SYNONYMS rather than a second
+  // hard-coded copy of the same five names -- these are fixed literals with
+  // no external input, so string-building the list is as safe as every other
+  // interpolated identifier in this file.
+  const erpInList = EXPECTED_ERP_SYNONYMS.map((n) => `'${n}'`).join(",");
   const erpSyn = await data.request().query(`
     SELECT name AS [name] FROM sys.synonyms
-    WHERE name IN ('ErpAccounts','ErpBankAccountCard','ErpDimensionValue','ErpGeneralJournalBatch','ErpSyncLog')
+    WHERE name IN (${erpInList})
     ORDER BY name;`);
   const gotErpNames = erpSyn.recordset.map((x: { name: string }) => x.name).join(",");
   const expectedErpNames = EXPECTED_ERP_SYNONYMS.slice().sort().join(",");
