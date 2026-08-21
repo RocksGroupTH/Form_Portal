@@ -37,10 +37,11 @@
 -- apply-sql stops with exit 1 and batch 3, the DBCC CHECKIDENT reseed to 2004,
 -- never runs. Nothing is destroyed by that, and the raised message says so.
 -- But if the form database is being stood up fresh, batch 1 will have created
--- an EMPTY table with its identity still at 1, which allocates ids straight
--- back into the 1004-1006 range the reseed exists to keep clear. Restore the
--- rows and reseed by hand; see CLAUDE.md, "Standing up a production form
--- database".
+-- an EMPTY table with its identity still at 1, which allocates ids from 1
+-- rather than from 2004 -- inside the whole 1..2004 span the source had
+-- already consumed, which is the range the reseed exists to keep clear.
+-- Restore the rows and reseed by hand; see CLAUDE.md, "Standing up a
+-- production form database".
 -- ---------------------------------------------------------------------------
 
 SET NOCOUNT ON;

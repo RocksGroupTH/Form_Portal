@@ -293,7 +293,7 @@ Two live Accounting forms share a generic request/approval backbone, plus a Busi
 
 `066_portal_form_team_member.sql` creates the table and copies the roster out of Fast_Core, so it goes *after* 059. It refuses to run unless the database is named `Rocks_Portal_Form…` **and** has `dbo.AccRequest`: the name test is what keeps a mistyped `--db` out of `Fast_Form`, which has `AccRequest` too and belongs to the live sibling. **066 is a copy, not a seed** — its `INSERT` reads `[Fast_Core].[dbo].[TeamMember]`, so that table must exist and still hold the roster when 066 runs. If it did not, batch 1 would commit the empty table and batch 2 roll back under `XACT_ABORT`, leaving no indexes, no FK and identity at 1; and once anyone logs in and is provisioned, the empty-table guard on the copy blocks the re-run permanently while new ids start at 1 — straight into the range 066 exists to keep clear. **Post-apply check:** `SELECT COUNT(*) FROM dbo.TeamMember` = 17 and `SELECT IDENT_CURRENT('dbo.TeamMember')` = 100000. It is the one migration that must **not** also be applied to `Rocks_Portal_Form_UAT` — identity lives in production only, and both pools reach it three-part. A new migration that changes an `Acc*` table does have to be applied to `Rocks_Portal_Form_UAT` as well, but the parallel-UAT batch is not that shape: **060, 062, 063 and 065 are Fast_Core only** (`FormEnvironment`, `UatTester`), and **061 and 064 are `Rocks_Portal_Form_UAT` only** — they refuse to run against a database whose name does not end in `_UAT`.
 
-**099 is the third, and it cannot repair a rebuilt database.** `Fast_Core.dbo.DepartmentErpMap` is a permanent synonym for `[Rocks_Portal_Form].[dbo].[DepartmentErpMap]` (migration 100), so the object resolves *into* whatever database is stood up — a form database without `DepartmentErpMap` leaves all three applications' department→ERP-dimension mapping pointing at nothing. `099_portal_form_department_erp_map.sql` is what creates it. **But 099 only works while `Fast_Core` still holds the original table**, which after 100 it never does again: its batch 2 raises on `OBJECT_ID('[Fast_Core].[dbo].[DepartmentErpMap]', 'U') IS NULL` — and `OBJECT_ID(…, 'U')` is NULL for a synonym (measured 2026-08-21 against the live `Fast_Core`: `'U'` → NULL, `'SN'` → 2114106572) — so `apply-sql` stops there and **batch 3, the `DBCC CHECKIDENT` reseed, never runs**. The result is an empty table with identity at 1, allocating ids straight back into the 1004-1006 range 099's reseed to 2004 exists to keep clear. Standing one up again means creating the table (batch 1 alone succeeds), restoring the rows from a backup with their ids, and reseeding by hand — or repointing the synonym.
+**099 is the third, and it cannot repair a rebuilt database.** `Fast_Core.dbo.DepartmentErpMap` is a permanent synonym for `[Rocks_Portal_Form].[dbo].[DepartmentErpMap]` (migration 100), so the object resolves *into* whatever database is stood up — a form database without `DepartmentErpMap` leaves all three applications' department→ERP-dimension mapping pointing at nothing. `099_portal_form_department_erp_map.sql` is what creates it. **But 099 only works while `Fast_Core` still holds the original table**, which after 100 it never does again: its batch 2 raises on `OBJECT_ID('[Fast_Core].[dbo].[DepartmentErpMap]', 'U') IS NULL` — and `OBJECT_ID(…, 'U')` is NULL for a synonym (measured 2026-08-21 against the live `Fast_Core`: `'U'` → NULL, `'SN'` → 2114106572) — so `apply-sql` stops there and **batch 3, the `DBCC CHECKIDENT` reseed, never runs**. The result is an empty table with identity at 1, allocating ids from 1 rather than from 2004 — inside the whole 1..2004 span the source had already consumed, which is the range the reseed exists to keep clear. Standing one up again means creating the table (batch 1 alone succeeds), restoring the rows from a backup with their ids, and reseeding by hand — or repointing the synonym.
 
 **Generic header (shared by all Accounting forms):** `AccFormMaster` (form catalog), `AccRequest` (shared request header), `AccApproval`, `AccActivityLog`, `AccSequence`, `AccEmailQueue`, `AccRequestFile`.
 
@@ -787,10 +787,28 @@ tables to two**:
   unequal despite identical data. 097 added the column to both databases, so the
   two tables now match. This was a side effect, not the migration's purpose —
   see "Per-form ERP configuration" above.
-- **Data — still open.** `Rocks_Portal_Form_UAT` holds an entire extra form,
-  **AP-3**, in `AccFormMaster` (production 6 rows, UAT 7), plus its five
-  `AccFormBrand` rows (AP-3 with KSI, PCMY, PCTH, ROCKS, UNO — production 18,
-  UAT 23). Production has neither.
+- **Data — the AP-3 gap has since closed, and something smaller took its
+  place.** As at 2026-08-20 `Rocks_Portal_Form_UAT` held an entire extra form,
+  **AP-3**, in `AccFormMaster` (production 6 rows, UAT 7) plus its five
+  `AccFormBrand` rows (production 18, UAT 23), and the open question was
+  whether AP-3 belonged in production. **Re-measured 2026-08-21: it does not
+  report any more.** `AccFormMaster` matches, and `AccFormBrand` is 23 rows on
+  both sides. Nothing in this repository closed it — no migration and no code
+  change touches either table — so it was closed outside the app, and the
+  earlier text is left above because a note that only ever states today's
+  reading cannot be told apart from one nobody has checked.
 
-What is left is data, not schema, and fixing it needs a decision that is not a
-developer's to make: whether AP-3 belongs in production.
+The single mismatch now is one row, and it is an id rather than a value:
+
+```
+AccFormBrand: 23 row(s) each side
+  Rocks_Portal_Form:     {"BrandCode":"KSI","FormCode":"AP-11","Id":1014,"IsActive":false,"SortOrder":3}
+  Rocks_Portal_Form_UAT: {"BrandCode":"KSI","FormCode":"AP-11","Id":1019,"IsActive":false,"SortOrder":3}
+```
+
+Every business column agrees; only `Id` differs, which is what a row inserted
+into each database separately looks like rather than dual-written through
+`writeBothPools`. It is inert — the row is `IsActive: false`, and nothing joins
+`AccFormBrand` by id — but it keeps the verifier red, which costs more than the
+row does. Closing it means deciding which id survives and rewriting the other
+side; that is a data decision, not a developer's.
