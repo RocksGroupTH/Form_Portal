@@ -21,7 +21,8 @@ We want a controlled way to pull the sent advance back into the Interface queue,
 **In scope**
 - Pull a `Sent` AP-2 advance back to the Interface "รอส่ง" queue (officer self-service, reason required).
 - Mark the superseded PV attempt as `Resent`; keep the ADV↔PV mapping across re-sends.
-- Re-send through the existing send path → new PV, new attempt.
+- **Re-select Payment Date before re-sending** so the new PV lands in the current/future payment cycle (validated against `getPaymentDates()`). The payment date is the officer-side input most likely to need changing on a re-send.
+- Re-send through the existing send path → new PV, new attempt (new `postingDate` = new Payment Date).
 - Report/queue visibility so Accounting can identify which PV to skip when posting in BC.
 
 **Out of scope (v1)**
@@ -38,6 +39,7 @@ We want a controlled way to pull the sent advance back into the Interface queue,
   - **"รอส่ง"** = not `Sent` (null / Failed).
   - **"ส่งแล้ว"** = `Sent`.
 - Send happens in `erp-queue/send` route → `sendAdvanceErpBatch(ids)` (`advance-erp-send.ts`).
+- **Payment Date** is stored on `AccAdvance.PaymentDate` (set at ACC_OFFICER approve) and is used directly as the journal `postingDate` in the send payload (`advance-erp-payload.ts`). Valid values come from `getPaymentDates()` (payment calendar). Changing `PaymentDate` before a (re-)send changes the resulting PV's posting date — no other wiring needed.
 
 ---
 
@@ -82,7 +84,8 @@ Sent advance (ADV26-xxxxx ↔ PV DocX), in "ส่งแล้ว" tab
    • UPDATE AccRequest: ErpInterfaceStatus=NULL, ErpDocumentNo=NULL
    • row leaves "ส่งแล้ว", reappears in "รอส่ง"
    • AccActivityLog entry ("erp-pullback", reason)
-   │  officer fixes interface (date/GL/bank/branch/batch) as needed
+   │  officer re-selects a new Payment Date (current/future cycle) on the "รอส่ง" row,
+   │    and fixes any interface config (GL/bank/branch/batch) as needed
    │  officer sends again via the normal queue send
    ▼
 [Re-send]  sendAdvanceErpBatch → CU 50263 → new PV DocY
@@ -101,8 +104,11 @@ Mapping result:  ADV26-xxxxx → [ DocX = Resent (⚠ do not post), DocY = Sent 
 - **DB / migration 101:** `AccAdvanceErpAttempt` + backfill (prod + UAT).
 - **`src/lib/adv/advance-erp-attempt-service.ts`** (new): `recordSentAttempt(requestId, docNo, env, company, userId)` and `markResent(requestId, reason, userId)`; `listAttempts(requestId)` for report.
 - **`src/lib/adv/advance-erp-send.ts`:** on successful send, call `recordSentAttempt(...)` (alongside `markInterfaceStatus('Sent', …)`).
-- **`src/app/api/request/advance/erp-queue/pullback/route.ts`** (new): POST `{ id, reason }` — auth = ACC_OFFICER; guard `ErpInterfaceStatus='Sent'`; runs `markResent` + resets request; `writeBothPools` (prod+UAT) per env routing; logs activity.
-- **`src/features/advance/components/AdvanceErpQueue.tsx`:** in the "ส่งแล้ว" tab, per-row "ดึงกลับเพื่อยิงใหม่" action → reason dialog → calls pullback route → refresh; show attempt chain (DocX=Resent, DocY=Sent) inline / expander.
+- **`src/app/api/request/advance/erp-queue/pullback/route.ts`** (new): POST `{ id, reason }` — auth = ACC_OFFICER; guard `ErpInterfaceStatus='Sent'`; runs `markResent` + resets request; logs activity.
+- **`src/app/api/request/advance/erp-queue/payment-date/route.ts`** (new): POST `{ id, paymentDate }` — set `AccAdvance.PaymentDate` for an `Approved` + not-`Sent` request; validate against `getPaymentDates()` (400 otherwise). Reused by the "รอส่ง" row picker.
+- **`src/features/advance/components/AdvanceErpQueue.tsx`:**
+  - "ส่งแล้ว" tab: per-row "ดึงกลับเพื่อยิงใหม่" action → reason dialog → pullback route → refresh; show attempt chain (DocX=Resent, DocY=Sent) inline / expander.
+  - "รอส่ง" tab: per-row **Payment Date picker** (options from `getPaymentDates()`) → payment-date route; shown so the officer can re-target the cycle before re-sending (especially after a pull-back).
 - **`advance-queue-service.ts` + Export Excel:** include Resent attempts so Accounting can see which PV to skip.
 
 No AL / BC changes.
@@ -127,10 +133,12 @@ No AL / BC changes.
 - `markResent` flips the current `Sent` attempt to `Resent` (+reason) and resets `AccRequest` interface fields.
 - Pull-back route rejects a non-`Sent` request and an empty reason.
 
+- `payment-date` route sets `AccAdvance.PaymentDate` for an Approved+not-Sent request; rejects a date outside `getPaymentDates()`.
+
 **E2E (Playwright, UAT mode)**
 1. Send an approved AP-2 advance → `ErpInterfaceStatus='Sent'`, attempt#1 `Sent` (verify DB).
 2. In "ส่งแล้ว" tab, "ดึงกลับเพื่อยิงใหม่" + reason → row moves to "รอส่ง"; attempt#1 = `Resent` with reason (verify DB).
-3. Re-send → new PV DocY; attempt#2 = `Sent`; mapping shows ADV↔DocY, DocX=`Resent` (verify DB + Export Excel row).
+3. On the "รอส่ง" row, change Payment Date to a later cycle → re-send → new PV DocY with the **new posting date**; attempt#2 = `Sent`; mapping shows ADV↔DocY, DocX=`Resent` (verify DB + Export Excel row).
 
 ---
 
