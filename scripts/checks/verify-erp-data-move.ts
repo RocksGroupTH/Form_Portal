@@ -30,8 +30,9 @@
  *     still a table
  *
  * Deliberately NOT checked: a literal row count or IDENT_CURRENT value.
- * These five tables are written by three applications on a sync schedule, so
- * a hardcoded count goes stale the moment any one of them runs a sync --
+ * These five tables are written on a sync schedule by two applications -- this
+ * one and Rocks Fast; ACC Portal only reads them -- so a hardcoded count goes
+ * stale the moment either of those runs a sync --
  * measured drift during Task 1 found three of the five already past their
  * "as measured" snapshot within the same day it was taken. Worse, after
  * migration 102 there is no independent source left to check a count
@@ -260,9 +261,10 @@ async function main() {
     }
   }
 
-  // 4. a WRITE through a synonym succeeds. This is the siblings' cross-database
-  //    permission, which would otherwise be discovered the next time either app
-  //    ran a sync. MERGE, because that is the shape all three actually use.
+  // 4. a WRITE through a synonym succeeds. This is Rocks Fast's cross-database
+  //    permission, which would otherwise be discovered the next time it ran a
+  //    sync. MERGE, because that is the shape its sync actually uses. (ACC
+  //    Portal only reads these rows, so it needs no write path proven.)
   //    Rolled back, so no data moves.
   const tx = data.transaction();
   await tx.begin();

@@ -77,7 +77,7 @@ case.
 The code halves, run in the repository root the same day:
 
 ```
-$ grep -nE 'ErpAccounts|ErpDimensionValue|ErpGeneralJournalBatch|ErpBankAccountCard|ErpSyncLog' \n    src/lib/acc/dual-write.ts scripts/checks/verify-master-alignment.ts
+$ grep -nE 'ErpAccounts|ErpDimensionValue|ErpGeneralJournalBatch|ErpBankAccountCard|ErpSyncLog' src/lib/acc/dual-write.ts scripts/checks/verify-master-alignment.ts
 $ echo $?
 1
 ```
