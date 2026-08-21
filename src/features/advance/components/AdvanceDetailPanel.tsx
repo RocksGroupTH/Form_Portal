@@ -37,6 +37,18 @@ export function AdvanceDetailPanel({ requestId, onClose }: { requestId: number |
   const router = useRouter();
   const [data, setData] = useState<AdvanceRequest | null>(null);
   const [loading, setLoading] = useState(false);
+  const [attempts, setAttempts] = useState<{ attemptNo: number; erpDocumentNo: string | null; status: string }[]>([]);
+
+  // ADV↔PV send history (only meaningful once a row has been pulled back and re-sent).
+  useEffect(() => {
+    if (requestId == null) { setAttempts([]); return; }
+    let cancelled = false;
+    fetch(`/api/request/advance/requests/${requestId}/attempts`)
+      .then((r) => r.json())
+      .then((j: { ok?: boolean; data?: { attemptNo: number; erpDocumentNo: string | null; status: string }[] }) => { if (!cancelled) setAttempts(j.data ?? []); })
+      .catch(() => { if (!cancelled) setAttempts([]); });
+    return () => { cancelled = true; };
+  }, [requestId]);
 
   useEffect(() => {
     if (requestId == null) { setData(null); return; }
@@ -217,6 +229,25 @@ export function AdvanceDetailPanel({ requestId, onClose }: { requestId: number |
                   </div>
                 )}
               </div>
+
+              {/* ERP send history (ADV↔PV mapping) — shown only after a re-send */}
+              {attempts.length > 1 && (
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wide mb-1.5" style={{ color: "var(--text-faint)" }}>
+                    ประวัติการส่ง ERP
+                  </p>
+                  <div className="flex flex-col gap-1">
+                    {attempts.map((a) => (
+                      <div key={a.attemptNo} className="flex items-center gap-2 text-[12px]">
+                        <span className="font-mono" style={{ color: "var(--text-primary)" }}>{a.erpDocumentNo ?? "—"}</span>
+                        <span className="font-semibold" style={{ color: a.status === "Resent" ? "var(--color-warning)" : "var(--color-success, #16a34a)" }}>
+                          {a.status === "Resent" ? "Resent (อย่า post)" : "Sent (ปัจจุบัน)"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>

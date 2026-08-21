@@ -79,6 +79,9 @@ export function AdvanceErpQueue() {
   const [frozenIds, setFrozenIds] = useState<number[]>([]);
   // Payment-date options for the per-row "รอส่ง" picker (loaded once).
   const [paymentDateOpts, setPaymentDateOpts] = useState<string[]>([]);
+  // Pull-back ("ดึงกลับเพื่อยิงใหม่") confirm state.
+  const [pullbackId, setPullbackId] = useState<number | null>(null);
+  const [pullbackBusy, setPullbackBusy] = useState(false);
 
   useEffect(() => {
     fetch("/api/request/advance/payment-dates")
@@ -189,6 +192,25 @@ export function AdvanceErpQueue() {
     if (!j.ok) { toast.error(j.error ?? "แก้วันจ่ายไม่สำเร็จ"); return; }
     toast.success("อัปเดตวันจ่ายแล้ว");
     load();
+  }
+
+  async function doPullback() {
+    if (pullbackId == null) return;
+    setPullbackBusy(true);
+    try {
+      const res = await fetch("/api/request/advance/erp-queue/pullback", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: pullbackId }),
+      });
+      const j = (await res.json()) as { ok: boolean; error?: string };
+      if (!j.ok) { toast.error(j.error ?? "ดึงกลับไม่สำเร็จ"); return; }
+      toast.success("ดึงกลับแล้ว — ย้ายไปแท็บ “รอส่ง”");
+      setPullbackId(null);
+      load();
+      setTab("pending");
+    } finally {
+      setPullbackBusy(false);
+    }
   }
 
   async function doSend() {
@@ -384,7 +406,7 @@ export function AdvanceErpQueue() {
               <table className="w-full text-[12px] border-collapse">
                 <thead>
                   <tr style={{ background: "var(--bg-card-alt)" }}>
-                    {["เลขที่", "Company", "ผู้รับเงิน", "วันจ่าย", "จำนวน", "External Doc.", "Doc No. (ERP)", "วันที่ส่ง", "สถานะ"].map((h) => (
+                    {["เลขที่", "Company", "ผู้รับเงิน", "วันจ่าย", "จำนวน", "External Doc.", "Doc No. (ERP)", "วันที่ส่ง", "สถานะ", "การจัดการ"].map((h) => (
                       <th key={h} className="px-2.5 py-2 text-left font-bold whitespace-nowrap"
                         style={{ color: "var(--text-faint)", borderBottom: "1px solid var(--border-card)" }}>{h}</th>
                     ))}
@@ -405,6 +427,16 @@ export function AdvanceErpQueue() {
                       <td className="px-2.5 py-2 whitespace-nowrap font-mono font-semibold" style={{ color: r.erpDocumentNo ? "var(--text-secondary)" : "var(--text-faint)" }}>{r.erpDocumentNo ?? "—"}</td>
                       <td className="px-2.5 py-2 whitespace-nowrap" style={{ color: "var(--text-muted)" }}>{fmtDateTime(r.erpInterfaceSentAt)}</td>
                       <td className="px-2.5 py-2 whitespace-nowrap"><SentBadge status={r.erpInterfaceStatus} error={r.erpInterfaceError} /></td>
+                      <td className="px-2.5 py-2 whitespace-nowrap">
+                        {r.erpInterfaceStatus === "Sent" && (
+                          <button type="button" onClick={() => setPullbackId(r.id)}
+                            className="text-[12px] font-semibold px-2 py-1 rounded-lg cursor-pointer border-none"
+                            style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}
+                            title="ดึงกลับเข้าคิวเพื่อยิงใหม่">
+                            ดึงกลับเพื่อยิงใหม่
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -484,6 +516,20 @@ export function AdvanceErpQueue() {
             <Button variant="secondary" onClick={() => setConfirmOpen(false)} disabled={busy}>ยกเลิก</Button>
             <Button variant="primary" icon={<Upload size={15} />} onClick={doSend} loading={busy}>ยืนยันส่ง</Button>
           </div>
+        </div>
+      </Dialog>
+
+      {/* pull-back confirm popup */}
+      <Dialog
+        open={pullbackId != null}
+        onOpenChange={(o) => { if (!pullbackBusy && !o) setPullbackId(null); }}
+        title="ดึงกลับเพื่อยิงใหม่?"
+        description="ใบเดิม (PV) จะถูกทำเครื่องหมายเป็น Resent และรายการจะกลับไปที่คิว “รอส่ง” เพื่อแก้วันจ่าย/ข้อมูลแล้วยิงใหม่ — บัญชีต้องไม่ post ใบ PV เดิมใน BC"
+        contentClassName="max-w-md"
+      >
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="secondary" onClick={() => setPullbackId(null)} disabled={pullbackBusy}>ยกเลิก</Button>
+          <Button variant="primary" onClick={doPullback} loading={pullbackBusy}>ยืนยันดึงกลับ</Button>
         </div>
       </Dialog>
     </div>
