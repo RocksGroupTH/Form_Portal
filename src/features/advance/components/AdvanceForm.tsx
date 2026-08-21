@@ -78,6 +78,9 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [ready, setReady] = useState(false);
+  // HR-dependent cards (requester + Head Accounting) load separately so a slow
+  // Graph photo fetch never holds the whole form (same approach as AP-3).
+  const [hrLoading, setHrLoading] = useState(true);
 
   // Tracked in state so an in-form auto-save (e.g. before attaching a file) makes
   // the new id available immediately, without waiting for a parent reload.
@@ -115,17 +118,28 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
 
   useEffect(() => {
     let cancelled = false;
+    // Essential options gate the form (fast config: brand chips + banks).
     Promise.all([
       fetch("/api/request/advance/options/brands").then((r) => r.json()),
       fetch("/api/request/advance/options/banks").then((r) => r.json()),
+    ])
+      .then(([b, bk]) => {
+        if (cancelled) return;
+        if (b.ok) setBrands(b.data);
+        if (bk.ok) setBanks(bk.data);
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setReady(true); });
+
+    // HR-dependent cards (requester + Head Accounting) — best-effort, NOT gated,
+    // so the form appears immediately and the cards show a skeleton until this lands.
+    Promise.all([
       fetch("/api/me/employee").then((r) => r.json()),
       fetch("/api/request/advance/requesters").then((r) => r.json()),
       fetch("/api/request/advance/first-approvers").then((r) => r.json()),
     ])
-      .then(([b, bk, m, rq, fa]) => {
+      .then(([m, rq, fa]) => {
         if (cancelled) return;
-        if (b.ok) setBrands(b.data);
-        if (bk.ok) setBanks(bk.data);
         if (fa?.ok) setHeadApprovers(fa.data ?? []);
         // AP-1 logic: requester is the logged-in user, resolved from HR.
         const e = m?.data?.employee;
@@ -145,7 +159,7 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
         }
       })
       .catch(() => {})
-      .finally(() => { if (!cancelled) setReady(true); });
+      .finally(() => { if (!cancelled) setHrLoading(false); });
     return () => { cancelled = true; };
   }, [initial]);
 
@@ -505,6 +519,7 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
           {/* ผู้ขอเบิก */}
           <div className="flex flex-col gap-2.5 min-w-0">
+            {hrLoading && !reqName ? <PersonSkeleton /> : (
             <div className="flex items-center gap-3 min-w-0">
               <div className="shrink-0 rounded-2xl overflow-hidden" style={{ boxShadow: "0 0 0 2px var(--nav-active-bg)" }}>
                 <Avatar name={reqName || "?"} size={48} photo={reqPhoto ?? undefined} color="var(--nav-active-text)" />
@@ -528,6 +543,7 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
                 )}
               </div>
             </div>
+            )}
             {requesterStaffId != null && (
               <span className="text-[12px] px-3 py-2 rounded-lg" style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}>
                 กำลังกรอกแทน {reqName || `#${requesterStaffId}`} — คำขอจะอยู่ใน "คำขอของฉัน" ของคุณ และเข้าอนุมัติที่ Head Accounting
@@ -541,7 +557,9 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
             <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
               ผู้อนุมัติขั้นแรก · Head Accounting
             </span>
-            {headApprovers.length > 0 ? (
+            {hrLoading && headApprovers.length === 0 ? (
+              <PersonSkeleton />
+            ) : headApprovers.length > 0 ? (
               headApprovers.map((a) => (
                 <div key={a.email} className="flex items-center gap-3 min-w-0">
                   <div className="shrink-0 rounded-2xl overflow-hidden" style={{ boxShadow: "0 0 0 2px var(--nav-active-bg)" }}>
@@ -874,6 +892,21 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
           </div>
         </div>
       </Dialog>
+    </div>
+  );
+}
+
+/** Placeholder for a requester/approver card while the HR lookup is in flight. */
+function PersonSkeleton() {
+  const bar = { background: "var(--bg-badge)" } as const;
+  return (
+    <div className="flex items-center gap-3 min-w-0 animate-pulse">
+      <div className="shrink-0 rounded-2xl" style={{ width: 48, height: 48, ...bar }} />
+      <div className="flex-1 min-w-0 flex flex-col gap-1.5">
+        <div className="h-3.5 rounded" style={{ width: "60%", ...bar }} />
+        <div className="h-3 rounded" style={{ width: "45%", ...bar }} />
+        <div className="h-3 rounded" style={{ width: "70%", ...bar }} />
+      </div>
     </div>
   );
 }
