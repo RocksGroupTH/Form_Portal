@@ -70,6 +70,13 @@ BEGIN
 
   DECLARE @problem NVARCHAR(400) = NULL;
 
+  -- TABLOCKX is taken on the Fast_Data side only, not on the Rocks_ERP_Data
+  -- side below -- deliberately, not an oversight. Fast_Data is the side that
+  -- can move: ACC Portal, RocksFast and this app all write it continuously,
+  -- so the lock is what stops one of them inserting between this count and
+  -- the DROP. Nothing writes Rocks_ERP_Data at all until Task 3 repoints this
+  -- app's code at it, and the two siblings never name that database, so
+  -- there is nothing on that side for a lock to guard against yet.
   IF @problem IS NULL AND (SELECT COUNT(*) FROM [dbo].[ErpAccounts] WITH (TABLOCKX))
                        <> (SELECT COUNT(*) FROM [Rocks_ERP_Data].[dbo].[ErpAccounts])
     SET @problem = 'ErpAccounts row counts differ';

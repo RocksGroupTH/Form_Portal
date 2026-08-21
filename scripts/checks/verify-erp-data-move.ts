@@ -5,15 +5,27 @@
  *
  *   - each of the five tables (ErpAccounts, ErpDimensionValue,
  *     ErpGeneralJournalBatch, ErpBankAccountCard, ErpSyncLog) is a table in
- *     Rocks_ERP_Data, holds the expected row count, has its identity reseeded
- *     to the expected value, and carries the expected index names
+ *     Rocks_ERP_Data, holds more than zero rows, has an identity that has
+ *     kept pace with its own row count, and carries the expected index names
  *   - Fast_Data holds a synonym of the same name for each, pointing at the
  *     Rocks_ERP_Data copy
- *   - a read through the synonym sees the same rows
+ *   - a direct count in Rocks_ERP_Data and a count read through the Fast_Data
+ *     synonym agree, both taken at run time
  *   - a write through the synonym succeeds, in the siblings' own MERGE shape
  *     (rolled back, so no data moves)
  *   - Fast_Data.dbo.TravelProvince -- a table the move must not touch -- is
  *     still a table
+ *
+ * Deliberately NOT checked: a literal row count or IDENT_CURRENT value.
+ * These five tables are written by three applications on a sync schedule, so
+ * a hardcoded count goes stale the moment any one of them runs a sync --
+ * measured drift during Task 1 found three of the five already past their
+ * "as measured" snapshot within the same day it was taken. Worse, after
+ * migration 102 there is no independent source left to check a count
+ * against: Fast_Data.dbo.ErpAccounts (and its four siblings) IS the synonym,
+ * so a "direct" read in Rocks_ERP_Data and a read "through the synonym" in
+ * Fast_Data are the only two vantage points there are, and comparing them is
+ * a tautology about routing, not a fact about the data -- see part 3 below.
  *
  * Read-only except for the rolled-back write probe in part 4.
  *
@@ -48,16 +60,20 @@ function loadDotEnvLocal() {
   }
 }
 
+// Index names are structural -- unlike row counts they do not drift with a
+// sync run, and they are the part of this gate that would actually catch a
+// botched recreation (a missing INCLUDE, a UQ_* rebuilt as a plain index,
+// and so on). No rows/ident fields here on purpose -- see the header.
 const EXPECTED = [
-  { table: "ErpAccounts", rows: 4793, ident: 4793,
+  { table: "ErpAccounts",
     indexes: ["IX_ErpAccounts_BrandCategory", "PK_ErpAccounts", "UQ_ErpAccounts"] },
-  { table: "ErpDimensionValue", rows: 806, ident: 806,
+  { table: "ErpDimensionValue",
     indexes: ["IX_ErpDimensionValue_BrandDim", "PK_ErpDimensionValue", "UQ_ErpDimensionValue"] },
-  { table: "ErpGeneralJournalBatch", rows: 174, ident: 174,
+  { table: "ErpGeneralJournalBatch",
     indexes: ["IX_ErpGeneralJournalBatch_Brand", "PK_ErpGeneralJournalBatch", "UQ_ErpGeneralJournalBatch"] },
-  { table: "ErpBankAccountCard", rows: 64, ident: 64,
+  { table: "ErpBankAccountCard",
     indexes: ["IX_ErpBankAccountCard_Brand", "PK_ErpBankAccountCard", "UQ_ErpBankAccountCard"] },
-  { table: "ErpSyncLog", rows: 21, ident: 21,
+  { table: "ErpSyncLog",
     indexes: ["IX_ErpSyncLog_BrandStarted", "PK_ErpSyncLog"] },
 ];
 
@@ -69,17 +85,20 @@ async function main() {
   const problems: string[] = [];
 
   for (const e of EXPECTED) {
-    // 1. the table, its rows, its identity
+    // 1. the table exists, holds more than zero rows, and its identity has
+    //    kept pace with them -- no literal count, see the header.
     const r = await erp.request().query(`
       SELECT OBJECT_ID('dbo.${e.table}', 'U') AS [tableId],
              (SELECT COUNT(*) FROM [dbo].[${e.table}]) AS [rowCnt],
              IDENT_CURRENT('dbo.${e.table}') AS [identCur];`);
     const row = r.recordset[0];
     if (row.tableId === null) problems.push(`${e.table}: not a table in Rocks_ERP_Data`);
-    if (row.rowCnt !== e.rows) problems.push(`${e.table}: ${row.rowCnt} rows, expected ${e.rows}`);
-    if (Number(row.identCur) !== e.ident) problems.push(`${e.table}: IDENT_CURRENT ${row.identCur}, expected ${e.ident}`);
+    if (!(row.rowCnt > 0)) problems.push(`${e.table}: holds ${row.rowCnt} rows, expected more than zero`);
+    if (Number(row.identCur) < row.rowCnt) {
+      problems.push(`${e.table}: IDENT_CURRENT ${row.identCur} is behind its own row count ${row.rowCnt}`);
+    }
 
-    // the indexes, by name
+    // the indexes, by name -- structural, checked against a literal on purpose
     const idx = await erp.request().query(`
       SELECT name FROM sys.indexes
       WHERE object_id = OBJECT_ID('dbo.${e.table}') AND type > 0 ORDER BY name;`);
@@ -98,10 +117,15 @@ async function main() {
       }
     }
 
-    // 3. a read through the synonym sees the same rows
+    // 3. the direct count (Rocks_ERP_Data) and the count read through the
+    //    Fast_Data synonym agree, both taken right now. This is a tautology
+    //    about routing, not a fact about the data -- Fast_Data.dbo.${e.table}
+    //    IS the synonym, so "direct" and "through the synonym" hit the same
+    //    object. What it actually proves is that the synonym resolves and
+    //    answers a query at all, which is worth catching on its own.
     const thru = await data.request().query(`SELECT COUNT(*) AS [n] FROM [dbo].[${e.table}];`);
-    if (thru.recordset[0].n !== e.rows) {
-      problems.push(`${e.table}: read through the synonym returned ${thru.recordset[0].n}, expected ${e.rows}`);
+    if (thru.recordset[0].n !== row.rowCnt) {
+      problems.push(`${e.table}: read through the synonym returned ${thru.recordset[0].n}, direct count is ${row.rowCnt}`);
     }
   }
 
