@@ -16,6 +16,11 @@ const PRODUCTION_HOSTS = [
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   allowedDevOrigins: PRODUCTION_HOSTS,
+  // tesseract.js loads its worker/wasm at runtime from node_modules — keep it out
+  // of the server bundle so those paths resolve (free OCR for AP-3 slip verify).
+  // pdf-to-img (pdfjs-dist + @napi-rs/canvas native) rasterises PDFs for OCR —
+  // must stay external so the wasm/native binaries resolve at runtime.
+  serverExternalPackages: ["tesseract.js", "pdf-to-img", "pdfjs-dist", "@napi-rs/canvas", "@anthropic-ai/sdk"],
   experimental: {
     serverActions: {
       bodySizeLimit: "10mb",

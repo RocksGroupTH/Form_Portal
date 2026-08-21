@@ -13,7 +13,7 @@ import {
 import { useHomeData } from "@/features/home/useHomeData";
 import { useFormEnvironments } from "@/lib/hooks/useFormEnvironments";
 import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
-import { Search, Route, Luggage, ClipboardCheck, FilePen, ArrowRight } from "lucide-react";
+import { Search, Route, Luggage, ClipboardCheck, FilePen, ReceiptText, ArrowRight } from "lucide-react";
 
 const ACCOUNTING_FORMS = [
   {
@@ -29,6 +29,13 @@ const ACCOUNTING_FORMS = [
     desc: "Advance · เงินทดรองจ่าย",
     href: "/request/advance",
     Icon: FilePen,
+  },
+  {
+    code: "AP-3",
+    name: "เคลียร์คืนเงินทดรองจ่าย",
+    desc: "Clear Advance · เคลียร์เงินทดรอง",
+    href: "/request/clear-advance",
+    Icon: ReceiptText,
   },
   {
     code: "AP-17",

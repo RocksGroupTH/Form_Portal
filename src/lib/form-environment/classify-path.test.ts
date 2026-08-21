@@ -30,6 +30,17 @@ test("AP-2 (advance) own routes, including its BC-posting queue", () => {
   assert.equal(classifyPath("/request/advancesomething"), null);
 });
 
+test("AP-3 (clear advance) own routes", () => {
+  assert.equal(classifyPath("/request/clear-advance"), "AP-3");
+  assert.equal(classifyPath("/request/clear-advance/5"), "AP-3");
+  assert.equal(classifyPath("/api/request/clear-advance"), "AP-3");
+  assert.equal(classifyPath("/api/request/clear-advance/requests/5"), "AP-3");
+  assert.equal(classifyPath("/api/request/clear-advance/pending-advances"), "AP-3");
+  // boundary: must not match mid-segment, and must not collide with AP-2's prefix.
+  assert.equal(classifyPath("/request/clear-advancesomething"), null);
+  assert.equal(classifyPath("/request/advance"), "AP-2");
+});
+
 test("AP-1 routes", () => {
   assert.equal(classifyPath("/api/request/accounting/requests/5"), "AP-1");
   assert.equal(classifyPath("/api/request/accounting/requests/drafts"), "AP-1");
