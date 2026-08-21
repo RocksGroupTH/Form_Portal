@@ -26,8 +26,15 @@
  *     of a day-scale one
  *   - a write through the synonym succeeds, in the siblings' own MERGE shape
  *     (rolled back, so no data moves)
- *   - Fast_Data.dbo.TravelProvince -- a table the move must not touch -- is
- *     still a table
+ *   - Fast_Data.dbo.TravelProvince -- a table this move must not touch -- is
+ *     still reachable. It is no longer a base table: migration 105
+ *     (2026-08-21, a separate and later move) converted it into a synonym
+ *     pointing at Rocks_Portal_Form, so asserting "is a table" here would be
+ *     permanently and uninformatively red rather than catching a real fault.
+ *     This move's blast radius is now proven by the Intel_* / IntelMkt*
+ *     tables above plus this synonym specifically -- not "exists in any form",
+ *     which would also pass if something had dropped it and left an
+ *     unrelated view or table of the same name behind
  *
  * Deliberately NOT checked: a literal row count or IDENT_CURRENT value.
  * These five tables are written on a sync schedule by two applications -- this
@@ -282,9 +289,16 @@ async function main() {
   }
 
   // 5. Fast_Data still holds what it is supposed to hold. The move must not
-  //    have reached anything outside its five.
-  const tp = await data.request().query(`SELECT OBJECT_ID('dbo.TravelProvince', 'U') AS [oid];`);
-  if (tp.recordset[0].oid === null) problems.push("Fast_Data.dbo.TravelProvince is no longer a table");
+  //    have reached anything outside its five. TravelProvince itself moved
+  //    out from under this assertion by a separate, later, deliberate
+  //    migration (104/105, 2026-08-21): Fast_Data.dbo.TravelProvince is no
+  //    longer a base table, so checking OBJECT_ID(..., 'U') here would be
+  //    permanently red by design, not a signal of anything wrong. What this
+  //    move must not have disturbed is now the synonym 105 left behind --
+  //    checked by type ('SN'), not an unqualified OBJECT_ID, so a same-named
+  //    view or table left by some unrelated accident would still fail this.
+  const tp = await data.request().query(`SELECT OBJECT_ID('dbo.TravelProvince', 'SN') AS [oid];`);
+  if (tp.recordset[0].oid === null) problems.push("Fast_Data.dbo.TravelProvince is not reachable as a synonym (expected one pointing at Rocks_Portal_Form after migration 105)");
 
   if (problems.length) {
     console.error("FAIL");
