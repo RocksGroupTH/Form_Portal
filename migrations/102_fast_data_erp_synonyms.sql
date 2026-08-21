@@ -4,21 +4,28 @@
 --   npm run apply-sql -- --db Fast_Data --file migrations/102_fast_data_erp_synonyms.sql
 --
 -- ---------------------------------------------------------------------------
--- THIS MIGRATION DESTROYS THE ONLY COPY OF 5,858 ROWS IF 101 HAS NOT RUN.
+-- THIS MIGRATION DESTROYS THE ONLY COPY OF THE DATA IF 101 HAS NOT RUN --
+-- 5,858 rows as at 2026-08-21, and larger by the time this actually runs:
+-- three applications sync into these tables continuously, so do not chase
+-- this number with a fresher one the next time this file is read.
 --
--- Everything before the DROPs is the guard. Per table, inside the transaction
--- that does the dropping: the target must exist as a table, the row counts must
--- match, and the contents must match. The source counts are taken under
--- TABLOCKX, which is held to the end of the transaction, so no sibling can
--- insert between the count and the drop.
+-- Everything before the DROPs is the guard, and it runs in two stages. The
+-- EXISTENCE checks -- that Fast_Data still holds all five as tables, not
+-- already synonyms, and that Rocks_ERP_Data holds all five as tables -- run
+-- first, as early-exit branches before BEGIN TRANSACTION even opens. Only
+-- once those hold does the transaction that does the dropping begin, and
+-- inside it: the row counts must match and the contents must match. The
+-- source counts are taken under TABLOCKX, which is held to the end of the
+-- transaction, so no sibling can insert between the count and the drop.
 --
 -- WHAT THE CONTENT CHECK DOES AND DOES NOT PROVE. Every one of the five has an
 -- nvarchar(MAX) column -- RawJson on four, ErrorMessage on ErpSyncLog. Dragging
--- 4,793 JSON payloads through a set comparison while holding an exclusive lock
--- on tables three applications write is the wrong trade, so the EXCEPT compares
--- every NON-LOB column plus DATALENGTH of the LOB. A payload edited to exactly
--- the same byte length would pass. That is a deliberate weakening and it is
--- stated here rather than described as a whole-row check.
+-- thousands of JSON payloads (4,793 as at 2026-08-21, and growing) through a
+-- set comparison while holding an exclusive lock on tables three applications
+-- write is the wrong trade, so the EXCEPT compares every NON-LOB column plus
+-- DATALENGTH of the LOB. A payload edited to exactly the same byte length
+-- would pass. That is a deliberate weakening and it is stated here rather
+-- than described as a whole-row check.
 --
 -- Why a synonym rather than editing the siblings: all three applications name
 -- these tables two-part, [dbo].[ErpAccounts] and so on, on a pool opened
@@ -63,8 +70,13 @@ BEGIN
   -- A clean server-side error the server rolls back, rather than a client
   -- attention at node-mssql's 15s default requestTimeout -- an attention
   -- cancels the statement without rolling the transaction back, and
-  -- XACT_ABORT does not cover it.
-  SET LOCK_TIMEOUT 5000;
+  -- XACT_ABORT does not cover it. LOCK_TIMEOUT is per STATEMENT, and this
+  -- transaction issues five separately-lockable TABLOCKX counts below, so
+  -- five contended waits at the old 5000 ms could sum past the 15s per-batch
+  -- requestTimeout on their own, producing the exact client attention this
+  -- is meant to prevent. 2000 ms keeps five worst-case waits (10s) under that
+  -- budget with room for the rest of the batch.
+  SET LOCK_TIMEOUT 2000;
   SET XACT_ABORT ON;
   BEGIN TRANSACTION;
 
@@ -147,7 +159,7 @@ BEGIN
   BEGIN
     ROLLBACK TRANSACTION;
     RAISERROR (
-      'Migration 102 refuses to drop: %s. The likeliest cause is a sync run between 101 and 102. Re-run 101 (its batch 3 tops up by id), then retry this.',
+      'Migration 102 refuses to drop: %s. The likeliest cause is a sync run between 101 and 102. Re-run 101 (its batch 3 is a MERGE that reconciles both new and changed rows by id), then retry this.',
       16, 1, @problem
     );
   END

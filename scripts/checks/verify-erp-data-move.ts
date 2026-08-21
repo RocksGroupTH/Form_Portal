@@ -6,7 +6,11 @@
  *   - each of the five tables (ErpAccounts, ErpDimensionValue,
  *     ErpGeneralJournalBatch, ErpBankAccountCard, ErpSyncLog) is a table in
  *     Rocks_ERP_Data, holds more than zero rows, has an identity that has
- *     kept pace with its own row count, and carries the expected index names
+ *     kept pace with the highest id actually in the table (IDENT_CURRENT >=
+ *     MAX(Id), not the row count, which under-estimates MAX(Id) the moment
+ *     ids have a gap), and carries the expected indexes -- name, whether each
+ *     is a unique CONSTRAINT (as migration 101 creates the four UQ_*, versus
+ *     a plain index for PK_* / IX_*), and key column order
  *   - Fast_Data holds a synonym of the same name for each, pointing at the
  *     Rocks_ERP_Data copy
  *   - a direct count in Rocks_ERP_Data and a count read through the Fast_Data
@@ -60,21 +64,40 @@ function loadDotEnvLocal() {
   }
 }
 
-// Index names are structural -- unlike row counts they do not drift with a
-// sync run, and they are the part of this gate that would actually catch a
-// botched recreation (a missing INCLUDE, a UQ_* rebuilt as a plain index,
-// and so on). No rows/ident fields here on purpose -- see the header.
+// Index SHAPE is structural -- unlike row counts it does not drift with a
+// sync run, and it is the part of this gate that would actually catch a
+// botched recreation. Checked per index below: the name (as a set, via the
+// name-list comparison), whether it is a unique CONSTRAINT rather than a
+// plain unique index -- name alone can't tell UQ_ErpAccounts-as-constraint
+// apart from UQ_ErpAccounts-as-plain-index, and DROP INDEX against the
+// former raises Msg 3723, which is what caught migration 097 -- and the key
+// column order. INCLUDE columns are NOT checked here. No rows/ident fields
+// on this constant on purpose -- see the header.
 const EXPECTED = [
-  { table: "ErpAccounts",
-    indexes: ["IX_ErpAccounts_BrandCategory", "PK_ErpAccounts", "UQ_ErpAccounts"] },
-  { table: "ErpDimensionValue",
-    indexes: ["IX_ErpDimensionValue_BrandDim", "PK_ErpDimensionValue", "UQ_ErpDimensionValue"] },
-  { table: "ErpGeneralJournalBatch",
-    indexes: ["IX_ErpGeneralJournalBatch_Brand", "PK_ErpGeneralJournalBatch", "UQ_ErpGeneralJournalBatch"] },
-  { table: "ErpBankAccountCard",
-    indexes: ["IX_ErpBankAccountCard_Brand", "PK_ErpBankAccountCard", "UQ_ErpBankAccountCard"] },
-  { table: "ErpSyncLog",
-    indexes: ["IX_ErpSyncLog_BrandStarted", "PK_ErpSyncLog"] },
+  { table: "ErpAccounts", indexes: [
+      { name: "IX_ErpAccounts_BrandCategory", uniqueConstraint: false, keyCols: ["BrandCode", "AccountCategory"] },
+      { name: "PK_ErpAccounts", uniqueConstraint: false, keyCols: ["Id"] },
+      { name: "UQ_ErpAccounts", uniqueConstraint: true, keyCols: ["BrandCode", "AccountCategory", "AccountNo"] },
+    ] },
+  { table: "ErpDimensionValue", indexes: [
+      { name: "IX_ErpDimensionValue_BrandDim", uniqueConstraint: false, keyCols: ["BrandCode", "DimensionCode"] },
+      { name: "PK_ErpDimensionValue", uniqueConstraint: false, keyCols: ["Id"] },
+      { name: "UQ_ErpDimensionValue", uniqueConstraint: true, keyCols: ["BrandCode", "DimensionCode", "Code"] },
+    ] },
+  { table: "ErpGeneralJournalBatch", indexes: [
+      { name: "IX_ErpGeneralJournalBatch_Brand", uniqueConstraint: false, keyCols: ["BrandCode"] },
+      { name: "PK_ErpGeneralJournalBatch", uniqueConstraint: false, keyCols: ["Id"] },
+      { name: "UQ_ErpGeneralJournalBatch", uniqueConstraint: true, keyCols: ["BrandCode", "BatchName"] },
+    ] },
+  { table: "ErpBankAccountCard", indexes: [
+      { name: "IX_ErpBankAccountCard_Brand", uniqueConstraint: false, keyCols: ["BrandCode"] },
+      { name: "PK_ErpBankAccountCard", uniqueConstraint: false, keyCols: ["Id"] },
+      { name: "UQ_ErpBankAccountCard", uniqueConstraint: true, keyCols: ["BrandCode", "AccountNo"] },
+    ] },
+  { table: "ErpSyncLog", indexes: [
+      { name: "IX_ErpSyncLog_BrandStarted", uniqueConstraint: false, keyCols: ["BrandCode", "StartedAt"] },
+      { name: "PK_ErpSyncLog", uniqueConstraint: false, keyCols: ["Id"] },
+    ] },
 ];
 
 async function main() {
@@ -85,25 +108,67 @@ async function main() {
   const problems: string[] = [];
 
   for (const e of EXPECTED) {
-    // 1. the table exists, holds more than zero rows, and its identity has
-    //    kept pace with them -- no literal count, see the header.
-    const r = await erp.request().query(`
-      SELECT OBJECT_ID('dbo.${e.table}', 'U') AS [tableId],
-             (SELECT COUNT(*) FROM [dbo].[${e.table}]) AS [rowCnt],
-             IDENT_CURRENT('dbo.${e.table}') AS [identCur];`);
-    const row = r.recordset[0];
-    if (row.tableId === null) problems.push(`${e.table}: not a table in Rocks_ERP_Data`);
-    if (!(row.rowCnt > 0)) problems.push(`${e.table}: holds ${row.rowCnt} rows, expected more than zero`);
-    if (Number(row.identCur) < row.rowCnt) {
-      problems.push(`${e.table}: IDENT_CURRENT ${row.identCur} is behind its own row count ${row.rowCnt}`);
+    // 1a. the table exists -- its own query, on purpose. The row/identity
+    //     query below names the table in a SELECT, and a SELECT that names a
+    //     nonexistent table is an "Invalid object name" compile error that
+    //     fails before OBJECT_ID's NULL could ever be inspected -- so folding
+    //     the existence check into that same SELECT (as an earlier version of
+    //     this script did) meant a partially-applied 101 aborted the whole
+    //     script instead of naming which table was missing.
+    const idOnly = await erp.request().query(`SELECT OBJECT_ID('dbo.${e.table}', 'U') AS [tableId];`);
+    if (idOnly.recordset[0].tableId === null) {
+      problems.push(`${e.table}: not a table in Rocks_ERP_Data`);
+      continue;
     }
 
-    // the indexes, by name -- structural, checked against a literal on purpose
+    // 1b. it holds more than zero rows, and its identity has kept pace with
+    //     the highest id actually present -- MAX([Id]), not the row count.
+    //     Row count under-estimates MAX(Id) the moment ids have a gap (any
+    //     row that failed to copy, any id skipped upstream): 4,000 rows with
+    //     MAX(Id) = 4813 and IDENT_CURRENT = 4500 would pass a row-count
+    //     comparison and still collide on the next insert.
+    const r = await erp.request().query(`
+      SELECT (SELECT COUNT(*) FROM [dbo].[${e.table}]) AS [rowCnt],
+             (SELECT MAX([Id]) FROM [dbo].[${e.table}]) AS [maxId],
+             IDENT_CURRENT('dbo.${e.table}') AS [identCur];`);
+    const row = r.recordset[0];
+    if (!(row.rowCnt > 0)) problems.push(`${e.table}: holds ${row.rowCnt} rows, expected more than zero`);
+    if (row.maxId !== null && Number(row.identCur) < row.maxId) {
+      problems.push(`${e.table}: IDENT_CURRENT ${row.identCur} is behind MAX(Id) ${row.maxId}`);
+    }
+
+    // the indexes: the name set (structural, checked against a literal), then
+    // per index whether it is a unique CONSTRAINT and its key column order.
     const idx = await erp.request().query(`
-      SELECT name FROM sys.indexes
+      SELECT name, is_unique_constraint AS [uniqueConstraint] FROM sys.indexes
       WHERE object_id = OBJECT_ID('dbo.${e.table}') AND type > 0 ORDER BY name;`);
-    const got = idx.recordset.map((x: { name: string }) => x.name).join(",");
-    if (got !== e.indexes.join(",")) problems.push(`${e.table}: indexes are ${got}, expected ${e.indexes.join(",")}`);
+    const gotNames = idx.recordset.map((x: { name: string }) => x.name).join(",");
+    const expectedNames = e.indexes.map((i) => i.name).join(",");
+    if (gotNames !== expectedNames) {
+      problems.push(`${e.table}: indexes are ${gotNames}, expected ${expectedNames}`);
+    }
+    for (const expIdx of e.indexes) {
+      const found = idx.recordset.find((x: { name: string }) => x.name === expIdx.name);
+      if (!found) continue; // already reported by the name-set check above
+      if (Boolean(found.uniqueConstraint) !== expIdx.uniqueConstraint) {
+        problems.push(
+          `${e.table}: ${expIdx.name} is_unique_constraint=${found.uniqueConstraint}, expected ${expIdx.uniqueConstraint}`,
+        );
+      }
+      const cols = await erp.request().query(`
+        SELECT c.name AS [colName]
+        FROM sys.index_columns ic
+        JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+        WHERE ic.object_id = OBJECT_ID('dbo.${e.table}')
+          AND ic.index_id = (SELECT index_id FROM sys.indexes WHERE object_id = OBJECT_ID('dbo.${e.table}') AND name = '${expIdx.name}')
+          AND ic.is_included_column = 0
+        ORDER BY ic.key_ordinal;`);
+      const gotCols = cols.recordset.map((x: { colName: string }) => x.colName).join(",");
+      const expCols = expIdx.keyCols.join(",");
+      if (gotCols !== expCols) {
+        problems.push(`${e.table}: ${expIdx.name} key columns are ${gotCols}, expected ${expCols}`);
+      }
+    }
 
     // 2. the Fast_Data object is a synonym pointing at the new home
     const syn = await data.request().query(`

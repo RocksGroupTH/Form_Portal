@@ -741,14 +741,14 @@ Run: `npm run apply-sql -- --db Fast_Data --file migrations/102_fast_data_erp_sy
 
 Expected: exit code 0.
 
-If it fails with `refuses to drop: <table> row counts differ` or `contents differ`, a sync ran during the window. That is the guard working. Re-run Step 2 (101 tops up by id), then this step. Record that it happened.
+If it fails with `refuses to drop: <table> row counts differ` or `contents differ`, a sync ran during the window. That is the guard working. Re-run Step 2 — 101's batch 3 is a MERGE keyed on `Id`, so a re-run reconciles both rows the sync added and rows it changed (`SyncedAt`, `IsActive`), not only new ids — then this step. Record that it happened.
 
 - [ ] **Step 5: Run the verification**
 
 Run: `npm run check:erp-data-home`
 Expected: `OK: the five ERP sync tables live in Rocks_ERP_Data and Fast_Data reaches them by synonym`
 
-If the counts moved in Step 1, the script's `EXPECTED` table needs those numbers — update it, and say so in your report. Do not proceed to Task 3 with a failing verification.
+The check asserts no literal row count or `IDENT_CURRENT` value — only that each table holds more than zero rows, that `IDENT_CURRENT >= MAX(Id)`, and that a direct count and a count read through the `Fast_Data` synonym agree at run time. A sync that ran during this window needs no update here; there is nothing in the script left to update. Do not proceed to Task 3 with a failing verification.
 
 - [ ] **Step 6: Confirm the previous move is undisturbed**
 
@@ -959,4 +959,4 @@ git commit -m "docs: Rocks_ERP_Data, and the line between synced data and our ow
 
 **Type consistency.** `getErpDataPool()` is named identically in Task 3 Steps 2, 3 and Task 4; `getAppPool(databaseName: string)` exists at `src/lib/db/mssql.ts:112` and is what the check script and the Task 2 probes use for `Rocks_ERP_Data`. The npm script `check:erp-data-home` is spelled the same in Task 1 Step 4, Task 2 Step 5 and Task 3 Step 4. The five table names and their index-name lists in the check script's `EXPECTED` match the `CREATE` statements in migration 101 exactly, including that `ErpSyncLog` has two indexes and the others three.
 
-**One thing the plan deliberately leaves to the implementer.** Task 2 Step 1 allows the row counts to have moved since 2026-08-21 and says what to do about it, rather than hard-failing on numbers that a scheduled sync can legitimately change. The identity reseeds are floors guarded by `<`, so they tolerate it; the check script's `EXPECTED` does not, and the step says to update it.
+**One thing the plan deliberately leaves to the implementer.** Task 2 Step 1 allows the row counts to have moved since 2026-08-21 and says what to do about it, rather than hard-failing on numbers that a scheduled sync can legitimately change. The identity reseeds are floors guarded by `<`, so they tolerate it. **Superseded by review:** the check script's `EXPECTED` was found to carry literal `rows`/`ident` fields that went stale within the same day they were measured — a gate that goes red for a healthy system. It no longer carries either: Task 1's review pass replaced them with `IDENT_CURRENT >= MAX(Id)` and a run-time direct-count-vs-through-the-synonym comparison, so there is nothing in the script left to update when Task 2's counts have moved, and Step 5 no longer says to.

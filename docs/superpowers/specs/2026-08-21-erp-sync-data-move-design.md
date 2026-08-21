@@ -202,11 +202,25 @@ sync is scheduled or running before starting.
 
 A check script, `npm run check:erp-data-home`, asserting for each of the five:
 
-1. the table exists in `Rocks_ERP_Data` with the row count and `IDENT_CURRENT`
-   measured in §2, and its indexes present under their original names;
+1. the table exists in `Rocks_ERP_Data`, holds more than zero rows, and its
+   identity has kept pace with the highest id actually present
+   (`IDENT_CURRENT >= MAX(Id)`) — **not** a literal row count or
+   `IDENT_CURRENT` value: these five tables sync continuously, so a
+   hardcoded count from §2's measurement would go stale the moment any of
+   the three applications ran a sync, turning a healthy system red. Its
+   indexes are present under their original names, each with the right
+   `is_unique_constraint` (true for the four `UQ_*`, false for `PK_*`/`IX_*`
+   — name alone can't tell a unique constraint from a plain unique index of
+   the same name) and the right key column order — structural properties
+   that do not drift and are the part of this gate that actually catches a
+   botched recreation;
 2. the `Fast_Data` object is in `sys.synonyms` with a `base_object_name` naming
    `[Rocks_ERP_Data].[dbo].[<name>]`;
-3. a read through the synonym returns the same count;
+3. a direct count in `Rocks_ERP_Data` and a count read through the synonym
+   agree, both taken at run time. Once migration 102 has run this is a
+   tautology about routing rather than a fact about the data — `Fast_Data`'s
+   object **is** the synonym, so "direct" and "through the synonym" are the
+   same object — but it does prove the synonym resolves and answers a query;
 4. a **write** through the synonym succeeds — a `MERGE` inside a transaction
    that is rolled back, proving the siblings' cross-database permission, which
    would otherwise be discovered the next time either app ran a sync;
