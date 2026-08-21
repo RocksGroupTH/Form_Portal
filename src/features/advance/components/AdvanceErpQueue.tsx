@@ -77,6 +77,15 @@ export function AdvanceErpQueue() {
   // The id set frozen when the confirm dialog opens — sent verbatim so the server
   // posts exactly what the popup showed (or 409s on drift).
   const [frozenIds, setFrozenIds] = useState<number[]>([]);
+  // Payment-date options for the per-row "รอส่ง" picker (loaded once).
+  const [paymentDateOpts, setPaymentDateOpts] = useState<string[]>([]);
+
+  useEffect(() => {
+    fetch("/api/request/advance/payment-dates")
+      .then((r) => r.json())
+      .then((j: { ok?: boolean; dates?: string[] }) => { if (j?.dates) setPaymentDateOpts(j.dates); })
+      .catch(() => {});
+  }, []);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -169,6 +178,17 @@ export function AdvanceErpQueue() {
     if (readyIds.length === 0) return toast.error("ไม่มีรายการที่พร้อมส่ง (config ยังไม่ครบ)");
     setFrozenIds(readyIds);            // freeze exactly what the popup shows
     setConfirmOpen(true);
+  }
+
+  async function changePaymentDate(id: number, paymentDate: string) {
+    const res = await fetch("/api/request/advance/erp-queue/payment-date", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, paymentDate }),
+    });
+    const j = (await res.json()) as { ok: boolean; error?: string };
+    if (!j.ok) { toast.error(j.error ?? "แก้วันจ่ายไม่สำเร็จ"); return; }
+    toast.success("อัปเดตวันจ่ายแล้ว");
+    load();
   }
 
   async function doSend() {
@@ -278,6 +298,48 @@ export function AdvanceErpQueue() {
                   {previewLoading || preview.length === 0 ? "กำลังคำนวณ..." : `ส่งทั้งหมด (${readyIds.length})`}
                 </Button>
               </div>
+            </div>
+
+            {/* per-row payment-date pickers (re-target the payment cycle before sending) */}
+            <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border-card)" }}>
+              <table className="w-full text-[12px] border-collapse">
+                <thead>
+                  <tr style={{ background: "var(--bg-card-alt)" }}>
+                    {["เลขที่", "Company", "ผู้รับเงิน", "จำนวน", "วันจ่าย"].map((h) => (
+                      <th key={h} className="px-2.5 py-2 text-left font-bold whitespace-nowrap"
+                        style={{ color: "var(--text-faint)", borderBottom: "1px solid var(--border-card)" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {sendable.map((row) => (
+                    <tr key={row.id} style={{ borderBottom: "1px solid var(--border-light)" }}>
+                      <td className="px-2.5 py-2 whitespace-nowrap">
+                        <button type="button" onClick={() => setPanelId(row.id)} className="cursor-pointer font-bold text-left bg-transparent border-none p-0"
+                          style={{ color: "var(--nav-active-text)" }}>{row.requestNo ?? `#${row.id}`}</button>
+                      </td>
+                      <td className="px-2.5 py-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{row.interfaceTarget}</td>
+                      <td className="px-2.5 py-2" style={{ color: "var(--text-primary)" }}>{row.payeeName ?? "—"}</td>
+                      <td className="px-2.5 py-2 whitespace-nowrap text-right tabular-nums font-semibold" style={{ color: "var(--text-secondary)" }}>{fmt(row.baseAmount ?? 0)}</td>
+                      <td className="px-2.5 py-2 whitespace-nowrap">
+                        {paymentDateOpts.length > 0 ? (
+                          <select
+                            value={row.paymentDate ?? ""}
+                            onChange={(e) => changePaymentDate(row.id, e.target.value)}
+                            className="text-[12px] px-2 py-1 rounded-lg"
+                            style={{ background: "var(--bg-card)", color: "var(--text-primary)", border: "1px solid var(--border-card)" }}
+                          >
+                            {!row.paymentDate && <option value="">— เลือกวันจ่าย —</option>}
+                            {paymentDateOpts.map((d) => <option key={d} value={d}>{d}</option>)}
+                          </select>
+                        ) : (
+                          <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>{row.paymentDate ?? "—"}</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
 
             <AdvanceJournalPreview items={preview} loading={previewLoading} />
