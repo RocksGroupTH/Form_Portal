@@ -86,7 +86,7 @@ export function AdvanceErpQueue() {
   useEffect(() => {
     fetch("/api/request/advance/payment-dates")
       .then((r) => r.json())
-      .then((j: { ok?: boolean; dates?: string[] }) => { if (j?.dates) setPaymentDateOpts(j.dates); })
+      .then((j: { ok?: boolean; data?: { dates?: string[] } }) => { if (j?.data?.dates) setPaymentDateOpts(j.data.dates); })
       .catch(() => {});
   }, []);
 
@@ -184,14 +184,18 @@ export function AdvanceErpQueue() {
   }
 
   async function changePaymentDate(id: number, paymentDate: string) {
-    const res = await fetch("/api/request/advance/erp-queue/payment-date", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, paymentDate }),
-    });
-    const j = (await res.json()) as { ok: boolean; error?: string };
-    if (!j.ok) { toast.error(j.error ?? "แก้วันจ่ายไม่สำเร็จ"); return; }
-    toast.success("อัปเดตวันจ่ายแล้ว");
-    load();
+    try {
+      const res = await fetch("/api/request/advance/erp-queue/payment-date", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, paymentDate }),
+      });
+      const j = (await res.json()) as { ok: boolean; error?: string };
+      if (!j.ok) { toast.error(j.error ?? "แก้วันจ่ายไม่สำเร็จ"); return; }
+      toast.success("อัปเดตวันจ่ายแล้ว");
+      load();
+    } catch {
+      toast.error("แก้วันจ่ายไม่สำเร็จ");
+    }
   }
 
   async function doPullback() {

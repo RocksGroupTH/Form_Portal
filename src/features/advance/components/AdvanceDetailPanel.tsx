@@ -45,7 +45,7 @@ export function AdvanceDetailPanel({ requestId, onClose }: { requestId: number |
     let cancelled = false;
     fetch(`/api/request/advance/requests/${requestId}/attempts`)
       .then((r) => r.json())
-      .then((j: { ok?: boolean; data?: { attemptNo: number; erpDocumentNo: string | null; status: string }[] }) => { if (!cancelled) setAttempts(j.data ?? []); })
+      .then((j: { ok?: boolean; data?: { attemptNo: number; erpDocumentNo: string | null; status: string }[] }) => { if (!cancelled) { if (j.ok && j.data) setAttempts(j.data); else setAttempts([]); } })
       .catch(() => { if (!cancelled) setAttempts([]); });
     return () => { cancelled = true; };
   }, [requestId]);
