@@ -93,7 +93,7 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
   const [errors, setErrors] = useState<Record<string, string>>({});
   // Refs for focus-on-error (in visual order).
   const brandRef = useRef<HTMLDivElement>(null);
-  const payeeTypeRef = useRef<HTMLSelectElement>(null);
+  const payeeTypeRef = useRef<HTMLDivElement>(null);
   const payeeNameRef = useRef<HTMLInputElement>(null);
   const payeeBankAccountRef = useRef<HTMLInputElement>(null);
   const payeeBankCodeRef = useRef<HTMLSelectElement>(null);
@@ -625,20 +625,38 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
       {/* Payee (โอนให้) */}
       <div className="rounded-2xl p-4 sm:p-5 flex flex-col gap-3" style={box}>
         <Field label="โอนให้ *" error={errors.payeeType} errorId="err-payeeType">
-          <select ref={payeeTypeRef} className={fieldClass} style={fieldStyle} value={payeeType} disabled={readOnly || !brandCode}
-            aria-invalid={!!errors.payeeType} aria-describedby={errors.payeeType ? "err-payeeType" : undefined}
-            onChange={(e) => {
-              const v = e.target.value as AdvancePayeeType | "";
-              setPayeeType(v);
-              clearError("payeeType");
-              // สลับผู้รับโอน → เริ่มชื่อคู่ค้าใหม่ (ว่าง) และล้างข้อมูลบัญชีเมื่อไม่ใช่คู่ค้า
-              setPayeeName("");
-              if (v !== "vendor") { setPayeeBankAccount(""); setPayeeBankCode(""); }
-            }}>
-            <option value="">— เลือก —</option>
-            <option value="employee">พนักงาน (ผู้ขอเบิก)</option>
-            <option value="vendor">คู่ค้า</option>
-          </select>
+          <div ref={payeeTypeRef} tabIndex={-1} role="radiogroup" aria-label="โอนให้"
+            className="flex flex-wrap gap-2 outline-none"
+            aria-invalid={!!errors.payeeType} aria-describedby={errors.payeeType ? "err-payeeType" : undefined}>
+            {([
+              { value: "employee", label: "พนักงาน (ผู้ขอเบิก)" },
+              { value: "vendor", label: "คู่ค้า" },
+            ] as const).map((opt) => {
+              const active = payeeType === opt.value;
+              return (
+                <button key={opt.value} type="button" role="radio" aria-checked={active}
+                  disabled={readOnly || !brandCode}
+                  onClick={() => {
+                    const v: AdvancePayeeType | "" = active ? "" : opt.value;
+                    setPayeeType(v);
+                    clearError("payeeType");
+                    // สลับผู้รับโอน → เริ่มชื่อคู่ค้าใหม่ (ว่าง) และล้างข้อมูลบัญชีเมื่อไม่ใช่คู่ค้า
+                    setPayeeName("");
+                    if (v !== "vendor") { setPayeeBankAccount(""); setPayeeBankCode(""); }
+                  }}
+                  className="flex items-center gap-2 px-3.5 py-2 rounded-xl cursor-pointer text-[14px] font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-50"
+                  style={{
+                    borderWidth: 2, borderStyle: "solid",
+                    borderColor: active ? "var(--nav-active-text)" : "var(--border-card)",
+                    background: active ? "var(--nav-active-bg)" : "var(--bg-card-alt)",
+                    color: active ? "var(--nav-active-text)" : "var(--text-secondary)",
+                  }}>
+                  {opt.label}
+                  {active && <Check size={14} />}
+                </button>
+              );
+            })}
+          </div>
         </Field>
         {!brandCode && (
           <p className="text-[11px]" style={{ color: "var(--text-faint)" }}>เลือกแบรนด์ก่อน จึงจะเลือก "โอนให้" ได้</p>
