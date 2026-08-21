@@ -1,7 +1,8 @@
 /**
  * AP-17 — Accommodation / Ticket Booking Request.
  * camelCase shapes mirroring the `AccTravelBooking*` tables (migration 048)
- * + `Fast_Data.dbo.TravelProvince` (migration 049).
+ * + `Rocks_Portal_Form.dbo.TravelProvince` (seeded into `Fast_Data` by
+ * migration 049, moved here by 104/105).
  * See docs/superpowers/specs/2026-07-14-ap17-accommodation-ticket-booking-design.md §2, §3, §9.
  */
 
@@ -70,7 +71,7 @@ export interface RentVehicle extends TravelSettingsOption {
   needsRentBooking: boolean;
 }
 
-/** Fast_Data.dbo.TravelProvince — ข้อ8 จังหวัด. */
+/** Rocks_Portal_Form.dbo.TravelProvince — ข้อ8 จังหวัด. */
 export interface ProvinceOption {
   id: number;
   nameTh: string;

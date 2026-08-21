@@ -1,9 +1,14 @@
-import { getDataPool } from "@/lib/db/mssql";
+import { getProductionFormPool } from "@/lib/db/mssql";
 import type { ProvinceOption } from "@/features/travel-booking/types";
 
-/** Active Thai provinces (Fast_Data.dbo.TravelProvince, migration 049), ordered by Thai name. */
+/** Active Thai provinces (Rocks_Portal_Form.dbo.TravelProvince, migration 104), ordered by Thai name. */
 export async function listProvinces(): Promise<ProvinceOption[]> {
-  const pool = await getDataPool();
+  // TravelProvince moved to Rocks_Portal_Form in migrations 104/105; Fast_Data
+  // keeps a synonym for the Rocks Fast and ACC Portal siblings. This app names
+  // the new home directly. getProductionFormPool() and never getFormPool():
+  // there is one physical copy, so the environment-varying pool has nothing to
+  // choose between.
+  const pool = await getProductionFormPool();
   const r = await pool.request().query(`
     SELECT Id, NameTh, NameEn
     FROM [dbo].[TravelProvince]

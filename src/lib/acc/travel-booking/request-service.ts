@@ -1,5 +1,5 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
-import { getDataPool } from "@/lib/db/mssql";
+import { getProductionFormPool } from "@/lib/db/mssql";
 import { hrEmployeeTable } from "@/lib/hr/constants";
 import { pickEmployeePhotoUrl } from "@/lib/hr/photo-url";
 import { resolveEmployeeForActor } from "@/lib/hr/employee-lookup";
@@ -449,10 +449,15 @@ async function resolveSettingOption(
   };
 }
 
-/** Fast_Data.dbo.TravelProvince is cross-database from the form DB — resolved via its own pool. */
+/** Rocks_Portal_Form.dbo.TravelProvince, migration 104 — resolved via its own pool (always Production; the caller's AccTx may be the UAT twin). */
 async function resolveProvinceName(id: number | null): Promise<string | null> {
   if (!id) return null;
-  const pool = await getDataPool();
+  // TravelProvince moved to Rocks_Portal_Form in migrations 104/105; Fast_Data
+  // keeps a synonym for the Rocks Fast and ACC Portal siblings. This app names
+  // the new home directly. getProductionFormPool() and never getFormPool():
+  // there is one physical copy, so the environment-varying pool has nothing to
+  // choose between.
+  const pool = await getProductionFormPool();
   const r = await pool.request().input("id", sql.Int, id)
     .query(`SELECT TOP 1 NameTh FROM [dbo].[TravelProvince] WHERE Id=@id`);
   return (r.recordset[0]?.NameTh as string) ?? null;
