@@ -35,7 +35,8 @@ Two things about this build that look like faults and are not:
 | **Rocks_Portal_Form** | `getFormPool()` | Form definitions, submissions, approvals, files, logs, and all `Acc*` Accounting tables. Form Portal's own database — `Rocks_Portal_Form_UAT` is the UAT twin, and which one `getFormPool()` returns depends on the form **and on who is asking** (see "Parallel Production and UAT") |
 | **Rocks_Portal_Form** (`TeamMember`) | `getProductionFormPool()` via `@/lib/team-member/service` | User identity and roles (migration 066). **Production only** — never the UAT twin, and never `getFormPool()`; see "Auth" |
 | **Rocks_Portal_Form** (`DepartmentErpMap`) | `getProductionFormPool()` via `@/lib/acc/department-map-service` | HR department → ERP dimension mapping (migrations 099/100). **One physical copy, production only** — never the UAT twin, and never `getFormPool()`, which resolves `Rocks_Portal_Form_UAT` for a tester in UAT mode where the object does not exist. `Fast_Core` keeps a permanent synonym so the Rocks Fast and ACC Portal siblings still reach the same rows. See "DepartmentErpMap moved out of Fast_Core" below |
-| **Fast_Data** | `getDataPool()` | AP-17 province lookups — `TravelProvince` (migration 049), read by `src/lib/acc/travel-booking/province-service.ts` and `src/lib/acc/travel-booking/request-service.ts`. **That is the only table this app still reads here**, now that the five Business Central sync tables have moved to `Rocks_ERP_Data` (migrations 101/102, see below) — neither `department-map-service.ts` nor either `src/lib/erp/*-sync.ts` has a `getDataPool()` call left. The *database* is not nearly empty: measured 2026-08-21 it holds 21 tables, twenty of them Rocks Fast's Intelligence tables (`Intel_*`, `IntelMkt*`) which this app never touches, beside the five synonyms 102 left behind. `DepartmentErpMap` was never in `Fast_Data` — it went `Fast_Core` → `Rocks_Portal_Form` (099/100) and its synonym stayed in `Fast_Core`, see the row above. **Not** a BI/reporting database in this app. |
+| **Rocks_Portal_Form** (`TravelProvince`) | `getProductionFormPool()` via `src/lib/acc/travel-booking/province-service.ts` and `src/lib/acc/travel-booking/request-service.ts` | AP-17 province lookups (migration 104). **One physical copy, production only** — never the UAT twin (migration 104 refuses outright if pointed at it), and never `getFormPool()`, which resolves `Rocks_Portal_Form_UAT` for a tester in UAT mode where the object does not exist. `Fast_Data` keeps a permanent synonym so the Rocks Fast and ACC Portal siblings still reach the same rows. See "TravelProvince moved out of Fast_Data" below |
+| **Fast_Data** | `getDataPool()` — no caller left in `src/` | Nothing here that this app's own code still reads. `TravelProvince` was the last table it read directly; migrations 104/105 moved it to `Rocks_Portal_Form` (see the row above), completing the same move already made for `DepartmentErpMap` (→ `Fast_Core`, 099/100) and the five Business Central sync tables (→ `Rocks_ERP_Data`, 101/102, see below) — `department-map-service.ts` and both `src/lib/erp/*-sync.ts` files already had no `getDataPool()` call left either. The *database* is not empty: measured 2026-08-21 it holds 20 tables — every one of them Rocks Fast's Intelligence tables (`Intel_*`, `IntelMkt*`), which this app never touches — plus six synonyms the Rocks Fast and ACC Portal siblings still read two-part: the five `Erp*` synonyms 102 left behind, and the `TravelProvince` synonym 105 left behind. `getDataPool()` stays exported only because two scripts under `scripts/checks/` (`verify-travel-province-move.ts`, `verify-erp-data-move.ts`) read through those synonyms to confirm they still resolve to the new homes. **Not** a BI/reporting database in this app. |
 | **Rocks_ERP_Data** | `getErpDataPool()` | Mirror of Business Central: `ErpAccounts`, `ErpDimensionValue`, `ErpGeneralJournalBatch`, `ErpBankAccountCard`, `ErpSyncLog` (migrations 101/102). Read/written by `src/lib/erp/account-sync.ts` and `src/lib/erp/dimension-sync.ts`, plus `loadErpDeptDisplayNamesByTargetBrand()` in `src/lib/acc/department-map-service.ts`. **One physical copy, no UAT twin** — `Fast_Data` keeps a permanent synonym per table so the Rocks Fast and ACC Portal siblings still reach the same rows two-part, unchanged. See "The ERP sync tables moved out of Fast_Data" below |
 | **Rocks_Portal_HR** | `getHrPool()` → `getAppPool("Rocks_Portal_HR")` | Employee master, manager chain, per-diem allowance history — cross-referenced by StaffId/email |
 | **Rocks_Codex** | (cross-DB query, e.g. `[Rocks_Codex].[dbo].[Holiday]`, `[Rocks_Codex].[dbo].[Brand]`) | Holiday calendar, company brand master |
@@ -141,6 +142,49 @@ what catches it**: `scripts/checks/verify-erp-data-move.ts` opens
 each `Fast_Data` synonym's `base_object_name` names that same database. It used
 to open `getAppPool("Rocks_ERP_Data")` — a literal, which reported on the
 migration's target no matter where the app was pointed.
+
+#### TravelProvince moved out of Fast_Data
+
+Migrations 104 (`Rocks_Portal_Form`) and 105 (`Fast_Data`) moved
+`TravelProvince` — the 77-row Thai province lookup AP-17's booking form uses —
+off the shared `Fast_Data` database and into this app's own. This is the third
+application of the same pattern, after 099/100 (`DepartmentErpMap` out of
+`Fast_Core`) and 101/102 (the five Business Central sync tables out of
+`Fast_Data`), and **with it, no code in this application reads `Fast_Data` at
+all**: `province-service.ts` and `request-service.ts` were its last two
+`getDataPool()` callers, and both now open `getProductionFormPool()` instead.
+`Fast_Data.dbo.TravelProvince` is now
+`CREATE SYNONYM ... FOR [Rocks_Portal_Form].[dbo].[TravelProvince]`, and the
+synonym is **permanent**, for the same reason the other two are: the Rocks
+Fast and ACC Portal siblings still open a pool on `Fast_Data` and name the
+table two-part, with no change needed on their side.
+
+There is deliberately **exactly one copy** — not dual-written, not in
+`MASTER_TABLES`, and migration 104 refuses outright if pointed at
+`Rocks_Portal_Form_UAT`. The same two facts force that as they do for the
+other two moves: a synonym names one database, so a sibling's write could
+never reach a UAT twin even if one existed; and **nothing writes this table in
+any of the three applications** — it was seeded once by migration 049 and has
+been read-only ever since, so there is no write for dual-write to carry and
+nothing that could drift between two copies.
+
+**The content guard this time is a genuine whole-row comparison**, unlike
+102's: `TravelProvince` carries no `nvarchar(MAX)` column, so migration 105's
+`EXCEPT` before the drop projects all four columns (`Id`, `NameTh`, `NameEn`,
+`IsActive`) with nothing reduced to a `DATALENGTH` — the compromise 102 needed
+for the five ERP tables' `RawJson` / `ErrorMessage` columns.
+
+**Migration 104 cannot bootstrap a fresh `Rocks_Portal_Form` once 105 has
+already run against the shared `Fast_Data`** — the same shape as 101's
+bootstrap hazard, and worse in one respect: nothing ever writes this table, so
+unlike the ERP mirror it cannot self-heal on the next sync. A database rebuilt
+after 105 has cut over needs its 77 rows restored by hand from a backup, then
+the identity reseeded — see migration 104's own header for the recovery
+steps. The old `049_fast_data_travel_province.sql` is not that recovery: its
+first batch is a bare `USE [Fast_Data];` (`049:7`), and `apply-sql` runs every
+batch in a file through one connection, so pointed at `--db
+Rocks_Portal_Form`, 049 still acts on `Fast_Data` — not on the database the
+recovery actually needs.
 
 ### Parallel Production and UAT
 
@@ -375,7 +419,7 @@ Accommodation/ticket booking requests for provincial work travel — supports mu
 
 - **Pages:** `/request/travel-booking` (fill/resume draft, multi-row), `/request/travel-booking/[id]` (detail), plus office/admin views under `/request/accounting/travel-booking*` (queue, report, settings)
 - **Feature code:** `src/features/travel-booking/`; service/lib code under `src/lib/acc/travel-booking/`
-- Uses `Rocks_Portal_HR.EmployeeAllowanceLog` for effective-dated per-diem history and `Fast_Data` for province lookups (`province-service.ts`)
+- Uses `Rocks_Portal_HR.EmployeeAllowanceLog` for effective-dated per-diem history and `Rocks_Portal_Form.TravelProvince` for province lookups (`province-service.ts`, migration 104 — `Fast_Data` keeps a permanent synonym for the Rocks Fast and ACC Portal siblings, see "TravelProvince moved out of Fast_Data" above)
 
 #### สิทธิ์เข้าถึง — who sees, and who may
 
@@ -840,13 +884,25 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 <!-- END:nextjs-agent-rules -->
 
-### Known pre-existing drift — `npm run check:alignment` is red
+### `npm run check:alignment` — red 2026-08-20, closed 2026-08-21 by migration 103
 
-Measured 2026-08-20, and **not caused by the access-rights work**; the new
-`AccBookingApprover` passes. Recorded because the verifier is now part of the
-routine and its red output should not be mistaken for a fresh break. Migration
-097 has since closed the schema half, taking the count **from four mismatching
-tables to two**:
+**Current state: passing.** Run fresh while writing this note (2026-08-21):
+
+```
+PASS — 21 configuration tables identical across Rocks_Portal_Form and
+Rocks_Portal_Form_UAT (84 rows compared; datetime columns and
+AccSetting.ERP_INTERFACE_ENV excluded by design)
+```
+
+What follows is kept as history, not deleted, because a note that only ever
+states today's reading cannot be told apart from one nobody has checked.
+
+First measured red on 2026-08-20 — **not caused by the access-rights work**
+landing the same day; the new `AccBookingApprover` passed the check from the
+start. It was recorded at the time because the verifier had just become part
+of the routine, and a red result needed to be told apart from a fresh break.
+Migration 097 has since closed the schema half, taking the count **from four
+mismatching tables to two**:
 
 - **Schema — closed by migration 097.** `AccBrandBankAccount` and
   `AccBrandJournalBatch` carried a `FormCode` column in `Rocks_Portal_Form_UAT`
