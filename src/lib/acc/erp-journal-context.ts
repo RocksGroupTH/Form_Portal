@@ -174,7 +174,7 @@ export async function saveErpJournalDescriptionTemplate(
  *
  * Two reads here deliberately take no form code:
  *
- * - `listErpDepartmentsForBrands` reads `Fast_Data.ErpDimensionValue`, the
+ * - `listErpDepartmentsForBrands` reads `Rocks_ERP_Data.ErpDimensionValue`, the
  *   ERP's own list of dimension values. It has no `FormCode` — it is which
  *   codes exist in Business Central, not which one this form should use.
  * - `getErpJournalDescriptionTemplate` reads the global `AppSetting` key, which

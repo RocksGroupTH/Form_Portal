@@ -228,7 +228,7 @@ function toPrepRow(
  * - `loadDepartmentErpMapsByTarget` — HR department → ERP dimension code.
  *
  * `loadErpDeptDisplayNamesByTargetBrand` takes none: it reads
- * `Fast_Data.ErpDimensionValue`, which is the ERP's own list of dimension
+ * `Rocks_ERP_Data.ErpDimensionValue`, which is the ERP's own list of dimension
  * values and has no `FormCode` — a display name for a code, not a choice of
  * code.
  *

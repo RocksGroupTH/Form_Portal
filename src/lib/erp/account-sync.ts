@@ -1,6 +1,6 @@
 /**
  * Sync BC G/L (API v2 accounts) & Bank Account Card (OData BankAccountCard)
- * per Brand Config brand → Fast_Data.ErpAccounts + ErpBankAccountCard
+ * per Brand Config brand → Rocks_ERP_Data.ErpAccounts + ErpBankAccountCard
  */
 
 import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";

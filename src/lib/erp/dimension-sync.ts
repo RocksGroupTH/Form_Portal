@@ -1,5 +1,5 @@
 /**
- * Sync BC dimension values for PCTH → Fast_Data.ErpDimensionValue
+ * Sync BC dimension values for PCTH → Rocks_ERP_Data.ErpDimensionValue
  */
 
 import { getErpDataPool, sql } from "@/lib/db/mssql";
