@@ -30,8 +30,8 @@ export interface AdvanceReportRow {
   actionedDate: string | null;
   actionedRemark: string | null;
   paymentDate: string | null;
-  clearAdvanceNo: string | null;   // AP-3 clearing (ยังไม่มี) — เว้นว่าง
-  advanceStatus: string | null;    // AP-3 clearing — เว้นว่าง
+  clearAdvanceNo: string | null;   // AP-3 clearing document no. (ADC…) linked back
+  advanceStatus: string | null;    // AP-3 clearing status label
   pendingOn: string | null;
   overallStatus: string;
 }
@@ -49,6 +49,14 @@ function overall(status: string): string {
     case "Returned": return "ส่งกลับแก้ไข (Returned)";
     default: return status;
   }
+}
+
+/** Status of the AP-3 clearing document that settled this advance. */
+function clearLabel(status: string): string {
+  if (status === "Approved") return "เคลียร์แล้ว (Cleared)";
+  if (status === "Submitted" || status === "ManagerApproved") return "กำลังเคลียร์";
+  if (status === "Returned") return "ส่งกลับแก้ไข";
+  return overall(status);
 }
 
 /** All AP-2 requests (excluding drafts) with the control-report columns. */
@@ -87,8 +95,29 @@ export async function listAdvanceReport(): Promise<AdvanceReportRow[]> {
     (byReq.get(rid) ?? byReq.set(rid, []).get(rid)!).push(a);
   }
 
+  // AP-3 clearing (ADC no. + status) linked back per advance. Wrapped so a
+  // Production DB without the AccClearAdvance table (AP-3 not deployed there)
+  // leaves the clearing columns blank instead of breaking the whole report.
+  const clearByAdvance = new Map<number, { no: string | null; status: string | null }>();
+  try {
+    const cRes = await pool.request().query(`
+      SELECT c.AdvanceRequestId, cr.RequestNo AS ClearNo, cr.Status AS ClearStatus
+      FROM [dbo].[AccClearAdvance] c
+      JOIN [dbo].[AccRequest] cr ON cr.Id = c.RequestId
+      WHERE c.AdvanceRequestId IN (${ids.join(",")})
+        AND cr.FormCode = 'AP-3' AND cr.Status NOT IN ('Cancelled','Draft')
+      ORDER BY cr.Id DESC`);
+    for (const c of cRes.recordset as Record<string, unknown>[]) {
+      const advId = c.AdvanceRequestId as number;
+      if (!clearByAdvance.has(advId)) {
+        clearByAdvance.set(advId, { no: (c.ClearNo as string) ?? null, status: (c.ClearStatus as string) ?? null });
+      }
+    }
+  } catch { /* AccClearAdvance absent (Production before AP-3) — clearing stays blank */ }
+
   return rows.map((r) => {
     const id = r.Id as number;
+    const clr = clearByAdvance.get(id);
     const steps = byReq.get(id) ?? [];
     const approvedSteps = steps.filter((s) => s.Status === "Approved");
     const lastApproved = approvedSteps[approvedSteps.length - 1] ?? null;
@@ -130,8 +159,8 @@ export async function listAdvanceReport(): Promise<AdvanceReportRow[]> {
       actionedDate: actioned ? iso(actioned.ActionedAt) : null,
       actionedRemark: (actioned?.Comment as string) ?? null,
       paymentDate: ymd(r.PaymentDate),
-      clearAdvanceNo: null,
-      advanceStatus: null,
+      clearAdvanceNo: clr?.no ?? null,
+      advanceStatus: clr?.status ? clearLabel(clr.status) : null,
       pendingOn: r.Status === "Submitted" && pendingType ? (STEP_LABEL[pendingType] ?? pendingType) : null,
       overallStatus: overall(r.Status as string),
     };
