@@ -61,7 +61,7 @@
 - Consumes: nothing from earlier tasks.
 - Produces: `npm run check:dept-map-home` — the verification entry point Task 2 runs. Exits 0 on success, 1 with a printed reason on failure.
 
-**Nothing in this task touches a database except the read-only probe in Step 1.** Do not run `apply-sql`. Task 2 applies these files, after a reviewer has looked at the guard in 100 — that guard is what stands between this work and deleting the only copy of the data.
+**Nothing in this task applies a migration.** Do not run `apply-sql`. Task 2 applies these files, after a reviewer has looked at the guard in 100 — that guard is what stands between this work and deleting the only copy of the data. Step 1 below is not a read-only probe, despite an earlier draft of this line calling it one: it runs `CREATE TABLE`, `DROP TABLE` and `CREATE SYNONYM` against the live shared `Fast_Core`, inside a transaction it then rolls back. That is DDL on a production database three applications use, on a throwaway object name, and the rollback is the only thing that makes it safe.
 
 - [ ] **Step 1: Prove that DROP TABLE and CREATE SYNONYM can share one transaction**
 
@@ -507,11 +507,36 @@ git commit -m "feat(db): migrations to move DepartmentErpMap into the form datab
 
 - [ ] **Step 1: Snapshot the source rows before touching anything**
 
-```bash
-npx tsx --env-file=.env.local -e "import('./src/lib/db/mssql').then(async (m) => { const p = await m.getCorePool(); const r = await p.request().query('SELECT * FROM [dbo].[DepartmentErpMap] ORDER BY Id'); require('node:fs').writeFileSync('dept-erp-map-snapshot.json', JSON.stringify(r.recordset, null, 2)); console.log('rows:', r.recordset.length); process.exit(0); })"
+**Write a scratch `.ts` file and run it. Do not use `node -e` or `tsx -e`.** A
+one-liner carrying SQL through a shell string is how this repo has twice had
+`${...}` and backticked words eaten by bash before they reached the file. Put
+the script in your scratch directory:
+
+```ts
+// <scratch>/snapshot-dept-map.ts
+import fs from "node:fs";
+import { getCorePool } from "@/lib/db/mssql";
+
+async function main() {
+  const pool = await getCorePool();
+  const r = await pool.request().query(
+    `SELECT * FROM [dbo].[DepartmentErpMap] ORDER BY Id;`
+  );
+  fs.writeFileSync(
+    "<scratch>/dept-erp-map-snapshot.json",
+    JSON.stringify(r.recordset, null, 2)
+  );
+  console.log("rows:", r.recordset.length);
+  process.exit(0);
+}
+main().catch((e) => { console.error("ERR", e.message); process.exit(1); });
 ```
 
-Write the file into your scratch directory, not the repo. Expected: `rows: 3`. If it is not 3, **stop and report BLOCKED** — the plan's measured state is stale and the migration's row-count guard will refuse anyway.
+Run: `npx tsx --env-file=.env.local <scratch>/snapshot-dept-map.ts`
+
+Expected: `rows: 3`, and the JSON file written **into your scratch directory,
+not the repo**. If it is not 3, **stop and report BLOCKED** — the plan's
+measured state is stale and the migration's row-count guard will refuse anyway.
 
 - [ ] **Step 2: Apply 099 to `Rocks_Portal_Form`**
 
@@ -521,11 +546,27 @@ Expected output includes `dbo.DepartmentErpMap created in the form database.`, `
 
 - [ ] **Step 3: Confirm the copy landed before dropping the original**
 
-```bash
-npx tsx --env-file=.env.local -e "import('./src/lib/db/mssql').then(async (m) => { const p = await m.getProductionFormPool(); const r = await p.request().query('SELECT COUNT(*) n, IDENT_CURRENT(''dbo.DepartmentErpMap'') cur FROM [dbo].[DepartmentErpMap]'); console.log(JSON.stringify(r.recordset[0])); process.exit(0); })"
+Again a scratch `.ts` file, not a shell one-liner:
+
+```ts
+// <scratch>/confirm-copy.ts
+import { getProductionFormPool } from "@/lib/db/mssql";
+
+async function main() {
+  const pool = await getProductionFormPool();
+  const r = await pool.request().query(`
+    SELECT COUNT(*) AS n, IDENT_CURRENT('dbo.DepartmentErpMap') AS cur
+    FROM [dbo].[DepartmentErpMap];
+  `);
+  console.log(JSON.stringify(r.recordset[0]));
+  process.exit(0);
+}
+main().catch((e) => { console.error("ERR", e.message); process.exit(1); });
 ```
 
-Expected: `{"n":3,"cur":2004}`. **If `n` is not 3, stop.** Migration 100 would refuse anyway, but do not rely on that.
+Run: `npx tsx --env-file=.env.local <scratch>/confirm-copy.ts`
+
+Expected: `n` is `3` and `cur` is `2004`. **If `n` is not 3, stop.** Migration 100 would refuse anyway, but do not rely on that.
 
 - [ ] **Step 4: Apply 100 to `Fast_Core`**
 
@@ -651,9 +692,23 @@ Expected: still `OK`. The code change cannot affect it — the script talks to t
 
 The unit suite does not touch a database, so prove this one by hand:
 
-```bash
-npx tsx --env-file=.env.local -e "import('./src/lib/acc/department-map-service').then(async (m) => { const r = await m.loadAllDepartmentErpMaps(); console.log('brands:', Array.from(r.keys()).join(',')); console.log('PCTH entries:', r.get('PCTH') ? r.get('PCTH').size : 0); process.exit(0); })"
+A scratch `.ts` file, not a shell one-liner:
+
+```ts
+// <scratch>/probe-service.ts
+import { loadAllDepartmentErpMaps } from "@/lib/acc/department-map-service";
+
+async function main() {
+  const byBrand = await loadAllDepartmentErpMaps();
+  console.log("brands:", Array.from(byBrand.keys()).join(","));
+  const pcth = byBrand.get("PCTH");
+  console.log("PCTH entries:", pcth ? pcth.size : 0);
+  process.exit(0);
+}
+main().catch((e) => { console.error("ERR", e.message); process.exit(1); });
 ```
+
+Run: `npx tsx --env-file=.env.local <scratch>/probe-service.ts`
 
 Expected: `brands: PCTH` and `PCTH entries: 3`. If it throws `Invalid object name`, the pool switch is wrong or Task 2 did not complete.
 

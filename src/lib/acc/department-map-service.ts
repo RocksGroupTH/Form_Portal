@@ -15,7 +15,7 @@ import {
   perFormWriteMatch,
   pickAllForForm,
 } from "@/lib/acc/per-form-config";
-import { getCorePool, getDataPool, sql } from "@/lib/db/mssql";
+import { getDataPool, getProductionFormPool, sql } from "@/lib/db/mssql";
 import { getBrandConfig } from "@/lib/brand-config";
 import {
   HR_DEPARTMENT_DIMENSION_CODE,
@@ -150,7 +150,12 @@ async function loadMappings(
   storageBrandCode: string,
   formCode: string | null,
 ): Promise<DepartmentMappingRow[]> {
-  const pool = await getCorePool();
+  // DepartmentErpMap lives in Rocks_Portal_Form since migration 099/100, and
+  // Fast_Core reaches it by synonym. getProductionFormPool() and never
+  // getFormPool(): there is one physical copy, so the environment-varying pool
+  // has nothing to choose between, and a UAT posting must resolve production's
+  // mapping — which is what happened when the table was in Fast_Core.
+  const pool = await getProductionFormPool();
   const req = pool
     .request()
     .input("brand", sql.NVarChar, storageBrandCode.trim().toUpperCase());
@@ -229,7 +234,7 @@ async function purgeLegacyClaimMappings(
   codes: string[],
   formCode: string | null,
 ): Promise<void> {
-  const pool = await getCorePool();
+  const pool = await getProductionFormPool();
   for (const code of codes) {
     const req = pool.request().input("brand", sql.NVarChar, code);
     if (formCode) req.input("formCode", sql.NVarChar(20), formCode);
@@ -444,8 +449,9 @@ export async function saveDepartmentMappings(
 
   // Bound the purge *before* the first upsert. `legacyClaimCodes` is
   // client-supplied and each entry becomes a whole-brand DELETE against
-  // `DepartmentErpMap` in the shared configuration database; validating it
-  // after the writes would leave a refused request half-applied. See
+  // `DepartmentErpMap` — rows the Rocks Fast and ACC Portal siblings also
+  // read to prepare financial journal postings; validating it after the
+  // writes would leave a refused request half-applied. See
   // `department-map-guard.ts` for what the list is and why it is dangerous.
   //
   // The bound is this target's own claim brands, read from
@@ -475,7 +481,7 @@ export async function saveDepartmentMappings(
   }
 
   const dimensionCode = HR_DEPARTMENT_DIMENSION_CODE;
-  const pool = await getCorePool();
+  const pool = await getProductionFormPool();
 
   for (const item of items) {
     const departmentCode = item.departmentCode.trim();
@@ -629,7 +635,7 @@ export async function loadDepartmentErpMapsByTarget(
   interfaceByClaim: Map<string, string>,
   formCode?: string,
 ): Promise<Map<string, Map<string, string>>> {
-  const pool = await getCorePool();
+  const pool = await getProductionFormPool();
   const req = pool.request();
   let formWhere = "WHERE FormCode IS NULL";
   if (formCode) {
@@ -729,7 +735,7 @@ export async function loadDeptGlOverridesByTarget(
   interfaceByClaim: Map<string, string>,
   formCode?: string,
 ): Promise<Map<string, Map<string, DeptGlOverride>>> {
-  const pool = await getCorePool();
+  const pool = await getProductionFormPool();
   const req = pool.request();
   let formWhere = "WHERE FormCode IS NULL";
   if (formCode) {
@@ -817,7 +823,7 @@ export async function loadDeptGlOverridesByTarget(
  * answer for a function with no way to say which form is asking.
  */
 export async function loadAllDepartmentErpMaps(): Promise<Map<string, Map<string, string>>> {
-  const pool = await getCorePool();
+  const pool = await getProductionFormPool();
   const res = await pool.request().query(`
     SELECT BrandCode, DepartmentCode, ErpCode
     FROM [dbo].[DepartmentErpMap]

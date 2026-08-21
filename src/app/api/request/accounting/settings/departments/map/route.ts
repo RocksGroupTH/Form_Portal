@@ -12,9 +12,10 @@ import {
  * **Admin-only, and deliberately not covered by the `departments` grant.** The
  * read beside it (`settings/departments`, GET) is granted; this write is not.
  *
- * `saveDepartmentMappings` opens the core pool and writes
- * `DepartmentErpMap`, which lives in the configuration database shared with the
- * Rocks Fast and ACC Portal siblings — both read it from their own
+ * `saveDepartmentMappings` writes `DepartmentErpMap` — which since migrations
+ * 099/100 lives in this app's own form database, reached from `Fast_Core` by a
+ * synonym. That is a change of address and nothing more: the Rocks Fast and ACC
+ * Portal siblings read the same rows through that synonym, from their own
  * `erp-prep-service.ts`, the path that prepares financial journal postings. A
  * mapping changed here decides where two other applications post money, which
  * is more than a settings-tab grant should carry. Ruled 2026-08-20; recorded in

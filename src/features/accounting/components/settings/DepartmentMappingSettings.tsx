@@ -231,9 +231,9 @@ export interface DepartmentMappingSettingsProps {
    *
    * What it gates: **everything that writes on this tab.** The `departments`
    * grant is read-only as of 2026-08-20 — `settings/departments/map` (the save)
-   * writes `DepartmentErpMap` in the configuration database two sibling
-   * applications read to prepare financial journal postings, and
-   * `settings/departments/sync` pulls DEPT dimension values out of Business
+   * writes `DepartmentErpMap`, rows two sibling applications read to prepare
+   * financial journal postings — shared rows, whichever database holds them —
+   * and `settings/departments/sync` pulls DEPT dimension values out of Business
    * Central into the ERP reporting database shared with Rocks Fast. Both are
    * admin-only, so both controls are hidden rather than offered and answered
    * 403.

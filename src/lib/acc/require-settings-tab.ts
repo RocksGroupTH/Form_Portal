@@ -35,9 +35,10 @@ import { decideSettingsTabAccess, type GrantableSettingsTabKey } from "@/lib/acc
  * Four routes do not use this at all and stay on `requireRole` — `approvers`
  * (it hands out the grants), the two `sync` POSTs (they write the ERP reporting
  * database shared with the Rocks Fast sibling) and `departments/map` (it writes
- * the shared configuration database that two sibling applications read to
- * prepare financial journal postings). `SETTINGS_ROUTE_TABS` records that, and
- * `departments` stays granted for reading.
+ * `DepartmentErpMap`, rows two sibling applications read to prepare financial
+ * journal postings — shared rows, whichever database holds them).
+ * `SETTINGS_ROUTE_TABS` records that, and `departments` stays granted for
+ * reading.
  *
  * Returns the session, or the `Response` to return — the same shape
  * `requireAuth()` uses, so a handler stays two lines:

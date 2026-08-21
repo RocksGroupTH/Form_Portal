@@ -111,16 +111,22 @@ export const SETTINGS_ROUTE_TABS: readonly SettingsRouteTabRule[] = [
   {
     route: "departments/map",
     tab: null,
-    // The `departments` grant is read-only, ruled 2026-08-20. This was the one
-    // granted route that wrote outside the form database, and what it writes is
-    // not ours alone: `saveDepartmentMappings` opens the core pool and writes
+    // The `departments` grant is read-only, ruled 2026-08-20. What the save
+    // writes is not ours alone: `saveDepartmentMappings` writes
     // `DepartmentErpMap`, which the Rocks Fast and ACC Portal siblings both read
     // from their own `erp-prep-service.ts` — the path that prepares financial
     // journal postings. A settings-tab grant should not decide where two other
     // applications post money, so the tab lists mappings and an admin saves them.
+    //
+    // Which database holds the rows has changed and does not matter. Until
+    // migrations 099/100 this was the one granted route that wrote outside the
+    // form database; those migrations moved the table into this app's own
+    // database behind a Fast_Core synonym, and the siblings read the same rows
+    // through it. The ruling rests on who reads the rows, not on where they
+    // live, so it survived the move unchanged.
     note:
-      "writes DepartmentErpMap in the shared configuration database, which two sibling "
-      + "applications read to prepare financial journal postings",
+      "writes DepartmentErpMap, which two sibling applications read to prepare "
+      + "financial journal postings — shared rows, whichever database holds them",
   },
   { route: "erp-config", tab: "erpInterface", note: "repoints where financial journals land" },
   { route: "gl-accounts", tab: "erpInterface" },

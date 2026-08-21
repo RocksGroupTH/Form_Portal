@@ -8,6 +8,38 @@
 -- switches live there -- so unlike migration 097 this file is applied exactly
 -- once, to one database.
 --
+-- ###########################################################################
+-- HISTORICAL -- already applied. DO NOT RE-RUN: the target moved to
+-- Rocks_Portal_Form (migrations 099/100). RUNNING THIS IN SSMS CAN CLEAR EVERY
+-- PER-FORM OVERRIDE IN THE LIVE FORM DATABASE.
+--
+-- The opening line above is out of date the moment you read it:
+-- DepartmentErpMap is no longer in Fast_Core at all. That name is a SYNONYM for
+-- [Rocks_Portal_Form].[dbo].[DepartmentErpMap], and the two halves of this file
+-- disagree about what a synonym is.
+--
+--   * Batch 2 (the ALTER TABLE) fails. Its guard reads sys.columns for
+--     OBJECT_ID('dbo.DepartmentErpMap'), which returns the SYNONYM's object id
+--     -- and a synonym has no columns (measured 2026-08-21: 0 rows in
+--     sys.columns, 0 in sys.indexes) -- so NOT EXISTS is true, and ALTER TABLE,
+--     being DDL, refuses to resolve the synonym.
+--   * Batch 3 begins UPDATE [dbo].[DepartmentErpMap] SET [FormCode] = NULL
+--     WHERE [FormCode] IS NOT NULL. UPDATE is DML and DML *does* resolve
+--     synonyms. It reaches the real table in Rocks_Portal_Form.
+--
+-- npm run apply-sql stops at the first failing batch (it awaits each in turn
+-- and exits 1), so batch 3 never runs there. SSMS does NOT stop -- by default
+-- it carries on to the next batch after an error -- so pasting this file into a
+-- query window runs the UPDATE against live rows three applications read to
+-- prepare financial journal postings, wiping every FormCode override.
+--
+-- Inert today only by luck: all three live rows are defaults already
+-- (measured 2026-08-21 -- 3 rows, 3 with FormCode NULL), so the UPDATE matches
+-- nothing. The first hand-written override makes it destructive.
+--
+-- If a column has to be added to DepartmentErpMap again, write a new migration
+-- against Rocks_Portal_Form.
+-- ###########################################################################
 -- ---------------------------------------------------------------------------
 -- Fast_Core is SHARED. Read this before running it.
 --
