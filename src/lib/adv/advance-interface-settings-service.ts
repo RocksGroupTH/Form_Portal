@@ -1,8 +1,9 @@
-import { listAllBrands } from "@/lib/acc/brand-options";
+import { getAllowedBrands, listAllBrands } from "@/lib/acc/brand-options";
 import type { ErpBcEnvironment } from "@/lib/acc/erp-environment";
 import { loadErpJournalBuildContext } from "@/lib/acc/erp-journal-context";
 import { resolveErpTargetProfile } from "@/lib/acc/erp-target-profile";
 import { listAdvanceInterfaceConfig } from "@/lib/adv/advance-interface-config-service";
+import { AP2_FORM_CODE } from "@/features/advance/constants";
 import { resolveFormAccess } from "@/lib/form-environment";
 
 /**
@@ -38,7 +39,7 @@ export interface AdvanceInterfaceConfigView {
 }
 
 export async function listAdvanceInterfaceConfigView(): Promise<AdvanceInterfaceConfigView[]> {
-  const [allBrands, ctx, ap2, ap2Access] = await Promise.all([
+  const [allBrands, ctx, ap2, ap2Access, ap2Brands] = await Promise.all([
     listAllBrands(),
     loadErpJournalBuildContext(),
     listAdvanceInterfaceConfig(),
@@ -46,15 +47,25 @@ export async function listAdvanceInterfaceConfigView(): Promise<AdvanceInterface
     // form environment here — the label (and BC target profile) then matches what
     // the send actually uses: UAT mode → Sandbox, otherwise Production.
     resolveFormAccess("AP-2"),
+    // The card list is AP-2's OWN brand set (AccFormBrand FormCode='AP-2'),
+    // not AP-1's — same convention as the AP-2 request-form brand picker.
+    getAllowedBrands(AP2_FORM_CODE),
   ]);
   const ap2Environment: ErpBcEnvironment = ap2Access.environment === "UAT" ? "Sandbox" : "Production";
   const brandByCode = new Map(allBrands.map((b) => [b.brandCode.toUpperCase(), b]));
 
-  // Claim brands that can post = those mapped in AP-1 ∪ those AP-2 has overridden.
-  const codes = Array.from(new Set([
-    ...Object.keys(ctx.interfaceByClaim),
-    ...Object.keys(ap2),
-  ])).sort();
+  // Cards = AP-2's own enabled brands (in their AccFormBrand SortOrder) ∪ any
+  // brand that already has an AP-2 interface config row (so none is orphaned).
+  const codes: string[] = [];
+  const seen = new Set<string>();
+  for (const b of ap2Brands) {
+    const c = b.brandCode.toUpperCase();
+    if (!seen.has(c)) { seen.add(c); codes.push(c); }
+  }
+  for (const c of Object.keys(ap2)) {
+    const up = c.toUpperCase();
+    if (!seen.has(up)) { seen.add(up); codes.push(up); }
+  }
 
   const rows = await Promise.all(
     codes.map(async (code) => {
