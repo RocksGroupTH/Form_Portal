@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { nextAttemptNo } from "./advance-erp-attempt-service";
+import { nextAttemptNo } from "./advance-erp-attempt-nextno";
 
 test("first attempt is 1 when there is no prior attempt", () => {
   assert.equal(nextAttemptNo(null), 1);

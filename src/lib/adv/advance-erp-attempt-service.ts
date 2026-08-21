@@ -12,10 +12,7 @@ export interface ErpAttempt {
   resentAt: string | null;
 }
 
-/** Pure: the attempt number to use given the current max (null/0 → 1). */
-export function nextAttemptNo(currentMax: number | null): number {
-  return (currentMax ?? 0) + 1;
-}
+export { nextAttemptNo } from "./advance-erp-attempt-nextno";
 
 /** Record a successful send as the next attempt (Status='Sent') for a request. */
 export async function recordSentAttempt(
