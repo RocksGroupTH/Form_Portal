@@ -482,13 +482,21 @@ brand-scoped when approving, sending or exporting a single PCTH claim.
 `refuseOutOfInterfaceScope` drops into all four unchanged; until it does, the
 grant is safe only because nobody holds it.
 
-**Commissioning — both tables ship empty, so the feature arrives switched off.**
+**Commissioning — both tables shipped empty, so the feature arrived switched
+off. One of them has since been seeded; measured 2026-08-21:**
 
-- No non-admin sees an AP-1 settings tab until an admin ticks one at
-  Settings → สิทธิ์เข้าถึง.
-- **AP-17's booking queue and report are hidden from every non-admin** until
-  someone is added at Settings → ตั้งค่าแบบฟอร์มขอเดินทาง → สิทธิ์เข้าถึง. The
-  panel says so on the page while the roster is empty.
+- `AccApproverSettingsTab` is still **empty**, so no non-admin sees an AP-1
+  settings tab until an admin ticks one at Settings → สิทธิ์เข้าถึง.
+- `AccBookingApprover` holds **one active row** — `sattawat.c@rocksgroup.com`,
+  in both form databases — added outside this repository. So AP-17's booking
+  queue and report are **not** hidden from everyone: that person sees them, as
+  do admins, and everyone else does not until they are added at Settings →
+  ตั้งค่าแบบฟอร์มขอเดินทาง → สิทธิ์เข้าถึง. `AccBookingApproverTab` is still
+  empty, so no tab is granted to anyone.
+  **Keeping the roster at that one person is a deliberate decision, taken
+  2026-08-21** — not an unfinished commissioning step. Do not "helpfully" copy
+  AP-1's four active `AccApprover` rows across; that is the exact conflation the
+  two separate rosters exist to prevent.
 - **Migration 095 must be applied to both form databases before this code
   deploys.**
 
@@ -857,17 +865,37 @@ tables to two**:
   earlier text is left above because a note that only ever states today's
   reading cannot be told apart from one nobody has checked.
 
-The single mismatch now is one row, and it is an id rather than a value:
+**Closed 2026-08-21 by migration 103. `npm run check:alignment` now passes** —
+21 tables, 84 rows, identical.
+
+The last mismatch was **not** the single row the verifier printed. It reports
+the first differing row and then `break`s out of the loop, so a one-line output
+had been read as a one-row problem for a day:
 
 ```
 AccFormBrand: 23 row(s) each side
-  Rocks_Portal_Form:     {"BrandCode":"KSI","FormCode":"AP-11","Id":1014,"IsActive":false,"SortOrder":3}
-  Rocks_Portal_Form_UAT: {"BrandCode":"KSI","FormCode":"AP-11","Id":1019,"IsActive":false,"SortOrder":3}
+  Rocks_Portal_Form:     {"BrandCode":"KSI","FormCode":"AP-11","Id":1014, …}
+  Rocks_Portal_Form_UAT: {"BrandCode":"KSI","FormCode":"AP-11","Id":1019, …}
 ```
 
-Every business column agrees; only `Id` differs, which is what a row inserted
-into each database separately looks like rather than dual-written through
-`writeBothPools`. It is inert — the row is `IsActive: false`, and nothing joins
-`AccFormBrand` by id — but it keeps the verifier red, which costs more than the
-row does. Closing it means deciding which id survives and rewriting the other
-side; that is a data decision, not a developer's.
+What was actually wrong is that **AP-3 and AP-11 held each other's id blocks** —
+ten rows, not one. Production had AP-11 at 1011-1015 and AP-3 at 1016-1020; UAT
+had them the other way round, because each block was inserted into the two
+databases in the opposite order by something other than `writeBothPools`. Every
+business column agreed on all twenty-three rows; only `Id` differed. A divergent
+id *is* the signature of a direct SQL edit against one database, because
+dual-write supplies production's id to UAT explicitly.
+
+`103_uat_form_brand_id_realign.sql` (`Rocks_Portal_Form_UAT` only) replaces every
+UAT row with production's wholesale inside one transaction — the operation whose
+correctness needs no reasoning about ordering, and the only one available here,
+since the two blocks occupy each other's target ids and no per-row update can be
+sequenced without colliding on the primary key or on `UQ_AccFormBrand`. It is
+guarded so it can only ever change ids: it refuses unless both tables hold the
+same set of `(FormCode, BrandCode)` **and** every pair already agrees on
+`IsActive` and `SortOrder`. Real configuration drift therefore still reports
+rather than being silently overwritten by production, which is the whole point of
+the verifier it exists to satisfy.
+
+**When the verifier is red, read past the first row.** It prints one pair and
+stops.
