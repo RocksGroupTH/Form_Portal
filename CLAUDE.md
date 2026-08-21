@@ -408,8 +408,8 @@ ACC Portal had been its only writer anywhere.
 |---|---|
 | `settings/approvers` | the tab that hands out access |
 | `settings/departments/map` | writes `DepartmentErpMap`, rows shared with two sibling applications — see below |
-| `settings/departments/sync` | writes `Fast_Data` |
-| `settings/erp-accounts/sync` | writes `Fast_Data` |
+| `settings/departments/sync` | writes `Rocks_ERP_Data`, the Business Central mirror two sibling applications also read through `Fast_Data`'s synonyms — see "The ERP sync tables moved out of Fast_Data" above |
+| `settings/erp-accounts/sync` | writes `Rocks_ERP_Data`, the Business Central mirror two sibling applications also read through `Fast_Data`'s synonyms — see "The ERP sync tables moved out of Fast_Data" above |
 
 *(ACC Portal has the grant feature and not this gate — its settings routes are
 `requireRole([...ADMIN_ROLES])` with "Account Admin" excluded, so a granted
