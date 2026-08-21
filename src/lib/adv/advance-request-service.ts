@@ -10,7 +10,6 @@ import {
   type RequesterSnapshot,
 } from "@/lib/acc/employee-context";
 import { queueEmail } from "@/lib/acc/email-queue";
-import type { AccApproval } from "@/features/accounting/types";
 import {
   AP2_FORM_CODE,
   AP2_SEQUENCE_PREFIX,
@@ -433,8 +432,12 @@ export async function deleteDraft(id: number, userId: number): Promise<void> {
     if (row.Status !== "Draft" && row.Status !== "Returned") {
       throw new Error("คำขอนี้ไม่สามารถลบได้ในสถานะปัจจุบัน");
     }
+    // Child rows first (FK order): attachments, AP-2's own approval, activity,
+    // detail, then the header. AP-2 uses AccAdvanceApproval (not AccApproval),
+    // and AccRequestFile must go before AccRequest or its FK blocks the delete.
+    await tx.request().input("id", sql.Int, id).query(`DELETE FROM [dbo].[AccRequestFile] WHERE RequestId=@id`);
+    await tx.request().input("id", sql.Int, id).query(`DELETE FROM [dbo].[AccAdvanceApproval] WHERE RequestId=@id`);
     await tx.request().input("id", sql.Int, id).query(`DELETE FROM [dbo].[AccActivityLog] WHERE RequestId=@id`);
-    await tx.request().input("id", sql.Int, id).query(`DELETE FROM [dbo].[AccApproval] WHERE RequestId=@id`);
     await tx.request().input("id", sql.Int, id).query(`DELETE FROM [dbo].[AccAdvance] WHERE RequestId=@id`);
     await tx.request().input("id", sql.Int, id).query(`DELETE FROM [dbo].[AccRequest] WHERE Id=@id`);
     await tx.commit();

@@ -172,6 +172,7 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
     const fd = new FormData();
     Array.from(list).forEach((f) => fd.append("files", f));
     setUploading(true);
+    const wasNew = requestId == null;
     try {
       // Attaching on a brand-new form auto-saves the draft first, so the file has a request to attach to.
       const id = requestId ?? (await persist());
@@ -179,7 +180,10 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
       const j = (await res.json()) as { ok: boolean; data?: typeof files; error?: string };
       if (!j.ok) throw new Error(j.error ?? "อัปโหลดไม่สำเร็จ");
       if (j.data) setFiles(j.data);
-      toast.success("แนบไฟล์แล้ว");
+      // Auto-created a draft on a fresh form → reflect its id in the URL so a
+      // refresh/back returns to the same draft instead of a blank New form.
+      if (wasNew) { onSaved(id); toast.success("สร้างแบบร่างอัตโนมัติ · แนบไฟล์แล้ว"); }
+      else toast.success("แนบไฟล์แล้ว");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "อัปโหลดไม่สำเร็จ");
     } finally {
@@ -197,6 +201,7 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
       if (!j.ok) throw new Error(j.error ?? "ลบไม่สำเร็จ");
       setFiles((prev) => prev.filter((f) => f.id !== fileId));
       setDeleteFileId(null);
+      toast.success("ลบไฟล์แล้ว");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "ลบไม่สำเร็จ");
     } finally {
@@ -292,15 +297,27 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
 
   async function handleSubmit() {
     setSubmitting(true);
+    // Step 1: persist the latest values. If this fails, nothing was saved.
+    let id: number;
     try {
-      const id = await persist();
+      id = await persist();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ");
+      setSubmitting(false);
+      return;
+    }
+    // Step 2: submit. If only this fails, the draft is already saved — say so
+    // clearly (and keep it resumable) so the user never thinks their data is gone.
+    try {
       const res = await fetch(`/api/request/advance/requests/${id}/submit`, { method: "POST" });
       const json = (await res.json()) as { ok: boolean; error?: string };
       if (!json.ok) throw new Error(json.error ?? "ส่งคำขอไม่สำเร็จ");
       toast.success("ส่งคำขอแล้ว");
       onSubmitted(id);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "ส่งคำขอไม่สำเร็จ");
+      onSaved(id); // draft persisted — reflect its id in the URL so it can be resumed
+      const detail = e instanceof Error ? e.message : "";
+      toast.error(`บันทึกแบบร่างแล้ว แต่ส่งคำขอไม่สำเร็จ: ${detail || "กรุณาลองส่งอีกครั้ง"}`);
     } finally {
       setSubmitting(false);
     }
