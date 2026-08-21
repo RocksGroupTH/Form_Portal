@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Check, User, Mail, UserCog, Paperclip, Camera, X, FileText } from "lucide-react";
 import { Button } from "@/components/ui/Button";
@@ -11,7 +11,7 @@ import { CurrencyCombobox } from "@/features/advance/components/CurrencyCombobox
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
 import type { AccBrandOption } from "@/features/accounting/types";
 import type { AdvancePayeeType, AdvanceRequest, AdvanceSaveInput } from "@/features/advance/types";
-import { AP2_DEFAULT_CURRENCY, AP2_PRPO_THRESHOLD } from "@/features/advance/constants";
+import { AP2_DEFAULT_CURRENCY, AP2_MAX_CLEAR_DAYS, AP2_PRPO_THRESHOLD } from "@/features/advance/constants";
 import type { BankOption } from "@/lib/adv/bank-master-service";
 
 interface Props {
@@ -82,6 +82,33 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
   const [savedId, setSavedId] = useState<number | null>(initial?.id ?? null);
   const requestId = savedId;
   const readOnly = !!initial && initial.status !== "Draft" && initial.status !== "Returned";
+
+  // P1.1 — client-side submit validation (mirrors validateAdvanceForSubmit).
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  // Refs for focus-on-error (in visual order).
+  const brandRef = useRef<HTMLDivElement>(null);
+  const payeeTypeRef = useRef<HTMLSelectElement>(null);
+  const payeeNameRef = useRef<HTMLInputElement>(null);
+  const payeeBankAccountRef = useRef<HTMLInputElement>(null);
+  const payeeBankCodeRef = useRef<HTMLSelectElement>(null);
+  const needByDateRef = useRef<HTMLInputElement>(null);
+  const expectedClearDateRef = useRef<HTMLInputElement>(null);
+  const amountRef = useRef<HTMLInputElement>(null);
+  const exchangeRateRef = useRef<HTMLInputElement>(null);
+  const overReasonRef = useRef<HTMLTextAreaElement>(null);
+  const purposeRef = useRef<HTMLTextAreaElement>(null);
+
+  // P1.2 — unsaved-change guard: snapshot of the last saved form payload.
+  const savedSnapshotRef = useRef<string>("");
+
+  // Clear a single field's error (called from each input's onChange).
+  const clearError = (key: string) =>
+    setErrors((p) => {
+      if (!(key in p)) return p;
+      const next = { ...p };
+      delete next[key];
+      return next;
+    });
 
   useEffect(() => {
     let cancelled = false;
@@ -266,6 +293,90 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
     };
   }
 
+  // P1.2 — initialize/refresh the saved snapshot once the form is ready (and on
+  // resume/initial change), so a freshly loaded form is not considered dirty.
+  useEffect(() => {
+    if (!ready) return;
+    savedSnapshotRef.current = JSON.stringify(buildInput());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, initial]);
+
+  const dirty = ready && !readOnly && JSON.stringify(buildInput()) !== savedSnapshotRef.current;
+
+  // Warn on refresh / tab-close / hard navigation while there are unsaved edits.
+  // In-app route interception via the Next App Router is out of scope here —
+  // beforeunload covers the browser-level exits, which is sufficient for now.
+  useEffect(() => {
+    if (!dirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirty]);
+
+  // P1.6 — date bounds. Normal client component: new Date() is fine here.
+  const todayYmd = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }, []);
+  const clearMaxYmd = useMemo(() => {
+    if (!needByDate) return undefined;
+    const d = new Date(needByDate);
+    if (Number.isNaN(d.getTime())) return undefined;
+    d.setDate(d.getDate() + AP2_MAX_CLEAR_DAYS);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }, [needByDate]);
+
+  // P1.1 — mirror validateAdvanceForSubmit (server stays the source of truth).
+  function validate(): Record<string, string> {
+    const errs: Record<string, string> = {};
+    if (!brandCode) errs.brand = "กรุณาเลือกแบรนด์";
+    if (!payeeType) errs.payeeType = "กรุณาเลือกผู้รับโอน (โอนให้)";
+    if (payeeType === "vendor") {
+      if (!payeeName.trim()) errs.payeeName = "กรุณากรอกชื่อคู่ค้า";
+      if (!payeeBankAccount.trim()) errs.payeeBankAccount = "กรุณากรอกเลขที่บัญชีคู่ค้า";
+      if (!payeeBankCode.trim()) errs.payeeBankCode = "กรุณาเลือกธนาคารของคู่ค้า";
+    }
+    if (!needByDate) errs.needByDate = "กรุณาระบุวันที่ต้องการเริ่มใช้เงิน";
+    if (!expectedClearDate) errs.expectedClearDate = "กรุณาระบุวันที่คาดว่าจะเคลียร์";
+    if (needByDate && expectedClearDate) {
+      const need = new Date(needByDate);
+      const clear = new Date(expectedClearDate);
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      if (need < today) errs.needByDate = "วันที่ต้องการเริ่มใช้เงินต้องไม่เป็นอดีต";
+      if (clear < need) errs.expectedClearDate = "วันเคลียร์ต้องไม่ก่อนวันที่ต้องการใช้เงิน";
+      else {
+        const diffDays = (clear.getTime() - need.getTime()) / 86_400_000;
+        if (diffDays > AP2_MAX_CLEAR_DAYS)
+          errs.expectedClearDate = `วันเคลียร์ต้องไม่เกิน ${AP2_MAX_CLEAR_DAYS} วันจากวันที่ต้องการใช้เงิน`;
+      }
+    }
+    if (!amount || Number(amount) <= 0) errs.amount = "กรุณาระบุจำนวนเงินที่ถูกต้อง";
+    if (foreign && (!exchangeRate || Number(exchangeRate) <= 0))
+      errs.exchangeRate = "กรุณาระบุอัตราแลกเปลี่ยน (สำหรับสกุลเงินต่างประเทศ)";
+    if (!purpose.trim()) errs.purpose = "กรุณากรอกรายละเอียดค่าใช้จ่าย";
+    if (baseAmount > AP2_PRPO_THRESHOLD && !overReason.trim())
+      errs.overReason = `ยอดเกิน ${AP2_PRPO_THRESHOLD.toLocaleString()} บาท — กรุณาระบุเหตุผลเพิ่มเติม`;
+    return errs;
+  }
+
+  // Focusable field refs in visual order — used to jump to the first error.
+  const errorFieldOrder: { key: string; ref: React.RefObject<HTMLElement | null> }[] = [
+    { key: "brand", ref: brandRef },
+    { key: "payeeType", ref: payeeTypeRef },
+    { key: "payeeName", ref: payeeNameRef },
+    { key: "payeeBankAccount", ref: payeeBankAccountRef },
+    { key: "payeeBankCode", ref: payeeBankCodeRef },
+    { key: "needByDate", ref: needByDateRef },
+    { key: "expectedClearDate", ref: expectedClearDateRef },
+    { key: "amount", ref: amountRef },
+    { key: "exchangeRate", ref: exchangeRateRef },
+    { key: "overReason", ref: overReasonRef },
+    { key: "purpose", ref: purposeRef },
+  ];
+
   async function persist(): Promise<number> {
     const url = requestId
       ? `/api/request/advance/requests/${requestId}`
@@ -286,6 +397,7 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
     setSaving(true);
     try {
       const id = await persist();
+      savedSnapshotRef.current = JSON.stringify(buildInput()); // no longer dirty
       toast.success("บันทึกแบบร่างแล้ว");
       onSaved(id);
     } catch (e) {
@@ -296,6 +408,21 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
   }
 
   async function handleSubmit() {
+    // P1.1 — validate client-side first; block + focus the first error, no save.
+    const errs = validate();
+    if (Object.keys(errs).length > 0) {
+      setErrors(errs);
+      const first = errorFieldOrder.find((f) => errs[f.key]);
+      const el = first?.ref.current;
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.focus({ preventScroll: true });
+      }
+      toast.error(`กรุณาตรวจสอบข้อมูลที่ยังไม่ครบ (${Object.keys(errs).length} จุด)`);
+      return;
+    }
+    setErrors({});
+
     setSubmitting(true);
     // Step 1: persist the latest values. If this fails, nothing was saved.
     let id: number;
@@ -312,9 +439,11 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
       const res = await fetch(`/api/request/advance/requests/${id}/submit`, { method: "POST" });
       const json = (await res.json()) as { ok: boolean; error?: string };
       if (!json.ok) throw new Error(json.error ?? "ส่งคำขอไม่สำเร็จ");
+      savedSnapshotRef.current = JSON.stringify(buildInput()); // submitted → not dirty
       toast.success("ส่งคำขอแล้ว");
       onSubmitted(id);
     } catch (e) {
+      savedSnapshotRef.current = JSON.stringify(buildInput()); // draft persisted — not dirty
       onSaved(id); // draft persisted — reflect its id in the URL so it can be resumed
       const detail = e instanceof Error ? e.message : "";
       toast.error(`บันทึกแบบร่างแล้ว แต่ส่งคำขอไม่สำเร็จ: ${detail || "กรุณาลองส่งอีกครั้ง"}`);
@@ -335,7 +464,7 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4 pb-20">
       {/* Requester (รหัสพนักงาน กรอกเอง → auto ดึง HR) + brand chips like AP-1 */}
       <div className="rounded-2xl p-4 sm:p-5 flex flex-col gap-3" style={box}>
         {/* ผู้ขอเบิก — same card + on-behalf picker as AP-1 */}
@@ -428,7 +557,7 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
           </div>
         </div>
 
-        <div>
+        <div ref={brandRef} tabIndex={-1} className="outline-none">
           <label className="text-[12px] font-bold" style={labelStyle}>แบรนด์ที่เบิก *</label>
           {brands.length === 0 ? (
             <p className="text-[13px] mt-1" style={{ color: "var(--text-faint)" }}>
@@ -440,7 +569,7 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
                 const active = brandCode === b.brandCode;
                 return (
                   <button key={b.brandCode} type="button" disabled={readOnly}
-                    onClick={() => setBrandCode(active ? "" : b.brandCode)}
+                    onClick={() => { setBrandCode(active ? "" : b.brandCode); clearError("brand"); }}
                     className="flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer text-[14px] font-semibold transition-all disabled:cursor-not-allowed"
                     style={{
                       borderWidth: 2, borderStyle: "solid",
@@ -459,16 +588,21 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
               })}
             </div>
           )}
+          {errors.brand && (
+            <p id="err-brand" className="text-[11px] mt-0.5 m-0" style={{ color: "#dc2626" }}>{errors.brand}</p>
+          )}
         </div>
       </div>
 
       {/* Payee (โอนให้) */}
       <div className="rounded-2xl p-4 sm:p-5 flex flex-col gap-3" style={box}>
-        <Field label="โอนให้ *">
-          <select className={fieldClass} style={fieldStyle} value={payeeType} disabled={readOnly || !brandCode}
+        <Field label="โอนให้ *" error={errors.payeeType} errorId="err-payeeType">
+          <select ref={payeeTypeRef} className={fieldClass} style={fieldStyle} value={payeeType} disabled={readOnly || !brandCode}
+            aria-invalid={!!errors.payeeType} aria-describedby={errors.payeeType ? "err-payeeType" : undefined}
             onChange={(e) => {
               const v = e.target.value as AdvancePayeeType | "";
               setPayeeType(v);
+              clearError("payeeType");
               // สลับผู้รับโอน → เริ่มชื่อคู่ค้าใหม่ (ว่าง) และล้างข้อมูลบัญชีเมื่อไม่ใช่คู่ค้า
               setPayeeName("");
               if (v !== "vendor") { setPayeeBankAccount(""); setPayeeBankCode(""); }
@@ -483,17 +617,20 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
         )}
         {payeeType === "vendor" && (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <Field label="ชื่อคู่ค้า *">
-              <input className={fieldClass} style={fieldStyle} value={payeeName} disabled={readOnly}
-                onChange={(e) => setPayeeName(e.target.value)} />
+            <Field label="ชื่อคู่ค้า *" error={errors.payeeName} errorId="err-payeeName">
+              <input ref={payeeNameRef} className={fieldClass} style={fieldStyle} value={payeeName} disabled={readOnly}
+                aria-invalid={!!errors.payeeName} aria-describedby={errors.payeeName ? "err-payeeName" : undefined}
+                onChange={(e) => { setPayeeName(e.target.value); clearError("payeeName"); }} />
             </Field>
-            <Field label="เลขที่บัญชี *">
-              <input className={fieldClass} style={fieldStyle} value={payeeBankAccount} disabled={readOnly}
-                onChange={(e) => setPayeeBankAccount(e.target.value)} />
+            <Field label="เลขที่บัญชี *" error={errors.payeeBankAccount} errorId="err-payeeBankAccount">
+              <input ref={payeeBankAccountRef} className={fieldClass} style={fieldStyle} value={payeeBankAccount} disabled={readOnly}
+                aria-invalid={!!errors.payeeBankAccount} aria-describedby={errors.payeeBankAccount ? "err-payeeBankAccount" : undefined}
+                onChange={(e) => { setPayeeBankAccount(e.target.value); clearError("payeeBankAccount"); }} />
             </Field>
-            <Field label="ธนาคาร *">
-              <select className={fieldClass} style={fieldStyle} value={payeeBankCode} disabled={readOnly}
-                onChange={(e) => setPayeeBankCode(e.target.value)}>
+            <Field label="ธนาคาร *" error={errors.payeeBankCode} errorId="err-payeeBankCode">
+              <select ref={payeeBankCodeRef} className={fieldClass} style={fieldStyle} value={payeeBankCode} disabled={readOnly}
+                aria-invalid={!!errors.payeeBankCode} aria-describedby={errors.payeeBankCode ? "err-payeeBankCode" : undefined}
+                onChange={(e) => { setPayeeBankCode(e.target.value); clearError("payeeBankCode"); }}>
                 <option value="">— เลือกธนาคาร —</option>
                 {banks.map((bk) => <option key={bk.bankCode} value={bk.bankCode}>{bk.bankName}</option>)}
               </select>
@@ -517,13 +654,17 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
           </p>
         )}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Field label="วันที่ต้องการเริ่มใช้เงิน *">
-            <input type="date" className={fieldClass} style={fieldStyle} value={needByDate}
-              disabled={readOnly} onChange={(e) => setNeedByDate(e.target.value)} />
+          <Field label="วันที่ต้องการเริ่มใช้เงิน *" error={errors.needByDate} errorId="err-needByDate">
+            <input ref={needByDateRef} type="date" className={fieldClass} style={fieldStyle} value={needByDate}
+              min={todayYmd}
+              aria-invalid={!!errors.needByDate} aria-describedby={errors.needByDate ? "err-needByDate" : undefined}
+              disabled={readOnly} onChange={(e) => { setNeedByDate(e.target.value); clearError("needByDate"); }} />
           </Field>
-          <Field label="วันที่คาดว่าจะเคลียร์ * (≤ 30 วัน)">
-            <input type="date" className={fieldClass} style={fieldStyle} value={expectedClearDate}
-              disabled={readOnly} onChange={(e) => setExpectedClearDate(e.target.value)} />
+          <Field label="วันที่คาดว่าจะเคลียร์ * (≤ 30 วัน)" error={errors.expectedClearDate} errorId="err-expectedClearDate">
+            <input ref={expectedClearDateRef} type="date" className={fieldClass} style={fieldStyle} value={expectedClearDate}
+              min={needByDate || todayYmd} max={clearMaxYmd}
+              aria-invalid={!!errors.expectedClearDate} aria-describedby={errors.expectedClearDate ? "err-expectedClearDate" : undefined}
+              disabled={readOnly} onChange={(e) => { setExpectedClearDate(e.target.value); clearError("expectedClearDate"); }} />
           </Field>
         </div>
 
@@ -544,16 +685,18 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
                   onChange={(code) => { setCurrencyCode(code); fetchFxRate(code); }} />
               </Field>
             )}
-            <Field label={foreign ? "จำนวนเงิน (สกุลนั้น) *" : "จำนวนเงิน (บาท) *"}>
-              <input type="number" min="0" step="0.01" className={fieldClass} style={fieldStyle} value={amount}
-                disabled={readOnly} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
+            <Field label={foreign ? "จำนวนเงิน (สกุลนั้น) *" : "จำนวนเงิน (บาท) *"} error={errors.amount} errorId="err-amount">
+              <input ref={amountRef} type="number" min="0" step="0.01" className={fieldClass} style={fieldStyle} value={amount}
+                aria-invalid={!!errors.amount} aria-describedby={errors.amount ? "err-amount" : undefined}
+                disabled={readOnly} onChange={(e) => { setAmount(e.target.value); clearError("amount"); }} placeholder="0.00" />
             </Field>
             {foreign && (
-              <Field label="อัตราแลกเปลี่ยน *">
+              <Field label="อัตราแลกเปลี่ยน *" error={errors.exchangeRate} errorId="err-exchangeRate">
                 <div className="flex items-center gap-1.5">
-                  <input type="number" min="0" step="0.000001" className={fieldClass} style={fieldStyle}
+                  <input ref={exchangeRateRef} type="number" min="0" step="0.000001" className={fieldClass} style={fieldStyle}
                     value={exchangeRate} disabled={readOnly}
-                    onChange={(e) => setExchangeRate(e.target.value)} placeholder="เช่น 36.50" />
+                    aria-invalid={!!errors.exchangeRate} aria-describedby={errors.exchangeRate ? "err-exchangeRate" : undefined}
+                    onChange={(e) => { setExchangeRate(e.target.value); clearError("exchangeRate"); }} placeholder="เช่น 36.50" />
                   <Button variant="secondary" size="sm" type="button" loading={fxLoading}
                     disabled={readOnly || !currencyCode.trim()}
                     onClick={() => fetchFxRate(currencyCode)}>ดึงอัตรา</Button>
@@ -576,16 +719,18 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
         </div>
 
         {baseAmount != null && baseAmount > AP2_PRPO_THRESHOLD && (
-          <Field label={`เหตุผลเพิ่มเติม (ยอดเกิน ${AP2_PRPO_THRESHOLD.toLocaleString()} บาท) *`}>
-            <textarea rows={2} className={fieldClass} style={fieldStyle} value={overReason} disabled={readOnly}
-              onChange={(e) => setOverReason(e.target.value)}
+          <Field label={`เหตุผลเพิ่มเติม (ยอดเกิน ${AP2_PRPO_THRESHOLD.toLocaleString()} บาท) *`} error={errors.overReason} errorId="err-overReason">
+            <textarea ref={overReasonRef} rows={2} className={fieldClass} style={fieldStyle} value={overReason} disabled={readOnly}
+              aria-invalid={!!errors.overReason} aria-describedby={errors.overReason ? "err-overReason" : undefined}
+              onChange={(e) => { setOverReason(e.target.value); clearError("overReason"); }}
               placeholder="เหตุผลที่ขอเบิกเกินวงเงิน / เหตุใดจึงไม่ผ่านกระบวนการ PR-PO" />
           </Field>
         )}
 
-        <Field label="รายละเอียดค่าใช้จ่าย *">
-          <textarea rows={3} className={fieldClass} style={fieldStyle} value={purpose} disabled={readOnly}
-            onChange={(e) => setPurpose(e.target.value)}
+        <Field label="รายละเอียดค่าใช้จ่าย *" error={errors.purpose} errorId="err-purpose">
+          <textarea ref={purposeRef} rows={3} className={fieldClass} style={fieldStyle} value={purpose} disabled={readOnly}
+            aria-invalid={!!errors.purpose} aria-describedby={errors.purpose ? "err-purpose" : undefined}
+            onChange={(e) => { setPurpose(e.target.value); clearError("purpose"); }}
             placeholder="ระบุรายการค่าใช้จ่ายและจำนวนเงินประมาณการของแต่ละรายการ เช่น ค่าจัดกิจกรรมพนักงาน" />
         </Field>
 
@@ -658,9 +803,24 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
       </fieldset>
 
       {!readOnly && (
-        <div className="flex items-center justify-end gap-2">
-          <Button variant="secondary" onClick={handleSave} loading={saving} disabled={submitting}>บันทึกแบบร่าง</Button>
-          <Button variant="primary" onClick={handleSubmit} loading={submitting} disabled={saving}>ส่งคำขอ</Button>
+        <div
+          className="sticky bottom-0 z-10 -mx-4 sm:-mx-5 px-4 sm:px-5 py-3 flex flex-wrap items-center justify-between gap-3"
+          style={{
+            background: "var(--bg-card)",
+            borderTop: "1px solid var(--border-card)",
+            boxShadow: "0 -4px 12px rgba(0,0,0,0.06)",
+          }}
+        >
+          <div className="flex items-baseline gap-2">
+            <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>ยอดที่เบิก:</span>
+            <span className="text-[15px] font-bold" style={{ color: "var(--text-primary)" }}>
+              {baseAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ฿
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" onClick={handleSave} loading={saving} disabled={submitting}>บันทึกแบบร่าง</Button>
+            <Button variant="primary" onClick={handleSubmit} loading={submitting} disabled={saving}>ส่งคำขอ</Button>
+          </div>
         </div>
       )}
 
@@ -692,11 +852,24 @@ export function AdvanceForm({ initial, onSaved, onSubmitted }: Props) {
   );
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({
+  label,
+  children,
+  error,
+  errorId,
+}: {
+  label: string;
+  children: ReactNode;
+  error?: string;
+  errorId?: string;
+}) {
   return (
     <div className="flex flex-col gap-1">
       <label className="text-[12px] font-bold" style={labelStyle}>{label}</label>
       {children}
+      {error && (
+        <p id={errorId} className="text-[11px] mt-0.5 m-0" style={{ color: "#dc2626" }}>{error}</p>
+      )}
     </div>
   );
 }
