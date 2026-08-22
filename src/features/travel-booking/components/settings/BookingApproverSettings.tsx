@@ -36,8 +36,8 @@ function ConfirmModal({
 }) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: "var(--overlay-bg)" }}
+      className="app-overlay fixed inset-0 z-50 flex items-center justify-center"
+     
     >
       <div
         className="rounded-2xl w-[400px] max-w-[90vw] overflow-hidden"

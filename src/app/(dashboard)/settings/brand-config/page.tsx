@@ -376,7 +376,7 @@ function BrandConfigModal({
   const [bcStatus, erpStatus] = getGroupStatusesFromForm(form);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "var(--overlay-bg)" }}>
+    <div className="app-overlay fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
         className="rounded-2xl w-[480px] max-w-full max-h-[90vh] flex flex-col overflow-hidden"
         style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", boxShadow: "var(--shadow-modal)" }}

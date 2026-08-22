@@ -143,8 +143,8 @@ function OptionDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: "var(--overlay-bg)" }}
+      className="app-overlay fixed inset-0 z-50 flex items-center justify-center"
+     
     >
       <div
         className={`rounded-2xl ${isVehicle ? "w-[560px]" : "w-[440px]"} max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden`}
