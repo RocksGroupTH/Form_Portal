@@ -165,6 +165,7 @@ export async function mergeFormBrandBatch(
   const form = formCode.trim().toUpperCase();
   const batch = batchName?.trim() || null;
   if (!brand) throw new Error("กรุณาระบุแบรนด์");
+  if (!form) throw new Error("กรุณาระบุ FormCode");
   await writeBothPools(async (tx) => {
     await tx
       .request()

@@ -233,6 +233,7 @@ export async function mergeFormBrandBranch(
   const form = formCode.trim().toUpperCase();
   const branch = branchCode?.trim() || null;
   if (!brand) throw new Error("กรุณาระบุแบรนด์");
+  if (!form) throw new Error("กรุณาระบุ FormCode");
   await writeBothPools(async (tx) => {
     await tx
       .request()

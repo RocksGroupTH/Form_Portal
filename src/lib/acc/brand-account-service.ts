@@ -203,6 +203,7 @@ export async function mergeFormBrandAccount(
   const accNo = accountNo.trim();
   if (!brand) throw new Error("กรุณาระบุแบรนด์");
   if (!accNo) throw new Error("กรุณาระบุเลขบัญชี");
+  if (!form) throw new Error("กรุณาระบุ FormCode");
   const table = TABLE[kind];
   await writeBothPools(async (tx) => {
     // Clear existing per-form rows for this brand
