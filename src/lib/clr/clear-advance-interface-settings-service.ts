@@ -23,6 +23,10 @@ export interface ClrInterfaceConfigView {
   environment: string | null;
   /** AP-3's own Journal Batch for the clearing journal. */
   journalBatchName: string | null;
+  /** AP-3 GL account for VAT input (ภาษีซื้อ). */
+  vatInputGlAccountNo: string | null;
+  /** AP-3 GL account for WHT payable. */
+  whtPayableGlAccountNo: string | null;
   /** true when the Journal Batch is set and the BC profile is complete. */
   ready: boolean;
 
@@ -65,6 +69,8 @@ export async function listClrInterfaceConfigView(): Promise<ClrInterfaceConfigVi
         bcProfileComplete: profile?.profileComplete ?? false,
         environment: profile?.environment ?? null,
         journalBatchName,
+        vatInputGlAccountNo: clr[code]?.vatInputGlAccountNo ?? null,
+        whtPayableGlAccountNo: clr[code]?.whtPayableGlAccountNo ?? null,
         ready: !!(journalBatchName && profile?.profileComplete),
         active: activeByCode.get(code) ?? false,
       } satisfies ClrInterfaceConfigView;

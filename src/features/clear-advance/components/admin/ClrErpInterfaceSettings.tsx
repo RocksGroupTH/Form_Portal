@@ -17,10 +17,13 @@ interface ViewRow {
   bcProfileComplete: boolean;
   environment: string | null;
   journalBatchName: string | null;
+  vatInputGlAccountNo: string | null;
+  whtPayableGlAccountNo: string | null;
   ready: boolean;
   active: boolean;
 }
 interface BatchOpt { batchName: string; displayName: string | null; templateName: string | null }
+interface GlOpt { accountNo: string; displayName: string | null }
 type SelectOption = { value: string; label: string; subLabel?: string };
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
@@ -36,6 +39,19 @@ function batchOptions(items: BatchOpt[], current?: string | null): SelectOption[
       o.displayName?.trim() && o.displayName.trim() !== o.batchName ? o.displayName.trim() : null,
     ].filter(Boolean).join(" · ") || undefined;
     out.push({ value: o.batchName, label: o.batchName, subLabel: sub });
+  }
+  if (current && !seen.has(current)) out.push({ value: current, label: current });
+  return out.sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function glOptions(items: GlOpt[], current?: string | null): SelectOption[] {
+  const seen = new Set<string>();
+  const out: SelectOption[] = [];
+  for (const o of items ?? []) {
+    if (seen.has(o.accountNo)) continue;
+    seen.add(o.accountNo);
+    const sub = o.displayName?.trim() && o.displayName.trim() !== o.accountNo ? o.displayName.trim() : undefined;
+    out.push({ value: o.accountNo, label: o.accountNo, subLabel: sub });
   }
   if (current && !seen.has(current)) out.push({ value: current, label: current });
   return out.sort((a, b) => a.label.localeCompare(b.label));
@@ -67,6 +83,8 @@ function StatusBadge({ ready }: { ready: boolean }) {
 function BrandCard({ row, onSaved }: { row: ViewRow; onSaved: () => void }) {
   const target = row.interfaceTarget ?? "";
   const [batch, setBatch] = useState(row.journalBatchName ?? "");
+  const [vatGl, setVatGl] = useState(row.vatInputGlAccountNo ?? "");
+  const [whtGl, setWhtGl] = useState(row.whtPayableGlAccountNo ?? "");
   const [busy, setBusy] = useState(false);
 
   // Journal batches for the target Company AP-3 inherits from AP-2 (interfaceTarget)
@@ -75,21 +93,36 @@ function BrandCard({ row, onSaved }: { row: ViewRow; onSaved: () => void }) {
     target ? `/api/request/clear-advance/settings/erp-journal-batches?company=${encodeURIComponent(target)}` : null,
     fetcher,
   );
+  // GL accounts for the claim brand (brand drives the chart of accounts scope)
+  const { data: liveGl, isLoading: glLoading } = useSWR<{ ok: boolean; data?: GlOpt[] }>(
+    row.brandCode ? `/api/request/clear-advance/settings/erp-gl-accounts?brand=${encodeURIComponent(row.brandCode)}` : null,
+    fetcher,
+  );
   const batchEnv = row.environment;
   const batchErr = liveBatch && !liveBatch.ok ? (liveBatch.error ?? "ดึง batch ไม่สำเร็จ") : null;
   const opts = useMemo(() => batchOptions(liveBatch?.data ?? [], batch), [liveBatch, batch]);
-  const dirty = batch.trim() !== (row.journalBatchName ?? "").trim();
+  const vatOpts = useMemo(() => glOptions(liveGl?.data ?? [], vatGl), [liveGl, vatGl]);
+  const whtOpts = useMemo(() => glOptions(liveGl?.data ?? [], whtGl), [liveGl, whtGl]);
+  const dirty =
+    batch.trim() !== (row.journalBatchName ?? "").trim() ||
+    vatGl.trim() !== (row.vatInputGlAccountNo ?? "").trim() ||
+    whtGl.trim() !== (row.whtPayableGlAccountNo ?? "").trim();
 
   async function save() {
     setBusy(true);
     try {
       const res = await fetch("/api/request/clear-advance/settings/erp-interface", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ brandCode: row.brandCode, journalBatchName: batch.trim() }),
+        body: JSON.stringify({
+          brandCode: row.brandCode,
+          journalBatchName: batch.trim(),
+          vatInputGlAccountNo: vatGl.trim() || null,
+          whtPayableGlAccountNo: whtGl.trim() || null,
+        }),
       });
       const j = (await res.json()) as { ok: boolean; error?: string };
       if (!j.ok) throw new Error(j.error ?? "บันทึกไม่สำเร็จ");
-      toast.success(`บันทึก Journal Batch ของ ${row.brandName} แล้ว`);
+      toast.success(`บันทึกการตั้งค่า ERP ของ ${row.brandName} แล้ว`);
       onSaved();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ");
@@ -130,26 +163,49 @@ function BrandCard({ row, onSaved }: { row: ViewRow; onSaved: () => void }) {
 
       <div className="flex flex-col gap-1.5">
         <p className="text-[10px] font-bold uppercase tracking-wide m-0" style={{ color: "var(--text-faint)" }}>Journal Batch *</p>
-        <div className="flex items-end gap-2">
-          <div className="flex-1 min-w-0">
-            <SearchableSelect
-              value={batch}
-              onChange={setBatch}
-              options={opts}
-              disabled={busy || isLoading}
-              placeholder={isLoading ? "กำลังโหลด batch..." : "เลือก Journal Batch"}
-              emptyLabel="— ไม่ระบุ —"
-            />
-          </div>
-          <Button variant="primary" size="sm" icon={<Save size={14} />}
-            onClick={save} loading={busy} disabled={!dirty || busy}>บันทึก</Button>
-        </div>
+        <SearchableSelect
+          value={batch}
+          onChange={setBatch}
+          options={opts}
+          disabled={busy || isLoading}
+          placeholder={isLoading ? "กำลังโหลด batch..." : "เลือก Journal Batch"}
+          emptyLabel="— ไม่ระบุ —"
+        />
         {batchErr && <p className="text-[11px] m-0" style={{ color: "var(--color-danger)" }}>{batchErr}</p>}
         {!isLoading && !batchErr && opts.length === 0 && (
           <p className="text-[11px] m-0" style={{ color: "var(--text-info-yellow)" }}>
             ไม่พบ Journal Batch ของแบรนด์นี้ใน ERP (sync ErpGeneralJournalBatch ก่อน)
           </p>
         )}
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <p className="text-[10px] font-bold uppercase tracking-wide m-0" style={{ color: "var(--text-faint)" }}>ภาษีซื้อ (VAT input)</p>
+        <SearchableSelect
+          value={vatGl}
+          onChange={setVatGl}
+          options={vatOpts}
+          disabled={busy || glLoading}
+          placeholder={glLoading ? "กำลังโหลดบัญชี..." : "เลือกบัญชีภาษีซื้อ"}
+          emptyLabel="— ไม่ระบุ —"
+        />
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <p className="text-[10px] font-bold uppercase tracking-wide m-0" style={{ color: "var(--text-faint)" }}>WHT payable</p>
+        <SearchableSelect
+          value={whtGl}
+          onChange={setWhtGl}
+          options={whtOpts}
+          disabled={busy || glLoading}
+          placeholder={glLoading ? "กำลังโหลดบัญชี..." : "เลือกบัญชี WHT payable"}
+          emptyLabel="— ไม่ระบุ —"
+        />
+      </div>
+
+      <div className="flex justify-end">
+        <Button variant="primary" size="sm" icon={<Save size={14} />}
+          onClick={save} loading={busy} disabled={!dirty || busy}>บันทึก</Button>
       </div>
     </div>
   );
