@@ -166,9 +166,22 @@
    * amber `--status-*` pair to reuse — `--status-pending-*` is blue in both
    * themes and `--status-bad-*` is the red being avoided.
    */
-  --status-uat-bg: color-mix(in srgb, var(--text-warning) 14%, var(--bg-card));
-  --status-uat-text: var(--text-warning);
-  --status-uat-border: color-mix(in srgb, var(--text-warning) 38%, transparent);
+  /* The UAT hue is orange, not `--text-warning`.
+   *
+   * `--text-warning` is #b5793a — a desaturated brown that reads as a warning
+   * rather than as the orange ACC Portal uses, which is what these chips are
+   * matching. `--color-status-orange` (#f39c12) is the right family but far too
+   * light to set text in: on its own 14% tint it measures 1.96:1.
+   *
+   * So the tint and the border come from #d97706 and the *text* is one step
+   * deeper at #b45309 — 4.33:1 on that tint, against 2.75:1 if the text used
+   * the same value the fill does. The two are close enough to read as one
+   * colour and far enough apart to be legible at the 10-11px extra-bold these
+   * chips are set in.
+   */
+  --status-uat-bg: color-mix(in srgb, #d97706 14%, var(--bg-card));
+  --status-uat-text: #b45309;
+  --status-uat-border: color-mix(in srgb, #d97706 38%, transparent);
 
   /* Radii — modern treatment */
   --radius-card: 14px;
@@ -265,6 +278,14 @@
   --bg-card-alt: #1a202a;
   /* The card's own colour, as in light — the bottom border is the separation. */
   --bg-card-header: #161b23;
+
+  /* UAT, lightened for a dark card — the light theme's #d97706 goes muddy on
+     one. Text at 6.04:1 on its own tint. The light block's values used to be
+     mixed from `--text-warning`, which is per-theme and so followed on its
+     own; a literal hue does not, and has to be stated here. */
+  --status-uat-bg: color-mix(in srgb, #f0a04b 16%, var(--bg-card));
+  --status-uat-text: #f0a04b;
+  --status-uat-border: color-mix(in srgb, #f0a04b 40%, transparent);
   --bg-elevated: #1a202a;
   --bg-input: #12171e;
   --bg-sidebar: #0c1015;
