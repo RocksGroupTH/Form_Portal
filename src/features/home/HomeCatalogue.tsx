@@ -13,8 +13,25 @@ import {
 import { useHomeData } from "@/features/home/useHomeData";
 import { useFormEnvironments } from "@/lib/hooks/useFormEnvironments";
 import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
+import { sortByFormCode } from "@/lib/form-code-order";
 import { Search, Route, Luggage, ClipboardCheck, FilePen, ArrowRight } from "lucide-react";
 
+/**
+ * The Accounting forms Home offers.
+ *
+ * Deliberately its own list rather than a filter over `REQUEST_CARDS`: Home
+ * renders a different card (its own `Icon` component, a short one-line `desc`)
+ * and never shows the management variants. The two lists must be kept in step
+ * by hand — adding a form to `REQUEST_CARDS` alone puts it on `/request` and
+ * *not* here. The `code` is the whole wiring: it feeds `isFormAvailable`,
+ * `isFormComingSoon` and `FormEnvironmentChip`, and `/api/form-environment`
+ * resolves every code any `REQUEST_CARDS` badge names, so a form already
+ * carrying a management card needs nothing further to be filtered correctly.
+ *
+ * The *order* here is not one of the things kept by hand: write entries in
+ * whatever order is convenient, and `sortByFormCode` renders them by form
+ * number.
+ */
 const ACCOUNTING_FORMS = [
   {
     code: "AP-1",
@@ -323,8 +340,9 @@ export function HomeCatalogue() {
   // "nothing matches your search" apart from "nothing is here at all" — a
   // tester in UAT mode who types anything into the search box must still see
   // the UAT explanation, not a false "no match" for their query.
-  const shownAccounting = ACCOUNTING_FORMS.filter(
-    (f) => isFormAvailable(f.code) || isFormComingSoon(f.code),
+  const shownAccounting = sortByFormCode(
+    ACCOUNTING_FORMS.filter((f) => isFormAvailable(f.code) || isFormComingSoon(f.code)),
+    (f) => f.code,
   );
   const accounting = shownAccounting.filter((f) => matches(f.code, f.name, f.desc));
 
