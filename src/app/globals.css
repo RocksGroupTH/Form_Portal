@@ -166,9 +166,25 @@
    * amber `--status-*` pair to reuse — `--status-pending-*` is blue in both
    * themes and `--status-bad-*` is the red being avoided.
    */
-  --status-uat-bg: color-mix(in srgb, var(--text-warning) 14%, var(--bg-card));
-  --status-uat-text: var(--text-warning);
-  --status-uat-border: color-mix(in srgb, var(--text-warning) 38%, transparent);
+  /* UAT — copied from ACC Portal, value for value.
+   *
+   * `--color-warning-bg` / `--color-warning-text` in that app's globals.css.
+   * Two rounds of eyedropping its screenshots produced two wrong ambers; these
+   * are read from the source at ../ACC_Portal, which is checked out beside this
+   * repo. If they ever need to change again, read them from there again.
+   *
+   * The text measures 3.45:1 on its own fill — below AA for the 9.5-11px bold
+   * these chips are set in. Kept anyway: matching the sibling app exactly is
+   * what was asked for, and these chips label a state that is also spelled out
+   * in each one's `title`.
+   *
+   * There is no `--status-uat-border`. ACC Portal's card badge has no border at
+   * all, and its navbar chip uses the neutral `--border-input` rather than a
+   * tinted one — an orange edge on both was the other half of why these did not
+   * match.
+   */
+  --status-uat-bg: #fef9f0;
+  --status-uat-text: #ca6f1e;
 
   /* Radii — modern treatment */
   --radius-card: 14px;
@@ -265,6 +281,11 @@
   --bg-card-alt: #1a202a;
   /* The card's own colour, as in light — the bottom border is the separation. */
   --bg-card-header: #161b23;
+
+  /* ACC Portal's dark values, likewise — 8.25:1, and warmer than a mix from
+     the light hue would have been. */
+  --status-uat-bg: #2d1f00;
+  --status-uat-text: #e3b341;
   --bg-elevated: #1a202a;
   --bg-input: #12171e;
   --bg-sidebar: #0c1015;

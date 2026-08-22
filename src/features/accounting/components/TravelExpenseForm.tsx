@@ -781,6 +781,7 @@ export function TravelExpenseForm({
               open={requesterPickerOpen}
               onClose={() => setRequesterPickerOpen(false)}
               colleagues={colleagues}
+              searchEndpoint="/api/request/accounting/requesters"
               self={employee ? {
                 staffId: employee.staffId,
                 fullName: employeeName || employee.fullName,
