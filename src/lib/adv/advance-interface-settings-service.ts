@@ -3,9 +3,9 @@ import { listFormBrands } from "@/lib/acc/settings-service";
 import { loadErpJournalBuildContext } from "@/lib/acc/erp-journal-context";
 import { resolveErpTargetProfile } from "@/lib/acc/erp-target-profile";
 import { listBrandErpInterfaceMaps, upsertFormBrandErpInterfaceMap } from "@/lib/acc/brand-erp-interface-map-service";
-import { listBrandAccounts, mergeFormBrandAccount } from "@/lib/acc/brand-account-service";
-import { listBrandBranches, mergeFormBrandBranch } from "@/lib/acc/brand-branch-service";
-import { listBrandJournalBatches, mergeFormBrandBatch } from "@/lib/acc/brand-journal-batch-service";
+import { mergeFormBrandAccount } from "@/lib/acc/brand-account-service";
+import { mergeFormBrandBranch } from "@/lib/acc/brand-branch-service";
+import { mergeFormBrandBatch } from "@/lib/acc/brand-journal-batch-service";
 import { AP2_FORM_CODE } from "@/features/advance/constants";
 
 export interface AdvanceInterfaceConfigView {
@@ -27,28 +27,17 @@ export interface AdvanceInterfaceConfigView {
 }
 
 export async function listAdvanceInterfaceConfigView(): Promise<AdvanceInterfaceConfigView[]> {
-  const [allBrands, ctx, ifaceMaps, ap2Brands, glRows, bankRows, branchRows, batchRows] =
+  const [allBrands, ctx, ifaceMaps, ap2Brands] =
     await Promise.all([
       listAllBrands(),
       loadErpJournalBuildContext(AP2_FORM_CODE),
       listBrandErpInterfaceMaps(AP2_FORM_CODE),
       listFormBrands(AP2_FORM_CODE),
-      listBrandAccounts("gl", null, AP2_FORM_CODE),
-      listBrandAccounts("bank", null, AP2_FORM_CODE),
-      listBrandBranches(null, AP2_FORM_CODE),
-      listBrandJournalBatches(null, AP2_FORM_CODE),
     ]);
 
   const activeByCode = new Map(ap2Brands.map((b) => [b.brandCode.toUpperCase(), b.isActive]));
   const brandByCode = new Map(allBrands.map((b) => [b.brandCode.toUpperCase(), b]));
-
-  // Per-form maps: only keep FormCode='AP-2' overrides (not NULL defaults).
-  // Fall through to ctx.brandAccounts for brands without AP-2-specific config.
   const ifaceByCode = new Map(ifaceMaps.map((m) => [m.brandCode.toUpperCase(), m]));
-  const ap2GlByCode  = new Map(glRows.filter(r => r.formCode === AP2_FORM_CODE).map(r => [r.brandCode.toUpperCase(), r]));
-  const ap2BankByCode = new Map(bankRows.filter(r => r.formCode === AP2_FORM_CODE).map(r => [r.brandCode.toUpperCase(), r]));
-  const ap2BranchByCode = new Map(branchRows.filter(r => r.formCode === AP2_FORM_CODE).map(r => [r.brandCode.toUpperCase(), r]));
-  const ap2BatchByCode = new Map(batchRows.filter(r => r.formCode === AP2_FORM_CODE).map(r => [r.brandCode.toUpperCase(), r]));
 
   const codes: string[] = [];
   const seen = new Set<string>();
@@ -67,10 +56,10 @@ export async function listAdvanceInterfaceConfigView(): Promise<AdvanceInterface
       const target = (ifaceRow?.interfaceBrandCode ?? code).toUpperCase();
       const profile = await resolveErpTargetProfile(target, AP2_FORM_CODE);
 
-      const glAccountNo     = ap2GlByCode.get(code)?.accountNo ?? base?.glAccountNo ?? null;
-      const bankAccountNo   = ap2BankByCode.get(code)?.accountNo ?? base?.bankAccountNo ?? null;
-      const branchCode      = ap2BranchByCode.get(code)?.branchCode ?? base?.branchCode ?? null;
-      const journalBatchName = ap2BatchByCode.get(code)?.batchName ?? base?.journalBatchName ?? null;
+      const glAccountNo     = base?.glAccountNo ?? null;
+      const bankAccountNo   = base?.bankAccountNo ?? null;
+      const branchCode      = base?.branchCode ?? null;
+      const journalBatchName = base?.journalBatchName ?? null;
 
       const ready = !!(
         glAccountNo && bankAccountNo && journalBatchName &&
