@@ -131,7 +131,7 @@ function SectionCard({
         className="flex items-center gap-2.5 px-5 py-3 rounded-t-2xl"
         style={{
           borderBottom: "1px solid var(--border-card)",
-          background: "var(--bg-card-alt)",
+          background: "var(--bg-card-header)",
         }}
       >
         <span

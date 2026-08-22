@@ -543,7 +543,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
             <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border-card)" }}>
               <p
                 className="text-[11px] font-bold m-0 px-3.5 py-2"
-                style={{ background: "var(--bg-card-alt)", color: "var(--text-secondary)", borderBottom: "1px solid var(--border-light)" }}
+                style={{ background: "var(--bg-card-header)", color: "var(--text-secondary)", borderBottom: "1px solid var(--border-light)" }}
               >
                 รายการที่กำลังส่ง ({tabs.length} ใบ)
               </p>

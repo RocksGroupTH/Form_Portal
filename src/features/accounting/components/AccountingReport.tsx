@@ -685,7 +685,7 @@ export function AccountingReport() {
           onClick={() => setFiltersOpen((v) => !v)}
           className="w-full flex items-center justify-between gap-3 px-4 py-3 cursor-pointer border-none text-left"
           style={{
-            background: "var(--bg-card-alt)",
+            background: "var(--bg-card-header)",
             borderBottom: filtersOpen ? "1px solid var(--border-light)" : undefined,
           }}
         >

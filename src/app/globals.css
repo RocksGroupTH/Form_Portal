@@ -92,6 +92,20 @@
   --bg-card: #ffffff;
   --bg-card-hover: #f7f9fd;
   --bg-card-alt: #f4f7fc;
+  /* The band across the top of a card, and a table's header row.
+   *
+   * Separate from `--bg-card-alt` because that token is doing three jobs —
+   * header bands, skeleton blocks, row stripes — and only this one needs to
+   * read as a distinct surface. At `--bg-card-alt` the band measured 1.07:1
+   * against the card behind it, which is no band at all: the title floated on
+   * white and the header stopped looking like a header. This is 1.19:1, still
+   * quiet, and leaves the title at 12.6:1.
+   *
+   * Contrast the *band*, not the text. `--text-heading` on either value is
+   * comfortably above any threshold; darkening the text would not have fixed
+   * anything, because the text was never the part that had gone missing.
+   */
+  --bg-card-header: #e4ecf7;
   --bg-elevated: #ffffff;
   --bg-input: #ffffff;
   --bg-sidebar: #1b2434;
@@ -247,6 +261,8 @@
   --bg-card: #161b23;
   --bg-card-hover: #1c222c;
   --bg-card-alt: #1a202a;
+  /* 1.21:1 against the dark card, title at 13.0:1 — see the light theme. */
+  --bg-card-header: #232b37;
   --bg-elevated: #1a202a;
   --bg-input: #12171e;
   --bg-sidebar: #0c1015;

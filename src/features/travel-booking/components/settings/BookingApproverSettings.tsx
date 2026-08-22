@@ -361,7 +361,7 @@ export function BookingApproverSettings() {
                 <tr
                   style={{
                     borderBottom: "1px solid var(--border-light)",
-                    background: "var(--bg-card-alt)",
+                    background: "var(--bg-card-header)",
                   }}
                 >
                   <th

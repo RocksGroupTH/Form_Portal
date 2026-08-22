@@ -95,7 +95,7 @@ function Section({
     >
       <div
         className="flex items-center gap-2.5 px-5 py-3"
-        style={{ borderBottom: "1px solid var(--border-card)", background: "var(--bg-card-alt)" }}
+        style={{ borderBottom: "1px solid var(--border-card)", background: "var(--bg-card-header)" }}
       >
         {icon && (
           <span
@@ -697,7 +697,7 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
                 >
                   <div
                     className="flex items-center justify-between gap-2 px-4 py-2.5"
-                    style={{ background: "var(--bg-card-alt)", borderBottom: "1px solid var(--border-light)" }}
+                    style={{ background: "var(--bg-card-header)", borderBottom: "1px solid var(--border-light)" }}
                   >
                     <span className="flex items-center gap-2 text-[12.5px] font-bold" style={{ color: "var(--text-heading)" }}>
                       <span style={{ color: "var(--nav-active-text)" }}>{BOOKING_TYPE_ICON[rule.type]}</span>

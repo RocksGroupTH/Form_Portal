@@ -408,7 +408,7 @@ function Section({
       {(title || icon) && (
         <div
           className="flex items-center gap-2.5 px-5 py-3"
-          style={{ borderBottom: "1px solid var(--border-card)", background: "var(--bg-card-alt)" }}
+          style={{ borderBottom: "1px solid var(--border-card)", background: "var(--bg-card-header)" }}
         >
           {icon && (
             <span
@@ -1641,7 +1641,7 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
             <>
               <div
                 className="px-5 py-3"
-                style={{ borderBottom: "1px solid var(--border-card)", background: "var(--bg-card-alt)" }}
+                style={{ borderBottom: "1px solid var(--border-card)", background: "var(--bg-card-header)" }}
               >
                 <p className="text-[11px] font-semibold uppercase tracking-wide m-0" style={{ color: "var(--text-muted)" }}>
                   รายละเอียดแต่ละวัน

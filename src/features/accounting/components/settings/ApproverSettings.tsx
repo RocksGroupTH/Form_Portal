@@ -370,7 +370,7 @@ function ApproverTabGrantTable({
             <thead>
               <tr
                 style={{
-                  background: "var(--bg-card-alt)",
+                  background: "var(--bg-card-header)",
                   borderBottom: "1px solid var(--border-light)",
                 }}
               >
