@@ -17,7 +17,7 @@ function ConfirmModal({ title, message, danger, onConfirm, onCancel }: {
   title: string; message: string; danger?: boolean; onConfirm: () => void; onCancel: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "var(--overlay-bg)" }}>
+    <div className="app-overlay fixed inset-0 z-50 flex items-center justify-center">
       <div className="rounded-2xl w-[400px] max-w-[90vw] overflow-hidden" style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", boxShadow: "var(--shadow-modal)" }}>
         <div className="px-5 py-4">
           <h3 className="text-[14px] font-bold mb-2" style={{ color: "var(--text-heading)" }}>{title}</h3>
@@ -38,7 +38,7 @@ function RolePickerModal({ userName, onSelect, onCancel }: {
 }) {
   const [role, setRole] = useState("Staff");
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "var(--overlay-bg)" }}>
+    <div className="app-overlay fixed inset-0 z-50 flex items-center justify-center">
       <div className="rounded-2xl w-[380px] max-w-[90vw] overflow-hidden" style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", boxShadow: "var(--shadow-modal)" }}>
         <div className="px-5 py-4">
           <h3 className="text-[14px] font-bold mb-1" style={{ color: "var(--text-heading)" }}>Set Role</h3>
@@ -99,7 +99,7 @@ function ADSearchModal({ onClose, onSelect, existingEmails, title }: {
   const existing = new Set((existingEmails ?? []).map((e) => e.toLowerCase()));
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "var(--overlay-bg)" }}>
+    <div className="app-overlay fixed inset-0 z-50 flex items-center justify-center">
       <div className="rounded-2xl w-[560px] max-w-[95vw] max-h-[80vh] flex flex-col overflow-hidden" style={{ background: "var(--bg-card)", boxShadow: "var(--shadow-modal)", border: "1px solid var(--border-card)" }}>
         {/* Header */}
         <div className="px-5 py-4 flex items-center justify-between shrink-0" style={{ borderBottom: "1px solid var(--border-card)" }}>

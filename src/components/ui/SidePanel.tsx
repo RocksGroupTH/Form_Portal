@@ -21,7 +21,7 @@ export const SidePanel = React.memo(function SidePanel({
 
   return (
     <>
-      <div className="fixed inset-0" style={{ zIndex, background: "var(--overlay-bg)" }} onClick={onClose} />
+      <div className="app-overlay fixed inset-0" style={{ zIndex }} onClick={onClose} />
       <div className="fixed top-0 right-0 bottom-0 flex flex-col"
         style={{ width, maxWidth: "100vw", zIndex: zIndex + 1, background: "var(--bg-card)",
           borderLeft: "1px solid var(--border-main)", animation: "slideInRight 0.25s ease-out" }}>

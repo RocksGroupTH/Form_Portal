@@ -100,10 +100,32 @@ export function UatModeSwitch({ compact = false }: UatModeSwitchProps) {
           setLeavingRecord(uatSwitchLeavesRecord(window.location.href, !uat));
           setOpen(true);
         }}
-        className="flex items-center gap-1.5 px-2 py-1 rounded-lg cursor-pointer border-none transition-colors shrink-0"
+        className={
+          compact
+            ? "flex items-center gap-1.5 px-2 py-1 rounded-lg cursor-pointer border-none transition-colors shrink-0"
+            : "flex items-center gap-1.5 h-9 px-2.5 rounded-lg cursor-pointer transition-colors shrink-0"
+        }
         style={{
-          background: uat ? "var(--status-bad-bg)" : "var(--bg-badge)",
-          color: uat ? "var(--status-bad-text)" : "var(--text-muted)",
+          // Amber, not red. The chip reports which database the viewer is
+          // writing to; red reads as an error, and being in UAT is a state
+          // somebody chose. It still has to carry across the bar at a glance,
+          // hence a tint where the neighbouring controls are plain.
+          //
+          // Mixed from `--text-warning` rather than a `--status-*` pair because
+          // there is no amber one: `--status-pending-*` is blue in both themes,
+          // and `--status-bad-*` is the red this is avoiding. `--text-warning`
+          // is defined for light and dark, so the mix follows the theme.
+          background: uat
+            ? "color-mix(in srgb, var(--text-warning) 12%, var(--bg-card))"
+            : "var(--bg-card)",
+          color: uat ? "var(--text-warning)" : "var(--text-muted)",
+          ...(compact
+            ? {}
+            : {
+                border: uat
+                  ? "1px solid color-mix(in srgb, var(--text-warning) 38%, transparent)"
+                  : "1px solid var(--border-card)",
+              }),
         }}
         title={uat ? "กำลังอยู่ในโหมด UAT — คลิกเพื่อสลับกลับ Production" : "คลิกเพื่อสลับไปโหมดทดสอบ UAT"}
         aria-label={
