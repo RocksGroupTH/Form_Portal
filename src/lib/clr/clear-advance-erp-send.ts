@@ -321,6 +321,7 @@ export async function sendClrErpBatch(ids: number[], userId: number): Promise<Cl
       const message = err instanceof Error ? err.message : "ส่งเข้า ERP ไม่สำเร็จ";
       try {
         await markInterfaceStatus(id, "Failed", { error: message, environment: bcEnvironment });
+        await logInterfaceActivity(id, userId, "erp_interface_failed", message);
       } catch {
         // logging failure must not mask the real error
       }
