@@ -10,22 +10,30 @@ import {
 
 /* ── what the page shows ── */
 
-test("สิทธิ์เข้าถึง is the last tab", () => {
+test("the strip runs brands, rules, approvers, access", () => {
+  assert.deepEqual(REIMBURSE_SETTINGS_TAB_ORDER, ["brands", "rules", "approvers", "access"]);
+  // สิทธิ์เข้าถึง last is the part that is not merely a preference: it is the
+  // tab that hands out the other three, so it reads as the end of the list.
   assert.equal(
     REIMBURSE_SETTINGS_TAB_ORDER[REIMBURSE_SETTINGS_TAB_ORDER.length - 1],
     "access",
   );
-  assert.deepEqual(REIMBURSE_SETTINGS_TAB_ORDER, ["approvers", "rules", "brands", "access"]);
 });
 
 /* ── what may be ticked ── */
 
 test("exactly two tabs are grantable, in page order", () => {
-  assert.deepEqual(GRANTABLE_REIMBURSE_TABS.map((t) => t.key), ["rules", "brands"]);
+  // Page order, not declaration order: the checkbox columns are the strip's
+  // first two tabs, so reordering the strip reorders the columns with it.
+  assert.deepEqual(GRANTABLE_REIMBURSE_TABS.map((t) => t.key), ["brands", "rules"]);
   assert.deepEqual(GRANTABLE_REIMBURSE_TABS.map((t) => t.label), [
-    "ระเบียบการจ่าย",
     "แบรนด์ที่เบิกได้",
+    "ระเบียบการจ่าย",
   ]);
+  assert.deepEqual(
+    GRANTABLE_REIMBURSE_TABS.map((t) => t.key),
+    REIMBURSE_SETTINGS_TAB_ORDER.filter((k) => k === "brands" || k === "rules"),
+  );
 });
 
 test("the grantable keys are a subset of the tabs the page actually has", () => {
