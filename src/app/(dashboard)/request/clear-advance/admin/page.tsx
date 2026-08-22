@@ -13,6 +13,7 @@ import {
   FileBarChart,
   FileSpreadsheet,
   SlidersHorizontal,
+  ArrowRightLeft,
 } from "lucide-react";
 
 interface HubCard {
@@ -28,6 +29,12 @@ const CARDS: HubCard[] = [
     desc: "หน้าตั้งค่า AP-3 แบบแท็บ · Interface ERP (Journal Batch ต่อแบรนด์) และผู้อนุมัติ",
     href: "/request/clear-advance/settings",
     icon: <SlidersHorizontal size={20} />,
+  },
+  {
+    title: "Interface ERP",
+    desc: "ส่งคำขอเคลียร์เงินทดรองที่อนุมัติแล้วเข้า Business Central · ดู preview journal ก่อนส่ง",
+    href: "/request/clear-advance/admin/interface",
+    icon: <ArrowRightLeft size={20} />,
   },
   {
     title: "รออนุมัติ",
