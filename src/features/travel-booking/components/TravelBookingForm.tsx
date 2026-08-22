@@ -236,6 +236,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
                 open={requesterPickerOpen}
                 onClose={() => setRequesterPickerOpen(false)}
                 colleagues={colleagues}
+                searchEndpoint="/api/request/travel-booking/requesters"
                 self={employee ? {
                   staffId: employee.staffId,
                   fullName: requesterName || employee.fullName,

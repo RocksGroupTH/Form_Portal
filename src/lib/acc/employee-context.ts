@@ -271,9 +271,14 @@ export async function resolveRequesterForActor(
     `);
   const b = r.recordset[0];
   if (!b) throw new Error("ไม่พบข้อมูลพนักงานที่เลือก");
-  if (actor.departmentId == null || b.DepartmentId !== actor.departmentId) {
-    throw new Error("เลือกได้เฉพาะพนักงานในแผนกเดียวกันเท่านั้น");
-  }
+  // Any active employee may be filed for, not only the actor's own department.
+  // What remains is the check above — the row must exist and be Active — plus
+  // `assertRequesterAllowedInUat` below.
+  //
+  // Widening this was asked for directly. It means a claim can be opened in the
+  // name of anyone in the company; the approval still routes to the
+  // *requester's* manager rather than the actor's, and `CreatedBy` still records
+  // who filed it, so the claim is attributable in both directions.
   const colleague: RequesterSnapshot = {
     employeeId: b.Id ?? null,
     staffId: b.StaffId ?? null,
