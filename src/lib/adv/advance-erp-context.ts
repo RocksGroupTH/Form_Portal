@@ -79,7 +79,7 @@ export async function loadAdvanceErpContext(
     bankAccountNo:     bank?.accountNo?.trim()     ?? null,
     branchCode:        branch?.branchCode?.trim()  ?? null,
     journalBatchName:  batch?.batchName?.trim()    ?? null,
-    deptAsBranch:      !!(branch?.deptAsBranch || branch?.fixedErpDeptCode?.trim()),
+    deptAsBranch:      branch?.deptAsBranch ?? false,
     fixedErpDeptCode:  branch?.fixedErpDeptCode?.trim() ?? null,
   };
 
