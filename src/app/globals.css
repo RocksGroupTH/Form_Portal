@@ -137,6 +137,23 @@
   --overlay-bg: rgba(31, 39, 53, 0.38);
   --overlay-blur: 6px;
 
+  /* The UAT colour, in one place.
+   *
+   * Amber rather than red, everywhere UAT is reported: the navbar chip and the
+   * Form Environment switches both used to pick their own, and the switch's was
+   * `--status-bad-*`. Red says something has gone wrong; being in UAT is a state
+   * somebody chose, and the page beside it uses the same red for a genuine
+   * failure — the unclassified-route panel — so the two were indistinguishable.
+   *
+   * Derived from `--text-warning`, which is defined for both themes, so these
+   * need no dark twin: `var()` resolves at use, not at definition. There is no
+   * amber `--status-*` pair to reuse — `--status-pending-*` is blue in both
+   * themes and `--status-bad-*` is the red being avoided.
+   */
+  --status-uat-bg: color-mix(in srgb, var(--text-warning) 14%, var(--bg-card));
+  --status-uat-text: var(--text-warning);
+  --status-uat-border: color-mix(in srgb, var(--text-warning) 38%, transparent);
+
   /* Radii — modern treatment */
   --radius-card: 14px;
   --radius-tile: 12px;

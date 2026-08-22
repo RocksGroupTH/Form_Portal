@@ -306,8 +306,13 @@ export function FormEnvironmentSettings() {
                         <EnvironmentSwitch
                           label="UAT"
                           on={row.uatEnabled}
-                          onBg="var(--status-bad-bg)"
-                          onText="var(--status-bad-text)"
+                          // Amber, matching the navbar's UAT chip — one token
+                          // for both. It was `--status-bad-*`, the same red the
+                          // unclassified-route panel below uses for a genuine
+                          // failure, so a form open for testing looked like a
+                          // fault.
+                          onBg="var(--status-uat-bg)"
+                          onText="var(--status-uat-text)"
                           disabled={saving === row.formCode}
                           onClick={() => {
                             setConfirmText("");
