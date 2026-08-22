@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 /**
- * Assert the 23 shared configuration tables are identical in Rocks_Portal_Form
+ * Assert the 25 shared configuration tables are identical in Rocks_Portal_Form
  * and Rocks_Portal_Form_UAT.
  *
  * Per-form routing means AP-1 may read one copy while AP-17 reads the other, so
@@ -46,17 +46,22 @@ function loadDotEnvLocal() {
 }
 
 /**
- * The 23 tables dual-write keeps in step.
+ * The 25 tables dual-write keeps in step.
  *
  * `AccBookingApprover` and `AccBookingApproverTab` are AP-17's, added with its
  * own approver roster and per-tab grants.
  *
- * The last two are AP-4's, added with its settings page: `AccReimburseApprover`
- * decides who may take either accounting step and `AccReimburseRule` is the
- * checklist `AccReimburseRuleAck` stores tick-by-id against — so both have to
- * carry the same rows *and the same ids* in each database, or a UAT tester's
- * AP-4 request stalls at ACCOUNT with an empty pool and a submitted claim
- * renders somebody else's rule text.
+ * The last four are AP-4's. `AccReimburseApprover` decides who may take
+ * either accounting step and `AccReimburseRule` is the checklist
+ * `AccReimburseRuleAck` stores tick-by-id against — so both have to carry the
+ * same rows *and the same ids* in each database, or a UAT tester's AP-4 request
+ * stalls at ACCOUNT with an empty pool and a submitted claim renders somebody
+ * else's rule text.
+ *
+ * `AccReimburseAccess` and `AccReimburseAccessTab` (migration 106) are the
+ * per-person settings-tab grants, and the id argument applies to them twice
+ * over: the grant rows name `AccReimburseAccess.Id`, so drifted counters would
+ * hand one person another's tabs.
  */
 const MASTER_TABLES = [
   "AccFormMaster",
@@ -82,6 +87,8 @@ const MASTER_TABLES = [
   "AccSetting",
   "AccReimburseApprover",
   "AccReimburseRule",
+  "AccReimburseAccess",
+  "AccReimburseAccessTab",
 ];
 
 /**

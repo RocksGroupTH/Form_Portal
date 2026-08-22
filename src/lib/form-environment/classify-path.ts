@@ -84,7 +84,7 @@ export const ROUTE_RULES: RouteRule[] = [
   // inconsistency and is not one; do not "fix" it.
   //
   // The reason is not the one first recorded (that AP-4's rule and approver
-  // tables are not dual-written — they are, and they are two of the 21 tables
+  // tables are not dual-written — they are, and they are two of the 25 tables
   // `npm run check:alignment` covers). It is that
   // `/api/request/reimburse/settings/rules` with no query string is the *form's
   // own* checklist source: the requester's ticks become `AccReimburseRuleAck`
