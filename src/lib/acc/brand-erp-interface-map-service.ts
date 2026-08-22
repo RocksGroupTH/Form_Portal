@@ -163,7 +163,7 @@ export async function upsertFormBrandErpInterfaceMap(
 ): Promise<void> {
   const claim = claimBrandCode.trim().toUpperCase();
   const target = interfaceBrandCode.trim().toUpperCase();
-  const form = formCode.trim();
+  const form = formCode.trim().toUpperCase();
   if (!claim) throw new Error("กรุณาระบุแบรนด์เบิก");
   if (!target) throw new Error("กรุณาเลือกแบรนด์ปลายทาง");
   if (!form) throw new Error("กรุณาระบุ FormCode");
