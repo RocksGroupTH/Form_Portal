@@ -135,6 +135,7 @@
   --shadow-lift: 0 12px 32px -12px rgba(59, 79, 116, 0.28);
 
   --overlay-bg: rgba(31, 39, 53, 0.38);
+  --overlay-blur: 6px;
 
   /* Radii — modern treatment */
   --radius-card: 14px;
@@ -240,6 +241,7 @@
   --shadow-lift: 0 12px 32px -12px rgba(0, 0, 0, 0.6);
 
   --overlay-bg: rgba(0, 0, 0, 0.65);
+  --overlay-blur: 6px;
 
   --radius-card: 14px;
   --radius-tile: 12px;
@@ -515,6 +517,22 @@ html {
 @keyframes claudeBar { 0% { width: 0%; margin-left: 0; } 50% { width: 60%; margin-left: 20%; } 100% { width: 0%; margin-left: 100%; } }
 
 /* Hide scrollbar utility */
+/* The scrim behind every modal, side panel and blocking popup.
+ *
+ * One class rather than the inline `background: var(--overlay-bg)` that used to
+ * be repeated at twenty-two call sites — which is why the backdrop blur could
+ * not simply be added to the token: CSS cannot hook a custom property's use, so
+ * a scrim's appearance had to become a rule of its own before it could gain one.
+ *
+ * `backdrop-filter` is unprefixed everywhere current and prefixed for Safari.
+ * Where neither applies the scrim still renders — the colour is the part that
+ * makes the dialog readable, the blur is what makes it feel in front.
+ */
+.app-overlay {
+  background: var(--overlay-bg);
+  backdrop-filter: blur(var(--overlay-blur));
+  -webkit-backdrop-filter: blur(var(--overlay-blur));
+}
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
 

@@ -49,8 +49,7 @@ export function BrandGate({ children }: { children: React.ReactNode }) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="brand-gate-title"
-        className="fixed inset-0 z-[101] flex items-center justify-center p-4"
-        style={{ background: "var(--overlay-bg)" }}
+        className="app-overlay fixed inset-0 z-[101] flex items-center justify-center p-4"
       >
         <div
           className="rounded-2xl p-6 sm:p-8 w-full max-w-2xl"

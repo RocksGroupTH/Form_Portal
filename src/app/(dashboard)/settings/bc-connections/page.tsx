@@ -164,7 +164,7 @@ function ConfirmModal({
   const canConfirm = !confirmPhrase || typed.trim() === confirmPhrase;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center" style={{ background: "var(--overlay-bg)" }}>
+    <div className="app-overlay fixed inset-0 z-[60] flex items-center justify-center">
       <div
         className="rounded-2xl w-[400px] max-w-[90vw] overflow-hidden"
         style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", boxShadow: "var(--shadow-modal)" }}
@@ -249,7 +249,7 @@ function BcFormModal({
     onChange({ ...form, [key]: value });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "var(--overlay-bg)" }}>
+    <div className="app-overlay fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
         className="rounded-2xl w-[520px] max-w-full max-h-[90vh] flex flex-col overflow-hidden"
         style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", boxShadow: "var(--shadow-modal)" }}
