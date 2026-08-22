@@ -94,18 +94,20 @@
   --bg-card-alt: #f4f7fc;
   /* The band across the top of a card, and a table's header row.
    *
-   * Separate from `--bg-card-alt` because that token is doing three jobs —
-   * header bands, skeleton blocks, row stripes — and only this one needs to
-   * read as a distinct surface. At `--bg-card-alt` the band measured 1.07:1
-   * against the card behind it, which is no band at all: the title floated on
-   * white and the header stopped looking like a header. This is 1.19:1, still
-   * quiet, and leaves the title at 12.6:1.
+   * The same colour as the card: the header is separated by its 1px bottom
+   * border alone, not by a fill. It was `--bg-card-alt`, then briefly a
+   * stronger tint — the tint was rejected on sight, and the divider does the
+   * job without one.
    *
-   * Contrast the *band*, not the text. `--text-heading` on either value is
-   * comfortably above any threshold; darkening the text would not have fixed
-   * anything, because the text was never the part that had gone missing.
+   * Still its own token rather than `--bg-card`. This surface is the one whose
+   * treatment keeps being revisited, and it is applied at 24 call sites; a name
+   * makes the next change one line instead of another structural sweep.
+   *
+   * If it is ever tinted again, contrast the *band*, not the text.
+   * `--text-heading` sits at 14:1 on any of these values — the title was never
+   * the part that looked wrong, the missing band was.
    */
-  --bg-card-header: #e4ecf7;
+  --bg-card-header: #ffffff;
   --bg-elevated: #ffffff;
   --bg-input: #ffffff;
   --bg-sidebar: #1b2434;
@@ -261,8 +263,8 @@
   --bg-card: #161b23;
   --bg-card-hover: #1c222c;
   --bg-card-alt: #1a202a;
-  /* 1.21:1 against the dark card, title at 13.0:1 — see the light theme. */
-  --bg-card-header: #232b37;
+  /* The card's own colour, as in light — the bottom border is the separation. */
+  --bg-card-header: #161b23;
   --bg-elevated: #1a202a;
   --bg-input: #12171e;
   --bg-sidebar: #0c1015;
@@ -606,6 +608,75 @@ html {
  * Where neither property applies the scrim still renders — the colour is what
  * makes the dialog readable, the blur is what makes it feel in front.
  */
+/* A light that travels around a control's edge while the pointer is on it.
+ *
+ * For controls that already carry a static border, where 'show a border on
+ * hover' would be a no-op — the motion is the affordance, not the line.
+ *
+ * How it works: a conic gradient is rotated by animating `--run-border-angle`,
+ * and a two-layer mask subtracts the padding box so only a 1px ring survives.
+ * The `@property` declaration is what makes the angle animatable at all — a
+ * plain custom property is a string to the animation engine and would jump
+ * from 0 to 1turn in one frame.
+ *
+ * `inset: -1px` puts the ring *over* the element's own border rather than
+ * inside it, so nothing reflows and the static border shows through the three
+ * quarters of the sweep that are transparent.
+ *
+ * Prefixed mask properties come FIRST and the standard ones LAST, for the
+ * reason `.app-overlay` documents: the minifier keeps the last of a duplicate
+ * pair, and the standard name is the one worth keeping.
+ */
+@property --run-border-angle {
+  syntax: "<angle>";
+  initial-value: 0turn;
+  inherits: false;
+}
+
+@keyframes runBorderSweep {
+  to { --run-border-angle: 1turn; }
+}
+
+.hover-run-border {
+  position: relative;
+}
+
+.hover-run-border::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease-out;
+  background: conic-gradient(
+    from var(--run-border-angle),
+    transparent 0turn 0.62turn,
+    var(--nav-active-text) 0.82turn,
+    transparent 1turn
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+.hover-run-border:hover::after,
+.hover-run-border:focus-visible::after {
+  opacity: 1;
+  animation: runBorderSweep 1.4s linear infinite;
+}
+
+/* Motion is the whole effect, so there is nothing to slow down — the ring
+   becomes a plain accent edge instead, which still answers 'this is hover'. */
+@media (prefers-reduced-motion: reduce) {
+  .hover-run-border:hover::after,
+  .hover-run-border:focus-visible::after {
+    animation: none;
+    background: var(--nav-active-text);
+  }
+}
 .app-overlay {
   background: var(--overlay-bg);
   -webkit-backdrop-filter: blur(var(--overlay-blur));
