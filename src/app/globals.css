@@ -541,14 +541,21 @@ html {
  * not simply be added to the token: CSS cannot hook a custom property's use, so
  * a scrim's appearance had to become a rule of its own before it could gain one.
  *
- * `backdrop-filter` is unprefixed everywhere current and prefixed for Safari.
- * Where neither applies the scrim still renders — the colour is the part that
+ * **The `-webkit-` prefix must come FIRST and the standard property LAST.**
+ * Written the other way round, the build emits only the prefixed one: Lightning
+ * CSS — the minifier Next runs — treats a prefixed and unprefixed declaration of
+ * the same property as duplicates and keeps the last. That shipped once, and the
+ * scrim dimmed without blurring in every browser that wants the standard name.
+ * Verified by grepping the built stylesheet, not by reading the source:
+ *   grep -o '.app-overlay{[^}]*}' .next/static/chunks/*.css
+ *
+ * Where neither property applies the scrim still renders — the colour is what
  * makes the dialog readable, the blur is what makes it feel in front.
  */
 .app-overlay {
   background: var(--overlay-bg);
-  backdrop-filter: blur(var(--overlay-blur));
   -webkit-backdrop-filter: blur(var(--overlay-blur));
+  backdrop-filter: blur(var(--overlay-blur));
 }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
