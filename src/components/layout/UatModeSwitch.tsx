@@ -111,18 +111,16 @@ export function UatModeSwitch({ compact = false }: UatModeSwitchProps) {
           // somebody chose. It still has to carry across the bar at a glance,
           // hence a tint where the neighbouring controls are plain.
           //
-          // `--status-uat-*` is the one definition of that amber; the Form
-          // Environment switches read the same tokens, so the chip and the
-          // switch cannot drift into two different ambers.
+          // `--status-uat-*` is the one definition of that orange; the Form
+          // Environment switches and the card badges read the same two tokens.
+          //
+          // The border is `--border-input` in *both* states, as ACC Portal's is:
+          // neutral, so switching to UAT changes the fill and the text and
+          // nothing else. A tinted edge was half of why the two did not match.
           background: uat ? "var(--status-uat-bg)" : "var(--bg-card)",
           color: uat ? "var(--status-uat-text)" : "var(--text-muted)",
-          ...(compact
-            ? {}
-            : {
-                border: uat
-                  ? "1px solid var(--status-uat-border)"
-                  : "1px solid var(--border-card)",
-              }),
+          letterSpacing: "0.3px",
+          ...(compact ? {} : { border: "1px solid var(--border-input)" }),
         }}
         title={uat ? "กำลังอยู่ในโหมด UAT — คลิกเพื่อสลับกลับ Production" : "คลิกเพื่อสลับไปโหมดทดสอบ UAT"}
         aria-label={
