@@ -53,7 +53,7 @@ function ADSearchModal({
   const existing = new Set(existingEmails.map((e) => e.toLowerCase()));
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "var(--overlay-bg)" }}>
+    <div className="app-overlay fixed inset-0 z-50 flex items-center justify-center">
       <div className="rounded-2xl w-[560px] max-w-[95vw] max-h-[80vh] flex flex-col overflow-hidden"
         style={{ background: "var(--bg-card)", boxShadow: "var(--shadow-modal)", border: "1px solid var(--border-card)" }}>
         <div className="px-5 py-4 flex items-center justify-between shrink-0" style={{ borderBottom: "1px solid var(--border-card)" }}>

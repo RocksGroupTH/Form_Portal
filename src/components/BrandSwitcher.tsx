@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { BRANDS, getBrandById } from "@/lib/brand";
 import { useBrand } from "./BrandProvider";
 import { Dialog } from "@/components/ui/Dialog";
@@ -22,18 +22,50 @@ export function BrandSwitcher({ compact = false }: BrandSwitcherProps) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex items-center gap-1.5 px-2 py-1 rounded-lg cursor-pointer border-none transition-colors"
-        style={{ background: "var(--bg-badge)" }}
+        className={
+          compact
+            ? "flex items-center gap-1.5 px-2 py-1 rounded-lg cursor-pointer border-none transition-colors shrink-0"
+            : "flex items-center gap-2 h-9 pl-2 pr-2.5 rounded-lg cursor-pointer transition-colors shrink-0"
+        }
+        style={
+          compact
+            ? { background: "var(--bg-badge)" }
+            : {
+                // Bordered rather than filled, so it reads as the same control
+                // as the UAT chip and the theme button beside it. The mobile bar
+                // keeps the filled pill: there is no row of siblings there to
+                // match, and a border on a 28px chip is mostly border.
+                background: "var(--bg-card)",
+                border: "1px solid var(--border-card)",
+              }
+        }
         title="Switch brand"
         aria-label={`Current brand: ${current.name}. Click to switch.`}
       >
-        <img src={current.logo} alt="" width={compact ? 16 : 18} height={compact ? 16 : 18} className="rounded shrink-0" />
+        <img
+          src={current.logo}
+          alt=""
+          width={compact ? 16 : 20}
+          height={compact ? 16 : 20}
+          className="rounded shrink-0"
+        />
         {!compact && (
-          <span className="text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>
-            {current.name}
+          <span className="flex flex-col items-start leading-none gap-0.5">
+            {/* The caption is what makes a bare four-letter code legible as a
+                company rather than a status. It is deliberately not a label
+                element: the whole pill is one button. */}
+            <span
+              className="text-[9px] font-semibold uppercase tracking-wider"
+              style={{ color: "var(--text-faint)" }}
+            >
+              Brand
+            </span>
+            <span className="text-[12px] font-bold" style={{ color: "var(--text-heading)" }}>
+              {current.name}
+            </span>
           </span>
         )}
-        <ChevronDown size={12} style={{ color: "var(--text-muted)" }} />
+        <ChevronRight size={13} style={{ color: "var(--text-muted)" }} className="shrink-0" />
       </button>
 
       <Dialog open={open} onOpenChange={setOpen} title="Switch Brand" contentClassName="max-w-2xl">
