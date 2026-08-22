@@ -111,19 +111,16 @@ export function UatModeSwitch({ compact = false }: UatModeSwitchProps) {
           // somebody chose. It still has to carry across the bar at a glance,
           // hence a tint where the neighbouring controls are plain.
           //
-          // Mixed from `--text-warning` rather than a `--status-*` pair because
-          // there is no amber one: `--status-pending-*` is blue in both themes,
-          // and `--status-bad-*` is the red this is avoiding. `--text-warning`
-          // is defined for light and dark, so the mix follows the theme.
-          background: uat
-            ? "color-mix(in srgb, var(--text-warning) 12%, var(--bg-card))"
-            : "var(--bg-card)",
-          color: uat ? "var(--text-warning)" : "var(--text-muted)",
+          // `--status-uat-*` is the one definition of that amber; the Form
+          // Environment switches read the same tokens, so the chip and the
+          // switch cannot drift into two different ambers.
+          background: uat ? "var(--status-uat-bg)" : "var(--bg-card)",
+          color: uat ? "var(--status-uat-text)" : "var(--text-muted)",
           ...(compact
             ? {}
             : {
                 border: uat
-                  ? "1px solid color-mix(in srgb, var(--text-warning) 38%, transparent)"
+                  ? "1px solid var(--status-uat-border)"
                   : "1px solid var(--border-card)",
               }),
         }}
