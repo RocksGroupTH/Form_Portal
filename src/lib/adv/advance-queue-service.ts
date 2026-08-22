@@ -3,7 +3,7 @@ import { getAccPool, sql } from "@/lib/adv/pool";
 import { AP2_FORM_CODE } from "@/features/advance/constants";
 import { STEP_LABEL, needsPayment, type StepType } from "@/lib/adv/approval-steps";
 import { isAdvanceApprover } from "@/lib/adv/advance-approver-service";
-import { listAdvanceInterfaceConfig } from "@/lib/adv/advance-interface-config-service";
+import { listBrandErpInterfaceMaps } from "@/lib/acc/brand-erp-interface-map-service";
 
 /** One row in the AP-2 approval / interface queues (with resolved Company). */
 export interface AdvanceQueueRow {
@@ -53,9 +53,9 @@ async function loadInterfaceMap(pool: Pool): Promise<Record<string, string>> {
   for (const row of r.recordset as { BrandCode: string; InterfaceBrandCode: string }[]) {
     map[(row.BrandCode ?? "").trim().toUpperCase()] = (row.InterfaceBrandCode ?? "").trim().toUpperCase();
   }
-  const ap2 = await listAdvanceInterfaceConfig();
-  for (const [brand, cfg] of Object.entries(ap2)) {
-    if (cfg.interfaceBrandCode) map[brand] = cfg.interfaceBrandCode.trim().toUpperCase();
+  const ap2Maps = await listBrandErpInterfaceMaps(AP2_FORM_CODE);
+  for (const m of ap2Maps) {
+    if (m.interfaceBrandCode) map[m.brandCode.trim().toUpperCase()] = m.interfaceBrandCode.trim().toUpperCase();
   }
   return map;
 }

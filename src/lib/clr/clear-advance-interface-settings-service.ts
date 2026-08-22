@@ -2,7 +2,8 @@ import { listAllBrands } from "@/lib/acc/brand-options";
 import { listFormBrands } from "@/lib/acc/settings-service";
 import { loadErpJournalBuildContext } from "@/lib/acc/erp-journal-context";
 import { resolveErpTargetProfile } from "@/lib/acc/erp-target-profile";
-import { listAdvanceInterfaceConfig } from "@/lib/adv/advance-interface-config-service";
+import { listBrandErpInterfaceMaps } from "@/lib/acc/brand-erp-interface-map-service";
+import { AP2_FORM_CODE } from "@/features/advance/constants";
 import { listClrInterfaceConfig } from "@/lib/clr/clear-advance-interface-config-service";
 
 /**
@@ -30,26 +31,27 @@ export interface ClrInterfaceConfigView {
 }
 
 export async function listClrInterfaceConfigView(): Promise<ClrInterfaceConfigView[]> {
-  const [allBrands, ctx, ap2, clr, ap3Brands] = await Promise.all([
+  const [allBrands, ctx, ap2Maps, clr, ap3Brands] = await Promise.all([
     listAllBrands(),
     loadErpJournalBuildContext("AP-3"),
-    listAdvanceInterfaceConfig(),
+    listBrandErpInterfaceMaps(AP2_FORM_CODE),
     listClrInterfaceConfig(),
     listFormBrands("AP-3"),
   ]);
+  const ap2ByCode = new Map(ap2Maps.map((m) => [m.brandCode.toUpperCase(), m]));
   const activeByCode = new Map(ap3Brands.map((b) => [b.brandCode.toUpperCase(), b.isActive]));
   const brandByCode = new Map(allBrands.map((b) => [b.brandCode.toUpperCase(), b]));
 
   // Same claim brands AP-2 can post: those mapped in AP-1 ∪ AP-2's overrides.
   const codes = Array.from(new Set([
     ...Object.keys(ctx.interfaceByClaim),
-    ...Object.keys(ap2),
+    ...Array.from(ap2ByCode.keys()),
   ])).sort();
 
   return Promise.all(
     codes.map(async (code) => {
       const master = brandByCode.get(code);
-      const cfg = ap2[code];
+      const cfg = ap2ByCode.get(code);
       const target = (cfg?.interfaceBrandCode ?? ctx.interfaceByClaim[code] ?? code).toUpperCase();
       const profile = await resolveErpTargetProfile(target, "AP-3");
       const journalBatchName = clr[code] ?? null;

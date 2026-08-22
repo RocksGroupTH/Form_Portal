@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole } from "@/lib/api-auth";
 import { isErpInterfaceBrandCode } from "@/lib/acc/erp-interface-brands";
-import { listAdvanceInterfaceConfigView } from "@/lib/adv/advance-interface-settings-service";
-import { saveAdvanceInterface } from "@/lib/adv/advance-interface-config-service";
+import { listAdvanceInterfaceConfigView, saveAdvanceInterfacePerForm } from "@/lib/adv/advance-interface-settings-service";
 
 /** GET — per-brand AP-2 Interface ERP config (AP-2's own + inherited display). */
 export async function GET() {
@@ -37,16 +36,18 @@ export async function POST(req: NextRequest) {
     if (!interfaceBrandCode) return NextResponse.json({ ok: false, error: "กรุณาเลือก Company ปลายทาง" }, { status: 400 });
     if (!isErpInterfaceBrandCode(interfaceBrandCode)) return NextResponse.json({ ok: false, error: "Company ปลายทางไม่ถูกต้อง" }, { status: 400 });
 
-    const glAccountNo = (body.glAccountNo ?? "").trim();
-    const bankAccountNo = (body.bankAccountNo ?? "").trim();
-    const branchCode = (body.branchCode ?? "").trim();
-    const journalBatchName = (body.journalBatchName ?? "").trim();
-    if (!glAccountNo) return NextResponse.json({ ok: false, error: "กรุณาเลือก G/L Account" }, { status: 400 });
+    const glAccountNo    = (body.glAccountNo ?? "").trim();
+    const bankAccountNo  = (body.bankAccountNo ?? "").trim();
+    const branchCode     = (body.branchCode ?? "").trim() || null;
+    const journalBatchName = (body.journalBatchName ?? "").trim() || null;
+    if (!glAccountNo)   return NextResponse.json({ ok: false, error: "กรุณาเลือก G/L Account" }, { status: 400 });
     if (!bankAccountNo) return NextResponse.json({ ok: false, error: "กรุณาเลือก Bank Account" }, { status: 400 });
 
-    // Batch is optional at save time — it may be pending the Sandbox web service.
-    // Description is not stored for AP-2 — the journal uses the request's purpose.
-    await saveAdvanceInterface(brandCode, { interfaceBrandCode, glAccountNo, bankAccountNo, branchCode, journalBatchName }, Number(session.user.id));
+    await saveAdvanceInterfacePerForm(
+      brandCode,
+      { interfaceBrandCode, glAccountNo, bankAccountNo, branchCode, journalBatchName },
+      Number(session.user.id),
+    );
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("[api/request/advance/settings/erp-interface] POST", err);
