@@ -472,7 +472,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
             onClick={handleSubmit}
             disabled={saving || submitting}
             className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-[13px] font-bold cursor-pointer border-none text-white disabled:opacity-60"
-            style={{ background: "var(--color-action)" }}
+            style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}
           >
             <Send size={14} />
             {submitting ? "กำลังส่งคำขอ..." : `ส่งคำขอ (${tabs.length} ใบ)`}
@@ -507,7 +507,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
               setRemoveConfirmIndex(null);
             }}
             className="inline-flex items-center gap-1.5 text-[14px] font-bold px-4 py-2 rounded-lg cursor-pointer border-none"
-            style={{ background: "var(--color-danger)", color: "#fff" }}
+            style={{ background: "var(--btn-danger-bg)", color: "var(--btn-danger-text)", border: "1px solid var(--btn-danger-border)" }}
           >
             ยืนยันลบทริป
           </button>

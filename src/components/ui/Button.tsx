@@ -12,13 +12,13 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const variantStyles: Record<ButtonVariant, React.CSSProperties> = {
-  primary: { background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "none" },
+  primary: { background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" },
   secondary: {
     background: "color-mix(in srgb, var(--bg-card) 80%, transparent)",
     color: "var(--text-primary)", border: "1px solid var(--border-card)",
   },
   ghost: { background: "transparent", color: "var(--text-secondary)", border: "1px solid transparent" },
-  danger: { background: "var(--btn-danger-bg)", color: "var(--btn-danger-text)", border: "none" },
+  danger: { background: "var(--btn-danger-bg)", color: "var(--btn-danger-text)", border: "1px solid var(--btn-danger-border)" },
   icon: { background: "transparent", color: "var(--text-muted)", border: "none", padding: 0 },
 };
 

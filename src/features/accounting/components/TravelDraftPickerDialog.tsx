@@ -105,7 +105,7 @@ export function TravelDraftPickerDialog({ open, drafts, onPickDraft, onNew, onDi
                     onClick={() => handleConfirmDelete(d.id)}
                     disabled={deletingId === d.id}
                     className="text-[12px] font-bold px-3 py-1.5 rounded-lg cursor-pointer border-none flex items-center gap-1.5"
-                    style={{ background: "var(--color-danger)", color: "#fff", opacity: deletingId === d.id ? 0.6 : 1 }}
+                    style={{ background: "var(--btn-danger-bg)", color: "var(--btn-danger-text)", border: "1px solid var(--btn-danger-border)", opacity: deletingId === d.id ? 0.6 : 1 }}
                   >
                     {deletingId === d.id && <Loader2 size={13} className="animate-spin" />}
                     ลบ

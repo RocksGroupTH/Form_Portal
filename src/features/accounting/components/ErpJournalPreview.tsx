@@ -399,7 +399,7 @@ function SegmentJournalPanel({
                     color: "var(--color-danger)",
                     border: "1px solid color-mix(in srgb, var(--color-danger) 35%, transparent)",
                   }
-                : { background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)" }
+                : { background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }
             }
           >
             <Upload size={13} />

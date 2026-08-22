@@ -162,11 +162,40 @@
   --nav-active-bg: rgba(76, 116, 196, 0.10);
   --nav-active-text: #4c74c4;
 
-  /* Buttons */
-  --btn-primary-bg: #4c74c4;
-  --btn-primary-text: #ffffff;
-  --btn-danger-bg: var(--color-danger);
-  --btn-danger-text: #ffffff;
+  /* Buttons — tinted, not filled.
+   *
+   * A soft wash of the accent, the accent itself for the text, and a border of
+   * the same hue. They were solid blocks with white text; a page with three of
+   * them read as three competing alarms, and the danger one in particular
+   * shouted at people who had merely opened a dialog.
+   *
+   * Mixed against `--bg-card` rather than given per-theme literals, so the dark
+   * theme needs no separate values: `var()` resolves at use, and `--bg-card` is
+   * already the surface these sit on in both. `--color-action` and
+   * `--color-danger` are single-valued across themes by design (see the
+   * `@theme` note above), so the hue is the same and only the wash moves.
+   *
+   * The `-border` half is not optional decoration: at 14% the fill is nearly
+   * the card behind it, and without an edge the button stops looking clickable.
+   *
+   * Lightning CSS wraps each mix in `@supports (color: color-mix(in lab, …))`
+   * and emits a fallback outside it — and because `--bg-card` is a variable it
+   * cannot fold the mix, so that fallback is the bare accent: `#4c74c4`, the
+   * same value `-text` resolves to. A browser taking the fallback would paint
+   * blue on blue. It is unreachable rather than fixed: Tailwind v4 requires
+   * Safari 16.4+ / Chrome 111+ / Firefox 128+, all of which support the tested
+   * syntax, so a browser that could take that branch could not render the rest
+   * of this stylesheet either. Do not "fix" it by folding the mix against a
+   * literal white — `.acc-theme` applies in both themes, and a literal there
+   * would tint an Accounting button for the light theme while it sits on a dark
+   * card.
+   */
+  --btn-primary-bg: color-mix(in srgb, var(--color-action) 14%, var(--bg-card));
+  --btn-primary-text: var(--color-action);
+  --btn-primary-border: color-mix(in srgb, var(--color-action) 38%, transparent);
+  --btn-danger-bg: color-mix(in srgb, var(--color-danger) 14%, var(--bg-card));
+  --btn-danger-text: var(--color-danger);
+  --btn-danger-border: color-mix(in srgb, var(--color-danger) 38%, transparent);
   --btn-ghost-bg: transparent;
   --btn-ghost-text: var(--text-secondary);
   --btn-ghost-hover: var(--bg-card-hover);
@@ -266,10 +295,19 @@
   --nav-active-bg: rgba(127, 160, 224, 0.14);
   --nav-active-text: #9fb9e8;
 
-  --btn-primary-bg: #5b7fc9;
-  --btn-primary-text: #ffffff;
-  --btn-danger-bg: #8f3b3b;
-  --btn-danger-text: #fbdcdc;
+  /* Buttons. Mixed the same way the base block mixes them, but from a lighter
+   * hue: `--color-action` / `--color-danger` are legible on white and go muddy
+   * on a dark card. Those two are NOT overridden here — CLAUDE.md records them
+   * as single-valued across both themes on purpose, and the nav accent reads
+   * them too, so moving them to fix a button would move the navigation with it.
+   * The lighter hues are named locally instead.
+   */
+  --btn-primary-bg: color-mix(in srgb, #7fa0e0 18%, var(--bg-card));
+  --btn-primary-text: #9fb9e8;
+  --btn-primary-border: color-mix(in srgb, #7fa0e0 42%, transparent);
+  --btn-danger-bg: color-mix(in srgb, #e08f8f 16%, var(--bg-card));
+  --btn-danger-text: #e8a3a3;
+  --btn-danger-border: color-mix(in srgb, #e08f8f 40%, transparent);
   --btn-ghost-bg: transparent;
   --btn-ghost-text: var(--text-secondary);
   --btn-ghost-hover: var(--bg-card-hover);
@@ -620,8 +658,12 @@ html {
   --color-action-hover: #3d63b0;
   --nav-active-bg:      #e8effc;
   --nav-active-text:    #4c74c4;
-  --btn-primary-bg:     #4c74c4;
-  --btn-primary-text:   #ffffff;
+  /* Tinted like everywhere else. This scope used to pin the primary button
+     back to a solid block, which would have left every Accounting page — most
+     of the app — on the old look while the rest moved. */
+  --btn-primary-bg:     color-mix(in srgb, #4c74c4 14%, var(--bg-card));
+  --btn-primary-text:   #4c74c4;
+  --btn-primary-border: color-mix(in srgb, #4c74c4 38%, transparent);
   --accent:             #4c74c4;
   --accent-hover:       #3d63b0;
   --accent-subtle:      rgba(76, 116, 196, 0.10);

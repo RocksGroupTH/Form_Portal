@@ -1837,8 +1837,7 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
                 disabled={cancelling}
                 className="inline-flex items-center gap-1.5 text-[13px] font-medium px-4 py-2 rounded-lg"
                 style={{
-                  background: "var(--color-danger)",
-                  color: "#ffffff",
+                  background: "var(--btn-danger-bg)", color: "var(--btn-danger-text)", border: "1px solid var(--btn-danger-border)",
                   opacity: cancelling ? 0.7 : 1,
                 }}
               >

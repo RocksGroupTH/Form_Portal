@@ -104,7 +104,7 @@ function LoginContent() {
             onClick={handleSignIn}
             disabled={loading}
             className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-xl text-[14px] font-bold cursor-pointer transition-opacity disabled:opacity-50 disabled:cursor-not-allowed btn-lift"
-            style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "none" }}
+            style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}
           >
             {loading ? (
               <span

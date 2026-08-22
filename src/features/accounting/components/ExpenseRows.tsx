@@ -344,7 +344,7 @@ function ExpenseRow({
                   aria-label="ลบรูป"
                   title="ลบรูป"
                   className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center cursor-pointer border-none"
-                  style={{ background: "var(--color-danger)", color: "#fff", opacity: removingId === f.id ? 0.6 : 1 }}
+                  style={{ background: "var(--btn-danger-bg)", color: "var(--btn-danger-text)", border: "1px solid var(--btn-danger-border)", opacity: removingId === f.id ? 0.6 : 1 }}
                 >
                   {removingId === f.id ? <Loader2 size={11} className="animate-spin" /> : <X size={11} />}
                 </button>
@@ -376,7 +376,7 @@ function ExpenseRow({
                 aria-label="เอารูปออก"
                 title="เอารูปออก"
                 className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center cursor-pointer border-none"
-                style={{ background: "var(--color-danger)", color: "#fff" }}
+                style={{ background: "var(--btn-danger-bg)", color: "var(--btn-danger-text)", border: "1px solid var(--btn-danger-border)" }}
               >
                 <X size={11} />
               </button>
@@ -425,7 +425,7 @@ function ExpenseRow({
             onClick={runConfirm}
             disabled={confirming}
             className="inline-flex items-center gap-1.5 text-[14px] font-bold px-4 py-2 rounded-lg cursor-pointer border-none"
-            style={{ background: "var(--color-danger)", color: "#fff", opacity: confirming ? 0.7 : 1 }}
+            style={{ background: "var(--btn-danger-bg)", color: "var(--btn-danger-text)", border: "1px solid var(--btn-danger-border)", opacity: confirming ? 0.7 : 1 }}
           >
             {confirming && <Loader2 size={13} className="animate-spin" />}
             {confirm?.kind === "row" ? "ยืนยัน ลบรายการ" : "ยืนยัน ลบรูป"}
