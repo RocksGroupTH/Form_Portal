@@ -5,7 +5,9 @@ import { toast } from "sonner";
 import {
   FileText, User, Mail, Wallet, CheckCircle, XCircle, Clock, RotateCcw,
   ThumbsUp, ThumbsDown, Ban, Paperclip, Image as ImageIcon, Banknote, ReceiptText,
+  Pencil,
 } from "lucide-react";
+import type { ClearAdvanceDetail as ClearDetail } from "@/features/clear-advance/types";
 import { Dialog } from "@/components/ui/Dialog";
 import { Avatar } from "@/components/ui/Avatar";
 import { ImageLightbox } from "@/features/accounting/components/ImageLightbox";
@@ -123,6 +125,11 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
   const [accComment, setAccComment] = useState("");
   const [cancelOpen, setCancelOpen] = useState(false);
 
+  // ACCOUNT-step inline edit state.
+  const [editOpen, setEditOpen] = useState(false);
+  const [editItems, setEditItems] = useState<ClearDetail["items"]>(() => clear?.items ?? []);
+  const [editBusy, setEditBusy] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
     fetch("/api/me/employee")
@@ -200,6 +207,39 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
       pvDocNo: pvDocNo.trim() || null,
       paymentDate: paymentDate || null,
     });
+  }
+
+  async function handleAccountEdit() {
+    if (!clear) return;
+    setEditBusy(true);
+    try {
+      const body = {
+        id: request.id,
+        brandCode: request.brandCode ?? null,
+        staffId: request.staffId ?? null,
+        clear: {
+          ...clear,
+          items: editItems,
+        },
+      };
+      const res = await fetch(
+        `/api/request/clear-advance/requests/${request.id}/account-edit`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
+      const json = (await res.json()) as { ok: boolean; error?: string };
+      if (!json.ok) throw new Error(json.error ?? "บันทึกไม่สำเร็จ");
+      toast.success("บันทึกการแก้ไขสำเร็จ");
+      setEditOpen(false);
+      onChanged?.();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ");
+    } finally {
+      setEditBusy(false);
+    }
   }
 
   return (
@@ -294,6 +334,138 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                 style={{ color: "var(--color-danger)", border: "1px solid rgba(220,38,38,0.25)", background: "rgba(220,38,38,0.06)" }}>
                 <ThumbsDown size={14} /> ไม่อนุมัติ
               </button>
+            </div>
+
+            {/* Inline expense-line editor — account approver can correct lines before passing to Head */}
+            <div className="mt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setEditItems(clear?.items ?? []);
+                  setEditOpen((v) => !v);
+                }}
+                className="inline-flex items-center gap-2 text-[12px] font-medium px-3 py-1.5 rounded-lg cursor-pointer"
+                style={{ color: "var(--nav-active-text)", background: "var(--nav-active-bg)", border: "1px solid var(--nav-active-bg)" }}>
+                <Pencil size={13} /> {editOpen ? "ปิดแก้ไขรายการ" : "แก้ไขรายการค่าใช้จ่าย"}
+              </button>
+
+              {editOpen && (
+                <div className="mt-3 flex flex-col gap-3">
+                  <p className="text-[11px] m-0" style={{ color: "var(--text-muted)" }}>
+                    แก้ไขได้เฉพาะในขั้นบัญชี (ACCOUNT) เท่านั้น — บันทึกจะอัปเดตรายการทันที ก่อนส่งต่อ Head
+                  </p>
+                  <div className="overflow-x-auto -mx-1 px-1">
+                    <table className="w-full border-collapse" style={{ minWidth: 760 }}>
+                      <thead>
+                        <tr className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                          <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>#</th>
+                          <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>วันที่</th>
+                          <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>รายละเอียด</th>
+                          <th className="px-2 py-1.5 text-right" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>ก่อน VAT</th>
+                          <th className="px-2 py-1.5 text-right" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>VAT</th>
+                          <th className="px-2 py-1.5 text-right" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>WHT</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {editItems.map((it, i) => (
+                          <tr key={it.id ?? i} className="text-[12px]" style={{ color: "var(--text-primary)" }}>
+                            <td className="px-2 py-1.5" style={{ borderBottom: "1px solid var(--border-light)" }}>{i + 1}</td>
+                            <td className="px-2 py-1.5" style={{ borderBottom: "1px solid var(--border-light)" }}>
+                              <input
+                                type="date"
+                                className="text-[12px] px-2 py-1 rounded outline-none w-36"
+                                style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-input)" }}
+                                value={it.expenseDate ?? ""}
+                                onChange={(e) => {
+                                  const next = [...editItems];
+                                  next[i] = { ...next[i], expenseDate: e.target.value || null };
+                                  setEditItems(next);
+                                }}
+                              />
+                            </td>
+                            <td className="px-2 py-1.5" style={{ borderBottom: "1px solid var(--border-light)" }}>
+                              <input
+                                className="text-[12px] px-2 py-1 rounded outline-none w-48"
+                                style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-input)" }}
+                                value={it.description ?? ""}
+                                placeholder="รายละเอียด"
+                                onChange={(e) => {
+                                  const next = [...editItems];
+                                  next[i] = { ...next[i], description: e.target.value };
+                                  setEditItems(next);
+                                }}
+                              />
+                            </td>
+                            <td className="px-2 py-1.5 text-right" style={{ borderBottom: "1px solid var(--border-light)" }}>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                className="text-[12px] px-2 py-1 rounded outline-none w-28 text-right tabular-nums"
+                                style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-input)" }}
+                                value={it.amountBeforeVat ?? ""}
+                                onChange={(e) => {
+                                  const next = [...editItems];
+                                  next[i] = { ...next[i], amountBeforeVat: e.target.value === "" ? null : Number(e.target.value) };
+                                  setEditItems(next);
+                                }}
+                              />
+                            </td>
+                            <td className="px-2 py-1.5 text-right" style={{ borderBottom: "1px solid var(--border-light)" }}>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                className="text-[12px] px-2 py-1 rounded outline-none w-24 text-right tabular-nums"
+                                style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-input)" }}
+                                value={it.vatAmount ?? ""}
+                                onChange={(e) => {
+                                  const next = [...editItems];
+                                  next[i] = { ...next[i], vatAmount: e.target.value === "" ? null : Number(e.target.value) };
+                                  setEditItems(next);
+                                }}
+                              />
+                            </td>
+                            <td className="px-2 py-1.5 text-right" style={{ borderBottom: "1px solid var(--border-light)" }}>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                className="text-[12px] px-2 py-1 rounded outline-none w-24 text-right tabular-nums"
+                                style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-input)" }}
+                                value={it.whtAmount ?? ""}
+                                onChange={(e) => {
+                                  const next = [...editItems];
+                                  next[i] = { ...next[i], whtAmount: e.target.value === "" ? null : Number(e.target.value) };
+                                  setEditItems(next);
+                                }}
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="flex gap-2 justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setEditOpen(false)}
+                      disabled={editBusy}
+                      className="text-[13px] font-medium px-4 py-2 rounded-lg"
+                      style={{ color: "var(--text-secondary)", background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}>
+                      ยกเลิก
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleAccountEdit}
+                      disabled={editBusy}
+                      className="inline-flex items-center gap-2 text-[13px] font-medium px-4 py-2 rounded-lg"
+                      style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)", opacity: editBusy ? 0.7 : 1 }}>
+                      <Pencil size={13} /> {editBusy ? "กำลังบันทึก..." : "บันทึกการแก้ไข"}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}

@@ -380,6 +380,25 @@ export function validateForSubmit(
 
 /* ─────────────────────────── writes ─────────────────────────── */
 
+/**
+ * Persist the AccClearAdvance header + AccClearAdvanceItem + AccClearAdvanceWht rows
+ * for a given request, recomputing actualTotal and refundToCompany.
+ * This is the pure data-layer write; it does NOT touch AccRequest.Status or approvals.
+ * Called by both saveDraft and saveAccountEdit.
+ */
+async function persistClearOnly(input: ClearAdvanceSaveInput): Promise<void> {
+  const pool = await getAccPool();
+  const tx = pool.transaction();
+  await tx.begin();
+  try {
+    await persistClear(tx, input.id!, input.clear, input.brandCode ?? null);
+    await tx.commit();
+  } catch (e) {
+    await tx.rollback();
+    throw e;
+  }
+}
+
 async function persistClear(
   tx: Awaited<ReturnType<Awaited<ReturnType<typeof getAccPool>>["transaction"]>>,
   requestId: number,
@@ -779,6 +798,35 @@ export async function submitRequest(
     });
   }
   return updated!;
+}
+
+/**
+ * ACCOUNT-step edit: allow the ACCOUNT approver (or admin) to update the clearing
+ * data of a Submitted request while it is still at the ACCOUNT step.
+ * Role/permission enforcement is the caller's responsibility (the route layer);
+ * this function only enforces the status+step guard.
+ */
+export async function saveAccountEdit(
+  input: ClearAdvanceSaveInput,
+  _actorUserId: number,
+  _actorEmail: string,
+): Promise<void> {
+  const id = input.id;
+  if (!id) throw new Error("ไม่พบคำขอ");
+
+  const pool = await getAccPool();
+  const check = await pool.request()
+    .input("id", sql.Int, id)
+    .input("form", sql.NVarChar, AP3_FORM_CODE)
+    .query(`SELECT TOP 1 Status, CurrentStepCode FROM [dbo].[AccRequest] WHERE Id = @id AND FormCode = @form`);
+  if (check.recordset.length === 0) throw new Error("ไม่พบคำขอ");
+
+  const row = check.recordset[0] as { Status: string; CurrentStepCode: string | null };
+  if (row.Status !== "Submitted" || row.CurrentStepCode !== "ACCOUNT") {
+    throw new Error("แก้ไขได้เฉพาะตอนอยู่ขั้นบัญชี (ACCOUNT) เท่านั้น");
+  }
+
+  await persistClearOnly(input);
 }
 
 /** Account step records the PV/PPEX doc no. + (optional) payment date on the header. */
