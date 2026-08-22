@@ -54,7 +54,7 @@ export async function listClrInterfaceConfigView(): Promise<ClrInterfaceConfigVi
       const cfg = ap2ByCode.get(code);
       const target = (cfg?.interfaceBrandCode ?? ctx.interfaceByClaim[code] ?? code).toUpperCase();
       const profile = await resolveErpTargetProfile(target, "AP-3");
-      const journalBatchName = clr[code] ?? null;
+      const journalBatchName = clr[code]?.journalBatchName ?? null;
       return {
         brandCode: code,
         brandName: master?.brandName ?? code,
