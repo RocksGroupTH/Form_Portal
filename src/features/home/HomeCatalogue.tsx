@@ -14,6 +14,10 @@ import { useHomeData } from "@/features/home/useHomeData";
 import { useFormEnvironments } from "@/lib/hooks/useFormEnvironments";
 import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
 import { sortByFormCode } from "@/lib/form-code-order";
+// The shared hover affordance — accent border, focus ring, a 3px lift. Home's
+// cards were plain <Link>s and the only card surface in the app without it, so
+// the same tile felt inert here and interactive on /request.
+import { HoverCard } from "@/components/ui/HoverCard";
 import { Search, Route, Luggage, ClipboardCheck, FilePen, ArrowRight } from "lucide-react";
 
 /**
@@ -110,14 +114,12 @@ function PendingLink({ href, Icon, title, subtitle, count }: {
   count: number;
 }) {
   return (
-    <Link
+    <HoverCard
       href={href}
-      className="flex items-center gap-3 px-3.5 py-3 no-underline"
+      className="flex items-center gap-3 px-3.5 py-3"
       style={{
-        background: "var(--bg-card)",
         borderRadius: "var(--radius-card)",
         boxShadow: "var(--shadow-card)",
-        border: "1px solid var(--border-card)",
       }}
     >
       <span
@@ -149,7 +151,7 @@ function PendingLink({ href, Icon, title, subtitle, count }: {
       >
         {count} รายการ
       </span>
-    </Link>
+    </HoverCard>
   );
 }
 
@@ -267,18 +269,16 @@ function AccountingFormCard({
   }
 
   return (
-    <Link
+    <HoverCard
       href={href}
-      className="flex gap-3 items-start p-3.5 no-underline"
+      className="flex gap-3 items-start p-3.5"
       style={{
-        background: "var(--bg-card)",
         borderRadius: "var(--radius-card)",
         boxShadow: "var(--shadow-card)",
-        border: "1px solid var(--border-card)",
       }}
     >
       {body}
-    </Link>
+    </HoverCard>
   );
 }
 

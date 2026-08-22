@@ -95,7 +95,7 @@ function ADSearchModal({
                       <span className="text-[10px] font-bold px-2 py-1 rounded-lg" style={{ color: "#4fa37a", background: "#e4f4ea" }}>เพิ่มแล้ว</span>
                     ) : (
                       <button onClick={() => { onSelect(u); onClose(); }} className="text-[11px] font-bold px-3 py-1 rounded-lg cursor-pointer border-none"
-                        style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)" }}>+ เพิ่ม</button>
+                        style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}>+ เพิ่ม</button>
                     )}
                   </div>
                 );
@@ -154,7 +154,7 @@ export function SameDayBrandSettings({ isAdmin }: SameDayBrandSettingsProps) {
         {isAdmin && (
           <button onClick={() => setShowModal(true)}
             className="flex items-center gap-1.5 text-[12px] font-medium px-3 py-2 rounded-lg cursor-pointer border-none"
-            style={{ background: "var(--color-action)", color: "#fff" }}>
+            style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}>
             <Plus size={13} /> เพิ่มรายชื่อ
           </button>
         )}

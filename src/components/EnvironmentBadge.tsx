@@ -29,6 +29,11 @@ export function EnvironmentBadge({
         borderRadius: 6,
         background: uat ? "var(--status-uat-bg)" : "var(--bg-badge)",
         color: uat ? "var(--status-uat-text)" : "var(--text-muted)",
+        // The navbar chip's border too, so the two are the same object seen in
+        // two places rather than two things that happen to share a hue. PRO
+        // keeps a transparent one of the same width: without it the badge
+        // changes size when a form is switched, and the card reflows.
+        border: uat ? "1px solid var(--status-uat-border)" : "1px solid transparent",
       }}
       title={
         uat

@@ -435,7 +435,7 @@ function BrandConfigModal({
 
         <div className="flex gap-2 px-5 py-3 shrink-0" style={{ borderTop: "1px solid var(--border-card)", background: "var(--bg-card-alt)" }}>
           <button type="button" onClick={onClose} className="px-3 py-2 rounded-lg text-[12px] font-medium cursor-pointer border-none" style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}>Cancel</button>
-          <button type="button" onClick={onSave} disabled={saving} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-bold cursor-pointer border-none text-white ml-auto" style={{ background: "var(--color-action)" }}>
+          <button type="button" onClick={onSave} disabled={saving} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-bold cursor-pointer border-none text-white ml-auto" style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}>
             {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
             Save
           </button>

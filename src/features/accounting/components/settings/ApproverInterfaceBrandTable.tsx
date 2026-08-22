@@ -217,7 +217,7 @@ export function ApproverInterfaceBrandTable({
       <div className="overflow-x-auto">
         <table className="w-full text-[12px] min-w-[860px]">
           <thead>
-            <tr style={{ background: "var(--bg-card-alt)", borderBottom: "1px solid var(--border-light)" }}>
+            <tr style={{ background: "var(--bg-card-header)", borderBottom: "1px solid var(--border-light)" }}>
               <th
                 className="text-left px-4 py-2.5 font-semibold whitespace-nowrap min-w-[220px]"
                 style={{ color: "var(--text-secondary)" }}

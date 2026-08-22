@@ -246,7 +246,7 @@ export function FormEnvironmentSettings() {
           <div className="overflow-x-auto">
             <table className="w-full text-[11px]">
               <thead>
-                <tr style={{ borderBottom: "1px solid var(--border-light)", background: "var(--bg-card-alt)" }}>
+                <tr style={{ borderBottom: "1px solid var(--border-light)", background: "var(--bg-card-header)" }}>
                   <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Form</th>
                   <th className="text-right px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Production</th>
                   <th className="text-right px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>UAT</th>
@@ -471,7 +471,7 @@ export function FormEnvironmentSettings() {
                   disabled={saving === pending.row.formCode}
                   onClick={() => void setFlag(pending.row.formCode, pending.field, pending.next)}
                   className="flex-1 px-3 py-2 rounded-lg text-[12px] font-bold border-none text-white disabled:opacity-50 disabled:cursor-not-allowed enabled:cursor-pointer"
-                  style={{ background: "var(--color-action)" }}
+                  style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}
                 >
                   {saving === pending.row.formCode
                     ? "กำลังบันทึก..."

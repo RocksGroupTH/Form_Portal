@@ -349,7 +349,7 @@ function SegmentJournalPanel({
     >
       <div
         className="px-3 py-2.5 flex flex-wrap items-center gap-2"
-        style={{ background: "var(--bg-card-alt)", borderBottom: "1px solid var(--border-light)" }}
+        style={{ background: "var(--bg-card-header)", borderBottom: "1px solid var(--border-light)" }}
       >
         <div className="min-w-0 flex-1">
           <p className="text-[12px] font-bold m-0" style={{ color: "var(--text-heading)" }}>
@@ -399,7 +399,7 @@ function SegmentJournalPanel({
                     color: "var(--color-danger)",
                     border: "1px solid color-mix(in srgb, var(--color-danger) 35%, transparent)",
                   }
-                : { background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)" }
+                : { background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }
             }
           >
             <Upload size={13} />
@@ -481,7 +481,7 @@ function InterfaceSectionBody({
           <div className="overflow-x-auto no-scrollbar">
             <table className="w-full text-[11px] min-w-[980px]">
               <thead>
-                <tr style={{ background: "var(--bg-card-alt)", borderBottom: "1px solid var(--border-light)" }}>
+                <tr style={{ background: "var(--bg-card-header)", borderBottom: "1px solid var(--border-light)" }}>
                   {journalHeaders.map((h) => (
                     <th
                       key={h}
@@ -580,7 +580,7 @@ function InterfaceSectionMeta({ section }: { section: ErpInterfaceTargetSection 
       className="px-4 py-3 flex items-start gap-3"
       style={{
         borderBottom: "1px solid var(--border-light)",
-        background: sectionReady ? "var(--bg-info-green)" : "var(--bg-card-alt)",
+        background: sectionReady ? "var(--bg-info-green)" : "var(--bg-card-header)",
       }}
     >
       <img
