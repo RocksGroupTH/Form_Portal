@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { resolveLoginEmail } from "@/lib/auth-email";
-import { findActiveEmployeeByEmail, listDepartmentColleagues } from "@/lib/hr/employee-lookup";
+import {
+  findActiveEmployeeByEmail,
+  listDepartmentColleagues,
+  searchActiveEmployees,
+} from "@/lib/hr/employee-lookup";
 import { resolveManagerInfo } from "@/lib/acc/employee-context";
 import { resolveFormAccess } from "@/lib/form-environment";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
@@ -14,8 +18,9 @@ function parseRequestId(raw: string | null): number | null {
 }
 
 /**
- * GET /api/request/accounting/requesters[?id=123] — self + same-department
- * colleagues for the on-behalf picker.
+ * GET /api/request/accounting/requesters[?id=123][&q=chai] — self, plus the
+ * people the on-behalf picker offers: the actor's own department by default,
+ * or a search across every active employee once `q` is two characters.
  *
  * The form code is named explicitly because this route is an aggregate ("BOTH"),
  * so the path alone resolves Production and would preview a tester real HR
@@ -39,15 +44,21 @@ export async function GET(req: NextRequest) {
     const { employee } = await findActiveEmployeeByEmail(loginEmail);
     const managerRes = await resolveManagerInfo(loginEmail, AP1_FORM_CODE, requestId);
     const access = await resolveFormAccess(AP1_FORM_CODE, requestId);
+    // No query: the actor's own department, which is who they file for almost
+    // every time and what the picker opens on. With a query: the whole active
+    // roster, searched in SQL — 1,117 people is too many to ship and filter in
+    // the browser, which is what the picker did while the list was one
+    // department.
+    const scope = { formCode: AP1_FORM_CODE, requestId };
+    const search = (req.nextUrl.searchParams.get("q") ?? "").trim();
     const deptId = employee?.departmentId ?? null;
-    const colleagues = deptId
-      ? (
-          await listDepartmentColleagues(deptId, {
-            formCode: AP1_FORM_CODE,
-            requestId,
-          })
-        ).filter((c) => c.staffId !== employee?.staffId)
-      : [];
+    const colleagues = (
+      search.length >= 2
+        ? await searchActiveEmployees(search, scope)
+        : deptId
+          ? await listDepartmentColleagues(deptId, scope)
+          : []
+    ).filter((c) => c.staffId !== employee?.staffId);
 
     return NextResponse.json({
       ok: true,

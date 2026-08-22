@@ -347,6 +347,37 @@ export interface ColleagueScope {
  * **UAT** manager, so the picker must too, or it asserts a real manager's name over
  * a request that will never reach them.
  */
+/**
+ * One `ColleagueRow` to the shape the picker renders.
+ *
+ * Shared by the department listing and the company-wide search so the two
+ * cannot disagree about what a colleague looks like — they select the same
+ * columns, and a field added to one query but mapped in only one place would
+ * be a row that renders differently depending on how it was found.
+ */
+function mapColleagueRow(row: ColleagueRow): DepartmentColleague {
+  return {
+    staffId: row.StaffId,
+    fullName:
+      [row.FirstName, row.LastName].filter(Boolean).join(" ") || row.FullName || null,
+    nickname: row.Nickname,
+    position: row.Position,
+    departmentId: row.DepartmentId,
+    departmentName: row.DepartmentName,
+    email: row.Email ?? row.EmailCompBr ?? null,
+    photoUrl: pickEmployeePhotoUrl(row.PhotoOverrideUrl, row.PhotoUrl),
+    manager: row.MgrStaffId
+      ? {
+          staffId: row.MgrStaffId,
+          fullName:
+            [row.MgrFirstName, row.MgrLastName].filter(Boolean).join(" ") || row.MgrFullName || null,
+          email: row.MgrEmail ?? row.MgrEmailCompBr ?? null,
+          position: row.MgrPosition,
+          photoUrl: pickEmployeePhotoUrl(row.MgrPhotoOverrideUrl, row.MgrPhotoUrl),
+        }
+      : null,
+  };
+}
 export async function listDepartmentColleagues(
   departmentId: number,
   scope?: ColleagueScope,
@@ -375,27 +406,7 @@ export async function listDepartmentColleagues(
       WHERE e.Status = @status AND e.DepartmentId = @dept
       ORDER BY e.FullName
     `);
-  const colleagues: DepartmentColleague[] = result.recordset.map((row) => ({
-    staffId: row.StaffId,
-    fullName:
-      [row.FirstName, row.LastName].filter(Boolean).join(" ") || row.FullName || null,
-    nickname: row.Nickname,
-    position: row.Position,
-    departmentId: row.DepartmentId,
-    departmentName: row.DepartmentName,
-    email: row.Email ?? row.EmailCompBr ?? null,
-    photoUrl: pickEmployeePhotoUrl(row.PhotoOverrideUrl, row.PhotoUrl),
-    manager: row.MgrStaffId
-      ? {
-          staffId: row.MgrStaffId,
-          fullName:
-            [row.MgrFirstName, row.MgrLastName].filter(Boolean).join(" ") || row.MgrFullName || null,
-          email: row.MgrEmail ?? row.MgrEmailCompBr ?? null,
-          position: row.MgrPosition,
-          photoUrl: pickEmployeePhotoUrl(row.MgrPhotoOverrideUrl, row.MgrPhotoUrl),
-        }
-      : null,
-  }));
+  const colleagues: DepartmentColleague[] = result.recordset.map(mapColleagueRow);
 
   const environment = scope?.formCode
     ? (await resolveFormAccess(scope.formCode, scope.requestId ?? null)).environment
@@ -403,6 +414,83 @@ export async function listDepartmentColleagues(
   return environment === "UAT" ? withUatColleagueManagers(colleagues) : colleagues;
 }
 
+/**
+ * Active employees matching a free-text query, for the on-behalf picker.
+ *
+ * The company-wide counterpart of `listDepartmentColleagues`, and the reason
+ * the picker searches the server instead of filtering what it was given: there
+ * are 1,117 active employees across 29 departments (measured 2026-08-22), and
+ * each row here carries the requester's manager as well, so shipping the lot
+ * would be a payload the picker used to answer in thirteen rows.
+ *
+ * `limit` is a hard ceiling, not a page: this feeds a type-ahead, and a person
+ * who cannot see the name they want types more of it. Sorted by name so the
+ * ceiling cuts the same place twice for the same query.
+ *
+ * The query is matched against full name, first/last, nickname, StaffId and
+ * both email columns — a picker that finds nobody when you type a staff number
+ * is a picker people stop using. Parameterised, and the wildcards are added
+ * here rather than by the caller so a `%` typed into the box is escaped rather
+ * than matching everything.
+ */
+export async function searchActiveEmployees(
+  query: string,
+  scope?: ColleagueScope,
+  limit = 30,
+): Promise<DepartmentColleague[]> {
+  const q = String(query ?? "").trim();
+  // Two characters is the floor the route also enforces. Guarded here too: a
+  // one-character search over 1,117 rows is every row, sorted and truncated,
+  // which is a slow way to return nothing useful.
+  if (q.length < 2) return [];
+  // `%`, `_` and `[` are LIKE's own metacharacters; wrapping each in brackets
+  // is T-SQL's way of asking for the literal. Deliberately no ESCAPE clause —
+  // that is the *other* mechanism, and declaring one here would make `[` the
+  // escape character, so `[%]` would read as a literal `%` and then a stray
+  // `]`. `]` needs nothing outside a bracket expression.
+  const like = "%" + q.replace(/[%_[]/g, (ch) => "[" + ch + "]") + "%";
+  const cap = Math.max(1, Math.min(100, Math.trunc(limit)));
+
+  const pool = await getHrPool();
+  const result = await pool
+    .request()
+    .input("status", sql.NVarChar, EMPLOYEE_STATUS_ACTIVE)
+    .input("like", sql.NVarChar, like)
+    .input("cap", sql.Int, cap)
+    .query<ColleagueRow>(`
+      SELECT TOP (@cap)
+        e.StaffId, e.FullName, e.FirstName, e.LastName, e.Nickname, e.Position,
+        e.DepartmentId, d.Name AS DepartmentName,
+        e.Email, e.EmailCompBr, e.PhotoUrl, e.PhotoOverrideUrl,
+        mgr.StaffId AS MgrStaffId, mgr.FullName AS MgrFullName,
+        mgr.FirstName AS MgrFirstName, mgr.LastName AS MgrLastName,
+        mgr.Email AS MgrEmail, mgr.EmailCompBr AS MgrEmailCompBr, mgr.Position AS MgrPosition,
+        mgr.PhotoUrl AS MgrPhotoUrl, mgr.PhotoOverrideUrl AS MgrPhotoOverrideUrl
+      FROM dbo.Employee e
+      LEFT JOIN dbo.Department d
+        ON d.Id = CAST(e.DepartmentId AS nvarchar(50))
+       AND (d.IsActive = 1 OR d.IsActive IS NULL)
+      LEFT JOIN dbo.Employee mgr
+        ON mgr.StaffId = e.ManagerStaffId AND mgr.Status = @status
+      WHERE e.Status = @status
+        AND (
+          e.FullName LIKE @like OR
+          e.FirstName LIKE @like OR
+          e.LastName LIKE @like OR
+          e.Nickname LIKE @like OR
+          e.Email LIKE @like OR
+          e.EmailCompBr LIKE @like OR
+          CAST(e.StaffId AS nvarchar(20)) LIKE @like
+        )
+      ORDER BY e.FullName
+    `);
+
+  const rows = result.recordset.map(mapColleagueRow);
+  const environment = scope?.formCode
+    ? (await resolveFormAccess(scope.formCode, scope.requestId ?? null)).environment
+    : await resolveFormEnvironment();
+  return environment === "UAT" ? withUatColleagueManagers(rows) : rows;
+}
 /** Find an active Employee by HR StaffId (used to resolve an on-behalf-of colleague). */
 export async function findActiveEmployeeByStaffId(
   staffId: number,
@@ -491,9 +579,12 @@ export async function resolveEmployeeForActor(
   if (!requesterStaffId || requesterStaffId === actor.staffId) return withUatManager(actor);
   const colleague = await findActiveEmployeeByStaffId(requesterStaffId);
   if (!colleague) throw new Error("ไม่พบข้อมูลพนักงานที่เลือก");
-  if (actor.departmentId == null || colleague.departmentId !== actor.departmentId) {
-    throw new Error("เลือกได้เฉพาะพนักงานในแผนกเดียวกันเท่านั้น");
-  }
+  // Any active employee may be filed for, not only the actor's own department.
+  // The rule that replaced it is the one above: `findActiveEmployeeByStaffId`
+  // returns nothing for a retired or unknown StaffId, and that still throws.
+  // Widening this was asked for directly; it means a claim can be opened in the
+  // name of anyone in the company, which their own manager then approves — the
+  // approval still routes to the *requester's* manager, never the actor's.
   if (opts?.forWrite) {
     await assertRequesterAllowedInUat(
       colleague.email ?? colleague.emailCompBr ?? null,

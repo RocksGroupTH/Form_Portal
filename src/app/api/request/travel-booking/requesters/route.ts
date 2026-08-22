@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { resolveLoginEmail } from "@/lib/auth-email";
-import { findActiveEmployeeByEmail, listDepartmentColleagues } from "@/lib/hr/employee-lookup";
+import {
+  findActiveEmployeeByEmail,
+  listDepartmentColleagues,
+  searchActiveEmployees,
+} from "@/lib/hr/employee-lookup";
 import { resolveManagerInfo } from "@/lib/acc/employee-context";
 import { resolveFormAccess } from "@/lib/form-environment";
 import { AP17_FORM_CODE } from "@/features/travel-booking/constants";
@@ -39,15 +43,21 @@ export async function GET(req: NextRequest) {
     const { employee } = await findActiveEmployeeByEmail(loginEmail);
     const managerRes = await resolveManagerInfo(loginEmail, AP17_FORM_CODE, requestId);
     const access = await resolveFormAccess(AP17_FORM_CODE, requestId);
+    // No query: the actor's own department, which is who they file for almost
+    // every time and what the picker opens on. With a query: the whole active
+    // roster, searched in SQL — 1,117 people is too many to ship and filter in
+    // the browser, which is what the picker did while the list was one
+    // department.
+    const scope = { formCode: AP17_FORM_CODE, requestId };
+    const search = (req.nextUrl.searchParams.get("q") ?? "").trim();
     const deptId = employee?.departmentId ?? null;
-    const colleagues = deptId
-      ? (
-          await listDepartmentColleagues(deptId, {
-            formCode: AP17_FORM_CODE,
-            requestId,
-          })
-        ).filter((c) => c.staffId !== employee?.staffId)
-      : [];
+    const colleagues = (
+      search.length >= 2
+        ? await searchActiveEmployees(search, scope)
+        : deptId
+          ? await listDepartmentColleagues(deptId, scope)
+          : []
+    ).filter((c) => c.staffId !== employee?.staffId);
 
     return NextResponse.json({
       ok: true,
