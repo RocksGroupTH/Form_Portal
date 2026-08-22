@@ -257,28 +257,72 @@ export async function previewClrErpJournal(ids: number[]): Promise<ClrPreviewIte
  * Send approved clear-advance requests to BC — ONE document per request (no
  * per-Company batching). Idempotent: Sent/Pending items are refused with a
  * descriptive error; only NULL/Failed items are marked Pending before posting.
+ *
+ * Two-phase per id:
+ *   Phase A — pre-flight (NO status mutation): guard against not-found / not-Approved /
+ *             already-Sent / already-Pending → push error result and continue.
+ *   Phase B — only for ids that passed pre-flight: resolve context + build payload,
+ *             mark Pending, call BC, stamp Sent or Failed. The Failed UPDATE also
+ *             carries AND ErpInterfaceStatus <> 'Sent' as belt-and-suspenders so an
+ *             already-Sent record can never be flipped to Failed even if a logic bug
+ *             somehow reaches Phase B with an already-Sent id.
  */
 export async function sendClrErpBatch(ids: number[], userId: number): Promise<ClrSendResult[]> {
   const results: ClrSendResult[] = [];
   const pool = await getAccPool();
 
   for (const id of ids) {
-    let bcEnvironment: ErpBcEnvironment | null = null;
+    /* ── Phase A: pre-flight — no status mutation ── */
+    let req: Awaited<ReturnType<typeof getRequest>>;
     try {
-      const req = await getRequest(id);
-      if (!req) throw new Error("ไม่พบคำขอ");
-      if (req.status !== "Approved") throw new Error("ต้องอนุมัติคำขอก่อนจึงจะส่ง ERP ได้");
-      if (!req.brandCode) throw new Error("ไม่พบแบรนด์ของคำขอ");
-      if (!req.clear) throw new Error("ไม่พบข้อมูลการเคลียร์เงินทดรองจ่าย");
-      if (!req.clear.items || req.clear.items.length === 0) throw new Error("ไม่มีรายการค่าใช้จ่าย");
+      req = await getRequest(id);
+    } catch (e) {
+      results.push({ id, ok: false, error: e instanceof Error ? e.message : "โหลดคำขอไม่สำเร็จ" });
+      continue;
+    }
+    if (!req) {
+      results.push({ id, ok: false, error: "ไม่พบคำขอ" });
+      continue;
+    }
+    if (req.status !== "Approved") {
+      results.push({ id, ok: false, error: "ต้องอนุมัติคำขอก่อนจึงจะส่ง ERP ได้" });
+      continue;
+    }
+    if (!req.brandCode) {
+      results.push({ id, ok: false, error: "ไม่พบแบรนด์ของคำขอ" });
+      continue;
+    }
+    if (!req.clear) {
+      results.push({ id, ok: false, error: "ไม่พบข้อมูลการเคลียร์เงินทดรองจ่าย" });
+      continue;
+    }
+    if (!req.clear.items || req.clear.items.length === 0) {
+      results.push({ id, ok: false, error: "ไม่มีรายการค่าใช้จ่าย" });
+      continue;
+    }
 
-      // Idempotent guard — read current ERP status
+    // Idempotent guard — read current ERP status (pre-flight, no mutation)
+    let st: ErpInterfaceStatus | null;
+    try {
       const stRes = await pool.request().input("id", sql.Int, id)
         .query(`SELECT ErpInterfaceStatus FROM [dbo].[AccRequest] WHERE Id=@id`);
-      const st = (stRes.recordset[0]?.ErpInterfaceStatus as ErpInterfaceStatus | null) ?? null;
-      if (st === "Sent") throw new Error("ส่งเข้า ERP สำเร็จแล้ว");
-      if (st === "Pending") throw new Error("กำลังส่งอยู่");
+      st = (stRes.recordset[0]?.ErpInterfaceStatus as ErpInterfaceStatus | null) ?? null;
+    } catch (e) {
+      results.push({ id, ok: false, error: e instanceof Error ? e.message : "อ่านสถานะไม่สำเร็จ" });
+      continue;
+    }
+    if (st === "Sent") {
+      results.push({ id, ok: false, error: "ส่งเข้า ERP สำเร็จแล้ว" });
+      continue;
+    }
+    if (st === "Pending") {
+      results.push({ id, ok: false, error: "กำลังส่งอยู่" });
+      continue;
+    }
 
+    /* ── Phase B: only ids that passed pre-flight reach here ── */
+    let bcEnvironment: ErpBcEnvironment | null = null;
+    try {
       const postingDate = req.clear.refundTransferDate ?? req.clear.paymentDate ?? todayYmd();
       const { config, target, departmentCode } = await loadClearAdvanceErpContext(req.brandCode, req.requesterDepartmentCode);
       bcEnvironment = target.environment;
@@ -320,7 +364,19 @@ export async function sendClrErpBatch(ids: number[], userId: number): Promise<Cl
     } catch (err) {
       const message = err instanceof Error ? err.message : "ส่งเข้า ERP ไม่สำเร็จ";
       try {
-        await markInterfaceStatus(id, "Failed", { error: message, environment: bcEnvironment });
+        // Belt-and-suspenders: AND ErpInterfaceStatus <> 'Sent' prevents flipping
+        // a Sent record to Failed even if a logic defect reaches this catch.
+        const pool2 = await getAccPool();
+        await pool2.request()
+          .input("id", sql.Int, id)
+          .input("status", sql.NVarChar, "Failed")
+          .input("error", sql.NVarChar, message)
+          .input("env", sql.NVarChar, bcEnvironment)
+          .query(`
+            UPDATE [dbo].[AccRequest]
+            SET ErpInterfaceStatus=@status, ErpInterfaceError=@error, ErpInterfaceSentAt=NULL,
+                ErpInterfaceSentBy=NULL, ErpInterfaceEnvironment=@env, UpdatedAt=SYSDATETIME()
+            WHERE Id=@id AND ErpInterfaceStatus <> 'Sent'`);
         await logInterfaceActivity(id, userId, "erp_interface_failed", message);
       } catch {
         // logging failure must not mask the real error

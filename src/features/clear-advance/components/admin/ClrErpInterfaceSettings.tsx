@@ -226,7 +226,7 @@ export function ClrErpInterfaceSettings() {
       </p>
       <p className="text-[12px] m-0" style={{ color: "var(--text-muted)" }}>
         AP-3 กลับรายการจาก AP-2 → G/L · ธนาคาร · สาขา มาจากรายการที่เคลียร์เอง
-        ตั้งค่าที่นี่แค่ <b>Journal Batch</b> ที่รายการเคลียร์จะลง (Company สืบทอดจาก AP-2)
+        ตั้งค่าที่นี่: <b>Journal Batch</b> · บัญชี<b>ภาษีซื้อ (VAT input)</b> · บัญชี<b>WHT payable</b> ที่รายการเคลียร์จะลง (Company สืบทอดจาก AP-2)
       </p>
       {isLoading ? (
         <p className="text-[13px] py-8 text-center" style={{ color: "var(--text-muted)" }}>กำลังโหลด...</p>

@@ -805,6 +805,10 @@ export async function submitRequest(
  * data of a Submitted request while it is still at the ACCOUNT step.
  * Role/permission enforcement is the caller's responsibility (the route layer);
  * this function only enforces the status+step guard.
+ *
+ * The advance amount is frozen from the DB — the accountant edits expense lines,
+ * not the advance received, so a crafted PUT cannot change AdvanceAmount and
+ * mis-state the ERP journal.
  */
 export async function saveAccountEdit(
   input: ClearAdvanceSaveInput,
@@ -825,6 +829,14 @@ export async function saveAccountEdit(
   if (row.Status !== "Submitted" || row.CurrentStepCode !== "ACCOUNT") {
     throw new Error("แก้ไขได้เฉพาะตอนอยู่ขั้นบัญชี (ACCOUNT) เท่านั้น");
   }
+
+  // Freeze advance amount: read the current DB value and overwrite the client-supplied
+  // value so a crafted PUT cannot change AdvanceAmount and mis-state the ERP journal.
+  const advRes = await pool.request()
+    .input("id", sql.Int, id)
+    .query(`SELECT TOP 1 AdvanceAmount FROM [dbo].[AccClearAdvance] WHERE RequestId = @id`);
+  if (advRes.recordset.length === 0) throw new Error("ไม่พบข้อมูลเคลียร์");
+  input.clear.advanceAmount = num((advRes.recordset[0] as Record<string, unknown>).AdvanceAmount);
 
   await persistClearOnly(input);
 }
