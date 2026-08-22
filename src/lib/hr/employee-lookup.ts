@@ -339,15 +339,6 @@ export interface ColleagueScope {
 }
 
 /**
- * Active employees in the given department (for the on-behalf requester picker), each with
- * their own manager resolved via a self-join so selecting a colleague can show who will
- * approve their request without another round-trip.
- *
- * In UAT that self-join is the wrong answer: the submit routes to the colleague's
- * **UAT** manager, so the picker must too, or it asserts a real manager's name over
- * a request that will never reach them.
- */
-/**
  * One `ColleagueRow` to the shape the picker renders.
  *
  * Shared by the department listing and the company-wide search so the two
@@ -378,6 +369,18 @@ function mapColleagueRow(row: ColleagueRow): DepartmentColleague {
       : null,
   };
 }
+/**
+ * Active employees in the given department (for the on-behalf requester picker), each with
+ * their own manager resolved via a self-join so selecting a colleague can show who will
+ * approve their request without another round-trip.
+ *
+ * This is what the picker opens on. `searchActiveEmployees` below is what it uses once
+ * somebody types — the department is the common case, not the only one.
+ *
+ * In UAT that self-join is the wrong answer: the submit routes to the colleague's
+ * **UAT** manager, so the picker must too, or it asserts a real manager's name over
+ * a request that will never reach them.
+ */
 export async function listDepartmentColleagues(
   departmentId: number,
   scope?: ColleagueScope,
