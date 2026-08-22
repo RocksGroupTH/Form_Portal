@@ -490,7 +490,13 @@ test("a return demands a note, and asks for a different thing than a rejection",
 test("returnReimburse claims the transition and clears the payment date", () => {
   const src = readSrc("lib/acc/reimburse/approval-service.ts");
   const body = src.slice(src.indexOf("export async function returnReimburse"));
-  const fn = body.slice(0, body.indexOf("\n}\n") + 2);
+  // \r?\n rather than \n: git checks this repo out with CRLF on Windows
+  // (core.autocrlf=true), where the old indexOf found nothing, returned -1,
+  // and sliced the body down to a single character — so every assertion
+  // below read an empty function and failed for a reason that was not the
+  // code's.
+  const close = /\r?\n\}\r?\n/.exec(body);
+  const fn = close ? body.slice(0, close.index + close[0].indexOf("}") + 1) : "";
 
   assert.ok(fn.length > 0, "returnReimburse not found");
   // Claimed, never read-then-written: `claimStep` is the conditional UPDATE that
