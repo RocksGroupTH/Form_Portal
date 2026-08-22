@@ -7,8 +7,12 @@ import { canSwitchEnvironment } from "@/lib/form-environment/viewer-controls";
  * Which database a form writes to, as a chip on the form's card.
  *
  * UAT is the one that has to be noticed — a request filed there is a test that
- * no one will pay, and its journals go to Business Central's sandbox — so it
- * gets the alert colours and Production stays quiet.
+ * no one will pay, and its journals go to Business Central's sandbox — so it is
+ * tinted and Production stays quiet.
+ *
+ * `--status-uat-*`, the amber the navbar chip and the Form Environment switches
+ * use. It was `--status-bad-*` — the red this app reserves for something having
+ * gone wrong — which made a form correctly open for testing read as a fault.
  */
 export function EnvironmentBadge({
   environment,
@@ -23,8 +27,13 @@ export function EnvironmentBadge({
       className={`text-[9.5px] font-extrabold px-1.5 py-0.5 shrink-0 ${className}`}
       style={{
         borderRadius: 6,
-        background: uat ? "var(--status-bad-bg)" : "var(--bg-badge)",
-        color: uat ? "var(--status-bad-text)" : "var(--text-muted)",
+        background: uat ? "var(--status-uat-bg)" : "var(--bg-badge)",
+        color: uat ? "var(--status-uat-text)" : "var(--text-muted)",
+        // The navbar chip's border too, so the two are the same object seen in
+        // two places rather than two things that happen to share a hue. PRO
+        // keeps a transparent one of the same width: without it the badge
+        // changes size when a form is switched, and the card reflows.
+        border: uat ? "1px solid var(--status-uat-border)" : "1px solid transparent",
       }}
       title={
         uat

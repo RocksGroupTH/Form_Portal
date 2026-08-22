@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
+import { uatActorGate } from "@/lib/acc/travel-booking/uat-gate";
 import { resolveLoginEmail } from "@/lib/auth-email";
 import { isAdminRole } from "@/lib/roles";
+import { canAccessBookingArea } from "@/lib/acc/booking-access";
 import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import {
@@ -35,6 +37,11 @@ export async function GET(
     return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
   }
 
+  // A UAT record is invisible outside the tester group — the id selected the
+  // database, membership decides who may touch what it found.
+  const uatGate = await uatActorGate(session);
+  if (uatGate) return uatGate;
+
   try {
     const data = await getTravelBookingRequest(id);
     if (!data) {
@@ -60,8 +67,22 @@ export async function GET(
     const isOwner = createdBy != null && createdBy === userId;
     const isManager = staffId != null && managerStaffId != null && staffId === managerStaffId;
     const isAdmin = isAdminRole(session.user.role);
+    /* AP-17's booking roster, as a **read** arm. The admin queue loads every row
+       of its list from this endpoint, so without it a roster member can see the
+       work and open none of it — the roster would grant a view of work nobody can
+       do. `canAccessBookingArea` keeps its own admin arm, so this only ever widens
+       the three tests above, and it is asked only when none of them answered,
+       which also keeps an owner or a manager off the roster query.
 
-    if (!isOwner && !isManager && !isAdmin) {
+       Deliberately not added to PUT or DELETE below: those edit and discard the
+       requester's draft group, and a roster member is an operator on submitted
+       work, not that draft's owner. */
+    const isBookingArea =
+      !isOwner && !isManager && !isAdmin
+        ? await canAccessBookingArea(loginEmail, session.user.role)
+        : false;
+
+    if (!isOwner && !isManager && !isAdmin && !isBookingArea) {
       return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
     }
 
@@ -87,6 +108,11 @@ export async function PUT(
   if (Number.isNaN(id)) {
     return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
   }
+
+  // A UAT record is invisible outside the tester group — the id selected the
+  // database, membership decides who may touch what it found.
+  const uatGate = await uatActorGate(session);
+  if (uatGate) return uatGate;
 
   try {
     const groupKey = await resolveGroupKey(id);
@@ -119,6 +145,11 @@ export async function DELETE(
   if (Number.isNaN(id)) {
     return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
   }
+
+  // A UAT record is invisible outside the tester group — the id selected the
+  // database, membership decides who may touch what it found.
+  const uatGate = await uatActorGate(session);
+  if (uatGate) return uatGate;
 
   try {
     const groupKey = await resolveGroupKey(id);

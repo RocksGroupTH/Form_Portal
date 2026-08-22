@@ -12,16 +12,23 @@ module.exports = {
       // Pointing PM2 at the Next binary's JS entrypoint with the node
       // interpreter avoids the .cmd spawn entirely.
       script: path.join(__dirname, "node_modules", "next", "dist", "bin", "next"),
-      args: "start -p 3020",
+      args: "start -p 3081",
       interpreter: "node",
       instances: 1,
       exec_mode: "fork",
       autorestart: true,
       max_restarts: 10,
       min_uptime: "10s",
+      // The host runs a dozen other Node apps and sits around 82% RAM, so a
+      // leak here starves its neighbours rather than just itself. The PM2 entry
+      // that has been serving this site carries the same 1.2 GB cap, set from
+      // the CLI rather than from this file — declaring it here means a deploy
+      // that recreates the process from ecosystem.config.cjs does not silently
+      // drop the guard.
+      max_memory_restart: "1200M",
       env: {
         NODE_ENV: "production",
-        PORT: "3020",
+        PORT: "3081",
       },
       error_file: "logs/pm2-error.log",
       out_file: "logs/pm2-out.log",

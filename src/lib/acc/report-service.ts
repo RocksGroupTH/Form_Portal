@@ -6,6 +6,7 @@ import {
 } from "@/lib/form-environment";
 import { keepRowsInCurrentEnvironment } from "@/lib/form-environment/current-rows";
 import { hrEmployeeTable } from "@/lib/hr/constants";
+import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import {
   fmtTravelSpanLabel,
   fmtTravelDatesList,
@@ -519,9 +520,19 @@ export async function queryReport(f: ReportFilters): Promise<ReportRow[]> {
   const rows = await (async () => {
     const pool = await getAccPool();
     const req = pool.request();
-    // AP-2 (advance) has its own header rows in AccRequest but its own approval,
-    // inbox and report — it must never leak into the AP-1 accounting report/queue.
-    const where: string[] = ["r.Status <> 'Draft'", "r.FormCode <> 'AP-2'"];
+    // AP-1 only. Every Acc* form writes to the same AccRequest table, so
+    // `Status <> 'Draft'` alone hands this query every accounting request there
+    // is — and this one is travel-expense-shaped: it LEFT JOINs
+    // AccTravelExpense and selects TravelDate, VehicleName and TotalDistanceKm,
+    // so another form's request arrives with all of them null and renders as a
+    // row of dashes. It feeds both the AP-1 report and the account approval
+    // queue (`?status=ManagerApproved`), so one predicate covers both.
+    //
+    // `listMyRequestRows` and `listMyWorkRows` in this file deliberately do NOT
+    // get this filter: they answer "what do I own / what must I act on", which
+    // spans every form by design.
+    req.input("formCode", sql.NVarChar, AP1_FORM_CODE);
+    const where: string[] = ["r.Status <> 'Draft'", "r.FormCode = @formCode"];
 
     const dateCol =
       f.dateBasis === "submit"

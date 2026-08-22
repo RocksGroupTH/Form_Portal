@@ -4,12 +4,16 @@
   "description": "Form and request portal for Rocks Group",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3020",
+    "dev": "next dev -p 3081",
     "build": "next build",
-    "start": "next start -p 3020",
+    "start": "next start -p 3081",
     "apply-sql": "tsx scripts/apply-sql.ts",
-    "test": "tsx --test src/lib/form-environment/classify-path.test.ts src/lib/form-environment/uat-identity.test.ts src/lib/form-environment/current-rows.test.ts src/lib/form-environment/pick-environment.test.ts src/lib/form-environment/coming-soon.test.ts src/lib/form-environment/viewer-list-environment.test.ts src/lib/form-environment/environment-writable.test.ts src/lib/form-environment/request-id.test.ts src/lib/form-environment/uat-switch-url.test.ts src/lib/form-environment/viewer-controls.test.ts src/lib/uat-mode.test.ts src/lib/acc/uat-mail-exempt.test.ts src/lib/acc/setting-scope.test.ts src/features/accounting/lib/erp-send-batch.test.ts src/lib/team-member/service.test.ts src/lib/adv/advance-erp-attempt-service.test.ts",
-    "check:alignment": "tsx scripts/checks/verify-master-alignment.ts"
+    "test": "tsx scripts/run-tests.ts",
+    "typecheck": "tsc --noEmit",
+    "check:alignment": "tsx scripts/checks/verify-master-alignment.ts",
+    "check:dept-map-home": "tsx scripts/checks/verify-department-erp-map-move.ts",
+    "check:erp-data-home": "tsx scripts/checks/verify-erp-data-move.ts",
+    "check:travel-province-home": "tsx scripts/checks/verify-travel-province-move.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.120.0",
@@ -26,12 +30,12 @@
     "leaflet": "^1.9.4",
     "lucide-react": "^0.577.0",
     "mssql": "^12.2.1",
-    "next": "^16.2.1",
+    "next": "^16.3.2",
     "pdf-to-img": "^6.2.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-hook-form": "^7.72.0",
-    "sharp": "^0.34.5",
+    "sharp": "^0.35.3",
     "sonner": "^2.0.7",
     "swr": "^2.4.1",
     "tesseract.js": "^7.0.0",
@@ -43,10 +47,10 @@
     "@types/mssql": "^9.1.9",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "next-auth": "^5.0.0-beta.30",
+    "next-auth": "^5.0.0-beta.32",
     "postcss": "^8.5.8",
     "tailwindcss": "^4.2.2",
-    "tsx": "^4.22.3",
+    "tsx": "^4.23.12",
     "typescript": "^5.9.3"
   }
 }

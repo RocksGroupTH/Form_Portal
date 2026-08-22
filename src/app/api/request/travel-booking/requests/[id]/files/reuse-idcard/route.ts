@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { requireAuth } from "@/lib/api-auth";
+import { uatActorGate } from "@/lib/acc/travel-booking/uat-gate";
+import { resolveLoginEmail } from "@/lib/auth-email";
+import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
+import { getSetting } from "@/lib/acc/settings-service";
+import {
+  decideIdCardRead,
+  parseConsentSetting,
+} from "@/lib/acc/travel-booking/id-card-access";
 import { downloadFile } from "@/lib/storage";
 import {
   isSharePointConfigured,
@@ -9,19 +17,36 @@ import {
 } from "@/lib/sharepoint";
 import { buildAccFolderPath, buildAccFileName } from "@/lib/acc/sharepoint-path";
 import { resolveFormEnvironment } from "@/lib/form-environment";
-import { AP17_FORM_CODE, FILE_REFTYPES } from "@/features/travel-booking/constants";
+import { AP17_FORM_CODE, FILE_REFTYPES, idCardReuseConsentKey } from "@/features/travel-booking/constants";
 import type { TravelBookingFileMeta } from "@/features/travel-booking/types";
 
 /**
  * POST /api/request/travel-booking/requests/[id]/files/reuse-idcard   body: { sourceFileId }
- * Copies a previously-uploaded ID card onto the current draft. The source must be an ID-card
- * file belonging to a request with the SAME requester (ผู้ขอเบิก StaffId) as the current one,
- * and the caller must own the current (Draft/Returned) request. The file is duplicated
- * independently in storage — the current request never shares the source's storage item.
+ *
+ * Copies the caller's own previously-uploaded ID card onto the current draft.
+ * The file is duplicated independently in storage — the current request never
+ * shares the source's storage item.
+ *
+ * Four conditions, all server-side: the caller owns the current (Draft/Returned)
+ * request; the current request's requester is the caller themself; the source is
+ * an ID-card file of that same requester; and the requester has granted reuse
+ * consent.
+ *
+ * The last two are new. The route checked only that the source's StaffId matched
+ * the *current request's* StaffId — and an on-behalf draft carries the
+ * colleague's StaffId, so anyone in the same department could open a draft for
+ * a colleague and copy that colleague's stored national-ID scan onto it, with
+ * no consent check anywhere on the path. See
+ * `@/lib/acc/travel-booking/id-card-access` for why department membership is
+ * not consent.
  */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireAuth();
   if (session instanceof Response) return session;
+
+  // Tester-only on a UAT record, before any of it is read. See `uatActorGate`.
+  const uatGate = await uatActorGate(session);
+  if (uatGate) return uatGate;
   const userId = Number(session.user.id);
 
   const { id } = await params;
@@ -65,6 +90,25 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
     if (!cur.StaffId) {
       return NextResponse.json({ ok: false, error: "คำขอนี้ยังไม่มีผู้ขอเบิก" }, { status: 400 });
+    }
+
+    // The requester on this draft must be the caller, and they must have said
+    // yes. Owning the draft is not enough — an on-behalf draft names somebody
+    // else as requester, which is exactly the case this closes.
+    const loginEmail = resolveLoginEmail(session.user, null, { email: session.user.email });
+    const actor = loginEmail ? (await findActiveEmployeeByEmail(loginEmail)).employee : null;
+    const actorStaffId = actor?.staffId ?? null;
+    const consent =
+      actorStaffId == null
+        ? null
+        : parseConsentSetting(await getSetting(idCardReuseConsentKey(actorStaffId)));
+    const verdict = decideIdCardRead({
+      actorStaffId,
+      subjectStaffId: cur.StaffId,
+      consent,
+    });
+    if (!verdict.ok) {
+      return NextResponse.json({ ok: false, error: verdict.error }, { status: verdict.status });
     }
 
     // Source file — must be an ID card belonging to the same requester (StaffId).

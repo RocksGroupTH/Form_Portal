@@ -1,21 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/api-auth";
 import { isSettingsKind, SETTINGS_KIND_ROUTES } from "@/lib/acc/travel-booking/settings-route-map";
+import { requireBookingSettingsTab } from "@/lib/acc/travel-booking/require-booking-settings-tab";
+
+/*
+ * The `[kind]` segment IS the granted tab key, so the gate below is
+ * per-tab rather than per-role: an admin passes everything, a non-admin
+ * booking approver passes only the kinds granted to them in
+ * `AccBookingApproverTab`.
+ *
+ * **Narrow before gating.** `isSettingsKind` is what turns an arbitrary path
+ * segment into one of the four known kinds — it uses
+ * `Object.prototype.hasOwnProperty.call`, so `__proto__` is refused — and
+ * `requireBookingSettingsTab` takes the narrowed value. Handing it the raw
+ * segment would put a client-supplied string into the authorization decision.
+ * Nothing mutates before the gate: `await params` is a resolved route value,
+ * not work.
+ */
 
 /**
  * GET /api/request/travel-booking/settings/[kind]
  * kind ∈ reasons | accommodations | vehicles | rent-vehicles
  * Returns the full list (including inactive) for the admin settings UI.
- * Requires IT Admin or System Admin.
+ * Requires IT Admin, System Admin, or a booking approver granted this tab.
  */
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ kind: string }> }) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
-  if (session instanceof Response) return session;
-
   const { kind } = await params;
   if (!isSettingsKind(kind)) {
     return NextResponse.json({ ok: false, error: "Invalid kind" }, { status: 400 });
   }
+
+  const session = await requireBookingSettingsTab(kind);
+  if (session instanceof Response) return session;
 
   try {
     const data = await SETTINGS_KIND_ROUTES[kind].list(false);
@@ -29,16 +44,17 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ kin
 /**
  * POST /api/request/travel-booking/settings/[kind]
  * Body: { id?, name, isActive?, sortOrder?, requiresCustomReason? }
- * Upserts one row of the given settings table. Requires IT Admin or System Admin.
+ * Upserts one row of the given settings table.
+ * Requires IT Admin, System Admin, or a booking approver granted this tab.
  */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ kind: string }> }) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
-  if (session instanceof Response) return session;
-
   const { kind } = await params;
   if (!isSettingsKind(kind)) {
     return NextResponse.json({ ok: false, error: "Invalid kind" }, { status: 400 });
   }
+
+  const session = await requireBookingSettingsTab(kind);
+  if (session instanceof Response) return session;
 
   try {
     const body = await req.json();

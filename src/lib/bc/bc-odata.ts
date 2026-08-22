@@ -3,6 +3,7 @@
  */
 
 import { decryptPassword } from "@/lib/db/connection-crypto";
+import { assertApiDestination } from "@/lib/bc/bc-destination";
 import {
   getBcConnectionById,
   getBcAccessToken,
@@ -74,7 +75,9 @@ async function fetchBcJsonCollection<T extends Record<string, unknown>>(
   errorLabel: string,
 ): Promise<T[]> {
   const rows: T[] = [];
-  let url: string | null = initialUrl;
+  // Every hop is checked, not just the first: `@odata.nextLink` comes back from
+  // the remote and is followed with the bearer token attached.
+  let url: string | null = assertApiDestination(initialUrl).toString();
   let retried401 = false;
 
   while (url) {
@@ -117,7 +120,7 @@ async function fetchBcJsonCollection<T extends Record<string, unknown>>(
     const json = (await res.json()) as Record<string, unknown>;
     const page = parseODataPage<T>(json);
     rows.push(...page.value);
-    url = page.nextLink;
+    url = page.nextLink ? assertApiDestination(page.nextLink).toString() : null;
   }
 
   return rows;
@@ -177,6 +180,29 @@ function buildPpapJournalActionUrl(
  * POST custom PPAP journal API (CreateFromJson).
  * Body: { requestBody: "<json string>" }, header company: BC company GUID.
  */
+/**
+ * A BC journal post that came back with an HTTP error status.
+ *
+ * Carries the status because the caller has to tell two very different
+ * outcomes apart. A 4xx is Business Central refusing the document — nothing was
+ * created, and the batch may safely be corrected and sent again. A 5xx, or a
+ * transport error (which never reaches this class at all, because `fetch`
+ * rejects instead), leaves the remote outcome *unknown*: the journal may well
+ * exist. `sendErpInterfaceBatch` holds such a batch instead of marking it
+ * retryable, so an operator reconciles rather than the system posting twice.
+ */
+export class BcJournalPostError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+    this.name = "BcJournalPostError";
+  }
+
+  /** True when BC definitively rejected the payload and created nothing. */
+  get definitelyRejected(): boolean {
+    return this.status >= 400 && this.status < 500;
+  }
+}
+
 export async function postBcPpapJournalCreateFromJson(
   connectionId: number,
   companyId: string,
@@ -187,7 +213,7 @@ export async function postBcPpapJournalCreateFromJson(
   const company = companyId.trim();
   if (!company) throw new Error("BC Company Id is required");
 
-  const url = buildPpapJournalActionUrl(baseUrl, environment);
+  const url = assertApiDestination(buildPpapJournalActionUrl(baseUrl, environment)).toString();
   const body = JSON.stringify({ requestBody: JSON.stringify(innerPayload) });
   let retried401 = false;
 
@@ -220,7 +246,8 @@ export async function postBcPpapJournalCreateFromJson(
     const text = await res.text().catch(() => "");
 
     if (!res.ok) {
-      throw new Error(
+      throw new BcJournalPostError(
+        res.status,
         `BC journal API ${res.status}${text ? `: ${text.slice(0, 1500)}` : ""}`,
       );
     }

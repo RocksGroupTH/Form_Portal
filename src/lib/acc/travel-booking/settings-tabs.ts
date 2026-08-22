@@ -1,0 +1,103 @@
+/**
+ * Which AP-17 settings tabs an admin may hand to an individual booking approver.
+ *
+ * The grant key IS the `[kind]` URL segment of
+ * `/api/request/travel-booking/settings/[kind]` — `SETTINGS_KIND_ROUTES` in
+ * `./settings-route-map` already defines those four and `isSettingsKind`
+ * narrows a segment to them, so `GrantableBookingTabKey` reuses that union
+ * rather than declaring a parallel one that could drift from it.
+ *
+ * `access` — the สิทธิ์เข้าถึง tab itself — is deliberately absent, for the same
+ * reason `approvers` is absent from AP-1's list: whoever can open it can grant
+ * themselves the rest. It is not a `SettingsKind` either (it has no `[kind]`
+ * route — the roster is served by `settings/approvers`), so the union already
+ * excludes it; the tests pin that so a later hand cannot quietly add it.
+ *
+ * This module imports nothing at runtime so it can be unit-tested: anything
+ * reachable from a database pool drags `@/env` in, which validates the whole
+ * environment at import time and throws in the test runner. The one import
+ * below is `import type`, which is erased. The half that needs a pool is
+ * `./booking-approver-tabs`.
+ */
+
+import type { SettingsKind } from "./settings-route-map";
+
+/** The four keys an admin can tick — the same union the routes narrow to. */
+export type GrantableBookingTabKey = SettingsKind;
+
+/**
+ * The label each tab carries.
+ *
+ * A `Record` on purpose: a fifth kind added to `SETTINGS_KIND_ROUTES` fails the
+ * typecheck here rather than becoming a route with no grant behind it.
+ *
+ * The labels are the settings page's own (`travel-booking-settings/page.tsx`),
+ * not prettified key names. Note `vehicles` → **การเดินทาง**, which is not what
+ * the key suggests: the tab covers the whole journey, not just the vehicle.
+ */
+const BOOKING_TAB_LABELS: Record<GrantableBookingTabKey, string> = {
+  reasons: "เหตุผลการเดินทาง",
+  accommodations: "ที่พัก",
+  vehicles: "การเดินทาง",
+  "rent-vehicles": "เช่ายานพาหนะ",
+};
+
+/** Display order — the order the settings page shows its tabs in. */
+const BOOKING_TAB_ORDER: readonly GrantableBookingTabKey[] = [
+  "reasons",
+  "accommodations",
+  "vehicles",
+  "rent-vehicles",
+];
+
+export const GRANTABLE_BOOKING_TABS: readonly {
+  key: GrantableBookingTabKey;
+  label: string;
+}[] = BOOKING_TAB_ORDER.map((key) => ({ key, label: BOOKING_TAB_LABELS[key] }));
+
+export function isGrantableBookingTabKey(key: string): boolean {
+  const k = String(key).trim();
+  for (const t of GRANTABLE_BOOKING_TABS) if (t.key === k) return true;
+  return false;
+}
+
+/** Keep only known keys, trimmed, de-duplicated, in the caller's order. */
+export function filterGrantableBookingTabKeys(keys: string[]): string[] {
+  const seen: Record<string, true> = {};
+  const out: string[] = [];
+  for (const raw of keys) {
+    const k = String(raw).trim();
+    if (isGrantableBookingTabKey(k) && !seen[k]) {
+      seen[k] = true;
+      out.push(k);
+    }
+  }
+  return out;
+}
+
+/* ── The decision ────────────────────────────────────────────────────────── */
+
+/**
+ * May this caller open this AP-17 settings tab?
+ *
+ * Pure on purpose: the guard around it needs a session and a pool, and this is
+ * the part worth pinning in tests.
+ *
+ * - an admin passes everything, `access` included — that is the role the grants
+ *   are handed out from;
+ * - a non-admin passes only a tab that is *both* grantable and in their list,
+ *   so `access` fails **even if a row for it exists**. `AccBookingApproverTab`
+ *   has no CHECK on `TabKey` and is dual-written from more than one place, so a
+ *   row naming any string can appear; the grantable test is what makes that
+ *   inert. Do not weaken this to a bare membership check.
+ */
+export function decideBookingTabAccess(
+  isAdmin: boolean,
+  granted: string[],
+  tab: string,
+): boolean {
+  if (isAdmin) return true;
+  const wanted = String(tab).trim();
+  if (!isGrantableBookingTabKey(wanted)) return false;
+  return filterGrantableBookingTabKeys(granted).indexOf(wanted) !== -1;
+}

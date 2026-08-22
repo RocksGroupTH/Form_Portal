@@ -4,10 +4,10 @@ import { resolveLoginEmail } from "@/lib/auth-email";
 import { normalizeRole } from "@/lib/roles";
 import {
   findTeamMemberForLogin,
+  lookupTeamMemberForLogin,
   provisionTeamMember,
   type TeamMemberRow,
 } from "@/lib/team-member-lookup";
-import type { Role } from "@/lib/types";
 
 import "@/lib/auth.config";
 
@@ -121,7 +121,22 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         if (account?.provider === "microsoft-entra-id" && email) {
           user.email = email;
-          const member = await findTeamMemberForLogin(email);
+
+          // Three outcomes, and only one of them is "no". An unreadable roster
+          // must not be read as "not a TeamMember" — that is the path that used
+          // to continue on to HR, throw there too, and land in the outer catch
+          // that granted a session. See `lookupTeamMemberForLogin`.
+          const lookup = await lookupTeamMemberForLogin(email);
+          if (lookup.status === "unavailable") {
+            console.error(
+              "[Auth] blocked login (TeamMember roster unreadable):",
+              email,
+              "—",
+              lookup.message,
+            );
+            return false;
+          }
+          const member = lookup.status === "found" ? lookup.member : null;
 
           if (member && member.IsActive) {
             user.role = normalizeRole(member.AppRole);
@@ -144,37 +159,66 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             }
             user.photo = photo;
           } else {
-            // Not an active TeamMember — allow only if an active HR Employee exists.
+            // Not an active TeamMember — allow only if an active HR Employee
+            // exists. A *failure* to ask is not a yes: this used to throw
+            // straight past into the outer catch, which returned true.
             const { findActiveEmployeeByEmail } = await import("@/lib/hr/employee-lookup");
-            const { employee } = await findActiveEmployeeByEmail(email);
+            let employee: Awaited<ReturnType<typeof findActiveEmployeeByEmail>>["employee"];
+            try {
+              employee = (await findActiveEmployeeByEmail(email)).employee;
+            } catch (hrErr: unknown) {
+              console.error(
+                "[Auth] blocked login (HR employee lookup unavailable):",
+                email,
+                "—",
+                hrErr instanceof Error ? hrErr.message : hrErr,
+              );
+              return false;
+            }
             if (!employee) {
               console.warn("[Auth] blocked login (not TeamMember, no active Employee):", email);
               return false; // → pages.error (/unauthorized)
             }
 
-            // Give them a real TeamMember row: an empty user.id makes AccRequest.CreatedBy NULL,
-            // which locks the user out of their own drafts (see provisionTeamMember).
+            // Give them a real TeamMember row. An empty `user.id` is not a usable
+            // session: `Number("")` is 0, so it owns nothing, matches nothing and
+            // stamps nothing — every draft such a session creates is a row its
+            // own author can never see again.
             //
-            // provisionTeamMember() swallows a database failure and returns null, so the
-            // login still completes — with user.id "" and role Staff, which is the same
-            // degraded session the outer catch produces. That is deliberate: a write that
-            // failed must not lock someone out. The reason is only ever visible in the
-            // "[TeamMember] provision failed" log line, so check there when a user reports
-            // that their own drafts have vanished.
-            const provisioned = member
-              ? null // inactive row exists — leave it alone, a System Admin owns that decision
-              : await provisionTeamMember({
-                  email,
-                  fullName: employee.fullName,
-                  nickname: employee.nickname,
-                  position: employee.position,
-                });
+            // This used to complete the login anyway, on the reasoning that a
+            // failed write must not lock anyone out. That is the wrong trade: the
+            // session it produced could not do the thing it was let in to do, and
+            // the only record of why was one log line. Fail closed instead; the
+            // person retries once the form database answers.
+            //
+            // An existing *inactive* row is a different answer — the roster says
+            // this person is retired. Provisioning around it would override a
+            // decision a System Admin made on purpose.
+            if (member) {
+              console.warn("[Auth] blocked login (TeamMember row is inactive):", email);
+              return false;
+            }
 
-            user.role = normalizeRole(provisioned?.AppRole ?? "Staff");
-            user.nickname = provisioned?.Nickname ?? "";
-            user.color = provisioned?.Color ?? "#6c757d";
-            user.id = provisioned ? String(provisioned.Id) : "";
-            user.name = provisioned?.FullName || employee.fullName || user.name;
+            const provisioned = await provisionTeamMember({
+              email,
+              fullName: employee.fullName,
+              nickname: employee.nickname,
+              position: employee.position,
+            });
+            if (!provisioned) {
+              console.error(
+                "[Auth] blocked login (could not provision a TeamMember row):",
+                email,
+                "— see the preceding [TeamMember] provision failed line",
+              );
+              return false;
+            }
+
+            user.role = normalizeRole(provisioned.AppRole ?? "Staff");
+            user.nickname = provisioned.Nickname ?? "";
+            user.color = provisioned.Color ?? "#6c757d";
+            user.id = String(provisioned.Id);
+            user.name = provisioned.FullName || employee.fullName || user.name;
 
             try {
               const { getADUserPhoto, getADUserByEmail } = await import("@/lib/graph");
@@ -195,17 +239,17 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       } catch (err: unknown) {
         console.error("[Auth] signIn error:", err instanceof Error ? err.message : err);
 
-        // Microsoft auth succeeded — do not block login when DB/Graph enrichment fails
-        if (account?.provider === "microsoft-entra-id") {
-          const email = resolveLoginEmail(user, profile as Record<string, unknown> | undefined);
-          if (email) user.email = email;
-          user.role = (user.role as Role) ?? "Staff";
-          user.nickname = user.nickname ?? "";
-          user.color = user.color ?? "#6c757d";
-          user.id = user.id ?? "";
-          user.photo = user.photo ?? null;
-          return true;
-        }
+        // Fail closed. This branch used to grant a `Staff` session with
+        // `user.id = ""`, on the reasoning that Microsoft had already
+        // authenticated the person so a database or Graph problem should not
+        // block them. But Entra only proves *who* they are. Whether they may use
+        // this application is a question only the roster and HR answer, and this
+        // is the branch that runs when neither could be asked.
+        //
+        // Everything genuinely optional is caught closer in — both Graph
+        // photo/display-name lookups have their own `catch`, so an unreachable
+        // Graph never reaches here. What is left is authorization that did not
+        // resolve.
         return false;
       }
     },
@@ -276,14 +320,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
               //   · no row — keep it. `userId` authorises nothing; it only
               //     selects or stamps the caller's own rows, so keeping it
               //     fails closed on nothing. Blanking it instead does damage
-              //     that outlives the outage, because `Number("")` is 0:
-              //     `/api/forms/submissions` binds that into
-              //     `OfficeFormSubmissions.SubmittedBy` (int NOT NULL, no FK),
-              //     and the owner's own list — `WHERE s.SubmittedBy = @userId`
-              //     — can then never return the row. Both Accounting forms
-              //     coerce `userId || null` instead, writing the orphaned
-              //     `CreatedBy = NULL` rows migration 058 exists to repair and
-              //     is now marked DO NOT RE-RUN.
+              //     that outlives the outage: both Accounting forms coerce
+              //     `userId || null`, so a blank id writes the orphaned
+              //     `AccRequest.CreatedBy = NULL` rows migration 058 exists to
+              //     repair and is now marked DO NOT RE-RUN — rows whose owner
+              //     can never see them again.
               //
               // Hence the warning on `!member` only, and hence the catch below
               // almost never firing: the read has already handled its own

@@ -45,7 +45,7 @@ export interface AdvanceInterfaceConfigView {
 export async function listAdvanceInterfaceConfigView(): Promise<AdvanceInterfaceConfigView[]> {
   const [allBrands, ctx, ap2, ap2Access, ap2Brands] = await Promise.all([
     listAllBrands(),
-    loadErpJournalBuildContext(),
+    loadErpJournalBuildContext("AP-2"),
     listAdvanceInterfaceConfig(),
     // The settings route is Production-pinned for DB reads, so resolve AP-2's OWN
     // form environment here — the label (and BC target profile) then matches what
@@ -80,7 +80,7 @@ export async function listAdvanceInterfaceConfigView(): Promise<AdvanceInterface
 
       const targetFromAp2 = !!cfg?.interfaceBrandCode;
       const target = (cfg?.interfaceBrandCode ?? ctx.interfaceByClaim[code] ?? code).toUpperCase();
-      const profile = await resolveErpTargetProfile(target, ap2Environment);
+      const profile = await resolveErpTargetProfile(target, "AP-2");
 
       const glAccountNo = cfg?.glAccountNo ?? base?.glAccountNo ?? null;
       const bankAccountNo = cfg?.bankAccountNo ?? base?.bankAccountNo ?? null;

@@ -32,7 +32,7 @@ export interface ClrInterfaceConfigView {
 export async function listClrInterfaceConfigView(): Promise<ClrInterfaceConfigView[]> {
   const [allBrands, ctx, ap2, clr, ap3Brands] = await Promise.all([
     listAllBrands(),
-    loadErpJournalBuildContext(),
+    loadErpJournalBuildContext("AP-3"),
     listAdvanceInterfaceConfig(),
     listClrInterfaceConfig(),
     listFormBrands("AP-3"),
@@ -51,7 +51,7 @@ export async function listClrInterfaceConfigView(): Promise<ClrInterfaceConfigVi
       const master = brandByCode.get(code);
       const cfg = ap2[code];
       const target = (cfg?.interfaceBrandCode ?? ctx.interfaceByClaim[code] ?? code).toUpperCase();
-      const profile = await resolveErpTargetProfile(target);
+      const profile = await resolveErpTargetProfile(target, "AP-3");
       const journalBatchName = clr[code] ?? null;
       return {
         brandCode: code,

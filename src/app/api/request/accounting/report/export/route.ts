@@ -3,6 +3,16 @@ import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { canAccessAccountArea } from "@/lib/acc/access";
 import { queryReport, buildReportWorkbook, type ReportFilters } from "@/lib/acc/report-service";
+import {
+  canActOnClaimBrand,
+  INTERFACE_SCOPE_ERROR,
+  resolveApproverInterfaceAccess,
+} from "@/lib/acc/approver-interface-access";
+import {
+  interfaceByClaimMapToRecord,
+  loadPrepDeptContext,
+} from "@/lib/acc/erp-prep-service";
+import { AP1_FORM_CODE } from "@/features/accounting/constants";
 
 /**
  * GET /api/request/accounting/report/export
@@ -50,6 +60,22 @@ export async function GET(req: NextRequest) {
         paymentDate: sp.get("paymentDate") ?? null,
       };
       rows = await queryReport(filters);
+    }
+
+    // Scope the rows, whichever way they were selected. `ids=` is the important
+    // half: it names an explicit list, so it bypassed every row filter by
+    // construction — the export was a way to read any interface group's claims
+    // in full, including requester names and amounts, straight out of Excel.
+    const [access, deptCtx] = await Promise.all([
+      resolveApproverInterfaceAccess(session.user.email, session.user.role),
+      // AP-1: `queryReport` pins `r.FormCode` to the same constant, so every
+      // row this filters is AP-1's and AP-1's interface mapping is the one that
+      // decides whose books they are.
+      loadPrepDeptContext(AP1_FORM_CODE),
+    ]);
+    if (!access.allAccess) {
+      const byClaim = interfaceByClaimMapToRecord(deptCtx.interfaceByClaim);
+      rows = rows.filter((r) => canActOnClaimBrand(access, byClaim, r.brandCode));
     }
 
     const generatedAt = new Date().toLocaleString("th-TH");

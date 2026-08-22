@@ -113,19 +113,28 @@ function collectConnectionIds(
   return Array.from(connIds);
 }
 
+/**
+ * The Business Central profile a send posts through, resolved for `formCode`.
+ *
+ * `formCode` is required rather than optional, unlike the list services this
+ * calls. Those answer settings editors too, for which defaults-only is the
+ * right answer; this function has exactly one caller and it is
+ * `sendErpInterfaceBatch`, which decides the BC company, connection and base
+ * URL a journal is posted to. There is no reading of this that is not about a
+ * particular form's money, so there is no default worth having — an omitted
+ * argument here would be a wrong-form read that type-checks.
+ */
 export async function resolveErpTargetProfile(
   interfaceBrandCode: string,
-  environmentOverride?: ErpBcEnvironment,
+  formCode: string,
 ): Promise<ErpTargetProfile | null> {
   const code = interfaceBrandCode.trim().toUpperCase();
   if (!isErpInterfaceBrandCode(code)) return null;
 
-  // Callers on a route that doesn't classify to the target form (e.g. a settings
-  // route → Production) can pass the form's real environment explicitly.
-  const environment = environmentOverride ?? await resolveEffectiveErpEnvironment();
+  const environment = await resolveEffectiveErpEnvironment();
   const [erpPage, targetSettings, cfg] = await Promise.all([
-    getBrandErpConfigPage(),
-    listErpTargetSettings(),
+    getBrandErpConfigPage(formCode),
+    listErpTargetSettings(formCode),
     getBrandConfig(code),
   ]);
 
@@ -139,13 +148,25 @@ export async function resolveErpTargetProfile(
   return buildErpTargetProfile(code, environment, erpPage, targetSettings, cfg, connById);
 }
 
-export async function resolveAllErpTargetProfiles(): Promise<ErpTargetProfile[]> {
+/**
+ * Every interface brand's profile, for `formCode`. Required for the same
+ * reason as `resolveErpTargetProfile` — its one caller is
+ * `loadErpJournalBuildContext`, and what it returns becomes the `bcMeta` and
+ * `bcEnvironment` the prep screen shows against each target group.
+ *
+ * `getBrandConfig` takes no form code and is not given one: it reads
+ * `Fast_Core` brand configuration, which is shared with Rocks Fast, is
+ * deliberately frozen (see CLAUDE.md) and has no `FormCode` column.
+ */
+export async function resolveAllErpTargetProfiles(
+  formCode: string,
+): Promise<ErpTargetProfile[]> {
   const brandIds = ERP_INTERFACE_BRANDS.map((b) => b.id);
   const environment = await resolveEffectiveErpEnvironment();
 
   const [erpPage, targetSettings, ...configs] = await Promise.all([
-    getBrandErpConfigPage(),
-    listErpTargetSettings(),
+    getBrandErpConfigPage(formCode),
+    listErpTargetSettings(formCode),
     ...brandIds.map((id) => getBrandConfig(id)),
   ]);
 

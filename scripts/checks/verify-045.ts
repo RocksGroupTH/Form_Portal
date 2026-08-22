@@ -38,7 +38,10 @@ async function main() {
   loadDotEnvLocal();
   const { getAppPool } = await import("../../src/lib/db/mssql");
 
-  const pool = await getAppPool("Fast_Core");
+  // DepartmentErpMap moved to the form database (migrations 099/100). Fast_Core
+  // now holds a synonym, and COL_LENGTH does not resolve synonyms — pointed at
+  // Fast_Core this check would fail on a table that is perfectly healthy.
+  const pool = await getAppPool("Rocks_Portal_Form");
   const result = await pool.request().query(`
     SELECT COL_LENGTH('dbo.DepartmentErpMap','FixedGlAccountNo') AS a,
            COL_LENGTH('dbo.DepartmentErpMap','FixedGlDescription') AS b

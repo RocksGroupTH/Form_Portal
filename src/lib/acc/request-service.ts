@@ -1,7 +1,7 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { hrEmployeeTable } from "@/lib/hr/constants";
 import { allocateRequestNo } from "@/lib/acc/sequence";
-import { deleteFile } from "@/lib/storage";
+import { deleteStoredFiles, type StoredFileRef } from "@/lib/acc/stored-file";
 import { computeTotalAmount, computeTotalDistance, computeRequestTotalAmount, computeRequestTotalDistance, allDayItems } from "@/lib/acc/calc";
 import {
   normalizeTravelDay,
@@ -19,6 +19,7 @@ import {
   UAT_MANAGER_MISSING_ERROR,
 } from "@/lib/uat-tester/guards";
 import { queueEmail } from "@/lib/acc/email-queue";
+import { AccConflictError, SUBMIT_ALREADY_CLAIMED } from "@/lib/acc/request-errors";
 import { buildEmail } from "@/lib/acc/email-templates";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import type {
@@ -810,6 +811,7 @@ export async function saveDraft(
 export async function deleteDraft(id: number, userId: number): Promise<void> {
   const pool = await getAccPool();
   const tx = pool.transaction();
+  let storedFiles: StoredFileRef[] = [];
   await tx.begin();
   try {
     const own = await tx.request().input("id", sql.Int, id)
@@ -820,6 +822,16 @@ export async function deleteDraft(id: number, userId: number): Promise<void> {
     if (row.Status !== "Draft" && row.Status !== "Returned") {
       throw new Error("คำขอนี้ไม่สามารถลบได้ในสถานะปัจจุบัน");
     }
+
+    // Read the storage references before the rows go: after this DELETE nothing
+    // records where the bytes are. `deleteDraft` used to skip storage entirely,
+    // so every attachment on a discarded draft stayed in SharePoint with no
+    // pointer left to find it by.
+    const filesRes = await tx.request().input("id", sql.Int, id)
+      .query(`SELECT StoragePath, StorageBackend FROM [dbo].[AccRequestFile] WHERE RequestId=@id`);
+    storedFiles = (
+      filesRes.recordset as { StoragePath: string; StorageBackend: string | null }[]
+    ).map((r) => ({ storagePath: r.StoragePath, storageBackend: r.StorageBackend }));
 
     await tx.request().input("id", sql.Int, id)
       .query(`DELETE FROM [dbo].[AccRequestFile] WHERE RequestId=@id`);
@@ -840,6 +852,10 @@ export async function deleteDraft(id: number, userId: number): Promise<void> {
     await tx.rollback().catch(() => {});
     throw e;
   }
+
+  // After the commit: the draft is gone either way, and a storage failure must
+  // not resurrect it. Reported, not swallowed.
+  await deleteStoredFiles(storedFiles, `AP-1 deleteDraft request ${id}`);
 }
 
 /**
@@ -859,13 +875,17 @@ export async function deleteItem(requestId: number, itemId: number, userId: numb
     throw new Error("ลบรายการได้เฉพาะคำขอที่เป็นฉบับร่างเท่านั้น");
   }
 
-  // Collect attachment storage paths for this item before deleting the rows.
+  // Collect attachment storage references for this item before deleting the
+  // rows — backend included, because these are SharePoint driveItem ids and the
+  // local `deleteFile` cannot remove them.
   const filesRes = await pool.request()
     .input("rid", sql.Int, requestId)
     .input("refId", sql.Int, itemId)
-    .query(`SELECT StoragePath FROM [dbo].[AccRequestFile]
+    .query(`SELECT StoragePath, StorageBackend FROM [dbo].[AccRequestFile]
             WHERE RequestId=@rid AND RefType='travel_item' AND RefId=@refId`);
-  const storagePaths = (filesRes.recordset as { StoragePath: string }[]).map((r) => r.StoragePath);
+  const storagePaths = (
+    filesRes.recordset as { StoragePath: string; StorageBackend: string | null }[]
+  ).map((r) => ({ storagePath: r.StoragePath, storageBackend: r.StorageBackend }));
 
   const tx = pool.transaction();
   await tx.begin();
@@ -882,10 +902,7 @@ export async function deleteItem(requestId: number, itemId: number, userId: numb
     throw e;
   }
 
-  // Best-effort: remove the files from storage.
-  for (const p of storagePaths) {
-    await deleteFile(p).catch(() => {});
-  }
+  await deleteStoredFiles(storagePaths, `AP-1 deleteItem request ${requestId} item ${itemId}`);
 
   // Recompute stored totals so drafts (and the draft picker) stay accurate.
   const updated = await getRequest(requestId);
@@ -942,13 +959,49 @@ export async function submitRequest(
     );
   }
 
-  const requestNo = await allocateRequestNo("TOF");
   const totalAmount = computeRequestTotalAmount(travelDays);
 
   const pool = await getAccPool();
   const tx = pool.transaction();
   await tx.begin();
   try {
+    // Claim the row first: owner, and still in a status that may be submitted,
+    // asserted by the UPDATE itself rather than by the `getRequest` read above.
+    //
+    // The read-then-write it replaces let two clicks — two tabs, a double
+    // submit, a retry after a slow response — both pass the status check, both
+    // allocate a running number, and both write a full submit: two TOF numbers
+    // burned, two MANAGER approvals, two activity-log lines and two emails for
+    // one claim. Only the row that changes state here proceeds, and the number
+    // is allocated after the claim, so the loser never consumes one.
+    const claim = await tx.request()
+      .input("id", sql.Int, id)
+      .input("uid", sql.Int, userId || null)
+      .query(`UPDATE [dbo].[AccRequest]
+              SET Status='Submitted', CurrentStepCode='MANAGER', UpdatedAt=SYSDATETIME()
+              OUTPUT INSERTED.RequestNo AS RequestNo
+              WHERE Id=@id AND CreatedBy=@uid AND Status IN ('Draft','Returned')`);
+    if (claim.rowsAffected[0] !== 1) {
+      throw new AccConflictError(SUBMIT_ALREADY_CLAIMED);
+    }
+
+    // A returned request keeps the number it was already given.
+    //
+    // This is the same row: the claim above accepts `Returned` as well as
+    // `Draft`, so a request sent back for revision is edited and resubmitted in
+    // place. Allocating unconditionally renumbered it every time — TOF26-09004
+    // came back as TOF26-09005 — which breaks the one thing a running number is
+    // for. Everyone who has already seen the request (the approver who returned
+    // it, the requester's own email, anything written down) is holding the old
+    // number, and the old one is then attached to nothing at all.
+    //
+    // Only a first submit allocates, and it still allocates inside the claim's
+    // transaction so a tab that lost the race never consumes one. `AccSequence`'s
+    // MERGE takes HOLDLOCK; holding it to commit serialises concurrent submits
+    // of the same prefix, which is what the running number needs anyway.
+    const existingNo = ((claim.recordset?.[0]?.RequestNo as string | null) ?? "").trim();
+    const requestNo = existingNo || (await allocateRequestNo("TOF", new Date(), tx));
+
     await tx.request()
       .input("id", sql.Int, id)
       .input("no", sql.NVarChar, requestNo)
@@ -968,7 +1021,7 @@ export async function submitRequest(
       .input("total", sql.Decimal(18, 2), totalAmount)
       .input("by", sql.Int, userId || null)
       .query(`UPDATE [dbo].[AccRequest] SET
-        RequestNo=@no, Status='Submitted', CurrentStepCode='MANAGER',
+        RequestNo=@no,
         EmployeeId=@empId, StaffId=@staffId, RequesterFirstName=@fname, RequesterLastName=@lname,
         RequesterFullName=@full, RequesterEmail=@email, RequesterPosition=@pos,
         RequesterDepartmentId=@deptId, RequesterDepartmentName=@deptName, RequesterDepartmentCode=@deptCode,

@@ -1,7 +1,8 @@
 /**
  * AP-17 — Accommodation / Ticket Booking Request.
  * camelCase shapes mirroring the `AccTravelBooking*` tables (migration 048)
- * + `Fast_Data.dbo.TravelProvince` (migration 049).
+ * + `Rocks_Portal_Form.dbo.TravelProvince` (seeded into `Fast_Data` by
+ * migration 049, moved here by 104/105).
  * See docs/superpowers/specs/2026-07-14-ap17-accommodation-ticket-booking-design.md §2, §3, §9.
  */
 
@@ -70,7 +71,7 @@ export interface RentVehicle extends TravelSettingsOption {
   needsRentBooking: boolean;
 }
 
-/** Fast_Data.dbo.TravelProvince — ข้อ8 จังหวัด. */
+/** Rocks_Portal_Form.dbo.TravelProvince — ข้อ8 จังหวัด. */
 export interface ProvinceOption {
   id: number;
   nameTh: string;
@@ -253,6 +254,14 @@ export interface TravelBookingDraftSummary {
  * save-draft/submit. Server-derived fields (names resolved from ids, requester
  * snapshot, isContinuation, perDiem*, paymentDate, submittedAt, requestNo, status,
  * approvals, bookingDetails) are omitted; the server fills those in.
+ *
+ * **The `needs*` booleans below are sent but ignored.** They are still on the
+ * type because the form computes them to drive its own conditional inputs, and
+ * because the same object shape round-trips through the draft. The server
+ * re-derives every one of them from the selected accommodation, vehicle and
+ * rent-vehicle rows on each save — see `@/lib/acc/travel-booking/derive-flags`
+ * for what they decide and why trusting them let a request with a hotel booking
+ * auto-complete without one.
  */
 export interface SaveTravelBookingInput {
   /** AccRequest.Id — present when updating an existing tab within a draft group. */

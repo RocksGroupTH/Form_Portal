@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/api-auth";
+import { requireSettingsTab } from "@/lib/acc/require-settings-tab";
 import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
 import {
   listErpAccountOptions,
@@ -10,7 +10,7 @@ import { listErpBranchesForBrands, listErpDepartmentsForBrands } from "@/lib/erp
 
 /** GET /api/request/accounting/settings/erp-accounts?brand=PCTH&category=GL */
 export async function GET(req: NextRequest) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireSettingsTab("erpInterface");
   if (session instanceof Response) return session;
 
   try {

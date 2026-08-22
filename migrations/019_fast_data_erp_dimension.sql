@@ -3,6 +3,27 @@
 -- Database: Fast_Data
 -- Apply: npm run apply-sql -- --db Fast_Data --file migrations/019_fast_data_erp_dimension.sql
 -- =============================================
+--
+-- HISTORICAL -- already applied. DO NOT RE-RUN: the target moved to
+-- Rocks_ERP_Data (migrations 101/102).
+--
+-- This file creates TWO of the five: ErpDimensionValue and ErpSyncLog. In
+-- Fast_Data both names are now SYNONYMs for [Rocks_ERP_Data].[dbo].[...], and a
+-- synonym does not appear in sys.tables -- so both guards below
+-- (IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = '...')) pass and the
+-- CREATE TABLE then fails with Msg 2714, because the synonym already owns the
+-- name. The guard cannot see the object it is guarding against. Measured
+-- 2026-08-21 against the cut-over Fast_Data: batch 2 raised "There is already
+-- an object named 'ErpDimensionValue' in the database" and batch 3 the same
+-- for 'ErpSyncLog'. Nothing was created; the file simply cannot run.
+--
+-- The two tables here also predate the named-default-constraint convention the
+-- later three use: their DEFAULTs are inline and auto-named, which is why 101
+-- states that it renames all of them deterministically rather than reproducing
+-- the source exactly.
+--
+-- If either table ever has to be created again, 101 is the file that does it,
+-- against Rocks_ERP_Data.
 
 USE [Fast_Data];
 GO

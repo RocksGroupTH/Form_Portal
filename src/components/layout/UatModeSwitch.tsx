@@ -39,10 +39,11 @@ export function UatModeSwitch({ compact = false }: UatModeSwitchProps) {
   const [submitting, setSubmitting] = useState(false);
   /**
    * Whether confirming would also leave the record named by `?id=` behind.
-   * Read from `window.location` when the dialog opens rather than during
-   * render: the navbar is never server-rendered, but a click handler is the
-   * only place `window` is unambiguously there, and the answer cannot change
-   * between opening the dialog and confirming it.
+   * Drives one extra paragraph of dialog copy only — the switch goes to Home
+   * either way. Read from `window.location` when the dialog opens rather than
+   * during render: the navbar is never server-rendered, but a click handler is
+   * the only place `window` is unambiguously there, and the answer cannot
+   * change between opening the dialog and confirming it.
    */
   const [leavingRecord, setLeavingRecord] = useState(false);
 
@@ -70,19 +71,20 @@ export function UatModeSwitch({ compact = false }: UatModeSwitchProps) {
       if (!res.ok || !json?.ok) {
         throw new Error((json && json.error) || `HTTP ${res.status}`);
       }
-      // Refresh the one payload every chip/filter reads, then force a full
-      // reload: nearly every list in this app is client-fetched through SWR,
-      // and `router.refresh()` only re-renders the server component tree,
-      // which this app barely uses. Only a reload guarantees nothing is left
-      // showing rows from the database the viewer just switched away from.
+      // Refresh the one payload every chip/filter reads, then leave the page
+      // entirely for Home. Nearly every list in this app is client-fetched
+      // through SWR and `router.refresh()` only re-renders the server component
+      // tree, which this app barely uses — so a soft refresh leaves rows on
+      // screen from the database the viewer just switched away from, and a hard
+      // reload of a fill page re-opens the record in `?id=`, which is the one
+      // thing the switch was meant to leave. Home is the page that is correct
+      // in either environment; `urlAfterUatSwitch` resolves it against this
+      // origin so a viewer already on Home gets a reload rather than an
+      // assignment that may not reload at all.
       await mutate("/api/form-environment");
-      // …except that a plain reload of a fill page re-opens the record in
-      // `?id=`, which is the one thing the switch was meant to leave. Drop that
-      // parameter when its record belongs to the other database; every other
-      // case reloads exactly as before.
-      const next = urlAfterUatSwitch(window.location.href, !uat);
-      if (next !== window.location.href) window.location.assign(next);
-      else window.location.reload();
+      const next = urlAfterUatSwitch(window.location.href);
+      if (next === window.location.href) window.location.reload();
+      else window.location.assign(next);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "สลับโหมดไม่สำเร็จ");
       setSubmitting(false);
@@ -98,10 +100,29 @@ export function UatModeSwitch({ compact = false }: UatModeSwitchProps) {
           setLeavingRecord(uatSwitchLeavesRecord(window.location.href, !uat));
           setOpen(true);
         }}
-        className="flex items-center gap-1.5 px-2 py-1 rounded-lg cursor-pointer border-none transition-colors shrink-0"
+        className={
+          compact
+            ? "flex items-center gap-1.5 px-2 py-1 rounded-lg cursor-pointer border-none transition-colors shrink-0"
+            : "flex items-center gap-1.5 h-9 px-2.5 rounded-lg cursor-pointer transition-colors shrink-0"
+        }
         style={{
-          background: uat ? "var(--status-bad-bg)" : "var(--bg-badge)",
-          color: uat ? "var(--status-bad-text)" : "var(--text-muted)",
+          // Amber, not red. The chip reports which database the viewer is
+          // writing to; red reads as an error, and being in UAT is a state
+          // somebody chose. It still has to carry across the bar at a glance,
+          // hence a tint where the neighbouring controls are plain.
+          //
+          // `--status-uat-*` is the one definition of that amber; the Form
+          // Environment switches read the same tokens, so the chip and the
+          // switch cannot drift into two different ambers.
+          background: uat ? "var(--status-uat-bg)" : "var(--bg-card)",
+          color: uat ? "var(--status-uat-text)" : "var(--text-muted)",
+          ...(compact
+            ? {}
+            : {
+                border: uat
+                  ? "1px solid var(--status-uat-border)"
+                  : "1px solid var(--border-card)",
+              }),
         }}
         title={uat ? "กำลังอยู่ในโหมด UAT — คลิกเพื่อสลับกลับ Production" : "คลิกเพื่อสลับไปโหมดทดสอบ UAT"}
         aria-label={
@@ -121,14 +142,14 @@ export function UatModeSwitch({ compact = false }: UatModeSwitchProps) {
       >
         <p className="text-[13px] mb-4" style={{ color: "var(--text-muted)" }}>
           {uat
-            ? "หลังจากสลับแล้ว คำขอที่คุณส่งหรือดำเนินการต่อจากนี้จะถูกบันทึกลงฐานข้อมูล Production (ข้อมูลจริง) แทนฐานข้อมูลทดสอบ UAT"
-            : "หลังจากสลับแล้ว คำขอที่คุณส่งหรือดำเนินการต่อจากนี้จะถูกบันทึกลงฐานข้อมูล UAT (ข้อมูลทดสอบ) แทนฐานข้อมูล Production จนกว่าคุณจะสลับกลับ"}
+            ? "หลังจากสลับแล้ว คำขอที่คุณส่งหรือดำเนินการต่อจากนี้จะถูกบันทึกลงฐานข้อมูล Production (ข้อมูลจริง) แทนฐานข้อมูลทดสอบ UAT และระบบจะพากลับไปหน้าแรก"
+            : "หลังจากสลับแล้ว คำขอที่คุณส่งหรือดำเนินการต่อจากนี้จะถูกบันทึกลงฐานข้อมูล UAT (ข้อมูลทดสอบ) แทนฐานข้อมูล Production จนกว่าคุณจะสลับกลับ และระบบจะพากลับไปหน้าแรก"}
         </p>
         {leavingRecord && (
           <p className="text-[13px] mb-4" style={{ color: "var(--text-primary)" }}>
             {uat
-              ? "คำขอที่เปิดอยู่ในหน้านี้เป็นข้อมูล UAT ระบบจะปิดคำขอนี้และเปิดแบบฟอร์มเปล่าให้แทน (คำขอยังถูกบันทึกไว้ เปิดได้จากหน้าแรกหรือคำขอของฉัน)"
-              : "คำขอที่เปิดอยู่ในหน้านี้เป็นข้อมูลจริง (Production) ระบบจะปิดคำขอนี้และเปิดแบบฟอร์มเปล่าให้แทน (คำขอยังถูกบันทึกไว้ เปิดได้จากหน้าแรกหรือคำขอของฉัน)"}
+              ? "คำขอที่เปิดอยู่ในหน้านี้เป็นข้อมูล UAT ระบบจะปิดคำขอนี้ทิ้ง (คำขอยังถูกบันทึกไว้ เปิดได้จากหน้าแรกหรือคำขอของฉัน)"
+              : "คำขอที่เปิดอยู่ในหน้านี้เป็นข้อมูลจริง (Production) ระบบจะปิดคำขอนี้ทิ้ง (คำขอยังถูกบันทึกไว้ เปิดได้จากหน้าแรกหรือคำขอของฉัน)"}
           </p>
         )}
         <div className="flex justify-end gap-2">

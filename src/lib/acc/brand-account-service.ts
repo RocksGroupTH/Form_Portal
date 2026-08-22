@@ -2,16 +2,20 @@ import { getAccPool, sql } from "@/lib/acc/pool";
 import { writeBothPools } from "@/lib/acc/dual-write";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import { getAllowedBrands } from "@/lib/acc/brand-options";
+import {
+  defaultsOnly,
+  perFormOrderBy,
+  perFormPredicate,
+  perFormWriteMatch,
+  pickAllForForm,
+} from "@/lib/acc/per-form-config";
 
-async function assertClaimBrandAllowed(
-  brandCode: string,
-  formCode: string = AP1_FORM_CODE,
-): Promise<void> {
-  const allowed = await getAllowedBrands(formCode);
+async function assertClaimBrandAllowed(brandCode: string): Promise<void> {
+  const allowed = await getAllowedBrands(AP1_FORM_CODE);
   const ok = allowed.some(
     (b) => b.brandCode.toUpperCase() === brandCode.toUpperCase(),
   );
-  if (!ok) throw new Error(`แบรนด์นี้ไม่ได้เปิดใช้ใน ${formCode}`);
+  if (!ok) throw new Error("แบรนด์นี้ไม่ได้เปิดใช้ใน AP-1");
 }
 
 export type BrandAccountKind = "gl" | "bank";
@@ -24,6 +28,8 @@ export interface BrandAccountRow {
   erpDescription?: string | null;
   isActive: boolean;
   sortOrder: number;
+  /** `null` is the default, which answers every form. */
+  formCode: string | null;
 }
 
 const TABLE: Record<BrandAccountKind, string> = {
@@ -42,6 +48,8 @@ function mapRow(
     displayName: (x.DisplayName as string) ?? null,
     isActive: !!x.IsActive,
     sortOrder: x.SortOrder as number,
+    // Never absent — see the note in brand-erp-interface-map-service.
+    formCode: (x.FormCode as string | null) ?? null,
   };
   if (kind === "gl") {
     row.erpDescription = (x.ErpDescription as string) ?? null;
@@ -49,33 +57,49 @@ function mapRow(
   return row;
 }
 
+/**
+ * With `formCode`, this form's G/L or bank accounts; without, the defaults
+ * alone — which is what the settings editor edits.
+ *
+ * A brand keeps several accounts, so the pick is per `(BrandCode, AccountNo)`:
+ * the table's unique index minus `FormCode`. A form overriding one account
+ * still sees the defaults it did not override.
+ */
 export async function listBrandAccounts(
   kind: BrandAccountKind,
   brandCode?: string | null,
-  formCode?: string | null,
+  formCode?: string,
 ): Promise<BrandAccountRow[]> {
   const pool = await getAccPool();
   const table = TABLE[kind];
   const req = pool.request();
-  const conds: string[] = [];
+  const conditions: string[] = [];
   if (brandCode) {
     req.input("brand", sql.NVarChar, brandCode);
-    conds.push("BrandCode = @brand");
+    conditions.push("BrandCode = @brand");
   }
-  // FormCode lives only on the G/L table (per-form config). Bank accounts are
-  // per-brand and shared across forms, so they are never filtered by form.
-  if (kind === "gl" && formCode) {
-    req.input("formCode", sql.NVarChar, formCode);
-    conds.push("FormCode = @formCode");
+  if (formCode) {
+    req.input("formCode", sql.NVarChar(20), formCode);
+    conditions.push(perFormPredicate());
+  } else {
+    conditions.push("FormCode IS NULL");
   }
-  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
   const r = await req.query(`
-    SELECT Id, BrandCode, AccountNo, DisplayName${kind === "gl" ? ", ErpDescription" : ""}, IsActive, SortOrder
+    SELECT Id, BrandCode, AccountNo, DisplayName${kind === "gl" ? ", ErpDescription" : ""}, IsActive, SortOrder, FormCode
     FROM [dbo].[${table}]
-    ${where}
-    ORDER BY BrandCode, SortOrder, AccountNo
+    WHERE ${conditions.join(" AND ")}
+    ORDER BY BrandCode, SortOrder, AccountNo, ${perFormOrderBy()}
   `);
-  return r.recordset.map((x) => mapRow(kind, x as Record<string, unknown>));
+  const rows = r.recordset.map((x) => mapRow(kind, x as Record<string, unknown>));
+  return formCode
+    ? pickAllForForm(
+        rows,
+        formCode,
+        // JSON rather than a concatenation: no separator character can appear
+        // inside a brand code or an account number and merge two distinct keys.
+        (row) => JSON.stringify([row.brandCode.toUpperCase(), row.accountNo]),
+      )
+    : defaultsOnly(rows);
 }
 
 export async function upsertBrandAccount(
@@ -88,31 +112,28 @@ export async function upsertBrandAccount(
     erpDescription?: string | null;
     isActive?: boolean;
     sortOrder?: number;
-    /** G/L only — which form this account belongs to. Defaults to AP-1. */
-    formCode?: string;
   },
   userId: number,
 ): Promise<void> {
   const accountNo = input.accountNo.trim();
   const brandCode = input.brandCode.trim().toUpperCase();
   if (!brandCode) throw new Error("กรุณาเลือกแบรนด์");
-  // FormCode scopes G/L config per form; bank accounts are shared per-brand.
-  const formCode = kind === "gl" ? (input.formCode?.trim() || AP1_FORM_CODE) : null;
-  await assertClaimBrandAllowed(brandCode, formCode ?? AP1_FORM_CODE);
+  await assertClaimBrandAllowed(brandCode);
   if (!accountNo) throw new Error("กรุณาระบุเลขบัญชี");
 
   const pool = await getAccPool();
   const table = TABLE[kind];
   // Resolve the target row once, against production, so both databases update
   // the same id rather than each picking its own "first row for this brand".
-  // For G/L the row is scoped by form, so AP-2 never grabs AP-1's row.
+  // Bounded to the default: the editor has no form selector, and an unbounded
+  // probe could land on an override and rewrite another form's account.
   let rowId = input.id;
   if (rowId == null) {
-    const findReq = pool.request().input("brand", sql.NVarChar, brandCode);
-    if (formCode) findReq.input("formCode", sql.NVarChar, formCode);
-    const existing = await findReq.query(`
+    const existing = await pool
+      .request()
+      .input("brand", sql.NVarChar, brandCode).query(`
         SELECT TOP 1 Id FROM [dbo].[${table}]
-        WHERE BrandCode = @brand${formCode ? " AND FormCode = @formCode" : ""}
+        WHERE BrandCode = @brand AND ${perFormWriteMatch(null)}
         ORDER BY SortOrder, Id
       `);
     rowId = (existing.recordset[0] as { Id: number } | undefined)?.Id;
@@ -134,7 +155,6 @@ export async function upsertBrandAccount(
         sql.NVarChar,
         input.erpDescription?.trim() || null,
       );
-      req.input("formCode", sql.NVarChar, formCode);
     }
 
     if (rowId) {
@@ -144,17 +164,20 @@ export async function upsertBrandAccount(
       SET BrandCode = @brand,
           AccountNo = @accountNo,
           DisplayName = @displayName,
-          ${kind === "gl" ? "ErpDescription = @erpDescription, FormCode = @formCode," : ""}
+          ${kind === "gl" ? "ErpDescription = @erpDescription," : ""}
           IsActive = @active,
           SortOrder = @sort,
           UpdatedAt = SYSDATETIME()
-      WHERE Id = @id
+      -- Bounded to the default as well as the id. The row id arrives from the
+      -- request body, and this editor only ever edits the default, so an id
+      -- naming an override must not be updatable through it.
+      WHERE Id = @id AND ${perFormWriteMatch(null)}
     `);
     } else {
       await req.query(`
       INSERT INTO [dbo].[${table}]
-        (BrandCode, AccountNo, DisplayName${kind === "gl" ? ", ErpDescription, FormCode" : ""}, IsActive, SortOrder, CreatedBy)
-      VALUES (@brand, @accountNo, @displayName${kind === "gl" ? ", @erpDescription, @formCode" : ""}, @active, @sort, @user)
+        (BrandCode, AccountNo, DisplayName${kind === "gl" ? ", ErpDescription" : ""}, IsActive, SortOrder, FormCode, CreatedBy)
+      VALUES (@brand, @accountNo, @displayName${kind === "gl" ? ", @erpDescription" : ""}, @active, @sort, NULL, @user)
     `);
     }
   });

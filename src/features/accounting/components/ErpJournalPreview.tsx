@@ -28,6 +28,7 @@ import {
   sortJournalLinesForPpap,
 } from "@/lib/acc/erp-ppap-payload";
 import { useErpSandboxDevHost } from "@/features/accounting/hooks/useErpSandboxDevHost";
+import { EnvironmentBadge } from "@/components/EnvironmentBadge";
 
 const BANK_COLOR = "#dc2626";
 
@@ -348,7 +349,7 @@ function SegmentJournalPanel({
     >
       <div
         className="px-3 py-2.5 flex flex-wrap items-center gap-2"
-        style={{ background: "var(--bg-card-alt)", borderBottom: "1px solid var(--border-light)" }}
+        style={{ background: "var(--bg-card-header)", borderBottom: "1px solid var(--border-light)" }}
       >
         <div className="min-w-0 flex-1">
           <p className="text-[12px] font-bold m-0" style={{ color: "var(--text-heading)" }}>
@@ -365,6 +366,13 @@ function SegmentJournalPanel({
             {fmtMoney(totalAmount)} บาท · {sources.length} เอกสาร
           </p>
         </div>
+        {/* Which set of books this batch posts to, next to the button that
+            posts it. The page header carries the same chip, but it is a long
+            scroll away by the time anyone reaches a send bar — and this is the
+            one control in the app that writes to Business Central. Both values
+            are worth saying here: UAT means the Sandbox company, Production
+            means the real one. */}
+        {queueEnvironment && <EnvironmentBadge environment={queueEnvironment} />}
         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={segmentStatusStyle(sendState.kind)}>
           {sendState.label}
         </span>
@@ -391,7 +399,7 @@ function SegmentJournalPanel({
                     color: "var(--color-danger)",
                     border: "1px solid color-mix(in srgb, var(--color-danger) 35%, transparent)",
                   }
-                : { background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)" }
+                : { background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }
             }
           >
             <Upload size={13} />
@@ -473,7 +481,7 @@ function InterfaceSectionBody({
           <div className="overflow-x-auto no-scrollbar">
             <table className="w-full text-[11px] min-w-[980px]">
               <thead>
-                <tr style={{ background: "var(--bg-card-alt)", borderBottom: "1px solid var(--border-light)" }}>
+                <tr style={{ background: "var(--bg-card-header)", borderBottom: "1px solid var(--border-light)" }}>
                   {journalHeaders.map((h) => (
                     <th
                       key={h}
@@ -572,7 +580,7 @@ function InterfaceSectionMeta({ section }: { section: ErpInterfaceTargetSection 
       className="px-4 py-3 flex items-start gap-3"
       style={{
         borderBottom: "1px solid var(--border-light)",
-        background: sectionReady ? "var(--bg-info-green)" : "var(--bg-card-alt)",
+        background: sectionReady ? "var(--bg-info-green)" : "var(--bg-card-header)",
       }}
     >
       <img

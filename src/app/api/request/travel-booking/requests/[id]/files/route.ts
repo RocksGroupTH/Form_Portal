@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { requireAuth } from "@/lib/api-auth";
+import { uatActorGate } from "@/lib/acc/travel-booking/uat-gate";
+import {
+  checkAttachment,
+  checkAttachmentBatch,
+  sniffAttachment,
+} from "@/lib/acc/attachment-guard";
 import { resolveLoginEmail } from "@/lib/auth-email";
-import { canAccessAccountArea } from "@/lib/acc/access";
+import { canAccessBookingArea } from "@/lib/acc/booking-access";
 import { deleteFile } from "@/lib/storage";
 import {
   isSharePointConfigured,
@@ -47,6 +53,10 @@ export async function POST(
 ) {
   const session = await requireAuth();
   if (session instanceof Response) return session;
+
+  // Tester-only on a UAT record, before any of it is read. See `uatActorGate`.
+  const uatGate = await uatActorGate(session);
+  if (uatGate) return uatGate;
   const userId = Number(session.user.id);
 
   const { id } = await params;
@@ -78,13 +88,31 @@ export async function POST(
         { status: 400 },
       );
     }
+    const batchRejection = checkAttachmentBatch(files);
+    if (batchRejection) {
+      return NextResponse.json(
+        { ok: false, error: batchRejection.error },
+        { status: batchRejection.status },
+      );
+    }
+
+    // Read and validate every file before storing any of them, so a batch whose
+    // second file is rejected does not leave the first one filed. The bytes
+    // decide the type: `file.type` is caller-written, and `image/svg+xml`
+    // passed the `startsWith("image/")` test this replaces.
+    const accepted: { file: File; buffer: Buffer; contentType: string }[] = [];
     for (const file of files) {
-      if (!file.type.startsWith("image/") && file.type !== "application/pdf") {
-        return NextResponse.json(
-          { ok: false, error: "รองรับเฉพาะไฟล์รูปภาพหรือ PDF" },
-          { status: 400 },
-        );
+      const buffer = Buffer.from(await file.arrayBuffer());
+      const check = checkAttachment({
+        fileName: file.name,
+        declaredType: file.type,
+        bytes: buffer,
+        allowedKinds: ["image", "pdf"],
+      });
+      if (!check.ok) {
+        return NextResponse.json({ ok: false, error: check.error }, { status: check.status });
       }
+      accepted.push({ file, buffer, contentType: check.type.contentType });
     }
 
     const pool = await getAccPool();
@@ -135,7 +163,7 @@ export async function POST(
       const loginEmail = resolveLoginEmail(session.user, null, {
         email: session.user.email,
       });
-      if (!(await canAccessAccountArea(loginEmail, session.user.role))) {
+      if (!(await canAccessBookingArea(loginEmail, session.user.role))) {
         return NextResponse.json(
           { ok: false, error: "Forbidden" },
           { status: 403 },
@@ -186,10 +214,7 @@ export async function POST(
 
     const created: TravelBookingFileMeta[] = [];
 
-    for (const file of files) {
-      const buffer = Buffer.from(await file.arrayBuffer());
-      const contentType = file.type || "application/octet-stream";
-
+    for (const { file, buffer, contentType } of accepted) {
       // 1) Insert a placeholder row to allocate the file id (used in the SharePoint filename).
       const insertRes = await pool
         .request()
@@ -197,7 +222,7 @@ export async function POST(
         .input("refType", sql.NVarChar(50), refType)
         .input("refId", sql.Int, refId)
         .input("fileName", sql.NVarChar(500), file.name)
-        .input("fileSize", sql.Int, file.size)
+        .input("fileSize", sql.Int, buffer.length)
         .input("contentType", sql.NVarChar(200), contentType)
         .input("uploadedBy", sql.Int, userId)
         .query(
@@ -231,6 +256,7 @@ export async function POST(
           requestId,
           fileId: newId,
           originalName: file.name,
+          extension: sniffAttachment(buffer)?.extension,
         });
         const { itemId } = await uploadFileToSharePoint(
           folderPath,
@@ -273,7 +299,7 @@ export async function POST(
         refType,
         refId,
         fileName: file.name,
-        fileSize: file.size,
+        fileSize: buffer.length,
         contentType,
       });
     }
@@ -299,6 +325,10 @@ export async function DELETE(
 ) {
   const session = await requireAuth();
   if (session instanceof Response) return session;
+
+  // Tester-only on a UAT record, before any of it is read. See `uatActorGate`.
+  const uatGate = await uatActorGate(session);
+  if (uatGate) return uatGate;
   const userId = Number(session.user.id);
 
   const { id } = await params;
@@ -377,7 +407,7 @@ export async function DELETE(
       const loginEmail = resolveLoginEmail(session.user, null, {
         email: session.user.email,
       });
-      if (!(await canAccessAccountArea(loginEmail, session.user.role))) {
+      if (!(await canAccessBookingArea(loginEmail, session.user.role))) {
         return NextResponse.json(
           { ok: false, error: "Forbidden" },
           { status: 403 },

@@ -16,7 +16,7 @@ export interface ErpGlOption { accountNo: string; displayName: string | null }
 export async function listClrErpGlOptions(brandCode: string): Promise<ErpGlOption[]> {
   const brand = brandCode.trim().toUpperCase();
   if (!brand) return [];
-  const ctx = await loadErpJournalBuildContext();
+  const ctx = await loadErpJournalBuildContext("AP-3");
   const company = (ctx.interfaceByClaim[brand] ?? brand).toUpperCase();
   const pool = await getAppPool(ERP_DATA_DB);
   const r = await pool.request()
@@ -67,7 +67,7 @@ export async function listClrErpJournalBatchesForCompany(company: string): Promi
 export async function listClrErpJournalBatches(brandCode: string): Promise<ErpJournalBatchOption[]> {
   const brand = brandCode.trim().toUpperCase();
   if (!brand) return [];
-  const ctx = await loadErpJournalBuildContext();
+  const ctx = await loadErpJournalBuildContext("AP-3");
   const company = (ctx.interfaceByClaim[brand] ?? brand).toUpperCase();
   return listClrErpJournalBatchesForCompany(company);
 }
@@ -100,7 +100,7 @@ export async function listClrErpBranchesForCompany(company: string): Promise<Erp
 export async function listClrErpBranchOptions(brandCode: string): Promise<ErpBranchOption[]> {
   const brand = brandCode.trim().toUpperCase();
   if (!brand) return [];
-  const ctx = await loadErpJournalBuildContext();
+  const ctx = await loadErpJournalBuildContext("AP-3");
   const company = (ctx.interfaceByClaim[brand] ?? brand).toUpperCase();
   return listClrErpBranchesForCompany(company);
 }

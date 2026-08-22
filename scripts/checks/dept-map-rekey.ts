@@ -2,7 +2,9 @@
 /**
  * Read-only check for Task 4: prove getMultiBrandDepartmentMappingPage() now
  * returns rows keyed by DepartmentCode (string, e.g. ACC/IT) with names from
- * listDepartmentCodes(), against the live Fast_Core DB.
+ * listDepartmentCodes(). Reads the live Rocks_Portal_Form DB — DepartmentErpMap
+ * moved there in migrations 099/100, and the service reaches it through
+ * getProductionFormPool(), not through Fast_Core's synonym.
  *
  * Does NOT mutate any mapping data.
  *

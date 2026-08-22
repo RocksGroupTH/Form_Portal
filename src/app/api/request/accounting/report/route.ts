@@ -7,6 +7,7 @@ import {
   resolveApproverInterfaceAccess,
 } from "@/lib/acc/approver-interface-access";
 import { listBrandErpInterfaceMaps } from "@/lib/acc/brand-erp-interface-map-service";
+import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import { queryReport, type ReportFilters } from "@/lib/acc/report-service";
 
 /**
@@ -51,7 +52,11 @@ export async function GET(req: NextRequest) {
       session.user.role,
     );
     if (!access.allAccess) {
-      const maps = await listBrandErpInterfaceMaps();
+      // AP-1, matching the export twin. queryReport pins r.FormCode = AP-1,
+      // so scoping this read to the defaults would make the list and the
+      // export disagree about whose books a claim brand belongs to the moment
+      // an AP-1 override exists — and they decide which rows an approver sees.
+      const maps = await listBrandErpInterfaceMaps(AP1_FORM_CODE);
       const interfaceByClaim = buildInterfaceByClaimRecord(maps);
       data = filterRowsForInterfaceAccess(data, interfaceByClaim, access);
     }

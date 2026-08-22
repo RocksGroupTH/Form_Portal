@@ -62,7 +62,7 @@ export async function loadAdvanceErpContext(
 ): Promise<AdvanceErpContext> {
   const code = brandCode.trim().toUpperCase();
   const [ctx, cfg] = await Promise.all([
-    loadErpJournalBuildContext(),
+    loadErpJournalBuildContext("AP-2"),
     getAdvanceInterfaceConfig(code),
   ]);
   const base = ctx.brandAccounts[code];
@@ -79,7 +79,7 @@ export async function loadAdvanceErpContext(
 
   // AP-2's own target (Company) → falls back to AP-1's brand→Company mapping.
   const interfaceTarget = (cfg?.interfaceBrandCode ?? ctx.interfaceByClaim[code] ?? code).toUpperCase();
-  const profile = await resolveErpTargetProfile(interfaceTarget);
+  const profile = await resolveErpTargetProfile(interfaceTarget, "AP-2");
   if (!profile?.profileComplete || !profile.bcConnectionId || !profile.bcId || !profile.baseUrl) {
     throw new Error(
       `การตั้งค่า BC สำหรับ ${interfaceTarget} ยังไม่ครบ — ตรวจสอบที่ Settings → Interface ERP`,

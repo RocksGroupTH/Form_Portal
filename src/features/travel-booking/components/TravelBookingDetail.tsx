@@ -29,7 +29,7 @@ import { Dialog } from "@/components/ui";
 import { Avatar } from "@/components/ui/Avatar";
 import { ImageLightbox } from "@/features/accounting/components/ImageLightbox";
 import { fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
-import { useAccountingAccess } from "@/features/accounting/hooks/useAccountingAccess";
+import { useBookingAccess } from "@/features/travel-booking/hooks/useBookingAccess";
 import { useErpSandboxDevHost } from "@/features/accounting/hooks/useErpSandboxDevHost";
 import { useTravelBookingOptionIcons } from "@/features/travel-booking/hooks/useOptionIcons";
 import { InfoStrip, typeInfo } from "@/features/travel-booking/components/BookingInfoStrip";
@@ -95,7 +95,7 @@ function Section({
     >
       <div
         className="flex items-center gap-2.5 px-5 py-3"
-        style={{ borderBottom: "1px solid var(--border-card)", background: "var(--bg-card-alt)" }}
+        style={{ borderBottom: "1px solid var(--border-card)", background: "var(--bg-card-header)" }}
       >
         {icon && (
           <span
@@ -344,7 +344,7 @@ interface TravelBookingDetailProps {
 }
 
 export function TravelBookingDetail({ request, onChanged, readOnlyBooking = false }: TravelBookingDetailProps) {
-  const { canAccount, loading: accessLoading } = useAccountingAccess();
+  const { canAccount, loading: accessLoading, error: accessError } = useBookingAccess();
 
   /* ── Viewer identity — mirrors AP-1 RequestDetail.tsx's `/api/me/employee` lookup ── */
   const [viewerStaffId, setViewerStaffId] = useState<number | null>(null);
@@ -379,19 +379,34 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
     [request.approvals],
   );
   /* Same gate as AP-1 (`canActManagerStep`): assigned StaffId / assigned email, plus the
-     localhost:3020 dev bypass that lets any logged-in user action the step while testing. */
+     localhost:3081 dev bypass that lets any logged-in user action the step while testing.
+     The two are kept apart because only the second one is worth announcing — for a UAT
+     request the assigned manager IS the requester's configured UAT manager, written into
+     the approval at submit, so matching it is acting on your own authority. */
   const isDevHost = useErpSandboxDevHost();
-  const canActManager =
-    request.status === "Submitted" &&
-    managerApproval?.status === "Pending" &&
+  const isStepPending =
+    request.status === "Submitted" && managerApproval?.status === "Pending";
+  const isAssignedManagerViewer =
+    isStepPending &&
     canActManagerStep(
       viewerStaffId,
       viewerEmail,
       managerApproval?.assignedTo ?? null,
       managerApproval,
       null,
-      isDevHost,
+      false,
     );
+  const canActManager =
+    isAssignedManagerViewer ||
+    (isStepPending &&
+      canActManagerStep(
+        viewerStaffId,
+        viewerEmail,
+        managerApproval?.assignedTo ?? null,
+        managerApproval,
+        null,
+        isDevHost,
+      ));
 
   const canCancel =
     isOwner &&
@@ -481,6 +496,13 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
   const bookingRules = useMemo(() => REQUIRED_BOOKING_RULES.filter((r) => r.needed(request)), [request]);
   const showAdminPanel =
     !readOnlyBooking && request.status === "ManagerApproved" && canAccount && request.id != null;
+  /* A rejected /access fetch leaves `canAccount` false, which is indistinguishable
+     from a genuine refusal. The panel still fails closed, but the banner below is
+     then addressed to someone we never established is not an operator, so it gets
+     a variant that adds the caveat instead. Only the operator-facing view is
+     affected: in `readOnlyBooking` the viewer is the requester, who is waiting for
+     Admin whatever the roster says. */
+  const bookingAreaUnknown = !readOnlyBooking && Boolean(accessError);
   const showBookingSummary =
     !showAdminPanel &&
     (readOnlyBooking || !accessLoading) &&
@@ -519,8 +541,21 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
         </div>
       )}
 
+      {/* ── ManagerApproved, permission check unavailable ── */}
+      {request.status === "ManagerApproved" && bookingAreaUnknown && (
+        <div
+          className="rounded-2xl p-4 mb-4 flex items-start gap-2.5"
+          style={{ background: "var(--bg-info-yellow)", border: "1px solid var(--border-info-yellow)" }}
+        >
+          <AlertCircle size={16} style={{ color: "var(--text-info-yellow)", marginTop: 2 }} className="shrink-0" />
+          <p className="text-[13px] m-0" style={{ color: "var(--text-info-yellow)" }}>
+            รอ Admin กรอกข้อมูลการจอง — ตรวจสอบสิทธิ์ของคุณไม่สำเร็จ หากคุณเป็นผู้ดูแลการจอง กรุณาลองโหลดหน้านี้ใหม่อีกครั้ง
+          </p>
+        </div>
+      )}
+
       {/* ── ManagerApproved, not-account-area banner ── */}
-      {request.status === "ManagerApproved" && !accessLoading && !canAccount && (
+      {request.status === "ManagerApproved" && !accessLoading && !canAccount && !bookingAreaUnknown && (
         <div
           className="rounded-2xl p-4 mb-4 flex items-start gap-2.5"
           style={{ background: "var(--bg-info-yellow)", border: "1px solid var(--border-info-yellow)" }}
@@ -536,9 +571,10 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
       <Section title="ขั้นตอนการอนุมัติ" icon={<CheckCircle size={15} />}>
         {canActManager && (
           <div className="mb-4 pb-4 flex flex-col gap-3" style={{ borderBottom: "1px solid var(--border-light)" }}>
-            {isDevHost ? (
+            {/* Only when the bypass is what grants this — see the gate above. */}
+            {isDevHost && !isAssignedManagerViewer ? (
               <p className="text-[10px] m-0" style={{ color: "var(--text-faint)" }}>
-                โหมดทดสอบ (localhost:3020) — ผู้ใช้ที่ล็อกอินกดอนุมัติแทนผู้จัดการได้
+                โหมดทดสอบ (localhost:3081) — ผู้ใช้ที่ล็อกอินกดอนุมัติแทนผู้จัดการได้
               </p>
             ) : null}
             <div className="flex flex-wrap gap-2">
@@ -661,7 +697,7 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
                 >
                   <div
                     className="flex items-center justify-between gap-2 px-4 py-2.5"
-                    style={{ background: "var(--bg-card-alt)", borderBottom: "1px solid var(--border-light)" }}
+                    style={{ background: "var(--bg-card-header)", borderBottom: "1px solid var(--border-light)" }}
                   >
                     <span className="flex items-center gap-2 text-[12.5px] font-bold" style={{ color: "var(--text-heading)" }}>
                       <span style={{ color: "var(--nav-active-text)" }}>{BOOKING_TYPE_ICON[rule.type]}</span>
@@ -1067,7 +1103,7 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
             onClick={handleCancel}
             disabled={cancelling}
             className="inline-flex items-center gap-1.5 text-[13px] font-medium px-4 py-2 rounded-lg"
-            style={{ background: "var(--color-danger)", color: "#ffffff", opacity: cancelling ? 0.7 : 1 }}
+            style={{ background: "var(--btn-danger-bg)", color: "var(--btn-danger-text)", border: "1px solid var(--btn-danger-border)", opacity: cancelling ? 0.7 : 1 }}
           >
             {cancelling ? "กำลังยกเลิก..." : "ยืนยัน ยกเลิกคำขอ"}
           </button>

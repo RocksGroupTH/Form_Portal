@@ -181,7 +181,7 @@ export function AdminBookingPanel({
     >
       <div
         className="flex items-center gap-2.5 px-5 py-3"
-        style={{ borderBottom: "1px solid var(--border-card)", background: "var(--bg-card-alt)" }}
+        style={{ borderBottom: "1px solid var(--border-card)", background: "var(--bg-card-header)" }}
       >
         <span
           className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
@@ -290,7 +290,7 @@ export function AdminBookingPanel({
             onClick={handleConfirmDelete}
             disabled={deleting}
             className="inline-flex items-center gap-1.5 text-[13px] font-medium px-4 py-2 rounded-lg cursor-pointer border-none text-white"
-            style={{ background: "var(--color-danger)", opacity: deleting ? 0.7 : 1 }}
+            style={{ background: "var(--btn-danger-bg)", color: "var(--btn-danger-text)", border: "1px solid var(--btn-danger-border)", opacity: deleting ? 0.7 : 1 }}
           >
             {deleting ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
             {deleting ? "กำลังลบ..." : "ยืนยัน ลบ"}
@@ -339,7 +339,7 @@ export function AdminBookingPanel({
             style={
               bounce === "return"
                 ? { background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)", opacity: bouncing ? 0.7 : 1 }
-                : { background: "var(--color-danger)", color: "#fff", border: "none", opacity: bouncing ? 0.7 : 1 }
+                : { background: "var(--btn-danger-bg)", color: "var(--btn-danger-text)", border: "1px solid var(--btn-danger-border)", opacity: bouncing ? 0.7 : 1 }
             }
           >
             {bouncing ? <Loader2 size={13} className="animate-spin" /> : null}
@@ -400,7 +400,7 @@ function BookingTypeGroup({
     <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border-card)" }}>
       <div
         className="flex items-center justify-between gap-2 px-4 py-2.5"
-        style={{ background: "var(--bg-card-alt)", borderBottom: "1px solid var(--border-light)" }}
+        style={{ background: "var(--bg-card-header)", borderBottom: "1px solid var(--border-light)" }}
       >
         <span className="flex items-center gap-2 text-[12.5px] font-bold" style={{ color: "var(--text-heading)" }}>
           <span style={{ color: "var(--nav-active-text)" }}>{icon}</span>
@@ -802,7 +802,7 @@ function AdminFileChip({
         aria-label="ลบไฟล์"
         title="ลบไฟล์"
         className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center cursor-pointer border-none"
-        style={{ background: "var(--color-danger)", color: "#fff", opacity: removing ? 0.6 : 1 }}
+        style={{ background: "var(--btn-danger-bg)", color: "var(--btn-danger-text)", border: "1px solid var(--btn-danger-border)", opacity: removing ? 0.6 : 1 }}
       >
         {removing ? <Loader2 size={11} className="animate-spin" /> : <X size={11} />}
       </button>

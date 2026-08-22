@@ -343,7 +343,7 @@ export function ErpInterfaceEnvironmentSettings() {
       >
         <div
           className="px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2"
-          style={{ borderBottom: "1px solid var(--border-light)", background: "var(--bg-card-alt)" }}
+          style={{ borderBottom: "1px solid var(--border-light)", background: "var(--bg-card-header)" }}
         >
           <div>
             <h2 className="text-[14px] font-bold m-0" style={{ color: "var(--text-heading)" }}>
@@ -413,7 +413,7 @@ export function ErpInterfaceEnvironmentSettings() {
               <tr
                 style={{
                   borderBottom: "1px solid var(--border-light)",
-                  background: "var(--bg-card-alt)",
+                  background: "var(--bg-card-header)",
                 }}
               >
                 <th colSpan={2} />

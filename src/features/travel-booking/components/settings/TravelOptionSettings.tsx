@@ -143,8 +143,8 @@ function OptionDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: "var(--overlay-bg)" }}
+      className="app-overlay fixed inset-0 z-50 flex items-center justify-center"
+     
     >
       <div
         className={`rounded-2xl ${isVehicle ? "w-[560px]" : "w-[440px]"} max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden`}
@@ -355,7 +355,7 @@ function OptionDialog({
             onClick={handleSubmit}
             disabled={saving}
             className="flex-1 px-3 py-2 rounded-lg text-[12px] font-bold cursor-pointer border-none text-white flex items-center justify-center gap-1.5"
-            style={{ background: "var(--color-action)", opacity: saving ? 0.6 : 1 }}
+            style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)", opacity: saving ? 0.6 : 1 }}
           >
             <Check size={12} />
             {saving ? "กำลังบันทึก..." : "บันทึก"}
@@ -594,7 +594,7 @@ export function TravelOptionSettings({
         <button
           onClick={() => setEditRow("new")}
           className="flex items-center gap-1.5 text-[12px] font-bold px-4 py-2.5 rounded-xl cursor-pointer border-none text-white shrink-0 transition-transform hover:-translate-y-[1px]"
-          style={{ background: "var(--color-action)" }}
+          style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}
         >
           <Plus size={14} /> {addLabel}
         </button>

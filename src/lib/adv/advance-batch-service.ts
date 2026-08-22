@@ -38,7 +38,7 @@ export async function advanceErpEnvironment(): Promise<ErpBcEnvironment> {
 
 /** Live-fetch a Company's batches from BC for a specific environment. */
 async function fetchLiveBatches(company: string, environment: ErpBcEnvironment): Promise<ErpBatch[]> {
-  const profile = await resolveErpTargetProfile(company.trim().toUpperCase(), environment);
+  const profile = await resolveErpTargetProfile(company.trim().toUpperCase(), "AP-2");
   if (!profile?.bcConnectionId || !profile.baseUrl || !profile.bcName) {
     // Missing connection/company for this env — almost always a UAT target not set up.
     const envLabel = environment === "Sandbox" ? "UAT/Sandbox" : "Production";

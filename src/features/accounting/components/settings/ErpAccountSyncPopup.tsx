@@ -25,8 +25,8 @@ export function ErpAccountSyncPopup({
 
   return (
     <div
-      className="acc-theme fixed inset-0 z-[60] flex items-center justify-center px-4"
-      style={{ background: "var(--overlay-bg)", animation: "overlayFadeIn 0.15s ease-out" }}
+      className="app-overlay acc-theme fixed inset-0 z-[60] flex items-center justify-center px-4"
+      style={{ animation: "overlayFadeIn 0.15s ease-out" }}
       role="status"
       aria-live="polite"
     >

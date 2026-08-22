@@ -4,6 +4,16 @@ import { getRequest } from "@/lib/acc/request-service";
 import { reject } from "@/lib/acc/approval-engine";
 import { buildAccActor, resolveAccActorForAction } from "@/lib/acc/actor-context";
 import { canAccessAccountArea } from "@/lib/acc/access";
+import {
+  canActOnClaimBrand,
+  INTERFACE_SCOPE_ERROR,
+  resolveApproverInterfaceAccess,
+} from "@/lib/acc/approver-interface-access";
+import {
+  interfaceByClaimMapToRecord,
+  loadPrepDeptContext,
+} from "@/lib/acc/erp-prep-service";
+import { authorizeAccRequest } from "@/lib/acc/request-acl";
 import { canActManagerApi, MANAGER_AUTH_ERROR } from "@/lib/acc/manager-auth";
 import { getRequestHost } from "@/lib/acc/erp-environment";
 import { processQueue } from "@/lib/acc/email-queue";
@@ -22,6 +32,11 @@ export async function POST(
   if (Number.isNaN(id)) {
     return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
   }
+
+  // Reaching the record at all: owner, assigned manager or accounting area —
+  // and, on a UAT id, an active tester. See `request-acl-policy`.
+  const gate = await authorizeAccRequest(session, id, "read");
+  if (gate instanceof Response) return gate;
 
   const accReq = await getRequest(id);
   if (!accReq) {
@@ -59,6 +74,17 @@ export async function POST(
   if (stepCode === "ACCOUNT") {
     if (!(await canAccessAccountArea(actor.email, session.user.role))) {
       return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+    }
+    // Interface scope, same reasoning as the approve route: rejecting is an
+    // action on another interface group's books just as much as approving is —
+    // including the form scoping, since this route reaches an `AccRequest` by
+    // id and is no more AP-1-specific than the approve route is.
+    const [access, deptCtx] = await Promise.all([
+      resolveApproverInterfaceAccess(actor.email, session.user.role),
+      loadPrepDeptContext(accReq.formCode),
+    ]);
+    if (!canActOnClaimBrand(access, interfaceByClaimMapToRecord(deptCtx.interfaceByClaim), accReq.brandCode)) {
+      return NextResponse.json({ ok: false, error: INTERFACE_SCOPE_ERROR }, { status: 403 });
     }
   }
 

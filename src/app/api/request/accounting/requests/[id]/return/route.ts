@@ -4,6 +4,7 @@ import { getRequest } from "@/lib/acc/request-service";
 import { returnForEdit } from "@/lib/acc/approval-engine";
 import { buildAccActor, resolveAccActorForAction } from "@/lib/acc/actor-context";
 import { canActManagerApi, MANAGER_AUTH_ERROR } from "@/lib/acc/manager-auth";
+import { authorizeAccRequest } from "@/lib/acc/request-acl";
 import { getRequestHost } from "@/lib/acc/erp-environment";
 import { processQueue } from "@/lib/acc/email-queue";
 
@@ -21,6 +22,11 @@ export async function POST(
   if (Number.isNaN(id)) {
     return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
   }
+
+  // Reaching the record at all: owner, assigned manager or accounting area —
+  // and, on a UAT id, an active tester. See `request-acl-policy`.
+  const gate = await authorizeAccRequest(session, id, "read");
+  if (gate instanceof Response) return gate;
 
   const accReq = await getRequest(id);
   if (!accReq) {
