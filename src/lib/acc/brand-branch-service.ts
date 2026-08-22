@@ -218,3 +218,42 @@ export async function upsertBrandBranch(
 
   deleteAccCachedByPrefix("acc:journal-ctx:");
 }
+
+/**
+ * Write one per-form BranchCode override for `formCode`, or clear it when
+ * `branchCode` is null (falls back to the NULL-default row).
+ */
+export async function mergeFormBrandBranch(
+  brandCode: string,
+  formCode: string,
+  branchCode: string | null,
+  userId: number,
+): Promise<void> {
+  const brand = brandCode.trim().toUpperCase();
+  const form = formCode.trim().toUpperCase();
+  const branch = branchCode?.trim() || null;
+  if (!brand) throw new Error("กรุณาระบุแบรนด์");
+  await writeBothPools(async (tx) => {
+    await tx
+      .request()
+      .input("brand", sql.NVarChar, brand)
+      .input("formCode", sql.NVarChar(20), form)
+      .query(`
+        DELETE FROM [dbo].[AccBrandBranchCode]
+        WHERE BrandCode = @brand AND FormCode = @formCode
+      `);
+    if (branch) {
+      await tx
+        .request()
+        .input("brand", sql.NVarChar, brand)
+        .input("formCode", sql.NVarChar(20), form)
+        .input("branch", sql.NVarChar, branch)
+        .input("user", sql.Int, userId || null)
+        .query(`
+          INSERT INTO [dbo].[AccBrandBranchCode]
+            (BrandCode, BranchCode, FormCode, IsActive, SortOrder, DeptAsBranch, CreatedBy)
+          VALUES (@brand, @branch, @formCode, 1, 0, 0, @user)
+        `);
+    }
+  });
+}
