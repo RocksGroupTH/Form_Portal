@@ -26,11 +26,14 @@ import {
  * card, each tab a feature component that owns its own fetching. The two pages
  * should be indistinguishable apart from what is on them.
  *
- * **Approvers is the default tab**, where AP-1 also opens on approvers, and here
- * for a sharper reason: `AccReimburseApprover` ships empty, and until it has two
- * active rows every AP-4 request stops at the accounting step with
- * "ไม่มีสิทธิ์ — คุณไม่ได้อยู่ในรายชื่อผู้อนุมัติฝ่ายบัญชีของแบบฟอร์ม AP-4". The
- * first thing anybody opening this page needs to do is the first thing they see.
+ * **Approvers is the default tab, and is deliberately not the first one.** The
+ * strip runs configuration-first — brands, rules, then the two rosters — but the
+ * page opens on ผู้อนุมัติบัญชี, as AP-1's does, and here for a sharper reason:
+ * `AccReimburseApprover` ships empty, and until it has two active rows every
+ * AP-4 request stops at the accounting step with "ไม่มีสิทธิ์ —
+ * คุณไม่ได้อยู่ในรายชื่อผู้อนุมัติฝ่ายบัญชีของแบบฟอร์ม AP-4". The one thing that
+ * blocks the whole form is the thing anybody opening this page should land on,
+ * whatever order the tabs read in.
  *
  * **สิทธิ์เข้าถึง is last, and it is not a rename of ผู้อนุมัติบัญชี.** The two
  * are separate rosters answering separate questions: ผู้อนุมัติบัญชี
@@ -160,7 +163,7 @@ function ReimburseSettingsContent() {
       <PageHeaderBar
         icon={Settings}
         title="ตั้งค่าขอเบิกเงินคืนพนักงาน"
-        subtitle="AP-4 · ผู้อนุมัติฝ่ายบัญชี ระเบียบการจ่าย แบรนด์ที่เบิกได้ และสิทธิ์เข้าถึง"
+        subtitle="AP-4 · แบรนด์ที่เบิกได้ ระเบียบการจ่าย ผู้อนุมัติฝ่ายบัญชี และสิทธิ์เข้าถึง"
         backHref={requestBackHref(searchParams.get("from"))}
       />
 

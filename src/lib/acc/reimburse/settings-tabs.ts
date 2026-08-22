@@ -35,11 +35,23 @@
  * a pool is `./access-tabs`.
  */
 
-/** Every tab the AP-4 settings page shows, in the order it shows them. */
+/**
+ * Every tab the AP-4 settings page shows, in the order it shows them.
+ *
+ * Configuration first, then the two rosters: which brands may be claimed
+ * against, the rules a requester agrees to, who approves the money, and who may
+ * change any of it. `GRANTABLE_REIMBURSE_TABS` is filtered from this array
+ * rather than written out again, so the checkbox columns on the สิทธิ์เข้าถึง
+ * tab follow the strip automatically.
+ *
+ * This is the display order only. `approvers` remains the tab the page *opens*
+ * on — see `parseTabKey` and the page's docblock — because AP-4 cannot process
+ * a single claim until that list has two active rows.
+ */
 export const REIMBURSE_SETTINGS_TAB_ORDER = [
-  "approvers",
-  "rules",
   "brands",
+  "rules",
+  "approvers",
   "access",
 ] as const;
 
@@ -56,8 +68,8 @@ export type GrantableReimburseTabKey = Extract<ReimburseSettingsTabKey, "rules" 
  * label here fails the typecheck rather than producing a checkbox with no text.
  */
 const REIMBURSE_TAB_LABELS: Record<GrantableReimburseTabKey, string> = {
-  rules: "ระเบียบการจ่าย",
   brands: "แบรนด์ที่เบิกได้",
+  rules: "ระเบียบการจ่าย",
 };
 
 /**
