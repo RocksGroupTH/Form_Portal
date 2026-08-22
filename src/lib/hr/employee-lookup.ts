@@ -418,6 +418,55 @@ export async function listDepartmentColleagues(
 }
 
 /**
+ * One active employee, in the picker's shape, resolved from HR by StaffId.
+ *
+ * The form needs this because `selectedRequester` used to be a lookup into the
+ * *department* list, and that list is no longer where the picker's rows come
+ * from: search returns people from anywhere, so selecting one left the lookup
+ * empty and the requester card rendered `#10075` with no name, department,
+ * email or manager. It fails the same way on a resumed draft whose requester
+ * has since moved department, which was already true before search existed.
+ *
+ * Same columns and the same UAT manager rewrite as the other two, so a person
+ * looks identical however the form came to be showing them.
+ */
+export async function findColleagueByStaffId(
+  staffId: number,
+  scope?: ColleagueScope,
+): Promise<DepartmentColleague | null> {
+  if (!Number.isInteger(staffId) || staffId <= 0) return null;
+  const pool = await getHrPool();
+  const result = await pool
+    .request()
+    .input("status", sql.NVarChar, EMPLOYEE_STATUS_ACTIVE)
+    .input("sid", sql.Int, staffId)
+    .query<ColleagueRow>(`
+      SELECT TOP (1)
+        e.StaffId, e.FullName, e.FirstName, e.LastName, e.Nickname, e.Position,
+        e.DepartmentId, d.Name AS DepartmentName,
+        e.Email, e.EmailCompBr, e.PhotoUrl, e.PhotoOverrideUrl,
+        mgr.StaffId AS MgrStaffId, mgr.FullName AS MgrFullName,
+        mgr.FirstName AS MgrFirstName, mgr.LastName AS MgrLastName,
+        mgr.Email AS MgrEmail, mgr.EmailCompBr AS MgrEmailCompBr, mgr.Position AS MgrPosition,
+        mgr.PhotoUrl AS MgrPhotoUrl, mgr.PhotoOverrideUrl AS MgrPhotoOverrideUrl
+      FROM dbo.Employee e
+      LEFT JOIN dbo.Department d
+        ON d.Id = CAST(e.DepartmentId AS nvarchar(50))
+       AND (d.IsActive = 1 OR d.IsActive IS NULL)
+      LEFT JOIN dbo.Employee mgr
+        ON mgr.StaffId = e.ManagerStaffId AND mgr.Status = @status
+      WHERE e.Status = @status AND e.StaffId = @sid
+    `);
+  const row = result.recordset[0];
+  if (!row) return null;
+
+  const environment = scope?.formCode
+    ? (await resolveFormAccess(scope.formCode, scope.requestId ?? null)).environment
+    : await resolveFormEnvironment();
+  const mapped = mapColleagueRow(row);
+  return environment === "UAT" ? (await withUatColleagueManagers([mapped]))[0] : mapped;
+}
+/**
  * Active employees matching a free-text query, for the on-behalf picker.
  *
  * The company-wide counterpart of `listDepartmentColleagues`, and the reason

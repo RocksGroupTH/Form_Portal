@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/api-auth";
 import { resolveLoginEmail } from "@/lib/auth-email";
 import {
   findActiveEmployeeByEmail,
+  findColleagueByStaffId,
   listDepartmentColleagues,
   searchActiveEmployees,
 } from "@/lib/hr/employee-lookup";
@@ -51,13 +52,28 @@ export async function GET(req: NextRequest) {
     // department.
     const scope = { formCode: AP1_FORM_CODE, requestId };
     const search = (req.nextUrl.searchParams.get("q") ?? "").trim();
+    const one = parseRequestId(req.nextUrl.searchParams.get("staffId"));
     const deptId = employee?.departmentId ?? null;
+
+    // Three modes, one shape.
+    //
+    // `staffId` resolves exactly one person from HR. The form needs it because
+    // the requester it is showing may not be in the department list at all —
+    // picked from a search, or carried on a resumed draft by somebody who has
+    // since moved department. Without it the card renders a bare "#10075".
+    //
+    // `q` searches the whole active roster; neither answers with the actor's own
+    // department, which is who people file for almost every time.
     const colleagues = (
-      search.length >= 2
-        ? await searchActiveEmployees(search, scope)
-        : deptId
-          ? await listDepartmentColleagues(deptId, scope)
-          : []
+      one !== null
+        ? [await findColleagueByStaffId(one, scope)].filter(
+            (c): c is NonNullable<typeof c> => c !== null,
+          )
+        : search.length >= 2
+          ? await searchActiveEmployees(search, scope)
+          : deptId
+            ? await listDepartmentColleagues(deptId, scope)
+            : []
     ).filter((c) => c.staffId !== employee?.staffId);
 
     return NextResponse.json({
