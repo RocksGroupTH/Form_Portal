@@ -6,13 +6,17 @@ import useSWR from "swr";
 import { AlertTriangle, CheckCircle2, Database, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog } from "@/components/ui/Dialog";
+// The typed-confirmation rule lives in its own import-free module so it can be
+// unit-tested without loading React, SWR and sonner. See its docblock for why
+// both Production directions are typed and neither UAT direction is.
+import {
+  CONFIRM_WORD,
+  isConfirmWordTyped,
+  needsTypedConfirm,
+  type SwitchField,
+} from "@/features/settings/form-environment-confirm";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
-
-/** Typed, not clicked: turning Production off hides a live form from general users. */
-const CONFIRM_WORD = "Confirm";
-
-type SwitchField = "production" | "uat";
 
 interface FormEnvironmentRow {
   formCode: string;
@@ -58,17 +62,13 @@ function directionLabel(next: boolean): string {
   return next ? "เปิด" : "ปิด";
 }
 
-/** The one transition that hides a live form from general users — gated by typed Confirm. */
-function isProductionOff(field: SwitchField, next: boolean): boolean {
-  return field === "production" && !next;
-}
-
 /** What this specific transition does — shown in the confirmation dialog body. */
 function transitionDescription(field: SwitchField, next: boolean): ReactNode {
   if (field === "production") {
     return next ? (
       <>
-        ผู้ใช้ทั่วไปจะเห็นและใช้งานฟอร์มนี้ได้ตามปกติ บนฐาน <b>Production</b>
+        ฟอร์มนี้จะ<b>เปิดให้ผู้ใช้ทั่วไปทั้งหมดทันที</b> คำขอที่ส่งเข้ามาจะถูกเขียนลงฐาน <b>Production</b>{" "}
+        และเป็นข้อมูลจริง — สวิตช์ UAT ไม่เกี่ยวข้องและไม่เปลี่ยนตาม
       </>
     ) : (
       <>
@@ -169,7 +169,7 @@ export function FormEnvironmentSettings() {
   );
 
   const [saving, setSaving] = useState<string | null>(null);
-  /** The switch waits here until confirmed — typed, for Production off; clicked, otherwise. */
+  /** The switch waits here until confirmed — typed, for either Production direction; clicked, for UAT. */
   const [pending, setPending] = useState<{ row: FormEnvironmentRow; field: SwitchField; next: boolean } | null>(
     null,
   );
@@ -380,7 +380,7 @@ export function FormEnvironmentSettings() {
         )}
       </div>
 
-      {/* ── Confirmation: Production off is typed, everything else is a plain confirm ── */}
+      {/* ── Confirmation: both Production directions are typed, UAT is a plain confirm ── */}
       <Dialog
         open={pending !== null}
         onOpenChange={(open) => {
@@ -405,7 +405,7 @@ export function FormEnvironmentSettings() {
               {pending.row.uatCount.toLocaleString()} รายการใน UAT
             </p>
 
-            {isProductionOff(pending.field, pending.next) ? (
+            {needsTypedConfirm(pending.field, pending.next) ? (
               <>
                 <label className="text-[12px] font-medium" style={{ color: "var(--text-primary)" }}>
                   พิมพ์ <code className="font-bold">Confirm</code> เพื่อยืนยัน
@@ -414,7 +414,7 @@ export function FormEnvironmentSettings() {
                     value={confirmText}
                     onChange={(e) => setConfirmText(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter" && confirmText.trim() === CONFIRM_WORD) {
+                      if (e.key === "Enter" && isConfirmWordTyped(confirmText)) {
                         void setFlag(pending.row.formCode, pending.field, pending.next);
                       }
                     }}
@@ -437,12 +437,19 @@ export function FormEnvironmentSettings() {
                     ยกเลิก
                   </button>
                   <button
-                    disabled={confirmText.trim() !== CONFIRM_WORD || saving === pending.row.formCode}
+                    disabled={!isConfirmWordTyped(confirmText) || saving === pending.row.formCode}
                     onClick={() => void setFlag(pending.row.formCode, pending.field, pending.next)}
                     className="flex-1 px-3 py-2 rounded-lg text-[12px] font-bold border-none text-white disabled:opacity-50 disabled:cursor-not-allowed enabled:cursor-pointer"
-                    style={{ background: "var(--color-danger)" }}
+                    // Red for the direction that takes a live form away, the
+                    // page's ordinary action colour for the one that puts it
+                    // back. Both are typed; only one is a loss.
+                    style={{
+                      background: pending.next ? "var(--color-action)" : "var(--color-danger)",
+                    }}
                   >
-                    {saving === pending.row.formCode ? "กำลังปิด..." : "ปิด Production"}
+                    {saving === pending.row.formCode
+                      ? `กำลัง${directionLabel(pending.next)}...`
+                      : `${directionLabel(pending.next)} ${fieldLabel(pending.field)}`}
                   </button>
                 </div>
               </>
