@@ -58,7 +58,7 @@ function RolePickerModal({ userName, onSelect, onCancel }: {
         </div>
         <div className="flex gap-2 px-5 py-3" style={{ borderTop: "1px solid var(--border-card)", background: "var(--bg-card-alt)" }}>
           <button onClick={onCancel} className="flex-1 px-3 py-2 rounded-lg text-[12px] font-medium cursor-pointer" style={{ background: "var(--bg-badge)", color: "var(--text-secondary)", border: "none" }}>Cancel</button>
-          <button onClick={() => onSelect(role)} className="flex-1 px-3 py-2 rounded-lg text-[12px] font-bold cursor-pointer border-none text-white" style={{ background: "var(--color-action)" }}>Add as {role}</button>
+          <button onClick={() => onSelect(role)} className="flex-1 px-3 py-2 rounded-lg text-[12px] font-bold cursor-pointer border-none text-white" style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}>Add as {role}</button>
         </div>
       </div>
     </div>
@@ -172,7 +172,7 @@ function ADSearchModal({ onClose, onSelect, existingEmails, title }: {
                       <button
                         onClick={() => { onSelect(u.email, u.name); onClose(); }}
                         className="text-[11px] font-bold px-3 py-1 rounded-lg cursor-pointer border-none"
-                        style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)" }}
+                        style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}
                       >
                         + Add
                       </button>
@@ -283,7 +283,7 @@ export default function SettingsUsersPage() {
             <button
               onClick={() => setShowAddUserModal(true)}
               className="flex items-center gap-1.5 text-[12px] font-medium px-3 py-2 rounded-lg cursor-pointer border-none"
-              style={{ background: "var(--color-action)", color: "var(--btn-primary-text)" }}
+              style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}
             >
               <Plus size={12} /> Add User from AD
             </button>
@@ -303,7 +303,7 @@ export default function SettingsUsersPage() {
           <div className="overflow-x-auto">
             <table className="w-full text-[11px]">
               <thead>
-                <tr style={{ borderBottom: "1px solid var(--border-light)", background: "var(--bg-card-alt)" }}>
+                <tr style={{ borderBottom: "1px solid var(--border-light)", background: "var(--bg-card-header)" }}>
                   <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Name</th>
                   <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Email</th>
                   <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Role</th>

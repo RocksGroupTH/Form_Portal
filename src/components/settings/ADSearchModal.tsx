@@ -237,7 +237,7 @@ export function ADSearchModal({
                           onClose();
                         }}
                         className="text-[11px] font-bold px-3 py-1 rounded-lg cursor-pointer border-none"
-                        style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)" }}
+                        style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}
                       >
                         + เลือก
                       </button>

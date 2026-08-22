@@ -362,7 +362,7 @@ function BcFormModal({
             </button>
             <div className="flex-1 flex items-center justify-end gap-2 min-w-0 ml-auto">
               {saveTestStatus && <TestStatusLabel ok={saveTestStatus.ok} message={saveTestStatus.message} />}
-              <button type="button" onClick={onSave} disabled={saving || testing} className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-[12px] font-bold cursor-pointer border-none text-white disabled:opacity-60" style={{ background: "var(--color-action)" }}>
+              <button type="button" onClick={onSave} disabled={saving || testing} className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-[12px] font-bold cursor-pointer border-none text-white disabled:opacity-60" style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}>
                 {saving && <Loader2 size={14} className="animate-spin" />}
                 {saving && testing ? "Testing…" : "Save"}
               </button>

@@ -319,7 +319,7 @@ export function BookingApproverSettings() {
           <button
             onClick={() => setShowAddModal(true)}
             className="flex items-center gap-1.5 text-[12px] font-medium px-3 py-2 rounded-lg cursor-pointer border-none"
-            style={{ background: "var(--color-action)", color: "var(--btn-primary-text)" }}
+            style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}
           >
             <Plus size={12} /> เพิ่มผู้มีสิทธิ์เข้าถึง
           </button>
@@ -361,7 +361,7 @@ export function BookingApproverSettings() {
                 <tr
                   style={{
                     borderBottom: "1px solid var(--border-light)",
-                    background: "var(--bg-card-alt)",
+                    background: "var(--bg-card-header)",
                   }}
                 >
                   <th

@@ -726,7 +726,7 @@ export function ErpPrepQueue({
         <div className="overflow-x-auto no-scrollbar">
           <table className="w-full text-[12px] min-w-[1080px]">
             <thead>
-              <tr style={{ background: "var(--bg-card-alt)", borderBottom: "1px solid var(--border-light)" }}>
+              <tr style={{ background: "var(--bg-card-header)", borderBottom: "1px solid var(--border-light)" }}>
                 <th className="text-left px-3 py-2.5 font-semibold whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>เลขที่</th>
                 <th className="text-left px-3 py-2.5 font-semibold whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>วันที่ส่ง</th>
                 <th className="text-left px-3 py-2.5 font-semibold" style={{ color: "var(--text-secondary)" }}>ผู้ขอ</th>

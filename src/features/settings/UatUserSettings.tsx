@@ -152,7 +152,7 @@ export function UatUserSettings() {
           <button
             onClick={() => setShowAddTesterModal(true)}
             className="flex items-center gap-1.5 text-[12px] font-medium px-3 py-2 rounded-lg cursor-pointer border-none"
-            style={{ background: "var(--color-action)", color: "var(--btn-primary-text)" }}
+            style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}
           >
             <Plus size={12} /> เพิ่มผู้ทดสอบ
           </button>
@@ -191,7 +191,7 @@ export function UatUserSettings() {
           <div className="overflow-x-auto">
             <table className="w-full text-[11px]">
               <thead>
-                <tr style={{ borderBottom: "1px solid var(--border-light)", background: "var(--bg-card-alt)" }}>
+                <tr style={{ borderBottom: "1px solid var(--border-light)", background: "var(--bg-card-header)" }}>
                   <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>ชื่อ</th>
                   <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>อีเมล</th>
                   <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>ผู้จัดการสำหรับ UAT</th>

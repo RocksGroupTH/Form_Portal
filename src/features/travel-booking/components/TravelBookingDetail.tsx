@@ -95,7 +95,7 @@ function Section({
     >
       <div
         className="flex items-center gap-2.5 px-5 py-3"
-        style={{ borderBottom: "1px solid var(--border-card)", background: "var(--bg-card-alt)" }}
+        style={{ borderBottom: "1px solid var(--border-card)", background: "var(--bg-card-header)" }}
       >
         {icon && (
           <span
@@ -697,7 +697,7 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
                 >
                   <div
                     className="flex items-center justify-between gap-2 px-4 py-2.5"
-                    style={{ background: "var(--bg-card-alt)", borderBottom: "1px solid var(--border-light)" }}
+                    style={{ background: "var(--bg-card-header)", borderBottom: "1px solid var(--border-light)" }}
                   >
                     <span className="flex items-center gap-2 text-[12.5px] font-bold" style={{ color: "var(--text-heading)" }}>
                       <span style={{ color: "var(--nav-active-text)" }}>{BOOKING_TYPE_ICON[rule.type]}</span>
@@ -1103,7 +1103,7 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
             onClick={handleCancel}
             disabled={cancelling}
             className="inline-flex items-center gap-1.5 text-[13px] font-medium px-4 py-2 rounded-lg"
-            style={{ background: "var(--color-danger)", color: "#ffffff", opacity: cancelling ? 0.7 : 1 }}
+            style={{ background: "var(--btn-danger-bg)", color: "var(--btn-danger-text)", border: "1px solid var(--btn-danger-border)", opacity: cancelling ? 0.7 : 1 }}
           >
             {cancelling ? "กำลังยกเลิก..." : "ยืนยัน ยกเลิกคำขอ"}
           </button>

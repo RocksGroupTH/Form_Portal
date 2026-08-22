@@ -24,7 +24,7 @@ export default function UnauthorizedPage() {
         <Link
           href="/login"
           className="inline-flex items-center gap-2 text-[13px] font-medium no-underline px-4 py-2 rounded-xl"
-          style={{ color: "var(--btn-primary-text)", background: "var(--btn-primary-bg)" }}
+          style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}
         >
           <ArrowLeft size={14} />
           Back to Sign In

@@ -80,10 +80,10 @@ export function TravelExpenseLoadingPopup({
           {pct != null ? (
             <div
               className="h-full rounded-full transition-[width] duration-300 ease-out"
-              style={{ width: `${pct}%`, background: "var(--color-action)" }}
+              style={{ width: `${pct}%`, background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}
             />
           ) : (
-            <div className="acc-progress h-full rounded-full" style={{ background: "var(--color-action)" }} />
+            <div className="acc-progress h-full rounded-full" style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }} />
           )}
         </div>
       </div>
