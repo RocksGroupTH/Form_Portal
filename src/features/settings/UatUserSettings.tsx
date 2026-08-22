@@ -5,7 +5,8 @@ import useSWR from "swr";
 import { AlertTriangle, FlaskConical, Loader2, Plus, UserCheck, UserX } from "lucide-react";
 import { toast } from "sonner";
 // This page's own copy of the picker is what `@/components/settings/ADSearchModal`
-// was lifted from, so the shared one is that copy with an `aria-label` added.
+// was lifted from, so the shared one is that copy with an `aria-label` added and
+// `onSelect` widened to hand back the whole row.
 import { ADSearchModal } from "@/components/settings/ADSearchModal";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
@@ -161,7 +162,7 @@ export function UatUserSettings() {
           <ADSearchModal
             title="เพิ่มผู้ทดสอบ UAT"
             onClose={() => setShowAddTesterModal(false)}
-            onSelect={(email) => { void doAction({ action: "upsert", email }); }}
+            onSelect={(u) => { void doAction({ action: "upsert", email: u.email }); }}
             existingEmails={testers.map((t) => t.email)}
           />
         )}
@@ -170,8 +171,8 @@ export function UatUserSettings() {
             title="ตั้งผู้จัดการสำหรับ UAT"
             subtitle={`สำหรับ ${managerPickerFor.name} (${managerPickerFor.email})`}
             onClose={() => setManagerPickerFor(null)}
-            onSelect={(managerEmail) => {
-              void doAction({ action: "upsert", email: managerPickerFor.email, managerEmail });
+            onSelect={(u) => {
+              void doAction({ action: "upsert", email: managerPickerFor.email, managerEmail: u.email });
             }}
           />
         )}

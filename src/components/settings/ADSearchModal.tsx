@@ -4,45 +4,41 @@ import { useEffect, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
 
 /**
- * Pick a person out of Microsoft Entra ID.
+ * The shared Entra ID people-picker used by the settings panels.
  *
  * Lifted from `UatUserSettings`'s private copy — the richest of the four the
  * settings surfaces each carried (title, subtitle, already-added marking) — and
- * the one AP-4's approver table is modelled on. `UatUserSettings` now imports
- * this instead, so extracting it removed a copy rather than adding one.
+ * imported today by `UatUserSettings` itself, AP-17's `BookingApproverSettings`
+ * and AP-4's `ReimburseApproverSettings`. It is the one new panels should
+ * import.
  *
- * The other three are deliberately left alone, because they are not the same
- * component wearing different formatting:
+ * The three remaining private copies are deliberately left alone, because they
+ * are not the same component wearing different formatting:
  *
  * - **Users & Roles** (`app/(dashboard)/settings/users/page.tsx`) is the
  *   English-language variant — English placeholder, empty and error copy, a
  *   hardcoded English subtitle with no prop to override it, `title` optional,
  *   and a text `✕` rather than the `X` icon. Adopting this one would translate
  *   that page's dialog into Thai.
- * - **AP-1's `ApproverSettings`** and **`SameDayBrandSettings`** both call
- *   `onSelect(user)` with the whole result row, and `ApproverSettings` reads
- *   `user.photo` off it to seed `AccApprover.PhotoUrl`. This modal's
- *   `onSelect(email, name)` cannot carry that, so migrating either means
- *   widening the shared signature — a change to a live approver-management
- *   path, which is worth doing on its own terms and not as a drive-by.
+ * - **AP-1's `ApproverSettings`** and **`SameDayBrandSettings`** are closer —
+ *   both already hand the whole row to `onSelect`, as this one does, and
+ *   `ApproverSettings` reads `user.photo` off it to seed `AccApprover.PhotoUrl`
+ *   — but each carries small behavioural differences, and raw hex where a
+ *   theme token belongs. Folding them in is a refactor of a live
+ *   approver-management path, worth doing on its own terms and not as a
+ *   drive-by.
+ *
+ * `onSelect` hands back the whole `ADResult` rather than a name/email pair, so
+ * a caller that later needs the Entra object id or the department does not
+ * have to widen this signature.
  */
-
-export interface ADSearchResult {
+export interface ADResult {
+  id?: string | null;
   email: string;
   name: string;
   jobTitle: string | null;
   department: string | null;
   photo?: string | null;
-}
-
-export interface ADSearchModalProps {
-  title: string;
-  subtitle?: string;
-  onClose: () => void;
-  /** Called with the chosen person. The modal closes itself immediately after. */
-  onSelect: (email: string, name: string) => void;
-  /** Marked "เพิ่มแล้ว" and not selectable. Case-insensitive. */
-  existingEmails?: string[];
 }
 
 export function ADSearchModal({
@@ -51,9 +47,16 @@ export function ADSearchModal({
   onClose,
   onSelect,
   existingEmails,
-}: ADSearchModalProps) {
+}: {
+  title: string;
+  subtitle?: string;
+  onClose: () => void;
+  onSelect: (user: ADResult) => void;
+  /** Already on the list — shown as "เพิ่มแล้ว" and not selectable again. */
+  existingEmails?: string[];
+}) {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<ADSearchResult[]>([]);
+  const [results, setResults] = useState<ADResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -85,7 +88,7 @@ export function ADSearchModal({
     };
   }, [query]);
 
-  const existing = new Set((existingEmails ?? []).map((e) => e.toLowerCase()));
+  const existing = new Set((existingEmails ?? []).map((e) => (e ?? "").toLowerCase()));
 
   return (
     <div
@@ -114,9 +117,9 @@ export function ADSearchModal({
           </div>
           <button
             onClick={onClose}
+            aria-label="ปิด"
             className="w-7 h-7 rounded-lg flex items-center justify-center cursor-pointer border-none"
             style={{ background: "var(--bg-badge)", color: "var(--text-muted)" }}
-            aria-label="ปิด"
           >
             <X size={14} />
           </button>
@@ -154,7 +157,7 @@ export function ADSearchModal({
             </div>
           ) : error ? (
             <div className="py-10 text-center">
-              <p className="text-[12px]" style={{ color: "var(--color-danger)" }}>
+              <p className="text-[12px]" style={{ color: "var(--text-danger)" }}>
                 {error}
               </p>
             </div>
@@ -173,7 +176,7 @@ export function ADSearchModal({
                 {results.length} ผลลัพธ์
               </p>
               {results.map((u) => {
-                const added = existing.has(u.email.toLowerCase());
+                const added = existing.has((u.email ?? "").toLowerCase());
                 return (
                   <div
                     key={u.email}
@@ -230,7 +233,7 @@ export function ADSearchModal({
                     ) : (
                       <button
                         onClick={() => {
-                          onSelect(u.email, u.name);
+                          onSelect(u);
                           onClose();
                         }}
                         className="text-[11px] font-bold px-3 py-1 rounded-lg cursor-pointer border-none"

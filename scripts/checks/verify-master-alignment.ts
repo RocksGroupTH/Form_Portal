@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 /**
- * Assert the 21 shared configuration tables are identical in Rocks_Portal_Form
+ * Assert the 23 shared configuration tables are identical in Rocks_Portal_Form
  * and Rocks_Portal_Form_UAT.
  *
  * Per-form routing means AP-1 may read one copy while AP-17 reads the other, so
@@ -46,7 +46,10 @@ function loadDotEnvLocal() {
 }
 
 /**
- * The 21 tables dual-write keeps in step.
+ * The 23 tables dual-write keeps in step.
+ *
+ * `AccBookingApprover` and `AccBookingApproverTab` are AP-17's, added with its
+ * own approver roster and per-tab grants.
  *
  * The last two are AP-4's, added with its settings page: `AccReimburseApprover`
  * decides who may take either accounting step and `AccReimburseRule` is the
@@ -61,6 +64,8 @@ const MASTER_TABLES = [
   "AccApprover",
   "AccApproverInterfaceBrand",
   "AccApproverSettingsTab",
+  "AccBookingApprover",
+  "AccBookingApproverTab",
   "AccVehicle",
   "AccTravelReason",
   "AccTravelAccommodation",

@@ -57,14 +57,15 @@ Unit tests live beside the code they cover as `*.test.ts`.
 
 ## Databases
 
-Five databases, one isolated pool each — never the global `sql.connect()`.
+Six databases, one isolated pool each — never the global `sql.connect()`.
 
 | Database | Holds |
 |---|---|
-| `Rocks_Portal_Form` | This app's own data: forms, requests, approvals, files, `Acc*` tables, **and `TeamMember` identity** |
+| `Rocks_Portal_Form` | This app's own data: forms, requests, approvals, files, `Acc*` tables, **`TeamMember` identity**, and **`TravelProvince`** (AP-17 province lookups) |
 | `Rocks_Portal_Form_UAT` | The UAT twin, served to configured testers |
 | `Fast_Core` | Shared config, brand/connection settings, plus this app's `FormEnvironment` and `UatTester` |
-| `Fast_Data` | Department maps, province lookups, ERP account/dimension sync |
+| `Fast_Data` | Nothing this app reads any more. `TravelProvince` moved to `Rocks_Portal_Form` (migrations 104/105), completing the same move already made for the five Business Central sync tables (`Fast_Data` → `Rocks_ERP_Data`, 101/102). **The department map moved out of `Fast_Core`, not out of here** — `DepartmentErpMap` went `Fast_Core` → `Rocks_Portal_Form` (migrations 099/100), and its synonym sits in `Fast_Core`. What is left here is Rocks Fast's Intelligence tables, which this app never touches, plus the six synonyms 102 and 105 left behind for the Rocks Fast and ACC Portal siblings. |
+| `Rocks_ERP_Data` | Business Central sync mirror — `ErpAccounts`, `ErpDimensionValue`, `ErpGeneralJournalBatch`, `ErpBankAccountCard`, `ErpSyncLog` (migrations 101/102). `Fast_Data` keeps a synonym per table for the two sibling apps |
 | `Rocks_Portal_HR` | Employee master and manager chain |
 
 `Fast_Form` belongs to the Rocks Fast sibling — this app must not touch it, and a

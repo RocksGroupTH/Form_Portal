@@ -188,9 +188,9 @@ export function ReimburseApproverSettings() {
             subtitle="ผู้อนุมัติต้องมีข้อมูลพนักงานที่ใช้งานอยู่ในระบบ HR (StaffId)"
             onClose={() => setShowAddModal(false)}
             existingEmails={approvers.map((a) => a.email)}
-            onSelect={(email, name) => {
+            onSelect={(u) => {
               setAdding(true);
-              void doAction({ action: "add", email, displayName: name }).finally(() => setAdding(false));
+              void doAction({ action: "add", email: u.email, displayName: u.name }).finally(() => setAdding(false));
             }}
           />
         )}
