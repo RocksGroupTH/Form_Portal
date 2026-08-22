@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/api-auth";
+import { requireReimburseSettingsTab } from "@/lib/acc/reimburse/require-reimburse-settings-tab";
 import { listFormBrands, setFormBrands } from "@/lib/acc/settings-service";
 import { AP4_FORM_CODE } from "@/features/reimburse/constants";
 
@@ -17,11 +17,14 @@ import { AP4_FORM_CODE } from "@/features/reimburse/constants";
  * for the requester-facing half.
  */
 
-/** Matches AP-1's settings routes, which are the neighbouring precedent. */
-const SETTINGS_ROLES = ["IT Admin", "System Admin"] as const;
-
+/**
+ * Gated on the `brands` tab grant, not on the role directly. The guard's admin
+ * arm is exactly the `["IT Admin", "System Admin"]` this used to require, so
+ * nobody who could reach it before loses it; what is added is the non-admin who
+ * has been ticked for this tab at Settings → สิทธิ์เข้าถึง.
+ */
 export async function GET() {
-  const session = await requireRole([...SETTINGS_ROLES]);
+  const session = await requireReimburseSettingsTab("brands");
   if (session instanceof Response) return session;
 
   try {
@@ -35,7 +38,7 @@ export async function GET() {
 
 /** POST { brandCodes: string[] } — the complete active set; anything absent is deactivated. */
 export async function POST(req: NextRequest) {
-  const session = await requireRole([...SETTINGS_ROLES]);
+  const session = await requireReimburseSettingsTab("brands");
   if (session instanceof Response) return session;
 
   try {

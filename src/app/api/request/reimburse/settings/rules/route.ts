@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth, requireRole } from "@/lib/api-auth";
+import { requireAuth } from "@/lib/api-auth";
+import { requireReimburseSettingsTab } from "@/lib/acc/reimburse/require-reimburse-settings-tab";
 import {
   createRule,
   listActiveRules,
@@ -20,9 +21,6 @@ import { validateRuleText } from "@/features/reimburse/constants";
  * terms — see `GET` below.
  */
 
-/** Who may edit the checklist. Matches AP-1's settings routes, which are the neighbouring precedent. */
-const SETTINGS_ROLES = ["IT Admin", "System Admin"] as const;
-
 /* ─────────────────────────── read ─────────────────────────── */
 
 /**
@@ -40,8 +38,14 @@ const SETTINGS_ROLES = ["IT Admin", "System Admin"] as const;
 export async function GET(req: NextRequest) {
   const includeInactive = req.nextUrl.searchParams.get("includeInactive") === "1";
 
+  // `requireReimburseSettingsTab` rather than `requireRole(["IT Admin",
+  // "System Admin"])`, which is what this was: the guard's admin arm is exactly
+  // that pair, so nobody loses the editor's read, and a non-admin granted the
+  // `rules` tab can now load the panel they are allowed to save. The read is
+  // widened with the write deliberately — a grant that can save but not load
+  // would be a panel that shows nothing and then overwrites it.
   const session = includeInactive
-    ? await requireRole([...SETTINGS_ROLES])
+    ? await requireReimburseSettingsTab("rules")
     : await requireAuth();
   if (session instanceof Response) return session;
 
@@ -85,7 +89,7 @@ function ruleId(raw: unknown): number | null {
  * say what its author agreed to. `setActive` is the whole retirement story.
  */
 export async function POST(req: NextRequest) {
-  const session = await requireRole([...SETTINGS_ROLES]);
+  const session = await requireReimburseSettingsTab("rules");
   if (session instanceof Response) return session;
 
   let body: RuleWriteBody;

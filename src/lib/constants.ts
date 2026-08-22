@@ -98,7 +98,7 @@ export const REQUEST_CARDS: NavItem[] = [
     id: "reimburse-settings",
     label: "ขอเบิกเงินคืนพนักงาน (ออฟฟิต)",
     icon: "Receipt",
-    desc: "ฟอร์ม AP-4 · ผู้อนุมัติบัญชี · ระเบียบการจ่าย · แบรนด์",
+    desc: "ฟอร์ม AP-4 · ผู้อนุมัติบัญชี · ระเบียบการจ่าย · แบรนด์ · สิทธิ์เข้าถึง",
     href: "/request/reimburse/settings",
     group: "Settings",
     groupTh: "ตั้งค่า",
