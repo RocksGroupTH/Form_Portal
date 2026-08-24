@@ -502,18 +502,30 @@ export function TravelExpenseForm({
     const dayMatch = first.match(/^day-(\d+)-/);
     if (dayMatch) setActiveDayIndex(Number(dayMatch[1]));
     const suffix = dayMatch ? first.replace(/^day-\d+-/, "") : first;
-    const el: HTMLElement | null =
-      suffix === "manager" || first === "manager" ? managerRef.current
-      : suffix === "travelDate" ? dateRef.current
-      : suffix === "workDetail" ? workDetailRef.current
-      : suffix === "brand" || first === "brand" ? brandRef.current
-      : suffix === "receipt" ? receiptRef.current
-      : vehicleRef.current;
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) el.focus();
-      else el.focus?.();
-    }
+
+    // Deferred a frame: a `data-field` inside a per-day block does not exist in
+    // the DOM until React has rendered the day just switched to above.
+    requestAnimationFrame(() => {
+      const el: HTMLElement | null =
+        // Markup claims its own key first. The chain below only knows the
+        // handful of names somebody remembered to add to it, and **everything
+        // else fell through to `vehicleRef`** — so a missing ค่าโดยสาร, whose
+        // key is `day-N-fare-0`, scrolled to the vehicle picker instead of to
+        // the expense block that was actually incomplete. A new block now needs
+        // a `data-field`, not an extra arm here.
+        document.querySelector<HTMLElement>(`[data-field="${suffix}"]`)
+        ?? (suffix === "manager" || first === "manager" ? managerRef.current
+        : suffix === "travelDate" ? dateRef.current
+        : suffix === "workDetail" ? workDetailRef.current
+        : suffix === "brand" || first === "brand" ? brandRef.current
+        : suffix === "receipt" ? receiptRef.current
+        : vehicleRef.current);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) el.focus();
+        else el.focus?.();
+      }
+    });
   }, [missing, setActiveDayIndex]);
 
   const buildItemsForSave = useCallback(
@@ -737,7 +749,13 @@ export function TravelExpenseForm({
       icon={<User size={15} />}
       title="ผู้ขอเบิก"
       dataTour="ap1-requester"
-      extra={colleagues.length > 0 ? (
+      extra={(
+        /*
+         * Not gated on `colleagues.length`: that list is the actor's own
+         * department, and the picker has searched the whole company since its
+         * `?q=` mode landed. Gating on it hid a working feature from anybody
+         * who is the only person in their department.
+         */
         <button
           type="button"
           onClick={() => setRequesterPickerOpen(true)}
@@ -746,7 +764,7 @@ export function TravelExpenseForm({
         >
           <UserCog size={13} /> เปลี่ยนผู้ขอเบิก
         </button>
-      ) : undefined}
+      )}
     >
       {employeeLoading ? (
         <div className="flex items-center gap-4">
@@ -1398,7 +1416,10 @@ export function TravelExpenseForm({
             key={`${sec.vehicleId ?? "sec"}-${si}`}
             className="rounded-xl px-4 py-3 flex flex-col gap-3"
             style={{
-              background: "var(--bg-card-alt)",
+              // White, matching the expense rows inside it — the frame and its
+              // rows read as one surface, separated by their borders rather
+              // than by two shades of grey stacked on each other.
+              background: "var(--bg-card)",
               border: "1px solid var(--border-card)",
             }}
           >
@@ -1408,6 +1429,7 @@ export function TravelExpenseForm({
             <ExpenseRows
               label="ค่าโดยสาร / ค่าเดินทาง"
               type="fare"
+              dataField={`fare-${si}`}
               items={sec.items}
               onAdd={() => addSectionItem(si, "fare")}
               onUpdate={(idx, patch) => updateSectionItem(si, idx, patch)}
@@ -1460,6 +1482,7 @@ export function TravelExpenseForm({
           <ExpenseRows
             label="ค่าโดยสาร / ค่าเดินทาง"
             type="fare"
+            dataField="fare"
             items={travel.items}
             onAdd={() => addItem("fare")}
             onUpdate={updateItem}

@@ -201,16 +201,18 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
         dataTour="ap17-requester"
         icon={<User size={15} />}
         title="ผู้ขอเบิก"
-        extra={colleagues.length > 0 ? (
+        extra={(
+          /* See AP-1's copy of this button — the department-size gate it used
+             to carry hid the picker from anyone alone in their department. */
           <button
             type="button"
             onClick={() => setRequesterPickerOpen(true)}
-            className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold cursor-pointer"
+            className="hover-run-border shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold cursor-pointer"
             style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", color: "var(--nav-active-text)" }}
           >
             <UserCog size={13} /> เปลี่ยนผู้ขอเบิก
           </button>
-        ) : undefined}
+        )}
       >
         {employeeLoading ? (
           <div className="flex items-center gap-3">

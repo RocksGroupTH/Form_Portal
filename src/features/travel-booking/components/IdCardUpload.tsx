@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { AlertTriangle, CheckCircle2, FileText, History, IdCard, Loader2, Paperclip, ScanLine, Trash2 } from "lucide-react";
 import type { TravelBookingFileMeta } from "@/features/travel-booking/types";
-import { looksLikeThaiIdCard } from "@/features/travel-booking/lib/idcard-ocr";
+import { looksLikeThaiIdCard, type IdCardCheck } from "@/features/travel-booking/lib/idcard-check";
 import { ImageLightbox } from "@/features/accounting/components/ImageLightbox";
 import { errLabelStyle, labelClass, requiredStar } from "./shared";
 
@@ -48,8 +48,14 @@ export function IdCardUpload({
   const [dragging, setDragging] = useState(false);
   const [removingId, setRemovingId] = useState<number | null>(null);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
-  // Popup shown when the OCR check decides the image is not a Thai ID card.
-  const [notIdCardMsg, setNotIdCardMsg] = useState<string | null>(null);
+  /**
+   * The refusal popup. `unavailable` separates "this photo is not a card" from
+   * "the check could not be reached" — both refuse the file, but the title and
+   * the button were hardcoded to the first, so somebody holding a perfectly
+   * good ID card was told it was not one and offered another photo as the
+   * remedy. Measured 2026-08-24 against a revoked key.
+   */
+  const [refusal, setRefusal] = useState<{ message: string; unavailable: boolean } | null>(null);
   // Reuse-a-previous-card (server-side, per requester consent).
   const [previousCard, setPreviousCard] = useState<PreviousIdCard | null>(null);
   const [reuseConsent, setReuseConsent] = useState<boolean | null>(null);
@@ -134,24 +140,33 @@ export function IdCardUpload({
       return;
     }
 
-    // OCR-check the image is actually a Thai national ID card.
+    // Ask the server whether this really is a Thai national ID card.
     setChecking(true);
+    let result: IdCardCheck;
     try {
-      const result = await looksLikeThaiIdCard(file);
-      if (!result.ok) {
-        setNotIdCardMsg(result.reason ?? "กรุณาอัปโหลดรูปบัตรประชาชนที่ชัดเจน");
-        reset();
-        return;
-      }
+      result = await looksLikeThaiIdCard(file);
     } catch {
-      setNotIdCardMsg("ตรวจสอบรูปบัตรไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
-      reset();
-      return;
+      result = { ok: false, unavailable: true };
     } finally {
       setChecking(false);
     }
 
-    // OCR passed — hold the file locally; it uploads when the draft is saved (like AP-1).
+    // Nothing is attached without a verdict of "yes" — a failure to *reach* the
+    // check refuses the file exactly like a "this is not a card" does. Decided
+    // 2026-08-24 with the cost accepted: while the check cannot run, AP-17
+    // cannot be filed, because this attachment is required to submit.
+    // `result.reason` already says which remedy applies — wait, retry, tell IT,
+    // or attach a different photo.
+    if (!result.ok) {
+      setRefusal({
+        message: result.reason ?? "กรุณาอัปโหลดรูปบัตรประชาชนที่ชัดเจน",
+        unavailable: !!result.unavailable,
+      });
+      reset();
+      return;
+    }
+
+    // Held locally; it uploads when the draft is saved (like AP-1).
     onSelectPending(file);
     reset();
   };
@@ -244,6 +259,8 @@ export function IdCardUpload({
                 </button>
               </div>
               <div className="text-center">
+                {/* Unconditional again, and truthful: nothing becomes a pending
+                    file without a positive verdict. */}
                 <div className="inline-flex items-center gap-1.5 text-[12.5px] font-bold" style={{ color: "#4fa37a" }}>
                   <CheckCircle2 size={14} /> ตรวจสอบแล้วเป็นบัตรประชาชน
                 </div>
@@ -453,13 +470,13 @@ export function IdCardUpload({
           document.body,
         )}
 
-      {/* "ไม่ใช่บัตรประชาชน" alert popup */}
-      {notIdCardMsg && typeof document !== "undefined" &&
+      {/* Refusal popup — the photo is not a card, or the check could not run */}
+      {refusal && typeof document !== "undefined" &&
         createPortal(
           <div
             className="fixed inset-0 z-[90] flex items-center justify-center p-4"
             style={{ background: "rgba(0,0,0,0.5)" }}
-            onClick={() => setNotIdCardMsg(null)}
+            onClick={() => setRefusal(null)}
           >
             <div
               role="alertdialog"
@@ -475,18 +492,19 @@ export function IdCardUpload({
                 <AlertTriangle size={28} />
               </div>
               <div className="text-[15.5px] font-bold" style={{ color: "var(--text-heading)" }}>
-                ไม่ใช่บัตรประชาชน
+                {refusal.unavailable ? "ตรวจรูปบัตรไม่สำเร็จ" : "ไม่ใช่บัตรประชาชน"}
               </div>
               <div className="text-[12.5px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                {notIdCardMsg}
+                {refusal.message}
               </div>
               <button
                 type="button"
-                onClick={() => setNotIdCardMsg(null)}
+                onClick={() => setRefusal(null)}
                 className="mt-1 w-full inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg text-[13px] font-bold text-white border-none cursor-pointer"
                 style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}
               >
-                เลือกรูปใหม่
+                {/* Another photo is no remedy when the check itself is down. */}
+                {refusal.unavailable ? "ปิด" : "เลือกรูปใหม่"}
               </button>
             </div>
           </div>,

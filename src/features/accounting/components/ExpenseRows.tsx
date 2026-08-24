@@ -1,10 +1,15 @@
 "use client";
 
-import React, { useRef, useState } from "react";
-import { Plus, Trash2, Paperclip, X, Loader2 } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { Plus, Trash2, Paperclip, X, Loader2, ScanLine } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog } from "@/components/ui";
 import { ImageLightbox } from "@/features/accounting/components/ImageLightbox";
+import {
+  readReceiptAmount,
+  RECEIPT_FAILURE_TEXT,
+  type ReceiptFailure,
+} from "@/features/accounting/lib/read-receipt-amount";
 import type { TravelExpenseItem, PendingFile } from "@/features/accounting/types";
 import type { TravelItemType } from "@/features/accounting/constants";
 
@@ -19,6 +24,12 @@ interface ExpenseRowsProps {
   highlightMissingReceipt?: boolean;
   /** Saved request id — enables deleting already-uploaded images (Draft editing). */
   requestId?: number;
+  /**
+   * Marks this block so `focusFirstMissing` can scroll to it by name. Matches
+   * the readiness key without its `day-N-` prefix (`fare`, `fare-0`, …). The
+   * same `[data-field]` mechanism AP-17's form uses.
+   */
+  dataField?: string;
 }
 
 const inputStyle: React.CSSProperties = {
@@ -36,6 +47,7 @@ export function ExpenseRows({
   onRemove,
   highlightMissingReceipt = false,
   requestId,
+  dataField,
 }: ExpenseRowsProps) {
   const rowItems = items.filter((it) => it.itemType === type);
   const allItems = items;
@@ -64,7 +76,7 @@ export function ExpenseRows({
   };
 
   return (
-    <div className="w-full">
+    <div className="w-full" data-field={dataField}>
       <div className="mb-2">
         <label
           className="text-[13px] font-medium"
@@ -170,6 +182,14 @@ function ExpenseRow({
   // Pending confirmation for destructive actions on already-saved data.
   const [confirm, setConfirm] = useState<{ kind: "file"; fileId: number } | { kind: "row" } | null>(null);
   const [confirming, setConfirming] = useState(false);
+  /**
+   * How the receipt read is going, for the note under the row. It never gates
+   * the input: the amount field is editable from the moment a file is attached,
+   * whatever the read is doing. An earlier cut swapped the input out for a
+   * spinner, which locked the requester out of their own field for as long as
+   * the call took — up to the route's 30s timeout.
+   */
+  const [readNote, setReadNote] = useState<"reading" | ReceiptFailure | null>(null);
 
   const uploaded = item.files ?? [];
   const pending = item.pendingFiles ?? [];
@@ -177,6 +197,60 @@ function ExpenseRow({
   const needsReceipt = highlightMissingReceipt && Number(item.amount) > 0 && totalFiles === 0;
   // A row is "saved" once it has a DB id (persisted by a previous save/submit).
   const isSaved = item.id != null;
+  /**
+   * The amount is asked for only once there is a receipt behind it — attaching
+   * is what unlocks the field, and the server has always refused an amount
+   * without one (`validateForSubmit`).
+   *
+   * The `amount > 0` arm is for rows saved before this: a draft written when
+   * the field came first still holds its figure, and hiding it would take money
+   * off a form its owner had already filled in.
+   */
+  const showAmount = totalFiles > 0 || Number(item.amount) > 0;
+
+  // The read resolves seconds after the attach. These keep its write honest
+  // against a row that has since been filled in by hand, or removed altogether.
+  const amountRef = useRef(item.amount);
+  amountRef.current = item.amount;
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    // Set on mount, not just cleared on unmount. StrictMode runs effects
+    // mount → cleanup → mount in development, so a cleanup-only version leaves
+    // this false for the rest of the component's life: every read then returned
+    // early, the note stayed on "กำลังอ่านยอด" forever and no amount was ever
+    // filled in. `reactStrictMode` is unset in next.config.mjs, which means on.
+    aliveRef.current = true;
+    return () => { aliveRef.current = false; };
+  }, []);
+  // The read is billed per call, so one at a time per row. `reading` is state
+  // and lags a render behind; a ref is what a second file picked in the same
+  // tick actually sees.
+  const readingRef = useRef(false);
+
+  /** Read the receipt's total and offer it — never over a figure already there. */
+  const prefillAmountFrom = async (file: File) => {
+    readingRef.current = true;
+    setReadNote("reading");
+    try {
+      const read = await readReceiptAmount(file);
+      if (!aliveRef.current) return;
+      if (read.amount != null) {
+        // Skipped when a figure arrived while this was in flight — typed by
+        // hand, which outranks the read. Not a failure; say nothing.
+        if (!(Number(amountRef.current) > 0)) onAmountChange(String(read.amount));
+        setReadNote(null);
+        return;
+      }
+      // The reason is carried through so the note can name the right remedy:
+      // a blank receipt, a key an operator must replace, and an outage are
+      // three different things to be told.
+      setReadNote(read.failure ?? "error");
+    } catch {
+      if (aliveRef.current) setReadNote("error");
+    } finally {
+      readingRef.current = false;
+    }
+  };
 
   // Delete an already-uploaded image (only possible while editing a saved draft).
   const handleRemoveUploaded = async (fileId: number) => {
@@ -253,19 +327,34 @@ function ExpenseRow({
       previewUrl: URL.createObjectURL(file),
     });
     if (fileInputRef.current) fileInputRef.current.value = "";
+
+    // Fill the amount from the receipt, in the background — the field is
+    // revealed either way, so a slow or failed read costs nothing.
+    //
+    // Skipped when a figure is already there or a read is in flight: each call
+    // is billed, and a second one could only overwrite the first's answer or
+    // race it. Attaching more images to a row that already has its amount is
+    // free.
+    if (!readingRef.current && !(Number(amountRef.current) > 0)) void prefillAmountFrom(file);
   };
 
   return (
     <div
-      className="flex flex-col gap-2 p-2.5 rounded-xl"
+      className="flex flex-col gap-1.5 px-3 py-2.5 rounded-xl"
       style={{
-        background: "var(--bg-card-alt)",
+        background: "var(--bg-card)",
         border: needsReceipt ? "1px solid var(--color-danger)" : "1px solid var(--border-card)",
         boxShadow: needsReceipt ? "0 0 0 1px var(--color-danger)" : undefined,
       }}
     >
+      {/*
+        One line, read left to right in the order the work happens: attach the
+        receipt, then the amount appears beside it, then remove the row. It used
+        to be two lines with the attach control at the bottom left and the
+        amount at the top right — diagonally opposite, so the eye had to travel
+        between a control and the thing it unlocks, across a large dead centre.
+      */}
       <div className="flex items-center gap-2">
-        {/* File attach (left) — chip reflects attach state */}
         <input
           ref={fileInputRef}
           type="file"
@@ -273,59 +362,21 @@ function ExpenseRow({
           className="hidden"
           onChange={handleFileChange}
         />
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          title="แนบรูปใบเสร็จ (รูปภาพเท่านั้น)"
-          className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-semibold cursor-pointer transition-colors"
-          style={
-            totalFiles > 0
-              ? { background: "var(--nav-active-bg)", color: "var(--nav-active-text)", border: "1px solid var(--nav-active-text)" }
-              : { background: "var(--bg-card)", color: "var(--text-secondary)", border: "1px solid var(--border-card)" }
-          }
-        >
-          <Paperclip size={13} />
-          {totalFiles > 0 ? `${totalFiles} รูป` : "แนบรูป"}
-        </button>
 
-        {/* Amount (right) — label, number right-aligned, ฿ suffix */}
-        <div className="relative ml-auto w-44 sm:w-52 shrink-0">
-          <input
-            type="number"
-            min="0"
-            step="1"
-            placeholder="จำนวนเงิน"
-            value={item.amount || ""}
-            onChange={(e) => onAmountChange(e.target.value)}
-            className="w-full rounded-lg pl-3 pr-7 py-2 text-[15px] font-bold outline-none tabular-nums text-right"
-            style={inputStyle}
-          />
-          <span
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-[14px] font-bold pointer-events-none"
-            style={{ color: "var(--text-muted)" }}
-          >
-            ฿
-          </span>
-        </div>
+        {/* Receipts — uploaded + pending; click to open zoomable lightbox.
+            Takes the free width (`flex-1 min-w-0`) and scrolls inside itself
+            rather than wrapping, so the row's height never changes as pictures
+            are added and nothing below it moves. `shrink-0` on each tile is
+            what stops flexbox squashing them instead of scrolling; the
+            asymmetric padding is headroom for the delete badge, which sits
+            outside each tile and would otherwise be clipped.
 
-        {/* Remove */}
-        <button
-          type="button"
-          onClick={handleRowRemove}
-          aria-label="ลบแถวนี้"
-          title="ลบแถวนี้"
-          className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center cursor-pointer acc-draft-del"
-          style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", color: "var(--text-muted)" }}
-        >
-          <Trash2 size={14} />
-        </button>
-      </div>
-
-      {/* Thumbnails — uploaded + pending; click to open zoomable lightbox */}
-      {totalFiles > 0 && (
-        <div className="flex flex-wrap gap-2">
+            Rendered unconditionally: the attach tile at the end is the only way
+            to add a picture, so an empty row shows the strip holding just that
+            tile — one control, one shape, whether the row has no image or nine. */}
+        <div className="flex-1 min-w-0 flex flex-nowrap items-center gap-2 overflow-x-auto pt-1.5 -mt-1.5 pb-1 pr-1.5">
           {uploaded.map((f) => (
-            <div key={`u-${f.id}`} className="relative w-16 h-16">
+            <div key={`u-${f.id}`} className="relative w-14 h-14 shrink-0">
               <button
                 type="button"
                 onClick={() => setLightbox({ src: f.url, alt: f.fileName })}
@@ -352,23 +403,31 @@ function ExpenseRow({
             </div>
           ))}
           {pending.map((p) => (
-            <div key={`p-${p.localId}`} className="relative w-16 h-16">
+            <div key={`p-${p.localId}`} className="relative w-14 h-14 shrink-0">
+              {/* `relative` is load-bearing: it makes this button the badge's
+                  containing block, which is what lets `overflow-hidden` clip
+                  the badge to the tile's corner. The badge used to sit outside
+                  the button, so nothing clipped it and its square bottom
+                  corners overhung the rounded tile. Giving the badge its own
+                  `rounded-b-xl` is not the fix — a 12px radius on a 14px-tall
+                  strip curves into a capsule; the corner has to come from the
+                  tile. */}
               <button
                 type="button"
                 onClick={() => setLightbox({ src: p.previewUrl, alt: p.file.name })}
-                className="w-full h-full rounded-xl overflow-hidden cursor-pointer p-0 border"
+                className="relative w-full h-full rounded-xl overflow-hidden cursor-pointer p-0 border"
                 style={{ borderColor: "var(--color-warning)", background: "var(--bg-card)" }}
                 title={`${p.file.name} — ยังไม่บันทึก · คลิกเพื่อดูรูปเต็ม`}
               >
                 <img src={p.previewUrl} alt={p.file.name} className="w-full h-full object-cover" draggable={false} />
+                {/* Pending badge */}
+                <span
+                  className="absolute bottom-0 left-0 right-0 text-[8px] font-bold text-center leading-tight py-0.5"
+                  style={{ background: "color-mix(in srgb, var(--color-warning) 85%, transparent)", color: "#fff" }}
+                >
+                  ยังไม่บันทึก
+                </span>
               </button>
-              {/* Pending badge */}
-              <span
-                className="absolute bottom-0 left-0 right-0 text-[8px] font-bold text-center leading-tight py-0.5"
-                style={{ background: "color-mix(in srgb, var(--color-warning) 85%, transparent)", color: "#fff" }}
-              >
-                ยังไม่บันทึก
-              </span>
               {/* Remove pending */}
               <button
                 type="button"
@@ -382,12 +441,104 @@ function ExpenseRow({
               </button>
             </div>
           ))}
+
+          {/* Add — last in the strip, so it steps right as pictures are added.
+              Same 64px box as a thumbnail so the row reads as one line of
+              tiles rather than a row with a control stuck on the end. */}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            aria-label={totalFiles > 0 ? "แนบรูปเพิ่ม" : "แนบรูปใบเสร็จ"}
+            title={
+              totalFiles > 0
+                ? "แนบรูปใบเสร็จเพิ่ม (รูปภาพเท่านั้น)"
+                : "แนบรูปใบเสร็จ (รูปภาพเท่านั้น)"
+            }
+            className="relative w-14 h-14 shrink-0 rounded-xl flex items-center justify-center cursor-pointer acc-add-row"
+            style={{
+              // Same fill as the row it sits in, so the dashed border is what
+              // marks it out rather than a colour difference — deliberate, and
+              // the reason the border stays dashed while everything else here
+              // is solid.
+              border: "1px dashed var(--border-card)",
+              background: "var(--bg-card)",
+              color: "var(--text-secondary)",
+            }}
+          >
+            <Paperclip size={18} />
+          </button>
         </div>
-      )}
+
+        {/* Amount — revealed by the attach, prefilled from the receipt.
+            Deliberately not gated on the read: once there is a receipt the
+            requester can type the figure, and the read either beats them to it
+            or does not. */}
+        <div className="relative w-32 sm:w-44 shrink-0">
+          {showAmount ? (
+            <>
+              <input
+                type="number"
+                min="0"
+                step="any"
+                placeholder="จำนวนเงิน"
+                value={item.amount || ""}
+                onChange={(e) => onAmountChange(e.target.value)}
+                className="w-full rounded-lg pl-3 pr-7 py-2 text-[15px] font-bold outline-none tabular-nums text-right"
+                style={inputStyle}
+              />
+              <span
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[14px] font-bold pointer-events-none"
+                style={{ color: "var(--text-muted)" }}
+              >
+                ฿
+              </span>
+            </>
+          ) : (
+            /* Sits where the input will be, so the empty slot explains itself
+               rather than looking like something failed to render. */
+            <p
+              className="m-0 py-2 text-[12.5px] text-right leading-tight"
+              style={{ color: "var(--text-muted)" }}
+            >
+              แนบใบเสร็จก่อน
+            </p>
+          )}
+        </div>
+
+        <button
+          type="button"
+          onClick={handleRowRemove}
+          aria-label="ลบแถวนี้"
+          title="ลบแถวนี้"
+          className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center cursor-pointer acc-draft-del"
+          style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", color: "var(--text-muted)" }}
+        >
+          <Trash2 size={14} />
+        </button>
+      </div>
 
       {needsReceipt && (
         <p className="text-[12px] font-medium" style={{ color: "var(--color-danger)" }}>
           ต้องแนบรูปใบเสร็จสำหรับรายการที่กรอกจำนวนเงิน
+        </p>
+      )}
+
+      {/* How the read is going. A note beside a working field — never in place
+          of one. Both lines say the same thing in the end: type it yourself. */}
+      {readNote === "reading" && (
+        <p
+          className="m-0 text-[12px] flex items-center gap-1.5"
+          style={{ color: "var(--text-muted)" }}
+        >
+          <ScanLine size={12} className="animate-pulse shrink-0" />
+          กำลังอ่านยอดจากใบเสร็จ — ระหว่างนี้กรอกเองได้เลย
+        </p>
+      )}
+      {/* Self-clearing: once there is a figure the note is stale, however it
+          got there. Re-attaching the image is the retry. */}
+      {readNote != null && readNote !== "reading" && !(Number(item.amount) > 0) && (
+        <p className="m-0 text-[12px]" style={{ color: "var(--text-muted)" }}>
+          {RECEIPT_FAILURE_TEXT[readNote]}
         </p>
       )}
 
