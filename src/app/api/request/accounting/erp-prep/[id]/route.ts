@@ -11,6 +11,7 @@ import {
   interfaceByClaimMapToRecord,
   loadPrepDeptContext,
 } from "@/lib/acc/erp-prep-service";
+import { AP1_FORM_CODE } from "@/features/accounting/constants";
 
 /**
  * GET /api/request/accounting/erp-prep/[id]
@@ -45,7 +46,9 @@ export async function GET(
     // amounts and requester names — by incrementing the number in the URL.
     const [access, deptCtx] = await Promise.all([
       resolveApproverInterfaceAccess(session.user.email, session.user.role),
-      loadPrepDeptContext(),
+      // AP-1: this is the detail behind the AP-1 prep queue, and
+      // `getErpPrepDetail` above resolves its dimensions for AP-1 too.
+      loadPrepDeptContext(AP1_FORM_CODE),
     ]);
     if (!canActOnClaimBrand(access, interfaceByClaimMapToRecord(deptCtx.interfaceByClaim), data.brandCode)) {
       return NextResponse.json({ ok: false, error: INTERFACE_SCOPE_ERROR }, { status: 403 });

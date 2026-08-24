@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/api-auth";
+import { requireSettingsTab } from "@/lib/acc/require-settings-tab";
 import {
   listSameDayBrandStaff,
   upsertSameDayBrandStaff,
@@ -10,10 +10,10 @@ import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
 /**
  * GET /api/request/accounting/settings/same-day-brand
  * Lists staff allowed to claim the same travel date across different brands.
- * Requires IT Admin or System Admin.
+ * Requires an admin, or the `sameDayBrand` settings-tab grant.
  */
 export async function GET() {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireSettingsTab("sameDayBrand");
   if (session instanceof Response) return session;
   try {
     const data = await listSameDayBrandStaff();
@@ -30,7 +30,7 @@ export async function GET() {
  * When adding via AD search only email is known; resolve StaffId from HR.
  */
 export async function POST(req: NextRequest) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireSettingsTab("sameDayBrand");
   if (session instanceof Response) return session;
   try {
     const body = await req.json();
@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
 
 /** DELETE ?id= — remove an allowlist entry. */
 export async function DELETE(req: NextRequest) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireSettingsTab("sameDayBrand");
   if (session instanceof Response) return session;
   try {
     const id = Number(req.nextUrl.searchParams.get("id"));

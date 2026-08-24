@@ -439,8 +439,43 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
     }
   }, [draftRequesterStaffId, employeeData?.employee?.staffId]);
 
+  /**
+   * The chosen requester, resolved from HR when the department list does not
+   * hold them.
+   *
+   * `colleagues` is the actor's own department. The picker's rows are not:
+   * search returns people from anywhere, and a resumed draft can name somebody
+   * who has since moved. Looking only in `colleagues` left this null in both
+   * cases, and the requester card rendered a bare `#10075` — no name, no
+   * department, no email, no manager to approve it.
+   */
+  const [fetchedRequester, setFetchedRequester] = useState<RequesterColleague | null>(null);
+  useEffect(() => {
+    if (!requesterStaffId) {
+      setFetchedRequester(null);
+      return;
+    }
+    if (colleagues.some((c) => c.staffId === requesterStaffId)) {
+      setFetchedRequester(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/request/travel-booking/requesters?staffId=${requesterStaffId}`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (cancelled) return;
+        setFetchedRequester(json?.ok ? (json.data?.colleagues?.[0] ?? null) : null);
+      })
+      .catch(() => {
+        if (!cancelled) setFetchedRequester(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [requesterStaffId, colleagues]);
+
   const selectedRequester = requesterStaffId
-    ? (colleagues.find((c) => c.staffId === requesterStaffId) ?? null)
+    ? (colleagues.find((c) => c.staffId === requesterStaffId) ?? fetchedRequester)
     : null;
 
   // The requester's other (non-rejected) travel-date ranges — used to lock overlapping days.

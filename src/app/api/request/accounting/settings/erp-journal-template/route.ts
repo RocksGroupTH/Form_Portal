@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/api-auth";
+import { requireSettingsTab } from "@/lib/acc/require-settings-tab";
 import {
   getErpJournalDescriptionTemplate,
   saveErpJournalDescriptionTemplate,
@@ -11,10 +11,11 @@ import {
 
 /**
  * GET /api/request/accounting/settings/erp-journal-template
- * POST — save template (IT Admin+)
+ * POST — save template. Requires an admin, or the `erpInterface` grant: this
+ * panel has no tab of its own, it renders inside BrandErpInterfaceSettings.
  */
 export async function GET() {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireSettingsTab("erpInterface");
   if (session instanceof Response) return session;
 
   try {
@@ -33,7 +34,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireSettingsTab("erpInterface");
   if (session instanceof Response) return session;
 
   try {

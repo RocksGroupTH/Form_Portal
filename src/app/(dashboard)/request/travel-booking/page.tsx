@@ -9,6 +9,7 @@ import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
 import { TravelBookingForm } from "@/features/travel-booking/components/TravelBookingForm";
 import { TravelBookingDraftPicker } from "@/features/travel-booking/components/TravelBookingDraftPicker";
+import { TravelBookingTour } from "@/features/travel-booking/components/tour/TravelBookingTour";
 import type { TravelBookingDraftSummary, TravelBookingGroup } from "@/features/travel-booking/types";
 import {
   createTravelBookingBackAction,
@@ -198,9 +199,12 @@ function TravelBookingContent() {
         subtitle="AP-17 · ทำงานต่างจังหวัด · กรอกได้หลายคำขอในครั้งเดียว"
         onBack={handleBack}
         backLabel="กลับ"
+        dataTour="ap17-intro"
       />
 
       <TravelBookingForm initial={initial} onSaved={handleSaved} onSubmitted={handleSubmitted} />
+
+      <TravelBookingTour />
     </PageContainer>
   );
 }

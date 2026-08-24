@@ -19,8 +19,8 @@ export function TravelExpenseLoadingPopup({
 
   return (
     <div
-      className="acc-theme fixed inset-0 z-[60] flex items-center justify-center px-4"
-      style={{ background: "var(--overlay-bg)", animation: "overlayFadeIn 0.15s ease-out" }}
+      className="app-overlay acc-theme fixed inset-0 z-[60] flex items-center justify-center px-4"
+      style={{ animation: "overlayFadeIn 0.15s ease-out" }}
       role="status"
       aria-live="polite"
       aria-busy="true"
@@ -80,10 +80,10 @@ export function TravelExpenseLoadingPopup({
           {pct != null ? (
             <div
               className="h-full rounded-full transition-[width] duration-300 ease-out"
-              style={{ width: `${pct}%`, background: "var(--color-action)" }}
+              style={{ width: `${pct}%`, background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}
             />
           ) : (
-            <div className="acc-progress h-full rounded-full" style={{ background: "var(--color-action)" }} />
+            <div className="acc-progress h-full rounded-full" style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }} />
           )}
         </div>
       </div>

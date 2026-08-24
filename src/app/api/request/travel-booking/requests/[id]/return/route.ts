@@ -5,7 +5,7 @@ import { resolveLoginEmail } from "@/lib/auth-email";
 import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
 import { isAdminRole } from "@/lib/roles";
 import { getAccPool, sql } from "@/lib/acc/pool";
-import { canAccessAccountArea } from "@/lib/acc/access";
+import { canAccessBookingArea } from "@/lib/acc/booking-access";
 import { getRequestHost } from "@/lib/acc/erp-environment";
 import { isManagerDevBypassHost } from "@/lib/acc/manager-auth";
 import { returnRequest, returnByAdmin, type Actor } from "@/lib/acc/travel-booking/approval";
@@ -57,7 +57,7 @@ export async function POST(
   // this, on any host.
   const devBypass = isManagerDevBypassHost(await getRequestHost());
   const allowed = atAdminStage
-    ? await canAccessAccountArea(loginEmail, session.user.role)
+    ? await canAccessBookingArea(loginEmail, session.user.role)
     : isManager || isAdmin || devBypass;
   if (!allowed) {
     return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });

@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/api-auth";
+import { requireSettingsTab } from "@/lib/acc/require-settings-tab";
 import { listFormBrands, setFormBrands } from "@/lib/acc/settings-service";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
 
 /**
  * GET /api/request/accounting/settings/brands
  * Returns the brand list configured for the AP-1 form.
- * Requires IT Admin or System Admin.
+ * Requires an admin, or the `brands` settings-tab grant.
  */
 export async function GET() {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireSettingsTab("brands");
   if (session instanceof Response) return session;
 
   try {
@@ -25,10 +25,10 @@ export async function GET() {
  * POST /api/request/accounting/settings/brands
  * Sets the active brand codes for the AP-1 form.
  * Body: { brandCodes: string[] }
- * Requires IT Admin or System Admin.
+ * Requires an admin, or the `brands` settings-tab grant.
  */
 export async function POST(req: NextRequest) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireSettingsTab("brands");
   if (session instanceof Response) return session;
 
   try {

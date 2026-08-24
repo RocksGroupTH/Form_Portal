@@ -11,6 +11,7 @@ export const env = createEnv({
     MSSQL_FORM_DATABASE: z.string().default("Rocks_Portal_Form"),
     MSSQL_FORM_UAT_DATABASE: z.string().default("Rocks_Portal_Form_UAT"),
     MSSQL_DATA_DATABASE: z.string().default("Fast_Data"),
+    MSSQL_ERP_DATA_DATABASE: z.string().default("Rocks_ERP_Data"),
     MSSQL_USER: z.string().min(1),
     MSSQL_PASSWORD: z.string().min(1),
     MSSQL_ENCRYPT: z
@@ -46,6 +47,7 @@ export const env = createEnv({
     MSSQL_FORM_DATABASE: process.env.MSSQL_FORM_DATABASE,
     MSSQL_FORM_UAT_DATABASE: process.env.MSSQL_FORM_UAT_DATABASE,
     MSSQL_DATA_DATABASE: process.env.MSSQL_DATA_DATABASE,
+    MSSQL_ERP_DATA_DATABASE: process.env.MSSQL_ERP_DATA_DATABASE,
     MSSQL_USER: process.env.MSSQL_USER,
     MSSQL_PASSWORD: process.env.MSSQL_PASSWORD,
     MSSQL_ENCRYPT: process.env.MSSQL_ENCRYPT,

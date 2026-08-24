@@ -92,6 +92,22 @@
   --bg-card: #ffffff;
   --bg-card-hover: #f7f9fd;
   --bg-card-alt: #f4f7fc;
+  /* The band across the top of a card, and a table's header row.
+   *
+   * The same colour as the card: the header is separated by its 1px bottom
+   * border alone, not by a fill. It was `--bg-card-alt`, then briefly a
+   * stronger tint — the tint was rejected on sight, and the divider does the
+   * job without one.
+   *
+   * Still its own token rather than `--bg-card`. This surface is the one whose
+   * treatment keeps being revisited, and it is applied at 24 call sites; a name
+   * makes the next change one line instead of another structural sweep.
+   *
+   * If it is ever tinted again, contrast the *band*, not the text.
+   * `--text-heading` sits at 14:1 on any of these values — the title was never
+   * the part that looked wrong, the missing band was.
+   */
+  --bg-card-header: #ffffff;
   --bg-elevated: #ffffff;
   --bg-input: #ffffff;
   --bg-sidebar: #1b2434;
@@ -135,6 +151,40 @@
   --shadow-lift: 0 12px 32px -12px rgba(59, 79, 116, 0.28);
 
   --overlay-bg: rgba(31, 39, 53, 0.38);
+  --overlay-blur: 6px;
+
+  /* The UAT colour, in one place.
+   *
+   * Amber rather than red, everywhere UAT is reported: the navbar chip and the
+   * Form Environment switches both used to pick their own, and the switch's was
+   * `--status-bad-*`. Red says something has gone wrong; being in UAT is a state
+   * somebody chose, and the page beside it uses the same red for a genuine
+   * failure — the unclassified-route panel — so the two were indistinguishable.
+   *
+   * Derived from `--text-warning`, which is defined for both themes, so these
+   * need no dark twin: `var()` resolves at use, not at definition. There is no
+   * amber `--status-*` pair to reuse — `--status-pending-*` is blue in both
+   * themes and `--status-bad-*` is the red being avoided.
+   */
+  /* UAT — copied from ACC Portal, value for value.
+   *
+   * `--color-warning-bg` / `--color-warning-text` in that app's globals.css.
+   * Two rounds of eyedropping its screenshots produced two wrong ambers; these
+   * are read from the source at ../ACC_Portal, which is checked out beside this
+   * repo. If they ever need to change again, read them from there again.
+   *
+   * The text measures 3.45:1 on its own fill — below AA for the 9.5-11px bold
+   * these chips are set in. Kept anyway: matching the sibling app exactly is
+   * what was asked for, and these chips label a state that is also spelled out
+   * in each one's `title`.
+   *
+   * There is no `--status-uat-border`. ACC Portal's card badge has no border at
+   * all, and its navbar chip uses the neutral `--border-input` rather than a
+   * tinted one — an orange edge on both was the other half of why these did not
+   * match.
+   */
+  --status-uat-bg: #fef9f0;
+  --status-uat-text: #ca6f1e;
 
   /* Radii — modern treatment */
   --radius-card: 14px;
@@ -144,11 +194,40 @@
   --nav-active-bg: rgba(76, 116, 196, 0.10);
   --nav-active-text: #4c74c4;
 
-  /* Buttons */
-  --btn-primary-bg: #4c74c4;
-  --btn-primary-text: #ffffff;
-  --btn-danger-bg: var(--color-danger);
-  --btn-danger-text: #ffffff;
+  /* Buttons — tinted, not filled.
+   *
+   * A soft wash of the accent, the accent itself for the text, and a border of
+   * the same hue. They were solid blocks with white text; a page with three of
+   * them read as three competing alarms, and the danger one in particular
+   * shouted at people who had merely opened a dialog.
+   *
+   * Mixed against `--bg-card` rather than given per-theme literals, so the dark
+   * theme needs no separate values: `var()` resolves at use, and `--bg-card` is
+   * already the surface these sit on in both. `--color-action` and
+   * `--color-danger` are single-valued across themes by design (see the
+   * `@theme` note above), so the hue is the same and only the wash moves.
+   *
+   * The `-border` half is not optional decoration: at 14% the fill is nearly
+   * the card behind it, and without an edge the button stops looking clickable.
+   *
+   * Lightning CSS wraps each mix in `@supports (color: color-mix(in lab, …))`
+   * and emits a fallback outside it — and because `--bg-card` is a variable it
+   * cannot fold the mix, so that fallback is the bare accent: `#4c74c4`, the
+   * same value `-text` resolves to. A browser taking the fallback would paint
+   * blue on blue. It is unreachable rather than fixed: Tailwind v4 requires
+   * Safari 16.4+ / Chrome 111+ / Firefox 128+, all of which support the tested
+   * syntax, so a browser that could take that branch could not render the rest
+   * of this stylesheet either. Do not "fix" it by folding the mix against a
+   * literal white — `.acc-theme` applies in both themes, and a literal there
+   * would tint an Accounting button for the light theme while it sits on a dark
+   * card.
+   */
+  --btn-primary-bg: color-mix(in srgb, var(--color-action) 14%, var(--bg-card));
+  --btn-primary-text: var(--color-action);
+  --btn-primary-border: color-mix(in srgb, var(--color-action) 38%, transparent);
+  --btn-danger-bg: color-mix(in srgb, var(--color-danger) 14%, var(--bg-card));
+  --btn-danger-text: var(--color-danger);
+  --btn-danger-border: color-mix(in srgb, var(--color-danger) 38%, transparent);
   --btn-ghost-bg: transparent;
   --btn-ghost-text: var(--text-secondary);
   --btn-ghost-hover: var(--bg-card-hover);
@@ -200,6 +279,13 @@
   --bg-card: #161b23;
   --bg-card-hover: #1c222c;
   --bg-card-alt: #1a202a;
+  /* The card's own colour, as in light — the bottom border is the separation. */
+  --bg-card-header: #161b23;
+
+  /* ACC Portal's dark values, likewise — 8.25:1, and warmer than a mix from
+     the light hue would have been. */
+  --status-uat-bg: #2d1f00;
+  --status-uat-text: #e3b341;
   --bg-elevated: #1a202a;
   --bg-input: #12171e;
   --bg-sidebar: #0c1015;
@@ -240,6 +326,7 @@
   --shadow-lift: 0 12px 32px -12px rgba(0, 0, 0, 0.6);
 
   --overlay-bg: rgba(0, 0, 0, 0.65);
+  --overlay-blur: 6px;
 
   --radius-card: 14px;
   --radius-tile: 12px;
@@ -247,10 +334,19 @@
   --nav-active-bg: rgba(127, 160, 224, 0.14);
   --nav-active-text: #9fb9e8;
 
-  --btn-primary-bg: #5b7fc9;
-  --btn-primary-text: #ffffff;
-  --btn-danger-bg: #8f3b3b;
-  --btn-danger-text: #fbdcdc;
+  /* Buttons. Mixed the same way the base block mixes them, but from a lighter
+   * hue: `--color-action` / `--color-danger` are legible on white and go muddy
+   * on a dark card. Those two are NOT overridden here — CLAUDE.md records them
+   * as single-valued across both themes on purpose, and the nav accent reads
+   * them too, so moving them to fix a button would move the navigation with it.
+   * The lighter hues are named locally instead.
+   */
+  --btn-primary-bg: color-mix(in srgb, #7fa0e0 18%, var(--bg-card));
+  --btn-primary-text: #9fb9e8;
+  --btn-primary-border: color-mix(in srgb, #7fa0e0 42%, transparent);
+  --btn-danger-bg: color-mix(in srgb, #e08f8f 16%, var(--bg-card));
+  --btn-danger-text: #e8a3a3;
+  --btn-danger-border: color-mix(in srgb, #e08f8f 40%, transparent);
   --btn-ghost-bg: transparent;
   --btn-ghost-text: var(--text-secondary);
   --btn-ghost-hover: var(--bg-card-hover);
@@ -515,6 +611,98 @@ html {
 @keyframes claudeBar { 0% { width: 0%; margin-left: 0; } 50% { width: 60%; margin-left: 20%; } 100% { width: 0%; margin-left: 100%; } }
 
 /* Hide scrollbar utility */
+/* The scrim behind every modal, side panel and blocking popup.
+ *
+ * One class rather than the inline `background: var(--overlay-bg)` that used to
+ * be repeated at twenty-two call sites — which is why the backdrop blur could
+ * not simply be added to the token: CSS cannot hook a custom property's use, so
+ * a scrim's appearance had to become a rule of its own before it could gain one.
+ *
+ * **The `-webkit-` prefix must come FIRST and the standard property LAST.**
+ * Written the other way round, the build emits only the prefixed one: Lightning
+ * CSS — the minifier Next runs — treats a prefixed and unprefixed declaration of
+ * the same property as duplicates and keeps the last. That shipped once, and the
+ * scrim dimmed without blurring in every browser that wants the standard name.
+ * Verified by grepping the built stylesheet, not by reading the source:
+ *   grep -o '.app-overlay{[^}]*}' .next/static/chunks/*.css
+ *
+ * Where neither property applies the scrim still renders — the colour is what
+ * makes the dialog readable, the blur is what makes it feel in front.
+ */
+/* A light that travels around a control's edge while the pointer is on it.
+ *
+ * For controls that already carry a static border, where 'show a border on
+ * hover' would be a no-op — the motion is the affordance, not the line.
+ *
+ * How it works: a conic gradient is rotated by animating `--run-border-angle`,
+ * and a two-layer mask subtracts the padding box so only a 1px ring survives.
+ * The `@property` declaration is what makes the angle animatable at all — a
+ * plain custom property is a string to the animation engine and would jump
+ * from 0 to 1turn in one frame.
+ *
+ * `inset: -1px` puts the ring *over* the element's own border rather than
+ * inside it, so nothing reflows and the static border shows through the three
+ * quarters of the sweep that are transparent.
+ *
+ * Prefixed mask properties come FIRST and the standard ones LAST, for the
+ * reason `.app-overlay` documents: the minifier keeps the last of a duplicate
+ * pair, and the standard name is the one worth keeping.
+ */
+@property --run-border-angle {
+  syntax: "<angle>";
+  initial-value: 0turn;
+  inherits: false;
+}
+
+@keyframes runBorderSweep {
+  to { --run-border-angle: 1turn; }
+}
+
+.hover-run-border {
+  position: relative;
+}
+
+.hover-run-border::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease-out;
+  background: conic-gradient(
+    from var(--run-border-angle),
+    transparent 0turn 0.62turn,
+    var(--nav-active-text) 0.82turn,
+    transparent 1turn
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+.hover-run-border:hover::after,
+.hover-run-border:focus-visible::after {
+  opacity: 1;
+  animation: runBorderSweep 1.4s linear infinite;
+}
+
+/* Motion is the whole effect, so there is nothing to slow down — the ring
+   becomes a plain accent edge instead, which still answers 'this is hover'. */
+@media (prefers-reduced-motion: reduce) {
+  .hover-run-border:hover::after,
+  .hover-run-border:focus-visible::after {
+    animation: none;
+    background: var(--nav-active-text);
+  }
+}
+.app-overlay {
+  background: var(--overlay-bg);
+  -webkit-backdrop-filter: blur(var(--overlay-blur));
+  backdrop-filter: blur(var(--overlay-blur));
+}
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
 
@@ -578,8 +766,12 @@ html {
   --color-action-hover: #3d63b0;
   --nav-active-bg:      #e8effc;
   --nav-active-text:    #4c74c4;
-  --btn-primary-bg:     #4c74c4;
-  --btn-primary-text:   #ffffff;
+  /* Tinted like everywhere else. This scope used to pin the primary button
+     back to a solid block, which would have left every Accounting page — most
+     of the app — on the old look while the rest moved. */
+  --btn-primary-bg:     color-mix(in srgb, #4c74c4 14%, var(--bg-card));
+  --btn-primary-text:   #4c74c4;
+  --btn-primary-border: color-mix(in srgb, #4c74c4 38%, transparent);
   --accent:             #4c74c4;
   --accent-hover:       #3d63b0;
   --accent-subtle:      rgba(76, 116, 196, 0.10);

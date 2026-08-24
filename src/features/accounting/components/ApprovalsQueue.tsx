@@ -608,7 +608,7 @@ export function ApprovalsQueue({
         <div className="overflow-x-auto no-scrollbar">
           <table className="w-full text-[12px] min-w-[1100px]">
             <thead>
-              <tr style={{ background: "var(--bg-card-alt)", borderBottom: "1px solid var(--border-light)" }}>
+              <tr style={{ background: "var(--bg-card-header)", borderBottom: "1px solid var(--border-light)" }}>
                 <th className="w-11 px-3 py-2.5">
                   <QueueCheckbox
                     checked={allFilteredSelected}

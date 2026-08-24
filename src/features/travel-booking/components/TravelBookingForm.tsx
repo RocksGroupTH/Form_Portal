@@ -179,6 +179,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
 
       {/* คำแนะนำ */}
       <div
+        data-tour="ap17-notice"
         className="rounded-2xl px-4 py-3.5 flex items-start gap-2.5"
         style={{
           background: "color-mix(in srgb, var(--color-action) 8%, var(--bg-card))",
@@ -197,6 +198,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
 
       {/* ผู้ขอเบิก (read-only) */}
       <SectionCard
+        dataTour="ap17-requester"
         icon={<User size={15} />}
         title="ผู้ขอเบิก"
         extra={colleagues.length > 0 ? (
@@ -234,6 +236,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
                 open={requesterPickerOpen}
                 onClose={() => setRequesterPickerOpen(false)}
                 colleagues={colleagues}
+                searchEndpoint="/api/request/travel-booking/requesters"
                 self={employee ? {
                   staffId: employee.staffId,
                   fullName: requesterName || employee.fullName,
@@ -350,6 +353,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
 
       {/* แท็บคำขอ */}
       <div
+        data-tour="ap17-tabs"
         className="sticky top-14 md:top-12 z-30 rounded-2xl overflow-hidden"
         style={{
           background: "color-mix(in srgb, var(--bg-card) 92%, transparent)",
@@ -441,6 +445,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
 
       {/* Footer: สรุปรวม + ปุ่มบันทึก/ส่ง */}
       <div
+        data-tour="ap17-submit"
         className="sticky bottom-3 rounded-2xl px-4 py-3.5 flex items-center justify-between gap-3 flex-wrap"
         style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", boxShadow: "var(--shadow-lg)" }}
       >
@@ -468,7 +473,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
             onClick={handleSubmit}
             disabled={saving || submitting}
             className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-[13px] font-bold cursor-pointer border-none text-white disabled:opacity-60"
-            style={{ background: "var(--color-action)" }}
+            style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}
           >
             <Send size={14} />
             {submitting ? "กำลังส่งคำขอ..." : `ส่งคำขอ (${tabs.length} ใบ)`}
@@ -503,7 +508,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
               setRemoveConfirmIndex(null);
             }}
             className="inline-flex items-center gap-1.5 text-[14px] font-bold px-4 py-2 rounded-lg cursor-pointer border-none"
-            style={{ background: "var(--color-danger)", color: "#fff" }}
+            style={{ background: "var(--btn-danger-bg)", color: "var(--btn-danger-text)", border: "1px solid var(--btn-danger-border)" }}
           >
             ยืนยันลบทริป
           </button>
@@ -539,7 +544,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
             <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border-card)" }}>
               <p
                 className="text-[11px] font-bold m-0 px-3.5 py-2"
-                style={{ background: "var(--bg-card-alt)", color: "var(--text-secondary)", borderBottom: "1px solid var(--border-light)" }}
+                style={{ background: "var(--bg-card-header)", color: "var(--text-secondary)", borderBottom: "1px solid var(--border-light)" }}
               >
                 รายการที่กำลังส่ง ({tabs.length} ใบ)
               </p>

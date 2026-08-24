@@ -13,6 +13,7 @@ import { useErpSandboxDevHost } from "@/features/accounting/hooks/useErpSandboxD
 import { useFormEnvironments } from "@/lib/hooks/useFormEnvironments";
 import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
 import { withRequestReturn } from "@/lib/request-hub-nav";
+import { sortByFormCode } from "@/lib/form-code-order";
 import {
   ClipboardList,
   Luggage,
@@ -271,7 +272,10 @@ export default function RequestHubPage() {
           groupMap[g].push(item);
         }
         return groupOrder.map((groupName) => {
-          const cards = groupMap[groupName];
+          // By form number within the group — AP-1 · AP-4 · AP-17 — rather
+          // than the order REQUEST_CARDS happens to list them in. Cards with
+          // no badge keep their source order and sit at the end.
+          const cards = sortByFormCode(groupMap[groupName], (c) => c.badge);
           const groupThLabel = cards[0].groupTh ? ` · ${cards[0].groupTh}` : "";
           return (
             <div key={groupName} className="mb-6">

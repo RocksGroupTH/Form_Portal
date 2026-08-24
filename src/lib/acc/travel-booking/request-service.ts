@@ -1,5 +1,5 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
-import { getDataPool } from "@/lib/db/mssql";
+import { getProductionFormPool } from "@/lib/db/mssql";
 import { hrEmployeeTable } from "@/lib/hr/constants";
 import { pickEmployeePhotoUrl } from "@/lib/hr/photo-url";
 import { resolveEmployeeForActor } from "@/lib/hr/employee-lookup";
@@ -449,10 +449,15 @@ async function resolveSettingOption(
   };
 }
 
-/** Fast_Data.dbo.TravelProvince is cross-database from the form DB — resolved via its own pool. */
+/** Rocks_Portal_Form.dbo.TravelProvince, migration 104 — resolved via its own pool (always Production; the caller's AccTx may be the UAT twin). */
 async function resolveProvinceName(id: number | null): Promise<string | null> {
   if (!id) return null;
-  const pool = await getDataPool();
+  // TravelProvince moved to Rocks_Portal_Form in migrations 104/105; Fast_Data
+  // keeps a synonym for the Rocks Fast and ACC Portal siblings. This app names
+  // the new home directly. getProductionFormPool() and never getFormPool():
+  // there is one physical copy, so the environment-varying pool has nothing to
+  // choose between.
+  const pool = await getProductionFormPool();
   const r = await pool.request().input("id", sql.Int, id)
     .query(`SELECT TOP 1 NameTh FROM [dbo].[TravelProvince] WHERE Id=@id`);
   return (r.recordset[0]?.NameTh as string) ?? null;
@@ -1166,20 +1171,30 @@ export async function submitTravelBookingGroup(
                 ManagerStaffId=@mgrStaff, ManagerEmail=@mgrEmail, TotalAmount=@total,
                 SubmittedBy=@by, SubmittedAt=SYSDATETIME(), UpdatedAt=SYSDATETIME()
                 WHERE Id=@id AND CreatedBy=@uid AND Status IN ('Draft','Returned');
-                SELECT @@ROWCOUNT AS n`);
+                DECLARE @n INT = @@ROWCOUNT;
+                SELECT @n AS n,
+                       (SELECT RequestNo FROM [dbo].[AccRequest] WHERE Id=@id) AS requestNo`);
       if ((upd.recordset[0].n as number) === 0) {
         throw new AccConflictError(SUBMIT_ALREADY_CLAIMED);
       }
 
-      // Allocated after the claim and inside the transaction, so a tab that lost
-      // the race never consumes a running number. This used to run for every tab
-      // before the transaction opened, on the reasoning that AP-1 did the same;
-      // AP-1 no longer does.
-      const requestNo = await allocateRequestNo(RUNNING_PREFIX, new Date(), tx);
-      await tx.request()
-        .input("id", sql.Int, requestId)
-        .input("no", sql.NVarChar, requestNo)
-        .query(`UPDATE [dbo].[AccRequest] SET RequestNo=@no WHERE Id=@id`);
+      // A returned request keeps the number it was already given — the claim
+      // above accepts `Returned`, so this is the same row being resubmitted in
+      // place, and renumbering it would strand every reference anyone already
+      // holds. Same rule as AP-1.
+      //
+      // A first submit still allocates after the claim and inside the
+      // transaction, so a tab that lost the race never consumes a running
+      // number. That much used to run for every tab before the transaction
+      // opened, on the reasoning that AP-1 did the same; AP-1 no longer does.
+      const existingNo = ((upd.recordset[0].requestNo as string | null) ?? "").trim();
+      const requestNo = existingNo || (await allocateRequestNo(RUNNING_PREFIX, new Date(), tx));
+      if (!existingNo) {
+        await tx.request()
+          .input("id", sql.Int, requestId)
+          .input("no", sql.NVarChar, requestNo)
+          .query(`UPDATE [dbo].[AccRequest] SET RequestNo=@no WHERE Id=@id`);
+      }
 
       await tx.request()
         .input("id", sql.Int, requestId)

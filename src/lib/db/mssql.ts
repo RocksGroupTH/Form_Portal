@@ -100,9 +100,37 @@ export function getUatFormPool(): Promise<sql.ConnectionPool> {
   return getNamedPool(env.MSSQL_FORM_UAT_DATABASE);
 }
 
-/** Data DB — reports, dashboards, BI */
+/**
+ * Fast_Data — no longer read by any code under src/. TravelProvince (AP-17
+ * province lookups) moved to Rocks_Portal_Form in migrations 104/105; the five
+ * Business Central sync tables moved to Rocks_ERP_Data in migrations 101/102
+ * (use getErpDataPool() for those). Of what this app ever reached in here,
+ * only synonyms are left -- six of them, kept for the Rocks Fast and ACC
+ * Portal siblings, which still name those tables two-part against Fast_Data.
+ *
+ * The database itself is NOT just synonyms: measured 2026-08-22 it also holds
+ * 20 base tables, every one of them Rocks Fast's Intelligence tables
+ * (Intel_* / IntelMkt*), which this app never touches and both check scripts
+ * below assert are still present.
+ *
+ * The accessor stays defined because scripts/checks/verify-travel-province-move.ts
+ * and verify-erp-data-move.ts both read through those synonyms to confirm they
+ * still resolve to the new homes.
+ */
 export function getDataPool(): Promise<sql.ConnectionPool> {
   return getNamedPool(env.MSSQL_DATA_DATABASE);
+}
+
+/**
+ * Rocks_ERP_Data — the mirror of Business Central: ErpAccounts,
+ * ErpDimensionValue, ErpGeneralJournalBatch, ErpBankAccountCard and ErpSyncLog.
+ *
+ * Sync output only. The per-brand and per-form choices this app makes about
+ * where money posts — AccBrandGlAccount, AccBrandJournalBatch and the rest —
+ * stay in the form database and are reached through getFormPool().
+ */
+export function getErpDataPool(): Promise<sql.ConnectionPool> {
+  return getNamedPool(env.MSSQL_ERP_DATA_DATABASE);
 }
 
 /**

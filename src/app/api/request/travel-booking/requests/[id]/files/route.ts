@@ -8,7 +8,7 @@ import {
   sniffAttachment,
 } from "@/lib/acc/attachment-guard";
 import { resolveLoginEmail } from "@/lib/auth-email";
-import { canAccessAccountArea } from "@/lib/acc/access";
+import { canAccessBookingArea } from "@/lib/acc/booking-access";
 import { deleteFile } from "@/lib/storage";
 import {
   isSharePointConfigured,
@@ -163,7 +163,7 @@ export async function POST(
       const loginEmail = resolveLoginEmail(session.user, null, {
         email: session.user.email,
       });
-      if (!(await canAccessAccountArea(loginEmail, session.user.role))) {
+      if (!(await canAccessBookingArea(loginEmail, session.user.role))) {
         return NextResponse.json(
           { ok: false, error: "Forbidden" },
           { status: 403 },
@@ -407,7 +407,7 @@ export async function DELETE(
       const loginEmail = resolveLoginEmail(session.user, null, {
         email: session.user.email,
       });
-      if (!(await canAccessAccountArea(loginEmail, session.user.role))) {
+      if (!(await canAccessBookingArea(loginEmail, session.user.role))) {
         return NextResponse.json(
           { ok: false, error: "Forbidden" },
           { status: 403 },

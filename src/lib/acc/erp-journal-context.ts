@@ -28,11 +28,38 @@ import { getAccCached, putAccCached, deleteAccCachedByPrefix } from "@/lib/acc/a
 const JOURNAL_CONTEXT_CACHE_PREFIX = "acc:journal-ctx:";
 const JOURNAL_CONTEXT_CACHE_TTL_MS = 60_000;
 
-function journalContextCacheKey(environment: ErpBcEnvironment): string {
-  return `${JOURNAL_CONTEXT_CACHE_PREFIX}${environment}`;
+/**
+ * `acc:journal-ctx:{Production|Sandbox}:{formCode}`.
+ *
+ * The environment arm is the CLAUDE.md rule — anything derived from a
+ * form-pool read carries the environment in its key, because two viewers of
+ * one route can resolve to different databases.
+ *
+ * The form arm is the same rule for the same reason. Every table behind this
+ * context now answers per form, so the context is a function of (environment,
+ * form) and a key naming only the environment would serve AP-1's G/L accounts,
+ * bank accounts, branch codes, journal batches, department G/L overrides and
+ * interface mapping to whichever other form asked second — for sixty seconds,
+ * silently, on the path that posts to Business Central.
+ *
+ * Both arms are closed enums or module constants, never user input, so the
+ * `:` separator cannot be forged into a colliding key.
+ */
+function journalContextCacheKey(
+  environment: ErpBcEnvironment,
+  formCode: string,
+): string {
+  return `${JOURNAL_CONTEXT_CACHE_PREFIX}${environment}:${formCode}`;
 }
 
-/** Bust cached journal build context after ERP account / branch settings change. */
+/**
+ * Bust cached journal build context after ERP account / branch settings change.
+ *
+ * Prefix-wide, so it still clears every environment *and* every form. A
+ * settings write is not scoped to the writer's own environment or form — the
+ * editors write defaults, which answer every form that has no override — so
+ * deleting one key would leave the rest of the matrix stale.
+ */
 export function invalidateErpJournalBuildContextCache(): void {
   deleteAccCachedByPrefix(JOURNAL_CONTEXT_CACHE_PREFIX);
 }
@@ -128,10 +155,36 @@ export async function saveErpJournalDescriptionTemplate(
   return normalized;
 }
 
-/** Primary G/L, Bank, Branch, Journal Batch + Interface ERP group metadata. */
-export async function loadErpJournalBuildContext(): Promise<ErpJournalBuildContext> {
+/**
+ * Primary G/L, Bank, Branch, Journal Batch + Interface ERP group metadata,
+ * resolved for `formCode`.
+ *
+ * `formCode` is required and has no default. Every value this builds decides
+ * where a journal line lands in Business Central — the G/L account, the bank
+ * account, the branch, the journal batch, the department dimension and the
+ * claim-brand-to-target mapping — so a caller that cannot say which form it is
+ * asking for cannot be given an answer. A default parameter here would be the
+ * exact silent wrong-form read this feature exists to prevent: it would
+ * type-check, it would return a plausible context, and it would post to another
+ * form's dimension.
+ *
+ * The form code is not a new source of truth. Both callers take it from the
+ * requests the context is about — see `sendErpInterfaceBatch`, whose batch
+ * comes from `listErpPrepRows` and is pinned to AP-1 by `r.FormCode`.
+ *
+ * Two reads here deliberately take no form code:
+ *
+ * - `listErpDepartmentsForBrands` reads `Rocks_ERP_Data.ErpDimensionValue`, the
+ *   ERP's own list of dimension values. It has no `FormCode` — it is which
+ *   codes exist in Business Central, not which one this form should use.
+ * - `getErpJournalDescriptionTemplate` reads the global `AppSetting` key, which
+ *   is not one of the seven per-form configuration tables.
+ */
+export async function loadErpJournalBuildContext(
+  formCode: string,
+): Promise<ErpJournalBuildContext> {
   const erpEnvironment = await resolveEffectiveErpEnvironment();
-  const cacheKey = journalContextCacheKey(erpEnvironment);
+  const cacheKey = journalContextCacheKey(erpEnvironment, formCode);
   const cached = getAccCached<ErpJournalBuildContext>(cacheKey, JOURNAL_CONTEXT_CACHE_TTL_MS);
   if (cached) return cached;
 
@@ -146,12 +199,12 @@ export async function loadErpJournalBuildContext(): Promise<ErpJournalBuildConte
     erpDepartmentsByTarget,
   ] = await Promise.all([
     getErpJournalDescriptionTemplate(),
-    getBrandErpConfigPage(),
-    listBrandAccounts("gl"),
-    listBrandAccounts("bank"),
-    listBrandBranches(),
-    listBrandJournalBatches(),
-    resolveAllErpTargetProfiles(),
+    getBrandErpConfigPage(formCode),
+    listBrandAccounts("gl", null, formCode),
+    listBrandAccounts("bank", null, formCode),
+    listBrandBranches(null, formCode),
+    listBrandJournalBatches(null, formCode),
+    resolveAllErpTargetProfiles(formCode),
     listErpDepartmentsForBrands(ERP_INTERFACE_BRANDS.map((b) => b.id)),
   ]);
 
@@ -163,7 +216,10 @@ export async function loadErpJournalBuildContext(): Promise<ErpJournalBuildConte
 
   const interfaceByClaimMap = new Map(Object.entries(interfaceByClaim));
 
-  const deptGlOverridesByTargetMap = await loadDeptGlOverridesByTarget(interfaceByClaimMap);
+  const deptGlOverridesByTargetMap = await loadDeptGlOverridesByTarget(
+    interfaceByClaimMap,
+    formCode,
+  );
   const deptGlOverridesByTarget: Record<string, Record<string, { accountNo: string; description: string }>> = {};
   for (const [target, deptMap] of Array.from(deptGlOverridesByTargetMap.entries())) {
     const inner: Record<string, { accountNo: string; description: string }> = {};

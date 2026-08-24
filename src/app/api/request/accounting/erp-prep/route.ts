@@ -13,7 +13,7 @@ import {
 } from "@/lib/acc/erp-prep-service";
 import { resolveFormEnvironment } from "@/lib/form-environment";
 import type { ErpPrepStatus } from "@/features/accounting/constants";
-import { ERP_PREP_STATUSES } from "@/features/accounting/constants";
+import { ERP_PREP_STATUSES, AP1_FORM_CODE } from "@/features/accounting/constants";
 
 /**
  * GET /api/request/accounting/erp-prep
@@ -47,7 +47,10 @@ export async function GET(req: NextRequest) {
     const [environment, access, deptCtx] = await Promise.all([
       resolveFormEnvironment(),
       resolveApproverInterfaceAccess(session.user.email, session.user.role),
-      loadPrepDeptContext(),
+      // The ERP prep queue is AP-1 — `listErpPrepRows` pins `r.FormCode` to
+      // the same constant — so the context that scopes this approver and
+      // resolves these rows' dimensions must be AP-1's.
+      loadPrepDeptContext(AP1_FORM_CODE),
     ]);
 
     let data = await listErpPrepRows(filters, { deptCtx });

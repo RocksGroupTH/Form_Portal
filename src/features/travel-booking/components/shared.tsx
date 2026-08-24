@@ -46,14 +46,18 @@ export function SectionCard({
   title,
   extra,
   children,
+  dataTour,
 }: {
   icon: React.ReactNode;
   title: React.ReactNode;
   extra?: React.ReactNode;
   children: React.ReactNode;
+  /** Guided-tour anchor (`[data-tour="ap17-…"]`); omitted on cards the tour skips. */
+  dataTour?: string;
 }) {
   return (
     <div
+      data-tour={dataTour}
       className="w-full min-w-0 rounded-2xl overflow-hidden"
       style={{
         background: "var(--bg-card)",
@@ -63,7 +67,7 @@ export function SectionCard({
     >
       <div
         className="flex items-center gap-2.5 px-5 py-3 rounded-t-2xl"
-        style={{ borderBottom: "1px solid var(--border-card)", background: "var(--bg-card-alt)" }}
+        style={{ borderBottom: "1px solid var(--border-card)", background: "var(--bg-card-header)" }}
       >
         <span
           className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
