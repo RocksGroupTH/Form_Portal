@@ -74,6 +74,14 @@ export interface TabFormState {
   returnNeedsVehicleRent: boolean;
 
   departureLocations: DepartureLocationInput[];
+  /**
+   * What the จุดขึ้นรถ default last wrote into each direction, so a province
+   * change can tell its own earlier fill apart from a place the requester
+   * typed. UI-only — `buildSaveInput` never sends it. See
+   * `../lib/departure-default.ts`.
+   */
+  goAppliedDeparturePlace: string | null;
+  returnAppliedDeparturePlace: string | null;
 
   rentVehicleId: number | null;
   rentVehicleCustomText: string | null;
@@ -115,6 +123,8 @@ export function emptyTab(): TabFormState {
     returnNeedsDepartTime: false,
     returnNeedsVehicleRent: false,
     departureLocations: [],
+    goAppliedDeparturePlace: null,
+    returnAppliedDeparturePlace: null,
     rentVehicleId: null,
     rentVehicleCustomText: null,
     needsRentBooking: false,
@@ -159,6 +169,10 @@ function tabFromRequest(r: TravelBookingRequest): TabFormState {
     departureLocations: r.departureLocations.map((d, i) => ({
       direction: d.direction, name: d.name, sortOrder: d.sortOrder ?? i,
     })),
+    // Null on purpose: a saved place is the requester's, whatever first wrote
+    // it, so a province change on a resumed draft must leave it alone.
+    goAppliedDeparturePlace: null,
+    returnAppliedDeparturePlace: null,
     rentVehicleId: r.rentVehicleId,
     rentVehicleCustomText: r.rentVehicleCustomText,
     needsRentBooking: r.needsRentBooking,
