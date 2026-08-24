@@ -216,7 +216,7 @@ export function IdCardUpload({
                 onClick={handleReuse}
                 disabled={reusing}
                 className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-bold cursor-pointer border-none text-white disabled:opacity-60"
-                style={{ background: "var(--color-action)" }}
+                style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}
               >
                 {reusing ? <Loader2 size={13} className="animate-spin" /> : <History size={13} />} ใช้บัตรนี้
               </button>
@@ -238,7 +238,7 @@ export function IdCardUpload({
                   aria-label="เอารูปออก"
                   title="เอารูปออก"
                   className="absolute top-2 right-2 w-8 h-8 rounded-full flex items-center justify-center text-white cursor-pointer border-none"
-                  style={{ background: "var(--color-danger)", boxShadow: "var(--shadow-lg)" }}
+                  style={{ background: "var(--btn-danger-bg)", color: "var(--btn-danger-text)", border: "1px solid var(--btn-danger-border)", boxShadow: "var(--shadow-lg)" }}
                 >
                   <Trash2 size={15} />
                 </button>
@@ -315,7 +315,7 @@ export function IdCardUpload({
 
                   <span
                     className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-[12.5px] font-bold text-white"
-                    style={{ background: "var(--color-action)" }}
+                    style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}
                   >
                     <Paperclip size={14} /> เลือกรูป
                   </span>
@@ -362,7 +362,7 @@ export function IdCardUpload({
                           aria-label="ลบรูป"
                           title="ลบรูป"
                           className="absolute top-2 right-2 w-8 h-8 rounded-full flex items-center justify-center text-white cursor-pointer border-none opacity-0 group-hover:opacity-100 focus:opacity-100 max-md:opacity-100 transition-opacity disabled:opacity-60"
-                          style={{ background: "var(--color-danger)", boxShadow: "var(--shadow-lg)" }}
+                          style={{ background: "var(--btn-danger-bg)", color: "var(--btn-danger-text)", border: "1px solid var(--btn-danger-border)", boxShadow: "var(--shadow-lg)" }}
                         >
                           {removing ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
                         </button>
@@ -387,7 +387,7 @@ export function IdCardUpload({
                           aria-label="ลบไฟล์"
                           title="ลบไฟล์"
                           className="absolute top-2 right-2 w-8 h-8 rounded-full flex items-center justify-center text-white cursor-pointer border-none opacity-0 group-hover:opacity-100 focus:opacity-100 max-md:opacity-100 transition-opacity disabled:opacity-60"
-                          style={{ background: "var(--color-danger)", boxShadow: "var(--shadow-lg)" }}
+                          style={{ background: "var(--btn-danger-bg)", color: "var(--btn-danger-text)", border: "1px solid var(--btn-danger-border)", boxShadow: "var(--shadow-lg)" }}
                         >
                           {removing ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
                         </button>
@@ -484,7 +484,7 @@ export function IdCardUpload({
                 type="button"
                 onClick={() => setNotIdCardMsg(null)}
                 className="mt-1 w-full inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg text-[13px] font-bold text-white border-none cursor-pointer"
-                style={{ background: "var(--color-action)" }}
+                style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}
               >
                 เลือกรูปใหม่
               </button>
@@ -528,7 +528,7 @@ export function IdCardUpload({
                   type="button"
                   onClick={() => submitConsent(true)}
                   className="flex-1 px-4 py-2.5 rounded-lg text-[13px] font-bold text-white border-none cursor-pointer"
-                  style={{ background: "var(--color-action)" }}
+                  style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}
                 >
                   เก็บไว้ใช้ครั้งหน้า
                 </button>

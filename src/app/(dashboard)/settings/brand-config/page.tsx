@@ -376,7 +376,7 @@ function BrandConfigModal({
   const [bcStatus, erpStatus] = getGroupStatusesFromForm(form);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "var(--overlay-bg)" }}>
+    <div className="app-overlay fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
         className="rounded-2xl w-[480px] max-w-full max-h-[90vh] flex flex-col overflow-hidden"
         style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", boxShadow: "var(--shadow-modal)" }}
@@ -435,7 +435,7 @@ function BrandConfigModal({
 
         <div className="flex gap-2 px-5 py-3 shrink-0" style={{ borderTop: "1px solid var(--border-card)", background: "var(--bg-card-alt)" }}>
           <button type="button" onClick={onClose} className="px-3 py-2 rounded-lg text-[12px] font-medium cursor-pointer border-none" style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}>Cancel</button>
-          <button type="button" onClick={onSave} disabled={saving} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-bold cursor-pointer border-none text-white ml-auto" style={{ background: "var(--color-action)" }}>
+          <button type="button" onClick={onSave} disabled={saving} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-bold cursor-pointer border-none text-white ml-auto" style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}>
             {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
             Save
           </button>

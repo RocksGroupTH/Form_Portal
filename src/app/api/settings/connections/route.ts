@@ -24,12 +24,21 @@ export async function GET() {
       data: {
         connections,
         encryptionConfigured: isEncryptionConfigured(),
+        // Every database this app resolves from an MSSQL_*_DATABASE variable,
+        // in the order src/lib/db/mssql.ts declares the pools. The card is
+        // labelled "change in .env.local", so it lists what .env.local
+        // actually controls: Rocks_Portal_HR is deliberately absent because it
+        // is a hard-coded getAppPool() literal, and MSSQL_DATABASE because it
+        // is only the connection's default catalogue and no pool uses it.
+        // Additive only — the three original keys keep their names and meaning.
         appMssql: {
           host: env.MSSQL_HOST,
           port: env.MSSQL_PORT,
           coreDatabase: env.MSSQL_CORE_DATABASE,
           formDatabase: env.MSSQL_FORM_DATABASE,
+          formUatDatabase: env.MSSQL_FORM_UAT_DATABASE,
           dataDatabase: env.MSSQL_DATA_DATABASE,
+          erpDataDatabase: env.MSSQL_ERP_DATA_DATABASE,
         },
       },
     });

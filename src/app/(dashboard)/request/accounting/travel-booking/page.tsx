@@ -7,8 +7,8 @@ import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
 import { HoverCard } from "@/components/ui/HoverCard";
-import { useAccountingAccess } from "@/features/accounting/hooks/useAccountingAccess";
-import { Luggage, ClipboardCheck, FileSpreadsheet, Settings } from "lucide-react";
+import { useBookingAccess } from "@/features/travel-booking/hooks/useBookingAccess";
+import { AlertCircle, Luggage, ClipboardCheck, FileSpreadsheet, Settings } from "lucide-react";
 
 interface HubCard {
   title: string;
@@ -36,7 +36,7 @@ const CARDS: HubCard[] = [
   },
   {
     title: "ตั้งค่า",
-    desc: "เหตุผลการเดินทาง · ที่พักค้างคืน · ยานพาหนะ · เช่ายานพาหนะ",
+    desc: "เหตุผลการเดินทาง · ที่พัก · การเดินทาง · เช่ายานพาหนะ · สิทธิ์เข้าถึง",
     href: "/request/accounting/travel-booking-settings",
     icon: <Settings size={20} />,
     adminOnly: true,
@@ -73,11 +73,20 @@ function TravelBookingHubCard({ card, href }: { card: HubCard; href: string }) {
 /** AP-17 admin hub — its own management area (queue + report + settings), separate from AP-1. */
 export default function TravelBookingHubPage() {
   const { data: session } = useSession();
-  const { loading: accessLoading, canAccount } = useAccountingAccess();
+  const {
+    loading: accessLoading,
+    canAccount,
+    canSettings,
+    error: accessError,
+  } = useBookingAccess();
   const role = session?.user?.role;
   const isAdmin = role === "IT Admin" || role === "System Admin";
   const cards = CARDS.filter((c) => {
-    if (c.adminOnly && !isAdmin) return false;
+    // `adminOnly` now means "admin, or holding at least one settings-tab
+    // grant" — matching AP-1's hub. Without `canSettings` a granted non-admin
+    // could open the settings page and pass its routes, but had no menu path
+    // to it: the grant worked and was unreachable.
+    if (c.adminOnly && !isAdmin && !canSettings) return false;
     if (accessLoading) {
       if (c.accountOnly) return false;
       return true;
@@ -97,6 +106,21 @@ export default function TravelBookingHubPage() {
         subtitle="คิวจอง รายงาน และตั้งค่าการจองที่พัก/ตั๋วโดยสาร (AP-17)"
         backHref={backHref}
       />
+
+      {/* An unreadable /access check hides the same cards a real refusal hides.
+          Say which one happened, rather than letting the menu imply the viewer is
+          off the roster. */}
+      {accessError ? (
+        <div
+          className="rounded-2xl p-4 mb-4 flex items-start gap-2.5"
+          style={{ background: "var(--bg-info-yellow)", border: "1px solid var(--border-info-yellow)" }}
+        >
+          <AlertCircle size={16} style={{ color: "var(--text-info-yellow)", marginTop: 2 }} className="shrink-0" />
+          <p className="text-[13px] m-0" style={{ color: "var(--text-info-yellow)" }}>
+            ตรวจสอบสิทธิ์ไม่สำเร็จ — เมนูที่ต้องใช้สิทธิ์จึงยังไม่แสดง กรุณาลองโหลดหน้านี้ใหม่อีกครั้ง
+          </p>
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {cards.map((card) => (

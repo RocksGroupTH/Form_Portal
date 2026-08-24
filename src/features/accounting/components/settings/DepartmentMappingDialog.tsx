@@ -33,6 +33,21 @@ export interface DepartmentMappingDialogProps {
   branchCode?: string | null;
   claimBrandCode?: string | null;
   initialMapFilter?: MapFilter;
+  /**
+   * Whether this viewer may write the mappings — an admin, in practice.
+   *
+   * `PUT settings/departments/map` went back to `requireRole` on 2026-08-20:
+   * it writes `DepartmentErpMap`, rows two sibling applications read to prepare
+   * financial journal postings — shared rows, whichever database holds them,
+   * which is more than a settings-tab grant should carry. The `departments`
+   * grant still opens the list, so this dialog stays reachable — read-only.
+   * Defaults to `true` so the admin-only callers do not have to say so.
+   *
+   * The affordance is *hidden*, not disabled-on-click: a control that is
+   * offered and then answered 403 is worse than one that is absent. This is a
+   * display rule, and the route is what enforces it.
+   */
+  canSave?: boolean;
   onSaved?: () => void;
 }
 
@@ -43,6 +58,7 @@ export function DepartmentMappingDialog({
   branchCode,
   claimBrandCode,
   initialMapFilter = "all",
+  canSave = true,
   onSaved,
 }: DepartmentMappingDialogProps) {
   const { data, mutate, isLoading } = useSWR<{ ok: boolean; data?: DepartmentMappingPageData; error?: string }>(
@@ -229,7 +245,10 @@ export function DepartmentMappingDialog({
       onOpenChange(false);
       return;
     }
-    if (editIsDirty) {
+    // Closing saves whatever is dirty. Read-only never becomes dirty — every
+    // control above is disabled — but the guard is here so a future edit that
+    // re-enables one cannot turn "close" into a PUT the viewer may not make.
+    if (canSave && editIsDirty) {
       const ok = await saveTargetMappings(editGroup);
       if (!ok) return;
     }
@@ -409,7 +428,7 @@ export function DepartmentMappingDialog({
                       const isSavedMapped = Boolean(savedCode) && !isDirty;
                       const matchesBranchHint = branchHint
                         && erpCode.toUpperCase() === branchHint.toUpperCase();
-                      const selectDisabled = saving || editGroup.erpOptions.length === 0;
+                      const selectDisabled = saving || !canSave || editGroup.erpOptions.length === 0;
 
                       const glCode = glByCode[m.departmentCode]?.trim() ?? "";
                       const savedGlCode = savedGlByCode[m.departmentCode]?.trim() ?? "";
@@ -425,7 +444,7 @@ export function DepartmentMappingDialog({
                       const glWithoutErpDept = Boolean(glCode) && !erpCode;
 
                       const rowIsDirty = isDirty || glIsDirty || glDescIsDirty;
-                      const glSelectDisabled = saving || glSelectOptions.length === 0;
+                      const glSelectDisabled = saving || !canSave || glSelectOptions.length === 0;
 
                       return (
                         <div
@@ -573,7 +592,7 @@ export function DepartmentMappingDialog({
                                     [m.departmentCode]: next,
                                   }));
                                 }}
-                                disabled={saving || !glCode}
+                                disabled={saving || !canSave || !glCode}
                                 maxLength={500}
                                 placeholder={!glCode ? "เลือก G/L ก่อน" : "คำอธิบาย Journal"}
                                 className="w-full text-[12px] rounded-xl px-3 outline-none min-h-[38px] disabled:opacity-50"
@@ -599,20 +618,27 @@ export function DepartmentMappingDialog({
             >
               <p className="text-[11px] m-0" style={{ color: "var(--text-muted)" }}>
                 แสดง {filteredMappings.length} จาก {editGroup.totalCount} แผนก
-                {editIsDirty && (
+                {canSave && editIsDirty && (
                   <span style={{ color: "var(--text-info-yellow)" }}> · มีการแก้ไขที่ยังไม่บันทึก</span>
+                )}
+                {!canSave && (
+                  <span style={{ color: "var(--text-faint)" }}>
+                    {" · "}ดูได้อย่างเดียว — การแก้ไข mapping สงวนไว้สำหรับผู้ดูแลระบบ
+                  </span>
                 )}
               </p>
               <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="primary"
-                  onClick={() => void saveTargetMappings(editGroup)}
-                  loading={saving}
-                  disabled={!editIsDirty}
-                >
-                  บันทึก
-                </Button>
+                {canSave && (
+                  <Button
+                    type="button"
+                    variant="primary"
+                    onClick={() => void saveTargetMappings(editGroup)}
+                    loading={saving}
+                    disabled={!editIsDirty}
+                  >
+                    บันทึก
+                  </Button>
+                )}
                 <Button
                   type="button"
                   variant="secondary"

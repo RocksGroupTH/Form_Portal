@@ -36,8 +36,8 @@ export function Dialog({ open, onOpenChange, title, description, children, conte
   return (
     <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
       <RadixDialog.Portal>
-        <RadixDialog.Overlay className="fixed inset-0 z-[70]"
-          style={{ backgroundColor: "var(--overlay-bg)", animation: "overlayFadeIn 0.15s ease-out" }} />
+        <RadixDialog.Overlay className="app-overlay fixed inset-0 z-[70]"
+          style={{ animation: "overlayFadeIn 0.15s ease-out" }} />
         <RadixDialog.Content
           aria-describedby={undefined}
           className={`fixed left-[50%] top-[50%] z-[71] w-full translate-x-[-50%] translate-y-[-50%] rounded-xl max-h-[90vh] ${paddingClass} ${overflowClass} ${uniformSurface ? "" : "shadow-2xl"} ${contentClassName || "max-w-lg"}`}

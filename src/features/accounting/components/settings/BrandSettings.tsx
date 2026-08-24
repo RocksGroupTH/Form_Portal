@@ -135,8 +135,7 @@ export function BrandSettings() {
         disabled={saving}
         className="flex items-center gap-2 px-5 py-2.5 rounded-xl cursor-pointer border-none text-[13px] font-bold"
         style={{
-          background: "var(--color-action)",
-          color: "#fff",
+          background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)",
           opacity: saving ? 0.6 : 1,
         }}
       >

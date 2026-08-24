@@ -11,7 +11,9 @@
     "test": "tsx scripts/run-tests.ts",
     "typecheck": "tsc --noEmit",
     "check:alignment": "tsx scripts/checks/verify-master-alignment.ts",
-    "check:reward-stock": "tsx scripts/checks/verify-reward-stock.ts"
+    "check:dept-map-home": "tsx scripts/checks/verify-department-erp-map-move.ts",
+    "check:erp-data-home": "tsx scripts/checks/verify-erp-data-move.ts",
+    "check:travel-province-home": "tsx scripts/checks/verify-travel-province-move.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -27,7 +29,7 @@
     "leaflet": "^1.9.4",
     "lucide-react": "^0.577.0",
     "mssql": "^12.2.1",
-    "next": "^16.3.1",
+    "next": "^16.3.2",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-hook-form": "^7.72.0",

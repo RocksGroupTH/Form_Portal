@@ -13,8 +13,29 @@ import {
 import { useHomeData } from "@/features/home/useHomeData";
 import { useFormEnvironments } from "@/lib/hooks/useFormEnvironments";
 import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
-import { Search, Route, Luggage, Gift, ArrowRight } from "lucide-react";
+import { sortByFormCode } from "@/lib/form-code-order";
+// The shared hover affordance — accent border, focus ring, a 3px lift. Home's
+// cards were plain <Link>s and the only card surface in the app without it, so
+// the same tile felt inert here and interactive on /request.
+import { HoverCard } from "@/components/ui/HoverCard";
+import { Search, Route, Luggage, ClipboardCheck, FilePen, ArrowRight } from "lucide-react";
 
+/**
+ * The Accounting forms Home offers.
+ *
+ * Deliberately its own list rather than a filter over `REQUEST_CARDS`: Home
+ * renders a different card (its own `Icon` component, a short one-line `desc`)
+ * and never shows the management variants. The two lists must be kept in step
+ * by hand — adding a form to `REQUEST_CARDS` alone puts it on `/request` and
+ * *not* here. The `code` is the whole wiring: it feeds `isFormAvailable`,
+ * `isFormComingSoon` and `FormEnvironmentChip`, and `/api/form-environment`
+ * resolves every code any `REQUEST_CARDS` badge names, so a form already
+ * carrying a management card needs nothing further to be filtered correctly.
+ *
+ * The *order* here is not one of the things kept by hand: write entries in
+ * whatever order is convenient, and `sortByFormCode` renders them by form
+ * number.
+ */
 const ACCOUNTING_FORMS = [
   {
     code: "AP-1",
@@ -78,6 +99,56 @@ function LoadError({ children }: { children: React.ReactNode }) {
     <p className="text-[12px] mt-0.5" style={{ color: "var(--color-danger)" }}>
       {children}
     </p>
+  );
+}
+
+/** One "waiting on you" row. Each approval system gets its own row and its own queue link. */
+function PendingLink({ href, Icon, title, subtitle, count }: {
+  href: string;
+  Icon: React.ComponentType<{ size?: number }>;
+  title: string;
+  subtitle: string;
+  count: number;
+}) {
+  return (
+    <HoverCard
+      href={href}
+      className="flex items-center gap-3 px-3.5 py-3"
+      style={{
+        borderRadius: "var(--radius-card)",
+        boxShadow: "var(--shadow-card)",
+      }}
+    >
+      <span
+        className="flex items-center justify-center shrink-0"
+        style={{
+          width: 30, height: 30,
+          borderRadius: 10,
+          background: "var(--status-ok-bg)",
+          color: "var(--status-ok-text)",
+        }}
+      >
+        <Icon size={15} />
+      </span>
+      <span className="flex-1 min-w-0">
+        <span className="block text-[12.5px] font-bold" style={{ color: "var(--text-primary)" }}>
+          {title}
+        </span>
+        <span className="block text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+          {subtitle}
+        </span>
+      </span>
+      <span
+        className="text-[10px] font-bold px-2.5 py-1 shrink-0"
+        style={{
+          borderRadius: 999,
+          background: "var(--status-pending-bg)",
+          color: "var(--status-pending-text)",
+        }}
+      >
+        {count} รายการ
+      </span>
+    </HoverCard>
   );
 }
 
@@ -195,18 +266,16 @@ function AccountingFormCard({
   }
 
   return (
-    <Link
+    <HoverCard
       href={href}
-      className="flex gap-3 items-start p-3.5 no-underline"
+      className="flex gap-3 items-start p-3.5"
       style={{
-        background: "var(--bg-card)",
         borderRadius: "var(--radius-card)",
         boxShadow: "var(--shadow-card)",
-        border: "1px solid var(--border-card)",
       }}
     >
       {body}
-    </Link>
+    </HoverCard>
   );
 }
 
@@ -267,8 +336,9 @@ export function HomeCatalogue() {
   // "nothing matches your search" apart from "nothing is here at all" — a
   // tester in UAT mode who types anything into the search box must still see
   // the UAT explanation, not a false "no match" for their query.
-  const shownAccounting = ACCOUNTING_FORMS.filter(
-    (f) => isFormAvailable(f.code) || isFormComingSoon(f.code),
+  const shownAccounting = sortByFormCode(
+    ACCOUNTING_FORMS.filter((f) => isFormAvailable(f.code) || isFormComingSoon(f.code)),
+    (f) => f.code,
   );
   const accounting = shownAccounting.filter((f) => matches(f.code, f.name, f.desc));
 

@@ -621,7 +621,7 @@ export function MyRequestsCard({ kind, header = true }: { kind: "mine" | "work";
       {header && (
         <div
           className="flex items-center gap-2.5 px-5 py-3"
-          style={{ borderBottom: "1px solid var(--border-card)", background: "var(--bg-card-alt)" }}
+          style={{ borderBottom: "1px solid var(--border-card)", background: "var(--bg-card-header)" }}
         >
           <span
             className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"

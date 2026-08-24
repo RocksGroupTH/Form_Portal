@@ -85,6 +85,45 @@ export function canActOnClaimBrand(
   return canActOnInterfaceTarget(access, interfaceByClaim[claim]);
 }
 
+/**
+ * May this approver repoint a claim brand at a different set of books?
+ *
+ * `AccApproverInterfaceBrand` scopes the same roster row everywhere else — the
+ * ERP send, the prep detail, the ACCOUNT approve/reject, the report export all
+ * ask `canActOnInterfaceTarget`. `settings/erp-config` was the one place the
+ * same person was unscoped: it validated only that the claim brand is enabled
+ * in AP-1, so a KSI-scoped approver holding the `erpInterface` grant could
+ * point PCTH's claims at any company they liked. Deciding *where* a claim's
+ * journals post is a stronger power than approving one of them.
+ *
+ * Both ends are checked, because either one moves money:
+ *
+ * - **the target it has now** — repointing PCTH's claims is taking documents
+ *   out of books that are not yours, even if the new target is;
+ * - **the target it is being given** — sending someone else's claims into your
+ *   own company is the same act from the other side.
+ *
+ * An unmapped claim brand has no current target and nothing to protect, so a
+ * scoped approver may give it one of their own. `nextTarget` is null for the
+ * clear (DELETE), which asks only the first question.
+ */
+export function canRetargetClaimBrand(
+  access: ApproverInterfaceAccess,
+  currentTarget: string | null | undefined,
+  nextTarget: string | null | undefined,
+): boolean {
+  if (access.allAccess) return true;
+  const current = (currentTarget ?? "").trim();
+  if (current && !canActOnInterfaceTarget(access, current)) return false;
+  const next = (nextTarget ?? "").trim();
+  if (next && !canActOnInterfaceTarget(access, next)) return false;
+  return true;
+}
+
 /** What a scoped-out actor is told. Deliberately does not name the target. */
 export const INTERFACE_SCOPE_ERROR =
   "ไม่มีสิทธิ์ในกลุ่ม Interface ของเอกสารนี้";
+
+/** The same refusal for a configuration change rather than a document. */
+export const INTERFACE_TARGET_SCOPE_ERROR =
+  "ไม่มีสิทธิ์ในกลุ่ม Interface ของแบรนด์นี้";

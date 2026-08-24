@@ -47,7 +47,11 @@ interface AppMssqlInfo {
   port: number;
   coreDatabase: string;
   formDatabase: string;
+  /** Optional so an older cached bundle rendering a newer payload — or the
+   *  reverse — degrades to a shorter list rather than printing undefined. */
+  formUatDatabase?: string;
   dataDatabase: string;
+  erpDataDatabase?: string;
 }
 
 interface FormState {
@@ -166,7 +170,7 @@ function ConfirmModal({
   const canConfirm = !confirmPhrase || typed.trim() === confirmPhrase;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center" style={{ background: "var(--overlay-bg)" }}>
+    <div className="app-overlay fixed inset-0 z-[60] flex items-center justify-center">
       <div
         className="rounded-2xl w-[400px] max-w-[90vw] overflow-hidden"
         style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", boxShadow: "var(--shadow-modal)" }}
@@ -245,7 +249,7 @@ function ConnectionFormModal({
     onChange({ ...form, [key]: value });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "var(--overlay-bg)" }}>
+    <div className="app-overlay fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
         className="rounded-2xl w-[520px] max-w-full max-h-[90vh] flex flex-col overflow-hidden"
         style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", boxShadow: "var(--shadow-modal)" }}
@@ -349,7 +353,7 @@ function ConnectionFormModal({
             </button>
             <div className="flex-1 flex items-center justify-end gap-2 min-w-0 ml-auto">
               {saveTestStatus && <TestStatusLabel ok={saveTestStatus.ok} message={saveTestStatus.message} />}
-              <button type="button" onClick={onSave} disabled={saving || testing} className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-[12px] font-bold cursor-pointer border-none text-white disabled:opacity-60" style={{ background: "var(--color-action)" }}>
+              <button type="button" onClick={onSave} disabled={saving || testing} className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-[12px] font-bold cursor-pointer border-none text-white disabled:opacity-60" style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}>
                 {saving && <Loader2 size={14} className="animate-spin" />}
                 {saving && testing ? "Testing…" : "Save"}
               </button>
@@ -388,7 +392,17 @@ function TestBadge({ c }: { c: Connection }) {
 }
 
 function AppMssqlInfoCard({ app }: { app: AppMssqlInfo }) {
-  const databases = [app.coreDatabase, app.formDatabase, app.dataDatabase].join(", ");
+  const databases = [
+    app.coreDatabase,
+    app.formDatabase,
+    app.formUatDatabase,
+    app.dataDatabase,
+    app.erpDataDatabase,
+  ]
+    .filter(function (d): d is string {
+      return Boolean(d);
+    })
+    .join(", ");
 
   return (
     <div

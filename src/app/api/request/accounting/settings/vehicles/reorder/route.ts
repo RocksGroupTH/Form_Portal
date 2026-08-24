@@ -1,9 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireRole } from "@/lib/api-auth";
+import { requireSettingsTab } from "@/lib/acc/require-settings-tab";
 import { reorderVehicles } from "@/lib/acc/settings-service";
 
 export async function POST(req: NextRequest) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireSettingsTab("vehicles");
   if (session instanceof Response) return session;
   try {
     const body = (await req.json()) as { ids?: number[] };

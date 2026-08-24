@@ -5,6 +5,7 @@ import {
   loadInterfaceBrandsByApproverIds,
   setApproverInterfaceBrands,
 } from "@/lib/acc/approver-interface-access";
+import { loadSettingsTabsByApproverIds } from "@/lib/acc/approver-settings-tabs";
 import type {
   AccApproverRow,
   AccVehicle,
@@ -90,12 +91,18 @@ export async function listApprovers(
     isActive: !!x.IsActive,
     photoUrl: (x.PhotoUrl as string) ?? null,
   }));
-  const brandMap = await loadInterfaceBrandsByApproverIds(
-    rows.map((row) => row.id),
-  );
+  const ids = rows.map((row) => row.id);
+  // Two independent side-table reads on the same pool — run them together so
+  // the grants cost no extra round-trip on the approval hot path, where
+  // listApprovers(true) is called by actor-context and approval-engine.
+  const [brandMap, tabMap] = await Promise.all([
+    loadInterfaceBrandsByApproverIds(ids),
+    loadSettingsTabsByApproverIds(ids),
+  ]);
   return rows.map((row) => ({
     ...row,
     interfaceBrandCodes: brandMap.get(row.id) ?? null,
+    settingsTabs: tabMap.get(row.id) ?? [],
   }));
 }
 

@@ -76,10 +76,12 @@ export async function POST(
       return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
     }
     // Interface scope, same reasoning as the approve route: rejecting is an
-    // action on another interface group's books just as much as approving is.
+    // action on another interface group's books just as much as approving is —
+    // including the form scoping, since this route reaches an `AccRequest` by
+    // id and is no more AP-1-specific than the approve route is.
     const [access, deptCtx] = await Promise.all([
       resolveApproverInterfaceAccess(actor.email, session.user.role),
-      loadPrepDeptContext(),
+      loadPrepDeptContext(accReq.formCode),
     ]);
     if (!canActOnClaimBrand(access, interfaceByClaimMapToRecord(deptCtx.interfaceByClaim), accReq.brandCode)) {
       return NextResponse.json({ ok: false, error: INTERFACE_SCOPE_ERROR }, { status: 403 });

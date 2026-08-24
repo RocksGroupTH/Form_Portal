@@ -52,7 +52,9 @@ export function UatDataBanner({
     return (
       <div
         className="rounded-2xl px-4 py-2.5 mb-4 flex items-center gap-2"
-        style={{ background: "var(--status-bad-bg)", color: "var(--status-bad-text)" }}
+        // The same amber as the navbar chip and the card badges. This banner
+        // states a fact about the record being read, not a problem with it.
+        style={{ background: "var(--status-uat-bg)", color: "var(--status-uat-text)" }}
       >
         <FlaskConical size={15} className="shrink-0" />
         <p className="text-[12px] font-bold m-0">ข้อมูลทดสอบ (UAT) — ไม่ใช่คำขอจริง</p>

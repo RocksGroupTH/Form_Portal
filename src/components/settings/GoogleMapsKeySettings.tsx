@@ -184,8 +184,7 @@ export function GoogleMapsKeySettings({ embedded, onChanged }: Props) {
             disabled={saving || !newKey.trim()}
             className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border-none text-[13px] font-bold cursor-pointer shrink-0"
             style={{
-              background: "var(--color-action)",
-              color: "#fff",
+              background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)",
               opacity: saving || !newKey.trim() ? 0.5 : 1,
               cursor: saving || !newKey.trim() ? "not-allowed" : "pointer",
             }}

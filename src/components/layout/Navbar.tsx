@@ -15,8 +15,9 @@ import { useUserPhoto } from "@/lib/hooks/useUserPhoto";
 import { getBrandFromSearchParams, replaceSearchParams, setBrandInSearchParams } from "@/lib/brand-url";
 import { TRAVEL_FROM_PARAM, resolveTravelReturnPath } from "@/features/accounting/lib/navigation";
 import { useRole } from "@/lib/hooks/useRole";
+import { orgLabelFromEmail } from "@/lib/org-label";
 import {
-  Sun, Moon, Home, FileText, ClipboardList, ClipboardCheck, Send, Settings2,
+  Sun, Moon, Home, FileText, ClipboardList, ClipboardCheck, Send, Settings2, ChevronDown,
 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 
@@ -45,6 +46,8 @@ export function Navbar() {
       : []),
   ];
   const displayPhoto = useUserPhoto();
+  /** The line under the name. Null when the address yields nothing — see org-label.ts. */
+  const orgLabel = orgLabelFromEmail(user?.email);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileMobile, setProfileMobile] = useState(false);
   const [iconOnlyNav, setIconOnlyNav] = useState(false);
@@ -183,28 +186,65 @@ export function Navbar() {
           ))}
         </div>
 
-        {/* Right: Brand + Theme + User */}
+        {/* Right: Brand · PRO/UAT · Theme │ User
+            Brand leads because it scopes everything to its right — which company
+            the requests belong to — and the two chips after it report the mode
+            and the theme. All three are the same 36px bordered control so the
+            cluster reads as one row of switches rather than three unrelated
+            widgets. The rule then separates the switches from the person. */}
         <div ref={rightRef} className="flex items-center gap-2 shrink-0">
-          <UatModeSwitch />
           <BrandSwitcher />
+          <UatModeSwitch />
           <button
             onClick={toggleTheme}
-            className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer border-none"
-            style={{ background: "transparent", color: "var(--text-secondary)" }}
+            className="w-9 h-9 rounded-lg flex items-center justify-center cursor-pointer shrink-0"
+            style={{
+              background: "var(--bg-card)",
+              border: "1px solid var(--border-card)",
+              color: "var(--text-secondary)",
+            }}
             aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
           >
             {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
           </button>
 
           {user && (
-            <button
-              type="button"
-              onClick={() => openProfile(false)}
-              className="cursor-pointer border-none bg-transparent p-0 rounded-full"
-              aria-label="My profile"
-            >
-              <Avatar name={user.nickname || user.name || ""} color={user.color} size={30} photo={displayPhoto} />
-            </button>
+            <>
+              <div
+                className="w-px h-6 mx-1 shrink-0"
+                style={{ background: "var(--border-main)" }}
+                aria-hidden
+              />
+              <button
+                type="button"
+                onClick={() => openProfile(false)}
+                className="flex items-center gap-2 cursor-pointer border-none bg-transparent p-0 shrink-0"
+                aria-label="My profile"
+              >
+                {/* Hidden below lg, not shrunk: the name is the widest thing in
+                    the bar and the nav collapses to icons when the cluster grows
+                    (see the ResizeObserver above). Dropping the text first keeps
+                    the tabs labelled for longer. */}
+                <span className="hidden lg:flex flex-col items-end leading-none gap-1 max-w-[180px]">
+                  <span
+                    className="text-[12px] font-bold truncate max-w-full"
+                    style={{ color: "var(--text-heading)" }}
+                  >
+                    {user.name || user.nickname || ""}
+                  </span>
+                  {orgLabel && (
+                    <span
+                      className="text-[10px] truncate max-w-full"
+                      style={{ color: "var(--text-muted)" }}
+                    >
+                      {orgLabel}
+                    </span>
+                  )}
+                </span>
+                <Avatar name={user.nickname || user.name || ""} color={user.color} size={30} photo={displayPhoto} />
+                <ChevronDown size={13} style={{ color: "var(--text-muted)" }} className="shrink-0" />
+              </button>
+            </>
           )}
         </div>
       </header>
@@ -245,8 +285,8 @@ export function Navbar() {
 
         {/* Right: Brand + Theme toggle */}
         <div className="flex items-center gap-1.5">
-          <UatModeSwitch compact />
           <BrandSwitcher compact />
+          <UatModeSwitch compact />
           <button
             onClick={toggleTheme}
             className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer border-none"

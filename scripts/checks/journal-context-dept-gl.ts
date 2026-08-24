@@ -38,10 +38,13 @@ async function main() {
     "../../src/lib/acc/erp-journal-context"
   );
 
-  const ctx = await loadErpJournalBuildContext();
+  // The context resolves per form now, so the check has to name one. AP-1 is
+  // the form the send path this check covers actually posts.
+  const { AP1_FORM_CODE } = await import("../../src/features/accounting/constants");
+  const ctx = await loadErpJournalBuildContext(AP1_FORM_CODE);
 
   const targets = Object.keys(ctx.deptGlOverridesByTarget);
-  console.log(`deptGlOverridesByTarget: ${targets.length} target key(s)`);
+  console.log(`deptGlOverridesByTarget (${AP1_FORM_CODE}): ${targets.length} target key(s)`);
   for (const target of targets) {
     const deptMap = ctx.deptGlOverridesByTarget[target];
     const depts = Object.keys(deptMap);
