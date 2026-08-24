@@ -14,9 +14,11 @@ import {
   Save,
   Send,
   User,
+  UserCog,
 } from "lucide-react";
 import { Button } from "@/components/ui";
 import { Avatar } from "@/components/ui/Avatar";
+import { RequesterPickerModal } from "@/components/RequesterPickerModal";
 import { UatDataBanner } from "@/components/UatDataBanner";
 import { useBrand } from "@/components/BrandProvider";
 import { useUserPhoto } from "@/lib/hooks/useUserPhoto";
@@ -40,6 +42,11 @@ import type {
   ReimburseItem,
   ReimburseRule,
 } from "@/features/reimburse/types";
+// The shape `/api/request/reimburse/requesters` answers with, taken from the
+// server functions that build it rather than restated — AP-1 and AP-17 each
+// declare their own copy of it in their form hooks, and a third would be one
+// copy too many. `import type` is erased, so no server module is bundled.
+import type { DepartmentColleague } from "@/lib/hr/employee-lookup";
 import { ReimburseNotice } from "./ReimburseNotice";
 import { ReimburseItemGrid, findItemRowProblems } from "./ReimburseItemGrid";
 import { ReimburseRuleChecklist } from "./ReimburseRuleChecklist";
@@ -196,6 +203,91 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
   const managerReason = employeeData?.managerReason ?? null;
   const employeeLoading = !employeeData && !employeeError;
 
+  /* ── ผู้ขอเบิก: filing for a colleague (AP-1 and AP-17 do this the same way) ── */
+
+  // The actor's own department — who people file for almost every time, and
+  // what the picker opens on. Typing in the picker searches the whole roster
+  // through the same route's `?q=`.
+  const { data: requesterOptsData, error: requesterOptsError } = useSWR<{
+    colleagues: DepartmentColleague[];
+    environment?: "Production" | "UAT";
+  }>(
+    [
+      // `initial?.id`, not `requestId`: a stable key. `requestId` changes on
+      // the first draft save, which would blank `colleagues` mid-edit and set
+      // the resolved-requester lookup running again for nothing.
+      initial?.id
+        ? `/api/request/reimburse/requesters?id=${initial.id}`
+        : "/api/request/reimburse/requesters",
+      "reimburse-form",
+    ],
+    ([url]: [string, string]) => jsonFetcher(url),
+    { revalidateOnFocus: false },
+  );
+  const colleagues = useMemo(() => requesterOptsData?.colleagues ?? [], [requesterOptsData]);
+  // The on-behalf manager comes from this fetch, so the submit gate below must
+  // not call it missing while it is still in flight.
+  const colleaguesLoading = !requesterOptsData && !requesterOptsError;
+  const requesterEnvironment = requesterOptsData?.environment ?? "Production";
+
+  const [requesterPickerOpen, setRequesterPickerOpen] = useState(false);
+  /** null = filing as self. */
+  const [requesterStaffId, setRequesterStaffId] = useState<number | null>(null);
+
+  // Seed from a resumed draft's saved requester (`AccRequest.StaffId`), once
+  // both it and our own staff id are known — and only when they differ, so a
+  // self-authored request stays null rather than looking like an on-behalf one.
+  useEffect(() => {
+    const draftStaffId = initial?.staffId ?? null;
+    const selfStaffId = employee?.staffId ?? null;
+    if (draftStaffId != null && selfStaffId != null && draftStaffId !== selfStaffId) {
+      setRequesterStaffId(draftStaffId);
+    }
+  }, [initial?.staffId, employee?.staffId]);
+
+  /**
+   * The chosen requester, resolved from HR when the department list does not
+   * hold them — a search result from another department, or a resumed draft
+   * whose requester has since moved. Without this the card renders a bare
+   * `#10075`: no name, no department, no manager to approve it.
+   */
+  const [fetchedRequester, setFetchedRequester] = useState<DepartmentColleague | null>(null);
+  useEffect(() => {
+    if (!requesterStaffId || colleagues.some((c) => c.staffId === requesterStaffId)) {
+      setFetchedRequester(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/request/reimburse/requesters?staffId=${requesterStaffId}`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (!cancelled) setFetchedRequester(json?.ok ? (json.data?.colleagues?.[0] ?? null) : null);
+      })
+      .catch(() => {
+        if (!cancelled) setFetchedRequester(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [requesterStaffId, colleagues]);
+
+  const selectedRequester = requesterStaffId
+    ? (colleagues.find((c) => c.staffId === requesterStaffId) ?? fetchedRequester)
+    : null;
+  const onBehalfName = selectedRequester?.fullName ?? (requesterStaffId ? `#${requesterStaffId}` : "");
+  /** The approver: the colleague's manager when filing on behalf, else our own. */
+  const shownManager = requesterStaffId ? (selectedRequester?.manager ?? null) : manager;
+  // In UAT a colleague's manager is their UAT manager, so the remedy for a
+  // missing one is the tester list — pointing at HR there ends with somebody
+  // asking HR to attach a real manager to test data.
+  const shownManagerReason = requesterStaffId
+    ? selectedRequester?.manager
+      ? null
+      : requesterEnvironment === "UAT"
+        ? "โหมด UAT: เพื่อนที่เลือกยังไม่ได้กำหนดผู้จัดการสำหรับ UAT — ตั้งที่ Settings → UAT Users"
+        : "เพื่อนที่เลือกยังไม่ได้กำหนดหัวหน้างานในระบบ HR"
+    : managerReason;
+
   const sessionPhoto = useUserPhoto();
   const requesterPhoto = employee?.photoUrl ?? sessionPhoto;
   const employeeName = employee
@@ -288,7 +380,11 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
   // list) is not something the requester can reach from this form — so it is
   // named here rather than discovered on a failed round trip. Same guard AP-1
   // uses: only once the lookup has actually answered.
-  if (!employeeLoading && !manager) {
+  //
+  // `shownManager`, not `manager`: filing on behalf of a colleague assigns
+  // *their* manager, so gating on the actor's would both block a submit that is
+  // fine and let one through whose requester has nobody to approve it.
+  if (!employeeLoading && !colleaguesLoading && !shownManager) {
     missing.push({ key: "manager", label: "ผู้จัดการ (ManagerStaffId)" });
   }
   // Five states, one of which is ready. The server refuses a submit whose
@@ -478,6 +574,10 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
             .filter((it) => !isBlankItemRow(it))
             .map((it, i) => ({ ...it, sortOrder: i })),
           ackedRuleIds,
+          // Stamped onto the row here; the submit takes it back off the row
+          // rather than from a payload, so this save is what decides whose
+          // claim it is and whose manager approves it.
+          requesterStaffId,
         };
         const res = await fetch("/api/request/reimburse/requests", {
           method: "POST",
@@ -605,7 +705,21 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
       <ReimburseNotice />
 
       {/* ── ผู้ขอเบิก ── */}
-      <SectionCard icon={<User size={15} />} title="ผู้ขอเบิก">
+      <SectionCard
+        icon={<User size={15} />}
+        title="ผู้ขอเบิก"
+        extra={(
+          /* Never gated on `colleagues.length` — see AP-1's copy. */
+          <button
+            type="button"
+            onClick={() => setRequesterPickerOpen(true)}
+            className="hover-run-border shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold cursor-pointer"
+            style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", color: "var(--nav-active-text)" }}
+          >
+            <UserCog size={13} /> เปลี่ยนผู้ขอเบิก
+          </button>
+        )}
+      >
         {employeeLoading ? (
           <div className="flex items-center gap-4">
             <div className="shrink-0 w-14 h-14 rounded-2xl animate-pulse" style={{ background: "var(--bg-card-alt)" }} />
@@ -629,31 +743,76 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="shrink-0 rounded-2xl overflow-hidden" style={{ boxShadow: "0 0 0 2px var(--nav-active-bg)" }}>
-                <Avatar name={employeeName || "?"} size={48} photo={requesterPhoto} color="var(--nav-active-text)" />
-              </div>
-              <div className="min-w-0 flex flex-col gap-0.5">
-                <div className="flex items-baseline gap-2 min-w-0">
-                  <span className="text-[14px] font-bold truncate" style={{ color: "var(--text-primary)" }}>
-                    {employeeName || "-"}
-                  </span>
-                  <span className="text-[11px] shrink-0" style={{ color: "var(--text-muted)" }}>
-                    #{employee.staffId}
-                  </span>
+            <div className="flex flex-col gap-2.5 min-w-0">
+              <RequesterPickerModal
+                open={requesterPickerOpen}
+                onClose={() => setRequesterPickerOpen(false)}
+                colleagues={colleagues}
+                searchEndpoint="/api/request/reimburse/requesters"
+                self={{
+                  staffId: employee.staffId,
+                  fullName: employeeName || employee.fullName,
+                  departmentName: employee.departmentName ?? null,
+                  position: employee.position ?? null,
+                  email: employee.email ?? employee.emailCompBr ?? null,
+                  photoUrl: requesterPhoto,
+                }}
+                value={requesterStaffId}
+                onSelect={setRequesterStaffId}
+              />
+
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="shrink-0 rounded-2xl overflow-hidden" style={{ boxShadow: "0 0 0 2px var(--nav-active-bg)" }}>
+                  <Avatar
+                    name={(requesterStaffId ? selectedRequester?.fullName : employeeName) || "?"}
+                    size={48}
+                    photo={(requesterStaffId ? selectedRequester?.photoUrl : requesterPhoto) ?? undefined}
+                    color="var(--nav-active-text)"
+                  />
                 </div>
-                {(employee.departmentName || employee.position) && (
-                  <span className="text-[12px] truncate" style={{ color: "var(--text-muted)" }}>
-                    {[employee.departmentName, employee.position].filter(Boolean).join(" · ")}
-                  </span>
-                )}
-                {(employee.email || employee.emailCompBr) && (
-                  <span className="inline-flex items-center gap-1 text-[12px] truncate" style={{ color: "var(--text-secondary)" }}>
-                    <Mail size={11} className="shrink-0" />
-                    <span className="truncate">{employee.email ?? employee.emailCompBr}</span>
-                  </span>
-                )}
+                <div className="min-w-0 flex flex-col gap-0.5">
+                  <div className="flex items-baseline gap-2 min-w-0">
+                    <span className="text-[14px] font-bold truncate" style={{ color: "var(--text-primary)" }}>
+                      {requesterStaffId
+                        ? (selectedRequester?.fullName ?? `#${requesterStaffId}`)
+                        : (employeeName || "-")}
+                    </span>
+                    <span className="text-[11px] shrink-0" style={{ color: "var(--text-muted)" }}>
+                      #{requesterStaffId ?? employee.staffId}
+                    </span>
+                  </div>
+                  {(() => {
+                    const dept = requesterStaffId ? selectedRequester?.departmentName : employee.departmentName;
+                    const pos = requesterStaffId ? selectedRequester?.position : employee.position;
+                    return (dept || pos) ? (
+                      <span className="text-[12px] truncate" style={{ color: "var(--text-muted)" }}>
+                        {[dept, pos].filter(Boolean).join(" · ")}
+                      </span>
+                    ) : null;
+                  })()}
+                  {(() => {
+                    const mail = requesterStaffId
+                      ? selectedRequester?.email
+                      : (employee.email ?? employee.emailCompBr);
+                    return mail ? (
+                      <span className="inline-flex items-center gap-1 text-[12px] truncate" style={{ color: "var(--text-secondary)" }}>
+                        <Mail size={11} className="shrink-0" />
+                        <span className="truncate">{mail}</span>
+                      </span>
+                    ) : null;
+                  })()}
+                </div>
               </div>
+
+              {requesterStaffId != null && (
+                <span
+                  className="text-[12px] px-3 py-2 rounded-lg"
+                  style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}
+                >
+                  กำลังกรอกแทน {onBehalfName} — คำขอจะอยู่ใน “คำขอของฉัน” ของคุณ
+                  และผู้อนุมัติจะเป็นหัวหน้าของผู้ขอเบิก
+                </span>
+              )}
             </div>
 
             <div
@@ -661,10 +820,10 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
               className="flex items-center gap-3 min-w-0 border-t md:border-t-0 md:border-l border-[var(--border-light)] pt-4 md:pt-0 md:pl-6"
               style={showErr("manager") ? { boxShadow: "0 0 0 1px var(--color-danger)", borderRadius: 10, padding: 12 } : {}}
             >
-              {manager ? (
+              {shownManager ? (
                 <>
                   <div className="shrink-0 rounded-2xl overflow-hidden" style={{ boxShadow: "0 0 0 2px var(--nav-active-bg)" }}>
-                    <Avatar name={manager.fullName || "?"} size={48} photo={manager.photoUrl ?? undefined} color="var(--nav-active-text)" />
+                    <Avatar name={shownManager.fullName || "?"} size={48} photo={shownManager.photoUrl ?? undefined} color="var(--nav-active-text)" />
                   </div>
                   <div className="min-w-0 flex flex-col gap-0.5">
                     <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
@@ -672,21 +831,21 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
                     </span>
                     <div className="flex items-baseline gap-2 min-w-0">
                       <span className="text-[14px] font-bold truncate" style={{ color: "var(--text-primary)" }}>
-                        {manager.fullName ?? "-"}
+                        {shownManager.fullName ?? "-"}
                       </span>
                       <span className="text-[11px] shrink-0" style={{ color: "var(--text-muted)" }}>
-                        #{manager.staffId}
+                        #{shownManager.staffId}
                       </span>
                     </div>
-                    {manager.position && (
+                    {shownManager.position && (
                       <span className="text-[12px] truncate" style={{ color: "var(--text-muted)" }}>
-                        {manager.position}
+                        {shownManager.position}
                       </span>
                     )}
-                    {manager.email && (
+                    {shownManager.email && (
                       <span className="inline-flex items-center gap-1 text-[12px] truncate" style={{ color: "var(--text-secondary)" }}>
                         <Mail size={11} className="shrink-0" />
-                        <span className="truncate">{manager.email}</span>
+                        <span className="truncate">{shownManager.email}</span>
                       </span>
                     )}
                   </div>
@@ -703,7 +862,7 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
                     className="text-[12.5px] leading-relaxed m-0"
                     style={{ color: showErr("manager") ? "var(--color-danger)" : "var(--text-muted)" }}
                   >
-                    {managerReason ?? "ยังไม่ได้กำหนดผู้จัดการ (ManagerStaffId) ในระบบ HR"}
+                    {shownManagerReason ?? "ยังไม่ได้กำหนดผู้จัดการ (ManagerStaffId) ในระบบ HR"}
                   </p>
                 </div>
               )}

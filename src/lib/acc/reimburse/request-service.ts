@@ -9,11 +9,17 @@
  * Two differences from AP-1 worth flagging up front:
  *
  * 1. `saveReimburseDraft`/`submitReimburseRequest` take only `userId`, not a
- *    login email or a pre-resolved requester. AP-4 has no on-behalf
- *    submission (spec §5.2 fields 1–2 are always the signed-in user's own HR
- *    record), so there is no second identity for a caller to disambiguate,
- *    and this module resolves everything itself from `userId` via
- *    `TeamMember.Id -> Email -> HR`.
+ *    login email or a pre-resolved requester — this module resolves everything
+ *    itself from `userId` via `TeamMember.Id -> Email -> HR`. AP-4 does now
+ *    have on-behalf submission (added 2026-08-24; the spec's §5.2 fields 1–2
+ *    predate it), but it arrives as `SaveInput.requesterStaffId` rather than as
+ *    a second function argument, so the shape here did not change.
+ *
+ *    The asymmetry that follows is the thing to hold on to: the **save** takes
+ *    the requester from the payload, and the **submit** takes it from the row
+ *    it already read (`current.staffId`), because the submit accepts no payload
+ *    at all. Passing null in either place quietly re-points the claim at the
+ *    actor and at the actor's manager.
  *
  * 2. Item money is validated in two layers, not one, and both of them live in
  *    `./item-money.ts` — a module with no runtime imports, so the rules that
@@ -351,7 +357,10 @@ export async function saveReimburseDraft(input: SaveInput, userId: number): Prom
   await assertFormWritable();
 
   const loginEmail = await requireLoginEmail(userId);
-  const requester = await resolveRequesterForActor(loginEmail, null);
+  // On-behalf: the requester columns and `ManagerStaffId` below are stamped
+  // from the chosen colleague, while `CreatedBy` stays the actor — which is
+  // what keeps the draft in the actor's own list and readable by both.
+  const requester = await resolveRequesterForActor(loginEmail, input.requesterStaffId ?? null);
 
   const items = prepareReimburseItemsForSave(input.items ?? []);
   const totalAmount = sumReimburseItems(items);
@@ -557,7 +566,12 @@ export async function submitReimburseRequest(id: number, userId: number): Promis
   }
 
   const loginEmail = await requireLoginEmail(userId);
-  const requester = await resolveRequesterForActor(loginEmail, null);
+  // The persisted requester, not the actor: this function takes no payload, so
+  // the saved row is the only thing that can say whose claim this is. Passing
+  // null here would re-stamp an on-behalf draft with the actor's own HR record
+  // and send it to the actor's manager. AP-1's submit route reads `StaffId` off
+  // the row for the same reason; here `current` already carries it.
+  const requester = await resolveRequesterForActor(loginEmail, current.staffId ?? null);
 
   const errors = await validateReimburseForSubmit(current, requester.managerStaffId);
   if (errors.length) throw new Error(errors.join("\n"));

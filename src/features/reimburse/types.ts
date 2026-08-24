@@ -89,9 +89,14 @@ export interface ReimburseDetail {
 }
 
 /**
- * What `saveReimburseDraft` accepts. AP-4 has no on-behalf submission (unlike
- * AP-1/AP-17 — spec §5.2 fields 1–2 are always the signed-in user's own HR
- * record), so unlike AP-1's `SaveInput` there is no `requesterStaffId`.
+ * What `saveReimburseDraft` accepts.
+ *
+ * The spec (§5.2 fields 1–2) had this form always naming the signed-in user's
+ * own HR record, and it did until 2026-08-24, when on-behalf submission was
+ * asked for on every form rather than on AP-1 and AP-17 only. The reach that
+ * gives is the same the other two forms have always had — anyone may file for
+ * any active employee, and it routes to *that* person's manager — which was
+ * raised and accepted rather than narrowed for AP-4 alone.
  */
 export interface SaveInput {
   /** AccRequest.Id — present when updating an existing draft. */
@@ -101,6 +106,8 @@ export interface SaveInput {
   items: ReimburseItem[];
   /** Rule ids ticked so far (spec §5.2 field 6) — replaced wholesale on every save. */
   ackedRuleIds: number[];
+  /** ผู้ขอเบิก when filing for a colleague (their HR StaffId); null/absent = self. */
+  requesterStaffId?: number | null;
 }
 
 /** `AccReimburseRule` row — one line of the acknowledgement checklist. */
