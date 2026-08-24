@@ -7,6 +7,7 @@ export interface ClrErpContext {
   config: ClrJournalConfig;
   target: AdvanceErpTarget;
   departmentCode: string;
+  branchCode: string | null;
 }
 
 /**
@@ -40,5 +41,6 @@ export async function loadClearAdvanceErpContext(
     },
     target: ap2.target,
     departmentCode: ap2.erpDeptCode,
+    branchCode: ap2.config.branchCode ?? null,
   };
 }

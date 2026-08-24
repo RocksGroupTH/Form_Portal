@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
-import { Upload, FileText, Search, Download } from "lucide-react";
+import { Upload, FileText, Search, Download, Eye, Loader2 } from "lucide-react";
 import { AdvanceCompanyBar, ADVANCE_COMPANY_ALL } from "./AdvanceCompanyBar";
 import { AdvanceDetailPanel } from "./AdvanceDetailPanel";
 import { AdvanceJournalPreview, type PreviewItem } from "./AdvanceJournalPreview";
@@ -68,6 +68,7 @@ export function AdvanceErpQueue() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [preview, setPreview] = useState<PreviewItem[]>([]);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [tab, setTab] = useState<TabKey>("pending");
   // sent-tab filters
   const [sentMonth, setSentMonth] = useState<string>("");
@@ -82,6 +83,8 @@ export function AdvanceErpQueue() {
   // Pull-back ("ดึงกลับเพื่อยิงใหม่") confirm state.
   const [pullbackId, setPullbackId] = useState<number | null>(null);
   const [pullbackBusy, setPullbackBusy] = useState(false);
+  // Checkbox selection state.
+  const [selected, setSelected] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     fetch("/api/request/advance/payment-dates")
@@ -115,6 +118,25 @@ export function AdvanceErpQueue() {
   const sendable = useMemo(() => filtered.filter(SENDABLE), [filtered]);
   const sentAll = useMemo(() => filtered.filter((r) => !SENDABLE(r)), [filtered]);
 
+  // Checkbox selection helpers.
+  const selectableIds = useMemo(() => sendable.map((r) => r.id), [sendable]);
+  const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selected.has(id));
+  const selectedIds = useMemo(
+    () => [...selected].filter((id) => selectableIds.includes(id)),
+    [selected, selectableIds],
+  );
+
+  const toggleRow = useCallback((id: number) => {
+    setSelected((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  }, []);
+  const toggleAll = useCallback(() => {
+    setSelected(() => allSelected ? new Set() : new Set(selectableIds));
+  }, [allSelected, selectableIds]);
+
+  // Clear stale preview when selection changes.
+  const selectedKey = useMemo(() => [...selected].sort((a, b) => a - b).join(","), [selected]);
+  useEffect(() => { setPreview([]); }, [selectedKey]);
+
   // Sent history is scoped to the month it was sent (AP-1 parity) so it never grows unbounded.
   const sentMonthOptions = useMemo(() => {
     const set = new Set<string>();
@@ -142,25 +164,8 @@ export function AdvanceErpQueue() {
     });
   }, [sentAll, statusFilter, sentMonth, search]);
 
-  // Auto-preview every pending-to-send row (no manual selection needed).
-  const sendableKey = useMemo(() => sendable.map((r) => r.id).sort((a, b) => a - b).join(","), [sendable]);
-  useEffect(() => {
-    const ids = sendableKey ? sendableKey.split(",").map(Number) : [];
-    if (ids.length === 0) { setPreview([]); return; }
-    let cancelled = false;
-    setPreviewLoading(true);
-    fetch("/api/request/advance/erp-queue/preview", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }),
-    })
-      .then((r) => r.json())
-      .then((j: { ok: boolean; data?: PreviewItem[] }) => { if (!cancelled) setPreview(j.ok && j.data ? j.data : []); })
-      .catch(() => { if (!cancelled) setPreview([]); })
-      .finally(() => { if (!cancelled) setPreviewLoading(false); });
-    return () => { cancelled = true; };
-  }, [sendableKey]);
-
   const readyIds = useMemo(() => preview.filter((p) => p.ok).map((p) => p.id), [preview]);
-  const notReady = sendable.length - readyIds.length;
+  const notReady = selectedIds.length - readyIds.length;
 
   // Per-Company summary of what the send will post (for the confirm popup).
   const sendSummary = useMemo(() => {
@@ -177,9 +182,33 @@ export function AdvanceErpQueue() {
   }, [preview]);
   const grandTotal = useMemo(() => sendSummary.reduce((s, x) => s + x.total, 0), [sendSummary]);
 
-  function sendAll() {
-    if (readyIds.length === 0) return toast.error("ไม่มีรายการที่พร้อมส่ง (config ยังไม่ครบ)");
-    setFrozenIds(readyIds);            // freeze exactly what the popup shows
+  // Fetch preview for the given ids — used by both "ดู Preview" and send buttons.
+  const fetchPreviewForIds = useCallback(async (ids: number[]): Promise<PreviewItem[]> => {
+    if (ids.length === 0) return [];
+    setPreviewLoading(true);
+    try {
+      const res = await fetch("/api/request/advance/erp-queue/preview", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }),
+      });
+      const j = (await res.json()) as { ok: boolean; data?: PreviewItem[] };
+      const data = j.ok && j.data ? j.data : [];
+      setPreview(data);
+      return data;
+    } catch { setPreview([]); return []; } finally { setPreviewLoading(false); }
+  }, []);
+
+  async function handleShowPreview() {
+    if (selectedIds.length === 0) return;
+    await fetchPreviewForIds(selectedIds);
+    setPreviewModalOpen(true);
+  }
+
+  async function handleSendSelected() {
+    if (selectedIds.length === 0) return toast.error("เลือกรายการก่อน");
+    const data = await fetchPreviewForIds(selectedIds);
+    const ready = data.filter((p) => p.ok).map((p) => p.id);
+    if (ready.length === 0) { toast.error("ไม่มีรายการที่พร้อมส่ง (config ยังไม่ครบ)"); return; }
+    setFrozenIds(ready);
     setConfirmOpen(true);
   }
 
@@ -208,7 +237,7 @@ export function AdvanceErpQueue() {
       });
       const j = (await res.json()) as { ok: boolean; error?: string };
       if (!j.ok) { toast.error(j.error ?? "ดึงกลับไม่สำเร็จ"); return; }
-      toast.success("ดึงกลับแล้ว — ย้ายไปแท็บ “รอส่ง”");
+      toast.success(`ดึงกลับแล้ว — ย้ายไปแท็บ "รอส่ง"`);
       setPullbackId(null);
       load();
       setTab("pending");
@@ -233,7 +262,9 @@ export function AdvanceErpQueue() {
       if (j.error && !j.okCount) throw new Error(j.error);
       toast.success(`ส่งสำเร็จ ${j.okCount ?? 0} รายการ${j.failCount ? ` · ไม่สำเร็จ ${j.failCount}` : ""}`);
       setConfirmOpen(false);
+      setSelected(new Set());
       load();
+      setTab("sent");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "ส่ง Interface ไม่สำเร็จ");
     } finally {
@@ -310,18 +341,22 @@ export function AdvanceErpQueue() {
               <span className="text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>
                 รอส่งเข้า ERP · {sendable.length} รายการ
               </span>
-              {previewLoading || preview.length === 0 ? (
-                <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>กำลังคำนวณ journal...</span>
-              ) : notReady > 0 ? (
+              {selectedIds.length > 0 && (
                 <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
-                  style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)" }}>
-                  config ไม่ครบ {notReady}
+                  style={{ background: "color-mix(in srgb, var(--nav-active-text) 10%, transparent)", color: "var(--nav-active-text)" }}>
+                  เลือก {selectedIds.length}
                 </span>
-              ) : null}
-              <div className="ml-auto">
+              )}
+              <div className="ml-auto flex items-center gap-2">
+                <Button variant="secondary" size="sm"
+                  icon={previewLoading ? <Loader2 size={14} className="animate-spin" /> : <Eye size={14} />}
+                  onClick={handleShowPreview} disabled={selectedIds.length === 0 || previewLoading || busy}>
+                  ดู Preview ({selectedIds.length})
+                </Button>
                 <Button variant="primary" icon={<Upload size={15} />}
-                  onClick={sendAll} loading={busy} disabled={previewLoading || preview.length === 0 || readyIds.length === 0}>
-                  {previewLoading || preview.length === 0 ? "กำลังคำนวณ..." : `ส่งทั้งหมด (${readyIds.length})`}
+                  onClick={handleSendSelected} loading={previewLoading || busy}
+                  disabled={selectedIds.length === 0 || previewLoading || busy}>
+                  ส่งที่เลือก ({selectedIds.length})
                 </Button>
               </div>
             </div>
@@ -331,6 +366,11 @@ export function AdvanceErpQueue() {
               <table className="w-full text-[12px] border-collapse">
                 <thead>
                   <tr style={{ background: "var(--bg-card-alt)" }}>
+                    <th className="px-3 py-2.5 w-8"
+                      style={{ borderBottom: "1px solid var(--border-card)" }}>
+                      <input type="checkbox" checked={allSelected} onChange={toggleAll}
+                        disabled={selectableIds.length === 0} className="cursor-pointer" />
+                    </th>
                     {["เลขที่", "Company", "ผู้รับเงิน", "จำนวน", "วันจ่าย"].map((h) => (
                       <th key={h} className="px-2.5 py-2 text-left font-bold whitespace-nowrap"
                         style={{ color: "var(--text-faint)", borderBottom: "1px solid var(--border-card)" }}>{h}</th>
@@ -340,6 +380,10 @@ export function AdvanceErpQueue() {
                 <tbody>
                   {sendable.map((row) => (
                     <tr key={row.id} style={{ borderBottom: "1px solid var(--border-light)" }}>
+                      <td className="px-3 py-2.5 w-8">
+                        <input type="checkbox" checked={selected.has(row.id)} onChange={() => toggleRow(row.id)}
+                          className="cursor-pointer" />
+                      </td>
                       <td className="px-2.5 py-2 whitespace-nowrap">
                         <button type="button" onClick={() => setPanelId(row.id)} className="cursor-pointer font-bold text-left bg-transparent border-none p-0"
                           style={{ color: "var(--nav-active-text)" }}>{row.requestNo ?? `#${row.id}`}</button>
@@ -367,8 +411,6 @@ export function AdvanceErpQueue() {
                 </tbody>
               </table>
             </div>
-
-            <AdvanceJournalPreview items={preview} loading={previewLoading} />
           </>
         )
       ) : (
@@ -450,6 +492,29 @@ export function AdvanceErpQueue() {
         </>
       )}
 
+      {/* Preview modal */}
+      {previewModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-12 overflow-y-auto"
+          style={{ background: "rgba(0,0,0,0.45)" }}
+          onClick={(e) => { if (e.target === e.currentTarget) setPreviewModalOpen(false); }}>
+          <div className="w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden"
+            style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)" }}>
+            <div className="flex items-center justify-between px-5 py-4"
+              style={{ borderBottom: "1px solid var(--border-card)" }}>
+              <span className="text-[15px] font-bold" style={{ color: "var(--text-heading)" }}>
+                Preview — Journal Lines ({selectedIds.length} รายการ)
+              </span>
+              <button type="button" onClick={() => setPreviewModalOpen(false)}
+                className="text-[13px] px-3 py-1.5 rounded-lg cursor-pointer border-none"
+                style={{ background: "var(--bg-card-alt)", color: "var(--text-muted)" }}>ปิด</button>
+            </div>
+            <div className="p-5 max-h-[72vh] overflow-y-auto">
+              <AdvanceJournalPreview items={preview} loading={previewLoading} />
+            </div>
+          </div>
+        </div>
+      )}
+
       <AdvanceDetailPanel requestId={panelId} onClose={() => setPanelId(null)} />
 
       {/* confirm send popup */}
@@ -528,7 +593,7 @@ export function AdvanceErpQueue() {
         open={pullbackId != null}
         onOpenChange={(o) => { if (!pullbackBusy && !o) setPullbackId(null); }}
         title="ดึงกลับเพื่อยิงใหม่?"
-        description="ใบเดิม (PV) จะถูกทำเครื่องหมายเป็น Resent และรายการจะกลับไปที่คิว “รอส่ง” เพื่อแก้วันจ่าย/ข้อมูลแล้วยิงใหม่ — บัญชีต้องไม่ post ใบ PV เดิมใน BC"
+        description={`ใบเดิม (PV) จะถูกทำเครื่องหมายเป็น Resent และรายการจะกลับไปที่คิว "รอส่ง" เพื่อแก้วันจ่าย/ข้อมูลแล้วยิงใหม่ — บัญชีต้องไม่ post ใบ PV เดิมใน BC`}
         contentClassName="max-w-md"
       >
         <div className="flex justify-end gap-2 pt-1">

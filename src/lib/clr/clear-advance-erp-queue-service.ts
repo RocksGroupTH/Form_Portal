@@ -8,6 +8,8 @@ export interface ClrErpQueueRow {
   erpStatus: string | null;
   erpDocumentNo: string | null;
   erpEnvironment: string | null;
+  erpSentAt: string | null;
+  erpError: string | null;
   advanceRequestNo: string | null;
   actualTotal: number | null;
   refundToCompany: number | null;
@@ -25,7 +27,8 @@ export async function listErpQueueRows(): Promise<ClrErpQueueRow[]> {
 
   const res = await r.query(`
     SELECT req.Id, req.RequestNo, req.BrandCode, req.ErpInterfaceStatus, req.ErpDocumentNo,
-           req.ErpInterfaceEnvironment, req.RequesterFullName,
+           req.ErpInterfaceEnvironment, req.ErpInterfaceSentAt, req.ErpInterfaceError,
+           req.RequesterFullName,
            c.AdvanceRequestNo, c.ActualTotal, c.RefundToCompany
     FROM [dbo].[AccRequest] req
     LEFT JOIN [dbo].[AccClearAdvance] c ON c.RequestId = req.Id
@@ -40,6 +43,8 @@ export async function listErpQueueRows(): Promise<ClrErpQueueRow[]> {
     erpStatus: (x.ErpInterfaceStatus as string) ?? null,
     erpDocumentNo: (x.ErpDocumentNo as string) ?? null,
     erpEnvironment: (x.ErpInterfaceEnvironment as string) ?? null,
+    erpSentAt: (x.ErpInterfaceSentAt instanceof Date ? x.ErpInterfaceSentAt.toISOString() : (x.ErpInterfaceSentAt as string)) ?? null,
+    erpError: (x.ErpInterfaceError as string) ?? null,
     advanceRequestNo: (x.AdvanceRequestNo as string) ?? null,
     actualTotal: num(x.ActualTotal),
     refundToCompany: num(x.RefundToCompany),

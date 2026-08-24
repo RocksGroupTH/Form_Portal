@@ -209,6 +209,7 @@ export async function previewClrErpJournal(ids: number[]): Promise<ClrPreviewIte
       const postingDate = req.clear.refundTransferDate ?? req.clear.paymentDate ?? todayYmd();
       const { config, target, departmentCode } = await loadClearAdvanceErpContext(req.brandCode, req.requesterDepartmentCode);
       const journalItems = toJournalItems(req.clear.items);
+      const itemBranch = journalItems.find((it) => it.branchCode)?.branchCode ?? null;
       const payload = buildClearAdvanceJournalPayload({
         requestNo: req.requestNo ?? String(id),
         postingDate,
@@ -216,6 +217,7 @@ export async function previewClrErpJournal(ids: number[]): Promise<ClrPreviewIte
         items: journalItems,
         config,
         departmentCode,
+        defaultBranchCode: itemBranch,
       });
 
       out.push({
@@ -328,6 +330,7 @@ export async function sendClrErpBatch(ids: number[], userId: number): Promise<Cl
       bcEnvironment = target.environment;
 
       const journalItems = toJournalItems(req.clear.items);
+      const itemBranch = journalItems.find((it) => it.branchCode)?.branchCode ?? null;
       const payload = buildClearAdvanceJournalPayload({
         requestNo: req.requestNo ?? String(id),
         postingDate,
@@ -335,6 +338,7 @@ export async function sendClrErpBatch(ids: number[], userId: number): Promise<Cl
         items: journalItems,
         config,
         departmentCode,
+        defaultBranchCode: itemBranch,
       });
 
       // Mark Pending (only when NULL/Failed — guard is in the SQL WHERE)

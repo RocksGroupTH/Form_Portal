@@ -21,6 +21,8 @@ export interface ClrJournalInput {
   items: ClrJournalItem[];
   config: ClrJournalConfig;
   departmentCode: string;
+  /** Fallback branch for lines that have no per-item branch (VAT, WHT, advance reversal, bank diff). */
+  defaultBranchCode?: string | null;
 }
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -38,11 +40,12 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
   if (items.length === 0) throw new Error("ไม่มีรายการค่าใช้จ่ายสำหรับสร้าง journal");
 
   const employeeCode = requestNo.slice(0, 35);
+  const defaultBranch = input.defaultBranchCode ?? "";
   const glLine = (accountNo: string, amount: number, branchCode: string | null): PpapJournalLinePayload => ({
     groupNo: "G1", postingDate, documentType: "Payment", accountType: "G/L Account",
     accountNo, description: `เคลียร์เงินทดรองจ่าย ${requestNo}`.slice(0, 100),
     paymentMethodCode: "BANK", amount: r2(amount), balAccountType: "G/L Account",
-    employeeCode, branchCode: branchCode ?? "", departmentCode,
+    employeeCode, branchCode: branchCode ?? defaultBranch, departmentCode,
   });
 
   const lines: PpapJournalLinePayload[] = [];
@@ -73,7 +76,7 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
       groupNo: "G1", postingDate, documentType: "Payment", accountType: "Bank Account",
       accountNo: c.bankAccountNo, description: `เคลียร์เงินทดรองจ่าย ${requestNo}`.slice(0, 100),
       paymentMethodCode: "BANK", amount: bankAmount,
-      employeeCode, branchCode: "", departmentCode,
+      employeeCode, branchCode: defaultBranch, departmentCode,
     });
   }
 
