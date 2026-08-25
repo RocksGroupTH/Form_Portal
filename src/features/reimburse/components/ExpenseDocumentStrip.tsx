@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FileSpreadsheet, FileText, Loader2, Paperclip, Plus, X } from "lucide-react";
+import { FileSpreadsheet, FileText, Loader2, Paperclip, X } from "lucide-react";
 import type { ReimburseFileMeta } from "@/features/reimburse/types";
 import { isAcceptedDocument } from "@/features/reimburse/lib/document-accept";
 import { AttachmentViewer, attachmentKind, type AttachmentKind, type AttachmentSource } from "./AttachmentViewer";
@@ -184,7 +184,11 @@ export function ExpenseDocumentStrip({
         border: `1px dashed ${
           dragging ? "var(--nav-active-text)" : hasError ? "var(--color-danger)" : "var(--border-card)"
         }`,
-        background: dragging ? "var(--nav-active-bg)" : "var(--bg-card-alt)",
+        // White, like the surface AP-1's receipt strip sits on. The tint moved
+        // to the add tile instead — see there for why that is the right way
+        // round: the zone is a container and should recede, the control inside
+        // it has to read as a control.
+        background: dragging ? "var(--nav-active-bg)" : "var(--bg-card)",
       }}
     >
       <input
@@ -208,7 +212,7 @@ export function ExpenseDocumentStrip({
         <span className="text-[11.5px]" style={{ color: "var(--text-muted)" }}>
           {entries.length > 0
             ? `${entries.length} ไฟล์ · ลากไฟล์มาวางได้`
-            : "ลากไฟล์มาวาง หรือกดปุ่ม + — ระบบจะอ่านข้อมูลมาสร้างรายการให้"}
+            : "ลากไฟล์มาวาง หรือกดปุ่มแนบ — ระบบจะอ่านข้อมูลมาสร้างรายการให้"}
         </span>
       </div>
 
@@ -241,12 +245,19 @@ export function ExpenseDocumentStrip({
           title={disabled ? "กำลังอ่านเอกสาร..." : "แนบเอกสารเพิ่ม"}
           className="w-14 h-14 shrink-0 rounded-xl flex items-center justify-center cursor-pointer acc-add-row disabled:cursor-not-allowed disabled:opacity-60"
           style={{
+            // AP-1's attach tile, token for token (`ExpenseRows`): a tint
+            // against the zone's white so the control reads as a control at a
+            // glance, leaving the dashed border to say "add" rather than
+            // carrying the whole job of being visible.
             border: "1px dashed var(--border-card)",
-            background: "var(--bg-card)",
+            background: "var(--bg-card-alt)",
             color: "var(--text-secondary)",
           }}
         >
-          {disabled ? <Loader2 size={18} className="animate-spin" /> : <Plus size={20} />}
+          {/* A paperclip, not a plus — the same mark AP-1 uses for the same
+              action. Two forms spelling "attach a file" with two different
+              icons is a cost paid by everybody who uses both. */}
+          {disabled ? <Loader2 size={18} className="animate-spin" /> : <Paperclip size={18} />}
         </button>
       </div>
 
