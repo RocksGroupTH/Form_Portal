@@ -1,7 +1,7 @@
 import type { RewardRequestStatus } from "@/features/reward/types";
 
 export const AP11_FORM_CODE = "AP-11";
-export const RUNNING_PREFIX = "TOP";
+export const RUNNING_PREFIX = "OPR";
 
 /** `AccRequestFile.RefType` for AP-11's evidence attachments (brief §5). */
 export const REWARD_FILE_REFTYPE = "reward_doc";

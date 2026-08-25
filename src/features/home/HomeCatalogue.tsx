@@ -18,7 +18,7 @@ import { sortByFormCode } from "@/lib/form-code-order";
 // cards were plain <Link>s and the only card surface in the app without it, so
 // the same tile felt inert here and interactive on /request.
 import { HoverCard } from "@/components/ui/HoverCard";
-import { Search, Route, Luggage, ClipboardCheck, FilePen, ArrowRight } from "lucide-react";
+import { Search, Route, Luggage, ClipboardCheck, FilePen, ArrowRight, Gift } from "lucide-react";
 
 /**
  * The Accounting forms Home offers.

@@ -285,7 +285,7 @@ IF NOT EXISTS (SELECT 1 FROM [dbo].[AccFormMaster] WHERE FormCode = 'AP-11')
   INSERT INTO [dbo].[AccFormMaster]
     (FormCode, GroupName, FormNameTh, FormNameEn, RunningPrefix, OwnerContact, SortOrder)
   VALUES
-    ('AP-11', 'Accounting', N'แลกของรางวัล', N'Reward', 'TOP', NULL, 11);
+    ('AP-11', 'Accounting', N'แลกของรางวัล', N'Reward', 'OPR', NULL, 11);
 GO
 
 -- 6. Seed AccFormBrand for AP-11 --------------------------------------------
