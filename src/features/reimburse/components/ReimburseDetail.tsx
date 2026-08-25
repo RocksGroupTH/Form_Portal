@@ -8,7 +8,6 @@ import {
   CheckCircle,
   Clock,
   FileCheck,
-  FileSpreadsheet,
   FileText,
   ImageIcon,
   Info,
@@ -418,6 +417,12 @@ export function ReimburseDetail({
   const [viewing, setViewing] = useState<{ source: AttachmentSource; kind: AttachmentKind } | null>(
     null,
   );
+  // The workbook counts as an attachment now rather than as its own slot, and
+  // goes first because on a request that has one it is the older file.
+  const attachments = request.excelFile
+    ? [request.excelFile, ...request.receiptFiles]
+    : request.receiptFiles;
+
   const viewFile = (f: ReimburseFileMeta) =>
     setViewing({
       source: { name: f.fileName, url: f.url },
@@ -1014,37 +1019,27 @@ export function ReimburseDetail({
 
       {/* ── เอกสารแนบ ── */}
       <Section title="เอกสารแนบ" icon={<Paperclip size={15} />}>
-        <div className="flex flex-col gap-3">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wide mb-1.5 m-0" style={{ color: "var(--text-muted)" }}>
-              <FileSpreadsheet size={11} className="inline mr-1 -mt-0.5" />
-              ไฟล์ Excel สรุปรายการ (AP-4.1)
+        {/* One list, matching the form's single slot. A request filed under the
+            old two-slot rule still carries an `excelFile`; it is listed first
+            rather than given a heading of its own. */}
+        <div>
+          <p
+            className="text-[11px] font-semibold uppercase tracking-wide mb-1.5 m-0"
+            style={{ color: "var(--text-muted)" }}
+          >
+            หลักฐานประกอบการเบิกค่าใช้จ่ายจริง (รูปถ่ายใบเสร็จ/ใบกำกับภาษี)
+          </p>
+          {attachments.length === 0 ? (
+            <p className="text-[13px] m-0" style={{ color: "var(--text-faint)" }}>
+              — ไม่มีไฟล์ —
             </p>
-            {request.excelFile ? (
-              <FileLink file={request.excelFile} onView={() => viewFile(request.excelFile!)} />
-            ) : (
-              <p className="text-[13px] m-0" style={{ color: "var(--text-faint)" }}>
-                — ไม่มีไฟล์ —
-              </p>
-            )}
-          </div>
-
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wide mb-1.5 m-0" style={{ color: "var(--text-muted)" }}>
-              หลักฐาน (ใบเสร็จ / ใบกำกับภาษี)
-            </p>
-            {request.receiptFiles.length === 0 ? (
-              <p className="text-[13px] m-0" style={{ color: "var(--text-faint)" }}>
-                — ไม่มีไฟล์ —
-              </p>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {request.receiptFiles.map((f) => (
-                  <FileLink key={f.id} file={f} onView={() => viewFile(f)} />
-                ))}
-              </div>
-            )}
-          </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {attachments.map((f) => (
+                <FileLink key={f.id} file={f} onView={() => viewFile(f)} />
+              ))}
+            </div>
+          )}
         </div>
       </Section>
 

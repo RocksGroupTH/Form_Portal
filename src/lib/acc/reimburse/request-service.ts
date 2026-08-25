@@ -481,8 +481,18 @@ export async function saveReimburseDraft(input: SaveInput, userId: number): Prom
 
 const ERR_NO_BRAND = "กรุณาเลือกแบรนด์ที่ต้องการเบิก";
 const ERR_NO_ITEMS = "กรุณาเพิ่มรายการค่าใช้จ่ายอย่างน้อย 1 รายการ";
-const ERR_NO_EXCEL = "กรุณาแนบไฟล์ Excel สรุปรายการ (AP-4.1)";
-const ERR_NO_RECEIPT = "กรุณาแนบหลักฐาน (ใบเสร็จ/ใบกำกับภาษี) อย่างน้อย 1 ไฟล์";
+/**
+ * One attachment rule, where there were two.
+ *
+ * AP-4 used to demand the AP-4.1 workbook *and* at least one receipt, in two
+ * separate slots with different accepted types. It now asks for at least one
+ * file of any accepted kind — image, PDF or spreadsheet — in a single slot.
+ * `AccReimburse.ExcelFileId` is left in place and still read, so a request
+ * filed under the old rule keeps showing its workbook and can still satisfy
+ * this check with it; nothing writes that column any more.
+ */
+const ERR_NO_ATTACHMENT =
+  "กรุณาแนบหลักฐานประกอบการเบิกค่าใช้จ่ายจริงอย่างน้อย 1 ไฟล์";
 const ERR_RULES_NOT_ACKED = "กรุณายืนยันระเบียบการจ่าย Reimburse ให้ครบทุกข้อ";
 
 /**
@@ -517,8 +527,9 @@ async function validateReimburseForSubmit(
     errs.push(...validateItemMoney(current.items));
   }
 
-  if (!current.excelFile) errs.push(ERR_NO_EXCEL);
-  if (current.receiptFiles.length === 0) errs.push(ERR_NO_RECEIPT);
+  // The workbook counts as an attachment rather than as its own requirement —
+  // an older request whose only file is the AP-4.1 sheet still passes.
+  if (!current.excelFile && current.receiptFiles.length === 0) errs.push(ERR_NO_ATTACHMENT);
 
   const activeRules = await listActiveRules();
   const ackedSet = new Set(current.ackedRuleIds);

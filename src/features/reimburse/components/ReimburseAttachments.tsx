@@ -20,27 +20,39 @@ import {
 import type { ReimburseFileMeta } from "@/features/reimburse/types";
 
 /**
- * AP-4's two attachment slots (spec §5.2 fields 4b and 5).
+ * AP-4's attachments — one slot, many files, any accepted kind.
  *
- * They are two different documents and are drawn as two separate controls, not
- * as one uploader with a file-type hint:
+ * It was two slots until 2026-08-25: the AP-4.1 workbook on its own, required,
+ * accepting only spreadsheets, and the receipts, required, accepting only
+ * images and PDF. Both are now the single
+ * "หลักฐานประกอบการเบิกค่าใช้จ่ายจริง" list, and the rule at submit is
+ * **at least one file** rather than one of each.
  *
- * - **the AP-4.1 workbook** — exactly one, and a second upload replaces it.
- *   `AccReimburse.ExcelFileId` is a pointer, and the upload route repoints it
- *   before removing the file it supersedes, so replacing is a single action
- *   here rather than delete-then-attach.
- * - **the receipts** — many, images or PDF.
+ * Two consequences worth knowing:
  *
- * Both upload against `/api/request/reimburse/requests/[id]/files`, which needs
- * a saved request, so a file chosen on an unsaved form is held in memory and
- * uploaded by the next save — the same shape AP-1 and AP-17 use. The multipart
- * field is **`files`** (plural) and the slot is chosen by `refType`; the form
- * owns that call, this component only collects.
+ * - **`AccReimburse.ExcelFileId` is read but never written.** A request filed
+ *   under the old rule still has one, so its workbook arrives as `excelFile`
+ *   and is listed alongside everything else. Hiding it would leave a stored
+ *   file with no way to see or remove it. The delete route clears the pointer
+ *   when that file goes.
+ * - **Nothing was relaxed about *what* may be uploaded.** The route still
+ *   sniffs magic bytes through `checkAttachment`; the widening is from two
+ *   narrow lists to the one full list of kinds the guard can vouch for.
+ *
+ * Uploads go to `/api/request/reimburse/requests/[id]/files`, which needs a
+ * saved request, so a file chosen on an unsaved form is held in memory and
+ * uploaded by the next save — the shape AP-1 and AP-17 use too. The multipart
+ * field is **`files`** (plural); the form owns that call, this component only
+ * collects.
  */
 
-const EXCEL_ACCEPT =
-  ".xlsx,.xls,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.ms-excel.sheet.macroEnabled.12";
-const RECEIPT_ACCEPT = "image/*,application/pdf,.pdf";
+/**
+ * What the picker offers. It mirrors the server's `RECEIPT_KINDS`, and is a
+ * convenience only — `accept` is a filter in the file dialog, not a control.
+ * The magic-byte check on the route is the control.
+ */
+const ATTACHMENT_ACCEPT =
+  "image/*,application/pdf,.pdf,.xlsx,.xls,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.ms-excel.sheet.macroEnabled.12";
 
 function fmtSize(bytes: number | null | undefined): string {
   if (bytes == null) return "";
@@ -49,9 +61,23 @@ function fmtSize(bytes: number | null | undefined): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function isImage(contentType: string | null | undefined, name: string): boolean {
-  if (contentType?.startsWith("image/")) return true;
-  return /\.(png|jpe?g|gif|webp|heic|heif)$/i.test(name);
+/**
+ * The icon for a row, now that one list holds all three kinds — it is the only
+ * thing telling a photo from a workbook at a glance.
+ *
+ * `attachmentKind` is the viewer's own classifier, reused rather than a second
+ * set of extension patterns: a file the icon calls a spreadsheet and the viewer
+ * calls something else would be the two disagreeing on screen.
+ */
+function fileIcon(contentType: string | null | undefined, name: string): React.ReactNode {
+  switch (attachmentKind(name, contentType)) {
+    case "image":
+      return <ImageIcon size={16} />;
+    case "excel":
+      return <FileSpreadsheet size={16} />;
+    default:
+      return <FileText size={16} />;
+  }
 }
 
 /**
@@ -243,31 +269,38 @@ function FileRow({
 export function ReimburseAttachments({
   excelFile,
   receiptFiles,
-  pendingExcel,
   pendingReceipts,
-  onSelectExcel,
   onAddReceipts,
   onRemovePendingReceipt,
   onDeleteStored,
-  excelError,
   receiptError,
 }: {
+  /**
+   * A request filed under the old two-slot rule, whose AP-4.1 workbook is
+   * pointed at by `AccReimburse.ExcelFileId`.
+   *
+   * Listed with everything else rather than in a slot of its own. Nothing
+   * writes that column any more, but dropping the value from the UI would hide
+   * a file that is still stored, still counts towards the submit gate, and
+   * still needs a way to be removed — the delete route clears the pointer when
+   * it goes.
+   */
   excelFile: ReimburseFileMeta | null;
   receiptFiles: ReimburseFileMeta[];
   /** Chosen but not yet uploaded — a saved request id is needed first. */
-  pendingExcel: File | null;
   pendingReceipts: File[];
-  onSelectExcel: (file: File | null) => void;
   onAddReceipts: (files: File[]) => void;
   onRemovePendingReceipt: (index: number) => void;
   /** Delete an already-uploaded file; resolves true once the server confirms. */
   onDeleteStored: (fileId: number) => Promise<boolean>;
-  excelError?: boolean;
   receiptError?: boolean;
 }) {
-  const excelInputRef = useRef<HTMLInputElement>(null);
   const receiptInputRef = useRef<HTMLInputElement>(null);
   const [removingId, setRemovingId] = useState<number | null>(null);
+
+  // The workbook first when there is one: it is the older file, and on a
+  // resumed request it is what the requester attached before the photos.
+  const storedFiles = excelFile ? [excelFile, ...receiptFiles] : receiptFiles;
 
   /**
    * What the viewer is showing, and how to render it.
@@ -301,63 +334,17 @@ export function ReimburseAttachments({
 
   return (
     <div className="flex flex-col gap-3 min-w-0">
-      {/* ── 4b · the AP-4.1 workbook — exactly one ── */}
-      <SlotShell
-        icon={<FileSpreadsheet size={16} />}
-        title="ไฟล์ Excel สรุปรายการ (AP-4.1)"
-        hint="แนบได้ 1 ไฟล์ (.xlsx / .xls / .xlsm) — แนบใหม่จะแทนที่ไฟล์เดิม"
-        hasError={excelError}
-      >
-        <input
-          ref={excelInputRef}
-          type="file"
-          accept={EXCEL_ACCEPT}
-          className="hidden"
-          onChange={(e) => {
-            const file = e.target.files?.[0] ?? null;
-            if (file) onSelectExcel(file);
-            e.target.value = "";
-          }}
-        />
-
-        {pendingExcel ? (
-          <FileRow
-            icon={<FileSpreadsheet size={16} />}
-            name={pendingExcel.name}
-            meta={fmtSize(pendingExcel.size)}
-            pending
-            onPreview={() => viewPending(pendingExcel)}
-            onRemove={() => onSelectExcel(null)}
-          />
-        ) : excelFile ? (
-          <FileRow
-            icon={<FileSpreadsheet size={16} />}
-            name={excelFile.fileName}
-            meta={fmtSize(excelFile.fileSize)}
-            href={excelFile.url}
-            onPreview={() => viewStored(excelFile)}
-            onRemove={() => handleRemoveStored(excelFile.id)}
-            removing={removingId === excelFile.id}
-          />
-        ) : null}
-
-        <PickButton
-          label={pendingExcel || excelFile ? "เปลี่ยนไฟล์ Excel" : "เลือกไฟล์ Excel"}
-          onClick={() => excelInputRef.current?.click()}
-        />
-      </SlotShell>
-
-      {/* ── 5 · receipts and tax invoices — many ── */}
+      {/* ── One slot: the AP-4.1 workbook and the receipt photos together ── */}
       <SlotShell
         icon={<Upload size={16} />}
-        title="หลักฐาน (ใบเสร็จ / ใบกำกับภาษี)"
-        hint="แนบได้หลายไฟล์ — รูปภาพ หรือ PDF"
+        title="หลักฐานประกอบการเบิกค่าใช้จ่ายจริง (รูปถ่ายใบเสร็จ/ใบกำกับภาษี)"
+        hint="แนบได้หลายไฟล์ — รูปภาพ, PDF หรือ Excel"
         hasError={receiptError}
       >
         <input
           ref={receiptInputRef}
           type="file"
-          accept={RECEIPT_ACCEPT}
+          accept={ATTACHMENT_ACCEPT}
           multiple
           className="hidden"
           onChange={(e) => {
@@ -367,12 +354,12 @@ export function ReimburseAttachments({
           }}
         />
 
-        {(receiptFiles.length > 0 || pendingReceipts.length > 0) && (
+        {(storedFiles.length > 0 || pendingReceipts.length > 0) && (
           <div className="flex flex-col gap-2">
-            {receiptFiles.map((f) => (
+            {storedFiles.map((f) => (
               <FileRow
                 key={f.id}
-                icon={isImage(f.contentType, f.fileName) ? <ImageIcon size={16} /> : <FileText size={16} />}
+                icon={fileIcon(f.contentType, f.fileName)}
                 name={f.fileName}
                 meta={fmtSize(f.fileSize)}
                 // Both: the name opens the viewer, the icon still downloads.
@@ -385,7 +372,7 @@ export function ReimburseAttachments({
             {pendingReceipts.map((f, i) => (
               <FileRow
                 key={pendingKeyOf(f)}
-                icon={f.type.startsWith("image/") ? <ImageIcon size={16} /> : <FileText size={16} />}
+                icon={fileIcon(f.type, f.name)}
                 name={f.name}
                 meta={fmtSize(f.size)}
                 pending
@@ -397,7 +384,7 @@ export function ReimburseAttachments({
         )}
 
         <PickButton
-          label={receiptFiles.length + pendingReceipts.length > 0 ? "เพิ่มหลักฐาน" : "เลือกไฟล์หลักฐาน"}
+          label={storedFiles.length + pendingReceipts.length > 0 ? "เพิ่มไฟล์" : "เลือกไฟล์"}
           onClick={() => receiptInputRef.current?.click()}
         />
       </SlotShell>

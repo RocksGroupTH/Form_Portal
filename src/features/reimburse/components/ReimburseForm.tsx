@@ -142,7 +142,6 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
   const [ackedRuleIds, setAckedRuleIds] = useState<number[]>(initial?.ackedRuleIds ?? []);
   const [excelFile, setExcelFile] = useState<ReimburseFileMeta | null>(initial?.excelFile ?? null);
   const [receiptFiles, setReceiptFiles] = useState<ReimburseFileMeta[]>(initial?.receiptFiles ?? []);
-  const [pendingExcel, setPendingExcel] = useState<File | null>(null);
   const [pendingReceipts, setPendingReceipts] = useState<File[]>([]);
 
   const [saving, setSaving] = useState(false);
@@ -375,8 +374,10 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
   const filledItems = useMemo(() => items.filter((it) => !isBlankItemRow(it)), [items]);
   const rowProblems = useMemo(() => findItemRowProblems(items), [items]);
 
-  const hasExcel = !!excelFile || !!pendingExcel;
-  const hasReceipt = receiptFiles.length > 0 || pendingReceipts.length > 0;
+  // One rule, not two. `excelFile` still counts because a request filed under
+  // the old two-slot rule may have a workbook and nothing else, and the server
+  // accepts exactly that.
+  const hasReceipt = !!excelFile || receiptFiles.length > 0 || pendingReceipts.length > 0;
   const ackedSet = useMemo(() => new Set(ackedRuleIds), [ackedRuleIds]);
   const allRulesAcked = rules.every((r) => ackedSet.has(r.id));
 
@@ -437,11 +438,11 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
   for (const p of rowProblems) {
     missing.push({ key: `item-${p.index}-${p.kind}`, label: p.label });
   }
-  if (!hasExcel) {
-    missing.push({ key: "excel", label: "ไฟล์ Excel สรุปรายการ (AP-4.1)" });
-  }
   if (!hasReceipt) {
-    missing.push({ key: "receipt", label: "หลักฐาน (ใบเสร็จ/ใบกำกับภาษี) อย่างน้อย 1 ไฟล์" });
+    missing.push({
+      key: "receipt",
+      label: "หลักฐานประกอบการเบิกค่าใช้จ่ายจริง อย่างน้อย 1 ไฟล์",
+    });
   }
   // An errored or still-in-flight fetch leaves `rules` empty, and `[].every()`
   // is `true` — so without these two branches the readiness panel goes green
@@ -554,12 +555,9 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
       // whatever the slot holds now, so a late addition survives to the next
       // save. `File` identity is by reference and `addReceipts` concatenates the
       // same instances, so `indexOf` is the right test.
-      if (pendingExcel) {
-        const sent = pendingExcel;
-        if (await post(REIMBURSE_FILE_REFTYPES.EXCEL, [sent])) {
-          setPendingExcel((cur) => (cur === sent ? null : cur));
-        } else ok = false;
-      }
+      // Everything goes to `RECEIPT` now, whatever its type: the two slots are
+      // one, and `EXCEL` is a refType that is still read (old rows) but never
+      // written.
       if (pendingReceipts.length > 0) {
         const sent = pendingReceipts;
         if (await post(REIMBURSE_FILE_REFTYPES.RECEIPT, sent)) {
@@ -568,7 +566,7 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
       }
       return ok;
     },
-    [pendingExcel, pendingReceipts],
+    [pendingReceipts],
   );
 
   /**
@@ -687,15 +685,6 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
     [],
   );
 
-  const selectExcel = useCallback(
-    (file: File | null) => {
-      // Choosing a replacement while one is already stored is not a delete: the
-      // upload route repoints `ExcelFileId` and removes the superseded file
-      // itself, so the old one stays until the new one is safely in place.
-      setPendingExcel(file);
-    },
-    [],
-  );
 
   const addReceipts = useCallback((files: File[]) => {
     setPendingReceipts((prev) => prev.concat(files));
@@ -1105,13 +1094,10 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
           <ReimburseAttachments
             excelFile={excelFile}
             receiptFiles={receiptFiles}
-            pendingExcel={pendingExcel}
             pendingReceipts={pendingReceipts}
-            onSelectExcel={selectExcel}
             onAddReceipts={addReceipts}
             onRemovePendingReceipt={removePendingReceipt}
             onDeleteStored={handleDeleteStored}
-            excelError={showErr("excel")}
             receiptError={showErr("receipt")}
           />
         </SectionCard>

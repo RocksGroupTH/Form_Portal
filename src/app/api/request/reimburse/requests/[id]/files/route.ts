@@ -37,7 +37,18 @@ import type { ReimburseFileMeta } from "@/features/reimburse/types";
 
 /** Which kinds each slot admits. The workbook kind exists nowhere else. */
 const EXCEL_KINDS: readonly AttachmentKind[] = ["spreadsheet"];
-const RECEIPT_KINDS: readonly AttachmentKind[] = ["image", "pdf"];
+
+/**
+ * Everything `attachment-guard` can vouch for, because AP-4's two upload slots
+ * became one — "หลักฐานประกอบการเบิกค่าใช้จ่ายจริง" now takes the AP-4.1
+ * workbook alongside the receipt photos.
+ *
+ * This is the full allowlist, not the removal of one: `checkAttachment` still
+ * sniffs magic bytes and `File.type` is still only a hint. Widening it to
+ * genuinely any file was considered and refused — these bytes land in a
+ * SharePoint library shared with Rocks Fast and ACC Portal.
+ */
+const RECEIPT_KINDS: readonly AttachmentKind[] = ["image", "pdf", "spreadsheet"];
 
 /**
  * The two `refType` values this route takes, and nothing else.
