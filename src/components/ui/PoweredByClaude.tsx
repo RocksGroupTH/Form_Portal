@@ -11,8 +11,8 @@ export function PoweredByClaude() {
       <img
         src="/claude-logo.webp"
         alt="Claude"
-        height={36}
-        style={{ height: 36, width: "auto", opacity: 0.7, flexShrink: 0, mixBlendMode: "multiply" }}
+        height={32}
+        style={{ height: 32, width: "auto", opacity: 0.7, flexShrink: 0, mixBlendMode: "multiply" }}
       />
     </span>
   );
