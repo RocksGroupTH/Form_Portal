@@ -57,9 +57,9 @@ export async function extractReceiptWithAI(
   buffer: Buffer,
   mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif" = "image/png",
 ): Promise<ReceiptExtractResult | null> {
-  const { value: apiKey } = await resolveApiKey("ANTHROPIC_API_KEY");
-  if (!apiKey) return null;
   try {
+    const { value: apiKey } = await resolveApiKey("ANTHROPIC_API_KEY");
+    if (!apiKey) return null;
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
     const client = new Anthropic({ apiKey });
     const res = await client.messages.create({
@@ -98,6 +98,6 @@ export async function extractReceiptWithAI(
       amounts: [beforeVat, vat].filter((n): n is number => n != null),
     };
   } catch {
-    return null; // key invalid / network / parse — fall back to Tesseract.
+    return null;
   }
 }
