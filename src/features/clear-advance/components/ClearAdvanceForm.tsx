@@ -133,6 +133,8 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   const [refundProofFiles, setRefundProofFiles] = useState<AccFileMeta[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadingProof, setUploadingProof] = useState(false);
+  const [ocrScanning, setOcrScanning] = useState(false);
+  const [slipScanning, setSlipScanning] = useState(false);
 
   const [brandCode, setBrandCode] = useState(initial?.brandCode ?? "");
   const [advanceRequestId, setAdvanceRequestId] = useState<number | null>(initial?.clear?.advanceRequestId ?? null);
@@ -644,6 +646,8 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
    * overwrites a line the user already filled.
    */
   async function verifyReceipts(docs: { file: File; fileId: number }[]) {
+    setOcrScanning(true);
+    try {
     const parsed: { data: ReceiptData; fileId: number }[] = [];
     for (const d of docs) {
       const r = await ocrReceipt(d.file); // serialized — the OCR worker is shared
@@ -694,11 +698,15 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
         ? "อ่านเอกสารมาเติมเป็น 1 รายการให้แล้ว — กรุณาตรวจสอบ/แก้ไข"
         : `อ่าน ${parsed.length} เอกสารมาเติมเป็น ${parsed.length} รายการให้แล้ว — กรุณาตรวจสอบ/แก้ไข`,
     );
+    } finally {
+      setOcrScanning(false);
+    }
   }
 
-  /** OCR the refund slip (free, local): default the amount + date fields, warn on mismatch. */
+  /** OCR the refund slip: Claude vision first, fallback Tesseract. */
   async function verifyRefundSlip(file: File) {
     if (!(refundToCompany > 0)) return;
+    setSlipScanning(true);
     try {
       const fd = new FormData();
       fd.append("file", file);
@@ -730,6 +738,8 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       }
     } catch {
       setSlipWarn(null); // OCR unavailable — never block the flow.
+    } finally {
+      setSlipScanning(false);
     }
   }
 
@@ -1433,6 +1443,20 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           </div>
         </div>
       </Dialog>
+
+      {/* OCR scanning overlays — shown while Claude reads receipts / transfer slips */}
+      {ocrScanning && (
+        <TravelExpenseLoadingPopup
+          label="กำลังตรวจสอบ..."
+          subtitle="AI กำลังอ่านข้อมูลจากใบเสร็จ / ใบกำกับภาษี"
+        />
+      )}
+      {slipScanning && (
+        <TravelExpenseLoadingPopup
+          label="กำลังตรวจสอบ..."
+          subtitle="AI กำลังอ่านข้อมูลจากสลิปโอนเงิน"
+        />
+      )}
     </div>
   );
 }
