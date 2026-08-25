@@ -49,6 +49,14 @@ export async function POST(req: NextRequest) {
   });
   if (!guard.ok) return guard.response;
 
+  // Unreachable while this route passes no `allowedKinds` (the guard then
+  // admits images only), and kept because that default is the *guard's*, not
+  // this route's. A future caller widening it must not silently start sending
+  // a PDF's bytes to an image content block.
+  if (guard.kind !== "image") {
+    return NextResponse.json({ ok: false, error: "รองรับเฉพาะไฟล์รูปภาพ" }, { status: 400 });
+  }
+
   try {
     const response = await guard.client.messages.parse({
       model: "claude-sonnet-5",

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Loader2, X } from "lucide-react";
 import { ImageLightbox } from "@/features/accounting/components/ImageLightbox";
+import { loadXlsx } from "@/lib/xlsx";
 
 /**
  * Open any AP-4 attachment without leaving the page — an image, a PDF, or the
@@ -105,7 +106,7 @@ export function AttachmentViewer({ open, source, kind, onClose }: AttachmentView
           // Imported here rather than at module scope: the parser is ~1 MB of
           // JavaScript, and most people filling this form never open a
           // workbook. `sheet_to_html` escapes cell text itself.
-          const XLSX = await import("xlsx-js-style");
+          const XLSX = await loadXlsx();
           const wb = XLSX.read(bytes, { type: "array" });
           const first = wb.SheetNames[0];
           if (cancelled) return;

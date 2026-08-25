@@ -19,7 +19,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { checkAttachment } from "@/lib/acc/attachment-guard";
+import { checkAttachment, type AttachmentKind } from "@/lib/acc/attachment-guard";
 import { consumeRateLimit } from "@/lib/rate-limit";
 import { resolveApiKey } from "@/lib/api-keys/service";
 
@@ -37,13 +37,35 @@ export const VISION_RATE_LIMIT = { limit: 40, windowMs: 10 * 60 * 1000 };
 /** A read is a convenience — never make the requester wait on a slow one. */
 export const VISION_TIMEOUT_MS = 30_000;
 
+/**
+ * What the guard let through, so the caller knows which reader to run.
+ *
+ * `mediaType` is set **only** for `kind: "image"` — it is the Messages API's
+ * own media type, and a PDF or a workbook has no business carrying one. A
+ * caller that wants to send bytes straight to the API therefore has to have
+ * checked the kind first, which is the point.
+ */
+export type GuardedUpload =
+  | { kind: "image"; bytes: Buffer; mediaType: SupportedImageType; fileName: string }
+  | { kind: "pdf" | "spreadsheet"; bytes: Buffer; fileName: string };
+
 export type VisionGuardResult =
-  | { ok: true; bytes: Buffer; mediaType: SupportedImageType; client: Anthropic }
+  | ({ ok: true; client: Anthropic } & GuardedUpload)
   | { ok: false; response: NextResponse };
 
 export async function guardVisionRequest(
   req: NextRequest,
-  opts: { userId: string | number; purpose: string; unavailableError: string },
+  opts: {
+    userId: string | number;
+    purpose: string;
+    unavailableError: string;
+    /**
+     * What this caller can actually read. **Defaults to images only** — see the
+     * comment at the `checkAttachment` call for why widening it here rather
+     * than per-caller would be a hole in AP-17's ID-card check.
+     */
+    allowedKinds?: readonly AttachmentKind[];
+  },
 ): Promise<VisionGuardResult> {
   // Settings → API Keys, then the old stores, then `.env`. Resolved per request
   // rather than read once at import, so replacing an expired key on the settings
@@ -78,11 +100,16 @@ export async function guardVisionRequest(
     }
 
     const bytes = Buffer.from(await file.arrayBuffer());
+    // Defaulted to images, not widened for everybody. AP-17's ID-card check
+    // must keep refusing a PDF, and it says so by saying nothing — a guard
+    // that opened up for every caller because one of them needed more is how
+    // that check would quietly start accepting a document it cannot verify.
+    const allowedKinds = opts.allowedKinds ?? (["image"] as const);
     const check = checkAttachment({
       fileName: file.name,
       declaredType: file.type,
       bytes,
-      allowedKinds: ["image"],
+      allowedKinds: allowedKinds as AttachmentKind[],
     });
     if (!check.ok) {
       return {
@@ -90,26 +117,26 @@ export async function guardVisionRequest(
         response: NextResponse.json({ ok: false, error: check.error }, { status: check.status }),
       };
     }
-    if (!isSupportedImageType(check.type.contentType)) {
-      return {
-        ok: false,
-        response: NextResponse.json(
-          { ok: false, error: "รองรับเฉพาะไฟล์ PNG, JPEG, GIF หรือ WEBP" },
-          { status: 400 },
-        ),
-      };
+
+    const client = new Anthropic({ apiKey, timeout: VISION_TIMEOUT_MS, maxRetries: 1 });
+    const kind = check.type.kind;
+
+    if (kind === "image") {
+      // Narrowed again: `allowedKinds: ["image"]` also admits HEIC, which every
+      // client here re-encodes away but a direct caller could still post.
+      if (!isSupportedImageType(check.type.contentType)) {
+        return {
+          ok: false,
+          response: NextResponse.json(
+            { ok: false, error: "รองรับเฉพาะไฟล์ PNG, JPEG, GIF หรือ WEBP" },
+            { status: 400 },
+          ),
+        };
+      }
+      return { ok: true, kind, bytes, mediaType: check.type.contentType, fileName: file.name, client };
     }
 
-    return {
-      ok: true,
-      bytes,
-      mediaType: check.type.contentType,
-      client: new Anthropic({
-        apiKey,
-        timeout: VISION_TIMEOUT_MS,
-        maxRetries: 1,
-      }),
-    };
+    return { ok: true, kind, bytes, fileName: file.name, client };
   } catch {
     return {
       ok: false,

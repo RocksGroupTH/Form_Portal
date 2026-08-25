@@ -39,6 +39,7 @@ import { AP4_FORM_CODE, isPurposeGiven, REIMBURSE_FILE_REFTYPES } from "@/featur
 import {
   RECEIPT_FIELDS_FAILURE_TEXT,
   readReceiptFields,
+  type ReceiptFieldsFailure,
 } from "@/features/reimburse/lib/read-receipt-fields";
 import type {
   ReimburseDetail,
@@ -46,6 +47,7 @@ import type {
   ReimburseItem,
   ReimburseRule,
 } from "@/features/reimburse/types";
+import type { ReceiptFields } from "@/features/reimburse/lib/receipt-fields";
 // The shape `/api/request/reimburse/requesters` answers with, taken from the
 // server functions that build it rather than restated — AP-1 and AP-17 each
 // declare their own copy of it in their form hooks, and a third would be one
@@ -54,7 +56,7 @@ import type { DepartmentColleague } from "@/lib/hr/employee-lookup";
 import { ReimburseNotice } from "./ReimburseNotice";
 import { ReimburseItemGrid, findItemRowProblems } from "./ReimburseItemGrid";
 import { ReimburseRuleChecklist } from "./ReimburseRuleChecklist";
-import { ReimburseAttachments } from "./ReimburseAttachments";
+import { ExpenseDocumentStrip, type PendingDocument } from "./ExpenseDocumentStrip";
 
 /**
  * AP-4 — ขอเบิกเงินคืนพนักงาน. Fill, save a draft, resume, submit.
@@ -112,9 +114,47 @@ function emptyItem(sortOrder: number): ReimburseItem {
   return { sortOrder, expenseDate: null, description: "", amount: 0, vatAmount: null, whtAmount: null };
 }
 
+/** One expense row from one line a document was read into. */
+function rowFromFields(f: ReceiptFields, sortOrder: number): ReimburseItem {
+  return {
+    sortOrder,
+    expenseDate: f.expenseDate,
+    documentNo: f.documentNo,
+    // Never read off a document — see `RawReceiptFields`. Left for the
+    // requester, who is the only one who knows this company's own codes.
+    category: null,
+    branchName: f.branchName,
+    description: f.description ?? "",
+    amount: f.amount ?? 0,
+    vatAmount: f.vat,
+    whtAmount: f.withholdingTax,
+  };
+}
+
+/**
+ * The rows a resumed request opens with — **no seeded blank row**.
+ *
+ * A new claim starts empty on purpose: attaching a document is what creates
+ * rows, and an empty row-1 sitting above the attach zone invites somebody to
+ * type into it before they have the receipt in front of them, which is the
+ * order this form is trying to reverse. "เพิ่มรายการ" is still there for a
+ * line with no document.
+ */
 function seedItems(initial?: ReimburseDetail | null): ReimburseItem[] {
-  const rows = initial?.items ?? [];
-  return rows.length > 0 ? rows.map((it, i) => ({ ...it, sortOrder: i })) : [emptyItem(0)];
+  return (initial?.items ?? []).map((it, i) => ({ ...it, sortOrder: i }));
+}
+
+/**
+ * A stable id per picked document.
+ *
+ * A `File` carries no identity, and keying the thumbnail strip by array index
+ * hands tile 2's DOM node to tile 3 the moment tile 2 is removed — mid-read,
+ * that puts one file's spinner on another file's picture.
+ */
+let documentIdSeq = 0;
+function nextDocumentId(): string {
+  documentIdSeq += 1;
+  return "doc-" + documentIdSeq;
 }
 
 /* ─────────────────────────── props ─────────────────────────── */
@@ -147,8 +187,9 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [triedSubmit, setTriedSubmit] = useState(false);
-  const [readingIndex, setReadingIndex] = useState<number | null>(null);
+  const [pendingDocs, setPendingDocs] = useState<PendingDocument[]>([]);
   const [readNote, setReadNote] = useState<string | null>(null);
+  const [removingFileId, setRemovingFileId] = useState<number | null>(null);
 
   const itemsRef = useRef<HTMLDivElement>(null);
   const filesRef = useRef<HTMLDivElement>(null);
@@ -351,8 +392,10 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
   const removeItem = useCallback((index: number) => {
     setItems((prev) => {
       const next = prev.filter((_, i) => i !== index).map((it, i) => ({ ...it, sortOrder: i }));
-      // Never leave the grid with nothing to type into.
-      return next.length > 0 ? next : [emptyItem(0)];
+      // Left empty when the last row goes: rows come from attaching a document,
+      // and a blank row put back automatically is the seeded row-1 this form
+      // deliberately does not show.
+      return next;
     });
   }, []);
 
@@ -378,6 +421,17 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
   // the old two-slot rule may have a workbook and nothing else, and the server
   // accepts exactly that.
   const hasReceipt = !!excelFile || receiptFiles.length > 0 || pendingReceipts.length > 0;
+
+  /**
+   * The stored files the strip shows: the receipts, plus the AP-4.1 workbook a
+   * request filed under the old two-slot rule still carries. Nothing writes
+   * `ExcelFileId` any more, but hiding a value that is still there would leave
+   * a stored file with no way to see or remove it.
+   */
+  const storedDocuments = useMemo(
+    () => (excelFile ? [excelFile, ...receiptFiles] : receiptFiles),
+    [excelFile, receiptFiles],
+  );
   const ackedSet = useMemo(() => new Set(ackedRuleIds), [ackedRuleIds]);
   const allRulesAcked = rules.every((r) => ackedSet.has(r.id));
 
@@ -502,7 +556,7 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
       setStatus(d.status);
       setBrandCode((prev) => d.brandCode ?? prev);
       setPurpose(d.purpose ?? "");
-      setItems(d.items.length > 0 ? d.items.map((it, i) => ({ ...it, sortOrder: i })) : [emptyItem(0)]);
+      setItems(d.items.map((it, i) => ({ ...it, sortOrder: i })));
       setAckedRuleIds(d.ackedRuleIds);
       setExcelFile(d.excelFile);
       setReceiptFiles(d.receiptFiles);
@@ -666,6 +720,9 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
 
   const handleDeleteStored = useCallback(
     async (fileId: number): Promise<boolean> => {
+      // Held here rather than inside the strip so the strip stays a view: it is
+      // this function that knows when the round trip is over.
+      setRemovingFileId(fileId);
       try {
         const res = await fetch(`/api/request/reimburse/files/${fileId}`, { method: "DELETE" });
         const json = (await res.json()) as { ok: boolean; error?: string };
@@ -680,6 +737,8 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
       } catch {
         toast.error("ลบไฟล์ไม่สำเร็จ");
         return false;
+      } finally {
+        setRemovingFileId(null);
       }
     },
     [],
@@ -690,11 +749,8 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
     setPendingReceipts((prev) => prev.concat(files));
   }, []);
 
-  const removePendingReceipt = useCallback((index: number) => {
-    setPendingReceipts((prev) => prev.filter((_, i) => i !== index));
-  }, []);
 
-  /* ── reading a receipt into one expense row ── */
+  /* ── attaching documents, which is what creates rows ── */
 
   // Set on mount, not only cleared on unmount. `useEffect(() => () => {...}, [])`
   // looks equivalent and is not: `reactStrictMode` is unset in next.config.mjs,
@@ -709,55 +765,84 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
     };
   }, []);
 
-  const handleReadReceipt = useCallback(
-    async (index: number, file: File) => {
-      // One at a time across the whole grid: the call is billed per image, and
-      // the grid disables every other row's button while this is set.
-      if (readingIndex !== null) return;
-      setReadingIndex(index);
+  /**
+   * Attach one or more documents, and turn each into an expense row.
+   *
+   * Files are read **one at a time**, not in parallel: each call is billed, and
+   * a burst of five would spend the per-user rate limit in one gesture and
+   * leave the requester unable to attach anything else for ten minutes.
+   *
+   * Every file is kept as evidence whatever the read returns. A document that
+   * could not be read is still what the requester attached, and AP-4 refuses to
+   * submit without at least one file.
+   */
+  const handlePickDocuments = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0) return;
+
+      const picked = files.map((file) => ({ localId: nextDocumentId(), file, reading: true }));
+      setPendingDocs((prev) => prev.concat(picked));
+      addReceipts(files);
       setReadNote(null);
 
-      // Kept whatever the read returns. The requester attached a receipt; that
-      // it was also unreadable is no reason to drop the evidence, and AP-4
-      // refuses to submit without at least one หลักฐาน file.
-      addReceipts([file]);
-
-      try {
-        const read = await readReceiptFields(file);
-        if (!aliveRef.current) return;
-        if (read.failure) {
-          setReadNote(RECEIPT_FIELDS_FAILURE_TEXT[read.failure]);
-          return;
+      const failures: ReceiptFieldsFailure[] = [];
+      for (const doc of picked) {
+        let read: Awaited<ReturnType<typeof readReceiptFields>>;
+        try {
+          read = await readReceiptFields(doc.file);
+        } catch {
+          read = { rows: [], failure: "error" };
         }
-        // Only what is still empty. Somebody who typed a figure while the read
-        // was in flight keeps theirs — a model answer arriving a second later
-        // must never overwrite a person's own number on a claim for money.
-        setItems((prev) =>
-          prev.map((it, i) => {
-            if (i !== index) return it;
-            const patch: Partial<ReimburseItem> = {};
-            const f = read.fields;
-            if (f.expenseDate && !it.expenseDate) patch.expenseDate = f.expenseDate;
-            if (f.documentNo && !it.documentNo?.trim()) patch.documentNo = f.documentNo;
-            if (f.branchName && !it.branchName?.trim()) patch.branchName = f.branchName;
-            if (f.description && !it.description?.trim()) patch.description = f.description;
-            if (f.amount !== null && !(Number(it.amount) > 0)) patch.amount = f.amount;
-            if (f.vat !== null && it.vatAmount === null) patch.vatAmount = f.vat;
-            if (f.withholdingTax !== null && it.whtAmount === null) {
-              patch.whtAmount = f.withholdingTax;
-            }
-            return { ...it, ...patch };
-          }),
+        if (!aliveRef.current) return;
+
+        // Cleared per file rather than at the end, so each thumbnail stops
+        // spinning as its own read lands instead of all of them at once.
+        setPendingDocs((prev) =>
+          prev.map((p) => (p.localId === doc.localId ? { ...p, reading: false } : p)),
         );
-      } catch {
-        if (aliveRef.current) setReadNote(RECEIPT_FIELDS_FAILURE_TEXT.error);
-      } finally {
-        // Released on every path, so a failure never leaves the row's controls
-        // locked with no way back. Re-attaching the image is the retry.
-        if (aliveRef.current) setReadingIndex(null);
+
+        if (read.failure) {
+          failures.push(read.failure);
+          continue;
+        }
+        // Appended, never merged into an existing row: the requester has not
+        // said which row this document belongs to, and guessing would put a
+        // model's figures on top of one they typed.
+        setItems((prev) => prev.concat(read.rows.map((f, i) => rowFromFields(f, prev.length + i))));
+      }
+
+      if (!aliveRef.current) return;
+      if (failures.length > 0) {
+        // The worst one, not the first: "the key is missing" is an operator's
+        // problem and outranks "this photo is unreadable", which is the
+        // requester's, and saying the smaller thing hides the bigger one.
+        const worst =
+          failures.indexOf("unavailable") >= 0
+            ? "unavailable"
+            : failures.indexOf("error") >= 0
+              ? "error"
+              : "not-found";
+        const suffix = files.length > 1 ? ` (${failures.length}/${files.length} ไฟล์)` : "";
+        setReadNote(RECEIPT_FIELDS_FAILURE_TEXT[worst] + suffix);
       }
     },
-    [readingIndex, addReceipts],
+    [addReceipts],
+  );
+
+  /** Take a picked file back out before it is uploaded — it removes its evidence too. */
+  const handleRemovePendingDoc = useCallback(
+    (localId: string) => {
+      setPendingDocs((prev) => {
+        const doc = prev.find((p) => p.localId === localId);
+        if (doc) {
+          // By reference: `addReceipts` concatenated this very `File`, and two
+          // picks of the same file on disk are two distinct objects.
+          setPendingReceipts((cur) => cur.filter((f) => f !== doc.file));
+        }
+        return prev.filter((p) => p.localId !== localId);
+      });
+    },
+    [],
   );
 
   /* ─────────────────────────── render ─────────────────────────── */
@@ -1073,8 +1158,9 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
         </div>
       </SectionCard>
 
-      {/* ── รายการค่าใช้จ่ายจริง ── */}
+      {/* ── รายการค่าใช้จ่ายจริง — including the documents they come from ── */}
       <div ref={itemsRef} className="min-w-0">
+        <span ref={filesRef} />
         <SectionCard icon={<ListChecks size={15} />} title="รายการค่าใช้จ่ายจริง">
           <ReimburseItemGrid
             items={items}
@@ -1083,24 +1169,19 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
             onRemove={removeItem}
             problems={rowProblems}
             showProblems={triedSubmit}
-            onReadReceipt={handleReadReceipt}
-            readingIndex={readingIndex}
             readNote={readNote}
-          />
-        </SectionCard>
-      </div>
-
-      {/* ── เอกสารแนบ ── */}
-      <div ref={filesRef} className="min-w-0">
-        <SectionCard icon={<Paperclip size={15} />} title="เอกสารแนบ">
-          <ReimburseAttachments
-            excelFile={excelFile}
-            receiptFiles={receiptFiles}
-            pendingReceipts={pendingReceipts}
-            onAddReceipts={addReceipts}
-            onRemovePendingReceipt={removePendingReceipt}
-            onDeleteStored={handleDeleteStored}
-            receiptError={showErr("receipt")}
+            documents={
+              <ExpenseDocumentStrip
+                storedFiles={storedDocuments}
+                pending={pendingDocs}
+                onPick={handlePickDocuments}
+                onRemovePending={handleRemovePendingDoc}
+                onRemoveStored={handleDeleteStored}
+                removingId={removingFileId}
+                disabled={pendingDocs.some((d) => d.reading)}
+                hasError={showErr("receipt")}
+              />
+            }
           />
         </SectionCard>
       </div>

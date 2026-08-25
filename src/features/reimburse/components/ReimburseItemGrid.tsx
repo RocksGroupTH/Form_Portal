@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { CircleAlert, Loader2, Plus, ScanLine, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { CircleAlert, Plus, Trash2 } from "lucide-react";
 import { SingleDatePicker } from "@/features/accounting/components/SingleDatePicker";
 import { fmtBaht } from "@/features/travel-booking/components/shared";
 import { sumReimburseItems } from "@/lib/acc/reimburse/calc";
@@ -178,7 +178,7 @@ const LABEL_CLASS = "block text-[10.5px] font-semibold uppercase tracking-wide m
 const IDENT_GRID =
   "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-[56px_150px_130px_110px_minmax(0,1fr)_150px] gap-2";
 const MONEY_GRID =
-  "grid grid-cols-2 md:grid-cols-[repeat(5,minmax(0,1fr))_86px] gap-2";
+  "grid grid-cols-2 md:grid-cols-[repeat(5,minmax(0,1fr))_44px] gap-2";
 
 /** Two decimals, without the float noise that makes 2675.0000000000005 reach a payout figure. */
 function round2(n: number): number {
@@ -277,59 +277,6 @@ function ReadOnlyMoney({
   );
 }
 
-/**
- * The per-row "read a receipt" control.
- *
- * Its own file input rather than one shared input plus a "which row?"
- * variable: a shared input has to be re-pointed before every click, and
- * picking the same file twice in a row fires no `change` event at all unless
- * the value is cleared in between. One input per row removes both.
- */
-function RowReceiptButton({
-  index,
-  busy,
-  disabled,
-  onPick,
-}: {
-  index: number;
-  busy: boolean;
-  /** Another row is mid-read. The call is billed, so one at a time for the whole grid. */
-  disabled: boolean;
-  onPick: (file: File) => void;
-}) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  return (
-    <>
-      <input
-        ref={inputRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) onPick(file);
-          // Cleared so re-picking the same file still fires `change`.
-          e.target.value = "";
-        }}
-      />
-      <button
-        type="button"
-        disabled={busy || disabled}
-        onClick={() => inputRef.current?.click()}
-        aria-label={`อ่านใบเสร็จสำหรับรายการที่ ${index + 1}`}
-        title={busy ? "กำลังอ่านใบเสร็จ..." : "แนบใบเสร็จเพื่ออ่านข้อมูลมาเติมให้"}
-        className="w-9 h-9 rounded-lg flex items-center justify-center border-none shrink-0 disabled:opacity-60"
-        style={{
-          background: "var(--nav-active-bg)",
-          color: "var(--nav-active-text)",
-          cursor: busy || disabled ? "not-allowed" : "pointer",
-        }}
-      >
-        {busy ? <Loader2 size={15} className="animate-spin" /> : <ScanLine size={15} />}
-      </button>
-    </>
-  );
-}
 
 export function ReimburseItemGrid({
   items,
@@ -338,8 +285,7 @@ export function ReimburseItemGrid({
   onRemove,
   problems,
   showProblems,
-  onReadReceipt,
-  readingIndex,
+  documents,
   readNote,
 }: {
   items: ReimburseItem[];
@@ -350,10 +296,15 @@ export function ReimburseItemGrid({
   problems: ItemRowProblem[];
   /** Only paint a row red once a submit has actually been attempted. */
   showProblems: boolean;
-  /** Read this image into row `index`, and keep it as a หลักฐาน attachment. */
-  onReadReceipt: (index: number, file: File) => void;
-  /** Which row is mid-read, or null. Owned by the form, which owns the file list. */
-  readingIndex: number | null;
+  /**
+   * The attachment strip, rendered at the top of this block.
+   *
+   * Passed in rather than built here: the files belong to the request, the form
+   * owns them, and reading one is what creates the rows below. This component
+   * only decides where it sits — first, because attaching is the first thing
+   * the requester does.
+   */
+  documents: React.ReactNode;
   /** Why the last read produced nothing. Cleared by the form on the next attempt. */
   readNote: string | null;
 }) {
@@ -366,6 +317,8 @@ export function ReimburseItemGrid({
 
   return (
     <div className="flex flex-col gap-2 min-w-0">
+      {documents}
+
       {readNote && (
         <p
           className="text-[12px] m-0 px-1 flex items-start gap-1.5"
@@ -506,13 +459,7 @@ export function ReimburseItemGrid({
                 <ReadOnlyMoney value={netPaid} />
               </Field>
 
-              <div className="flex justify-end gap-1.5 md:self-end md:pb-0.5">
-                <RowReceiptButton
-                  index={index}
-                  busy={readingIndex === index}
-                  disabled={readingIndex !== null && readingIndex !== index}
-                  onPick={(file) => onReadReceipt(index, file)}
-                />
+              <div className="flex justify-end md:self-end md:pb-0.5">
                 <button
                   type="button"
                   onClick={() => onRemove(index)}
