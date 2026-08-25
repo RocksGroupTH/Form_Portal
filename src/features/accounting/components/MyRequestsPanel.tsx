@@ -131,6 +131,7 @@ function RequestRowList({
 }) {
   const [rows, setRows] = useState<ReportRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [viewerReady, setViewerReady] = useState(kind !== "work");
   const [drawerId, setDrawerId] = useState<number | null>(null);
   const [drawerDetail, setDrawerDetail] = useState<AccRequest | null>(null);
   const [tbDetail, setTbDetail] = useState<TravelBookingRequest | null>(null);
@@ -242,10 +243,12 @@ function RequestRowList({
         const email = empJson?.ok ? empJson.data?.email ?? null : null;
         const isAccountApprover = Boolean(accessJson?.ok && accessJson.data?.approver);
         setWorkViewer({ staffId, email, isAccountApprover });
+        setViewerReady(true);
       })
       .catch(() => {
         if (!cancelled) {
           setWorkViewer({ staffId: null, email: null, isAccountApprover: false });
+          setViewerReady(true);
         }
       });
     return () => { cancelled = true; };
@@ -456,7 +459,7 @@ function RequestRowList({
       )}
 
       {/* List */}
-      {loading ? (
+      {(loading || !viewerReady) ? (
         <div className="flex items-center justify-center py-10">
           <Loader2 size={22} className="animate-spin" style={{ color: "var(--text-muted)" }} />
         </div>

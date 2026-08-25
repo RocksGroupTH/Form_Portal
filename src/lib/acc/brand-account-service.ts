@@ -182,3 +182,52 @@ export async function upsertBrandAccount(
     }
   });
 }
+
+/**
+ * Write exactly one per-form GL or Bank account override for `formCode`.
+ *
+ * DELETE + INSERT within one writeBothPools call so the per-form row is always
+ * exactly one (replacing whatever was there before). Never touches FormCode=NULL
+ * rows — AP-1's defaults are untouched.
+ */
+export async function mergeFormBrandAccount(
+  kind: BrandAccountKind,
+  brandCode: string,
+  formCode: string,
+  accountNo: string,
+  erpDescription: string | null,
+  userId: number,
+): Promise<void> {
+  const brand = brandCode.trim().toUpperCase();
+  const form = formCode.trim().toUpperCase();
+  const accNo = accountNo.trim();
+  if (!brand) throw new Error("กรุณาระบุแบรนด์");
+  if (!accNo) throw new Error("กรุณาระบุเลขบัญชี");
+  if (!form) throw new Error("กรุณาระบุ FormCode");
+  const table = TABLE[kind];
+  await writeBothPools(async (tx) => {
+    // Clear existing per-form rows for this brand
+    await tx
+      .request()
+      .input("brand", sql.NVarChar, brand)
+      .input("formCode", sql.NVarChar(20), form)
+      .query(`
+        DELETE FROM [dbo].[${table}]
+        WHERE BrandCode = @brand AND FormCode = @formCode
+      `);
+    const req = tx
+      .request()
+      .input("brand", sql.NVarChar, brand)
+      .input("formCode", sql.NVarChar(20), form)
+      .input("accNo", sql.NVarChar, accNo)
+      .input("user", sql.Int, userId || null);
+    if (kind === "gl") {
+      req.input("erpDesc", sql.NVarChar, erpDescription?.trim() || null);
+    }
+    await req.query(`
+      INSERT INTO [dbo].[${table}]
+        (BrandCode, AccountNo, FormCode, IsActive, SortOrder${kind === "gl" ? ", ErpDescription" : ""}, CreatedBy)
+      VALUES (@brand, @accNo, @formCode, 1, 0${kind === "gl" ? ", @erpDesc" : ""}, @user)
+    `);
+  });
+}

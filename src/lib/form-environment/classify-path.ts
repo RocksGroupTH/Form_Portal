@@ -10,10 +10,10 @@
  * Pure: no I/O, no request context. Exhaustively tested in classify-path.test.ts.
  */
 
-export type FormCode = "AP-1" | "AP-15" | "AP-17";
+export type FormCode = "AP-1" | "AP-15" | "AP-17" | "AP-2" | "AP-3";
 
 /** Every form code, as values — the runtime half of the `FormCode` union. */
-export const FORM_CODES: readonly FormCode[] = ["AP-1", "AP-15", "AP-17"];
+export const FORM_CODES: readonly FormCode[] = ["AP-1", "AP-15", "AP-17", "AP-2", "AP-3"];
 
 /**
  * Narrow caller-supplied text to a known form code.
@@ -78,6 +78,24 @@ export const ROUTE_RULES: RouteRule[] = [
   // AP-17 proper.
   { prefix: "/api/request/travel-booking", result: "AP-17" },
   { prefix: "/request/travel-booking", result: "AP-17" },
+
+  // AP-2 settings — like AP-1's, these carry a config-row id (tier/approver id),
+  // not an AccRequest id, so they must NOT be request-id routed. Read Production;
+  // the service layer dual-writes to both databases.
+  { prefix: "/api/request/advance/settings", result: null },
+
+  // AP-2 proper (เบิกเงินทดรองจ่าย / Advance). Its own top-level prefix, so the
+  // whole subtree — form, API, and the erp-prep queue that posts to BC — resolves
+  // to a single form. No /erp-prep rule of its own is needed: it sits under the
+  // advance prefix and inherits AP-2.
+  { prefix: "/api/request/advance", result: "AP-2" },
+  { prefix: "/request/advance", result: "AP-2" },
+
+  // AP-3 proper (เคลียร์คืนเงินทดรองจ่าย / Clear Advance). Its own top-level
+  // prefix. Phase 1 has no ERP posting; the pending-advance dropdown reads the
+  // approved AP-2 rows that share this form database.
+  { prefix: "/api/request/clear-advance", result: "AP-3" },
+  { prefix: "/request/clear-advance", result: "AP-3" },
 
   // AP-1 proper.
   { prefix: "/api/request/accounting", result: "AP-1" },

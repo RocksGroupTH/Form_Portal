@@ -146,3 +146,46 @@ export async function deleteBrandErpInterfaceMap(
       `);
   });
 }
+
+/**
+ * Upsert a per-form InterfaceBrandCode override for `formCode`.
+ *
+ * Does NOT call assertClaimBrandAllowed — the AP-2 settings route is admin-gated
+ * and the brand comes from listFormBrands("AP-2"), so validation is already done.
+ * The unique index on AccBrandErpInterface is (FormCode, BrandCode), so MERGE on
+ * that key finds at most one row and is safe.
+ */
+export async function upsertFormBrandErpInterfaceMap(
+  claimBrandCode: string,
+  interfaceBrandCode: string,
+  formCode: string,
+  userId: number,
+): Promise<void> {
+  const claim = claimBrandCode.trim().toUpperCase();
+  const target = interfaceBrandCode.trim().toUpperCase();
+  const form = formCode.trim().toUpperCase();
+  if (!claim) throw new Error("กรุณาระบุแบรนด์เบิก");
+  if (!target) throw new Error("กรุณาเลือกแบรนด์ปลายทาง");
+  if (!form) throw new Error("กรุณาระบุ FormCode");
+  if (!isErpInterfaceBrandCode(target)) {
+    throw new Error(`แบรนด์ปลายทาง "${target}" ไม่มีใน Brand Config`);
+  }
+  await writeBothPools(async (tx) => {
+    await tx
+      .request()
+      .input("brand", sql.NVarChar, claim)
+      .input("target", sql.NVarChar, target)
+      .input("formCode", sql.NVarChar(20), form)
+      .input("user", sql.Int, userId || null)
+      .query(`
+        MERGE [dbo].[AccBrandErpInterface] AS t
+        USING (SELECT @brand AS BrandCode, @formCode AS FormCode) AS s
+          ON t.BrandCode = s.BrandCode AND t.FormCode = s.FormCode
+        WHEN MATCHED THEN
+          UPDATE SET InterfaceBrandCode = @target, UpdatedAt = SYSDATETIME()
+        WHEN NOT MATCHED THEN
+          INSERT (BrandCode, InterfaceBrandCode, FormCode, CreatedBy)
+          VALUES (@brand, @target, @formCode, @user);
+      `);
+  });
+}
