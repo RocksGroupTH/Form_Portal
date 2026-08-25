@@ -61,7 +61,18 @@ const MAX_PDF_PAGES = 3;
 const MAX_SHEET_CHARS = 40_000;
 
 /** No sheet of expense lines has more rows than this; the rest is a different document. */
-const MAX_ROWS = 100;
+const MAX_SHEET_ROWS = 100;
+
+/**
+ * One document is one row, and the code says so rather than only the prompt.
+ *
+ * A two-page PDF is sent as two images, and asking a model nicely not to read
+ * them as two documents is a request, not a guarantee — the prompt does ask,
+ * and this is what makes it true. The failure it prevents is quiet and costly:
+ * two identical expense lines from one quotation, each carrying the full
+ * amount, on a claim somebody then approves.
+ */
+const MAX_DOCUMENT_ROWS = 1;
 
 const RowSchema = z.object({
   expenseDate: z
@@ -189,8 +200,9 @@ export async function POST(req: NextRequest) {
     // decides "future" — it is the clock the row is stored against.
     const today = todayYmd();
     const raw = response.parsed_output?.rows ?? [];
+    const cap = guard.kind === "spreadsheet" ? MAX_SHEET_ROWS : MAX_DOCUMENT_ROWS;
     const rows: ReceiptFields[] = raw
-      .slice(0, MAX_ROWS)
+      .slice(0, cap)
       .map((r) =>
         sanitizeReceiptFields(
           {

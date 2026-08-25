@@ -1,22 +1,30 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { FileSpreadsheet, FileText, Loader2, Paperclip, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FileSpreadsheet, FileText, Loader2, Maximize2, Paperclip, Plus, X } from "lucide-react";
+import { FullScreenModal } from "@/components/ui/FullScreenModal";
 import type { ReimburseFileMeta } from "@/features/reimburse/types";
+import { isAcceptedDocument } from "@/features/reimburse/lib/document-accept";
 import { AttachmentViewer, attachmentKind, type AttachmentKind, type AttachmentSource } from "./AttachmentViewer";
 
 /**
- * AP-4's one attachment control: a wide drop zone, then a strip of thumbnails.
+ * AP-4's one attachment control: a framed drop zone with the attachments
+ * *inside* it, in a single scrolling row that ends in an add tile.
  *
- * It replaces two things at once — the separate "เอกสารแนบ" card and the
- * per-row scan button — because both were places to attach a file, and a form
- * with two of those makes the requester decide something that does not matter.
- * Attaching here is what creates expense rows; see `ReimburseForm`.
+ * It replaces both the separate "เอกสารแนบ" card and the per-row scan button,
+ * because both were places to attach a file and a form with two of those makes
+ * the requester decide something that does not matter. Attaching here is what
+ * creates expense rows; see `ReimburseForm`.
  *
- * The tile shape is AP-1's (`ExpenseRows`), deliberately: a 14×14 button, the
- * amber "ยังไม่บันทึก" band on anything not yet uploaded, and a remove badge
- * clipped to the corner. Two forms showing attachments two different ways is a
- * cost paid by every person who uses both.
+ * **One row that scrolls, not a wrapping grid.** Wrapping grows the block's
+ * height with every file, which pushes the expense rows down the page while
+ * somebody is typing into them. The row's height is fixed whether there is one
+ * attachment or twenty; "ดูเต็มจอ" is what the twenty case is for.
+ *
+ * The tile shape is AP-1's (`ExpenseRows`) — a 14×14 button, the amber
+ * "ยังไม่บันทึก" band on anything not yet uploaded, a remove badge clipped to
+ * the corner, and a dashed add tile at the end. Two forms showing attachments
+ * two different ways is a cost paid by everybody who uses both.
  *
  * What is **not** copied from AP-1 is the image-only assumption. AP-4 takes
  * PDFs and workbooks too, so a tile is either a picture or a typed icon, and
@@ -30,6 +38,29 @@ export interface PendingDocument {
   file: File;
   /** Set while this file is being read into rows. */
   reading?: boolean;
+}
+
+/**
+ * What the picker offers — a convenience, not a control. `accept` filters the
+ * file dialog; `isAcceptedDocument` does the same for a drop, and the
+ * magic-byte check on the upload route is what actually decides.
+ */
+const ATTACHMENT_ACCEPT =
+  "image/*,application/pdf,.pdf,.xlsx,.xls,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.ms-excel.sheet.macroEnabled.12";
+
+/** One thing to look at, whether it is stored or still in the browser. */
+interface Entry {
+  key: string;
+  name: string;
+  kind: AttachmentKind;
+  source: AttachmentSource;
+  /** A picture to show in the tile, or null for a typed icon. */
+  previewUrl: string | null;
+  pending: boolean;
+  reading: boolean;
+  onRemove: () => void;
+  /** True while the server is being asked to delete this one. */
+  removing: boolean;
 }
 
 export function ExpenseDocumentStrip({
@@ -53,9 +84,12 @@ export function ExpenseDocumentStrip({
   disabled?: boolean;
   hasError?: boolean;
 }) {
+  const inputRef = useRef<HTMLInputElement>(null);
   const [viewing, setViewing] = useState<{ source: AttachmentSource; kind: AttachmentKind } | null>(
     null,
   );
+  const [expanded, setExpanded] = useState(false);
+  const [dragging, setDragging] = useState(false);
 
   /**
    * Object URLs for the picture thumbnails, revoked together whenever the
@@ -73,91 +107,208 @@ export function ExpenseDocumentStrip({
     [previewUrls],
   );
 
+  const entries: Entry[] = [
+    ...storedFiles.map((f) => ({
+      key: `s-${f.id}`,
+      name: f.fileName,
+      kind: attachmentKind(f.fileName, f.contentType),
+      source: { name: f.fileName, url: f.url } as AttachmentSource,
+      previewUrl: attachmentKind(f.fileName, f.contentType) === "image" ? f.url : null,
+      pending: false,
+      reading: false,
+      onRemove: () => void onRemoveStored(f.id),
+      removing: removingId === f.id,
+    })),
+    ...pending.map((p, i) => ({
+      key: `p-${p.localId}`,
+      name: p.file.name,
+      kind: attachmentKind(p.file.name, p.file.type),
+      source: { name: p.file.name, file: p.file } as AttachmentSource,
+      previewUrl: previewUrls[i],
+      pending: true,
+      reading: !!p.reading,
+      onRemove: () => onRemovePending(p.localId),
+      removing: false,
+    })),
+  ];
+
+  const openViewer = (e: Entry) => setViewing({ source: e.source, kind: e.kind });
+
+  const takeFiles = useCallback(
+    (files: File[]) => {
+      const accepted = files.filter((f) => isAcceptedDocument(f.name, f.type));
+      if (accepted.length > 0) onPick(accepted);
+    },
+    [onPick],
+  );
+
+  /**
+   * Dragging over a child fires `dragleave` on the parent, so a plain boolean
+   * flickers the highlight off as the pointer crosses a tile. Counting enter
+   * and leave is the standard fix; the ref rather than state because it is
+   * bookkeeping nothing renders from.
+   */
+  const dragDepth = useRef(0);
+
+  const dropHandlers = disabled
+    ? {}
+    : {
+        onDragEnter: (e: React.DragEvent) => {
+          e.preventDefault();
+          dragDepth.current += 1;
+          setDragging(true);
+        },
+        onDragOver: (e: React.DragEvent) => {
+          // Without this the browser navigates to the file instead of dropping.
+          e.preventDefault();
+        },
+        onDragLeave: (e: React.DragEvent) => {
+          e.preventDefault();
+          dragDepth.current -= 1;
+          if (dragDepth.current <= 0) {
+            dragDepth.current = 0;
+            setDragging(false);
+          }
+        },
+        onDrop: (e: React.DragEvent) => {
+          e.preventDefault();
+          dragDepth.current = 0;
+          setDragging(false);
+          takeFiles(Array.from(e.dataTransfer?.files ?? []));
+        },
+      };
+
   return (
-    <div className="flex flex-col gap-2.5 min-w-0">
+    <div
+      {...dropHandlers}
+      className="rounded-xl px-3.5 py-3 flex flex-col gap-2.5 min-w-0 transition-colors"
+      style={{
+        border: `1px dashed ${
+          dragging ? "var(--nav-active-text)" : hasError ? "var(--color-danger)" : "var(--border-card)"
+        }`,
+        background: dragging ? "var(--nav-active-bg)" : "var(--bg-card-alt)",
+      }}
+    >
       <input
-        id="ap4-doc-input"
+        ref={inputRef}
         type="file"
         accept={ATTACHMENT_ACCEPT}
         multiple
         className="hidden"
         onChange={(e) => {
-          const picked = e.target.files ? Array.from(e.target.files) : [];
-          if (picked.length > 0) onPick(picked);
+          takeFiles(e.target.files ? Array.from(e.target.files) : []);
           // Cleared so re-picking the same file still fires `change`.
           e.target.value = "";
         }}
       />
 
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => document.getElementById("ap4-doc-input")?.click()}
-        className="w-full rounded-xl px-4 py-5 flex flex-col items-center justify-center gap-1.5 cursor-pointer acc-add-row disabled:cursor-not-allowed disabled:opacity-70"
-        style={{
-          border: `1px dashed ${hasError ? "var(--color-danger)" : "var(--border-card)"}`,
-          background: "var(--bg-card-alt)",
-          color: "var(--text-secondary)",
-        }}
-      >
-        <span className="flex items-center gap-2 text-[13.5px] font-bold">
-          <Paperclip size={16} /> แนบเอกสารที่นี่ — ระบบจะอ่านข้อมูลมาสร้างรายการให้
+      <div className="flex items-center gap-2 min-w-0">
+        <Paperclip size={15} className="shrink-0" style={{ color: "var(--nav-active-text)" }} />
+        <span className="text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>
+          เอกสารแนบ
         </span>
         <span className="text-[11.5px]" style={{ color: "var(--text-muted)" }}>
-          รูปภาพ · PDF · Excel — แนบได้หลายไฟล์
+          {entries.length > 0
+            ? `${entries.length} ไฟล์ · ลากไฟล์มาวางได้`
+            : "ลากไฟล์มาวาง หรือกดปุ่ม + — ระบบจะอ่านข้อมูลมาสร้างรายการให้"}
         </span>
-      </button>
+        <span className="flex-1" />
+        {entries.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold cursor-pointer border-none"
+            style={{ background: "var(--bg-card)", color: "var(--nav-active-text)" }}
+          >
+            <Maximize2 size={13} /> ดูเต็มจอ
+          </button>
+        )}
+      </div>
 
-      {(storedFiles.length > 0 || pending.length > 0) && (
-        // Scrolls inside itself rather than wrapping, so the block's height
-        // never changes as files are added and nothing below it moves. The
-        // asymmetric padding is headroom for the remove badge, which sits
-        // outside each tile and would otherwise be clipped.
-        <div className="flex flex-nowrap items-center gap-2.5 overflow-x-auto pt-1.5 -mt-1.5 pb-1 pr-1.5">
-          {storedFiles.map((f) => (
-            <div key={`s-${f.id}`} className="relative w-14 h-14 shrink-0">
-              <Tile
-                title={`${f.fileName} — คลิกเพื่อเปิดดู`}
-                imageSrc={isImageMeta(f) ? f.url : null}
-                kind={attachmentKind(f.fileName, f.contentType)}
-                onClick={() =>
-                  setViewing({
-                    source: { name: f.fileName, url: f.url },
-                    kind: attachmentKind(f.fileName, f.contentType),
-                  })
-                }
-              />
-              <RemoveBadge
-                label={`ลบไฟล์ ${f.fileName}`}
-                busy={removingId === f.id}
-                onClick={() => void onRemoveStored(f.id)}
-              />
-            </div>
-          ))}
+      {/* One row, scrolling inside itself. `shrink-0` on each tile is what makes
+          flexbox scroll rather than squash them; the asymmetric padding is
+          headroom for the remove badge, which sits outside each tile and would
+          otherwise be clipped. */}
+      <div className="flex flex-nowrap items-center gap-2.5 overflow-x-auto pt-1.5 -mt-1.5 pb-1 pr-1.5">
+        {entries.map((e) => (
+          <div key={e.key} className="relative w-14 h-14 shrink-0">
+            <Tile
+              title={`${e.name}${e.pending ? " — ยังไม่บันทึก" : ""} · คลิกเพื่อเปิดดู`}
+              previewUrl={e.previewUrl}
+              kind={e.kind}
+              pending={e.pending}
+              reading={e.reading}
+              onClick={() => openViewer(e)}
+            />
+            <RemoveBadge label={`เอาไฟล์ ${e.name} ออก`} busy={e.removing} onClick={e.onRemove} />
+          </div>
+        ))}
 
-          {pending.map((p, i) => (
-            <div key={`p-${p.localId}`} className="relative w-14 h-14 shrink-0">
-              <Tile
-                title={`${p.file.name} — ยังไม่บันทึก · คลิกเพื่อเปิดดู`}
-                imageSrc={previewUrls[i]}
-                kind={attachmentKind(p.file.name, p.file.type)}
-                pending
-                reading={p.reading}
-                onClick={() =>
-                  setViewing({
-                    source: { name: p.file.name, file: p.file },
-                    kind: attachmentKind(p.file.name, p.file.type),
-                  })
-                }
-              />
-              <RemoveBadge
-                label={`เอาไฟล์ ${p.file.name} ออก`}
-                onClick={() => onRemovePending(p.localId)}
-              />
-            </div>
-          ))}
-        </div>
-      )}
+        {/* Always last, always the same size as a tile: one control, one shape,
+            whether the row holds nothing or nine. */}
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => inputRef.current?.click()}
+          aria-label="แนบเอกสารเพิ่ม"
+          title={disabled ? "กำลังอ่านเอกสาร..." : "แนบเอกสารเพิ่ม"}
+          className="w-14 h-14 shrink-0 rounded-xl flex items-center justify-center cursor-pointer acc-add-row disabled:cursor-not-allowed disabled:opacity-60"
+          style={{
+            border: "1px dashed var(--border-card)",
+            background: "var(--bg-card)",
+            color: "var(--text-secondary)",
+          }}
+        >
+          {disabled ? <Loader2 size={18} className="animate-spin" /> : <Plus size={20} />}
+        </button>
+      </div>
+
+      <FullScreenModal open={expanded} onClose={() => setExpanded(false)} title="เอกสารแนบ">
+        {entries.length === 0 ? (
+          <p className="text-[13px] m-0" style={{ color: "var(--text-faint)" }}>
+            — ยังไม่มีไฟล์ —
+          </p>
+        ) : (
+          // A grid here rather than a row: the whole screen is the point, and
+          // full names are what makes twenty attachments navigable at all.
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            {entries.map((e) => (
+              <button
+                key={e.key}
+                type="button"
+                onClick={() => {
+                  openViewer(e);
+                  setExpanded(false);
+                }}
+                className="rounded-xl p-2.5 flex flex-col items-center gap-2 cursor-pointer text-left border"
+                style={{ borderColor: "var(--border-card)", background: "var(--bg-card)" }}
+              >
+                <span className="relative w-full aspect-square rounded-lg overflow-hidden flex items-center justify-center" style={{ background: "var(--bg-card-alt)", color: "var(--nav-active-text)" }}>
+                  {e.previewUrl ? (
+                    <img src={e.previewUrl} alt="" className="w-full h-full object-cover" draggable={false} />
+                  ) : e.kind === "excel" ? (
+                    <FileSpreadsheet size={34} />
+                  ) : (
+                    <FileText size={34} />
+                  )}
+                </span>
+                <span
+                  className="w-full text-[11.5px] font-semibold break-words line-clamp-2"
+                  style={{ color: "var(--text-primary)" }}
+                  title={e.name}
+                >
+                  {e.name}
+                </span>
+                {e.pending && (
+                  <span className="text-[10px] font-bold" style={{ color: "var(--color-warning)" }}>
+                    ยังไม่บันทึก
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+      </FullScreenModal>
 
       <AttachmentViewer
         open={viewing !== null}
@@ -169,27 +320,16 @@ export function ExpenseDocumentStrip({
   );
 }
 
-/**
- * What the picker offers — a convenience, not a control. `accept` filters the
- * file dialog; the magic-byte check on the upload route is what decides.
- */
-const ATTACHMENT_ACCEPT =
-  "image/*,application/pdf,.pdf,.xlsx,.xls,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.ms-excel.sheet.macroEnabled.12";
-
-function isImageMeta(f: ReimburseFileMeta): boolean {
-  return attachmentKind(f.fileName, f.contentType) === "image";
-}
-
 function Tile({
   title,
-  imageSrc,
+  previewUrl,
   kind,
   pending,
   reading,
   onClick,
 }: {
   title: string;
-  imageSrc: string | null;
+  previewUrl: string | null;
   kind: AttachmentKind;
   pending?: boolean;
   reading?: boolean;
@@ -210,8 +350,8 @@ function Tile({
         color: "var(--nav-active-text)",
       }}
     >
-      {imageSrc ? (
-        <img src={imageSrc} alt="" className="w-full h-full object-cover" draggable={false} />
+      {previewUrl ? (
+        <img src={previewUrl} alt="" className="w-full h-full object-cover" draggable={false} />
       ) : kind === "excel" ? (
         <FileSpreadsheet size={22} />
       ) : (
