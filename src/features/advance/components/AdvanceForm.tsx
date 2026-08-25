@@ -6,6 +6,7 @@ import { Check, User, Mail, UserCog, Paperclip, Camera, X, FileText } from "luci
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { Avatar } from "@/components/ui/Avatar";
+import { DateRangePicker } from "@/components/ui/DateRangePicker";
 import { RequesterPickerModal, type RequesterOption } from "@/components/RequesterPickerModal";
 import { CurrencyCombobox } from "@/features/advance/components/CurrencyCombobox";
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
@@ -97,8 +98,6 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
   const payeeNameRef = useRef<HTMLInputElement>(null);
   const payeeBankAccountRef = useRef<HTMLInputElement>(null);
   const payeeBankCodeRef = useRef<HTMLSelectElement>(null);
-  const needByDateRef = useRef<HTMLInputElement>(null);
-  const expectedClearDateRef = useRef<HTMLInputElement>(null);
   const amountRef = useRef<HTMLInputElement>(null);
   const exchangeRateRef = useRef<HTMLInputElement>(null);
   const overReasonRef = useRef<HTMLTextAreaElement>(null);
@@ -342,14 +341,6 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   }, []);
-  const clearMaxYmd = useMemo(() => {
-    if (!needByDate) return undefined;
-    const d = new Date(needByDate);
-    if (Number.isNaN(d.getTime())) return undefined;
-    d.setDate(d.getDate() + AP2_MAX_CLEAR_DAYS);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  }, [needByDate]);
-
   // P1.1 — mirror validateAdvanceForSubmit (server stays the source of truth).
   function validate(): Record<string, string> {
     const errs: Record<string, string> = {};
@@ -390,8 +381,6 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
     { key: "payeeName", ref: payeeNameRef },
     { key: "payeeBankAccount", ref: payeeBankAccountRef },
     { key: "payeeBankCode", ref: payeeBankCodeRef },
-    { key: "needByDate", ref: needByDateRef },
-    { key: "expectedClearDate", ref: expectedClearDateRef },
     { key: "amount", ref: amountRef },
     { key: "exchangeRate", ref: exchangeRateRef },
     { key: "overReason", ref: overReasonRef },
@@ -699,20 +688,23 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
             เลือก &quot;โอนให้&quot; ก่อน จึงจะกรอกรายละเอียดค่าใช้จ่าย จำนวนเงิน ฯลฯ ได้
           </p>
         )}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Field label="วันที่ต้องการเริ่มใช้เงิน *" error={errors.needByDate} errorId="err-needByDate">
-            <input ref={needByDateRef} type="date" className={fieldClass} style={fieldStyle} value={needByDate}
-              min={todayYmd}
-              aria-invalid={!!errors.needByDate} aria-describedby={errors.needByDate ? "err-needByDate" : undefined}
-              disabled={readOnly} onChange={(e) => { setNeedByDate(e.target.value); clearError("needByDate"); }} />
-          </Field>
-          <Field label="วันที่คาดว่าจะเคลียร์ * (≤ 30 วัน)" error={errors.expectedClearDate} errorId="err-expectedClearDate">
-            <input ref={expectedClearDateRef} type="date" className={fieldClass} style={fieldStyle} value={expectedClearDate}
-              min={needByDate || todayYmd} max={clearMaxYmd}
-              aria-invalid={!!errors.expectedClearDate} aria-describedby={errors.expectedClearDate ? "err-expectedClearDate" : undefined}
-              disabled={readOnly} onChange={(e) => { setExpectedClearDate(e.target.value); clearError("expectedClearDate"); }} />
-          </Field>
-        </div>
+        <Field label="ช่วงเวลาใช้เงิน — วันที่คาดว่าจะเคลียร์ * (≤ 30 วัน)"
+          error={errors.needByDate || errors.expectedClearDate}
+          errorId="err-dates">
+          <DateRangePicker
+            startDate={needByDate}
+            endDate={expectedClearDate}
+            onChange={(start, end) => {
+              setNeedByDate(start);
+              setExpectedClearDate(end);
+              clearError("needByDate");
+              clearError("expectedClearDate");
+            }}
+            minDate={todayYmd}
+            maxDays={AP2_MAX_CLEAR_DAYS}
+            disabled={readOnly}
+          />
+        </Field>
 
         {/* Currency + amount */}
         <div className="flex flex-col gap-2">
@@ -850,18 +842,18 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
 
       {!readOnly && (
         <div
-          className="sticky bottom-0 z-10 -mx-4 sm:-mx-5 px-4 sm:px-5 py-3 flex flex-wrap items-center justify-between gap-3"
+          className="sticky bottom-3 z-10 rounded-2xl px-4 py-3.5 flex flex-wrap items-center justify-between gap-3"
           style={{
             background: "var(--bg-card)",
-            borderTop: "1px solid var(--border-card)",
-            boxShadow: "0 -4px 12px rgba(0,0,0,0.06)",
+            border: "1px solid var(--border-card)",
+            boxShadow: "var(--shadow-lg)",
           }}
         >
           <div className="flex flex-col gap-0.5">
             <div className="flex items-baseline gap-2">
-              <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>ยอดที่เบิก:</span>
-              <span className="text-[15px] font-bold" style={{ color: "var(--text-primary)" }}>
-                {baseAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ฿
+              <span className="text-[11px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>ยอดที่เบิก</span>
+              <span className="text-[16px] font-bold" style={{ color: "var(--text-heading)" }}>
+                ฿{baseAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             </div>
             {/* P2.3 — saved-state indicator */}
@@ -880,8 +872,8 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
             )}
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="secondary" onClick={handleSave} loading={saving} disabled={submitting}>บันทึกแบบร่าง</Button>
-            <Button variant="primary" onClick={handleSubmit} loading={submitting} disabled={saving}>ส่งคำขอ</Button>
+            <Button size="lg" variant="secondary" onClick={handleSave} loading={saving} disabled={submitting}>บันทึกแบบร่าง</Button>
+            <Button size="lg" variant="primary" onClick={handleSubmit} loading={submitting} disabled={saving}>ส่งคำขอ</Button>
           </div>
         </div>
       )}
