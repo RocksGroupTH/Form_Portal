@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2, X } from "lucide-react";
+import { ExternalLink, Loader2, X } from "lucide-react";
 import { ImageLightbox } from "@/features/accounting/components/ImageLightbox";
 import { loadXlsx } from "@/lib/xlsx";
 
@@ -22,8 +22,9 @@ import { loadXlsx } from "@/lib/xlsx";
  *
  * - **image** — handed to `ImageLightbox`, the viewer AP-1 and AP-17 already
  *   use, so zoom and pan behave identically across the three forms.
- * - **pdf** — a blob URL in a sandboxed `<iframe>`, letting the browser's own
- *   PDF viewer do the work.
+ * - **pdf** — a blob URL in an `<object>`, letting the browser's own PDF viewer
+ *   do the work. **No `sandbox`** — see the comment at that element; the
+ *   attribute made the pane blank and could not have been kept meaningfully.
  * - **excel** — parsed with `xlsx-js-style` (already a dependency; plain `xlsx`
  *   is the one with the advisories) and rendered as a plain table. A workbook
  *   is data to check, not a document to lay out, so the first sheet as text is
@@ -165,7 +166,7 @@ export function AttachmentViewer({ open, source, kind, onClose }: AttachmentView
   }
 
   return (
-    <Shell name={source.name} onClose={onClose}>
+    <Shell name={source.name} onClose={onClose} openUrl={blobUrl}>
       {loading && (
         <Centre>
           <Loader2 size={22} className="animate-spin" />
@@ -173,14 +174,35 @@ export function AttachmentViewer({ open, source, kind, onClose }: AttachmentView
       )}
       {!loading && error && <Centre>{error}</Centre>}
       {!loading && !error && kind === "pdf" && blobUrl && (
-        <iframe
-          src={blobUrl}
-          title={source.name}
-          // Same-origin is what lets the built-in PDF viewer run at all; the
-          // bytes came from our own fetch, and every other capability stays off.
-          sandbox="allow-same-origin"
-          style={{ width: "100%", height: "100%", border: "none", background: "var(--bg-card-alt)" }}
-        />
+        // `<object>`, and **no `sandbox`**. It was `<iframe sandbox="allow-same-origin">`
+        // and rendered a blank white pane: a browser's built-in PDF viewer is
+        // itself a scripted component, so a sandbox without `allow-scripts`
+        // stops it loading at all. Adding `allow-scripts` beside
+        // `allow-same-origin` is the documented way to have no sandbox while
+        // looking like you do, so the attribute is gone rather than weakened.
+        //
+        // What actually protects us is unchanged and is not this attribute:
+        // the bytes were fetched by us and wrapped in a Blob **we** typed
+        // `application/pdf`, so the frame cannot be talked into rendering HTML;
+        // and the server still serves the stored file as
+        // `Content-Disposition: attachment` under `nosniff`, which is the guard
+        // this component exists to work with rather than around.
+        <object
+          data={blobUrl}
+          type="application/pdf"
+          aria-label={source.name}
+          style={{ width: "100%", height: "100%", background: "var(--bg-card-alt)" }}
+        >
+          {/* Shown by the browser only when it will not embed a PDF at all —
+              iOS Safari, and any policy that blocks plugins. Without it that
+              case is the same blank pane this replaced. */}
+          <Centre>
+            <span className="flex flex-col items-center gap-2">
+              เบราว์เซอร์นี้แสดง PDF ในหน้านี้ไม่ได้
+              <OpenInTab url={blobUrl} />
+            </span>
+          </Centre>
+        </object>
       )}
       {!loading && !error && kind === "excel" && sheetHtml && (
         <div
@@ -209,13 +231,39 @@ function Centre({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * "Open in a new tab", pointed at the blob this component already made.
+ *
+ * Deliberately the blob and not the file's download URL: the blob is what the
+ * viewer is showing, it exists for a file that has not been uploaded yet, and
+ * the stored URL would come back `Content-Disposition: attachment` and
+ * download rather than open — which is the behaviour this whole component
+ * exists to give people an alternative to.
+ */
+function OpenInTab({ url }: { url: string }) {
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12.5px] font-semibold no-underline"
+      style={{ background: "var(--bg-card-alt)", color: "var(--nav-active-text)" }}
+    >
+      <ExternalLink size={13} /> เปิดในแท็บใหม่
+    </a>
+  );
+}
+
 function Shell({
   name,
   onClose,
+  openUrl,
   children,
 }: {
   name: string;
   onClose: () => void;
+  /** Present once the bytes have been fetched; absent while loading or on error. */
+  openUrl?: string | null;
   children: React.ReactNode;
 }) {
   return (
@@ -245,6 +293,7 @@ function Shell({
           >
             {name}
           </span>
+          {openUrl && <OpenInTab url={openUrl} />}
           <button
             type="button"
             onClick={onClose}
