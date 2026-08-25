@@ -477,6 +477,10 @@ function ExpenseRow({
         <div className="relative w-32 sm:w-44 shrink-0">
           {showAmount ? (
             <>
+              {/* Locked while the read is in flight, and released the moment it
+                  lands either way — a figure, or a failure that says to type it
+                  in. Typing over an answer that is one second away only creates
+                  a race about whose number wins. */}
               <input
                 type="number"
                 min="0"
@@ -484,6 +488,7 @@ function ExpenseRow({
                 placeholder="จำนวนเงิน"
                 value={item.amount || ""}
                 onChange={(e) => onAmountChange(e.target.value)}
+                disabled={readNote === "reading"}
                 className="w-full rounded-lg pl-3 pr-7 py-2 text-[15px] font-bold outline-none tabular-nums text-right"
                 style={inputStyle}
               />
@@ -493,16 +498,28 @@ function ExpenseRow({
               >
                 ฿
               </span>
-              {/* Indeterminate sweep along the field's own bottom edge — the
-                  exact place the figure is about to appear. A line of text
-                  under the row is easy to miss while looking at the input;
-                  this is not. Same animation the loading popup uses. */}
+              {/* Covers the whole field rather than a hairline at its edge, so
+                  the state is unmistakable at a glance. Laid over a disabled
+                  input of the same size instead of replacing it, so nothing
+                  below shifts when the read finishes. `acc-progress` is a 40%
+                  band that sweeps across — the same animation the loading
+                  popup uses. */}
               {readNote === "reading" && (
                 <div
-                  className="absolute left-0 right-0 bottom-0 h-[3px] rounded-b-lg overflow-hidden pointer-events-none"
-                  style={{ background: "color-mix(in srgb, var(--color-action) 12%, transparent)" }}
+                  className="absolute inset-0 rounded-lg overflow-hidden pointer-events-none"
+                  style={{ background: "color-mix(in srgb, var(--color-action) 10%, var(--bg-input))" }}
                 >
-                  <div className="acc-progress h-full" style={{ background: "var(--color-action)" }} />
+                  <div
+                    className="acc-progress h-full"
+                    style={{ background: "color-mix(in srgb, var(--color-action) 26%, transparent)" }}
+                  />
+                  <span
+                    className="absolute inset-0 flex items-center justify-center gap-1.5 text-[11.5px] font-semibold"
+                    style={{ color: "var(--color-action)" }}
+                  >
+                    <Loader2 size={12} className="animate-spin" />
+                    กำลังอ่านยอด...
+                  </span>
                 </div>
               )}
             </>
@@ -538,17 +555,8 @@ function ExpenseRow({
 
       {/* How the read is going. A note beside a working field — never in place
           of one. Both lines say the same thing in the end: type it yourself. */}
-      {readNote === "reading" && (
-        <p
-          className="m-0 text-[12px] flex items-center gap-1.5"
-          style={{ color: "var(--text-muted)" }}
-        >
-          {/* Spinning, not pulsing. A pulse on a 12px icon is easy to read as
-              a rendering artefact; rotation is unmistakably "working". */}
-          <Loader2 size={12} className="animate-spin shrink-0" style={{ color: "var(--color-action)" }} />
-          กำลังอ่านยอดจากใบเสร็จ — ระหว่างนี้กรอกเองได้เลย
-        </p>
-      )}
+      {/* No note while reading: the field says so itself now, and the line that
+          used to sit here told people to type in a box that is locked. */}
       {/* Self-clearing: once there is a figure the note is stale, however it
           got there. Re-attaching the image is the retry. */}
       {readNote != null && readNote !== "reading" && !(Number(item.amount) > 0) && (
