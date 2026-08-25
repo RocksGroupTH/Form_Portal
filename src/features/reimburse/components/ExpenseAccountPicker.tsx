@@ -168,14 +168,27 @@ export function ExpenseAccountPicker({
                   setOpen(false);
                   setQuery("");
                 }}
-                className="w-full text-left px-3 py-2 text-[12.5px] cursor-pointer border-none flex items-baseline gap-2"
+                className="w-full text-left px-3 py-2 cursor-pointer border-none block"
                 style={{
                   background: a.accountNo === value ? "var(--nav-active-bg)" : "transparent",
-                  color: "var(--text-primary)",
                 }}
               >
-                <span className="tabular-nums font-semibold shrink-0">{a.accountNo}</span>
-                <span className="truncate" style={{ color: "var(--text-secondary)" }}>
+                {/* The same two lines as the cell above, so what is picked here
+                    looks like what appears there. Side by side, a long Thai
+                    account name pushed the number and the name into competing
+                    for one row's width — the option list has more of it than
+                    the 190px cell does, but making the two read differently
+                    for that reason costs more than it buys. */}
+                <span
+                  className="block text-[10.5px] leading-tight tabular-nums truncate"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  {a.accountNo}
+                </span>
+                <span
+                  className="block text-[13px] leading-tight truncate"
+                  style={{ color: "var(--text-primary)" }}
+                >
                   {a.displayName}
                 </span>
               </button>
