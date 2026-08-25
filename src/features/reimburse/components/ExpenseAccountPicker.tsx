@@ -15,7 +15,10 @@ import type { ExpenseAccount } from "@/lib/acc/reimburse/expense-account-service
  *
  * **The stored value is the account number**, not the name — that is what
  * Business Central posts against, and a display name can change on the next
- * sync while the number does not. The name is shown beside it.
+ * sync while the number does not. The cell shows both, stacked: the number
+ * small and grey above, the name below in full. One line put them in
+ * competition for 190px and the name always lost, which is the half that tells
+ * a reader whether the account is the right one.
  *
  * Two states it has to render honestly rather than as an empty list:
  *
@@ -114,15 +117,12 @@ export function ExpenseAccountPicker({
     };
   }, [open]);
 
-  const label = selected
-    ? `${selected.accountNo} — ${selected.displayName}`
-    : value
-      ? // Not in the list: an older free-text value, or an account since
-        // blocked in BC. Shown as-is rather than blanked.
-        value
-      : "";
-
   const placeholder = !brandChosen ? "เลือกแบรนด์ก่อน" : loading ? "กำลังโหลด..." : "เลือกบัญชี...";
+
+  /** The `title` — one line, because a tooltip has no second one. */
+  const tooltip = selected
+    ? `${selected.accountNo} — ${selected.displayName}`
+    : value || placeholder;
 
   const panel =
     open && rect ? (
@@ -207,19 +207,50 @@ export function ExpenseAccountPicker({
         aria-label={ariaLabel}
         disabled={!brandChosen}
         onClick={() => setOpen((v) => !v)}
-        className="w-full rounded-lg px-3 py-2 text-[14px] outline-none flex items-center gap-1.5 disabled:cursor-not-allowed"
+        className="w-full rounded-lg px-3 py-1.5 outline-none flex items-center gap-1.5 disabled:cursor-not-allowed"
         style={{
           background: "var(--bg-input)",
-          color: label ? "var(--text-primary)" : "var(--text-muted)",
           borderWidth: 1,
           borderStyle: "solid",
           borderColor: "var(--border-input)",
           cursor: brandChosen ? "pointer" : "not-allowed",
           opacity: brandChosen ? 1 : 0.7,
         }}
-        title={label || placeholder}
+        title={tooltip}
       >
-        <span className="truncate text-left flex-1">{label || placeholder}</span>
+        {/* Two lines, the number above the name. The column is 190px and a
+            Thai account name routinely runs past that, so one line meant the
+            name was always the half that got truncated — and the name is what
+            tells a reader whether the account is right. Stacked, the number
+            fits whole and the name gets the full width to itself. */}
+        <span className="min-w-0 flex-1 text-left">
+          {selected ? (
+            <>
+              <span
+                className="block text-[10.5px] leading-tight tabular-nums truncate"
+                style={{ color: "var(--text-muted)" }}
+              >
+                {selected.accountNo}
+              </span>
+              <span
+                className="block text-[13px] leading-tight truncate"
+                style={{ color: "var(--text-primary)" }}
+              >
+                {selected.displayName}
+              </span>
+            </>
+          ) : (
+            // One line: either a raw value that is not an account at all — an
+            // older free-text `รายการ`, or one since blocked in BC — or the
+            // placeholder. Neither has a number and a name to separate.
+            <span
+              className="block text-[13px] leading-tight truncate py-[7px]"
+              style={{ color: value ? "var(--text-primary)" : "var(--text-muted)" }}
+            >
+              {value || placeholder}
+            </span>
+          )}
+        </span>
         <ChevronDown size={14} className="shrink-0" style={{ color: "var(--text-muted)" }} />
       </button>
 
