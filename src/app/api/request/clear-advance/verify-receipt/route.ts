@@ -36,14 +36,19 @@ export async function POST(req: NextRequest) {
     let mediaType: AiMedia = aiMediaType(file.type);
     if (isPdf) { buffer = await pdfFirstPageToPng(buffer); mediaType = "image/png"; }
 
-    // Claude vision first (if configured); fall back to free Tesseract+regex when
-    // absent, on error, or when the model returned nothing usable.
+    // Claude vision first; fall back to Tesseract+regex when absent/failed.
     const ai = await extractReceiptWithAI(buffer, mediaType);
     const aiUsable = !!ai && !!(ai.date || ai.docNo || ai.description || ai.beforeVat != null || ai.payeeName);
-    const result = aiUsable ? ai! : await extractReceipt(buffer);
-    return NextResponse.json({ ok: true, data: result, source: aiUsable ? "ai" : "ocr" });
+    if (aiUsable) return NextResponse.json({ ok: true, data: ai!, source: "ai" });
+
+    // Tesseract fallback — may fail if the CDN model is unavailable; treat as soft failure.
+    try {
+      const result = await extractReceipt(buffer);
+      return NextResponse.json({ ok: true, data: result, source: "ocr" });
+    } catch {
+      return NextResponse.json({ ok: false, error: "อ่านใบเสร็จไม่สำเร็จ — ไม่มีเครื่องมือ OCR" }, { status: 502 });
+    }
   } catch (e) {
-    // OCR failure shouldn't break the flow — report it, the UI treats it as "unavailable".
     return NextResponse.json(
       { ok: false, error: e instanceof Error ? e.message : "verify failed" },
       { status: 502 },
