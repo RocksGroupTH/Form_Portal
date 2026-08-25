@@ -97,6 +97,7 @@ function mapItemRow(x: Record<string, unknown>): ReimburseItem {
     vendorTaxId: (x.VendorTaxId as string) ?? null,
     vendorName: (x.VendorName as string) ?? null,
     vendorAddress: (x.VendorAddress as string) ?? null,
+    sourceFileId: (x.SourceFileId as number) ?? null,
     description: (x.Description as string) ?? "",
     amount: Number(x.Amount) || 0,
     vatAmount: num(x.VatAmount),
@@ -161,7 +162,7 @@ async function loadItems(pool: AccPool, requestId: number): Promise<ReimburseIte
     .input("rid", sql.Int, requestId)
     .query(
       `SELECT Id, SortOrder, ExpenseDate, DocumentNo, Category, BranchName, VendorTaxId, VendorName, VendorAddress,
-              Description, Amount, VatAmount, WhtAmount
+              SourceFileId, Description, Amount, VatAmount, WhtAmount
        FROM [dbo].[AccReimburseItem] WHERE RequestId=@rid ORDER BY SortOrder, Id`,
     );
   return (r.recordset as Record<string, unknown>[]).map(mapItemRow);
@@ -325,6 +326,7 @@ async function persistReimburseItems(tx: AccTx, requestId: number, items: Reimbu
       .input("taxId", sql.NVarChar(20), it.vendorTaxId ?? null)
       .input("vendorName", sql.NVarChar(300), it.vendorName ?? null)
       .input("vendorAddr", sql.NVarChar(500), it.vendorAddress ?? null)
+      .input("srcFile", sql.Int, it.sourceFileId ?? null)
       .input("desc", sql.NVarChar(500), it.description ?? "")
       .input("amount", sql.Decimal(18, 2), it.amount)
       .input("vat", sql.Decimal(18, 2), it.vatAmount ?? null)
@@ -332,9 +334,9 @@ async function persistReimburseItems(tx: AccTx, requestId: number, items: Reimbu
       .query(
         `INSERT INTO [dbo].[AccReimburseItem]
            (RequestId, SortOrder, ExpenseDate, DocumentNo, Category, BranchName,
-            VendorTaxId, VendorName, VendorAddress, Description, Amount, VatAmount, WhtAmount)
+            VendorTaxId, VendorName, VendorAddress, SourceFileId, Description, Amount, VatAmount, WhtAmount)
          VALUES (@rid, @sort, @date, @docNo, @category, @branch,
-                 @taxId, @vendorName, @vendorAddr, @desc, @amount, @vat, @wht)`,
+                 @taxId, @vendorName, @vendorAddr, @srcFile, @desc, @amount, @vat, @wht)`,
       );
   }
 }

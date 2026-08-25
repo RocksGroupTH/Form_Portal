@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CircleAlert, Plus, Trash2 } from "lucide-react";
+import { CircleAlert, Maximize2, Plus, Trash2 } from "lucide-react";
+import { FullScreenModal } from "@/components/ui/FullScreenModal";
 import { SingleDatePicker } from "@/features/accounting/components/SingleDatePicker";
 import { ExpenseAccountPicker } from "./ExpenseAccountPicker";
 import type { ExpenseAccount } from "@/lib/acc/reimburse/expense-account-service";
@@ -320,6 +321,8 @@ export function ReimburseItemGrid({
   /** False before a brand is picked; the list is keyed on brand and cannot load. */
   brandChosen: boolean;
 }) {
+  const [fullScreen, setFullScreen] = useState(false);
+
   // The total the server will store: the blank trailing row contributes
   // nothing, and `sumReimburseItems` is the same function it totals with.
   const total = sumReimburseItems(items.filter((it) => !isBlankItemRow(it)));
@@ -327,10 +330,17 @@ export function ReimburseItemGrid({
   const problemAt = (index: number, kind: ItemRowProblem["kind"]) =>
     showProblems && problems.some((p) => p.index === index && p.kind === kind);
 
-  return (
-    <div className="flex flex-col gap-2 min-w-0">
-      {documents}
-
+  /**
+   * The rows themselves, held in a variable so the same JSX — the same handlers,
+   * the same state — renders both inline and inside the full-screen modal.
+   *
+   * Not a second copy and not a read-only view: the full-screen view is the
+   * eleven-column table given the width it wants, and everything in it stays
+   * editable. A duplicated block would drift, and a read-only one would send somebody back
+   * to the cramped version to change what they just noticed.
+   */
+  const rowsBlock = (
+    <>
       {readNote && (
         <p
           className="text-[12px] m-0 px-1 flex items-start gap-1.5"
@@ -534,6 +544,34 @@ export function ReimburseItemGrid({
       >
         <Plus size={13} /> เพิ่มรายการ
       </button>
+    </>
+  );
+
+  return (
+    <div className="flex flex-col gap-2 min-w-0">
+      {documents}
+
+      {/* The full-screen control belongs to the table, not to the attachments:
+          eleven columns is what needs the room. Hidden until there is a row,
+          because an empty table full-screen is a blank page. */}
+      {items.length > 0 && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => setFullScreen(true)}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold cursor-pointer"
+            style={{
+              background: "var(--bg-card-alt)",
+              color: "var(--nav-active-text)",
+              border: "1px solid var(--border-card)",
+            }}
+          >
+            <Maximize2 size={13} /> ดูเต็มจอ
+          </button>
+        </div>
+      )}
+
+      {rowsBlock}
 
       {showProblems && problems.length > 0 && (
         <ul className="m-0 pl-4 flex flex-col gap-1">
@@ -562,6 +600,33 @@ export function ReimburseItemGrid({
           ฿{fmtBaht(total)}
         </span>
       </div>
+
+      {/* The same rows, the same handlers, with the width the eleven columns
+          want. `rowsBlock` is rendered in exactly one place at a time — React
+          remounts the inputs on the switch, which loses focus and nothing
+          else, because every value lives in the caller's state rather than in
+          the fields. */}
+      <FullScreenModal
+        open={fullScreen}
+        onClose={() => setFullScreen(false)}
+        title="รายการค่าใช้จ่ายจริง"
+      >
+        <div className="flex flex-col gap-2 min-w-0">
+          {rowsBlock}
+
+          <div
+            className="rounded-xl px-4 py-3 flex items-center justify-between gap-3 mt-1"
+            style={{ background: "var(--nav-active-bg)" }}
+          >
+            <span className="text-[12.5px] font-semibold" style={{ color: "var(--nav-active-text)" }}>
+              ยอดรวมที่ขอเบิก
+            </span>
+            <span className="text-[16px] font-bold tabular-nums" style={{ color: "var(--nav-active-text)" }}>
+              ฿{fmtBaht(total)}
+            </span>
+          </div>
+        </div>
+      </FullScreenModal>
     </div>
   );
 }

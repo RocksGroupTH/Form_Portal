@@ -113,8 +113,8 @@ function RuleRow({
                 onClick={() => {
                   void onSave(rule.id, draft).then(() => setEditing(false));
                 }}
-                className="inline-flex items-center gap-1 text-[11px] font-bold px-3 py-1.5 rounded-lg border-none enabled:cursor-pointer disabled:opacity-60"
-                style={{ background: "var(--color-action)", color: "var(--btn-primary-text)" }}
+                className="inline-flex items-center gap-1 text-[11px] font-bold px-3 py-1.5 rounded-lg enabled:cursor-pointer disabled:opacity-60"
+                style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}
               >
                 {busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} บันทึก
               </button>
@@ -348,8 +348,8 @@ export function ReimburseRuleSettings() {
                   type="button"
                   disabled={saving || !newText.trim()}
                   onClick={() => void handleCreate()}
-                  className="inline-flex items-center gap-1 text-[11px] font-bold px-3 py-1.5 rounded-lg border-none enabled:cursor-pointer disabled:opacity-60"
-                  style={{ background: "var(--color-action)", color: "var(--btn-primary-text)" }}
+                  className="inline-flex items-center gap-1 text-[11px] font-bold px-3 py-1.5 rounded-lg enabled:cursor-pointer disabled:opacity-60"
+                  style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}
                 >
                   {saving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} เพิ่ม
                 </button>
@@ -372,8 +372,8 @@ export function ReimburseRuleSettings() {
           ) : (
             <button
               onClick={() => setAdding(true)}
-              className="flex items-center gap-1.5 text-[12px] font-medium px-3 py-2 rounded-lg cursor-pointer border-none"
-              style={{ background: "var(--color-action)", color: "var(--btn-primary-text)" }}
+              className="flex items-center gap-1.5 text-[12px] font-medium px-3 py-2 rounded-lg cursor-pointer"
+              style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}
             >
               <Plus size={12} /> เพิ่มระเบียบ
             </button>

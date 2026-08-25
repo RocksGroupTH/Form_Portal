@@ -119,9 +119,13 @@ function emptyItem(sortOrder: number): ReimburseItem {
 }
 
 /** One expense row from one line a document was read into. */
-function rowFromFields(f: ReadRow, sortOrder: number): ReimburseItem {
+function rowFromFields(f: ReadRow, sortOrder: number, sourceDocId: string): ReimburseItem {
   return {
     sortOrder,
+    // The only link that exists yet: the file has no id until it is uploaded,
+    // which does not happen until the next save. `handleSaveDraft` swaps this
+    // for `sourceFileId` once the upload answers.
+    sourceDocId,
     expenseDate: f.expenseDate,
     documentNo: f.documentNo,
     // The G/L account the server matched against its own candidate list — null
@@ -163,6 +167,48 @@ let documentIdSeq = 0;
 function nextDocumentId(): string {
   documentIdSeq += 1;
   return "doc-" + documentIdSeq;
+}
+
+/** Renumber `sortOrder` after a removal, so it stays the row's position. */
+function reindex(rows: ReimburseItem[]): ReimburseItem[] {
+  return rows.map((it, i) => ({ ...it, sortOrder: i }));
+}
+
+/**
+ * Swap each row's `sourceDocId` for the `sourceFileId` the upload just handed
+ * back, or null when there is nothing to change.
+ *
+ * Null rather than an unchanged copy so the caller can skip a whole second
+ * round trip — which is every save after the first, since only a save that
+ * uploaded something has ids to record.
+ */
+function linkRowsToFiles(
+  rows: ReimburseItem[],
+  docs: PendingDocument[],
+  assigned: Array<{ file: File; fileId: number }>,
+): ReimburseItem[] | null {
+  if (assigned.length === 0) return null;
+
+  // `File` identity is by reference throughout: `addReceipts` concatenates the
+  // very objects the picker produced, and two picks of the same file on disk
+  // are two distinct objects that must not be conflated.
+  const idByFile = new Map(assigned.map((a) => [a.file, a.fileId]));
+  const idByDoc = new Map<string, number>();
+  for (const d of docs) {
+    const fileId = idByFile.get(d.file);
+    if (fileId !== undefined) idByDoc.set(d.localId, fileId);
+  }
+  if (idByDoc.size === 0) return null;
+
+  let changed = false;
+  const out = rows.map((it) => {
+    if (!it.sourceDocId) return it;
+    const fileId = idByDoc.get(it.sourceDocId);
+    if (fileId === undefined) return it;
+    changed = true;
+    return { ...it, sourceFileId: fileId, sourceDocId: null };
+  });
+  return changed ? out : null;
 }
 
 /* ─────────────────────────── props ─────────────────────────── */
@@ -594,10 +640,22 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
    * the receipts go up together rather than one request each.
    */
   const uploadPending = useCallback(
-    async (id: number): Promise<boolean> => {
+    async (id: number): Promise<{ ok: boolean; assigned: Array<{ file: File; fileId: number }> }> => {
       let ok = true;
 
-      const post = async (refType: string, files: File[]): Promise<boolean> => {
+      /**
+       * Upload one slot, and hand back the id the server gave each file.
+       *
+       * The route returns `data` as one entry per uploaded file **in the order
+       * they were sent**, which is what makes the positional pairing below
+       * sound. That pairing is the whole mechanism linking an expense row to
+       * the document it was read from, so if the route ever starts reordering
+       * its response this breaks quietly — hence it is written down here.
+       */
+      const post = async (
+        refType: string,
+        files: File[],
+      ): Promise<{ ok: boolean; ids: Array<{ file: File; fileId: number }> }> => {
         const fd = new FormData();
         fd.append("refType", refType);
         // `files`, plural — AP-4's route reads `formData.getAll("files")`.
@@ -607,15 +665,25 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
             method: "POST",
             body: fd,
           });
-          const json = (await res.json()) as { ok: boolean; error?: string };
+          const json = (await res.json()) as {
+            ok: boolean;
+            data?: Array<{ id: number }>;
+            error?: string;
+          };
           if (!json.ok) {
             toast.error(json.error ?? "อัปโหลดไฟล์ไม่สำเร็จ");
-            return false;
+            return { ok: false, ids: [] };
           }
-          return true;
+          const created = json.data ?? [];
+          const ids: Array<{ file: File; fileId: number }> = [];
+          for (let i = 0; i < files.length && i < created.length; i++) {
+            const fileId = created[i]?.id;
+            if (typeof fileId === "number") ids.push({ file: files[i], fileId });
+          }
+          return { ok: true, ids };
         } catch {
           toast.error("อัปโหลดไฟล์ไม่สำเร็จ");
-          return false;
+          return { ok: false, ids: [] };
         }
       };
 
@@ -635,13 +703,16 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
       // Everything goes to `RECEIPT` now, whatever its type: the two slots are
       // one, and `EXCEL` is a refType that is still read (old rows) but never
       // written.
+      let assigned: Array<{ file: File; fileId: number }> = [];
       if (pendingReceipts.length > 0) {
         const sent = pendingReceipts;
-        if (await post(REIMBURSE_FILE_REFTYPES.RECEIPT, sent)) {
+        const res = await post(REIMBURSE_FILE_REFTYPES.RECEIPT, sent);
+        if (res.ok) {
+          assigned = res.ids;
           setPendingReceipts((cur) => cur.filter((f) => sent.indexOf(f) === -1));
         } else ok = false;
       }
-      return ok;
+      return { ok, assigned };
     },
     [pendingReceipts],
   );
@@ -689,7 +760,29 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
         if (!id) return null;
         if (!requestId) setRequestId(id);
 
-        const uploadsOk = await uploadPending(id);
+        const upload = await uploadPending(id);
+        const uploadsOk = upload.ok;
+
+        // A second save, and only when there is something to record: a file has
+        // no id until it has been uploaded, and the upload cannot happen until
+        // the request has one — so the first save writes the rows and this one
+        // writes which document each came from. Skipped entirely when nothing
+        // was uploaded, which is every save after the first.
+        const linked = linkRowsToFiles(body.items, pendingDocs, upload.assigned);
+        if (linked) {
+          await fetch("/api/request/reimburse/requests", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...body, id, items: linked }),
+          }).catch(() => {
+            // Not fatal and not surfaced: the claim and its files are saved,
+            // and all that is lost is the ability to remove a row by removing
+            // its document. Reported to the console for the same reason the
+            // upload failures are.
+            console.error("[AP-4] could not record which document each row came from");
+          });
+        }
+
         await reloadFromServer(id);
         if (!opts?.silent && uploadsOk) toast.success("บันทึกร่างแล้ว");
         onSaved?.(id);
@@ -755,6 +848,11 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
         }
         setExcelFile((prev) => (prev && prev.id === fileId ? null : prev));
         setReceiptFiles((prev) => prev.filter((f) => f.id !== fileId));
+        // Same rule as for a not-yet-uploaded document, and the reason
+        // `SourceFileId` is a stored column rather than browser state: without
+        // it this gesture would remove the rows before the first save and leave
+        // them behind afterwards.
+        setItems((prev) => reindex(prev.filter((it) => it.sourceFileId !== fileId)));
         toast.success("ลบไฟล์แล้ว");
         return true;
       } catch {
@@ -831,7 +929,9 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
         // Appended, never merged into an existing row: the requester has not
         // said which row this document belongs to, and guessing would put a
         // model's figures on top of one they typed.
-        setItems((prev) => prev.concat(read.rows.map((f, i) => rowFromFields(f, prev.length + i))));
+        setItems((prev) =>
+          prev.concat(read.rows.map((f, i) => rowFromFields(f, prev.length + i, doc.localId))),
+        );
       }
 
       if (!aliveRef.current) return;
@@ -864,6 +964,10 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
         }
         return prev.filter((p) => p.localId !== localId);
       });
+      // The rows this document produced go with it. Taking the evidence away
+      // and leaving the lines it created is how a claim comes to carry an
+      // amount with nothing behind it.
+      setItems((prev) => reindex(prev.filter((it) => it.sourceDocId !== localId)));
     },
     [],
   );

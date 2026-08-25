@@ -308,8 +308,8 @@ export function ReimburseAccessSettings() {
         <div className="mb-4">
           <button
             onClick={() => setShowAddModal(true)}
-            className="flex items-center gap-1.5 text-[12px] font-medium px-3 py-2 rounded-lg cursor-pointer border-none"
-            style={{ background: "var(--color-action)", color: "var(--btn-primary-text)" }}
+            className="flex items-center gap-1.5 text-[12px] font-medium px-3 py-2 rounded-lg cursor-pointer"
+            style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}
           >
             <Plus size={12} /> เพิ่มผู้มีสิทธิ์เข้าถึง
           </button>

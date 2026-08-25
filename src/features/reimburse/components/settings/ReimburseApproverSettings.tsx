@@ -176,8 +176,8 @@ export function ReimburseApproverSettings() {
           <button
             onClick={() => setShowAddModal(true)}
             disabled={adding}
-            className="flex items-center gap-1.5 text-[12px] font-medium px-3 py-2 rounded-lg border-none enabled:cursor-pointer disabled:opacity-60"
-            style={{ background: "var(--color-action)", color: "var(--btn-primary-text)" }}
+            className="flex items-center gap-1.5 text-[12px] font-medium px-3 py-2 rounded-lg enabled:cursor-pointer disabled:opacity-60"
+            style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}
           >
             {adding ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} เพิ่มผู้อนุมัติ
           </button>

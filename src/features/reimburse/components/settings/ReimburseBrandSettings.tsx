@@ -228,10 +228,17 @@ export function ReimburseBrandSettings() {
         onClick={() => void handleSave()}
         disabled={!canSave}
         title={loadFailed ? "โหลดค่าที่บันทึกไว้ไม่สำเร็จ — กรุณารีเฟรชหน้านี้ก่อนบันทึก" : undefined}
-        className="flex items-center gap-2 px-5 py-2.5 rounded-xl border-none text-[13px] font-bold"
+        // `--btn-primary-*` as a set. Pairing `--color-action` as the background
+        // with `--btn-primary-text` as the colour rendered this button as an
+        // empty blue pill: that token resolves to `var(--color-action)` itself,
+        // so the label was the exact colour of what it sat on. The three tokens
+        // are one button style — a tinted fill, action-coloured text, a matching
+        // border — and taking one out of the set is what broke it.
+        className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-[13px] font-bold"
         style={{
-          background: "var(--color-action)",
+          background: "var(--btn-primary-bg)",
           color: "var(--btn-primary-text)",
+          border: "1px solid var(--btn-primary-border)",
           opacity: canSave ? 1 : 0.6,
           cursor: canSave ? "pointer" : "not-allowed",
         }}

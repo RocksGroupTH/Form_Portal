@@ -31,6 +31,22 @@ export interface ReimburseItem {
   vendorName?: string | null;
   /** ที่อยู่ of the seller. Migration 118. */
   vendorAddress?: string | null;
+  /**
+   * `AccRequestFile.Id` of the attachment this row was read from, or null for a
+   * row typed by hand. Migration 119.
+   *
+   * Deleting that attachment deletes this row. Not a foreign key — see the
+   * migration; a dangling id means "the document is gone", which is what the
+   * form then shows.
+   */
+  sourceFileId?: number | null;
+  /**
+   * **UI only, never persisted.** The `PendingDocument.localId` this row came
+   * from, which is the only link that exists before the file has been uploaded
+   * and given an id. The save swaps it for `sourceFileId` once the upload
+   * answers, and the server never sees it.
+   */
+  sourceDocId?: string | null;
   description: string;
   /**
    * **VAT-inclusive** — ค่าใช้จ่ายรวม in the AP-4.1 sheet, and the only money

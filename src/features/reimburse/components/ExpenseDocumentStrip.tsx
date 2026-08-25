@@ -1,8 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FileSpreadsheet, FileText, Loader2, Maximize2, Paperclip, Plus, X } from "lucide-react";
-import { FullScreenModal } from "@/components/ui/FullScreenModal";
+import { FileSpreadsheet, FileText, Loader2, Paperclip, Plus, X } from "lucide-react";
 import type { ReimburseFileMeta } from "@/features/reimburse/types";
 import { isAcceptedDocument } from "@/features/reimburse/lib/document-accept";
 import { AttachmentViewer, attachmentKind, type AttachmentKind, type AttachmentSource } from "./AttachmentViewer";
@@ -19,7 +18,7 @@ import { AttachmentViewer, attachmentKind, type AttachmentKind, type AttachmentS
  * **One row that scrolls, not a wrapping grid.** Wrapping grows the block's
  * height with every file, which pushes the expense rows down the page while
  * somebody is typing into them. The row's height is fixed whether there is one
- * attachment or twenty; "ดูเต็มจอ" is what the twenty case is for.
+ * attachment or twenty.
  *
  * The tile shape is AP-1's (`ExpenseRows`) — a 14×14 button, the amber
  * "ยังไม่บันทึก" band on anything not yet uploaded, a remove badge clipped to
@@ -88,7 +87,6 @@ export function ExpenseDocumentStrip({
   const [viewing, setViewing] = useState<{ source: AttachmentSource; kind: AttachmentKind } | null>(
     null,
   );
-  const [expanded, setExpanded] = useState(false);
   const [dragging, setDragging] = useState(false);
 
   /**
@@ -212,17 +210,6 @@ export function ExpenseDocumentStrip({
             ? `${entries.length} ไฟล์ · ลากไฟล์มาวางได้`
             : "ลากไฟล์มาวาง หรือกดปุ่ม + — ระบบจะอ่านข้อมูลมาสร้างรายการให้"}
         </span>
-        <span className="flex-1" />
-        {entries.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setExpanded(true)}
-            className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold cursor-pointer border-none"
-            style={{ background: "var(--bg-card)", color: "var(--nav-active-text)" }}
-          >
-            <Maximize2 size={13} /> ดูเต็มจอ
-          </button>
-        )}
       </div>
 
       {/* One row, scrolling inside itself. `shrink-0` on each tile is what makes
@@ -262,53 +249,6 @@ export function ExpenseDocumentStrip({
           {disabled ? <Loader2 size={18} className="animate-spin" /> : <Plus size={20} />}
         </button>
       </div>
-
-      <FullScreenModal open={expanded} onClose={() => setExpanded(false)} title="เอกสารแนบ">
-        {entries.length === 0 ? (
-          <p className="text-[13px] m-0" style={{ color: "var(--text-faint)" }}>
-            — ยังไม่มีไฟล์ —
-          </p>
-        ) : (
-          // A grid here rather than a row: the whole screen is the point, and
-          // full names are what makes twenty attachments navigable at all.
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-            {entries.map((e) => (
-              <button
-                key={e.key}
-                type="button"
-                onClick={() => {
-                  openViewer(e);
-                  setExpanded(false);
-                }}
-                className="rounded-xl p-2.5 flex flex-col items-center gap-2 cursor-pointer text-left border"
-                style={{ borderColor: "var(--border-card)", background: "var(--bg-card)" }}
-              >
-                <span className="relative w-full aspect-square rounded-lg overflow-hidden flex items-center justify-center" style={{ background: "var(--bg-card-alt)", color: "var(--nav-active-text)" }}>
-                  {e.previewUrl ? (
-                    <img src={e.previewUrl} alt="" className="w-full h-full object-cover" draggable={false} />
-                  ) : e.kind === "excel" ? (
-                    <FileSpreadsheet size={34} />
-                  ) : (
-                    <FileText size={34} />
-                  )}
-                </span>
-                <span
-                  className="w-full text-[11.5px] font-semibold break-words line-clamp-2"
-                  style={{ color: "var(--text-primary)" }}
-                  title={e.name}
-                >
-                  {e.name}
-                </span>
-                {e.pending && (
-                  <span className="text-[10px] font-bold" style={{ color: "var(--color-warning)" }}>
-                    ยังไม่บันทึก
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
-        )}
-      </FullScreenModal>
 
       <AttachmentViewer
         open={viewing !== null}
