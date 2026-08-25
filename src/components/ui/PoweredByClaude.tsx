@@ -1,4 +1,4 @@
-/** Small "Powered by Claude" badge shown on AI-assisted upload sections. */
+/** "Powered by Claude" badge — logo matches the Claude Desktop icon (orange sunburst). */
 export function PoweredByClaude() {
   return (
     <span
@@ -6,20 +6,29 @@ export function PoweredByClaude() {
       style={{ color: "var(--text-faint)" }}
       aria-label="ประมวลผลโดย Claude AI"
     >
-      {/* Anthropic Claude logomark */}
+      {/* Claude Desktop sunburst logomark — 11 rounded arms, organic lengths */}
       <svg
         width="18"
         height="18"
-        viewBox="0 0 24 24"
+        viewBox="0 0 41 41"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
         aria-hidden="true"
         style={{ flexShrink: 0 }}
       >
-        <path
-          d="M13.827 3.52L18.27 16.52H15.335L14.25 13.23H9.75L8.665 16.52H5.73L10.173 3.52H13.827ZM12 6.23L10.535 11.23H13.465L12 6.23Z"
-          fill="#CC785C"
-        />
+        <g transform="translate(20.5,20.5)">
+          <rect x="-1.4" y="-17" width="2.8" height="14" rx="1.4" fill="#CC785C" transform="rotate(0)" />
+          <rect x="-1.4" y="-17" width="2.8" height="15" rx="1.4" fill="#CC785C" transform="rotate(33)" />
+          <rect x="-1.4" y="-17" width="2.8" height="13" rx="1.4" fill="#CC785C" transform="rotate(66)" />
+          <rect x="-1.4" y="-17" width="2.8" height="14.5" rx="1.4" fill="#CC785C" transform="rotate(99)" />
+          <rect x="-1.4" y="-17" width="2.8" height="13" rx="1.4" fill="#CC785C" transform="rotate(132)" />
+          <rect x="-1.4" y="-17" width="2.8" height="15" rx="1.4" fill="#CC785C" transform="rotate(165)" />
+          <rect x="-1.4" y="-17" width="2.8" height="14" rx="1.4" fill="#CC785C" transform="rotate(198)" />
+          <rect x="-1.4" y="-17" width="2.8" height="13.5" rx="1.4" fill="#CC785C" transform="rotate(231)" />
+          <rect x="-1.4" y="-17" width="2.8" height="15" rx="1.4" fill="#CC785C" transform="rotate(264)" />
+          <rect x="-1.4" y="-17" width="2.8" height="13" rx="1.4" fill="#CC785C" transform="rotate(297)" />
+          <rect x="-1.4" y="-17" width="2.8" height="14.5" rx="1.4" fill="#CC785C" transform="rotate(330)" />
+        </g>
       </svg>
       Powered by Claude
     </span>
