@@ -479,16 +479,6 @@ export function ApiKeySettings() {
             นำเข้าจากที่เก็บเดิม ({importable.length})
           </Button>
         )}
-        {/* The Maps & Routing card is gone from the hub, but its page is a
-            provider-status view rather than a key editor and is still worth
-            reaching. Linked from here so it does not become an orphan URL. */}
-        <a
-          href="/settings/maps"
-          className="ml-auto text-[12px] underline underline-offset-2"
-          style={{ color: "var(--nav-active-text)" }}
-        >
-          สถานะผู้ให้บริการแผนที่
-        </a>
       </div>
 
       <p className="text-[12px] m-0 -mt-2" style={{ color: "var(--text-muted)" }}>
