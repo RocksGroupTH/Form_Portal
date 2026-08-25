@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { Avatar } from "@/components/ui/Avatar";
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
+import { PoweredByClaude } from "@/components/ui/PoweredByClaude";
 import type { AccBrandOption, AccFileMeta } from "@/features/accounting/types";
 import type {
   BranchOption,
@@ -986,9 +987,12 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
             onRemove={(id) => removeFile(id, "clear_doc")}
           />
           {!readOnly && advanceRequestId != null && (
-            <p className="text-[11px] mt-1 m-0" style={{ color: "var(--text-faint)" }}>
-              แนบใบเสร็จ/ใบกำกับภาษี (รูปภาพหรือ PDF · ไทย/อังกฤษ) — <b>1 ไฟล์ = 1 รายการ</b> ระบบจะอ่าน “วันที่ · เลขที่เอกสาร · รายละเอียด · ยอดก่อน VAT · VAT · หัก ณ ที่จ่าย (พร้อมเลขผู้เสียภาษี/ชื่อผู้รับ ถ้ามี)” มาเติมให้ (แก้ไขได้)
-            </p>
+            <div className=”flex items-start justify-between gap-2 mt-1”>
+              <p className=”text-[11px] m-0” style={{ color: “var(--text-faint)” }}>
+                แนบใบเสร็จ/ใบกำกับภาษี (รูปภาพหรือ PDF · ไทย/อังกฤษ) — <b>1 ไฟล์ = 1 รายการ</b> ระบบจะอ่าน “วันที่ · เลขที่เอกสาร · รายละเอียด · ยอดก่อน VAT · VAT · หัก ณ ที่จ่าย (พร้อมเลขผู้เสียภาษี/ชื่อผู้รับ ถ้ามี)” มาเติมให้ (แก้ไขได้)
+              </p>
+              <PoweredByClaude />
+            </div>
           )}
           <FieldError msg={fieldErrors.files} />
         </Field>
@@ -1383,9 +1387,12 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
               onPick={(list) => uploadFiles(list, "refund_proof")}
               onRemove={(id) => removeFile(id, "refund_proof")}
             />
-            <p className="text-[11px] mt-1 m-0" style={{ color: "var(--text-faint)" }}>
-              แนบสลิปแล้วระบบจะอ่าน “จำนวนเงิน” และ “วันที่” มาเติมให้อัตโนมัติ (แก้ไขได้) · ยอดที่ต้องโอนคืน ฿{money(refundToCompany)}
-            </p>
+            <div className=”flex items-start justify-between gap-2 mt-1”>
+              <p className=”text-[11px] m-0” style={{ color: “var(--text-faint)” }}>
+                แนบสลิปแล้วระบบจะอ่าน “จำนวนเงิน” และ “วันที่” มาเติมให้อัตโนมัติ (แก้ไขได้) · ยอดที่ต้องโอนคืน ฿{money(refundToCompany)}
+              </p>
+              <PoweredByClaude />
+            </div>
             <FieldError msg={fieldErrors.refundProof} />
           </Field>
           </div>
