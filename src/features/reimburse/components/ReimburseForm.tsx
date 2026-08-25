@@ -10,6 +10,7 @@ import {
   ListChecks,
   Mail,
   Maximize2,
+  Minimize2,
   Paperclip,
   Receipt,
   Save,
@@ -112,6 +113,9 @@ async function jsonFetcher<T>(url: string): Promise<T> {
   if (!json.ok) throw new Error(json.error ?? "Request failed");
   return json.data as T;
 }
+
+/** Breathing room between the widened card and the window edge. */
+const WIDE_INSET = 12;
 
 function emptyItem(sortOrder: number): ReimburseItem {
   // `amount: 0` is the untouched marker the server's `isBlankItemRow` reads —
@@ -245,7 +249,25 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
   const [pendingDocs, setPendingDocs] = useState<PendingDocument[]>([]);
   const [readNote, setReadNote] = useState<string | null>(null);
   const [removingFileId, setRemovingFileId] = useState<number | null>(null);
-  const [itemsFullScreen, setItemsFullScreen] = useState(false);
+  const [itemsWide, setItemsWide] = useState(false);
+  /**
+   * The viewport's width without its scrollbar, measured only while widened.
+   *
+   * Null until then, so the ordinary layout costs no listener and no reflow;
+   * `clientWidth` rather than `innerWidth` because the difference between them
+   * is exactly the scrollbar this must not include.
+   */
+  const [viewportWidth, setViewportWidth] = useState<number | null>(null);
+  useEffect(() => {
+    if (!itemsWide) {
+      setViewportWidth(null);
+      return;
+    }
+    const measure = () => setViewportWidth(document.documentElement.clientWidth);
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [itemsWide]);
 
   const itemsRef = useRef<HTMLDivElement>(null);
   const filesRef = useRef<HTMLDivElement>(null);
@@ -1288,7 +1310,34 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
       </SectionCard>
 
       {/* ── รายการค่าใช้จ่ายจริง — including the documents they come from ── */}
-      <div ref={itemsRef} className="min-w-0">
+      {/**
+       * Widened in place rather than lifted into a modal.
+       *
+       * Only the horizontal axis changes: the card keeps its position in the
+       * page, still grows downward with the rows, and everything in it stays
+       * exactly as editable as before. A modal was the wrong shape for "I need
+       * to see all fourteen columns" — it took the claim away from the form it
+       * belongs to and had to re-render the same table somewhere else.
+       *
+       * `50% - w/2` breaks out of `PageContainer`'s centred `max-w-[1200px]`
+       * without knowing what that max is. The width is **measured**
+       * (`documentElement.clientWidth`) rather than `100vw`, because `vw`
+       * includes the vertical scrollbar and would leave the card a scrollbar's
+       * width too wide — `html:has(.acc-theme)` clips that overflow, so the
+       * symptom would not be a page scrollbar but a quietly cropped right edge.
+       */}
+      <div
+        ref={itemsRef}
+        className="min-w-0 transition-[width,margin] duration-200"
+        style={
+          itemsWide && viewportWidth
+            ? {
+                width: viewportWidth - WIDE_INSET * 2,
+                marginLeft: `calc(50% - ${(viewportWidth - WIDE_INSET * 2) / 2}px)`,
+              }
+            : undefined
+        }
+      >
         <span ref={filesRef} />
         <SectionCard
           icon={<ListChecks size={15} />}
@@ -1301,7 +1350,7 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
             items.length > 0 ? (
               <button
                 type="button"
-                onClick={() => setItemsFullScreen(true)}
+                onClick={() => setItemsWide((v) => !v)}
                 className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold cursor-pointer"
                 style={{
                   background: "var(--bg-card-alt)",
@@ -1309,7 +1358,15 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
                   border: "1px solid var(--border-card)",
                 }}
               >
-                <Maximize2 size={13} /> ดูเต็มจอ
+                {itemsWide ? (
+                  <>
+                    <Minimize2 size={13} /> ย่อกลับ
+                  </>
+                ) : (
+                  <>
+                    <Maximize2 size={13} /> ขยายเต็มความกว้าง
+                  </>
+                )}
               </button>
             ) : undefined
           }
@@ -1325,8 +1382,6 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
             accounts={expenseAccounts ?? []}
             accountsLoading={accountsLoading}
             brandChosen={!!brandCode}
-            fullScreen={itemsFullScreen}
-            onCloseFullScreen={() => setItemsFullScreen(false)}
             documents={
               <ExpenseDocumentStrip
                 storedFiles={storedDocuments}

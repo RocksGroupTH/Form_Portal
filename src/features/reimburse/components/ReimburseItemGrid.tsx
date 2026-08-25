@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { CircleAlert, Plus, Trash2 } from "lucide-react";
-import { FullScreenModal } from "@/components/ui/FullScreenModal";
 import { SingleDatePicker } from "@/features/accounting/components/SingleDatePicker";
 import { ExpenseAccountPicker } from "./ExpenseAccountPicker";
 import type { ExpenseAccount } from "@/lib/acc/reimburse/expense-account-service";
@@ -324,8 +323,6 @@ export function ReimburseItemGrid({
   accounts,
   accountsLoading,
   brandChosen,
-  fullScreen,
-  onCloseFullScreen,
 }: {
   items: ReimburseItem[];
   onUpdate: (index: number, patch: Partial<ReimburseItem>) => void;
@@ -351,16 +348,6 @@ export function ReimburseItemGrid({
   accountsLoading?: boolean;
   /** False before a brand is picked; the list is keyed on brand and cannot load. */
   brandChosen: boolean;
-  /**
-   * Whether the table is showing full screen.
-   *
-   * Owned by the caller because the control that opens it sits in the section's
-   * own header — `SectionCard`'s `extra` — which is above this component. Held
-   * here instead would mean either a second button inside the table or a ref
-   * handle passed upward, both worse than one boolean passed down.
-   */
-  fullScreen: boolean;
-  onCloseFullScreen: () => void;
 }) {
 
   // The total the server will store: the blank trailing row contributes
@@ -371,13 +358,9 @@ export function ReimburseItemGrid({
     showProblems && problems.some((p) => p.index === index && p.kind === kind);
 
   /**
-   * The rows themselves, held in a variable so the same JSX — the same handlers,
-   * the same state — renders both inline and inside the full-screen modal.
-   *
-   * Not a second copy and not a read-only view: the full-screen view is the
-   * eleven-column table given the width it wants, and everything in it stays
-   * editable. A duplicated block would drift, and a read-only one would send somebody back
-   * to the cramped version to change what they just noticed.
+   * The rows, kept in a variable so the render below reads as the sequence it
+   * is — documents, rows, problems, total — rather than a hundred lines of
+   * table wedged between two short blocks.
    */
   const rowsBlock = (
     <>
@@ -402,7 +385,12 @@ export function ReimburseItemGrid({
         // scrollbar at the bottom and the columns stay lined up under their
         // labels. A scroller per row would give one bar each and let the rows
         // drift out of alignment with each other as they were scrolled.
-        <div className="overflow-x-auto pb-1">
+        // `show-x-scroll` opts back in to a visible scrollbar. `.acc-theme`
+        // hides every scrollbar on these pages, so `overflow-x-auto` alone
+        // scrolls with no affordance at all — nothing on screen says the table
+        // continues to the right. AP-3's expense grid opted back in the same
+        // way; the class exists for exactly this.
+        <div className="overflow-x-auto show-x-scroll pb-1">
           <div style={{ minWidth: ROW_MIN_WIDTH }} className="flex flex-col gap-2">
             {/* Same inset and the same template as a row, plus a transparent
                 border so the header's columns line up with the bordered rows
@@ -619,32 +607,6 @@ export function ReimburseItemGrid({
         </span>
       </div>
 
-      {/* The same rows, the same handlers, with the width the eleven columns
-          want. `rowsBlock` is rendered in exactly one place at a time — React
-          remounts the inputs on the switch, which loses focus and nothing
-          else, because every value lives in the caller's state rather than in
-          the fields. */}
-      <FullScreenModal
-        open={fullScreen}
-        onClose={onCloseFullScreen}
-        title="รายการค่าใช้จ่ายจริง"
-      >
-        <div className="flex flex-col gap-2 min-w-0">
-          {rowsBlock}
-
-          <div
-            className="rounded-xl px-4 py-3 flex items-center justify-between gap-3 mt-1"
-            style={{ background: "var(--nav-active-bg)" }}
-          >
-            <span className="text-[12.5px] font-semibold" style={{ color: "var(--nav-active-text)" }}>
-              ยอดรวมที่ขอเบิก
-            </span>
-            <span className="text-[16px] font-bold tabular-nums" style={{ color: "var(--nav-active-text)" }}>
-              ฿{fmtBaht(total)}
-            </span>
-          </div>
-        </div>
-      </FullScreenModal>
     </div>
   );
 }
