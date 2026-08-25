@@ -1,12 +1,17 @@
 -- API keys and their change log move into the Accounting database.
 --
 -- Apply with (Rocks_Portal_Form ONLY -- NOT the UAT twin):
---   npm run apply-sql -- --db Rocks_Portal_Form --file migrations/107_portal_form_api_key.sql
+--   npm run apply-sql -- --db Rocks_Portal_Form --file migrations/116_portal_form_api_key.sql
 --
--- NUMBERED 107, NOT 106. 106 (AccReimburseAccess) belongs to the unmerged
--- feat/ap-4-reimbursement branch, so master's highest applied number being 105
--- is not the number to reason from -- the same reason 095 was not 067. See the
--- AP-17 roster note in CLAUDE.md.
+-- NUMBERED 116, AND IT WAS 107 UNTIL THIS BRANCH MET MASTER. The AP-2 / AP-3
+-- work took master from 105 to 115 while this was being written, so 107
+-- collided with 107_acc_advance_interface_branch.sql.
+--
+-- Read the highest number on *master* before picking one, not the highest in
+-- your own tree, and re-read it before merging. The unmerged
+-- feat/ap-4-reimbursement branch has the same collision waiting for it: its
+-- 106_acc_reimburse_access.sql now sits on master's
+-- 106_acc_erp_journal_batch_template_key.sql.
 --
 -- ---------------------------------------------------------------------------
 -- SINGLE COPY, PRODUCTION ONLY. Not created in Rocks_Portal_Form_UAT, not

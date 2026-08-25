@@ -45,7 +45,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     };
 
     // Removal is deactivation — there is no hard delete, so a key's history can
-    // never be destroyed by removing the key. See migration 107's header.
+    // never be destroyed by removing the key. See migration 116's header.
     if (typeof body.isActive === "boolean") {
       await setApiKeyActive(id, body.isActive, Number(session.user.id));
       return NextResponse.json({ ok: true });

@@ -147,3 +147,46 @@ export async function upsertBrandJournalBatch(
     }
   });
 }
+
+/**
+ * Write one per-form BatchName override for `formCode`, or clear it when
+ * `batchName` is null. Keyed by claim brand (AP-2 stores batch per claim brand,
+ * not per interface brand). Read path uses explicit formCode='AP-2' filter
+ * (see advance-erp-context.ts) to avoid resolveJournalBatchName's interface-
+ * brand-first lookup.
+ */
+export async function mergeFormBrandBatch(
+  brandCode: string,
+  formCode: string,
+  batchName: string | null,
+  userId: number,
+): Promise<void> {
+  const brand = brandCode.trim().toUpperCase();
+  const form = formCode.trim().toUpperCase();
+  const batch = batchName?.trim() || null;
+  if (!brand) throw new Error("กรุณาระบุแบรนด์");
+  if (!form) throw new Error("กรุณาระบุ FormCode");
+  await writeBothPools(async (tx) => {
+    await tx
+      .request()
+      .input("brand", sql.NVarChar, brand)
+      .input("formCode", sql.NVarChar(20), form)
+      .query(`
+        DELETE FROM [dbo].[AccBrandJournalBatch]
+        WHERE BrandCode = @brand AND FormCode = @formCode
+      `);
+    if (batch) {
+      await tx
+        .request()
+        .input("brand", sql.NVarChar, brand)
+        .input("formCode", sql.NVarChar(20), form)
+        .input("batch", sql.NVarChar, batch)
+        .input("user", sql.Int, userId || null)
+        .query(`
+          INSERT INTO [dbo].[AccBrandJournalBatch]
+            (BrandCode, BatchName, FormCode, IsActive, SortOrder, CreatedBy)
+          VALUES (@brand, @batch, @formCode, 1, 0, @user)
+        `);
+    }
+  });
+}

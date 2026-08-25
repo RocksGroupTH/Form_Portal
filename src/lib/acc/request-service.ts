@@ -307,7 +307,8 @@ export async function listMyRequests(submittedByOrCreator: number): Promise<AccR
   const pool = await getAccPool();
   const res = await pool.request().input("uid", sql.Int, submittedByOrCreator)
     .query(`SELECT * FROM [dbo].[AccRequest]
-            WHERE SubmittedBy = @uid OR CreatedBy = @uid
+            WHERE (SubmittedBy = @uid OR CreatedBy = @uid)
+              AND FormCode <> 'AP-2'   -- AP-2 มีหน้า/รายงานของตัวเอง ไม่ปนกับ AP-1
             ORDER BY CreatedAt DESC`);
   return (res.recordset as Record<string, unknown>[]).map(mapRequestRow);
 }

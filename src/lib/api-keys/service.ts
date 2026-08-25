@@ -1,6 +1,6 @@
 /**
  * The API-key registry: `Rocks_Portal_Form.dbo.ApiKey` plus its change log.
- * See `migrations/107_portal_form_api_key.sql` for why it lives there, why
+ * See `migrations/116_portal_form_api_key.sql` for why it lives there, why
  * there is no UAT twin, and why `ExpiresAt NULL` is the whole "no expiry"
  * story.
  *
@@ -217,7 +217,7 @@ type Tx = ReturnType<Awaited<ReturnType<typeof getProductionFormPool>>["transact
  * replacing its value writes two rows, so "when was this last rotated?" stays a
  * single indexed query instead of a scan through free-text detail.
  *
- * `detail` must never carry any part of a secret — see migration 107's header.
+ * `detail` must never carry any part of a secret — see migration 116's header.
  */
 async function writeLog(
   tx: Tx,
@@ -356,7 +356,7 @@ export async function updateApiKey(id: number, input: UpdateApiKeyInput, userId:
   }
 }
 
-/** Removal is deactivation — see migration 107's header for why there is no delete. */
+/** Removal is deactivation — see migration 116's header for why there is no delete. */
 export async function setApiKeyActive(id: number, active: boolean, userId: number): Promise<void> {
   const pool = await getProductionFormPool();
   const tx = pool.transaction();

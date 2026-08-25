@@ -18,8 +18,10 @@ import {
   ClipboardList,
   Luggage,
   Package,
+  ReceiptText,
   Route,
   Settings,
+  Wallet,
 } from "lucide-react";
 
 const ICON_MAP: Record<string, React.ComponentType<{ size?: number; style?: React.CSSProperties }>> = {
@@ -27,6 +29,8 @@ const ICON_MAP: Record<string, React.ComponentType<{ size?: number; style?: Reac
   ClipboardList,
   Route,
   Luggage,
+  Wallet,
+  ReceiptText,
 };
 
 function requestCardHref(item: (typeof REQUEST_CARDS)[number]): string {
@@ -237,7 +241,7 @@ export default function RequestHubPage() {
         title={isAdminView ? "Accounting Admin" : "Request"}
         subtitle={
           isAdminView
-            ? "คิวอนุมัติ รายงาน และตั้งค่าของ AP-1 / AP-17"
+            ? "คิวอนุมัติ รายงาน และตั้งค่าของ AP-1 / AP-2 / AP-17"
             : "Submit master-data requests — items, vendors, price changes"
         }
         backHref={isAdminView ? "/settings" : "/"}
@@ -351,8 +355,13 @@ export default function RequestHubPage() {
            empty for the UAT reason below — and naming a condition the reader
            already satisfies would be a lie either way round. */
         <p className="text-[12px] py-8 text-center" style={{ color: "var(--text-muted)" }}>
+          {/* Both sides of this merge were partly wrong. Master listed the new
+              forms but pinned one port, and `ERP_SANDBOX_ALLOWED_HOSTS` now
+              allows 3081 *and* 3020 — naming either alone misleads. Keep the
+              UAT-aware condition, keep master's fuller form list, drop the
+              port rather than guess at it. */}
           {isAdminView && !isDevHost && !isUatViewer
-            ? "หน้าจัดการของ AP-1 / AP-17 เปิดได้เมื่อสลับเป็นโหมด UAT หรือตอนรัน dev ที่ localhost:3081"
+            ? "หน้าจัดการของ AP-1 / AP-2 / AP-3 / AP-17 เปิดได้เมื่อสลับเป็นโหมด UAT หรือตอนรัน dev ที่ localhost"
             : viewer?.uatMode
               ? "คุณอยู่ในโหมด UAT แต่ยังไม่มีฟอร์มใดเปิดให้ทดสอบในขณะนี้"
               : "ยังไม่มีคำขอที่เปิดให้ใช้งาน"}

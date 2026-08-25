@@ -790,6 +790,29 @@ html {
   height: 0;
 }
 
+/* Opt back IN to a visible horizontal scrollbar for wide tables (e.g. the AP-3
+   expense grid). acc-theme hides all scrollbars, which removes the left/right
+   scroll affordance; higher specificity + later source order beats the hide. */
+.acc-theme .show-x-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 45%, transparent) transparent;
+}
+.acc-theme .show-x-scroll::-webkit-scrollbar {
+  display: block;
+  height: 10px;
+  width: 10px;
+}
+.acc-theme .show-x-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.acc-theme .show-x-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-muted) 40%, transparent);
+  border-radius: 6px;
+}
+.acc-theme .show-x-scroll::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-muted) 65%, transparent);
+}
+
 /* Hide native number spinners inside accounting UI */
 .acc-theme input[type="number"]::-webkit-outer-spin-button,
 .acc-theme input[type="number"]::-webkit-inner-spin-button {
