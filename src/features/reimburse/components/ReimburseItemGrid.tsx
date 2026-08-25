@@ -163,10 +163,119 @@ export function findItemRowProblems(items: ReimburseItem[]): ItemRowProblem[] {
 
 /* ─────────────────────────── the grid ─────────────────────────── */
 
-const HEAD_CLASS = "text-[11px] font-semibold uppercase tracking-wide";
-const MOBILE_LABEL_CLASS = "md:hidden text-[11px] font-semibold uppercase tracking-wide mb-1";
-const ROW_GRID =
-  "grid grid-cols-1 md:grid-cols-[150px_minmax(0,1fr)_130px_120px_130px_78px] gap-2 md:items-center";
+const LABEL_CLASS = "block text-[10.5px] font-semibold uppercase tracking-wide mb-1";
+
+/**
+ * Two lines per row, not eleven columns across.
+ *
+ * The AP-4.1 sheet has eleven columns, which is fine on a spreadsheet and
+ * unusable as one grid row in a browser — either every field is too narrow to
+ * read or the page scrolls sideways while somebody is typing into it. Splitting
+ * on the sheet's own seam keeps each field a usable width: **which document
+ * this is**, then **what it cost**. Below `md` both collapse to one column, as
+ * the single-line grid already did.
+ */
+const IDENT_GRID =
+  "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-[56px_150px_130px_110px_minmax(0,1fr)_150px] gap-2";
+const MONEY_GRID =
+  "grid grid-cols-2 md:grid-cols-[repeat(5,minmax(0,1fr))_86px] gap-2";
+
+/** Two decimals, without the float noise that makes 2675.0000000000005 reach a payout figure. */
+function round2(n: number): number {
+  return Math.round((Number.isFinite(n) ? n : 0) * 100) / 100;
+}
+
+/** A labelled cell. The label shows at every width — with eleven fields, unlabelled columns are unreadable. */
+function Field({
+  label,
+  align,
+  children,
+}: {
+  label: string;
+  align?: "right";
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="min-w-0">
+      <span
+        className={`${LABEL_CLASS} ${align === "right" ? "text-right" : ""}`}
+        style={{ color: "var(--text-muted)" }}
+      >
+        {label}
+      </span>
+      {children}
+    </div>
+  );
+}
+
+/** A plain text cell. Blank becomes null, matching what `prepareReimburseItemsForSave` stores. */
+function TextCell({
+  value,
+  onChange,
+  placeholder,
+  ariaLabel,
+  maxLength,
+}: {
+  value: string | null | undefined;
+  onChange: (next: string | null) => void;
+  placeholder?: string;
+  ariaLabel: string;
+  /** The column's own width, so the server never has to truncate. */
+  maxLength: number;
+}) {
+  return (
+    <input
+      type="text"
+      aria-label={ariaLabel}
+      placeholder={placeholder}
+      maxLength={maxLength}
+      value={value ?? ""}
+      onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
+      className="w-full rounded-lg px-3 py-2 text-[14px] outline-none"
+      style={{
+        background: "var(--bg-input)",
+        color: "var(--text-primary)",
+        borderWidth: 1,
+        borderStyle: "solid",
+        borderColor: "var(--border-input)",
+      }}
+    />
+  );
+}
+
+/**
+ * A derived money figure, shown and not editable.
+ *
+ * ค่าใช้จ่ายรวม and จำนวนจ่ายสุทธิ are computed from the three stored columns.
+ * Making them editable would give the row five money fields that must agree,
+ * and no way to say which one is right when they do not.
+ */
+function ReadOnlyMoney({
+  value,
+  emphasis,
+  hasError,
+}: {
+  value: number | null | undefined;
+  emphasis?: boolean;
+  hasError?: boolean;
+}) {
+  const n = Number(value) || 0;
+  return (
+    <div
+      className={`w-full rounded-lg px-3 py-2 text-[14px] tabular-nums text-right ${emphasis ? "font-bold" : ""}`}
+      style={{
+        background: "var(--bg-card)",
+        color: n === 0 ? "var(--text-faint)" : "var(--text-primary)",
+        borderWidth: 1,
+        borderStyle: "solid",
+        borderColor: hasError ? "var(--color-danger)" : "var(--border-card)",
+        boxShadow: hasError ? "0 0 0 1px var(--color-danger)" : undefined,
+      }}
+    >
+      {n === 0 ? "0.00" : fmtBaht(n)}
+    </div>
+  );
+}
 
 /**
  * The per-row "read a receipt" control.
@@ -257,19 +366,6 @@ export function ReimburseItemGrid({
 
   return (
     <div className="flex flex-col gap-2 min-w-0">
-      {/* Column headings — desktop only; each field carries its own label below md. */}
-      <div
-        className={`${ROW_GRID} hidden md:grid px-1`}
-        style={{ color: "var(--text-muted)" }}
-      >
-        <span className={HEAD_CLASS}>วันที่</span>
-        <span className={HEAD_CLASS}>รายละเอียด</span>
-        <span className={`${HEAD_CLASS} text-right`}>ยอดรวม VAT</span>
-        <span className={`${HEAD_CLASS} text-right`}>VAT</span>
-        <span className={`${HEAD_CLASS} text-right`}>หัก ณ ที่จ่าย</span>
-        <span />
-      </div>
-
       {readNote && (
         <p
           className="text-[12px] m-0 px-1 flex items-start gap-1.5"
@@ -289,107 +385,145 @@ export function ReimburseItemGrid({
       {items.map((item, index) => {
         const dateBad = problemAt(index, "date");
         const amountBad = problemAt(index, "amount");
+        // Both derived from `amount`, which stays the one stored authority for
+        // what the line costs — see `ReimburseItem.amount`.
+        const beforeVat = round2((Number(item.amount) || 0) - (Number(item.vatAmount) || 0));
+        const netPaid = round2((Number(item.amount) || 0) - (Number(item.whtAmount) || 0));
         return (
           <div
             key={item.id ?? `row-${index}`}
-            className={`${ROW_GRID} rounded-xl p-3 md:p-0 md:rounded-none border md:border-0`}
-            style={{
-              borderColor: "var(--border-card)",
-              background: "transparent",
-            }}
+            className="rounded-xl border p-3 flex flex-col gap-2.5 min-w-0"
+            style={{ borderColor: "var(--border-card)", background: "var(--bg-card-alt)" }}
           >
-            <div className="min-w-0">
-              <span className={MOBILE_LABEL_CLASS} style={{ color: "var(--text-muted)" }}>
-                วันที่
-              </span>
-              <SingleDatePicker
-                value={item.expenseDate ?? ""}
-                onChange={(ymd) => onUpdate(index, { expenseDate: ymd || null })}
-                ariaLabel={`วันที่ของรายการที่ ${index + 1}`}
-                placeholder="เลือกวันที่..."
-                hasError={dateBad}
-              />
+            {/* ── line 1 · which document this is ── */}
+            <div className={IDENT_GRID}>
+              <Field label="ลำดับที่">
+                <span
+                  className="flex items-center h-[38px] px-3 text-[14px] tabular-nums font-semibold"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  {index + 1}
+                </span>
+              </Field>
+
+              <Field label="วันที่">
+                <SingleDatePicker
+                  value={item.expenseDate ?? ""}
+                  onChange={(ymd) => onUpdate(index, { expenseDate: ymd || null })}
+                  ariaLabel={`วันที่ของรายการที่ ${index + 1}`}
+                  placeholder="เลือกวันที่..."
+                  hasError={dateBad}
+                />
+              </Field>
+
+              <Field label="เลขที่เอกสาร">
+                <TextCell
+                  ariaLabel={`เลขที่เอกสารของรายการที่ ${index + 1}`}
+                  placeholder="ABC1234"
+                  value={item.documentNo}
+                  maxLength={100}
+                  onChange={(v) => onUpdate(index, { documentNo: v })}
+                />
+              </Field>
+
+              <Field label="รายการ">
+                <TextCell
+                  ariaLabel={`รายการของรายการที่ ${index + 1}`}
+                  placeholder="AP-4.2"
+                  value={item.category}
+                  maxLength={50}
+                  onChange={(v) => onUpdate(index, { category: v })}
+                />
+              </Field>
+
+              <Field label="รายละเอียด">
+                <TextCell
+                  ariaLabel={`รายละเอียดของรายการที่ ${index + 1}`}
+                  placeholder="ค่าอะไร / ร้านไหน..."
+                  value={item.description}
+                  maxLength={500}
+                  // "" not null: `Description` is NOT NULL in the database, and
+                  // the other two are nullable.
+                  onChange={(v) => onUpdate(index, { description: v ?? "" })}
+                />
+              </Field>
+
+              <Field label="สาขา">
+                <TextCell
+                  ariaLabel={`สาขาของรายการที่ ${index + 1}`}
+                  placeholder="—"
+                  value={item.branchName}
+                  maxLength={200}
+                  onChange={(v) => onUpdate(index, { branchName: v })}
+                />
+              </Field>
             </div>
 
-            <div className="min-w-0">
-              <span className={MOBILE_LABEL_CLASS} style={{ color: "var(--text-muted)" }}>
-                รายละเอียด
-              </span>
-              <input
-                type="text"
-                aria-label={`รายละเอียดของรายการที่ ${index + 1}`}
-                placeholder="ค่าอะไร / ร้านไหน..."
-                value={item.description ?? ""}
-                onChange={(e) => onUpdate(index, { description: e.target.value })}
-                className="w-full rounded-lg px-3 py-2 text-[14px] outline-none"
-                style={{
-                  background: "var(--bg-input)",
-                  color: "var(--text-primary)",
-                  borderWidth: 1,
-                  borderStyle: "solid",
-                  borderColor: "var(--border-input)",
-                }}
-              />
-            </div>
+            {/* ── line 2 · what it cost ── */}
+            <div className={MONEY_GRID}>
+              <Field label="ก่อน VAT" align="right">
+                <MoneyCell
+                  ariaLabel={`ค่าใช้จ่ายก่อน VAT ของรายการที่ ${index + 1}`}
+                  value={beforeVat}
+                  placeholder="0.00"
+                  // Typing here sets the stored VAT-inclusive `amount`, keeping
+                  // whatever VAT the row already holds. Editing either of these
+                  // two moves the total; the total itself is read-only, so the
+                  // three can never be made to disagree.
+                  onChange={(next) =>
+                    onUpdate(index, { amount: round2((next ?? 0) + (Number(item.vatAmount) || 0)) })
+                  }
+                />
+              </Field>
 
-            <div className="min-w-0">
-              <span className={MOBILE_LABEL_CLASS} style={{ color: "var(--text-muted)" }}>
-                ยอดรวม VAT
-              </span>
-              <MoneyCell
-                ariaLabel={`ยอดรวม VAT ของรายการที่ ${index + 1}`}
-                value={item.amount}
-                emphasis
-                hasError={amountBad}
-                placeholder="0.00"
-                // A cleared amount is 0, which `isBlankItemRow` reads as
-                // "untouched" — the same convention the server documents.
-                onChange={(next) => onUpdate(index, { amount: next ?? 0 })}
-              />
-            </div>
+              <Field label="VAT" align="right">
+                <MoneyCell
+                  ariaLabel={`VAT ของรายการที่ ${index + 1}`}
+                  value={item.vatAmount}
+                  placeholder="—"
+                  // null, not 0: VAT genuinely not specified is not VAT of zero.
+                  // The total follows so ก่อน VAT stays where the requester put it.
+                  onChange={(next) =>
+                    onUpdate(index, { vatAmount: next, amount: round2(beforeVat + (next ?? 0)) })
+                  }
+                />
+              </Field>
 
-            <div className="min-w-0">
-              <span className={MOBILE_LABEL_CLASS} style={{ color: "var(--text-muted)" }}>
-                VAT
-              </span>
-              <MoneyCell
-                ariaLabel={`VAT ของรายการที่ ${index + 1}`}
-                value={item.vatAmount}
-                placeholder="—"
-                // null, not 0: VAT genuinely not specified is not VAT of zero.
-                onChange={(next) => onUpdate(index, { vatAmount: next })}
-              />
-            </div>
+              <Field label="ค่าใช้จ่ายรวม" align="right">
+                <ReadOnlyMoney value={item.amount} emphasis hasError={amountBad} />
+              </Field>
 
-            <div className="min-w-0">
-              <span className={MOBILE_LABEL_CLASS} style={{ color: "var(--text-muted)" }}>
-                หัก ณ ที่จ่าย
-              </span>
-              <MoneyCell
-                ariaLabel={`หัก ณ ที่จ่าย ของรายการที่ ${index + 1}`}
-                value={item.whtAmount}
-                placeholder="—"
-                onChange={(next) => onUpdate(index, { whtAmount: next })}
-              />
-            </div>
+              <Field label="หัก ณ ที่จ่าย" align="right">
+                <MoneyCell
+                  ariaLabel={`หัก ณ ที่จ่าย ของรายการที่ ${index + 1}`}
+                  value={item.whtAmount}
+                  placeholder="—"
+                  onChange={(next) => onUpdate(index, { whtAmount: next })}
+                />
+              </Field>
 
-            <div className="flex justify-end gap-1.5">
-              <RowReceiptButton
-                index={index}
-                busy={readingIndex === index}
-                disabled={readingIndex !== null && readingIndex !== index}
-                onPick={(file) => onReadReceipt(index, file)}
-              />
-              <button
-                type="button"
-                onClick={() => onRemove(index)}
-                aria-label={`ลบรายการที่ ${index + 1}`}
-                title="ลบรายการนี้"
-                className="w-9 h-9 rounded-lg flex items-center justify-center cursor-pointer border-none shrink-0"
-                style={{ background: "var(--bg-card-alt)", color: "var(--color-danger)" }}
-              >
-                <Trash2 size={15} />
-              </button>
+              <Field label="จ่ายสุทธิ" align="right">
+                <ReadOnlyMoney value={netPaid} />
+              </Field>
+
+              <div className="flex justify-end gap-1.5 md:self-end md:pb-0.5">
+                <RowReceiptButton
+                  index={index}
+                  busy={readingIndex === index}
+                  disabled={readingIndex !== null && readingIndex !== index}
+                  onPick={(file) => onReadReceipt(index, file)}
+                />
+                <button
+                  type="button"
+                  onClick={() => onRemove(index)}
+                  aria-label={`ลบรายการที่ ${index + 1}`}
+                  title="ลบรายการนี้"
+                  className="w-9 h-9 rounded-lg flex items-center justify-center cursor-pointer border-none shrink-0"
+                  style={{ background: "var(--bg-card)", color: "var(--color-danger)" }}
+                >
+                  <Trash2 size={15} />
+                </button>
+              </div>
             </div>
           </div>
         );

@@ -53,6 +53,8 @@ const EMPTY: ReceiptFields = {
   amount: null,
   vat: null,
   withholdingTax: null,
+  documentNo: null,
+  branchName: null,
 };
 
 /** Enough for a receipt's digits at 1600px; well below the API's 5 MB image cap. */
@@ -69,7 +71,9 @@ function isEmpty(f: ReceiptFields): boolean {
     f.description === null &&
     f.amount === null &&
     f.vat === null &&
-    f.withholdingTax === null
+    f.withholdingTax === null &&
+    f.documentNo === null &&
+    f.branchName === null
   );
 }
 
@@ -110,6 +114,8 @@ export async function readReceiptFields(file: File): Promise<ReceiptFieldsRead> 
       amount: typeof d.amount === "number" ? d.amount : null,
       vat: typeof d.vat === "number" ? d.vat : null,
       withholdingTax: typeof d.withholdingTax === "number" ? d.withholdingTax : null,
+      documentNo: typeof d.documentNo === "string" ? d.documentNo : null,
+      branchName: typeof d.branchName === "string" ? d.branchName : null,
     };
     return isEmpty(fields) ? { fields, failure: "not-found" } : { fields };
   } catch {

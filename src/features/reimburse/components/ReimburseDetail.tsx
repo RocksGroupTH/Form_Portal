@@ -174,6 +174,27 @@ const APPROVE_DONE_LABEL: Record<ReimburseStepCode, string> = {
   ACCOUNT_FINAL: "อนุมัติขั้นสุดท้ายแล้ว",
 };
 
+/**
+ * The expense table's columns, in the AP-4.1 sheet's own order.
+ *
+ * A list rather than eleven `<th>` literals so the headings and their
+ * alignment cannot drift apart from each other; the cells are still written
+ * out, because each formats differently.
+ */
+const ITEM_COLUMNS: readonly { label: string; right?: boolean }[] = [
+  { label: "ลำดับที่" },
+  { label: "วันที่" },
+  { label: "เลขที่เอกสาร" },
+  { label: "รายการ" },
+  { label: "รายละเอียด" },
+  { label: "สาขา" },
+  { label: "ก่อน VAT", right: true },
+  { label: "VAT", right: true },
+  { label: "ค่าใช้จ่ายรวม", right: true },
+  { label: "หัก ณ ที่จ่าย", right: true },
+  { label: "จ่ายสุทธิ", right: true },
+];
+
 /** AP-4's rounds, not AP-1's — see `src/lib/acc/reimburse/payment-calendar.ts`. */
 const AP4_ROUNDS_HINT = "วันจ่าย: ศุกร์ที่ 1 และ 3 ของเดือน (เลื่อนกลับ 1 วันถ้าตรงวันหยุด)";
 
@@ -964,41 +985,67 @@ export function ReimburseDetail({
             — ไม่มีรายการ —
           </p>
         ) : (
+          // Laid out as the AP-4.1 sheet is, so a reader who knows that
+          // workbook can check this table against it column for column. It
+          // scrolls inside its own container rather than widening the page.
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[560px] border-collapse">
+            <table className="w-full min-w-[1040px] border-collapse">
               <thead>
                 <tr style={{ borderBottom: "1px solid var(--border-card)" }}>
-                  {["วันที่", "รายละเอียด", "ยอดรวม VAT", "VAT", "หัก ณ ที่จ่าย"].map((h, i) => (
+                  {ITEM_COLUMNS.map((c) => (
                     <th
-                      key={h}
-                      className={`text-[11px] font-semibold uppercase tracking-wide py-2 px-2 ${i >= 2 ? "text-right" : "text-left"}`}
+                      key={c.label}
+                      className={`text-[11px] font-semibold uppercase tracking-wide py-2 px-2 ${c.right ? "text-right" : "text-left"}`}
                       style={{ color: "var(--text-muted)" }}
                     >
-                      {h}
+                      {c.label}
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {request.items.map((it, i) => (
-                  <tr key={it.id ?? i} style={{ borderBottom: "1px solid var(--border-light)" }}>
-                    <td className="text-[13px] py-2 px-2 whitespace-nowrap" style={{ color: "var(--text-primary)" }}>
-                      {fmtDateOnly(it.expenseDate)}
-                    </td>
-                    <td className="text-[13px] py-2 px-2 break-words" style={{ color: "var(--text-primary)" }}>
-                      {it.description || "—"}
-                    </td>
-                    <td className="text-[13px] py-2 px-2 text-right tabular-nums font-semibold" style={{ color: "var(--text-primary)" }}>
-                      {fmtMoney(it.amount)}
-                    </td>
-                    <td className="text-[13px] py-2 px-2 text-right tabular-nums" style={{ color: "var(--text-secondary)" }}>
-                      {fmtMoney(it.vatAmount)}
-                    </td>
-                    <td className="text-[13px] py-2 px-2 text-right tabular-nums" style={{ color: "var(--text-secondary)" }}>
-                      {fmtMoney(it.whtAmount)}
-                    </td>
-                  </tr>
-                ))}
+                {request.items.map((it, i) => {
+                  // Derived, never stored — see `ReimburseItem.amount`.
+                  const beforeVat = (Number(it.amount) || 0) - (Number(it.vatAmount) || 0);
+                  const netPaid = (Number(it.amount) || 0) - (Number(it.whtAmount) || 0);
+                  return (
+                    <tr key={it.id ?? i} style={{ borderBottom: "1px solid var(--border-light)" }}>
+                      <td className="text-[13px] py-2 px-2 tabular-nums" style={{ color: "var(--text-muted)" }}>
+                        {i + 1}
+                      </td>
+                      <td className="text-[13px] py-2 px-2 whitespace-nowrap" style={{ color: "var(--text-primary)" }}>
+                        {fmtDateOnly(it.expenseDate)}
+                      </td>
+                      <td className="text-[13px] py-2 px-2 whitespace-nowrap" style={{ color: "var(--text-primary)" }}>
+                        {it.documentNo || "—"}
+                      </td>
+                      <td className="text-[13px] py-2 px-2 whitespace-nowrap" style={{ color: "var(--text-primary)" }}>
+                        {it.category || "—"}
+                      </td>
+                      <td className="text-[13px] py-2 px-2 break-words" style={{ color: "var(--text-primary)" }}>
+                        {it.description || "—"}
+                      </td>
+                      <td className="text-[13px] py-2 px-2 break-words" style={{ color: "var(--text-secondary)" }}>
+                        {it.branchName || "—"}
+                      </td>
+                      <td className="text-[13px] py-2 px-2 text-right tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                        {fmtMoney(beforeVat)}
+                      </td>
+                      <td className="text-[13px] py-2 px-2 text-right tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                        {fmtMoney(it.vatAmount)}
+                      </td>
+                      <td className="text-[13px] py-2 px-2 text-right tabular-nums font-semibold" style={{ color: "var(--text-primary)" }}>
+                        {fmtMoney(it.amount)}
+                      </td>
+                      <td className="text-[13px] py-2 px-2 text-right tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                        {fmtMoney(it.whtAmount)}
+                      </td>
+                      <td className="text-[13px] py-2 px-2 text-right tabular-nums font-semibold" style={{ color: "var(--text-primary)" }}>
+                        {fmtMoney(netPaid)}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

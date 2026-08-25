@@ -21,17 +21,40 @@ import { MAX_RECEIPT_AMOUNT } from "@/features/accounting/lib/receipt-amount";
 
 /** `AccReimburseItem.Description` is `NVARCHAR(500)` (migration 088). */
 export const MAX_DESCRIPTION_LENGTH = 500;
+/** `AccReimburseItem.DocumentNo` is `NVARCHAR(100)` (migration 117). */
+export const MAX_DOCUMENT_NO_LENGTH = 100;
+/** `AccReimburseItem.BranchName` is `NVARCHAR(200)` (migration 117). */
+export const MAX_BRANCH_LENGTH = 200;
 
-/** What the model is asked for. Every field nullable — null is a real answer. */
+/**
+ * What the model is asked for. Every field nullable — null is a real answer.
+ *
+ * **`category` (รายการ) is deliberately absent.** It holds this company's own
+ * internal code — "AP-4.2" — which appears on no vendor's receipt, so a model
+ * asked for it could only invent one, and an invented category is a
+ * miscategorised payment nobody would have reason to re-check.
+ */
 export interface RawReceiptFields {
   expenseDate: string | null;
   description: string | null;
   amount: number | null;
   vat: number | null;
   withholdingTax: number | null;
+  /** เลขที่เอกสาร — the receipt or tax-invoice number printed on the document. */
+  documentNo?: string | null;
+  /** สาขา — the vendor branch, where the receipt names one. */
+  branchName?: string | null;
 }
 
-export type ReceiptFields = RawReceiptFields;
+export interface ReceiptFields {
+  expenseDate: string | null;
+  description: string | null;
+  amount: number | null;
+  vat: number | null;
+  withholdingTax: number | null;
+  documentNo: string | null;
+  branchName: string | null;
+}
 
 /**
  * True for a value with exactly 13 integer digits.
@@ -79,11 +102,26 @@ export function sanitizeReceiptFields(raw: RawReceiptFields, today: string): Rec
     if (raw.expenseDate <= today) expenseDate = raw.expenseDate;
   }
 
-  let description: string | null = null;
-  if (typeof raw.description === "string") {
-    const trimmed = raw.description.trim();
-    if (trimmed) description = trimmed.slice(0, MAX_DESCRIPTION_LENGTH);
-  }
+  return {
+    expenseDate,
+    description: text(raw.description, MAX_DESCRIPTION_LENGTH),
+    amount,
+    vat,
+    withholdingTax,
+    documentNo: text(raw.documentNo, MAX_DOCUMENT_NO_LENGTH),
+    branchName: text(raw.branchName, MAX_BRANCH_LENGTH),
+  };
+}
 
-  return { expenseDate, description, amount, vat, withholdingTax };
+/**
+ * A trimmed string bounded to what its column takes, or null.
+ *
+ * The cut matters: every one of these columns is a fixed-width `NVARCHAR`, and
+ * a longer value is a failed INSERT at submit — long after the requester has
+ * stopped looking at the form.
+ */
+function text(v: unknown, max: number): string | null {
+  if (typeof v !== "string") return null;
+  const trimmed = v.trim();
+  return trimmed ? trimmed.slice(0, max) : null;
 }

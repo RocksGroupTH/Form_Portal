@@ -91,6 +91,9 @@ function mapItemRow(x: Record<string, unknown>): ReimburseItem {
     id: x.Id as number,
     sortOrder: (x.SortOrder as number) ?? 0,
     expenseDate: x.ExpenseDate ? toYmd(x.ExpenseDate as Date) : null,
+    documentNo: (x.DocumentNo as string) ?? null,
+    category: (x.Category as string) ?? null,
+    branchName: (x.BranchName as string) ?? null,
     description: (x.Description as string) ?? "",
     amount: Number(x.Amount) || 0,
     vatAmount: num(x.VatAmount),
@@ -154,7 +157,7 @@ async function loadItems(pool: AccPool, requestId: number): Promise<ReimburseIte
     .request()
     .input("rid", sql.Int, requestId)
     .query(
-      `SELECT Id, SortOrder, ExpenseDate, Description, Amount, VatAmount, WhtAmount
+      `SELECT Id, SortOrder, ExpenseDate, DocumentNo, Category, BranchName, Description, Amount, VatAmount, WhtAmount
        FROM [dbo].[AccReimburseItem] WHERE RequestId=@rid ORDER BY SortOrder, Id`,
     );
   return (r.recordset as Record<string, unknown>[]).map(mapItemRow);
@@ -312,13 +315,17 @@ async function persistReimburseItems(tx: AccTx, requestId: number, items: Reimbu
       .input("rid", sql.Int, requestId)
       .input("sort", sql.Int, it.sortOrder ?? i)
       .input("date", sql.Date, it.expenseDate)
+      .input("docNo", sql.NVarChar(100), it.documentNo ?? null)
+      .input("category", sql.NVarChar(50), it.category ?? null)
+      .input("branch", sql.NVarChar(200), it.branchName ?? null)
       .input("desc", sql.NVarChar(500), it.description ?? "")
       .input("amount", sql.Decimal(18, 2), it.amount)
       .input("vat", sql.Decimal(18, 2), it.vatAmount ?? null)
       .input("wht", sql.Decimal(18, 2), it.whtAmount ?? null)
       .query(
-        `INSERT INTO [dbo].[AccReimburseItem] (RequestId, SortOrder, ExpenseDate, Description, Amount, VatAmount, WhtAmount)
-         VALUES (@rid, @sort, @date, @desc, @amount, @vat, @wht)`,
+        `INSERT INTO [dbo].[AccReimburseItem]
+           (RequestId, SortOrder, ExpenseDate, DocumentNo, Category, BranchName, Description, Amount, VatAmount, WhtAmount)
+         VALUES (@rid, @sort, @date, @docNo, @category, @branch, @desc, @amount, @vat, @wht)`,
       );
   }
 }

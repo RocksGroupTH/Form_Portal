@@ -242,3 +242,37 @@ test("a single row is not numbered, several rows are", () => {
   assert.equal(rowLabel(0, 3), " (แถวที่ 1)");
   assert.equal(rowLabel(2, 3), " (แถวที่ 3)");
 });
+
+/* ── the AP-4.1 columns: เลขที่เอกสาร · รายการ · สาขา ── */
+
+test("a row carrying only a document number is not blank", () => {
+  // Dropping it would silently discard a line the requester typed, which is
+  // the exact failure `isBlankItemRow` exists to prevent — the three new
+  // columns have to join the check, not sit outside it.
+  assert.equal(
+    isBlankItemRow({ sortOrder: 0, expenseDate: null, description: "", amount: 0, vatAmount: null, whtAmount: null, documentNo: "ABC1234", category: null, branchName: null }),
+    false,
+  );
+});
+
+test("a row carrying only a category, or only a branch, is not blank", () => {
+  const base = { sortOrder: 0, expenseDate: null, description: "", amount: 0, vatAmount: null, whtAmount: null, documentNo: null, category: null, branchName: null };
+  assert.equal(isBlankItemRow({ ...base, category: "AP-4.2" }), false);
+  assert.equal(isBlankItemRow({ ...base, branchName: "สำนักงานใหญ่" }), false);
+});
+
+test("whitespace in the new columns still counts as blank", () => {
+  assert.equal(
+    isBlankItemRow({ sortOrder: 0, expenseDate: null, description: "", amount: 0, vatAmount: null, whtAmount: null, documentNo: "   ", category: "\n", branchName: "  " }),
+    true,
+  );
+});
+
+test("the new columns are trimmed on the way to storage, and blank becomes null", () => {
+  const [row] = prepareReimburseItemsForSave([
+    { sortOrder: 0, expenseDate: "2026-08-16", description: "ค่าลงเอกสาร", amount: 1000, vatAmount: null, whtAmount: null, documentNo: "  ABC1234 ", category: " AP-4.2 ", branchName: "   " },
+  ]);
+  assert.equal(row.documentNo, "ABC1234");
+  assert.equal(row.category, "AP-4.2");
+  assert.equal(row.branchName, null);
+});

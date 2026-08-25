@@ -1,7 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 // Relative, not "@/": tsx does not resolve the alias for a bare test run.
-import { sanitizeReceiptFields, MAX_DESCRIPTION_LENGTH } from "./receipt-fields";
+import {
+  sanitizeReceiptFields,
+  MAX_BRANCH_LENGTH,
+  MAX_DESCRIPTION_LENGTH,
+  MAX_DOCUMENT_NO_LENGTH,
+} from "./receipt-fields";
 
 const TODAY = "2026-08-25";
 
@@ -16,6 +21,8 @@ test("a clean answer comes through field for field", () => {
     amount: 428,
     vat: 28,
     withholdingTax: null,
+    documentNo: null,
+    branchName: null,
   });
 });
 
@@ -152,5 +159,63 @@ test("everything null in gives everything null out", () => {
     { expenseDate: null, description: null, amount: null, vat: null, withholdingTax: null },
     TODAY,
   );
-  assert.deepEqual(out, { expenseDate: null, description: null, amount: null, vat: null, withholdingTax: null });
+  assert.deepEqual(out, {
+    expenseDate: null,
+    description: null,
+    amount: null,
+    vat: null,
+    withholdingTax: null,
+    documentNo: null,
+    branchName: null,
+  });
+});
+
+/* ── the AP-4.1 identifying columns ── */
+
+test("a document number and a branch come through trimmed", () => {
+  const out = sanitizeReceiptFields(
+    {
+      expenseDate: null, description: null, amount: null, vat: null, withholdingTax: null,
+      documentNo: "  ABC1234 ", branchName: " สาขาลาดพร้าว ",
+    },
+    TODAY,
+  );
+  assert.equal(out.documentNo, "ABC1234");
+  assert.equal(out.branchName, "สาขาลาดพร้าว");
+});
+
+test("blank or non-string identifiers are null, never empty strings", () => {
+  const out = sanitizeReceiptFields(
+    {
+      expenseDate: null, description: null, amount: null, vat: null, withholdingTax: null,
+      documentNo: "   ", branchName: 42 as never,
+    },
+    TODAY,
+  );
+  assert.equal(out.documentNo, null);
+  assert.equal(out.branchName, null);
+});
+
+test("an over-long document number or branch is cut to what its column takes", () => {
+  const out = sanitizeReceiptFields(
+    {
+      expenseDate: null, description: null, amount: null, vat: null, withholdingTax: null,
+      documentNo: "A".repeat(MAX_DOCUMENT_NO_LENGTH + 20),
+      branchName: "ก".repeat(MAX_BRANCH_LENGTH + 20),
+    },
+    TODAY,
+  );
+  assert.equal(out.documentNo?.length, MAX_DOCUMENT_NO_LENGTH);
+  assert.equal(out.branchName?.length, MAX_BRANCH_LENGTH);
+});
+
+test("`category` is never read off a receipt", () => {
+  // รายการ ("AP-4.2") is this company's own internal code. It is not printed on
+  // any vendor's receipt, so a model asked for it could only invent one — and
+  // an invented category on a claim is a miscategorised payment.
+  const out = sanitizeReceiptFields(
+    { expenseDate: null, description: null, amount: null, vat: null, withholdingTax: null },
+    TODAY,
+  );
+  assert.equal("category" in out, false);
 });

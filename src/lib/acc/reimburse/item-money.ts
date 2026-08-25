@@ -58,6 +58,23 @@ function trimmedDate(v: unknown): string | null {
 }
 
 /**
+ * The stored form of one of the AP-4.1 text columns — trimmed, or null.
+ *
+ * Null rather than `""` so "not filled in" has one representation in the
+ * column instead of two that every later read would have to test for.
+ */
+function trimmedText(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  return t === "" ? null : t;
+}
+
+/** Did the requester put anything in one of those text cells? */
+function textIsEntered(v: unknown): boolean {
+  return trimmedText(v) !== null;
+}
+
+/**
  * Did the requester put anything in this money cell?
  *
  * Blank (`null`, `undefined`, `""`, whitespace) is nothing, and so is a plain
@@ -107,6 +124,12 @@ function requireMoney(v: unknown, message: string): number {
 export function isBlankItemRow(it: ReimburseItem): boolean {
   if (trimmedDate(it.expenseDate)) return false;
   if (typeof it.description === "string" && it.description.trim() !== "") return false;
+  // The AP-4.1 columns count too. A row where the requester typed only the
+  // document number is a row they meant; leaving these three out of the check
+  // is how it would be dropped without a word.
+  if (textIsEntered(it.documentNo)) return false;
+  if (textIsEntered(it.category)) return false;
+  if (textIsEntered(it.branchName)) return false;
   if (moneyIsEntered(it.amount)) return false;
   if (moneyIsEntered(it.vatAmount)) return false;
   if (moneyIsEntered(it.whtAmount)) return false;
@@ -165,7 +188,20 @@ export function prepareReimburseItemsForSave(items: ReimburseItem[]): ReimburseI
       whtAmount = requireMoney(it.whtAmount, whtInvalidMsg(lbl));
     }
 
-    return { ...it, sortOrder: it.sortOrder ?? i, expenseDate, amount, vatAmount, whtAmount };
+    return {
+      ...it,
+      sortOrder: it.sortOrder ?? i,
+      expenseDate,
+      amount,
+      vatAmount,
+      whtAmount,
+      // Trimmed here rather than in the grid: the grid is one caller, and a
+      // column that arrives padded from anywhere else would be stored padded
+      // and then never match anything compared against it.
+      documentNo: trimmedText(it.documentNo),
+      category: trimmedText(it.category),
+      branchName: trimmedText(it.branchName),
+    };
   });
 }
 

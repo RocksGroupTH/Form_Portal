@@ -52,6 +52,14 @@ const AnswerSchema = z.object({
     .number()
     .nullable()
     .describe("The withholding tax line in baht if one is printed, or null."),
+  documentNo: z
+    .string()
+    .nullable()
+    .describe("The receipt or tax-invoice number printed on the document, or null."),
+  branchName: z
+    .string()
+    .nullable()
+    .describe("The vendor branch the receipt names, or null."),
 });
 
 const PROMPT = [
@@ -66,6 +74,9 @@ const PROMPT = [
   "- amount: ยอดรวมสุทธิที่ผู้จ่ายต้องจ่ายจริง ถ้ามีทั้งยอดก่อนและหลังส่วนลด ให้เอายอดสุทธิ",
   "- vat: บรรทัดภาษีมูลค่าเพิ่ม ถ้าไม่ได้พิมพ์แยกไว้ ให้ตอบ null อย่าคำนวณเอง",
   "- withholdingTax: บรรทัดหัก ณ ที่จ่าย ถ้าไม่ได้พิมพ์ไว้ ให้ตอบ null อย่าคำนวณเอง",
+  "- documentNo: เลขที่ใบเสร็จ/ใบกำกับภาษี ตามที่พิมพ์ไว้",
+  "  ห้ามตอบเลขประจำตัวผู้เสียภาษี (13 หลัก) เป็นเลขที่เอกสาร",
+  "- branchName: สาขาของร้าน/ผู้ขาย ถ้าใบเสร็จระบุไว้ ถ้าไม่ระบุ ให้ตอบ null",
   "",
   "ห้ามเด็ดขาด:",
   "- ห้ามตอบเลขประจำตัวผู้เสียภาษี เลขที่ใบเสร็จ เบอร์โทร หรือจำนวนชิ้น เป็นตัวเลขเงิน",
@@ -109,6 +120,8 @@ export async function POST(req: NextRequest) {
         amount: parsed?.amount ?? null,
         vat: parsed?.vat ?? null,
         withholdingTax: parsed?.withholdingTax ?? null,
+        documentNo: parsed?.documentNo ?? null,
+        branchName: parsed?.branchName ?? null,
       },
       todayYmd(),
     );

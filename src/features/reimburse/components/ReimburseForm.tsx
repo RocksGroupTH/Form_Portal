@@ -738,6 +738,8 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
             const patch: Partial<ReimburseItem> = {};
             const f = read.fields;
             if (f.expenseDate && !it.expenseDate) patch.expenseDate = f.expenseDate;
+            if (f.documentNo && !it.documentNo?.trim()) patch.documentNo = f.documentNo;
+            if (f.branchName && !it.branchName?.trim()) patch.branchName = f.branchName;
             if (f.description && !it.description?.trim()) patch.description = f.description;
             if (f.amount !== null && !(Number(it.amount) > 0)) patch.amount = f.amount;
             if (f.vat !== null && it.vatAmount === null) patch.vatAmount = f.vat;

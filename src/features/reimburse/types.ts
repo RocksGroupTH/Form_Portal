@@ -13,8 +13,22 @@ export interface ReimburseItem {
   sortOrder: number;
   /** YYYY-MM-DD. Nullable only while the grid row is still being typed: NOT NULL in the database, and a row with any other content but no date is refused at save (see lib/acc/reimburse/item-money.ts). */
   expenseDate: string | null;
+  /** เลขที่เอกสาร — the receipt or tax-invoice number. Migration 117. */
+  documentNo?: string | null;
+  /** รายการ — the expense category, e.g. "AP-4.2". Free text; there is no master list. Migration 117. */
+  category?: string | null;
+  /** สาขา — the branch the expense belongs to. Migration 117. */
+  branchName?: string | null;
   description: string;
-  /** VAT-inclusive. */
+  /**
+   * **VAT-inclusive** — ค่าใช้จ่ายรวม in the AP-4.1 sheet, and the only money
+   * column stored besides the two below.
+   *
+   * ใช้จ่ายก่อนภาษีมูลค่าเพิ่ม and จำนวนจ่ายสุทธิ are both derived rather than
+   * stored (`amount - vatAmount` and `amount - whtAmount`), so there is exactly
+   * one authority for what a line costs. Storing all five would let a rounding
+   * difference put two of them at odds with no way to tell which is right.
+   */
   amount: number;
   vatAmount?: number | null;
   /** Withholding tax, where the service exceeded 1,000 THB. */
