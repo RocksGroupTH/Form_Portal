@@ -1,5 +1,4 @@
 import "server-only";
-import { resolveApiKey } from "@/lib/api-keys/service";
 import type { ReceiptExtractResult } from "./slip-verify";
 
 /**
@@ -58,7 +57,7 @@ export async function extractReceiptWithAI(
   mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif" = "image/png",
 ): Promise<ReceiptExtractResult | null> {
   try {
-    const { value: apiKey } = await resolveApiKey("ANTHROPIC_API_KEY");
+    const apiKey = process.env.ANTHROPIC_API_KEY || null;
     if (!apiKey) return null;
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
     const client = new Anthropic({ apiKey });
@@ -129,7 +128,7 @@ export async function extractSlipWithAI(
   mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif" = "image/png",
 ): Promise<SlipAiResult | null> {
   try {
-    const { value: apiKey } = await resolveApiKey("ANTHROPIC_API_KEY");
+    const apiKey = process.env.ANTHROPIC_API_KEY || null;
     if (!apiKey) return null;
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
     const client = new Anthropic({ apiKey });
