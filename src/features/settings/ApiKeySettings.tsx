@@ -14,6 +14,8 @@ import {
   Pencil,
   Plus,
   PlugZap,
+  BookOpen,
+  ExternalLink,
   CheckCircle2,
   Power,
   PowerOff,
@@ -21,6 +23,8 @@ import {
 import { Button, Dialog } from "@/components/ui";
 import { describeExpiry, expiryLabel, type ExpiryTone } from "@/lib/api-keys/expiry";
 import { TESTABLE_CODES, KNOWN_CODE_USAGE, IMPORT_NAMES } from "@/lib/api-keys/codes";
+import { KEY_GUIDES, applyGuideOrigin } from "@/lib/api-keys/guides";
+import { parseGuideText, type GuideToken } from "@/lib/api-keys/guide-text";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -67,6 +71,79 @@ function fmtDateTime(iso: string): string {
   // Local getters, never toISOString — the server runs Thai time.
   const p = (n: number) => String(n).padStart(2, "0");
   return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/* ─────────────────────────── setup guide ─────────────────────────── */
+
+function InlineText({ text }: { text: string }) {
+  const origin = typeof window !== "undefined" ? window.location.origin : "https://your-domain";
+  const tokens: GuideToken[] = parseGuideText(applyGuideOrigin(text, origin));
+  return (
+    <>
+      {tokens.map((t, i) => {
+        if (t.kind === "bold") return <strong key={i} style={{ color: "var(--text-heading)" }}>{t.text}</strong>;
+        if (t.kind === "code") {
+          return (
+            <code key={i} className="mx-0.5 px-1 rounded font-mono text-[11px]" style={{ background: "var(--bg-badge)" }}>
+              {t.text}
+            </code>
+          );
+        }
+        if (t.kind === "link") {
+          return (
+            <a
+              key={i}
+              href={t.href}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-0.5 font-semibold underline underline-offset-2"
+              style={{ color: "var(--nav-active-text)" }}
+            >
+              {t.text}
+              <ExternalLink size={10} />
+            </a>
+          );
+        }
+        return <span key={i}>{t.text}</span>;
+      })}
+    </>
+  );
+}
+
+/**
+ * The "where do I get this key" manual for one code. Content lives in
+ * `lib/api-keys/guides.ts` as data — this only knows how to draw it, so a new
+ * provider needs no change here.
+ */
+function KeyGuidePanel({ code }: { code: string }) {
+  const guide = KEY_GUIDES[code];
+  if (!guide) return null;
+  return (
+    <div
+      className="rounded-xl p-4 text-[12px] flex flex-col gap-3"
+      style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)", color: "var(--text-muted)" }}
+    >
+      <p className="font-semibold m-0" style={{ color: "var(--text-heading)" }}>{guide.title}</p>
+      <ol className="list-decimal pl-4 space-y-2 m-0">
+        {guide.steps.map((step, i) => (
+          <li key={i} className="leading-relaxed"><InlineText text={step} /></li>
+        ))}
+      </ol>
+      {guide.notes && guide.notes.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          {guide.notes.map((note, i) => (
+            <p
+              key={i}
+              className="text-[11px] leading-relaxed rounded-lg px-3 py-2 m-0"
+              style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}
+            >
+              <InlineText text={note} />
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /* ─────────────────────────── add / edit dialog ─────────────────────────── */
@@ -166,9 +243,15 @@ function KeyDialog({
             onChange={(e) => set({ code: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_") })}
             disabled={!!editing}
             placeholder="ANTHROPIC_API_KEY"
+            list="api-key-codes"
             className={`${inputClass} font-mono tracking-wide disabled:opacity-60`}
             style={inputStyle}
           />
+          {/* The three the app reads. Free text is still allowed — this is a
+              registry, and an unknown code is stored and served the same. */}
+          <datalist id="api-key-codes">
+            {Object.keys(KEY_GUIDES).map((c) => <option key={c} value={c} />)}
+          </datalist>
           {editing && (
             <p className="text-[11.5px] mt-1 m-0" style={{ color: "var(--text-muted)" }}>
               CODE เปลี่ยนไม่ได้ — เป็นชื่อที่โค้ดใช้เรียก
@@ -233,6 +316,14 @@ function KeyDialog({
         </div>
       </div>
 
+      {/* Shown as soon as the CODE is recognised — the steps are needed while the
+          key is being fetched, not after the dialog has been closed. */}
+      {KEY_GUIDES[draft.code] && (
+        <div className="mb-6">
+          <KeyGuidePanel code={draft.code} />
+        </div>
+      )}
+
       <div className="flex justify-end gap-2">
         <Button variant="secondary" onClick={onClose} disabled={saving}>ยกเลิก</Button>
         <Button onClick={submit} disabled={saving}>
@@ -286,6 +377,7 @@ export function ApiKeySettings() {
 
   const [dialog, setDialog] = useState<{ editing: ApiKeyListItem | null } | null>(null);
   const [openLogId, setOpenLogId] = useState<number | null>(null);
+  const [openGuideId, setOpenGuideId] = useState<number | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [importing, setImporting] = useState(false);
   const [testingId, setTestingId] = useState<number | null>(null);
@@ -481,6 +573,11 @@ export function ApiKeySettings() {
                         ทดสอบการเชื่อมต่อ
                       </Button>
                     )}
+                    {KEY_GUIDES[k.code] && (
+                      <Button variant="secondary" size="sm" onClick={() => setOpenGuideId(openGuideId === k.id ? null : k.id)}>
+                        <BookOpen size={13} /> คู่มือ
+                      </Button>
+                    )}
                     <Button variant="secondary" size="sm" onClick={() => setOpenLogId(openLogId === k.id ? null : k.id)}>
                       <History size={13} /> ประวัติ
                     </Button>
@@ -511,6 +608,12 @@ export function ApiKeySettings() {
                   <p className="text-[12px] m-0 pl-[25px]" style={{ color: "var(--color-danger)" }}>
                     ถอดรหัสค่า key นี้ไม่ได้ — CONNECTION_ENCRYPTION_KEY อาจถูกเปลี่ยน กรอกค่า key ใหม่เพื่อแก้
                   </p>
+                )}
+
+                {openGuideId === k.id && (
+                  <div className="pt-2" style={{ borderTop: "1px solid var(--border-light)" }}>
+                    <KeyGuidePanel code={k.code} />
+                  </div>
                 )}
 
                 {openLogId === k.id && (
