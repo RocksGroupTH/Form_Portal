@@ -72,7 +72,16 @@ export function TravelExpenseLoadingPopup({
           ) : null}
         </div>
 
-        {/* Progress bar — determinate when progress provided */}
+        {/*
+          Progress bar — determinate when progress provided.
+
+          The fill is `--color-action` itself, not `--btn-primary-bg`. That
+          token is a *soft button surface* — `color-mix(action 14%, --bg-card)`
+          — so against this track, which is action at 12%, the bar was very
+          nearly the colour of the groove it sat in and read as empty. A 1px
+          border on a 6px bar also ate a third of its height, and `color` on a
+          div holding no text did nothing at all; both are gone.
+        */}
         <div
           className="w-full h-1.5 rounded-full overflow-hidden"
           style={{ background: "color-mix(in srgb, var(--color-action) 12%, transparent)" }}
@@ -80,10 +89,10 @@ export function TravelExpenseLoadingPopup({
           {pct != null ? (
             <div
               className="h-full rounded-full transition-[width] duration-300 ease-out"
-              style={{ width: `${pct}%`, background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}
+              style={{ width: `${pct}%`, background: "var(--color-action)" }}
             />
           ) : (
-            <div className="acc-progress h-full rounded-full" style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }} />
+            <div className="acc-progress h-full rounded-full" style={{ background: "var(--color-action)" }} />
           )}
         </div>
       </div>

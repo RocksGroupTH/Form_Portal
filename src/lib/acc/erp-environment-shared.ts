@@ -5,6 +5,14 @@ export type ErpBcEnvironment = "Production" | "Sandbox";
  * Dev hosts where the `devHostOnly` management cards and the manager-approval
  * dev bypass are offered.
  *
+ * **This is no longer the only way to the management cards.** A tester with UAT
+ * mode on sees them anywhere, including the live host — see the filter in
+ * `src/app/(dashboard)/request/page.tsx`, and note that those cards reveal a
+ * route, not a record: both destinations fetch their own `/access`. It is
+ * still the only way to the **manager-approval dev bypass**, which really does
+ * decide who may action a step, and which additionally requires a
+ * non-production build and `ACC_MANAGER_DEV_BYPASS=1`.
+ *
  * Both ports are listed on purpose. 3081 is what `package.json` and
  * `ecosystem.config.cjs` run today — the app was moved off 3020 so it stops
  * colliding with the Rocks Fast sibling, which owns that port. 3020 stays here

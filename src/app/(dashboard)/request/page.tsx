@@ -183,6 +183,12 @@ export default function RequestHubPage() {
    */
   const { data: formEnvData } = useFormEnvironments();
   const viewer = formEnvData?.viewer;
+  /**
+   * A tester with UAT mode on. Not the cookie alone — /api/form-environment
+   * requires an active UatTester row beside it, the same rule the resolver's
+   * own `viewerIsTesting()` applies, so this cannot be forged client-side.
+   */
+  const isUatViewer = !!viewer?.uatMode;
   const forms = formEnvData?.forms;
   const groupFilter = useSearchParams().get("group");
   const isGroupView = Boolean(groupFilter?.trim());
@@ -203,7 +209,14 @@ export default function RequestHubPage() {
 
   const visibleRequestCards = REQUEST_CARDS.filter(
     (item) =>
-      (!item.devHostOnly || isDevHost) &&
+      // `devHostOnly` hides links, not data: /request/accounting and its AP-17
+      // twin each fetch their own /access and render "no access" for anyone the
+      // approver roster and the admin roles do not admit. So opening these two
+      // cards to a UAT tester on the live host reveals a route, not a record —
+      // and a tester is a System-Admin-curated list, not anyone with a cookie.
+      // Without this the pilot could not be worked at all from the real host,
+      // which is the whole point of running UAT beside Production.
+      (!item.devHostOnly || isDevHost || isUatViewer) &&
       // `available` answers "may I file a new one", not "may I work what
       // already exists" — pickEnvironment draws that same line for a record's
       // own id. A `manage: true` card is the approval queue / report /
@@ -330,20 +343,25 @@ export default function RequestHubPage() {
       })()}
         </>
       ) : (
-        /* Empty for one of two reasons: the management cards are devHostOnly
-           so this view is empty off localhost, or every card's form was
+        /* Empty for one of two reasons: the management cards are reachable
+           only from a dev host or in UAT mode, or every card's form was
            filtered out by availability — most often a tester in UAT mode with
            no form currently open for testing. Say which, rather than
            rendering a header over nothing.
 
-           Gated on `isAdminView && !isDevHost` rather than `isAdminView`
-           alone: the management cards ignore `available` now (see the filter
-           above), so on a dev host the admin view can only be empty for the
-           UAT reason below, never the localhost one — and claiming "only on
-           localhost" while standing on localhost would be a lie. */
+           Gated on `!isDevHost && !isUatViewer` rather than `isAdminView`
+           alone: the management cards ignore `available` (see the filter
+           above), so wherever they are allowed the admin view can only be
+           empty for the UAT reason below — and naming a condition the reader
+           already satisfies would be a lie either way round. */
         <p className="text-[12px] py-8 text-center" style={{ color: "var(--text-muted)" }}>
-          {isAdminView && !isDevHost
-            ? "หน้าจัดการของ AP-1 / AP-2 / AP-17 เปิดได้เฉพาะตอนรัน dev ที่ localhost:3020"
+          {/* Both sides of this merge were partly wrong. Master listed the new
+              forms but pinned one port, and `ERP_SANDBOX_ALLOWED_HOSTS` now
+              allows 3081 *and* 3020 — naming either alone misleads. Keep the
+              UAT-aware condition, keep master's fuller form list, drop the
+              port rather than guess at it. */}
+          {isAdminView && !isDevHost && !isUatViewer
+            ? "หน้าจัดการของ AP-1 / AP-2 / AP-3 / AP-17 เปิดได้เมื่อสลับเป็นโหมด UAT หรือตอนรัน dev ที่ localhost"
             : viewer?.uatMode
               ? "คุณอยู่ในโหมด UAT แต่ยังไม่มีฟอร์มใดเปิดให้ทดสอบในขณะนี้"
               : "ยังไม่มีคำขอที่เปิดให้ใช้งาน"}

@@ -33,6 +33,11 @@ export const env = createEnv({
     CONNECTION_ENCRYPTION_KEY: z.string().optional(),
     SHAREPOINT_ACC_SITE: z.string().optional(),
     SHAREPOINT_ACC_FOLDER: z.string().optional(),
+    // Optional on purpose. This file validates the whole environment at import,
+    // so a required key would take the entire app down on any deploy that has
+    // not set it — instead of only the AP-1 receipt read, which degrades to a
+    // blank, editable field. Reads of the receipt image are billed per call.
+    ANTHROPIC_API_KEY: z.string().optional(),
   },
   client: {
     NEXT_PUBLIC_APP_URL: z.string().url().optional(),
@@ -63,6 +68,7 @@ export const env = createEnv({
     CONNECTION_ENCRYPTION_KEY: process.env.CONNECTION_ENCRYPTION_KEY,
     SHAREPOINT_ACC_SITE: process.env.SHAREPOINT_ACC_SITE,
     SHAREPOINT_ACC_FOLDER: process.env.SHAREPOINT_ACC_FOLDER,
+    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
     NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
     NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY,
   },

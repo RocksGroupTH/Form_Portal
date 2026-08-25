@@ -233,6 +233,15 @@ export function RequesterPickerModal({
               ไม่พบ “{query}”
             </p>
           )}
+          {/* Nobody else in the department. The picker still works — say so,
+              rather than showing the requester's own row over blank space. */}
+          {!searching && !q && filtered.length === 0 && (
+            <p className="py-8 text-center text-[12px]" style={{ color: "var(--text-muted)" }}>
+              {searchEndpoint
+                ? "ไม่มีเพื่อนร่วมแผนก — พิมพ์ชื่อเพื่อค้นหาทั้งบริษัท"
+                : "ไม่มีเพื่อนร่วมแผนกให้เลือก"}
+            </p>
+          )}
         </div>
       </div>
     </div>,
