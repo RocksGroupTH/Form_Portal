@@ -39,6 +39,23 @@ async function requireKey(): Promise<string> {
   return key;
 }
 
+/**
+ * Smoke-test one specific key — Settings → API Keys tests the value on the row
+ * being looked at, including a deactivated one, rather than whatever
+ * `resolveOrsKey` would answer with. Returns how many places came back.
+ */
+export async function testOrsKey(key: string): Promise<number> {
+  const url =
+    `${ORS_BASE}/geocode/autocomplete` +
+    `?api_key=${encodeURIComponent(key)}` +
+    `&text=${encodeURIComponent("กรุงเทพ")}` +
+    `&boundary.country=TH&size=1`;
+  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`ORS ตอบกลับ ${res.status}`);
+  const json = (await res.json()) as { features?: unknown[] };
+  return json.features?.length ?? 0;
+}
+
 /** Autocomplete place search (ORS / Pelias). Returns up to ~6 suggestions. */
 export async function orsGeocode(text: string): Promise<OrsPlace[]> {
   const q = text.trim();

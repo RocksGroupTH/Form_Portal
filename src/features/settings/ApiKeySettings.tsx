@@ -13,11 +13,14 @@ import {
   Loader2,
   Pencil,
   Plus,
+  PlugZap,
+  CheckCircle2,
   Power,
   PowerOff,
 } from "lucide-react";
 import { Button, Dialog } from "@/components/ui";
 import { describeExpiry, expiryLabel, type ExpiryTone } from "@/lib/api-keys/expiry";
+import { TESTABLE_CODES, KNOWN_CODE_USAGE, IMPORT_NAMES } from "@/lib/api-keys/codes";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -40,17 +43,6 @@ interface LogItem {
   changedAt: string;
   changedByName: string | null;
 }
-
-/**
- * Codes this application actually reads. Anything else is stored and served
- * just the same — this only exists so somebody can see, before deactivating a
- * key, what would stop working.
- */
-const KNOWN_CODES: Record<string, string> = {
-  ANTHROPIC_API_KEY: "AP-1 อ่านยอดใบเสร็จ · AP-17 ตรวจบัตรประชาชน",
-  GOOGLE_MAPS_API_KEY: "AP-1 แผนที่และระยะทาง",
-  ORS_API_KEY: "AP-1 ค้นหาสถานที่ · AP-17 จุดขึ้นรถ",
-};
 
 const ACTION_LABEL: Record<string, string> = {
   created: "เพิ่ม key",
@@ -296,13 +288,15 @@ export function ApiKeySettings() {
   const [openLogId, setOpenLogId] = useState<number | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [importing, setImporting] = useState(false);
+  const [testingId, setTestingId] = useState<number | null>(null);
+  const [testResult, setTestResult] = useState<Record<number, { ok: boolean; message: string }>>({});
 
   const keys = data?.data?.keys ?? [];
   const encryptionReady = data?.data?.encryptionReady ?? true;
   const today = new Date();
 
   const registeredCodes = keys.map((k) => k.code);
-  const importable = Object.keys(KNOWN_CODES).filter((c) => registeredCodes.indexOf(c) < 0);
+  const importable = Object.keys(KNOWN_CODE_USAGE).filter((c) => registeredCodes.indexOf(c) < 0);
 
   const toggleActive = async (k: ApiKeyListItem) => {
     setBusyId(k.id);
@@ -324,6 +318,25 @@ export function ApiKeySettings() {
     }
   };
 
+  const runTest = async (k: ApiKeyListItem) => {
+    setTestingId(k.id);
+    // Clear the previous verdict first: a stale green beside a spinner reads as
+    // "passed" while the new call is still deciding.
+    setTestResult((r) => ({ ...r, [k.id]: { ok: false, message: "" } }));
+    try {
+      const res = await fetch(`/api/settings/api-keys/${k.id}/test`, { method: "POST" });
+      const json = await res.json();
+      const result = json.ok
+        ? (json.data as { ok: boolean; message: string })
+        : { ok: false, message: json.error ?? "ทดสอบไม่สำเร็จ" };
+      setTestResult((r) => ({ ...r, [k.id]: result }));
+    } catch {
+      setTestResult((r) => ({ ...r, [k.id]: { ok: false, message: "เรียกทดสอบไม่สำเร็จ" } }));
+    } finally {
+      setTestingId(null);
+    }
+  };
+
   const importAll = async () => {
     setImporting(true);
     let moved = 0;
@@ -332,7 +345,7 @@ export function ApiKeySettings() {
         const res = await fetch("/api/settings/api-keys", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "import", code, name: KNOWN_CODES[code] }),
+          body: JSON.stringify({ action: "import", code, name: IMPORT_NAMES[code] ?? code }),
         });
         const json = await res.json();
         if (json.ok && json.data?.imported) moved++;
@@ -420,26 +433,54 @@ export function ApiKeySettings() {
                   opacity: k.isActive ? 1 : 0.6,
                 }}
               >
-                <div className="flex items-center gap-3 flex-wrap">
+                {/* Line 1 — what this key IS. Code leads because it is the name
+                    the code uses; everything else on the line qualifies it. */}
+                <div className="flex items-center gap-2.5 min-w-0">
                   <KeyRound size={15} className="shrink-0" style={{ color: "var(--nav-active-text)" }} />
-                  <span className="font-mono font-bold text-[13.5px] tracking-wide" style={{ color: "var(--text-primary)" }}>
+                  <span className="font-mono font-bold text-[13.5px] tracking-wide shrink-0" style={{ color: "var(--text-primary)" }}>
                     {k.code}
                   </span>
                   <span className="text-[13px] truncate" style={{ color: "var(--text-secondary)" }}>{k.name}</span>
-
+                  {!k.isActive && (
+                    <span
+                      className="px-2 py-0.5 rounded-md text-[11px] font-semibold shrink-0"
+                      style={{ background: "var(--bg-card-alt)", color: "var(--text-muted)" }}
+                    >
+                      ปิดใช้งาน
+                    </span>
+                  )}
                   <span
-                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11.5px] font-semibold shrink-0"
+                    className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11.5px] font-semibold shrink-0"
                     style={{ background: tone.bg, color: tone.fg }}
                   >
                     {status.tone === "none" ? <InfinityIcon size={11} /> : <Clock size={11} />}
                     {expiryLabel(status)}
                   </span>
-
-                  <span className="font-mono text-[12.5px] shrink-0" style={{ color: "var(--text-muted)" }}>
+                  <span className="font-mono text-[12.5px] shrink-0 tabular-nums" style={{ color: "var(--text-muted)" }}>
                     {k.unreadable ? "อ่านค่าไม่ได้" : k.masked}
                   </span>
+                </div>
 
+                {/* Line 2 — what it is FOR. Suppressed when the Name already
+                    says it, which is what an early import made it do. */}
+                {KNOWN_CODE_USAGE[k.code] && KNOWN_CODE_USAGE[k.code] !== k.name && (
+                  <p className="m-0 text-[11.5px] pl-[25px]" style={{ color: "var(--text-muted)" }}>
+                    ใช้กับ {KNOWN_CODE_USAGE[k.code]}
+                  </p>
+                )}
+
+                {/* Line 3 — provenance on the left, actions on the right. */}
+                <div className="flex items-center gap-2 flex-wrap pl-[25px]">
+                  <span className="text-[11.5px]" style={{ color: "var(--text-muted)" }}>
+                    แก้ไขล่าสุด {k.updatedByName ?? "-"} · {fmtDateTime(k.updatedAt)}
+                  </span>
                   <div className="ml-auto flex items-center gap-1.5 shrink-0">
+                    {TESTABLE_CODES.indexOf(k.code) >= 0 && (
+                      <Button variant="secondary" size="sm" onClick={() => runTest(k)} disabled={testingId === k.id || k.unreadable}>
+                        {testingId === k.id ? <Loader2 size={13} className="animate-spin" /> : <PlugZap size={13} />}
+                        ทดสอบการเชื่อมต่อ
+                      </Button>
+                    )}
                     <Button variant="secondary" size="sm" onClick={() => setOpenLogId(openLogId === k.id ? null : k.id)}>
                       <History size={13} /> ประวัติ
                     </Button>
@@ -454,15 +495,20 @@ export function ApiKeySettings() {
                   </div>
                 </div>
 
-                <div className="flex items-baseline gap-3 flex-wrap text-[11.5px]" style={{ color: "var(--text-muted)" }}>
-                  {KNOWN_CODES[k.code] && <span>ใช้กับ: {KNOWN_CODES[k.code]}</span>}
-                  <span className="ml-auto">
-                    แก้ไขล่าสุด {k.updatedByName ?? "-"} · {fmtDateTime(k.updatedAt)}
-                  </span>
-                </div>
+                {/* The result stays on screen instead of a toast that vanishes —
+                    this is the one thing somebody presses the button to read. */}
+                {testResult[k.id] && (
+                  <p
+                    className="m-0 text-[12px] pl-[25px] flex items-center gap-1.5"
+                    style={{ color: testResult[k.id].ok ? "var(--color-success)" : "var(--color-danger)" }}
+                  >
+                    {testResult[k.id].ok ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />}
+                    {testResult[k.id].message}
+                  </p>
+                )}
 
                 {k.unreadable && (
-                  <p className="text-[12px] m-0" style={{ color: "var(--color-danger)" }}>
+                  <p className="text-[12px] m-0 pl-[25px]" style={{ color: "var(--color-danger)" }}>
                     ถอดรหัสค่า key นี้ไม่ได้ — CONNECTION_ENCRYPTION_KEY อาจถูกเปลี่ยน กรอกค่า key ใหม่เพื่อแก้
                   </p>
                 )}

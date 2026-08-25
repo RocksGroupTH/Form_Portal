@@ -417,3 +417,21 @@ export async function importLegacyKey(code: string, name: string, userId: number
   await createApiKey({ code: normalized, name, secret: found.value, expiresAt: null }, userId);
   return true;
 }
+
+/**
+ * The decrypted value of one row, for a server-side tester.
+ *
+ * **Never return this from a route.** It exists so Settings → API Keys can
+ * check the key on the row somebody is looking at — including a deactivated
+ * one, which `resolveApiKey` skips by design.
+ */
+export async function getApiKeySecret(id: number): Promise<{ code: string; value: string } | null> {
+  const pool = await getProductionFormPool();
+  const r = await pool
+    .request()
+    .input("id", sql.Int, id)
+    .query(`SELECT TOP 1 Code, SecretEnc FROM [dbo].[ApiKey] WHERE Id = @id`);
+  const row = r.recordset[0];
+  if (!row) return null;
+  return { code: row.Code as string, value: decryptSecret(row.SecretEnc as string) };
+}

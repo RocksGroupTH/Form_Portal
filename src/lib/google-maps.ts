@@ -33,9 +33,16 @@ async function requireKey(): Promise<string> {
   return key;
 }
 
-/** Server-side smoke test (Geocoding API). Fails for HTTP-referrer-only keys. */
-export async function testGoogleMapsKey(): Promise<number> {
-  const key = await requireKey();
+/**
+ * Server-side smoke test (Geocoding API). Fails for HTTP-referrer-only keys.
+ *
+ * `explicitKey` lets Settings → API Keys test the value on one particular row,
+ * including a deactivated one, rather than whatever `resolveGoogleMapsKey`
+ * happens to answer with — otherwise "test" would silently check a different
+ * key from the one being looked at.
+ */
+export async function testGoogleMapsKey(explicitKey?: string): Promise<number> {
+  const key = explicitKey?.trim() || (await requireKey());
   const url =
     `${GEOCODE_TEST_URL}?address=${encodeURIComponent("กรุงเทพ")}` +
     `&key=${encodeURIComponent(key)}` +
