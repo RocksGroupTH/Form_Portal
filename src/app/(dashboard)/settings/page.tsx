@@ -1,13 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { HoverCard } from "@/components/ui/HoverCard";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
-import { Dialog } from "@/components/ui/Dialog";
-import { MapProviderSettings } from "@/components/settings/MapProviderSettings";
 import { SETTINGS_CARDS } from "@/lib/constants";
 import {
   Settings2,
@@ -16,6 +14,7 @@ import {
   Layers,
   Shield,
   Map as MapIcon,
+  KeyRound,
   Loader2,
   FlaskConical,
   ClipboardList,
@@ -28,6 +27,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ size?: number; style?: Reac
   Layers,
   Shield,
   Map: MapIcon,
+  KeyRound,
   FlaskConical,
   ClipboardList,
 };
@@ -35,7 +35,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ size?: number; style?: Reac
 export default function SettingsHubPage() {
   const router = useRouter();
   const { data: session, status } = useSession();
-  const [mapsOpen, setMapsOpen] = useState(false);
+
   const isAdmin =
     session?.user?.role === "IT Admin" || session?.user?.role === "System Admin";
   const isSystemAdmin = isSystemAdminRole(session?.user?.role);
@@ -97,14 +97,6 @@ export default function SettingsHubPage() {
             </>
           );
 
-          if (item.id === "maps") {
-            return (
-              <HoverCard key={item.id} onClick={() => setMapsOpen(true)} className="p-5">
-                {inner}
-              </HoverCard>
-            );
-          }
-
           return (
             <HoverCard key={item.id} href={item.href} className="p-5 block">
               {inner}
@@ -112,15 +104,6 @@ export default function SettingsHubPage() {
           );
         })}
       </div>
-
-      <Dialog
-        open={mapsOpen}
-        onOpenChange={setMapsOpen}
-        title="Maps & Routing"
-        contentClassName="max-w-2xl"
-      >
-        <MapProviderSettings />
-      </Dialog>
     </PageContainer>
   );
 }

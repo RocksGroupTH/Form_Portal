@@ -1,5 +1,4 @@
-import { env } from "@/env";
-import { getAppSetting } from "@/lib/app-settings";
+import { resolveApiKey } from "@/lib/api-keys/service";
 
 const ORS_BASE = "https://api.openrouteservice.org";
 /** Bias geocoding toward Thailand / Bangkok. */
@@ -20,19 +19,18 @@ export interface OrsRoute {
   polyline: [number, number][];
 }
 
-/** Resolve the ORS key: Fast_Core AppSetting (admin UI) first, then env fallback.
- *  A DB read failure must NOT break the env fallback — swallow it and try env. */
+/**
+ * Resolve the ORS key through the shared registry: Settings → API Keys first,
+ * then the old `Fast_Core.AppSetting` row, then env. A read failure at any step
+ * must NOT break the fallback below it — `resolveApiKey` swallows and carries
+ * on, which is what keeps routing working through a database outage.
+ * Reports `"db"` for either stored source; that signal only distinguishes
+ * "stored" from "in a file".
+ */
 export async function resolveOrsKey(): Promise<{ key: string | null; source: "db" | "env" | null }> {
-  let dbKey: string | undefined;
-  try {
-    dbKey = (await getAppSetting("ORS_API_KEY"))?.trim() || undefined;
-  } catch {
-    dbKey = undefined;
-  }
-  if (dbKey) return { key: dbKey, source: "db" };
-  const envKey = env.ORS_API_KEY?.trim();
-  if (envKey) return { key: envKey, source: "env" };
-  return { key: null, source: null };
+  const { value, source } = await resolveApiKey("ORS_API_KEY");
+  if (!value) return { key: null, source: null };
+  return { key: value, source: source === "env" ? "env" : "db" };
 }
 
 async function requireKey(): Promise<string> {

@@ -137,11 +137,11 @@ export const SETTINGS_CARDS: NavItem[] = [
     systemAdminOnly: true,
   },
   {
-    id: "maps",
-    label: "Maps & Routing",
-    icon: "Map",
-    desc: "Google Maps API Key (AP-1 · ฟอร์ม)",
-    href: "/settings/maps",
+    id: "api-keys",
+    label: "API Keys",
+    icon: "KeyRound",
+    desc: "Anthropic · Google Maps · OpenRouteService — วันหมดอายุและประวัติการเปลี่ยน",
+    href: "/settings/api-keys",
   },
   {
     id: "users",

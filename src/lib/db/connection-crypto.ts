@@ -42,6 +42,14 @@ export function decryptPassword(enc: string): string {
   return Buffer.concat([decipher.update(data), decipher.final()]).toString("utf8");
 }
 
+/**
+ * The same envelope under a name that fits a caller storing something other
+ * than a database password — API keys (`src/lib/api-keys/service.ts`) use it.
+ * Deliberately the same `CONNECTION_ENCRYPTION_KEY`: one secret to rotate, not
+ * two, and nothing about AES-256-GCM here is specific to passwords.
+ */
+export { encryptPassword as encryptSecret, decryptPassword as decryptSecret };
+
 export function isEncryptionConfigured(): boolean {
   try {
     getKey();

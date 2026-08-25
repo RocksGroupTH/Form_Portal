@@ -21,7 +21,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { checkAttachment } from "@/lib/acc/attachment-guard";
 import { consumeRateLimit } from "@/lib/rate-limit";
-import { env } from "@/env";
+import { resolveApiKey } from "@/lib/api-keys/service";
 
 /** The image media types the Messages API accepts. */
 export const SUPPORTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
@@ -45,7 +45,11 @@ export async function guardVisionRequest(
   req: NextRequest,
   opts: { userId: string | number; purpose: string; unavailableError: string },
 ): Promise<VisionGuardResult> {
-  if (!env.ANTHROPIC_API_KEY) {
+  // Settings → API Keys, then the old stores, then `.env`. Resolved per request
+  // rather than read once at import, so replacing an expired key on the settings
+  // page takes effect immediately instead of at the next deploy.
+  const { value: apiKey } = await resolveApiKey("ANTHROPIC_API_KEY");
+  if (!apiKey) {
     return {
       ok: false,
       response: NextResponse.json({ ok: false, error: opts.unavailableError }, { status: 503 }),
@@ -101,7 +105,7 @@ export async function guardVisionRequest(
       bytes,
       mediaType: check.type.contentType,
       client: new Anthropic({
-        apiKey: env.ANTHROPIC_API_KEY,
+        apiKey,
         timeout: VISION_TIMEOUT_MS,
         maxRetries: 1,
       }),
