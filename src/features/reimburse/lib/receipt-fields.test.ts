@@ -6,6 +6,8 @@ import {
   MAX_BRANCH_LENGTH,
   MAX_DESCRIPTION_LENGTH,
   MAX_DOCUMENT_NO_LENGTH,
+  MAX_VENDOR_ADDRESS_LENGTH,
+  MAX_VENDOR_NAME_LENGTH,
 } from "./receipt-fields";
 
 const TODAY = "2026-08-25";
@@ -23,6 +25,9 @@ test("a clean answer comes through field for field", () => {
     withholdingTax: null,
     documentNo: null,
     branchName: null,
+    vendorTaxId: null,
+    vendorName: null,
+    vendorAddress: null,
   });
 });
 
@@ -167,6 +172,9 @@ test("everything null in gives everything null out", () => {
     withholdingTax: null,
     documentNo: null,
     branchName: null,
+    vendorTaxId: null,
+    vendorName: null,
+    vendorAddress: null,
   });
 });
 
@@ -218,4 +226,73 @@ test("`category` is never read off a receipt", () => {
     TODAY,
   );
   assert.equal("category" in out, false);
+});
+
+/* ── the vendor block: เลขที่ผู้เสียภาษี · ชื่อ · ที่อยู่ ── */
+
+test("a tax id keeps its 13 digits — the rule that guards the money columns is inverted here", () => {
+  // `looksLikeTaxId` refuses 13-digit values in amount/vat/wht precisely
+  // because that is what a Thai receipt prints. This field is the one place
+  // the same shape is the correct answer, so it must not inherit that guard.
+  const out = sanitizeReceiptFields(
+    { expenseDate: null, description: null, amount: null, vat: null, withholdingTax: null,
+      vendorTaxId: "0105547161674" },
+    TODAY,
+  );
+  assert.equal(out.vendorTaxId, "0105547161674");
+});
+
+test("separators a document prints between the groups are stripped", () => {
+  for (const printed of ["0-1055-47161-67-4", "0 1055 47161 67 4", " 0105547161674 "]) {
+    assert.equal(
+      sanitizeReceiptFields(
+        { expenseDate: null, description: null, amount: null, vat: null, withholdingTax: null, vendorTaxId: printed },
+        TODAY,
+      ).vendorTaxId,
+      "0105547161674",
+      printed,
+    );
+  }
+});
+
+test("anything that is not exactly 13 digits is refused", () => {
+  // Not 13 digits means it is not a Thai tax id, and a wrong one on a claim is
+  // worse than a blank the requester fills in.
+  for (const bad of ["", "12345", "01055471616740", "010554716167X", "เลขที่ภาษี"]) {
+    assert.equal(
+      sanitizeReceiptFields(
+        { expenseDate: null, description: null, amount: null, vat: null, withholdingTax: null, vendorTaxId: bad },
+        TODAY,
+      ).vendorTaxId,
+      null,
+      JSON.stringify(bad),
+    );
+  }
+});
+
+test("the vendor name and address are trimmed, capped and blank-to-null", () => {
+  const out = sanitizeReceiptFields(
+    { expenseDate: null, description: null, amount: null, vat: null, withholdingTax: null,
+      vendorName: "  บริษัท เดอะ 101 จำกัด  ", vendorAddress: " เลขที่ 36/3 หมู่ที่ 6 ไทรน้อย นนทบุรี 11150 " },
+    TODAY,
+  );
+  assert.equal(out.vendorName, "บริษัท เดอะ 101 จำกัด");
+  assert.equal(out.vendorAddress, "เลขที่ 36/3 หมู่ที่ 6 ไทรน้อย นนทบุรี 11150");
+
+  const blank = sanitizeReceiptFields(
+    { expenseDate: null, description: null, amount: null, vat: null, withholdingTax: null,
+      vendorName: "   ", vendorAddress: "" },
+    TODAY,
+  );
+  assert.equal(blank.vendorName, null);
+  assert.equal(blank.vendorAddress, null);
+
+  const long = sanitizeReceiptFields(
+    { expenseDate: null, description: null, amount: null, vat: null, withholdingTax: null,
+      vendorName: "ก".repeat(MAX_VENDOR_NAME_LENGTH + 30),
+      vendorAddress: "ข".repeat(MAX_VENDOR_ADDRESS_LENGTH + 30) },
+    TODAY,
+  );
+  assert.equal(long.vendorName?.length, MAX_VENDOR_NAME_LENGTH);
+  assert.equal(long.vendorAddress?.length, MAX_VENDOR_ADDRESS_LENGTH);
 });

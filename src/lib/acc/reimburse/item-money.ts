@@ -130,6 +130,9 @@ export function isBlankItemRow(it: ReimburseItem): boolean {
   if (textIsEntered(it.documentNo)) return false;
   if (textIsEntered(it.category)) return false;
   if (textIsEntered(it.branchName)) return false;
+  if (textIsEntered(it.vendorTaxId)) return false;
+  if (textIsEntered(it.vendorName)) return false;
+  if (textIsEntered(it.vendorAddress)) return false;
   if (moneyIsEntered(it.amount)) return false;
   if (moneyIsEntered(it.vatAmount)) return false;
   if (moneyIsEntered(it.whtAmount)) return false;
@@ -201,6 +204,9 @@ export function prepareReimburseItemsForSave(items: ReimburseItem[]): ReimburseI
       documentNo: trimmedText(it.documentNo),
       category: trimmedText(it.category),
       branchName: trimmedText(it.branchName),
+      vendorTaxId: trimmedText(it.vendorTaxId),
+      vendorName: trimmedText(it.vendorName),
+      vendorAddress: trimmedText(it.vendorAddress),
     };
   });
 }

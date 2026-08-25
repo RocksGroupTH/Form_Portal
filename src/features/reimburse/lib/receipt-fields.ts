@@ -25,6 +25,13 @@ export const MAX_DESCRIPTION_LENGTH = 500;
 export const MAX_DOCUMENT_NO_LENGTH = 100;
 /** `AccReimburseItem.BranchName` is `NVARCHAR(200)` (migration 117). */
 export const MAX_BRANCH_LENGTH = 200;
+/** `AccReimburseItem.VendorName` is `NVARCHAR(300)` (migration 118). */
+export const MAX_VENDOR_NAME_LENGTH = 300;
+/** `AccReimburseItem.VendorAddress` is `NVARCHAR(500)` (migration 118). */
+export const MAX_VENDOR_ADDRESS_LENGTH = 500;
+
+/** A Thai tax id, and a Thai national id, are both exactly this many digits. */
+const TAX_ID_DIGITS = 13;
 
 /**
  * What the model is asked for. Every field nullable — null is a real answer.
@@ -44,6 +51,12 @@ export interface RawReceiptFields {
   documentNo?: string | null;
   /** สาขา — the vendor branch, where the receipt names one. */
   branchName?: string | null;
+  /** เลขประจำตัวผู้เสียภาษี of the **seller**, as printed. */
+  vendorTaxId?: string | null;
+  /** ชื่อ-สกุล / ชื่อบริษัท of the seller. */
+  vendorName?: string | null;
+  /** ที่อยู่ of the seller. */
+  vendorAddress?: string | null;
 }
 
 export interface ReceiptFields {
@@ -54,6 +67,9 @@ export interface ReceiptFields {
   withholdingTax: number | null;
   documentNo: string | null;
   branchName: string | null;
+  vendorTaxId: string | null;
+  vendorName: string | null;
+  vendorAddress: string | null;
 }
 
 /**
@@ -110,7 +126,31 @@ export function sanitizeReceiptFields(raw: RawReceiptFields, today: string): Rec
     withholdingTax,
     documentNo: text(raw.documentNo, MAX_DOCUMENT_NO_LENGTH),
     branchName: text(raw.branchName, MAX_BRANCH_LENGTH),
+    vendorTaxId: taxId(raw.vendorTaxId),
+    vendorName: text(raw.vendorName, MAX_VENDOR_NAME_LENGTH),
+    vendorAddress: text(raw.vendorAddress, MAX_VENDOR_ADDRESS_LENGTH),
   };
+}
+
+/**
+ * The seller's tax id, digits only, or null.
+ *
+ * **`looksLikeTaxId` is deliberately not applied here — it is inverted.** That
+ * guard exists because a 13-digit run is what a Thai receipt prints and is the
+ * number most likely to come back in place of a total, so the money columns
+ * refuse the shape. This is the one field where the shape is the right answer,
+ * and reusing the guard would null exactly the values it is meant to capture.
+ *
+ * Separators are stripped because documents print the id grouped
+ * (`0-1055-47161-67-4`) and a stored value that varies by punctuation matches
+ * nothing later. Anything that is not exactly 13 digits afterwards is refused:
+ * it is then not a Thai tax id, and a wrong one on a claim is worse than a
+ * blank the requester fills in.
+ */
+function taxId(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const digits = v.replace(/\D/g, "");
+  return digits.length === TAX_ID_DIGITS ? digits : null;
 }
 
 /**

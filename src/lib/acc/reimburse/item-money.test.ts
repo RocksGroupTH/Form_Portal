@@ -276,3 +276,23 @@ test("the new columns are trimmed on the way to storage, and blank becomes null"
   assert.equal(row.category, "AP-4.2");
   assert.equal(row.branchName, null);
 });
+
+/* ── the vendor block (migration 118) ── */
+
+test("a row carrying only a vendor detail is not blank", () => {
+  const base = { sortOrder: 0, expenseDate: null, description: "", amount: 0, vatAmount: null, whtAmount: null, documentNo: null, category: null, branchName: null, vendorTaxId: null, vendorName: null, vendorAddress: null };
+  assert.equal(isBlankItemRow({ ...base, vendorTaxId: "0105547161674" }), false);
+  assert.equal(isBlankItemRow({ ...base, vendorName: "บริษัท เดอะ 101 จำกัด" }), false);
+  assert.equal(isBlankItemRow({ ...base, vendorAddress: "นนทบุรี 11150" }), false);
+  assert.equal(isBlankItemRow({ ...base, vendorName: "   " }), true);
+});
+
+test("the vendor block is trimmed on the way to storage", () => {
+  const [row] = prepareReimburseItemsForSave([
+    { sortOrder: 0, expenseDate: "2026-08-13", description: "ค่าป้าย", amount: 30687.6, vatAmount: 2007.6, whtAmount: 860.4,
+      vendorTaxId: " 0105547161674 ", vendorName: "  บริษัท เดอะ 101 จำกัด ", vendorAddress: "  " },
+  ]);
+  assert.equal(row.vendorTaxId, "0105547161674");
+  assert.equal(row.vendorName, "บริษัท เดอะ 101 จำกัด");
+  assert.equal(row.vendorAddress, null);
+});

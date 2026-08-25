@@ -23,6 +23,9 @@ import { UatDataBanner } from "@/components/UatDataBanner";
 import { useBrand } from "@/components/BrandProvider";
 import { useUserPhoto } from "@/lib/hooks/useUserPhoto";
 import type { AccBrandOption } from "@/features/accounting/types";
+// `import type` is erased, so the service module — which opens pools — never
+// reaches the browser bundle.
+import type { ExpenseAccount } from "@/lib/acc/reimburse/expense-account-service";
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
 import {
   SectionCard,
@@ -40,6 +43,7 @@ import {
   RECEIPT_FIELDS_FAILURE_TEXT,
   readReceiptFields,
   type ReceiptFieldsFailure,
+  type ReadRow,
 } from "@/features/reimburse/lib/read-receipt-fields";
 import type {
   ReimburseDetail,
@@ -47,7 +51,7 @@ import type {
   ReimburseItem,
   ReimburseRule,
 } from "@/features/reimburse/types";
-import type { ReceiptFields } from "@/features/reimburse/lib/receipt-fields";
+
 // The shape `/api/request/reimburse/requesters` answers with, taken from the
 // server functions that build it rather than restated — AP-1 and AP-17 each
 // declare their own copy of it in their form hooks, and a third would be one
@@ -115,15 +119,19 @@ function emptyItem(sortOrder: number): ReimburseItem {
 }
 
 /** One expense row from one line a document was read into. */
-function rowFromFields(f: ReceiptFields, sortOrder: number): ReimburseItem {
+function rowFromFields(f: ReadRow, sortOrder: number): ReimburseItem {
   return {
     sortOrder,
     expenseDate: f.expenseDate,
     documentNo: f.documentNo,
-    // Never read off a document — see `RawReceiptFields`. Left for the
-    // requester, who is the only one who knows this company's own codes.
-    category: null,
+    // The G/L account the server matched against its own candidate list — null
+    // until AP-4 has some history to suggest from, and null whenever the model
+    // answered with something that was not on the list.
+    category: f.accountNo,
     branchName: f.branchName,
+    vendorTaxId: f.vendorTaxId,
+    vendorName: f.vendorName,
+    vendorAddress: f.vendorAddress,
     description: f.description ?? "",
     amount: f.amount ?? 0,
     vatAmount: f.vat,
@@ -215,6 +223,21 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
   } = useSWR<AccBrandOption[]>("/api/request/reimburse/options/brands", jsonFetcher, {
     revalidateOnFocus: false,
   });
+
+  /**
+   * The G/L accounts the `รายการ` column offers — `ErpAccounts` for this brand,
+   * postable expense accounts only.
+   *
+   * Keyed on the brand and **null while none is chosen**, which is what stops
+   * SWR fetching: the endpoint answers 400 without one, deliberately, because
+   * quietly listing some other brand's accounts would offer ones this claim
+   * cannot post to. The picker says "เลือกแบรนด์ก่อน" rather than sitting empty.
+   */
+  const { data: expenseAccounts, isLoading: accountsLoading } = useSWR<ExpenseAccount[]>(
+    brandCode ? `/api/request/reimburse/options/expense-accounts?brand=${encodeURIComponent(brandCode)}` : null,
+    jsonFetcher,
+    { revalidateOnFocus: false },
+  );
 
   const {
     data: rulesData,
@@ -789,7 +812,7 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
       for (const doc of picked) {
         let read: Awaited<ReturnType<typeof readReceiptFields>>;
         try {
-          read = await readReceiptFields(doc.file);
+          read = await readReceiptFields(doc.file, brandCode);
         } catch {
           read = { rows: [], failure: "error" };
         }
@@ -826,7 +849,7 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
         setReadNote(RECEIPT_FIELDS_FAILURE_TEXT[worst] + suffix);
       }
     },
-    [addReceipts],
+    [addReceipts, brandCode],
   );
 
   /** Take a picked file back out before it is uploaded — it removes its evidence too. */
@@ -1170,6 +1193,9 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
             problems={rowProblems}
             showProblems={triedSubmit}
             readNote={readNote}
+            accounts={expenseAccounts ?? []}
+            accountsLoading={accountsLoading}
+            brandChosen={!!brandCode}
             documents={
               <ExpenseDocumentStrip
                 storedFiles={storedDocuments}

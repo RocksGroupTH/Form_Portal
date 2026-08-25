@@ -19,6 +19,18 @@ export interface ReimburseItem {
   category?: string | null;
   /** สาขา — the branch the expense belongs to. Migration 117. */
   branchName?: string | null;
+  /**
+   * เลขประจำตัวผู้เสียภาษี of the seller, digits only. Migration 118.
+   *
+   * A string, not a number: it leads with a zero, arithmetic on it is
+   * meaningless, and the stored form is stripped of the grouping documents
+   * print so a value cannot vary by punctuation.
+   */
+  vendorTaxId?: string | null;
+  /** ชื่อ-สกุล / ชื่อบริษัท of the seller. Migration 118. */
+  vendorName?: string | null;
+  /** ที่อยู่ of the seller. Migration 118. */
+  vendorAddress?: string | null;
   description: string;
   /**
    * **VAT-inclusive** — ค่าใช้จ่ายรวม in the AP-4.1 sheet, and the only money

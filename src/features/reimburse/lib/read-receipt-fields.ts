@@ -21,6 +21,18 @@
 import { toDownscaledCanvas } from "@/lib/image/downscale";
 import type { ReceiptFields } from "./receipt-fields";
 
+/** A read row: the sanitized document fields, plus the account the server matched. */
+export interface ReadRow extends ReceiptFields {
+  /**
+   * `ErpAccounts.AccountNo`, or null.
+   *
+   * Only ever one the **server** matched against its own candidate list — a
+   * model asked to pick from a list can still answer with a number that is not
+   * on it, and an invented G/L account is a misposted expense.
+   */
+  accountNo: string | null;
+}
+
 export type ReceiptFieldsFailure =
   /** The call worked; nothing on this document could be trusted. */
   | "not-found"
@@ -41,7 +53,7 @@ export const RECEIPT_FIELDS_FAILURE_TEXT: Record<ReceiptFieldsFailure, string> =
 
 export interface ReceiptFieldsRead {
   /** One entry per expense line found. Empty when `failure` is set. */
-  rows: ReceiptFields[];
+  rows: ReadRow[];
   /** Always set when no row came back. */
   failure?: ReceiptFieldsFailure;
 }
@@ -79,7 +91,11 @@ async function toUploadBlob(file: File): Promise<{ blob: Blob; name: string } | 
   return blob ? { blob, name: "receipt.jpg" } : null;
 }
 
-export async function readReceiptFields(file: File): Promise<ReceiptFieldsRead> {
+export async function readReceiptFields(
+  file: File,
+  /** The claim's brand — decides which accounts are offered as suggestions. */
+  brandCode?: string | null,
+): Promise<ReceiptFieldsRead> {
   const upload = await toUploadBlob(file);
   if (!upload) return { rows: [], failure: "not-found" };
 
@@ -87,7 +103,11 @@ export async function readReceiptFields(file: File): Promise<ReceiptFieldsRead> 
   form.append("file", upload.blob, upload.name);
 
   try {
-    const res = await fetch("/api/request/reimburse/receipt-item", {
+    // The brand rides in the query string, not the body: `guardVisionRequest`
+    // consumes the body with its own `formData()`, and a request body can only
+    // be read once.
+    const qs = brandCode ? `?brand=${encodeURIComponent(brandCode)}` : "";
+    const res = await fetch(`/api/request/reimburse/receipt-item${qs}`, {
       method: "POST",
       body: form,
     });
@@ -103,7 +123,7 @@ export async function readReceiptFields(file: File): Promise<ReceiptFieldsRead> 
     // values land in rows that decide a payout. The server already ran
     // `sanitizeReceiptFields`; this only refuses a malformed *envelope*.
     const raw: unknown = json.data?.rows;
-    const rows: ReceiptFields[] = Array.isArray(raw)
+    const rows: ReadRow[] = Array.isArray(raw)
       ? raw.map((d: Record<string, unknown>) => ({
           expenseDate: typeof d?.expenseDate === "string" ? d.expenseDate : null,
           description: typeof d?.description === "string" ? d.description : null,
@@ -112,6 +132,12 @@ export async function readReceiptFields(file: File): Promise<ReceiptFieldsRead> 
           withholdingTax: typeof d?.withholdingTax === "number" ? d.withholdingTax : null,
           documentNo: typeof d?.documentNo === "string" ? d.documentNo : null,
           branchName: typeof d?.branchName === "string" ? d.branchName : null,
+          vendorTaxId: typeof d?.vendorTaxId === "string" ? d.vendorTaxId : null,
+          vendorName: typeof d?.vendorName === "string" ? d.vendorName : null,
+          vendorAddress: typeof d?.vendorAddress === "string" ? d.vendorAddress : null,
+          // Only ever an account the server matched against its own candidate
+          // list; anything else already came back null.
+          accountNo: typeof d?.accountNo === "string" ? d.accountNo : null,
         }))
       : [];
 

@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { CircleAlert, Plus, Trash2 } from "lucide-react";
 import { SingleDatePicker } from "@/features/accounting/components/SingleDatePicker";
+import { ExpenseAccountPicker } from "./ExpenseAccountPicker";
+import type { ExpenseAccount } from "@/lib/acc/reimburse/expense-account-service";
 import { fmtBaht } from "@/features/travel-booking/components/shared";
 import { sumReimburseItems } from "@/lib/acc/reimburse/calc";
 import {
@@ -177,6 +179,8 @@ const LABEL_CLASS = "block text-[10.5px] font-semibold uppercase tracking-wide m
  */
 const IDENT_GRID =
   "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-[56px_150px_130px_110px_minmax(0,1fr)_150px] gap-2";
+const VENDOR_GRID =
+  "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-[170px_260px_minmax(0,1fr)] gap-2";
 const MONEY_GRID =
   "grid grid-cols-2 md:grid-cols-[repeat(5,minmax(0,1fr))_44px] gap-2";
 
@@ -287,6 +291,9 @@ export function ReimburseItemGrid({
   showProblems,
   documents,
   readNote,
+  accounts,
+  accountsLoading,
+  brandChosen,
 }: {
   items: ReimburseItem[];
   onUpdate: (index: number, patch: Partial<ReimburseItem>) => void;
@@ -307,6 +314,11 @@ export function ReimburseItemGrid({
   documents: React.ReactNode;
   /** Why the last read produced nothing. Cleared by the form on the next attempt. */
   readNote: string | null;
+  /** The G/L accounts this brand may book to — `รายการ`'s options. */
+  accounts: ExpenseAccount[];
+  accountsLoading?: boolean;
+  /** False before a brand is picked; the list is keyed on brand and cannot load. */
+  brandChosen: boolean;
 }) {
   // The total the server will store: the blank trailing row contributes
   // nothing, and `sumReimburseItems` is the same function it totals with.
@@ -380,12 +392,13 @@ export function ReimburseItemGrid({
               </Field>
 
               <Field label="รายการ">
-                <TextCell
-                  ariaLabel={`รายการของรายการที่ ${index + 1}`}
-                  placeholder="AP-4.2"
+                <ExpenseAccountPicker
+                  ariaLabel={`บัญชีของรายการที่ ${index + 1}`}
                   value={item.category}
-                  maxLength={50}
                   onChange={(v) => onUpdate(index, { category: v })}
+                  accounts={accounts}
+                  loading={accountsLoading}
+                  brandChosen={brandChosen}
                 />
               </Field>
 
@@ -412,7 +425,40 @@ export function ReimburseItemGrid({
               </Field>
             </div>
 
-            {/* ── line 2 · what it cost ── */}
+            {/* ── line 2 · who was paid ── */}
+            <div className={VENDOR_GRID}>
+              <Field label="เลขประจำตัวผู้เสียภาษี">
+                <TextCell
+                  ariaLabel={`เลขประจำตัวผู้เสียภาษีของรายการที่ ${index + 1}`}
+                  placeholder="0105547161674"
+                  value={item.vendorTaxId}
+                  maxLength={20}
+                  onChange={(v) => onUpdate(index, { vendorTaxId: v })}
+                />
+              </Field>
+
+              <Field label="ชื่อ-สกุล / ชื่อบริษัท">
+                <TextCell
+                  ariaLabel={`ชื่อผู้ขายของรายการที่ ${index + 1}`}
+                  placeholder="ผู้ขาย / ผู้ออกเอกสาร"
+                  value={item.vendorName}
+                  maxLength={300}
+                  onChange={(v) => onUpdate(index, { vendorName: v })}
+                />
+              </Field>
+
+              <Field label="ที่อยู่">
+                <TextCell
+                  ariaLabel={`ที่อยู่ผู้ขายของรายการที่ ${index + 1}`}
+                  placeholder="—"
+                  value={item.vendorAddress}
+                  maxLength={500}
+                  onChange={(v) => onUpdate(index, { vendorAddress: v })}
+                />
+              </Field>
+            </div>
+
+            {/* ── line 3 · what it cost ── */}
             <div className={MONEY_GRID}>
               <Field label="ก่อน VAT" align="right">
                 <MoneyCell

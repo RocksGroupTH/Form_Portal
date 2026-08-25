@@ -188,6 +188,9 @@ const ITEM_COLUMNS: readonly { label: string; right?: boolean }[] = [
   { label: "รายการ" },
   { label: "รายละเอียด" },
   { label: "สาขา" },
+  { label: "เลขผู้เสียภาษี" },
+  { label: "ผู้ขาย" },
+  { label: "ที่อยู่" },
   { label: "ก่อน VAT", right: true },
   { label: "VAT", right: true },
   { label: "ค่าใช้จ่ายรวม", right: true },
@@ -989,7 +992,7 @@ export function ReimburseDetail({
           // workbook can check this table against it column for column. It
           // scrolls inside its own container rather than widening the page.
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1040px] border-collapse">
+            <table className="w-full min-w-[1500px] border-collapse">
               <thead>
                 <tr style={{ borderBottom: "1px solid var(--border-card)" }}>
                   {ITEM_COLUMNS.map((c) => (
@@ -1027,6 +1030,15 @@ export function ReimburseDetail({
                       </td>
                       <td className="text-[13px] py-2 px-2 break-words" style={{ color: "var(--text-secondary)" }}>
                         {it.branchName || "—"}
+                      </td>
+                      <td className="text-[13px] py-2 px-2 whitespace-nowrap tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                        {it.vendorTaxId || "—"}
+                      </td>
+                      <td className="text-[13px] py-2 px-2 break-words" style={{ color: "var(--text-primary)" }}>
+                        {it.vendorName || "—"}
+                      </td>
+                      <td className="text-[13px] py-2 px-2 break-words" style={{ color: "var(--text-secondary)" }}>
+                        {it.vendorAddress || "—"}
                       </td>
                       <td className="text-[13px] py-2 px-2 text-right tabular-nums" style={{ color: "var(--text-secondary)" }}>
                         {fmtMoney(beforeVat)}

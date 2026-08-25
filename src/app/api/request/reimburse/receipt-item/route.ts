@@ -6,6 +6,10 @@ import { guardVisionRequest, visionImageBlock } from "@/lib/acc/vision-guard";
 import { statusForVisionError } from "@/lib/acc/vision-error";
 import { pdfPagesToPng } from "@/lib/pdf-to-image";
 import { loadXlsx } from "@/lib/xlsx";
+import {
+  listSuggestedExpenseAccounts,
+  type ExpenseAccount,
+} from "@/lib/acc/reimburse/expense-account-service";
 import { MAX_RECEIPT_AMOUNT } from "@/features/accounting/lib/receipt-amount";
 import { todayYmd } from "@/features/accounting/lib/thai-calendar";
 import {
@@ -84,6 +88,19 @@ const RowSchema = z.object({
     .nullable()
     .describe("The receipt, invoice or quotation number printed on the document, or null."),
   branchName: z.string().nullable().describe("The vendor branch the document names, or null."),
+  vendorTaxId: z
+    .string()
+    .nullable()
+    .describe("The SELLER's 13-digit Thai tax id (เลขประจำตัวผู้เสียภาษี), or null."),
+  vendorName: z
+    .string()
+    .nullable()
+    .describe("The SELLER's company or personal name, or null."),
+  vendorAddress: z.string().nullable().describe("The SELLER's address, or null."),
+  accountNo: z
+    .string()
+    .nullable()
+    .describe("The G/L account number chosen from the candidate list, or null if none fits."),
   description: z
     .string()
     .nullable()
@@ -103,6 +120,31 @@ const AnswerSchema = z.object({
   rows: z.array(RowSchema).describe("One entry per expense line found. Empty if none is legible."),
 });
 
+/**
+ * The candidate-account block, appended only when there is history to draw on.
+ *
+ * **Empty history means the model is not asked about the account at all**, and
+ * that is the point of choosing "accounts AP-4 has actually used" over "the
+ * whole chart": a suggestion drawn from nothing is a guess, and a guessed G/L
+ * account is a misposted expense nobody has a reason to re-check. On day one
+ * every requester picks from the full picker; each pick becomes the history the
+ * next read learns from.
+ */
+function accountRules(candidates: ExpenseAccount[]): string {
+  if (candidates.length === 0) {
+    return ["", "- accountNo: ให้ตอบ null เสมอ (ยังไม่มีรายการบัญชีให้เลือก)"].join("\n");
+  }
+  return [
+    "",
+    "- accountNo: เลือกบัญชีที่ตรงที่สุด **จากรายการข้างล่างนี้เท่านั้น**",
+    "  ตอบเป็นเลขบัญชีเป๊ะ ๆ ตามที่อยู่ในรายการ ห้ามแต่งเลขขึ้นเอง",
+    "  ถ้าไม่มีอันไหนตรงพอ ให้ตอบ null — การเดาบัญชีแย่กว่าการเว้นว่าง",
+    "",
+    "รายการบัญชีที่เลือกได้:",
+    ...candidates.map((a) => `  ${a.accountNo}  ${a.displayName}`),
+  ].join("\n");
+}
+
 /** Shared rules, so a document and a sheet are read to the same standard. */
 const COMMON_RULES = [
   "กติกาของทุกช่อง:",
@@ -111,6 +153,12 @@ const COMMON_RULES = [
   "- documentNo: เลขที่เอกสารตามที่พิมพ์ไว้",
   "  ห้ามตอบเลขประจำตัวผู้เสียภาษี (13 หลัก) เป็นเลขที่เอกสาร",
   "- branchName: สาขาของผู้ขาย ถ้าไม่ระบุ ให้ตอบ null",
+  "",
+  "ข้อมูลผู้ขาย — เอาของ 'ผู้ขาย/ผู้ออกเอกสาร' เท่านั้น ห้ามเอาของ 'ลูกค้า/ผู้ซื้อ':",
+  "- vendorTaxId: เลขประจำตัวผู้เสียภาษีของผู้ขาย 13 หลัก",
+  "  เอกสารมักพิมพ์เลขของทั้งผู้ขายและลูกค้า ให้เอาของฝั่งผู้ขายเท่านั้น",
+  "- vendorName: ชื่อบริษัทหรือชื่อ-สกุลของผู้ขาย",
+  "- vendorAddress: ที่อยู่ของผู้ขาย",
   "- description: ซื้ออะไร จากร้านไหน สั้น ๆ เป็นภาษาไทย",
   `  ไม่เกิน ${MAX_DESCRIPTION_LENGTH} ตัวอักษร`,
   "- amount: ยอดรวมที่รวมภาษีมูลค่าเพิ่มแล้ว ก่อนหักภาษี ณ ที่จ่าย",
@@ -125,21 +173,27 @@ const COMMON_RULES = [
   "- ช่องไหนอ่านไม่ออกหรือไม่แน่ใจ ให้ตอบ null เฉพาะช่องนั้น อย่าเดา",
 ].join("\n");
 
-const DOCUMENT_PROMPT = [
-  "รูปนี้คือเอกสารค่าใช้จ่าย 1 ฉบับ — ใบเสร็จรับเงิน ใบกำกับภาษี ใบเสนอราคา หรือสลิป",
-  "ถ้ามีหลายรูป ทั้งหมดคือเอกสารฉบับเดียวกันคนละหน้า",
-  "ให้ตอบ rows เป็น 1 รายการ (หรือ 0 รายการถ้าอ่านไม่ออกเลย)",
-  "",
-  COMMON_RULES,
-].join("\n");
+function documentPrompt(candidates: ExpenseAccount[]): string {
+  return [
+    "รูปนี้คือเอกสารค่าใช้จ่าย 1 ฉบับ — ใบเสร็จรับเงิน ใบกำกับภาษี ใบเสนอราคา หรือสลิป",
+    "ถ้ามีหลายรูป ทั้งหมดคือเอกสารฉบับเดียวกันคนละหน้า",
+    "ให้ตอบ rows เป็น 1 รายการ (หรือ 0 รายการถ้าอ่านไม่ออกเลย)",
+    "",
+    COMMON_RULES,
+    accountRules(candidates),
+  ].join("\n");
+}
 
-const SHEET_PROMPT = [
-  "ข้างล่างนี้คือตารางค่าใช้จ่ายที่แปลงมาจากไฟล์ Excel",
-  "ให้ตอบ rows 1 รายการต่อ 1 บรรทัดของค่าใช้จ่ายจริง",
-  "ข้ามหัวตาราง บรรทัดว่าง และบรรทัดสรุป/ยอดรวมท้ายตาราง",
-  "",
-  COMMON_RULES,
-].join("\n");
+function sheetPrompt(candidates: ExpenseAccount[]): string {
+  return [
+    "ข้างล่างนี้คือตารางค่าใช้จ่ายที่แปลงมาจากไฟล์ Excel",
+    "ให้ตอบ rows 1 รายการต่อ 1 บรรทัดของค่าใช้จ่ายจริง",
+    "ข้ามหัวตาราง บรรทัดว่าง และบรรทัดสรุป/ยอดรวมท้ายตาราง",
+    "",
+    COMMON_RULES,
+    accountRules(candidates),
+  ].join("\n");
+}
 
 /** The workbook's first sheet as tab-separated text, bounded. */
 async function sheetToText(bytes: Buffer): Promise<string | null> {
@@ -159,6 +213,12 @@ export async function POST(req: NextRequest) {
   const session = await requireAuth();
   if (session instanceof Response) return session;
 
+  // A query parameter, not a multipart field: `guardVisionRequest` consumes the
+  // body with its own `req.formData()`, and a request body can only be read
+  // once. Absent brand simply means no suggestions — never an error, because
+  // reading the document is still worth doing without one.
+  const brand = req.nextUrl.searchParams.get("brand")?.trim() ?? "";
+
   const guard = await guardVisionRequest(req, {
     userId: session.user.id,
     purpose: "reimburse-item",
@@ -171,21 +231,35 @@ export async function POST(req: NextRequest) {
     // Built per kind, then read the same way: one schema, one sanitizer, one
     // response shape, so a new input kind cannot come with its own idea of
     // what a row is.
+    // Accounts AP-4 has actually booked to before, narrowed to this brand.
+    // Empty on day one and after a brand with no history, which
+    // `accountRules` turns into "always answer null" rather than a guess.
+    // Never fatal: a failure here costs the suggestion, not the read.
+    const candidates = brand
+      ? await listSuggestedExpenseAccounts(brand).catch((e) => {
+          console.error("[receipt-item] account suggestions unavailable", e);
+          return [] as ExpenseAccount[];
+        })
+      : [];
+
     let content: Array<Record<string, unknown>>;
     if (guard.kind === "image") {
-      content = [visionImageBlock(guard.bytes, guard.mediaType), { type: "text", text: DOCUMENT_PROMPT }];
+      content = [
+        visionImageBlock(guard.bytes, guard.mediaType),
+        { type: "text", text: documentPrompt(candidates) },
+      ];
     } else if (guard.kind === "pdf") {
       const pages = await pdfPagesToPng(guard.bytes, MAX_PDF_PAGES);
       content = [
         ...pages.map((p) => visionImageBlock(p, "image/png")),
-        { type: "text", text: DOCUMENT_PROMPT },
+        { type: "text", text: documentPrompt(candidates) },
       ];
     } else {
       const sheet = await sheetToText(guard.bytes);
       // An empty workbook is "nothing legible", not an error: the requester
       // still gets their row and their file is still kept as evidence.
       if (!sheet) return NextResponse.json({ ok: true, data: { rows: [] } });
-      content = [{ type: "text", text: `${SHEET_PROMPT}\n\n${sheet}` }];
+      content = [{ type: "text", text: `${sheetPrompt(candidates)}\n\n${sheet}` }];
     }
 
     const response = await guard.client.messages.parse({
@@ -201,10 +275,15 @@ export async function POST(req: NextRequest) {
     const today = todayYmd();
     const raw = response.parsed_output?.rows ?? [];
     const cap = guard.kind === "spreadsheet" ? MAX_SHEET_ROWS : MAX_DOCUMENT_ROWS;
+    // The account is checked against the candidate list rather than trusted.
+    // A model asked to pick from a list can still answer with a number that is
+    // not on it, and an invented G/L account is a misposted expense — so an
+    // unrecognised answer becomes null, exactly as an unreadable total does.
+    const offered = new Set(candidates.map((a) => a.accountNo));
     const rows: ReceiptFields[] = raw
       .slice(0, cap)
-      .map((r) =>
-        sanitizeReceiptFields(
+      .map((r) => ({
+        ...sanitizeReceiptFields(
           {
             expenseDate: r.expenseDate ?? null,
             description: r.description ?? null,
@@ -213,10 +292,14 @@ export async function POST(req: NextRequest) {
             withholdingTax: r.withholdingTax ?? null,
             documentNo: r.documentNo ?? null,
             branchName: r.branchName ?? null,
+            vendorTaxId: r.vendorTaxId ?? null,
+            vendorName: r.vendorName ?? null,
+            vendorAddress: r.vendorAddress ?? null,
           },
           today,
         ),
-      )
+        accountNo: r.accountNo && offered.has(r.accountNo.trim()) ? r.accountNo.trim() : null,
+      }))
       // A row where nothing survived sanitising is not a row — it would reach
       // the grid as a blank line the requester has to notice and delete.
       .filter((r) => r.expenseDate || r.description || r.amount !== null || r.documentNo);
