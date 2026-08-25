@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Plus, Trash2, Paperclip, X, Loader2, ScanLine } from "lucide-react";
+import { Plus, Trash2, Paperclip, X, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog } from "@/components/ui";
 import { ImageLightbox } from "@/features/accounting/components/ImageLightbox";
@@ -93,7 +93,7 @@ export function ExpenseRows({
         className="w-full flex items-center justify-center gap-1.5 py-2.5 mb-2 rounded-xl text-[13px] font-medium cursor-pointer transition-colors acc-add-row"
         style={{
           border: "1px dashed var(--border-card)",
-          background: "transparent",
+          background: "var(--bg-card-alt)",
           color: "var(--text-muted)",
         }}
       >
@@ -206,7 +206,7 @@ function ExpenseRow({
    * the field came first still holds its figure, and hiding it would take money
    * off a form its owner had already filled in.
    */
-  const showAmount = totalFiles > 0 || Number(item.amount) > 0;
+  const showAmount = totalFiles > 0 || Number(item.amount) > 0 || readNote === "reading";
 
   // The read resolves seconds after the attach. These keep its write honest
   // against a row that has since been filled in by hand, or removed altogether.
@@ -456,12 +456,13 @@ function ExpenseRow({
             }
             className="relative w-14 h-14 shrink-0 rounded-xl flex items-center justify-center cursor-pointer acc-add-row"
             style={{
-              // Same fill as the row it sits in, so the dashed border is what
-              // marks it out rather than a colour difference — deliberate, and
-              // the reason the border stays dashed while everything else here
-              // is solid.
+              // A tint against the row's white, so the control reads as a
+              // control at a glance and the dashed border only has to say
+              // "add" rather than carry the whole job of being visible.
+              // Matches "เพิ่มรายการ" above — the two are the same kind of
+              // thing and should not look like two different ideas.
               border: "1px dashed var(--border-card)",
-              background: "var(--bg-card)",
+              background: "var(--bg-card-alt)",
               color: "var(--text-secondary)",
             }}
           >
@@ -492,6 +493,18 @@ function ExpenseRow({
               >
                 ฿
               </span>
+              {/* Indeterminate sweep along the field's own bottom edge — the
+                  exact place the figure is about to appear. A line of text
+                  under the row is easy to miss while looking at the input;
+                  this is not. Same animation the loading popup uses. */}
+              {readNote === "reading" && (
+                <div
+                  className="absolute left-0 right-0 bottom-0 h-[3px] rounded-b-lg overflow-hidden pointer-events-none"
+                  style={{ background: "color-mix(in srgb, var(--color-action) 12%, transparent)" }}
+                >
+                  <div className="acc-progress h-full" style={{ background: "var(--color-action)" }} />
+                </div>
+              )}
             </>
           ) : (
             /* Sits where the input will be, so the empty slot explains itself
@@ -530,7 +543,9 @@ function ExpenseRow({
           className="m-0 text-[12px] flex items-center gap-1.5"
           style={{ color: "var(--text-muted)" }}
         >
-          <ScanLine size={12} className="animate-pulse shrink-0" />
+          {/* Spinning, not pulsing. A pulse on a 12px icon is easy to read as
+              a rendering artefact; rotation is unmistakably "working". */}
+          <Loader2 size={12} className="animate-spin shrink-0" style={{ color: "var(--color-action)" }} />
           กำลังอ่านยอดจากใบเสร็จ — ระหว่างนี้กรอกเองได้เลย
         </p>
       )}

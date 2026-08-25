@@ -815,8 +815,11 @@ html:has(.acc-theme) {
 .acc-add-row {
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
+/* The resting fill moved to --bg-card-alt (set inline on the two controls that
+   use this class), so hover has to go a step further or it would be invisible
+   against it. --nav-active-bg is a 10% action tint: bluer, not just darker. */
 .acc-add-row:hover {
-  background: var(--bg-card-alt);
+  background: var(--nav-active-bg);
   border-color: var(--nav-active-text);
   color: var(--nav-active-text);
 }
