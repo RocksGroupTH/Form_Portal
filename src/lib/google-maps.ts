@@ -1,5 +1,4 @@
-import { env } from "@/env";
-import { getAppSetting } from "@/lib/app-settings";
+import { resolveApiKey } from "@/lib/api-keys/service";
 import {
   GoogleMapsReferrerRestrictedError,
   parseGeocodeTestResponse,
@@ -10,26 +9,22 @@ export { GoogleMapsReferrerRestrictedError, testGoogleMapsKeyInBrowser };
 
 const GEOCODE_TEST_URL = "https://maps.googleapis.com/maps/api/geocode/json";
 
-/** Resolve Google Maps API key: Fast_Core AppSetting first, then env fallbacks. */
+/**
+ * Resolve the Google Maps key through the shared registry: Settings → API Keys
+ * first, then the old `Fast_Core.AppSetting` row, then env.
+ *
+ * The middle step is why this move needed no flag day — a key nobody has
+ * entered on the new page keeps resolving exactly where it always did. It
+ * reports as `"db"` because from an operator's side it is still "stored in the
+ * database, not in a file", which is the only distinction this signal drives.
+ */
 export async function resolveGoogleMapsKey(): Promise<{
   key: string | null;
   source: "db" | "env" | null;
 }> {
-  let dbKey: string | undefined;
-  try {
-    dbKey = (await getAppSetting("GOOGLE_MAPS_API_KEY"))?.trim() || undefined;
-  } catch {
-    dbKey = undefined;
-  }
-  if (dbKey) return { key: dbKey, source: "db" };
-
-  const publicKey = env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY?.trim();
-  if (publicKey) return { key: publicKey, source: "env" };
-
-  const serverKey = env.GOOGLE_MAPS_API_KEY?.trim();
-  if (serverKey) return { key: serverKey, source: "env" };
-
-  return { key: null, source: null };
+  const { value, source } = await resolveApiKey("GOOGLE_MAPS_API_KEY");
+  if (!value) return { key: null, source: null };
+  return { key: value, source: source === "env" ? "env" : "db" };
 }
 
 async function requireKey(): Promise<string> {
@@ -38,9 +33,16 @@ async function requireKey(): Promise<string> {
   return key;
 }
 
-/** Server-side smoke test (Geocoding API). Fails for HTTP-referrer-only keys. */
-export async function testGoogleMapsKey(): Promise<number> {
-  const key = await requireKey();
+/**
+ * Server-side smoke test (Geocoding API). Fails for HTTP-referrer-only keys.
+ *
+ * `explicitKey` lets Settings → API Keys test the value on one particular row,
+ * including a deactivated one, rather than whatever `resolveGoogleMapsKey`
+ * happens to answer with — otherwise "test" would silently check a different
+ * key from the one being looked at.
+ */
+export async function testGoogleMapsKey(explicitKey?: string): Promise<number> {
+  const key = explicitKey?.trim() || (await requireKey());
   const url =
     `${GEOCODE_TEST_URL}?address=${encodeURIComponent("กรุงเทพ")}` +
     `&key=${encodeURIComponent(key)}` +
