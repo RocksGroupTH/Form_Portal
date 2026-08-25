@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  isPurposeGiven,
   REIMBURSE_NOTICE,
   RULE_TEXT_MAX,
   RULE_TEXT_REQUIRED,
@@ -112,4 +113,24 @@ test("an unknown or deactivated rule id is named, not left to the FK", () => {
   // the request would record agreement to a line that is no longer shown.
   assert.deepStrictEqual(unknownRuleAckIds([2], [1, 3]), [2]);
   assert.deepStrictEqual(unknownRuleAckIds([], active), []);
+});
+
+/* ─────────────────────────── วัตถุประสงค์ is required ─────────────────────────── */
+
+test("a purpose with real characters is accepted", () => {
+  assert.equal(isPurposeGiven("ค่าเดินทางไปพบลูกค้า"), true);
+  assert.equal(isPurposeGiven("x"), true);
+});
+
+test("nothing, or only whitespace, is not a purpose", () => {
+  // The field is a textarea, so a requester who presses Enter twice and moves
+  // on has typed something the server must still refuse.
+  for (const blank of [null, undefined, "", "   ", "\n", "\t\n  ", " "]) {
+    assert.equal(isPurposeGiven(blank as string | null), false, JSON.stringify(blank));
+  }
+});
+
+test("a non-string is not a purpose", () => {
+  assert.equal(isPurposeGiven(42 as never), false);
+  assert.equal(isPurposeGiven({} as never), false);
 });

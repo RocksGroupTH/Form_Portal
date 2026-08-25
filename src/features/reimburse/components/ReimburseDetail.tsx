@@ -14,6 +14,7 @@ import {
   Info,
   ListChecks,
   Mail,
+  Download,
   Paperclip,
   Receipt,
   RotateCcw,
@@ -22,6 +23,12 @@ import {
   User,
   XCircle,
 } from "lucide-react";
+import {
+  AttachmentViewer,
+  attachmentKind,
+  type AttachmentKind,
+  type AttachmentSource,
+} from "./AttachmentViewer";
 import { Dialog } from "@/components/ui";
 import { Avatar } from "@/components/ui/Avatar";
 import { UatDataBanner } from "@/components/UatDataBanner";
@@ -341,23 +348,46 @@ function DetailRow({ label, value }: { label: string; value: React.ReactNode }) 
   );
 }
 
-function FileLink({ file }: { file: ReimburseFileMeta }) {
+/**
+ * One attachment row: the name opens it in the viewer, the icon downloads it.
+ *
+ * This is the surface the three approvers actually read a claim on, and until
+ * now every file here — receipt, tax invoice, workbook — was a bare download
+ * link, so checking one meant leaving the page and opening whatever the desktop
+ * associates with `.pdf`. The download stays, because approving is not the only
+ * reason to want the file.
+ */
+function FileLink({ file, onView }: { file: ReimburseFileMeta; onView: () => void }) {
   const image = isImageFile(file);
   return (
-    <a
-      href={file.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="flex items-center gap-2.5 rounded-lg px-3 py-2 min-w-0 no-underline"
+    <div
+      className="flex items-center gap-2.5 rounded-lg px-3 py-2 min-w-0"
       style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}
     >
       <span className="shrink-0" style={{ color: "var(--nav-active-text)" }}>
         {image ? <ImageIcon size={16} /> : <FileText size={16} />}
       </span>
-      <span className="text-[12.5px] font-semibold truncate" style={{ color: "var(--text-primary)" }}>
+      <button
+        type="button"
+        onClick={onView}
+        className="flex-1 min-w-0 text-left text-[12.5px] font-semibold truncate cursor-zoom-in border-none bg-transparent p-0"
+        style={{ color: "var(--text-primary)" }}
+        title={file.fileName}
+      >
         {file.fileName}
-      </span>
-    </a>
+      </button>
+      <a
+        href={file.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label={`ดาวน์โหลด ${file.fileName}`}
+        title="ดาวน์โหลด"
+        className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center no-underline"
+        style={{ background: "var(--bg-card)", color: "var(--text-muted)" }}
+      >
+        <Download size={14} />
+      </a>
+    </div>
   );
 }
 
@@ -382,6 +412,17 @@ export function ReimburseDetail({
   const rules = rulesData ?? [];
   const ackedSet = new Set(request.ackedRuleIds);
   const ackedRules = rules.filter((r) => ackedSet.has(r.id));
+
+  // What the attachment viewer is showing. Stored files only here — nothing on
+  // this page is unsaved.
+  const [viewing, setViewing] = useState<{ source: AttachmentSource; kind: AttachmentKind } | null>(
+    null,
+  );
+  const viewFile = (f: ReimburseFileMeta) =>
+    setViewing({
+      source: { name: f.fileName, url: f.url },
+      kind: attachmentKind(f.fileName, f.contentType),
+    });
 
   const brand = getBrandById(request.brandCode);
   // Recomputed from the items on screen, with the server's own function, so the
@@ -980,7 +1021,7 @@ export function ReimburseDetail({
               ไฟล์ Excel สรุปรายการ (AP-4.1)
             </p>
             {request.excelFile ? (
-              <FileLink file={request.excelFile} />
+              <FileLink file={request.excelFile} onView={() => viewFile(request.excelFile!)} />
             ) : (
               <p className="text-[13px] m-0" style={{ color: "var(--text-faint)" }}>
                 — ไม่มีไฟล์ —
@@ -999,7 +1040,7 @@ export function ReimburseDetail({
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {request.receiptFiles.map((f) => (
-                  <FileLink key={f.id} file={f} />
+                  <FileLink key={f.id} file={f} onView={() => viewFile(f)} />
                 ))}
               </div>
             )}
@@ -1249,6 +1290,13 @@ export function ReimburseDetail({
           </button>
         </div>
       </Dialog>
+
+      <AttachmentViewer
+        open={viewing !== null}
+        source={viewing?.source ?? null}
+        kind={viewing?.kind ?? "other"}
+        onClose={() => setViewing(null)}
+      />
     </div>
   );
 }

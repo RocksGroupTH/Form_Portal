@@ -5,38 +5,20 @@ import { createPortal } from "react-dom";
 import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
 import { fmtTravelDatesList } from "@/features/accounting/lib/format-travel-dates";
 
-const TH_DAYS = ["อา", "จ", "อ", "พ", "พฤ", "ศ", "ส"] as const;
-const TH_MONTHS = [
-  "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
-  "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม",
-] as const;
-
-function toYmd(year: number, month0: number, day: number): string {
-  return `${year}-${String(month0 + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-}
-
-function parseYmd(ymd: string): { year: number; month0: number; day: number } | null {
-  const [ys, ms, ds] = ymd.split("-");
-  const year = Number(ys);
-  const month0 = Number(ms) - 1;
-  const day = Number(ds);
-  if (!year || month0 < 0 || month0 > 11 || !day) return null;
-  return { year, month0, day };
-}
-
-function buildMonthCells(year: number, month0: number): (number | null)[] {
-  const firstDow = new Date(year, month0, 1).getDay();
-  const daysInMonth = new Date(year, month0 + 1, 0).getDate();
-  const cells: (number | null)[] = [];
-  for (let i = 0; i < firstDow; i++) cells.push(null);
-  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-  return cells;
-}
-
-function todayYmd(): string {
-  const now = new Date();
-  return toYmd(now.getFullYear(), now.getMonth(), now.getDate());
-}
+// The month arithmetic and Thai labels are shared with `SingleDatePicker`
+// (AP-4's per-row expense date) rather than kept as a second copy here — see
+// `thai-calendar.ts` for why. `parseYmd` is stricter than the local version it
+// replaces: it refuses a day the month does not have, so a corrupt stored
+// value now opens the panel on the current month instead of on a month that
+// silently rolled forward.
+import {
+  TH_DAYS,
+  TH_MONTHS,
+  buildMonthCells,
+  parseYmd,
+  toYmd,
+  todayYmd,
+} from "@/features/accounting/lib/thai-calendar";
 
 export interface FilterMultiDatePickerProps {
   label: string;

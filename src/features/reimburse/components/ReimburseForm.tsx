@@ -35,7 +35,11 @@ import {
 } from "@/features/travel-booking/components/shared";
 import { sumReimburseItems } from "@/lib/acc/reimburse/calc";
 import { isBlankItemRow } from "@/lib/acc/reimburse/item-money";
-import { AP4_FORM_CODE, REIMBURSE_FILE_REFTYPES } from "@/features/reimburse/constants";
+import { AP4_FORM_CODE, isPurposeGiven, REIMBURSE_FILE_REFTYPES } from "@/features/reimburse/constants";
+import {
+  RECEIPT_FIELDS_FAILURE_TEXT,
+  readReceiptFields,
+} from "@/features/reimburse/lib/read-receipt-fields";
 import type {
   ReimburseDetail,
   ReimburseFileMeta,
@@ -144,6 +148,8 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [triedSubmit, setTriedSubmit] = useState(false);
+  const [readingIndex, setReadingIndex] = useState<number | null>(null);
+  const [readNote, setReadNote] = useState<string | null>(null);
 
   const itemsRef = useRef<HTMLDivElement>(null);
   const filesRef = useRef<HTMLDivElement>(null);
@@ -419,6 +425,12 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
       label: "แบรนด์ที่เบิก (แบรนด์เดิมไม่อยู่ในรายการที่อนุญาตแล้ว — กรุณาเลือกใหม่)",
     });
   }
+
+  // Ordered right after แบรนด์ because that is where it sits on the form, and
+  // `focusFirstMissing` scrolls to whichever entry is first.
+  if (!isPurposeGiven(purpose)) {
+    missing.push({ key: "purpose", label: "วัตถุประสงค์ / รายละเอียดการเบิก" });
+  }
   if (filledItems.length === 0) {
     missing.push({ key: "items", label: "รายการค่าใช้จ่ายอย่างน้อย 1 รายการ" });
   }
@@ -455,8 +467,14 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
   const focusFirstMissing = useCallback(() => {
     const first = firstMissingKey;
     if (!first) return;
-    const el =
-      first === "manager"
+    const el: HTMLElement | null =
+      // Markup claims its own key first, the shape AP-1's form settled on. The
+      // chain below only knows the handful of names somebody remembered to add
+      // to it, and **everything else falls through to `rulesRef`** — so a new
+      // field lands on the compliance checklist rather than on the thing that
+      // is actually empty. A new block needs a `data-field`, not an extra arm.
+      document.querySelector<HTMLElement>(`[data-field="${first}"]`)
+      ?? (first === "manager"
         ? managerRef.current
         : first === "brand"
           ? brandRef.current
@@ -464,8 +482,11 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
             ? itemsRef.current
             : first === "excel" || first === "receipt"
               ? filesRef.current
-              : rulesRef.current;
-    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+              : rulesRef.current);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) el.focus();
+    }
   }, [firstMissingKey]);
 
   /* ── persistence ── */
@@ -683,6 +704,70 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
   const removePendingReceipt = useCallback((index: number) => {
     setPendingReceipts((prev) => prev.filter((_, i) => i !== index));
   }, []);
+
+  /* ── reading a receipt into one expense row ── */
+
+  // Set on mount, not only cleared on unmount. `useEffect(() => () => {...}, [])`
+  // looks equivalent and is not: `reactStrictMode` is unset in next.config.mjs,
+  // which means on, so development runs mount → cleanup → mount and the ref
+  // would stay false for the rest of the component's life — every read then
+  // returns early and nothing is ever filled. Found the hard way in AP-1.
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
+
+  const handleReadReceipt = useCallback(
+    async (index: number, file: File) => {
+      // One at a time across the whole grid: the call is billed per image, and
+      // the grid disables every other row's button while this is set.
+      if (readingIndex !== null) return;
+      setReadingIndex(index);
+      setReadNote(null);
+
+      // Kept whatever the read returns. The requester attached a receipt; that
+      // it was also unreadable is no reason to drop the evidence, and AP-4
+      // refuses to submit without at least one หลักฐาน file.
+      addReceipts([file]);
+
+      try {
+        const read = await readReceiptFields(file);
+        if (!aliveRef.current) return;
+        if (read.failure) {
+          setReadNote(RECEIPT_FIELDS_FAILURE_TEXT[read.failure]);
+          return;
+        }
+        // Only what is still empty. Somebody who typed a figure while the read
+        // was in flight keeps theirs — a model answer arriving a second later
+        // must never overwrite a person's own number on a claim for money.
+        setItems((prev) =>
+          prev.map((it, i) => {
+            if (i !== index) return it;
+            const patch: Partial<ReimburseItem> = {};
+            const f = read.fields;
+            if (f.expenseDate && !it.expenseDate) patch.expenseDate = f.expenseDate;
+            if (f.description && !it.description?.trim()) patch.description = f.description;
+            if (f.amount !== null && !(Number(it.amount) > 0)) patch.amount = f.amount;
+            if (f.vat !== null && it.vatAmount === null) patch.vatAmount = f.vat;
+            if (f.withholdingTax !== null && it.whtAmount === null) {
+              patch.whtAmount = f.withholdingTax;
+            }
+            return { ...it, ...patch };
+          }),
+        );
+      } catch {
+        if (aliveRef.current) setReadNote(RECEIPT_FIELDS_FAILURE_TEXT.error);
+      } finally {
+        // Released on every path, so a failure never leaves the row's controls
+        // locked with no way back. Re-attaching the image is the retry.
+        if (aliveRef.current) setReadingIndex(null);
+      }
+    },
+    [readingIndex, addReceipts],
+  );
 
   /* ─────────────────────────── render ─────────────────────────── */
 
@@ -972,16 +1057,28 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
 
         <div>
           <label className={labelClass} style={labelStyle}>
-            วัตถุประสงค์ / รายละเอียดการเบิก
+            วัตถุประสงค์ / รายละเอียดการเบิก {requiredStar}
           </label>
           <textarea
             rows={2}
+            data-field="purpose"
             className={inputClass}
-            style={{ ...inputStyle, resize: "vertical" }}
+            style={{
+              ...inputStyle,
+              resize: "vertical",
+              ...(showErr("purpose")
+                ? { borderColor: "var(--color-danger)", boxShadow: "0 0 0 1px var(--color-danger)" }
+                : null),
+            }}
             value={purpose}
-            placeholder="เบิกค่าอะไร ใช้กับงานไหน (ถ้ามี)..."
+            placeholder="เบิกค่าอะไร ใช้กับงานไหน..."
             onChange={(e) => setPurpose(e.target.value)}
           />
+          {showErr("purpose") && (
+            <p className="text-[11.5px] mt-1.5 m-0" style={{ color: "var(--color-danger)" }}>
+              กรุณากรอกวัตถุประสงค์ / รายละเอียดการเบิก
+            </p>
+          )}
         </div>
       </SectionCard>
 
@@ -995,6 +1092,9 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
             onRemove={removeItem}
             problems={rowProblems}
             showProblems={triedSubmit}
+            onReadReceipt={handleReadReceipt}
+            readingIndex={readingIndex}
+            readNote={readNote}
           />
         </SectionCard>
       </div>

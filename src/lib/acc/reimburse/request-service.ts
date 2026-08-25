@@ -47,6 +47,8 @@ import {
   AP4_FORM_CODE,
   AP4_RUNNING_PREFIX,
   REIMBURSE_FILE_REFTYPES,
+  isPurposeGiven,
+  PURPOSE_REQUIRED,
 } from "@/features/reimburse/constants";
 import type {
   ReimburseApproval,
@@ -503,6 +505,11 @@ async function validateReimburseForSubmit(
   }
 
   if (!current.brandCode) errs.push(ERR_NO_BRAND);
+
+  // Spec §5.2 field 2. Client-side required marks are not a control: a draft
+  // written before this rule existed still holds a null purpose, and the save
+  // path accepts one, so the check has to be here as well as on the form.
+  if (!isPurposeGiven(current.purpose)) errs.push(PURPOSE_REQUIRED);
 
   if (current.items.length === 0) {
     errs.push(ERR_NO_ITEMS);

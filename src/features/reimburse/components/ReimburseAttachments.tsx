@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import {
+  Download,
   FileSpreadsheet,
   FileText,
   ImageIcon,
@@ -10,7 +11,12 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import { ImageLightbox } from "@/features/accounting/components/ImageLightbox";
+import {
+  AttachmentViewer,
+  attachmentKind,
+  type AttachmentKind,
+  type AttachmentSource,
+} from "./AttachmentViewer";
 import type { ReimburseFileMeta } from "@/features/reimburse/types";
 
 /**
@@ -201,6 +207,22 @@ function FileRow({
           {pending ? "จะอัปโหลดเมื่อกดบันทึกร่าง/ส่งคำขอ" : meta}
         </span>
       </div>
+      {/* Downloading survives the viewer, and has to. The name above opens the
+          preview once `onPreview` is given, so without this button a stored PDF
+          — which used to be a plain link — would no longer be savable at all. */}
+      {href && (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`ดาวน์โหลด ${name}`}
+          title="ดาวน์โหลด"
+          className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center no-underline"
+          style={{ background: "var(--bg-card-alt)", color: "var(--text-muted)" }}
+        >
+          <Download size={14} />
+        </a>
+      )}
       <button
         type="button"
         onClick={onRemove}
@@ -246,20 +268,27 @@ export function ReimburseAttachments({
   const excelInputRef = useRef<HTMLInputElement>(null);
   const receiptInputRef = useRef<HTMLInputElement>(null);
   const [removingId, setRemovingId] = useState<number | null>(null);
-  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
 
-  // Object URLs for the not-yet-uploaded receipt previews, revoked together
-  // whenever the pending set changes so a long editing session cannot leak them.
-  const pendingReceiptUrls = useMemo(
-    () => pendingReceipts.map((f) => (f.type.startsWith("image/") ? URL.createObjectURL(f) : null)),
-    [pendingReceipts],
+  /**
+   * What the viewer is showing, and how to render it.
+   *
+   * One piece of state for every slot: a stored PDF, a pending workbook and an
+   * uploaded photo are the same question — "let me look at this" — and the
+   * viewer resolves the bytes itself, so nothing here has to mint an object URL
+   * per row the way the image-only preview used to.
+   */
+  const [viewing, setViewing] = useState<{ source: AttachmentSource; kind: AttachmentKind } | null>(
+    null,
   );
-  useEffect(
-    () => () => {
-      for (const url of pendingReceiptUrls) if (url) URL.revokeObjectURL(url);
-    },
-    [pendingReceiptUrls],
-  );
+
+  const viewStored = (f: ReimburseFileMeta) =>
+    setViewing({
+      source: { name: f.fileName, url: f.url },
+      kind: attachmentKind(f.fileName, f.contentType),
+    });
+
+  const viewPending = (f: File) =>
+    setViewing({ source: { name: f.name, file: f }, kind: attachmentKind(f.name, f.type) });
 
   const handleRemoveStored = async (fileId: number) => {
     setRemovingId(fileId);
@@ -297,6 +326,7 @@ export function ReimburseAttachments({
             name={pendingExcel.name}
             meta={fmtSize(pendingExcel.size)}
             pending
+            onPreview={() => viewPending(pendingExcel)}
             onRemove={() => onSelectExcel(null)}
           />
         ) : excelFile ? (
@@ -305,6 +335,7 @@ export function ReimburseAttachments({
             name={excelFile.fileName}
             meta={fmtSize(excelFile.fileSize)}
             href={excelFile.url}
+            onPreview={() => viewStored(excelFile)}
             onRemove={() => handleRemoveStored(excelFile.id)}
             removing={removingId === excelFile.id}
           />
@@ -338,33 +369,27 @@ export function ReimburseAttachments({
 
         {(receiptFiles.length > 0 || pendingReceipts.length > 0) && (
           <div className="flex flex-col gap-2">
-            {receiptFiles.map((f) => {
-              const image = isImage(f.contentType, f.fileName);
-              return (
-                <FileRow
-                  key={f.id}
-                  icon={image ? <ImageIcon size={16} /> : <FileText size={16} />}
-                  name={f.fileName}
-                  meta={fmtSize(f.fileSize)}
-                  href={image ? undefined : f.url}
-                  onPreview={image ? () => setLightboxSrc(f.url) : undefined}
-                  onRemove={() => handleRemoveStored(f.id)}
-                  removing={removingId === f.id}
-                />
-              );
-            })}
+            {receiptFiles.map((f) => (
+              <FileRow
+                key={f.id}
+                icon={isImage(f.contentType, f.fileName) ? <ImageIcon size={16} /> : <FileText size={16} />}
+                name={f.fileName}
+                meta={fmtSize(f.fileSize)}
+                // Both: the name opens the viewer, the icon still downloads.
+                href={f.url}
+                onPreview={() => viewStored(f)}
+                onRemove={() => handleRemoveStored(f.id)}
+                removing={removingId === f.id}
+              />
+            ))}
             {pendingReceipts.map((f, i) => (
               <FileRow
                 key={pendingKeyOf(f)}
-                icon={
-                  pendingReceiptUrls[i] ? <ImageIcon size={16} /> : <FileText size={16} />
-                }
+                icon={f.type.startsWith("image/") ? <ImageIcon size={16} /> : <FileText size={16} />}
                 name={f.name}
                 meta={fmtSize(f.size)}
                 pending
-                onPreview={
-                  pendingReceiptUrls[i] ? () => setLightboxSrc(pendingReceiptUrls[i]!) : undefined
-                }
+                onPreview={() => viewPending(f)}
                 onRemove={() => onRemovePendingReceipt(i)}
               />
             ))}
@@ -377,10 +402,11 @@ export function ReimburseAttachments({
         />
       </SlotShell>
 
-      <ImageLightbox
-        open={!!lightboxSrc}
-        src={lightboxSrc ?? ""}
-        onClose={() => setLightboxSrc(null)}
+      <AttachmentViewer
+        open={viewing !== null}
+        source={viewing?.source ?? null}
+        kind={viewing?.kind ?? "other"}
+        onClose={() => setViewing(null)}
       />
     </div>
   );

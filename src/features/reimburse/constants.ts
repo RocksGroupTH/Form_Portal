@@ -107,6 +107,29 @@ export function unknownRuleAckIds(
   return out;
 }
 
+/* ─────────────────────────── วัตถุประสงค์ ─────────────────────────── */
+
+/**
+ * The message the submit refuses with when วัตถุประสงค์ is empty. It lives
+ * beside the predicate so the server's error and the form's inline warning
+ * cannot drift into saying two different things.
+ */
+export const PURPOSE_REQUIRED = "กรุณากรอกวัตถุประสงค์ / รายละเอียดการเบิก";
+
+/**
+ * Is there a purpose worth storing?
+ *
+ * Required at **submit**, not at draft save — the line every other AP-4 rule
+ * sits on, so a half-filled draft still saves. Whitespace has to count as
+ * absent because the field is a textarea: somebody who presses Enter twice and
+ * moves on has typed something, and the save path's `purpose.trim() || null`
+ * would store that as null anyway. Refusing it at submit and accepting it at
+ * save would mean the row that passed validation is not the row that persists.
+ */
+export function isPurposeGiven(purpose: string | null | undefined): boolean {
+  return typeof purpose === "string" && purpose.trim().length > 0;
+}
+
 /**
  * The rule text as it will be stored, or the message refusing it.
  *

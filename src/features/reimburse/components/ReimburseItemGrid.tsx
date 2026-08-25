@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { CircleAlert, Plus, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { CircleAlert, Loader2, Plus, ScanLine, Trash2 } from "lucide-react";
+import { SingleDatePicker } from "@/features/accounting/components/SingleDatePicker";
 import { fmtBaht } from "@/features/travel-booking/components/shared";
 import { sumReimburseItems } from "@/lib/acc/reimburse/calc";
 import {
@@ -165,7 +166,61 @@ export function findItemRowProblems(items: ReimburseItem[]): ItemRowProblem[] {
 const HEAD_CLASS = "text-[11px] font-semibold uppercase tracking-wide";
 const MOBILE_LABEL_CLASS = "md:hidden text-[11px] font-semibold uppercase tracking-wide mb-1";
 const ROW_GRID =
-  "grid grid-cols-1 md:grid-cols-[150px_minmax(0,1fr)_130px_120px_130px_36px] gap-2 md:items-center";
+  "grid grid-cols-1 md:grid-cols-[150px_minmax(0,1fr)_130px_120px_130px_78px] gap-2 md:items-center";
+
+/**
+ * The per-row "read a receipt" control.
+ *
+ * Its own file input rather than one shared input plus a "which row?"
+ * variable: a shared input has to be re-pointed before every click, and
+ * picking the same file twice in a row fires no `change` event at all unless
+ * the value is cleared in between. One input per row removes both.
+ */
+function RowReceiptButton({
+  index,
+  busy,
+  disabled,
+  onPick,
+}: {
+  index: number;
+  busy: boolean;
+  /** Another row is mid-read. The call is billed, so one at a time for the whole grid. */
+  disabled: boolean;
+  onPick: (file: File) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  return (
+    <>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) onPick(file);
+          // Cleared so re-picking the same file still fires `change`.
+          e.target.value = "";
+        }}
+      />
+      <button
+        type="button"
+        disabled={busy || disabled}
+        onClick={() => inputRef.current?.click()}
+        aria-label={`อ่านใบเสร็จสำหรับรายการที่ ${index + 1}`}
+        title={busy ? "กำลังอ่านใบเสร็จ..." : "แนบใบเสร็จเพื่ออ่านข้อมูลมาเติมให้"}
+        className="w-9 h-9 rounded-lg flex items-center justify-center border-none shrink-0 disabled:opacity-60"
+        style={{
+          background: "var(--nav-active-bg)",
+          color: "var(--nav-active-text)",
+          cursor: busy || disabled ? "not-allowed" : "pointer",
+        }}
+      >
+        {busy ? <Loader2 size={15} className="animate-spin" /> : <ScanLine size={15} />}
+      </button>
+    </>
+  );
+}
 
 export function ReimburseItemGrid({
   items,
@@ -174,6 +229,9 @@ export function ReimburseItemGrid({
   onRemove,
   problems,
   showProblems,
+  onReadReceipt,
+  readingIndex,
+  readNote,
 }: {
   items: ReimburseItem[];
   onUpdate: (index: number, patch: Partial<ReimburseItem>) => void;
@@ -183,6 +241,12 @@ export function ReimburseItemGrid({
   problems: ItemRowProblem[];
   /** Only paint a row red once a submit has actually been attempted. */
   showProblems: boolean;
+  /** Read this image into row `index`, and keep it as a หลักฐาน attachment. */
+  onReadReceipt: (index: number, file: File) => void;
+  /** Which row is mid-read, or null. Owned by the form, which owns the file list. */
+  readingIndex: number | null;
+  /** Why the last read produced nothing. Cleared by the form on the next attempt. */
+  readNote: string | null;
 }) {
   // The total the server will store: the blank trailing row contributes
   // nothing, and `sumReimburseItems` is the same function it totals with.
@@ -206,6 +270,16 @@ export function ReimburseItemGrid({
         <span />
       </div>
 
+      {readNote && (
+        <p
+          className="text-[12px] m-0 px-1 flex items-start gap-1.5"
+          style={{ color: "var(--text-muted)" }}
+        >
+          <CircleAlert size={13} className="shrink-0 mt-0.5" />
+          {readNote}
+        </p>
+      )}
+
       {items.length === 0 && (
         <p className="text-[13px] text-center py-4 m-0" style={{ color: "var(--text-faint)" }}>
           ยังไม่มีรายการ — กด &quot;เพิ่มรายการ&quot; เพื่อเริ่มกรอก
@@ -228,20 +302,12 @@ export function ReimburseItemGrid({
               <span className={MOBILE_LABEL_CLASS} style={{ color: "var(--text-muted)" }}>
                 วันที่
               </span>
-              <input
-                type="date"
-                aria-label={`วันที่ของรายการที่ ${index + 1}`}
+              <SingleDatePicker
                 value={item.expenseDate ?? ""}
-                onChange={(e) => onUpdate(index, { expenseDate: e.target.value || null })}
-                className="w-full rounded-lg px-3 py-2 text-[14px] outline-none"
-                style={{
-                  background: "var(--bg-input)",
-                  color: "var(--text-primary)",
-                  borderWidth: 1,
-                  borderStyle: "solid",
-                  borderColor: dateBad ? "var(--color-danger)" : "var(--border-input)",
-                  boxShadow: dateBad ? "0 0 0 1px var(--color-danger)" : undefined,
-                }}
+                onChange={(ymd) => onUpdate(index, { expenseDate: ymd || null })}
+                ariaLabel={`วันที่ของรายการที่ ${index + 1}`}
+                placeholder="เลือกวันที่..."
+                hasError={dateBad}
               />
             </div>
 
@@ -307,13 +373,19 @@ export function ReimburseItemGrid({
               />
             </div>
 
-            <div className="flex md:block justify-end">
+            <div className="flex justify-end gap-1.5">
+              <RowReceiptButton
+                index={index}
+                busy={readingIndex === index}
+                disabled={readingIndex !== null && readingIndex !== index}
+                onPick={(file) => onReadReceipt(index, file)}
+              />
               <button
                 type="button"
                 onClick={() => onRemove(index)}
                 aria-label={`ลบรายการที่ ${index + 1}`}
                 title="ลบรายการนี้"
-                className="w-9 h-9 rounded-lg flex items-center justify-center cursor-pointer border-none"
+                className="w-9 h-9 rounded-lg flex items-center justify-center cursor-pointer border-none shrink-0"
                 style={{ background: "var(--bg-card-alt)", color: "var(--color-danger)" }}
               >
                 <Trash2 size={15} />

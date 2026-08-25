@@ -1,0 +1,156 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+// Relative, not "@/": tsx does not resolve the alias for a bare test run.
+import { sanitizeReceiptFields, MAX_DESCRIPTION_LENGTH } from "./receipt-fields";
+
+const TODAY = "2026-08-25";
+
+test("a clean answer comes through field for field", () => {
+  const out = sanitizeReceiptFields(
+    { expenseDate: "2026-08-20", description: "ค่าแท็กซี่ ไปสำนักงานใหญ่", amount: 428, vat: 28, withholdingTax: null },
+    TODAY,
+  );
+  assert.deepEqual(out, {
+    expenseDate: "2026-08-20",
+    description: "ค่าแท็กซี่ ไปสำนักงานใหญ่",
+    amount: 428,
+    vat: 28,
+    withholdingTax: null,
+  });
+});
+
+test("one bad field nulls only itself", () => {
+  // The whole answer is not thrown away over one unreadable number — the
+  // requester keeps the fields the model did get right.
+  const out = sanitizeReceiptFields(
+    { expenseDate: "2026-08-20", description: "ค่าอาหาร", amount: -5, vat: null, withholdingTax: null },
+    TODAY,
+  );
+  assert.equal(out.amount, null);
+  assert.equal(out.description, "ค่าอาหาร");
+  assert.equal(out.expenseDate, "2026-08-20");
+});
+
+test("a 13-digit number is refused wherever it appears", () => {
+  // Every Thai receipt prints a tax id, and it is the number most likely to
+  // come back as the total. 13 digits is never a plausible baht amount here.
+  const out = sanitizeReceiptFields(
+    { expenseDate: null, description: null, amount: 1234567890123, vat: 1234567890123, withholdingTax: null },
+    TODAY,
+  );
+  assert.equal(out.amount, null);
+  assert.equal(out.vat, null);
+});
+
+test("an amount outside the plausible range is refused", () => {
+  for (const bad of [0, -1, 1_000_001, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.equal(
+      sanitizeReceiptFields({ expenseDate: null, description: null, amount: bad, vat: null, withholdingTax: null }, TODAY).amount,
+      null,
+      String(bad),
+    );
+  }
+  assert.equal(
+    sanitizeReceiptFields({ expenseDate: null, description: null, amount: 1_000_000, vat: null, withholdingTax: null }, TODAY).amount,
+    1_000_000,
+  );
+});
+
+test("VAT or withholding larger than the total is refused, not clamped", () => {
+  // Bigger than the total means the model matched the wrong line. A clamped
+  // figure would look deliberate on a form about to be submitted.
+  const out = sanitizeReceiptFields(
+    { expenseDate: null, description: null, amount: 100, vat: 150, withholdingTax: 999 },
+    TODAY,
+  );
+  assert.equal(out.amount, 100);
+  assert.equal(out.vat, null);
+  assert.equal(out.withholdingTax, null);
+});
+
+test("VAT equal to the total is allowed, and zero is a real answer", () => {
+  const out = sanitizeReceiptFields(
+    { expenseDate: null, description: null, amount: 100, vat: 100, withholdingTax: 0 },
+    TODAY,
+  );
+  assert.equal(out.vat, 100);
+  assert.equal(out.withholdingTax, 0);
+});
+
+test("VAT is refused outright when the total was not read", () => {
+  // With no total there is nothing to sanity-check it against, and a VAT
+  // figure alone in a row with no amount helps nobody.
+  const out = sanitizeReceiptFields(
+    { expenseDate: null, description: null, amount: null, vat: 28, withholdingTax: 7 },
+    TODAY,
+  );
+  assert.equal(out.vat, null);
+  assert.equal(out.withholdingTax, null);
+});
+
+test("a future date is refused; today is not", () => {
+  // A receipt cannot be for money not yet spent — a future date means the
+  // model read an expiry or a due date.
+  assert.equal(
+    sanitizeReceiptFields({ expenseDate: "2026-08-26", description: null, amount: null, vat: null, withholdingTax: null }, TODAY).expenseDate,
+    null,
+  );
+  assert.equal(
+    sanitizeReceiptFields({ expenseDate: TODAY, description: null, amount: null, vat: null, withholdingTax: null }, TODAY).expenseDate,
+    TODAY,
+  );
+});
+
+test("a malformed or impossible date is refused", () => {
+  for (const bad of ["", "25/08/2026", "2026-02-29", "not-a-date", "2569-08-25"]) {
+    assert.equal(
+      sanitizeReceiptFields({ expenseDate: bad, description: null, amount: null, vat: null, withholdingTax: null }, TODAY).expenseDate,
+      null,
+      bad,
+    );
+  }
+});
+
+test("the description is trimmed, and blank becomes null", () => {
+  assert.equal(
+    sanitizeReceiptFields({ expenseDate: null, description: "  ค่าน้ำมัน  ", amount: null, vat: null, withholdingTax: null }, TODAY).description,
+    "ค่าน้ำมัน",
+  );
+  for (const blank of ["", "   ", "\n\t"]) {
+    assert.equal(
+      sanitizeReceiptFields({ expenseDate: null, description: blank, amount: null, vat: null, withholdingTax: null }, TODAY).description,
+      null,
+      JSON.stringify(blank),
+    );
+  }
+});
+
+test("an over-long description is cut to what the column takes", () => {
+  // AccReimburseItem.Description is NVARCHAR(500); a longer string is a
+  // failed INSERT at submit, long after the requester has stopped looking.
+  const long = "ก".repeat(MAX_DESCRIPTION_LENGTH + 50);
+  const out = sanitizeReceiptFields(
+    { expenseDate: null, description: long, amount: null, vat: null, withholdingTax: null },
+    TODAY,
+  );
+  assert.equal(out.description?.length, MAX_DESCRIPTION_LENGTH);
+});
+
+test("a non-number where a number belongs is null, not NaN", () => {
+  const out = sanitizeReceiptFields(
+    // The route parses into this shape, but nothing stops a model from
+    // answering with the wrong type through a hand-rolled client.
+    { expenseDate: null, description: 42 as never, amount: "428" as never, vat: null, withholdingTax: null },
+    TODAY,
+  );
+  assert.equal(out.amount, null);
+  assert.equal(out.description, null);
+});
+
+test("everything null in gives everything null out", () => {
+  const out = sanitizeReceiptFields(
+    { expenseDate: null, description: null, amount: null, vat: null, withholdingTax: null },
+    TODAY,
+  );
+  assert.deepEqual(out, { expenseDate: null, description: null, amount: null, vat: null, withholdingTax: null });
+});
