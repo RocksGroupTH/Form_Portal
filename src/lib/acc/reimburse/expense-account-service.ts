@@ -75,53 +75,71 @@ export async function listExpenseAccounts(brandCode: string): Promise<ExpenseAcc
   }));
 }
 
-/** How many previously-used accounts are offered to the model as candidates. */
-const SUGGESTION_LIMIT = 60;
+/** How many previously-used accounts lead the list handed to the reader. */
+const HISTORY_LIMIT = 60;
 
 /**
- * The accounts AP-4 claims have actually been booked to before, most-used
- * first, narrowed to the ones still valid for this brand.
+ * Every account this brand can book to, **ordered with the ones AP-4 has
+ * actually used first**.
  *
- * This is what the document reader is given to choose from, rather than the
- * whole ~280-row list. It is **deliberately empty on day one**: nothing has
- * been filed yet, so there is no history, and the route then does not ask the
- * model about the category at all — a suggestion drawn from nothing is a
- * guess, and a guessed account is a misposted expense nobody re-checks. The
- * requester picks from the full picker instead, and their pick becomes the
- * history the next read learns from.
+ * This is what the document reader chooses from. It used to be the history
+ * *alone*, which had one consequence that turned out to matter more than the
+ * token cost it saved: with no history there were no candidates, so nothing
+ * was ever suggested, and nothing ever entered the history to break the
+ * deadlock. The reader now always has the full list, and history only decides
+ * what it sees first.
+ *
+ * Ordering is not decoration. The list runs to a few hundred rows, and the
+ * accounts this company has actually reimbursed against are far likelier than
+ * the rest of the chart — putting them at the top is a cheap prior that costs
+ * nothing when it is wrong, because everything else is still there below.
  *
  * History is read from the form database (`getAccPool()`) and the names from
  * the ERP mirror (`getErpDataPool()`), so the two are joined here rather than
- * in SQL — they are different databases, and the mirror has no UAT twin while
- * the form database does.
+ * in SQL — different databases, and the mirror has no UAT twin while the form
+ * database does. A history read that fails costs the ordering, never the list.
  */
 export async function listSuggestedExpenseAccounts(brandCode: string): Promise<ExpenseAccount[]> {
   const valid = await listExpenseAccounts(brandCode);
   if (valid.length === 0) return [];
 
-  const pool = await getAccPool();
-  const r = await pool
-    .request()
-    .input("form", accSql.NVarChar(20), AP4_FORM_CODE)
-    .query(
-      `SELECT TOP (${SUGGESTION_LIMIT}) i.Category AS accountNo, COUNT(*) AS uses
-       FROM [dbo].[AccReimburseItem] i
-       JOIN [dbo].[AccRequest] r ON r.Id = i.RequestId
-       WHERE r.FormCode = @form
-         AND i.Category IS NOT NULL
-         AND LTRIM(RTRIM(i.Category)) <> ''
-       GROUP BY i.Category
-       ORDER BY COUNT(*) DESC`,
-    );
+  let used: string[] = [];
+  try {
+    const pool = await getAccPool();
+    const r = await pool
+      .request()
+      .input("form", accSql.NVarChar(20), AP4_FORM_CODE)
+      .query(
+        `SELECT TOP (${HISTORY_LIMIT}) i.Category AS accountNo
+         FROM [dbo].[AccReimburseItem] i
+         JOIN [dbo].[AccRequest] r ON r.Id = i.RequestId
+         WHERE r.FormCode = @form
+           AND i.Category IS NOT NULL
+           AND LTRIM(RTRIM(i.Category)) <> ''
+         GROUP BY i.Category
+         ORDER BY COUNT(*) DESC`,
+      );
+    used = (r.recordset as { accountNo: string }[]).map((x) => String(x.accountNo).trim());
+  } catch (e) {
+    // The full list is still correct without it — only the order is worse.
+    console.error("[expense-accounts] history unavailable; falling back to chart order", e);
+  }
 
   // Intersected with what is valid *now*: an account used last year may since
-  // have been blocked in BC, and offering it would be offering something the
-  // picker itself refuses.
+  // have been blocked in BC, and leading with it would put something the
+  // picker itself refuses at the top of the model's list.
   const byNo = new Map(valid.map((a) => [a.accountNo, a]));
+  const seen = new Set<string>();
   const out: ExpenseAccount[] = [];
-  for (const row of r.recordset as { accountNo: string }[]) {
-    const hit = byNo.get(String(row.accountNo).trim());
-    if (hit) out.push(hit);
+  for (const no of used) {
+    const hit = byNo.get(no);
+    if (hit && !seen.has(no)) {
+      seen.add(no);
+      out.push(hit);
+    }
+  }
+  for (const a of valid) {
+    if (!seen.has(a.accountNo)) out.push(a);
   }
   return out;
 }

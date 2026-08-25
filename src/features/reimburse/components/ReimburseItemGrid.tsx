@@ -19,12 +19,16 @@ import type { ReimburseItem } from "@/features/reimburse/types";
 /**
  * รายการค่าใช้จ่ายจริง (spec §5.2 field 4) — the repeating expense grid.
  *
- * Columns: วันที่ · รายละเอียด · ยอดรวม VAT · VAT · หัก ณ ที่จ่าย, plus add and
- * remove. `vatAmount` and `whtAmount` are informational breakdowns of the
- * VAT-inclusive `amount`, never additions to it — which is why the live total
- * below the grid comes from `sumReimburseItems`, the same function the server
- * totals with at submit. A second sum written here is how the number on screen
- * comes to disagree with the number that gets paid.
+ * The AP-4.1 sheet's columns, in its order — see `COLUMNS`. One line per row,
+ * one horizontal scrollbar for the whole table, and "ดูเต็มจอ" when the full
+ * width is wanted at once.
+ *
+ * **Three of the money columns are derived and read-only.** `amount` is the
+ * only total stored: ก่อน VAT is `amount - vatAmount` and จ่ายสุทธิ is
+ * `amount - whtAmount`, so the row cannot be edited into a state where its own
+ * figures disagree. The live total below comes from `sumReimburseItems`, the
+ * same function the server totals with at submit — a second sum written here
+ * is how the number on screen comes to differ from the number that gets paid.
  *
  * `isBlankItemRow` — again the server's own predicate, not a local copy —
  * decides which rows are real. The trailing empty row the grid always offers is
@@ -166,51 +170,61 @@ export function findItemRowProblems(items: ReimburseItem[]): ItemRowProblem[] {
 
 /* ─────────────────────────── the grid ─────────────────────────── */
 
-const LABEL_CLASS = "block text-[10.5px] font-semibold uppercase tracking-wide mb-1";
+const HEAD_CLASS = "text-[10.5px] font-semibold uppercase tracking-wide truncate";
 
 /**
- * Two lines per row, not eleven columns across.
+ * One line per expense row, scrolled sideways — the AP-4.1 sheet's own shape.
  *
- * The AP-4.1 sheet has eleven columns, which is fine on a spreadsheet and
- * unusable as one grid row in a browser — either every field is too narrow to
- * read or the page scrolls sideways while somebody is typing into it. Splitting
- * on the sheet's own seam keeps each field a usable width: **which document
- * this is**, then **what it cost**. Below `md` both collapse to one column, as
- * the single-line grid already did.
+ * It was three stacked lines for a while, on the reasoning that fourteen
+ * columns cannot be read at once in a browser. In use that turned out to be
+ * the wrong trade: a claim is checked by comparing rows against each other,
+ * and stacked rows make two lines impossible to compare without scrolling
+ * vertically past the fields in between. One line each, one horizontal
+ * scrollbar for the whole table, and "ดูเต็มจอ" for when the whole width is
+ * wanted at once.
+ *
+ * The header and every row share this template, which is what keeps the labels
+ * over their fields; a width changed here moves both.
  */
-const IDENT_GRID =
-  "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-[56px_150px_130px_110px_minmax(0,1fr)_150px] gap-2";
-const VENDOR_GRID =
-  "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-[170px_260px_minmax(0,1fr)] gap-2";
-const MONEY_GRID =
-  "grid grid-cols-2 md:grid-cols-[repeat(5,minmax(0,1fr))_44px] gap-2";
+const COLUMNS: readonly { label: string; width: string; right?: boolean }[] = [
+  { label: "ลำดับ", width: "44px" },
+  { label: "วันที่", width: "148px" },
+  { label: "เลขที่เอกสาร", width: "130px" },
+  { label: "รายการ", width: "190px" },
+  { label: "รายละเอียด", width: "230px" },
+  { label: "สาขา", width: "130px" },
+  { label: "เลขผู้เสียภาษี", width: "140px" },
+  { label: "ผู้ขาย", width: "180px" },
+  { label: "ที่อยู่", width: "230px" },
+  { label: "ก่อน VAT", width: "110px", right: true },
+  { label: "VAT", width: "100px", right: true },
+  { label: "ค่าใช้จ่ายรวม", width: "120px", right: true },
+  { label: "หัก ณ ที่จ่าย", width: "110px", right: true },
+  { label: "จ่ายสุทธิ", width: "120px", right: true },
+];
+
+/** The trailing column holds the remove button and has no heading. */
+const ACTION_COLUMN_WIDTH = 44;
+const COLUMN_GAP = 8;
+
+const ROW_GRID = "grid gap-2";
+
+/**
+ * Wide enough that no column is squeezed, so the scroller — rather than the
+ * layout — absorbs a narrow window. Computed from `COLUMNS` instead of typed
+ * out, because a hand-kept total drifts the moment a width changes and the
+ * symptom is a subtly clipped last column nobody traces back to here.
+ */
+const ROW_MIN_WIDTH =
+  COLUMNS.reduce((sum, c) => sum + parseInt(c.width, 10), 0) +
+  ACTION_COLUMN_WIDTH +
+  COLUMN_GAP * COLUMNS.length;
+
+const ROW_TEMPLATE = `${COLUMNS.map((c) => c.width).join(" ")} ${ACTION_COLUMN_WIDTH}px`;
 
 /** Two decimals, without the float noise that makes 2675.0000000000005 reach a payout figure. */
 function round2(n: number): number {
   return Math.round((Number.isFinite(n) ? n : 0) * 100) / 100;
-}
-
-/** A labelled cell. The label shows at every width — with eleven fields, unlabelled columns are unreadable. */
-function Field({
-  label,
-  align,
-  children,
-}: {
-  label: string;
-  align?: "right";
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="min-w-0">
-      <span
-        className={`${LABEL_CLASS} ${align === "right" ? "text-right" : ""}`}
-        style={{ color: "var(--text-muted)" }}
-      >
-        {label}
-      </span>
-      {children}
-    </div>
-  );
 }
 
 /** A plain text cell. Blank becomes null, matching what `prepareReimburseItemsForSave` stores. */
@@ -357,180 +371,164 @@ export function ReimburseItemGrid({
         </p>
       )}
 
-      {items.map((item, index) => {
-        const dateBad = problemAt(index, "date");
-        const amountBad = problemAt(index, "amount");
-        // Both derived from `amount`, which stays the one stored authority for
-        // what the line costs — see `ReimburseItem.amount`.
-        const beforeVat = round2((Number(item.amount) || 0) - (Number(item.vatAmount) || 0));
-        const netPaid = round2((Number(item.amount) || 0) - (Number(item.whtAmount) || 0));
-        return (
-          <div
-            key={item.id ?? `row-${index}`}
-            className="rounded-xl border p-3 flex flex-col gap-2.5 min-w-0"
-            style={{ borderColor: "var(--border-card)", background: "var(--bg-card-alt)" }}
-          >
-            {/* ── line 1 · which document this is ── */}
-            <div className={IDENT_GRID}>
-              <Field label="ลำดับที่">
+      {items.length > 0 && (
+        // One scroller around the header *and* every row, so there is a single
+        // scrollbar at the bottom and the columns stay lined up under their
+        // labels. A scroller per row would give one bar each and let the rows
+        // drift out of alignment with each other as they were scrolled.
+        <div className="overflow-x-auto pb-1">
+          <div style={{ minWidth: ROW_MIN_WIDTH }} className="flex flex-col gap-2">
+            <div className={`${ROW_GRID} px-1`} style={{ gridTemplateColumns: ROW_TEMPLATE }}>
+              {COLUMNS.map((c) => (
                 <span
-                  className="flex items-center h-[38px] px-3 text-[14px] tabular-nums font-semibold"
+                  key={c.label}
+                  className={`${HEAD_CLASS} ${c.right ? "text-right" : ""}`}
                   style={{ color: "var(--text-muted)" }}
                 >
-                  {index + 1}
+                  {c.label}
                 </span>
-              </Field>
-
-              <Field label="วันที่">
-                <SingleDatePicker
-                  value={item.expenseDate ?? ""}
-                  onChange={(ymd) => onUpdate(index, { expenseDate: ymd || null })}
-                  ariaLabel={`วันที่ของรายการที่ ${index + 1}`}
-                  placeholder="เลือกวันที่..."
-                  hasError={dateBad}
-                />
-              </Field>
-
-              <Field label="เลขที่เอกสาร">
-                <TextCell
-                  ariaLabel={`เลขที่เอกสารของรายการที่ ${index + 1}`}
-                  placeholder="ABC1234"
-                  value={item.documentNo}
-                  maxLength={100}
-                  onChange={(v) => onUpdate(index, { documentNo: v })}
-                />
-              </Field>
-
-              <Field label="รายการ">
-                <ExpenseAccountPicker
-                  ariaLabel={`บัญชีของรายการที่ ${index + 1}`}
-                  value={item.category}
-                  onChange={(v) => onUpdate(index, { category: v })}
-                  accounts={accounts}
-                  loading={accountsLoading}
-                  brandChosen={brandChosen}
-                />
-              </Field>
-
-              <Field label="รายละเอียด">
-                <TextCell
-                  ariaLabel={`รายละเอียดของรายการที่ ${index + 1}`}
-                  placeholder="ค่าอะไร / ร้านไหน..."
-                  value={item.description}
-                  maxLength={500}
-                  // "" not null: `Description` is NOT NULL in the database, and
-                  // the other two are nullable.
-                  onChange={(v) => onUpdate(index, { description: v ?? "" })}
-                />
-              </Field>
-
-              <Field label="สาขา">
-                <TextCell
-                  ariaLabel={`สาขาของรายการที่ ${index + 1}`}
-                  placeholder="—"
-                  value={item.branchName}
-                  maxLength={200}
-                  onChange={(v) => onUpdate(index, { branchName: v })}
-                />
-              </Field>
+              ))}
+              <span />
             </div>
 
-            {/* ── line 2 · who was paid ── */}
-            <div className={VENDOR_GRID}>
-              <Field label="เลขประจำตัวผู้เสียภาษี">
-                <TextCell
-                  ariaLabel={`เลขประจำตัวผู้เสียภาษีของรายการที่ ${index + 1}`}
-                  placeholder="0105547161674"
-                  value={item.vendorTaxId}
-                  maxLength={20}
-                  onChange={(v) => onUpdate(index, { vendorTaxId: v })}
-                />
-              </Field>
-
-              <Field label="ชื่อ-สกุล / ชื่อบริษัท">
-                <TextCell
-                  ariaLabel={`ชื่อผู้ขายของรายการที่ ${index + 1}`}
-                  placeholder="ผู้ขาย / ผู้ออกเอกสาร"
-                  value={item.vendorName}
-                  maxLength={300}
-                  onChange={(v) => onUpdate(index, { vendorName: v })}
-                />
-              </Field>
-
-              <Field label="ที่อยู่">
-                <TextCell
-                  ariaLabel={`ที่อยู่ผู้ขายของรายการที่ ${index + 1}`}
-                  placeholder="—"
-                  value={item.vendorAddress}
-                  maxLength={500}
-                  onChange={(v) => onUpdate(index, { vendorAddress: v })}
-                />
-              </Field>
-            </div>
-
-            {/* ── line 3 · what it cost ── */}
-            <div className={MONEY_GRID}>
-              <Field label="ก่อน VAT" align="right">
-                <MoneyCell
-                  ariaLabel={`ค่าใช้จ่ายก่อน VAT ของรายการที่ ${index + 1}`}
-                  value={beforeVat}
-                  placeholder="0.00"
-                  // Typing here sets the stored VAT-inclusive `amount`, keeping
-                  // whatever VAT the row already holds. Editing either of these
-                  // two moves the total; the total itself is read-only, so the
-                  // three can never be made to disagree.
-                  onChange={(next) =>
-                    onUpdate(index, { amount: round2((next ?? 0) + (Number(item.vatAmount) || 0)) })
-                  }
-                />
-              </Field>
-
-              <Field label="VAT" align="right">
-                <MoneyCell
-                  ariaLabel={`VAT ของรายการที่ ${index + 1}`}
-                  value={item.vatAmount}
-                  placeholder="—"
-                  // null, not 0: VAT genuinely not specified is not VAT of zero.
-                  // The total follows so ก่อน VAT stays where the requester put it.
-                  onChange={(next) =>
-                    onUpdate(index, { vatAmount: next, amount: round2(beforeVat + (next ?? 0)) })
-                  }
-                />
-              </Field>
-
-              <Field label="ค่าใช้จ่ายรวม" align="right">
-                <ReadOnlyMoney value={item.amount} emphasis hasError={amountBad} />
-              </Field>
-
-              <Field label="หัก ณ ที่จ่าย" align="right">
-                <MoneyCell
-                  ariaLabel={`หัก ณ ที่จ่าย ของรายการที่ ${index + 1}`}
-                  value={item.whtAmount}
-                  placeholder="—"
-                  onChange={(next) => onUpdate(index, { whtAmount: next })}
-                />
-              </Field>
-
-              <Field label="จ่ายสุทธิ" align="right">
-                <ReadOnlyMoney value={netPaid} />
-              </Field>
-
-              <div className="flex justify-end md:self-end md:pb-0.5">
-                <button
-                  type="button"
-                  onClick={() => onRemove(index)}
-                  aria-label={`ลบรายการที่ ${index + 1}`}
-                  title="ลบรายการนี้"
-                  className="w-9 h-9 rounded-lg flex items-center justify-center cursor-pointer border-none shrink-0"
-                  style={{ background: "var(--bg-card)", color: "var(--color-danger)" }}
+            {items.map((item, index) => {
+              const dateBad = problemAt(index, "date");
+              const amountBad = problemAt(index, "amount");
+              // Both derived from `amount`, which stays the one stored authority
+              // for what the line costs — see `ReimburseItem.amount`.
+              const beforeVat = round2((Number(item.amount) || 0) - (Number(item.vatAmount) || 0));
+              const netPaid = round2((Number(item.amount) || 0) - (Number(item.whtAmount) || 0));
+              return (
+                <div
+                  key={item.id ?? `row-${index}`}
+                  className={`${ROW_GRID} rounded-xl border px-2 py-2 items-center`}
+                  style={{ gridTemplateColumns: ROW_TEMPLATE, borderColor: "var(--border-card)", background: "var(--bg-card-alt)" }}
                 >
-                  <Trash2 size={15} />
-                </button>
-              </div>
-            </div>
+                  <span
+                    className="text-[13px] tabular-nums font-semibold text-center"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    {index + 1}
+                  </span>
+
+                  <SingleDatePicker
+                    value={item.expenseDate ?? ""}
+                    onChange={(ymd) => onUpdate(index, { expenseDate: ymd || null })}
+                    ariaLabel={`วันที่ของรายการที่ ${index + 1}`}
+                    placeholder="เลือกวันที่..."
+                    hasError={dateBad}
+                  />
+
+                  <TextCell
+                    ariaLabel={`เลขที่เอกสารของรายการที่ ${index + 1}`}
+                    placeholder="ABC1234"
+                    value={item.documentNo}
+                    maxLength={100}
+                    onChange={(v) => onUpdate(index, { documentNo: v })}
+                  />
+
+                  <ExpenseAccountPicker
+                    ariaLabel={`บัญชีของรายการที่ ${index + 1}`}
+                    value={item.category}
+                    onChange={(v) => onUpdate(index, { category: v })}
+                    accounts={accounts}
+                    loading={accountsLoading}
+                    brandChosen={brandChosen}
+                  />
+
+                  <TextCell
+                    ariaLabel={`รายละเอียดของรายการที่ ${index + 1}`}
+                    placeholder="ค่าอะไร..."
+                    value={item.description}
+                    maxLength={500}
+                    // "" not null: `Description` is NOT NULL in the database,
+                    // and the other text columns are nullable.
+                    onChange={(v) => onUpdate(index, { description: v ?? "" })}
+                  />
+
+                  <TextCell
+                    ariaLabel={`สาขาของรายการที่ ${index + 1}`}
+                    placeholder="—"
+                    value={item.branchName}
+                    maxLength={200}
+                    onChange={(v) => onUpdate(index, { branchName: v })}
+                  />
+
+                  <TextCell
+                    ariaLabel={`เลขประจำตัวผู้เสียภาษีของรายการที่ ${index + 1}`}
+                    placeholder="0105547161674"
+                    value={item.vendorTaxId}
+                    maxLength={20}
+                    onChange={(v) => onUpdate(index, { vendorTaxId: v })}
+                  />
+
+                  <TextCell
+                    ariaLabel={`ชื่อผู้ขายของรายการที่ ${index + 1}`}
+                    placeholder="ผู้ขาย"
+                    value={item.vendorName}
+                    maxLength={300}
+                    onChange={(v) => onUpdate(index, { vendorName: v })}
+                  />
+
+                  <TextCell
+                    ariaLabel={`ที่อยู่ผู้ขายของรายการที่ ${index + 1}`}
+                    placeholder="—"
+                    value={item.vendorAddress}
+                    maxLength={500}
+                    onChange={(v) => onUpdate(index, { vendorAddress: v })}
+                  />
+
+                  <MoneyCell
+                    ariaLabel={`ค่าใช้จ่ายก่อน VAT ของรายการที่ ${index + 1}`}
+                    value={beforeVat}
+                    placeholder="0.00"
+                    // Typing here sets the stored VAT-inclusive `amount`,
+                    // keeping whatever VAT the row already holds. Editing
+                    // either of these two moves the total; the total itself is
+                    // read-only, so the three can never be made to disagree.
+                    onChange={(next) =>
+                      onUpdate(index, { amount: round2((next ?? 0) + (Number(item.vatAmount) || 0)) })
+                    }
+                  />
+
+                  <MoneyCell
+                    ariaLabel={`VAT ของรายการที่ ${index + 1}`}
+                    value={item.vatAmount}
+                    placeholder="—"
+                    // null, not 0: VAT genuinely not specified is not VAT of
+                    // zero. The total follows so ก่อน VAT stays put.
+                    onChange={(next) =>
+                      onUpdate(index, { vatAmount: next, amount: round2(beforeVat + (next ?? 0)) })
+                    }
+                  />
+
+                  <ReadOnlyMoney value={item.amount} emphasis hasError={amountBad} />
+
+                  <MoneyCell
+                    ariaLabel={`หัก ณ ที่จ่าย ของรายการที่ ${index + 1}`}
+                    value={item.whtAmount}
+                    placeholder="—"
+                    onChange={(next) => onUpdate(index, { whtAmount: next })}
+                  />
+
+                  <ReadOnlyMoney value={netPaid} />
+
+                  <button
+                    type="button"
+                    onClick={() => onRemove(index)}
+                    aria-label={`ลบรายการที่ ${index + 1}`}
+                    title="ลบรายการนี้"
+                    className="w-9 h-9 rounded-lg flex items-center justify-center cursor-pointer border-none shrink-0 justify-self-end"
+                    style={{ background: "var(--bg-card)", color: "var(--color-danger)" }}
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              );
+            })}
           </div>
-        );
-      })}
+        </div>
+      )}
 
       <button
         type="button"
