@@ -1,16 +1,12 @@
 import "server-only";
+import { resolveApiKey } from "@/lib/api-keys/service";
 import type { ReceiptExtractResult } from "./slip-verify";
 
 /**
- * Optional AI (Claude vision) receipt extraction. OFF by default: it runs only
- * when explicitly enabled with `AI_RECEIPT_OCR=on` AND a key is present — so a
- * stray/invalid key left in the env never triggers a (failing) call. The key is
- * read ONLY from the environment (never a file/config) — see the no-secrets policy.
- * When off/absent this is a no-op and the caller uses the free Tesseract+regex path.
+ * Optional AI (Claude vision) receipt extraction. Runs when a key is available
+ * from the portal API-key registry (DB → env fallback via resolveApiKey). When
+ * absent this is a no-op and the caller uses the free Tesseract+regex path.
  */
-export function aiConfigured(): boolean {
-  return process.env.AI_RECEIPT_OCR === "on" && !!process.env.ANTHROPIC_API_KEY;
-}
 
 const MODEL = process.env.ANTHROPIC_RECEIPT_MODEL || "claude-haiku-4-5-20251001";
 
@@ -61,10 +57,11 @@ export async function extractReceiptWithAI(
   buffer: Buffer,
   mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif" = "image/png",
 ): Promise<ReceiptExtractResult | null> {
-  if (!aiConfigured()) return null;
+  const { value: apiKey } = await resolveApiKey("ANTHROPIC_API_KEY");
+  if (!apiKey) return null;
   try {
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
-    const client = new Anthropic(); // reads ANTHROPIC_API_KEY from env
+    const client = new Anthropic({ apiKey });
     const res = await client.messages.create({
       model: MODEL,
       max_tokens: 1024,
