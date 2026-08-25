@@ -122,7 +122,7 @@ export function AdvanceErpQueue() {
   const selectableIds = useMemo(() => sendable.map((r) => r.id), [sendable]);
   const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selected.has(id));
   const selectedIds = useMemo(
-    () => [...selected].filter((id) => selectableIds.includes(id)),
+    () => Array.from(selected).filter((id) => selectableIds.includes(id)),
     [selected, selectableIds],
   );
 
@@ -134,7 +134,7 @@ export function AdvanceErpQueue() {
   }, [allSelected, selectableIds]);
 
   // Clear stale preview when selection changes.
-  const selectedKey = useMemo(() => [...selected].sort((a, b) => a - b).join(","), [selected]);
+  const selectedKey = useMemo(() => Array.from(selected).sort((a, b) => a - b).join(","), [selected]);
   useEffect(() => { setPreview([]); }, [selectedKey]);
 
   // Sent history is scoped to the month it was sent (AP-1 parity) so it never grows unbounded.
