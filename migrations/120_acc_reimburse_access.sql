@@ -1,8 +1,16 @@
 -- AP-4's own access list, and the per-tab grants over it.
 --
+--
+-- RENUMBERED FROM 106 ON 2026-08-25. It collided with master's
+-- 106_acc_erp_journal_batch_template_key.sql — the collision the header of
+-- 116_portal_form_api_key.sql predicted while this branch was unmerged. Safe to
+-- renumber because it had not been applied anywhere: measured that day, neither
+-- Rocks_Portal_Form nor Rocks_Portal_Form_UAT held dbo.AccReimburseAccess, and
+-- apply-sql keeps no record of what has run — it takes an explicit --file — so
+-- the number is a name for humans rather than a key anything looks up.
 -- Apply with (BOTH databases):
---   npm run apply-sql -- --db Rocks_Portal_Form     --file migrations/106_acc_reimburse_access.sql
---   npm run apply-sql -- --db Rocks_Portal_Form_UAT --file migrations/106_acc_reimburse_access.sql
+--   npm run apply-sql -- --db Rocks_Portal_Form     --file migrations/120_acc_reimburse_access.sql
+--   npm run apply-sql -- --db Rocks_Portal_Form_UAT --file migrations/120_acc_reimburse_access.sql
 --
 -- Apply this BEFORE the code that reads it reaches either database. A missing
 -- table is 'Invalid object name' at compile time, not an empty result, and

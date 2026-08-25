@@ -6,10 +6,8 @@
 --   npm run apply-sql -- --db Rocks_Portal_Form_UAT --file migrations/118_acc_reimburse_item_vendor.sql
 --
 -- NUMBERED 118. Read the highest number on *master* before picking one and
--- re-read it before merging: 117 is this branch's own, and the branch still
--- carries the unresolved 106 collision (106_acc_reimburse_access.sql here vs
--- master's 106_acc_erp_journal_batch_template_key.sql). Whoever renumbers that
--- file must not take 117 or 118.
+-- re-read it before merging. The 106 collision this file used to warn about is
+-- closed: the AP-4 access migration was renumbered to 120 on 2026-08-25.
 --
 -- ---------------------------------------------------------------------------
 -- WHY THESE THREE ARE STORED AND NOT DERIVED. Unlike ค่าใช้จ่ายรวม and

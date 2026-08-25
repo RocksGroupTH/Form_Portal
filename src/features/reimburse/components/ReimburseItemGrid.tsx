@@ -597,16 +597,24 @@ export function ReimburseItemGrid({
           ))}
         </ul>
       )}
-
       {/* Live total — the figure the server will store, from its own function. */}
       <div
         className="rounded-xl px-4 py-3 flex items-center justify-between gap-3 mt-1"
         style={{ background: "var(--nav-active-bg)" }}
       >
-        <span className="text-[12.5px] font-semibold" style={{ color: "var(--nav-active-text)" }}>
-          ยอดรวมที่ขอเบิก
+        <span className="min-w-0">
+          <span className="block text-[12.5px] font-semibold" style={{ color: "var(--nav-active-text)" }}>
+            ยอดรวมที่ขอเบิก
+          </span>
+          {/* Said out loud, because the figure below deliberately does **not**
+              equal the ค่าใช้จ่ายรวม column summed — it is จ่ายสุทธิ summed.
+              Without this line that reads as an arithmetic bug on the one
+              number the whole form is about. */}
+          <span className="block text-[11px] mt-0.5" style={{ color: "var(--nav-active-text)", opacity: 0.75 }}>
+            รวมจาก &quot;จ่ายสุทธิ&quot; — หักภาษี ณ ที่จ่ายแล้ว
+          </span>
         </span>
-        <span className="text-[16px] font-bold tabular-nums" style={{ color: "var(--nav-active-text)" }}>
+        <span className="text-[16px] font-bold tabular-nums shrink-0" style={{ color: "var(--nav-active-text)" }}>
           ฿{fmtBaht(total)}
         </span>
       </div>

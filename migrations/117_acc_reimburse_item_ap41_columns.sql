@@ -5,12 +5,10 @@
 --   npm run apply-sql -- --db Rocks_Portal_Form     --file migrations/117_acc_reimburse_item_ap41_columns.sql
 --   npm run apply-sql -- --db Rocks_Portal_Form_UAT --file migrations/117_acc_reimburse_item_ap41_columns.sql
 --
--- NUMBERED 117 BECAUSE 106 IS ALREADY TAKEN TWICE ON THIS BRANCH.
--- feat/ap-4-reimbursement carries 106_acc_reimburse_access.sql while master
--- carries 106_acc_erp_journal_batch_template_key.sql — the collision the header
--- of 116_portal_form_api_key.sql predicted, and it is still open. Whoever
--- renumbers that file must NOT give it 117. Read the highest number on *master*
--- before picking one, and re-read it before merging.
+-- NUMBERED 117 because 106 was taken twice on this branch at the time. That
+-- collision is closed: the AP-4 access migration was renumbered to 120 on
+-- 2026-08-25. Read the highest number on *master* before picking one, and
+-- re-read it before merging.
 --
 -- ---------------------------------------------------------------------------
 -- WHY THREE COLUMNS AND NOT FIVE. The AP-4.1 sheet has eleven columns; five of

@@ -6,9 +6,8 @@
 --   npm run apply-sql -- --db Rocks_Portal_Form_UAT --file migrations/119_acc_reimburse_item_source_file.sql
 --
 -- NUMBERED 119. Read the highest number on *master* before picking one and
--- re-read it before merging: 117 and 118 are this branch's own, and the branch
--- still carries the unresolved 106 collision (106_acc_reimburse_access.sql here
--- vs master's 106_acc_erp_journal_batch_template_key.sql).
+-- re-read it before merging. The 106 collision this file used to warn about is
+-- closed: the AP-4 access migration was renumbered to 120 on 2026-08-25.
 --
 -- ---------------------------------------------------------------------------
 -- WHY IT IS STORED AT ALL. Attaching a document creates expense rows from it.
