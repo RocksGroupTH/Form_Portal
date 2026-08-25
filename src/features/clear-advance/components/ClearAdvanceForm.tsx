@@ -596,7 +596,10 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
         const j = (await res.json()) as { ok: boolean; data?: AccFileMeta; error?: string };
         if (!j.ok) throw new Error(j.error ?? "อัปโหลดไม่สำเร็จ");
         if (j.data) {
-          (isProof ? setRefundProofFiles : setFiles)((prev) => [...prev, j.data!]);
+          const newFile = j.data!;
+          (isProof ? setRefundProofFiles : setFiles)((prev) =>
+            prev.some((x) => x.id === newFile.id) ? prev : [...prev, newFile],
+          );
           if (!isProof && isOcrable(f)) ocrDocs.push({ file: f, fileId: j.data.id });
         }
       }
