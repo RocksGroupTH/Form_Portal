@@ -16,6 +16,31 @@ test("AP-17 own routes", () => {
   assert.equal(classifyPath("/request/travel-booking/5"), "AP-17");
 });
 
+test("AP-2 (advance) own routes, including its BC-posting queue", () => {
+  assert.equal(classifyPath("/request/advance"), "AP-2");
+  assert.equal(classifyPath("/request/advance/5"), "AP-2");
+  assert.equal(classifyPath("/api/request/advance"), "AP-2");
+  assert.equal(classifyPath("/api/request/advance/5"), "AP-2");
+  assert.equal(classifyPath("/api/request/advance/work"), "AP-2");
+  // the advance erp-prep queue inherits AP-2 from the parent prefix — a single
+  // form, never BOTH/null, so the journal and BC target agree on one database.
+  assert.equal(classifyPath("/api/request/advance/erp-prep"), "AP-2");
+  assert.equal(classifyPath("/api/request/advance/erp-prep/send"), "AP-2");
+  // boundary: must not match mid-segment.
+  assert.equal(classifyPath("/request/advancesomething"), null);
+});
+
+test("AP-3 (clear advance) own routes", () => {
+  assert.equal(classifyPath("/request/clear-advance"), "AP-3");
+  assert.equal(classifyPath("/request/clear-advance/5"), "AP-3");
+  assert.equal(classifyPath("/api/request/clear-advance"), "AP-3");
+  assert.equal(classifyPath("/api/request/clear-advance/requests/5"), "AP-3");
+  assert.equal(classifyPath("/api/request/clear-advance/pending-advances"), "AP-3");
+  // boundary: must not match mid-segment, and must not collide with AP-2's prefix.
+  assert.equal(classifyPath("/request/clear-advancesomething"), null);
+  assert.equal(classifyPath("/request/advance"), "AP-2");
+});
+
 test("AP-1 routes", () => {
   assert.equal(classifyPath("/api/request/accounting/requests/5"), "AP-1");
   assert.equal(classifyPath("/api/request/accounting/requests/drafts"), "AP-1");
@@ -56,6 +81,9 @@ test("settings read production; dual-write is handled in the service layer", () 
   assert.equal(classifyPath("/api/request/accounting/settings/vehicles"), null);
   assert.equal(classifyPath("/api/request/accounting/settings/approvers"), null);
   assert.equal(classifyPath("/api/request/travel-booking/settings/reason"), "AP-17");
+  // AP-2 settings carry a config-row id, not an AccRequest id — Production + dual-write.
+  assert.equal(classifyPath("/api/request/advance/settings/tiers"), null);
+  assert.equal(classifyPath("/api/request/advance/settings/erp-interface"), null);
 });
 
 test("Form Builder and everything else is production", () => {
