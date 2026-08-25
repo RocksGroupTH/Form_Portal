@@ -790,7 +790,7 @@ Locations was removed when this app was cloned — with zero callers anywhere in
 - **Components**: `"use client"` only when needed. Use existing UI components from `@/components/ui`
 - **ES5 target**: Don't use `[...set]` or `[...map.values()]` — use `Array.from()` instead
 - **Date display**: Use local getters (`getFullYear()`, `getMonth()`), never `toISOString()` — server is Thai time, do NOT use `fixThaiDate()`
-- **Logos**: the navbar mark, the favicon (`src/app/layout.tsx`) and the login lockup all use `/brandlogo/rocks.png`; the loading screen uses the Codex Family logo. `public/brandlogo/` holds the Rocks Group and company-brand logos only. Replace the favicon once a Form Portal icon exists, or the two apps share a tab icon
+- **Logos**: every mark in the app is now the Rocks one. The navbar, the favicon (`src/app/layout.tsx`) and the login lockup use `/brandlogo/rocks.png`; the loading screen and `BrandGate` use `/brandlogo/rocks-200.png`. **Which of the two depends on the slot, not on taste**: `rocks.png` is **74×91**, so a square box letterboxes it and leaves the glyph looking small — the navbar renders it 20×24 for that reason, and the two square 64×64 slots take the 200×200 file instead. The Codex Family logo was used on those two until 2026-08-25 and **no component references `public/codexfamilylogo/` any more**; the folder and its `proxy.ts` matcher exclusion are a loose end nobody has decided to remove. `public/brandlogo/` holds the Rocks Group and company-brand logos only. Replace the favicon once a Form Portal icon exists, or the two apps share a tab icon
 
 ## Environment Variables
 

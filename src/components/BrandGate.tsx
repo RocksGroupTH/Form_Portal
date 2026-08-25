@@ -61,12 +61,14 @@ export function BrandGate({ children }: { children: React.ReactNode }) {
           }}
         >
           <div className="text-center mb-6">
+            {/* Square slot, so the 200×200 file rather than the 74×91 one —
+                see the note in app/loading.tsx. */}
             <img
-              src="/codexfamilylogo/logo_3_speed_256.png"
+              src="/brandlogo/rocks-200.png"
               alt=""
               width={64}
               height={64}
-              className="mx-auto mb-3"
+              className="mx-auto mb-3 object-contain"
             />
             <h2
               id="brand-gate-title"
