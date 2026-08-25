@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CircleAlert, Maximize2, Plus, Trash2 } from "lucide-react";
+import { CircleAlert, Plus, Trash2 } from "lucide-react";
 import { FullScreenModal } from "@/components/ui/FullScreenModal";
 import { SingleDatePicker } from "@/features/accounting/components/SingleDatePicker";
 import { ExpenseAccountPicker } from "./ExpenseAccountPicker";
@@ -207,7 +207,21 @@ const COLUMNS: readonly { label: string; width: string; right?: boolean }[] = [
 const ACTION_COLUMN_WIDTH = 44;
 const COLUMN_GAP = 8;
 
+/**
+ * The row's own inset, applied to the header too so the labels sit over their
+ * fields rather than 4px off, and — the part that actually broke — **counted
+ * in `ROW_MIN_WIDTH`**.
+ *
+ * `box-sizing: border-box` puts padding and border inside the element's width,
+ * so a min-width that omits them leaves the columns that much less room than
+ * they asked for and the last one is pushed past the rounded edge. That is
+ * exactly what it looked like: the remove button hanging outside the row.
+ */
+const ROW_PAD_X = 8;
+const ROW_BORDER_X = 1;
+
 const ROW_GRID = "grid gap-2";
+const ROW_INSET = "px-2";
 
 /**
  * Wide enough that no column is squeezed, so the scroller — rather than the
@@ -218,7 +232,8 @@ const ROW_GRID = "grid gap-2";
 const ROW_MIN_WIDTH =
   COLUMNS.reduce((sum, c) => sum + parseInt(c.width, 10), 0) +
   ACTION_COLUMN_WIDTH +
-  COLUMN_GAP * COLUMNS.length;
+  COLUMN_GAP * COLUMNS.length +
+  (ROW_PAD_X + ROW_BORDER_X) * 2;
 
 const ROW_TEMPLATE = `${COLUMNS.map((c) => c.width).join(" ")} ${ACTION_COLUMN_WIDTH}px`;
 
@@ -309,6 +324,8 @@ export function ReimburseItemGrid({
   accounts,
   accountsLoading,
   brandChosen,
+  fullScreen,
+  onCloseFullScreen,
 }: {
   items: ReimburseItem[];
   onUpdate: (index: number, patch: Partial<ReimburseItem>) => void;
@@ -334,8 +351,17 @@ export function ReimburseItemGrid({
   accountsLoading?: boolean;
   /** False before a brand is picked; the list is keyed on brand and cannot load. */
   brandChosen: boolean;
+  /**
+   * Whether the table is showing full screen.
+   *
+   * Owned by the caller because the control that opens it sits in the section's
+   * own header — `SectionCard`'s `extra` — which is above this component. Held
+   * here instead would mean either a second button inside the table or a ref
+   * handle passed upward, both worse than one boolean passed down.
+   */
+  fullScreen: boolean;
+  onCloseFullScreen: () => void;
 }) {
-  const [fullScreen, setFullScreen] = useState(false);
 
   // The total the server will store: the blank trailing row contributes
   // nothing, and `sumReimburseItems` is the same function it totals with.
@@ -378,7 +404,13 @@ export function ReimburseItemGrid({
         // drift out of alignment with each other as they were scrolled.
         <div className="overflow-x-auto pb-1">
           <div style={{ minWidth: ROW_MIN_WIDTH }} className="flex flex-col gap-2">
-            <div className={`${ROW_GRID} px-1`} style={{ gridTemplateColumns: ROW_TEMPLATE }}>
+            {/* Same inset and the same template as a row, plus a transparent
+                border so the header's columns line up with the bordered rows
+                below rather than sitting 1px to the left of them. */}
+            <div
+              className={`${ROW_GRID} ${ROW_INSET} border border-transparent`}
+              style={{ gridTemplateColumns: ROW_TEMPLATE }}
+            >
               {COLUMNS.map((c) => (
                 <span
                   key={c.label}
@@ -401,7 +433,7 @@ export function ReimburseItemGrid({
               return (
                 <div
                   key={item.id ?? `row-${index}`}
-                  className={`${ROW_GRID} rounded-xl border px-2 py-2 items-center`}
+                  className={`${ROW_GRID} ${ROW_INSET} rounded-xl border py-2 items-center`}
                   style={{ gridTemplateColumns: ROW_TEMPLATE, borderColor: "var(--border-card)", background: "var(--bg-card-alt)" }}
                 >
                   <span
@@ -549,26 +581,6 @@ export function ReimburseItemGrid({
     <div className="flex flex-col gap-2 min-w-0">
       {documents}
 
-      {/* The full-screen control belongs to the table, not to the attachments:
-          eleven columns is what needs the room. Hidden until there is a row,
-          because an empty table full-screen is a blank page. */}
-      {items.length > 0 && (
-        <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={() => setFullScreen(true)}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold cursor-pointer"
-            style={{
-              background: "var(--bg-card-alt)",
-              color: "var(--nav-active-text)",
-              border: "1px solid var(--border-card)",
-            }}
-          >
-            <Maximize2 size={13} /> ดูเต็มจอ
-          </button>
-        </div>
-      )}
-
       {rowsBlock}
 
       {showProblems && problems.length > 0 && (
@@ -606,7 +618,7 @@ export function ReimburseItemGrid({
           the fields. */}
       <FullScreenModal
         open={fullScreen}
-        onClose={() => setFullScreen(false)}
+        onClose={onCloseFullScreen}
         title="รายการค่าใช้จ่ายจริง"
       >
         <div className="flex flex-col gap-2 min-w-0">

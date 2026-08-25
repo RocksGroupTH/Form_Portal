@@ -9,6 +9,7 @@ import {
   FileCheck,
   ListChecks,
   Mail,
+  Maximize2,
   Paperclip,
   Receipt,
   Save,
@@ -244,6 +245,7 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
   const [pendingDocs, setPendingDocs] = useState<PendingDocument[]>([]);
   const [readNote, setReadNote] = useState<string | null>(null);
   const [removingFileId, setRemovingFileId] = useState<number | null>(null);
+  const [itemsFullScreen, setItemsFullScreen] = useState(false);
 
   const itemsRef = useRef<HTMLDivElement>(null);
   const filesRef = useRef<HTMLDivElement>(null);
@@ -1288,7 +1290,30 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
       {/* ── รายการค่าใช้จ่ายจริง — including the documents they come from ── */}
       <div ref={itemsRef} className="min-w-0">
         <span ref={filesRef} />
-        <SectionCard icon={<ListChecks size={15} />} title="รายการค่าใช้จ่ายจริง">
+        <SectionCard
+          icon={<ListChecks size={15} />}
+          title="รายการค่าใช้จ่ายจริง"
+          // In the section's own header rather than floating above the table:
+          // it is this card that expands, and the control that expands it
+          // belongs beside the card's name. Hidden until there is a row —
+          // an empty table full screen is a blank page.
+          extra={
+            items.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => setItemsFullScreen(true)}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold cursor-pointer"
+                style={{
+                  background: "var(--bg-card-alt)",
+                  color: "var(--nav-active-text)",
+                  border: "1px solid var(--border-card)",
+                }}
+              >
+                <Maximize2 size={13} /> ดูเต็มจอ
+              </button>
+            ) : undefined
+          }
+        >
           <ReimburseItemGrid
             items={items}
             onUpdate={updateItem}
@@ -1300,6 +1325,8 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
             accounts={expenseAccounts ?? []}
             accountsLoading={accountsLoading}
             brandChosen={!!brandCode}
+            fullScreen={itemsFullScreen}
+            onCloseFullScreen={() => setItemsFullScreen(false)}
             documents={
               <ExpenseDocumentStrip
                 storedFiles={storedDocuments}
