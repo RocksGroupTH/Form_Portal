@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
-import { CheckCircle2, Circle, Link2, Save, RefreshCw } from "lucide-react";
+import { CheckCircle2, Circle, Link2, Save, RefreshCw, Download } from "lucide-react";
 import { Button, Toggle } from "@/components/ui";
 import { SearchableSelect } from "@/features/accounting/components/settings/SearchableSelect";
 
@@ -349,6 +349,33 @@ export function AdvanceErpInterfaceSettings() {
     }
   }
 
+  const [syncingVendor, setSyncingVendor] = useState(false);
+  async function syncVendor() {
+    setSyncingVendor(true);
+    try {
+      const res = await fetch("/api/request/advance/settings/vendors/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const j = (await res.json()) as {
+        ok: boolean;
+        error?: string;
+        data?: { results: { vendorRows: number }[]; errors: unknown[] };
+      };
+      if (!j.ok) {
+        toast.error(j.error ?? "Sync Vendor ไม่สำเร็จ");
+        return;
+      }
+      const totalRows = j.data?.results.reduce((sum, r) => sum + (r.vendorRows ?? 0), 0) ?? 0;
+      toast.success(`Sync Vendor สำเร็จ (${totalRows} รายการ)`);
+      await mutateErp();
+    } catch {
+      toast.error("Sync Vendor ไม่สำเร็จ");
+    } finally {
+      setSyncingVendor(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <div className="rounded-xl px-4 py-3 flex flex-wrap items-start justify-between gap-3"
@@ -362,6 +389,16 @@ export function AdvanceErpInterfaceSettings() {
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          <Button
+            type="button"
+            variant="secondary"
+            icon={<Download size={15} className={syncingVendor ? "animate-pulse" : ""} />}
+            onClick={() => void syncVendor()}
+            loading={syncingVendor}
+            disabled={syncingVendor}
+          >
+            Sync Vendor
+          </Button>
           <Button
             type="button"
             variant="secondary"
