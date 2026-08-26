@@ -14,7 +14,7 @@ import { statusLabelDisplay } from "@/features/accounting/constants";
 import { STEP_LABEL, type StepType } from "@/lib/adv/approval-steps";
 import { Wallet } from "lucide-react";
 import { PaymentDatePicker } from "@/components/ui/PaymentDatePicker";
-import { SearchableSelect } from "@/features/accounting/components/settings/SearchableSelect";
+import { AdvanceVendorPicker } from "@/features/advance/components/AdvanceVendorPicker";
 import type { AdvanceRequest } from "@/features/advance/types";
 
 export default function AdvanceDetailPage() {
@@ -43,9 +43,7 @@ function AdvanceDetailContent() {
   const [rejectReason, setRejectReason] = useState("");
 
   // Vendor selection at the ACC_OFFICER step.
-  const [vendors, setVendors] = useState<{ vendorNo: string; displayName: string | null }[]>([]);
   const [selectedVendor, setSelectedVendor] = useState<string>("");
-  const [vendorMatch, setVendorMatch] = useState<{ status: string | null; confidence: string | null; reason: string | null }>({ status: null, confidence: null, reason: null });
   const [matchingVendor, setMatchingVendor] = useState(false);
 
   const fetchRequest = useCallback(() => {
@@ -82,32 +80,6 @@ function AdvanceDetailContent() {
       })
       .catch(() => {});
   }, [request?.currentStepCode]);
-
-  useEffect(() => {
-    if (requestId == null) return;
-    if (request?.currentStepCode !== "ACC_OFFICER" || !request?.brandCode) return;
-    let cancelled = false;
-    fetch(`/api/request/advance/vendors?company=${encodeURIComponent(request.brandCode)}`)
-      .then((r) => r.json())
-      .then((j: { ok: boolean; vendors?: { vendorNo: string; displayName: string | null }[] }) => {
-        if (cancelled) return;
-        if (j.ok && j.vendors) setVendors(j.vendors);
-      })
-      .catch(() => {});
-    setMatchingVendor(true);
-    fetch(`/api/request/advance/vendor-match/${requestId}`, { method: "POST" })
-      .then((r) => r.json())
-      .then((j: { ok: boolean; data?: { status: string | null; vendorNo: string | null; confidence: string | null; reason: string | null } }) => {
-        if (cancelled) return;
-        if (j.ok && j.data) {
-          setVendorMatch({ status: j.data.status, confidence: j.data.confidence, reason: j.data.reason });
-          setSelectedVendor((prev) => prev || (j.data?.vendorNo ?? ""));
-        }
-      })
-      .catch(() => {})
-      .finally(() => { if (!cancelled) setMatchingVendor(false); });
-    return () => { cancelled = true; };
-  }, [request?.currentStepCode, request?.brandCode, requestId]);
 
   async function act(path: string, body?: unknown) {
     setBusy(true);
@@ -257,52 +229,12 @@ function AdvanceDetailContent() {
                 วันจ่าย:
                 <PaymentDatePicker value={paymentDate} onChange={setPaymentDate} allowedDates={paymentDates} />
               </div>
-              <div className="text-[12px] flex items-center gap-2" style={{ color: "var(--text-secondary)" }}>
-                Vendor:
-                <div style={{ minWidth: 300, maxWidth: 400 }}>
-                  <SearchableSelect
-                    value={selectedVendor}
-                    onChange={(v) => {
-                      setSelectedVendor(v);
-                      if (!v) return;
-                      fetch("/api/request/advance/vendor-confirm", {
-                        method: "POST", headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ id: requestId, vendorNo: v }),
-                      })
-                        .then((r) => r.json())
-                        .then((j: { ok: boolean; error?: string }) => {
-                          if (!j.ok) toast.error(j.error ?? "ยืนยัน Vendor ไม่สำเร็จ");
-                          else { setVendorMatch((m) => ({ ...m, status: "confirmed" })); toast.success("ยืนยัน Vendor แล้ว"); }
-                        })
-                        .catch(() => toast.error("ยืนยัน Vendor ไม่สำเร็จ"));
-                    }}
-                    options={vendors.map((v) => ({
-                      value: v.vendorNo,
-                      label: v.displayName ?? v.vendorNo,
-                      subLabel: v.vendorNo,
-                    }))}
-                    placeholder="— เลือก Vendor —"
-                    emptyLabel="— เลือก Vendor —"
-                    searchPlaceholder="ค้นหาชื่อ หรือ รหัส vendor..."
-                  />
-                </div>
-                {selectedVendor ? (
-                  <span
-                    title={vendorMatch.reason ?? ""}
-                    className="text-[11px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap"
-                    style={{ background: "rgba(79,163,122,0.15)", color: "#4fa37a" }}
-                  >
-                    ● Match
-                  </span>
-                ) : (
-                  <span
-                    className="text-[11px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap"
-                    style={{ background: "color-mix(in srgb, var(--color-danger) 12%, transparent)", color: "var(--color-danger)" }}
-                  >
-                    ● Unmatch
-                  </span>
-                )}
-              </div>
+              <AdvanceVendorPicker
+                requestId={requestId!}
+                company={request.brandCode ?? ""}
+                onConfirmed={setSelectedVendor}
+                onMatchingChange={setMatchingVendor}
+              />
             </div>
           )}
           {/* ACC_OFFICER is the final ERP-posting step — only "ดำเนินการ", no
