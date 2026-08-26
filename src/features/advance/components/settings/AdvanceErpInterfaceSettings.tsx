@@ -6,6 +6,8 @@ import { toast } from "sonner";
 import { CheckCircle2, Circle, Link2, Save, RefreshCw, Download } from "lucide-react";
 import { Button, Toggle } from "@/components/ui";
 import { SearchableSelect } from "@/features/accounting/components/settings/SearchableSelect";
+import { ErpAccountSyncPopup, type ErpSyncPopupState } from "@/features/accounting/components/settings/ErpAccountSyncPopup";
+import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
 
 interface ConfigRow {
   brandCode: string;
@@ -350,27 +352,68 @@ export function AdvanceErpInterfaceSettings() {
   }
 
   const [syncingVendor, setSyncingVendor] = useState(false);
+  const [syncPopup, setSyncPopup] = useState<ErpSyncPopupState>({
+    open: false, brandCode: "", part: "", percent: 0, status: "running",
+  });
   async function syncVendor() {
+    const brands = ERP_INTERFACE_BRANDS;
+    const total = brands.length;
+    let done = 0;
+    let totalRows = 0;
+    const errors: string[] = [];
+
     setSyncingVendor(true);
+    setSyncPopup({ open: true, brandCode: "", part: "เตรียมข้อมูล", percent: 0, status: "running" });
+
     try {
-      const res = await fetch("/api/request/advance/settings/vendors/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-      const j = (await res.json()) as {
-        ok: boolean;
-        error?: string;
-        data?: { results: { vendorRows: number }[]; errors: unknown[] };
-      };
-      if (!j.ok) {
-        toast.error(j.error ?? "Sync Vendor ไม่สำเร็จ");
-        return;
+      for (const brand of brands) {
+        setSyncPopup({
+          open: true, brandCode: brand.id, part: "Vendor Master",
+          percent: Math.round((done / total) * 100), status: "running",
+        });
+        try {
+          const res = await fetch("/api/request/advance/settings/vendors/sync", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ brandCode: brand.id }),
+          });
+          const j = (await res.json()) as {
+            ok: boolean;
+            error?: string;
+            data?: { results: { vendorRows: number }[]; errors: unknown[] };
+          };
+          if (!j.ok) errors.push(`${brand.id}: ${j.error ?? "Sync failed"}`);
+          else totalRows += j.data?.results.reduce((s, r) => s + (r.vendorRows ?? 0), 0) ?? 0;
+        } catch {
+          errors.push(`${brand.id}: Sync failed`);
+        }
+        done += 1;
+        setSyncPopup({
+          open: true, brandCode: brand.id, part: "Vendor Master",
+          percent: Math.round((done / total) * 100), status: "running",
+        });
       }
-      const totalRows = j.data?.results.reduce((sum, r) => sum + (r.vendorRows ?? 0), 0) ?? 0;
-      toast.success(`Sync Vendor สำเร็จ (${totalRows} รายการ)`);
+
       await mutateErp();
+
+      if (errors.length > 0) {
+        setSyncPopup({
+          open: true, brandCode: "", part: "", percent: 100, status: "error",
+          detail: errors.slice(0, 3).join(" · "),
+        });
+        toast.warning(`Sync Vendor บางรายการไม่สำเร็จ (${errors.length}) — ดึงได้ ${totalRows} รายการ`);
+      } else {
+        setSyncPopup({
+          open: true, brandCode: "", part: "", percent: 100, status: "done",
+          detail: `ดึง Vendor สำเร็จ ${totalRows} รายการ`,
+        });
+        toast.success(`Sync Vendor สำเร็จ — ${totalRows} รายการ`);
+      }
+      window.setTimeout(() => setSyncPopup((p) => ({ ...p, open: false })), errors.length > 0 ? 3500 : 1800);
     } catch {
+      setSyncPopup({ open: true, brandCode: "", part: "", percent: 0, status: "error", detail: "Sync Vendor ไม่สำเร็จ" });
       toast.error("Sync Vendor ไม่สำเร็จ");
+      window.setTimeout(() => setSyncPopup((p) => ({ ...p, open: false })), 2500);
     } finally {
       setSyncingVendor(false);
     }
@@ -378,6 +421,7 @@ export function AdvanceErpInterfaceSettings() {
 
   return (
     <div className="flex flex-col gap-4">
+      <ErpAccountSyncPopup state={syncPopup} />
       <div className="rounded-xl px-4 py-3 flex flex-wrap items-start justify-between gap-3"
         style={{ background: "var(--nav-active-bg)", border: "1px solid var(--border-card)" }}>
         <div className="flex-1 min-w-[200px]">
