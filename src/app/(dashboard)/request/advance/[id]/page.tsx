@@ -14,6 +14,7 @@ import { statusLabelDisplay } from "@/features/accounting/constants";
 import { STEP_LABEL, type StepType } from "@/lib/adv/approval-steps";
 import { Wallet } from "lucide-react";
 import { PaymentDatePicker } from "@/components/ui/PaymentDatePicker";
+import { SearchableSelect } from "@/features/accounting/components/settings/SearchableSelect";
 import type { AdvanceRequest } from "@/features/advance/types";
 
 export default function AdvanceDetailPage() {
@@ -236,31 +237,33 @@ function AdvanceDetailContent() {
               </div>
               <div className="text-[12px] flex items-center gap-2" style={{ color: "var(--text-secondary)" }}>
                 Vendor:
-                <select
-                  aria-label="เลือก Vendor"
-                  value={selectedVendor}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setSelectedVendor(v);
-                    if (!v) return;
-                    fetch("/api/request/advance/vendor-confirm", {
-                      method: "POST", headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ id: requestId, vendorNo: v }),
-                    })
-                      .then((r) => r.json())
-                      .then((j: { ok: boolean; error?: string }) => {
-                        if (!j.ok) toast.error(j.error ?? "ยืนยัน Vendor ไม่สำเร็จ");
-                        else { setVendorMatch((m) => ({ ...m, status: "confirmed" })); toast.success("ยืนยัน Vendor แล้ว"); }
+                <div style={{ minWidth: 300, maxWidth: 400 }}>
+                  <SearchableSelect
+                    value={selectedVendor}
+                    onChange={(v) => {
+                      setSelectedVendor(v);
+                      if (!v) return;
+                      fetch("/api/request/advance/vendor-confirm", {
+                        method: "POST", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ id: requestId, vendorNo: v }),
                       })
-                      .catch(() => toast.error("ยืนยัน Vendor ไม่สำเร็จ"));
-                  }}
-                  className="border rounded px-2 py-1"
-                >
-                  <option value="">— เลือก Vendor —</option>
-                  {vendors.map((v) => (
-                    <option key={v.vendorNo} value={v.vendorNo}>{v.displayName ?? v.vendorNo} ({v.vendorNo})</option>
-                  ))}
-                </select>
+                        .then((r) => r.json())
+                        .then((j: { ok: boolean; error?: string }) => {
+                          if (!j.ok) toast.error(j.error ?? "ยืนยัน Vendor ไม่สำเร็จ");
+                          else { setVendorMatch((m) => ({ ...m, status: "confirmed" })); toast.success("ยืนยัน Vendor แล้ว"); }
+                        })
+                        .catch(() => toast.error("ยืนยัน Vendor ไม่สำเร็จ"));
+                    }}
+                    options={vendors.map((v) => ({
+                      value: v.vendorNo,
+                      label: v.displayName ?? v.vendorNo,
+                      subLabel: v.vendorNo,
+                    }))}
+                    placeholder="— เลือก Vendor —"
+                    emptyLabel="— เลือก Vendor —"
+                    searchPlaceholder="ค้นหาชื่อ หรือ รหัส vendor..."
+                  />
+                </div>
                 {selectedVendor ? (
                   <span
                     title={vendorMatch.reason ?? ""}
