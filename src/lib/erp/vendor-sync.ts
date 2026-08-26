@@ -56,14 +56,15 @@ function normalizeCodexVendors(rows: CodexVendorRow[]): NormalizedCodexVendor[] 
     }
     byNo.set(vendorNo.toUpperCase(), {
       vendorNo,
-      displayName: t(r.name),
+      displayName: t(r.name) ?? vendorNo,
       vendorPostingGroup: (r.vendorPostingGroup ?? "").trim().toUpperCase() || null,
       addressLine1: t(r.address),
       city: t(r.city),
       postalCode: t(r.postCode),
       phoneNumber: t(r.phoneNo),
       currencyCode: t(r.currencyCode),
-      isBlocked: (r.blocked ?? "").trim() !== "",
+      // Blocked in BC, or PDPA privacy-blocked → not selectable for payment.
+      isBlocked: (r.blocked ?? "").trim() !== "" || r.privacyBlocked === true,
       bcLastModified,
     });
   }
