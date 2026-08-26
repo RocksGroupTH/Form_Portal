@@ -46,6 +46,7 @@ function AdvanceDetailContent() {
   const [vendors, setVendors] = useState<{ vendorNo: string; displayName: string | null }[]>([]);
   const [selectedVendor, setSelectedVendor] = useState<string>("");
   const [vendorMatch, setVendorMatch] = useState<{ status: string | null; confidence: string | null; reason: string | null }>({ status: null, confidence: null, reason: null });
+  const [matchingVendor, setMatchingVendor] = useState(false);
 
   const fetchRequest = useCallback(() => {
     if (requestId == null || Number.isNaN(requestId)) {
@@ -93,6 +94,7 @@ function AdvanceDetailContent() {
         if (j.ok && j.vendors) setVendors(j.vendors);
       })
       .catch(() => {});
+    setMatchingVendor(true);
     fetch(`/api/request/advance/vendor-match/${requestId}`, { method: "POST" })
       .then((r) => r.json())
       .then((j: { ok: boolean; data?: { status: string | null; vendorNo: string | null; confidence: string | null; reason: string | null } }) => {
@@ -102,7 +104,8 @@ function AdvanceDetailContent() {
           setSelectedVendor((prev) => prev || (j.data?.vendorNo ?? ""));
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setMatchingVendor(false); });
     return () => { cancelled = true; };
   }, [request?.currentStepCode, request?.brandCode, requestId]);
 
@@ -187,6 +190,12 @@ function AdvanceDetailContent() {
 
   return (
     <PageContainer className="acc-theme py-6 px-3 sm:px-0 flex flex-col gap-4">
+      {matchingVendor && (
+        <TravelExpenseLoadingPopup
+          label="AI กำลังจับคู่ Vendor..."
+          subtitle="กำลังค้นหา Vendor ที่ตรงกับผู้รับเงิน"
+        />
+      )}
       <PageHeaderBar
         icon={Wallet}
         title={request.requestNo ?? "ฉบับร่าง"}
