@@ -114,7 +114,19 @@ export async function getRequest(id: number): Promise<AdvanceRequest | null> {
   const req = mapRequestRow(head.recordset[0] as Record<string, unknown>);
 
   const advance = await loadAdvance(pool, id);
-  if (advance) req.advance = advance;
+  if (advance) {
+    // Employee payees have no stored bank account — resolve it live from HR so
+    // the value always reflects the current Employee record. Select ONLY
+    // BankAccountNo (never the multi-MB PhotoUrl column) keyed by the indexed
+    // StaffId, so this is a sub-millisecond lookup.
+    if (advance.payeeType === "employee" && req.staffId != null) {
+      const bankRes = await pool.request().input("sid", sql.Int, req.staffId)
+        .query(`SELECT TOP 1 BankAccountNo FROM ${hrEmployeeTable()} WHERE StaffId = @sid AND Status = N'Active'`);
+      const acct = ((bankRes.recordset[0]?.BankAccountNo as string) ?? "").trim();
+      if (acct) advance.payeeBankAccount = acct;
+    }
+    req.advance = advance;
+  }
 
   const aRes = await pool.request().input("id", sql.Int, id)
     .query(`SELECT a.*,
