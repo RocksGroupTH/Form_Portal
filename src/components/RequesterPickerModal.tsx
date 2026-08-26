@@ -12,6 +12,7 @@ export interface RequesterOption {
   departmentName?: string | null;
   email?: string | null;
   photoUrl?: string | null;
+  bankAccountNo?: string | null;
 }
 
 /**
