@@ -10,6 +10,46 @@ import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { toast } from "sonner";
 import { APP_DB_CONNECTION_ID } from "@/lib/db/app-connection";
+
+/**
+ * A brand's logo, or its code where there is no logo file.
+ *
+ * The brand list comes from the company brand master now, and a brand added
+ * there does not come with artwork in `public/brandlogo/` — Paloma and SANMAI
+ * have none today. `next/image` renders a missing file as a broken image, so
+ * the fallback is driven by `onError` rather than by the path being null: the
+ * path is always built, it is the *file* that may not exist.
+ */
+function BrandMark({ src, alt, code, size }: { src: string | null; alt: string; code: string; size: number }) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) {
+    return (
+      <span
+        className="rounded flex items-center justify-center font-bold shrink-0"
+        style={{
+          width: size,
+          height: size,
+          fontSize: Math.round(size * 0.32),
+          background: "var(--nav-active-bg)",
+          color: "var(--nav-active-text)",
+        }}
+        aria-label={alt}
+      >
+        {code.slice(0, 3)}
+      </span>
+    );
+  }
+  return (
+    <Image
+      src={src}
+      alt={alt}
+      width={size}
+      height={size}
+      className="rounded object-contain"
+      onError={() => setFailed(true)}
+    />
+  );
+}
 import {
   SearchableSelect,
   type SearchableSelectOption,
@@ -20,7 +60,7 @@ const fetcher = (url: string) => fetch(url).then((r) => r.json());
 interface BrandConfigRow {
   brandCode: string;
   brandName: string;
-  brandLogo: string;
+  brandLogo: string | null;
   bcId: string | null;
   bcName: string | null;
   bcConnectionId: number | null;
@@ -177,7 +217,7 @@ function BrandConfigCard({
           className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0"
           style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}
         >
-          <Image src={config.brandLogo} alt={config.brandName} width={36} height={36} className="rounded object-contain" />
+          <BrandMark src={config.brandLogo} alt={config.brandName} code={config.brandCode} size={36} />
         </div>
         <div className="flex flex-col items-end gap-1 shrink-0">
           {st.groups.map((g) => (
@@ -382,7 +422,7 @@ function BrandConfigModal({
         style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", boxShadow: "var(--shadow-modal)" }}
       >
         <div className="px-5 py-4 shrink-0 flex items-center gap-3" style={{ borderBottom: "1px solid var(--border-card)" }}>
-          <Image src={brand.brandLogo} alt={brand.brandName} width={32} height={32} className="rounded object-contain" />
+          <BrandMark src={brand.brandLogo} alt={brand.brandName} code={brand.brandCode} size={32} />
           <div className="flex-1 min-w-0">
             <h2 className="text-[15px] font-bold" style={{ color: "var(--text-heading)" }}>{brand.brandName}</h2>
             <p className="text-[11px] font-mono" style={{ color: "var(--text-muted)" }}>{brand.brandCode}</p>
