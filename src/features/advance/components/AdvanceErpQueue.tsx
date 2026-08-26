@@ -431,7 +431,7 @@ export function AdvanceErpQueue() {
                             aria-label="เลือก Vendor"
                             value={row.matchedVendorNo ?? ""}
                             onChange={(e) => { if (e.target.value) changeVendor(row.id, e.target.value); }}
-                            className="text-[12px] rounded-lg px-2 py-1 outline-none cursor-pointer"
+                            className="text-[12px] rounded-lg px-2 py-1 outline-none cursor-pointer min-w-[260px] max-w-[380px]"
                             style={{ background: "var(--bg-card)", border: "1px solid var(--border-input)", color: "var(--text-primary)" }}
                           >
                             <option value="">— เลือก Vendor —</option>
@@ -440,7 +440,7 @@ export function AdvanceErpQueue() {
                             ))}
                           </select>
                         ) : (
-                          <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>{row.matchedVendorName ?? row.matchedVendorNo ?? "—"}</span>
+                          <span className="text-[12px] inline-block min-w-[260px]" style={{ color: "var(--text-secondary)" }}>{row.matchedVendorName ?? row.matchedVendorNo ?? "—"}</span>
                         )}
                       </td>
                       <td className="px-2.5 py-2 whitespace-nowrap">

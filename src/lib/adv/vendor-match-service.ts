@@ -5,6 +5,7 @@ import { getRequest } from "@/lib/adv/advance-request-service";
 import {
   prefilterVendors, listVendors, findSelectableVendor, isVendorSelectable,
 } from "@/lib/adv/advance-erp-master-service";
+import { resolveAdvanceInterfaceCompany } from "@/lib/adv/advance-erp-context";
 import type { VendorCandidate } from "@/lib/adv/vendor-match-normalize";
 import {
   runVendorMatch,
@@ -110,11 +111,14 @@ export async function matchAdvanceVendor(requestId: number): Promise<VendorMatch
   const req = await getRequest(requestId);
   if (!req?.advance || !req.brandCode) return null;
   const a = req.advance;
+  // ErpVendors is keyed by the BC interface Company (PCTH/KSI/…), not the portal
+  // brand (ROCKS/…), so resolve before any vendor lookup.
+  const company = await resolveAdvanceInterfaceCompany(req.brandCode);
   const st = a.vendorMatchStatus;
   if (st === "confirmed") {
     // Spec §7: if the confirmed vendor is no longer selectable (blocked/removed
     // in BC), force re-selection; otherwise return the confirmed pick.
-    if (a.matchedVendorNo && (await isVendorSelectable(req.brandCode, a.matchedVendorNo))) {
+    if (a.matchedVendorNo && (await isVendorSelectable(company, a.matchedVendorNo))) {
       return { status: "suggested", vendorNo: a.matchedVendorNo, vendorName: a.matchedVendorName,
         confidence: a.vendorMatchConfidence, reason: a.vendorMatchReason };
     }
@@ -126,7 +130,7 @@ export async function matchAdvanceVendor(requestId: number): Promise<VendorMatch
   }
   const result = await runVendorMatch(
     a.payeeName ?? "",
-    makeFetchCandidates(req.brandCode),
+    makeFetchCandidates(company),
     askHaiku,
   );
   await writeMatch(requestId, result);
@@ -137,7 +141,9 @@ export async function matchAdvanceVendor(requestId: number): Promise<VendorMatch
 export async function confirmAdvanceVendor(
   requestId: number, company: string, vendorNo: string, userId: number,
 ): Promise<void> {
-  const picked = await findSelectableVendor(company, vendorNo);
+  // Callers pass the portal brand; ErpVendors is keyed by the interface Company.
+  const co = await resolveAdvanceInterfaceCompany(company);
+  const picked = await findSelectableVendor(co, vendorNo);
   if (!picked) throw new VendorConfirmError("Vendor นี้ถูกระงับหรือไม่มีอยู่แล้ว — เลือกใหม่");
   const pool = await getAccPool();
   await pool.request()

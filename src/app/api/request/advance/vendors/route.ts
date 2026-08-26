@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/api-auth";
 import { buildAccActor } from "@/lib/acc/actor-context";
 import { isAdvanceApprover } from "@/lib/adv/advance-approver-service";
 import { listVendors } from "@/lib/adv/advance-erp-master-service";
+import { resolveAdvanceInterfaceCompany } from "@/lib/adv/advance-erp-context";
 
 /**
  * GET /api/request/advance/vendors?company=PCTH
@@ -28,7 +29,10 @@ export async function GET(req: NextRequest) {
   if (!company) return NextResponse.json({ ok: false, error: "ต้องระบุ company" }, { status: 400 });
 
   try {
-    const vendors = await listVendors(company);
+    // The caller may pass a portal brand (detail page) or an already-resolved
+    // interface Company (queue); resolve either to the BC Company that keys ErpVendors.
+    const resolved = await resolveAdvanceInterfaceCompany(company);
+    const vendors = await listVendors(resolved);
     return NextResponse.json({ ok: true, vendors });
   } catch (err) {
     console.error("[api/request/advance/vendors] GET", err);

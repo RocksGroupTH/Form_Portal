@@ -53,6 +53,20 @@ async function resolveAdvanceErpDept(
  * loadErpJournalBuildContext's interfaceByClaim map, which already resolves
  * the AP-2 override (AccBrandErpInterface FormCode='AP-2') before the NULL default.
  */
+/**
+ * Resolve a portal brand (claim) to the BC interface Company code that keys
+ * ErpVendors and the other Rocks_ERP_Data masters (e.g. ROCKS → PCTH). Idempotent
+ * for values that are already interface Company codes (PCTH → PCTH). Vendor
+ * lookups must use this, never the raw brand, or they query a non-existent
+ * BrandCode and come back empty.
+ */
+export async function resolveAdvanceInterfaceCompany(brandCode: string): Promise<string> {
+  const code = (brandCode ?? "").trim().toUpperCase();
+  if (!code) return "";
+  const ctx = await loadErpJournalBuildContext(AP2_FORM_CODE);
+  return (ctx.interfaceByClaim[code] ?? code).toUpperCase();
+}
+
 export async function loadAdvanceErpContext(
   brandCode: string,
   hrDeptCode?: string | null,
