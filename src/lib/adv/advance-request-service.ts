@@ -323,8 +323,11 @@ async function persistAdvance(
         NeedByDate=@needBy, ExpectedClearDate=@clear, Purpose=@purpose,
         Currency=@currency, Amount=@amount, ExchangeRate=@rate, BaseAmount=@base,
         WhtNote=@wht, OverThresholdReason=@overReason,
-        VendorMatchStatus = CASE WHEN ISNULL(PayeeName,'') <> ISNULL(@payeeName,'')
-                                 THEN 'pending' ELSE VendorMatchStatus END,
+        MatchedVendorNo = CASE WHEN ISNULL(PayeeName,'') <> ISNULL(@payeeName,'') THEN NULL ELSE MatchedVendorNo END,
+        MatchedVendorName = CASE WHEN ISNULL(PayeeName,'') <> ISNULL(@payeeName,'') THEN NULL ELSE MatchedVendorName END,
+        VendorMatchConfidence = CASE WHEN ISNULL(PayeeName,'') <> ISNULL(@payeeName,'') THEN NULL ELSE VendorMatchConfidence END,
+        VendorMatchReason = CASE WHEN ISNULL(PayeeName,'') <> ISNULL(@payeeName,'') THEN NULL ELSE VendorMatchReason END,
+        VendorMatchStatus = CASE WHEN ISNULL(PayeeName,'') <> ISNULL(@payeeName,'') THEN 'pending' ELSE VendorMatchStatus END,
         UpdatedAt=SYSDATETIME()
       WHERE RequestId=@rid`);
   } else {

@@ -3,7 +3,7 @@ import { resolveApiKey } from "@/lib/api-keys/service";
 import { getAccPool, sql } from "@/lib/adv/pool";
 import { getRequest } from "@/lib/adv/advance-request-service";
 import {
-  prefilterVendors, listVendors, findSelectableVendor,
+  prefilterVendors, listVendors, findSelectableVendor, isVendorSelectable,
 } from "@/lib/adv/advance-erp-master-service";
 import type { VendorCandidate } from "@/lib/adv/vendor-match-normalize";
 import {
@@ -90,6 +90,18 @@ async function writeMatch(requestId: number, r: VendorMatchResult): Promise<void
         AND (VendorMatchStatus IS NULL OR VendorMatchStatus = 'pending')`);
 }
 
+/** Force a row back to 'pending' (bypasses writeMatch's null/pending guard) —
+ *  used when a previously-confirmed vendor is no longer selectable in BC. */
+async function resetMatchToPending(requestId: number): Promise<void> {
+  const pool = await getAccPool();
+  await pool.request().input("rid", sql.Int, requestId).query(`
+    UPDATE [dbo].[AccAdvance]
+    SET MatchedVendorNo = NULL, MatchedVendorName = NULL,
+        VendorMatchStatus = 'pending', VendorMatchConfidence = NULL,
+        VendorMatchReason = NULL, VendorConfirmedBy = NULL, VendorMatchedAt = SYSDATETIME()
+    WHERE RequestId = @rid`);
+}
+
 /**
  * Run matching for one advance if it is still pending/NULL, persist and return
  * the result. Idempotent: already-suggested/confirmed rows are returned untouched.
@@ -97,18 +109,23 @@ async function writeMatch(requestId: number, r: VendorMatchResult): Promise<void
 export async function matchAdvanceVendor(requestId: number): Promise<VendorMatchResult | null> {
   const req = await getRequest(requestId);
   if (!req?.advance || !req.brandCode) return null;
-  const st = req.advance.vendorMatchStatus;
-  if (st === "suggested" || st === "confirmed" || st === "none") {
-    return {
-      status: st === "confirmed" ? "suggested" : st,   // never widen 'confirmed' back out
-      vendorNo: req.advance.matchedVendorNo,
-      vendorName: req.advance.matchedVendorName,
-      confidence: req.advance.vendorMatchConfidence,
-      reason: req.advance.vendorMatchReason,
-    };
+  const a = req.advance;
+  const st = a.vendorMatchStatus;
+  if (st === "confirmed") {
+    // Spec §7: if the confirmed vendor is no longer selectable (blocked/removed
+    // in BC), force re-selection; otherwise return the confirmed pick.
+    if (a.matchedVendorNo && (await isVendorSelectable(req.brandCode, a.matchedVendorNo))) {
+      return { status: "suggested", vendorNo: a.matchedVendorNo, vendorName: a.matchedVendorName,
+        confidence: a.vendorMatchConfidence, reason: a.vendorMatchReason };
+    }
+    await resetMatchToPending(requestId);
+    // fall through to re-run matching below
+  } else if (st === "suggested" || st === "none") {
+    return { status: st, vendorNo: a.matchedVendorNo, vendorName: a.matchedVendorName,
+      confidence: a.vendorMatchConfidence, reason: a.vendorMatchReason };
   }
   const result = await runVendorMatch(
-    req.advance.payeeName ?? "",
+    a.payeeName ?? "",
     makeFetchCandidates(req.brandCode),
     askHaiku,
   );
