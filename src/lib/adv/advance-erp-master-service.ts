@@ -18,12 +18,14 @@ const ERP_DATA_DB = process.env.MSSQL_ERP_DATA_DATABASE || "Rocks_ERP_Data";
 export interface AdvErpAcctOption { accountNo: string; displayName: string | null }
 export interface AdvErpBranchOption { code: string; displayName: string | null }
 export interface AdvErpBatchOption { batchName: string; displayName: string | null; templateName: string | null }
+export interface AdvErpVendorOption { vendorNo: string; displayName: string | null }
 
 export interface AdvErpCompanyMaster {
   gl: AdvErpAcctOption[];
   bank: AdvErpAcctOption[];
   branch: AdvErpBranchOption[];
   journalBatch: AdvErpBatchOption[];
+  vendors: AdvErpVendorOption[];
 }
 
 async function listGl(company: string): Promise<AdvErpAcctOption[]> {
@@ -85,14 +87,65 @@ async function listBatch(company: string): Promise<AdvErpBatchOption[]> {
   }));
 }
 
-/** All four master lists for one Company, read from Rocks_ERP_Data. */
+export async function listVendors(company: string): Promise<AdvErpVendorOption[]> {
+  const c = company.trim().toUpperCase();
+  if (!c) return [];
+  const pool = await getAppPool(ERP_DATA_DB);
+  const r = await pool.request().input("c", sql.NVarChar, c).query(`
+    SELECT VendorNo, DisplayName FROM [dbo].[ErpVendors]
+    WHERE BrandCode = @c
+      AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
+    ORDER BY DisplayName`);
+  return (r.recordset as Record<string, unknown>[]).map((x) => ({
+    vendorNo: x.VendorNo as string,
+    displayName: (x.DisplayName as string) ?? null,
+  }));
+}
+
+/** Prefilter candidates for the matcher: active vendors whose name shares a token
+ *  with the payee. Caps the set so the LLM prompt stays small. */
+export async function prefilterVendors(company: string, payeeName: string, limit = 10): Promise<AdvErpVendorOption[]> {
+  const c = company.trim().toUpperCase();
+  const term = (payeeName ?? "").trim();
+  if (!c || !term) return [];
+  const pool = await getAppPool(ERP_DATA_DB);
+  const r = await pool.request()
+    .input("c", sql.NVarChar, c)
+    .input("t", sql.NVarChar, `%${term}%`)
+    .input("lim", sql.Int, limit)
+    .query(`
+      SELECT TOP (@lim) VendorNo, DisplayName FROM [dbo].[ErpVendors]
+      WHERE BrandCode = @c
+        AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
+        AND (DisplayName LIKE @t OR @t LIKE '%' + DisplayName + '%')
+      ORDER BY LEN(DisplayName)`);
+  return (r.recordset as Record<string, unknown>[]).map((x) => ({
+    vendorNo: x.VendorNo as string,
+    displayName: (x.DisplayName as string) ?? null,
+  }));
+}
+
+/** Is this vendor still selectable (active + not blocked) for the company? */
+export async function isVendorSelectable(company: string, vendorNo: string): Promise<boolean> {
+  const c = company.trim().toUpperCase();
+  const v = (vendorNo ?? "").trim();
+  if (!c || !v) return false;
+  const pool = await getAppPool(ERP_DATA_DB);
+  const r = await pool.request().input("c", sql.NVarChar, c).input("v", sql.NVarChar, v).query(`
+    SELECT TOP 1 1 AS Ok FROM [dbo].[ErpVendors]
+    WHERE BrandCode = @c AND VendorNo = @v
+      AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)`);
+  return r.recordset.length > 0;
+}
+
+/** All five master lists for one Company, read from Rocks_ERP_Data. */
 export async function listAdvErpMaster(company: string): Promise<AdvErpCompanyMaster> {
   const c = company.trim().toUpperCase();
-  if (!c) return { gl: [], bank: [], branch: [], journalBatch: [] };
-  const [gl, bank, branch, journalBatch] = await Promise.all([
-    listGl(c), listBank(c), listBranch(c), listBatch(c),
+  if (!c) return { gl: [], bank: [], branch: [], journalBatch: [], vendors: [] };
+  const [gl, bank, branch, journalBatch, vendors] = await Promise.all([
+    listGl(c), listBank(c), listBranch(c), listBatch(c), listVendors(c),
   ]);
-  return { gl, bank, branch, journalBatch };
+  return { gl, bank, branch, journalBatch, vendors };
 }
 
 /** Master lists for several Companies, keyed by Company code. */
