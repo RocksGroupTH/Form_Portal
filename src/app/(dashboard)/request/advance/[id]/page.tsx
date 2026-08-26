@@ -125,10 +125,23 @@ function AdvanceDetailContent() {
     }
   }
 
-  function handleApprove() {
+  async function handleApprove() {
     if (request?.currentStepCode === "ACC_OFFICER") {
       if (!paymentDate) return toast.error("กรุณาเลือกวันจ่าย");
       if (!selectedVendor) return toast.error("กรุณาเลือก Vendor");
+      // Approving IS the confirmation: a merely-suggested vendor is only
+      // 'suggested' in the DB, but the gate requires 'confirmed' — confirm the
+      // selected vendor now (idempotent) so the approval passes.
+      try {
+        const res = await fetch("/api/request/advance/vendor-confirm", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: requestId, vendorNo: selectedVendor }),
+        });
+        const j = (await res.json()) as { ok: boolean; error?: string };
+        if (!j.ok) return toast.error(j.error ?? "ยืนยัน Vendor ไม่สำเร็จ");
+      } catch {
+        return toast.error("ยืนยัน Vendor ไม่สำเร็จ");
+      }
       act("approve", { paymentDate });
     } else {
       act("approve");
