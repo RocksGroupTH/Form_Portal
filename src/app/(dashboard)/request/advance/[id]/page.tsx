@@ -13,6 +13,7 @@ import { TravelExpenseLoadingPopup } from "@/features/accounting/components/Trav
 import { statusLabelDisplay } from "@/features/accounting/constants";
 import { STEP_LABEL, type StepType } from "@/lib/adv/approval-steps";
 import { Wallet } from "lucide-react";
+import { PaymentDatePicker } from "@/components/ui/PaymentDatePicker";
 import type { AdvanceRequest } from "@/features/advance/types";
 
 export default function AdvanceDetailPage() {
@@ -201,15 +202,10 @@ function AdvanceDetailContent() {
           </h3>
           {currentStep === "ACC_OFFICER" && (
             <div className="flex flex-wrap items-center gap-3">
-              <label className="text-[12px] flex items-center gap-2" style={{ color: "var(--text-secondary)" }}>
+              <div className="text-[12px] flex items-center gap-2" style={{ color: "var(--text-secondary)" }}>
                 วันจ่าย:
-                <select className="text-[13px] px-2 py-1 rounded-lg"
-                  style={{ background: "var(--bg-card)", color: "var(--text-primary)", border: "1px solid var(--border-card)" }}
-                  value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)}>
-                  <option value="">— เลือก —</option>
-                  {paymentDates.map((d) => <option key={d} value={d}>{d}</option>)}
-                </select>
-              </label>
+                <PaymentDatePicker value={paymentDate} onChange={setPaymentDate} allowedDates={paymentDates} />
+              </div>
               <label className="text-[12px] flex items-center gap-2" style={{ color: "var(--text-secondary)" }}>
                 <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} />
                 ตรวจสอบแล้ว (Check)

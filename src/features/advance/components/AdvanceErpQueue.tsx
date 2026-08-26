@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { Upload, FileText, Search, Download, Eye, Loader2 } from "lucide-react";
+import { PaymentDatePicker } from "@/components/ui/PaymentDatePicker";
 import { AdvanceCompanyBar, ADVANCE_COMPANY_ALL } from "./AdvanceCompanyBar";
 import { AdvanceDetailPanel } from "./AdvanceDetailPanel";
 import { AdvanceJournalPreview, type PreviewItem } from "./AdvanceJournalPreview";
@@ -393,15 +394,11 @@ export function AdvanceErpQueue() {
                       <td className="px-2.5 py-2 whitespace-nowrap text-right tabular-nums font-semibold" style={{ color: "var(--text-secondary)" }}>{fmt(row.baseAmount ?? 0)}</td>
                       <td className="px-2.5 py-2 whitespace-nowrap">
                         {paymentDateOpts.length > 0 ? (
-                          <select
+                          <PaymentDatePicker
                             value={row.paymentDate ?? ""}
-                            onChange={(e) => changePaymentDate(row.id, e.target.value)}
-                            className="text-[12px] px-2 py-1 rounded-lg"
-                            style={{ background: "var(--bg-card)", color: "var(--text-primary)", border: "1px solid var(--border-card)" }}
-                          >
-                            {!row.paymentDate && <option value="">— เลือกวันจ่าย —</option>}
-                            {paymentDateOpts.map((d) => <option key={d} value={d}>{d}</option>)}
-                          </select>
+                            onChange={(d) => changePaymentDate(row.id, d)}
+                            allowedDates={paymentDateOpts}
+                          />
                         ) : (
                           <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>{row.paymentDate ?? "—"}</span>
                         )}

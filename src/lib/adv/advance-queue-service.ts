@@ -73,7 +73,7 @@ function mapRow(row: Record<string, unknown>, map: Record<string, string>): Adva
     brandCode: (row.BrandCode as string) ?? null,
     interfaceTarget: resolveTarget(map, (row.BrandCode as string) ?? null),
     requesterFullName: (row.RequesterFullName as string) ?? null,
-    payeeName: (row.PayeeName as string) ?? null,
+    payeeName: (row.PayeeName as string) || (row.RequesterFullName as string) || null,
     purpose: (row.Purpose as string) ?? null,
     currency: (row.Currency as string) ?? null,
     amount: n(row.Amount),

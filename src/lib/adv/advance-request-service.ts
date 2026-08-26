@@ -408,7 +408,10 @@ export async function saveDraft(
                   UpdatedAt=SYSDATETIME() WHERE Id=@id`);
     }
 
-    await persistAdvance(tx, requestId, input.advance);
+    const advance = input.advance.payeeType === "employee"
+      ? { ...input.advance, payeeName: requester.fullName ?? input.advance.payeeName }
+      : input.advance;
+    await persistAdvance(tx, requestId, advance);
 
     await tx.commit();
     return requestId;
@@ -526,6 +529,14 @@ export async function submitRequest(
         ManagerStaffId=@mgrStaff, ManagerEmail=@mgrEmail, CompanyName=@company,
         TotalAmount=@total, SubmittedBy=@by, SubmittedAt=SYSDATETIME(), UpdatedAt=SYSDATETIME()
         WHERE Id=@id`);
+
+    // Pin payeeName to HR fullName for employee-type advances (consistent with saveDraft).
+    if (advance.payeeType === "employee" && requester.fullName) {
+      await tx.request()
+        .input("id", sql.Int, id)
+        .input("name", sql.NVarChar, requester.fullName)
+        .query(`UPDATE [dbo].[AccAdvance] SET PayeeName=@name WHERE RequestId=@id AND (PayeeType='employee' OR PayeeType IS NULL)`);
+    }
 
     // Rebuild AP-2's own approval chain from the matrix (idempotent on resubmit).
     await tx.request().input("id", sql.Int, id)

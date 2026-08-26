@@ -477,49 +477,93 @@ export async function listMyWorkRows(
       .query(
         buildListQuery(
           "request",
-          `r.Status <> 'Draft' AND EXISTS (
-          SELECT 1 FROM [dbo].[AccApproval] a
-          WHERE a.RequestId = r.Id
-            AND (
-              (@staffId IS NOT NULL AND a.AssignedTo = @staffId)
-              OR (@email <> '' AND a.AssignedEmail = @email)
-              /* AP-1's accounting queue. [dbo].[AccApprover] is AP-1's roster
-                 and every Acc* form shares this table, so without the form pin
-                 an AP-1 accountant is handed every other form's pending
-                 accounting step — and clicking one opened it over an AP-1 URL. */
-              OR (
-                r.FormCode = 'AP-1'
-                AND @staffId IS NOT NULL
-                AND a.StepCode = 'ACCOUNT'
-                AND a.Status = 'Pending'
-                AND EXISTS (
-                  SELECT 1 FROM [dbo].[AccApprover] ap
-                  WHERE ap.StaffId = @staffId AND ap.IsActive = 1
+          `r.Status <> 'Draft' AND (
+          EXISTS (
+            SELECT 1 FROM [dbo].[AccApproval] a
+            WHERE a.RequestId = r.Id
+              AND (
+                (@staffId IS NOT NULL AND a.AssignedTo = @staffId)
+                OR (@email <> '' AND a.AssignedEmail = @email)
+                /* AP-1's accounting queue. [dbo].[AccApprover] is AP-1's roster
+                   and every Acc* form shares [dbo].[AccApproval], so without the
+                   form pin an AP-1 accountant is handed every other form's
+                   pending accounting step — and clicking one opened it over an
+                   AP-1 URL. Only AP-1 and AP-4 write AccApproval rows at all;
+                   AP-2 and AP-3 have their own tables, below. */
+                OR (
+                  r.FormCode = 'AP-1'
+                  AND @staffId IS NOT NULL
+                  AND a.StepCode = 'ACCOUNT'
+                  AND a.Status = 'Pending'
+                  AND EXISTS (
+                    SELECT 1 FROM [dbo].[AccApprover] ap
+                    WHERE ap.StaffId = @staffId AND ap.IsActive = 1
+                  )
                 )
-              )
-              /* AP-4's, which answers to its own pool and has two accounting
-                 steps rather than one. Matched on StaffId first and login email
-                 second, the same two ways findActiveApprover() resolves an
-                 actor — an approver with no Rocks_Portal_HR.Employee row may
-                 act, so their queue has to find them too. */
-              OR (
-                r.FormCode = 'AP-4'
-                AND a.StepCode IN ('ACCOUNT', 'ACCOUNT_FINAL')
-                AND a.Status = 'Pending'
-                AND EXISTS (
-                  SELECT 1 FROM [dbo].[AccReimburseApprover] ra
-                  WHERE ra.IsActive = 1
-                    AND (
-                      (@staffId IS NOT NULL AND ra.StaffId = @staffId)
-                      OR (
-                        @email <> N''
-                        AND LOWER(LTRIM(RTRIM(COALESCE(ra.Email, N''))))
-                          = LOWER(LTRIM(RTRIM(@email)))
+                /* AP-4's, which answers to its own roster and has two accounting
+                   steps rather than one. Matched on StaffId first and login
+                   email second, the same two ways findActiveApprover() resolves
+                   an actor — an approver with no Rocks_Portal_HR.Employee row
+                   may act, so their queue has to find them too. */
+                OR (
+                  r.FormCode = 'AP-4'
+                  AND a.StepCode IN ('ACCOUNT', 'ACCOUNT_FINAL')
+                  AND a.Status = 'Pending'
+                  AND EXISTS (
+                    SELECT 1 FROM [dbo].[AccReimburseApprover] ra
+                    WHERE ra.IsActive = 1
+                      AND (
+                        (@staffId IS NOT NULL AND ra.StaffId = @staffId)
+                        OR (
+                          @email <> N''
+                          AND LOWER(LTRIM(RTRIM(COALESCE(ra.Email, N''))))
+                            = LOWER(LTRIM(RTRIM(@email)))
+                        )
                       )
-                    )
+                  )
                 )
               )
-            )
+          )
+          OR EXISTS (
+            SELECT 1 FROM [dbo].[AccClearAdvanceApproval] ca
+            WHERE ca.RequestId = r.Id
+              AND (
+                (@staffId IS NOT NULL AND ca.AssignedStaffId = @staffId)
+                OR (
+                  @email <> ''
+                  AND LOWER(LTRIM(RTRIM(COALESCE(ca.AssignedEmail, N'')))) = LOWER(LTRIM(RTRIM(@email)))
+                )
+                OR (
+                  @staffId IS NOT NULL
+                  AND ca.StepCode = 'ACCOUNT'
+                  AND ca.Status = 'Pending'
+                  AND EXISTS (
+                    SELECT 1 FROM [dbo].[AccClearAdvanceApprover] ap
+                    WHERE ap.StaffId = @staffId AND ap.IsActive = 1 AND ap.Role = 'ACCOUNT'
+                  )
+                )
+              )
+          )
+          OR EXISTS (
+            SELECT 1 FROM [dbo].[AccAdvanceApproval] aa
+            WHERE aa.RequestId = r.Id
+              AND (
+                (@staffId IS NOT NULL AND aa.AssignedStaffId = @staffId)
+                OR (
+                  @email <> ''
+                  AND LOWER(LTRIM(RTRIM(COALESCE(aa.AssignedEmail, N'')))) = LOWER(LTRIM(RTRIM(@email)))
+                )
+                OR (
+                  @staffId IS NOT NULL
+                  AND aa.Status = 'Pending'
+                  AND EXISTS (
+                    SELECT 1 FROM [dbo].[AccAdvanceApprover] ap
+                    WHERE ap.StaffId = @staffId AND ap.IsActive = 1
+                      AND ap.ApproverRole = aa.StepType
+                  )
+                )
+              )
+          )
         )`,
           "r.SubmittedAt DESC, r.Id DESC",
           viewerManagerSelect,
