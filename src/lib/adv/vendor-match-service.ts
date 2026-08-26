@@ -20,6 +20,14 @@ import {
 export { runVendorMatch };
 export type { VendorMatchResult, VendorMatchStatus, VendorMatchConfidence, LlmPick, FetchCandidates, AskLlm };
 
+/** Thrown for user-facing vendor-confirm validation failures (safe to show the client). */
+export class VendorConfirmError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "VendorConfirmError";
+  }
+}
+
 const MODEL = process.env.ANTHROPIC_VENDOR_MATCH_MODEL || "claude-haiku-4-5-20251001"; // Model id — update on Haiku model refresh; mirrors src/lib/clr/ai-receipt.ts
 
 /** Real candidate fetch: coarse SQL prefilter, fall back to a capped full list. */
@@ -113,7 +121,7 @@ export async function confirmAdvanceVendor(
   requestId: number, company: string, vendorNo: string, userId: number,
 ): Promise<void> {
   const picked = await findSelectableVendor(company, vendorNo);
-  if (!picked) throw new Error("Vendor นี้ถูกระงับหรือไม่มีอยู่แล้ว — เลือกใหม่");
+  if (!picked) throw new VendorConfirmError("Vendor นี้ถูกระงับหรือไม่มีอยู่แล้ว — เลือกใหม่");
   const pool = await getAccPool();
   await pool.request()
     .input("rid", sql.Int, requestId)
