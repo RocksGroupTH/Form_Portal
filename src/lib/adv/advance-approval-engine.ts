@@ -76,6 +76,17 @@ export async function approveCurrentStep(
     if (!opts.paymentDate || !valid.includes(opts.paymentDate)) {
       throw new Error("วันที่จ่ายไม่อยู่ในรอบที่กำหนด (ศุกร์ที่ 2 หรือ 4)");
     }
+    // AP-2: the debit posts to a Vendor, so the Accounting Officer must have a
+    // confirmed vendor before this step can complete. (Belt: the send guard and
+    // the payload builder also refuse, but the gate lives here so the queue only
+    // ever receives complete rows.)
+    const pool = await getAccPool();
+    const vr = await pool.request().input("rid", sql.Int, requestId)
+      .query(`SELECT MatchedVendorNo, VendorMatchStatus FROM [dbo].[AccAdvance] WHERE RequestId=@rid`);
+    const vrow = vr.recordset[0] as { MatchedVendorNo?: string | null; VendorMatchStatus?: string | null } | undefined;
+    if (!vrow?.MatchedVendorNo || vrow.VendorMatchStatus !== "confirmed") {
+      throw new Error("ต้องยืนยัน Vendor ก่อนอนุมัติ (เลือก Vendor ในหน้ารายละเอียด)");
+    }
   }
 
   const pool = await getAccPool();
