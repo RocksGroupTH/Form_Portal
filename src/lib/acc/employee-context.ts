@@ -1,5 +1,4 @@
 import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
-import { pickEmployeePhotoUrl } from "@/lib/hr/photo-url";
 import { getHrPool } from "@/lib/hr/pool";
 import { sql } from "@/lib/db/mssql";
 import {
@@ -81,8 +80,6 @@ interface ManagerRow {
   Email: string | null;
   EmailCompBr: string | null;
   Position: string | null;
-  PhotoUrl: string | null;
-  PhotoOverrideUrl: string | null;
 }
 
 /**
@@ -151,7 +148,7 @@ export async function resolveManagerInfo(
 
   const pool = await getHrPool();
   const r = await pool.request().input("sid", sql.Int, managerStaffId).query<ManagerRow>(`
-    SELECT TOP 1 StaffId, FullName, FirstName, LastName, Email, EmailCompBr, Position, PhotoUrl, PhotoOverrideUrl
+    SELECT TOP 1 StaffId, FullName, FirstName, LastName, Email, EmailCompBr, Position
     FROM dbo.Employee WHERE StaffId = @sid AND Status = 'Active'
   `);
   const row = r.recordset[0];
@@ -173,7 +170,7 @@ export async function resolveManagerInfo(
       fullName,
       email: row.Email ?? row.EmailCompBr ?? null,
       position: row.Position ?? null,
-      photoUrl: pickEmployeePhotoUrl(row.PhotoOverrideUrl, row.PhotoUrl),
+      photoUrl: `/api/hr/photo/${row.StaffId}`,
     },
   };
 }

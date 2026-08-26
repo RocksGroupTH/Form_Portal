@@ -1,7 +1,6 @@
 import { sql } from "@/lib/db/mssql";
 import { resolveFormAccess, resolveFormEnvironment } from "@/lib/form-environment";
 import { EMPLOYEE_STATUS_ACTIVE } from "@/lib/hr/constants";
-import { pickEmployeePhotoUrl } from "@/lib/hr/photo-url";
 import { getHrPool } from "@/lib/hr/pool";
 import { assertRequesterAllowedInUat } from "@/lib/uat-tester/guards";
 import { uatManagerFor, uatManagerStaffIdsFor } from "@/lib/uat-tester/service";
@@ -46,8 +45,6 @@ interface EmployeeRow {
   CompanyTaxId: string | null;
   CompanyPhone: string | null;
   LogoPath: string | null;
-  PhotoUrl: string | null;
-  PhotoOverrideUrl: string | null;
 }
 
 function normalizeEmail(value: string | null | undefined): string {
@@ -99,7 +96,7 @@ function rowToEmployee(row: EmployeeRow): EmployeeContext {
     teamMemberId: row.TeamMemberId,
     adUserId: row.AdUserId,
     status: row.Status,
-    photoUrl: pickEmployeePhotoUrl(row.PhotoOverrideUrl, row.PhotoUrl),
+    photoUrl: row.StaffId != null ? `/api/hr/photo/${row.StaffId}` : null,
     brand: rowToBrand(row),
   };
 }
@@ -154,9 +151,7 @@ export async function findActiveEmployeeByEmail(
         hb.CompanyAddress,
         hb.CompanyTaxId,
         hb.CompanyPhone,
-        hb.LogoPath,
-        e.PhotoUrl,
-        e.PhotoOverrideUrl
+        hb.LogoPath
       FROM dbo.Employee e
       LEFT JOIN dbo.HrBrand hb ON hb.Id = e.BrandId
       LEFT JOIN dbo.Department d
@@ -241,8 +236,6 @@ interface ColleagueRow {
   DepartmentName: string | null;
   Email: string | null;
   EmailCompBr: string | null;
-  PhotoUrl: string | null;
-  PhotoOverrideUrl: string | null;
   MgrStaffId: number | null;
   MgrFullName: string | null;
   MgrFirstName: string | null;
@@ -250,8 +243,6 @@ interface ColleagueRow {
   MgrEmail: string | null;
   MgrEmailCompBr: string | null;
   MgrPosition: string | null;
-  MgrPhotoUrl: string | null;
-  MgrPhotoOverrideUrl: string | null;
 }
 
 /** Active HR identities behind a set of manager StaffIds, keyed by StaffId. */
@@ -277,11 +268,8 @@ async function listActiveManagersByStaffIds(
     Email: string | null;
     EmailCompBr: string | null;
     Position: string | null;
-    PhotoUrl: string | null;
-    PhotoOverrideUrl: string | null;
   }>(`
-    SELECT StaffId, FullName, FirstName, LastName, Email, EmailCompBr, Position,
-           PhotoUrl, PhotoOverrideUrl
+    SELECT StaffId, FullName, FirstName, LastName, Email, EmailCompBr, Position
     FROM dbo.Employee
     WHERE Status = @status AND StaffId IN (${placeholders.join(", ")})
   `);
@@ -293,7 +281,7 @@ async function listActiveManagersByStaffIds(
         [row.FirstName, row.LastName].filter(Boolean).join(" ") || row.FullName || null,
       email: row.Email ?? row.EmailCompBr ?? null,
       position: row.Position,
-      photoUrl: pickEmployeePhotoUrl(row.PhotoOverrideUrl, row.PhotoUrl),
+      photoUrl: row.StaffId != null ? `/api/hr/photo/${row.StaffId}` : null,
     });
   }
   return out;
@@ -356,7 +344,7 @@ function mapColleagueRow(row: ColleagueRow): DepartmentColleague {
     departmentId: row.DepartmentId,
     departmentName: row.DepartmentName,
     email: row.Email ?? row.EmailCompBr ?? null,
-    photoUrl: pickEmployeePhotoUrl(row.PhotoOverrideUrl, row.PhotoUrl),
+    photoUrl: row.StaffId != null ? `/api/hr/photo/${row.StaffId}` : null,
     manager: row.MgrStaffId
       ? {
           staffId: row.MgrStaffId,
@@ -364,7 +352,7 @@ function mapColleagueRow(row: ColleagueRow): DepartmentColleague {
             [row.MgrFirstName, row.MgrLastName].filter(Boolean).join(" ") || row.MgrFullName || null,
           email: row.MgrEmail ?? row.MgrEmailCompBr ?? null,
           position: row.MgrPosition,
-          photoUrl: pickEmployeePhotoUrl(row.MgrPhotoOverrideUrl, row.MgrPhotoUrl),
+          photoUrl: `/api/hr/photo/${row.MgrStaffId}`,
         }
       : null,
   };
@@ -395,11 +383,10 @@ export async function listDepartmentColleagues(
       SELECT
         e.StaffId, e.FullName, e.FirstName, e.LastName, e.Nickname, e.Position,
         e.DepartmentId, d.Name AS DepartmentName,
-        e.Email, e.EmailCompBr, e.PhotoUrl, e.PhotoOverrideUrl,
+        e.Email, e.EmailCompBr,
         mgr.StaffId AS MgrStaffId, mgr.FullName AS MgrFullName,
         mgr.FirstName AS MgrFirstName, mgr.LastName AS MgrLastName,
-        mgr.Email AS MgrEmail, mgr.EmailCompBr AS MgrEmailCompBr, mgr.Position AS MgrPosition,
-        mgr.PhotoUrl AS MgrPhotoUrl, mgr.PhotoOverrideUrl AS MgrPhotoOverrideUrl
+        mgr.Email AS MgrEmail, mgr.EmailCompBr AS MgrEmailCompBr, mgr.Position AS MgrPosition
       FROM dbo.Employee e
       LEFT JOIN dbo.Department d
         ON d.Id = CAST(e.DepartmentId AS nvarchar(50))
@@ -444,11 +431,10 @@ export async function findColleagueByStaffId(
       SELECT TOP (1)
         e.StaffId, e.FullName, e.FirstName, e.LastName, e.Nickname, e.Position,
         e.DepartmentId, d.Name AS DepartmentName,
-        e.Email, e.EmailCompBr, e.PhotoUrl, e.PhotoOverrideUrl,
+        e.Email, e.EmailCompBr,
         mgr.StaffId AS MgrStaffId, mgr.FullName AS MgrFullName,
         mgr.FirstName AS MgrFirstName, mgr.LastName AS MgrLastName,
-        mgr.Email AS MgrEmail, mgr.EmailCompBr AS MgrEmailCompBr, mgr.Position AS MgrPosition,
-        mgr.PhotoUrl AS MgrPhotoUrl, mgr.PhotoOverrideUrl AS MgrPhotoOverrideUrl
+        mgr.Email AS MgrEmail, mgr.EmailCompBr AS MgrEmailCompBr, mgr.Position AS MgrPosition
       FROM dbo.Employee e
       LEFT JOIN dbo.Department d
         ON d.Id = CAST(e.DepartmentId AS nvarchar(50))
@@ -513,11 +499,10 @@ export async function searchActiveEmployees(
       SELECT TOP (@cap)
         e.StaffId, e.FullName, e.FirstName, e.LastName, e.Nickname, e.Position,
         e.DepartmentId, d.Name AS DepartmentName,
-        e.Email, e.EmailCompBr, e.PhotoUrl, e.PhotoOverrideUrl,
+        e.Email, e.EmailCompBr,
         mgr.StaffId AS MgrStaffId, mgr.FullName AS MgrFullName,
         mgr.FirstName AS MgrFirstName, mgr.LastName AS MgrLastName,
-        mgr.Email AS MgrEmail, mgr.EmailCompBr AS MgrEmailCompBr, mgr.Position AS MgrPosition,
-        mgr.PhotoUrl AS MgrPhotoUrl, mgr.PhotoOverrideUrl AS MgrPhotoOverrideUrl
+        mgr.Email AS MgrEmail, mgr.EmailCompBr AS MgrEmailCompBr, mgr.Position AS MgrPosition
       FROM dbo.Employee e
       LEFT JOIN dbo.Department d
         ON d.Id = CAST(e.DepartmentId AS nvarchar(50))
@@ -560,8 +545,7 @@ export async function findActiveEmployeeByStaffId(
         e.DepartmentId, d.Name AS DepartmentName, e.DepartmentCode, e.SubDepartmentId,
         e.LocationId, e.ManagerStaffId, e.TeamMemberId, e.AdUserId, e.Status,
         hb.Id AS HrBrandId, hb.Code AS HrBrandCode, hb.Name AS HrBrandName, hb.Color AS HrBrandColor,
-        hb.CompanyName, hb.CompanyAddress, hb.CompanyTaxId, hb.CompanyPhone, hb.LogoPath,
-        e.PhotoUrl, e.PhotoOverrideUrl
+        hb.CompanyName, hb.CompanyAddress, hb.CompanyTaxId, hb.CompanyPhone, hb.LogoPath
       FROM dbo.Employee e
       LEFT JOIN dbo.HrBrand hb ON hb.Id = e.BrandId
       LEFT JOIN dbo.Department d
