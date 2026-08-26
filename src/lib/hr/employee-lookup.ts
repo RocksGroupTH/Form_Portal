@@ -24,6 +24,7 @@ interface EmployeeRow {
   LastName: string | null;
   Email: string | null;
   EmailCompBr: string | null;
+  BankAccountNo: string | null;
   Phone: string | null;
   Allowance: number | null;
   Position: string | null;
@@ -85,6 +86,7 @@ function rowToEmployee(row: EmployeeRow): EmployeeContext {
     email: row.Email,
     emailCompBr: row.EmailCompBr,
     phone: row.Phone,
+    bankAccountNo: row.BankAccountNo ?? null,
     allowance: row.Allowance !== null && row.Allowance !== undefined ? Number(row.Allowance) : null,
     position: row.Position,
     departmentId: row.DepartmentId,
@@ -131,6 +133,7 @@ export async function findActiveEmployeeByEmail(
         e.LastName,
         e.Email,
         e.EmailCompBr,
+        e.BankAccountNo,
         e.Phone,
         e.Allowance,
         e.Position,
@@ -220,6 +223,7 @@ export interface DepartmentColleague {
   departmentId: number | null;
   departmentName: string | null;
   email: string | null;
+  bankAccountNo: string | null;
   photoUrl: string | null;
   /** The colleague's own manager (approver when opening a request on their behalf). */
   manager: ColleagueManager | null;
@@ -236,6 +240,7 @@ interface ColleagueRow {
   DepartmentName: string | null;
   Email: string | null;
   EmailCompBr: string | null;
+  BankAccountNo: string | null;
   MgrStaffId: number | null;
   MgrFullName: string | null;
   MgrFirstName: string | null;
@@ -344,6 +349,7 @@ function mapColleagueRow(row: ColleagueRow): DepartmentColleague {
     departmentId: row.DepartmentId,
     departmentName: row.DepartmentName,
     email: row.Email ?? row.EmailCompBr ?? null,
+    bankAccountNo: row.BankAccountNo ?? null,
     photoUrl: row.StaffId != null ? `/api/hr/photo/${row.StaffId}` : null,
     manager: row.MgrStaffId
       ? {
@@ -383,7 +389,7 @@ export async function listDepartmentColleagues(
       SELECT
         e.StaffId, e.FullName, e.FirstName, e.LastName, e.Nickname, e.Position,
         e.DepartmentId, d.Name AS DepartmentName,
-        e.Email, e.EmailCompBr,
+        e.Email, e.EmailCompBr, e.BankAccountNo,
         mgr.StaffId AS MgrStaffId, mgr.FullName AS MgrFullName,
         mgr.FirstName AS MgrFirstName, mgr.LastName AS MgrLastName,
         mgr.Email AS MgrEmail, mgr.EmailCompBr AS MgrEmailCompBr, mgr.Position AS MgrPosition
@@ -431,7 +437,7 @@ export async function findColleagueByStaffId(
       SELECT TOP (1)
         e.StaffId, e.FullName, e.FirstName, e.LastName, e.Nickname, e.Position,
         e.DepartmentId, d.Name AS DepartmentName,
-        e.Email, e.EmailCompBr,
+        e.Email, e.EmailCompBr, e.BankAccountNo,
         mgr.StaffId AS MgrStaffId, mgr.FullName AS MgrFullName,
         mgr.FirstName AS MgrFirstName, mgr.LastName AS MgrLastName,
         mgr.Email AS MgrEmail, mgr.EmailCompBr AS MgrEmailCompBr, mgr.Position AS MgrPosition
@@ -499,7 +505,7 @@ export async function searchActiveEmployees(
       SELECT TOP (@cap)
         e.StaffId, e.FullName, e.FirstName, e.LastName, e.Nickname, e.Position,
         e.DepartmentId, d.Name AS DepartmentName,
-        e.Email, e.EmailCompBr,
+        e.Email, e.EmailCompBr, e.BankAccountNo,
         mgr.StaffId AS MgrStaffId, mgr.FullName AS MgrFullName,
         mgr.FirstName AS MgrFirstName, mgr.LastName AS MgrLastName,
         mgr.Email AS MgrEmail, mgr.EmailCompBr AS MgrEmailCompBr, mgr.Position AS MgrPosition
@@ -541,7 +547,7 @@ export async function findActiveEmployeeByStaffId(
     .query<EmployeeRow>(`
       SELECT TOP 1
         e.Id, e.StaffId, e.BrandId, e.EmployeeType, e.FullName, e.FullNameTh, e.Nickname,
-        e.FirstName, e.LastName, e.Email, e.EmailCompBr, e.Phone, e.Allowance, e.Position,
+        e.FirstName, e.LastName, e.Email, e.EmailCompBr, e.BankAccountNo, e.Phone, e.Allowance, e.Position,
         e.DepartmentId, d.Name AS DepartmentName, e.DepartmentCode, e.SubDepartmentId,
         e.LocationId, e.ManagerStaffId, e.TeamMemberId, e.AdUserId, e.Status,
         hb.Id AS HrBrandId, hb.Code AS HrBrandCode, hb.Name AS HrBrandName, hb.Color AS HrBrandColor,
