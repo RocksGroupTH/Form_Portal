@@ -33,7 +33,7 @@ export async function runVendorMatch(
   askLlm: AskLlm,
 ): Promise<VendorMatchResult> {
   const normalized = normalizePayeeName(payeeName);
-  const raw = await fetchCandidates(payeeName);
+  const raw = await fetchCandidates(payeeName); // intentionally raw — SQL LIKE matches original casing/punctuation
   const candidates = rankCandidates(normalized, raw);
   const decision = decideMatch(normalized, candidates);
 
@@ -59,5 +59,5 @@ export async function runVendorMatch(
     return { status: "none", vendorNo: null, vendorName: null, confidence: null, reason: null };
   }
   return { status: "suggested", vendorNo: chosen.vendorNo, vendorName: chosen.displayName,
-    confidence: pick.confidence, reason: (pick.reason ?? "").slice(0, 500) };
+    confidence: pick.confidence, reason: (pick.reason ?? "").slice(0, 500) }; // VendorMatchReason is NVARCHAR(500) — migration 119
 }

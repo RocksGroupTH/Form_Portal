@@ -3,7 +3,7 @@ import { resolveApiKey } from "@/lib/api-keys/service";
 import { getAccPool, sql } from "@/lib/adv/pool";
 import { getRequest } from "@/lib/adv/advance-request-service";
 import {
-  prefilterVendors, listVendors, isVendorSelectable, type AdvErpVendorOption,
+  prefilterVendors, listVendors, findSelectableVendor,
 } from "@/lib/adv/advance-erp-master-service";
 import type { VendorCandidate } from "@/lib/adv/vendor-match-normalize";
 import {
@@ -20,7 +20,7 @@ import {
 export { runVendorMatch };
 export type { VendorMatchResult, VendorMatchStatus, VendorMatchConfidence, LlmPick, FetchCandidates, AskLlm };
 
-const MODEL = process.env.ANTHROPIC_VENDOR_MATCH_MODEL || "claude-haiku-4-5-20251001";
+const MODEL = process.env.ANTHROPIC_VENDOR_MATCH_MODEL || "claude-haiku-4-5-20251001"; // Model id — update on Haiku model refresh; mirrors src/lib/clr/ai-receipt.ts
 
 /** Real candidate fetch: coarse SQL prefilter, fall back to a capped full list. */
 function makeFetchCandidates(company: string): FetchCandidates {
@@ -52,7 +52,12 @@ async function askHaiku(payeeName: string, candidates: VendorCandidate[]): Promi
   const rawText = textPart && "text" in textPart ? textPart.text : "";
   const m = rawText.match(/\{[\s\S]*\}/);
   if (!m) return null;
-  const j = JSON.parse(m[0]) as { vendorNo?: string | null; confidence?: string; reason?: string };
+  let j: { vendorNo?: string | null; confidence?: string; reason?: string };
+  try {
+    j = JSON.parse(m[0]) as { vendorNo?: string | null; confidence?: string; reason?: string };
+  } catch {
+    return null; // malformed model output → caller maps to "none"
+  }
   if (!j.vendorNo) return null;
   const confidence: VendorMatchConfidence =
     j.confidence === "high" || j.confidence === "medium" || j.confidence === "low" ? j.confidence : "low";
@@ -73,7 +78,8 @@ async function writeMatch(requestId: number, r: VendorMatchResult): Promise<void
       SET MatchedVendorNo = @no, MatchedVendorName = @name,
           VendorMatchStatus = @status, VendorMatchConfidence = @conf,
           VendorMatchReason = @reason, VendorMatchedAt = SYSDATETIME()
-      WHERE RequestId = @rid`);
+      WHERE RequestId = @rid
+        AND (VendorMatchStatus IS NULL OR VendorMatchStatus = 'pending')`);
 }
 
 /**
@@ -106,15 +112,13 @@ export async function matchAdvanceVendor(requestId: number): Promise<VendorMatch
 export async function confirmAdvanceVendor(
   requestId: number, company: string, vendorNo: string, userId: number,
 ): Promise<void> {
-  const ok = await isVendorSelectable(company, vendorNo);
-  if (!ok) throw new Error("Vendor นี้ถูกระงับหรือไม่มีอยู่แล้ว — เลือกใหม่");
-  const vendors = await listVendors(company);
-  const picked = vendors.find((v: AdvErpVendorOption) => v.vendorNo === vendorNo);
+  const picked = await findSelectableVendor(company, vendorNo);
+  if (!picked) throw new Error("Vendor นี้ถูกระงับหรือไม่มีอยู่แล้ว — เลือกใหม่");
   const pool = await getAccPool();
   await pool.request()
     .input("rid", sql.Int, requestId)
     .input("no", sql.NVarChar, vendorNo)
-    .input("name", sql.NVarChar, picked?.displayName ?? null)
+    .input("name", sql.NVarChar, picked.displayName ?? null)
     .input("by", sql.Int, userId)
     .query(`
       UPDATE [dbo].[AccAdvance]

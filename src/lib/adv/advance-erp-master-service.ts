@@ -138,6 +138,21 @@ export async function isVendorSelectable(company: string, vendorNo: string): Pro
   return r.recordset.length > 0;
 }
 
+/** The selectable (active, unblocked) vendor row, or null. One round-trip:
+ *  serves both the validity gate and the display-name snapshot. */
+export async function findSelectableVendor(company: string, vendorNo: string): Promise<AdvErpVendorOption | null> {
+  const c = company.trim().toUpperCase();
+  const v = (vendorNo ?? "").trim();
+  if (!c || !v) return null;
+  const pool = await getAppPool(ERP_DATA_DB);
+  const r = await pool.request().input("c", sql.NVarChar, c).input("v", sql.NVarChar, v).query(`
+    SELECT TOP 1 VendorNo, DisplayName FROM [dbo].[ErpVendors]
+    WHERE BrandCode = @c AND VendorNo = @v
+      AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)`);
+  const row = (r.recordset as Record<string, unknown>[])[0];
+  return row ? { vendorNo: row.VendorNo as string, displayName: (row.DisplayName as string) ?? null } : null;
+}
+
 /** All five master lists for one Company, read from Rocks_ERP_Data. */
 export async function listAdvErpMaster(company: string): Promise<AdvErpCompanyMaster> {
   const c = company.trim().toUpperCase();
