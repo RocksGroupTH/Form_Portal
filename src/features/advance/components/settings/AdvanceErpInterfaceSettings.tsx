@@ -267,11 +267,11 @@ function BrandCard({ row, erpByCompany, onSaved }: {
         <div className="min-w-0">
           <FieldLabel>Branch (AP-2) · ไม่บังคับ</FieldLabel>
           <SearchableSelect value={branch} onChange={setBranch} options={branchOpts}
-            placeholder={noOpts ? "เลือกปลายทางก่อน" : "— เลือก Branch —"}
-            emptyLabel={noOpts ? "เลือกปลายทางก่อน" : "— เลือก Branch —"}
+            placeholder={noOpts ? "เลือกปลายทางก่อน" : "— ไม่ระบุ · ใช้แผนกผู้ขอ —"}
+            emptyLabel={noOpts ? "เลือกปลายทางก่อน" : "— ไม่ระบุ · ใช้แผนกผู้ขอ —"}
             searchPlaceholder="ค้นหา Branch..." triggerBackground="var(--bg-card)" />
           <p className="text-[10px] m-0 mt-0.5" style={{ color: "var(--text-faint)" }}>
-            ถ้าไม่ตั้ง จะใช้แผนกของผู้ขอ (map HR→ERP)
+            เลือก “— ไม่ระบุ —” เพื่อใช้แผนกของผู้ขอ (map HR→ERP)
           </p>
         </div>
         <div className="min-w-0">
