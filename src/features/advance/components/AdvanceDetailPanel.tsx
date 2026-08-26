@@ -59,6 +59,7 @@ export function AdvanceDetailPanel({ requestId, onClose, onChanged }:
   }, [requestId]);
 
   useEffect(() => {
+    setSelectedVendor("");
     if (requestId == null) { setData(null); return; }
     let cancelled = false;
     setLoading(true);
@@ -244,10 +245,12 @@ export function AdvanceDetailPanel({ requestId, onClose, onChanged }:
                     Vendor (สำหรับลง ERP)
                   </p>
                   <AdvanceVendorPicker
+                    key={requestId}
                     requestId={requestId}
                     company={data.brandCode ?? ""}
                     compact
                     onConfirmed={setSelectedVendor}
+                    onSuggested={setSelectedVendor}
                   />
                 </div>
               )}

@@ -233,6 +233,7 @@ function AdvanceDetailContent() {
                 requestId={requestId!}
                 company={request.brandCode ?? ""}
                 onConfirmed={setSelectedVendor}
+                onSuggested={setSelectedVendor}
                 onMatchingChange={setMatchingVendor}
               />
             </div>

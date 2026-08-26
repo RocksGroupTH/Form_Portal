@@ -13,6 +13,8 @@ export interface AdvanceVendorPickerProps {
   compact?: boolean;
   /** notified after a successful confirm (parent tracks the confirmed vendorNo). */
   onConfirmed?: (vendorNo: string) => void;
+  /** notified with the AI-suggested vendorNo (not yet confirmed) so the parent can seed its selection. */
+  onSuggested?: (vendorNo: string) => void;
   /** notified when the AI match run starts/stops (full page drives its own popup). */
   onMatchingChange?: (matching: boolean) => void;
 }
@@ -22,6 +24,7 @@ export function AdvanceVendorPicker({
   company,
   compact = false,
   onConfirmed,
+  onSuggested,
   onMatchingChange,
 }: AdvanceVendorPickerProps) {
   const [vendors, setVendors] = useState<{ vendorNo: string; displayName: string | null }[]>([]);
@@ -47,7 +50,11 @@ export function AdvanceVendorPicker({
         if (cancelled) return;
         if (j.ok && j.data) {
           setReason(j.data.reason);
-          setSelectedVendor((prev) => prev || (j.data?.vendorNo ?? ""));
+          const suggested = j.data.vendorNo ?? "";
+          if (suggested) {
+            setSelectedVendor((prev) => prev || suggested);
+            onSuggested?.(suggested);
+          }
         }
       })
       .catch(() => {})
@@ -55,7 +62,7 @@ export function AdvanceVendorPicker({
         if (!cancelled) { setMatching(false); onMatchingChange?.(false); }
       });
     return () => { cancelled = true; };
-  }, [requestId, company, onMatchingChange]);
+  }, [requestId, company, onMatchingChange, onSuggested]);
 
   function confirm(vendorNo: string) {
     setSelectedVendor(vendorNo);
