@@ -344,12 +344,11 @@ function ExpenseRow({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file.type.startsWith("image/")) {
-      toast.error("แนบได้เฉพาะไฟล์รูปภาพเท่านั้น");
-      if (fileInputRef.current) fileInputRef.current.value = "";
-      return;
-    }
-
+    // No type check here. This slot takes any file since 2026-08-26, and the
+    // server's `checkAttachment` is what decides — it reads the bytes, which
+    // `file.type` only claims. A browser-side copy of that rule is how the
+    // widening was missed: the route already accepted the PDF, and this refused
+    // it before it was ever posted.
     // Hold in memory; the form uploads it on save / submit (no need to save a draft first).
     onPendingAdd({
       localId: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
@@ -368,7 +367,19 @@ function ExpenseRow({
     // is billed, and a second one could only overwrite the first's answer or
     // race it. Attaching more images to a row that already has its amount is
     // free.
-    if (!readingRef.current && !(Number(amountRef.current) > 0)) void prefillAmountFrom(file);
+    // Images only. `/receipt-amount` posts to the Messages API, which takes
+    // PNG/JPEG/GIF/WEBP and nothing else, so a PDF or a workbook would spend a
+    // round trip to come back 400 and leave "อ่านยอดไม่สำเร็จ" on a row whose
+    // attachment is perfectly fine. Since this slot took any file (2026-08-26)
+    // that is a normal case, not an error — so it stays silent and the amount
+    // is typed, which is what happens after a failed read anyway.
+    if (
+      file.type.startsWith("image/") &&
+      !readingRef.current &&
+      !(Number(amountRef.current) > 0)
+    ) {
+      void prefillAmountFrom(file);
+    }
   };
 
   return (

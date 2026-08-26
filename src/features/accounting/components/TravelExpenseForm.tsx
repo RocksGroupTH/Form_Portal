@@ -592,6 +592,7 @@ export function TravelExpenseForm({
       }
 
       let failed = 0;
+      let firstError: string | null = null;
       for (let di = 0; di < pendingByDay.length; di++) {
         const pendingPerIndex = pendingByDay[di];
         const serverDay = serverDays[di];
@@ -612,15 +613,29 @@ export function TravelExpenseForm({
                 body: fd,
               });
               const j = await r.json();
-              if (!j.ok) failed++;
-              else URL.revokeObjectURL(pf.previewUrl);
+              if (!j.ok) {
+                failed++;
+                // Keep the first reason. Every refusal here already carries one
+                // — too large, request not editable, SharePoint unreachable —
+                // and the count alone sent somebody hunting through the wrong
+                // half of the system for it.
+                if (!firstError) firstError = typeof j.error === "string" ? j.error : null;
+              } else if (pf.previewUrl) {
+                URL.revokeObjectURL(pf.previewUrl);
+              }
             } catch {
               failed++;
             }
           }
         }
       }
-      if (failed > 0) toast.error(`อัปโหลดรูปบางไฟล์ไม่สำเร็จ (${failed} ไฟล์)`);
+      if (failed > 0) {
+        toast.error(
+          firstError
+            ? `แนบไฟล์ไม่สำเร็จ ${failed} ไฟล์ — ${firstError}`
+            : `แนบไฟล์ไม่สำเร็จ (${failed} ไฟล์)`,
+        );
+      }
     },
     [collectPendingByDay],
   );
