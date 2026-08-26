@@ -39,7 +39,6 @@ function AdvanceDetailContent() {
   // Account-step approval inputs.
   const [paymentDates, setPaymentDates] = useState<string[]>([]);
   const [paymentDate, setPaymentDate] = useState<string>("");
-  const [checked, setChecked] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
 
   // Vendor selection at the ACC_OFFICER step.
@@ -127,10 +126,9 @@ function AdvanceDetailContent() {
 
   function handleApprove() {
     if (request?.currentStepCode === "ACC_OFFICER") {
-      if (!checked) return toast.error("ต้องกด Check ก่อนอนุมัติ");
       if (!paymentDate) return toast.error("กรุณาเลือกวันจ่าย");
       if (!selectedVendor) return toast.error("กรุณาเลือก Vendor");
-      act("approve", { paymentDate, isChecked: checked });
+      act("approve", { paymentDate });
     } else {
       act("approve");
     }
@@ -236,10 +234,6 @@ function AdvanceDetailContent() {
                 วันจ่าย:
                 <PaymentDatePicker value={paymentDate} onChange={setPaymentDate} allowedDates={paymentDates} />
               </div>
-              <label className="text-[12px] flex items-center gap-2" style={{ color: "var(--text-secondary)" }}>
-                <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} />
-                ตรวจสอบแล้ว (Check)
-              </label>
               <div className="text-[12px] flex items-center gap-2" style={{ color: "var(--text-secondary)" }}>
                 Vendor:
                 <select

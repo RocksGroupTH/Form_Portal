@@ -71,7 +71,6 @@ export async function approveCurrentStep(
   if (!step) throw new Error("คำขอไม่อยู่ในขั้นรออนุมัติ");
 
   if (needsPayment(step.stepType)) {
-    if (!opts.isChecked) throw new Error("ต้องกด Check ก่อนอนุมัติ");
     const valid = await getPaymentDates();
     if (!opts.paymentDate || !valid.includes(opts.paymentDate)) {
       throw new Error("วันที่จ่ายไม่อยู่ในรอบที่กำหนด (ศุกร์ที่ 2 หรือ 4)");
