@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { buildAdvanceJournalPayload } from "./advance-erp-payload";
 import type { AdvanceRequest, AdvanceDetail } from "@/features/advance/types";
 
-const cfg = { glAccountNo: "115010", bankAccountNo: "101010", journalBatchName: "PAY", branchCode: "BR1" } as never;
+const cfg = { bankAccountNo: "101010", journalBatchName: "PAY", branchCode: "BR1" } as never;
 const req = { requestNo: "ADV26-00001", paymentDate: "2026-08-28", requesterFullName: "Somchai" } as unknown as AdvanceRequest;
 const baseAdv = { amount: 1000, baseAmount: 1000, purpose: "x", payeeName: "ACME",
   matchedVendorNo: "V1", matchedVendorName: "ACME", vendorMatchStatus: "confirmed" } as unknown as AdvanceDetail;

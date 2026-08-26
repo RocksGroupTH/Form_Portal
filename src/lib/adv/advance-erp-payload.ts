@@ -5,9 +5,10 @@ import type { AdvanceDetail, AdvanceRequest } from "@/features/advance/types";
 /**
  * Build the PPAP CreateFromJson payload for one advance.
  *
- * An advance is a single paired entry — Dr เงินทดรองจ่าย (G/L) / Cr Bank — so the
- * payload is exactly two lines under one group (G1). Accounts come from config
- * (never hardcoded); a missing value throws a friendly error at send time.
+ * An advance is a single paired entry — Dr Vendor / Cr Bank — so the payload is
+ * exactly two lines under one group (G1). The Dr G/L is derived by BC from the
+ * vendor's posting group (ADV), so no G/L is configured here. Accounts come from
+ * config (never hardcoded); a missing value throws a friendly error at send time.
  */
 export function buildAdvanceJournalPayload(
   req: AdvanceRequest,
@@ -15,8 +16,7 @@ export function buildAdvanceJournalPayload(
   config: BrandErpAccountConfig,
   departmentCode: string,
 ): PpapJournalPayload {
-  const { glAccountNo, bankAccountNo, journalBatchName, branchCode } = config;
-  if (!glAccountNo) throw new Error("ยังไม่ได้ตั้งค่า G/L Account ของ AP-2 สำหรับแบรนด์นี้ (Settings → บัญชี AP-2)");
+  const { bankAccountNo, journalBatchName, branchCode } = config;
   if (!bankAccountNo) throw new Error("ยังไม่ได้ตั้งค่า Bank Account สำหรับแบรนด์นี้");
   if (!journalBatchName) throw new Error("ยังไม่ได้ตั้งค่า Journal Batch สำหรับแบรนด์นี้");
   if (!req.paymentDate) throw new Error("ยังไม่กำหนดวันจ่าย (PaymentDate)");

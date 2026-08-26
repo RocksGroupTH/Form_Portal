@@ -19,7 +19,6 @@ export interface AdvanceInterfaceConfigView {
   bcProfileComplete: boolean;
   environment: string | null;
   branchCode: string | null;
-  glAccountNo: string | null;
   bankAccountNo: string | null;
   journalBatchName: string | null;
   ready: boolean;
@@ -56,13 +55,14 @@ export async function listAdvanceInterfaceConfigView(): Promise<AdvanceInterface
       const target = (ifaceRow?.interfaceBrandCode ?? code).toUpperCase();
       const profile = await resolveErpTargetProfile(target, AP2_FORM_CODE);
 
-      const glAccountNo     = base?.glAccountNo ?? null;
       const bankAccountNo   = base?.bankAccountNo ?? null;
       const branchCode      = base?.branchCode ?? null;
       const journalBatchName = base?.journalBatchName ?? null;
 
+      // Dr posts to the matched Vendor (G/L derived from posting group), so the
+      // send-ready gate no longer needs a configured G/L account.
       const ready = !!(
-        glAccountNo && bankAccountNo && journalBatchName &&
+        bankAccountNo && journalBatchName &&
         branchCode && profile?.profileComplete
       );
 
@@ -77,7 +77,6 @@ export async function listAdvanceInterfaceConfigView(): Promise<AdvanceInterface
         bcProfileComplete: profile?.profileComplete ?? false,
         environment: profile?.environment ?? null,
         branchCode,
-        glAccountNo,
         bankAccountNo,
         journalBatchName,
         ready,
@@ -93,7 +92,6 @@ export async function saveAdvanceInterfacePerForm(
   brandCode: string,
   values: {
     interfaceBrandCode: string;
-    glAccountNo: string;
     bankAccountNo: string;
     branchCode: string | null;
     journalBatchName: string | null;
@@ -102,7 +100,6 @@ export async function saveAdvanceInterfacePerForm(
 ): Promise<void> {
   await Promise.all([
     upsertFormBrandErpInterfaceMap(brandCode, values.interfaceBrandCode, AP2_FORM_CODE, userId),
-    mergeFormBrandAccount("gl",   brandCode, AP2_FORM_CODE, values.glAccountNo, null, userId),
     mergeFormBrandAccount("bank", brandCode, AP2_FORM_CODE, values.bankAccountNo, null, userId),
     mergeFormBrandBranch(brandCode, AP2_FORM_CODE, values.branchCode || null, userId),
     mergeFormBrandBatch(brandCode, AP2_FORM_CODE, values.journalBatchName || null, userId),

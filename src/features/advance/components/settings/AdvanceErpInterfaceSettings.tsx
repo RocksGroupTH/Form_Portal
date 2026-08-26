@@ -20,7 +20,6 @@ interface ConfigRow {
   bcProfileComplete: boolean;
   environment: string | null;
   branchCode: string | null;
-  glAccountNo: string | null;
   bankAccountNo: string | null;
   journalBatchName: string | null;
   ready: boolean;
@@ -116,9 +115,9 @@ function BrandCard({ row, erpByCompany, onSaved }: {
   erpByCompany: Record<string, CompanyErp>;
   onSaved: () => void;
 }) {
-  // AP-2 owns its target Company + G/L + Bank + Branch + Journal Batch.
+  // AP-2 owns its target Company + Bank + Branch + Journal Batch. The Dr line
+  // posts to the matched Vendor, so no G/L account is configured here.
   const [targetSel, setTargetSel] = useState(row.interfaceTarget ?? "");
-  const [gl, setGl] = useState(row.glAccountNo ?? "");
   const [bank, setBank] = useState(row.bankAccountNo ?? "");
   const [branch, setBranch] = useState(row.branchCode ?? "");
   const [batch, setBatch] = useState(row.journalBatchName ?? "");
@@ -130,25 +129,23 @@ function BrandCard({ row, erpByCompany, onSaved }: {
     [erpByCompany],
   );
 
-  // Changing the target Company resets the four picks — accounts are
-  // company-specific, so a G/L from the old Company must never be saved here.
+  // Changing the target Company resets the picks — accounts are company-specific,
+  // so a Bank/Branch/Batch from the old Company must never be saved here.
   function onTargetChange(v: string) {
     if (v === targetSel) return;
     setTargetSel(v);
-    setGl(""); setBank(""); setBranch(""); setBatch("");
+    setBank(""); setBranch(""); setBatch("");
   }
 
-  // All four dropdowns read from Rocks_ERP_Data (via the erp-master endpoint),
-  // keyed by the selected target Company: G/L · Bank · Branch · Journal Batch.
+  // All three dropdowns read from Rocks_ERP_Data (via the erp-master endpoint),
+  // keyed by the selected target Company: Bank · Branch · Journal Batch.
   const target = targetSel;
   const erp = erpByCompany[targetSel];
-  const glOpts = useMemo(() => acctOptions(erp?.gl ?? [], gl), [erp, gl]);
   const bankOpts = useMemo(() => acctOptions(erp?.bank ?? [], bank), [erp, bank]);
   const branchOpts = useMemo(() => branchOptions(erp?.branch ?? [], branch), [erp, branch]);
   const batchOpts = useMemo(() => batchOptions(erp?.journalBatch ?? [], batch), [erp, batch]);
 
   const targetDirty = targetSel.trim() !== (row.interfaceTarget ?? "").trim();
-  const glDirty = gl.trim() !== (row.glAccountNo ?? "").trim();
   const bankDirty = bank.trim() !== (row.bankAccountNo ?? "").trim();
   const branchDirty = branch.trim() !== (row.branchCode ?? "").trim();
   const batchDirty = batch.trim() !== (row.journalBatchName ?? "").trim();
@@ -174,7 +171,6 @@ function BrandCard({ row, erpByCompany, onSaved }: {
 
   async function saveAll() {
     if (!targetSel.trim()) return toast.error("กรุณาเลือก Company ปลายทาง");
-    if (!gl.trim()) return toast.error("กรุณาเลือก G/L Account");
     if (!bank.trim()) return toast.error("กรุณาเลือก Bank Account");
     setBusy("all");
     try {
@@ -184,7 +180,6 @@ function BrandCard({ row, erpByCompany, onSaved }: {
         body: JSON.stringify({
           brandCode: row.brandCode,
           interfaceBrandCode: targetSel.trim(),
-          glAccountNo: gl.trim(),
           bankAccountNo: bank.trim(),
           branchCode: branch.trim(),
           journalBatchName: batch.trim(),
@@ -203,7 +198,7 @@ function BrandCard({ row, erpByCompany, onSaved }: {
 
   const noOpts = !erp;
   const bcLine = [decode(row.bcName), row.bcConnectionName?.trim()].filter((v) => v && v !== "—").join(" · ") || "—";
-  const anyDirty = targetDirty || glDirty || bankDirty || branchDirty || batchDirty;
+  const anyDirty = targetDirty || bankDirty || branchDirty || batchDirty;
 
   return (
     <div className="rounded-xl p-4"
@@ -260,20 +255,8 @@ function BrandCard({ row, erpByCompany, onSaved }: {
         </p>
       )}
 
-      {/* editable: G/L + Bank + Branch + Journal Batch — one Save button per Company */}
+      {/* editable: Bank + Branch + Journal Batch — one Save button per Company */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div className="min-w-0">
-          <FieldLabel>G/L Account (AP-2)</FieldLabel>
-          <SearchableSelect
-            value={gl}
-            onChange={setGl}
-            options={glOpts}
-            placeholder={noOpts ? "เลือกปลายทาง / Sync ERP ก่อน" : "— เลือก G/L —"}
-            emptyLabel={noOpts ? "เลือกปลายทาง / Sync ERP ก่อน" : "— เลือก G/L —"}
-            searchPlaceholder="ค้นหา G/L..."
-            triggerBackground="var(--bg-card)"
-          />
-        </div>
         <div className="min-w-0">
           <FieldLabel>Bank Account (AP-2)</FieldLabel>
           <SearchableSelect value={bank} onChange={setBank} options={bankOpts}
@@ -305,7 +288,7 @@ function BrandCard({ row, erpByCompany, onSaved }: {
       <div className="flex items-center justify-between gap-3 mt-3 pt-3"
         style={{ borderTop: "1px solid var(--border-light)" }}>
         <p className="text-[10px] m-0" style={{ color: "var(--text-faint)" }}>
-          AP-2 กำหนดเอง: Company ปลายทาง · G/L · Bank · Branch · Journal Batch
+          AP-2 กำหนดเอง: Company ปลายทาง · Bank · Branch · Journal Batch
         </p>
         <Button variant="primary" icon={<Save size={15} />} onClick={saveAll}
           loading={busy === "all"} disabled={!anyDirty}>บันทึก</Button>
@@ -329,8 +312,8 @@ export function AdvanceErpInterfaceSettings() {
 
   useEffect(() => load(), [load]);
 
-  // G/L · Bank · Branch · Journal Batch — read straight from Rocks_ERP_Data
-  // (4 Erp* tables), keyed by Company (interface target).
+  // Bank · Branch · Journal Batch — read straight from Rocks_ERP_Data
+  // (Erp* tables), keyed by Company (interface target).
   const { data: erpData, isLoading: erpLoading, mutate: mutateErp } =
     useSWR<{ ok: boolean; data?: Record<string, CompanyErp> }>(
       "/api/request/advance/settings/erp-master",
@@ -429,7 +412,7 @@ export function AdvanceErpInterfaceSettings() {
             <Link2 size={15} style={{ color: "var(--nav-active-text)" }} /> Interface ERP (AP-2)
           </p>
           <p className="text-[11px] m-0 mt-1" style={{ color: "var(--text-muted)" }}>
-            G/L · Bank · Branch · Journal Batch ดึงจาก Rocks_ERP_Data (ตาม Company) — Company ใช้ร่วมกับ AP-1
+            Bank · Branch · Journal Batch ดึงจาก Rocks_ERP_Data (ตาม Company) — Dr ลง Vendor (G/L มาจาก Posting Group)
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
