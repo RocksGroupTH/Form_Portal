@@ -1,9 +1,8 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ChevronDown, ChevronUp, CircleAlert, Plus, Trash2 } from "lucide-react";
 import { SingleDatePicker } from "@/features/accounting/components/SingleDatePicker";
-import { ExpenseAccountPicker } from "./ExpenseAccountPicker";
 import type { ExpenseAccount } from "@/lib/acc/reimburse/expense-account-service";
 import { fmtBaht } from "@/features/travel-booking/components/shared";
 import { sumReimburseItems } from "@/lib/acc/reimburse/calc";
@@ -189,7 +188,6 @@ const COLUMNS: readonly { label: string; width: string; right?: boolean }[] = [
   { label: "ลำดับ", width: "44px" },
   { label: "วันที่", width: "148px" },
   { label: "เลขที่เอกสาร", width: "130px" },
-  { label: "รายการ", width: "190px" },
   { label: "รายละเอียด", width: "230px" },
   { label: "สาขา", width: "130px" },
   { label: "เลขผู้เสียภาษี", width: "140px" },
@@ -234,10 +232,18 @@ const ROW_MIN_WIDTH =
   COLUMN_GAP * COLUMNS.length +
   (ROW_PAD_X + ROW_BORDER_X) * 2;
 
-/** The panel under an expanded row. Narrower than the table on purpose — it is
- *  pinned to the left edge of the visible area, so it has to fit a normal window. */
-const DETAIL_PANEL_WIDTH = 860;
-const DETAIL_GRID = "grid grid-cols-[26px_minmax(0,1fr)_90px_110px_120px] gap-2 items-baseline";
+/**
+ * The detail panel sits **below the horizontal scroller**, not inside it, so it
+ * is exactly as wide as the card and needs no width of its own.
+ *
+ * It used to be pinned `sticky left-0` inside the scroller at a fixed 860px.
+ * That put it in a 2,156px-wide row, which meant its width was unrelated to the
+ * card's and closing it moved the horizontal scroll out from under the reader.
+ * Out here neither is true: one panel, full width, and the table keeps its
+ * scroll position when the panel opens and closes.
+ */
+const DETAIL_GRID =
+  "grid grid-cols-[34px_minmax(0,1fr)_90px_120px_130px] gap-3 items-baseline";
 
 const ROW_TEMPLATE = `${COLUMNS.map((c) => c.width).join(" ")} ${ACTION_COLUMN_WIDTH}px`;
 
@@ -325,9 +331,6 @@ export function ReimburseItemGrid({
   showProblems,
   documents,
   readNote,
-  accounts,
-  accountsLoading,
-  brandChosen,
 }: {
   items: ReimburseItem[];
   onUpdate: (index: number, patch: Partial<ReimburseItem>) => void;
@@ -348,11 +351,19 @@ export function ReimburseItemGrid({
   documents: React.ReactNode;
   /** Why the last read produced nothing. Cleared by the form on the next attempt. */
   readNote: string | null;
-  /** The G/L accounts this brand may book to — `รายการ`'s options. */
-  accounts: ExpenseAccount[];
+  /**
+   * The G/L accounts this brand may book to.
+   *
+   * **Still passed, deliberately unread here.** The `รายการ` column that let a
+   * requester change the account was hidden on 2026-08-26; the account itself is
+   * unaffected — the document read still fills `item.category` and the save
+   * still stores it, which is what a future ERP posting needs. Keeping the props
+   * is what makes putting the column back a one-line change rather than a
+   * re-plumbing.
+   */
+  accounts?: ExpenseAccount[];
   accountsLoading?: boolean;
-  /** False before a brand is picked; the list is keyed on brand and cannot load. */
-  brandChosen: boolean;
+  brandChosen?: boolean;
 }) {
 
   /**
@@ -362,15 +373,18 @@ export function ReimburseItemGrid({
    * row wholesale and hands back new ids — keyed on those, every panel would
    * close itself on each save.
    */
-  const [openRows, setOpenRows] = useState<ReadonlySet<string>>(() => new Set());
+  const [openRow, setOpenRow] = useState<string | null>(null);
   const toggleRow = useCallback((key: string) => {
-    setOpenRows((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+    setOpenRow((prev) => (prev === key ? null : key));
   }, []);
+
+  // The row whose lines the panel is showing. Resolved here rather than in the
+  // loop because the panel renders outside it — and re-resolved on every render
+  // so a row deleted while open simply stops matching and the panel closes.
+  const openIndex = openRow ? Number(openRow.slice("row-".length)) : -1;
+  const openItem = openIndex >= 0 ? items[openIndex] : undefined;
+  const openLines = openItem?.details ?? [];
+  const openTotal = openLines.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
 
   // The total the server will store: the blank trailing row contributes
   // nothing, and `sumReimburseItems` is the same function it totals with.
@@ -446,19 +460,20 @@ export function ReimburseItemGrid({
               const rowKey = `row-${index}`;
               const lines = item.details ?? [];
               const lineCount = lines.length;
-              const isOpen = lineCount > 0 && openRows.has(rowKey);
+              const isOpen = lineCount > 0 && openRow === rowKey;
               return (
-                <Fragment key={item.id ?? rowKey}>
                 <div
+                  key={item.id ?? rowKey}
                   className={`${ROW_GRID} ${ROW_INSET} border py-2 items-center`}
                   style={{
                     gridTemplateColumns: ROW_TEMPLATE,
-                    borderColor: "var(--border-card)",
+                    // The panel is no longer under this row — it sits at the
+                    // bottom of the card — so the open row is marked here
+                    // instead; otherwise nothing on screen says which row the
+                    // panel is showing.
+                    borderColor: isOpen ? "var(--color-action)" : "var(--border-card)",
                     background: "var(--bg-card-alt)",
-                    // Square off the join when the panel is under it, so the
-                    // two read as one block rather than two stacked cards.
-                    borderRadius: isOpen ? "12px 12px 0 0" : 12,
-                    borderBottomWidth: isOpen ? 0 : 1,
+                    borderRadius: 12,
                   }}
                 >
                   <span
@@ -482,15 +497,6 @@ export function ReimburseItemGrid({
                     value={item.documentNo}
                     maxLength={100}
                     onChange={(v) => onUpdate(index, { documentNo: v })}
-                  />
-
-                  <ExpenseAccountPicker
-                    ariaLabel={`บัญชีของรายการที่ ${index + 1}`}
-                    value={item.category}
-                    onChange={(v) => onUpdate(index, { category: v })}
-                    accounts={accounts}
-                    loading={accountsLoading}
-                    brandChosen={brandChosen}
                   />
 
                   <TextCell
@@ -599,67 +605,98 @@ export function ReimburseItemGrid({
                     </button>
                   </span>
                 </div>
-
-                {isOpen && (
-                  <div
-                    className={`${ROW_INSET} border rounded-b-xl pb-2.5`}
-                    style={{
-                      borderColor: "var(--border-card)",
-                      background: "var(--bg-card-alt)",
-                      borderTopWidth: 0,
-                    }}
-                  >
-                    {/* Pinned to the left of whatever part of the table is on
-                        screen. The row above is 2,156px wide, so a panel laid
-                        out normally would start wherever the reader happens to
-                        have scrolled to — often off-screen entirely. */}
-                    <div className="sticky left-0" style={{ width: DETAIL_PANEL_WIDTH, maxWidth: "100%" }}>
-                      <p
-                        className="text-[11px] font-semibold uppercase tracking-wide m-0 pt-1 pb-1.5"
-                        style={{ color: "var(--text-muted)" }}
-                      >
-                        รายการในเอกสาร · {lineCount} บรรทัด
-                      </p>
-                      <div className={`${DETAIL_GRID} pb-1`} style={{ color: "var(--text-muted)" }}>
-                        <span className={HEAD_CLASS}>#</span>
-                        <span className={HEAD_CLASS}>รายละเอียด</span>
-                        <span className={`${HEAD_CLASS} text-right`}>จำนวน</span>
-                        <span className={`${HEAD_CLASS} text-right`}>ราคา/หน่วย</span>
-                        <span className={`${HEAD_CLASS} text-right`}>มูลค่า</span>
-                      </div>
-                      {lines.map((d, di) => (
-                        <div
-                          key={`${rowKey}-d-${di}`}
-                          className={`${DETAIL_GRID} py-1.5`}
-                          style={{ borderTop: "1px solid var(--border-light)" }}
-                        >
-                          <span className="text-[12px] tabular-nums" style={{ color: "var(--text-faint)" }}>
-                            {di + 1}
-                          </span>
-                          <span className="text-[12.5px] break-words" style={{ color: "var(--text-primary)" }}>
-                            {d.description}
-                          </span>
-                          <span className="text-[12.5px] tabular-nums text-right" style={{ color: "var(--text-secondary)" }}>
-                            {d.quantity == null ? "—" : fmtBaht(d.quantity)}
-                          </span>
-                          <span className="text-[12.5px] tabular-nums text-right" style={{ color: "var(--text-secondary)" }}>
-                            {d.unitPrice == null ? "—" : fmtBaht(d.unitPrice)}
-                          </span>
-                          <span className="text-[12.5px] tabular-nums text-right font-semibold" style={{ color: "var(--text-primary)" }}>
-                            {d.amount == null ? "—" : fmtBaht(d.amount)}
-                          </span>
-                        </div>
-                      ))}
-                      <p className="text-[11px] m-0 pt-2" style={{ color: "var(--text-faint)" }}>
-                        คัดลอกมาจากเอกสารเพื่อให้ตรวจได้ ไม่ได้นำมารวมเป็นยอด — ยอดของแถวคือ ค่าใช้จ่ายรวม ด้านบน
-                      </p>
-                    </div>
-                  </div>
-                )}
-                </Fragment>
               );
             })}
           </div>
+        </div>
+      )}
+
+      {openLines.length > 0 && (
+        // Full width of the card, at the bottom, below the scroller — see
+        // DETAIL_GRID above for why it is not inside it any more.
+        <div
+          className="border rounded-xl px-3 pt-2.5 pb-3"
+          style={{ borderColor: "var(--color-action)", background: "var(--bg-card-alt)" }}
+        >
+          <div className="flex items-baseline justify-between gap-3 pb-2">
+            <p className="text-[12px] font-semibold m-0" style={{ color: "var(--text-primary)" }}>
+              รายการในเอกสาร
+              <span className="font-normal" style={{ color: "var(--text-muted)" }}>
+                {" · แถวที่ "}
+                {openIndex + 1}
+                {openItem?.vendorName ? ` · ${openItem.vendorName}` : ""}
+                {` · ${openLines.length} บรรทัด`}
+              </span>
+            </p>
+            <button
+              type="button"
+              onClick={() => setOpenRow(null)}
+              className="text-[12px] cursor-pointer border-none bg-transparent p-0 shrink-0"
+              style={{ color: "var(--text-muted)" }}
+            >
+              ปิด
+            </button>
+          </div>
+
+          <div className={`${DETAIL_GRID} pb-1.5`}>
+            <span className={HEAD_CLASS} style={{ color: "var(--text-muted)" }}>#</span>
+            <span className={HEAD_CLASS} style={{ color: "var(--text-muted)" }}>รายละเอียด</span>
+            <span className={`${HEAD_CLASS} text-right`} style={{ color: "var(--text-muted)" }}>จำนวน</span>
+            <span className={`${HEAD_CLASS} text-right`} style={{ color: "var(--text-muted)" }}>ราคา/หน่วย</span>
+            <span className={`${HEAD_CLASS} text-right`} style={{ color: "var(--text-muted)" }}>มูลค่า</span>
+          </div>
+
+          {openLines.map((d, di) => (
+            <div
+              key={`${openRow}-d-${di}`}
+              className={`${DETAIL_GRID} py-1.5`}
+              style={{ borderTop: "1px solid var(--border-light)" }}
+            >
+              <span className="text-[12px] tabular-nums" style={{ color: "var(--text-faint)" }}>
+                {di + 1}
+              </span>
+              <span className="text-[12.5px] break-words leading-snug" style={{ color: "var(--text-primary)" }}>
+                {d.description}
+              </span>
+              <span className="text-[12.5px] tabular-nums text-right" style={{ color: "var(--text-secondary)" }}>
+                {d.quantity == null ? "—" : fmtBaht(d.quantity)}
+              </span>
+              <span className="text-[12.5px] tabular-nums text-right" style={{ color: "var(--text-secondary)" }}>
+                {d.unitPrice == null ? "—" : fmtBaht(d.unitPrice)}
+              </span>
+              <span
+                className="text-[12.5px] tabular-nums text-right font-semibold"
+                style={{ color: "var(--text-primary)" }}
+              >
+                {d.amount == null ? "—" : fmtBaht(d.amount)}
+              </span>
+            </div>
+          ))}
+
+          {/* The document's own total, for checking it against the row above.
+              Labelled as the document's so it cannot be read as the figure
+              being claimed — the note below says which one that is. */}
+          <div
+            className={`${DETAIL_GRID} pt-2`}
+            style={{ borderTop: "1px solid var(--border-card)" }}
+          >
+            <span />
+            <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
+              รวมตามเอกสาร
+            </span>
+            <span />
+            <span />
+            <span
+              className="text-[12.5px] tabular-nums text-right font-semibold"
+              style={{ color: "var(--text-primary)" }}
+            >
+              {fmtBaht(round2(openTotal))}
+            </span>
+          </div>
+
+          <p className="text-[11px] m-0 pt-2" style={{ color: "var(--text-faint)" }}>
+            คัดลอกมาจากเอกสารเพื่อให้ตรวจได้ ไม่ได้นำมารวมเป็นยอด — ยอดที่เบิกคือ ค่าใช้จ่ายรวม ของแถวด้านบน
+          </p>
         </div>
       )}
 
