@@ -5,7 +5,7 @@ import { requireAuth } from "@/lib/api-auth";
 import { guardVisionRequest, visionImageBlock } from "@/lib/acc/vision-guard";
 import { statusForVisionError } from "@/lib/acc/vision-error";
 import { pdfPagesToPng } from "@/lib/pdf-to-image";
-import { loadXlsx } from "@/lib/xlsx";
+import { MAX_PDF_PAGES, sheetToText } from "@/lib/acc/sheet-text";
 import {
   listSuggestedExpenseAccounts,
   type ExpenseAccount,
@@ -55,7 +55,6 @@ import {
  */
 
 /** Enough for the Thai documents this form sees; the call is billed per image. */
-const MAX_PDF_PAGES = 3;
 
 /**
  * How much of a workbook is sent.
@@ -64,7 +63,6 @@ const MAX_PDF_PAGES = 3;
  * is generous for an AP-4.1 summary and small enough that somebody attaching a
  * year-end export does not send a megabyte of cells.
  */
-const MAX_SHEET_CHARS = 40_000;
 
 /** No sheet of expense lines has more rows than this; the rest is a different document. */
 const MAX_SHEET_ROWS = 100;
@@ -219,20 +217,6 @@ function sheetPrompt(candidates: ExpenseAccount[]): string {
     COMMON_RULES,
     accountRules(candidates),
   ].join("\n");
-}
-
-/** The workbook's first sheet as tab-separated text, bounded. */
-async function sheetToText(bytes: Buffer): Promise<string | null> {
-  // `loadXlsx`, not a bare dynamic import: the package is CommonJS and its API
-  // lands on `.default` under some loaders while the types advertise the named
-  // exports either way, so `XLSX.read(...)` type-checks, builds, and throws.
-  const XLSX = await loadXlsx();
-  const wb = XLSX.read(bytes, { type: "buffer" });
-  const first = wb.SheetNames[0];
-  if (!first) return null;
-  const text = XLSX.utils.sheet_to_csv(wb.Sheets[first], { FS: "\t", blankrows: false });
-  const trimmed = text.trim();
-  return trimmed ? trimmed.slice(0, MAX_SHEET_CHARS) : null;
 }
 
 export async function POST(req: NextRequest) {

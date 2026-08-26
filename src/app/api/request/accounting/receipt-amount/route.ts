@@ -5,10 +5,23 @@ import { requireAuth } from "@/lib/api-auth";
 import { guardVisionRequest, visionImageBlock } from "@/lib/acc/vision-guard";
 import { statusForVisionError } from "@/lib/acc/vision-error";
 import { sanitizeReceiptAmount, MAX_RECEIPT_AMOUNT } from "@/features/accounting/lib/receipt-amount";
+import { pdfPagesToPng } from "@/lib/pdf-to-image";
+import { MAX_PDF_PAGES, sheetToText } from "@/lib/acc/sheet-text";
 
 /**
  * POST /api/request/accounting/receipt-amount — read the total off a receipt
- * image so AP-1 can prefill จำนวนเงิน.
+ * so AP-1 can prefill จำนวนเงิน.
+ *
+ * Takes **any document the Messages API can be shown**, not only a photo: a
+ * PDF invoice is rasterised to at most `MAX_PDF_PAGES` pages, a workbook is
+ * flattened to tab-separated text, and an image goes as itself. AP-1's
+ * attachment slot has taken any file since 2026-08-26, and a slot that accepts
+ * a PDF while the read beside it refuses one is worse than either rule alone.
+ *
+ * The question asked is still AP-1's, and it differs from AP-4's: **one grand
+ * total for one row**, never a row per line. That is why this route is not
+ * simply AP-4's with a different schema — only the file-to-content half is
+ * shared, through `sheet-text.ts` and `pdf-to-image.ts`.
  *
  * Auth, the rate limit and every upload guard live in `guardVisionRequest`,
  * shared with AP-17's ID-card check; see that file for why they run in the
@@ -28,7 +41,7 @@ const AnswerSchema = z.object({
 });
 
 const PROMPT = [
-  "รูปนี้คือใบเสร็จรับเงินหรือสลิป",
+  "เอกสารนี้คือใบเสร็จรับเงิน สลิป ใบกำกับภาษี หรือใบแจ้งหนี้",
   "ให้ตอบเฉพาะ 'ยอดรวมสุทธิ' ที่ผู้จ่ายต้องจ่ายจริง เป็นตัวเลขบาท",
   "",
   "กติกา:",
@@ -46,27 +59,38 @@ export async function POST(req: NextRequest) {
     userId: session.user.id,
     purpose: "receipt-amount",
     unavailableError: "ยังไม่ได้เปิดใช้งานการอ่านยอดจากใบเสร็จ",
+    allowedKinds: ["image", "pdf", "spreadsheet"],
   });
   if (!guard.ok) return guard.response;
 
-  // Unreachable while this route passes no `allowedKinds` (the guard then
-  // admits images only), and kept because that default is the *guard's*, not
-  // this route's. A future caller widening it must not silently start sending
-  // a PDF's bytes to an image content block.
-  if (guard.kind !== "image") {
-    return NextResponse.json({ ok: false, error: "รองรับเฉพาะไฟล์รูปภาพ" }, { status: 400 });
-  }
-
   try {
+    // Built per kind and then asked the same question, so a new input kind
+    // cannot arrive with its own idea of what an answer is.
+    let content: Array<Record<string, unknown>>;
+    if (guard.kind === "image") {
+      content = [visionImageBlock(guard.bytes, guard.mediaType), { type: "text", text: PROMPT }];
+    } else if (guard.kind === "pdf") {
+      const pages = await pdfPagesToPng(guard.bytes, MAX_PDF_PAGES);
+      content = [
+        ...pages.map((page) => visionImageBlock(page, "image/png")),
+        { type: "text", text: PROMPT },
+      ];
+    } else {
+      const sheet = await sheetToText(guard.bytes);
+      // An empty workbook is "nothing legible", not a failure: the field opens
+      // blank and the requester types the figure, which is where a null answer
+      // leaves them anyway. Returning an error instead would put a red note on
+      // a perfectly good attachment.
+      if (!sheet) return NextResponse.json({ ok: true, data: { amount: null } });
+      content = [{ type: "text", text: `${PROMPT}
+
+${sheet}` }];
+    }
+
     const response = await guard.client.messages.parse({
       model: "claude-sonnet-5",
       max_tokens: 1024,
-      messages: [
-        {
-          role: "user",
-          content: [visionImageBlock(guard.bytes, guard.mediaType), { type: "text", text: PROMPT }],
-        },
-      ],
+      messages: [{ role: "user", content: content as never }],
       output_config: { format: zodOutputFormat(AnswerSchema) },
     });
 

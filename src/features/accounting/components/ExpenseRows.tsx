@@ -367,19 +367,11 @@ function ExpenseRow({
     // is billed, and a second one could only overwrite the first's answer or
     // race it. Attaching more images to a row that already has its amount is
     // free.
-    // Images only. `/receipt-amount` posts to the Messages API, which takes
-    // PNG/JPEG/GIF/WEBP and nothing else, so a PDF or a workbook would spend a
-    // round trip to come back 400 and leave "อ่านยอดไม่สำเร็จ" on a row whose
-    // attachment is perfectly fine. Since this slot took any file (2026-08-26)
-    // that is a normal case, not an error — so it stays silent and the amount
-    // is typed, which is what happens after a failed read anyway.
-    if (
-      file.type.startsWith("image/") &&
-      !readingRef.current &&
-      !(Number(amountRef.current) > 0)
-    ) {
-      void prefillAmountFrom(file);
-    }
+    // Every file, whatever it is. `/receipt-amount` rasterises a PDF and
+    // flattens a workbook server-side, so the read is worth attempting on all
+    // of them; a kind it genuinely cannot use comes back as a null amount and
+    // the field simply opens blank.
+    if (!readingRef.current && !(Number(amountRef.current) > 0)) void prefillAmountFrom(file);
   };
 
   return (
