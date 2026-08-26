@@ -10,6 +10,7 @@ import {
   type RequesterSnapshot,
 } from "@/lib/acc/employee-context";
 import { queueEmail } from "@/lib/acc/email-queue";
+import { buildAdvanceEmail } from "@/lib/adv/advance-email-templates";
 import {
   AP2_FORM_CODE,
   AP2_SEQUENCE_PREFIX,
@@ -573,11 +574,16 @@ export async function submitRequest(
     const notifyEmails = firstRole
       ? await listApproverEmailsByRole(firstRole)
       : managerEmail ? [managerEmail] : [];
-    const subject = `เบิกเงินทดรองจ่าย ${requestNo} รออนุมัติ (${STEP_LABEL[firstStep]})`;
-    const bodyHtml =
-      `<p>มีคำขอเบิกเงินทดรองจ่ายเลขที่ <b>${requestNo}</b> รอการอนุมัติของท่าน (${STEP_LABEL[firstStep]})</p>` +
-      `<p>ผู้ขอ: ${updated.requesterFullName ?? "-"} · จำนวนเงิน: ${(updated.totalAmount ?? 0).toLocaleString()} บาท</p>` +
-      `<p><a href="/request/advance/${id}">เปิดคำขอ</a></p>`;
+    const { subject, html: bodyHtml } = buildAdvanceEmail("Submitted", {
+      id,
+      requestNo,
+      requesterFullName: updated.requesterFullName,
+      brandCode: updated.brandCode,
+      payeeName: updated.advance?.payeeName,
+      totalAmount: updated.totalAmount,
+      paymentDate: updated.paymentDate,
+      stepLabel: STEP_LABEL[firstStep],
+    });
     for (const toEmail of notifyEmails) {
       await queueEmail({ requestId: id, toEmail, subject, bodyHtml, triggerType: "Submitted" });
     }
