@@ -15,6 +15,9 @@ import { ADVANCE_JOURNAL_TEMPLATE } from "@/lib/adv/advance-batch-service";
 
 const ERP_DATA_DB = process.env.MSSQL_ERP_DATA_DATABASE || "Rocks_ERP_Data";
 
+/** Only vendors whose posting group is ADV qualify as advance vendors. */
+const ADVANCE_VENDOR_POSTING_GROUP = "ADV";
+
 export interface AdvErpAcctOption { accountNo: string; displayName: string | null }
 export interface AdvErpBranchOption { code: string; displayName: string | null }
 export interface AdvErpBatchOption { batchName: string; displayName: string | null; templateName: string | null }
@@ -91,10 +94,14 @@ export async function listVendors(company: string): Promise<AdvErpVendorOption[]
   const c = company.trim().toUpperCase();
   if (!c) return [];
   const pool = await getAppPool(ERP_DATA_DB);
-  const r = await pool.request().input("c", sql.NVarChar, c).query(`
+  const r = await pool.request()
+    .input("c", sql.NVarChar, c)
+    .input("pg", sql.NVarChar, ADVANCE_VENDOR_POSTING_GROUP)
+    .query(`
     SELECT VendorNo, DisplayName FROM [dbo].[ErpVendors]
     WHERE BrandCode = @c
       AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
+      AND VendorPostingGroup = @pg
     ORDER BY DisplayName`);
   return (r.recordset as Record<string, unknown>[]).map((x) => ({
     vendorNo: x.VendorNo as string,
@@ -102,7 +109,7 @@ export async function listVendors(company: string): Promise<AdvErpVendorOption[]
   }));
 }
 
-/** Prefilter candidates for the matcher: active vendors whose name shares a token
+/** Prefilter candidates for the matcher: active ADV vendors whose name shares a token
  *  with the payee. Caps the set so the LLM prompt stays small. */
 export async function prefilterVendors(company: string, payeeName: string, limit = 10): Promise<AdvErpVendorOption[]> {
   const c = company.trim().toUpperCase();
@@ -113,10 +120,12 @@ export async function prefilterVendors(company: string, payeeName: string, limit
     .input("c", sql.NVarChar, c)
     .input("t", sql.NVarChar, `%${term}%`)
     .input("lim", sql.Int, limit)
+    .input("pg", sql.NVarChar, ADVANCE_VENDOR_POSTING_GROUP)
     .query(`
       SELECT TOP (@lim) VendorNo, DisplayName FROM [dbo].[ErpVendors]
       WHERE BrandCode = @c
         AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
+        AND VendorPostingGroup = @pg
         AND (DisplayName LIKE @t OR @t LIKE '%' + DisplayName + '%')
       ORDER BY LEN(DisplayName)`);
   return (r.recordset as Record<string, unknown>[]).map((x) => ({
@@ -125,30 +134,40 @@ export async function prefilterVendors(company: string, payeeName: string, limit
   }));
 }
 
-/** Is this vendor still selectable (active + not blocked) for the company? */
+/** Is this vendor still selectable (active + not blocked + ADV posting group) for the company? */
 export async function isVendorSelectable(company: string, vendorNo: string): Promise<boolean> {
   const c = company.trim().toUpperCase();
   const v = (vendorNo ?? "").trim();
   if (!c || !v) return false;
   const pool = await getAppPool(ERP_DATA_DB);
-  const r = await pool.request().input("c", sql.NVarChar, c).input("v", sql.NVarChar, v).query(`
+  const r = await pool.request()
+    .input("c", sql.NVarChar, c)
+    .input("v", sql.NVarChar, v)
+    .input("pg", sql.NVarChar, ADVANCE_VENDOR_POSTING_GROUP)
+    .query(`
     SELECT TOP 1 1 AS Ok FROM [dbo].[ErpVendors]
     WHERE BrandCode = @c AND VendorNo = @v
-      AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)`);
+      AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
+      AND VendorPostingGroup = @pg`);
   return r.recordset.length > 0;
 }
 
-/** The selectable (active, unblocked) vendor row, or null. One round-trip:
+/** The selectable (active, unblocked, ADV posting group) vendor row, or null. One round-trip:
  *  serves both the validity gate and the display-name snapshot. */
 export async function findSelectableVendor(company: string, vendorNo: string): Promise<AdvErpVendorOption | null> {
   const c = company.trim().toUpperCase();
   const v = (vendorNo ?? "").trim();
   if (!c || !v) return null;
   const pool = await getAppPool(ERP_DATA_DB);
-  const r = await pool.request().input("c", sql.NVarChar, c).input("v", sql.NVarChar, v).query(`
+  const r = await pool.request()
+    .input("c", sql.NVarChar, c)
+    .input("v", sql.NVarChar, v)
+    .input("pg", sql.NVarChar, ADVANCE_VENDOR_POSTING_GROUP)
+    .query(`
     SELECT TOP 1 VendorNo, DisplayName FROM [dbo].[ErpVendors]
     WHERE BrandCode = @c AND VendorNo = @v
-      AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)`);
+      AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
+      AND VendorPostingGroup = @pg`);
   const row = (r.recordset as Record<string, unknown>[])[0];
   return row ? { vendorNo: row.VendorNo as string, displayName: (row.DisplayName as string) ?? null } : null;
 }

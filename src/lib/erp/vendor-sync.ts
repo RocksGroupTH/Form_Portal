@@ -5,6 +5,7 @@ import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
 import {
   buildBcApiV2CompanyEntityUrl,
   fetchBcApiV2Collection,
+  postBcCodexStoreRpc,
 } from "@/lib/bc/bc-odata";
 import { getBcConnectionById } from "@/lib/bc/bc-connection";
 import { getBrandConfig } from "@/lib/brand-config";
@@ -14,6 +15,26 @@ import {
   type BcVendorRow,
   type NormalizedVendor,
 } from "@/lib/erp/vendor-normalization";
+
+/** Shape returned by RPCCodexStore_CodexGetVendors */
+interface CodexVendorRow {
+  no: string;
+  name: string;
+  searchName: string;
+  address: string;
+  city: string;
+  postCode: string;
+  phoneNo: string;
+  contact: string;
+  vendorPostingGroup: string;
+  genBusPostingGroup: string;
+  vatBusPostingGroup: string;
+  paymentTermsCode: string;
+  currencyCode: string;
+  blocked: string;
+  privacyBlocked: boolean;
+  lastDateModified: string;
+}
 
 export const ERP_VENDOR_SYNC_TYPE = "VENDORS";
 export const ERP_VENDOR_SOURCE_ENVIRONMENT = "Production";
@@ -30,6 +51,7 @@ interface BrandVendorSyncContext {
   bcCompanyId: string;
   bcCompanyName: string;
   bcConnectionId: number;
+  baseUrl: string;
   vendorsUrl: string;
 }
 
@@ -63,6 +85,7 @@ async function resolveBrandVendorSyncContext(brandCode: string): Promise<BrandVe
     bcCompanyId: brand.bcId.trim(),
     bcCompanyName: brand.bcName.trim(),
     bcConnectionId: brand.bcConnectionId,
+    baseUrl: connection.BaseUrl,
     vendorsUrl: url.toString(),
   };
 }
@@ -175,6 +198,68 @@ async function insertVendorSyncLog(
     `);
 }
 
+/**
+ * Enrich ErpVendors.VendorPostingGroup for a brand via the Codex RPC.
+ * Throws on failure — posting group is required for the ADV filter feature.
+ */
+async function enrichVendorPostingGroups(ctx: BrandVendorSyncContext): Promise<number> {
+  const codexRows = await postBcCodexStoreRpc<CodexVendorRow>(
+    ctx.bcConnectionId,
+    ctx.bcCompanyId,
+    ERP_VENDOR_SOURCE_ENVIRONMENT,
+    ctx.baseUrl,
+    "RPCCodexStore_CodexGetVendors",
+    [],
+  );
+
+  // Build map: VENDORNO (upper) → posting group (upper)
+  const pgMap = new Map<string, string>();
+  for (const row of codexRows) {
+    const no = (row.no ?? "").trim().toUpperCase();
+    const pg = (row.vendorPostingGroup ?? "").trim().toUpperCase();
+    if (no) pgMap.set(no, pg);
+  }
+
+  if (pgMap.size === 0) return 0;
+
+  // Batch UPDATE via UPDATE … FROM (VALUES …) join to avoid N round-trips.
+  // MSSQL supports: UPDATE t SET … FROM (VALUES (…),(…),…) AS src(no, pg) WHERE …
+  // Split into chunks of 500 to stay well under parameter/row limits.
+  const CHUNK = 500;
+  const entries = Array.from(pgMap.entries());
+  const pool = await getErpDataPool();
+  let updated = 0;
+
+  for (let i = 0; i < entries.length; i += CHUNK) {
+    const chunk = entries.slice(i, i + CHUNK);
+
+    // Build VALUES clause with positional params
+    const req = pool.request()
+      .input("env", sql.NVarChar, ERP_VENDOR_SOURCE_ENVIRONMENT)
+      .input("brand", sql.NVarChar, ctx.brandCode);
+
+    const valueParts: string[] = [];
+    chunk.forEach(([no, pg], idx) => {
+      req.input(`no${idx}`, sql.NVarChar, no);
+      req.input(`pg${idx}`, sql.NVarChar, pg);
+      valueParts.push(`(@no${idx}, @pg${idx})`);
+    });
+
+    const r = await req.query(`
+      UPDATE ev
+      SET ev.VendorPostingGroup = src.PostingGroup
+      FROM [dbo].[ErpVendors] ev
+      INNER JOIN (VALUES ${valueParts.join(",")}) AS src(VendorNo, PostingGroup)
+        ON ev.VendorNo = src.VendorNo
+      WHERE ev.SourceEnvironment = @env
+        AND ev.BrandCode = @brand
+    `);
+    updated += r.rowsAffected[0] ?? 0;
+  }
+
+  return updated;
+}
+
 export async function syncBrandErpVendors(
   brandCode: string,
   triggeredBy: number | null,
@@ -245,6 +330,17 @@ export async function syncBrandErpVendors(
   } catch (error) {
     if (transactionOpen) await transaction.rollback().catch(() => undefined);
     const message = error instanceof Error ? error.message : "Vendor sync failed";
+    await insertVendorSyncLog(ctx.brandCode, "failed", vendorRows, message, triggeredBy, startedAt)
+      .catch(() => undefined);
+    throw error;
+  }
+
+  // Posting-group enrichment pass (after the Standard-API MERGE transaction is committed).
+  // Throws on failure — VendorPostingGroup is required for the ADV vendor filter.
+  try {
+    await enrichVendorPostingGroups(ctx);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Vendor posting group enrichment failed";
     await insertVendorSyncLog(ctx.brandCode, "failed", vendorRows, message, triggeredBy, startedAt)
       .catch(() => undefined);
     throw error;

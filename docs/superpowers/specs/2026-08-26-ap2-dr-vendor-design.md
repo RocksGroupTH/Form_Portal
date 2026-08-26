@@ -188,3 +188,45 @@ Change `buildAdvanceJournalPayload` (and the batch builder) in
   values; tune during build against real `ErpVendors` data.
 - **A3:** The existing `config.glAccountNo` (AP-2 advance G/L) is retained in
   config but unused for posting in Phase 1.
+
+## Phase 1.5 — Vendor Posting Group Filter
+
+**Implemented:** 2026-08-26, branch `feat/erp-vendors-sync`.
+
+### Summary
+
+AP-2 vendor reads are restricted to vendors with `VendorPostingGroup = 'ADV'`
+(the ERP-canonical classifier for advance vendors, held on the BC Vendor Card).
+This is more accurate than filtering by `VendorNo` prefix — the PCTH data probe
+found 6 mismatches between the `ADV%` prefix heuristic and the actual posting
+group.
+
+### Source
+
+Posting group is populated via `RPCCodexStore_CodexGetVendors` (codeunit 50165),
+an unbound OData V4 action exposed by the Rocks BC customisation. The
+`RPCIT_Vendor` page web service is retired / returns 404 and is not used.
+
+The RPC is called in `src/lib/erp/vendor-sync.ts` → `enrichVendorPostingGroups`
+as a second pass after the Standard-API v2.0 MERGE transaction commits. The RPC
+call throws on failure (posting group is required for the feature; a silent null
+would suppress all ADV vendors in the dropdown).
+
+### Migration
+
+**Migration 120** (`migrations/120_erp_vendors_posting_group.sql`) adds a
+nullable `NVARCHAR(20)` column `VendorPostingGroup` to `dbo.ErpVendors` in
+`Rocks_ERP_Data`. Idempotent (`COL_LENGTH` guard).
+
+### Filter Applied
+
+`ADVANCE_VENDOR_POSTING_GROUP = "ADV"` is declared in
+`src/lib/adv/advance-erp-master-service.ts` and bound via `sql.NVarChar` in all
+four vendor read functions:
+
+| Function | Role |
+|---|---|
+| `listVendors` | Dropdown population |
+| `prefilterVendors` | LLM matcher prefilter |
+| `isVendorSelectable` | Confirm-time validity gate |
+| `findSelectableVendor` | Confirm-time row fetch + display-name snapshot |

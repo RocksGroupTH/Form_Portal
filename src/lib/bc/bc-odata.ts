@@ -196,23 +196,32 @@ export async function fetchBcApiV2Collection<T extends Record<string, unknown>>(
   return fetchBcJsonCollection<T>(connectionId, initialUrl, "BC API error");
 }
 
-function buildPpapJournalActionUrl(
+/** Build an ODataV4 unbound action URL: {root}[/{env}]/ODataV4/{action} */
+function buildBcActionUrl(
   baseUrl: string,
   environment: "Production" | "Sandbox",
+  action: string,
 ): string {
   const root = baseUrl.trim().replace(/\/+$/, "");
   const env = environment === "Sandbox" ? "Sandbox" : "Production";
   const envSegment = `/${env}`;
 
   if (root.toLowerCase().endsWith(envSegment.toLowerCase())) {
-    return `${root}/ODataV4/PPAPJournalCreateAPI_CreateFromJson`;
+    return `${root}/ODataV4/${action}`;
   }
 
   if (!root.toLowerCase().includes(BC_HOST)) {
     throw new Error("BC Base URL must point to api.businesscentral.dynamics.com");
   }
 
-  return `${root}${envSegment}/ODataV4/PPAPJournalCreateAPI_CreateFromJson`;
+  return `${root}${envSegment}/ODataV4/${action}`;
+}
+
+function buildPpapJournalActionUrl(
+  baseUrl: string,
+  environment: "Production" | "Sandbox",
+): string {
+  return buildBcActionUrl(baseUrl, environment, "PPAPJournalCreateAPI_CreateFromJson");
 }
 
 /**
@@ -297,5 +306,86 @@ export async function postBcPpapJournalCreateFromJson(
     } catch {
       return { raw: text };
     }
+  }
+}
+
+/**
+ * POST a RPCCodexStore_* unbound OData V4 action with body { inputJson } and
+ * return the parsed row array.
+ *
+ * Response shape: { "value": "<JSON-array-string>" }
+ * On { "error": "..." } throws. On 401 retries once after token refresh.
+ */
+export async function postBcCodexStoreRpc<T = Record<string, unknown>>(
+  connectionId: number,
+  companyId: string,
+  environment: "Production" | "Sandbox",
+  baseUrl: string,
+  fn: string,
+  input: unknown[] = [],
+): Promise<T[]> {
+  const company = companyId.trim();
+  if (!company) throw new Error("BC Company Id is required");
+
+  const url = assertApiDestination(buildBcActionUrl(baseUrl, environment, fn)).toString();
+  const body = JSON.stringify({ inputJson: JSON.stringify(input) });
+  let retried401 = false;
+
+  while (true) {
+    const conn = await getBcConnectionById(connectionId);
+    if (!conn) throw new Error("BC connection not found");
+
+    const token = await getBcAccessToken(conn.Code);
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        company,
+      },
+      body,
+    });
+
+    if (res.status === 401 && !retried401) {
+      retried401 = true;
+      const refresh = await refreshBcConnectionToken(connectionId);
+      if (!refresh.ok) throw new Error(refresh.message || "BC token refresh failed");
+      continue;
+    }
+
+    const text = await res.text().catch(() => "");
+
+    if (!res.ok) {
+      throw new Error(`BC ${fn} ${res.status}${text ? `: ${text.slice(0, 1500)}` : ""}`);
+    }
+
+    let outer: { value?: string; error?: string };
+    try {
+      outer = JSON.parse(text) as { value?: string; error?: string };
+    } catch {
+      throw new Error(`BC ${fn}: unparseable response: ${text.slice(0, 400)}`);
+    }
+
+    if (outer.error) throw new Error(`BC ${fn}: ${outer.error}`);
+
+    let rows: unknown;
+    try {
+      rows = JSON.parse(outer.value ?? "[]");
+    } catch {
+      throw new Error(`BC ${fn}: value field is not valid JSON`);
+    }
+
+    if (!Array.isArray(rows)) {
+      // Single-object error response embedded in value
+      const r = rows as Record<string, unknown>;
+      if (r && typeof r === "object" && r["error"]) {
+        throw new Error(`BC ${fn}: ${r["error"]}`);
+      }
+      throw new Error(`BC ${fn}: expected array in value, got ${typeof rows}`);
+    }
+
+    return rows as T[];
   }
 }
