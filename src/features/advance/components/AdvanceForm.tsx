@@ -305,6 +305,11 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
         baseAmount,
         whtNote: whtNote || null,
         overThresholdReason: overReason || null,
+        matchedVendorNo: null,
+        matchedVendorName: null,
+        vendorMatchStatus: null,
+        vendorMatchConfidence: null,
+        vendorMatchReason: null,
       },
     };
   }

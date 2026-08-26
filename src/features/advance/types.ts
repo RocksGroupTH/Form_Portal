@@ -17,6 +17,12 @@ export interface AdvanceDetail {
   payeeName: string | null;         // ชื่อคู่ค้า/พนักงาน (vendor: กรอกเอง; employee: auto)
   payeeBankAccount: string | null;  // เลขที่บัญชี (vendor path)
   payeeBankCode: string | null;     // ธนาคาร → AccBankMaster.BankCode
+  // Vendor match (AP-2 Dr = Vendor). Written by the matcher / officer.
+  matchedVendorNo: string | null;
+  matchedVendorName: string | null;
+  vendorMatchStatus: "pending" | "suggested" | "confirmed" | "none" | null;
+  vendorMatchConfidence: "high" | "medium" | "low" | null;
+  vendorMatchReason: string | null;
   // Advance
   needByDate: string | null;        // วันที่ต้องการเริ่มใช้เงิน
   expectedClearDate: string | null; // วันที่คาดว่าจะเคลียร์ (<= needBy + 30 วัน)

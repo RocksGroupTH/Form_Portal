@@ -68,6 +68,11 @@ function mapAdvanceRow(r: Record<string, unknown>): AdvanceDetail {
     payeeName: (r.PayeeName as string) ?? null,
     payeeBankAccount: (r.PayeeBankAccount as string) ?? null,
     payeeBankCode: (r.PayeeBankCode as string) ?? null,
+    matchedVendorNo: (r.MatchedVendorNo as string) ?? null,
+    matchedVendorName: (r.MatchedVendorName as string) ?? null,
+    vendorMatchStatus: (r.VendorMatchStatus as AdvanceDetail["vendorMatchStatus"]) ?? null,
+    vendorMatchConfidence: (r.VendorMatchConfidence as AdvanceDetail["vendorMatchConfidence"]) ?? null,
+    vendorMatchReason: (r.VendorMatchReason as string) ?? null,
     needByDate: r.NeedByDate ? toYmd(r.NeedByDate as Date) : null,
     expectedClearDate: r.ExpectedClearDate ? toYmd(r.ExpectedClearDate as Date) : null,
     purpose: (r.Purpose as string) ?? null,
@@ -317,7 +322,10 @@ async function persistAdvance(
         PayeeType=@payeeType, PayeeName=@payeeName, PayeeBankAccount=@bankAcct, PayeeBankCode=@bankCode,
         NeedByDate=@needBy, ExpectedClearDate=@clear, Purpose=@purpose,
         Currency=@currency, Amount=@amount, ExchangeRate=@rate, BaseAmount=@base,
-        WhtNote=@wht, OverThresholdReason=@overReason, UpdatedAt=SYSDATETIME()
+        WhtNote=@wht, OverThresholdReason=@overReason,
+        VendorMatchStatus = CASE WHEN ISNULL(PayeeName,'') <> ISNULL(@payeeName,'')
+                                 THEN 'pending' ELSE VendorMatchStatus END,
+        UpdatedAt=SYSDATETIME()
       WHERE RequestId=@rid`);
   } else {
     await reqBind().query(`
@@ -467,6 +475,8 @@ export async function submitRequest(
 
   const advance = current.advance ?? {
     payeeType: null, payeeName: null, payeeBankAccount: null, payeeBankCode: null,
+    matchedVendorNo: null, matchedVendorName: null, vendorMatchStatus: null,
+    vendorMatchConfidence: null, vendorMatchReason: null,
     needByDate: null, expectedClearDate: null, purpose: null,
     currency: AP2_DEFAULT_CURRENCY, amount: null, exchangeRate: null, baseAmount: null, whtNote: null,
     overThresholdReason: null,
