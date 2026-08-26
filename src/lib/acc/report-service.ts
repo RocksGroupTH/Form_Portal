@@ -515,6 +515,26 @@ export async function listMyWorkRows(
                 )
               )
           )
+          OR EXISTS (
+            SELECT 1 FROM [dbo].[AccAdvanceApproval] aa
+            WHERE aa.RequestId = r.Id
+              AND (
+                (@staffId IS NOT NULL AND aa.AssignedStaffId = @staffId)
+                OR (
+                  @email <> ''
+                  AND LOWER(LTRIM(RTRIM(COALESCE(aa.AssignedEmail, N'')))) = LOWER(LTRIM(RTRIM(@email)))
+                )
+                OR (
+                  @staffId IS NOT NULL
+                  AND aa.Status = 'Pending'
+                  AND EXISTS (
+                    SELECT 1 FROM [dbo].[AccAdvanceApprover] ap
+                    WHERE ap.StaffId = @staffId AND ap.IsActive = 1
+                      AND ap.ApproverRole = aa.StepType
+                  )
+                )
+              )
+          )
         )`,
           "r.SubmittedAt DESC, r.Id DESC",
           viewerManagerSelect,
