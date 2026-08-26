@@ -83,23 +83,27 @@ function AdvanceDetailContent() {
   }, [request?.currentStepCode]);
 
   useEffect(() => {
+    if (requestId == null) return;
     if (request?.currentStepCode !== "ACC_OFFICER" || !request?.brandCode) return;
+    let cancelled = false;
     fetch(`/api/request/advance/vendors?company=${encodeURIComponent(request.brandCode)}`)
       .then((r) => r.json())
       .then((j: { ok: boolean; vendors?: { vendorNo: string; displayName: string | null }[] }) => {
+        if (cancelled) return;
         if (j.ok && j.vendors) setVendors(j.vendors);
       })
       .catch(() => {});
-    if (requestId == null) return;
     fetch(`/api/request/advance/vendor-match/${requestId}`, { method: "POST" })
       .then((r) => r.json())
       .then((j: { ok: boolean; data?: { status: string | null; vendorNo: string | null; confidence: string | null; reason: string | null } }) => {
+        if (cancelled) return;
         if (j.ok && j.data) {
           setVendorMatch({ status: j.data.status, confidence: j.data.confidence, reason: j.data.reason });
-          if (j.data.vendorNo) setSelectedVendor(j.data.vendorNo);
+          setSelectedVendor((prev) => prev || (j.data?.vendorNo ?? ""));
         }
       })
       .catch(() => {});
+    return () => { cancelled = true; };
   }, [request?.currentStepCode, request?.brandCode, requestId]);
 
   async function act(path: string, body?: unknown) {
@@ -239,6 +243,7 @@ function AdvanceDetailContent() {
               <div className="text-[12px] flex items-center gap-2" style={{ color: "var(--text-secondary)" }}>
                 Vendor:
                 <select
+                  aria-label="เลือก Vendor"
                   value={selectedVendor}
                   onChange={(e) => {
                     const v = e.target.value;

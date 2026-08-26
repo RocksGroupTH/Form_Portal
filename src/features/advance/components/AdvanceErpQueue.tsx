@@ -428,6 +428,7 @@ export function AdvanceErpQueue() {
                       <td className="px-2.5 py-2 whitespace-nowrap">
                         {(vendorOpts[row.interfaceTarget] ?? []).length > 0 ? (
                           <select
+                            aria-label="เลือก Vendor"
                             value={row.matchedVendorNo ?? ""}
                             onChange={(e) => { if (e.target.value) changeVendor(row.id, e.target.value); }}
                             className="text-[12px] rounded-lg px-2 py-1 outline-none cursor-pointer"

@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
   const st = await pool.request().input("id", sql.Int, id)
     .query(`SELECT Status, ErpInterfaceStatus FROM [dbo].[AccRequest] WHERE Id=@id AND FormCode='AP-2'`);
   const row = st.recordset[0] as { Status?: string; ErpInterfaceStatus?: string | null } | undefined;
-  if (!row || row.Status !== "Approved" || row.ErpInterfaceStatus === "Sent") {
+  if (!row || row.Status !== "Approved" || row.ErpInterfaceStatus === "Sent" || row.ErpInterfaceStatus === "Pending") {
     return NextResponse.json({ ok: false, error: "แก้ Vendor ได้เฉพาะรายการที่อนุมัติแล้วและยังไม่ได้ส่ง" }, { status: 400 });
   }
 
