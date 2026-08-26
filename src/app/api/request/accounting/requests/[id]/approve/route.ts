@@ -14,6 +14,7 @@ import {
   loadPrepDeptContext,
 } from "@/lib/acc/erp-prep-service";
 import { authorizeAccRequest } from "@/lib/acc/request-acl";
+import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import { canActManagerApi, MANAGER_AUTH_ERROR } from "@/lib/acc/manager-auth";
 import { getRequestHost } from "@/lib/acc/erp-environment";
 import { processQueue } from "@/lib/acc/email-queue";
@@ -36,7 +37,13 @@ export async function POST(
   // Reaching the record at all: owner, assigned manager or accounting area —
   // and, on a UAT id, an active tester. Without this a real accountant could
   // approve test data by typing its number. See `request-acl-policy`.
-  const gate = await authorizeAccRequest(session, id, "read");
+  // AP-1 only. Every Acc* form shares [dbo].[AccRequest], and AP-4 parks a
+  // request at the same (ManagerApproved, ACCOUNT) tuple this route's account
+  // step claims — so without the form pin an AP-1 accountant could finalize an
+  // AP-4 claim through this URL, skipping AP-4's ACCOUNT_FINAL step and its
+  // two-person rule entirely. A foreign id now 404s here, and every claim in
+  // `approval-engine` names FormCode as well.
+  const gate = await authorizeAccRequest(session, id, "read", AP1_FORM_CODE);
   if (gate instanceof Response) return gate;
 
   const accReq = await getRequest(id);

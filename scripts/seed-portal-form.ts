@@ -56,6 +56,19 @@ const SOURCE_DB = "Fast_Form";
  * child that references it (AccFormMaster before AccFormBrand, AccApprover
  * before AccApproverInterfaceBrand, AccTravelVehicleOption before
  * AccTravelVehiclePlace).
+ *
+ * **19 here, 21 in `scripts/checks/verify-master-alignment.ts`, and that is
+ * correct.** The two missing names are AP-4's `AccReimburseApprover` and
+ * `AccReimburseRule`, which are dual-written shared configuration and so belong
+ * in the alignment check — but `SOURCE_DB` here is `Fast_Form`, the Rocks Fast
+ * sibling, which has no `AccReimburse*` tables at all. Appending them would make
+ * every run fail on `Invalid object name` against the source.
+ *
+ * There is nothing to copy for AP-4: `AccReimburseApprover` ships empty and is
+ * filled in from Settings, and `AccReimburseRule` is seeded by its own migration.
+ * A stand-up that needs AP-4 needs migrations 088–092 on both form databases
+ * (and 093 on Fast_Core) — see CLAUDE.md's deployment checklist — not a wider
+ * copy from a database that never held the form.
  */
 const MASTER_TABLES = [
   "AccFormMaster",

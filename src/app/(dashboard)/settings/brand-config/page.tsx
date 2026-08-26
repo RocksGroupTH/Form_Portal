@@ -1,15 +1,17 @@
 ﻿"use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import useSWR from "swr";
-import Image from "next/image";
-import { Layers, Loader2, Pencil, Save, X } from "lucide-react";
+
+import { Layers, Loader2, Pencil, Save, Upload, X } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { toast } from "sonner";
 import { APP_DB_CONNECTION_ID } from "@/lib/db/app-connection";
+import { BrandMark } from "@/components/BrandMark";
+
 import {
   SearchableSelect,
   type SearchableSelectOption,
@@ -20,7 +22,11 @@ const fetcher = (url: string) => fetch(url).then((r) => r.json());
 interface BrandConfigRow {
   brandCode: string;
   brandName: string;
-  brandLogo: string;
+  brandLogo: string | null;
+  /** This app's own switch (BrandSetting), not BrandConfig.IsActive. */
+  isEnabled: boolean;
+  /** True when `brandLogo` is an uploaded one, so it can be removed. */
+  hasUploadedLogo: boolean;
   bcId: string | null;
   bcName: string | null;
   bcConnectionId: number | null;
@@ -157,9 +163,13 @@ function getConfigStatus(c: BrandConfigRow): { complete: boolean; groups: GroupS
 function BrandConfigCard({
   config,
   onEdit,
+  onToggleEnabled,
+  toggling,
 }: {
   config: BrandConfigRow;
   onEdit: () => void;
+  onToggleEnabled: (next: boolean) => void;
+  toggling: boolean;
 }) {
   const st = getConfigStatus(config);
 
@@ -170,6 +180,9 @@ function BrandConfigCard({
         background: "var(--bg-card)",
         border: `1px solid ${st.complete ? "var(--border-info-green)" : "var(--border-card)"}`,
         boxShadow: "var(--shadow-sm)",
+        // Dimmed rather than hidden: this page is where a brand is turned back
+        // on, so it has to stay visible and legible while off.
+        opacity: config.isEnabled ? 1 : 0.55,
       }}
     >
       <div className="flex items-start justify-between gap-2">
@@ -177,7 +190,7 @@ function BrandConfigCard({
           className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0"
           style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}
         >
-          <Image src={config.brandLogo} alt={config.brandName} width={36} height={36} className="rounded object-contain" />
+          <BrandMark src={config.brandLogo} alt={config.brandName} code={config.brandCode} size={36} rounded="rounded" />
         </div>
         <div className="flex flex-col items-end gap-1 shrink-0">
           {st.groups.map((g) => (
@@ -190,6 +203,29 @@ function BrandConfigCard({
         <h3 className="text-[14px] font-bold" style={{ color: "var(--text-heading)" }}>{config.brandName}</h3>
         <p className="text-[11px] font-mono mt-0.5" style={{ color: "var(--text-muted)" }}>{config.brandCode}</p>
       </div>
+
+      {/* The switch acts immediately — it writes one boolean to this app's own
+          BrandSetting row, not to the shared BrandConfig the Save button below
+          edits, so folding it into that form would tie a quick toggle to a
+          whole BC configuration. */}
+      <label className="flex items-center justify-between gap-2 cursor-pointer">
+        <span className="text-[12px] font-medium" style={{ color: "var(--text-secondary)" }}>
+          {config.isEnabled ? "เปิดใช้งาน" : "ปิดอยู่"}
+        </span>
+        <span className="flex items-center gap-1.5">
+          {toggling && <Loader2 size={12} className="animate-spin" style={{ color: "var(--text-muted)" }} />}
+          <input
+            type="checkbox"
+            role="switch"
+            checked={config.isEnabled}
+            disabled={toggling}
+            onChange={(e) => onToggleEnabled(e.target.checked)}
+            aria-label={`เปิดใช้งานแบรนด์ ${config.brandName}`}
+            className="cursor-pointer"
+            style={{ width: 34, height: 18, accentColor: "var(--color-action)" }}
+          />
+        </span>
+      </label>
 
       {!st.complete && (
         <div className="flex flex-col gap-1">
@@ -359,6 +395,7 @@ function BrandConfigModal({
   onErpServerChange,
   onSave,
   onClose,
+  onLogoChanged,
 }: {
   brand: BrandConfigRow;
   form: FormState;
@@ -371,9 +408,64 @@ function BrandConfigModal({
   onErpServerChange: (connectionId: string) => void;
   onSave: () => void;
   onClose: () => void;
+  /** Refetch after an upload or a removal — the URL carries a cache buster. */
+  onLogoChanged: () => Promise<unknown>;
 }) {
   const set = (key: keyof FormState, value: string) => onChange({ ...form, [key]: value });
   const [bcStatus, erpStatus] = getGroupStatusesFromForm(form);
+  const logoInputRef = useRef<HTMLInputElement | null>(null);
+  const [logoBusy, setLogoBusy] = useState(false);
+
+  // The upload is its own request, applied at once, not folded into Save. Save
+  // writes the shared Fast_Core config row; the logo is this app's own, and a
+  // picture the admin has just chosen should appear immediately rather than
+  // waiting on a form they may still be filling in.
+  const uploadLogo = async (file: File) => {
+    setLogoBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`/api/settings/brand-config/${brand.brandCode}/logo`, {
+        method: "POST",
+        body: fd,
+      });
+      const json = await res.json().catch(() => null);
+      if (!json?.ok) {
+        // The server's own reason: "แนบได้เฉพาะไฟล์รูปภาพเท่านั้น", a size
+        // refusal, and so on. A generic message here would send somebody
+        // hunting for a problem the answer already named.
+        toast.error(json?.error ?? "อัปโหลดโลโก้ไม่สำเร็จ");
+        return;
+      }
+      toast.success("อัปโหลดโลโก้แล้ว");
+      await onLogoChanged();
+    } catch {
+      toast.error("อัปโหลดโลโก้ไม่สำเร็จ");
+    } finally {
+      setLogoBusy(false);
+      if (logoInputRef.current) logoInputRef.current.value = "";
+    }
+  };
+
+  const removeLogo = async () => {
+    setLogoBusy(true);
+    try {
+      const res = await fetch(`/api/settings/brand-config/${brand.brandCode}/logo`, {
+        method: "DELETE",
+      });
+      const json = await res.json().catch(() => null);
+      if (!json?.ok) {
+        toast.error(json?.error ?? "ลบโลโก้ไม่สำเร็จ");
+        return;
+      }
+      toast.success("ลบโลโก้แล้ว");
+      await onLogoChanged();
+    } catch {
+      toast.error("ลบโลโก้ไม่สำเร็จ");
+    } finally {
+      setLogoBusy(false);
+    }
+  };
 
   return (
     <div className="app-overlay fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -382,7 +474,7 @@ function BrandConfigModal({
         style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", boxShadow: "var(--shadow-modal)" }}
       >
         <div className="px-5 py-4 shrink-0 flex items-center gap-3" style={{ borderBottom: "1px solid var(--border-card)" }}>
-          <Image src={brand.brandLogo} alt={brand.brandName} width={32} height={32} className="rounded object-contain" />
+          <BrandMark src={brand.brandLogo} alt={brand.brandName} code={brand.brandCode} size={32} rounded="rounded" />
           <div className="flex-1 min-w-0">
             <h2 className="text-[15px] font-bold" style={{ color: "var(--text-heading)" }}>{brand.brandName}</h2>
             <p className="text-[11px] font-mono" style={{ color: "var(--text-muted)" }}>{brand.brandCode}</p>
@@ -393,6 +485,66 @@ function BrandConfigModal({
         </div>
 
         <div className="px-5 py-4 flex flex-col gap-4 overflow-y-auto">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wide mb-2" style={{ color: "var(--text-muted)" }}>
+              โลโก้
+            </p>
+            <div className="flex items-center gap-3">
+              <div
+                className="w-14 h-14 rounded-xl flex items-center justify-center shrink-0"
+                style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}
+              >
+                <BrandMark
+                  src={brand.brandLogo}
+                  alt={brand.brandName}
+                  code={brand.brandCode}
+                  size={40}
+                  rounded="rounded"
+                />
+              </div>
+              <div className="flex-1 min-w-0 flex flex-col gap-1.5">
+                <div className="flex items-center gap-2">
+                  <input
+                    ref={logoInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void uploadLogo(f);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => logoInputRef.current?.click()}
+                    disabled={logoBusy}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-semibold cursor-pointer border-none disabled:opacity-60"
+                    style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}
+                  >
+                    {logoBusy ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+                    {brand.hasUploadedLogo ? "เปลี่ยนโลโก้" : "อัปโหลดโลโก้"}
+                  </button>
+                  {brand.hasUploadedLogo && (
+                    <button
+                      type="button"
+                      onClick={() => void removeLogo()}
+                      disabled={logoBusy}
+                      className="px-3 py-1.5 rounded-lg text-[12px] font-semibold cursor-pointer border-none disabled:opacity-60"
+                      style={{ background: "var(--btn-danger-bg)", color: "var(--btn-danger-text)" }}
+                    >
+                      ลบ
+                    </button>
+                  )}
+                </div>
+                <p className="text-[10px] leading-snug m-0" style={{ color: "var(--text-muted)" }}>
+                  {brand.hasUploadedLogo
+                    ? "ใช้โลโก้ที่อัปโหลดไว้ · ลบแล้วจะกลับไปใช้ไฟล์ในระบบถ้ามี"
+                    : "ยังไม่มีโลโก้ที่อัปโหลด — ตอนนี้ใช้ไฟล์ในระบบหรือแสดงเป็นตัวย่อ"}
+                </p>
+              </div>
+            </div>
+          </div>
+
           <div>
             <SectionHeader status={bcStatus} />
             <div className="flex flex-col gap-3">
@@ -458,6 +610,42 @@ export default function BrandConfigPage() {
       lookups: { dbConnections: LookupItem[]; bcConnections: LookupItem[] };
     };
   }>("/api/settings/brand-config", fetcher);
+
+  const [togglingCode, setTogglingCode] = useState<string | null>(null);
+
+  /**
+   * Turn a brand on or off.
+   *
+   * Its own endpoint, and its own `mutate()`: this writes
+   * `Rocks_Portal_Form.dbo.BrandSetting`, while the Save button in the dialog
+   * writes the shared `Fast_Core.dbo.BrandConfig` row. No optimistic update —
+   * the switch governs who can work under a brand, so it should read the
+   * server's answer rather than its own guess.
+   */
+  const toggleEnabled = useCallback(
+    async (row: BrandConfigRow, next: boolean) => {
+      setTogglingCode(row.brandCode);
+      try {
+        const res = await fetch(`/api/settings/brand-config/${row.brandCode}/enabled`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ isEnabled: next }),
+        });
+        const json = await res.json().catch(() => null);
+        if (!json?.ok) {
+          toast.error(json?.error ?? "บันทึกไม่สำเร็จ");
+          return;
+        }
+        toast.success(next ? `เปิดใช้งาน ${row.brandName}` : `ปิด ${row.brandName}`);
+        await mutate();
+      } catch {
+        toast.error("บันทึกไม่สำเร็จ");
+      } finally {
+        setTogglingCode(null);
+      }
+    },
+    [mutate],
+  );
 
   const [editing, setEditing] = useState<BrandConfigRow | null>(null);
   const [form, setForm] = useState<FormState>({
@@ -587,7 +775,13 @@ export default function BrandConfigPage() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {configs.map((c) => (
-            <BrandConfigCard key={c.brandCode} config={c} onEdit={() => openEdit(c)} />
+            <BrandConfigCard
+              key={c.brandCode}
+              config={c}
+              onEdit={() => openEdit(c)}
+              onToggleEnabled={(next) => void toggleEnabled(c, next)}
+              toggling={togglingCode === c.brandCode}
+            />
           ))}
         </div>
       )}
@@ -605,6 +799,12 @@ export default function BrandConfigPage() {
           onErpServerChange={handleErpServerChange}
           onSave={handleSave}
           onClose={() => setEditing(null)}
+          onLogoChanged={async () => {
+            const next = await mutate();
+            // Keep the open dialog's header in step with the new logo.
+            const fresh = next?.data?.configs.find((c) => c.brandCode === editing.brandCode);
+            if (fresh) setEditing(fresh);
+          }}
         />
       )}
     </PageContainer>

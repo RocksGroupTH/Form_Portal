@@ -24,7 +24,43 @@ import {
 } from "lucide-react";
 import { Dialog } from "@/components/ui";
 import { Avatar } from "@/components/ui/Avatar";
-import { ImageLightbox } from "@/features/accounting/components/ImageLightbox";
+import {
+  AttachmentViewer,
+  attachmentKind,
+  type AttachmentKind,
+  type AttachmentSource,
+} from "@/components/ui/AttachmentViewer";
+import { FileSpreadsheet } from "lucide-react";
+
+/**
+ * One attachment tile.
+ *
+ * Three byte-identical copies of this markup sat inline before AP-1's receipt
+ * slot was widened to take any file (2026-08-26) — at which point all three
+ * needed the same "not an image" fallback, which is what made one copy worth
+ * having. A stored PDF's URL in an `<img>` renders as a broken image.
+ */
+function FileTile({ file, onOpen }: { file: AccFileMeta; onOpen: (f: AccFileMeta) => void }) {
+  const kind = attachmentKind(file.fileName, file.contentType);
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(file)}
+      title={`${file.fileName} — คลิกเพื่อเปิดดู`}
+      className="w-16 h-16 rounded-lg overflow-hidden cursor-pointer border-none p-0 flex items-center justify-center"
+      style={{ background: "var(--bg-card)", color: "var(--nav-active-text)" }}
+    >
+      {kind === "image" ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={file.url} alt={file.fileName} className="w-full h-full object-cover" />
+      ) : kind === "excel" ? (
+        <FileSpreadsheet size={24} />
+      ) : (
+        <FileText size={24} />
+      )}
+    </button>
+  );
+}
 import { UatDataBanner } from "@/components/UatDataBanner";
 import { canActManagerStep } from "@/lib/acc/manager-auth";
 import { useErpSandboxDevHost } from "@/features/accounting/hooks/useErpSandboxDevHost";
@@ -718,7 +754,7 @@ function TravelDaySection({
   totalDays,
   vehicleIcons,
   expenseLines,
-  onImageClick,
+  onFileClick,
   showBrand = true,
 }: {
   request: AccRequest;
@@ -727,7 +763,7 @@ function TravelDaySection({
   totalDays: number;
   vehicleIcons: Record<number, string | null>;
   expenseLines: ExpenseLine[];
-  onImageClick: (src: string, alt: string) => void;
+  onFileClick: (file: AccFileMeta) => void;
   showBrand?: boolean;
 }) {
   const expenseGroups = useMemo(() => groupExpenseLines(expenseLines), [expenseLines]);
@@ -919,16 +955,7 @@ function TravelDaySection({
                     {group.entries[0].files.length > 0 && (
                       <div className="flex flex-wrap gap-2 mt-2.5">
                         {group.entries[0].files.map((f) => (
-                          <button
-                            key={f.id}
-                            type="button"
-                            onClick={() => onImageClick(f.url, f.fileName)}
-                            className="w-16 h-16 rounded-lg overflow-hidden cursor-pointer border-none p-0"
-                            style={{ background: "var(--bg-card)" }}
-                          >
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={f.url} alt={f.fileName} className="w-full h-full object-cover" />
-                          </button>
+                          <FileTile key={f.id} file={f} onOpen={onFileClick} />
                         ))}
                       </div>
                     )}
@@ -957,16 +984,7 @@ function TravelDaySection({
                             {cluster.entries[0].files.length > 0 && (
                               <div className="flex flex-wrap gap-2 mt-2">
                                 {cluster.entries[0].files.map((f) => (
-                                  <button
-                                    key={f.id}
-                                    type="button"
-                                    onClick={() => onImageClick(f.url, f.fileName)}
-                                    className="w-16 h-16 rounded-lg overflow-hidden cursor-pointer border-none p-0"
-                                    style={{ background: "var(--bg-card)" }}
-                                  >
-                                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                                    <img src={f.url} alt={f.fileName} className="w-full h-full object-cover" />
-                                  </button>
+                                  <FileTile key={f.id} file={f} onOpen={onFileClick} />
                                 ))}
                               </div>
                             )}
@@ -995,16 +1013,7 @@ function TravelDaySection({
                                   {entry.files.length > 0 && (
                                     <div className="flex flex-wrap gap-2 mt-1.5">
                                       {entry.files.map((f) => (
-                                        <button
-                                          key={f.id}
-                                          type="button"
-                                          onClick={() => onImageClick(f.url, f.fileName)}
-                                          className="w-16 h-16 rounded-lg overflow-hidden cursor-pointer border-none p-0"
-                                          style={{ background: "var(--bg-card)" }}
-                                        >
-                                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                                          <img src={f.url} alt={f.fileName} className="w-full h-full object-cover" />
-                                        </button>
+                                        <FileTile key={f.id} file={f} onOpen={onFileClick} />
                                       ))}
                                     </div>
                                   )}
@@ -1235,7 +1244,7 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
     }
   }
 
-  const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
+  const [viewing, setViewing] = useState<{ source: AttachmentSource; kind: AttachmentKind } | null>(null);
 
   /* Selected travel day (when multiple) — show one day at a time, like the request form. */
   const [activeDay, setActiveDay] = useState(0);
@@ -1627,7 +1636,12 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
           totalDays={travelDays.length}
           vehicleIcons={vehicleIcons}
           expenseLines={buildExpenseLines(travelDays[activeDayIdx])}
-          onImageClick={(src, alt) => setLightbox({ src, alt })}
+          onFileClick={(f) =>
+            setViewing({
+              source: { name: f.fileName, url: f.url },
+              kind: attachmentKind(f.fileName, f.contentType),
+            })
+          }
           showBrand={travelDays.length === 1}
         />
       )}
@@ -1848,11 +1862,11 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
         </>
       )}
 
-      <ImageLightbox
-        open={lightbox != null}
-        src={lightbox?.src ?? ""}
-        alt={lightbox?.alt}
-        onClose={() => setLightbox(null)}
+      <AttachmentViewer
+        open={viewing != null}
+        source={viewing?.source ?? null}
+        kind={viewing?.kind ?? "other"}
+        onClose={() => setViewing(null)}
       />
     </div>
   );

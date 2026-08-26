@@ -18,7 +18,9 @@ import { sortByFormCode } from "@/lib/form-code-order";
 // cards were plain <Link>s and the only card surface in the app without it, so
 // the same tile felt inert here and interactive on /request.
 import { HoverCard } from "@/components/ui/HoverCard";
-import { Search, Route, Luggage, ClipboardCheck, FilePen, ReceiptText, ArrowRight } from "lucide-react";
+// `Receipt` is AP-4's, `ReceiptText` is AP-3's — two forms, two icons, not a
+// rename either side made.
+import { Search, Route, Luggage, Receipt, ReceiptText, ClipboardCheck, FilePen, ArrowRight } from "lucide-react";
 
 /**
  * The Accounting forms Home offers.
@@ -64,6 +66,13 @@ const ACCOUNTING_FORMS = [
     desc: "ไปทำงานต่างจังหวัด",
     href: "/request/travel-booking",
     Icon: Luggage,
+  },
+  {
+    code: "AP-4",
+    name: "ขอเบิกเงินคืนพนักงาน",
+    desc: "เบิกเงินที่สำรองจ่ายไปก่อน",
+    href: "/request/reimburse",
+    Icon: Receipt,
   },
 ];
 

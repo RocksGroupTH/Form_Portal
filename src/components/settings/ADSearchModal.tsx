@@ -6,12 +6,27 @@ import { Search, X } from "lucide-react";
 /**
  * The shared Entra ID people-picker used by the settings panels.
  *
- * Four private copies of this modal predate it — Users & Roles, AP-1's
- * `ApproverSettings`, `SameDayBrandSettings` and `UatUserSettings` — each with
- * a slightly different prop shape and, in two of them, raw hex where a theme
- * token belongs. This is the one new panels should import; the four are left
- * alone deliberately, since folding them in is a refactor of its own and each
- * carries small behavioural differences worth reading before they are merged.
+ * Lifted from `UatUserSettings`'s private copy — the richest of the four the
+ * settings surfaces each carried (title, subtitle, already-added marking) — and
+ * imported today by `UatUserSettings` itself, AP-17's `BookingApproverSettings`
+ * and AP-4's `ReimburseApproverSettings`. It is the one new panels should
+ * import.
+ *
+ * The three remaining private copies are deliberately left alone, because they
+ * are not the same component wearing different formatting:
+ *
+ * - **Users & Roles** (`app/(dashboard)/settings/users/page.tsx`) is the
+ *   English-language variant — English placeholder, empty and error copy, a
+ *   hardcoded English subtitle with no prop to override it, `title` optional,
+ *   and a text `✕` rather than the `X` icon. Adopting this one would translate
+ *   that page's dialog into Thai.
+ * - **AP-1's `ApproverSettings`** and **`SameDayBrandSettings`** are closer —
+ *   both already hand the whole row to `onSelect`, as this one does, and
+ *   `ApproverSettings` reads `user.photo` off it to seed `AccApprover.PhotoUrl`
+ *   — but each carries small behavioural differences, and raw hex where a
+ *   theme token belongs. Folding them in is a refactor of a live
+ *   approver-management path, worth doing on its own terms and not as a
+ *   drive-by.
  *
  * `onSelect` hands back the whole `ADResult` rather than a name/email pair, so
  * a caller that later needs the Entra object id or the department does not

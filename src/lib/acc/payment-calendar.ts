@@ -1,17 +1,15 @@
 import { getCorePool, sql } from "@/lib/db/mssql";
+import { nthFridayOfMonth, ymd } from "@/lib/acc/payment-calendar-core";
 
-function nthFridayOfMonth(year: number, month0: number, nth: number): Date {
-  const d = new Date(year, month0, 1);
-  const offset = (5 - d.getDay() + 7) % 7; // 5 = Friday
-  return new Date(year, month0, 1 + offset + (nth - 1) * 7);
-}
-
-function ymd(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
+// Re-exported for src/lib/acc/reimburse/payment-calendar.ts (AP-4), which needs
+// the same building blocks but a different round (1st/3rd Friday instead of
+// 2nd/4th). Behaviour is unchanged — the bodies just moved to payment-calendar-core.ts
+// (a module with no database import) so a pure-logic caller can use them without
+// pulling in @/lib/db/mssql. See that file for why that matters.
+export { nthFridayOfMonth, ymd };
 
 /** Fetch holiday date strings (YYYY-MM-DD) within [from,to] from Rocks_Codex. */
-async function getHolidaySet(from: Date, to: Date): Promise<Set<string>> {
+export async function getHolidaySet(from: Date, to: Date): Promise<Set<string>> {
   const pool = await getCorePool();
   const r = await pool
     .request()
@@ -27,7 +25,7 @@ async function getHolidaySet(from: Date, to: Date): Promise<Set<string>> {
 }
 
 /** Shift backward when the payment Friday falls on a weekend or public holiday. */
-function shiftPaymentDay(d: Date, holidays: Set<string>): Date {
+export function shiftPaymentDay(d: Date, holidays: Set<string>): Date {
   const cur = new Date(d);
   while (cur.getDay() === 0 || cur.getDay() === 6 || holidays.has(ymd(cur))) {
     cur.setDate(cur.getDate() - 1);

@@ -2,20 +2,22 @@
 
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { BRANDS } from "@/lib/brand";
 import { getBrandFromSearchParams } from "@/lib/brand-url";
 import { useBrand } from "./BrandProvider";
+import { BrandMark } from "./BrandMark";
 
 /**
  * Blocks rendering of children with a non-dismissable modal until the user
  * picks a brand. Once a brand is selected (via the modal or BrandSwitcher),
  * the cookie is set and children render normally.
  *
- * Note: All enabled brands are selectable here. Per-feature access checks
- * (e.g. ERP sync, brand-scoped Accounting settings) happen at the API layer.
+ * The list comes from `/api/brands` (the company brand master minus anything
+ * switched off at Settings → Brand Configuration), not from a hardcoded array.
+ * Per-feature access checks — ERP sync, brand-scoped Accounting settings —
+ * still happen at the API layer.
  */
 export function BrandGate({ children }: { children: React.ReactNode }) {
-  const { brand, setBrand } = useBrand();
+  const { brand, setBrand, brands, brandsLoading } = useBrand();
   const sp = useSearchParams();
   const [isSyncing, setIsSyncing] = useState(false);
 
@@ -30,8 +32,23 @@ export function BrandGate({ children }: { children: React.ReactNode }) {
     void setBrand(urlBrand, { syncUrl: false, refresh: true }).finally(() => setIsSyncing(false));
   }, [brand, setBrand, sp]);
 
-  if (brand) return <>{children}</>;
+  // A cookie naming a brand that is no longer offered has to reopen the picker,
+  // or switching a brand off would leave everyone already on it working under
+  // it forever.
+  //
+  // **Only once the list has actually been answered, and only if it is not
+  // empty.** `brands` is also empty while the fetch is in flight and after it
+  // fails, and forcing a modal with nothing in it over a transient error would
+  // lock the app shut. Trusting the cookie is the fail-safe direction: the
+  // server re-checks the brand on every request that acts on one.
+  const listUsable = !brandsLoading && brands.length > 0;
+  const brandStillOffered = !listUsable || brands.some((b) => b.id === brand);
+
+  if (brand && brandStillOffered) return <>{children}</>;
   if (isSyncing) return null;
+  // Nothing to choose from yet — show the dimmed shell rather than an empty
+  // grid that looks like a broken page.
+  if (brandsLoading) return null;
 
   return (
     <>
@@ -83,43 +100,26 @@ export function BrandGate({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {BRANDS.map((b) => {
-              const isDisabled = !b.enabled;
-              return (
-                <button
-                  key={b.id}
-                  onClick={() => {
-                    if (!isDisabled) void setBrand(b.id);
-                  }}
-                  disabled={isDisabled}
-                  className="flex flex-col items-center gap-2 p-4 rounded-xl cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 transition-transform hover:scale-[1.03]"
-                  style={{
-                    background: "var(--bg-card)",
-                    border: "1px solid var(--border-card)",
-                  }}
-                >
-                  <img
-                    src={b.logo}
-                    alt={b.name}
-                    width={64}
-                    height={64}
-                    className="rounded-lg object-contain"
-                    style={{ filter: isDisabled ? "grayscale(1)" : undefined }}
-                  />
-                  <span className="text-[14px] font-bold" style={{ color: "var(--text-heading)" }}>
-                    {b.name}
-                  </span>
-                  {isDisabled && (
-                    <span
-                      className="text-[9px] font-bold px-1.5 py-0.5 rounded"
-                      style={{ background: "var(--color-warning-light)", color: "var(--text-inverse)" }}
-                    >
-                      SOON
-                    </span>
-                  )}
-                </button>
-              );
-            })}
+            {/* No disabled state any more: `/api/brands` returns what may be
+                picked, so a brand that is here is selectable. The old "SOON"
+                badge came from a hardcoded `enabled` flag that was `true` on
+                all four entries and so never rendered. */}
+            {brands.map((b) => (
+              <button
+                key={b.id}
+                onClick={() => void setBrand(b.id)}
+                className="flex flex-col items-center gap-2 p-4 rounded-xl cursor-pointer transition-transform hover:scale-[1.03]"
+                style={{
+                  background: "var(--bg-card)",
+                  border: "1px solid var(--border-card)",
+                }}
+              >
+                <BrandMark src={b.logo} alt={b.name} code={b.id} size={64} />
+                <span className="text-[14px] font-bold" style={{ color: "var(--text-heading)" }}>
+                  {b.name}
+                </span>
+              </button>
+            ))}
           </div>
         </div>
       </div>

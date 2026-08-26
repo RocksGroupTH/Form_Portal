@@ -138,6 +138,38 @@ export const REQUEST_CARDS: NavItem[] = [
     devHostOnly: true,
     manage: true,
   },
+  {
+    id: "reimburse-settings",
+    label: "ขอเบิกเงินคืนพนักงาน (ออฟฟิต)",
+    icon: "Receipt",
+    desc: "ฟอร์ม AP-4 · แบรนด์ · ระเบียบการจ่าย · ผู้อนุมัติบัญชี · สิทธิ์เข้าถึง",
+    href: "/request/reimburse/settings",
+    group: "Settings",
+    groupTh: "ตั้งค่า",
+    badge: "AP-4",
+    // Deliberately **not** `devHostOnly`, unlike its two neighbours.
+    //
+    // For AP-1 and AP-17 that flag is cosmetic — their approver and brand tables
+    // are populated, so hiding the card off localhost hides a page nobody needs.
+    // AP-4 ships with `AccReimburseApprover` empty, so until a System Admin adds
+    // somebody every claim stops dead at the ACCOUNT step, and migration 092
+    // seeds `AccFormBrand` with `ROCKS`, which is not one of the four brands in
+    // `src/lib/brand.ts`. Both are fixed here and nowhere else. The card was
+    // hiding the one page needed to commission the form, on the only host where
+    // commissioning happens, while the page itself is `requireRole`-gated
+    // server-side and was therefore authorized anyway.
+    manage: true,
+  },
+  {
+    id: "reimburse-form",
+    label: "ขอเบิกเงินคืนพนักงาน",
+    icon: "Receipt",
+    desc: "เบิกเงินที่สำรองจ่ายไปก่อน / ฉบับร่างของฉัน",
+    href: "/request/reimburse",
+    group: "Accounting",
+    groupTh: "บัญชี",
+    badge: "AP-4",
+  },
 ];
 
 /**
@@ -215,7 +247,7 @@ export const SETTINGS_CARDS: NavItem[] = [
     id: "accounting-admin",
     label: "Accounting Admin",
     icon: "ClipboardList",
-    desc: "คิวอนุมัติ รายงาน และตั้งค่าของ AP-1 / AP-17",
+    desc: "คิวอนุมัติ รายงาน และตั้งค่าของ AP-1 / AP-4 / AP-17",
     // The Request hub narrowed to its management cards. /request/accounting is
     // AP-1's own hub and would leave out AP-17, which this card promises.
     href: "/request?group=Settings",

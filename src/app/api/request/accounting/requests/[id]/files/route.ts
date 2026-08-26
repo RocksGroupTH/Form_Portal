@@ -60,13 +60,28 @@ export async function POST(
 
     const buffer = Buffer.from(await file.arrayBuffer());
 
-    // The bytes decide, not `file.type` — see `attachment-guard`. AP-1 stores
-    // receipt photos only, so PDFs are out here even though AP-17 takes them.
+    // The bytes still decide, not `file.type` — see `attachment-guard`. What
+    // changed on 2026-08-26 is that this slot takes **any** file: a claim's
+    // evidence is not always a photo, and refusing a PDF invoice or a scanned
+    // contract sent people to attach a screenshot of it instead.
+    //
+    // `"any"` switches off the *kind* check and nothing else. The size and
+    // empty-file limits still apply, the bytes are still sniffed — so a real
+    // photo is still identified as one and keeps its inline preview — and
+    // anything unrecognised becomes `application/octet-stream` with
+    // `inlineSafe: false`. `attachmentResponseHeaders` re-sniffs on download and
+    // reaches the same verdict, serving it as `attachment` with `nosniff` and a
+    // `default-src 'none'; sandbox` CSP, which is what stops a stored SVG or
+    // HTML file executing on this origin. **That header logic is the control
+    // here — do not relax it.**
+    //
+    // AP-17's ID-card slot and AP-4's workbook slot keep their narrow lists
+    // deliberately: those two read the file rather than merely storing it.
     const check = checkAttachment({
       fileName: file.name,
       declaredType: file.type,
       bytes: buffer,
-      allowedKinds: ["image"],
+      allowedKinds: "any",
     });
     if (!check.ok) {
       return NextResponse.json({ ok: false, error: check.error }, { status: check.status });

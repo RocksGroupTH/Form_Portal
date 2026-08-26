@@ -1,10 +1,15 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Plus, Trash2, Paperclip, X, Loader2 } from "lucide-react";
+import { Plus, Trash2, Paperclip, X, Loader2, FileText, FileSpreadsheet } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog } from "@/components/ui";
-import { ImageLightbox } from "@/features/accounting/components/ImageLightbox";
+import {
+  AttachmentViewer,
+  attachmentKind,
+  type AttachmentKind,
+  type AttachmentSource,
+} from "@/components/ui/AttachmentViewer";
 import {
   readReceiptAmount,
   RECEIPT_FAILURE_TEXT,
@@ -12,6 +17,31 @@ import {
 } from "@/features/accounting/lib/read-receipt-amount";
 import type { TravelExpenseItem, PendingFile } from "@/features/accounting/types";
 import type { TravelItemType } from "@/features/accounting/constants";
+
+/**
+ * A receipt tile's contents: the picture where there is one, an icon where
+ * there is not.
+ *
+ * `previewUrl` is null for anything that is not an image — a stored PDF's URL
+ * and a workbook's blob URL both render as a broken image, which is what the
+ * tiles showed for the first minute after this slot was widened to take any
+ * file. The icon is the same pair AP-4's document strip uses, so the two forms'
+ * attachments read alike.
+ */
+function Thumb({
+  previewUrl,
+  kind,
+  alt,
+}: {
+  previewUrl: string | null;
+  kind: AttachmentKind;
+  alt: string;
+}) {
+  if (previewUrl) {
+    return <img src={previewUrl} alt={alt} className="w-full h-full object-cover" draggable={false} />;
+  }
+  return kind === "excel" ? <FileSpreadsheet size={22} /> : <FileText size={22} />;
+}
 
 interface ExpenseRowsProps {
   label: string;
@@ -120,7 +150,7 @@ export function ExpenseRows({
               if (gi < 0) return;
               const existing = allItems[gi].pendingFiles ?? [];
               const target = existing.find((p) => p.localId === localId);
-              if (target) URL.revokeObjectURL(target.previewUrl);
+              if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
               onUpdate(gi, { pendingFiles: existing.filter((p) => p.localId !== localId) });
             }}
             onUploadedRemove={(fileId) => {
@@ -177,7 +207,7 @@ function ExpenseRow({
   onUploadedRemove,
 }: ExpenseRowProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
+  const [viewing, setViewing] = useState<{ source: AttachmentSource; kind: AttachmentKind } | null>(null);
   const [removingId, setRemovingId] = useState<number | null>(null);
   // Pending confirmation for destructive actions on already-saved data.
   const [confirm, setConfirm] = useState<{ kind: "file"; fileId: number } | { kind: "row" } | null>(null);
@@ -314,17 +344,19 @@ function ExpenseRow({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file.type.startsWith("image/")) {
-      toast.error("แนบได้เฉพาะไฟล์รูปภาพเท่านั้น");
-      if (fileInputRef.current) fileInputRef.current.value = "";
-      return;
-    }
-
+    // No type check here. This slot takes any file since 2026-08-26, and the
+    // server's `checkAttachment` is what decides — it reads the bytes, which
+    // `file.type` only claims. A browser-side copy of that rule is how the
+    // widening was missed: the route already accepted the PDF, and this refused
+    // it before it was ever posted.
     // Hold in memory; the form uploads it on save / submit (no need to save a draft first).
     onPendingAdd({
       localId: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
       file,
-      previewUrl: URL.createObjectURL(file),
+      // Only for images. A blob URL for a PDF or a workbook renders as a broken
+      // image in the tile; the thumbnail falls back to an icon when this is
+      // blank, and `AttachmentViewer` reads the `File` itself rather than this.
+      previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : "",
     });
     if (fileInputRef.current) fileInputRef.current.value = "";
 
@@ -335,6 +367,10 @@ function ExpenseRow({
     // is billed, and a second one could only overwrite the first's answer or
     // race it. Attaching more images to a row that already has its amount is
     // free.
+    // Every file, whatever it is. `/receipt-amount` rasterises a PDF and
+    // flattens a workbook server-side, so the read is worth attempting on all
+    // of them; a kind it genuinely cannot use comes back as a null amount and
+    // the field simply opens blank.
     if (!readingRef.current && !(Number(amountRef.current) > 0)) void prefillAmountFrom(file);
   };
 
@@ -358,7 +394,12 @@ function ExpenseRow({
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*"
+          // No `accept`: this slot takes any file since 2026-08-26. A claim's
+          // evidence is not always a photo, and `accept="image/*"` made the OS
+          // picker hide the PDF invoice somebody was trying to attach — so they
+          // attached a screenshot of it instead. The server's own guard still
+          // applies the size limits; it is `attachmentResponseHeaders` that
+          // keeps serving safe.
           className="hidden"
           onChange={handleFileChange}
         />
@@ -379,12 +420,21 @@ function ExpenseRow({
             <div key={`u-${f.id}`} className="relative w-14 h-14 shrink-0">
               <button
                 type="button"
-                onClick={() => setLightbox({ src: f.url, alt: f.fileName })}
-                className="w-full h-full rounded-xl overflow-hidden cursor-pointer p-0 border"
-                style={{ borderColor: "var(--border-card)", background: "var(--bg-card)" }}
-                title={`${f.fileName} — คลิกเพื่อดูรูปเต็ม`}
+                onClick={() =>
+                  setViewing({
+                    source: { name: f.fileName, url: f.url },
+                    kind: attachmentKind(f.fileName, f.contentType),
+                  })
+                }
+                className="w-full h-full rounded-xl overflow-hidden cursor-pointer p-0 border flex items-center justify-center"
+                style={{ borderColor: "var(--border-card)", background: "var(--bg-card)", color: "var(--nav-active-text)" }}
+                title={`${f.fileName} — คลิกเพื่อเปิดดู`}
               >
-                <img src={f.url} alt={f.fileName} className="w-full h-full object-cover" draggable={false} />
+                <Thumb
+                  previewUrl={attachmentKind(f.fileName, f.contentType) === "image" ? f.url : null}
+                  kind={attachmentKind(f.fileName, f.contentType)}
+                  alt={f.fileName}
+                />
               </button>
               {/* Delete uploaded image — only while editing a saved draft */}
               {requestId != null && (
@@ -414,12 +464,21 @@ function ExpenseRow({
                   tile. */}
               <button
                 type="button"
-                onClick={() => setLightbox({ src: p.previewUrl, alt: p.file.name })}
-                className="relative w-full h-full rounded-xl overflow-hidden cursor-pointer p-0 border"
-                style={{ borderColor: "var(--color-warning)", background: "var(--bg-card)" }}
-                title={`${p.file.name} — ยังไม่บันทึก · คลิกเพื่อดูรูปเต็ม`}
+                onClick={() =>
+                  setViewing({
+                    source: { name: p.file.name, file: p.file },
+                    kind: attachmentKind(p.file.name, p.file.type),
+                  })
+                }
+                className="relative w-full h-full rounded-xl overflow-hidden cursor-pointer p-0 border flex items-center justify-center"
+                style={{ borderColor: "var(--color-warning)", background: "var(--bg-card)", color: "var(--nav-active-text)" }}
+                title={`${p.file.name} — ยังไม่บันทึก · คลิกเพื่อเปิดดู`}
               >
-                <img src={p.previewUrl} alt={p.file.name} className="w-full h-full object-cover" draggable={false} />
+                <Thumb
+                  previewUrl={p.previewUrl || null}
+                  kind={attachmentKind(p.file.name, p.file.type)}
+                  alt={p.file.name}
+                />
                 {/* Pending badge */}
                 <span
                   className="absolute bottom-0 left-0 right-0 text-[8px] font-bold text-center leading-tight py-0.5"
@@ -565,11 +624,11 @@ function ExpenseRow({
         </p>
       )}
 
-      <ImageLightbox
-        open={lightbox != null}
-        src={lightbox?.src ?? ""}
-        alt={lightbox?.alt}
-        onClose={() => setLightbox(null)}
+      <AttachmentViewer
+        open={viewing != null}
+        source={viewing?.source ?? null}
+        kind={viewing?.kind ?? "other"}
+        onClose={() => setViewing(null)}
       />
 
       {/* Confirm destructive action on saved data */}

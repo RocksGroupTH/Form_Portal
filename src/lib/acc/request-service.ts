@@ -762,8 +762,17 @@ export async function saveDraft(
                    @rEmail, @rPos, @rDeptId, @rDeptName, @rDeptCode, @mgrStaff)`);
       requestId = ins.recordset[0].Id as number;
     } else {
+      // `AND FormCode=@form` pins this to AP-1. `AccRequest` holds every form's
+      // header, and without it a Draft the caller created under another form —
+      // an AP-4 claim, say — passes the creator and status checks below and has
+      // its requester, brand and manager snapshot rewritten from AP-1's
+      // `resolveRequesterForActor`, with `TotalAmount` clobbered by AP-1's own
+      // sum. A tautology on AP-1's rows: `FormCode` is NOT NULL with an FK to
+      // `AccFormMaster`, and the insert branch above binds `AP1_FORM_CODE`, so
+      // every row this branch can legitimately reach already matches.
       const own = await tx.request().input("id", sql.Int, requestId)
-        .query(`SELECT CreatedBy, Status FROM [dbo].[AccRequest] WHERE Id=@id`);
+        .input("form", sql.NVarChar, AP1_FORM_CODE)
+        .query(`SELECT CreatedBy, Status FROM [dbo].[AccRequest] WHERE Id=@id AND FormCode=@form`);
       if (own.recordset.length === 0) throw new Error("ไม่พบคำขอ");
       const ownerRow = own.recordset[0] as { CreatedBy: number | null; Status: string };
       if (ownerRow.CreatedBy !== userId) throw new Error("ไม่มีสิทธิ์แก้ไขคำขอนี้");
@@ -814,8 +823,15 @@ export async function deleteDraft(id: number, userId: number): Promise<void> {
   let storedFiles: StoredFileRef[] = [];
   await tx.begin();
   try {
+    // Pinned to AP-1 for the same reason `saveDraft` is, and with a sharper
+    // consequence: the `DELETE FROM AccRequest` at the end of this function
+    // takes `AccReimburse` and `AccReimburseItem` with it through their
+    // `ON DELETE CASCADE`, so an AP-4 draft reaching here is destroyed outright
+    // and logged as an AP-1 delete. AP-4 has its own delete
+    // (`@/lib/acc/reimburse/delete-service`).
     const own = await tx.request().input("id", sql.Int, id)
-      .query(`SELECT CreatedBy, Status FROM [dbo].[AccRequest] WHERE Id=@id`);
+      .input("form", sql.NVarChar, AP1_FORM_CODE)
+      .query(`SELECT CreatedBy, Status FROM [dbo].[AccRequest] WHERE Id=@id AND FormCode=@form`);
     if (own.recordset.length === 0) throw new Error("ไม่พบคำขอ");
     const row = own.recordset[0] as { CreatedBy: number | null; Status: string };
     if (row.CreatedBy !== userId) throw new Error("ไม่มีสิทธิ์ลบคำขอนี้");
@@ -866,8 +882,15 @@ export async function deleteDraft(id: number, userId: number): Promise<void> {
 export async function deleteItem(requestId: number, itemId: number, userId: number): Promise<void> {
   const pool = await getAccPool();
 
+  // Pinned like `saveDraft` and `deleteDraft`, and for uniformity rather than
+  // for a live hole: every statement below is already scoped to
+  // `RefType='travel_item'` or to `AccTravelExpense` rows, of which a non-AP-1
+  // request has none, so this is a no-op on one today. Leaving the one
+  // ownership read in this file that does not name the form would make the
+  // invariant untestable and the next statement added here a real one.
   const own = await pool.request().input("id", sql.Int, requestId)
-    .query(`SELECT CreatedBy, Status FROM [dbo].[AccRequest] WHERE Id=@id`);
+    .input("form", sql.NVarChar, AP1_FORM_CODE)
+    .query(`SELECT CreatedBy, Status FROM [dbo].[AccRequest] WHERE Id=@id AND FormCode=@form`);
   if (own.recordset.length === 0) throw new Error("ไม่พบคำขอ");
   const row = own.recordset[0] as { CreatedBy: number | null; Status: string };
   if (row.CreatedBy !== userId) throw new Error("ไม่มีสิทธิ์แก้ไขคำขอนี้");

@@ -28,6 +28,44 @@
  * behaviour that existed before this guard and is not this change's to remove.
  * SVG is deliberately absent and has its own rejection message, because it is
  * the one thing a user might reasonably expect to work.
+ *
+ * Excel workbooks (`kind: "spreadsheet"` — `.xlsx`, `.xlsm` and legacy `.xls`)
+ * were added for AP-4, whose form has a slot for the AP-4.1 summary workbook
+ * beside its receipt slot. They are **not in the default `allowedKinds`**, so
+ * no existing caller widened: AP-1 passes `["image"]`, AP-17 and AP-4's receipt
+ * slot pass `["image", "pdf"]`, and only AP-4's workbook slot passes
+ * `["spreadsheet"]`. A workbook posted to a receipt slot now sniffs
+ * successfully and is then refused on kind, which is the same 400 it got before
+ * and a clearer message.
+ *
+ * ## Why a workbook needs more than a magic number
+ *
+ * `.xlsx` is a ZIP and `.xls` is an OLE2 compound file — both container formats
+ * shared with things that are not spreadsheets (`.docx`, `.jar`, any `.zip`;
+ * `.doc`, `.msi`). The signature alone says only "a container", so each is
+ * narrowed by a part/stream name that a workbook carries and that both formats
+ * store *uncompressed*: `xl/workbook.xml` in the ZIP entry headers, and the
+ * UTF-16LE `Workbook` stream name in the OLE2 directory. No inflating, no FAT
+ * walking, no dependency — still pure functions over bytes.
+ *
+ * **That establishes the right shape, not safety**, exactly as the five-byte
+ * `%PDF-` rule above it does. A `.docx` or a bare `.zip` built to contain an
+ * `xl/workbook.xml` entry passes, and a `.doc` with an embedded Excel object
+ * carries a `Workbook` stream and sniffs as `.xls` without anyone crafting
+ * anything. What the check buys is that a photo, an SVG or an arbitrary
+ * document does not reach the workbook slot by being renamed — the same thing
+ * every other rule here buys. Nothing downstream opens the bytes: they are
+ * stored, and served back as a forced download under `nosniff` and a `sandbox`
+ * CSP.
+ *
+ * Macro-enabled workbooks are **accepted** (2026-08-19, controller's ruling).
+ * They were refused for one release. `AccReimburse.ExcelFileId` is an
+ * unconditional AP-4 submit gate, so if the AP-4.1 template Accounting hands
+ * out is an `.xlsm`, refusing it does not cost a marginal risk — it costs the
+ * whole form. Excel's own macro protections are what stand between the
+ * accountant and a macro either way. A VBA project therefore only changes which
+ * type the bytes are (`XLSM` rather than `XLSX`, same kind, same forced
+ * download), never whether they are admitted.
  */
 
 /** Largest single attachment. Receipt photos; a 15 MB phone picture fits. */
@@ -39,7 +77,17 @@ export const MAX_ATTACHMENT_COUNT = 20;
 /** Ceiling on one multipart body, so a huge post is refused before buffering. */
 export const MAX_ATTACHMENT_TOTAL_BYTES = 60 * 1024 * 1024;
 
-export type AttachmentKind = "image" | "pdf";
+export type AttachmentKind = "image" | "pdf" | "spreadsheet" | "binary";
+
+/**
+ * What a slot will take. An array restricts to those kinds; `"any"` switches the
+ * kind check off entirely.
+ *
+ * A string literal rather than an empty array on purpose: `[]` reads as "nothing
+ * is allowed", which is the opposite, and a caller that built its list
+ * dynamically could arrive at one by accident.
+ */
+export type AllowedAttachmentKinds = readonly AttachmentKind[] | "any";
 
 export interface AttachmentType {
   /** Canonical MIME type. Never the caller's string. */
@@ -62,7 +110,59 @@ const WEBP: AttachmentType = { contentType: "image/webp", extension: "webp", kin
 const HEIC: AttachmentType = { contentType: "image/heic", extension: "heic", kind: "image", inlineSafe: false };
 const PDF: AttachmentType = { contentType: "application/pdf", extension: "pdf", kind: "pdf", inlineSafe: false };
 
-export const ALLOWED_ATTACHMENT_TYPES: readonly AttachmentType[] = [PNG, JPEG, GIF, WEBP, HEIC, PDF];
+/**
+ * What `allowedKinds: "any"` returns for bytes no signature matches.
+ *
+ * `inlineSafe: false` is the load-bearing field, and it is why widening a slot to
+ * "any file" is not the hole it sounds like: `attachmentResponseHeaders`
+ * re-sniffs on download, reaches this same verdict, and serves the bytes as
+ * `attachment` with `nosniff` and a `default-src 'none'; sandbox` CSP. An SVG or
+ * an HTML file stored here can never execute on this origin.
+ *
+ * The blank `extension` means "keep whatever the uploader's file was called" —
+ * `buildAccFileName` treats it as absent and falls back to the original name.
+ * Forcing `.bin` would hand back a file the requester's own machine no longer
+ * knows how to open.
+ */
+const UNKNOWN_BINARY: AttachmentType = {
+  contentType: "application/octet-stream",
+  extension: "",
+  kind: "binary",
+  inlineSafe: false,
+};
+const XLSX: AttachmentType = {
+  contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  extension: "xlsx",
+  kind: "spreadsheet",
+  inlineSafe: false,
+};
+const XLSM: AttachmentType = {
+  contentType: "application/vnd.ms-excel.sheet.macroEnabled.12",
+  extension: "xlsm",
+  kind: "spreadsheet",
+  inlineSafe: false,
+};
+const XLS: AttachmentType = {
+  contentType: "application/vnd.ms-excel",
+  extension: "xls",
+  kind: "spreadsheet",
+  inlineSafe: false,
+};
+
+export const ALLOWED_ATTACHMENT_TYPES: readonly AttachmentType[] = [
+  PNG,
+  JPEG,
+  GIF,
+  WEBP,
+  HEIC,
+  PDF,
+  XLSX,
+  XLSM,
+  XLS,
+];
+
+/** The kinds a caller gets when it does not ask for a subset. Deliberately excludes `spreadsheet`. */
+export const DEFAULT_ALLOWED_KINDS: readonly AttachmentKind[] = ["image", "pdf"];
 
 function startsWith(buf: Uint8Array, sig: readonly number[], offset = 0): boolean {
   if (buf.length < offset + sig.length) return false;
@@ -74,6 +174,65 @@ function startsWith(buf: Uint8Array, sig: readonly number[], offset = 0): boolea
 
 function asciiAt(buf: Uint8Array, offset: number, text: string): boolean {
   return startsWith(buf, Array.from(text, (c) => c.charCodeAt(0)), offset);
+}
+
+/* ── Container formats: ZIP (.xlsx) and OLE2 (.xls) ── */
+
+/** Local file header — the first bytes of every non-empty ZIP, `.xlsx` included. */
+const ZIP_LOCAL_HEADER = [0x50, 0x4b, 0x03, 0x04];
+/** OLE2 / Compound File Binary header — `.xls`, and also `.doc`, `.ppt`, `.msi`. */
+const OLE2_HEADER = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
+
+/**
+ * A `Buffer` over the same memory — no copy. `Buffer.prototype.indexOf` is the
+ * only fast substring search available without a dependency, and a 15 MB
+ * attachment is not worth copying to get at it.
+ */
+function asBuffer(bytes: Uint8Array): Buffer {
+  return Buffer.isBuffer(bytes)
+    ? bytes
+    : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+}
+
+function contains(bytes: Uint8Array, needle: Buffer): boolean {
+  return asBuffer(bytes).indexOf(needle) !== -1;
+}
+
+/**
+ * Part and stream names, stored uncompressed in both containers: ZIP keeps
+ * every entry name in plaintext in its local headers and central directory,
+ * and OLE2 keeps every stream name as UTF-16LE in its directory sectors. So a
+ * plain byte search answers "is this a workbook" without decoding either
+ * format.
+ */
+const ZIP_WORKBOOK_PART = Buffer.from("xl/workbook.xml", "latin1");
+const ZIP_MACRO_PART = Buffer.from("vbaProject.bin", "latin1");
+const OLE_WORKBOOK_STREAM = Buffer.from("Workbook", "utf16le");
+const OLE_MACRO_STREAM = Buffer.from("_VBA_PROJECT", "utf16le");
+/** The two streams an OOXML file encrypted with a password is wrapped in. */
+const OLE_ENCRYPTED_PACKAGE_STREAM = Buffer.from("EncryptedPackage", "utf16le");
+const OLE_ENCRYPTION_INFO_STREAM = Buffer.from("EncryptionInfo", "utf16le");
+
+/**
+ * True when the bytes are a workbook carrying a VBA project — a macro-enabled
+ * `.xlsm`, or a legacy `.xls` with macros.
+ *
+ * **This is not a refusal** — see the header. It is the one definition of
+ * "carries a VBA project", and `sniffAttachment` calls it to decide between
+ * `XLSM` and `XLSX` so the two cannot drift apart. Note that a workbook *saved*
+ * as `.xlsm` but holding no macro has no `vbaProject.bin` part and is
+ * indistinguishable from an `.xlsx` by content; it is typed as one, which is
+ * correct — the bytes are what is stored and served, not the name.
+ */
+export function looksLikeMacroWorkbook(bytes: Uint8Array): boolean {
+  if (bytes.length < 12) return false;
+  if (startsWith(bytes, ZIP_LOCAL_HEADER)) {
+    return contains(bytes, ZIP_MACRO_PART) && contains(bytes, ZIP_WORKBOOK_PART);
+  }
+  if (startsWith(bytes, OLE2_HEADER)) {
+    return contains(bytes, OLE_MACRO_STREAM) && contains(bytes, OLE_WORKBOOK_STREAM);
+  }
+  return false;
 }
 
 /**
@@ -97,7 +256,42 @@ export function sniffAttachment(bytes: Uint8Array): AttachmentType | null {
   }
   if (asciiAt(bytes, 0, "%PDF-")) return PDF;
 
+  // Containers last: the signature only narrows the field, the part/stream name
+  // decides. A `.docx` and a `.zip` share the ZIP header with `.xlsx`; a `.doc`
+  // shares the OLE2 header with `.xls`. An ordinary one of either carries no
+  // workbook marker and falls through to null. This is a shape test, not a
+  // safety test — see the header for what it does and does not buy.
+  if (startsWith(bytes, ZIP_LOCAL_HEADER)) {
+    if (!contains(bytes, ZIP_WORKBOOK_PART)) return null;
+    return looksLikeMacroWorkbook(bytes) ? XLSM : XLSX;
+  }
+  if (startsWith(bytes, OLE2_HEADER)) {
+    // Legacy `.xls` has one extension whether or not it carries macros, so
+    // `OLE_MACRO_STREAM` decides nothing here.
+    return contains(bytes, OLE_WORKBOOK_STREAM) ? XLS : null;
+  }
+
   return null;
+}
+
+/**
+ * True when the bytes are a password-protected OOXML file: an OLE2 container
+ * holding `EncryptionInfo` / `EncryptedPackage` instead of the workbook itself.
+ * The real `.xlsx` is inside, encrypted, so no part name is in the clear and
+ * `sniffAttachment` cannot see it — which would otherwise be reported as "only
+ * Excel files are supported" to somebody holding an Excel file.
+ *
+ * A legacy `.xls` protected with a password is *not* this shape: it keeps its
+ * plaintext `Workbook` stream and encrypts the records inside it, so it sniffs
+ * as `XLS` and is accepted. Nothing here opens it, so that costs nothing beyond
+ * a workbook whose reader will be asked for the password.
+ */
+export function looksLikeEncryptedWorkbook(bytes: Uint8Array): boolean {
+  if (bytes.length < 12) return false;
+  if (!startsWith(bytes, OLE2_HEADER)) return false;
+  return (
+    contains(bytes, OLE_ENCRYPTED_PACKAGE_STREAM) || contains(bytes, OLE_ENCRYPTION_INFO_STREAM)
+  );
 }
 
 /** True when the bytes look like SVG — an XML or HTML document, not a picture. */
@@ -121,6 +315,27 @@ export interface AttachmentAcceptance {
 
 export type AttachmentCheck = AttachmentAcceptance | AttachmentRejection;
 
+/** A slot that takes workbooks and nothing else — AP-4's AP-4.1 upload. */
+function isWorkbookOnly(allowedKinds: readonly AttachmentKind[]): boolean {
+  return allowedKinds.length === 1 && allowedKinds[0] === "spreadsheet";
+}
+
+/** "These bytes are not on the list at all", worded for the slot that was posted to. */
+function unrecognisedMessage(allowedKinds: readonly AttachmentKind[]): string {
+  return isWorkbookOnly(allowedKinds)
+    ? "ชนิดไฟล์ไม่ถูกต้อง — รองรับเฉพาะไฟล์ Excel (.xlsx/.xlsm/.xls)"
+    : "ชนิดไฟล์ไม่ถูกต้อง — รองรับเฉพาะรูปภาพ (PNG/JPG/GIF/WEBP/HEIC) หรือ PDF";
+}
+
+/** "These bytes are a real attachment, but not one this slot takes." */
+/** Only ever called with a subset — `"any"` refuses nothing on kind. */
+function wrongKindMessage(allowedKinds: readonly AttachmentKind[]): string {
+  if (isWorkbookOnly(allowedKinds)) return "แนบได้เฉพาะไฟล์ Excel (.xlsx/.xlsm/.xls) เท่านั้น";
+  return allowedKinds.includes("pdf")
+    ? "รองรับเฉพาะไฟล์รูปภาพหรือ PDF"
+    : "แนบได้เฉพาะไฟล์รูปภาพเท่านั้น";
+}
+
 /**
  * Decide whether one uploaded file may be stored.
  *
@@ -131,10 +346,21 @@ export function checkAttachment(input: {
   fileName: string;
   declaredType?: string | null;
   bytes: Uint8Array;
-  /** Restrict to a subset — AP-1 stores photos only, AP-17 also takes PDFs. */
-  allowedKinds?: readonly AttachmentKind[];
+  /**
+   * Restrict to a subset — AP-1 stores photos only, AP-17 also takes PDFs, and
+   * AP-4's workbook slot takes `["spreadsheet"]` and nothing else. Omitting it
+   * means images and PDFs: `spreadsheet` is never allowed by default, so a new
+   * caller cannot acquire it by forgetting to say what it wants.
+   */
+  allowedKinds?: AllowedAttachmentKinds;
 }): AttachmentCheck {
   const { bytes } = input;
+  const allowedKinds = input.allowedKinds ?? DEFAULT_ALLOWED_KINDS;
+  // AP-1's receipt slot, since 2026-08-26. Everything else below still runs —
+  // the empty-file and size checks, and the sniff itself, so a real photo is
+  // still identified as one and keeps its inline preview. Only the *kind*
+  // verdict is skipped.
+  const anyKind = allowedKinds === "any";
 
   if (bytes.length === 0) {
     return { ok: false, status: 400, error: "ไฟล์ว่างเปล่า" };
@@ -149,21 +375,26 @@ export function checkAttachment(input: {
 
   const type = sniffAttachment(bytes);
   if (!type) {
+    if (anyKind) return { ok: true, type: UNKNOWN_BINARY };
     if (looksLikeSvg(bytes)) {
       return { ok: false, status: 400, error: "ไม่รองรับไฟล์ SVG — กรุณาใช้ไฟล์ภาพถ่ายหรือ PDF" };
     }
-    return { ok: false, status: 400, error: "ชนิดไฟล์ไม่ถูกต้อง — รองรับเฉพาะรูปภาพ (PNG/JPG/GIF/WEBP/HEIC) หรือ PDF" };
+    // Only where a workbook is a legal answer. An encrypted OLE container is
+    // also what a password-protected .doc looks like, and telling AP-1's image
+    // slot that its *Excel* file is protected names a file type the slot does
+    // not take in the first place.
+    if (!anyKind && allowedKinds.includes("spreadsheet") && looksLikeEncryptedWorkbook(bytes)) {
+      return {
+        ok: false,
+        status: 400,
+        error: "ไฟล์ Excel นี้ถูกตั้งรหัสผ่าน กรุณาบันทึกใหม่โดยไม่ใส่รหัสผ่าน",
+      };
+    }
+    return { ok: false, status: 400, error: unrecognisedMessage(allowedKinds) };
   }
 
-  const allowedKinds = input.allowedKinds ?? ["image", "pdf"];
-  if (!allowedKinds.includes(type.kind)) {
-    return {
-      ok: false,
-      status: 400,
-      error: allowedKinds.includes("pdf")
-        ? "รองรับเฉพาะไฟล์รูปภาพหรือ PDF"
-        : "แนบได้เฉพาะไฟล์รูปภาพเท่านั้น",
-    };
+  if (!anyKind && !allowedKinds.includes(type.kind)) {
+    return { ok: false, status: 400, error: wrongKindMessage(allowedKinds) };
   }
 
   return { ok: true, type };

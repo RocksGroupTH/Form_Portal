@@ -49,19 +49,41 @@ function canvasToJpeg(canvas: HTMLCanvasElement): Promise<Blob | null> {
   return new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", JPEG_QUALITY));
 }
 
+/** Images are re-encoded; a PDF or a workbook is posted as it is. */
+function isImageFile(file: File): boolean {
+  return file.type.startsWith("image/") || /.(png|jpe?g|gif|webp|heic|heif)$/i.test(file.name);
+}
+
+/**
+ * What to post.
+ *
+ * **Only images are downscaled.** Re-encoding a PDF through a canvas would
+ * throw away every page but the first, and the route rasterises them server-side
+ * for exactly that reason; a workbook is not an image at all. For a photo the
+ * downscale is a cost control — image tokens scale with area and the call is
+ * billed — and it is also what turns a phone's HEIC into a media type the API
+ * accepts. AP-4's `read-receipt-fields.ts` splits on the same line.
+ *
+ * Null means the browser could not decode an image it was handed.
+ */
+async function toUploadBlob(file: File): Promise<{ blob: Blob; name: string } | null> {
+  if (!isImageFile(file)) return { blob: file, name: file.name };
+  const canvas = await toDownscaledCanvas(file);
+  if (!canvas) return null;
+  const blob = await canvasToJpeg(canvas);
+  return blob ? { blob, name: "receipt.jpg" } : null;
+}
+
 export async function readReceiptAmount(file: File): Promise<ReceiptRead> {
   // A file the browser cannot decode yields no amount for the same reason a
-  // blank receipt does — from where the requester sits it is this image, and
-  // the remedy is to type the figure. Reported as `not-found` rather than
-  // inventing a fourth line of copy for it.
-  const canvas = await toDownscaledCanvas(file);
-  if (!canvas) return { amount: null, failure: "not-found" };
-
-  const blob = await canvasToJpeg(canvas);
-  if (!blob) return { amount: null, failure: "not-found" };
+  // blank receipt does — from where the requester sits it is this file, and the
+  // remedy is to type the figure. Reported as `not-found` rather than inventing
+  // a fourth line of copy for it.
+  const upload = await toUploadBlob(file);
+  if (!upload) return { amount: null, failure: "not-found" };
 
   const form = new FormData();
-  form.append("file", blob, "receipt.jpg");
+  form.append("file", upload.blob, upload.name);
 
   try {
     const res = await fetch("/api/request/accounting/receipt-amount", {

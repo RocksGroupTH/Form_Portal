@@ -80,8 +80,14 @@ export function buildAccFileName(opts: {
   extension?: string;
 }): string {
   const dotIdx = opts.originalName.lastIndexOf(".");
+  // A **blank** explicit extension means "keep the uploader's", not "no
+  // extension" — `checkAttachment`'s UNKNOWN_BINARY carries one for exactly that
+  // reason. `??` alone passes an empty string straight through (it is not
+  // nullish), and `sanitizeSegment("")` then yields "file", so every
+  // unrecognised upload was stored as `…_7.file` whatever it actually was.
+  const explicit = opts.extension?.trim();
   const ext =
-    opts.extension ??
+    explicit ||
     (dotIdx > 0 ? opts.originalName.slice(dotIdx + 1).toLowerCase() : "bin");
   const ref = opts.requestNo ?? `draft${opts.requestId}`;
   const stem = sanitizeSegment(`${opts.typeLabel}_${ref}_${opts.fileId}`);

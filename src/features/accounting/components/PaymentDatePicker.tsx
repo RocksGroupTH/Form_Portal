@@ -37,15 +37,33 @@ function buildMonthCells(year: number, month0: number): (number | null)[] {
   return cells;
 }
 
+/** The footnote under the grid when the caller does not name its own rounds. */
+const AP1_ROUNDS_HINT = "วันจ่าย: ศุกร์ที่ 2 และ 4 ของเดือน (เลื่อนกลับ 1 วันถ้าตรงวันหยุด)";
+
 export interface PaymentDatePickerProps {
   dates: string[];
   value: string;
   onChange: (ymd: string) => void;
   loading?: boolean;
+  /**
+   * Which rounds these dates are, in words.
+   *
+   * The grid itself is round-agnostic — it offers exactly `dates` and nothing
+   * else — but the footnote was AP-1's wording hard-coded. AP-4 pays on the 1st
+   * and 3rd Friday, so it passes its own; the default keeps every existing
+   * caller identical.
+   */
+  hint?: string;
 }
 
-/** Calendar limited to valid AP-1 payment dates (2nd/4th Friday, holiday-adjusted). */
-export function PaymentDatePicker({ dates, value, onChange, loading }: PaymentDatePickerProps) {
+/** Calendar limited to the payment dates the caller offers (holiday-adjusted server-side). */
+export function PaymentDatePicker({
+  dates,
+  value,
+  onChange,
+  loading,
+  hint = AP1_ROUNDS_HINT,
+}: PaymentDatePickerProps) {
   const allowed = useMemo(() => new Set(dates), [dates]);
 
   const initialMonth = useMemo(() => {
@@ -215,7 +233,7 @@ export function PaymentDatePicker({ dates, value, onChange, loading }: PaymentDa
       )}
 
       <p className="text-[10px] text-center px-3 pb-3 m-0" style={{ color: "var(--text-faint)" }}>
-        วันจ่าย: ศุกร์ที่ 2 และ 4 ของเดือน (เลื่อนกลับ 1 วันถ้าตรงวันหยุด)
+        {hint}
       </p>
     </div>
   );

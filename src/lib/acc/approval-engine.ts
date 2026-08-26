@@ -5,7 +5,7 @@ import { listApprovers } from "@/lib/acc/settings-service";
 import { queueEmail } from "@/lib/acc/email-queue";
 import { buildEmail, type AccTrigger } from "@/lib/acc/email-templates";
 import { requireActorStaffId } from "@/lib/acc/actor-context";
-import type { StepCode } from "@/features/accounting/constants";
+import { AP1_FORM_CODE, type StepCode } from "@/features/accounting/constants";
 
 export interface Actor {
   userId: number;
@@ -47,8 +47,9 @@ export async function approveManager(requestId: number, actor: Actor): Promise<v
   try {
     // Gate: only advance a request that is actually still at the MANAGER step.
     const upd = await tx.request().input("rid", sql.Int, requestId)
+      .input("form", sql.NVarChar, AP1_FORM_CODE)
       .query(`UPDATE [dbo].[AccRequest] SET Status='ManagerApproved', CurrentStepCode='ACCOUNT', UpdatedAt=SYSDATETIME()
-              WHERE Id=@rid AND CurrentStepCode='MANAGER' AND Status='Submitted';
+              WHERE Id=@rid AND FormCode=@form AND CurrentStepCode='MANAGER' AND Status='Submitted';
               SELECT @@ROWCOUNT AS n`);
     if ((upd.recordset[0].n as number) === 0) {
       await tx.rollback();
@@ -91,9 +92,10 @@ export async function approveAccount(
   await tx.begin();
   try {
     const upd = await tx.request().input("rid", sql.Int, requestId).input("pd", sql.Date, paymentDate)
+      .input("form", sql.NVarChar, AP1_FORM_CODE)
       .query(`UPDATE [dbo].[AccRequest] SET Status='Approved', CurrentStepCode=NULL,
               PaymentDate=@pd, UpdatedAt=SYSDATETIME()
-              WHERE Id=@rid AND CurrentStepCode='ACCOUNT' AND Status='ManagerApproved';
+              WHERE Id=@rid AND FormCode=@form AND CurrentStepCode='ACCOUNT' AND Status='ManagerApproved';
               SELECT @@ROWCOUNT AS n`);
     if ((upd.recordset[0].n as number) === 0) {
       await tx.rollback();
@@ -135,8 +137,9 @@ export async function reject(
   try {
     const upd = await tx.request().input("rid", sql.Int, requestId)
       .input("step", sql.NVarChar, stepCode).input("status", sql.NVarChar, expectedStatus)
+      .input("form", sql.NVarChar, AP1_FORM_CODE)
       .query(`UPDATE [dbo].[AccRequest] SET Status='Rejected', CurrentStepCode=NULL, UpdatedAt=SYSDATETIME()
-              WHERE Id=@rid AND CurrentStepCode=@step AND Status=@status;
+              WHERE Id=@rid AND FormCode=@form AND CurrentStepCode=@step AND Status=@status;
               SELECT @@ROWCOUNT AS n`);
     if ((upd.recordset[0].n as number) === 0) {
       await tx.rollback();
@@ -172,8 +175,9 @@ export async function returnForEdit(requestId: number, actor: Actor, comment: st
   await tx.begin();
   try {
     const upd = await tx.request().input("rid", sql.Int, requestId)
+      .input("form", sql.NVarChar, AP1_FORM_CODE)
       .query(`UPDATE [dbo].[AccRequest] SET Status='Returned', CurrentStepCode=NULL, UpdatedAt=SYSDATETIME()
-              WHERE Id=@rid AND CurrentStepCode='MANAGER' AND Status='Submitted';
+              WHERE Id=@rid AND FormCode=@form AND CurrentStepCode='MANAGER' AND Status='Submitted';
               SELECT @@ROWCOUNT AS n`);
     if ((upd.recordset[0].n as number) === 0) {
       await tx.rollback();
@@ -212,9 +216,10 @@ export async function cancelByRequester(requestId: number, actor: Actor): Promis
   await tx.begin();
   try {
     const upd = await tx.request().input("rid", sql.Int, requestId).input("by", sql.Int, actor.userId)
+      .input("form", sql.NVarChar, AP1_FORM_CODE)
       .query(`UPDATE [dbo].[AccRequest] SET Status='Cancelled', CurrentStepCode=NULL,
               CancelledBy=@by, CancelledAt=SYSDATETIME(), UpdatedAt=SYSDATETIME()
-              WHERE Id=@rid AND Status = 'Submitted'
+              WHERE Id=@rid AND FormCode=@form AND Status = 'Submitted'
                 AND SubmittedAt IS NOT NULL AND DATEDIFF(HOUR, SubmittedAt, SYSDATETIME()) <= 24;
               SELECT @@ROWCOUNT AS n`);
     if ((upd.recordset[0].n as number) === 0) {

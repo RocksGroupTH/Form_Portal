@@ -11,6 +11,9 @@ import { getAccPool, sql } from "@/lib/acc/pool";
 import { canAccessAccountArea } from "@/lib/acc/access";
 import { resolveFormEnvironment } from "@/lib/form-environment";
 import { getActiveUatTesterFor } from "@/lib/uat-tester/service";
+import { AP4_FORM_CODE } from "@/features/reimburse/constants";
+import { findActiveApprover } from "@/lib/acc/reimburse/approval-policy";
+import { listReimburseApprovers } from "@/lib/acc/reimburse/settings-service";
 import {
   decideRequestMutate,
   decideRequestRead,
@@ -68,18 +71,34 @@ export async function loadAccRequestAcl(
  * `staffId` is passed in rather than looked up here: the callers that need it
  * have already built an actor (`buildAccActor`) or an employee context, and a
  * second HR round-trip per request is measurable on the detail pages.
+ *
+ * `formCode` names the form of the row being decided, and it changes one thing:
+ * which approver roster counts as the accounting area. `canAccessAccountArea`
+ * asks `AccApprover`, which is **AP-1's** list — AP-4 deliberately owns its own
+ * pool (`AccReimburseApprover`, spec decision 3) so that editing one form's
+ * approvers cannot silently change the other's. Without this, an AP-4 approver
+ * who is not also an AP-1 approver could not open, let alone action, the
+ * requests they are the configured approver for. The widening is one-way: an
+ * AP-4 approver gains nothing on an AP-1 or AP-17 row, because the extra lookup
+ * only runs when the row itself is AP-4.
  */
 export async function buildAccAclViewer(input: {
   userId: number;
   email: string | null;
   staffId: number | null;
   role: string | null;
+  formCode?: string | null;
 }): Promise<AccAclViewer> {
   const environment = await resolveFormEnvironment();
-  const [isAccountArea, tester] = await Promise.all([
+  const [isSharedAccountArea, tester, reimburseApprover] = await Promise.all([
     canAccessAccountArea(input.email, input.role),
     environment === "UAT"
       ? getActiveUatTesterFor(input.email, input.staffId)
+      : Promise.resolve(null),
+    input.formCode === AP4_FORM_CODE
+      ? listReimburseApprovers().then((roster) =>
+          findActiveApprover(roster, input.staffId, input.email),
+        )
       : Promise.resolve(null),
   ]);
 
@@ -88,7 +107,7 @@ export async function buildAccAclViewer(input: {
     email: input.email,
     staffId: input.staffId,
     role: input.role,
-    isAccountArea,
+    isAccountArea: isSharedAccountArea || reimburseApprover != null,
     environment,
     isActiveUatTester: tester != null,
   };
@@ -128,6 +147,9 @@ export async function authorizeAccRequest(
     email,
     staffId: actor.staffId,
     role: session.user.role ?? null,
+    // The row's own form, not the caller's `formCode` hint — the hint is
+    // optional and its absence must not change who the accounting area is.
+    formCode: row.formCode,
   });
 
   const verdict = mode === "read" ? decideRequestRead(row, viewer) : decideRequestMutate(row, viewer);

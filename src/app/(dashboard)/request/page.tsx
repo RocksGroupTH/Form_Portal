@@ -18,6 +18,7 @@ import {
   ClipboardList,
   Luggage,
   Package,
+  Receipt,
   ReceiptText,
   Route,
   Settings,
@@ -27,6 +28,7 @@ import {
 const ICON_MAP: Record<string, React.ComponentType<{ size?: number; style?: React.CSSProperties }>> = {
   Package,
   ClipboardList,
+  Receipt,
   Route,
   Luggage,
   Wallet,
@@ -241,7 +243,7 @@ export default function RequestHubPage() {
         title={isAdminView ? "Accounting Admin" : "Request"}
         subtitle={
           isAdminView
-            ? "คิวอนุมัติ รายงาน และตั้งค่าของ AP-1 / AP-2 / AP-17"
+            ? "คิวอนุมัติ รายงาน และตั้งค่าของ AP-1 / AP-2 / AP-3 / AP-4 / AP-17"
             : "Submit master-data requests — items, vendors, price changes"
         }
         backHref={isAdminView ? "/settings" : "/"}
@@ -355,8 +357,12 @@ export default function RequestHubPage() {
            empty for the UAT reason below — and naming a condition the reader
            already satisfies would be a lie either way round. */
         <p className="text-[12px] py-8 text-center" style={{ color: "var(--text-muted)" }}>
+          {/* Each earlier resolution of this line had one half: the UAT-aware
+              condition came from feat/api-keys, AP-4 from this branch. The port
+              is dropped because ERP_SANDBOX_ALLOWED_HOSTS allows 3081 *and*
+              3020, so naming either alone misleads. */}
           {isAdminView && !isDevHost && !isUatViewer
-            ? "หน้าจัดการของ AP-1 / AP-2 / AP-3 / AP-17 เปิดได้เมื่อสลับเป็นโหมด UAT หรือตอนรัน dev ที่ localhost"
+            ? "หน้าจัดการของ AP-1 / AP-2 / AP-3 / AP-4 / AP-17 เปิดได้เมื่อสลับเป็นโหมด UAT หรือตอนรัน dev ที่ localhost"
             : viewer?.uatMode
               ? "คุณอยู่ในโหมด UAT แต่ยังไม่มีฟอร์มใดเปิดให้ทดสอบในขณะนี้"
               : "ยังไม่มีคำขอที่เปิดให้ใช้งาน"}
