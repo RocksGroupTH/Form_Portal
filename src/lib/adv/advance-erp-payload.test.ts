@@ -24,3 +24,16 @@ test("build refuses when no vendor is confirmed", () => {
   const noVendor = { ...baseAdv, matchedVendorNo: null } as unknown as AdvanceDetail;
   assert.throws(() => buildAdvanceJournalPayload(req, noVendor, cfg, "DEPT1"), /Vendor/);
 });
+
+test("Branch uses the configured branch when set", () => {
+  const p = buildAdvanceJournalPayload(req, baseAdv, cfg, "DEPT1");
+  assert.equal(p.lines[0].branchCode, "BR1");
+  assert.equal(p.lines[1].branchCode, "BR1");
+});
+
+test("Branch falls back to the requester's ERP dept when unset", () => {
+  const noBranch = { bankAccountNo: "101010", journalBatchName: "PAY", branchCode: null } as never;
+  const p = buildAdvanceJournalPayload(req, baseAdv, noBranch, "DEPT1");
+  assert.equal(p.lines[0].branchCode, "DEPT1");
+  assert.equal(p.lines[1].branchCode, "DEPT1");
+});

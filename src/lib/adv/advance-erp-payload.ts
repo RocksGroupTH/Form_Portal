@@ -33,9 +33,13 @@ export function buildAdvanceJournalPayload(
   // The CU maps payload.employeeCode → BC "External Document No." (APJournalCreate.al,
   // CopyStr 1..35), so carry the request no (ADV26-xxxxx) there.
   const employeeCode = (req.requestNo ?? "").slice(0, 35);
-  const branch = branchCode ?? "";
   // departmentCode is already the resolved ERP dept (HR→ERP mapped or fixed) —
   // see resolveAdvanceErpDept in advance-erp-context.ts.
+  // Branch falls back to the requester's ERP department when no brand-level
+  // Branch is configured (AP-2-only rule; AP-1 requires a configured branch).
+  // departmentCode always resolves (the context throws on an unmapped dept), so
+  // the fallback never posts a blank branch.
+  const branch = branchCode?.trim() || departmentCode;
 
   return {
     journalBatchName,

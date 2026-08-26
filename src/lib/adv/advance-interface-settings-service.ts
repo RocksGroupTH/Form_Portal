@@ -60,10 +60,11 @@ export async function listAdvanceInterfaceConfigView(): Promise<AdvanceInterface
       const journalBatchName = base?.journalBatchName ?? null;
 
       // Dr posts to the matched Vendor (G/L derived from posting group), so the
-      // send-ready gate no longer needs a configured G/L account.
+      // send-ready gate no longer needs a configured G/L account. Branch is also
+      // optional — when unset the payload falls back to the requester's mapped
+      // ERP department — so it is not part of the gate either.
       const ready = !!(
-        bankAccountNo && journalBatchName &&
-        branchCode && profile?.profileComplete
+        bankAccountNo && journalBatchName && profile?.profileComplete
       );
 
       return {
