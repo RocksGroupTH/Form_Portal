@@ -261,8 +261,21 @@ function AdvanceDetailContent() {
                     <option key={v.vendorNo} value={v.vendorNo}>{v.displayName ?? v.vendorNo} ({v.vendorNo})</option>
                   ))}
                 </select>
-                {vendorMatch.status === "suggested" && vendorMatch.confidence && (
-                  <span title={vendorMatch.reason ?? ""} className="text-[11px] opacity-70">AI: {vendorMatch.confidence}</span>
+                {selectedVendor ? (
+                  <span
+                    title={vendorMatch.reason ?? ""}
+                    className="text-[11px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap"
+                    style={{ background: "rgba(79,163,122,0.15)", color: "#4fa37a" }}
+                  >
+                    ● Match
+                  </span>
+                ) : (
+                  <span
+                    className="text-[11px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap"
+                    style={{ background: "color-mix(in srgb, var(--color-danger) 12%, transparent)", color: "var(--color-danger)" }}
+                  >
+                    ● Unmatch
+                  </span>
                 )}
               </div>
             </div>
