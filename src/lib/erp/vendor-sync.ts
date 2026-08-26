@@ -1,20 +1,11 @@
-/** Sync Business Central Standard API v2.0 vendors into Rocks_ERP_Data.ErpVendors. */
+/** Sync Business Central vendors into Rocks_ERP_Data.ErpVendors via RPCCodexStore_CodexGetVendors. */
 
 import type { Transaction } from "mssql";
 import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
-import {
-  buildBcApiV2CompanyEntityUrl,
-  fetchBcApiV2Collection,
-  postBcCodexStoreRpc,
-} from "@/lib/bc/bc-odata";
+import { postBcCodexStoreRpc } from "@/lib/bc/bc-odata";
 import { getBcConnectionById } from "@/lib/bc/bc-connection";
 import { getBrandConfig } from "@/lib/brand-config";
 import { getErpDataPool, sql } from "@/lib/db/mssql";
-import {
-  normalizeVendorSnapshot,
-  type BcVendorRow,
-  type NormalizedVendor,
-} from "@/lib/erp/vendor-normalization";
 
 /** Shape returned by RPCCodexStore_CodexGetVendors */
 interface CodexVendorRow {
@@ -36,15 +27,51 @@ interface CodexVendorRow {
   lastDateModified: string;
 }
 
+interface NormalizedCodexVendor {
+  vendorNo: string;
+  displayName: string | null;
+  vendorPostingGroup: string | null;
+  addressLine1: string | null;
+  city: string | null;
+  postalCode: string | null;
+  phoneNumber: string | null;
+  currencyCode: string | null;
+  isBlocked: boolean;
+  bcLastModified: Date | null;
+}
+
+function normalizeCodexVendors(rows: CodexVendorRow[]): NormalizedCodexVendor[] {
+  const byNo = new Map<string, NormalizedCodexVendor>();
+  for (const r of rows) {
+    const vendorNo = (r.no ?? "").trim();
+    if (!vendorNo) continue;
+    const t = (v: string | null | undefined): string | null => {
+      const s = (v ?? "").trim();
+      return s ? s : null;
+    };
+    let bcLastModified: Date | null = null;
+    if (r.lastDateModified) {
+      const d = new Date(r.lastDateModified);
+      if (!Number.isNaN(d.getTime())) bcLastModified = d;
+    }
+    byNo.set(vendorNo.toUpperCase(), {
+      vendorNo,
+      displayName: t(r.name),
+      vendorPostingGroup: (r.vendorPostingGroup ?? "").trim().toUpperCase() || null,
+      addressLine1: t(r.address),
+      city: t(r.city),
+      postalCode: t(r.postCode),
+      phoneNumber: t(r.phoneNo),
+      currencyCode: t(r.currencyCode),
+      isBlocked: (r.blocked ?? "").trim() !== "",
+      bcLastModified,
+    });
+  }
+  return Array.from(byNo.values());
+}
+
 export const ERP_VENDOR_SYNC_TYPE = "VENDORS";
 export const ERP_VENDOR_SOURCE_ENVIRONMENT = "Production";
-
-const VENDOR_SELECT = [
-  "id", "number", "displayName", "addressLine1", "addressLine2", "city",
-  "state", "country", "postalCode", "phoneNumber", "email", "website",
-  "taxRegistrationNumber", "currencyId", "currencyCode", "taxLiable", "blocked",
-  "lastModifiedDateTime",
-].join(",");
 
 interface BrandVendorSyncContext {
   brandCode: string;
@@ -52,7 +79,6 @@ interface BrandVendorSyncContext {
   bcCompanyName: string;
   bcConnectionId: number;
   baseUrl: string;
-  vendorsUrl: string;
 }
 
 export interface VendorSyncResult {
@@ -72,28 +98,19 @@ async function resolveBrandVendorSyncContext(brandCode: string): Promise<BrandVe
   const connection = await getBcConnectionById(brand.bcConnectionId);
   if (!connection?.IsActive) throw new Error(`BC connection for ${code} is not active`);
 
-  const url = new URL(buildBcApiV2CompanyEntityUrl(
-    connection.BaseUrl,
-    brand.bcId,
-    "vendors",
-    ERP_VENDOR_SOURCE_ENVIRONMENT,
-  ));
-  url.searchParams.set("$select", VENDOR_SELECT);
-
   return {
     brandCode: code,
     bcCompanyId: brand.bcId.trim(),
     bcCompanyName: brand.bcName.trim(),
     bcConnectionId: brand.bcConnectionId,
     baseUrl: connection.BaseUrl,
-    vendorsUrl: url.toString(),
   };
 }
 
 async function writeVendor(
   transaction: Transaction,
   ctx: BrandVendorSyncContext,
-  vendor: NormalizedVendor,
+  vendor: NormalizedCodexVendor,
   snapshotAt: Date,
 ): Promise<void> {
   await new sql.Request(transaction)
@@ -105,19 +122,11 @@ async function writeVendor(
     .input("vendorNo", sql.NVarChar, vendor.vendorNo)
     .input("displayName", sql.NVarChar, vendor.displayName)
     .input("address1", sql.NVarChar, vendor.addressLine1)
-    .input("address2", sql.NVarChar, vendor.addressLine2)
     .input("city", sql.NVarChar, vendor.city)
-    .input("state", sql.NVarChar, vendor.state)
-    .input("country", sql.NVarChar, vendor.countryCode)
     .input("postal", sql.NVarChar, vendor.postalCode)
     .input("phone", sql.NVarChar, vendor.phoneNumber)
-    .input("email", sql.NVarChar, vendor.email)
-    .input("website", sql.NVarChar, vendor.website)
-    .input("taxRegistration", sql.NVarChar, vendor.taxRegistrationNumber)
-    .input("currencyId", sql.UniqueIdentifier, vendor.currencyId)
     .input("currencyCode", sql.NVarChar, vendor.currencyCode)
-    .input("taxLiable", sql.Bit, vendor.taxLiable ? 1 : 0)
-    .input("blockedStatus", sql.NVarChar, vendor.blockedStatus)
+    .input("vendorPostingGroup", sql.NVarChar, vendor.vendorPostingGroup)
     .input("isBlocked", sql.Bit, vendor.isBlocked ? 1 : 0)
     .input("bcLastModified", sql.DateTime2, vendor.bcLastModified)
     .input("snapshotAt", sql.DateTime2, snapshotAt)
@@ -139,19 +148,11 @@ async function writeVendor(
         VendorNo = @vendorNo,
         DisplayName = @displayName,
         AddressLine1 = @address1,
-        AddressLine2 = @address2,
         City = @city,
-        State = @state,
-        CountryCode = @country,
         PostalCode = @postal,
         PhoneNumber = @phone,
-        Email = @email,
-        Website = @website,
-        TaxRegistrationNumber = @taxRegistration,
-        CurrencyId = @currencyId,
         CurrencyCode = @currencyCode,
-        TaxLiable = @taxLiable,
-        BlockedStatus = @blockedStatus,
+        VendorPostingGroup = @vendorPostingGroup,
         IsBlocked = @isBlocked,
         BcLastModified = @bcLastModified,
         IsActive = 1,
@@ -159,15 +160,13 @@ async function writeVendor(
         SyncedAt = @snapshotAt
       WHEN NOT MATCHED THEN INSERT (
         SourceEnvironment, BrandCode, BcCompanyId, BcCompanyName, BcConnectionId,
-        VendorNo, DisplayName, AddressLine1, AddressLine2, City, State,
-        CountryCode, PostalCode, PhoneNumber, Email, Website, TaxRegistrationNumber,
-        CurrencyId, CurrencyCode, TaxLiable, BlockedStatus, IsBlocked, BcLastModified, IsActive,
+        VendorNo, DisplayName, AddressLine1, City, PostalCode, PhoneNumber,
+        CurrencyCode, VendorPostingGroup, IsBlocked, BcLastModified, IsActive,
         SourceDeletedAt, SyncedAt
       ) VALUES (
         @environment, @brand, @companyId, @companyName, @connectionId,
-        @vendorNo, @displayName, @address1, @address2, @city, @state,
-        @country, @postal, @phone, @email, @website, @taxRegistration,
-        @currencyId, @currencyCode, @taxLiable, @blockedStatus, @isBlocked, @bcLastModified, 1,
+        @vendorNo, @displayName, @address1, @city, @postal, @phone,
+        @currencyCode, @vendorPostingGroup, @isBlocked, @bcLastModified, 1,
         NULL, @snapshotAt
       );
     `);
@@ -196,68 +195,6 @@ async function insertVendorSyncLog(
       VALUES
         (@syncType, @brand, @status, @rows, @error, @started, SYSDATETIME(), @triggeredBy)
     `);
-}
-
-/**
- * Enrich ErpVendors.VendorPostingGroup for a brand via the Codex RPC.
- * Throws on failure — posting group is required for the ADV filter feature.
- */
-async function enrichVendorPostingGroups(ctx: BrandVendorSyncContext): Promise<number> {
-  const codexRows = await postBcCodexStoreRpc<CodexVendorRow>(
-    ctx.bcConnectionId,
-    ctx.bcCompanyId,
-    ERP_VENDOR_SOURCE_ENVIRONMENT,
-    ctx.baseUrl,
-    "RPCCodexStore_CodexGetVendors",
-    [],
-  );
-
-  // Build map: VENDORNO (upper) → posting group (upper)
-  const pgMap = new Map<string, string>();
-  for (const row of codexRows) {
-    const no = (row.no ?? "").trim().toUpperCase();
-    const pg = (row.vendorPostingGroup ?? "").trim().toUpperCase();
-    if (no) pgMap.set(no, pg);
-  }
-
-  if (pgMap.size === 0) return 0;
-
-  // Batch UPDATE via UPDATE … FROM (VALUES …) join to avoid N round-trips.
-  // MSSQL supports: UPDATE t SET … FROM (VALUES (…),(…),…) AS src(no, pg) WHERE …
-  // Split into chunks of 500 to stay well under parameter/row limits.
-  const CHUNK = 500;
-  const entries = Array.from(pgMap.entries());
-  const pool = await getErpDataPool();
-  let updated = 0;
-
-  for (let i = 0; i < entries.length; i += CHUNK) {
-    const chunk = entries.slice(i, i + CHUNK);
-
-    // Build VALUES clause with positional params
-    const req = pool.request()
-      .input("env", sql.NVarChar, ERP_VENDOR_SOURCE_ENVIRONMENT)
-      .input("brand", sql.NVarChar, ctx.brandCode);
-
-    const valueParts: string[] = [];
-    chunk.forEach(([no, pg], idx) => {
-      req.input(`no${idx}`, sql.NVarChar, no);
-      req.input(`pg${idx}`, sql.NVarChar, pg);
-      valueParts.push(`(@no${idx}, @pg${idx})`);
-    });
-
-    const r = await req.query(`
-      UPDATE ev
-      SET ev.VendorPostingGroup = src.PostingGroup
-      FROM [dbo].[ErpVendors] ev
-      INNER JOIN (VALUES ${valueParts.join(",")}) AS src(VendorNo, PostingGroup)
-        ON ev.VendorNo = src.VendorNo
-      WHERE ev.SourceEnvironment = @env
-        AND ev.BrandCode = @brand
-    `);
-    updated += r.rowsAffected[0] ?? 0;
-  }
-
-  return updated;
 }
 
 export async function syncBrandErpVendors(
@@ -290,9 +227,16 @@ export async function syncBrandErpVendors(
     if (lockResult < 0) throw new Error(`Vendor sync for ${ctx.brandCode} is already running`);
 
     // Serialize before fetching so an older snapshot can never publish after a newer one.
-    // No target row is touched until every BC page has succeeded.
-    const rawRows = await fetchBcApiV2Collection<BcVendorRow>(ctx.bcConnectionId, ctx.vendorsUrl);
-    const vendors = normalizeVendorSnapshot(rawRows);
+    // No target row is touched until the single RPC call has succeeded.
+    const rawRows = await postBcCodexStoreRpc<CodexVendorRow>(
+      ctx.bcConnectionId,
+      ctx.bcCompanyId,
+      ERP_VENDOR_SOURCE_ENVIRONMENT,
+      ctx.baseUrl,
+      "RPCCodexStore_CodexGetVendors",
+      [],
+    );
+    const vendors = normalizeCodexVendors(rawRows);
     const active = await new sql.Request(transaction)
       .input("environment", sql.NVarChar, ERP_VENDOR_SOURCE_ENVIRONMENT)
       .input("brand", sql.NVarChar, ctx.brandCode)
@@ -330,17 +274,6 @@ export async function syncBrandErpVendors(
   } catch (error) {
     if (transactionOpen) await transaction.rollback().catch(() => undefined);
     const message = error instanceof Error ? error.message : "Vendor sync failed";
-    await insertVendorSyncLog(ctx.brandCode, "failed", vendorRows, message, triggeredBy, startedAt)
-      .catch(() => undefined);
-    throw error;
-  }
-
-  // Posting-group enrichment pass (after the Standard-API MERGE transaction is committed).
-  // Throws on failure — VendorPostingGroup is required for the ADV vendor filter.
-  try {
-    await enrichVendorPostingGroups(ctx);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Vendor posting group enrichment failed";
     await insertVendorSyncLog(ctx.brandCode, "failed", vendorRows, message, triggeredBy, startedAt)
       .catch(() => undefined);
     throw error;
