@@ -1,4 +1,4 @@
-import { listAllBrands } from "@/lib/acc/brand-options";
+import { listBrandRegistry } from "@/lib/brand-registry";
 import { BRANDS } from "@/lib/brand";
 
 /**
@@ -19,8 +19,16 @@ export interface BrandDbTarget {
 export interface BrandConfigPublic {
   brandCode: string;
   brandName: string;
-  /** `/brandlogo/{code}-200.png`, or null for a brand with no logo file. */
+  /**
+   * An uploaded logo's URL, or the `/brandlogo/{code}-200.png` convention.
+   * Never checked for existence — the card falls back on the image failing to
+   * load. Null only if the registry ever stops building one.
+   */
   brandLogo: string | null;
+  /** Whether this app offers the brand in its picker (`BrandSetting`). */
+  isEnabled: boolean;
+  /** True when the logo above is one an admin uploaded, so it can be removed. */
+  hasUploadedLogo: boolean;
   bcId: string | null;
   bcName: string | null;
   bcConnectionId: number | null;
@@ -33,6 +41,12 @@ export interface BrandConfigPublic {
   dashboardDbConnectionCode: string | null;
   dashboardDbConnectionName: string | null;
   dashboardDatabaseName: string | null;
+  /**
+   * `Fast_Core.dbo.BrandConfig.IsActive` — a column of the **shared** config
+   * row, not this app's switch. `isEnabled` above is ours. They are separate on
+   * purpose: writing our meaning into a column two sibling applications also
+   * read is how two apps end up disagreeing about what a flag means.
+   */
   isActive: boolean;
 }
 
@@ -106,13 +120,14 @@ export async function listBrandConfigLookups(): Promise<BrandConfigLookups> {
  */
 export async function listBrandConfigs(userId: number): Promise<BrandConfigPublic[]> {
   const pool = await getCorePool();
-  // Already filtered to IsActive = 1 by `listAllBrands`.
-  const enabledBrands = await listAllBrands();
+  // Every active brand in the master, disabled ones included — this page is
+  // where they are turned back on.
+  const enabledBrands = await listBrandRegistry();
 
   for (const b of enabledBrands) {
     await pool
       .request()
-      .input("brandCode", mssqlSql.NVarChar, b.brandCode)
+      .input("brandCode", mssqlSql.NVarChar, b.code)
       .input("createdBy", mssqlSql.Int, userId || null)
       .query(`
         IF NOT EXISTS (SELECT 1 FROM BrandConfig WHERE BrandCode = @brandCode)
@@ -149,20 +164,22 @@ export async function listBrandConfigs(userId: number): Promise<BrandConfigPubli
   }
 
   return enabledBrands.map((brand) => {
-    const r = byCode.get(brand.brandCode);
+    const r = byCode.get(brand.code);
     const dbId = (r?.DbConnectionId as number) ?? null;
     const dashId = (r?.DashboardDbConnectionId as number) ?? null;
     const erpConn = mapDbConnectionDisplay(dbId, r?.DbCode as string, r?.DbName as string);
     const dashConn = mapDbConnectionDisplay(dashId, r?.DashDbCode as string, r?.DashDbName as string);
 
     return {
-      brandCode: brand.brandCode,
-      brandName: brand.brandName,
+      brandCode: brand.code,
+      brandName: brand.name,
+      isEnabled: brand.isEnabled,
+      hasUploadedLogo: brand.hasUploadedLogo,
       // `/brandlogo/{code}-200.png`, the same convention the brand switcher
       // uses. A brand with no such file — Paloma and SANMAI today — renders the
       // card's initials fallback instead of a broken image; see BrandMark on
       // the settings page.
-      brandLogo: brand.brandLogo,
+      brandLogo: brand.logo,
       bcId: (r?.BcId as string) ?? null,
       bcName: (r?.BcName as string) ?? null,
       bcConnectionId: (r?.BcConnectionId as number) ?? null,
@@ -188,8 +205,8 @@ export async function updateBrandConfig(
   // Against the master, for the same reason `listBrandConfigs` reads it: a
   // brand the page can show has to be a brand the page can save. Checking the
   // hardcoded four here would 400 every save for Paloma and SANMAI.
-  const brands = await listAllBrands();
-  if (!brands.some((b) => b.brandCode === brandCode)) return null;
+  const brands = await listBrandRegistry();
+  if (!brands.some((b) => b.code === brandCode)) return null;
 
   const pool = await getCorePool();
   await pool

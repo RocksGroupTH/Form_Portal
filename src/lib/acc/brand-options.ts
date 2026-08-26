@@ -1,23 +1,26 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
-import { getCorePool } from "@/lib/db/mssql";
+import { listBrandRegistry } from "@/lib/brand-registry";
 import type { AccBrandOption } from "@/features/accounting/types";
 
-/** All active brands from the company brand master (Rocks_Codex.dbo.Brand). */
+/**
+ * All active brands from the company brand master, with this app's logo for
+ * each — an uploaded one where there is one, the local file otherwise.
+ *
+ * **Disabled brands are still returned.** `BrandSetting.IsEnabled` governs the
+ * brand *picker*: whether a user may work under that brand. This list is the
+ * one an admin grants a form access to, and hiding a brand here would make an
+ * existing grant invisible rather than revoked. Narrow it at the picker, which
+ * is what `listSelectableBrands` is for.
+ *
+ * The Codex `Logo` column is still ignored: it holds a path on the Codex server
+ * (/uploads/brands/*), and that server serves the newer brands only behind a
+ * login — measured 2026-08-26. See `brand-registry.ts`.
+ */
 export async function listAllBrands(): Promise<AccBrandOption[]> {
-  const pool = await getCorePool();
-  const r = await pool.request().query(`
-    SELECT Code, Name, Logo
-    FROM [Rocks_Codex].[dbo].[Brand] WITH (NOLOCK)
-    WHERE IsActive = 1 AND Code IS NOT NULL AND LTRIM(RTRIM(Code)) <> ''
-    ORDER BY Id
-  `);
-  // The Codex Logo column points at /uploads/brands/* which this app does not
-  // serve. Use the local processed logos at /brandlogo/{code}-200.png instead
-  // (same convention as the brand switcher).
-  return r.recordset.map((x: { Code: string; Name: string | null; Logo: string | null }) => ({
-    brandCode: x.Code,
-    brandName: x.Name ?? x.Code,
-    brandLogo: `/brandlogo/${x.Code.toLowerCase()}-200.png`,
+  return (await listBrandRegistry()).map((b) => ({
+    brandCode: b.code,
+    brandName: b.name,
+    brandLogo: b.logo,
   }));
 }
 
