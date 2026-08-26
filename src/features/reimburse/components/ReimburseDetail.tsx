@@ -27,7 +27,7 @@ import {
   attachmentKind,
   type AttachmentKind,
   type AttachmentSource,
-} from "./AttachmentViewer";
+} from "@/components/ui/AttachmentViewer";
 import { Dialog } from "@/components/ui";
 import { Avatar } from "@/components/ui/Avatar";
 import { UatDataBanner } from "@/components/UatDataBanner";

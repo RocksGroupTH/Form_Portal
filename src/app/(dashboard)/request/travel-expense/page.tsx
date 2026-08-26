@@ -10,6 +10,10 @@ import { TravelDraftPickerDialog } from "@/features/accounting/components/Travel
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
 import { FileText } from "lucide-react";
 import { toast } from "sonner";
+// Pure and import-free, which is what makes it safe in a client component — and
+// sharing it is the point: the server refuses a mutate on any other status, so
+// a second list here would drift into offering an edit the API then rejects.
+import { EDITABLE_STATUSES } from "@/lib/acc/request-acl-policy";
 import type { AccRequest, TravelDraftSummary } from "@/features/accounting/types";
 import {
   createTravelBackAction,
@@ -103,6 +107,21 @@ function TravelExpenseContent() {
       .then((json: { ok: boolean; data?: AccRequest }) => {
         if (cancelled) return;
         if (json.ok && json.data) {
+          // A request that is not a Draft or Returned cannot be changed —
+          // `decideRequestMutate` refuses every save, submit and attachment on
+          // it. This page had no status check at all, so a Submitted, Approved
+          // or Rejected request opened as a fully editable form with a working
+          // attach button, and every write came back 403 "แก้ไขได้เฉพาะคำขอที่
+          // เป็นฉบับร่างของคุณเท่านั้น". Reported as "แนบไฟล์ไม่สำเร็จ" on a
+          // rejected claim, which is exactly what it looks like from the form.
+          //
+          // The detail page is where a finished request belongs, and it is
+          // reachable, so send them there rather than showing an inert form.
+          if (!EDITABLE_STATUSES.includes(json.data.status)) {
+            toast.info("คำขอนี้ไม่ได้อยู่ในสถานะที่แก้ไขได้ — เปิดหน้ารายละเอียดให้แทน");
+            router.replace(`/request/travel-expense/${requestId}`);
+            return;
+          }
           setInitial(json.data);
         } else {
           setNotFound(true);
@@ -118,7 +137,7 @@ function TravelExpenseContent() {
     return () => {
       cancelled = true;
     };
-  }, [requestId]);
+  }, [requestId, router]);
 
   function handlePickDraft(id: number) {
     setPickerOpen(false);

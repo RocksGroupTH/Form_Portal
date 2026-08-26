@@ -77,7 +77,17 @@ export const MAX_ATTACHMENT_COUNT = 20;
 /** Ceiling on one multipart body, so a huge post is refused before buffering. */
 export const MAX_ATTACHMENT_TOTAL_BYTES = 60 * 1024 * 1024;
 
-export type AttachmentKind = "image" | "pdf" | "spreadsheet";
+export type AttachmentKind = "image" | "pdf" | "spreadsheet" | "binary";
+
+/**
+ * What a slot will take. An array restricts to those kinds; `"any"` switches the
+ * kind check off entirely.
+ *
+ * A string literal rather than an empty array on purpose: `[]` reads as "nothing
+ * is allowed", which is the opposite, and a caller that built its list
+ * dynamically could arrive at one by accident.
+ */
+export type AllowedAttachmentKinds = readonly AttachmentKind[] | "any";
 
 export interface AttachmentType {
   /** Canonical MIME type. Never the caller's string. */
@@ -99,6 +109,27 @@ const GIF: AttachmentType = { contentType: "image/gif", extension: "gif", kind: 
 const WEBP: AttachmentType = { contentType: "image/webp", extension: "webp", kind: "image", inlineSafe: true };
 const HEIC: AttachmentType = { contentType: "image/heic", extension: "heic", kind: "image", inlineSafe: false };
 const PDF: AttachmentType = { contentType: "application/pdf", extension: "pdf", kind: "pdf", inlineSafe: false };
+
+/**
+ * What `allowedKinds: "any"` returns for bytes no signature matches.
+ *
+ * `inlineSafe: false` is the load-bearing field, and it is why widening a slot to
+ * "any file" is not the hole it sounds like: `attachmentResponseHeaders`
+ * re-sniffs on download, reaches this same verdict, and serves the bytes as
+ * `attachment` with `nosniff` and a `default-src 'none'; sandbox` CSP. An SVG or
+ * an HTML file stored here can never execute on this origin.
+ *
+ * The blank `extension` means "keep whatever the uploader's file was called" —
+ * `buildAccFileName` treats it as absent and falls back to the original name.
+ * Forcing `.bin` would hand back a file the requester's own machine no longer
+ * knows how to open.
+ */
+const UNKNOWN_BINARY: AttachmentType = {
+  contentType: "application/octet-stream",
+  extension: "",
+  kind: "binary",
+  inlineSafe: false,
+};
 const XLSX: AttachmentType = {
   contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   extension: "xlsx",
@@ -297,6 +328,7 @@ function unrecognisedMessage(allowedKinds: readonly AttachmentKind[]): string {
 }
 
 /** "These bytes are a real attachment, but not one this slot takes." */
+/** Only ever called with a subset — `"any"` refuses nothing on kind. */
 function wrongKindMessage(allowedKinds: readonly AttachmentKind[]): string {
   if (isWorkbookOnly(allowedKinds)) return "แนบได้เฉพาะไฟล์ Excel (.xlsx/.xlsm/.xls) เท่านั้น";
   return allowedKinds.includes("pdf")
@@ -320,10 +352,15 @@ export function checkAttachment(input: {
    * means images and PDFs: `spreadsheet` is never allowed by default, so a new
    * caller cannot acquire it by forgetting to say what it wants.
    */
-  allowedKinds?: readonly AttachmentKind[];
+  allowedKinds?: AllowedAttachmentKinds;
 }): AttachmentCheck {
   const { bytes } = input;
   const allowedKinds = input.allowedKinds ?? DEFAULT_ALLOWED_KINDS;
+  // AP-1's receipt slot, since 2026-08-26. Everything else below still runs —
+  // the empty-file and size checks, and the sniff itself, so a real photo is
+  // still identified as one and keeps its inline preview. Only the *kind*
+  // verdict is skipped.
+  const anyKind = allowedKinds === "any";
 
   if (bytes.length === 0) {
     return { ok: false, status: 400, error: "ไฟล์ว่างเปล่า" };
@@ -338,6 +375,7 @@ export function checkAttachment(input: {
 
   const type = sniffAttachment(bytes);
   if (!type) {
+    if (anyKind) return { ok: true, type: UNKNOWN_BINARY };
     if (looksLikeSvg(bytes)) {
       return { ok: false, status: 400, error: "ไม่รองรับไฟล์ SVG — กรุณาใช้ไฟล์ภาพถ่ายหรือ PDF" };
     }
@@ -345,7 +383,7 @@ export function checkAttachment(input: {
     // also what a password-protected .doc looks like, and telling AP-1's image
     // slot that its *Excel* file is protected names a file type the slot does
     // not take in the first place.
-    if (allowedKinds.includes("spreadsheet") && looksLikeEncryptedWorkbook(bytes)) {
+    if (!anyKind && allowedKinds.includes("spreadsheet") && looksLikeEncryptedWorkbook(bytes)) {
       return {
         ok: false,
         status: 400,
@@ -355,7 +393,7 @@ export function checkAttachment(input: {
     return { ok: false, status: 400, error: unrecognisedMessage(allowedKinds) };
   }
 
-  if (!allowedKinds.includes(type.kind)) {
+  if (!anyKind && !allowedKinds.includes(type.kind)) {
     return { ok: false, status: 400, error: wrongKindMessage(allowedKinds) };
   }
 

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FileSpreadsheet, FileText, Loader2, Paperclip, X } from "lucide-react";
 import type { ReimburseFileMeta } from "@/features/reimburse/types";
 import { isAcceptedDocument } from "@/features/reimburse/lib/document-accept";
-import { AttachmentViewer, attachmentKind, type AttachmentKind, type AttachmentSource } from "./AttachmentViewer";
+import { AttachmentViewer, attachmentKind, type AttachmentKind, type AttachmentSource } from "@/components/ui/AttachmentViewer";
 
 /**
  * AP-4's one attachment control: a framed drop zone with the attachments

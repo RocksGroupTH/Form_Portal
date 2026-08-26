@@ -136,6 +136,21 @@ export async function guardVisionRequest(
       return { ok: true, kind, bytes, mediaType: check.type.contentType, fileName: file.name, client };
     }
 
+    // `binary` is what `allowedKinds: "any"` returns for bytes no signature
+    // matches. No caller here passes "any" — every vision route names the kinds
+    // it can actually send — so this is unreachable today, and it refuses rather
+    // than casting because the next route to be widened would otherwise post an
+    // unidentified file to the Messages API and get an opaque 400 back.
+    if (kind === "binary") {
+      return {
+        ok: false,
+        response: NextResponse.json(
+          { ok: false, error: "อ่านไฟล์ชนิดนี้ไม่ได้" },
+          { status: 400 },
+        ),
+      };
+    }
+
     return { ok: true, kind, bytes, fileName: file.name, client };
   } catch {
     return {

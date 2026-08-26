@@ -510,3 +510,61 @@ test("a workbook Excel actually wrote sniffs as XLSX and passes the workbook slo
   assert.match(headers["Content-Disposition"], /^attachment;/);
   assert.equal(headers["X-Content-Type-Options"], "nosniff");
 });
+
+/* ── `allowedKinds: "any"` — the unrestricted slot ──
+ *
+ * AP-1 was widened to accept any file on 2026-08-26. The allowlist is what
+ * stops that being dangerous everywhere *else*, so these tests pin the two
+ * halves of the bargain: the kind check is the only thing "any" switches off,
+ * and nothing it lets through is ever marked safe to render inline.
+ */
+
+test('"any" accepts bytes no sniffer recognises, as an opaque download', () => {
+  const check = checkAttachment({
+    fileName: "notes.docx",
+    bytes: DOCX_BYTES,
+    allowedKinds: "any",
+  });
+  assert.equal(check.ok, true);
+  if (!check.ok) return;
+  assert.equal(check.type.contentType, "application/octet-stream");
+  assert.equal(check.type.inlineSafe, false);
+});
+
+test('"any" still recognises a real image, so photos keep their preview', () => {
+  const check = checkAttachment({ fileName: "receipt.jpg", bytes: JPEG_BYTES, allowedKinds: "any" });
+  assert.equal(check.ok, true);
+  if (!check.ok) return;
+  assert.equal(check.type.contentType, "image/jpeg");
+  assert.equal(check.type.inlineSafe, true);
+});
+
+test('"any" accepts an SVG but never marks it inline-safe', () => {
+  const check = checkAttachment({ fileName: "logo.svg", bytes: SVG_BYTES, allowedKinds: "any" });
+  assert.equal(check.ok, true);
+  if (!check.ok) return;
+  assert.equal(check.type.inlineSafe, false);
+  // The download path re-sniffs and reaches the same verdict, which is what
+  // actually stops it executing on our origin.
+  const headers = attachmentResponseHeaders({ bytes: SVG_BYTES, fileName: "logo.svg" });
+  assert.match(headers["Content-Disposition"], /^attachment;/);
+  assert.equal(headers["X-Content-Type-Options"], "nosniff");
+});
+
+test('"any" still refuses an empty file', () => {
+  const check = checkAttachment({ fileName: "empty.bin", bytes: new Uint8Array(0), allowedKinds: "any" });
+  assert.equal(check.ok, false);
+  if (check.ok) return;
+  assert.equal(check.status, 400);
+});
+
+test('"any" still enforces the size cap', () => {
+  const check = checkAttachment({
+    fileName: "huge.bin",
+    bytes: new Uint8Array(MAX_ATTACHMENT_BYTES + 1),
+    allowedKinds: "any",
+  });
+  assert.equal(check.ok, false);
+  if (check.ok) return;
+  assert.equal(check.status, 413);
+});
