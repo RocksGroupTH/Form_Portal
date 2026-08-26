@@ -3,8 +3,11 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { X, ExternalLink, Paperclip, FileText } from "lucide-react";
+import { toast } from "sonner";
 import { statusLabelDisplay } from "@/features/accounting/constants";
 import type { AdvanceRequest } from "@/features/advance/types";
+import { PaymentDatePicker } from "@/components/ui/PaymentDatePicker";
+import { AdvanceVendorPicker } from "./AdvanceVendorPicker";
 
 function money(n: number | null | undefined): string {
   return (n ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -33,11 +36,16 @@ function Field({ label, value }: { label: string; value: string | null | undefin
  * history) without navigating into the full form page. Opens instantly and
  * fetches only the request JSON, so it is far faster than the detail route.
  */
-export function AdvanceDetailPanel({ requestId, onClose }: { requestId: number | null; onClose: () => void }) {
+export function AdvanceDetailPanel({ requestId, onClose, onChanged }:
+  { requestId: number | null; onClose: () => void; onChanged?: () => void }) {
   const router = useRouter();
   const [data, setData] = useState<AdvanceRequest | null>(null);
   const [loading, setLoading] = useState(false);
   const [attempts, setAttempts] = useState<{ attemptNo: number; erpDocumentNo: string | null; status: string }[]>([]);
+  const [selectedVendor, setSelectedVendor] = useState<string>("");
+  const [paymentDates, setPaymentDates] = useState<string[]>([]);
+  const [paymentDate, setPaymentDate] = useState<string>("");
+  const [approving, setApproving] = useState(false);
 
   // ADV↔PV send history (only meaningful once a row has been pulled back and re-sent).
   useEffect(() => {
@@ -71,6 +79,19 @@ export function AdvanceDetailPanel({ requestId, onClose }: { requestId: number |
     return () => window.removeEventListener("keydown", onKey);
   }, [requestId, onClose]);
 
+  const atApproval = data?.status === "Submitted" && !!data?.currentStepCode;
+  const atAccOfficer = atApproval && data?.currentStepCode === "ACC_OFFICER";
+
+  useEffect(() => {
+    if (!atAccOfficer) return;
+    fetch("/api/request/advance/payment-dates")
+      .then((r) => r.json())
+      .then((j: { ok: boolean; data?: { dates: string[]; default: string } }) => {
+        if (j.ok && j.data) { setPaymentDates(j.data.dates); setPaymentDate(j.data.default); }
+      })
+      .catch(() => {});
+  }, [atAccOfficer]);
+
   if (requestId == null) return null;
 
   const adv = data?.advance;
@@ -78,6 +99,37 @@ export function AdvanceDetailPanel({ requestId, onClose }: { requestId: number |
   const fx = adv && adv.currency !== "THB" && adv.amount != null
     ? `${adv.amount.toLocaleString()} ${adv.currency} × ${adv.exchangeRate ?? "-"} = ${money(adv.baseAmount)} ฿`
     : `${money(adv?.baseAmount ?? adv?.amount ?? data?.totalAmount)} ฿`;
+
+  async function handleApprove() {
+    if (requestId == null) return;
+    if (atAccOfficer) {
+      if (!paymentDate) return toast.error("กรุณาเลือกวันจ่าย");
+      if (!selectedVendor) return toast.error("กรุณาเลือก Vendor");
+    }
+    setApproving(true);
+    try {
+      if (atAccOfficer) {
+        const c = await fetch("/api/request/advance/vendor-confirm", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: requestId, vendorNo: selectedVendor }),
+        }).then((r) => r.json()) as { ok: boolean; error?: string };
+        if (!c.ok) { toast.error(c.error ?? "ยืนยัน Vendor ไม่สำเร็จ"); return; }
+      }
+      const res = await fetch(`/api/request/advance/requests/${requestId}/approve`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(atAccOfficer ? { paymentDate } : {}),
+      });
+      const j = (await res.json()) as { ok: boolean; error?: string };
+      if (!j.ok) { toast.error(j.error ?? "อนุมัติไม่สำเร็จ"); return; }
+      toast.success("อนุมัติสำเร็จ");
+      onChanged?.();
+      onClose();
+    } catch {
+      toast.error("อนุมัติไม่สำเร็จ");
+    } finally {
+      setApproving(false);
+    }
+  }
 
   return (
     <>
@@ -186,6 +238,20 @@ export function AdvanceDetailPanel({ requestId, onClose }: { requestId: number |
                 )}
               </div>
 
+              {atAccOfficer && requestId != null && (
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wide mb-1.5" style={{ color: "var(--text-faint)" }}>
+                    Vendor (สำหรับลง ERP)
+                  </p>
+                  <AdvanceVendorPicker
+                    requestId={requestId}
+                    company={data.brandCode ?? ""}
+                    compact
+                    onConfirmed={setSelectedVendor}
+                  />
+                </div>
+              )}
+
               {/* approval history — always shown */}
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-wide mb-2" style={{ color: "var(--text-faint)" }}>
@@ -253,9 +319,21 @@ export function AdvanceDetailPanel({ requestId, onClose }: { requestId: number |
         </div>
 
         {/* footer */}
-        <div className="px-4 py-3" style={{ borderTop: "1px solid var(--border-card)" }}>
+        <div className="px-4 py-3 flex flex-col gap-2" style={{ borderTop: "1px solid var(--border-card)" }}>
+          {atApproval && (
+            <div className="flex items-center gap-2">
+              {atAccOfficer && (
+                <PaymentDatePicker value={paymentDate} onChange={setPaymentDate} allowedDates={paymentDates} />
+              )}
+              <button type="button" onClick={handleApprove} disabled={approving}
+                className="ml-auto text-[13px] font-bold px-4 py-2 rounded-lg cursor-pointer border-none disabled:opacity-60"
+                style={{ background: "var(--color-action, #A3121B)", color: "#fff" }}>
+                {approving ? "กำลังดำเนินการ..." : atAccOfficer ? "ดำเนินการ" : "อนุมัติ"}
+              </button>
+            </div>
+          )}
           <button type="button" onClick={() => router.push(`/request/advance/${requestId}`)}
-            className="flex items-center gap-1.5 text-[12px] font-semibold cursor-pointer"
+            className="flex items-center gap-1.5 text-[12px] font-semibold cursor-pointer bg-transparent border-none p-0"
             style={{ color: "var(--nav-active-text)" }}>
             เปิดใบเต็ม <ExternalLink size={13} />
           </button>
