@@ -19,7 +19,7 @@
  * "your document is no good" even when the fault is a revoked key on our side.
  */
 import { toDownscaledCanvas } from "@/lib/image/downscale";
-import type { ReceiptFields } from "./receipt-fields";
+import type { DetailLine, ReceiptFields } from "./receipt-fields";
 
 /** A read row: the sanitized document fields, plus the account the server matched. */
 export interface ReadRow extends ReceiptFields {
@@ -31,6 +31,8 @@ export interface ReadRow extends ReceiptFields {
    * on it, and an invented G/L account is a misposted expense.
    */
   accountNo: string | null;
+  /** The lines printed inside the document, already sanitized by the server. */
+  lines: DetailLine[];
 }
 
 export type ReceiptFieldsFailure =
@@ -138,6 +140,11 @@ export async function readReceiptFields(
           // Only ever an account the server matched against its own candidate
           // list; anything else already came back null.
           accountNo: typeof d?.accountNo === "string" ? d.accountNo : null,
+          // Re-narrowed like everything else at this boundary, but only for
+          // shape — the server already ran `sanitizeDetailLines` over them.
+          lines: Array.isArray(d?.lines)
+            ? (d.lines as DetailLine[]).filter((l) => typeof l?.description === "string" && l.description !== "")
+            : [],
         }))
       : [];
 

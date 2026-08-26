@@ -2,7 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 // Relative, not "@/": tsx does not resolve the alias for a bare test run.
 import {
+  sanitizeDetailLines,
   sanitizeReceiptFields,
+  MAX_DETAIL_LINES,
   MAX_BRANCH_LENGTH,
   MAX_DESCRIPTION_LENGTH,
   MAX_DOCUMENT_NO_LENGTH,
@@ -295,4 +297,62 @@ test("the vendor name and address are trimmed, capped and blank-to-null", () => 
   );
   assert.equal(long.vendorName?.length, MAX_VENDOR_NAME_LENGTH);
   assert.equal(long.vendorAddress?.length, MAX_VENDOR_ADDRESS_LENGTH);
+});
+
+/* ── the lines inside one document ── */
+
+test("each line keeps its own description, quantity, unit price and amount", () => {
+  const out = sanitizeDetailLines([
+    { description: "SN1 - LOGO ต้อง TOTO LIGHT BOX ขนาด 1,000 mm.", quantity: 1, unitPrice: 8000, amount: 8000 },
+    { description: "SN6- กล่องไฟ Light Box (ถ้วยเฟรนช์ฟราย) 40x40 cm", quantity: 1, unitPrice: 5700, amount: 5700 },
+  ]);
+  assert.equal(out.length, 2);
+  assert.deepEqual(out[0], {
+    description: "SN1 - LOGO ต้อง TOTO LIGHT BOX ขนาด 1,000 mm.",
+    quantity: 1,
+    unitPrice: 8000,
+    amount: 8000,
+  });
+});
+
+test("a line with no description is dropped, not kept as a blank row", () => {
+  // The description is the only thing that makes a line readable. A line that
+  // is nothing but numbers tells a reader less than no line at all.
+  const out = sanitizeDetailLines([
+    { description: "  ", quantity: 1, unitPrice: 100, amount: 100 },
+    { description: null, quantity: 2, unitPrice: 50, amount: 100 },
+    { description: "ค่าบริการ", quantity: null, unitPrice: null, amount: 6500 },
+  ]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].description, "ค่าบริการ");
+  assert.equal(out[0].amount, 6500);
+});
+
+test("a bad number on a line nulls only that number", () => {
+  const [line] = sanitizeDetailLines([
+    { description: "งานป้าย", quantity: Number.NaN, unitPrice: -5, amount: 380 },
+  ]);
+  assert.equal(line.quantity, null);
+  assert.equal(line.unitPrice, null);
+  assert.equal(line.amount, 380);
+});
+
+test("a 13-digit value is refused on a line too", () => {
+  // Same reason as the row above it: the tax id is printed on the document and
+  // is the number most likely to come back in place of money.
+  const [line] = sanitizeDetailLines([
+    { description: "งานพิมพ์", quantity: null, unitPrice: 1234567890123, amount: 500 },
+  ]);
+  assert.equal(line.unitPrice, null);
+  assert.equal(line.amount, 500);
+});
+
+test("the list is capped, and anything that is not a list is empty", () => {
+  const many = Array.from({ length: MAX_DETAIL_LINES + 20 }, (_, i) => ({
+    description: "line " + i, quantity: null, unitPrice: null, amount: 1,
+  }));
+  assert.equal(sanitizeDetailLines(many).length, MAX_DETAIL_LINES);
+  assert.deepEqual(sanitizeDetailLines(null as never), []);
+  assert.deepEqual(sanitizeDetailLines(undefined), []);
+  assert.deepEqual(sanitizeDetailLines("nope" as never), []);
 });

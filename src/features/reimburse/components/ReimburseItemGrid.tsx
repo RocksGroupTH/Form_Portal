@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { CircleAlert, Plus, Trash2 } from "lucide-react";
+import { Fragment, useCallback, useEffect, useState } from "react";
+import { ChevronDown, ChevronUp, CircleAlert, Plus, Trash2 } from "lucide-react";
 import { SingleDatePicker } from "@/features/accounting/components/SingleDatePicker";
 import { ExpenseAccountPicker } from "./ExpenseAccountPicker";
 import type { ExpenseAccount } from "@/lib/acc/reimburse/expense-account-service";
@@ -202,8 +202,8 @@ const COLUMNS: readonly { label: string; width: string; right?: boolean }[] = [
   { label: "จ่ายสุทธิ", width: "120px", right: true },
 ];
 
-/** The trailing column holds the remove button and has no heading. */
-const ACTION_COLUMN_WIDTH = 44;
+/** The trailing column holds the expand and remove buttons, and has no heading. */
+const ACTION_COLUMN_WIDTH = 76;
 const COLUMN_GAP = 8;
 
 /**
@@ -233,6 +233,11 @@ const ROW_MIN_WIDTH =
   ACTION_COLUMN_WIDTH +
   COLUMN_GAP * COLUMNS.length +
   (ROW_PAD_X + ROW_BORDER_X) * 2;
+
+/** The panel under an expanded row. Narrower than the table on purpose — it is
+ *  pinned to the left edge of the visible area, so it has to fit a normal window. */
+const DETAIL_PANEL_WIDTH = 860;
+const DETAIL_GRID = "grid grid-cols-[26px_minmax(0,1fr)_90px_110px_120px] gap-2 items-baseline";
 
 const ROW_TEMPLATE = `${COLUMNS.map((c) => c.width).join(" ")} ${ACTION_COLUMN_WIDTH}px`;
 
@@ -350,6 +355,23 @@ export function ReimburseItemGrid({
   brandChosen: boolean;
 }) {
 
+  /**
+   * Which rows have their document's lines showing.
+   *
+   * Keyed on position rather than on `item.id`, because the save replaces every
+   * row wholesale and hands back new ids — keyed on those, every panel would
+   * close itself on each save.
+   */
+  const [openRows, setOpenRows] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleRow = useCallback((key: string) => {
+    setOpenRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
   // The total the server will store: the blank trailing row contributes
   // nothing, and `sumReimburseItems` is the same function it totals with.
   const total = sumReimburseItems(items.filter((it) => !isBlankItemRow(it)));
@@ -418,11 +440,26 @@ export function ReimburseItemGrid({
               // for what the line costs — see `ReimburseItem.amount`.
               const beforeVat = round2((Number(item.amount) || 0) - (Number(item.vatAmount) || 0));
               const netPaid = round2((Number(item.amount) || 0) - (Number(item.whtAmount) || 0));
+              // Keyed on position, not on `item.id`: the save replaces every
+              // row wholesale, so an id is new after each one and an expanded
+              // panel would close itself on every save.
+              const rowKey = `row-${index}`;
+              const lines = item.details ?? [];
+              const lineCount = lines.length;
+              const isOpen = lineCount > 0 && openRows.has(rowKey);
               return (
+                <Fragment key={item.id ?? rowKey}>
                 <div
-                  key={item.id ?? `row-${index}`}
-                  className={`${ROW_GRID} ${ROW_INSET} rounded-xl border py-2 items-center`}
-                  style={{ gridTemplateColumns: ROW_TEMPLATE, borderColor: "var(--border-card)", background: "var(--bg-card-alt)" }}
+                  className={`${ROW_GRID} ${ROW_INSET} border py-2 items-center`}
+                  style={{
+                    gridTemplateColumns: ROW_TEMPLATE,
+                    borderColor: "var(--border-card)",
+                    background: "var(--bg-card-alt)",
+                    // Square off the join when the panel is under it, so the
+                    // two read as one block rather than two stacked cards.
+                    borderRadius: isOpen ? "12px 12px 0 0" : 12,
+                    borderBottomWidth: isOpen ? 0 : 1,
+                  }}
                 >
                   <span
                     className="text-[13px] tabular-nums font-semibold text-center"
@@ -533,17 +570,93 @@ export function ReimburseItemGrid({
 
                   <ReadOnlyMoney value={netPaid} />
 
-                  <button
-                    type="button"
-                    onClick={() => onRemove(index)}
-                    aria-label={`ลบรายการที่ ${index + 1}`}
-                    title="ลบรายการนี้"
-                    className="w-9 h-9 rounded-lg flex items-center justify-center cursor-pointer border-none shrink-0 justify-self-end"
-                    style={{ background: "var(--bg-card)", color: "var(--color-danger)" }}
-                  >
-                    <Trash2 size={15} />
-                  </button>
+                  <span className="flex items-center gap-1 justify-self-end">
+                    {/* Only where there is something to open. A control that
+                        does nothing on most rows teaches people to stop
+                        pressing it on the rows where it works. */}
+                    {lineCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => toggleRow(rowKey)}
+                        aria-expanded={isOpen}
+                        aria-label={`${isOpen ? "ปิด" : "ดู"}รายการย่อยของรายการที่ ${index + 1}`}
+                        title={`เอกสารนี้มี ${lineCount} รายการย่อย`}
+                        className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer border-none shrink-0"
+                        style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}
+                      >
+                        {isOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => onRemove(index)}
+                      aria-label={`ลบรายการที่ ${index + 1}`}
+                      title="ลบรายการนี้"
+                      className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer border-none shrink-0"
+                      style={{ background: "var(--bg-card)", color: "var(--color-danger)" }}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </span>
                 </div>
+
+                {isOpen && (
+                  <div
+                    className={`${ROW_INSET} border rounded-b-xl pb-2.5`}
+                    style={{
+                      borderColor: "var(--border-card)",
+                      background: "var(--bg-card-alt)",
+                      borderTopWidth: 0,
+                    }}
+                  >
+                    {/* Pinned to the left of whatever part of the table is on
+                        screen. The row above is 2,156px wide, so a panel laid
+                        out normally would start wherever the reader happens to
+                        have scrolled to — often off-screen entirely. */}
+                    <div className="sticky left-0" style={{ width: DETAIL_PANEL_WIDTH, maxWidth: "100%" }}>
+                      <p
+                        className="text-[11px] font-semibold uppercase tracking-wide m-0 pt-1 pb-1.5"
+                        style={{ color: "var(--text-muted)" }}
+                      >
+                        รายการในเอกสาร · {lineCount} บรรทัด
+                      </p>
+                      <div className={`${DETAIL_GRID} pb-1`} style={{ color: "var(--text-muted)" }}>
+                        <span className={HEAD_CLASS}>#</span>
+                        <span className={HEAD_CLASS}>รายละเอียด</span>
+                        <span className={`${HEAD_CLASS} text-right`}>จำนวน</span>
+                        <span className={`${HEAD_CLASS} text-right`}>ราคา/หน่วย</span>
+                        <span className={`${HEAD_CLASS} text-right`}>มูลค่า</span>
+                      </div>
+                      {lines.map((d, di) => (
+                        <div
+                          key={`${rowKey}-d-${di}`}
+                          className={`${DETAIL_GRID} py-1.5`}
+                          style={{ borderTop: "1px solid var(--border-light)" }}
+                        >
+                          <span className="text-[12px] tabular-nums" style={{ color: "var(--text-faint)" }}>
+                            {di + 1}
+                          </span>
+                          <span className="text-[12.5px] break-words" style={{ color: "var(--text-primary)" }}>
+                            {d.description}
+                          </span>
+                          <span className="text-[12.5px] tabular-nums text-right" style={{ color: "var(--text-secondary)" }}>
+                            {d.quantity == null ? "—" : fmtBaht(d.quantity)}
+                          </span>
+                          <span className="text-[12.5px] tabular-nums text-right" style={{ color: "var(--text-secondary)" }}>
+                            {d.unitPrice == null ? "—" : fmtBaht(d.unitPrice)}
+                          </span>
+                          <span className="text-[12.5px] tabular-nums text-right font-semibold" style={{ color: "var(--text-primary)" }}>
+                            {d.amount == null ? "—" : fmtBaht(d.amount)}
+                          </span>
+                        </div>
+                      ))}
+                      <p className="text-[11px] m-0 pt-2" style={{ color: "var(--text-faint)" }}>
+                        คัดลอกมาจากเอกสารเพื่อให้ตรวจได้ ไม่ได้นำมารวมเป็นยอด — ยอดของแถวคือ ค่าใช้จ่ายรวม ด้านบน
+                      </p>
+                    </div>
+                  </div>
+                )}
+                </Fragment>
               );
             })}
           </div>

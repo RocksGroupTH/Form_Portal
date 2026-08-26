@@ -55,6 +55,7 @@ import type {
   ReimburseDetail,
   ReimburseFileMeta,
   ReimburseItem,
+  ReimburseItemDetail,
   SaveInput,
 } from "@/features/reimburse/types";
 
@@ -165,7 +166,44 @@ async function loadItems(pool: AccPool, requestId: number): Promise<ReimburseIte
               SourceFileId, Description, Amount, VatAmount, WhtAmount
        FROM [dbo].[AccReimburseItem] WHERE RequestId=@rid ORDER BY SortOrder, Id`,
     );
-  return (r.recordset as Record<string, unknown>[]).map(mapItemRow);
+  const items = (r.recordset as Record<string, unknown>[]).map(mapItemRow);
+  if (items.length === 0) return items;
+
+  // One query for every line of every item, joined in memory rather than a
+  // query per row. The join is on the item's own `Id`, which is why the insert
+  // path has to read it back — see `persistReimburseItems`.
+  const d = await pool
+    .request()
+    .input("rid", sql.Int, requestId)
+    .query(
+      `SELECT d.ItemId, d.SortOrder, d.Description, d.Quantity, d.UnitPrice, d.Amount
+       FROM [dbo].[AccReimburseItemDetail] d
+       JOIN [dbo].[AccReimburseItem] i ON i.Id = d.ItemId
+       WHERE i.RequestId = @rid
+       ORDER BY d.ItemId, d.SortOrder, d.Id`,
+    );
+
+  const byItem = new Map<number, ReimburseItemDetail[]>();
+  for (const row of d.recordset as Record<string, unknown>[]) {
+    const itemId = row.ItemId as number;
+    const list = byItem.get(itemId) ?? [];
+    list.push({
+      sortOrder: (row.SortOrder as number) ?? list.length,
+      description: (row.Description as string) ?? "",
+      quantity: num(row.Quantity),
+      unitPrice: num(row.UnitPrice),
+      amount: num(row.Amount),
+    });
+    byItem.set(itemId, list);
+  }
+  // Left undefined rather than `[]` when a row has none, so "this document
+  // itemised nothing" and "this row was typed by hand" read the same to the UI
+  // — neither has a panel worth opening.
+  for (const it of items) {
+    const list = it.id ? byItem.get(it.id) : undefined;
+    if (list?.length) it.details = list;
+  }
+  return items;
 }
 
 async function loadAckedRuleIds(pool: AccPool, requestId: number): Promise<number[]> {
@@ -315,7 +353,7 @@ async function persistReimburseItems(tx: AccTx, requestId: number, items: Reimbu
   await tx.request().input("rid", sql.Int, requestId).query(`DELETE FROM [dbo].[AccReimburseItem] WHERE RequestId=@rid`);
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
-    await tx
+    const inserted = await tx
       .request()
       .input("rid", sql.Int, requestId)
       .input("sort", sql.Int, it.sortOrder ?? i)
@@ -335,8 +373,50 @@ async function persistReimburseItems(tx: AccTx, requestId: number, items: Reimbu
         `INSERT INTO [dbo].[AccReimburseItem]
            (RequestId, SortOrder, ExpenseDate, DocumentNo, Category, BranchName,
             VendorTaxId, VendorName, VendorAddress, SourceFileId, Description, Amount, VatAmount, WhtAmount)
+         OUTPUT INSERTED.Id
          VALUES (@rid, @sort, @date, @docNo, @category, @branch,
                  @taxId, @vendorName, @vendorAddr, @srcFile, @desc, @amount, @vat, @wht)`,
+      );
+
+    // The id has to be read back here and nowhere else: the wholesale replace
+    // above means an item's `Id` is new on every save, so the lines inside its
+    // document can only be attached to the row that was just written. The
+    // matching delete costs nothing extra — `ON DELETE CASCADE` on
+    // `FK_AccReimburseItemDetail_Item` took the old ones out with the parent.
+    const itemId = (inserted.recordset?.[0] as { Id?: number } | undefined)?.Id;
+    if (itemId) await persistItemDetails(tx, itemId, it.details ?? []);
+  }
+}
+
+/**
+ * The lines printed inside one document.
+ *
+ * No delete of its own: this is only ever called straight after the parent row
+ * was inserted, and the parent's own wholesale delete already cascaded the
+ * previous set away.
+ */
+async function persistItemDetails(
+  tx: AccTx,
+  itemId: number,
+  details: ReimburseItemDetail[],
+): Promise<void> {
+  for (let i = 0; i < details.length; i++) {
+    const d = details[i];
+    const description = typeof d.description === "string" ? d.description.trim() : "";
+    // NOT NULL in the column, and a line of bare numbers is unreadable anyway.
+    if (!description) continue;
+    await tx
+      .request()
+      .input("itemId", sql.Int, itemId)
+      .input("sort", sql.Int, d.sortOrder ?? i)
+      .input("desc", sql.NVarChar(500), description)
+      .input("qty", sql.Decimal(18, 2), d.quantity ?? null)
+      .input("unit", sql.Decimal(18, 2), d.unitPrice ?? null)
+      .input("amount", sql.Decimal(18, 2), d.amount ?? null)
+      .query(
+        `INSERT INTO [dbo].[AccReimburseItemDetail]
+           (ItemId, SortOrder, Description, Quantity, UnitPrice, Amount)
+         VALUES (@itemId, @sort, @desc, @qty, @unit, @amount)`,
       );
   }
 }

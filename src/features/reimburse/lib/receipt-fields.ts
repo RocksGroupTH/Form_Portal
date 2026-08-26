@@ -34,6 +34,62 @@ export const MAX_VENDOR_ADDRESS_LENGTH = 500;
 const TAX_ID_DIGITS = 13;
 
 /**
+ * How many lines are kept from inside one document.
+ *
+ * A quotation or tax invoice itemises what was bought — the example this was
+ * built against lists eight — and that list is the answer to "what is this
+ * charge actually for". Bounded because the column it lands in is a table and
+ * a 400-line statement is a different document with a different purpose.
+ */
+export const MAX_DETAIL_LINES = 50;
+
+/** One line as printed inside a document, before it is trusted. */
+export interface RawDetailLine {
+  description: string | null;
+  quantity: number | null;
+  unitPrice: number | null;
+  amount: number | null;
+}
+
+export interface DetailLine {
+  description: string;
+  quantity: number | null;
+  unitPrice: number | null;
+  amount: number | null;
+}
+
+/**
+ * The lines inside one document, cleaned.
+ *
+ * **A line with no description is dropped rather than kept.** The description
+ * is the only part that makes a line readable; a row of bare numbers under a
+ * charge tells a reader less than no row at all, and it would sit in the panel
+ * looking like data that failed to load.
+ *
+ * Nothing here is summed or checked against the row's own total. These lines
+ * are a transcription of what the document says, not a second source of truth
+ * for what the claim is worth — `Amount` on the row remains that.
+ */
+export function sanitizeDetailLines(raw: unknown): DetailLine[] {
+  if (!Array.isArray(raw)) return [];
+  const out: DetailLine[] = [];
+  for (const r of raw as RawDetailLine[]) {
+    const description = text(r?.description, MAX_DESCRIPTION_LENGTH);
+    if (!description) continue;
+    out.push({
+      description,
+      // Zero is a real quantity to print, so the floor is 0 rather than the
+      // smallest positive value the row's own amount uses.
+      quantity: money(r?.quantity, 0, MAX_RECEIPT_AMOUNT),
+      unitPrice: money(r?.unitPrice, 0, MAX_RECEIPT_AMOUNT),
+      amount: money(r?.amount, 0, MAX_RECEIPT_AMOUNT),
+    });
+    if (out.length >= MAX_DETAIL_LINES) break;
+  }
+  return out;
+}
+
+/**
  * What the model is asked for. Every field nullable — null is a real answer.
  *
  * **`category` (รายการ) is deliberately absent.** It holds this company's own

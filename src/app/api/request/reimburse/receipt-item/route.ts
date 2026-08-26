@@ -14,7 +14,9 @@ import { MAX_RECEIPT_AMOUNT } from "@/features/accounting/lib/receipt-amount";
 import { todayYmd } from "@/features/accounting/lib/thai-calendar";
 import {
   MAX_DESCRIPTION_LENGTH,
+  sanitizeDetailLines,
   sanitizeReceiptFields,
+  type DetailLine,
   type ReceiptFields,
 } from "@/features/reimburse/lib/receipt-fields";
 
@@ -114,6 +116,16 @@ const RowSchema = z.object({
     .number()
     .nullable()
     .describe("The withholding tax figure in baht if one is printed, or null."),
+  lines: z
+    .array(
+      z.object({
+        description: z.string().nullable().describe("What this line is for, in Thai, as printed."),
+        quantity: z.number().nullable().describe("The quantity column, or null."),
+        unitPrice: z.number().nullable().describe("The unit price column, or null."),
+        amount: z.number().nullable().describe("This line's own value before tax, or null."),
+      }),
+    )
+    .describe("Every itemised line printed inside the document. Empty if it itemises nothing."),
 });
 
 const AnswerSchema = z.object({
@@ -172,6 +184,14 @@ const COMMON_RULES = [
   "  เพราะ 'จำนวนเงินที่ชำระ' คือยอดหลังหักภาษี ณ ที่จ่ายแล้ว",
   "- vat: บรรทัดภาษีมูลค่าเพิ่ม ถ้าไม่ได้พิมพ์แยกไว้ ให้ตอบ null อย่าคำนวณเอง",
   "- withholdingTax: บรรทัดหัก ณ ที่จ่าย ถ้าไม่ได้พิมพ์ไว้ ให้ตอบ null อย่าคำนวณเอง",
+  "",
+  "lines: รายการย่อยที่พิมพ์อยู่ในเอกสาร — คัดลอกมาให้ครบทุกบรรทัด ตามลำดับที่พิมพ์",
+  "- description: ข้อความของบรรทัดนั้นตามที่พิมพ์ เช่น 'SN1 - LOGO ต้อง TOTO LIGHT BOX ขนาด 1,000 mm.'",
+  "  ถ้ามีทั้งชื่อหมวดและคำบรรยาย ให้รวมเป็นข้อความเดียว",
+  "- quantity / unitPrice / amount: ตามคอลัมน์จำนวน ราคา และมูลค่าของบรรทัดนั้น ไม่มีให้ตอบ null",
+  "- ห้ามใส่บรรทัดสรุปท้ายเอกสาร (มูลค่าที่คำนวณภาษี, ภาษีมูลค่าเพิ่ม, จำนวนเงินทั้งสิ้น)",
+  "  และห้ามใส่หมายเหตุอย่าง Project, Warranty, Payment",
+  "- เอกสารที่ไม่ได้แจกแจงรายการ เช่น สลิปโอนเงิน ให้ตอบ lines เป็นลิสต์ว่าง",
   "",
   "ห้ามเด็ดขาด:",
   "- ห้ามตอบเลขประจำตัวผู้เสียภาษี เลขที่เอกสาร เบอร์โทร หรือจำนวนชิ้น เป็นตัวเลขเงิน",
@@ -286,7 +306,7 @@ export async function POST(req: NextRequest) {
     // not on it, and an invented G/L account is a misposted expense — so an
     // unrecognised answer becomes null, exactly as an unreadable total does.
     const offered = new Set(candidates.map((a) => a.accountNo));
-    const rows: ReceiptFields[] = raw
+    const rows: Array<ReceiptFields & { accountNo: string | null; lines: DetailLine[] }> = raw
       .slice(0, cap)
       .map((r) => ({
         ...sanitizeReceiptFields(
@@ -305,6 +325,7 @@ export async function POST(req: NextRequest) {
           today,
         ),
         accountNo: r.accountNo && offered.has(r.accountNo.trim()) ? r.accountNo.trim() : null,
+        lines: sanitizeDetailLines(r.lines),
       }))
       // A row where nothing survived sanitising is not a row — it would reach
       // the grid as a blank line the requester has to notice and delete.

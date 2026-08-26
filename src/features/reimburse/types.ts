@@ -6,6 +6,16 @@
  */
 import type { ReimburseStatus, ReimburseStepCode } from "./constants";
 
+/** One line as printed inside an attached document (`AccReimburseItemDetail`). */
+export interface ReimburseItemDetail {
+  sortOrder: number;
+  /** NOT NULL in the database — a line with no description is dropped before it gets here. */
+  description: string;
+  quantity?: number | null;
+  unitPrice?: number | null;
+  amount?: number | null;
+}
+
 /** One expense line (`AccReimburseItem`). */
 export interface ReimburseItem {
   /** AccReimburseItem.Id — present after save/load, absent for a row not yet persisted. */
@@ -47,6 +57,16 @@ export interface ReimburseItem {
    * answers, and the server never sees it.
    */
   sourceDocId?: string | null;
+  /**
+   * The lines printed inside the attached document — what the quotation or tax
+   * invoice itemises under this one charge (`AccReimburseItemDetail`,
+   * migration 121).
+   *
+   * A transcription, never a second source of truth: nothing sums it, and
+   * `amount` above stays what the claim is worth. Absent on a row typed by
+   * hand and on a row read from a document that itemises nothing.
+   */
+  details?: ReimburseItemDetail[];
   description: string;
   /**
    * **VAT-inclusive** — ค่าใช้จ่ายรวม in the AP-4.1 sheet, and the only money
