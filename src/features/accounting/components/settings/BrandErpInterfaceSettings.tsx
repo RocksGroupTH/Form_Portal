@@ -37,7 +37,6 @@ import type {
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
 const SYNC_PHASES = [
-  { phase: "vendor", label: "Vendor Master" },
   { phase: "journalBatch", label: "Journal Batch" },
   { phase: "gl", label: "G/L Account" },
   { phase: "bank", label: "Bank Account" },
@@ -47,7 +46,6 @@ const SYNC_PHASES = [
 type SyncPhaseKey = (typeof SYNC_PHASES)[number]["phase"];
 
 const DEFAULT_SYNC_PHASES: Record<SyncPhaseKey, boolean> = {
-  vendor: false,
   journalBatch: false,
   gl: false,
   bank: false,
@@ -1830,7 +1828,6 @@ export function BrandErpInterfaceSettings({ isAdmin }: BrandErpInterfaceSettings
 
   const setAllSyncPhases = (selected: boolean) => {
     setSyncPhasesSelected({
-      vendor: selected,
       journalBatch: selected,
       gl: selected,
       bank: selected,
@@ -1899,8 +1896,7 @@ export function BrandErpInterfaceSettings({ isAdmin }: BrandErpInterfaceSettings
               totalRows += (json.data?.glRows ?? 0)
                 + (json.data?.bankRows ?? 0)
                 + (json.data?.branchRows ?? 0)
-                + (json.data?.journalBatchRows ?? 0)
-                + (json.data?.vendorRows ?? 0);
+                + (json.data?.journalBatchRows ?? 0);
             }
           } catch {
             errors.push(`${brand.id} (${label}): Sync failed`);
