@@ -20,6 +20,7 @@ export function buildAdvanceJournalPayload(
   if (!bankAccountNo) throw new Error("ยังไม่ได้ตั้งค่า Bank Account สำหรับแบรนด์นี้");
   if (!journalBatchName) throw new Error("ยังไม่ได้ตั้งค่า Journal Batch สำหรับแบรนด์นี้");
   if (!req.paymentDate) throw new Error("ยังไม่กำหนดวันจ่าย (PaymentDate)");
+  if (!advance.matchedVendorNo) throw new Error("ยังไม่ได้เลือก Vendor สำหรับรายการนี้ (แก้ที่ขั้น Accounting Officer)");
 
   // Post the THB base amount (foreign-currency advances convert via exchangeRate).
   const amount = advance.baseAmount ?? advance.amount ?? 0;
@@ -43,12 +44,11 @@ export function buildAdvanceJournalPayload(
         groupNo: "G1",
         postingDate,
         documentType: "Payment",
-        accountType: "G/L Account",
-        accountNo: glAccountNo,
+        accountType: "Vendor",
+        accountNo: advance.matchedVendorNo,
         description,
         paymentMethodCode: "BANK",
         amount,
-        balAccountType: "G/L Account",
         employeeCode,
         branchCode: branch,
         departmentCode,
