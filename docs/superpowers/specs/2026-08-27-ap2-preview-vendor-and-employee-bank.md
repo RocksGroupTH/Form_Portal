@@ -113,36 +113,48 @@ panel offers **approve only**. Reject/return stay on the full page ("เปิ�
 
 ---
 
-## Feature B — Employee bank account auto-fill
+## Feature B — Employee bank account (live, always fresh)
 
 Source of truth: `Rocks_Portal_HR.dbo.Employee.BankAccountNo`. There is no bank
 name/code in HR, so only the account number is pulled; `payeeBankCode` stays null
 for employee payees.
 
+**Resolution model: live, not stored.** For employee payees the bank account is
+**resolved fresh from HR on every read** (form load and advance read), never
+snapshotted into `AccAdvance`. So an HR change is reflected on existing advances
+too. This is safe for performance because we `SELECT` only `BankAccountNo` (a tiny
+nvarchar) keyed by the indexed `StaffId` on a ~1.1k-row table — the known HR
+slowness was solely the multi-MB base64 `PhotoUrl` column ([[project_formportal_photo_perf]]),
+which we never select here. No DB write, no migration.
+
 ### B1. Surface `bankAccountNo` in HR lookups
 
-Add `bankAccountNo: string | null` (`SELECT … BankAccountNo`) to the employee
-lookup rows used by the advance flow:
+Add `bankAccountNo: string | null` (`SELECT … BankAccountNo`, **never** PhotoUrl)
+to the employee lookup rows used by the advance flow:
 - `src/lib/hr/employee-lookup.ts` — `findActiveEmployeeByEmail` and
   `listDepartmentColleagues` (self + on-behalf colleagues).
 - The advance requesters endpoint (`/api/request/advance/requesters`) and
   `/api/me/employee` include `bankAccountNo` in their employee/colleague payloads.
 
-Only add the column to the SELECT and the returned shape; do not change the
-existing photo/perf handling.
-
-### B2. `AdvanceForm` fills + stores it
+### B2. `AdvanceForm` shows it live (create/edit)
 
 - Track the resolved requester's `bankAccountNo` (self from `/me/employee`, or the
-  selected on-behalf colleague from the requesters list).
-- When `payeeType === "employee"`: the note becomes
+  selected on-behalf colleague from the requesters list — both now carry it).
+- When `payeeType === "employee"`, the note becomes:
   "โอนเข้าบัญชีของผู้ขอเบิก (<name>) · เลขบัญชี <bankAccountNo | "— ไม่พบใน HR">".
-- On save: `payeeBankAccount = payeeType === "vendor" ? payeeBankAccount
-  : payeeType === "employee" ? (resolvedEmployeeBankAccountNo || null) : null`.
-  `payeeBankCode` stays null for employee. (Snapshot at submit time is correct for
-  a payment record.)
-- `AdvanceDetailPanel` already renders `adv.payeeBankAccount` under "เลขบัญชี", so
-  it will show for employee payees automatically once stored.
+- **Do not** write it into the payload: `payeeBankAccount`/`payeeBankCode` stay
+  `null` for employee payees on save (unchanged), because the value is resolved
+  live at read time (B3).
+
+### B3. Advance read overlays the live value (view/preview)
+
+In the advance read service (`getAdvanceRequest` in
+`src/lib/adv/advance-request-service.ts`), when the advance's `payeeType ===
+"employee"`, `LEFT JOIN Employee ON Employee.StaffId = <requester staffId>` and set
+the returned `advance.payeeBankAccount` to `Employee.BankAccountNo` (select only
+that column). Because `AdvanceDetailPanel` and the full page already render
+`adv.payeeBankAccount` under "เลขบัญชี", both show the live employee account with
+no further UI change.
 
 No new validation (employee bank account is informational; absence shows a hint,
 does not block submit).
@@ -153,8 +165,10 @@ does not block submit).
 
 - **A:** panel `data` → `AdvanceVendorPicker` (match/options/confirm) → approve
   endpoint → `onChanged` reloads queue.
-- **B:** HR `Employee.BankAccountNo` → lookup services → form state → `payeeBankAccount`
-  on the advance → shown in panel/preview.
+- **B (create/edit):** HR `Employee.BankAccountNo` → lookup services → form note.
+- **B (view/preview):** advance read `LEFT JOIN Employee` by requester StaffId →
+  overlay onto `advance.payeeBankAccount` (employee payees only) → shown in
+  panel/full page. Always current; nothing stored.
 
 ## Error handling
 
@@ -166,8 +180,8 @@ does not block submit).
 
 - Extract-and-reuse of `AdvanceVendorPicker` must not change full-page behavior
   (manual E2E: full page ACC_OFFICER match + approve still works).
-- Employee bank auto-fill: unit-test the payload rule (employee → account from HR;
-  vendor → typed account; neither → null) where the pure mapping is testable.
+- Employee bank live-resolve: verify a live join returns the account for an
+  employee-payee advance and that `SELECT` avoids the PhotoUrl column (perf).
 - Manual E2E via the approve queue: open drawer at ACC_OFFICER → AI match →
   pick/confirm vendor → status badge → pick payment date → ดำเนินการ → queue
   refreshes; and create an employee-payee advance → bank account shows in preview.
@@ -180,6 +194,7 @@ does not block submit).
 - Edit: `src/app/(dashboard)/request/advance/[id]/page.tsx` (use the shared picker)
 - Edit: `src/features/advance/components/AdvanceDetailPanel.tsx` (vendor section + approve footer + `onChanged`)
 - Edit: `src/features/advance/components/AdvanceApproveQueue.tsx` (pass `onChanged`)
-- Edit: `src/lib/hr/employee-lookup.ts` (+`bankAccountNo`)
+- Edit: `src/lib/hr/employee-lookup.ts` (+`bankAccountNo`, never PhotoUrl)
 - Edit: advance requesters route + `/api/me/employee` shape (+`bankAccountNo`)
-- Edit: `src/features/advance/components/AdvanceForm.tsx` (fill + store employee bank account)
+- Edit: `src/features/advance/components/AdvanceForm.tsx` (show live employee bank account in the note)
+- Edit: `src/lib/adv/advance-request-service.ts` (`getAdvanceRequest` live-overlays employee bank account)
