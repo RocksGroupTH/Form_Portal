@@ -84,8 +84,11 @@ export async function loadAdvanceErpContext(
   // Prefer FormCode='AP-2' rows; fall back to the picked NULL-default row.
   const gl     = glRows.find(r => r.formCode === AP2_FORM_CODE)     ?? glRows[0]     ?? null;
   const bank   = bankRows.find(r => r.formCode === AP2_FORM_CODE)   ?? bankRows[0]   ?? null;
-  const branch = branchRows.find(r => r.formCode === AP2_FORM_CODE) ?? branchRows[0] ?? null;
   const batch  = batchRows.find(r => r.formCode === AP2_FORM_CODE)  ?? batchRows[0]  ?? null;
+  // Branch is the exception: AP-2 self-owns it. Only an explicit AP-2 row counts —
+  // an inherited NULL-default (AP-1's shared branch, e.g. HQ) is treated as "no
+  // branch" so a blank AP-2 branch falls back to the requester's mapped ERP dept.
+  const branch = branchRows.find(r => r.formCode === AP2_FORM_CODE) ?? null;
 
   const config: BrandErpAccountConfig = {
     glAccountNo:       gl?.accountNo?.trim()       ?? null,

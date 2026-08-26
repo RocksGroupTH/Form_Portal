@@ -4,7 +4,7 @@ import { loadErpJournalBuildContext } from "@/lib/acc/erp-journal-context";
 import { resolveErpTargetProfile } from "@/lib/acc/erp-target-profile";
 import { listBrandErpInterfaceMaps, upsertFormBrandErpInterfaceMap } from "@/lib/acc/brand-erp-interface-map-service";
 import { mergeFormBrandAccount } from "@/lib/acc/brand-account-service";
-import { mergeFormBrandBranch } from "@/lib/acc/brand-branch-service";
+import { listBrandBranches, mergeFormBrandBranch } from "@/lib/acc/brand-branch-service";
 import { mergeFormBrandBatch } from "@/lib/acc/brand-journal-batch-service";
 import { AP2_FORM_CODE } from "@/features/advance/constants";
 
@@ -26,15 +26,24 @@ export interface AdvanceInterfaceConfigView {
 }
 
 export async function listAdvanceInterfaceConfigView(): Promise<AdvanceInterfaceConfigView[]> {
-  const [allBrands, ctx, ifaceMaps, ap2Brands] =
+  const [allBrands, ctx, ifaceMaps, ap2Brands, branchRows] =
     await Promise.all([
       listAllBrands(),
       loadErpJournalBuildContext(AP2_FORM_CODE),
       listBrandErpInterfaceMaps(AP2_FORM_CODE),
       listFormBrands(AP2_FORM_CODE),
+      listBrandBranches(null, AP2_FORM_CODE),
     ]);
 
   const activeByCode = new Map(ap2Brands.map((b) => [b.brandCode.toUpperCase(), b.isActive]));
+  // AP-2 self-owns its branch: show only an explicit AP-2 override, never the
+  // inherited NULL-default (AP-1's shared branch). A blank means "use the
+  // requester's mapped ERP dept" — see loadAdvanceErpContext.
+  const ap2BranchByCode = new Map(
+    branchRows
+      .filter((b) => b.formCode === AP2_FORM_CODE)
+      .map((b) => [b.brandCode.toUpperCase(), b.branchCode]),
+  );
   const brandByCode = new Map(allBrands.map((b) => [b.brandCode.toUpperCase(), b]));
   const ifaceByCode = new Map(ifaceMaps.map((m) => [m.brandCode.toUpperCase(), m]));
 
@@ -56,7 +65,7 @@ export async function listAdvanceInterfaceConfigView(): Promise<AdvanceInterface
       const profile = await resolveErpTargetProfile(target, AP2_FORM_CODE);
 
       const bankAccountNo   = base?.bankAccountNo ?? null;
-      const branchCode      = base?.branchCode ?? null;
+      const branchCode      = ap2BranchByCode.get(code) ?? null;
       const journalBatchName = base?.journalBatchName ?? null;
 
       // Dr posts to the matched Vendor (G/L derived from posting group), so the
