@@ -42,6 +42,11 @@ function AdvanceDetailContent() {
   const [checked, setChecked] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
 
+  // Vendor selection at the ACC_OFFICER step.
+  const [vendors, setVendors] = useState<{ vendorNo: string; displayName: string | null }[]>([]);
+  const [selectedVendor, setSelectedVendor] = useState<string>("");
+  const [vendorMatch, setVendorMatch] = useState<{ status: string | null; confidence: string | null; reason: string | null }>({ status: null, confidence: null, reason: null });
+
   const fetchRequest = useCallback(() => {
     if (requestId == null || Number.isNaN(requestId)) {
       setNotFound(true);
@@ -77,6 +82,26 @@ function AdvanceDetailContent() {
       .catch(() => {});
   }, [request?.currentStepCode]);
 
+  useEffect(() => {
+    if (request?.currentStepCode !== "ACC_OFFICER" || !request?.brandCode) return;
+    fetch(`/api/request/advance/vendors?company=${encodeURIComponent(request.brandCode)}`)
+      .then((r) => r.json())
+      .then((j: { ok: boolean; vendors?: { vendorNo: string; displayName: string | null }[] }) => {
+        if (j.ok && j.vendors) setVendors(j.vendors);
+      })
+      .catch(() => {});
+    if (requestId == null) return;
+    fetch(`/api/request/advance/vendor-match/${requestId}`, { method: "POST" })
+      .then((r) => r.json())
+      .then((j: { ok: boolean; data?: { status: string | null; vendorNo: string | null; confidence: string | null; reason: string | null } }) => {
+        if (j.ok && j.data) {
+          setVendorMatch({ status: j.data.status, confidence: j.data.confidence, reason: j.data.reason });
+          if (j.data.vendorNo) setSelectedVendor(j.data.vendorNo);
+        }
+      })
+      .catch(() => {});
+  }, [request?.currentStepCode, request?.brandCode, requestId]);
+
   async function act(path: string, body?: unknown) {
     setBusy(true);
     try {
@@ -100,6 +125,7 @@ function AdvanceDetailContent() {
     if (request?.currentStepCode === "ACC_OFFICER") {
       if (!checked) return toast.error("ต้องกด Check ก่อนอนุมัติ");
       if (!paymentDate) return toast.error("กรุณาเลือกวันจ่าย");
+      if (!selectedVendor) return toast.error("กรุณาเลือก Vendor");
       act("approve", { paymentDate, isChecked: checked });
     } else {
       act("approve");
@@ -210,6 +236,36 @@ function AdvanceDetailContent() {
                 <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} />
                 ตรวจสอบแล้ว (Check)
               </label>
+              <div className="text-[12px] flex items-center gap-2" style={{ color: "var(--text-secondary)" }}>
+                Vendor:
+                <select
+                  value={selectedVendor}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setSelectedVendor(v);
+                    if (!v) return;
+                    fetch("/api/request/advance/vendor-confirm", {
+                      method: "POST", headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ id: requestId, vendorNo: v }),
+                    })
+                      .then((r) => r.json())
+                      .then((j: { ok: boolean; error?: string }) => {
+                        if (!j.ok) toast.error(j.error ?? "ยืนยัน Vendor ไม่สำเร็จ");
+                        else { setVendorMatch((m) => ({ ...m, status: "confirmed" })); toast.success("ยืนยัน Vendor แล้ว"); }
+                      })
+                      .catch(() => toast.error("ยืนยัน Vendor ไม่สำเร็จ"));
+                  }}
+                  className="border rounded px-2 py-1"
+                >
+                  <option value="">— เลือก Vendor —</option>
+                  {vendors.map((v) => (
+                    <option key={v.vendorNo} value={v.vendorNo}>{v.displayName ?? v.vendorNo} ({v.vendorNo})</option>
+                  ))}
+                </select>
+                {vendorMatch.status === "suggested" && vendorMatch.confidence && (
+                  <span title={vendorMatch.reason ?? ""} className="text-[11px] opacity-70">AI: {vendorMatch.confidence}</span>
+                )}
+              </div>
             </div>
           )}
           {/* ACC_OFFICER is the final ERP-posting step — only "ดำเนินการ", no

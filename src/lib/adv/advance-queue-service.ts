@@ -30,6 +30,8 @@ export interface AdvanceQueueRow {
   erpDocumentNo: string | null;
   paymentDate: string | null;
   updatedAt: string;
+  matchedVendorNo: string | null;
+  matchedVendorName: string | null;
 }
 
 type Pool = Awaited<ReturnType<typeof getAccPool>>;
@@ -89,6 +91,8 @@ function mapRow(row: Record<string, unknown>, map: Record<string, string>): Adva
     erpDocumentNo: (row.ErpDocumentNo as string) ?? null,
     paymentDate: row.PaymentDate ? (row.PaymentDate as Date).toISOString().slice(0, 10) : null,
     updatedAt: row.UpdatedAt ? (row.UpdatedAt as Date).toISOString() : "",
+    matchedVendorNo: (row.MatchedVendorNo as string) ?? null,
+    matchedVendorName: (row.MatchedVendorName as string) ?? null,
   };
 }
 
@@ -97,7 +101,8 @@ const SELECT_COLS = `
   r.Status, r.CurrentStepCode, r.ErpInterfaceStatus, r.ErpInterfaceError,
   r.ErpInterfaceSentAt, r.ErpInterfaceEnvironment, r.ErpDocumentNo,
   r.PaymentDate, r.UpdatedAt,
-  a.PayeeName, a.Purpose, a.Currency, a.Amount, a.BaseAmount
+  a.PayeeName, a.Purpose, a.Currency, a.Amount, a.BaseAmount,
+  a.MatchedVendorNo, a.MatchedVendorName
 `;
 
 /**
