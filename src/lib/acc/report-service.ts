@@ -477,22 +477,44 @@ export async function listMyWorkRows(
       .query(
         buildListQuery(
           "request",
-          `r.Status <> 'Draft' AND EXISTS (
-          SELECT 1 FROM [dbo].[AccApproval] a
-          WHERE a.RequestId = r.Id
-            AND (
-              (@staffId IS NOT NULL AND a.AssignedTo = @staffId)
-              OR (@email <> '' AND a.AssignedEmail = @email)
-              OR (
-                @staffId IS NOT NULL
-                AND a.StepCode = 'ACCOUNT'
-                AND a.Status = 'Pending'
-                AND EXISTS (
-                  SELECT 1 FROM [dbo].[AccApprover] ap
-                  WHERE ap.StaffId = @staffId AND ap.IsActive = 1
+          `r.Status <> 'Draft' AND (
+          EXISTS (
+            SELECT 1 FROM [dbo].[AccApproval] a
+            WHERE a.RequestId = r.Id
+              AND (
+                (@staffId IS NOT NULL AND a.AssignedTo = @staffId)
+                OR (@email <> '' AND a.AssignedEmail = @email)
+                OR (
+                  @staffId IS NOT NULL
+                  AND a.StepCode = 'ACCOUNT'
+                  AND a.Status = 'Pending'
+                  AND EXISTS (
+                    SELECT 1 FROM [dbo].[AccApprover] ap
+                    WHERE ap.StaffId = @staffId AND ap.IsActive = 1
+                  )
                 )
               )
-            )
+          )
+          OR EXISTS (
+            SELECT 1 FROM [dbo].[AccClearAdvanceApproval] ca
+            WHERE ca.RequestId = r.Id
+              AND (
+                (@staffId IS NOT NULL AND ca.AssignedStaffId = @staffId)
+                OR (
+                  @email <> ''
+                  AND LOWER(LTRIM(RTRIM(COALESCE(ca.AssignedEmail, N'')))) = LOWER(LTRIM(RTRIM(@email)))
+                )
+                OR (
+                  @staffId IS NOT NULL
+                  AND ca.StepCode = 'ACCOUNT'
+                  AND ca.Status = 'Pending'
+                  AND EXISTS (
+                    SELECT 1 FROM [dbo].[AccClearAdvanceApprover] ap
+                    WHERE ap.StaffId = @staffId AND ap.IsActive = 1 AND ap.Role = 'ACCOUNT'
+                  )
+                )
+              )
+          )
         )`,
           "r.SubmittedAt DESC, r.Id DESC",
           viewerManagerSelect,
