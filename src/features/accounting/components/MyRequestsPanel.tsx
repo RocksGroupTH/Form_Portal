@@ -15,6 +15,7 @@ import { TravelBookingDetail } from "@/features/travel-booking/components/Travel
 import type { TravelBookingRequest } from "@/features/travel-booking/types";
 import { ReimburseDetail } from "@/features/reimburse/components/ReimburseDetail";
 import type { ReimburseDetail as ReimburseDetailData } from "@/features/reimburse/types";
+import { AdvanceDetailPanel } from "@/features/advance/components/AdvanceDetailPanel";
 import { useFormEnvironments } from "@/lib/hooks/useFormEnvironments";
 import { toast } from "sonner";
 
@@ -234,6 +235,9 @@ function RequestRowList({
     setDrawerDetail(null);
     setTbDetail(null);
     setRbDetail(null);
+    // AP-2 (advance) has its own table + API; it renders via AdvanceDetailPanel,
+    // which fetches its own data. Routing it through the accounting API 404s.
+    if (drawerFormCode === "AP-2") return;
     return loadDrawer(drawerId, drawerFormCode);
   }, [drawerId, drawerFormCode, loadDrawer]);
 
@@ -541,8 +545,17 @@ function RequestRowList({
         </div>
       )}
 
+      {/* AP-2 (advance) — self-contained drawer with its own fetch + vendor/approve */}
+      {drawerFormCode === "AP-2" && drawerId != null && (
+        <AdvanceDetailPanel
+          requestId={drawerId}
+          onClose={() => setDrawerId(null)}
+          onChanged={() => void loadRows()}
+        />
+      )}
+
       {/* Detail drawer — same day-selector view as the report / approval queue */}
-      <SidePanel open={drawerId != null} onClose={() => setDrawerId(null)} width="min(720px, 100vw)" zIndex={50}>
+      <SidePanel open={drawerId != null && drawerFormCode !== "AP-2"} onClose={() => setDrawerId(null)} width="min(720px, 100vw)" zIndex={50}>
         <div
           className="flex items-center justify-between px-4 py-3 shrink-0"
           style={{ borderBottom: "1px solid var(--border-light)" }}
