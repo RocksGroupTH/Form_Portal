@@ -407,4 +407,18 @@ export interface TravelBookingAccountQueueItem {
   paymentDate: string | null;
   updatedAt: string;
   perDiemHistory: string[];
+  /**
+   * The trip whose fate this figure still hangs on, or null when nothing can
+   * move it. `settled: false` means accounting must not sign this row yet — the
+   * queue page disables its controls and `approveByAccount` refuses it. Copied
+   * rather than imported for the reason above: this file has no imports, and
+   * `PerDiemDependency` (`@/lib/acc/travel-booking/perdiem-dependency`) is the
+   * server-side original the two must stay identical to.
+   */
+  perDiemDependency: {
+    requestId: number;
+    requestNo: string | null;
+    status: string;
+    settled: boolean;
+  } | null;
 }

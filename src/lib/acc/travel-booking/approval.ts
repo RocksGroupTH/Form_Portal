@@ -7,6 +7,8 @@ import { buildTravelBookingEmail, type TravelBookingTrigger } from "@/lib/acc/tr
 import { computePayoutDate } from "@/lib/acc/travel-booking/payment-month";
 import { getTravelBookingRequest } from "@/lib/acc/travel-booking/request-service";
 import { recomputeGroupPerDiem } from "@/lib/acc/travel-booking/perdiem-recompute";
+import { loadPerDiemDependency } from "@/lib/acc/travel-booking/perdiem-dependency-load";
+import { dependencyRefusalText } from "@/lib/acc/travel-booking/perdiem-dependency-text";
 import { AP17_FORM_CODE } from "@/features/travel-booking/constants";
 import type { TravelBookingRequest } from "@/features/travel-booking/types";
 
@@ -456,6 +458,18 @@ export async function approveByAccount(requestId: number, actor: Actor): Promise
               WHERE Id=@rid AND Status='ManagerApproved' AND CurrentStepCode='ACCOUNT'`);
     if ((res.rowsAffected[0] ?? 0) === 0) {
       throw new Error("คำขอนี้ไม่อยู่ในขั้นตอนอนุมัติของบัญชี");
+    }
+
+    // The rule, not the button. The queue disables this row's controls, but a
+    // control removed from a page is not a control the server has: this reads
+    // the group from the database at the moment of the call, inside the
+    // transaction that has just claimed the row, so a predecessor decided a
+    // moment ago is seen and one still undecided cannot be signed off by a
+    // stale page, a replayed request or the multi-select loop. Throwing rolls
+    // the claim back, leaving the request exactly where it was.
+    const dependency = await loadPerDiemDependency(tx, requestId);
+    if (dependency && !dependency.settled) {
+      throw new Error(dependencyRefusalText(dependency));
     }
 
     await tx.request()

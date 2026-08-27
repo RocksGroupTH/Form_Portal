@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
-import { Check, ChevronRight, History, Inbox, Loader2, RotateCcw, ThumbsDown, ThumbsUp } from "lucide-react";
+import { Check, ChevronRight, Clock, History, Inbox, Loader2, RotateCcw, ThumbsDown, ThumbsUp } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { backTo } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
@@ -15,6 +15,9 @@ import { fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
 import { fmtBaht } from "@/features/travel-booking/components/shared";
 import { TravelBookingDetail } from "@/features/travel-booking/components/TravelBookingDetail";
 import { payoutMonthOptions, type PayoutMonth } from "@/lib/acc/travel-booking/payout-months";
+// Pure, import-free (its own type import is erased) — the same sentences the
+// server refuses with, so the queue and the 400 can never disagree.
+import { dependencyWarningText } from "@/lib/acc/travel-booking/perdiem-dependency-text";
 import type { TravelBookingAccountQueueItem, TravelBookingRequest } from "@/features/travel-booking/types";
 
 async function fetcher(url: string): Promise<TravelBookingAccountQueueItem[]> {
@@ -48,28 +51,59 @@ function monthOptionsFor(paymentDate: string | null): PayoutMonth[] {
 }
 
 /** Row-selection checkbox — same shape as AP-1's `ApprovalsQueue.tsx`. */
-function QueueCheckbox({ checked, onChange, ariaLabel }: { checked: boolean; onChange: () => void; ariaLabel: string }) {
+function QueueCheckbox({
+  checked,
+  onChange,
+  ariaLabel,
+  disabled,
+  title,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  ariaLabel: string;
+  disabled?: boolean;
+  title?: string;
+}) {
   return (
     <button
       type="button"
       role="checkbox"
       aria-checked={checked}
       aria-label={ariaLabel}
+      aria-disabled={disabled ? true : undefined}
+      disabled={disabled}
+      title={title}
       onClick={(e) => {
         e.stopPropagation();
+        if (disabled) return;
         onChange();
       }}
-      className="w-[18px] h-[18px] rounded-[6px] flex items-center justify-center shrink-0 cursor-pointer transition-all border-none p-0"
+      className={`w-[18px] h-[18px] rounded-[6px] flex items-center justify-center shrink-0 transition-all border-none p-0 ${
+        disabled ? "cursor-not-allowed" : "cursor-pointer"
+      }`}
       style={{
         background: checked ? "var(--text-info-green)" : "var(--bg-card)",
         boxShadow: checked
           ? "0 0 0 2px color-mix(in srgb, var(--text-info-green) 28%, transparent)"
           : "inset 0 0 0 1.5px var(--border-card)",
+        opacity: disabled ? 0.45 : 1,
       }}
     >
       {checked && <Check size={11} strokeWidth={3} style={{ color: "var(--bg-card)" }} />}
     </button>
   );
+}
+
+/**
+ * A row whose per-diem figure can still move under the reader — its group's
+ * predecessor is not decided yet (`perdiem-dependency.ts`). Accounting must not
+ * sign it, so the row's checkbox and approve button are both disabled and the
+ * multi-select never picks it up. The server refuses it as well
+ * (`approveByAccount`); this only saves the click.
+ */
+function isBlocked(item: TravelBookingAccountQueueItem): boolean {
+  const dep = item.perDiemDependency;
+  return !!dep && !dep.settled;
 }
 
 /**
@@ -223,8 +257,17 @@ export default function TravelBookingAccountApprovalsPage() {
       ? detail.id
       : null;
 
-  const selectedRows = useMemo(() => rows.filter((r) => selectedIds.has(r.id)), [rows, selectedIds]);
-  const allSelected = rows.length > 0 && rows.every((r) => selectedIds.has(r.id));
+  /** The rows accounting may actually sign — a blocked row is never selectable. */
+  const selectableRows = useMemo(() => rows.filter((r) => !isBlocked(r)), [rows]);
+  /* Blocked rows are filtered out of the selection as well as out of the
+     checkbox, not merely hidden from it: a row selected before a refetch could
+     come back blocked (its predecessor was returned to the requester while this
+     page was open), and the batch approve reads this list. */
+  const selectedRows = useMemo(
+    () => selectableRows.filter((r) => selectedIds.has(r.id)),
+    [selectableRows, selectedIds],
+  );
+  const allSelected = selectableRows.length > 0 && selectableRows.every((r) => selectedIds.has(r.id));
 
   function toggleSelect(id: number) {
     setSelectedIds((prev) => {
@@ -239,7 +282,7 @@ export default function TravelBookingAccountApprovalsPage() {
     setSelectedIds((prev) => {
       if (allSelected) return new Set();
       const next = new Set(prev);
-      for (const r of rows) next.add(r.id);
+      for (const r of selectableRows) next.add(r.id);
       return next;
     });
   }
@@ -373,15 +416,28 @@ export default function TravelBookingAccountApprovalsPage() {
               className="flex items-center gap-3 px-5 py-3"
               style={{ borderBottom: "1px solid var(--border-light)", background: "var(--bg-card-alt)" }}
             >
-              <QueueCheckbox checked={allSelected} onChange={toggleSelectAll} ariaLabel="เลือกทั้งหมด" />
+              <QueueCheckbox
+                checked={allSelected}
+                onChange={toggleSelectAll}
+                ariaLabel="เลือกทั้งหมด"
+                disabled={selectableRows.length === 0}
+                title={selectableRows.length === 0 ? "ทุกรายการรอผลอนุมัติของคำขอที่เกี่ยวข้องอยู่" : undefined}
+              />
               <span className="text-[12px] font-medium" style={{ color: "var(--text-muted)" }}>
-                เลือกทั้งหมด ({rows.length} รายการ)
+                เลือกทั้งหมด ({selectableRows.length} รายการ)
+                {selectableRows.length !== rows.length && (
+                  <span style={{ color: "var(--text-info-yellow)" }}>
+                    {" "}
+                    · รออีก {rows.length - selectableRows.length} รายการ
+                  </span>
+                )}
               </span>
             </div>
 
             <div className="flex flex-col">
               {rows.map((item) => {
-                const isSelected = selectedIds.has(item.id);
+                const blocked = isBlocked(item);
+                const isSelected = !blocked && selectedIds.has(item.id);
                 const options = monthOptionsFor(item.paymentDate);
                 const currentYm = monthByRow[item.id] ?? ymFromDate(item.paymentDate) ?? options[0]?.ym ?? "";
 
@@ -396,6 +452,8 @@ export default function TravelBookingAccountApprovalsPage() {
                         checked={isSelected}
                         onChange={() => toggleSelect(item.id)}
                         ariaLabel={`เลือก ${item.requestNo ?? item.id}`}
+                        disabled={blocked}
+                        title={blocked && item.perDiemDependency ? dependencyWarningText(item.perDiemDependency) : undefined}
                       />
                     </div>
 
@@ -440,6 +498,23 @@ export default function TravelBookingAccountApprovalsPage() {
                         </span>
                       </div>
 
+                      {/* Named and explained, not just greyed out: an accountant who
+                          finds a row they cannot approve has to be told which request
+                          they are waiting on and why, or the queue simply looks broken. */}
+                      {blocked && item.perDiemDependency && (
+                        <div
+                          className="flex items-start gap-1.5 mb-2 px-2.5 py-2 rounded-lg text-[11px]"
+                          style={{
+                            background: "rgba(220,38,38,0.06)",
+                            color: "var(--color-danger)",
+                            border: "1px solid rgba(220,38,38,0.25)",
+                          }}
+                        >
+                          <Clock size={13} className="shrink-0 mt-0.5" />
+                          <span>{dependencyWarningText(item.perDiemDependency)}</span>
+                        </div>
+                      )}
+
                       {item.perDiemHistory.length > 0 && (
                         <div
                           className="flex items-start gap-1.5 mb-2 px-2.5 py-2 rounded-lg text-[11px]"
@@ -482,9 +557,17 @@ export default function TravelBookingAccountApprovalsPage() {
                         <button
                           type="button"
                           onClick={() => void approveOne(item.id)}
-                          disabled={approvingId === item.id || batchRunning}
-                          className="inline-flex items-center gap-1.5 text-[12px] font-medium px-3 py-1.5 rounded-lg cursor-pointer ml-auto"
-                          style={{ background: "var(--bg-info-green)", color: "var(--text-info-green)", border: "1px solid var(--border-info-green)" }}
+                          disabled={blocked || approvingId === item.id || batchRunning}
+                          title={blocked && item.perDiemDependency ? dependencyWarningText(item.perDiemDependency) : undefined}
+                          className={`inline-flex items-center gap-1.5 text-[12px] font-medium px-3 py-1.5 rounded-lg ml-auto ${
+                            blocked ? "cursor-not-allowed" : "cursor-pointer"
+                          }`}
+                          style={{
+                            background: "var(--bg-info-green)",
+                            color: "var(--text-info-green)",
+                            border: "1px solid var(--border-info-green)",
+                            opacity: blocked ? 0.45 : 1,
+                          }}
                         >
                           {approvingId === item.id ? <Loader2 size={13} className="animate-spin" /> : <ThumbsUp size={13} />}
                           อนุมัติ

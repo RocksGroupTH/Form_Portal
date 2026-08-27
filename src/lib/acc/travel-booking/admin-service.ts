@@ -2,6 +2,8 @@ import { getAccPool, sql } from "@/lib/acc/pool";
 import type { Actor } from "@/lib/acc/approval-engine";
 import { getTravelBookingRequest } from "@/lib/acc/travel-booking/request-service";
 import { deleteStoredFiles, type StoredFileRef } from "@/lib/acc/stored-file";
+import { loadPerDiemDependencies } from "@/lib/acc/travel-booking/perdiem-dependency-load";
+import type { PerDiemDependency } from "@/lib/acc/travel-booking/perdiem-dependency";
 import { AP17_FORM_CODE, BOOKING_TYPE_REFTYPE } from "@/features/travel-booking/constants";
 import type { BookingType, TravelBookingRequest } from "@/features/travel-booking/types";
 
@@ -118,6 +120,13 @@ export interface AccountQueueItem {
    * `MetadataJson`. Empty when the figure never moved.
    */
   perDiemHistory: string[];
+  /**
+   * The trip in this request's `GroupKey` group whose fate this figure still
+   * hangs on — see `perdiem-dependency.ts`. Null when nothing can move it.
+   * `settled: false` is the one that blocks: the queue names it and disables the
+   * row's controls, and `approveByAccount` refuses it server-side.
+   */
+  perDiemDependency: PerDiemDependency | null;
 }
 
 /**
@@ -168,6 +177,12 @@ export async function listAccountQueue(): Promise<AccountQueueItem[]> {
     }
   }
 
+  // Batched for the same reason the history above is, and it matters more here:
+  // this one needs every *sibling* of every queued request's group, which a
+  // per-row query would fetch over and over for rows that share a group. One
+  // round trip whatever the queue holds — see `loadPerDiemDependencies`.
+  const dependencies = await loadPerDiemDependencies(pool, ids);
+
   return rows.map((x) => ({
     id: x.Id as number,
     requestNo: (x.RequestNo as string) ?? null,
@@ -183,6 +198,7 @@ export async function listAccountQueue(): Promise<AccountQueueItem[]> {
     paymentDate: x.PaymentDate ? toYmd(x.PaymentDate as Date) : null,
     updatedAt: x.UpdatedAt ? (x.UpdatedAt as Date).toISOString() : "",
     perDiemHistory: historyByRequest.get(x.Id as number) ?? [],
+    perDiemDependency: dependencies.get(x.Id as number) ?? null,
   }));
 }
 
