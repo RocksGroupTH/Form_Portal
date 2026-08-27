@@ -678,10 +678,6 @@ export async function saveTravelBookingDraft(
     forWrite: true,
   });
 
-  // One brand for the whole group: a submission is one claim against one
-  // company, however many bookings it holds. Blank becomes NULL rather than an
-  // empty string, so the submit check has one absent value to test, not two.
-  const brandCode = (input.brandCode ?? "").trim() || null;
 
   const pool = await getAccPool();
 
@@ -815,7 +811,7 @@ export async function saveTravelBookingDraft(
           .input("pos", sql.NVarChar, emp.position ?? null)
           .input("deptId", sql.Int, emp.departmentId ?? null)
           .input("deptName", sql.NVarChar, emp.departmentName ?? null)
-          .input("brandCode", sql.NVarChar(40), brandCode)
+          .input("brandCode", sql.NVarChar(40), (tab.brandCode ?? "").trim() || null)
           .query(`UPDATE [dbo].[AccRequest] SET
                   EmployeeId=@empId, StaffId=@staffId, RequesterFirstName=@fname, RequesterLastName=@lname,
                   RequesterFullName=@full, RequesterEmail=@email, RequesterPosition=@pos,
@@ -835,7 +831,7 @@ export async function saveTravelBookingDraft(
           .input("deptId", sql.Int, emp.departmentId ?? null)
           .input("deptName", sql.NVarChar, emp.departmentName ?? null)
           .input("user", sql.Int, userId || null)
-          .input("brandCode", sql.NVarChar(40), brandCode)
+          .input("brandCode", sql.NVarChar(40), (tab.brandCode ?? "").trim() || null)
           .query(`INSERT INTO [dbo].[AccRequest]
                   (FormCode, Status, CurrentStepCode, EmployeeId, StaffId, RequesterFirstName, RequesterLastName,
                    RequesterFullName, RequesterEmail, RequesterPosition, RequesterDepartmentId, RequesterDepartmentName, CreatedBy, BrandCode)

@@ -54,25 +54,37 @@ export async function POST(
     // would enrich each row from the brand master over `getCorePool()`, which
     // would fail an AP-17 submit on a Fast_Core outage over display data the
     // check never reads.
+    // **Every trip in the group, not the first.** The brand is per trip — a
+    // group is one AccRequest row per tab, each with its own BrandCode — so a
+    // TOP 1 check would pass a group whose second journey names a brand that is
+    // blank, or one the allowlist has since dropped.
     const pool = await getAccPool();
-    const brandRow = await pool
+    const brandRows = await pool
       .request()
       .input("groupKey", sql.NVarChar, groupKey)
-      .query(`SELECT TOP 1 BrandCode FROM [dbo].[AccRequest] r
+      .query(`SELECT r.Id, r.BrandCode FROM [dbo].[AccRequest] r
               INNER JOIN [dbo].[AccTravelBooking] b ON b.RequestId = r.Id
               WHERE b.GroupKey = @groupKey`);
-    const brandCode = (brandRow.recordset[0]?.BrandCode as string | null) ?? null;
-    if (!brandCode) {
-      return NextResponse.json(
-        { ok: false, error: "กรุณาเลือกแบรนด์ที่เบิกก่อนส่งคำขอ" },
-        { status: 400 },
-      );
+    const codes: string[] = [];
+    for (const row of brandRows.recordset as { BrandCode: string | null }[]) {
+      const code = (row.BrandCode ?? "").trim();
+      if (!code) {
+        return NextResponse.json(
+          { ok: false, error: "กรุณาเลือกแบรนด์ที่เบิกให้ครบทุกทริปก่อนส่งคำขอ" },
+          { status: 400 },
+        );
+      }
+      if (codes.indexOf(code) === -1) codes.push(code);
     }
-    if (!(await isBrandAllowedForForm(AP17_FORM_CODE, brandCode))) {
-      return NextResponse.json(
-        { ok: false, error: "แบรนด์ที่เลือกไม่อยู่ในรายการที่เบิกได้แล้ว — กรุณาเลือกใหม่" },
-        { status: 400 },
-      );
+    // De-duplicated first: two trips under one brand are the common case and
+    // should not cost two round trips to answer the same question.
+    for (const code of codes) {
+      if (!(await isBrandAllowedForForm(AP17_FORM_CODE, code))) {
+        return NextResponse.json(
+          { ok: false, error: `แบรนด์ ${code} ไม่อยู่ในรายการที่เบิกได้แล้ว — กรุณาเลือกใหม่` },
+          { status: 400 },
+        );
+      }
     }
 
     const loginEmail = resolveLoginEmail(session.user, null, { email: session.user.email });

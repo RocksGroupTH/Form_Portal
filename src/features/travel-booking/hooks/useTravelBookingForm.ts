@@ -43,6 +43,9 @@ export interface TabFormState {
   /** AccRequest.Id — set once this tab has been persisted by a save. */
   id?: number;
 
+  /** `AccRequest.BrandCode` — the company this trip is claimed against. */
+  brandCode: string | null;
+
   reasonId: number | null;
   reasonCustomText: string | null;
 
@@ -99,6 +102,7 @@ export interface TabFormState {
 
 export function emptyTab(): TabFormState {
   return {
+    brandCode: null,
     reasonId: null,
     reasonCustomText: null,
     workDetail: null,
@@ -141,6 +145,9 @@ export function emptyTab(): TabFormState {
 function tabFromRequest(r: TravelBookingRequest): TabFormState {
   return {
     id: r.id,
+    // A resumed trip keeps the brand its own row was saved with — no seeding
+    // effect is needed now that the value belongs to the tab.
+    brandCode: r.brandCode,
     reasonId: r.reasonId,
     reasonCustomText: r.reasonCustomText,
     workDetail: r.workDetail,
@@ -188,6 +195,7 @@ function tabFromRequest(r: TravelBookingRequest): TabFormState {
 function buildSaveInput(tab: TabFormState, sortOrder: number): SaveTravelBookingInput {
   return {
     id: tab.id,
+    brandCode: tab.brandCode,
     reasonId: tab.reasonId,
     reasonCustomText: tab.reasonCustomText,
     workDetail: tab.workDetail,
@@ -247,6 +255,12 @@ export interface FieldIssue {
 
 export function validateTab(tab: TabFormState, settings: TabSettingsMaps): FieldIssue[] {
   const issues: FieldIssue[] = [];
+
+  // A plain per-tab issue, which is what it should have been: the brand belongs
+  // to this trip, so it is missing on this trip alone and clears on its own.
+  if (!tab.brandCode) {
+    issues.push({ key: "brand", label: "แบรนด์ที่เบิก" });
+  }
 
   if (!tab.reasonId) {
     issues.push({ key: "reason", label: "เหตุผลการเดินทาง" });
@@ -443,14 +457,14 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
   const [requesterStaffId, setRequesterStaffId] = useState<number | null>(null);
 
   /**
-   * The brand this booking is filed under — request-level, not per tab.
+   * The brands this form may be claimed against — AP-17's own `AccFormBrand`
+   * rows, which start empty: nothing is seeded, so until an admin ticks a brand
+   * at Settings → ตั้งค่าแบบฟอร์มขอเดินทาง → แบรนด์ที่เบิก the form has nothing
+   * to offer and no trip can be submitted. The form says that rather than
+   * showing an empty row of chips.
    *
-   * The list is AP-17's own `AccFormBrand` rows, which start empty: nothing is
-   * seeded, so until an admin ticks a brand at Settings → ตั้งค่าแบบฟอร์มขอเดินทาง
-   * → แบรนด์ที่เบิก the form has nothing to offer and cannot be submitted. The
-   * form says that rather than showing an empty row of chips.
+   * The *chosen* brand lives on each tab (`TabFormState.brandCode`), not here.
    */
-  const [brandCode, setBrandCode] = useState<string | null>(null);
   const [brands, setBrands] = useState<AccBrandOption[]>([]);
   useEffect(() => {
     let cancelled = false;
@@ -469,14 +483,6 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
   // (self-authored requests stay null).
   const draftRequesterStaffId = initial?.requests?.[0]?.staffId ?? null;
 
-  // A resumed draft keeps the brand it was saved with, from the same anchor row
-  // the requester comes from — one brand for the whole group. Seeded once and
-  // only while nothing has been picked, so re-running this effect cannot undo a
-  // change the requester just made.
-  const draftBrandCode = initial?.requests?.[0]?.brandCode ?? null;
-  useEffect(() => {
-    if (draftBrandCode) setBrandCode((cur) => cur ?? draftBrandCode);
-  }, [draftBrandCode]);
   useEffect(() => {
     const selfStaffId = employeeData?.employee?.staffId ?? null;
     if (draftRequesterStaffId != null && selfStaffId != null && draftRequesterStaffId !== selfStaffId) {
@@ -585,18 +591,7 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
 
   /* ── Validation across all tabs ── */
   const tabIssues = useMemo(() => tabs.map((t) => validateTab(t, settingsMaps)), [tabs, settingsMaps]);
-  /**
-   * The brand blocks submit like any required field.
-   *
-   * It is **not** a `tabIssue`: one brand covers the whole group, so a
-   * per-tab issue list would report the same missing value once per trip and
-   * clear it in all of them at once. The server refuses it too — see the
-   * submit route — because a draft can hold a code the allowlist has since
-   * dropped, which no client check can see.
-   */
-  const brandMissing = !brandCode;
-  const canSubmit =
-    tabs.length > 0 && !brandMissing && tabIssues.every((issues) => issues.length === 0);
+  const canSubmit = tabs.length > 0 && tabIssues.every((issues) => issues.length === 0);
 
   /* ── Tab CRUD ── */
 
@@ -634,7 +629,6 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
         id: groupKey ?? undefined,
         tabs: tabsRef.current.map((t, i) => buildSaveInput(t, i)),
         requesterStaffId,
-        brandCode,
       };
       const res = anchorRequestId
         ? await fetch(`/api/request/travel-booking/requests/${anchorRequestId}`, {
@@ -844,10 +838,7 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
     existingRanges,
     requesterStaffId,
     setRequesterStaffId,
-    brandCode,
-    setBrandCode,
     brands,
-    brandMissing,
     selectedRequester,
 
     // tabs

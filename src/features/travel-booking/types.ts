@@ -269,6 +269,15 @@ export interface SaveTravelBookingInput {
   /** AccRequest.Id — present when updating an existing tab within a draft group. */
   id?: number;
 
+  /**
+   * `AccRequest.BrandCode` — the company **this trip** is claimed against.
+   *
+   * Per trip, not per request: a group is one `AccRequest` row per tab, each
+   * with its own `BrandCode`, and one journey can be for a different company
+   * than the next. Nullable on a draft, required at submit.
+   */
+  brandCode: string | null;
+
   reasonId: number | null;
   reasonCustomText: string | null;
 
@@ -320,14 +329,6 @@ export interface SaveTravelBookingGroupInput {
   tabs: SaveTravelBookingInput[];
   /** Optional: open on behalf of a same-department colleague (their HR StaffId). */
   requesterStaffId?: number | null;
-  /**
-   * The company brand this booking is filed under — `AccRequest.BrandCode`.
-   *
-   * Request-level, not per tab: one submission is one claim against one brand,
-   * however many bookings it holds. Nullable on a draft and required at submit,
-   * which is where it is checked against `AccFormBrand`.
-   */
-  brandCode?: string | null;
 }
 
 /**

@@ -96,18 +96,14 @@ function departureDefaults(
 interface TravelBookingTabProps {
   tab: TabFormState;
   /**
-   * The brand picker, rendered above the reason.
+   * The brands this form may be claimed against.
    *
-   * Request-level, not per tab: these four props come from the form, not from
-   * `tab`, and changing the brand here changes it for every trip in the group.
-   * It lives in this component only because that is where the field belongs on
-   * screen.
+   * The *chosen* one is `tab.brandCode` — per trip, like every other field
+   * here, because a group is one `AccRequest` row per tab and each carries its
+   * own `BrandCode`. Only the option list is passed in, since it is the same
+   * for every tab and fetching it per tab would repeat the request.
    */
   brands: AccBrandOption[];
-  brandCode: string | null;
-  onBrandChange: (code: string | null) => void;
-  /** True once nothing is picked; painted red only after a submit attempt. */
-  brandMissing: boolean;
   isContinuation: boolean;
   perDiemEstimate: { days: number; total: number; groups: { rate: number; days: number }[] };
   allowanceRate: number | null;
@@ -142,9 +138,6 @@ export function TravelBookingTab({
   triedSubmit,
   requesterStaffId,
   brands,
-  brandCode,
-  onBrandChange,
-  brandMissing,
   onChange,
   onSelectPendingIdCard,
   onRemoveIdCardFile,
@@ -231,14 +224,10 @@ export function TravelBookingTab({
     <div className="w-full max-w-full mx-auto flex flex-col gap-4 min-w-0">
       {/* เหตุผล + รายละเอียด + จังหวัด/สถานที่ */}
       <SectionCard dataTour="ap17-trip" icon={<Briefcase size={15} />} title="เหตุผลและรายละเอียดการเดินทาง">
-        {/* Above the reason, and required.
-
-            **One brand for the whole request, not per trip.** Only the active
-            tab renders, so it reads as a field of the trip in front of you;
-            the note under the chips is what says otherwise, because changing
-            it here changes it for every trip in the group. */}
+        {/* Above the reason, and required — per trip, like everything else in
+            this section. */}
         <div data-field="brand">
-          <label className={labelClass} style={errLabelStyle(triedSubmit && brandMissing)}>
+          <label className={labelClass} style={errLabelStyle(hasErr("brand"))}>
             แบรนด์ที่เบิก{requiredStar}
           </label>
           {brands.length === 0 ? (
@@ -246,15 +235,14 @@ export function TravelBookingTab({
               ยังไม่ได้ตั้งค่าแบรนด์ที่เบิกได้สำหรับฟอร์มนี้ — ติดต่อผู้ดูแลระบบ
             </p>
           ) : (
-            <>
-              <div className="flex flex-wrap gap-2 mt-1">
+            <div className="flex flex-wrap gap-2 mt-1">
                 {brands.map((b) => {
-                  const active = brandCode === b.brandCode;
+                  const active = tab.brandCode === b.brandCode;
                   return (
                     <button
                       key={b.brandCode}
                       type="button"
-                      onClick={() => onBrandChange(active ? null : b.brandCode)}
+                      onClick={() => onChange({ brandCode: active ? null : b.brandCode })}
                       className="flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer text-[14px] font-semibold transition-all"
                       style={{
                         borderWidth: 2,
@@ -270,11 +258,7 @@ export function TravelBookingTab({
                     </button>
                   );
                 })}
-              </div>
-              <p className="text-[11px] m-0 pt-1.5" style={{ color: "var(--text-faint)" }}>
-                ใช้กับทุกทริปในคำขอนี้
-              </p>
-            </>
+            </div>
           )}
         </div>
 
