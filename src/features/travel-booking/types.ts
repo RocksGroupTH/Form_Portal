@@ -145,6 +145,20 @@ export interface TravelBookingRequest {
   status: TravelBookingStatus;
   /** `AccRequest.BrandCode` — the company this booking is filed under. */
   brandCode: string | null;
+  /**
+   * Where this trip's uncounted first day went, when `isContinuation` is set.
+   *
+   * A continuation trip departs on the day the one before it returned, and one
+   * day cannot pay per diem twice — so the first day is dropped here and counted
+   * there. `isContinuation` alone said a day had gone without saying where,
+   * which on a one-day trip means the whole allowance reads as zero with no
+   * explanation on the page.
+   *
+   * Null when the trip is not a continuation, and also when the sibling that
+   * caused it cannot be found — a group edited by hand could leave the flag set
+   * with nothing matching it, and the note then says less rather than lying.
+   */
+  continuationFromRequestNo: string | null;
 
   // requester snapshot (from AccRequest / AccTravelBooking)
   staffId: number | null;

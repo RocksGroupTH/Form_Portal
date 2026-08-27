@@ -82,6 +82,9 @@ function mapTravelBookingRow(
     requestNo: (r.RequestNo as string) ?? null,
     status: r.Status as TravelBookingStatus,
     brandCode: (r.BrandCode as string) ?? null,
+    // Only ever present on the single-request load, which is the one place the
+    // note is rendered; the list queries do not pay for the subquery.
+    continuationFromRequestNo: (r.ContinuationFromRequestNo as string) ?? null,
 
     staffId: (r.StaffId as number) ?? null,
     requesterFullName: (r.RequesterFullName as string) ?? null,
@@ -268,7 +271,21 @@ export async function getTravelBookingRequest(id: number): Promise<TravelBooking
   const headRes = await pool.request()
     .input("id", sql.Int, id)
     .input("form", sql.NVarChar, AP17_FORM_CODE)
-    .query(`SELECT r.*, e.PhotoUrl AS HrRequesterPhotoUrl, e.PhotoOverrideUrl AS HrRequesterPhotoOverrideUrl
+    .query(`SELECT r.*, e.PhotoUrl AS HrRequesterPhotoUrl, e.PhotoOverrideUrl AS HrRequesterPhotoOverrideUrl,
+              -- The trip whose per diem already covers this one's first day.
+              -- Matched the same way isContinuation was decided at save time:
+              -- the same group, an earlier SortOrder, and a ReturnDate that
+              -- touches this DepartDate. Nearest earlier sibling wins, so a
+              -- group of three trips meeting on one day names the immediate
+              -- predecessor rather than the first of them.
+              (SELECT TOP 1 pr.RequestNo
+                 FROM [dbo].[AccTravelBooking] pt
+                 INNER JOIN [dbo].[AccRequest] pr ON pr.Id = pt.RequestId
+                 INNER JOIN [dbo].[AccTravelBooking] mt ON mt.RequestId = r.Id
+                WHERE pt.GroupKey = mt.GroupKey
+                  AND pt.SortOrder < mt.SortOrder
+                  AND pt.ReturnDate = mt.DepartDate
+                ORDER BY pt.SortOrder DESC, pt.Id DESC) AS ContinuationFromRequestNo
             FROM [dbo].[AccRequest] r
             LEFT JOIN ${hrEmployeeTable()} e ON e.StaffId = r.StaffId AND e.Status = N'Active'
             WHERE r.Id = @id AND r.FormCode = @form`);

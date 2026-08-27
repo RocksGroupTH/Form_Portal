@@ -892,8 +892,29 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
                 : "—"
             }
           />
+          {/* Which day went, and where it went to.
+
+              "ต่อเนื่องจากทริปก่อนหน้า (-1 วัน)" was the whole note, and on a
+              one-day trip that leaves Per diem reading 0 วัน · 0.00 บาท with
+              nothing on the page saying why — the reader has to know the rule
+              and go looking for the sibling. Naming the date and the request
+              that already counted it answers both at once.
+
+              The request number is null when the sibling cannot be matched — a
+              group edited by hand can leave the flag set with nothing touching
+              it — and the note then falls back to the shorter wording rather
+              than printing a blank. */}
           {request.isContinuation && (
-            <DetailRow label="หมายเหตุ" value="ต่อเนื่องจากทริปก่อนหน้า (นับ Per diem วันแรกซ้ำ -1 วัน)" />
+            <DetailRow
+              label="หมายเหตุ"
+              value={
+                request.departDate
+                  ? request.continuationFromRequestNo
+                    ? `ต่อเนื่องจากทริปก่อนหน้า — วันที่ ${fmtYmdDisplay(request.departDate)} นับ Per diem ไปแล้วในคำขอ ${request.continuationFromRequestNo} จึงไม่นับซ้ำที่นี่ (-1 วัน)`
+                    : `ต่อเนื่องจากทริปก่อนหน้า — วันที่ ${fmtYmdDisplay(request.departDate)} นับ Per diem ไปแล้วในทริปก่อนหน้า จึงไม่นับซ้ำที่นี่ (-1 วัน)`
+                  : "ต่อเนื่องจากทริปก่อนหน้า (นับ Per diem วันแรกซ้ำ -1 วัน)"
+              }
+            />
           )}
           <DetailRow
             label="ที่พักค้างคืน"
