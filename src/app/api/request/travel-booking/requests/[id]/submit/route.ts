@@ -5,6 +5,7 @@ import { uatActorGate } from "@/lib/acc/travel-booking/uat-gate";
 import { resolveLoginEmail } from "@/lib/auth-email";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { submitTravelBookingGroup } from "@/lib/acc/travel-booking/request-service";
+import { isBrandAllowedForForm } from "@/lib/acc/brand-options";
 import { processQueue } from "@/lib/acc/email-queue";
 import { isSharePointConfigured, moveSharePointFolder } from "@/lib/sharepoint";
 import { buildAccFolderPath, yearFromRequestNo } from "@/lib/acc/sharepoint-path";
@@ -42,6 +43,36 @@ export async function POST(
     const groupKey = await resolveGroupKey(id);
     if (!groupKey) {
       return NextResponse.json({ ok: false, error: "not found" }, { status: 404 });
+    }
+
+    // The brand is checked here, against `AccFormBrand`, and not only in the
+    // picker. A draft can hold a code the allowlist has since dropped — or one
+    // that was never on it — and a client-enforced invariant is not one. AP-4's
+    // submit does the same, for the same reason.
+    //
+    // `isBrandAllowedForForm` reads `AccFormBrand` alone; `getAllowedBrands`
+    // would enrich each row from the brand master over `getCorePool()`, which
+    // would fail an AP-17 submit on a Fast_Core outage over display data the
+    // check never reads.
+    const pool = await getAccPool();
+    const brandRow = await pool
+      .request()
+      .input("groupKey", sql.NVarChar, groupKey)
+      .query(`SELECT TOP 1 BrandCode FROM [dbo].[AccRequest] r
+              INNER JOIN [dbo].[AccTravelBooking] b ON b.RequestId = r.Id
+              WHERE b.GroupKey = @groupKey`);
+    const brandCode = (brandRow.recordset[0]?.BrandCode as string | null) ?? null;
+    if (!brandCode) {
+      return NextResponse.json(
+        { ok: false, error: "กรุณาเลือกแบรนด์ที่เบิกก่อนส่งคำขอ" },
+        { status: 400 },
+      );
+    }
+    if (!(await isBrandAllowedForForm(AP17_FORM_CODE, brandCode))) {
+      return NextResponse.json(
+        { ok: false, error: "แบรนด์ที่เลือกไม่อยู่ในรายการที่เบิกได้แล้ว — กรุณาเลือกใหม่" },
+        { status: 400 },
+      );
     }
 
     const loginEmail = resolveLoginEmail(session.user, null, { email: session.user.email });

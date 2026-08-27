@@ -2,7 +2,8 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, Check, Circle, History, Info, Loader2, Mail, Phone, Plus, Save, Send, Trash2, User, UserCog, Wallet } from "lucide-react";
+import { AlertTriangle, Building2, Check, Circle, History, Info, Loader2, Mail, Phone, Plus, Save, Send, Trash2, User, UserCog, Wallet } from "lucide-react";
+import { BrandMark } from "@/components/BrandMark";
 import { Avatar } from "@/components/ui/Avatar";
 import { Dialog } from "@/components/ui/Dialog";
 import { RequesterPickerModal } from "@/components/RequesterPickerModal";
@@ -69,6 +70,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
     employee, employeeHint, employeeEmail, employeeLoading, manager, managerReason,
     colleagues, colleaguesLoading, requesterEnvironment,
     existingRanges, requesterStaffId, setRequesterStaffId, selectedRequester,
+    brandCode, setBrandCode, brands,
     continuationFlags, perDiemEstimates, totalPerDiemEstimate,
     tabIssues, canSubmit,
     saving, submitting, submitPhase, saveDraft, submitAll, uploadIdCard, removeIdCardFile,
@@ -195,6 +197,43 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
           ))}
         </div>
       </div>
+
+      {/* แบรนด์ที่เบิก — AP-1's chips, over AP-17's own AccFormBrand rows. */}
+      <SectionCard icon={<Building2 size={15} />} title="แบรนด์ที่เบิก">
+        {brands.length === 0 ? (
+          // Not an empty row of chips: nothing has gone wrong with the page,
+          // the form simply has no brand granted yet and cannot be submitted
+          // until one is. Nothing is seeded — that was deliberate.
+          <p className="text-[13px] m-0" style={{ color: "var(--text-faint)" }}>
+            ยังไม่ได้ตั้งค่าแบรนด์ที่เบิกได้สำหรับฟอร์มนี้ — ติดต่อผู้ดูแลระบบ
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {brands.map((b) => {
+              const active = brandCode === b.brandCode;
+              return (
+                <button
+                  key={b.brandCode}
+                  type="button"
+                  onClick={() => setBrandCode(active ? null : b.brandCode)}
+                  className="flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer text-[14px] font-semibold transition-all"
+                  style={{
+                    borderWidth: 2,
+                    borderStyle: "solid",
+                    borderColor: active ? "var(--nav-active-text)" : "var(--border-card)",
+                    background: active ? "var(--nav-active-bg)" : "var(--bg-card-alt)",
+                    color: active ? "var(--nav-active-text)" : "var(--text-secondary)",
+                  }}
+                >
+                  <BrandMark src={b.brandLogo} alt="" code={b.brandCode} size={20} rounded="rounded" />
+                  {b.brandName}
+                  {active && <Check size={14} />}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </SectionCard>
 
       {/* ผู้ขอเบิก (read-only) */}
       <SectionCard

@@ -81,6 +81,7 @@ function mapTravelBookingRow(
     id: r.Id as number,
     requestNo: (r.RequestNo as string) ?? null,
     status: r.Status as TravelBookingStatus,
+    brandCode: (r.BrandCode as string) ?? null,
 
     staffId: (r.StaffId as number) ?? null,
     requesterFullName: (r.RequesterFullName as string) ?? null,
@@ -315,7 +316,7 @@ export async function listMyTravelBookings(userId: number): Promise<TravelBookin
     .input("form", sql.NVarChar, AP17_FORM_CODE)
     .query(`
       SELECT
-        r.Id, r.RequestNo, r.Status, r.StaffId, r.RequesterFullName, r.RequesterEmail, r.RequesterPosition, r.RequesterDepartmentName,
+        r.Id, r.RequestNo, r.Status, r.BrandCode, r.StaffId, r.RequesterFullName, r.RequesterEmail, r.RequesterPosition, r.RequesterDepartmentName,
         r.PaymentDate, r.SubmittedAt,
         t.Phone, t.AllowanceSnapshot, t.ReasonId, t.ReasonName, t.ReasonCustomText, t.WorkDetail,
         t.ProvinceId, t.ProvinceName, t.AccommodationId, t.AccommodationName, t.AccommodationCustomText, t.NeedsRoomBooking,
@@ -677,6 +678,11 @@ export async function saveTravelBookingDraft(
     forWrite: true,
   });
 
+  // One brand for the whole group: a submission is one claim against one
+  // company, however many bookings it holds. Blank becomes NULL rather than an
+  // empty string, so the submit check has one absent value to test, not two.
+  const brandCode = (input.brandCode ?? "").trim() || null;
+
   const pool = await getAccPool();
 
   // Resolve *Name fields + IsContinuation for every tab up front (small in-run cache
@@ -809,11 +815,12 @@ export async function saveTravelBookingDraft(
           .input("pos", sql.NVarChar, emp.position ?? null)
           .input("deptId", sql.Int, emp.departmentId ?? null)
           .input("deptName", sql.NVarChar, emp.departmentName ?? null)
+          .input("brandCode", sql.NVarChar(40), brandCode)
           .query(`UPDATE [dbo].[AccRequest] SET
                   EmployeeId=@empId, StaffId=@staffId, RequesterFirstName=@fname, RequesterLastName=@lname,
                   RequesterFullName=@full, RequesterEmail=@email, RequesterPosition=@pos,
                   RequesterDepartmentId=@deptId, RequesterDepartmentName=@deptName,
-                  CurrentStepCode='MANAGER', UpdatedAt=SYSDATETIME()
+                  CurrentStepCode='MANAGER', BrandCode=@brandCode, UpdatedAt=SYSDATETIME()
                   WHERE Id=@id`);
       } else {
         const ins = await tx.request()
@@ -828,11 +835,12 @@ export async function saveTravelBookingDraft(
           .input("deptId", sql.Int, emp.departmentId ?? null)
           .input("deptName", sql.NVarChar, emp.departmentName ?? null)
           .input("user", sql.Int, userId || null)
+          .input("brandCode", sql.NVarChar(40), brandCode)
           .query(`INSERT INTO [dbo].[AccRequest]
                   (FormCode, Status, CurrentStepCode, EmployeeId, StaffId, RequesterFirstName, RequesterLastName,
-                   RequesterFullName, RequesterEmail, RequesterPosition, RequesterDepartmentId, RequesterDepartmentName, CreatedBy)
+                   RequesterFullName, RequesterEmail, RequesterPosition, RequesterDepartmentId, RequesterDepartmentName, CreatedBy, BrandCode)
                   OUTPUT inserted.Id AS Id
-                  VALUES (@form, 'Draft', 'MANAGER', @empId, @staffId, @fname, @lname, @full, @email, @pos, @deptId, @deptName, @user)`);
+                  VALUES (@form, 'Draft', 'MANAGER', @empId, @staffId, @fname, @lname, @full, @email, @pos, @deptId, @deptName, @user, @brandCode)`);
         finalRequestId = ins.recordset[0].Id as number;
       }
 

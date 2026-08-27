@@ -18,6 +18,7 @@ import type {
   VehicleOption,
 } from "@/features/travel-booking/types";
 import type { EmployeeContext } from "@/lib/hr/types";
+import type { AccBrandOption } from "@/features/accounting/types";
 
 /* ── Client-side editable tab state ──
    Writable subset of TravelBookingRequest (mirrors SaveTravelBookingInput) plus
@@ -441,11 +442,41 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
   // "Open on behalf of" — null means submitting as self.
   const [requesterStaffId, setRequesterStaffId] = useState<number | null>(null);
 
+  /**
+   * The brand this booking is filed under — request-level, not per tab.
+   *
+   * The list is AP-17's own `AccFormBrand` rows, which start empty: nothing is
+   * seeded, so until an admin ticks a brand at Settings → ตั้งค่าแบบฟอร์มขอเดินทาง
+   * → แบรนด์ที่เบิก the form has nothing to offer and cannot be submitted. The
+   * form says that rather than showing an empty row of chips.
+   */
+  const [brandCode, setBrandCode] = useState<string | null>(null);
+  const [brands, setBrands] = useState<AccBrandOption[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/request/travel-booking/options/brands")
+      .then((r) => r.json())
+      .then((j: { ok?: boolean; data?: AccBrandOption[] }) => {
+        if (!cancelled && j?.ok && Array.isArray(j.data)) setBrands(j.data);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
   // Seed from a resumed group's saved requester (TravelBookingRequest.staffId,
   // shared by every tab in the group), once both the group's staff id and our
   // own staff id are known — but only when it differs from the logged-in user
   // (self-authored requests stay null).
   const draftRequesterStaffId = initial?.requests?.[0]?.staffId ?? null;
+
+  // A resumed draft keeps the brand it was saved with, from the same anchor row
+  // the requester comes from — one brand for the whole group. Seeded once and
+  // only while nothing has been picked, so re-running this effect cannot undo a
+  // change the requester just made.
+  const draftBrandCode = initial?.requests?.[0]?.brandCode ?? null;
+  useEffect(() => {
+    if (draftBrandCode) setBrandCode((cur) => cur ?? draftBrandCode);
+  }, [draftBrandCode]);
   useEffect(() => {
     const selfStaffId = employeeData?.employee?.staffId ?? null;
     if (draftRequesterStaffId != null && selfStaffId != null && draftRequesterStaffId !== selfStaffId) {
@@ -592,6 +623,7 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
         id: groupKey ?? undefined,
         tabs: tabsRef.current.map((t, i) => buildSaveInput(t, i)),
         requesterStaffId,
+        brandCode,
       };
       const res = anchorRequestId
         ? await fetch(`/api/request/travel-booking/requests/${anchorRequestId}`, {
@@ -801,6 +833,9 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
     existingRanges,
     requesterStaffId,
     setRequesterStaffId,
+    brandCode,
+    setBrandCode,
+    brands,
     selectedRequester,
 
     // tabs

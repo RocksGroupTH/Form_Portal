@@ -3,8 +3,10 @@ import type { Session } from "next-auth";
 import { requireAuth } from "@/lib/api-auth";
 import { isAdminRole } from "@/lib/roles";
 import { resolveBookingTabsByEmail } from "@/lib/acc/travel-booking/booking-approver-tabs";
-import { decideBookingTabAccess } from "@/lib/acc/travel-booking/settings-tabs";
-import type { SettingsKind } from "@/lib/acc/travel-booking/settings-route-map";
+import {
+  decideBookingTabAccess,
+  type GrantableBookingTabKey,
+} from "@/lib/acc/travel-booking/settings-tabs";
 
 /**
  * The gate on one AP-17 settings tab — the counterpart of
@@ -33,7 +35,7 @@ import type { SettingsKind } from "@/lib/acc/travel-booking/settings-route-map";
  *   all is refused. Testing grant-list membership here instead would be a second
  *   copy of that rule, and only one of the two would ever be corrected.
  *
- * **`tab` is typed `SettingsKind`, not `string`, and that matters more here than
+ * **`tab` is typed `GrantableBookingTabKey`, not `string`, and that matters more here than
  * it does for AP-1.** AP-1's routes pass a literal; these take the tab from the
  * URL. A caller must therefore narrow the raw `[kind]` segment with
  * `isSettingsKind` — which uses `Object.prototype.hasOwnProperty.call`, so
@@ -52,7 +54,12 @@ import type { SettingsKind } from "@/lib/acc/travel-booking/settings-route-map";
  * ```
  */
 export async function requireBookingSettingsTab(
-  tab: SettingsKind,
+  // `GrantableBookingTabKey`, not `SettingsKind`: four of the five keys are
+  // `[kind]` segments and `brands` is not — it has its own route. Typing this
+  // parameter to the kinds alone would leave that route unable to name its own
+  // grant. `access` is still unrepresentable, which is the exclusion that
+  // matters: whoever opens it can grant themselves the rest.
+  tab: GrantableBookingTabKey,
 ): Promise<Session | Response> {
   const session = await requireAuth();
   if (session instanceof Response) return session;

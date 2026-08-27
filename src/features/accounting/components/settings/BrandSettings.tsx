@@ -16,9 +16,27 @@ interface FormBrandRow {
   sortOrder: number;
 }
 
-export function BrandSettings() {
+/**
+ * Which brands a form accepts.
+ *
+ * Shared by AP-1 and AP-17. The endpoint is a prop rather than a literal
+ * because the two forms keep separate rows in `AccFormBrand` — granting a
+ * brand to the travel-expense form must not thereby grant it to the booking
+ * form — and a second copy of this panel would drift on the save semantics,
+ * which are "replace the whole set", not "toggle one".
+ *
+ * `options/all-brands` stays AP-1's for both: it is the company brand master,
+ * not an AP-1 list, and AP-17 has no endpoint of its own for it.
+ */
+export function BrandSettings({
+  endpoint = "/api/request/accounting/settings/brands",
+  description = "เลือกแบรนด์ที่พนักงานสามารถเลือกในฟอร์มเบิกค่าเดินทาง AP-1 — ติ๊กเพื่อเปิด/ปิด แล้วกดบันทึก",
+}: {
+  endpoint?: string;
+  description?: string;
+} = {}) {
   const { data, mutate } = useSWR<{ ok: boolean; data: FormBrandRow[] }>(
-    "/api/request/accounting/settings/brands",
+    endpoint,
     fetcher,
   );
   const { data: allData } = useSWR<{ ok: boolean; data: AccBrandOption[] }>(
@@ -57,7 +75,7 @@ export function BrandSettings() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const res = await fetch("/api/request/accounting/settings/brands", {
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ brandCodes: Array.from(checked) }),
@@ -79,7 +97,7 @@ export function BrandSettings() {
     <div>
       <SettingOptionGroup
         title="แบรนด์ที่เบิกได้"
-        description="เลือกแบรนด์ที่พนักงานสามารถเลือกในฟอร์มเบิกค่าเดินทาง AP-1 — ติ๊กเพื่อเปิด/ปิด แล้วกดบันทึก"
+        description={description}
       >
         {allBrands.map((brand) => {
           const active = checked.has(brand.brandCode);

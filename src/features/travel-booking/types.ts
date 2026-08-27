@@ -143,6 +143,8 @@ export interface TravelBookingRequest {
   id?: number;
   requestNo: string | null;
   status: TravelBookingStatus;
+  /** `AccRequest.BrandCode` — the company this booking is filed under. */
+  brandCode: string | null;
 
   // requester snapshot (from AccRequest / AccTravelBooking)
   staffId: number | null;
@@ -318,6 +320,14 @@ export interface SaveTravelBookingGroupInput {
   tabs: SaveTravelBookingInput[];
   /** Optional: open on behalf of a same-department colleague (their HR StaffId). */
   requesterStaffId?: number | null;
+  /**
+   * The company brand this booking is filed under — `AccRequest.BrandCode`.
+   *
+   * Request-level, not per tab: one submission is one claim against one brand,
+   * however many bookings it holds. Nullable on a draft and required at submit,
+   * which is where it is checked against `AccFormBrand`.
+   */
+  brandCode?: string | null;
 }
 
 /**
