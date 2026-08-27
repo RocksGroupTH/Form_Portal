@@ -12,6 +12,7 @@ const mockReq: TravelBookingRequest = {
   id: 123,
   requestNo: "TOF26-0007",
   status: "Submitted",
+  currentStepCode: "MANAGER",
   brandCode: "PCTH",
   continuationFromRequestNo: null,
   continuationFromRequestId: null,

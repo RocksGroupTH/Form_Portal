@@ -16,6 +16,17 @@ export type TravelBookingStatus =
   | "Returned"
   | "Cancelled";
 
+/**
+ * `AccRequest.CurrentStepCode` — the step a live request is parked on.
+ *
+ * Load-bearing since the accounting step was added: `Status='ManagerApproved'`
+ * no longer names one stage. It means Admin's booking fill-in (`'ADMIN'`) *or*
+ * accounting's sign-off (`'ACCOUNT'`), and only this column tells them apart.
+ * Every server predicate on that status pairs it with the step; the client
+ * could not, because the read shape did not carry it.
+ */
+export type TravelBookingStepCode = "MANAGER" | "ADMIN" | "ACCOUNT";
+
 /** Transport direction — go (ขาไป) / return (ขากลับ). */
 export type TravelDirection = "go" | "return";
 
@@ -143,6 +154,12 @@ export interface TravelBookingRequest {
   id?: number;
   requestNo: string | null;
   status: TravelBookingStatus;
+  /**
+   * `AccRequest.CurrentStepCode` — which step the request is parked on, NULL once
+   * it is terminal. `status` alone cannot answer that: `ManagerApproved` spans
+   * both the Admin booking stage and accounting's sign-off.
+   */
+  currentStepCode: TravelBookingStepCode | null;
   /** `AccRequest.BrandCode` — the company this booking is filed under. */
   brandCode: string | null;
   /**

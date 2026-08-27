@@ -44,6 +44,7 @@ import type {
   TravelBookingGroup,
   TravelBookingRequest,
   TravelBookingStatus,
+  TravelBookingStepCode,
   TravelDirection,
   TravelReasonOption,
   VehicleOption,
@@ -81,6 +82,11 @@ function mapTravelBookingRow(
     id: r.Id as number,
     requestNo: (r.RequestNo as string) ?? null,
     status: r.Status as TravelBookingStatus,
+    // Selected by every caller of this mapper. `Status='ManagerApproved'` names
+    // two different stages since the accounting step landed, and this is the
+    // only column that separates them — a client predicate that checks the
+    // status alone acts on the wrong one.
+    currentStepCode: (r.CurrentStepCode as TravelBookingStepCode) ?? null,
     brandCode: (r.BrandCode as string) ?? null,
     // Only ever present on the single-request load, which is the one place the
     // note is rendered; the list queries do not pay for the subquery.
@@ -342,7 +348,7 @@ export async function listMyTravelBookings(userId: number): Promise<TravelBookin
     .input("form", sql.NVarChar, AP17_FORM_CODE)
     .query(`
       SELECT
-        r.Id, r.RequestNo, r.Status, r.BrandCode, r.StaffId, r.RequesterFullName, r.RequesterEmail, r.RequesterPosition, r.RequesterDepartmentName,
+        r.Id, r.RequestNo, r.Status, r.CurrentStepCode, r.BrandCode, r.StaffId, r.RequesterFullName, r.RequesterEmail, r.RequesterPosition, r.RequesterDepartmentName,
         r.PaymentDate, r.SubmittedAt,
         t.Phone, t.AllowanceSnapshot, t.ReasonId, t.ReasonName, t.ReasonCustomText, t.WorkDetail,
         t.ProvinceId, t.ProvinceName, t.AccommodationId, t.AccommodationName, t.AccommodationCustomText, t.NeedsRoomBooking,

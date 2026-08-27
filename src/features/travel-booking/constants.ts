@@ -29,18 +29,46 @@ export const TRAVEL_BOOKING_STATUSES: TravelBookingStatus[] = [
 export const STATUS_LABEL_TH: Record<TravelBookingStatus, string> = {
   Draft: "ฉบับร่าง",
   Submitted: "รออนุมัติ (ผู้จัดการ)",
-  ManagerApproved: "รอ Admin จองให้",
+  /**
+   * Stage-neutral on purpose. `ManagerApproved` used to mean one thing — waiting
+   * for Admin — and this label said so. It now spans Admin's booking fill-in and
+   * accounting's sign-off, so the *status* can only honestly say the manager has
+   * approved; which of the two stages it is sitting on is `CurrentStepCode`'s
+   * answer, given by `travelBookingStatusLabel` below.
+   */
+  ManagerApproved: "ผู้จัดการอนุมัติแล้ว",
   Completed: "เสร็จสิ้น",
   Rejected: "ไม่อนุมัติ",
   Returned: "ส่งกลับแก้ไข",
   Cancelled: "ยกเลิก",
 };
 
-/** UI label — collapse "รออนุมัติ (...)" / "รอ Admin..." to a single pending label. */
-export function statusLabelDisplay(status: string): string {
-  const label = STATUS_LABEL_TH[status as TravelBookingStatus] ?? status;
-  if (label.startsWith("รออนุมัติ") || label.startsWith("รอ Admin")) return "รอดำเนินการ";
-  return label;
+/** Per-stage labels for `ManagerApproved`, keyed on `AccRequest.CurrentStepCode`. */
+const MANAGER_APPROVED_STEP_LABEL_TH: Record<string, string> = {
+  ADMIN: "รอ Admin จองให้",
+  ACCOUNT: "รอบัญชีตรวจสอบ",
+};
+
+/**
+ * Full status label, told apart by step where the status alone is ambiguous.
+ *
+ * Pass `currentStepCode` wherever the caller has it — a reader of a
+ * `ManagerApproved` request otherwise cannot tell "Admin has yet to book this"
+ * from "Admin booked it, accounting has yet to sign it off", which is half that
+ * status's life.
+ */
+export function travelBookingStatusLabel(status: string, currentStepCode?: string | null): string {
+  if (status === "ManagerApproved" && currentStepCode) {
+    const stepLabel = MANAGER_APPROVED_STEP_LABEL_TH[currentStepCode];
+    if (stepLabel) return stepLabel;
+  }
+  return STATUS_LABEL_TH[status as TravelBookingStatus] ?? status;
+}
+
+/** UI label — collapse every still-pending stage to a single pending label. */
+export function statusLabelDisplay(status: string, currentStepCode?: string | null): string {
+  if (isPendingTravelBookingStatus(status)) return "รอดำเนินการ";
+  return travelBookingStatusLabel(status, currentStepCode);
 }
 
 export function isPendingTravelBookingStatus(status: string): boolean {

@@ -2,7 +2,7 @@ import { getAccPool, sql } from "@/lib/acc/pool";
 import { getAllowanceLog } from "@/lib/acc/travel-booking/allowance-log";
 import { rateForDay, type AllowanceLogEntry } from "@/lib/acc/travel-booking/perdiem";
 import { enumerateTravelDates, fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
-import { STATUS_LABEL_TH } from "@/features/travel-booking/constants";
+import { travelBookingStatusLabel } from "@/features/travel-booking/constants";
 import type { TravelBookingStatus } from "@/features/travel-booking/types";
 import * as XLSX from "xlsx-js-style";
 
@@ -50,6 +50,12 @@ export interface TravelBookingReportRow {
   /** MANAGER-step AccApproval.ActionedAt, only when that step is Approved. */
   approvedDate: string | null;
   status: TravelBookingStatus;
+  /**
+   * `AccRequest.CurrentStepCode` — which stage a live request sits on. Carried
+   * because `status` alone cannot say: `ManagerApproved` is both Admin's
+   * booking stage and accounting's sign-off, and the export prints one label.
+   */
+  currentStepCode: string | null;
   /** Distinct effective per-diem rate(s) actually applied over the trip, e.g. "500" or "500, 1000". */
   perDiemRate: string | null;
   perDiemDays: number;
@@ -123,7 +129,7 @@ const BASE_CTE = `
   WITH Base AS (
     SELECT
       r.Id, r.RequestNo, r.BrandCode, r.StaffId, r.RequesterFullName, r.RequesterPosition, r.RequesterDepartmentName,
-      r.EmployeeId, r.Status, r.PaymentDate, r.SubmittedAt,
+      r.EmployeeId, r.Status, r.CurrentStepCode, r.PaymentDate, r.SubmittedAt,
       t.ReasonId, t.ReasonName, t.ReasonCustomText, t.WorkDetail,
       t.DepartDate, t.ReturnDate,
       t.ProvinceId, t.ProvinceName,
@@ -253,6 +259,7 @@ export async function queryTravelBookingReport(
       workLocationsCsv: (x.WorkLocationsCsv as string) ?? null,
       approvedDate: x.ApprovedDate ? ymd(x.ApprovedDate as Date) : null,
       status: x.Status as TravelBookingStatus,
+      currentStepCode: (x.CurrentStepCode as string) ?? null,
       perDiemRate,
       perDiemDays: (x.PerDiemDays as number) ?? 0,
       perDiemTotal: Number(x.PerDiemTotal) || 0,
@@ -314,7 +321,7 @@ export function buildTravelBookingReportWorkbook(
       r.provinceName, r.accommodationName,
       r.workLocationsCsv,
       r.approvedDate ? fmtYmdDisplay(r.approvedDate) : null,
-      STATUS_LABEL_TH[r.status] ?? r.status,
+      travelBookingStatusLabel(r.status, r.currentStepCode),
       r.perDiemRate, r.perDiemDays, r.perDiemTotal,
       r.continuationFromRequestNo ? `วันแรกนับใน ${r.continuationFromRequestNo}` : null,
       r.paymentDate ? fmtYmdDisplay(r.paymentDate) : null,
