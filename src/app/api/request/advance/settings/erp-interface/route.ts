@@ -16,7 +16,7 @@ export async function GET() {
   }
 }
 
-/** POST — save AP-2's G/L + Bank + Journal Batch for one brand in a single write. */
+/** POST — save AP-2's Bank + Branch + Journal Batch for one brand in a single write. */
 export async function POST(req: NextRequest) {
   const session = await requireRole(["IT Admin", "System Admin"]);
   if (session instanceof Response) return session;
@@ -24,7 +24,6 @@ export async function POST(req: NextRequest) {
     const body = (await req.json().catch(() => ({}))) as {
       brandCode?: string;
       interfaceBrandCode?: string;
-      glAccountNo?: string;
       bankAccountNo?: string;
       branchCode?: string;
       journalBatchName?: string;
@@ -36,16 +35,14 @@ export async function POST(req: NextRequest) {
     if (!interfaceBrandCode) return NextResponse.json({ ok: false, error: "กรุณาเลือก Company ปลายทาง" }, { status: 400 });
     if (!isErpInterfaceBrandCode(interfaceBrandCode)) return NextResponse.json({ ok: false, error: "Company ปลายทางไม่ถูกต้อง" }, { status: 400 });
 
-    const glAccountNo    = (body.glAccountNo ?? "").trim();
     const bankAccountNo  = (body.bankAccountNo ?? "").trim();
     const branchCode     = (body.branchCode ?? "").trim() || null;
     const journalBatchName = (body.journalBatchName ?? "").trim() || null;
-    if (!glAccountNo)   return NextResponse.json({ ok: false, error: "กรุณาเลือก G/L Account" }, { status: 400 });
     if (!bankAccountNo) return NextResponse.json({ ok: false, error: "กรุณาเลือก Bank Account" }, { status: 400 });
 
     await saveAdvanceInterfacePerForm(
       brandCode,
-      { interfaceBrandCode, glAccountNo, bankAccountNo, branchCode, journalBatchName },
+      { interfaceBrandCode, bankAccountNo, branchCode, journalBatchName },
       Number(session.user.id),
     );
     return NextResponse.json({ ok: true });

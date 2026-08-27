@@ -4,7 +4,7 @@ import { loadErpJournalBuildContext } from "@/lib/acc/erp-journal-context";
 import { resolveErpTargetProfile } from "@/lib/acc/erp-target-profile";
 import { listBrandErpInterfaceMaps, upsertFormBrandErpInterfaceMap } from "@/lib/acc/brand-erp-interface-map-service";
 import { mergeFormBrandAccount } from "@/lib/acc/brand-account-service";
-import { mergeFormBrandBranch } from "@/lib/acc/brand-branch-service";
+import { listBrandBranches, mergeFormBrandBranch } from "@/lib/acc/brand-branch-service";
 import { mergeFormBrandBatch } from "@/lib/acc/brand-journal-batch-service";
 import { AP2_FORM_CODE } from "@/features/advance/constants";
 
@@ -19,7 +19,6 @@ export interface AdvanceInterfaceConfigView {
   bcProfileComplete: boolean;
   environment: string | null;
   branchCode: string | null;
-  glAccountNo: string | null;
   bankAccountNo: string | null;
   journalBatchName: string | null;
   ready: boolean;
@@ -27,15 +26,24 @@ export interface AdvanceInterfaceConfigView {
 }
 
 export async function listAdvanceInterfaceConfigView(): Promise<AdvanceInterfaceConfigView[]> {
-  const [allBrands, ctx, ifaceMaps, ap2Brands] =
+  const [allBrands, ctx, ifaceMaps, ap2Brands, branchRows] =
     await Promise.all([
       listAllBrands(),
       loadErpJournalBuildContext(AP2_FORM_CODE),
       listBrandErpInterfaceMaps(AP2_FORM_CODE),
       listFormBrands(AP2_FORM_CODE),
+      listBrandBranches(null, AP2_FORM_CODE),
     ]);
 
   const activeByCode = new Map(ap2Brands.map((b) => [b.brandCode.toUpperCase(), b.isActive]));
+  // AP-2 self-owns its branch: show only an explicit AP-2 override, never the
+  // inherited NULL-default (AP-1's shared branch). A blank means "use the
+  // requester's mapped ERP dept" — see loadAdvanceErpContext.
+  const ap2BranchByCode = new Map(
+    branchRows
+      .filter((b) => b.formCode === AP2_FORM_CODE)
+      .map((b) => [b.brandCode.toUpperCase(), b.branchCode]),
+  );
   const brandByCode = new Map(allBrands.map((b) => [b.brandCode.toUpperCase(), b]));
   const ifaceByCode = new Map(ifaceMaps.map((m) => [m.brandCode.toUpperCase(), m]));
 
@@ -56,14 +64,16 @@ export async function listAdvanceInterfaceConfigView(): Promise<AdvanceInterface
       const target = (ifaceRow?.interfaceBrandCode ?? code).toUpperCase();
       const profile = await resolveErpTargetProfile(target, AP2_FORM_CODE);
 
-      const glAccountNo     = base?.glAccountNo ?? null;
       const bankAccountNo   = base?.bankAccountNo ?? null;
-      const branchCode      = base?.branchCode ?? null;
+      const branchCode      = ap2BranchByCode.get(code) ?? null;
       const journalBatchName = base?.journalBatchName ?? null;
 
+      // Dr posts to the matched Vendor (G/L derived from posting group), so the
+      // send-ready gate no longer needs a configured G/L account. Branch is also
+      // optional — when unset the payload falls back to the requester's mapped
+      // ERP department — so it is not part of the gate either.
       const ready = !!(
-        glAccountNo && bankAccountNo && journalBatchName &&
-        branchCode && profile?.profileComplete
+        bankAccountNo && journalBatchName && profile?.profileComplete
       );
 
       return {
@@ -77,7 +87,6 @@ export async function listAdvanceInterfaceConfigView(): Promise<AdvanceInterface
         bcProfileComplete: profile?.profileComplete ?? false,
         environment: profile?.environment ?? null,
         branchCode,
-        glAccountNo,
         bankAccountNo,
         journalBatchName,
         ready,
@@ -93,7 +102,6 @@ export async function saveAdvanceInterfacePerForm(
   brandCode: string,
   values: {
     interfaceBrandCode: string;
-    glAccountNo: string;
     bankAccountNo: string;
     branchCode: string | null;
     journalBatchName: string | null;
@@ -102,7 +110,6 @@ export async function saveAdvanceInterfacePerForm(
 ): Promise<void> {
   await Promise.all([
     upsertFormBrandErpInterfaceMap(brandCode, values.interfaceBrandCode, AP2_FORM_CODE, userId),
-    mergeFormBrandAccount("gl",   brandCode, AP2_FORM_CODE, values.glAccountNo, null, userId),
     mergeFormBrandAccount("bank", brandCode, AP2_FORM_CODE, values.bankAccountNo, null, userId),
     mergeFormBrandBranch(brandCode, AP2_FORM_CODE, values.branchCode || null, userId),
     mergeFormBrandBatch(brandCode, AP2_FORM_CODE, values.journalBatchName || null, userId),

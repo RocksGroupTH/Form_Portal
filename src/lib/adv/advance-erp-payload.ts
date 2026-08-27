@@ -5,9 +5,10 @@ import type { AdvanceDetail, AdvanceRequest } from "@/features/advance/types";
 /**
  * Build the PPAP CreateFromJson payload for one advance.
  *
- * An advance is a single paired entry — Dr เงินทดรองจ่าย (G/L) / Cr Bank — so the
- * payload is exactly two lines under one group (G1). Accounts come from config
- * (never hardcoded); a missing value throws a friendly error at send time.
+ * An advance is a single paired entry — Dr Vendor / Cr Bank — so the payload is
+ * exactly two lines under one group (G1). The Dr G/L is derived by BC from the
+ * vendor's posting group (ADV), so no G/L is configured here. Accounts come from
+ * config (never hardcoded); a missing value throws a friendly error at send time.
  */
 export function buildAdvanceJournalPayload(
   req: AdvanceRequest,
@@ -15,11 +16,11 @@ export function buildAdvanceJournalPayload(
   config: BrandErpAccountConfig,
   departmentCode: string,
 ): PpapJournalPayload {
-  const { glAccountNo, bankAccountNo, journalBatchName, branchCode } = config;
-  if (!glAccountNo) throw new Error("ยังไม่ได้ตั้งค่า G/L Account ของ AP-2 สำหรับแบรนด์นี้ (Settings → บัญชี AP-2)");
+  const { bankAccountNo, journalBatchName, branchCode } = config;
   if (!bankAccountNo) throw new Error("ยังไม่ได้ตั้งค่า Bank Account สำหรับแบรนด์นี้");
   if (!journalBatchName) throw new Error("ยังไม่ได้ตั้งค่า Journal Batch สำหรับแบรนด์นี้");
   if (!req.paymentDate) throw new Error("ยังไม่กำหนดวันจ่าย (PaymentDate)");
+  if (!advance.matchedVendorNo) throw new Error("ยังไม่ได้เลือก Vendor สำหรับรายการนี้ (แก้ที่ขั้น Accounting Officer)");
 
   // Post the THB base amount (foreign-currency advances convert via exchangeRate).
   const amount = advance.baseAmount ?? advance.amount ?? 0;
@@ -32,9 +33,13 @@ export function buildAdvanceJournalPayload(
   // The CU maps payload.employeeCode → BC "External Document No." (APJournalCreate.al,
   // CopyStr 1..35), so carry the request no (ADV26-xxxxx) there.
   const employeeCode = (req.requestNo ?? "").slice(0, 35);
-  const branch = branchCode ?? "";
   // departmentCode is already the resolved ERP dept (HR→ERP mapped or fixed) —
   // see resolveAdvanceErpDept in advance-erp-context.ts.
+  // Branch falls back to the requester's ERP department when no brand-level
+  // Branch is configured (AP-2-only rule; AP-1 requires a configured branch).
+  // departmentCode always resolves (the context throws on an unmapped dept), so
+  // the fallback never posts a blank branch.
+  const branch = branchCode?.trim() || departmentCode;
 
   return {
     journalBatchName,
@@ -43,12 +48,11 @@ export function buildAdvanceJournalPayload(
         groupNo: "G1",
         postingDate,
         documentType: "Payment",
-        accountType: "G/L Account",
-        accountNo: glAccountNo,
+        accountType: "Vendor",
+        accountNo: advance.matchedVendorNo,
         description,
         paymentMethodCode: "BANK",
         amount,
-        balAccountType: "G/L Account",
         employeeCode,
         branchCode: branch,
         departmentCode,

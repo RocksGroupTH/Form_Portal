@@ -53,6 +53,20 @@ async function resolveAdvanceErpDept(
  * loadErpJournalBuildContext's interfaceByClaim map, which already resolves
  * the AP-2 override (AccBrandErpInterface FormCode='AP-2') before the NULL default.
  */
+/**
+ * Resolve a portal brand (claim) to the BC interface Company code that keys
+ * ErpVendors and the other Rocks_ERP_Data masters (e.g. ROCKS → PCTH). Idempotent
+ * for values that are already interface Company codes (PCTH → PCTH). Vendor
+ * lookups must use this, never the raw brand, or they query a non-existent
+ * BrandCode and come back empty.
+ */
+export async function resolveAdvanceInterfaceCompany(brandCode: string): Promise<string> {
+  const code = (brandCode ?? "").trim().toUpperCase();
+  if (!code) return "";
+  const ctx = await loadErpJournalBuildContext(AP2_FORM_CODE);
+  return (ctx.interfaceByClaim[code] ?? code).toUpperCase();
+}
+
 export async function loadAdvanceErpContext(
   brandCode: string,
   hrDeptCode?: string | null,
@@ -70,8 +84,11 @@ export async function loadAdvanceErpContext(
   // Prefer FormCode='AP-2' rows; fall back to the picked NULL-default row.
   const gl     = glRows.find(r => r.formCode === AP2_FORM_CODE)     ?? glRows[0]     ?? null;
   const bank   = bankRows.find(r => r.formCode === AP2_FORM_CODE)   ?? bankRows[0]   ?? null;
-  const branch = branchRows.find(r => r.formCode === AP2_FORM_CODE) ?? branchRows[0] ?? null;
   const batch  = batchRows.find(r => r.formCode === AP2_FORM_CODE)  ?? batchRows[0]  ?? null;
+  // Branch is the exception: AP-2 self-owns it. Only an explicit AP-2 row counts —
+  // an inherited NULL-default (AP-1's shared branch, e.g. HQ) is treated as "no
+  // branch" so a blank AP-2 branch falls back to the requester's mapped ERP dept.
+  const branch = branchRows.find(r => r.formCode === AP2_FORM_CODE) ?? null;
 
   const config: BrandErpAccountConfig = {
     glAccountNo:       gl?.accountNo?.trim()       ?? null,

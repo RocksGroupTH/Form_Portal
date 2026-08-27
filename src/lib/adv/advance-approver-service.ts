@@ -32,7 +32,7 @@ export interface AdvanceApprover {
 export async function listAdvanceApprovers(): Promise<AdvanceApprover[]> {
   const pool = await getAccPool();
   const r = await pool.request().query(`
-    SELECT Id, StaffId, Email, DisplayName, ApproverRole, IsActive, PhotoUrl
+    SELECT Id, StaffId, Email, DisplayName, ApproverRole, IsActive
     FROM [dbo].[AccAdvanceApprover] ORDER BY ApproverRole, DisplayName, Email`);
   return (r.recordset as Record<string, unknown>[]).map((x) => ({
     id: x.Id as number,
@@ -41,7 +41,7 @@ export async function listAdvanceApprovers(): Promise<AdvanceApprover[]> {
     displayName: (x.DisplayName as string) ?? null,
     approverRole: (x.ApproverRole as AdvanceApproverRole) ?? "ACC_OFFICER",
     isActive: !!x.IsActive,
-    photoUrl: (x.PhotoUrl as string) ?? null,
+    photoUrl: (x.StaffId as number) != null ? `/api/hr/photo/${x.StaffId as number}` : null,
   }));
 }
 
@@ -68,7 +68,7 @@ export interface ApproverDisplay {
 export async function listActiveApproversByRole(role: AdvanceApproverRole): Promise<ApproverDisplay[]> {
   const pool = await getAccPool();
   const r = await pool.request().input("role", sql.NVarChar, role).query(`
-    SELECT a.StaffId, a.Email, a.DisplayName, a.PhotoUrl, e.Position
+    SELECT a.StaffId, a.Email, a.DisplayName, e.Position
     FROM [dbo].[AccAdvanceApprover] a
     LEFT JOIN ${hrEmployeeTable()} e ON e.StaffId = a.StaffId AND e.Status = N'Active'
     WHERE a.IsActive = 1 AND a.ApproverRole = @role ORDER BY a.DisplayName, a.Email`);
@@ -77,7 +77,7 @@ export async function listActiveApproversByRole(role: AdvanceApproverRole): Prom
     email: x.Email as string,
     displayName: (x.DisplayName as string) ?? null,
     position: (x.Position as string) ?? null,
-    photoUrl: (x.PhotoUrl as string) ?? null,
+    photoUrl: (x.StaffId as number) != null ? `/api/hr/photo/${x.StaffId as number}` : null,
   }));
 }
 

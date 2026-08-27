@@ -155,8 +155,15 @@ export function SearchableSelect({
       let left = r.left;
       const overflow = left + width - window.innerWidth + 8;
       if (overflow > 0) left = Math.max(8, left - overflow);
+      // Flip above the trigger when the panel would run off the bottom edge.
+      const panelH = 300;
+      let top = r.bottom + 4;
+      if (top + panelH > window.innerHeight - 8) {
+        const above = r.top - panelH - 4;
+        top = above >= 8 ? above : Math.max(8, window.innerHeight - panelH - 8);
+      }
       setPortalRoot(document.body);
-      setCoords({ top: r.bottom + 4, left, width, mode: "fixed" });
+      setCoords({ top, left, width, mode: "fixed" });
     }
     place();
     window.addEventListener("resize", place);

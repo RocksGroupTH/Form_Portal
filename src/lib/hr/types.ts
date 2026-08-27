@@ -28,6 +28,7 @@ export interface EmployeeContext {
   email: string | null;
   emailCompBr: string | null;
   phone: string | null;
+  bankAccountNo: string | null;
   /** Standing per-diem/travel allowance rate (Employee.Allowance) — informational; AP-17 snapshots this. */
   allowance: number | null;
   position: string | null;

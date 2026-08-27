@@ -1,6 +1,7 @@
 import { getAccPool, sql } from "@/lib/adv/pool";
 import { getPaymentDates } from "@/lib/acc/payment-calendar";
 import { queueEmail } from "@/lib/acc/email-queue";
+import { buildAdvanceEmail } from "@/lib/adv/advance-email-templates";
 import { requireActorStaffId } from "@/lib/acc/actor-context";
 import type { Actor } from "@/lib/acc/approval-engine";
 import { getRequest } from "@/lib/adv/advance-request-service";
@@ -51,10 +52,17 @@ async function notifyStep(requestId: number, stepType: StepType, requestNo: stri
     emails = (r.recordset as { AssignedEmail: string | null }[])
       .map((x) => x.AssignedEmail).filter((e): e is string => !!e);
   }
-  const subject = `เบิกเงินทดรองจ่าย ${requestNo} รออนุมัติ (${STEP_LABEL[stepType]})`;
-  const body =
-    `<p>มีคำขอเบิกเงินทดรองจ่าย <b>${requestNo}</b> รอการอนุมัติของท่าน (${STEP_LABEL[stepType]})</p>` +
-    `<p><a href="/request/advance/${requestId}">เปิดคำขอ</a></p>`;
+  const req = await getRequest(requestId);
+  const { subject, html: body } = buildAdvanceEmail("StepPending", {
+    id: requestId,
+    requestNo,
+    requesterFullName: req?.requesterFullName,
+    brandCode: req?.brandCode,
+    payeeName: req?.advance?.payeeName,
+    totalAmount: req?.totalAmount,
+    paymentDate: req?.paymentDate,
+    stepLabel: STEP_LABEL[stepType],
+  });
   for (const toEmail of emails) {
     await queueEmail({ requestId, toEmail, subject, bodyHtml: body, triggerType: "ManagerApproved" });
   }
@@ -71,10 +79,20 @@ export async function approveCurrentStep(
   if (!step) throw new Error("คำขอไม่อยู่ในขั้นรออนุมัติ");
 
   if (needsPayment(step.stepType)) {
-    if (!opts.isChecked) throw new Error("ต้องกด Check ก่อนอนุมัติ");
     const valid = await getPaymentDates();
     if (!opts.paymentDate || !valid.includes(opts.paymentDate)) {
       throw new Error("วันที่จ่ายไม่อยู่ในรอบที่กำหนด (ศุกร์ที่ 2 หรือ 4)");
+    }
+    // AP-2: the debit posts to a Vendor, so the Accounting Officer must have a
+    // confirmed vendor before this step can complete. (Belt: the send guard and
+    // the payload builder also refuse, but the gate lives here so the queue only
+    // ever receives complete rows.)
+    const pool = await getAccPool();
+    const vr = await pool.request().input("rid", sql.Int, requestId)
+      .query(`SELECT MatchedVendorNo, VendorMatchStatus FROM [dbo].[AccAdvance] WHERE RequestId=@rid`);
+    const vrow = vr.recordset[0] as { MatchedVendorNo?: string | null; VendorMatchStatus?: string | null } | undefined;
+    if (!vrow?.MatchedVendorNo || vrow.VendorMatchStatus !== "confirmed") {
+      throw new Error("ต้องยืนยัน Vendor ก่อนอนุมัติ (เลือก Vendor ในหน้ารายละเอียด)");
     }
   }
 
@@ -120,12 +138,16 @@ export async function approveCurrentStep(
   if (nextType) {
     await notifyStep(requestId, nextType, no);
   } else if (req?.requesterEmail) {
-    await queueEmail({
-      requestId, toEmail: req.requesterEmail,
-      subject: `เบิกเงินทดรองจ่าย ${no} อนุมัติแล้ว`,
-      bodyHtml: `<p>คำขอ <b>${no}</b> ได้รับการอนุมัติครบทุกขั้นแล้ว</p>`,
-      triggerType: "Approved",
+    const { subject, html: bodyHtml } = buildAdvanceEmail("Approved", {
+      id: requestId,
+      requestNo: no,
+      requesterFullName: req.requesterFullName,
+      brandCode: req.brandCode,
+      payeeName: req.advance?.payeeName,
+      totalAmount: req.totalAmount,
+      paymentDate: req.paymentDate,
     });
+    await queueEmail({ requestId, toEmail: req.requesterEmail, subject, bodyHtml, triggerType: "Approved" });
   }
 }
 
@@ -151,11 +173,19 @@ export async function rejectCurrentStep(requestId: number, actor: Actor, comment
     await tx.commit();
   } catch (e) { await tx.rollback().catch(() => {}); throw e; }
   const req = await getRequest(requestId);
-  if (req?.requesterEmail) await queueEmail({
-    requestId, toEmail: req.requesterEmail,
-    subject: `เบิกเงินทดรองจ่าย ${req.requestNo ?? `#${requestId}`} ไม่อนุมัติ`,
-    bodyHtml: `<p>คำขอถูกปฏิเสธ</p><p>หมายเหตุ: ${comment}</p>`, triggerType: "Rejected",
-  });
+  if (req?.requesterEmail) {
+    const { subject, html: bodyHtml } = buildAdvanceEmail("Rejected", {
+      id: requestId,
+      requestNo: req.requestNo ?? `#${requestId}`,
+      requesterFullName: req.requesterFullName,
+      brandCode: req.brandCode,
+      payeeName: req.advance?.payeeName,
+      totalAmount: req.totalAmount,
+      paymentDate: req.paymentDate,
+      note: comment,
+    });
+    await queueEmail({ requestId, toEmail: req.requesterEmail, subject, bodyHtml, triggerType: "Rejected" });
+  }
 }
 
 /**
@@ -192,20 +222,22 @@ export async function cancelByRequester(requestId: number, actor: Actor): Promis
   // Notify Head Accounting + cc the requester that the request was withdrawn
   // (best-effort — never fail the cancel over an email).
   try {
-    const info = await pool.request().input("rid", sql.Int, requestId)
-      .query(`SELECT RequestNo, RequesterEmail, RequesterFullName FROM [dbo].[AccRequest] WHERE Id=@rid`);
-    const row = info.recordset[0] as { RequestNo: string | null; RequesterEmail: string | null; RequesterFullName: string | null } | undefined;
-    const requestNo = row?.RequestNo || `#${requestId}`;
+    const req = await getRequest(requestId);
+    const requestNo = req?.requestNo || `#${requestId}`;
     const headEmails = await listApproverEmailsByRole("HEAD_ACC");
     const recipients = Array.from(new Set([
       ...headEmails.filter((e): e is string => !!e),
-      ...(row?.RequesterEmail ? [row.RequesterEmail] : []),
+      ...(req?.requesterEmail ? [req.requesterEmail] : []),
     ]));
-    const subject = `ยกเลิกคำขอเบิกเงินทดรองจ่าย ${requestNo}`;
-    const bodyHtml =
-      `<p>คำขอเบิกเงินทดรองจ่าย <b>${requestNo}</b> ถูก<b>ยกเลิก</b>โดยผู้ขอ` +
-      `${row?.RequesterFullName ? ` (${row.RequesterFullName})` : ""} ก่อนการอนุมัติของ Head Accounting</p>` +
-      `<p>ไม่ต้องดำเนินการอนุมัติคำขอนี้อีก</p>`;
+    const { subject, html: bodyHtml } = buildAdvanceEmail("Cancelled", {
+      id: requestId,
+      requestNo,
+      requesterFullName: req?.requesterFullName,
+      brandCode: req?.brandCode,
+      payeeName: req?.advance?.payeeName,
+      totalAmount: req?.totalAmount,
+      paymentDate: req?.paymentDate,
+    });
     for (const toEmail of recipients) {
       await queueEmail({ requestId, toEmail, subject, bodyHtml, triggerType: "Cancelled" });
     }
@@ -234,9 +266,17 @@ export async function returnCurrentStep(requestId: number, actor: Actor, comment
     await tx.commit();
   } catch (e) { await tx.rollback().catch(() => {}); throw e; }
   const req = await getRequest(requestId);
-  if (req?.requesterEmail) await queueEmail({
-    requestId, toEmail: req.requesterEmail,
-    subject: `เบิกเงินทดรองจ่าย ${req.requestNo ?? `#${requestId}`} ส่งกลับแก้ไข`,
-    bodyHtml: `<p>คำขอถูกส่งกลับให้แก้ไข</p><p>${comment}</p>`, triggerType: "Returned",
-  });
+  if (req?.requesterEmail) {
+    const { subject, html: bodyHtml } = buildAdvanceEmail("Returned", {
+      id: requestId,
+      requestNo: req.requestNo ?? `#${requestId}`,
+      requesterFullName: req.requesterFullName,
+      brandCode: req.brandCode,
+      payeeName: req.advance?.payeeName,
+      totalAmount: req.totalAmount,
+      paymentDate: req.paymentDate,
+      note: comment,
+    });
+    await queueEmail({ requestId, toEmail: req.requesterEmail, subject, bodyHtml, triggerType: "Returned" });
+  }
 }

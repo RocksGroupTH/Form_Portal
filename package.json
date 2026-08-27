@@ -13,7 +13,9 @@
     "check:alignment": "tsx scripts/checks/verify-master-alignment.ts",
     "check:dept-map-home": "tsx scripts/checks/verify-department-erp-map-move.ts",
     "check:erp-data-home": "tsx scripts/checks/verify-erp-data-move.ts",
-    "check:travel-province-home": "tsx scripts/checks/verify-travel-province-move.ts"
+    "check:erp-vendors": "tsx scripts/checks/verify-erp-vendors.ts",
+    "check:travel-province-home": "tsx scripts/checks/verify-travel-province-move.ts",
+    "sync:erp-vendors": "tsx scripts/sync-erp-vendors.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.120.0",
