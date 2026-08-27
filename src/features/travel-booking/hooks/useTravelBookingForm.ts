@@ -585,7 +585,18 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
 
   /* ── Validation across all tabs ── */
   const tabIssues = useMemo(() => tabs.map((t) => validateTab(t, settingsMaps)), [tabs, settingsMaps]);
-  const canSubmit = tabs.length > 0 && tabIssues.every((issues) => issues.length === 0);
+  /**
+   * The brand blocks submit like any required field.
+   *
+   * It is **not** a `tabIssue`: one brand covers the whole group, so a
+   * per-tab issue list would report the same missing value once per trip and
+   * clear it in all of them at once. The server refuses it too — see the
+   * submit route — because a draft can hold a code the allowlist has since
+   * dropped, which no client check can see.
+   */
+  const brandMissing = !brandCode;
+  const canSubmit =
+    tabs.length > 0 && !brandMissing && tabIssues.every((issues) => issues.length === 0);
 
   /* ── Tab CRUD ── */
 
@@ -836,6 +847,7 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
     brandCode,
     setBrandCode,
     brands,
+    brandMissing,
     selectedRequester,
 
     // tabs

@@ -2,8 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, Building2, Check, Circle, History, Info, Loader2, Mail, Phone, Plus, Save, Send, Trash2, User, UserCog, Wallet } from "lucide-react";
-import { BrandMark } from "@/components/BrandMark";
+import { AlertTriangle, Check, Circle, History, Info, Loader2, Mail, Phone, Plus, Save, Send, Trash2, User, UserCog, Wallet } from "lucide-react";
 import { Avatar } from "@/components/ui/Avatar";
 import { Dialog } from "@/components/ui/Dialog";
 import { RequesterPickerModal } from "@/components/RequesterPickerModal";
@@ -70,7 +69,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
     employee, employeeHint, employeeEmail, employeeLoading, manager, managerReason,
     colleagues, colleaguesLoading, requesterEnvironment,
     existingRanges, requesterStaffId, setRequesterStaffId, selectedRequester,
-    brandCode, setBrandCode, brands,
+    brandCode, setBrandCode, brands, brandMissing,
     continuationFlags, perDiemEstimates, totalPerDiemEstimate,
     tabIssues, canSubmit,
     saving, submitting, submitPhase, saveDraft, submitAll, uploadIdCard, removeIdCardFile,
@@ -133,6 +132,15 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
     setTriedSubmit(true);
     if (!overallCanSubmit) {
       toast.error("กรุณากรอกข้อมูลให้ครบก่อนส่งคำขอ");
+      // The brand first: it is request-level, so it is missing on every tab at
+      // once and jumping to "the first tab with a problem" would land on a
+      // field that is not the one to fix. It renders in the active tab, so
+      // nothing needs switching.
+      if (brandMissing) {
+        requestAnimationFrame(() => requestAnimationFrame(() => scrollToField("brand")));
+        return;
+      }
+
       // Jump to the first tab with a missing field and focus it (else the requester/manager at top).
       const badTab = tabIssues.findIndex((iss) => iss.length > 0);
       if (badTab >= 0) {
@@ -151,7 +159,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
     }
     toast.success(`ส่งคำขอ ${result.count ?? tabs.length} ใบแล้ว`);
     onSubmitted?.(result.count ?? tabs.length, result.firstRequestId ?? null);
-  }, [overallCanSubmit, submitAll, onSubmitted, tabs.length, tabIssues, activeTabIndex, setActiveTabIndex]);
+  }, [overallCanSubmit, submitAll, onSubmitted, tabs.length, tabIssues, activeTabIndex, setActiveTabIndex, brandMissing]);
 
   const activeTab = tabs[activeTabIndex] ?? tabs[0];
 
@@ -197,43 +205,6 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
           ))}
         </div>
       </div>
-
-      {/* แบรนด์ที่เบิก — AP-1's chips, over AP-17's own AccFormBrand rows. */}
-      <SectionCard icon={<Building2 size={15} />} title="แบรนด์ที่เบิก">
-        {brands.length === 0 ? (
-          // Not an empty row of chips: nothing has gone wrong with the page,
-          // the form simply has no brand granted yet and cannot be submitted
-          // until one is. Nothing is seeded — that was deliberate.
-          <p className="text-[13px] m-0" style={{ color: "var(--text-faint)" }}>
-            ยังไม่ได้ตั้งค่าแบรนด์ที่เบิกได้สำหรับฟอร์มนี้ — ติดต่อผู้ดูแลระบบ
-          </p>
-        ) : (
-          <div className="flex flex-wrap gap-2">
-            {brands.map((b) => {
-              const active = brandCode === b.brandCode;
-              return (
-                <button
-                  key={b.brandCode}
-                  type="button"
-                  onClick={() => setBrandCode(active ? null : b.brandCode)}
-                  className="flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer text-[14px] font-semibold transition-all"
-                  style={{
-                    borderWidth: 2,
-                    borderStyle: "solid",
-                    borderColor: active ? "var(--nav-active-text)" : "var(--border-card)",
-                    background: active ? "var(--nav-active-bg)" : "var(--bg-card-alt)",
-                    color: active ? "var(--nav-active-text)" : "var(--text-secondary)",
-                  }}
-                >
-                  <BrandMark src={b.brandLogo} alt="" code={b.brandCode} size={20} rounded="rounded" />
-                  {b.brandName}
-                  {active && <Check size={14} />}
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </SectionCard>
 
       {/* ผู้ขอเบิก (read-only) */}
       <SectionCard
@@ -478,6 +449,10 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
           issues={tabIssues[activeTabIndex] ?? []}
           triedSubmit={triedSubmit}
           requesterStaffId={requesterStaffId}
+          brands={brands}
+          brandCode={brandCode}
+          onBrandChange={setBrandCode}
+          brandMissing={brandMissing}
           onChange={(patch) => updateTab(activeTabIndex, patch)}
           onSelectPendingIdCard={(file) => updateTab(activeTabIndex, { pendingIdCard: file })}
           onRemoveIdCardFile={(fileId) => removeIdCardFile(activeTabIndex, fileId)}
