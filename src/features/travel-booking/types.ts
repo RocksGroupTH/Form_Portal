@@ -114,12 +114,27 @@ export interface TravelBookingFileMeta {
   contentType: string;
 }
 
-/** Admin fill-in booking row (AccTravelBookingDetail), 2.x. */
+/**
+ * Admin fill-in booking row (AccTravelBookingDetail), 2.x.
+ *
+ * Five fields, not two, since migration 123: a hotel or ticket invoice states a
+ * number, a price before VAT, the VAT, any discount and the total charged, and
+ * accounting signs off against that paper. `totalAmount` is **stored, not
+ * derived** — the arithmetic is a check on the invoice, not a substitute for it
+ * (see `lib/booking-amounts.ts`). All four figures are null on every row written
+ * before 123, which is honest: nobody recorded them at the time.
+ *
+ * One shape for all three booking kinds — `bookingType` discriminates them and
+ * the fields are identical across them.
+ */
 export interface BookingDetail {
   id: number;
   bookingType: BookingType;
   bookingNo: string | null;
   priceExVat: number | null;
+  vatAmount: number | null;
+  discountAmount: number | null;
+  totalAmount: number | null;
   files: TravelBookingFileMeta[];
 }
 

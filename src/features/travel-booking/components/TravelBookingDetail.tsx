@@ -808,13 +808,42 @@ export function TravelBookingDetail({
                                 )}
                               </p>
                             </div>
-                            {/* Price is Admin/accounting information — not shown in the requester
-                                view, but shown wherever the viewer is approving the payout. */}
+                            {/* The figures are Admin/accounting information — not shown in the
+                                requester view, but shown wherever the viewer is approving the
+                                payout. Each is rendered only when it holds something: null
+                                means nobody recorded it (every row written before migration
+                                123 reads null for the last three), and a row of "0.00 บาท"
+                                would claim a booking carried no VAT rather than that its VAT
+                                is unknown. */}
                             {showPrice && d.priceExVat != null && (
                               <div className="flex items-baseline gap-2 min-w-0">
                                 <FieldLabel inline>ราคา (ก่อน VAT)</FieldLabel>
                                 <p className="text-[13px] m-0 tabular-nums" style={{ color: "var(--color-action)" }}>
                                   {fmtBaht(d.priceExVat)} บาท
+                                </p>
+                              </div>
+                            )}
+                            {showPrice && d.vatAmount != null && (
+                              <div className="flex items-baseline gap-2 min-w-0">
+                                <FieldLabel inline>ภาษี (VAT)</FieldLabel>
+                                <p className="text-[13px] m-0 tabular-nums" style={{ color: "var(--text-primary)" }}>
+                                  {fmtBaht(d.vatAmount)} บาท
+                                </p>
+                              </div>
+                            )}
+                            {showPrice && d.discountAmount != null && (
+                              <div className="flex items-baseline gap-2 min-w-0">
+                                <FieldLabel inline>ส่วนลด</FieldLabel>
+                                <p className="text-[13px] m-0 tabular-nums" style={{ color: "var(--text-primary)" }}>
+                                  {fmtBaht(d.discountAmount)} บาท
+                                </p>
+                              </div>
+                            )}
+                            {showPrice && d.totalAmount != null && (
+                              <div className="flex items-baseline gap-2 min-w-0">
+                                <FieldLabel inline>ราคารวม</FieldLabel>
+                                <p className="text-[13px] m-0 tabular-nums font-bold" style={{ color: "var(--color-action)" }}>
+                                  {fmtBaht(d.totalAmount)} บาท
                                 </p>
                               </div>
                             )}

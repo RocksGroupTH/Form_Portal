@@ -5,6 +5,8 @@ import { deleteStoredFiles, type StoredFileRef } from "@/lib/acc/stored-file";
 import { loadPerDiemDependencies } from "@/lib/acc/travel-booking/perdiem-dependency-load";
 import type { PerDiemDependency } from "@/lib/acc/travel-booking/perdiem-dependency";
 import { AP17_FORM_CODE, BOOKING_TYPE_REFTYPE } from "@/features/travel-booking/constants";
+import { sanitizeBookingAmount } from "@/features/travel-booking/lib/booking-amounts";
+import { sanitizeBookingNo } from "@/features/travel-booking/lib/booking-no";
 import type { BookingType, TravelBookingRequest } from "@/features/travel-booking/types";
 
 type AccPool = Awaited<ReturnType<typeof getAccPool>>;
@@ -210,10 +212,14 @@ export interface SavedBookingDetail {
   bookingType: BookingType;
   bookingNo: string | null;
   priceExVat: number | null;
+  vatAmount: number | null;
+  discountAmount: number | null;
+  totalAmount: number | null;
 }
 
 interface SavedRow {
   Id: number; TravelBookingId: number; BookingType: string; BookingNo: string | null; PriceExVat: number | null;
+  VatAmount: number | null; DiscountAmount: number | null; TotalAmount: number | null;
 }
 
 function mapSavedRow(row: SavedRow): SavedBookingDetail {
@@ -223,6 +229,9 @@ function mapSavedRow(row: SavedRow): SavedBookingDetail {
     bookingType: row.BookingType as BookingType,
     bookingNo: row.BookingNo ?? null,
     priceExVat: num(row.PriceExVat),
+    vatAmount: num(row.VatAmount),
+    discountAmount: num(row.DiscountAmount),
+    totalAmount: num(row.TotalAmount),
   };
 }
 
@@ -270,15 +279,30 @@ async function requireEditableBooking(runner: SqlRunner, requestId: number): Pro
 /**
  * Create or update one `AccTravelBookingDetail` row. A request may hold SEVERAL rows of the
  * same `bookingType` (e.g. two hotels for one trip), so rows are keyed by `Id`, not by type:
- * pass `detailId` to edit an existing row, omit it to add another one. Both `bookingNo` and
- * `priceExVat` may be null — Admin can create an empty row just to hang attachments on it,
- * and fill the fields in afterwards. Attachments are handled separately (the file route),
- * which needs this row's `Id` as `AccRequestFile.RefId` — hence the full saved row is returned.
+ * pass `detailId` to edit an existing row, omit it to add another one. **Every** field may be
+ * null — Admin can create an empty row just to hang attachments on it, and fill the fields in
+ * afterwards. Attachments are handled separately (the file route), which needs this row's `Id`
+ * as `AccRequestFile.RefId` — hence the full saved row is returned.
+ *
+ * Five fields since migration 123, and **this is the gate on the four figures**, not the panel:
+ * every one goes through `sanitizeBookingAmount`, so a value out of range or non-numeric is
+ * stored as NULL rather than as itself. The client applies the same function, which makes the
+ * field behave predictably as it is typed — it does not make the client the authority. The
+ * total is stored as entered and never reconciled against the other three here: a supplier's
+ * own total is a fact about the transaction, and `totalMismatch` flags a disagreement for a
+ * person to judge rather than correcting it (see `features/travel-booking/lib/booking-amounts.ts`).
  */
 export async function saveBookingDetail(
   requestId: number,
   bookingType: BookingType,
-  input: { detailId?: number | null; bookingNo: string | null; priceExVat: number | null },
+  input: {
+    detailId?: number | null;
+    bookingNo: string | null;
+    priceExVat: number | null;
+    vatAmount?: number | null;
+    discountAmount?: number | null;
+    totalAmount?: number | null;
+  },
   actor: Actor,
 ): Promise<SavedBookingDetail> {
   const pool = await getAccPool();
@@ -293,25 +317,35 @@ export async function saveBookingDetail(
     const bind = (r: ReturnType<typeof tx.request>) =>
       r.input("tbid", sql.Int, travelBookingId)
         .input("type", sql.NVarChar(20), bookingType)
-        .input("no", sql.NVarChar(100), input.bookingNo?.trim() || null)
-        .input("price", sql.Decimal(18, 2), input.priceExVat ?? null);
+        // Refused, not truncated: `sql.NVarChar(100)` binds a longer string
+        // silently, which would store the first hundred characters of the wrong
+        // thing as a booking reference.
+        .input("no", sql.NVarChar(100), sanitizeBookingNo(input.bookingNo))
+        .input("price", sql.Decimal(18, 2), sanitizeBookingAmount(input.priceExVat))
+        .input("vat", sql.Decimal(18, 2), sanitizeBookingAmount(input.vatAmount))
+        .input("disc", sql.Decimal(18, 2), sanitizeBookingAmount(input.discountAmount))
+        .input("total", sql.Decimal(18, 2), sanitizeBookingAmount(input.totalAmount));
 
     const OUTPUT_COLS = `OUTPUT inserted.Id AS Id, inserted.TravelBookingId AS TravelBookingId,
-               inserted.BookingType AS BookingType, inserted.BookingNo AS BookingNo, inserted.PriceExVat AS PriceExVat`;
+               inserted.BookingType AS BookingType, inserted.BookingNo AS BookingNo, inserted.PriceExVat AS PriceExVat,
+               inserted.VatAmount AS VatAmount, inserted.DiscountAmount AS DiscountAmount, inserted.TotalAmount AS TotalAmount`;
 
     let saved: SavedRow | undefined;
     if (input.detailId != null) {
       const upd = await bind(tx.request()).input("did", sql.Int, input.detailId)
-        .query(`UPDATE [dbo].[AccTravelBookingDetail] SET BookingNo = @no, PriceExVat = @price
+        .query(`UPDATE [dbo].[AccTravelBookingDetail]
+                SET BookingNo = @no, PriceExVat = @price,
+                    VatAmount = @vat, DiscountAmount = @disc, TotalAmount = @total
                 ${OUTPUT_COLS}
                 WHERE Id = @did AND TravelBookingId = @tbid AND BookingType = @type`);
       saved = upd.recordset[0] as SavedRow | undefined;
       if (!saved) throw new Error("ไม่พบรายการจองที่ระบุ");
     } else {
       const ins = await bind(tx.request()).input("user", sql.Int, actor.userId || null)
-        .query(`INSERT INTO [dbo].[AccTravelBookingDetail] (TravelBookingId, BookingType, BookingNo, PriceExVat, CreatedBy)
+        .query(`INSERT INTO [dbo].[AccTravelBookingDetail]
+                  (TravelBookingId, BookingType, BookingNo, PriceExVat, VatAmount, DiscountAmount, TotalAmount, CreatedBy)
                 ${OUTPUT_COLS}
-                VALUES (@tbid, @type, @no, @price, @user)`);
+                VALUES (@tbid, @type, @no, @price, @vat, @disc, @total, @user)`);
       saved = ins.recordset[0] as SavedRow;
     }
 
