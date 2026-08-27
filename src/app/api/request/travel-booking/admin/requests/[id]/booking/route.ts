@@ -28,9 +28,14 @@ async function requireAdminContext(
 
 /**
  * POST /api/request/travel-booking/admin/requests/[id]/booking
- * Admin fill-in — create or update one AccTravelBookingDetail row (bookingNo, priceExVat).
+ * Admin fill-in — create or update one AccTravelBookingDetail row: bookingNo plus the four
+ * figures an invoice states (priceExVat, vatAmount, discountAmount, totalAmount).
  * A type may hold several rows: pass `detailId` to edit one, omit it to add another.
- * Both fields may be null — an empty row is how Admin gets an id to attach files to first.
+ * **Every field may be null** — an empty row is how Admin gets an id to attach files to first.
+ *
+ * The body is read permissively here and narrowed in the service, which is where
+ * `sanitizeBookingNo` / `sanitizeBookingAmount` run. The client applies the same functions;
+ * that is a convenience for the person typing, not the gate.
  */
 export async function POST(
   req: NextRequest,
@@ -45,6 +50,9 @@ export async function POST(
       detailId?: number | null;
       bookingNo: string | null;
       priceExVat: number | null;
+      vatAmount?: number | null;
+      discountAmount?: number | null;
+      totalAmount?: number | null;
     };
     if (!body.bookingType || !BOOKING_TYPES.has(body.bookingType)) {
       return NextResponse.json({ ok: false, error: "Invalid bookingType" }, { status: 400 });
@@ -58,7 +66,14 @@ export async function POST(
     const data = await saveBookingDetail(
       ctx.requestId,
       body.bookingType,
-      { detailId, bookingNo: body.bookingNo ?? null, priceExVat: body.priceExVat ?? null },
+      {
+        detailId,
+        bookingNo: body.bookingNo ?? null,
+        priceExVat: body.priceExVat ?? null,
+        vatAmount: body.vatAmount ?? null,
+        discountAmount: body.discountAmount ?? null,
+        totalAmount: body.totalAmount ?? null,
+      },
       actor,
     );
     return NextResponse.json({ ok: true, data });

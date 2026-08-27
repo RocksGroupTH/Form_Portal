@@ -16,6 +16,17 @@ export type TravelBookingStatus =
   | "Returned"
   | "Cancelled";
 
+/**
+ * `AccRequest.CurrentStepCode` — the step a live request is parked on.
+ *
+ * Load-bearing since the accounting step was added: `Status='ManagerApproved'`
+ * no longer names one stage. It means Admin's booking fill-in (`'ADMIN'`) *or*
+ * accounting's sign-off (`'ACCOUNT'`), and only this column tells them apart.
+ * Every server predicate on that status pairs it with the step; the client
+ * could not, because the read shape did not carry it.
+ */
+export type TravelBookingStepCode = "MANAGER" | "ADMIN" | "ACCOUNT";
+
 /** Transport direction — go (ขาไป) / return (ขากลับ). */
 export type TravelDirection = "go" | "return";
 
@@ -103,12 +114,27 @@ export interface TravelBookingFileMeta {
   contentType: string;
 }
 
-/** Admin fill-in booking row (AccTravelBookingDetail), 2.x. */
+/**
+ * Admin fill-in booking row (AccTravelBookingDetail), 2.x.
+ *
+ * Five fields, not two, since migration 123: a hotel or ticket invoice states a
+ * number, a price before VAT, the VAT, any discount and the total charged, and
+ * accounting signs off against that paper. `totalAmount` is **stored, not
+ * derived** — the arithmetic is a check on the invoice, not a substitute for it
+ * (see `lib/booking-amounts.ts`). All four figures are null on every row written
+ * before 123, which is honest: nobody recorded them at the time.
+ *
+ * One shape for all three booking kinds — `bookingType` discriminates them and
+ * the fields are identical across them.
+ */
 export interface BookingDetail {
   id: number;
   bookingType: BookingType;
   bookingNo: string | null;
   priceExVat: number | null;
+  vatAmount: number | null;
+  discountAmount: number | null;
+  totalAmount: number | null;
   files: TravelBookingFileMeta[];
 }
 
@@ -143,8 +169,30 @@ export interface TravelBookingRequest {
   id?: number;
   requestNo: string | null;
   status: TravelBookingStatus;
+  /**
+   * `AccRequest.CurrentStepCode` — which step the request is parked on, NULL once
+   * it is terminal. `status` alone cannot answer that: `ManagerApproved` spans
+   * both the Admin booking stage and accounting's sign-off.
+   */
+  currentStepCode: TravelBookingStepCode | null;
   /** `AccRequest.BrandCode` — the company this booking is filed under. */
   brandCode: string | null;
+  /**
+   * Where this trip's uncounted first day went, when `isContinuation` is set.
+   *
+   * A continuation trip departs on the day the one before it returned, and one
+   * day cannot pay per diem twice — so the first day is dropped here and counted
+   * there. `isContinuation` alone said a day had gone without saying where,
+   * which on a one-day trip means the whole allowance reads as zero with no
+   * explanation on the page.
+   *
+   * Null when the trip is not a continuation, and also when the sibling that
+   * caused it cannot be found — a group edited by hand could leave the flag set
+   * with nothing matching it, and the note then says less rather than lying.
+   */
+  continuationFromRequestNo: string | null;
+  /** That request's id, so the number can be a link rather than a string to copy. */
+  continuationFromRequestId: number | null;
 
   // requester snapshot (from AccRequest / AccTravelBooking)
   staffId: number | null;
@@ -352,4 +400,40 @@ export interface TravelBookingAdminQueueItem {
   needsRentBooking: boolean;
   paymentDate: string | null;
   updatedAt: string;
+}
+
+/**
+ * Row returned by `GET /api/request/travel-booking/account/queue` — a client-safe
+ * copy of `AccountQueueItem` from `src/lib/acc/travel-booking/admin-service.ts`.
+ */
+export interface TravelBookingAccountQueueItem {
+  id: number;
+  requestNo: string | null;
+  /** `AccRequest.BrandCode` — per trip, so two rows of one group can differ. */
+  brandCode: string | null;
+  requesterFullName: string | null;
+  requesterPosition: string | null;
+  requesterDepartmentName: string | null;
+  provinceName: string | null;
+  departDate: string | null;
+  returnDate: string | null;
+  perDiemDays: number;
+  perDiemTotal: number;
+  paymentDate: string | null;
+  updatedAt: string;
+  perDiemHistory: string[];
+  /**
+   * The trip whose fate this figure still hangs on, or null when nothing can
+   * move it. `settled: false` means accounting must not sign this row yet — the
+   * queue page disables its controls and `approveByAccount` refuses it. Copied
+   * rather than imported for the reason above: this file has no imports, and
+   * `PerDiemDependency` (`@/lib/acc/travel-booking/perdiem-dependency`) is the
+   * server-side original the two must stay identical to.
+   */
+  perDiemDependency: {
+    requestId: number;
+    requestNo: string | null;
+    status: string;
+    settled: boolean;
+  } | null;
 }

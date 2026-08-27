@@ -1,11 +1,12 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import type { Actor } from "@/lib/acc/approval-engine";
-import { queueEmail, processQueue } from "@/lib/acc/email-queue";
-import { buildTravelBookingEmail } from "@/lib/acc/travel-booking/email-templates";
-import { getRequesterEmail } from "@/lib/acc/travel-booking/approval";
 import { getTravelBookingRequest } from "@/lib/acc/travel-booking/request-service";
 import { deleteStoredFiles, type StoredFileRef } from "@/lib/acc/stored-file";
+import { loadPerDiemDependencies } from "@/lib/acc/travel-booking/perdiem-dependency-load";
+import type { PerDiemDependency } from "@/lib/acc/travel-booking/perdiem-dependency";
 import { AP17_FORM_CODE, BOOKING_TYPE_REFTYPE } from "@/features/travel-booking/constants";
+import { sanitizeBookingAmount } from "@/features/travel-booking/lib/booking-amounts";
+import { sanitizeBookingNo } from "@/features/travel-booking/lib/booking-no";
 import type { BookingType, TravelBookingRequest } from "@/features/travel-booking/types";
 
 type AccPool = Awaited<ReturnType<typeof getAccPool>>;
@@ -49,7 +50,21 @@ export interface AdminQueueItem {
   updatedAt: string;
 }
 
-/** AP-17 requests that finished Manager approval and are waiting on Admin to fill bookings. */
+/**
+ * AP-17 requests that finished Manager approval and are waiting on Admin to
+ * fill bookings — `ManagerApproved` / `CurrentStepCode='ADMIN'`.
+ *
+ * The `CurrentStepCode` filter is load-bearing, not decorative: before the
+ * accounting step existed, `completeRequest` moved a finished request straight
+ * to `Status='Completed'`, so `Status='ManagerApproved'` alone already named
+ * the ADMIN stage exactly. Commit cb8e47e changed that hand-off to
+ * `CurrentStepCode='ACCOUNT'` (`Status` stays `ManagerApproved`) without
+ * updating this query in the same file — so without the filter this list also
+ * shows work Admin has already finished and handed to accounting, and Admin's
+ * เสร็จสิ้น button 400s on those rows (`completeRequest` itself guards on
+ * `CurrentStepCode='ADMIN'`). See `listAccountQueue` below for the sibling
+ * query this pairs with.
+ */
 export async function listAdminQueue(): Promise<AdminQueueItem[]> {
   const pool = await getAccPool();
   const res = await pool.request()
@@ -61,7 +76,7 @@ export async function listAdminQueue(): Promise<AdminQueueItem[]> {
              t.NeedsRoomBooking, t.GoNeedsTicketBooking, t.ReturnNeedsTicketBooking, t.NeedsRentBooking
       FROM [dbo].[AccRequest] r
       INNER JOIN [dbo].[AccTravelBooking] t ON t.RequestId = r.Id
-      WHERE r.FormCode = @form AND r.Status = 'ManagerApproved'
+      WHERE r.FormCode = @form AND r.Status = 'ManagerApproved' AND r.CurrentStepCode = 'ADMIN'
       ORDER BY r.UpdatedAt ASC
     `);
   return (res.recordset as Record<string, unknown>[]).map((x) => ({
@@ -82,6 +97,113 @@ export async function listAdminQueue(): Promise<AdminQueueItem[]> {
   }));
 }
 
+/* ─────────────────────────── accounting queue ─────────────────────────── */
+
+export interface AccountQueueItem {
+  id: number;
+  requestNo: string | null;
+  /** `AccRequest.BrandCode` — per trip, so two rows of one group can differ. */
+  brandCode: string | null;
+  requesterFullName: string | null;
+  requesterPosition: string | null;
+  requesterDepartmentName: string | null;
+  provinceName: string | null;
+  departDate: string | null;
+  returnDate: string | null;
+  perDiemDays: number;
+  perDiemTotal: number;
+  /** The payout month/date currently scheduled — set at Manager approval, editable here. */
+  paymentDate: string | null;
+  updatedAt: string;
+  /**
+   * `AccActivityLog.Note` for every `perdiem_recalculated` row against this
+   * request, oldest first — already the human-readable Thai sentence
+   * `recomputeGroupPerDiem` writes, so nothing here re-derives it from
+   * `MetadataJson`. Empty when the figure never moved.
+   */
+  perDiemHistory: string[];
+  /**
+   * The trip in this request's `GroupKey` group whose fate this figure still
+   * hangs on — see `perdiem-dependency.ts`. Null when nothing can move it.
+   * `settled: false` is the one that blocks: the queue names it and disables the
+   * row's controls, and `approveByAccount` refuses it server-side.
+   */
+  perDiemDependency: PerDiemDependency | null;
+}
+
+/**
+ * AP-17 requests Admin has finished booking and handed to accounting —
+ * `ManagerApproved` / `CurrentStepCode='ACCOUNT'` (set by `completeRequest`,
+ * closed by `approveByAccount` in `approval.ts`). Unlike `listAdminQueue`,
+ * this filters on `CurrentStepCode` as well as `Status`: the two queues sit on
+ * the same status and must not show each other's rows.
+ */
+export async function listAccountQueue(): Promise<AccountQueueItem[]> {
+  const pool = await getAccPool();
+  const res = await pool.request()
+    .input("form", sql.NVarChar, AP17_FORM_CODE)
+    .query(`
+      SELECT r.Id, r.RequestNo, r.BrandCode, r.RequesterFullName, r.RequesterPosition, r.RequesterDepartmentName,
+             r.PaymentDate, r.UpdatedAt,
+             t.ProvinceName, t.DepartDate, t.ReturnDate, t.PerDiemDays, t.PerDiemTotal
+      FROM [dbo].[AccRequest] r
+      INNER JOIN [dbo].[AccTravelBooking] t ON t.RequestId = r.Id
+      WHERE r.FormCode = @form AND r.Status = 'ManagerApproved' AND r.CurrentStepCode = 'ACCOUNT'
+      ORDER BY r.UpdatedAt ASC
+    `);
+  const rows = res.recordset as Record<string, unknown>[];
+  const ids = rows.map((x) => x.Id as number);
+
+  // Batch-loaded rather than a correlated subquery: STRING_AGG would need every
+  // note squeezed through one delimiter and split back apart on the way out,
+  // for no fewer round trips once the queue holds more than a handful of rows.
+  const historyByRequest = new Map<number, string[]>();
+  if (ids.length > 0) {
+    const histReq = pool.request();
+    const placeholders = ids.map((id, i) => {
+      histReq.input(`id${i}`, sql.Int, id);
+      return `@id${i}`;
+    });
+    const histRes = await histReq
+      .input("action", sql.NVarChar(50), "perdiem_recalculated")
+      .query(`
+        SELECT RequestId, Note FROM [dbo].[AccActivityLog]
+        WHERE Action = @action AND RequestId IN (${placeholders.join(", ")})
+        ORDER BY CreatedAt ASC
+      `);
+    for (const h of histRes.recordset as { RequestId: number; Note: string | null }[]) {
+      if (!h.Note) continue;
+      const list = historyByRequest.get(h.RequestId) ?? [];
+      list.push(h.Note);
+      historyByRequest.set(h.RequestId, list);
+    }
+  }
+
+  // Batched for the same reason the history above is, and it matters more here:
+  // this one needs every *sibling* of every queued request's group, which a
+  // per-row query would fetch over and over for rows that share a group. One
+  // round trip whatever the queue holds — see `loadPerDiemDependencies`.
+  const dependencies = await loadPerDiemDependencies(pool, ids);
+
+  return rows.map((x) => ({
+    id: x.Id as number,
+    requestNo: (x.RequestNo as string) ?? null,
+    brandCode: (x.BrandCode as string) ?? null,
+    requesterFullName: (x.RequesterFullName as string) ?? null,
+    requesterPosition: (x.RequesterPosition as string) ?? null,
+    requesterDepartmentName: (x.RequesterDepartmentName as string) ?? null,
+    provinceName: (x.ProvinceName as string) ?? null,
+    departDate: x.DepartDate ? toYmd(x.DepartDate as Date) : null,
+    returnDate: x.ReturnDate ? toYmd(x.ReturnDate as Date) : null,
+    perDiemDays: (x.PerDiemDays as number) ?? 0,
+    perDiemTotal: Number(x.PerDiemTotal) || 0,
+    paymentDate: x.PaymentDate ? toYmd(x.PaymentDate as Date) : null,
+    updatedAt: x.UpdatedAt ? (x.UpdatedAt as Date).toISOString() : "",
+    perDiemHistory: historyByRequest.get(x.Id as number) ?? [],
+    perDiemDependency: dependencies.get(x.Id as number) ?? null,
+  }));
+}
+
 /* ─────────────────────────── booking fill-in ─────────────────────────── */
 
 export interface SavedBookingDetail {
@@ -90,10 +212,14 @@ export interface SavedBookingDetail {
   bookingType: BookingType;
   bookingNo: string | null;
   priceExVat: number | null;
+  vatAmount: number | null;
+  discountAmount: number | null;
+  totalAmount: number | null;
 }
 
 interface SavedRow {
   Id: number; TravelBookingId: number; BookingType: string; BookingNo: string | null; PriceExVat: number | null;
+  VatAmount: number | null; DiscountAmount: number | null; TotalAmount: number | null;
 }
 
 function mapSavedRow(row: SavedRow): SavedBookingDetail {
@@ -103,6 +229,9 @@ function mapSavedRow(row: SavedRow): SavedBookingDetail {
     bookingType: row.BookingType as BookingType,
     bookingNo: row.BookingNo ?? null,
     priceExVat: num(row.PriceExVat),
+    vatAmount: num(row.VatAmount),
+    discountAmount: num(row.DiscountAmount),
+    totalAmount: num(row.TotalAmount),
   };
 }
 
@@ -130,13 +259,18 @@ type SqlRunner = Pick<AccPool, "request"> | Pick<AccTx, "request">;
  */
 async function requireEditableBooking(runner: SqlRunner, requestId: number): Promise<number> {
   const tbRes = await runner.request().input("rid", sql.Int, requestId)
-    .query(`SELECT t.Id AS TravelBookingId, r.Status
+    .query(`SELECT t.Id AS TravelBookingId, r.Status, r.CurrentStepCode
             FROM [dbo].[AccTravelBooking] t
             INNER JOIN [dbo].[AccRequest] r WITH (UPDLOCK, HOLDLOCK) ON r.Id = t.RequestId
             WHERE t.RequestId = @rid`);
-  const tbRow = tbRes.recordset[0] as { TravelBookingId: number; Status: string } | undefined;
+  const tbRow = tbRes.recordset[0] as { TravelBookingId: number; Status: string; CurrentStepCode: string | null } | undefined;
   if (!tbRow) throw new Error("ไม่พบคำขอนี้");
-  if (tbRow.Status !== "ManagerApproved") {
+  // `Status` alone used to name the Admin stage exactly (see `listAdminQueue`'s
+  // own note) — since the accounting step split it in two, a request can be
+  // `ManagerApproved` while already handed to accounting (`CurrentStepCode =
+  // 'ACCOUNT'`), and without this check Admin could still save, delete or
+  // re-attach evidence on a request accounting is signing off.
+  if (tbRow.Status !== "ManagerApproved" || tbRow.CurrentStepCode !== "ADMIN") {
     throw new Error("คำขอนี้ไม่อยู่ในขั้นตอนที่ Admin สามารถกรอกข้อมูลการจองได้");
   }
   return tbRow.TravelBookingId;
@@ -145,15 +279,30 @@ async function requireEditableBooking(runner: SqlRunner, requestId: number): Pro
 /**
  * Create or update one `AccTravelBookingDetail` row. A request may hold SEVERAL rows of the
  * same `bookingType` (e.g. two hotels for one trip), so rows are keyed by `Id`, not by type:
- * pass `detailId` to edit an existing row, omit it to add another one. Both `bookingNo` and
- * `priceExVat` may be null — Admin can create an empty row just to hang attachments on it,
- * and fill the fields in afterwards. Attachments are handled separately (the file route),
- * which needs this row's `Id` as `AccRequestFile.RefId` — hence the full saved row is returned.
+ * pass `detailId` to edit an existing row, omit it to add another one. **Every** field may be
+ * null — Admin can create an empty row just to hang attachments on it, and fill the fields in
+ * afterwards. Attachments are handled separately (the file route), which needs this row's `Id`
+ * as `AccRequestFile.RefId` — hence the full saved row is returned.
+ *
+ * Five fields since migration 123, and **this is the gate on the four figures**, not the panel:
+ * every one goes through `sanitizeBookingAmount`, so a value out of range or non-numeric is
+ * stored as NULL rather than as itself. The client applies the same function, which makes the
+ * field behave predictably as it is typed — it does not make the client the authority. The
+ * total is stored as entered and never reconciled against the other three here: a supplier's
+ * own total is a fact about the transaction, and `totalMismatch` flags a disagreement for a
+ * person to judge rather than correcting it (see `features/travel-booking/lib/booking-amounts.ts`).
  */
 export async function saveBookingDetail(
   requestId: number,
   bookingType: BookingType,
-  input: { detailId?: number | null; bookingNo: string | null; priceExVat: number | null },
+  input: {
+    detailId?: number | null;
+    bookingNo: string | null;
+    priceExVat: number | null;
+    vatAmount?: number | null;
+    discountAmount?: number | null;
+    totalAmount?: number | null;
+  },
   actor: Actor,
 ): Promise<SavedBookingDetail> {
   const pool = await getAccPool();
@@ -168,25 +317,35 @@ export async function saveBookingDetail(
     const bind = (r: ReturnType<typeof tx.request>) =>
       r.input("tbid", sql.Int, travelBookingId)
         .input("type", sql.NVarChar(20), bookingType)
-        .input("no", sql.NVarChar(100), input.bookingNo?.trim() || null)
-        .input("price", sql.Decimal(18, 2), input.priceExVat ?? null);
+        // Refused, not truncated: `sql.NVarChar(100)` binds a longer string
+        // silently, which would store the first hundred characters of the wrong
+        // thing as a booking reference.
+        .input("no", sql.NVarChar(100), sanitizeBookingNo(input.bookingNo))
+        .input("price", sql.Decimal(18, 2), sanitizeBookingAmount(input.priceExVat))
+        .input("vat", sql.Decimal(18, 2), sanitizeBookingAmount(input.vatAmount))
+        .input("disc", sql.Decimal(18, 2), sanitizeBookingAmount(input.discountAmount))
+        .input("total", sql.Decimal(18, 2), sanitizeBookingAmount(input.totalAmount));
 
     const OUTPUT_COLS = `OUTPUT inserted.Id AS Id, inserted.TravelBookingId AS TravelBookingId,
-               inserted.BookingType AS BookingType, inserted.BookingNo AS BookingNo, inserted.PriceExVat AS PriceExVat`;
+               inserted.BookingType AS BookingType, inserted.BookingNo AS BookingNo, inserted.PriceExVat AS PriceExVat,
+               inserted.VatAmount AS VatAmount, inserted.DiscountAmount AS DiscountAmount, inserted.TotalAmount AS TotalAmount`;
 
     let saved: SavedRow | undefined;
     if (input.detailId != null) {
       const upd = await bind(tx.request()).input("did", sql.Int, input.detailId)
-        .query(`UPDATE [dbo].[AccTravelBookingDetail] SET BookingNo = @no, PriceExVat = @price
+        .query(`UPDATE [dbo].[AccTravelBookingDetail]
+                SET BookingNo = @no, PriceExVat = @price,
+                    VatAmount = @vat, DiscountAmount = @disc, TotalAmount = @total
                 ${OUTPUT_COLS}
                 WHERE Id = @did AND TravelBookingId = @tbid AND BookingType = @type`);
       saved = upd.recordset[0] as SavedRow | undefined;
       if (!saved) throw new Error("ไม่พบรายการจองที่ระบุ");
     } else {
       const ins = await bind(tx.request()).input("user", sql.Int, actor.userId || null)
-        .query(`INSERT INTO [dbo].[AccTravelBookingDetail] (TravelBookingId, BookingType, BookingNo, PriceExVat, CreatedBy)
+        .query(`INSERT INTO [dbo].[AccTravelBookingDetail]
+                  (TravelBookingId, BookingType, BookingNo, PriceExVat, VatAmount, DiscountAmount, TotalAmount, CreatedBy)
                 ${OUTPUT_COLS}
-                VALUES (@tbid, @type, @no, @price, @user)`);
+                VALUES (@tbid, @type, @no, @price, @vat, @disc, @total, @user)`);
       saved = ins.recordset[0] as SavedRow;
     }
 
@@ -315,13 +474,18 @@ async function missingRequiredBookings(
 }
 
 /**
- * Admin closes the request — ManagerApproved → Completed — once every required booking type
- * (per `REQUIRED_BOOKINGS`) has at least one row and EVERY one of its rows carries a saved
- * `BookingNo` + `PriceExVat` and at least one attached file. A type may hold several rows
- * (two hotels, two tickets, …), and a half-filled extra row blocks completion on purpose —
- * Admin either finishes it or removes it. `getTravelBookingRequest` already joins
- * `AccTravelBookingDetail` with its `AccRequestFile` rows (by RefType/RefId), so the gate is
- * checked against that shape directly rather than re-deriving the RefType↔BookingType mapping.
+ * Admin hands the request on to accounting — ManagerApproved/ADMIN → ManagerApproved/ACCOUNT —
+ * once every required booking type (per `REQUIRED_BOOKINGS`) has at least one row and EVERY one
+ * of its rows carries a saved `BookingNo` + `PriceExVat` and at least one attached file. A type
+ * may hold several rows (two hotels, two tickets, …), and a half-filled extra row blocks
+ * completion on purpose — Admin either finishes it or removes it. `getTravelBookingRequest`
+ * already joins `AccTravelBookingDetail` with its `AccRequestFile` rows (by RefType/RefId), so
+ * the gate is checked against that shape directly rather than re-deriving the RefType↔BookingType
+ * mapping.
+ *
+ * This no longer closes the request — `Status` stays `ManagerApproved` and only
+ * `CurrentStepCode` moves, to `'ACCOUNT'`. Closing it to `Completed` is now
+ * `approveByAccount`'s job (`approval.ts`).
  */
 export async function completeRequest(requestId: number, actor: Actor): Promise<TravelBookingRequest> {
   const req = await getTravelBookingRequest(requestId);
@@ -348,7 +512,7 @@ export async function completeRequest(requestId: number, actor: Actor): Promise<
   await tx.begin();
   try {
     const upd = await tx.request().input("rid", sql.Int, requestId)
-      .query(`UPDATE [dbo].[AccRequest] SET Status='Completed', CurrentStepCode=NULL, UpdatedAt=SYSDATETIME()
+      .query(`UPDATE [dbo].[AccRequest] SET CurrentStepCode='ACCOUNT', UpdatedAt=SYSDATETIME()
               WHERE Id=@rid AND CurrentStepCode='ADMIN' AND Status='ManagerApproved';
               SELECT @@ROWCOUNT AS n`);
     if ((upd.recordset[0].n as number) === 0) {
@@ -369,27 +533,21 @@ export async function completeRequest(requestId: number, actor: Actor): Promise<
         `ข้อมูลการจองถูกแก้ไขระหว่างปิดงาน — กรุณาตรวจสอบแล้วลองใหม่: ${stillMissing.join(", ")}`,
       );
     }
+    // Not 'completed' — the request is not finished, it is handed to accounting.
+    // No email fires here either: nothing in `TravelBookingTrigger` says "arranged,
+    // awaiting accounting" (the closest is `Completed`, which would tell the
+    // requester the wrong thing), and `approveByAccount` is where the real
+    // "finished" email now belongs — see `approval.ts`.
     await tx.request().input("rid", sql.Int, requestId).input("by", sql.Int, actor.userId)
-      .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action) VALUES (@rid, @by, 'completed')`);
+      .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note)
+              VALUES (@rid, @by, 'sent_to_account', N'ส่งต่อให้บัญชีตรวจสอบ')`);
     await tx.commit();
   } catch (e) {
     await tx.rollback().catch(() => {});
     throw e;
   }
 
-  try {
-    const requesterEmail = await getRequesterEmail(requestId);
-    const updated = requesterEmail ? await getTravelBookingRequest(requestId) : null;
-    if (requesterEmail && updated) {
-      const mail = buildTravelBookingEmail("Completed", updated);
-      await queueEmail({ requestId, toEmail: requesterEmail, subject: mail.subject, bodyHtml: mail.html, triggerType: "Completed" });
-    }
-  } catch {
-    // Notification failures must never fail the completion action itself.
-  }
-  void processQueue().catch(() => {});
-
   const updated = await getTravelBookingRequest(requestId);
-  if (!updated) throw new Error("ไม่พบคำขอหลังปิดงาน");
+  if (!updated) throw new Error("ไม่พบคำขอหลังส่งต่อให้บัญชี");
   return updated;
 }

@@ -124,8 +124,10 @@ function TravelBookingDetailContent() {
           admin/requests/[id]/booking and /complete — already authorize with
           `canAccessBookingArea`. Making this page read-only would hide work the server
           grants, which is the epic's complaint pointed the other way. The panel stays
-          gated inside the component on `canAccount` + ManagerApproved, so an owner or
-          manager opening the same URL still gets the read-only summary. */}
+          gated inside the component on `canAccount` + the ADMIN step, so an owner or
+          manager opening the same URL still gets the read-only summary — and so does
+          anyone opening it once the request has moved on to accounting, where every
+          control the panel renders is refused by the server. */}
       <TravelBookingDetail request={request} onChanged={fetchRequest} />
     </PageContainer>
   );

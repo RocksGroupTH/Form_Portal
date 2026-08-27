@@ -1,6 +1,6 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { writeBothPools } from "@/lib/acc/dual-write";
-import { filterGrantableBookingTabKeys } from "@/lib/acc/travel-booking/settings-tabs";
+import { filterStorableBookingKeys } from "@/lib/acc/travel-booking/settings-tabs";
 
 /**
  * Per-approver AP-17 settings-tab grants, stored in `AccBookingApproverTab`
@@ -69,7 +69,7 @@ export async function loadBookingTabsByApproverIds(
   }
 
   for (const id of approverIds) {
-    map.set(id, filterGrantableBookingTabKeys(byApprover.get(id) ?? []));
+    map.set(id, filterStorableBookingKeys(byApprover.get(id) ?? []));
   }
   return map;
 }
@@ -91,7 +91,7 @@ export async function setBookingApproverTabs(
   approverId: number,
   keys: string[],
 ): Promise<void> {
-  const wanted = filterGrantableBookingTabKeys(keys);
+  const wanted = filterStorableBookingKeys(keys);
   await writeBothPools(async (tx) => {
     await tx
       .request()

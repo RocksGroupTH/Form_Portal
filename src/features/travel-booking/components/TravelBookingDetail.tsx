@@ -1,5 +1,6 @@
 "use client";
 
+import { SidePanel, SidePanelClose } from "@/components/ui/SidePanel";
 import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -11,6 +12,7 @@ import {
   Car,
   CheckCircle,
   Clock,
+  FileSpreadsheet,
   FileText,
   Mail,
   MapPin,
@@ -24,17 +26,23 @@ import {
   User,
   Wallet,
   XCircle,
+  Loader2,
 } from "lucide-react";
 import { Dialog } from "@/components/ui";
 import { Avatar } from "@/components/ui/Avatar";
-import { ImageLightbox } from "@/features/accounting/components/ImageLightbox";
+import {
+  AttachmentViewer,
+  attachmentKind,
+  type AttachmentKind,
+  type AttachmentSource,
+} from "@/components/ui/AttachmentViewer";
 import { fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
 import { useBookingAccess } from "@/features/travel-booking/hooks/useBookingAccess";
 import { useErpSandboxDevHost } from "@/features/accounting/hooks/useErpSandboxDevHost";
 import { useTravelBookingOptionIcons } from "@/features/travel-booking/hooks/useOptionIcons";
 import { InfoStrip, typeInfo } from "@/features/travel-booking/components/BookingInfoStrip";
 import { canActManagerStep } from "@/lib/acc/manager-auth";
-import { formatPayoutMonth } from "@/lib/acc/travel-booking/payment-month";
+import { payoutMonthLabel } from "@/lib/acc/travel-booking/payout-months";
 import { UatDataBanner } from "@/components/UatDataBanner";
 import { AdminBookingPanel } from "./AdminBookingPanel";
 import { TravelBookingStatusBadge } from "./TravelBookingStatusBadge";
@@ -68,12 +76,6 @@ function fmtDateTime(raw: string | null | undefined): string {
   const hh = String(d.getHours()).padStart(2, "0");
   const min = String(d.getMinutes()).padStart(2, "0");
   return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
-}
-
-/** 'YYYY-MM-DD' → local-midnight Date (avoids the UTC-parse shift `new Date(str)` can cause). */
-function ymdToDate(ymd: string): Date {
-  const [y, m, d] = ymd.split("-").map(Number);
-  return new Date(y, (m || 1) - 1, d || 1);
 }
 
 /* ── small layout primitives (mirrors AP-1 RequestDetail.tsx's look — its own Section/DetailRow/
@@ -177,20 +179,28 @@ function FlagChip({ label }: { label: string }) {
   );
 }
 
+/**
+ * **Every kind opens the shared in-page viewer**, the one AP-1 and AP-4 use.
+ * A non-image used to be an `<a target="_blank">` at the download route, where
+ * `attachmentResponseHeaders` serves `Content-Disposition: attachment` — so the
+ * tab downloaded the file rather than showing it.
+ */
 function FileThumb({
   file,
-  onImageClick,
+  onViewFile,
 }: {
   file: TravelBookingFileMeta;
-  onImageClick: (src: string, alt: string) => void;
+  onViewFile: (file: TravelBookingFileMeta) => void;
 }) {
   const url = `/api/request/travel-booking/files/${file.id}`;
-  const isImage = file.contentType.startsWith("image/");
-  if (isImage) {
+  // Declared type first, then the name — SharePoint returns
+  // `application/octet-stream` often enough that the fallback is load-bearing.
+  const kind = attachmentKind(file.fileName, file.contentType);
+  if (kind === "image") {
     return (
       <button
         type="button"
-        onClick={() => onImageClick(url, file.fileName)}
+        onClick={() => onViewFile(file)}
         title={file.fileName}
         className="w-20 h-20 shrink-0 rounded-xl overflow-hidden cursor-pointer border-none p-0"
         style={{ background: "var(--bg-card-alt)" }}
@@ -201,19 +211,22 @@ function FileThumb({
     );
   }
   return (
-    <a
-      href={url}
-      target="_blank"
-      rel="noopener noreferrer"
+    <button
+      type="button"
+      onClick={() => onViewFile(file)}
       title={file.fileName}
-      className="w-20 h-20 shrink-0 rounded-xl overflow-hidden flex flex-col items-center justify-center gap-1 border no-underline"
+      className="w-20 h-20 shrink-0 rounded-xl overflow-hidden flex flex-col items-center justify-center gap-1 border cursor-pointer p-0"
       style={{ borderColor: "var(--border-card)", background: "var(--bg-card-alt)" }}
     >
-      <FileText size={20} style={{ color: "var(--text-muted)" }} />
+      {kind === "excel" ? (
+        <FileSpreadsheet size={20} style={{ color: "var(--text-muted)" }} />
+      ) : (
+        <FileText size={20} style={{ color: "var(--text-muted)" }} />
+      )}
       <span className="text-[9px] px-1 truncate w-full text-center" style={{ color: "var(--text-muted)" }}>
         {file.fileName}
       </span>
-    </a>
+    </button>
   );
 }
 
@@ -341,9 +354,58 @@ interface TravelBookingDetailProps {
    * placeholder for anything not filled in yet.
    */
   readOnlyBooking?: boolean;
+  /**
+   * Whether the read-only booking summary prints each row's ราคา (ก่อน VAT).
+   *
+   * Defaults to `!readOnlyBooking`, which is the rule this used to be: price is
+   * Admin/accounting information and the requester's drawer must not show it.
+   * It is a separate prop because the accounting sign-off queue needs both
+   * halves at once — the fill-in panel frozen *and* the prices visible, since
+   * that is the payout being approved.
+   */
+  showBookingPrice?: boolean;
+  /** Set on the copy rendered inside the per-diem panel — see `siblingId`. */
+  nested?: boolean;
 }
 
-export function TravelBookingDetail({ request, onChanged, readOnlyBooking = false }: TravelBookingDetailProps) {
+export function TravelBookingDetail({
+  request,
+  onChanged,
+  readOnlyBooking = false,
+  showBookingPrice,
+  nested = false,
+}: TravelBookingDetailProps) {
+  /**
+   * The sibling trip opened from the per-diem note, in a panel over this one.
+   *
+   * A panel rather than a route: this component is mounted three ways — the
+   * detail page, the admin queue's SidePanel and My Requests' — and navigating
+   * would throw away whichever of those the reader is in. One panel here works
+   * the same in all three.
+   *
+   * `nested` is the recursion stop. A continuation chain is short, but the note
+   * inside the sibling would otherwise open a third panel over the second; at
+   * depth one the number renders as plain text instead.
+   */
+  const [siblingId, setSiblingId] = useState<number | null>(null);
+  const [sibling, setSibling] = useState<TravelBookingRequest | null>(null);
+  const [siblingLoading, setSiblingLoading] = useState(false);
+
+  useEffect(() => {
+    if (siblingId == null) return;
+    let cancelled = false;
+    setSiblingLoading(true);
+    setSibling(null);
+    fetch(`/api/request/travel-booking/requests/${siblingId}`)
+      .then((r) => r.json())
+      .then((j: { ok?: boolean; data?: TravelBookingRequest }) => {
+        if (!cancelled && j?.ok && j.data) setSibling(j.data);
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setSiblingLoading(false); });
+    return () => { cancelled = true; };
+  }, [siblingId]);
+
   const { canAccount, loading: accessLoading, error: accessError } = useBookingAccess();
 
   /* ── Viewer identity — mirrors AP-1 RequestDetail.tsx's `/api/me/employee` lookup ── */
@@ -474,7 +536,16 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
     }
   }
 
-  const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
+  /* One viewer for the whole page, not one per thumbnail — a modal rendered
+     inside a list item is a modal per item. */
+  const [viewing, setViewing] = useState<{ source: AttachmentSource; kind: AttachmentKind } | null>(
+    null,
+  );
+  const openFileViewer = (f: TravelBookingFileMeta) =>
+    setViewing({
+      source: { name: f.fileName, url: `/api/request/travel-booking/files/${f.id}` },
+      kind: attachmentKind(f.fileName, f.contentType),
+    });
 
   // Option emojis (เหตุผล/ที่พัก/ยานพาหนะ/รถเช่า) live in settings, not on the request — resolve by id.
   const icons = useTravelBookingOptionIcons();
@@ -494,15 +565,21 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
 
   /* ── Booking cards — Admin fills them in; everyone else only ever sees them read-only ── */
   const bookingRules = useMemo(() => REQUIRED_BOOKING_RULES.filter((r) => r.needed(request)), [request]);
-  const showAdminPanel =
-    !readOnlyBooking && request.status === "ManagerApproved" && canAccount && request.id != null;
+  /* `ManagerApproved` alone is not the Admin stage — it is also accounting's
+     sign-off, where every control this panel renders (add/edit/delete a booking
+     row, upload/delete an attachment, เสร็จสิ้น) is refused by the server with a
+     Thai error. `CurrentStepCode` is what separates the two stages. */
+  const atAdminStep = request.status === "ManagerApproved" && request.currentStepCode === "ADMIN";
+  const atAccountStep = request.status === "ManagerApproved" && request.currentStepCode === "ACCOUNT";
+  const showAdminPanel = !readOnlyBooking && atAdminStep && canAccount && request.id != null;
+  const showPrice = showBookingPrice ?? !readOnlyBooking;
   /* A rejected /access fetch leaves `canAccount` false, which is indistinguishable
      from a genuine refusal. The panel still fails closed, but the banner below is
      then addressed to someone we never established is not an operator, so it gets
      a variant that adds the caveat instead. Only the operator-facing view is
      affected: in `readOnlyBooking` the viewer is the requester, who is waiting for
      Admin whatever the roster says. */
-  const bookingAreaUnknown = !readOnlyBooking && Boolean(accessError);
+  const bookingAreaUnknown = !readOnlyBooking && atAdminStep && Boolean(accessError);
   const showBookingSummary =
     !showAdminPanel &&
     (readOnlyBooking || !accessLoading) &&
@@ -541,8 +618,8 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
         </div>
       )}
 
-      {/* ── ManagerApproved, permission check unavailable ── */}
-      {request.status === "ManagerApproved" && bookingAreaUnknown && (
+      {/* ── Admin booking stage, permission check unavailable ── */}
+      {bookingAreaUnknown && (
         <div
           className="rounded-2xl p-4 mb-4 flex items-start gap-2.5"
           style={{ background: "var(--bg-info-yellow)", border: "1px solid var(--border-info-yellow)" }}
@@ -554,15 +631,30 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
         </div>
       )}
 
-      {/* ── ManagerApproved, not-account-area banner ── */}
-      {request.status === "ManagerApproved" && !accessLoading && !canAccount && !bookingAreaUnknown && (
+      {/* ── Admin booking stage, not-account-area banner ── */}
+      {atAdminStep && !accessLoading && !canAccount && !bookingAreaUnknown && (
         <div
           className="rounded-2xl p-4 mb-4 flex items-start gap-2.5"
           style={{ background: "var(--bg-info-yellow)", border: "1px solid var(--border-info-yellow)" }}
         >
           <AlertCircle size={16} style={{ color: "var(--text-info-yellow)", marginTop: 2 }} className="shrink-0" />
           <p className="text-[13px] m-0" style={{ color: "var(--text-info-yellow)" }}>
-            รอ Admin กรอกข้อมูลการจอง — ทีมบัญชีจะดำเนินการจองตามรายการที่ร้องขอ แล้วอัปเดตสถานะเป็น &quot;เสร็จสิ้น&quot;
+            รอ Admin กรอกข้อมูลการจอง — ทีมบัญชีจะดำเนินการจองตามรายการที่ร้องขอ แล้วส่งต่อให้บัญชีตรวจสอบ
+          </p>
+        </div>
+      )}
+
+      {/* ── Accounting stage — Admin has finished; the two banners above are no
+             longer true of this request, and neither is anything about เสร็จสิ้น
+             being Admin's to press. ── */}
+      {atAccountStep && (
+        <div
+          className="rounded-2xl p-4 mb-4 flex items-start gap-2.5"
+          style={{ background: "var(--bg-info-yellow)", border: "1px solid var(--border-info-yellow)" }}
+        >
+          <AlertCircle size={16} style={{ color: "var(--text-info-yellow)", marginTop: 2 }} className="shrink-0" />
+          <p className="text-[13px] m-0" style={{ color: "var(--text-info-yellow)" }}>
+            Admin จองให้เรียบร้อยแล้ว — รอบัญชีตรวจสอบและอนุมัติปิดงาน
           </p>
         </div>
       )}
@@ -742,12 +834,42 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
                                 )}
                               </p>
                             </div>
-                            {/* Price is Admin/accounting information — not shown in the requester view. */}
-                            {!readOnlyBooking && d.priceExVat != null && (
+                            {/* The figures are Admin/accounting information — not shown in the
+                                requester view, but shown wherever the viewer is approving the
+                                payout. Each is rendered only when it holds something: null
+                                means nobody recorded it (every row written before migration
+                                123 reads null for the last three), and a row of "0.00 บาท"
+                                would claim a booking carried no VAT rather than that its VAT
+                                is unknown. */}
+                            {showPrice && d.priceExVat != null && (
                               <div className="flex items-baseline gap-2 min-w-0">
                                 <FieldLabel inline>ราคา (ก่อน VAT)</FieldLabel>
                                 <p className="text-[13px] m-0 tabular-nums" style={{ color: "var(--color-action)" }}>
                                   {fmtBaht(d.priceExVat)} บาท
+                                </p>
+                              </div>
+                            )}
+                            {showPrice && d.vatAmount != null && (
+                              <div className="flex items-baseline gap-2 min-w-0">
+                                <FieldLabel inline>ภาษี (VAT)</FieldLabel>
+                                <p className="text-[13px] m-0 tabular-nums" style={{ color: "var(--text-primary)" }}>
+                                  {fmtBaht(d.vatAmount)} บาท
+                                </p>
+                              </div>
+                            )}
+                            {showPrice && d.discountAmount != null && (
+                              <div className="flex items-baseline gap-2 min-w-0">
+                                <FieldLabel inline>ส่วนลด</FieldLabel>
+                                <p className="text-[13px] m-0 tabular-nums" style={{ color: "var(--text-primary)" }}>
+                                  {fmtBaht(d.discountAmount)} บาท
+                                </p>
+                              </div>
+                            )}
+                            {showPrice && d.totalAmount != null && (
+                              <div className="flex items-baseline gap-2 min-w-0">
+                                <FieldLabel inline>ราคารวม</FieldLabel>
+                                <p className="text-[13px] m-0 tabular-nums font-bold" style={{ color: "var(--color-action)" }}>
+                                  {fmtBaht(d.totalAmount)} บาท
                                 </p>
                               </div>
                             )}
@@ -757,7 +879,7 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
                               <FieldLabel>ไฟล์แนบ (ใบยืนยันการจอง) — {d.files.length} ไฟล์</FieldLabel>
                               <div className="flex flex-wrap gap-2">
                                 {d.files.map((f) => (
-                                  <FileThumb key={f.id} file={f} onImageClick={(src, alt) => setLightbox({ src, alt })} />
+                                  <FileThumb key={f.id} file={f} onViewFile={openFileViewer} />
                                 ))}
                               </div>
                             </div>
@@ -782,7 +904,7 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
           {request.paymentDate && (
             <DetailRow
               label="กำหนดจ่าย"
-              value={`${formatPayoutMonth(ymdToDate(request.paymentDate))} (ภายในวันที่ ${fmtYmdDisplay(request.paymentDate)})`}
+              value={`${payoutMonthLabel(request.paymentDate.slice(0, 7)) ?? request.paymentDate} (ภายในวันที่ ${fmtYmdDisplay(request.paymentDate)})`}
               valueStyle={{ color: "var(--text-info-green)" }}
             />
           )}
@@ -892,9 +1014,49 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
                 : "—"
             }
           />
+          {/* Which day went, and where it went to.
+
+              "ต่อเนื่องจากทริปก่อนหน้า (-1 วัน)" was the whole note, and on a
+              one-day trip that leaves Per diem reading 0 วัน · 0.00 บาท with
+              nothing on the page saying why.
+
+              Two lines rather than one sentence: the fact and the consequence
+              read at different speeds, and as a single run of text it wrapped
+              mid-clause and had to be read twice. The request number is a link
+              — the next thing anybody does with it is go and look. */}
           {request.isContinuation && (
-            <DetailRow label="หมายเหตุ" value="ต่อเนื่องจากทริปก่อนหน้า (นับ Per diem วันแรกซ้ำ -1 วัน)" />
+            <DetailRow
+              label="หมายเหตุ"
+              value={
+                <span className="flex flex-col gap-0.5">
+                  <span>
+                    วันแรก{" "}
+                    <strong>{request.departDate ? fmtYmdDisplay(request.departDate) : "—"}</strong>{" "}
+                    นับ Per diem ไปแล้วใน{" "}
+                    {request.continuationFromRequestId && request.continuationFromRequestNo && !nested ? (
+                      <button
+                        type="button"
+                        onClick={() => setSiblingId(request.continuationFromRequestId)}
+                        title="ดูรายละเอียดคำขอนั้น"
+                        className="font-bold underline underline-offset-2 cursor-pointer border-none bg-transparent p-0"
+                        style={{ color: "var(--nav-active-text)" }}
+                      >
+                        {request.continuationFromRequestNo}
+                      </button>
+                    ) : request.continuationFromRequestNo ? (
+                      <strong>{request.continuationFromRequestNo}</strong>
+                    ) : (
+                      <strong>ทริปก่อนหน้า</strong>
+                    )}
+                  </span>
+                  <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                    ต่อเนื่องจากทริปก่อนหน้า จึงไม่นับซ้ำที่นี่ (−1 วัน)
+                  </span>
+                </span>
+              }
+            />
           )}
+
           <DetailRow
             label="ที่พักค้างคืน"
             value={withIcon(
@@ -966,7 +1128,7 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
         {request.idCardFiles.length > 0 ? (
           <div className="flex flex-wrap gap-2">
             {request.idCardFiles.map((f) => (
-              <FileThumb key={f.id} file={f} onImageClick={(src, alt) => setLightbox({ src, alt })} />
+              <FileThumb key={f.id} file={f} onViewFile={openFileViewer} />
             ))}
           </div>
         ) : (
@@ -1110,7 +1272,51 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
         </div>
       </Dialog>
 
-      <ImageLightbox open={lightbox != null} src={lightbox?.src ?? ""} alt={lightbox?.alt} onClose={() => setLightbox(null)} />
+      <AttachmentViewer
+        open={viewing != null}
+        source={viewing?.source ?? null}
+        kind={viewing?.kind ?? "other"}
+        onClose={() => setViewing(null)}
+      />
+
+      {/* The trip that counted this one's first day — same panel the queue and
+          My Requests open a request in, so the number behaves the same
+          everywhere. `nested` stops the note inside it opening a third. */}
+      <SidePanel
+        open={siblingId != null}
+        onClose={() => setSiblingId(null)}
+        width="min(760px, 100vw)"
+        zIndex={60}
+      >
+        <div
+          className="flex items-center justify-between px-4 py-3 shrink-0"
+          style={{ borderBottom: "1px solid var(--border-light)" }}
+        >
+          <div className="min-w-0">
+            <p className="text-[14px] font-bold truncate m-0" style={{ color: "var(--text-heading)" }}>
+              {sibling?.requestNo ?? request.continuationFromRequestNo ?? "รายละเอียดคำขอ"}
+            </p>
+            <p className="text-[11px] m-0 mt-0.5" style={{ color: "var(--text-muted)" }}>
+              ทริปที่นับ Per diem ของวันแรกไปแล้ว
+            </p>
+          </div>
+          <SidePanelClose onClick={() => setSiblingId(null)} />
+        </div>
+
+        <div className="flex-1 overflow-y-auto no-scrollbar px-4 py-4 acc-theme">
+          {siblingLoading && !sibling ? (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 size={24} className="animate-spin" style={{ color: "var(--text-muted)" }} />
+            </div>
+          ) : sibling ? (
+            <TravelBookingDetail request={sibling} readOnlyBooking nested />
+          ) : (
+            <p className="text-[13px] py-16 text-center" style={{ color: "var(--text-muted)" }}>
+              โหลดรายละเอียดไม่สำเร็จ
+            </p>
+          )}
+        </div>
+      </SidePanel>
     </div>
   );
 }

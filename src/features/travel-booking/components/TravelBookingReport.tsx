@@ -61,7 +61,7 @@ type ColKey =
   | "requestNo" | "brandCode" | "staffId" | "fullName" | "position" | "departmentName"
   | "reasonName" | "workDetail" | "departDate" | "returnDate" | "provinceName"
   | "accommodationName" | "workLocationsCsv" | "approvedDate" | "status"
-  | "perDiemRate" | "perDiemDays" | "perDiemTotal" | "paymentDate" | "rateChangeNote";
+  | "perDiemRate" | "perDiemDays" | "perDiemTotal" | "continuationNote" | "paymentDate" | "rateChangeNote";
 
 const ALL_COLUMNS: (ColumnToggleOption<ColKey> & { align?: "right" })[] = [
   { key: "requestNo", label: "เลขที่คำขอ" },
@@ -85,6 +85,9 @@ const ALL_COLUMNS: (ColumnToggleOption<ColKey> & { align?: "right" })[] = [
   { key: "perDiemRate", label: "เบี้ยเลี้ยง (เรท/วัน)", align: "right" },
   { key: "perDiemDays", label: "เบี้ยเลี้ยง (จำนวนวัน)", align: "right" },
   { key: "perDiemTotal", label: "เบี้ยเลี้ยง (ยอดรวม)", align: "right" },
+  // Beside the figures it explains, not with the other notes at the end: a
+  // 0.00 total two columns from its own reason is the confusion this removes.
+  { key: "continuationNote", label: "หมายเหตุ Per diem" },
   { key: "paymentDate", label: "วันที่จ่าย" },
   { key: "rateChangeNote", label: "หมายเหตุการเปลี่ยนเรท" },
 ];
@@ -158,6 +161,28 @@ function cellValue(
     case "perDiemDays": return row.perDiemDays;
     case "perDiemTotal": return fmtBaht(row.perDiemTotal);
     case "paymentDate": return row.paymentDate ? fmtYmdDisplay(row.paymentDate) : "—";
+    case "continuationNote":
+      if (!row.continuationFromRequestNo) return "—";
+      return (
+        <span className="text-[11.5px]" style={{ color: "var(--text-muted)" }}>
+          วันแรกนับใน{" "}
+          {row.continuationFromRequestId ? (
+            // Opens in the same drawer the เลขที่คำขอ column uses, so the
+            // number behaves the same wherever it appears in this table.
+            <button
+              type="button"
+              onClick={() => onOpen(row.continuationFromRequestId!)}
+              title="ดูรายละเอียดคำขอนั้น"
+              className="font-bold underline underline-offset-2 cursor-pointer border-none bg-transparent p-0 text-[11.5px]"
+              style={{ color: "var(--nav-active-text)" }}
+            >
+              {row.continuationFromRequestNo}
+            </button>
+          ) : (
+            <strong>{row.continuationFromRequestNo}</strong>
+          )}
+        </span>
+      );
     case "rateChangeNote":
       return row.rateChangeNote ? (
         <span style={{ color: "var(--color-warning)" }}>{row.rateChangeNote}</span>

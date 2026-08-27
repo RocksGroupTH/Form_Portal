@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
 import {
@@ -8,6 +8,8 @@ import {
   BedDouble,
   Car,
   CheckCircle2,
+  Clock,
+  FileSpreadsheet,
   FileText,
   Loader2,
   Paperclip,
@@ -17,14 +19,38 @@ import {
   ThumbsDown,
   Ticket,
   Trash2,
+  Undo2,
   X,
 } from "lucide-react";
 import { Dialog } from "@/components/ui";
-import { ImageLightbox } from "@/features/accounting/components/ImageLightbox";
+import {
+  AttachmentViewer,
+  attachmentKind,
+  type AttachmentKind,
+  type AttachmentSource,
+} from "@/components/ui/AttachmentViewer";
 import { useTravelBookingOptionIcons } from "@/features/travel-booking/hooks/useOptionIcons";
 import { InfoStrip, tripInfo, typeInfo, type InfoGroup } from "@/features/travel-booking/components/BookingInfoStrip";
 import { BOOKING_TYPE_REFTYPE } from "@/features/travel-booking/constants";
 import { REQUIRED_BOOKING_RULES } from "@/features/travel-booking/lib/booking-requirements";
+import {
+  sanitizeBookingAmount,
+  suggestedTotal,
+  totalMismatch,
+  MAX_BOOKING_AMOUNT,
+} from "@/features/travel-booking/lib/booking-amounts";
+import { bookingFieldsLocked, type SavedBookingEntry } from "@/features/travel-booking/lib/booking-lock";
+import { bookingRowDirty } from "@/features/travel-booking/lib/booking-dirty";
+import { onFileAttached, onFileRemoved } from "@/features/travel-booking/lib/booking-file-sync";
+import {
+  sanitizeBookingNo,
+  MAX_BOOKING_NO_LENGTH,
+} from "@/features/travel-booking/lib/booking-no";
+import {
+  readBookingFields,
+  BOOKING_FIELDS_FAILURE_TEXT,
+  type BookingFieldsFailure,
+} from "@/features/travel-booking/lib/read-booking-fields";
 import type {
   BookingDetail,
   BookingType,
@@ -37,6 +63,62 @@ const TYPE_ICON: Record<BookingType, ReactNode> = {
   ticket: <Ticket size={15} />,
   rent: <Car size={15} />,
 };
+
+const fieldStyle = {
+  background: "var(--bg-input)",
+  color: "var(--text-primary)",
+  border: "1px solid var(--border-input)",
+} as const;
+
+/** A figure as the input should show it: blank for "nobody recorded this", never "0". */
+function numText(v: number | null | undefined): string {
+  return v != null ? String(v) : "";
+}
+
+function FieldCaption({ children }: { children: ReactNode }) {
+  return (
+    <label
+      className="block text-[11px] font-semibold mb-1 uppercase tracking-wide"
+      style={{ color: "var(--text-muted)" }}
+    >
+      {children}
+    </label>
+  );
+}
+
+/**
+ * One money field. Four of the five are identical apart from their caption, and
+ * writing them out four times is how one of them ends up without the `disabled`
+ * that locks it while the read is running.
+ */
+function BahtField({
+  label,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  value: string;
+  onChange: (next: string) => void;
+  disabled: boolean;
+}) {
+  return (
+    <div>
+      <FieldCaption>{label}</FieldCaption>
+      <input
+        type="number"
+        step="0.01"
+        min="0"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        className="w-full rounded-lg px-3 py-2 text-[13px] outline-none tabular-nums text-right disabled:opacity-60 disabled:cursor-not-allowed"
+        style={fieldStyle}
+        placeholder="0.00"
+      />
+    </div>
+  );
+}
 
 /** One booking row counts as done when it has a number, a price and at least one attachment. */
 function isRowComplete(detail: BookingDetail): boolean {
@@ -51,15 +133,24 @@ function isTypeComplete(rows: BookingDetail[]): boolean {
 
 /**
  * Admin fill-in panel (spec §7/§8.1) — rendered on the detail page only for account-area
- * viewers while `Status === 'ManagerApproved'`. One group per REQUIRED booking (room/ticket/
+ * viewers while the request is on the Admin booking step (`Status === 'ManagerApproved'` **and**
+ * `CurrentStepCode === 'ADMIN'` — the status alone also covers accounting's sign-off, where
+ * every control below is refused by the server). One group per REQUIRED booking (room/ticket/
  * rent, gated by `REQUIRED_BOOKING_RULES` against the request's Needs*Booking flags).
  *
  * A group holds as many rows as the trip needs (two hotels, two tickets, …) — "เพิ่ม…" adds
- * another. Each row saves BookingNo + PriceExVat and takes its own attachments; attaching
- * works straight away, without saving first, because the row is created on demand (see
- * `BookingRowCard.ensureDetailId`). The bottom "ทำรายการเสร็จ" button is disabled until every
+ * another. Each row saves BookingNo + PriceExVat and takes its own attachments; picking a file
+ * only holds it on the card, and "บันทึกข้อมูลการจอง" is what writes the row and then uploads
+ * the files it is holding (see `BookingRowCard.handleSave`). Nothing reaches SharePoint before
+ * that press. The bottom "ทำรายการเสร็จ" button is disabled until every
  * required group is complete — the server (`completeRequest`) re-validates the same gate, so
  * this is a UX pre-check, not the source of truth.
+ *
+ * It is **also** disabled while any row is carrying unsaved edits, and that half has no
+ * server counterpart at all: the server sees only what was saved, so a booking signed off
+ * against figures still sitting in somebody's input boxes is invisible to it. Each card
+ * answers `bookingRowDirty` for itself and reports up through `onDirtyChange`; the panel
+ * counts, and says in Thai why the button is off rather than leaving a dead control.
  */
 export function AdminBookingPanel({
   request,
@@ -87,12 +178,49 @@ export function AdminBookingPanel({
   const [completing, setCompleting] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<{ detailId: number; label: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
+  /* One viewer for the whole panel, not one per chip — a modal rendered inside a
+     list item is a modal per item. The chips only report which file was clicked. */
+  const [viewing, setViewing] = useState<{ source: AttachmentSource; kind: AttachmentKind } | null>(
+    null,
+  );
 
   /* Bounce the request instead of booking it — back to the requester, or rejected outright. */
   const [bounce, setBounce] = useState<"return" | "reject" | null>(null);
   const [bounceComment, setBounceComment] = useState("");
   const [bouncing, setBouncing] = useState(false);
+
+  /**
+   * Which rows are carrying unsaved edits, keyed on the row's own identity.
+   *
+   * The Complete button is here and the edits are three components down, so each
+   * card reports its own answer up and the panel only ever counts. A plain object
+   * rather than a `Set` because the update has to be immutable to re-render and
+   * `new Set(prev)` needs downlevel iteration under this ES5 target.
+   *
+   * **The key is `BookingTypeGroup`'s own `rowKey`**, prefixed by type — the same
+   * identity that keeps a card mounted when its draft slot becomes a saved row, so
+   * a save does not look like one row leaving and another arriving.
+   *
+   * `reportRowDirty` is `useCallback`'d with no dependencies so a card's reporting
+   * effect is driven by its own dirtiness and nothing else, and the updater returns
+   * `prev` untouched when the answer has not changed, so a report that says the
+   * same thing again costs no render.
+   */
+  const [dirtyRows, setDirtyRows] = useState<Record<string, true>>({});
+  const reportRowDirty = useCallback((key: string, dirty: boolean) => {
+    setDirtyRows((prev) => {
+      if (dirty === (prev[key] === true)) return prev;
+      const next = { ...prev };
+      // Clearing the entry rather than storing `false` is what makes an unmounted
+      // row stop counting: a card that has gone leaves nothing behind, so a
+      // deleted row cannot hold the Complete button disabled with nothing on
+      // screen explaining why.
+      if (dirty) next[key] = true;
+      else delete next[key];
+      return next;
+    });
+  }, []);
+  const anyRowDirty = Object.keys(dirtyRows).length > 0;
 
   const missingLabels = requiredRules
     .filter((r) => !isTypeComplete(rowsByType.get(r.type) ?? []))
@@ -101,6 +229,10 @@ export function AdminBookingPanel({
 
   async function handleComplete() {
     if (!requestId) return;
+    // The button is disabled for this, but the check is repeated here because a
+    // press that slipped through would sign the booking off against figures that
+    // exist only on somebody's screen — see `booking-dirty.ts`.
+    if (anyRowDirty) return;
     setCompleting(true);
     try {
       const res = await fetch(`/api/request/travel-booking/admin/requests/${requestId}/complete`, {
@@ -213,8 +345,23 @@ export function AdminBookingPanel({
               info={typeInfo(request, rule.type, optionIcons)}
               rows={rowsByType.get(rule.type) ?? []}
               onChanged={onChanged}
+              onRowDirty={reportRowDirty}
               onRequestDelete={(detailId) => setPendingDelete({ detailId, label: rule.label })}
-              onImageClick={(src, alt) => setLightbox({ src, alt })}
+              onViewFile={(f) =>
+                setViewing({
+                  source: { name: f.fileName, url: `/api/request/travel-booking/files/${f.id}` },
+                  kind: attachmentKind(f.fileName, f.contentType),
+                })
+              }
+              /* A pick that has not been uploaded yet, so the viewer takes the `File`
+                 itself rather than a URL — `AttachmentSource` accepts either, the same
+                 way IdCardUpload hands it its pending card image. */
+              onViewPending={(f) =>
+                setViewing({
+                  source: { name: f.name, file: f },
+                  kind: attachmentKind(f.name, f.type),
+                })
+              }
             />
           ))
         )}
@@ -231,11 +378,36 @@ export function AdminBookingPanel({
           </div>
         )}
 
+        {/* Why the Complete button is off. A disabled control with no explanation is
+            the thing to avoid, and this one is off for a reason nobody can see from
+            the button: an edit typed into a card further up the page. Kept separate
+            from the "ยังกรอกไม่ครบ" strip above — the two can be true at once, and
+            they ask for different things to be done. */}
+        {anyRowDirty && (
+          <div
+            className="rounded-xl px-4 py-3 flex items-start gap-2"
+            style={{ background: "var(--bg-info-yellow)", border: "1px solid var(--border-info-yellow)" }}
+          >
+            <AlertTriangle size={15} style={{ color: "var(--text-info-yellow)", marginTop: 1 }} className="shrink-0" />
+            <p className="text-[12.5px] m-0" style={{ color: "var(--text-info-yellow)" }}>
+              มีรายการที่แก้ไขแล้วยังไม่ได้บันทึก — ปิดงานไม่ได้จนกว่าจะกด “บันทึกข้อมูลการจอง”
+              ในรายการนั้น หรือกด “ใช้ข้อมูลที่บันทึกไว้ล่าสุด” เพื่อย้อนกลับไปข้อมูลที่บันทึกไว้
+            </p>
+          </div>
+        )}
+
         <div className="flex flex-wrap items-center gap-2 pt-1" style={{ borderTop: "1px solid var(--border-light)" }}>
           <button
             type="button"
             onClick={handleComplete}
-            disabled={completing || !allComplete}
+            title={
+              anyRowDirty
+                ? "มีรายการที่ยังไม่ได้บันทึก"
+                : !allComplete
+                  ? "ยังกรอกข้อมูลการจองไม่ครบ"
+                  : undefined
+            }
+            disabled={completing || !allComplete || anyRowDirty}
             className="mt-2 inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-[13px] font-bold cursor-pointer border-none text-white disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ background: "var(--positive, #15b357)" }}
           >
@@ -348,11 +520,11 @@ export function AdminBookingPanel({
         </div>
       </Dialog>
 
-      <ImageLightbox
-        open={lightbox != null}
-        src={lightbox?.src ?? ""}
-        alt={lightbox?.alt}
-        onClose={() => setLightbox(null)}
+      <AttachmentViewer
+        open={viewing != null}
+        source={viewing?.source ?? null}
+        kind={viewing?.kind ?? "other"}
+        onClose={() => setViewing(null)}
       />
     </div>
   );
@@ -370,8 +542,10 @@ function BookingTypeGroup({
   info,
   rows,
   onChanged,
+  onRowDirty,
   onRequestDelete,
-  onImageClick,
+  onViewFile,
+  onViewPending,
 }: {
   type: BookingType;
   label: string;
@@ -380,19 +554,56 @@ function BookingTypeGroup({
   info: InfoGroup[];
   rows: BookingDetail[];
   onChanged: () => void;
+  /** Report one row's unsaved-edits answer to the panel, which owns Complete. */
+  onRowDirty: (key: string, dirty: boolean) => void;
   onRequestDelete: (detailId: number) => void;
-  onImageClick: (src: string, alt: string) => void;
+  onViewFile: (file: TravelBookingFileMeta) => void;
+  onViewPending: (file: File) => void;
 }) {
   const [draftOpen, setDraftOpen] = useState(false);
-  /* Close the slot only once the new row actually shows up in the refetched request —
-     hiding it the moment the POST returns would blink the card out and back in. */
-  const prevRowCount = useRef(rows.length);
-  useEffect(() => {
-    if (rows.length > prevRowCount.current) setDraftOpen(false);
-    prevRowCount.current = rows.length;
-  }, [rows.length]);
 
-  const showDraft = draftOpen || rows.length === 0;
+  /**
+   * Which draft slot created which saved row — and therefore which React key
+   * each row card carries.
+   *
+   * **This is what keeps the AI read — and the held files — alive.** Saving the
+   * empty slot creates the row (`handleSave` → `persist`), the parent refetches, and
+   * the row then arrives in `rows` while the slot closes. Keyed naively — `"draft"`
+   * for the slot, `detail.id` for a saved row — React sees one card leave and
+   * another arrive, unmounts the first, and every piece of its state goes with it:
+   * the in-flight read, the note saying it is running, the figures it was about to
+   * fill in, and any picked file still waiting to be uploaded. The read then
+   * resolves into a component nobody is looking at, and a file whose upload failed
+   * has nowhere left to be retried from.
+   *
+   * So the row inherits the key of the slot that created it, and each press of
+   * "เพิ่ม" opens a slot with a *new* number rather than re-using `"draft"`.
+   * One card, mounted from the first save until the panel closes; no key ever
+   * moves from one card to another, so no already-landed row is remounted when
+   * the next slot opens.
+   */
+  const [draftSlot, setDraftSlot] = useState(0);
+  const slotOfRow = useRef(new Map<number, number>());
+  const rowKey = (id: number) => {
+    const slot = slotOfRow.current.get(id);
+    return slot === undefined ? `row-${id}` : `slot-${slot}`;
+  };
+
+  /* Close the slot only once the new row actually shows up in the refetched request —
+     hiding it the moment the POST returns would blink the card out and back in. It is
+     the row's arrival that closes the slot, not a count going up: a row appearing for
+     any other reason should not shut a slot somebody deliberately opened. */
+  /* The dirty registry is keyed on the same identity as the React key, prefixed by
+     type so two groups' `row-7` cannot be one entry. Same reason `rowKey` exists at
+     all: a draft slot keeps its identity when it becomes a saved row, so a save is
+     not read as one row leaving the register and another joining it. */
+  const reportDirty = useCallback(
+    (key: string, dirty: boolean) => onRowDirty(`${type}:${key}`, dirty),
+    [type, onRowDirty],
+  );
+
+  const draftLanded = rows.some((r) => slotOfRow.current.get(r.id) === draftSlot);
+  const showDraft = !draftLanded && (draftOpen || rows.length === 0);
   const total = rows.length + (showDraft ? 1 : 0);
   const complete = isTypeComplete(rows);
 
@@ -429,35 +640,43 @@ function BookingTypeGroup({
 
         {rows.map((detail, idx) => (
           <BookingRowCard
-            key={detail.id}
+            key={rowKey(detail.id)}
+            dirtyKey={rowKey(detail.id)}
             type={type}
             requestId={requestId}
             detail={detail}
             position={idx + 1}
             total={total}
             onChanged={onChanged}
+            onDirtyChange={reportDirty}
             onDelete={() => onRequestDelete(detail.id)}
-            onImageClick={onImageClick}
+            onViewFile={onViewFile}
+            onViewPending={onViewPending}
           />
         ))}
 
         {showDraft && (
           <BookingRowCard
-            key="draft"
+            key={`slot-${draftSlot}`}
+            dirtyKey={`slot-${draftSlot}`}
             type={type}
             requestId={requestId}
             detail={undefined}
             position={rows.length + 1}
             total={total}
             onChanged={onChanged}
+            onDirtyChange={reportDirty}
+            onCreated={(id) => slotOfRow.current.set(id, draftSlot)}
             onDelete={rows.length > 0 ? () => setDraftOpen(false) : undefined}
-            onImageClick={onImageClick}
+            onViewFile={onViewFile}
+            onViewPending={onViewPending}
           />
         )}
 
         <button
           type="button"
-          onClick={() => setDraftOpen(true)}
+          /* A new slot number, never a re-used one — see `slotOfRow` above. */
+          onClick={() => { setDraftSlot((s) => s + 1); setDraftOpen(true); }}
           disabled={showDraft}
           className="self-start inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-[12.5px] font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           style={{ background: "transparent", border: "1px dashed var(--border-card)", color: "var(--text-secondary)" }}
@@ -470,57 +689,275 @@ function BookingTypeGroup({
 }
 
 /**
- * One `AccTravelBookingDetail` row. `detail` is undefined for a not-yet-created row: the very
- * first save OR the very first attachment creates it (`ensureDetailId`), so Admin never has to
- * save before attaching. `createdIdRef` remembers the new id until the parent's refetch lands,
- * so a second action on the same card edits that row instead of creating another one.
+ * One `AccTravelBookingDetail` row. `detail` is undefined for a not-yet-created row, and
+ * **"บันทึกข้อมูลการจอง" is the only thing that creates it** — picking a file used to create it
+ * too, through an `ensureDetailId` that is now gone, which meant a card nobody ever saved still
+ * left a booking-detail row behind and its bytes in SharePoint. `createdIdRef` remembers the new
+ * id until the parent's refetch lands, so a second save on the same card edits that row instead
+ * of creating another one.
  */
 function BookingRowCard({
+  dirtyKey,
   type,
   requestId,
   detail,
   position,
   total,
   onChanged,
+  onDirtyChange,
+  onCreated,
   onDelete,
-  onImageClick,
+  onViewFile,
+  onViewPending,
 }: {
+  /** This card's identity in the panel's dirty registry — the parent's `rowKey`. */
+  dirtyKey: string;
   type: BookingType;
   requestId: number;
   detail: BookingDetail | undefined;
   position: number;
   total: number;
   onChanged: () => void;
+  /** Tell the panel whether this row is carrying unsaved edits. */
+  onDirtyChange: (key: string, dirty: boolean) => void;
+  /** Told the id the very first save minted, so the parent can keep this card's key. */
+  onCreated?: (id: number) => void;
   onDelete?: () => void;
-  onImageClick: (src: string, alt: string) => void;
+  onViewFile: (file: TravelBookingFileMeta) => void;
+  /** Open a picked-but-not-yet-uploaded file in the same viewer the stored ones use. */
+  onViewPending: (file: File) => void;
 }) {
   const [bookingNo, setBookingNo] = useState(detail?.bookingNo ?? "");
-  const [priceExVat, setPriceExVat] = useState(detail?.priceExVat != null ? String(detail.priceExVat) : "");
+  const [priceExVat, setPriceExVat] = useState(numText(detail?.priceExVat));
+  const [vat, setVat] = useState(numText(detail?.vatAmount));
+  const [discount, setDiscount] = useState(numText(detail?.discountAmount));
+  const [totalAmount, setTotalAmount] = useState(numText(detail?.totalAmount));
   const [saving, setSaving] = useState(false);
+  /**
+   * Files picked on this card and not sent anywhere yet.
+   *
+   * They are held here until "บันทึกข้อมูลการจอง" is pressed, which is what the
+   * requirement asks for: the bytes go to SharePoint on save, not on pick.
+   */
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  /** True only while `handleSave` is posting the held files. */
   const [uploading, setUploading] = useState(false);
   const [removingId, setRemovingId] = useState<number | null>(null);
   const createdIdRef = useRef<number | null>(null);
+
+  /**
+   * How the read of the attached file is going.
+   *
+   * `"reading"` is the only value that locks anything, and it is left the moment
+   * the call lands — **with a figure or with a failure, no difference**. This is
+   * the one place AP-17 must not copy its own ID-card rule: that check fails
+   * closed because an unverified national ID card is the thing it exists to
+   * stop, and there is no equivalent here. A booking desk that cannot type a
+   * booking number because Anthropic is down is a desk that cannot work, and
+   * nothing is protected by making them wait.
+   */
+  const [readNote, setReadNote] = useState<"reading" | BookingFieldsFailure | null>(null);
 
   const detailId = detail?.id ?? createdIdRef.current;
   const files = detail?.files ?? [];
   const complete = !!detail && isRowComplete(detail);
 
-  /* Flag anything Admin still has to act on: edits typed but not saved yet, or a row that is
-     missing a number / price / attachment. Compare the price numerically so "50" vs "50.00"
-     doesn't read as an unsaved edit. */
-  const typedPrice = priceExVat.trim() === "" ? null : Number(priceExVat.trim());
-  const dirty =
-    bookingNo.trim() !== (detail?.bookingNo ?? "").trim() ||
-    (Number.isNaN(typedPrice) ? true : typedPrice !== (detail?.priceExVat ?? null));
-  const needsAttention = dirty || !complete;
-  const attentionLabel = dirty ? "ยังไม่ได้บันทึก" : "ยังไม่ครบ";
+  /* Every figure goes through the same admission test the server applies, so what the
+     field means as it is typed is what will be stored. Blank reads as null, not as zero. */
+  const nPrice = sanitizeBookingAmount(priceExVat);
+  const nVat = sanitizeBookingAmount(vat);
+  const nDiscount = sanitizeBookingAmount(discount);
+  const nTotal = sanitizeBookingAmount(totalAmount);
+
+  /* A suggestion and a flag, never a correction: what is stored is what the invoice says.
+     A half-filled row is deliberately not a mismatch — see `booking-amounts.ts`. */
+  const computedTotal = suggestedTotal(nPrice, nVat, nDiscount);
+  const mismatch = totalMismatch(nPrice, nVat, nDiscount, nTotal);
+
+  /**
+   * The fields open only once there is a file behind them and the read of it has
+   * finished. Attaching is what unlocks them — the same shape AP-1's expense row
+   * uses, where the receipt is asked for before the money is.
+   *
+   * The rule is read against the **saved** row, not the live inputs, and it
+   * exempts a row that already records something. Saving and uploading are
+   * independent here, so a row can hold a booking number and a price with no
+   * file — see `booking-lock.ts`, which owns the rule and the reason.
+   */
+  const reading = readNote === "reading";
+  /* Held picks count as attachments here. `bookingFieldsLocked` unlocks on `hasFile`,
+     so counting only the stored ones would leave the fields shut after a pick — and
+     shut for good, because the press that would store the file is the press that
+     needs the fields typed into first. The same count feeds `booking-file-sync`, so
+     a pick is the row's "first file" when nothing is stored yet, and removing the
+     last one — held or stored — still clears the figures. */
+  /* What the last successful save wrote, until the parent's refetch supersedes it. */
+  const [savedSnapshot, setSavedSnapshot] = useState<SavedBookingEntry | null>(null);
+  const attachedCount = files.length + pendingFiles.length;
+  const hasFile = attachedCount > 0;
+  /* `detail` is the parent's copy and lags a successful save by a refetch. Without
+     the local snapshot a brand-new row re-locks for that gap — held files cleared,
+     `detail` still undefined — and shows "แนบไฟล์ใบยืนยันการจองก่อน" one beat after
+     the save that attached the file. The snapshot is what was just persisted, so the
+     rule sees a row that records something, which it does; `detail` takes over the
+     moment it arrives. */
+  const locked = bookingFieldsLocked({ saved: detail ?? savedSnapshot, hasFile, reading });
+
+  /* The read resolves seconds after the attach. These keep its write honest against
+     fields that have since been filled in by hand. */
+  const valuesRef = useRef({ bookingNo, priceExVat, vat, discount, totalAmount });
+  valuesRef.current = { bookingNo, priceExVat, vat, discount, totalAmount };
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    // Set on mount, not just cleared on unmount. StrictMode runs effects
+    // mount → cleanup → mount in development, so a cleanup-only version leaves
+    // this false for the rest of the component's life: every read then returns
+    // early, the note sits on "กำลังอ่านข้อมูล" forever and no field is ever
+    // filled. `reactStrictMode` is unset in next.config.mjs, which means on.
+    aliveRef.current = true;
+    return () => { aliveRef.current = false; };
+  }, []);
+  /* The read is billed per call, so one at a time per row. `reading` is state and lags
+     a render behind; a ref is what a second file picked in the same tick actually sees. */
+  const readingRef = useRef(false);
+
+  /** Blank all five. Used when a row's first file arrives, and when its last one goes. */
+  function clearFields() {
+    setBookingNo("");
+    setPriceExVat("");
+    setVat("");
+    setDiscount("");
+    setTotalAmount("");
+  }
+
+  /**
+   * Read the attachment and offer what it says.
+   *
+   * `replaces` is set for a row's first file, where the read owns the row: the
+   * fields were blanked in the same tick, so `valuesRef` still holds the values
+   * that were cleared and guarding against them would restore exactly what the
+   * clear removed. Otherwise a person outranks the read — see booking-file-sync.
+   */
+  async function prefillFrom(file: File, replaces: boolean) {
+    readingRef.current = true;
+    setReadNote("reading");
+    try {
+      const read = await readBookingFields(file);
+      if (!aliveRef.current) return;
+      if (read.failure) {
+        // The reason is carried through so the note names the right remedy: a
+        // file with nothing on it, a key an operator must replace, and an
+        // outage are three different things to be told. The fields open either
+        // way — that is what the `finally` and this early return both preserve.
+        setReadNote(read.failure);
+        return;
+      }
+      // Whatever arrived while the call was in flight was typed by a person,
+      // and a person outranks the read. Each field is judged on its own: three
+      // filled by the read beside two typed by hand is the normal outcome.
+      const v = valuesRef.current;
+      const f = read.fields;
+      const free = (current: string) => replaces || !current.trim();
+      if (f.bookingNo && free(v.bookingNo)) setBookingNo(f.bookingNo);
+      if (f.priceExVat != null && free(v.priceExVat)) setPriceExVat(String(f.priceExVat));
+      if (f.vat != null && free(v.vat)) setVat(String(f.vat));
+      if (f.discount != null && free(v.discount)) setDiscount(String(f.discount));
+      if (f.total != null && free(v.totalAmount)) setTotalAmount(String(f.total));
+      setReadNote(null);
+    } catch {
+      if (aliveRef.current) setReadNote("error");
+    } finally {
+      readingRef.current = false;
+    }
+  }
+
+  /** True while any of the five is still blank — nothing left to fill means nothing to ask. */
+  function anyFieldEmpty(): boolean {
+    const v = valuesRef.current;
+    return (
+      !v.bookingNo.trim() ||
+      !v.priceExVat.trim() ||
+      !v.vat.trim() ||
+      !v.discount.trim() ||
+      !v.totalAmount.trim()
+    );
+  }
+
+  /**
+   * Anything Admin still has to act on: edits typed but not saved yet — a held file
+   * being one of them — or a row missing a number / price / attachment.
+   *
+   * The comparison itself is `bookingRowDirty`, which owns it for both readers: this
+   * badge and the panel's Complete gate. It is read against **`detail ?? savedSnapshot`**,
+   * the same value the field lock uses and for the same reason — `detail` is the
+   * parent's copy and lags a successful save by a refetch, so comparing against it
+   * alone would report a row as edited for the one beat after its own save, and
+   * hold Complete off with nothing to press but Save again.
+   */
+  const unsaved = bookingRowDirty({
+    saved: detail ?? savedSnapshot,
+    current: { bookingNo, priceExVat, vat, discount, totalAmount },
+    pendingFileCount: pendingFiles.length,
+  });
+  const needsAttention = unsaved || !complete;
+  const attentionLabel = unsaved ? "ยังไม่ได้บันทึก" : "ยังไม่ครบ";
+
+  /**
+   * Report this row's answer to the panel, and take it out of the register when the
+   * card goes.
+   *
+   * One effect with a cleanup, not a mount flag and a cleanup-only ref: this file
+   * documents that trap a few lines up (`aliveRef`), and it does not apply here.
+   * StrictMode's mount → cleanup → mount runs the cleanup, which deregisters, and
+   * then the effect again, which re-reports — so the register ends the sequence
+   * holding exactly what this row says. The cleanup is what stops a **deleted** row
+   * from leaving Complete disabled forever with nothing on screen to explain it.
+   */
+  useEffect(() => {
+    onDirtyChange(dirtyKey, unsaved);
+    return () => onDirtyChange(dirtyKey, false);
+  }, [dirtyKey, unsaved, onDirtyChange]);
+
+  /**
+   * Put the row back to what was last saved. **Local only — no fetch, no DELETE.**
+   *
+   * Stored files stay stored; only picks this card is still holding are dropped,
+   * because they are not part of the saved state and are what "unsaved" mostly
+   * means here. A row with nothing saved empties, which leaves it exactly as a
+   * fresh slot is — `bookingFieldsLocked` re-locks it once the held picks are gone,
+   * which is the correct state for a row nobody has started.
+   */
+  function handleRevert() {
+    const saved = detail ?? savedSnapshot;
+    setBookingNo(saved?.bookingNo ?? "");
+    setPriceExVat(numText(saved?.priceExVat));
+    setVat(numText(saved?.vatAmount));
+    setDiscount(numText(saved?.discountAmount));
+    setTotalAmount(numText(saved?.totalAmount));
+    setPendingFiles([]);
+    setReadNote(null);
+    toast.success(saved ? "ย้อนกลับไปใช้ข้อมูลที่บันทึกไว้ล่าสุดแล้ว" : "ล้างข้อมูลที่กรอกไว้แล้ว");
+  }
 
   /** Create (detailId == null) or update the row from the current inputs. Toasts on failure. */
   async function persist(id: number | null): Promise<number | null> {
-    const priceTrim = priceExVat.trim();
-    const price = priceTrim === "" ? null : Number(priceTrim);
-    if (priceTrim !== "" && Number.isNaN(price)) {
-      toast.error("กรุณากรอกราคาเป็นตัวเลข");
+    // A figure typed but refused — not a number, negative, or past the ceiling —
+    // is reported rather than quietly stored as NULL. The server applies the
+    // same test and is the actual gate; this is so the person sees why.
+    const figures: Array<[string, string, number | null]> = [
+      ["ราคา (ก่อน VAT)", priceExVat, nPrice],
+      ["ภาษี (VAT)", vat, nVat],
+      ["ส่วนลด", discount, nDiscount],
+      ["ราคารวม", totalAmount, nTotal],
+    ];
+    for (const [label, raw, value] of figures) {
+      if (raw.trim() !== "" && value === null) {
+        toast.error(`${label}: กรอกเป็นตัวเลขไม่ติดลบ และไม่เกิน ${MAX_BOOKING_AMOUNT.toLocaleString()} บาท`);
+        return null;
+      }
+    }
+    if (bookingNo.trim() !== "" && sanitizeBookingNo(bookingNo) === null) {
+      toast.error(`เลขที่การจองยาวเกิน ${MAX_BOOKING_NO_LENGTH} ตัวอักษร`);
       return null;
     }
     try {
@@ -530,8 +967,11 @@ function BookingRowCard({
         body: JSON.stringify({
           bookingType: type,
           detailId: id,
-          bookingNo: bookingNo.trim() || null,
-          priceExVat: price,
+          bookingNo: sanitizeBookingNo(bookingNo),
+          priceExVat: nPrice,
+          vatAmount: nVat,
+          discountAmount: nDiscount,
+          totalAmount: nTotal,
         }),
       });
       const json: { ok: boolean; error?: string; data?: { id: number } } = await res.json();
@@ -539,6 +979,10 @@ function BookingRowCard({
         toast.error(json.error ?? "บันทึกข้อมูลการจองไม่สำเร็จ");
         return null;
       }
+      // The parent keys this card on the slot that created the row, so the card
+      // survives the refetch that turns a draft into a saved row — and with it,
+      // any read still in flight. See `slotOfRow` in `BookingTypeGroup`.
+      if (id == null) onCreated?.(json.data.id);
       createdIdRef.current = json.data.id;
       return json.data.id;
     } catch {
@@ -547,53 +991,132 @@ function BookingRowCard({
     }
   }
 
-  /** The row's id, creating the row first if it doesn't exist yet (attach-before-save). */
-  async function ensureDetailId(): Promise<number | null> {
-    const existing = detail?.id ?? createdIdRef.current;
-    return existing != null ? existing : persist(null);
-  }
-
-  async function handleSave() {
-    setSaving(true);
-    const id = await persist(detail?.id ?? createdIdRef.current);
-    setSaving(false);
-    if (id == null) return;
-    toast.success("บันทึกข้อมูลการจองแล้ว");
-    onChanged();
-  }
-
-  async function handleUpload(fileList: FileList | null) {
-    if (!fileList || fileList.length === 0) return;
-    const picked = Array.from(fileList);
-    for (const f of picked) {
-      if (!f.type.startsWith("image/") && f.type !== "application/pdf") {
-        toast.error("รองรับเฉพาะไฟล์รูปภาพหรือ PDF");
-        return;
-      }
-    }
-    setUploading(true);
+  /**
+   * Post the held files against a row that now certainly exists. Returns the message
+   * to show on failure, or null when they all landed.
+   *
+   * Same endpoint and same `FormData` shape the pick used to build — `refType`,
+   * `bookingDetailId`, one repeated `files` part per file. Nothing about how the
+   * server admits these bytes changes; only when they are sent.
+   */
+  async function uploadPending(id: number, picked: File[]): Promise<string | null> {
+    const fd = new FormData();
+    fd.append("refType", BOOKING_TYPE_REFTYPE[type]);
+    fd.append("bookingDetailId", String(id));
+    for (const f of picked) fd.append("files", f);
     try {
-      const id = await ensureDetailId();
-      if (id == null) return;
-      const fd = new FormData();
-      fd.append("refType", BOOKING_TYPE_REFTYPE[type]);
-      fd.append("bookingDetailId", String(id));
-      for (const f of picked) fd.append("files", f);
       const res = await fetch(`/api/request/travel-booking/requests/${requestId}/files`, {
         method: "POST",
         body: fd,
       });
       const json: { ok: boolean; error?: string } = await res.json();
-      if (!json.ok) {
-        toast.error(json.error ?? "อัปโหลดไฟล์ไม่สำเร็จ");
-        return;
-      }
-      toast.success("แนบไฟล์แล้ว");
-      onChanged();
+      return json.ok ? null : (json.error ?? "อัปโหลดไฟล์ไม่สำเร็จ");
     } catch {
-      toast.error("อัปโหลดไฟล์ไม่สำเร็จ");
-    } finally {
-      setUploading(false);
+      return "อัปโหลดไฟล์ไม่สำเร็จ";
+    }
+  }
+
+  /**
+   * Write the row, then send whatever files this card is holding for it.
+   *
+   * The order is forced rather than chosen: the upload route wants a
+   * `bookingDetailId`, and until the row is persisted there is not one. `persist`
+   * reports its own failure and returns null, and nothing is uploaded in that case.
+   *
+   * **A failed upload does not clear `pendingFiles`, and does not claim success.**
+   * The row is saved and the files are not, so pressing Save again is the retry —
+   * a safe one, because the second press updates the same row rather than creating
+   * another. Toasting "บันทึกแล้ว" over a half-done save is what would leave
+   * somebody believing their confirmation is in SharePoint when it is not.
+   */
+  async function handleSave() {
+    setSaving(true);
+    const id = await persist(detail?.id ?? createdIdRef.current);
+    if (id == null) {
+      setSaving(false);
+      return;
+    }
+    setSavedSnapshot({
+      bookingNo: bookingNo.trim() || null,
+      priceExVat: nPrice,
+      vatAmount: nVat,
+      discountAmount: nDiscount,
+      totalAmount: nTotal,
+    });
+    const picked = pendingFiles;
+    if (picked.length === 0) {
+      setSaving(false);
+      toast.success("บันทึกข้อมูลการจองแล้ว");
+      onChanged();
+      return;
+    }
+    setUploading(true);
+    const failure = await uploadPending(id, picked);
+    setUploading(false);
+    setSaving(false);
+    if (failure) {
+      toast.error(`บันทึกข้อมูลการจองแล้ว แต่แนบไฟล์ไม่สำเร็จ: ${failure} — กดบันทึกอีกครั้งเพื่อลองแนบใหม่`);
+      // The figures did land, so the parent still refetches. The held files stay on
+      // this card, which survives that refetch because it is keyed on the slot that
+      // created it — see `slotOfRow` in `BookingTypeGroup`.
+      onChanged();
+      return;
+    }
+    setPendingFiles([]);
+    toast.success("บันทึกข้อมูลการจองและแนบไฟล์แล้ว");
+    onChanged();
+  }
+
+  /**
+   * Take a pick onto the card. **Nothing is uploaded here, and no row is created.**
+   *
+   * The AI read still runs on the pick, deliberately: `readBookingFields` takes the
+   * `File` and needs no upload, and the whole point of the read is that the five
+   * fields fill while the person is looking at them. Deferring it to Save would put
+   * the answer on screen after the moment it was useful.
+   */
+  function handlePick(fileList: FileList | null) {
+    if (!fileList || fileList.length === 0) return;
+    const picked = Array.from(fileList);
+
+    // No type check here. This slot takes any file, and the server's
+    // `checkAttachment` is what decides — it reads the bytes, which `file.type`
+    // only claims. A browser-side copy of that rule is how AP-1's widening was
+    // missed: the route already accepted the file and this refused it before it
+    // was ever posted.
+
+    // Skipped when a read is already in flight: each call is billed and a
+    // second could only race the first. On a later file it is skipped again
+    // unless something is still blank — a second attachment is another page of
+    // the same booking, not a new booking.
+    //
+    // A row's FIRST file is different: it clears the five fields and the read
+    // then owns them. The figures describe the confirmation, so a new
+    // confirmation replaces them rather than filling in around figures left
+    // from a document that is no longer attached. "First" counts held picks as
+    // well as stored files — `attachedCount` — so a second pick on an unsaved card
+    // does not wipe what the first pick's read has just produced.
+    const attach = onFileAttached({ existingFileCount: attachedCount });
+    if (attach.clearFirst) clearFields();
+    if (!readingRef.current && (attach.clearFirst || anyFieldEmpty())) {
+      void prefillFrom(picked[0], attach.readReplaces);
+    }
+
+    setPendingFiles((prev) => prev.concat(picked));
+  }
+
+  /**
+   * Drop a held pick. **No DELETE** — the server has never heard of this file, so
+   * there is nothing to ask it to remove.
+   *
+   * The clear rule is the stored one's: losing the last attachment, held or stored,
+   * leaves the figures describing a document nobody can open.
+   */
+  function handleRemovePending(index: number) {
+    setPendingFiles((prev) => prev.filter((_, i) => i !== index));
+    if (onFileRemoved({ remainingFileCount: attachedCount - 1 })) {
+      clearFields();
+      setReadNote(null);
     }
   }
 
@@ -608,6 +1131,20 @@ function BookingRowCard({
       if (!json.ok) {
         toast.error(json.error ?? "ลบไฟล์ไม่สำเร็จ");
         return;
+      }
+      // The figures were read off the confirmation, so losing the last one
+      // leaves them describing a document nobody can open.
+      //
+      // Whether the row then re-locks depends on what is SAVED, not on what is
+      // now on screen: `bookingFieldsLocked` reads `detail`. A draft clears and
+      // locks, back where it was before anything was attached. A row already
+      // saved with figures clears and stays open — it has to, or removing a file
+      // would strand the very data the last fix was about. Either way the
+      // database keeps its values until Save is pressed, which the
+      // "ยังไม่ได้บันทึก" badge is there to say.
+      if (onFileRemoved({ remainingFileCount: attachedCount - 1 })) {
+        clearFields();
+        setReadNote(null);
       }
       onChanged();
     } catch {
@@ -653,42 +1190,93 @@ function BookingRowCard({
         </div>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div>
-          <label
-            className="block text-[11px] font-semibold mb-1 uppercase tracking-wide"
-            style={{ color: "var(--text-muted)" }}
-          >
-            เลขที่การจอง / Booking No.
-          </label>
-          <input
-            type="text"
-            value={bookingNo}
-            onChange={(e) => setBookingNo(e.target.value)}
-            className="w-full rounded-lg px-3 py-2 text-[13px] outline-none"
-            style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-input)" }}
-            placeholder="เช่น AGD-123456"
-          />
+      {/* The five fields the invoice states, in the order it states them. `relative` is
+          load-bearing: the reading overlay is laid over this whole block rather than over
+          each input, so the state reads as one thing and nothing below shifts when it
+          clears. One sweep, not five — AP-1 overlays a single field because it has one. */}
+      <div className="relative">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="col-span-2 sm:col-span-4">
+            <FieldCaption>เลขที่การจอง / Booking No.</FieldCaption>
+            <input
+              type="text"
+              value={bookingNo}
+              onChange={(e) => setBookingNo(e.target.value)}
+              disabled={locked}
+              maxLength={MAX_BOOKING_NO_LENGTH}
+              className="w-full rounded-lg px-3 py-2 text-[13px] outline-none disabled:opacity-60 disabled:cursor-not-allowed"
+              style={fieldStyle}
+              placeholder="เช่น AGD-123456"
+            />
+          </div>
+          <BahtField label="ราคา (ก่อน VAT)" value={priceExVat} onChange={setPriceExVat} disabled={locked} />
+          <BahtField label="ภาษี (VAT)" value={vat} onChange={setVat} disabled={locked} />
+          <BahtField label="ส่วนลด" value={discount} onChange={setDiscount} disabled={locked} />
+          <BahtField label="ราคารวม" value={totalAmount} onChange={setTotalAmount} disabled={locked} />
         </div>
-        <div>
-          <label
-            className="block text-[11px] font-semibold mb-1 uppercase tracking-wide"
-            style={{ color: "var(--text-muted)" }}
+
+        {/* AP-1's treatment: a 40% band sweeping across a tinted panel, laid over
+            disabled inputs of the same size rather than replacing them. */}
+        {reading && (
+          <div
+            className="absolute inset-0 rounded-lg overflow-hidden pointer-events-none"
+            style={{ background: "color-mix(in srgb, var(--color-action) 10%, var(--bg-input))" }}
           >
-            ราคา (ก่อน VAT)
-          </label>
-          <input
-            type="number"
-            step="0.01"
-            min="0"
-            value={priceExVat}
-            onChange={(e) => setPriceExVat(e.target.value)}
-            className="w-full rounded-lg px-3 py-2 text-[13px] outline-none"
-            style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-input)" }}
-            placeholder="0.00"
-          />
-        </div>
+            <div
+              className="acc-progress h-full"
+              style={{ background: "color-mix(in srgb, var(--color-action) 26%, transparent)" }}
+            />
+            <span
+              className="absolute inset-0 flex items-center justify-center gap-1.5 text-[12px] font-semibold"
+              style={{ color: "var(--color-action)" }}
+            >
+              <Loader2 size={13} className="animate-spin" />
+              กำลังอ่านข้อมูล...
+            </span>
+          </div>
+        )}
       </div>
+
+      {/* Why the fields are shut — gated on `locked`, not on `!hasFile`. A row that
+          already holds saved figures is open despite having no file, and telling its
+          owner the fields unlock after attaching would describe a lock that is not
+          there. Never shown while the read runs either: the fields say that themselves,
+          and a second line about a box that is refusing typing is the exact fault this
+          wording avoids. */}
+      {locked && !reading && !uploading && (
+        <p className="m-0 text-[12px]" style={{ color: "var(--text-muted)" }}>
+          แนบไฟล์ใบยืนยันการจองก่อน ระบบจะอ่านข้อมูลให้ แล้วจึงแก้ไขช่องต่าง ๆ ได้
+        </p>
+      )}
+
+      {/* Open, but still missing its confirmation — `isTypeComplete` wants one before
+          the booking can be completed, so the prompt stays. It just no longer claims
+          the fields are waiting on it. */}
+      {!locked && !hasFile && !reading && !uploading && (
+        <p className="m-0 text-[12px]" style={{ color: "var(--text-muted)" }}>
+          อย่าลืมแนบไฟล์ใบยืนยันการจอง
+        </p>
+      )}
+
+      {/* How the read went. A note beside working fields — never in place of one. It
+          clears itself once every figure is in, however each one got there. */}
+      {readNote != null && readNote !== "reading" && anyFieldEmpty() && (
+        <p className="m-0 text-[12px]" style={{ color: "var(--text-muted)" }}>
+          {BOOKING_FIELDS_FAILURE_TEXT[readNote]}
+        </p>
+      )}
+
+      {/* The arithmetic, as a check on the paper rather than a replacement for it. */}
+      {computedTotal != null && (
+        <p
+          className="m-0 text-[11.5px] tabular-nums flex items-center gap-1.5"
+          style={{ color: mismatch ? "var(--text-info-yellow)" : "var(--text-muted)" }}
+        >
+          {mismatch && <AlertTriangle size={12} className="shrink-0" />}
+          ราคารวมที่คำนวณได้ (ราคา + VAT − ส่วนลด): {computedTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท
+          {mismatch && " — ไม่ตรงกับราคารวมที่กรอกไว้ ตรวจสอบกับเอกสารอีกครั้ง"}
+        </p>
+      )}
 
       <div className="pt-2" style={{ borderTop: "1px solid var(--border-light)" }}>
         <label
@@ -701,11 +1289,16 @@ function BookingRowCard({
         <input
           id={inputId}
           type="file"
-          accept="image/*,application/pdf"
+          // No `accept`: this slot takes any file. A booking confirmation is not
+          // always a photo or a PDF — travel agents send workbooks — and
+          // `accept="image/*,application/pdf"` made the OS picker hide the file
+          // somebody was trying to attach, so they attached a screenshot of it
+          // instead. The server's `checkAttachment` reads the bytes and is the
+          // gate; `attachmentResponseHeaders` is what keeps serving them safe.
           multiple
           className="hidden"
           onChange={(e) => {
-            void handleUpload(e.target.files);
+            handlePick(e.target.files);
             e.target.value = "";
           }}
         />
@@ -718,12 +1311,20 @@ function BookingRowCard({
               file={f}
               onRemove={() => handleRemoveFile(f.id)}
               removing={removingId === f.id}
-              onImageClick={onImageClick}
+              onViewFile={onViewFile}
+            />
+          ))}
+          {pendingFiles.map((f, i) => (
+            <PendingFileChip
+              key={`${i}-${f.name}-${f.lastModified}`}
+              file={f}
+              onRemove={() => handleRemovePending(i)}
+              onView={() => onViewPending(f)}
             />
           ))}
           <label
             htmlFor={inputId}
-            title="แนบไฟล์ (รูปภาพหรือ PDF)"
+            title="แนบไฟล์ใบยืนยันการจอง"
             className="w-20 h-20 shrink-0 rounded-xl flex flex-col items-center justify-center gap-1 cursor-pointer transition-colors"
             style={{ border: "1px dashed var(--border-card)", background: "transparent", color: "var(--text-muted)" }}
           >
@@ -733,68 +1334,220 @@ function BookingRowCard({
             </span>
           </label>
         </div>
+
+        {/* One quiet line saying what the dashed squares mean. The chips carry the
+            state; this says what to do about it. */}
+        {pendingFiles.length > 0 && (
+          <p className="m-0 mt-2 text-[11.5px] flex items-center gap-1.5" style={{ color: "var(--text-info-yellow)" }}>
+            <Clock size={12} className="shrink-0" />
+            ไฟล์ {pendingFiles.length} ไฟล์ยังไม่ได้อัปโหลด — จะส่งขึ้นระบบเมื่อกด “บันทึกข้อมูลการจอง”
+          </p>
+        )}
       </div>
 
       {/* Save last — the row is filled top-to-bottom (number → price → files), so the commit
-          action belongs at the end. Attachments are saved on upload, not by this button. */}
+          action belongs at the end. It is also what uploads: a picked file waits on the card
+          until this is pressed, so the row and its attachments are written by one action. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving}
+          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-[12.5px] font-bold cursor-pointer disabled:opacity-60"
+          style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)", color: "var(--text-secondary)" }}
+        >
+          {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+          {uploading ? "กำลังแนบไฟล์..." : saving ? "กำลังบันทึก..." : "บันทึกข้อมูลการจอง"}
+        </button>
+
+        {/* Beside Save and only while there is something to undo — the other half of
+            what the Complete gate asks for. A control offering to discard nothing is
+            noise, so it is not rendered on a clean row rather than shown disabled.
+
+            No Dialog: this throws away local edits and nothing else, which is not
+            what the two confirms in this file are for — those delete rows and bytes
+            on the server. A toast says what happened, in the same voice as Save's. */}
+        {unsaved && (
+          <button
+            type="button"
+            onClick={handleRevert}
+            /* Refused mid-read: the call in flight writes the five fields when it
+               lands, so reverting underneath it would put back figures the person
+               had just asked to be rid of. The fields are shut for that moment
+               anyway — see `bookingFieldsLocked`. */
+            disabled={saving || reading}
+            title={
+              detail ?? savedSnapshot
+                ? "ทิ้งการแก้ไขในรายการนี้ แล้วกลับไปใช้ข้อมูลที่บันทึกไว้ล่าสุด"
+                : "ล้างข้อมูลที่กรอกไว้ในรายการนี้"
+            }
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-[12.5px] font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{
+              background: "transparent",
+              border: "1px solid var(--border-info-yellow)",
+              color: "var(--text-info-yellow)",
+            }}
+          >
+            <Undo2 size={13} />
+            {detail ?? savedSnapshot ? "ใช้ข้อมูลที่บันทึกไว้ล่าสุด" : "ล้างข้อมูลที่กรอก"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A picked file that is not stored anywhere yet.
+ *
+ * Deliberately the same 80×80 tile as `AdminFileChip`, with two differences: a
+ * dashed border in the panel's "needs attention" colour, and a footer badge. Somebody
+ * has to be able to tell which of these squares is actually in SharePoint without
+ * reading anything — they are otherwise identical, and the difference is whether the
+ * file survives closing the page.
+ *
+ * The thumbnail's object URL is made in an effect whose cleanup revokes exactly the
+ * URL that run created — no ref set on mount, so strict mode's mount → cleanup →
+ * mount simply makes a second URL and revokes the first.
+ */
+function PendingFileChip({
+  file,
+  onRemove,
+  onView,
+}: {
+  file: File;
+  onRemove: () => void;
+  onView: () => void;
+}) {
+  const kind = attachmentKind(file.name, file.type);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (kind !== "image") return;
+    const url = URL.createObjectURL(file);
+    setPreviewUrl(url);
+    return () => {
+      URL.revokeObjectURL(url);
+      setPreviewUrl(null);
+    };
+  }, [file, kind]);
+
+  return (
+    <div className="relative w-20 h-20">
       <button
         type="button"
-        onClick={handleSave}
-        disabled={saving}
-        className="self-start inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-[12.5px] font-bold cursor-pointer disabled:opacity-60"
-        style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)", color: "var(--text-secondary)" }}
+        onClick={onView}
+        title={file.name + " — ยังไม่ได้อัปโหลด"}
+        className={
+          kind === "image" && previewUrl
+            ? "relative w-full h-full rounded-xl overflow-hidden cursor-pointer p-0 border"
+            : "relative w-full h-full rounded-xl overflow-hidden cursor-pointer p-0 border flex flex-col items-center justify-center gap-1"
+        }
+        style={{
+          borderStyle: "dashed",
+          borderColor: "var(--border-info-yellow)",
+          background: "var(--bg-card)",
+        }}
       >
-        {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
-        {saving ? "กำลังบันทึก..." : "บันทึกข้อมูลการจอง"}
+        {kind === "image" && previewUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={previewUrl} alt={file.name} className="w-full h-full object-cover" draggable={false} />
+        ) : (
+          <>
+            {kind === "excel" ? (
+              <FileSpreadsheet size={22} style={{ color: "var(--text-muted)" }} />
+            ) : (
+              <FileText size={22} style={{ color: "var(--text-muted)" }} />
+            )}
+            <span className="text-[9px] px-1 truncate w-full text-center" style={{ color: "var(--text-muted)" }}>
+              {file.name}
+            </span>
+          </>
+        )}
+        {/* Says which square is only on this page — the same badge language the card's
+            own "ยังไม่ได้บันทึก" uses, one size down so it sits beside it rather than
+            against it.
+
+            **Inside the button, not beside it.** As a sibling it was a square-cornered
+            bar laid over a rounded tile, so the bottom two corners read as square while
+            the top stayed round. In here the button's own `overflow-hidden` clips it to
+            the same `rounded-xl`, which also keeps the two radii from having to be
+            kept in step by hand. `pointer-events-none` keeps the tile clickable. */}
+        <span
+          className="absolute bottom-0 inset-x-0 flex items-center justify-center gap-0.5 text-[8.5px] font-bold py-0.5 pointer-events-none"
+          style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)" }}
+        >
+          <Clock size={9} /> ยังไม่อัปโหลด
+        </span>
+      </button>
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label="เอาไฟล์ออก"
+        title="เอาไฟล์ออก"
+        className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center cursor-pointer border-none"
+        style={{ background: "var(--btn-danger-bg)", color: "var(--btn-danger-text)", border: "1px solid var(--btn-danger-border)" }}
+      >
+        <X size={11} />
       </button>
     </div>
   );
 }
 
-/** Thumbnail + remove badge. Images open in the shared zoomable lightbox (same as the ID card);
-    PDFs have nothing to zoom, so they still open in a new tab. */
+/**
+ * Thumbnail + remove badge. **Every kind opens the shared in-page viewer** — the
+ * one AP-1 and AP-4 use — so "view" means view. A PDF used to be an
+ * `<a target="_blank">` pointed at the download route, where
+ * `attachmentResponseHeaders` serves it `Content-Disposition: attachment`: the
+ * tab downloaded the file and closed, which is not viewing it.
+ *
+ * `attachmentKind` derives the kind from the declared type and then the name;
+ * a bare `contentType.startsWith("image/")` was what this had, and SharePoint
+ * hands back `application/octet-stream` often enough for that to be wrong.
+ */
 function AdminFileChip({
   file,
   onRemove,
   removing,
-  onImageClick,
+  onViewFile,
 }: {
   file: TravelBookingFileMeta;
   onRemove: () => void;
   removing: boolean;
-  onImageClick: (src: string, alt: string) => void;
+  onViewFile: (file: TravelBookingFileMeta) => void;
 }) {
   const url = `/api/request/travel-booking/files/${file.id}`;
-  const isImage = file.contentType.startsWith("image/");
+  const kind = attachmentKind(file.fileName, file.contentType);
 
   return (
     <div className="relative w-20 h-20">
-      {isImage ? (
-        <button
-          type="button"
-          onClick={() => onImageClick(url, file.fileName)}
-          title={file.fileName}
-          className="w-full h-full rounded-xl overflow-hidden cursor-pointer p-0 border"
-          style={{ borderColor: "var(--border-card)", background: "var(--bg-card)" }}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
+      <button
+        type="button"
+        onClick={() => onViewFile(file)}
+        title={file.fileName}
+        className={
+          kind === "image"
+            ? "w-full h-full rounded-xl overflow-hidden cursor-pointer p-0 border"
+            : "w-full h-full rounded-xl overflow-hidden cursor-pointer p-0 border flex flex-col items-center justify-center gap-1"
+        }
+        style={{ borderColor: "var(--border-card)", background: "var(--bg-card)" }}
+      >
+        {kind === "image" ? (
+          // eslint-disable-next-line @next/next/no-img-element
           <img src={url} alt={file.fileName} className="w-full h-full object-cover" draggable={false} />
-        </button>
-      ) : (
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
-          title={file.fileName}
-          className="w-full h-full rounded-xl overflow-hidden flex flex-col items-center justify-center gap-1 border no-underline"
-          style={{ borderColor: "var(--border-card)", background: "var(--bg-card)" }}
-        >
-          <FileText size={22} style={{ color: "var(--text-muted)" }} />
-          <span className="text-[9px] px-1 truncate w-full text-center" style={{ color: "var(--text-muted)" }}>
-            {file.fileName}
-          </span>
-        </a>
-      )}
+        ) : (
+          <>
+            {kind === "excel" ? (
+              <FileSpreadsheet size={22} style={{ color: "var(--text-muted)" }} />
+            ) : (
+              <FileText size={22} style={{ color: "var(--text-muted)" }} />
+            )}
+            <span className="text-[9px] px-1 truncate w-full text-center" style={{ color: "var(--text-muted)" }}>
+              {file.fileName}
+            </span>
+          </>
+        )}
+      </button>
       <button
         type="button"
         onClick={onRemove}

@@ -49,9 +49,20 @@ export async function GET(_req: NextRequest) {
       }
     }
     const canSettings = admin || settingsTabs.length > 0;
+    // Admins see both menus; a grant list only governs non-admins, exactly as
+    // `settingsTabs` above does. `approver` (the AccBookingApprover roster) is
+    // still what decides whether an action is permitted once a page is open.
     return NextResponse.json({
       ok: true,
-      data: { account: approver, approver, admin, settingsTabs, canSettings },
+      data: {
+        account: approver,
+        approver,
+        admin,
+        settingsTabs,
+        canSettings,
+        bookingQueue: admin || settingsTabs.indexOf("bookingQueue") !== -1,
+        accountApproval: admin || settingsTabs.indexOf("accountApproval") !== -1,
+      },
     });
   } catch (err) {
     console.error("[api/request/travel-booking/access] GET", err);

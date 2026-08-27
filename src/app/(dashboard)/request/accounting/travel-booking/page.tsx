@@ -17,6 +17,12 @@ interface HubCard {
   icon: React.ReactNode;
   adminOnly?: boolean;
   accountOnly?: boolean;
+  /**
+   * The AccBookingApproverTab menu key that ALSO opens this card, on top of
+   * roster membership — see the filter below for why it is "also" and not
+   * "instead".
+   */
+  menu?: "bookingQueue" | "accountApproval";
 }
 
 const CARDS: HubCard[] = [
@@ -26,6 +32,15 @@ const CARDS: HubCard[] = [
     href: "/request/accounting/travel-booking/queue",
     icon: <ClipboardCheck size={20} />,
     accountOnly: true,
+    menu: "bookingQueue",
+  },
+  {
+    title: "อนุมัติจองที่พัก/ตั๋วโดยสาร (บัญชี)",
+    desc: "รายการที่ Admin จองเสร็จแล้ว รอบัญชีเลือกเดือนจ่ายแล้วอนุมัติปิดงาน",
+    href: "/request/accounting/travel-booking/approvals",
+    icon: <ClipboardCheck size={20} />,
+    accountOnly: true,
+    menu: "accountApproval",
   },
   {
     title: "รายงาน",
@@ -77,8 +92,11 @@ export default function TravelBookingHubPage() {
     loading: accessLoading,
     canAccount,
     canSettings,
+    bookingQueue,
+    accountApproval,
     error: accessError,
   } = useBookingAccess();
+  const menuGrants = { bookingQueue, accountApproval };
   const role = session?.user?.role;
   const isAdmin = role === "IT Admin" || role === "System Admin";
   const cards = CARDS.filter((c) => {
@@ -91,7 +109,18 @@ export default function TravelBookingHubPage() {
       if (c.accountOnly) return false;
       return true;
     }
-    if (c.accountOnly && !canAccount) return false;
+    // Roster membership OR the menu grant — deliberately "or", not the
+    // grant alone. Measured 2026-08-27: AccBookingApproverTab holds **zero**
+    // rows while AccBookingApprover holds two active ones, and one of those
+    // two is a Staff-role Accounting Manager. Gating on the grant alone would
+    // have taken the booking queue away from exactly the person the queue is
+    // for, the day this shipped. The grant therefore *adds* reach — it opens a
+    // menu to somebody who is not on the roster — rather than being a second
+    // thing a roster member must also be given.
+    //
+    // Nothing is leaked by showing a card: the pages behind both queues
+    // authorize with canAccessBookingArea server-side regardless.
+    if (c.accountOnly && !canAccount && !(c.menu && menuGrants[c.menu])) return false;
     return true;
   });
   const from = useSearchParams().get("from");

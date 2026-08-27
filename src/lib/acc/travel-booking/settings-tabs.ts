@@ -110,3 +110,61 @@ export function decideBookingTabAccess(
   if (!isGrantableBookingTabKey(wanted)) return false;
   return filterGrantableBookingTabKeys(granted).indexOf(wanted) !== -1;
 }
+
+/**
+ * The two AP-17 work queues an admin may hand to an individual approver.
+ *
+ * Stored in the same `AccBookingApproverTab` rows as the settings tabs above —
+ * the table has no CHECK on `TabKey`, which is what makes a second vocabulary
+ * possible without a migration, and what makes keeping them apart in code
+ * essential. `isGrantableBookingTabKey` must refuse these and `isBookingMenuKey`
+ * must refuse those, or a menu grant becomes a way past
+ * `requireBookingSettingsTab` into the configuration routes.
+ *
+ * Membership of `AccBookingApprover` is still what lets somebody *act*; a tick
+ * only decides what they see.
+ */
+export type BookingMenuKey = "bookingQueue" | "accountApproval";
+
+const BOOKING_MENU_LABELS: Record<BookingMenuKey, string> = {
+  bookingQueue: "คิวจองที่พัก/ตั๋วโดยสาร",
+  accountApproval: "อนุมัติ (บัญชี)",
+};
+
+const BOOKING_MENU_ORDER: readonly BookingMenuKey[] = ["bookingQueue", "accountApproval"];
+
+export const GRANTABLE_BOOKING_MENUS: readonly { key: BookingMenuKey; label: string }[] =
+  BOOKING_MENU_ORDER.map((key) => ({ key, label: BOOKING_MENU_LABELS[key] }));
+
+export function isBookingMenuKey(key: string): boolean {
+  const k = String(key).trim();
+  for (const m of GRANTABLE_BOOKING_MENUS) if (m.key === k) return true;
+  return false;
+}
+
+/**
+ * Everything `AccBookingApproverTab` may legitimately hold: settings tabs **and**
+ * menu grants.
+ *
+ * Separate from `filterGrantableBookingTabKeys` on purpose, and this is the
+ * distinction the whole design rests on. That one answers "may this grant open a
+ * settings route" and must stay narrow; this one answers "may this row exist",
+ * and menu keys must survive it or a tick saves nothing.
+ *
+ * The pre-flight scan caught the version of this plan that had no such split:
+ * `booking-approver-tabs.ts` applies the grantable filter on **both** read (:72)
+ * and write (:94), so a menu key was dropped twice over and the feature silently
+ * did nothing.
+ */
+export function filterStorableBookingKeys(keys: string[]): string[] {
+  const seen: Record<string, true> = {};
+  const out: string[] = [];
+  for (const raw of keys) {
+    const k = String(raw).trim();
+    if ((isGrantableBookingTabKey(k) || isBookingMenuKey(k)) && !seen[k]) {
+      seen[k] = true;
+      out.push(k);
+    }
+  }
+  return out;
+}

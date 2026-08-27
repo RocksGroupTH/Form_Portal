@@ -16,6 +16,7 @@ import { allocateRequestNo } from "@/lib/acc/sequence";
 import { queueEmail } from "@/lib/acc/email-queue";
 import { buildTravelBookingEmail } from "@/lib/acc/travel-booking/email-templates";
 import { computePerDiem } from "@/lib/acc/travel-booking/perdiem";
+import { isTravelDateTooSoon } from "@/features/travel-booking/lib/earliest-travel-date";
 import { getAllowanceLog } from "@/lib/acc/travel-booking/allowance-log";
 import {
   listAccommodations,
@@ -44,6 +45,7 @@ import type {
   TravelBookingGroup,
   TravelBookingRequest,
   TravelBookingStatus,
+  TravelBookingStepCode,
   TravelDirection,
   TravelReasonOption,
   VehicleOption,
@@ -81,7 +83,16 @@ function mapTravelBookingRow(
     id: r.Id as number,
     requestNo: (r.RequestNo as string) ?? null,
     status: r.Status as TravelBookingStatus,
+    // Selected by every caller of this mapper. `Status='ManagerApproved'` names
+    // two different stages since the accounting step landed, and this is the
+    // only column that separates them — a client predicate that checks the
+    // status alone acts on the wrong one.
+    currentStepCode: (r.CurrentStepCode as TravelBookingStepCode) ?? null,
     brandCode: (r.BrandCode as string) ?? null,
+    // Only ever present on the single-request load, which is the one place the
+    // note is rendered; the list queries do not pay for the subquery.
+    continuationFromRequestNo: (r.ContinuationFromRequestNo as string) ?? null,
+    continuationFromRequestId: (r.ContinuationFromRequestId as number) ?? null,
 
     staffId: (r.StaffId as number) ?? null,
     requesterFullName: (r.RequesterFullName as string) ?? null,
@@ -192,7 +203,8 @@ async function loadIdCardFiles(pool: AccPool, requestId: number): Promise<Travel
 
 async function loadBookingDetails(pool: AccPool, travelBookingId: number, requestId: number): Promise<BookingDetail[]> {
   const detRes = await pool.request().input("tbid", sql.Int, travelBookingId)
-    .query(`SELECT Id, BookingType, BookingNo, PriceExVat FROM [dbo].[AccTravelBookingDetail] WHERE TravelBookingId=@tbid ORDER BY Id`);
+    .query(`SELECT Id, BookingType, BookingNo, PriceExVat, VatAmount, DiscountAmount, TotalAmount
+            FROM [dbo].[AccTravelBookingDetail] WHERE TravelBookingId=@tbid ORDER BY Id`);
   const details = detRes.recordset as Record<string, unknown>[];
   if (details.length === 0) return [];
 
@@ -215,6 +227,9 @@ async function loadBookingDetails(pool: AccPool, travelBookingId: number, reques
     bookingType: d.BookingType as BookingType,
     bookingNo: (d.BookingNo as string) ?? null,
     priceExVat: num(d.PriceExVat),
+    vatAmount: num(d.VatAmount),
+    discountAmount: num(d.DiscountAmount),
+    totalAmount: num(d.TotalAmount),
     files: filesByDetail.get(d.Id as number) ?? [],
   }));
 }
@@ -268,7 +283,29 @@ export async function getTravelBookingRequest(id: number): Promise<TravelBooking
   const headRes = await pool.request()
     .input("id", sql.Int, id)
     .input("form", sql.NVarChar, AP17_FORM_CODE)
-    .query(`SELECT r.*, e.PhotoUrl AS HrRequesterPhotoUrl, e.PhotoOverrideUrl AS HrRequesterPhotoOverrideUrl
+    .query(`SELECT r.*, e.PhotoUrl AS HrRequesterPhotoUrl, e.PhotoOverrideUrl AS HrRequesterPhotoOverrideUrl,
+              -- The trip whose per diem already covers this one's first day.
+              -- Matched the same way isContinuation was decided at save time:
+              -- the same group, an earlier SortOrder, and a ReturnDate that
+              -- touches this DepartDate. Nearest earlier sibling wins, so a
+              -- group of three trips meeting on one day names the immediate
+              -- predecessor rather than the first of them.
+              (SELECT TOP 1 pr.RequestNo
+                 FROM [dbo].[AccTravelBooking] pt
+                 INNER JOIN [dbo].[AccRequest] pr ON pr.Id = pt.RequestId
+                 INNER JOIN [dbo].[AccTravelBooking] mt ON mt.RequestId = r.Id
+                WHERE pt.GroupKey = mt.GroupKey
+                  AND pt.SortOrder < mt.SortOrder
+                  AND pt.ReturnDate = mt.DepartDate
+                ORDER BY pt.SortOrder DESC, pt.Id DESC) AS ContinuationFromRequestNo,
+              (SELECT TOP 1 pr.Id
+                 FROM [dbo].[AccTravelBooking] pt
+                 INNER JOIN [dbo].[AccRequest] pr ON pr.Id = pt.RequestId
+                 INNER JOIN [dbo].[AccTravelBooking] mt ON mt.RequestId = r.Id
+                WHERE pt.GroupKey = mt.GroupKey
+                  AND pt.SortOrder < mt.SortOrder
+                  AND pt.ReturnDate = mt.DepartDate
+                ORDER BY pt.SortOrder DESC, pt.Id DESC) AS ContinuationFromRequestId
             FROM [dbo].[AccRequest] r
             LEFT JOIN ${hrEmployeeTable()} e ON e.StaffId = r.StaffId AND e.Status = N'Active'
             WHERE r.Id = @id AND r.FormCode = @form`);
@@ -316,7 +353,7 @@ export async function listMyTravelBookings(userId: number): Promise<TravelBookin
     .input("form", sql.NVarChar, AP17_FORM_CODE)
     .query(`
       SELECT
-        r.Id, r.RequestNo, r.Status, r.BrandCode, r.StaffId, r.RequesterFullName, r.RequesterEmail, r.RequesterPosition, r.RequesterDepartmentName,
+        r.Id, r.RequestNo, r.Status, r.CurrentStepCode, r.BrandCode, r.StaffId, r.RequesterFullName, r.RequesterEmail, r.RequesterPosition, r.RequesterDepartmentName,
         r.PaymentDate, r.SubmittedAt,
         t.Phone, t.AllowanceSnapshot, t.ReasonId, t.ReasonName, t.ReasonCustomText, t.WorkDetail,
         t.ProvinceId, t.ProvinceName, t.AccommodationId, t.AccommodationName, t.AccommodationCustomText, t.NeedsRoomBooking,
@@ -966,6 +1003,13 @@ export function validateTravelBookingTab(
   // ข้อ6 — วันเดินทาง (range)
   if (!tab.departDate || !tab.returnDate) return fail("กรุณาเลือกวันเดินทางไปและกลับ");
   if (tab.returnDate < tab.departDate) return fail("วันที่เดินทางกลับต้องไม่ก่อนวันที่เดินทางไป");
+  // A booking desk has to actually book something, so the earliest trip is
+  // tomorrow. Re-asserted here and not only in the picker: a draft saved before
+  // this rule existed still holds whatever date it was given, and a resumed one
+  // must be re-picked rather than silently submitted into the past.
+  if (isTravelDateTooSoon(tab.departDate, new Date())) {
+    return fail("วันเดินทางต้องเป็นวันพรุ่งนี้เป็นต้นไป กรุณาเลือกวันใหม่");
+  }
 
   // ข้อ11 — เวลา (required only when the matching direction flags it, 12.3)
   if (tab.goNeedsDepartTime && !tab.departTime) return fail("กรุณาระบุเวลาออกเดินทางขาไป");

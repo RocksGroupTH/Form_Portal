@@ -6,6 +6,9 @@ import { queueEmail, processQueue } from "@/lib/acc/email-queue";
 import { buildTravelBookingEmail, type TravelBookingTrigger } from "@/lib/acc/travel-booking/email-templates";
 import { computePayoutDate } from "@/lib/acc/travel-booking/payment-month";
 import { getTravelBookingRequest } from "@/lib/acc/travel-booking/request-service";
+import { recomputeGroupPerDiem } from "@/lib/acc/travel-booking/perdiem-recompute";
+import { loadPerDiemDependency } from "@/lib/acc/travel-booking/perdiem-dependency-load";
+import { dependencyRefusalText } from "@/lib/acc/travel-booking/perdiem-dependency-text";
 import { AP17_FORM_CODE } from "@/features/travel-booking/constants";
 import type { TravelBookingRequest } from "@/features/travel-booking/types";
 
@@ -60,12 +63,15 @@ async function requireTravelBookingRequest(id: number): Promise<TravelBookingReq
 
 /**
  * Manager approves — Submitted → ManagerApproved, handing off to Admin for booking fill-in
- * (spec §7: "Manager → Admin fill-in → done"; AP-17 has no separate ACCOUNT approval step).
+ * (spec: ผู้จัดการ → Admin จอง → บัญชี → เสร็จสิ้น).
  * Sets `PaymentDate` = end-of-month payout (>20th rolls to next month, see payment-month.ts).
  *
  * When the request needs nothing booked (ข้อ10.1 / ข้อ12.2 / ข้อ15.1 all false) there is no
- * Admin work to queue, so it closes straight to `Completed` — only the per-diem payout is
- * left, and that is already carried by `PaymentDate`.
+ * Admin work to queue, so it skips that step and lands on `'ACCOUNT'` — **not** on
+ * `Completed`. That case is per diem and nothing else, which is precisely what
+ * accounting's step and its editable payout month exist to check; closing it
+ * here would let the one request that is purely a payout be the one nobody in
+ * accounting ever sees.
  */
 /**
  * Write the "acted for the assigned manager" line, when that is what happened.
@@ -97,6 +103,33 @@ async function logManagerOnBehalf(
             VALUES (@rid, @by, 'manager_acted_on_behalf', @note)`);
 }
 
+/**
+ * Give back the day a now-dead trip was absorbing, for the rest of its group.
+ *
+ * Reads the dying request's own `GroupKey` inside the caller's transaction —
+ * the same one the status UPDATE just ran on — and hands off to
+ * `recomputeGroupPerDiem`. A request with no group key skips silently; there
+ * should be none for AP-17; `submitTravelBookingGroup` mints one for every tab,
+ * including a single-trip group.
+ */
+async function recomputeAfterDeath(
+  tx: ReturnType<Awaited<ReturnType<typeof getAccPool>>["transaction"]>,
+  requestId: number,
+  kind: "cancelled" | "rejected",
+): Promise<void> {
+  const r = await tx
+    .request()
+    .input("rid", sql.Int, requestId)
+    .query(`SELECT t.GroupKey, req.RequestNo
+            FROM [dbo].[AccTravelBooking] t
+            INNER JOIN [dbo].[AccRequest] req ON req.Id = t.RequestId
+            WHERE t.RequestId = @rid`);
+  const row = r.recordset[0] as { GroupKey: string | null; RequestNo: string | null } | undefined;
+  const groupKey = row?.GroupKey ?? null;
+  if (!groupKey) return;
+  await recomputeGroupPerDiem(tx, groupKey, { requestId, requestNo: row?.RequestNo ?? null, kind });
+}
+
 export async function approveByManager(requestId: number, actor: Actor): Promise<TravelBookingRequest> {
   const staffId = requireActorStaffId(actor);
   const pool = await getAccPool();
@@ -120,8 +153,8 @@ export async function approveByManager(requestId: number, actor: Actor): Promise
       .input("rid", sql.Int, requestId)
       .input("form", sql.NVarChar, AP17_FORM_CODE)
       .input("pd", sql.Date, payDate)
-      .input("status", sql.NVarChar(30), needsBooking ? "ManagerApproved" : "Completed")
-      .input("step", sql.NVarChar(30), needsBooking ? "ADMIN" : null)
+      .input("status", sql.NVarChar(30), "ManagerApproved")
+      .input("step", sql.NVarChar(30), needsBooking ? "ADMIN" : "ACCOUNT")
       .query(`UPDATE [dbo].[AccRequest] SET Status=@status, CurrentStepCode=@step,
               PaymentDate=@pd, UpdatedAt=SYSDATETIME()
               WHERE Id=@rid AND FormCode=@form AND CurrentStepCode='MANAGER' AND Status='Submitted';
@@ -140,9 +173,12 @@ export async function approveByManager(requestId: number, actor: Actor): Promise
     await tx.request().input("rid", sql.Int, requestId).input("by", sql.Int, actor.userId)
       .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action) VALUES (@rid, @by, 'manager_approved')`);
     if (!needsBooking) {
+      // Same action name `completeRequest` writes when Admin hands a request on,
+      // because it is the same hand-off — the booking desk simply had nothing to
+      // do. It used to be a 'completed' row, which is no longer what happens.
       await tx.request().input("rid", sql.Int, requestId).input("by", sql.Int, actor.userId)
         .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note)
-                VALUES (@rid, @by, 'completed', N'ไม่มีรายการที่ต้องจอง — ปิดงานอัตโนมัติ')`);
+                VALUES (@rid, @by, 'sent_to_account', N'ไม่มีรายการที่ต้องจอง — ส่งต่อให้บัญชีตรวจสอบ')`);
     }
     await logManagerOnBehalf(tx, requestId, actor, "อนุมัติ");
     await tx.commit();
@@ -196,6 +232,7 @@ export async function rejectRequest(requestId: number, actor: Actor, comment: st
       .input("c", sql.NVarChar, comment)
       .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note) VALUES (@rid, @by, 'rejected', @c)`);
     await logManagerOnBehalf(tx, requestId, actor, "ไม่อนุมัติ");
+    await recomputeAfterDeath(tx, requestId, "rejected");
     await tx.commit();
   } catch (e) {
     await tx.rollback().catch(() => {});
@@ -253,26 +290,47 @@ export async function returnRequest(requestId: number, actor: Actor, comment: st
 /* ── Admin (booking) stage — spec §8.1: Admin can bounce a request instead of booking it ── */
 
 /**
- * Guarded transition out of the Admin booking stage (`ManagerApproved` / `CurrentStepCode='ADMIN'`).
- * `PaymentDate` is cleared because it is recomputed at the next manager approval.
+ * Guarded transition out of a post-manager stage — `ManagerApproved` on either
+ * `CurrentStepCode='ADMIN'` (the booking desk) or `'ACCOUNT'` (the sign-off).
+ *
+ * `fromStep` is part of the UPDATE's own predicate, not a prior read: the two
+ * stages share a status, so a claim that named only the status would let an
+ * accountant's return fire against a request that had meanwhile bounced back to
+ * Admin — and vice versa.
+ *
+ * `clearPaymentDate` because the two exits differ: sending a request back past
+ * the manager drops the payout month, which the next manager approval mints
+ * again, whereas accounting handing one back to Admin never revisits the manager
+ * and would strand the request with no payout month at all.
  */
-async function transitionFromAdminStage(
+async function transitionFromStage(
   requestId: number,
   actor: Actor,
   comment: string,
-  target: { status: "Returned" | "Rejected"; stepCode: "MANAGER" | null; action: string; blockedError: string },
+  target: {
+    fromStep: "ADMIN" | "ACCOUNT";
+    status: "Returned" | "Rejected" | "ManagerApproved";
+    stepCode: "MANAGER" | "ADMIN" | null;
+    clearPaymentDate: boolean;
+    action: string;
+    blockedError: string;
+  },
 ): Promise<void> {
   const pool = await getAccPool();
   const tx = pool.transaction();
   await tx.begin();
   try {
+    // Two literals from a closed union, never anything a caller supplied — every
+    // value the statement reads is still a bound parameter.
+    const clearPay = target.clearPaymentDate ? "PaymentDate=NULL," : "";
     const upd = await tx.request()
       .input("rid", sql.Int, requestId)
       .input("status", sql.NVarChar(30), target.status)
       .input("step", sql.NVarChar(30), target.stepCode)
+      .input("fromStep", sql.NVarChar(30), target.fromStep)
       .query(`UPDATE [dbo].[AccRequest] SET Status=@status, CurrentStepCode=@step,
-              PaymentDate=NULL, UpdatedAt=SYSDATETIME()
-              WHERE Id=@rid AND CurrentStepCode='ADMIN' AND Status='ManagerApproved';
+              ${clearPay} UpdatedAt=SYSDATETIME()
+              WHERE Id=@rid AND CurrentStepCode=@fromStep AND Status='ManagerApproved';
               SELECT @@ROWCOUNT AS n`);
     if ((upd.recordset[0].n as number) === 0) {
       await tx.rollback();
@@ -282,6 +340,11 @@ async function transitionFromAdminStage(
       .input("action", sql.NVarChar(50), target.action)
       .input("c", sql.NVarChar, comment)
       .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note) VALUES (@rid, @by, @action, @c)`);
+    // Only a rejection here kills the trip — a return sends it back to the
+    // requester, still alive, so it must not touch the rest of the group.
+    if (target.status === "Rejected") {
+      await recomputeAfterDeath(tx, requestId, "rejected");
+    }
     await tx.commit();
   } catch (e) {
     await tx.rollback().catch(() => {});
@@ -296,9 +359,11 @@ async function transitionFromAdminStage(
  */
 export async function returnByAdmin(requestId: number, actor: Actor, comment: string): Promise<TravelBookingRequest> {
   if (!comment?.trim()) throw new Error("กรุณาระบุสิ่งที่ต้องแก้ไข");
-  await transitionFromAdminStage(requestId, actor, comment, {
+  await transitionFromStage(requestId, actor, comment, {
+    fromStep: "ADMIN",
     status: "Returned",
     stepCode: "MANAGER",
+    clearPaymentDate: true,
     action: "admin_returned",
     blockedError: "คำขอไม่อยู่ในขั้นที่ Admin สามารถส่งกลับแก้ไขได้",
   });
@@ -313,9 +378,11 @@ export async function returnByAdmin(requestId: number, actor: Actor, comment: st
 /** Admin rejects at the booking stage — ManagerApproved → Rejected (terminal). Comment required. */
 export async function rejectByAdmin(requestId: number, actor: Actor, comment: string): Promise<TravelBookingRequest> {
   if (!comment?.trim()) throw new Error("กรุณาระบุเหตุผลที่ไม่อนุมัติ");
-  await transitionFromAdminStage(requestId, actor, comment, {
+  await transitionFromStage(requestId, actor, comment, {
+    fromStep: "ADMIN",
     status: "Rejected",
     stepCode: null,
+    clearPaymentDate: true,
     action: "admin_rejected",
     blockedError: "คำขอไม่อยู่ในขั้นที่ Admin สามารถไม่อนุมัติได้",
   });
@@ -357,11 +424,127 @@ export async function cancelByRequester(requestId: number, actor: Actor): Promis
               WHERE RequestId=@rid AND Status='Pending'`);
     await tx.request().input("rid", sql.Int, requestId).input("by", sql.Int, actor.userId)
       .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action) VALUES (@rid, @by, 'cancelled')`);
+    await recomputeAfterDeath(tx, requestId, "cancelled");
     await tx.commit();
   } catch (e) {
     await tx.rollback().catch(() => {});
     throw e;
   }
+
+  return requireTravelBookingRequest(requestId);
+}
+
+/* ── Accounting stage — spec: ผู้จัดการ → Admin จอง → บัญชี → done ── */
+
+/**
+ * Accounting signs the booking off: `ManagerApproved`/`ACCOUNT` → `Completed`.
+ *
+ * The last step, and the point after which the per-diem figure is frozen — see
+ * `recomputeGroupPerDiem`, which refuses a `Completed` request.
+ *
+ * The status and step are the UPDATE's own predicate rather than a read followed
+ * by a write: two accountants pressing approve on the same request both pass a
+ * read, and only one may close it.
+ */
+export async function approveByAccount(requestId: number, actor: Actor): Promise<TravelBookingRequest> {
+  const pool = await getAccPool();
+  const tx = pool.transaction();
+  await tx.begin();
+  try {
+    const res = await tx.request()
+      .input("rid", sql.Int, requestId)
+      .query(`UPDATE [dbo].[AccRequest]
+              SET Status='Completed', CurrentStepCode=NULL, UpdatedAt=SYSDATETIME()
+              WHERE Id=@rid AND Status='ManagerApproved' AND CurrentStepCode='ACCOUNT'`);
+    if ((res.rowsAffected[0] ?? 0) === 0) {
+      throw new Error("คำขอนี้ไม่อยู่ในขั้นตอนอนุมัติของบัญชี");
+    }
+
+    // The rule, not the button. The queue disables this row's controls, but a
+    // control removed from a page is not a control the server has: this reads
+    // the group from the database at the moment of the call, inside the
+    // transaction that has just claimed the row, so a predecessor decided a
+    // moment ago is seen and one still undecided cannot be signed off by a
+    // stale page, a replayed request or the multi-select loop. Throwing rolls
+    // the claim back, leaving the request exactly where it was.
+    const dependency = await loadPerDiemDependency(tx, requestId);
+    if (dependency && !dependency.settled) {
+      throw new Error(dependencyRefusalText(dependency));
+    }
+
+    await tx.request()
+      .input("rid", sql.Int, requestId)
+      .input("by", sql.Int, actor.userId)
+      .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note)
+              VALUES (@rid, @by, 'account_approved', N'บัญชีอนุมัติ')`);
+
+    await tx.commit();
+  } catch (e) {
+    await tx.rollback();
+    throw e;
+  }
+
+  // This is the point the request is actually finished, so the `Completed`
+  // template — unlike at Admin's hand-off in `completeRequest` — is honest here.
+  const requesterEmail = await getRequesterEmail(requestId);
+  await notify(requestId, "Completed", requesterEmail);
+  void processQueue().catch(() => {});
+
+  const updated = await getTravelBookingRequest(requestId);
+  if (!updated) throw new Error("ไม่พบคำขอ");
+  return updated;
+}
+
+/**
+ * Accounting hands the request back to the Admin booking desk — `ManagerApproved`
+ * stays, `CurrentStepCode` goes `'ACCOUNT'` → `'ADMIN'`. Comment required.
+ *
+ * The exit that was missing: an accountant who finds a wrong booking number
+ * could previously only sign it off, because the return route's `atAdminStage`
+ * test fell through to the manager branch, whose service requires
+ * `CurrentStepCode='MANAGER'`. The fix is a step backwards, not a new status —
+ * the request is still approved, still alive, and still owed a payout, and only
+ * Admin's own evidence needs redoing. Nothing goes back to the requester, so
+ * `PaymentDate` is kept: no later manager approval would mint it again.
+ */
+export async function returnByAccount(requestId: number, actor: Actor, comment: string): Promise<TravelBookingRequest> {
+  if (!comment?.trim()) throw new Error("กรุณาระบุสิ่งที่ต้องแก้ไข");
+  await transitionFromStage(requestId, actor, comment, {
+    fromStep: "ACCOUNT",
+    status: "ManagerApproved",
+    stepCode: "ADMIN",
+    clearPaymentDate: false,
+    action: "account_returned_to_admin",
+    blockedError: "คำขอไม่อยู่ในขั้นที่บัญชีสามารถส่งกลับให้ Admin แก้ไขได้",
+  });
+
+  // The requester is not being asked for anything — the work is Admin's — so the
+  // roster that gets pinged is the one that gets pinged when a request first
+  // reaches the booking desk.
+  const admins = await listApprovers(true);
+  for (const a of admins) {
+    await notify(requestId, "ReadyForAdmin", a.email, comment);
+  }
+  void processQueue().catch(() => {});
+
+  return requireTravelBookingRequest(requestId);
+}
+
+/** Accounting rejects at the sign-off stage — ManagerApproved/ACCOUNT → Rejected (terminal). Comment required. */
+export async function rejectByAccount(requestId: number, actor: Actor, comment: string): Promise<TravelBookingRequest> {
+  if (!comment?.trim()) throw new Error("กรุณาระบุเหตุผลที่ไม่อนุมัติ");
+  await transitionFromStage(requestId, actor, comment, {
+    fromStep: "ACCOUNT",
+    status: "Rejected",
+    stepCode: null,
+    clearPaymentDate: true,
+    action: "account_rejected",
+    blockedError: "คำขอไม่อยู่ในขั้นที่บัญชีสามารถไม่อนุมัติได้",
+  });
+
+  const requesterEmail = await getRequesterEmail(requestId);
+  await notify(requestId, "Rejected", requesterEmail, comment);
+  void processQueue().catch(() => {});
 
   return requireTravelBookingRequest(requestId);
 }
