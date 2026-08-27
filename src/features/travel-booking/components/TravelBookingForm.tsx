@@ -12,6 +12,7 @@ import { useUserPhoto } from "@/lib/hooks/useUserPhoto";
 import { fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
 import { useTravelBookingForm } from "@/features/travel-booking/hooks/useTravelBookingForm";
 import { TravelBookingTab } from "./TravelBookingTab";
+import { lockedTravelDates } from "@/features/travel-booking/lib/date-locks";
 import { SectionCard, fmtBaht } from "./shared";
 import { AP17_HEADER_MESSAGE_LINES } from "@/features/travel-booking/constants";
 import type { TravelBookingGroup } from "@/features/travel-booking/types";
@@ -35,20 +36,6 @@ const FIELD_ANCHOR_FALLBACK: Record<string, string> = {
   rentVehicleCustom: "rentVehicle",
 };
 
-const pad2 = (n: number) => String(n).padStart(2, "0");
-/** Interior days (exclusive of both endpoints) of a [depart, return] range, as YYYY-MM-DD. */
-function interiorDays(depart: string | null, ret: string | null): string[] {
-  if (!depart || !ret || ret <= depart) return [];
-  const out: string[] = [];
-  const cur = new Date(`${depart}T00:00:00`);
-  const end = new Date(`${ret}T00:00:00`);
-  cur.setDate(cur.getDate() + 1);
-  while (cur < end) {
-    out.push(`${cur.getFullYear()}-${pad2(cur.getMonth() + 1)}-${pad2(cur.getDate())}`);
-    cur.setDate(cur.getDate() + 1);
-  }
-  return out;
-}
 
 /** Scroll the first missing field (by its `data-field` anchor) into view and focus its input. */
 function scrollToField(key: string) {
@@ -103,16 +90,19 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
         : "เพื่อนที่เลือกยังไม่ได้กำหนดหัวหน้างานในระบบ HR"
     : managerReason;
 
-  // Days already booked (interiors of the requester's other trips + this group's other tabs) —
-  // locked in the current tab's date picker so ranges can't overlap (endpoints stay shareable).
-  const lockedTravelDates = useMemo(() => {
-    const set = new Set<string>();
-    for (const rg of existingRanges) for (const d of interiorDays(rg.departDate, rg.returnDate)) set.add(d);
-    tabs.forEach((t, i) => {
-      if (i !== activeTabIndex) for (const d of interiorDays(t.departDate, t.returnDate)) set.add(d);
-    });
-    return Array.from(set);
-  }, [existingRanges, tabs, activeTabIndex]);
+  // Days with no half-slot left — see `lockedTravelDates` for the rule. Both
+  // the requester's other trips and this group's other tabs count, since a
+  // person cannot be on two journeys at once whichever request booked them.
+  const lockedDates = useMemo(
+    () =>
+      lockedTravelDates([
+        ...existingRanges.map((rg) => ({ departDate: rg.departDate, returnDate: rg.returnDate })),
+        ...tabs
+          .filter((_, i) => i !== activeTabIndex)
+          .map((t) => ({ departDate: t.departDate, returnDate: t.returnDate })),
+      ]),
+    [existingRanges, tabs, activeTabIndex],
+  );
 
   // `shownManager`, not `manager`: on behalf of a colleague the submit assigns
   // *their* manager, so gating on the actor's would both block a submit that is
@@ -436,7 +426,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
           vehicles={vehicles}
           rentVehicles={rentVehicles}
           provinces={provinces}
-          disabledTravelDates={lockedTravelDates}
+          disabledTravelDates={lockedDates}
           issues={tabIssues[activeTabIndex] ?? []}
           triedSubmit={triedSubmit}
           requesterStaffId={requesterStaffId}

@@ -246,7 +246,22 @@ export function IdCardUpload({
                 className="relative rounded-xl overflow-hidden border"
                 style={{ borderColor: "var(--border-card)", background: "var(--bg-card)", width: 160, height: 160 }}
               >
-                {pendingUrl && <img src={pendingUrl} alt="" className="block w-full h-full object-cover" draggable={false} />}
+                {/* Clickable, like the saved card and the reuse list below it
+                    already were — this one was the only ID card image on the
+                    page that could not be opened, and it is the one somebody
+                    has just attached and most wants to check. A button around
+                    the image only: the remove control is a sibling, since a
+                    button inside a button is not valid markup. */}
+                {pendingUrl && (
+                  <button
+                    type="button"
+                    onClick={() => setLightboxSrc(pendingUrl)}
+                    title="กดเพื่อดูรูปเต็ม"
+                    className="block w-full h-full p-0 border-none cursor-zoom-in bg-transparent"
+                  >
+                    <img src={pendingUrl} alt="รูปบัตรประชาชนที่แนบ" className="block w-full h-full object-cover" draggable={false} />
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => onSelectPending(null)}
