@@ -339,6 +339,8 @@ export interface SaveTravelBookingGroupInput {
 export interface TravelBookingAdminQueueItem {
   id: number;
   requestNo: string | null;
+  /** `AccRequest.BrandCode` — per trip, so two rows of one group can differ. */
+  brandCode: string | null;
   requesterFullName: string | null;
   requesterPosition: string | null;
   requesterDepartmentName: string | null;

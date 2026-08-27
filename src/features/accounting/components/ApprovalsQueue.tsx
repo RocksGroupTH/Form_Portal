@@ -8,6 +8,7 @@ import {
   Loader2,
   Check,
   ThumbsDown,
+  Pencil,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
@@ -209,6 +210,68 @@ function QueueCheckbox({
 
 /* ── ApprovalsQueue ── */
 
+/**
+ * Was the manager's approval before noon, Bangkok?
+ *
+ * Read back through the Bangkok timezone rather than through the browser's: a
+ * laptop set to another zone would otherwise flip the label right on the
+ * boundary, which is the one place it matters.
+ */
+function managerApprovedBeforeNoon(iso: string): boolean {
+  const hour = Number(
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Bangkok",
+      hour: "2-digit",
+      hour12: false,
+    }).format(new Date(iso)),
+  );
+  return hour < 12;
+}
+
+/** `dd/MM HH:mm` — the year is noise in a queue of this month's work. */
+function fmtDateTimeShort(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  const p2 = (n: number) => String(n).padStart(2, "0");
+  return `${p2(d.getDate())}/${p2(d.getMonth() + 1)} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+}
+
+/**
+ * The payment round on a queue row: a pill that opens the calendar.
+ *
+ * A `<select>` of ISO dates was the first cut and is worse than it looks — the
+ * rounds are a fortnight apart and a flat list of them tells you nothing about
+ * which month you are in, or that the 25th is the 4th Friday. The calendar shows
+ * the shape; this only shows the answer.
+ */
+function PaymentDatePill({
+  value,
+  onEdit,
+  saving,
+}: {
+  value: string | null;
+  onEdit: () => void;
+  saving: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onEdit}
+      disabled={saving}
+      title="คลิกเพื่อเลือกวันจ่าย"
+      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11.5px] font-semibold cursor-pointer border-none disabled:opacity-60"
+      style={
+        value
+          ? { background: "var(--status-ok-bg)", color: "var(--status-ok-text)" }
+          : { background: "var(--bg-badge)", color: "var(--text-faint)" }
+      }
+    >
+      {saving ? "..." : value ? fmtPaymentLabel(value) : "— เลือก —"}
+      <Pencil size={11} />
+    </button>
+  );
+}
+
 export function ApprovalsQueue({
   interfaceTarget,
   onInterfaceTargetChange,
@@ -234,6 +297,16 @@ export function ApprovalsQueue({
   const [loadingDrawer, setLoadingDrawer] = useState(false);
 
   const [paymentDates, setPaymentDates] = useState<string[]>([]);
+  /**
+   * Rows whose payment date was edited in place, by request id.
+   *
+   * Held here rather than refetching the whole queue: the edit is one field and
+   * a refetch would rebuild every row, losing the selection the accountant is
+   * part-way through making.
+   */
+  const [rowPaymentDates, setRowPaymentDates] = useState<Record<number, string>>({});
+  const [editingPaymentId, setEditingPaymentId] = useState<number | null>(null);
+  const [savingPaymentId, setSavingPaymentId] = useState<number | null>(null);
   const [paymentDate, setPaymentDate] = useState("");
   const [paymentDatesLoading, setPaymentDatesLoading] = useState(true);
 
@@ -370,6 +443,44 @@ export function ApprovalsQueue({
     () => withRequestGroupMeta(displayRows),
     [displayRows],
   );
+
+  const editingRow = useMemo(
+    () => (editingPaymentId == null ? null : displayRows.find((d) => d.row.id === editingPaymentId)?.row ?? null),
+    [editingPaymentId, displayRows],
+  );
+
+  /**
+   * Save one row's round.
+   *
+   * Optimistic only in the sense that the pill re-reads from `rowPaymentDates`
+   * — the value is written there **after** the server has answered, so a
+   * refused date leaves the old one on screen rather than a figure the database
+   * never took.
+   */
+  const savePaymentDate = useCallback(async (id: number, date: string) => {
+    if (!date) return;
+    setSavingPaymentId(id);
+    try {
+      const res = await fetch(`/api/request/accounting/requests/${id}/payment-date`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paymentDate: date }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!json?.ok) {
+        // The server's own reason — "not a payment round", "already approved".
+        toast.error(json?.error ?? "บันทึกวันจ่ายไม่สำเร็จ");
+        return;
+      }
+      setRowPaymentDates((prev) => ({ ...prev, [id]: date }));
+      toast.success(`วันจ่าย ${fmtPaymentLabel(date)}`);
+      setEditingPaymentId(null);
+    } catch {
+      toast.error("บันทึกวันจ่ายไม่สำเร็จ");
+    } finally {
+      setSavingPaymentId(null);
+    }
+  }, []);
 
   const selectedRows = useMemo(
     () => ifaceFilteredRows.filter((r) => selectedIds.has(r.id)),
@@ -618,8 +729,11 @@ export function ApprovalsQueue({
                 </th>
                 <th className="text-left px-3 py-2.5 font-semibold whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>เลขที่</th>
                 <th className="text-left px-3 py-2.5 font-semibold whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>วันที่ส่ง</th>
+                <th className="text-center px-3 py-2.5 font-semibold whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>ผจก. อนุมัติ</th>
+                <th className="text-center px-3 py-2.5 font-semibold whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>วันจ่าย</th>
                 <th className="text-left px-3 py-2.5 font-semibold" style={{ color: "var(--text-secondary)" }}>ผู้ขอ</th>
                 <th className="text-left px-3 py-2.5 font-semibold hidden lg:table-cell" style={{ color: "var(--text-secondary)" }}>แผนก</th>
+                <th className="text-center px-3 py-2.5 font-semibold whitespace-nowrap hidden lg:table-cell" style={{ color: "var(--text-secondary)" }}>Dept</th>
                 <th className="text-left px-3 py-2.5 font-semibold whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>แบรนด์</th>
                 <th className="text-left px-3 py-2.5 font-semibold whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>เดินทาง</th>
                 <th className="text-left px-3 py-2.5 font-semibold hidden md:table-cell" style={{ color: "var(--text-secondary)" }}>ยานพาหนะ</th>
@@ -631,7 +745,7 @@ export function ApprovalsQueue({
               {groupedDisplayRows.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={10}
+                    colSpan={13}
                     className="px-4 py-10 text-center text-[13px]"
                     style={{ color: "var(--text-muted)" }}
                   >
@@ -697,11 +811,57 @@ export function ApprovalsQueue({
                         <td className="px-3 py-2.5 whitespace-nowrap" rowSpan={requestGroupSize} style={{ ...sharedCellStyle, color: "var(--text-muted)" }}>
                           {fmtDateOnly(row.submittedAt)}
                         </td>
+                        {/* ผจก. อนุมัติ — with the noon label beneath it. The
+                            cut-off is the company's payment process, not a rule
+                            either app enforces: getDefaultPaymentDate takes the
+                            next round regardless, here and in ACC Portal. This
+                            tells the accountant which round the claim is *meant*
+                            for; วันจ่าย beside it is where they act on that. */}
+                        <td className="px-3 py-2.5 whitespace-nowrap text-center" rowSpan={requestGroupSize} style={sharedCellStyle}>
+                          {row.managerApprovedAt ? (
+                            <>
+                              <p className="m-0 text-[11.5px]" style={{ color: "var(--text-secondary)" }}>
+                                {fmtDateTimeShort(row.managerApprovedAt)}
+                              </p>
+                              <p
+                                className="m-0 text-[10px]"
+                                style={{
+                                  color: managerApprovedBeforeNoon(row.managerApprovedAt)
+                                    ? "var(--color-success)"
+                                    : "var(--color-warning)",
+                                }}
+                              >
+                                {managerApprovedBeforeNoon(row.managerApprovedAt) ? "ก่อนเที่ยง" : "หลังเที่ยง"}
+                              </p>
+                            </>
+                          ) : (
+                            <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>—</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2.5 whitespace-nowrap text-center" rowSpan={requestGroupSize} style={sharedCellStyle}>
+                          <PaymentDatePill
+                            value={rowPaymentDates[row.id] ?? row.paymentDate ?? null}
+                            onEdit={() => setEditingPaymentId(row.id)}
+                            saving={savingPaymentId === row.id}
+                          />
+                        </td>
                         <td className="px-3 py-2.5" rowSpan={requestGroupSize} style={sharedCellStyle}>
                           <CellTruncate text={row.requesterFullName} maxWidth={130} style={{ color: "var(--text-primary)" }} />
                         </td>
                         <td className="px-3 py-2.5 hidden lg:table-cell" rowSpan={requestGroupSize} style={sharedCellStyle}>
                           <CellTruncate text={row.requesterDepartmentName} maxWidth={110} />
+                        </td>
+                        <td className="px-3 py-2.5 whitespace-nowrap text-center hidden lg:table-cell" rowSpan={requestGroupSize} style={sharedCellStyle}>
+                          {row.requesterDepartmentCode ? (
+                            <span
+                              className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
+                              style={{ background: "var(--bg-badge)", color: "var(--text-muted)", border: "1px solid var(--border-light)" }}
+                            >
+                              {row.requesterDepartmentCode}
+                            </span>
+                          ) : (
+                            <span className="text-[10px]" style={{ color: "var(--text-faint)" }}>—</span>
+                          )}
                         </td>
                         <td className="px-3 py-2.5 whitespace-nowrap" rowSpan={requestGroupSize} style={sharedCellStyle}>
                           {row.brandCode ? (
@@ -813,6 +973,45 @@ export function ApprovalsQueue({
           progress={batchProgress}
         />
       ) : null}
+
+      {/* Payment round — one request at a time, saved on change.
+
+          A calendar rather than a list: the rounds are a fortnight apart, and
+          seeing that the 25th is the 4th Friday of the month is most of what
+          makes a date the right one. */}
+      <Dialog
+        open={editingPaymentId != null}
+        onOpenChange={(open) => { if (!open && savingPaymentId == null) setEditingPaymentId(null); }}
+        title={editingRow ? `วันที่จ่าย · ${editingRow.requestNo ?? ""}` : "เลือกวันที่จ่าย"}
+      >
+        {/* Why this claim lands where it does. The rule turns on the manager's
+            clock, which is not visible from a calendar, so the calendar has to
+            say it. */}
+        {editingRow?.managerApprovedAt && (
+          <p className="text-[11px] mb-2 px-1 leading-relaxed" style={{ color: "var(--text-muted)" }}>
+            ผจก. อนุมัติ {fmtDateTimeShort(editingRow.managerApprovedAt)} —{" "}
+            <strong>
+              {managerApprovedBeforeNoon(editingRow.managerApprovedAt) ? "ก่อนเที่ยง" : "หลังเที่ยง"}
+            </strong>
+            {editingRow.suggestedPaymentDate ? ` จึงเข้ารอบ ${fmtPaymentLabel(editingRow.suggestedPaymentDate)}` : ""}
+            <br />
+            ก่อนเที่ยงเข้ารอบจ่ายถัดไป · ตั้งแต่เที่ยงข้ามไปอีกหนึ่งรอบ
+          </p>
+        )}
+        <PaymentDatePicker
+          dates={paymentDates}
+          value={
+            editingRow
+              ? rowPaymentDates[editingRow.id] ?? editingRow.paymentDate ?? ""
+              : ""
+          }
+          onChange={(d) => { if (editingPaymentId != null) void savePaymentDate(editingPaymentId, d); }}
+          loading={paymentDatesLoading || savingPaymentId != null}
+        />
+        <p className="text-[10.5px] m-0 pt-2 px-1" style={{ color: "var(--text-faint)" }}>
+          วันจ่าย: ศุกร์ที่ 2 และ 4 ของเดือน (เลื่อนกลับ 1 วันถ้าตรงวันหยุด)
+        </p>
+      </Dialog>
 
       {/* Batch result dialog */}
       <Dialog

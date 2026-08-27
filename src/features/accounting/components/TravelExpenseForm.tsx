@@ -22,6 +22,7 @@ import {
   CalendarRange,
   Mail,
   UserCog,
+  Info,
 } from "lucide-react";
 import { Button } from "@/components/ui";
 import { Dialog } from "@/components/ui/Dialog";
@@ -45,7 +46,7 @@ import {
 } from "@/features/accounting/lib/travel-sections";
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
 import type { AccRequest, TravelDraftSummary, TravelExpenseDetail, TravelExpenseItem, AccVehicle } from "@/features/accounting/types";
-import { MAPS_UNAVAILABLE_USER_MESSAGE } from "@/features/accounting/constants";
+import { AP1_HEADER_MESSAGE_LINES, MAPS_UNAVAILABLE_USER_MESSAGE } from "@/features/accounting/constants";
 
 /* ── Props ── */
 
@@ -941,6 +942,25 @@ export function TravelExpenseForm({
           child on every blank form, where the banner renders nothing. */}
       <div className="-mb-4 empty:hidden">
         <UatDataBanner requestId={requestId} holdSpace={false} />
+      </div>
+
+      {/* คำแนะนำ — AP-17's notice, same shape and same place. */}
+      <div
+        data-tour="ap1-notice"
+        className="rounded-2xl px-4 py-3.5 flex items-start gap-2.5"
+        style={{
+          background: "color-mix(in srgb, var(--color-action) 8%, var(--bg-card))",
+          border: "1px solid color-mix(in srgb, var(--color-action) 25%, var(--border-card))",
+        }}
+      >
+        <Info size={16} className="shrink-0 mt-0.5" style={{ color: "var(--color-action)" }} />
+        <div className="flex flex-col gap-1">
+          {AP1_HEADER_MESSAGE_LINES.map((line, i) => (
+            <p key={i} className="text-[12.5px] leading-relaxed m-0" style={{ color: "var(--text-secondary)" }}>
+              {line}
+            </p>
+          ))}
+        </div>
       </div>
 
       {requesterCard}

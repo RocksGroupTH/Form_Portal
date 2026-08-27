@@ -1,3 +1,5 @@
+import { getPaymentDates } from "@/lib/acc/payment-calendar";
+import { paymentDateForApproval } from "@/lib/acc/payment-cycle";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { queryBothPools } from "@/lib/acc/query-both";
 import {
@@ -70,6 +72,25 @@ export interface ReportRow {
   pendingApproverEmail?: string | null;
   managerStaffId?: number | null;
   managerEmail?: string | null;
+  /**
+   * When the manager approved, as an ISO instant.
+   *
+   * The accounting queue shows it beside the payment round, and labels whether
+   * it landed before noon — the cut-off the company's payment process runs on.
+   * **Nothing in either app enforces that**: `getDefaultPaymentDate` is
+   * identical here and in ACC Portal and takes the next round regardless. The
+   * label explains the round to the accountant choosing it; the choice is the
+   * accountant's.
+   */
+  managerApprovedAt?: string | null;
+  /**
+   * The round this claim is *meant* for, from the manager's clock — see
+   * `payment-cycle.ts`. A suggestion shown beside the editable date; nothing
+   * writes it.
+   */
+  suggestedPaymentDate?: string | null;
+  /** HR department code (`AccRequest.RequesterDepartmentCode`), falling back to HR. */
+  requesterDepartmentCode?: string | null;
   /** True when the signed-in user already approved the MANAGER step (My Work API). */
   viewerManagerApproved?: boolean;
   /**
@@ -166,6 +187,16 @@ export const TRAVEL_DAYS_CSV_SELECT = `(SELECT STRING_AGG(
 
 const REQUEST_ROW_SELECT = `r.Id, r.RequestNo, r.FormCode, f.FormNameTh, r.StaffId, r.RequesterFullName, r.RequesterDepartmentName,
   r.BrandCode,
+  -- Stamped on the request at submit, but older rows predate the column
+  -- (migration 047), so fall back to the employee's current department.
+  COALESCE(r.RequesterDepartmentCode, (
+    SELECT TOP 1 emp.DepartmentCode FROM ${hrEmployeeTable()} emp
+    WHERE emp.StaffId = r.StaffId AND emp.Status = N'Active'
+  )) AS RequesterDepartmentCode,
+  (SELECT TOP 1 a.ActionedAt
+   FROM [dbo].[AccApproval] a
+   WHERE a.RequestId = r.Id AND a.StepCode = N'MANAGER' AND a.Status = N'Approved'
+   ORDER BY a.ActionedAt DESC, a.Id DESC) AS ManagerApprovedAt,
   MIN(t.TravelDate) AS TravelDate,
   MAX(t.TravelDate) AS TravelDateTo,
   COUNT(t.Id) AS DayCount,
@@ -351,6 +382,11 @@ function mapRow(
     currentStepCode: (x.CurrentStepCode as string) ?? null,
     pendingStepCode: (x.PendingStepCode as string) ?? null,
     pendingApproverName: (x.PendingApproverName as string) ?? null,
+    // A plain toISOString: the driver reads Thai wall clocks correctly since
+    // useUTC: false, so the fixThaiDate ACC Portal still applies here would
+    // shift it seven hours.
+    managerApprovedAt: x.ManagerApprovedAt ? (x.ManagerApprovedAt as Date).toISOString() : null,
+    requesterDepartmentCode: (x.RequesterDepartmentCode as string) ?? null,
     pendingApproverEmail: (x.PendingApproverEmail as string) ?? null,
     managerStaffId: (x.ManagerStaffId as number) ?? null,
     managerEmail: (x.ManagerEmail as string) ?? null,
@@ -379,8 +415,12 @@ function buildListQuery(
     SELECT ${REQUEST_ROW_SELECT}${extraSelect}
     ${FROM_JOINS}
     WHERE ${where}
+    -- Every non-aggregated column of REQUEST_ROW_SELECT belongs here. The
+    -- correlated subqueries do not: they are scalar and keyed on r.Id, which is
+    -- grouped. RequesterDepartmentCode is a plain column and does.
     GROUP BY r.Id, r.RequestNo, r.FormCode, f.FormNameTh, r.StaffId, r.RequesterFullName,
-      r.RequesterDepartmentName, r.BrandCode, r.TotalAmount, r.Status, r.PaymentDate, r.SubmittedAt,
+      r.RequesterDepartmentName, r.RequesterDepartmentCode, r.BrandCode, r.TotalAmount,
+      r.Status, r.PaymentDate, r.SubmittedAt,
       r.CurrentStepCode, r.ManagerStaffId, r.ManagerEmail
     ORDER BY ${order}
   `;
@@ -662,9 +702,20 @@ export async function queryReport(f: ReportFilters): Promise<ReportRow[]> {
       ),
     );
 
-    return (res.recordset as Record<string, unknown>[]).map((x) =>
-      mapRow(x, view),
-    );
+    const mapped = (res.recordset as Record<string, unknown>[]).map((x) => mapRow(x, view));
+
+    // One calendar fetch for the whole result, and only when something in it
+    // has a manager approval to read — the suggestion is computed from the raw
+    // `Date`, not from the ISO string on the mapped row, so it stays here
+    // beside the recordset rather than moving into `mapRow`.
+    if (res.recordset.some((x: Record<string, unknown>) => x.ManagerApprovedAt)) {
+      const calendar = await getPaymentDates();
+      mapped.forEach((row, i) => {
+        const actioned = (res.recordset[i] as Record<string, unknown>).ManagerApprovedAt as Date | null;
+        row.suggestedPaymentDate = paymentDateForApproval(actioned, calendar);
+      });
+    }
+    return mapped;
   })();
   return rows.sort(bySubmittedAtDesc);
 }
