@@ -8,6 +8,7 @@ import {
   BedDouble,
   Car,
   CheckCircle2,
+  Clock,
   FileSpreadsheet,
   FileText,
   Loader2,
@@ -136,9 +137,10 @@ function isTypeComplete(rows: BookingDetail[]): boolean {
  * rent, gated by `REQUIRED_BOOKING_RULES` against the request's Needs*Booking flags).
  *
  * A group holds as many rows as the trip needs (two hotels, two tickets, …) — "เพิ่ม…" adds
- * another. Each row saves BookingNo + PriceExVat and takes its own attachments; attaching
- * works straight away, without saving first, because the row is created on demand (see
- * `BookingRowCard.ensureDetailId`). The bottom "ทำรายการเสร็จ" button is disabled until every
+ * another. Each row saves BookingNo + PriceExVat and takes its own attachments; picking a file
+ * only holds it on the card, and "บันทึกข้อมูลการจอง" is what writes the row and then uploads
+ * the files it is holding (see `BookingRowCard.handleSave`). Nothing reaches SharePoint before
+ * that press. The bottom "ทำรายการเสร็จ" button is disabled until every
  * required group is complete — the server (`completeRequest`) re-validates the same gate, so
  * this is a UX pre-check, not the source of truth.
  */
@@ -305,6 +307,15 @@ export function AdminBookingPanel({
                   kind: attachmentKind(f.fileName, f.contentType),
                 })
               }
+              /* A pick that has not been uploaded yet, so the viewer takes the `File`
+                 itself rather than a URL — `AttachmentSource` accepts either, the same
+                 way IdCardUpload hands it its pending card image. */
+              onViewPending={(f) =>
+                setViewing({
+                  source: { name: f.name, file: f },
+                  kind: attachmentKind(f.name, f.type),
+                })
+              }
             />
           ))
         )}
@@ -462,6 +473,7 @@ function BookingTypeGroup({
   onChanged,
   onRequestDelete,
   onViewFile,
+  onViewPending,
 }: {
   type: BookingType;
   label: string;
@@ -472,6 +484,7 @@ function BookingTypeGroup({
   onChanged: () => void;
   onRequestDelete: (detailId: number) => void;
   onViewFile: (file: TravelBookingFileMeta) => void;
+  onViewPending: (file: File) => void;
 }) {
   const [draftOpen, setDraftOpen] = useState(false);
 
@@ -479,17 +492,19 @@ function BookingTypeGroup({
    * Which draft slot created which saved row — and therefore which React key
    * each row card carries.
    *
-   * **This is what keeps the AI read alive.** Attaching a file to the empty slot
-   * creates the row (`ensureDetailId`), the parent refetches, and the row then
-   * arrives in `rows` while the slot closes. Keyed naively — `"draft"` for the
-   * slot, `detail.id` for a saved row — React sees one card leave and another
-   * arrive, unmounts the first, and every piece of its state goes with it: the
-   * in-flight read, the note saying it is running, and the figures it was about
-   * to fill in. The read then resolves into a component nobody is looking at.
+   * **This is what keeps the AI read — and the held files — alive.** Saving the
+   * empty slot creates the row (`handleSave` → `persist`), the parent refetches, and
+   * the row then arrives in `rows` while the slot closes. Keyed naively — `"draft"`
+   * for the slot, `detail.id` for a saved row — React sees one card leave and
+   * another arrive, unmounts the first, and every piece of its state goes with it:
+   * the in-flight read, the note saying it is running, the figures it was about to
+   * fill in, and any picked file still waiting to be uploaded. The read then
+   * resolves into a component nobody is looking at, and a file whose upload failed
+   * has nowhere left to be retried from.
    *
    * So the row inherits the key of the slot that created it, and each press of
    * "เพิ่ม" opens a slot with a *new* number rather than re-using `"draft"`.
-   * One card, mounted from the first attach until the panel closes; no key ever
+   * One card, mounted from the first save until the panel closes; no key ever
    * moves from one card to another, so no already-landed row is remounted when
    * the next slot opens.
    */
@@ -551,6 +566,7 @@ function BookingTypeGroup({
             onChanged={onChanged}
             onDelete={() => onRequestDelete(detail.id)}
             onViewFile={onViewFile}
+            onViewPending={onViewPending}
           />
         ))}
 
@@ -566,6 +582,7 @@ function BookingTypeGroup({
             onCreated={(id) => slotOfRow.current.set(id, draftSlot)}
             onDelete={rows.length > 0 ? () => setDraftOpen(false) : undefined}
             onViewFile={onViewFile}
+            onViewPending={onViewPending}
           />
         )}
 
@@ -585,10 +602,12 @@ function BookingTypeGroup({
 }
 
 /**
- * One `AccTravelBookingDetail` row. `detail` is undefined for a not-yet-created row: the very
- * first save OR the very first attachment creates it (`ensureDetailId`), so Admin never has to
- * save before attaching. `createdIdRef` remembers the new id until the parent's refetch lands,
- * so a second action on the same card edits that row instead of creating another one.
+ * One `AccTravelBookingDetail` row. `detail` is undefined for a not-yet-created row, and
+ * **"บันทึกข้อมูลการจอง" is the only thing that creates it** — picking a file used to create it
+ * too, through an `ensureDetailId` that is now gone, which meant a card nobody ever saved still
+ * left a booking-detail row behind and its bytes in SharePoint. `createdIdRef` remembers the new
+ * id until the parent's refetch lands, so a second save on the same card edits that row instead
+ * of creating another one.
  */
 function BookingRowCard({
   type,
@@ -600,6 +619,7 @@ function BookingRowCard({
   onCreated,
   onDelete,
   onViewFile,
+  onViewPending,
 }: {
   type: BookingType;
   requestId: number;
@@ -611,6 +631,8 @@ function BookingRowCard({
   onCreated?: (id: number) => void;
   onDelete?: () => void;
   onViewFile: (file: TravelBookingFileMeta) => void;
+  /** Open a picked-but-not-yet-uploaded file in the same viewer the stored ones use. */
+  onViewPending: (file: File) => void;
 }) {
   const [bookingNo, setBookingNo] = useState(detail?.bookingNo ?? "");
   const [priceExVat, setPriceExVat] = useState(numText(detail?.priceExVat));
@@ -618,6 +640,14 @@ function BookingRowCard({
   const [discount, setDiscount] = useState(numText(detail?.discountAmount));
   const [totalAmount, setTotalAmount] = useState(numText(detail?.totalAmount));
   const [saving, setSaving] = useState(false);
+  /**
+   * Files picked on this card and not sent anywhere yet.
+   *
+   * They are held here until "บันทึกข้อมูลการจอง" is pressed, which is what the
+   * requirement asks for: the bytes go to SharePoint on save, not on pick.
+   */
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  /** True only while `handleSave` is posting the held files. */
   const [uploading, setUploading] = useState(false);
   const [removingId, setRemovingId] = useState<number | null>(null);
   const createdIdRef = useRef<number | null>(null);
@@ -662,7 +692,14 @@ function BookingRowCard({
    * file — see `booking-lock.ts`, which owns the rule and the reason.
    */
   const reading = readNote === "reading";
-  const hasFile = files.length > 0;
+  /* Held picks count as attachments here. `bookingFieldsLocked` unlocks on `hasFile`,
+     so counting only the stored ones would leave the fields shut after a pick — and
+     shut for good, because the press that would store the file is the press that
+     needs the fields typed into first. The same count feeds `booking-file-sync`, so
+     a pick is the row's "first file" when nothing is stored yet, and removing the
+     last one — held or stored — still clears the figures. */
+  const attachedCount = files.length + pendingFiles.length;
+  const hasFile = attachedCount > 0;
   const locked = bookingFieldsLocked({ saved: detail ?? null, hasFile, reading });
 
   /* The read resolves seconds after the attach. These keep its write honest against
@@ -754,8 +791,11 @@ function BookingRowCard({
     nVat !== (detail?.vatAmount ?? null) ||
     nDiscount !== (detail?.discountAmount ?? null) ||
     nTotal !== (detail?.totalAmount ?? null);
-  const needsAttention = dirty || !complete;
-  const attentionLabel = dirty ? "ยังไม่ได้บันทึก" : "ยังไม่ครบ";
+  /* A held file is unsaved work exactly as a typed-but-uncommitted figure is, so it
+     lights the same badge rather than a second one competing with it. */
+  const unsaved = dirty || pendingFiles.length > 0;
+  const needsAttention = unsaved || !complete;
+  const attentionLabel = unsaved ? "ยังไม่ได้บันทึก" : "ยังไม่ครบ";
 
   /** Create (detailId == null) or update the row from the current inputs. Toasts on failure. */
   async function persist(id: number | null): Promise<number | null> {
@@ -809,22 +849,84 @@ function BookingRowCard({
     }
   }
 
-  /** The row's id, creating the row first if it doesn't exist yet (attach-before-save). */
-  async function ensureDetailId(): Promise<number | null> {
-    const existing = detail?.id ?? createdIdRef.current;
-    return existing != null ? existing : persist(null);
+  /**
+   * Post the held files against a row that now certainly exists. Returns the message
+   * to show on failure, or null when they all landed.
+   *
+   * Same endpoint and same `FormData` shape the pick used to build — `refType`,
+   * `bookingDetailId`, one repeated `files` part per file. Nothing about how the
+   * server admits these bytes changes; only when they are sent.
+   */
+  async function uploadPending(id: number, picked: File[]): Promise<string | null> {
+    const fd = new FormData();
+    fd.append("refType", BOOKING_TYPE_REFTYPE[type]);
+    fd.append("bookingDetailId", String(id));
+    for (const f of picked) fd.append("files", f);
+    try {
+      const res = await fetch(`/api/request/travel-booking/requests/${requestId}/files`, {
+        method: "POST",
+        body: fd,
+      });
+      const json: { ok: boolean; error?: string } = await res.json();
+      return json.ok ? null : (json.error ?? "อัปโหลดไฟล์ไม่สำเร็จ");
+    } catch {
+      return "อัปโหลดไฟล์ไม่สำเร็จ";
+    }
   }
 
+  /**
+   * Write the row, then send whatever files this card is holding for it.
+   *
+   * The order is forced rather than chosen: the upload route wants a
+   * `bookingDetailId`, and until the row is persisted there is not one. `persist`
+   * reports its own failure and returns null, and nothing is uploaded in that case.
+   *
+   * **A failed upload does not clear `pendingFiles`, and does not claim success.**
+   * The row is saved and the files are not, so pressing Save again is the retry —
+   * a safe one, because the second press updates the same row rather than creating
+   * another. Toasting "บันทึกแล้ว" over a half-done save is what would leave
+   * somebody believing their confirmation is in SharePoint when it is not.
+   */
   async function handleSave() {
     setSaving(true);
     const id = await persist(detail?.id ?? createdIdRef.current);
+    if (id == null) {
+      setSaving(false);
+      return;
+    }
+    const picked = pendingFiles;
+    if (picked.length === 0) {
+      setSaving(false);
+      toast.success("บันทึกข้อมูลการจองแล้ว");
+      onChanged();
+      return;
+    }
+    setUploading(true);
+    const failure = await uploadPending(id, picked);
+    setUploading(false);
     setSaving(false);
-    if (id == null) return;
-    toast.success("บันทึกข้อมูลการจองแล้ว");
+    if (failure) {
+      toast.error(`บันทึกข้อมูลการจองแล้ว แต่แนบไฟล์ไม่สำเร็จ: ${failure} — กดบันทึกอีกครั้งเพื่อลองแนบใหม่`);
+      // The figures did land, so the parent still refetches. The held files stay on
+      // this card, which survives that refetch because it is keyed on the slot that
+      // created it — see `slotOfRow` in `BookingTypeGroup`.
+      onChanged();
+      return;
+    }
+    setPendingFiles([]);
+    toast.success("บันทึกข้อมูลการจองและแนบไฟล์แล้ว");
     onChanged();
   }
 
-  async function handleUpload(fileList: FileList | null) {
+  /**
+   * Take a pick onto the card. **Nothing is uploaded here, and no row is created.**
+   *
+   * The AI read still runs on the pick, deliberately: `readBookingFields` takes the
+   * `File` and needs no upload, and the whole point of the read is that the five
+   * fields fill while the person is looking at them. Deferring it to Save would put
+   * the answer on screen after the moment it was useful.
+   */
+  function handlePick(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) return;
     const picked = Array.from(fileList);
 
@@ -834,10 +936,6 @@ function BookingRowCard({
     // missed: the route already accepted the file and this refused it before it
     // was ever posted.
 
-    // Read the first file for the five fields, in the background and in
-    // parallel with the upload — the fields are locked until it lands either
-    // way, so nothing is gained by waiting for SharePoint first.
-    //
     // Skipped when a read is already in flight: each call is billed and a
     // second could only race the first. On a later file it is skipped again
     // unless something is still blank — a second attachment is another page of
@@ -846,36 +944,30 @@ function BookingRowCard({
     // A row's FIRST file is different: it clears the five fields and the read
     // then owns them. The figures describe the confirmation, so a new
     // confirmation replaces them rather than filling in around figures left
-    // from a document that is no longer attached.
-    const attach = onFileAttached({ existingFileCount: files.length });
+    // from a document that is no longer attached. "First" counts held picks as
+    // well as stored files — `attachedCount` — so a second pick on an unsaved card
+    // does not wipe what the first pick's read has just produced.
+    const attach = onFileAttached({ existingFileCount: attachedCount });
     if (attach.clearFirst) clearFields();
     if (!readingRef.current && (attach.clearFirst || anyFieldEmpty())) {
       void prefillFrom(picked[0], attach.readReplaces);
     }
 
-    setUploading(true);
-    try {
-      const id = await ensureDetailId();
-      if (id == null) return;
-      const fd = new FormData();
-      fd.append("refType", BOOKING_TYPE_REFTYPE[type]);
-      fd.append("bookingDetailId", String(id));
-      for (const f of picked) fd.append("files", f);
-      const res = await fetch(`/api/request/travel-booking/requests/${requestId}/files`, {
-        method: "POST",
-        body: fd,
-      });
-      const json: { ok: boolean; error?: string } = await res.json();
-      if (!json.ok) {
-        toast.error(json.error ?? "อัปโหลดไฟล์ไม่สำเร็จ");
-        return;
-      }
-      toast.success("แนบไฟล์แล้ว");
-      onChanged();
-    } catch {
-      toast.error("อัปโหลดไฟล์ไม่สำเร็จ");
-    } finally {
-      setUploading(false);
+    setPendingFiles((prev) => prev.concat(picked));
+  }
+
+  /**
+   * Drop a held pick. **No DELETE** — the server has never heard of this file, so
+   * there is nothing to ask it to remove.
+   *
+   * The clear rule is the stored one's: losing the last attachment, held or stored,
+   * leaves the figures describing a document nobody can open.
+   */
+  function handleRemovePending(index: number) {
+    setPendingFiles((prev) => prev.filter((_, i) => i !== index));
+    if (onFileRemoved({ remainingFileCount: attachedCount - 1 })) {
+      clearFields();
+      setReadNote(null);
     }
   }
 
@@ -901,7 +993,7 @@ function BookingRowCard({
       // would strand the very data the last fix was about. Either way the
       // database keeps its values until Save is pressed, which the
       // "ยังไม่ได้บันทึก" badge is there to say.
-      if (onFileRemoved({ remainingFileCount: files.length - 1 })) {
+      if (onFileRemoved({ remainingFileCount: attachedCount - 1 })) {
         clearFields();
         setReadNote(null);
       }
@@ -1057,7 +1149,7 @@ function BookingRowCard({
           multiple
           className="hidden"
           onChange={(e) => {
-            void handleUpload(e.target.files);
+            handlePick(e.target.files);
             e.target.value = "";
           }}
         />
@@ -1073,6 +1165,14 @@ function BookingRowCard({
               onViewFile={onViewFile}
             />
           ))}
+          {pendingFiles.map((f, i) => (
+            <PendingFileChip
+              key={`${i}-${f.name}-${f.lastModified}`}
+              file={f}
+              onRemove={() => handleRemovePending(i)}
+              onView={() => onViewPending(f)}
+            />
+          ))}
           <label
             htmlFor={inputId}
             title="แนบไฟล์ใบยืนยันการจอง"
@@ -1085,10 +1185,20 @@ function BookingRowCard({
             </span>
           </label>
         </div>
+
+        {/* One quiet line saying what the dashed squares mean. The chips carry the
+            state; this says what to do about it. */}
+        {pendingFiles.length > 0 && (
+          <p className="m-0 mt-2 text-[11.5px] flex items-center gap-1.5" style={{ color: "var(--text-info-yellow)" }}>
+            <Clock size={12} className="shrink-0" />
+            ไฟล์ {pendingFiles.length} ไฟล์ยังไม่ได้อัปโหลด — จะส่งขึ้นระบบเมื่อกด “บันทึกข้อมูลการจอง”
+          </p>
+        )}
       </div>
 
       {/* Save last — the row is filled top-to-bottom (number → price → files), so the commit
-          action belongs at the end. Attachments are saved on upload, not by this button. */}
+          action belongs at the end. It is also what uploads: a picked file waits on the card
+          until this is pressed, so the row and its attachments are written by one action. */}
       <button
         type="button"
         onClick={handleSave}
@@ -1097,7 +1207,98 @@ function BookingRowCard({
         style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)", color: "var(--text-secondary)" }}
       >
         {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
-        {saving ? "กำลังบันทึก..." : "บันทึกข้อมูลการจอง"}
+        {uploading ? "กำลังแนบไฟล์..." : saving ? "กำลังบันทึก..." : "บันทึกข้อมูลการจอง"}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * A picked file that is not stored anywhere yet.
+ *
+ * Deliberately the same 80×80 tile as `AdminFileChip`, with two differences: a
+ * dashed border in the panel's "needs attention" colour, and a footer badge. Somebody
+ * has to be able to tell which of these squares is actually in SharePoint without
+ * reading anything — they are otherwise identical, and the difference is whether the
+ * file survives closing the page.
+ *
+ * The thumbnail's object URL is made in an effect whose cleanup revokes exactly the
+ * URL that run created — no ref set on mount, so strict mode's mount → cleanup →
+ * mount simply makes a second URL and revokes the first.
+ */
+function PendingFileChip({
+  file,
+  onRemove,
+  onView,
+}: {
+  file: File;
+  onRemove: () => void;
+  onView: () => void;
+}) {
+  const kind = attachmentKind(file.name, file.type);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (kind !== "image") return;
+    const url = URL.createObjectURL(file);
+    setPreviewUrl(url);
+    return () => {
+      URL.revokeObjectURL(url);
+      setPreviewUrl(null);
+    };
+  }, [file, kind]);
+
+  return (
+    <div className="relative w-20 h-20">
+      <button
+        type="button"
+        onClick={onView}
+        title={file.name + " — ยังไม่ได้อัปโหลด"}
+        className={
+          kind === "image" && previewUrl
+            ? "w-full h-full rounded-xl overflow-hidden cursor-pointer p-0 border"
+            : "w-full h-full rounded-xl overflow-hidden cursor-pointer p-0 border flex flex-col items-center justify-center gap-1"
+        }
+        style={{
+          borderStyle: "dashed",
+          borderColor: "var(--border-info-yellow)",
+          background: "var(--bg-card)",
+        }}
+      >
+        {kind === "image" && previewUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={previewUrl} alt={file.name} className="w-full h-full object-cover" draggable={false} />
+        ) : (
+          <>
+            {kind === "excel" ? (
+              <FileSpreadsheet size={22} style={{ color: "var(--text-muted)" }} />
+            ) : (
+              <FileText size={22} style={{ color: "var(--text-muted)" }} />
+            )}
+            <span className="text-[9px] px-1 truncate w-full text-center" style={{ color: "var(--text-muted)" }}>
+              {file.name}
+            </span>
+          </>
+        )}
+      </button>
+      {/* Says which square is only on this page — the same badge language the card's
+          own "ยังไม่ได้บันทึก" uses, one size down so it sits beside it rather than
+          against it. `pointer-events-none` keeps the whole tile clickable. */}
+      <span
+        className="absolute bottom-0 inset-x-0 flex items-center justify-center gap-0.5 text-[8.5px] font-bold py-0.5 pointer-events-none"
+        style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)" }}
+      >
+        <Clock size={9} /> ยังไม่อัปโหลด
+      </span>
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label="เอาไฟล์ออก"
+        title="เอาไฟล์ออก"
+        className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center cursor-pointer border-none"
+        style={{ background: "var(--btn-danger-bg)", color: "var(--btn-danger-text)", border: "1px solid var(--btn-danger-border)" }}
+      >
+        <X size={11} />
       </button>
     </div>
   );
