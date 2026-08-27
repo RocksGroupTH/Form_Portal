@@ -6,6 +6,7 @@ import { queueEmail, processQueue } from "@/lib/acc/email-queue";
 import { buildTravelBookingEmail, type TravelBookingTrigger } from "@/lib/acc/travel-booking/email-templates";
 import { computePayoutDate } from "@/lib/acc/travel-booking/payment-month";
 import { getTravelBookingRequest } from "@/lib/acc/travel-booking/request-service";
+import { recomputeGroupPerDiem } from "@/lib/acc/travel-booking/perdiem-recompute";
 import { AP17_FORM_CODE } from "@/features/travel-booking/constants";
 import type { TravelBookingRequest } from "@/features/travel-booking/types";
 
@@ -95,6 +96,33 @@ async function logManagerOnBehalf(
     .input("note", sql.NVarChar, note.slice(0, 2000))
     .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note)
             VALUES (@rid, @by, 'manager_acted_on_behalf', @note)`);
+}
+
+/**
+ * Give back the day a now-dead trip was absorbing, for the rest of its group.
+ *
+ * Reads the dying request's own `GroupKey` inside the caller's transaction —
+ * the same one the status UPDATE just ran on — and hands off to
+ * `recomputeGroupPerDiem`. A request with no group key skips silently; there
+ * should be none for AP-17; `submitTravelBookingGroup` mints one for every tab,
+ * including a single-trip group.
+ */
+async function recomputeAfterDeath(
+  tx: ReturnType<Awaited<ReturnType<typeof getAccPool>>["transaction"]>,
+  requestId: number,
+  kind: "cancelled" | "rejected",
+): Promise<void> {
+  const r = await tx
+    .request()
+    .input("rid", sql.Int, requestId)
+    .query(`SELECT t.GroupKey, req.RequestNo
+            FROM [dbo].[AccTravelBooking] t
+            INNER JOIN [dbo].[AccRequest] req ON req.Id = t.RequestId
+            WHERE t.RequestId = @rid`);
+  const row = r.recordset[0] as { GroupKey: string | null; RequestNo: string | null } | undefined;
+  const groupKey = row?.GroupKey ?? null;
+  if (!groupKey) return;
+  await recomputeGroupPerDiem(tx, groupKey, { requestId, requestNo: row?.RequestNo ?? null, kind });
 }
 
 export async function approveByManager(requestId: number, actor: Actor): Promise<TravelBookingRequest> {
@@ -196,6 +224,7 @@ export async function rejectRequest(requestId: number, actor: Actor, comment: st
       .input("c", sql.NVarChar, comment)
       .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note) VALUES (@rid, @by, 'rejected', @c)`);
     await logManagerOnBehalf(tx, requestId, actor, "ไม่อนุมัติ");
+    await recomputeAfterDeath(tx, requestId, "rejected");
     await tx.commit();
   } catch (e) {
     await tx.rollback().catch(() => {});
@@ -282,6 +311,11 @@ async function transitionFromAdminStage(
       .input("action", sql.NVarChar(50), target.action)
       .input("c", sql.NVarChar, comment)
       .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note) VALUES (@rid, @by, @action, @c)`);
+    // Only a rejection here kills the trip — a return sends it back to the
+    // requester, still alive, so it must not touch the rest of the group.
+    if (target.status === "Rejected") {
+      await recomputeAfterDeath(tx, requestId, "rejected");
+    }
     await tx.commit();
   } catch (e) {
     await tx.rollback().catch(() => {});
@@ -357,6 +391,7 @@ export async function cancelByRequester(requestId: number, actor: Actor): Promis
               WHERE RequestId=@rid AND Status='Pending'`);
     await tx.request().input("rid", sql.Int, requestId).input("by", sql.Int, actor.userId)
       .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action) VALUES (@rid, @by, 'cancelled')`);
+    await recomputeAfterDeath(tx, requestId, "cancelled");
     await tx.commit();
   } catch (e) {
     await tx.rollback().catch(() => {});
