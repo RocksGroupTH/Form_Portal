@@ -32,6 +32,7 @@ import {
   MAX_BOOKING_AMOUNT,
 } from "@/features/travel-booking/lib/booking-amounts";
 import { bookingFieldsLocked } from "@/features/travel-booking/lib/booking-lock";
+import { onFileAttached, onFileRemoved } from "@/features/travel-booking/lib/booking-file-sync";
 import {
   sanitizeBookingNo,
   MAX_BOOKING_NO_LENGTH,
@@ -667,8 +668,24 @@ function BookingRowCard({
      a render behind; a ref is what a second file picked in the same tick actually sees. */
   const readingRef = useRef(false);
 
-  /** Read the attachment and offer what it says — never over a field already filled. */
-  async function prefillFrom(file: File) {
+  /** Blank all five. Used when a row's first file arrives, and when its last one goes. */
+  function clearFields() {
+    setBookingNo("");
+    setPriceExVat("");
+    setVat("");
+    setDiscount("");
+    setTotalAmount("");
+  }
+
+  /**
+   * Read the attachment and offer what it says.
+   *
+   * `replaces` is set for a row's first file, where the read owns the row: the
+   * fields were blanked in the same tick, so `valuesRef` still holds the values
+   * that were cleared and guarding against them would restore exactly what the
+   * clear removed. Otherwise a person outranks the read — see booking-file-sync.
+   */
+  async function prefillFrom(file: File, replaces: boolean) {
     readingRef.current = true;
     setReadNote("reading");
     try {
@@ -687,11 +704,12 @@ function BookingRowCard({
       // filled by the read beside two typed by hand is the normal outcome.
       const v = valuesRef.current;
       const f = read.fields;
-      if (f.bookingNo && !v.bookingNo.trim()) setBookingNo(f.bookingNo);
-      if (f.priceExVat != null && !v.priceExVat.trim()) setPriceExVat(String(f.priceExVat));
-      if (f.vat != null && !v.vat.trim()) setVat(String(f.vat));
-      if (f.discount != null && !v.discount.trim()) setDiscount(String(f.discount));
-      if (f.total != null && !v.totalAmount.trim()) setTotalAmount(String(f.total));
+      const free = (current: string) => replaces || !current.trim();
+      if (f.bookingNo && free(v.bookingNo)) setBookingNo(f.bookingNo);
+      if (f.priceExVat != null && free(v.priceExVat)) setPriceExVat(String(f.priceExVat));
+      if (f.vat != null && free(v.vat)) setVat(String(f.vat));
+      if (f.discount != null && free(v.discount)) setDiscount(String(f.discount));
+      if (f.total != null && free(v.totalAmount)) setTotalAmount(String(f.total));
       setReadNote(null);
     } catch {
       if (aliveRef.current) setReadNote("error");
@@ -805,10 +823,20 @@ function BookingRowCard({
     // parallel with the upload — the fields are locked until it lands either
     // way, so nothing is gained by waiting for SharePoint first.
     //
-    // Skipped when a read is already in flight or the row is fully filled in:
-    // each call is billed, and a second one could only race the first or find
-    // nothing left to fill.
-    if (!readingRef.current && anyFieldEmpty()) void prefillFrom(picked[0]);
+    // Skipped when a read is already in flight: each call is billed and a
+    // second could only race the first. On a later file it is skipped again
+    // unless something is still blank — a second attachment is another page of
+    // the same booking, not a new booking.
+    //
+    // A row's FIRST file is different: it clears the five fields and the read
+    // then owns them. The figures describe the confirmation, so a new
+    // confirmation replaces them rather than filling in around figures left
+    // from a document that is no longer attached.
+    const attach = onFileAttached({ existingFileCount: files.length });
+    if (attach.clearFirst) clearFields();
+    if (!readingRef.current && (attach.clearFirst || anyFieldEmpty())) {
+      void prefillFrom(picked[0], attach.readReplaces);
+    }
 
     setUploading(true);
     try {
@@ -847,6 +875,20 @@ function BookingRowCard({
       if (!json.ok) {
         toast.error(json.error ?? "ลบไฟล์ไม่สำเร็จ");
         return;
+      }
+      // The figures were read off the confirmation, so losing the last one
+      // leaves them describing a document nobody can open.
+      //
+      // Whether the row then re-locks depends on what is SAVED, not on what is
+      // now on screen: `bookingFieldsLocked` reads `detail`. A draft clears and
+      // locks, back where it was before anything was attached. A row already
+      // saved with figures clears and stays open — it has to, or removing a file
+      // would strand the very data the last fix was about. Either way the
+      // database keeps its values until Save is pressed, which the
+      // "ยังไม่ได้บันทึก" badge is there to say.
+      if (onFileRemoved({ remainingFileCount: files.length - 1 })) {
+        clearFields();
+        setReadNote(null);
       }
       onChanged();
     } catch {
