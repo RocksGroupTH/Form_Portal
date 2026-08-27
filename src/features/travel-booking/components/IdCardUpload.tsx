@@ -6,7 +6,12 @@ import { toast } from "sonner";
 import { AlertTriangle, CheckCircle2, FileText, History, IdCard, Loader2, Paperclip, ScanLine, Trash2 } from "lucide-react";
 import type { TravelBookingFileMeta } from "@/features/travel-booking/types";
 import { looksLikeThaiIdCard, type IdCardCheck } from "@/features/travel-booking/lib/idcard-check";
-import { ImageLightbox } from "@/features/accounting/components/ImageLightbox";
+import {
+  AttachmentViewer,
+  attachmentKind,
+  type AttachmentKind,
+  type AttachmentSource,
+} from "@/components/ui/AttachmentViewer";
 import { errLabelStyle, labelClass, requiredStar } from "./shared";
 
 /**
@@ -47,7 +52,25 @@ export function IdCardUpload({
   const [checking, setChecking] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [removingId, setRemovingId] = useState<number | null>(null);
-  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+  /**
+   * One viewer for the whole component, not one per card — a modal rendered
+   * inside a list item is a modal per item.
+   *
+   * **This changes display only.** Which bytes are reachable is still decided
+   * entirely by `id-card-access.ts` on the server: the viewer fetches the same
+   * `/api/request/travel-booking/files/{id}` URL this component already pointed
+   * at, so consent, the data-subject check and every upload guard are untouched.
+   */
+  const [viewing, setViewing] = useState<{ source: AttachmentSource; kind: AttachmentKind } | null>(
+    null,
+  );
+  const openFileViewer = (fileId: number, fileName: string, contentType: string) =>
+    setViewing({
+      source: { name: fileName, url: `/api/request/travel-booking/files/${fileId}` },
+      // Declared type first, then the name — SharePoint returns
+      // `application/octet-stream` often enough that the fallback matters.
+      kind: attachmentKind(fileName, contentType),
+    });
   /**
    * The refusal popup. `unavailable` separates "this photo is not a card" from
    * "the check could not be reached" — both refuse the file, but the title and
@@ -201,14 +224,16 @@ export function IdCardUpload({
             >
               <button
                 type="button"
-                onClick={() => { if (previousCard.contentType.startsWith("image/")) setLightboxSrc(`/api/request/travel-booking/files/${previousCard.fileId}`); }}
-                title={previousCard.contentType.startsWith("image/") ? "แตะเพื่อดูรูปเต็ม" : undefined}
-                aria-label="ดูรูปบัตรเต็ม"
-                className={`relative w-12 h-12 rounded-lg overflow-hidden border shrink-0 flex items-center justify-center p-0 ${previousCard.contentType.startsWith("image/") ? "cursor-zoom-in" : ""}`}
+                onClick={() =>
+                  openFileViewer(previousCard.fileId, previousCard.fileName, previousCard.contentType)
+                }
+                title="แตะเพื่อดูไฟล์เต็ม"
+                aria-label="ดูบัตรประชาชนที่เคยแนบ"
+                className="relative w-12 h-12 rounded-lg overflow-hidden border shrink-0 flex items-center justify-center p-0 cursor-zoom-in"
                 style={{ borderColor: "var(--border-card)", background: "var(--bg-card)" }}
               >
                 <IdCard size={22} style={{ color: "var(--nav-active-text)" }} />
-                {previousCard.contentType.startsWith("image/") && (
+                {attachmentKind(previousCard.fileName, previousCard.contentType) === "image" && (
                   <img
                     src={`/api/request/travel-booking/files/${previousCard.fileId}`}
                     alt=""
@@ -255,7 +280,15 @@ export function IdCardUpload({
                 {pendingUrl && (
                   <button
                     type="button"
-                    onClick={() => setLightboxSrc(pendingUrl)}
+                    // A pick that has not been uploaded yet, so the viewer is
+                    // handed the `File` itself rather than a URL — the source
+                    // type takes either.
+                    onClick={() =>
+                      setViewing({
+                        source: { name: pendingFile.name, file: pendingFile },
+                        kind: attachmentKind(pendingFile.name, pendingFile.type),
+                      })
+                    }
                     title="กดเพื่อดูรูปเต็ม"
                     className="block w-full h-full p-0 border-none cursor-zoom-in bg-transparent"
                   >
@@ -358,7 +391,7 @@ export function IdCardUpload({
             <div className="flex flex-col gap-2">
               {files.map((f) => {
                 const url = `/api/request/travel-booking/files/${f.id}`;
-                const isImage = f.contentType.startsWith("image/");
+                const isImage = attachmentKind(f.fileName, f.contentType) === "image";
                 const removing = removingId === f.id;
                 return (
                   // Same large boxed format as the pre-upload dropzone, now showing the attached card.
@@ -381,7 +414,7 @@ export function IdCardUpload({
                         {/* tap the image to view full */}
                         <button
                           type="button"
-                          onClick={() => setLightboxSrc(url)}
+                          onClick={() => openFileViewer(f.id, f.fileName, f.contentType)}
                           title="แตะเพื่อดูรูปเต็ม"
                           aria-label="ดูรูปเต็ม"
                           className="absolute inset-0 cursor-zoom-in border-none bg-transparent"
@@ -404,14 +437,15 @@ export function IdCardUpload({
                         className="group relative rounded-xl overflow-hidden border flex items-center justify-center"
                         style={{ borderColor: "var(--border-card)", background: "var(--bg-card)", width: 160, height: 160 }}
                       >
-                        <a
-                          href={url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="absolute inset-0 flex items-center justify-center no-underline"
+                        <button
+                          type="button"
+                          onClick={() => openFileViewer(f.id, f.fileName, f.contentType)}
+                          title="แตะเพื่อดูไฟล์"
+                          aria-label="ดูไฟล์"
+                          className="absolute inset-0 flex items-center justify-center cursor-zoom-in border-none bg-transparent p-0"
                         >
                           <FileText size={36} style={{ color: "var(--text-muted)" }} />
-                        </a>
+                        </button>
                         <button
                           type="button"
                           onClick={() => handleRemove(f.id)}
@@ -571,7 +605,12 @@ export function IdCardUpload({
           document.body,
         )}
 
-      <ImageLightbox open={!!lightboxSrc} src={lightboxSrc ?? ""} onClose={() => setLightboxSrc(null)} />
+      <AttachmentViewer
+        open={viewing != null}
+        source={viewing?.source ?? null}
+        kind={viewing?.kind ?? "other"}
+        onClose={() => setViewing(null)}
+      />
     </div>
   );
 }

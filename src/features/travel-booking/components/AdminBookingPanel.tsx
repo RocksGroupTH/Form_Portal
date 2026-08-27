@@ -8,6 +8,7 @@ import {
   BedDouble,
   Car,
   CheckCircle2,
+  FileSpreadsheet,
   FileText,
   Loader2,
   Paperclip,
@@ -20,7 +21,12 @@ import {
   X,
 } from "lucide-react";
 import { Dialog } from "@/components/ui";
-import { ImageLightbox } from "@/features/accounting/components/ImageLightbox";
+import {
+  AttachmentViewer,
+  attachmentKind,
+  type AttachmentKind,
+  type AttachmentSource,
+} from "@/components/ui/AttachmentViewer";
 import { useTravelBookingOptionIcons } from "@/features/travel-booking/hooks/useOptionIcons";
 import { InfoStrip, tripInfo, typeInfo, type InfoGroup } from "@/features/travel-booking/components/BookingInfoStrip";
 import { BOOKING_TYPE_REFTYPE } from "@/features/travel-booking/constants";
@@ -162,7 +168,11 @@ export function AdminBookingPanel({
   const [completing, setCompleting] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<{ detailId: number; label: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
+  /* One viewer for the whole panel, not one per chip — a modal rendered inside a
+     list item is a modal per item. The chips only report which file was clicked. */
+  const [viewing, setViewing] = useState<{ source: AttachmentSource; kind: AttachmentKind } | null>(
+    null,
+  );
 
   /* Bounce the request instead of booking it — back to the requester, or rejected outright. */
   const [bounce, setBounce] = useState<"return" | "reject" | null>(null);
@@ -289,7 +299,12 @@ export function AdminBookingPanel({
               rows={rowsByType.get(rule.type) ?? []}
               onChanged={onChanged}
               onRequestDelete={(detailId) => setPendingDelete({ detailId, label: rule.label })}
-              onImageClick={(src, alt) => setLightbox({ src, alt })}
+              onViewFile={(f) =>
+                setViewing({
+                  source: { name: f.fileName, url: `/api/request/travel-booking/files/${f.id}` },
+                  kind: attachmentKind(f.fileName, f.contentType),
+                })
+              }
             />
           ))
         )}
@@ -423,11 +438,11 @@ export function AdminBookingPanel({
         </div>
       </Dialog>
 
-      <ImageLightbox
-        open={lightbox != null}
-        src={lightbox?.src ?? ""}
-        alt={lightbox?.alt}
-        onClose={() => setLightbox(null)}
+      <AttachmentViewer
+        open={viewing != null}
+        source={viewing?.source ?? null}
+        kind={viewing?.kind ?? "other"}
+        onClose={() => setViewing(null)}
       />
     </div>
   );
@@ -446,7 +461,7 @@ function BookingTypeGroup({
   rows,
   onChanged,
   onRequestDelete,
-  onImageClick,
+  onViewFile,
 }: {
   type: BookingType;
   label: string;
@@ -456,7 +471,7 @@ function BookingTypeGroup({
   rows: BookingDetail[];
   onChanged: () => void;
   onRequestDelete: (detailId: number) => void;
-  onImageClick: (src: string, alt: string) => void;
+  onViewFile: (file: TravelBookingFileMeta) => void;
 }) {
   const [draftOpen, setDraftOpen] = useState(false);
 
@@ -535,7 +550,7 @@ function BookingTypeGroup({
             total={total}
             onChanged={onChanged}
             onDelete={() => onRequestDelete(detail.id)}
-            onImageClick={onImageClick}
+            onViewFile={onViewFile}
           />
         ))}
 
@@ -550,7 +565,7 @@ function BookingTypeGroup({
             onChanged={onChanged}
             onCreated={(id) => slotOfRow.current.set(id, draftSlot)}
             onDelete={rows.length > 0 ? () => setDraftOpen(false) : undefined}
-            onImageClick={onImageClick}
+            onViewFile={onViewFile}
           />
         )}
 
@@ -584,7 +599,7 @@ function BookingRowCard({
   onChanged,
   onCreated,
   onDelete,
-  onImageClick,
+  onViewFile,
 }: {
   type: BookingType;
   requestId: number;
@@ -595,7 +610,7 @@ function BookingRowCard({
   /** Told the id the very first save minted, so the parent can keep this card's key. */
   onCreated?: (id: number) => void;
   onDelete?: () => void;
-  onImageClick: (src: string, alt: string) => void;
+  onViewFile: (file: TravelBookingFileMeta) => void;
 }) {
   const [bookingNo, setBookingNo] = useState(detail?.bookingNo ?? "");
   const [priceExVat, setPriceExVat] = useState(numText(detail?.priceExVat));
@@ -1055,7 +1070,7 @@ function BookingRowCard({
               file={f}
               onRemove={() => handleRemoveFile(f.id)}
               removing={removingId === f.id}
-              onImageClick={onImageClick}
+              onViewFile={onViewFile}
             />
           ))}
           <label
@@ -1088,50 +1103,60 @@ function BookingRowCard({
   );
 }
 
-/** Thumbnail + remove badge. Images open in the shared zoomable lightbox (same as the ID card);
-    PDFs have nothing to zoom, so they still open in a new tab. */
+/**
+ * Thumbnail + remove badge. **Every kind opens the shared in-page viewer** — the
+ * one AP-1 and AP-4 use — so "view" means view. A PDF used to be an
+ * `<a target="_blank">` pointed at the download route, where
+ * `attachmentResponseHeaders` serves it `Content-Disposition: attachment`: the
+ * tab downloaded the file and closed, which is not viewing it.
+ *
+ * `attachmentKind` derives the kind from the declared type and then the name;
+ * a bare `contentType.startsWith("image/")` was what this had, and SharePoint
+ * hands back `application/octet-stream` often enough for that to be wrong.
+ */
 function AdminFileChip({
   file,
   onRemove,
   removing,
-  onImageClick,
+  onViewFile,
 }: {
   file: TravelBookingFileMeta;
   onRemove: () => void;
   removing: boolean;
-  onImageClick: (src: string, alt: string) => void;
+  onViewFile: (file: TravelBookingFileMeta) => void;
 }) {
   const url = `/api/request/travel-booking/files/${file.id}`;
-  const isImage = file.contentType.startsWith("image/");
+  const kind = attachmentKind(file.fileName, file.contentType);
 
   return (
     <div className="relative w-20 h-20">
-      {isImage ? (
-        <button
-          type="button"
-          onClick={() => onImageClick(url, file.fileName)}
-          title={file.fileName}
-          className="w-full h-full rounded-xl overflow-hidden cursor-pointer p-0 border"
-          style={{ borderColor: "var(--border-card)", background: "var(--bg-card)" }}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
+      <button
+        type="button"
+        onClick={() => onViewFile(file)}
+        title={file.fileName}
+        className={
+          kind === "image"
+            ? "w-full h-full rounded-xl overflow-hidden cursor-pointer p-0 border"
+            : "w-full h-full rounded-xl overflow-hidden cursor-pointer p-0 border flex flex-col items-center justify-center gap-1"
+        }
+        style={{ borderColor: "var(--border-card)", background: "var(--bg-card)" }}
+      >
+        {kind === "image" ? (
+          // eslint-disable-next-line @next/next/no-img-element
           <img src={url} alt={file.fileName} className="w-full h-full object-cover" draggable={false} />
-        </button>
-      ) : (
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
-          title={file.fileName}
-          className="w-full h-full rounded-xl overflow-hidden flex flex-col items-center justify-center gap-1 border no-underline"
-          style={{ borderColor: "var(--border-card)", background: "var(--bg-card)" }}
-        >
-          <FileText size={22} style={{ color: "var(--text-muted)" }} />
-          <span className="text-[9px] px-1 truncate w-full text-center" style={{ color: "var(--text-muted)" }}>
-            {file.fileName}
-          </span>
-        </a>
-      )}
+        ) : (
+          <>
+            {kind === "excel" ? (
+              <FileSpreadsheet size={22} style={{ color: "var(--text-muted)" }} />
+            ) : (
+              <FileText size={22} style={{ color: "var(--text-muted)" }} />
+            )}
+            <span className="text-[9px] px-1 truncate w-full text-center" style={{ color: "var(--text-muted)" }}>
+              {file.fileName}
+            </span>
+          </>
+        )}
+      </button>
       <button
         type="button"
         onClick={onRemove}

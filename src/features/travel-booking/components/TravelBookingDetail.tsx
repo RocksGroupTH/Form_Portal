@@ -12,6 +12,7 @@ import {
   Car,
   CheckCircle,
   Clock,
+  FileSpreadsheet,
   FileText,
   Mail,
   MapPin,
@@ -29,7 +30,12 @@ import {
 } from "lucide-react";
 import { Dialog } from "@/components/ui";
 import { Avatar } from "@/components/ui/Avatar";
-import { ImageLightbox } from "@/features/accounting/components/ImageLightbox";
+import {
+  AttachmentViewer,
+  attachmentKind,
+  type AttachmentKind,
+  type AttachmentSource,
+} from "@/components/ui/AttachmentViewer";
 import { fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
 import { useBookingAccess } from "@/features/travel-booking/hooks/useBookingAccess";
 import { useErpSandboxDevHost } from "@/features/accounting/hooks/useErpSandboxDevHost";
@@ -173,20 +179,28 @@ function FlagChip({ label }: { label: string }) {
   );
 }
 
+/**
+ * **Every kind opens the shared in-page viewer**, the one AP-1 and AP-4 use.
+ * A non-image used to be an `<a target="_blank">` at the download route, where
+ * `attachmentResponseHeaders` serves `Content-Disposition: attachment` — so the
+ * tab downloaded the file rather than showing it.
+ */
 function FileThumb({
   file,
-  onImageClick,
+  onViewFile,
 }: {
   file: TravelBookingFileMeta;
-  onImageClick: (src: string, alt: string) => void;
+  onViewFile: (file: TravelBookingFileMeta) => void;
 }) {
   const url = `/api/request/travel-booking/files/${file.id}`;
-  const isImage = file.contentType.startsWith("image/");
-  if (isImage) {
+  // Declared type first, then the name — SharePoint returns
+  // `application/octet-stream` often enough that the fallback is load-bearing.
+  const kind = attachmentKind(file.fileName, file.contentType);
+  if (kind === "image") {
     return (
       <button
         type="button"
-        onClick={() => onImageClick(url, file.fileName)}
+        onClick={() => onViewFile(file)}
         title={file.fileName}
         className="w-20 h-20 shrink-0 rounded-xl overflow-hidden cursor-pointer border-none p-0"
         style={{ background: "var(--bg-card-alt)" }}
@@ -197,19 +211,22 @@ function FileThumb({
     );
   }
   return (
-    <a
-      href={url}
-      target="_blank"
-      rel="noopener noreferrer"
+    <button
+      type="button"
+      onClick={() => onViewFile(file)}
       title={file.fileName}
-      className="w-20 h-20 shrink-0 rounded-xl overflow-hidden flex flex-col items-center justify-center gap-1 border no-underline"
+      className="w-20 h-20 shrink-0 rounded-xl overflow-hidden flex flex-col items-center justify-center gap-1 border cursor-pointer p-0"
       style={{ borderColor: "var(--border-card)", background: "var(--bg-card-alt)" }}
     >
-      <FileText size={20} style={{ color: "var(--text-muted)" }} />
+      {kind === "excel" ? (
+        <FileSpreadsheet size={20} style={{ color: "var(--text-muted)" }} />
+      ) : (
+        <FileText size={20} style={{ color: "var(--text-muted)" }} />
+      )}
       <span className="text-[9px] px-1 truncate w-full text-center" style={{ color: "var(--text-muted)" }}>
         {file.fileName}
       </span>
-    </a>
+    </button>
   );
 }
 
@@ -519,7 +536,16 @@ export function TravelBookingDetail({
     }
   }
 
-  const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
+  /* One viewer for the whole page, not one per thumbnail — a modal rendered
+     inside a list item is a modal per item. */
+  const [viewing, setViewing] = useState<{ source: AttachmentSource; kind: AttachmentKind } | null>(
+    null,
+  );
+  const openFileViewer = (f: TravelBookingFileMeta) =>
+    setViewing({
+      source: { name: f.fileName, url: `/api/request/travel-booking/files/${f.id}` },
+      kind: attachmentKind(f.fileName, f.contentType),
+    });
 
   // Option emojis (เหตุผล/ที่พัก/ยานพาหนะ/รถเช่า) live in settings, not on the request — resolve by id.
   const icons = useTravelBookingOptionIcons();
@@ -853,7 +879,7 @@ export function TravelBookingDetail({
                               <FieldLabel>ไฟล์แนบ (ใบยืนยันการจอง) — {d.files.length} ไฟล์</FieldLabel>
                               <div className="flex flex-wrap gap-2">
                                 {d.files.map((f) => (
-                                  <FileThumb key={f.id} file={f} onImageClick={(src, alt) => setLightbox({ src, alt })} />
+                                  <FileThumb key={f.id} file={f} onViewFile={openFileViewer} />
                                 ))}
                               </div>
                             </div>
@@ -1102,7 +1128,7 @@ export function TravelBookingDetail({
         {request.idCardFiles.length > 0 ? (
           <div className="flex flex-wrap gap-2">
             {request.idCardFiles.map((f) => (
-              <FileThumb key={f.id} file={f} onImageClick={(src, alt) => setLightbox({ src, alt })} />
+              <FileThumb key={f.id} file={f} onViewFile={openFileViewer} />
             ))}
           </div>
         ) : (
@@ -1246,7 +1272,12 @@ export function TravelBookingDetail({
         </div>
       </Dialog>
 
-      <ImageLightbox open={lightbox != null} src={lightbox?.src ?? ""} alt={lightbox?.alt} onClose={() => setLightbox(null)} />
+      <AttachmentViewer
+        open={viewing != null}
+        source={viewing?.source ?? null}
+        kind={viewing?.kind ?? "other"}
+        onClose={() => setViewing(null)}
+      />
 
       {/* The trip that counted this one's first day — same panel the queue and
           My Requests open a request in, so the number behaves the same
