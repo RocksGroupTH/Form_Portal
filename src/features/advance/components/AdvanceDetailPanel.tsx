@@ -46,6 +46,7 @@ export function AdvanceDetailPanel({ requestId, onClose, onChanged }:
   const [paymentDates, setPaymentDates] = useState<string[]>([]);
   const [paymentDate, setPaymentDate] = useState<string>("");
   const [approving, setApproving] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
 
   // ADV↔PV send history (only meaningful once a row has been pulled back and re-sent).
   useEffect(() => {
@@ -60,6 +61,7 @@ export function AdvanceDetailPanel({ requestId, onClose, onChanged }:
 
   useEffect(() => {
     setSelectedVendor("");
+    setRejectReason("");
     if (requestId == null) { setData(null); return; }
     let cancelled = false;
     setLoading(true);
@@ -127,6 +129,31 @@ export function AdvanceDetailPanel({ requestId, onClose, onChanged }:
       onClose();
     } catch {
       toast.error("อนุมัติไม่สำเร็จ");
+    } finally {
+      setApproving(false);
+    }
+  }
+
+  // Reject / return — only offered at earlier steps (HEAD_ACC / DIRECTOR); the
+  // ACC_OFFICER step is post-only ("ดำเนินการ"), matching the full page.
+  async function act(kind: "reject" | "return") {
+    if (requestId == null) return;
+    if (!rejectReason.trim()) {
+      return toast.error(kind === "reject" ? "กรุณาระบุเหตุผลที่ไม่อนุมัติ" : "กรุณาระบุสิ่งที่ต้องแก้ไข");
+    }
+    setApproving(true);
+    try {
+      const res = await fetch(`/api/request/advance/requests/${requestId}/${kind}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ comment: rejectReason.trim() }),
+      });
+      const j = (await res.json()) as { ok: boolean; error?: string };
+      if (!j.ok) { toast.error(j.error ?? "ดำเนินการไม่สำเร็จ"); return; }
+      toast.success(kind === "reject" ? "ไม่อนุมัติแล้ว" : "ส่งกลับแก้ไขแล้ว");
+      onChanged?.();
+      onClose();
+    } catch {
+      toast.error("ดำเนินการไม่สำเร็จ");
     } finally {
       setApproving(false);
     }
@@ -323,16 +350,43 @@ export function AdvanceDetailPanel({ requestId, onClose, onChanged }:
 
         {/* footer */}
         <div className="px-4 py-3 flex flex-col gap-2" style={{ borderTop: "1px solid var(--border-card)" }}>
-          {atApproval && (
+          {atApproval && atAccOfficer && (
             <div className="flex items-center gap-2">
-              {atAccOfficer && (
-                <PaymentDatePicker value={paymentDate} onChange={setPaymentDate} allowedDates={paymentDates} />
-              )}
+              <PaymentDatePicker value={paymentDate} onChange={setPaymentDate} allowedDates={paymentDates} />
               <button type="button" onClick={handleApprove} disabled={approving}
                 className="ml-auto text-[13px] font-bold px-4 py-2 rounded-lg cursor-pointer border-none disabled:opacity-60"
                 style={{ background: "var(--color-action, #A3121B)", color: "#fff" }}>
-                {approving ? "กำลังดำเนินการ..." : atAccOfficer ? "ดำเนินการ" : "อนุมัติ"}
+                {approving ? "กำลังดำเนินการ..." : "ดำเนินการ"}
               </button>
+            </div>
+          )}
+          {atApproval && !atAccOfficer && (
+            <div className="flex flex-col gap-2">
+              <textarea
+                rows={2}
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="เหตุผล / สิ่งที่ต้องแก้ไข (กรอกก่อนกด ไม่อนุมัติ หรือ ส่งกลับแก้ไข)"
+                className="text-[13px] px-3 py-2 rounded-lg outline-none resize-none"
+                style={{ background: "var(--bg-card)", color: "var(--text-primary)", border: "1px solid var(--border-card)" }}
+              />
+              <div className="flex items-center justify-end gap-2">
+                <button type="button" onClick={() => act("return")} disabled={approving}
+                  className="text-[13px] font-semibold px-3 py-2 rounded-lg cursor-pointer disabled:opacity-60"
+                  style={{ background: "var(--bg-card-alt)", color: "var(--text-muted)", border: "1px solid var(--border-card)" }}>
+                  ส่งกลับแก้ไข
+                </button>
+                <button type="button" onClick={() => act("reject")} disabled={approving}
+                  className="text-[13px] font-semibold px-3 py-2 rounded-lg cursor-pointer border-none disabled:opacity-60"
+                  style={{ background: "color-mix(in srgb, var(--color-danger) 12%, transparent)", color: "var(--color-danger)" }}>
+                  ไม่อนุมัติ
+                </button>
+                <button type="button" onClick={handleApprove} disabled={approving}
+                  className="text-[13px] font-bold px-4 py-2 rounded-lg cursor-pointer border-none disabled:opacity-60"
+                  style={{ background: "var(--color-action, #A3121B)", color: "#fff" }}>
+                  {approving ? "กำลังดำเนินการ..." : "อนุมัติ"}
+                </button>
+              </div>
             </div>
           )}
           <button type="button" onClick={() => router.push(`/request/advance/${requestId}`)}
