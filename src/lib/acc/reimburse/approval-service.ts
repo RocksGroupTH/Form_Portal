@@ -426,6 +426,15 @@ export async function approveReimburseManager(
     for (const email of await approverEmails()) {
       await notifyQuietly(updated, email, "ManagerApproved", "รอฝ่ายบัญชีตรวจสอบ");
     }
+    // And the requester, who otherwise hears nothing between submitting and the
+    // final approval two steps later, and has to come back and look to find out
+    // their manager said yes.
+    await notifyQuietly(
+      updated,
+      updated.requesterEmail,
+      "ManagerApproved",
+      "ผู้จัดการอนุมัติแล้ว รอฝ่ายบัญชีตรวจสอบ",
+    );
   });
 }
 
@@ -822,8 +831,10 @@ export async function cancelReimburseByRequester(
     await logActivity(tx, requestId, actor.userId, "cancelled");
   });
 
-  await afterCommit(requestId, async (updated) => {
-    // The manager is the one person holding a queue item that has just gone away.
-    await notifyQuietly(updated, updated.managerEmail, "Cancelled", "ผู้ขอยกเลิกคำขอ");
-  });
+  // No mail. A requester withdrawing their own claim is not news anyone needs
+  // sent: the manager's queue simply no longer holds it, and the activity row
+  // above records who withdrew it and when. AP-1 and AP-17 have always been
+  // silent here — AP-4 mailed the manager until 2026-08-28 and was the odd one
+  // out. `afterCommit` goes with it rather than being left wrapping nothing:
+  // all it does is re-read the request to build a message from.
 }
