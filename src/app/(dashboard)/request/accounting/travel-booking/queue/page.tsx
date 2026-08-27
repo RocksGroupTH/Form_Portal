@@ -168,6 +168,18 @@ export default function TravelBookingAdminQueuePage() {
                     <span className="text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>
                       {item.requestNo ?? "-"}
                     </span>
+                    {/* A pill beside the number, matching AP-1's approval queue.
+                        Per trip, so two rows of one booking group can name
+                        different companies — which is exactly why it has to be
+                        on the row rather than on a group header somewhere. */}
+                    {item.brandCode && (
+                      <span
+                        className="px-1.5 py-0.5 rounded text-[10.5px] font-bold"
+                        style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}
+                      >
+                        {item.brandCode}
+                      </span>
+                    )}
                     <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>
                       {item.requesterFullName ?? "-"}
                     </span>

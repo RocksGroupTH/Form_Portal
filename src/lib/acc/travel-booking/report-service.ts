@@ -33,6 +33,8 @@ export function numberList(values: string[]): number[] {
 export interface TravelBookingReportRow {
   id: number;
   requestNo: string | null;
+  /** `AccRequest.BrandCode` — per trip, so two rows of one group can differ. */
+  brandCode: string | null;
   staffId: number | null;
   fullName: string | null;
   position: string | null;
@@ -109,7 +111,7 @@ function computeReportPerDiemDisplay(
 const BASE_CTE = `
   WITH Base AS (
     SELECT
-      r.Id, r.RequestNo, r.StaffId, r.RequesterFullName, r.RequesterPosition, r.RequesterDepartmentName,
+      r.Id, r.RequestNo, r.BrandCode, r.StaffId, r.RequesterFullName, r.RequesterPosition, r.RequesterDepartmentName,
       r.EmployeeId, r.Status, r.PaymentDate, r.SubmittedAt,
       t.ReasonId, t.ReasonName, t.ReasonCustomText, t.WorkDetail,
       t.DepartDate, t.ReturnDate,
@@ -201,6 +203,7 @@ export async function queryTravelBookingReport(
     return {
       id: x.Id as number,
       requestNo: (x.RequestNo as string) ?? null,
+      brandCode: (x.BrandCode as string) ?? null,
       staffId: (x.StaffId as number) ?? null,
       fullName: (x.RequesterFullName as string) ?? null,
       position: (x.RequesterPosition as string) ?? null,
@@ -246,7 +249,7 @@ export function buildTravelBookingReportWorkbook(
 
   const headerRowIndex = aoa.length;
   const columns = [
-    "เลขที่คำขอ", "รหัสพนักงาน", "ชื่อ-นามสกุล", "ตำแหน่ง", "แผนก",
+    "เลขที่คำขอ", "แบรนด์ที่เบิก", "รหัสพนักงาน", "ชื่อ-นามสกุล", "ตำแหน่ง", "แผนก",
     "เหตุผลในการเดินทาง", "รายละเอียดการไปปฏิบัติงาน",
     "วันเดินทางขาไป", "วันเดินทางขากลับ", "จังหวัด", "สถานที่พักค้างคืน",
     "สถานที่ไปปฏิบัติงาน", "วันที่อนุมัติ", "สถานะ",
@@ -255,13 +258,19 @@ export function buildTravelBookingReportWorkbook(
   ];
   aoa.push(columns);
 
-  // Columns 15/16 = Perdiem day/amount (right-aligned numeric).
-  const NUM_COL = 15;
-  const MONEY_COL = 16;
+  // Found by heading, not written as a number.
+  //
+  // These were `15` and `16` — correct until a column was inserted before them,
+  // at which point the right-alignment and the money format silently move one
+  // column left and land on somebody's per-diem *rate* and day count. Adding
+  // "แบรนด์ที่เบิก" second is exactly that edit, so the trap is removed rather
+  // than re-tuned.
+  const NUM_COL = columns.indexOf("เบี้ยเลี้ยง (จำนวนวัน)");
+  const MONEY_COL = columns.indexOf("เบี้ยเลี้ยง (ยอดรวม)");
 
   for (const r of rows) {
     aoa.push([
-      r.requestNo, r.staffId, r.fullName, r.position, r.departmentName,
+      r.requestNo, r.brandCode, r.staffId, r.fullName, r.position, r.departmentName,
       r.reasonName, r.workDetail,
       r.departDate ? fmtYmdDisplay(r.departDate) : null,
       r.returnDate ? fmtYmdDisplay(r.returnDate) : null,

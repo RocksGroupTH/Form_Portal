@@ -58,13 +58,17 @@ function defaultServerFilters(): ServerFilters {
 }
 
 type ColKey =
-  | "requestNo" | "staffId" | "fullName" | "position" | "departmentName"
+  | "requestNo" | "brandCode" | "staffId" | "fullName" | "position" | "departmentName"
   | "reasonName" | "workDetail" | "departDate" | "returnDate" | "provinceName"
   | "accommodationName" | "workLocationsCsv" | "approvedDate" | "status"
   | "perDiemRate" | "perDiemDays" | "perDiemTotal" | "paymentDate" | "rateChangeNote";
 
 const ALL_COLUMNS: (ColumnToggleOption<ColKey> & { align?: "right" })[] = [
   { key: "requestNo", label: "เลขที่คำขอ" },
+  // Beside the request number, not at the end: the brand is a property of the
+  // claim rather than of the journey, and it is per trip — two rows of one
+  // group can name different companies.
+  { key: "brandCode", label: "แบรนด์ที่เบิก" },
   { key: "staffId", label: "รหัสพนักงาน" },
   { key: "fullName", label: "ชื่อ-นามสกุล" },
   { key: "position", label: "ตำแหน่ง" },
@@ -121,6 +125,19 @@ function cellValue(
         >
           {row.requestNo}
         </button>
+      ) : (
+        "—"
+      );
+    // A pill, like AP-1's queue shows it — a bare code beside long Thai names
+    // reads as noise, and this column is scanned rather than read.
+    case "brandCode":
+      return row.brandCode ? (
+        <span
+          className="inline-block px-1.5 py-0.5 rounded text-[11px] font-bold"
+          style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}
+        >
+          {row.brandCode}
+        </span>
       ) : (
         "—"
       );

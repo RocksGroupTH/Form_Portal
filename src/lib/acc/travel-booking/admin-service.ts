@@ -31,6 +31,8 @@ function toYmd(d: Date): string {
 export interface AdminQueueItem {
   id: number;
   requestNo: string | null;
+  /** `AccRequest.BrandCode` — per trip, so two rows of one group can differ. */
+  brandCode: string | null;
   requesterFullName: string | null;
   requesterPosition: string | null;
   requesterDepartmentName: string | null;
@@ -53,7 +55,7 @@ export async function listAdminQueue(): Promise<AdminQueueItem[]> {
   const res = await pool.request()
     .input("form", sql.NVarChar, AP17_FORM_CODE)
     .query(`
-      SELECT r.Id, r.RequestNo, r.RequesterFullName, r.RequesterPosition, r.RequesterDepartmentName,
+      SELECT r.Id, r.RequestNo, r.BrandCode, r.RequesterFullName, r.RequesterPosition, r.RequesterDepartmentName,
              r.PaymentDate, r.UpdatedAt,
              t.ProvinceName, t.DepartDate, t.ReturnDate,
              t.NeedsRoomBooking, t.GoNeedsTicketBooking, t.ReturnNeedsTicketBooking, t.NeedsRentBooking
@@ -65,6 +67,7 @@ export async function listAdminQueue(): Promise<AdminQueueItem[]> {
   return (res.recordset as Record<string, unknown>[]).map((x) => ({
     id: x.Id as number,
     requestNo: (x.RequestNo as string) ?? null,
+    brandCode: (x.BrandCode as string) ?? null,
     requesterFullName: (x.RequesterFullName as string) ?? null,
     requesterPosition: (x.RequesterPosition as string) ?? null,
     requesterDepartmentName: (x.RequesterDepartmentName as string) ?? null,
