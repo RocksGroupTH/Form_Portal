@@ -2,8 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   GRANTABLE_BOOKING_TABS,
+  GRANTABLE_BOOKING_MENUS,
   decideBookingTabAccess,
   filterGrantableBookingTabKeys,
+  filterStorableBookingKeys,
+  isBookingMenuKey,
   isGrantableBookingTabKey,
 } from "./settings-tabs";
 
@@ -305,4 +308,53 @@ test("every AP-17 settings handler is gated, and approvers is the admin-only one
     8,
     "the AP-17 settings routes gained or lost a handler — check its gate, then update this number",
   );
+});
+
+/* ── The two work-queue menus ─────────────────────────────────────────────
+ *
+ * Stored in the same `AccBookingApproverTab` rows as the settings tabs, which
+ * is why they must be told apart from them: `requireBookingSettingsTab` gates
+ * *configuration*, and a menu grant is not that.
+ */
+
+test("both booking menus are grantable, in the page's order", () => {
+  assert.deepEqual(
+    GRANTABLE_BOOKING_MENUS.map((m) => m.key),
+    ["bookingQueue", "accountApproval"],
+  );
+});
+
+test("a menu key is not a settings tab, and a settings tab is not a menu", () => {
+  assert.equal(isGrantableBookingTabKey("bookingQueue"), false);
+  assert.equal(isGrantableBookingTabKey("accountApproval"), false);
+  assert.equal(isBookingMenuKey("brands"), false);
+  assert.equal(isBookingMenuKey("access"), false);
+});
+
+test("an unknown menu key is refused however it is spelled", () => {
+  assert.equal(isBookingMenuKey("nope"), false);
+  assert.equal(isBookingMenuKey(""), false);
+  assert.equal(isBookingMenuKey("__proto__"), false);
+  assert.equal(isBookingMenuKey("BookingQueue"), false);
+});
+
+test("a padded menu key still matches", () => {
+  assert.equal(isBookingMenuKey(" bookingQueue "), true);
+});
+
+test("storage keeps both vocabularies; authorization keeps only tabs", () => {
+  const both = ["brands", "bookingQueue", "access", "nope"];
+  // 'access' and 'nope' are in neither vocabulary and are dropped by both.
+  assert.deepEqual(filterStorableBookingKeys(both), ["brands", "bookingQueue"]);
+  assert.deepEqual(filterGrantableBookingTabKeys(both), ["brands"]);
+});
+
+/**
+ * The security property the split exists to preserve: a menu grant must not
+ * open a settings route. `decideBookingTabAccess` refuses it because
+ * `isGrantableBookingTabKey` does.
+ */
+test("a menu grant never satisfies a settings tab", () => {
+  assert.equal(decideBookingTabAccess(false, ["bookingQueue"], "bookingQueue"), false);
+  assert.equal(decideBookingTabAccess(false, ["bookingQueue"], "brands"), false);
 });

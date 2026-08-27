@@ -8,7 +8,7 @@ import {
 } from "@/lib/acc/booking-approver-service";
 import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
 import { setBookingApproverTabs } from "@/lib/acc/travel-booking/booking-approver-tabs";
-import { filterGrantableBookingTabKeys } from "@/lib/acc/travel-booking/settings-tabs";
+import { filterStorableBookingKeys } from "@/lib/acc/travel-booking/settings-tabs";
 
 /*
  * AP-17's สิทธิ์เข้าถึง tab — the roster that decides who sees the booking
@@ -65,9 +65,14 @@ export async function GET() {
  * `settingsTabs`: **omitted leaves the grants alone**; an array is the whole
  * granted set, so `[]` revokes everything. The distinction is the point — the
  * add-approver call and any future partial save send no tabs, and treating that
- * as an empty set would silently revoke every grant the person held. Unknown
- * keys — `access` above all — are dropped by `filterGrantableBookingTabKeys`
- * before the write: the client's list is a request, not a decision.
+ * as an empty set would silently revoke every grant the person held. The field
+ * carries both vocabularies stored in `AccBookingApproverTab` — settings-tab
+ * keys and the two work-queue menu keys — so it is filtered by
+ * `filterStorableBookingKeys`, not the narrower `filterGrantableBookingTabKeys`:
+ * that one would strip a menu key before it ever reached
+ * `setBookingApproverTabs`, silently discarding half of what the panel posts.
+ * Unknown keys are dropped either way — the client's list is a request, not a
+ * decision.
  * Requires IT Admin or System Admin.
  */
 export async function POST(req: NextRequest) {
@@ -129,7 +134,7 @@ export async function POST(req: NextRequest) {
       if (approverId) {
         await setBookingApproverTabs(
           approverId,
-          filterGrantableBookingTabKeys(
+          filterStorableBookingKeys(
             (body.settingsTabs as unknown[]).map((k) => String(k)),
           ),
         );

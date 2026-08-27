@@ -5,7 +5,7 @@ import useSWR from "swr";
 import { AlertTriangle, Check, Loader2, Plus, ShieldCheck, UserCheck, UserX } from "lucide-react";
 import { toast } from "sonner";
 import { ADSearchModal, type ADResult } from "@/components/settings/ADSearchModal";
-import { GRANTABLE_BOOKING_TABS } from "@/lib/acc/travel-booking/settings-tabs";
+import { GRANTABLE_BOOKING_TABS, GRANTABLE_BOOKING_MENUS } from "@/lib/acc/travel-booking/settings-tabs";
 
 const ENDPOINT = "/api/request/travel-booking/settings/approvers";
 
@@ -79,12 +79,21 @@ function ConfirmModal({
   );
 }
 
-/* ── Per-tab grants ──
+/* ── Per-tab and per-menu grants ──
  *
  * One checkbox per entry in `GRANTABLE_BOOKING_TABS`, which is also what the
  * settings page builds its tab strip from — so the columns and the tabs cannot
  * drift, and the tab that hands out access (`access`) can never appear among
  * them. A non-admin who could open it would grant themselves the rest.
+ *
+ * `GRANTABLE_BOOKING_MENUS` — the booking-queue and account-approval work
+ * queues — is a separate vocabulary stored in the same `AccBookingApproverTab`
+ * rows. `settings-tabs.ts` keeps the two apart for authorization
+ * (`isGrantableBookingTabKey` refuses a menu key, `isBookingMenuKey` refuses a
+ * tab key), but for *display and save* here they are one combined grant set:
+ * a single checked-state and a single POST, or a save that touched only one
+ * half would replace the stored row and silently erase the other half —
+ * `setBookingApproverTabs` replaces the granted set, it does not merge.
  */
 function TabGrantCheckbox({
   checked,
@@ -127,6 +136,14 @@ function TabGrantCheckbox({
   );
 }
 
+// The whole grant vocabulary this panel can tick, tabs first then menus — the
+// order the columns render in, and the order posted so what is stored never
+// depends on which box happened to be ticked last.
+const ALL_GRANT_COLUMNS: readonly { key: string; label: string }[] = [
+  ...GRANTABLE_BOOKING_TABS,
+  ...GRANTABLE_BOOKING_MENUS,
+];
+
 function TabGrantCells({
   row,
   onSaved,
@@ -160,9 +177,12 @@ function TabGrantCells({
           email: row.email,
           displayName: row.displayName,
           isActive: row.isActive,
-          // Posted in GRANTABLE_BOOKING_TABS order, so what is stored never
-          // depends on the order the boxes happened to be ticked.
-          settingsTabs: GRANTABLE_BOOKING_TABS.filter((t) => next.has(t.key)).map((t) => t.key),
+          // The whole granted set — settings tabs AND the two menu grants —
+          // travels together in one POST. `setBookingApproverTabs` replaces
+          // the stored set rather than merging it, so posting only the tab
+          // half (or only the menu half) would silently erase the other half
+          // of whatever this person already held.
+          settingsTabs: ALL_GRANT_COLUMNS.filter((t) => next.has(t.key)).map((t) => t.key),
         }),
       });
       const json = await res.json();
@@ -192,6 +212,16 @@ function TabGrantCells({
           />
         </td>
       ))}
+      {GRANTABLE_BOOKING_MENUS.map((menu) => (
+        <td key={menu.key} className="px-3 py-2.5 text-center">
+          <TabGrantCheckbox
+            checked={checked.has(menu.key)}
+            saving={saving}
+            onChange={() => void toggle(menu.key)}
+            ariaLabel={`${row.displayName || row.email} — ${menu.label}`}
+          />
+        </td>
+      ))}
     </>
   );
 }
@@ -212,10 +242,11 @@ function TabGrantCells({
  * available action. Deactivation is a soft delete — rows are never removed, so
  * the history of who could see what stays readable.
  *
- * Between the two sit the four per-tab grant columns. They are only offered on
- * an **active** row: the save behind a tick is the same upsert that adds a
- * person, so ticking a box on a deactivated row would quietly restore them, and
- * their grants are inert while they are off anyway.
+ * Between the two sit the settings-tab grant columns and, grouped under their
+ * own "เมนูที่เห็น" heading, the two work-queue menu grant columns. They are
+ * only offered on an **active** row: the save behind a tick is the same
+ * upsert that adds a person, so ticking a box on a deactivated row would
+ * quietly restore them, and their grants are inert while they are off anyway.
  */
 export function BookingApproverSettings() {
   const {
@@ -353,35 +384,74 @@ export function BookingApproverSettings() {
         ) : (
           <>
           <p className="text-[11px] mb-2" style={{ color: "var(--text-muted)" }}>
-            ผู้อนุมัติที่ไม่ใช่แอดมินจะเห็นเฉพาะแท็บที่ติ๊กให้
+            ผู้อนุมัติที่ไม่ใช่แอดมินจะเห็นเฉพาะแท็บและเมนูที่ติ๊กให้
           </p>
           <div className="overflow-x-auto">
-            <table className="w-full text-[11px] min-w-[820px]">
+            <table className="w-full text-[11px] min-w-[980px]">
               <thead>
+                <tr
+                  style={{
+                    background: "var(--bg-card-header)",
+                  }}
+                >
+                  <th
+                    rowSpan={2}
+                    className="text-left px-4 py-2 font-semibold align-bottom"
+                    style={{ color: "var(--text-muted)", borderBottom: "1px solid var(--border-light)" }}
+                  >
+                    ชื่อ
+                  </th>
+                  <th
+                    rowSpan={2}
+                    className="text-left px-4 py-2 font-semibold align-bottom"
+                    style={{ color: "var(--text-muted)", borderBottom: "1px solid var(--border-light)" }}
+                  >
+                    อีเมล
+                  </th>
+                  <th
+                    rowSpan={2}
+                    className="text-left px-4 py-2 font-semibold align-bottom"
+                    style={{ color: "var(--text-muted)", borderBottom: "1px solid var(--border-light)" }}
+                  >
+                    รหัสพนักงาน
+                  </th>
+                  {/* Group heading for the settings-tab columns below — no text
+                      of its own, since the tab strip already names each one and
+                      "แท็บตั้งค่า" would only repeat that. */}
+                  <th
+                    colSpan={GRANTABLE_BOOKING_TABS.length}
+                    className="text-center px-3 py-1 font-semibold"
+                    style={{ color: "var(--text-faint)", borderBottom: "1px solid var(--border-light)" }}
+                  />
+                  {/* The two work-queue menu grants get their own heading so an
+                      admin can tell a menu grant from a settings grant at a
+                      glance — they are a different vocabulary, stored in the
+                      same rows, and mean "sees this queue", not "may configure
+                      this". */}
+                  <th
+                    colSpan={GRANTABLE_BOOKING_MENUS.length}
+                    className="text-center px-3 py-1 font-semibold whitespace-nowrap"
+                    style={{ color: "var(--text-faint)", borderBottom: "1px solid var(--border-light)" }}
+                  >
+                    เมนูที่เห็น
+                  </th>
+                  {/* Status and its control share one column: the badge reports,
+                      the button acts. A badge that is also a button reads as
+                      neither. */}
+                  <th
+                    rowSpan={2}
+                    className="text-center px-4 py-2 font-semibold align-bottom"
+                    style={{ color: "var(--text-muted)", borderBottom: "1px solid var(--border-light)" }}
+                  >
+                    สถานะ
+                  </th>
+                </tr>
                 <tr
                   style={{
                     borderBottom: "1px solid var(--border-light)",
                     background: "var(--bg-card-header)",
                   }}
                 >
-                  <th
-                    className="text-left px-4 py-2 font-semibold"
-                    style={{ color: "var(--text-muted)" }}
-                  >
-                    ชื่อ
-                  </th>
-                  <th
-                    className="text-left px-4 py-2 font-semibold"
-                    style={{ color: "var(--text-muted)" }}
-                  >
-                    อีเมล
-                  </th>
-                  <th
-                    className="text-left px-4 py-2 font-semibold"
-                    style={{ color: "var(--text-muted)" }}
-                  >
-                    รหัสพนักงาน
-                  </th>
                   {/* The grantable settings tabs, in the settings page's own
                       order — both lists are built from GRANTABLE_BOOKING_TABS,
                       so a fifth tab appears in both or in neither. */}
@@ -394,15 +464,18 @@ export function BookingApproverSettings() {
                       {tab.label}
                     </th>
                   ))}
-                  {/* Status and its control share one column: the badge reports,
-                      the button acts. A badge that is also a button reads as
-                      neither. */}
-                  <th
-                    className="text-center px-4 py-2 font-semibold"
-                    style={{ color: "var(--text-muted)" }}
-                  >
-                    สถานะ
-                  </th>
+                  {/* The grantable work-queue menus, in the page's own order —
+                      both lists are built from GRANTABLE_BOOKING_MENUS, so a
+                      third menu appears in both or in neither. */}
+                  {GRANTABLE_BOOKING_MENUS.map((menu) => (
+                    <th
+                      key={menu.key}
+                      className="text-center px-3 py-2 font-semibold whitespace-nowrap"
+                      style={{ color: "var(--text-muted)" }}
+                    >
+                      {menu.label}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
