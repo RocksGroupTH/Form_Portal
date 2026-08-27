@@ -1,3 +1,5 @@
+import { getPaymentDates } from "@/lib/acc/payment-calendar";
+import { paymentDateForApproval } from "@/lib/acc/payment-cycle";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { queryBothPools } from "@/lib/acc/query-both";
 import {
@@ -81,6 +83,12 @@ export interface ReportRow {
    * accountant's.
    */
   managerApprovedAt?: string | null;
+  /**
+   * The round this claim is *meant* for, from the manager's clock — see
+   * `payment-cycle.ts`. A suggestion shown beside the editable date; nothing
+   * writes it.
+   */
+  suggestedPaymentDate?: string | null;
   /** HR department code (`AccRequest.RequesterDepartmentCode`), falling back to HR. */
   requesterDepartmentCode?: string | null;
   /** True when the signed-in user already approved the MANAGER step (My Work API). */
@@ -694,9 +702,20 @@ export async function queryReport(f: ReportFilters): Promise<ReportRow[]> {
       ),
     );
 
-    return (res.recordset as Record<string, unknown>[]).map((x) =>
-      mapRow(x, view),
-    );
+    const mapped = (res.recordset as Record<string, unknown>[]).map((x) => mapRow(x, view));
+
+    // One calendar fetch for the whole result, and only when something in it
+    // has a manager approval to read — the suggestion is computed from the raw
+    // `Date`, not from the ISO string on the mapped row, so it stays here
+    // beside the recordset rather than moving into `mapRow`.
+    if (res.recordset.some((x: Record<string, unknown>) => x.ManagerApprovedAt)) {
+      const calendar = await getPaymentDates();
+      mapped.forEach((row, i) => {
+        const actioned = (res.recordset[i] as Record<string, unknown>).ManagerApprovedAt as Date | null;
+        row.suggestedPaymentDate = paymentDateForApproval(actioned, calendar);
+      });
+    }
+    return mapped;
   })();
   return rows.sort(bySubmittedAtDesc);
 }
