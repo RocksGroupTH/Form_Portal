@@ -196,3 +196,53 @@ test("the cause's own row, if its flag flips too, gets a truthful note about its
   assert.equal(meta.locked, true);
   assert.equal(meta.before.days, meta.after.days);
 });
+
+test("a rewritten per diem also rewrites AccRequest.TotalAmount, in the same statement", async () => {
+  const { recomputeGroupPerDiem } = await loadRecompute();
+
+  // Same fixture as the first test: request 2 stops being a continuation and
+  // gets its first day back. `AccTravelBooking.PerDiemTotal` moving without
+  // `AccRequest.TotalAmount` moving with it is what left My Requests and My
+  // Work showing the pre-cancellation figure for good.
+  const rows = [
+    {
+      RequestId: 1, SortOrder: 0, DepartDate: d("2026-01-01"), ReturnDate: d("2026-01-03"),
+      IsContinuation: false, PerDiemDays: 2, PerDiemTotal: 0, Status: "Cancelled", EmployeeId: null,
+    },
+    {
+      RequestId: 2, SortOrder: 1, DepartDate: d("2026-01-03"), ReturnDate: d("2026-01-04"),
+      IsContinuation: true, PerDiemDays: 1, PerDiemTotal: 0, Status: "Submitted", EmployeeId: null,
+    },
+  ];
+  const { tx, calls } = makeFakeTx(rows);
+
+  await recomputeGroupPerDiem(tx, "grp-1", { requestId: 1, requestNo: "TRL26-00001", kind: "cancelled" });
+
+  const updates = callsFor(calls, "UPDATE", 2);
+  assert.equal(updates.length, 1, "still one round-trip — both tables in one batch");
+  assert.match(updates[0].sql, /UPDATE \[dbo\]\.\[AccTravelBooking\] SET/);
+  assert.match(updates[0].sql, /UPDATE \[dbo\]\.\[AccRequest\] SET\s+TotalAmount=@total/);
+  // The same bound value feeds both, so the two figures cannot drift apart.
+  assert.match(updates[0].sql, /WHERE Id=@rid/);
+});
+
+test("a frozen row rewrites neither figure — TotalAmount follows the same writability rule", async () => {
+  const { recomputeGroupPerDiem } = await loadRecompute();
+
+  const rows = [
+    {
+      RequestId: 1, SortOrder: 0, DepartDate: d("2026-01-01"), ReturnDate: d("2026-01-03"),
+      IsContinuation: false, PerDiemDays: 2, PerDiemTotal: 0, Status: "Cancelled", EmployeeId: null,
+    },
+    {
+      RequestId: 2, SortOrder: 1, DepartDate: d("2026-01-03"), ReturnDate: d("2026-01-04"),
+      IsContinuation: true, PerDiemDays: 1, PerDiemTotal: 200, Status: "Completed", EmployeeId: null,
+    },
+  ];
+  const { tx, calls } = makeFakeTx(rows);
+
+  await recomputeGroupPerDiem(tx, "grp-1", { requestId: 1, requestNo: "TRL26-00001", kind: "cancelled" });
+
+  assert.equal(callsFor(calls, "UPDATE", 2).length, 0, "accounting signed it — neither table is touched");
+  assert.equal(callsFor(calls, "INSERT", 2).length, 1, "but the locked audit row still goes in");
+});

@@ -94,6 +94,13 @@ export async function recomputeGroupPerDiem(
       afterDays = computed.days;
       afterTotal = computed.total;
 
+      // Both money figures, one batch, one transaction, one writability rule.
+      // `AccRequest.TotalAmount` is the per-diem total surfaced on every list
+      // row — `submitTravelBookingGroup` stamps it at submit and nothing else
+      // ever wrote it, so a day given back moved `AccTravelBooking.PerDiemTotal`
+      // and left My Requests, My Work and the header showing the
+      // pre-cancellation figure for good, disagreeing with the accounting queue
+      // and the report, which read the detail row.
       await tx.request()
         .input("rid", sql.Int, requestId)
         .input("cont", sql.Bit, nowContinuation ? 1 : 0)
@@ -102,7 +109,10 @@ export async function recomputeGroupPerDiem(
         .query(`UPDATE [dbo].[AccTravelBooking] SET
                   IsContinuation=@cont, PerDiemDays=@days, PerDiemTotal=@total,
                   UpdatedAt=SYSDATETIME()
-                WHERE RequestId=@rid`);
+                WHERE RequestId=@rid;
+                UPDATE [dbo].[AccRequest] SET
+                  TotalAmount=@total, UpdatedAt=SYSDATETIME()
+                WHERE Id=@rid`);
     }
 
     const causeLabel = cause.kind === "cancelled" ? "ถูกยกเลิก" : "ไม่ได้รับอนุมัติ";
