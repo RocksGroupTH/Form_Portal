@@ -1,5 +1,4 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
-import { fixThaiDate } from "@/lib/db/mssql";
 import { hrEmployeeTable } from "@/lib/hr/constants";
 import { allocateRequestNo } from "@/lib/acc/sequence";
 import { listClrErpBranchOptions } from "@/lib/clr/clear-advance-admin-service";
@@ -82,9 +81,9 @@ function mapRequestRow(r: Record<string, unknown>): ClearAdvanceRequest {
     companyName: (r.CompanyName as string) ?? null,
     totalAmount: num(r.TotalAmount),
     submittedBy: (r.SubmittedBy as number) ?? null,
-    submittedAt: r.SubmittedAt ? fixThaiDate(r.SubmittedAt as Date)!.toISOString() : null,
-    createdAt: r.CreatedAt ? fixThaiDate(r.CreatedAt as Date)!.toISOString() : "",
-    updatedAt: r.UpdatedAt ? fixThaiDate(r.UpdatedAt as Date)!.toISOString() : "",
+    submittedAt: r.SubmittedAt ? (r.SubmittedAt as Date).toISOString() : null,
+    createdAt: r.CreatedAt ? (r.CreatedAt as Date).toISOString() : "",
+    updatedAt: r.UpdatedAt ? (r.UpdatedAt as Date).toISOString() : "",
   };
 }
 
@@ -219,8 +218,8 @@ export async function getRequest(id: number): Promise<ClearAdvanceRequest | null
       actionedByStaffId: (x.ActionedByStaffId as number) ?? null,
       actionedByName: (x.ActionedByHrName as string) ?? null,
       assignedName: (x.AssignedHrName as string) ?? null,
-      actionedAt: x.ActionedAt ? fixThaiDate(x.ActionedAt as Date)!.toISOString() : null,
-      createdAt: x.CreatedAt ? fixThaiDate(x.CreatedAt as Date)!.toISOString() : "",
+      actionedAt: x.ActionedAt ? (x.ActionedAt as Date).toISOString() : null,
+      createdAt: x.CreatedAt ? (x.CreatedAt as Date).toISOString() : "",
     };
   });
 
@@ -251,7 +250,7 @@ export async function listMyDrafts(userId: number): Promise<ClearAdvanceDraftSum
     advanceAmount: num(row.AdvanceAmount),
     actualTotal: num(row.ActualTotal),
     refundToCompany: num(row.RefundToCompany),
-    updatedAt: row.UpdatedAt ? fixThaiDate(row.UpdatedAt as Date)!.toISOString() : "",
+    updatedAt: row.UpdatedAt ? (row.UpdatedAt as Date).toISOString() : "",
   }));
 }
 

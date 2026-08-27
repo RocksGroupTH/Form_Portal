@@ -1,5 +1,4 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
-import { fixThaiDate } from "@/lib/db/mssql";
 import { hrEmployeeTable } from "@/lib/hr/constants";
 import { AP3_FORM_CODE } from "@/features/clear-advance/constants";
 
@@ -100,7 +99,7 @@ export async function listControlRows(f: ClrReportFilters): Promise<ClrControlRo
     const step = (x.CurrentStepCode as string) ?? null;
     return {
       id: x.Id as number,
-      submittedAt: x.SubmittedAt ? fixThaiDate(x.SubmittedAt as Date)!.toISOString() : null,
+      submittedAt: x.SubmittedAt ? (x.SubmittedAt as Date).toISOString() : null,
       requestNo: (x.RequestNo as string) ?? null,
       staffId: (x.StaffId as number) ?? null,
       advanceRequestNo: (x.AdvanceRequestNo as string) ?? null,
@@ -116,11 +115,11 @@ export async function listControlRows(f: ClrReportFilters): Promise<ClrControlRo
       pvDocNo: (x.PvDocNo as string) ?? null,
       paymentDate: x.PaymentDate ? toYmd(x.PaymentDate as Date) : null,
       managerApprovedName: (x.MgrName as string) ?? null,
-      managerApprovedAt: x.MgrAt ? fixThaiDate(x.MgrAt as Date)!.toISOString() : null,
+      managerApprovedAt: x.MgrAt ? (x.MgrAt as Date).toISOString() : null,
       accountActionedName: (x.AccName as string) ?? null,
-      accountActionedAt: x.AccAt ? fixThaiDate(x.AccAt as Date)!.toISOString() : null,
+      accountActionedAt: x.AccAt ? (x.AccAt as Date).toISOString() : null,
       headApprovedName: (x.HeadName as string) ?? null,
-      headApprovedAt: x.HeadAt ? fixThaiDate(x.HeadAt as Date)!.toISOString() : null,
+      headApprovedAt: x.HeadAt ? (x.HeadAt as Date).toISOString() : null,
       pendingOn: step ? (stepLabel[step] ?? step) : null,
       overallStatus: x.Status as string,
     };
