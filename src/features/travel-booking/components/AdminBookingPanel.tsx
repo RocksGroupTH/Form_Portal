@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
 import {
@@ -19,6 +19,7 @@ import {
   ThumbsDown,
   Ticket,
   Trash2,
+  Undo2,
   X,
 } from "lucide-react";
 import { Dialog } from "@/components/ui";
@@ -39,6 +40,7 @@ import {
   MAX_BOOKING_AMOUNT,
 } from "@/features/travel-booking/lib/booking-amounts";
 import { bookingFieldsLocked, type SavedBookingEntry } from "@/features/travel-booking/lib/booking-lock";
+import { bookingRowDirty } from "@/features/travel-booking/lib/booking-dirty";
 import { onFileAttached, onFileRemoved } from "@/features/travel-booking/lib/booking-file-sync";
 import {
   sanitizeBookingNo,
@@ -143,6 +145,12 @@ function isTypeComplete(rows: BookingDetail[]): boolean {
  * that press. The bottom "ทำรายการเสร็จ" button is disabled until every
  * required group is complete — the server (`completeRequest`) re-validates the same gate, so
  * this is a UX pre-check, not the source of truth.
+ *
+ * It is **also** disabled while any row is carrying unsaved edits, and that half has no
+ * server counterpart at all: the server sees only what was saved, so a booking signed off
+ * against figures still sitting in somebody's input boxes is invisible to it. Each card
+ * answers `bookingRowDirty` for itself and reports up through `onDirtyChange`; the panel
+ * counts, and says in Thai why the button is off rather than leaving a dead control.
  */
 export function AdminBookingPanel({
   request,
@@ -181,6 +189,39 @@ export function AdminBookingPanel({
   const [bounceComment, setBounceComment] = useState("");
   const [bouncing, setBouncing] = useState(false);
 
+  /**
+   * Which rows are carrying unsaved edits, keyed on the row's own identity.
+   *
+   * The Complete button is here and the edits are three components down, so each
+   * card reports its own answer up and the panel only ever counts. A plain object
+   * rather than a `Set` because the update has to be immutable to re-render and
+   * `new Set(prev)` needs downlevel iteration under this ES5 target.
+   *
+   * **The key is `BookingTypeGroup`'s own `rowKey`**, prefixed by type — the same
+   * identity that keeps a card mounted when its draft slot becomes a saved row, so
+   * a save does not look like one row leaving and another arriving.
+   *
+   * `reportRowDirty` is `useCallback`'d with no dependencies so a card's reporting
+   * effect is driven by its own dirtiness and nothing else, and the updater returns
+   * `prev` untouched when the answer has not changed, so a report that says the
+   * same thing again costs no render.
+   */
+  const [dirtyRows, setDirtyRows] = useState<Record<string, true>>({});
+  const reportRowDirty = useCallback((key: string, dirty: boolean) => {
+    setDirtyRows((prev) => {
+      if (dirty === (prev[key] === true)) return prev;
+      const next = { ...prev };
+      // Clearing the entry rather than storing `false` is what makes an unmounted
+      // row stop counting: a card that has gone leaves nothing behind, so a
+      // deleted row cannot hold the Complete button disabled with nothing on
+      // screen explaining why.
+      if (dirty) next[key] = true;
+      else delete next[key];
+      return next;
+    });
+  }, []);
+  const anyRowDirty = Object.keys(dirtyRows).length > 0;
+
   const missingLabels = requiredRules
     .filter((r) => !isTypeComplete(rowsByType.get(r.type) ?? []))
     .map((r) => r.label);
@@ -188,6 +229,10 @@ export function AdminBookingPanel({
 
   async function handleComplete() {
     if (!requestId) return;
+    // The button is disabled for this, but the check is repeated here because a
+    // press that slipped through would sign the booking off against figures that
+    // exist only on somebody's screen — see `booking-dirty.ts`.
+    if (anyRowDirty) return;
     setCompleting(true);
     try {
       const res = await fetch(`/api/request/travel-booking/admin/requests/${requestId}/complete`, {
@@ -300,6 +345,7 @@ export function AdminBookingPanel({
               info={typeInfo(request, rule.type, optionIcons)}
               rows={rowsByType.get(rule.type) ?? []}
               onChanged={onChanged}
+              onRowDirty={reportRowDirty}
               onRequestDelete={(detailId) => setPendingDelete({ detailId, label: rule.label })}
               onViewFile={(f) =>
                 setViewing({
@@ -332,11 +378,36 @@ export function AdminBookingPanel({
           </div>
         )}
 
+        {/* Why the Complete button is off. A disabled control with no explanation is
+            the thing to avoid, and this one is off for a reason nobody can see from
+            the button: an edit typed into a card further up the page. Kept separate
+            from the "ยังกรอกไม่ครบ" strip above — the two can be true at once, and
+            they ask for different things to be done. */}
+        {anyRowDirty && (
+          <div
+            className="rounded-xl px-4 py-3 flex items-start gap-2"
+            style={{ background: "var(--bg-info-yellow)", border: "1px solid var(--border-info-yellow)" }}
+          >
+            <AlertTriangle size={15} style={{ color: "var(--text-info-yellow)", marginTop: 1 }} className="shrink-0" />
+            <p className="text-[12.5px] m-0" style={{ color: "var(--text-info-yellow)" }}>
+              มีรายการที่แก้ไขแล้วยังไม่ได้บันทึก — ปิดงานไม่ได้จนกว่าจะกด “บันทึกข้อมูลการจอง”
+              ในรายการนั้น หรือกด “ใช้ข้อมูลที่บันทึกไว้ล่าสุด” เพื่อย้อนกลับไปข้อมูลที่บันทึกไว้
+            </p>
+          </div>
+        )}
+
         <div className="flex flex-wrap items-center gap-2 pt-1" style={{ borderTop: "1px solid var(--border-light)" }}>
           <button
             type="button"
             onClick={handleComplete}
-            disabled={completing || !allComplete}
+            title={
+              anyRowDirty
+                ? "มีรายการที่ยังไม่ได้บันทึก"
+                : !allComplete
+                  ? "ยังกรอกข้อมูลการจองไม่ครบ"
+                  : undefined
+            }
+            disabled={completing || !allComplete || anyRowDirty}
             className="mt-2 inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-[13px] font-bold cursor-pointer border-none text-white disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ background: "var(--positive, #15b357)" }}
           >
@@ -471,6 +542,7 @@ function BookingTypeGroup({
   info,
   rows,
   onChanged,
+  onRowDirty,
   onRequestDelete,
   onViewFile,
   onViewPending,
@@ -482,6 +554,8 @@ function BookingTypeGroup({
   info: InfoGroup[];
   rows: BookingDetail[];
   onChanged: () => void;
+  /** Report one row's unsaved-edits answer to the panel, which owns Complete. */
+  onRowDirty: (key: string, dirty: boolean) => void;
   onRequestDelete: (detailId: number) => void;
   onViewFile: (file: TravelBookingFileMeta) => void;
   onViewPending: (file: File) => void;
@@ -519,6 +593,15 @@ function BookingTypeGroup({
      hiding it the moment the POST returns would blink the card out and back in. It is
      the row's arrival that closes the slot, not a count going up: a row appearing for
      any other reason should not shut a slot somebody deliberately opened. */
+  /* The dirty registry is keyed on the same identity as the React key, prefixed by
+     type so two groups' `row-7` cannot be one entry. Same reason `rowKey` exists at
+     all: a draft slot keeps its identity when it becomes a saved row, so a save is
+     not read as one row leaving the register and another joining it. */
+  const reportDirty = useCallback(
+    (key: string, dirty: boolean) => onRowDirty(`${type}:${key}`, dirty),
+    [type, onRowDirty],
+  );
+
   const draftLanded = rows.some((r) => slotOfRow.current.get(r.id) === draftSlot);
   const showDraft = !draftLanded && (draftOpen || rows.length === 0);
   const total = rows.length + (showDraft ? 1 : 0);
@@ -558,12 +641,14 @@ function BookingTypeGroup({
         {rows.map((detail, idx) => (
           <BookingRowCard
             key={rowKey(detail.id)}
+            dirtyKey={rowKey(detail.id)}
             type={type}
             requestId={requestId}
             detail={detail}
             position={idx + 1}
             total={total}
             onChanged={onChanged}
+            onDirtyChange={reportDirty}
             onDelete={() => onRequestDelete(detail.id)}
             onViewFile={onViewFile}
             onViewPending={onViewPending}
@@ -573,12 +658,14 @@ function BookingTypeGroup({
         {showDraft && (
           <BookingRowCard
             key={`slot-${draftSlot}`}
+            dirtyKey={`slot-${draftSlot}`}
             type={type}
             requestId={requestId}
             detail={undefined}
             position={rows.length + 1}
             total={total}
             onChanged={onChanged}
+            onDirtyChange={reportDirty}
             onCreated={(id) => slotOfRow.current.set(id, draftSlot)}
             onDelete={rows.length > 0 ? () => setDraftOpen(false) : undefined}
             onViewFile={onViewFile}
@@ -610,23 +697,29 @@ function BookingTypeGroup({
  * of creating another one.
  */
 function BookingRowCard({
+  dirtyKey,
   type,
   requestId,
   detail,
   position,
   total,
   onChanged,
+  onDirtyChange,
   onCreated,
   onDelete,
   onViewFile,
   onViewPending,
 }: {
+  /** This card's identity in the panel's dirty registry — the parent's `rowKey`. */
+  dirtyKey: string;
   type: BookingType;
   requestId: number;
   detail: BookingDetail | undefined;
   position: number;
   total: number;
   onChanged: () => void;
+  /** Tell the panel whether this row is carrying unsaved edits. */
+  onDirtyChange: (key: string, dirty: boolean) => void;
   /** Told the id the very first save minted, so the parent can keep this card's key. */
   onCreated?: (id: number) => void;
   onDelete?: () => void;
@@ -790,20 +883,61 @@ function BookingRowCard({
     );
   }
 
-  /* Flag anything Admin still has to act on: edits typed but not saved yet, or a row that is
-     missing a number / price / attachment. Figures are compared numerically so "50" vs "50.00"
-     doesn't read as an unsaved edit. */
-  const dirty =
-    (sanitizeBookingNo(bookingNo) ?? "") !== (detail?.bookingNo?.trim() ?? "") ||
-    nPrice !== (detail?.priceExVat ?? null) ||
-    nVat !== (detail?.vatAmount ?? null) ||
-    nDiscount !== (detail?.discountAmount ?? null) ||
-    nTotal !== (detail?.totalAmount ?? null);
-  /* A held file is unsaved work exactly as a typed-but-uncommitted figure is, so it
-     lights the same badge rather than a second one competing with it. */
-  const unsaved = dirty || pendingFiles.length > 0;
+  /**
+   * Anything Admin still has to act on: edits typed but not saved yet — a held file
+   * being one of them — or a row missing a number / price / attachment.
+   *
+   * The comparison itself is `bookingRowDirty`, which owns it for both readers: this
+   * badge and the panel's Complete gate. It is read against **`detail ?? savedSnapshot`**,
+   * the same value the field lock uses and for the same reason — `detail` is the
+   * parent's copy and lags a successful save by a refetch, so comparing against it
+   * alone would report a row as edited for the one beat after its own save, and
+   * hold Complete off with nothing to press but Save again.
+   */
+  const unsaved = bookingRowDirty({
+    saved: detail ?? savedSnapshot,
+    current: { bookingNo, priceExVat, vat, discount, totalAmount },
+    pendingFileCount: pendingFiles.length,
+  });
   const needsAttention = unsaved || !complete;
   const attentionLabel = unsaved ? "ยังไม่ได้บันทึก" : "ยังไม่ครบ";
+
+  /**
+   * Report this row's answer to the panel, and take it out of the register when the
+   * card goes.
+   *
+   * One effect with a cleanup, not a mount flag and a cleanup-only ref: this file
+   * documents that trap a few lines up (`aliveRef`), and it does not apply here.
+   * StrictMode's mount → cleanup → mount runs the cleanup, which deregisters, and
+   * then the effect again, which re-reports — so the register ends the sequence
+   * holding exactly what this row says. The cleanup is what stops a **deleted** row
+   * from leaving Complete disabled forever with nothing on screen to explain it.
+   */
+  useEffect(() => {
+    onDirtyChange(dirtyKey, unsaved);
+    return () => onDirtyChange(dirtyKey, false);
+  }, [dirtyKey, unsaved, onDirtyChange]);
+
+  /**
+   * Put the row back to what was last saved. **Local only — no fetch, no DELETE.**
+   *
+   * Stored files stay stored; only picks this card is still holding are dropped,
+   * because they are not part of the saved state and are what "unsaved" mostly
+   * means here. A row with nothing saved empties, which leaves it exactly as a
+   * fresh slot is — `bookingFieldsLocked` re-locks it once the held picks are gone,
+   * which is the correct state for a row nobody has started.
+   */
+  function handleRevert() {
+    const saved = detail ?? savedSnapshot;
+    setBookingNo(saved?.bookingNo ?? "");
+    setPriceExVat(numText(saved?.priceExVat));
+    setVat(numText(saved?.vatAmount));
+    setDiscount(numText(saved?.discountAmount));
+    setTotalAmount(numText(saved?.totalAmount));
+    setPendingFiles([]);
+    setReadNote(null);
+    toast.success(saved ? "ย้อนกลับไปใช้ข้อมูลที่บันทึกไว้ล่าสุดแล้ว" : "ล้างข้อมูลที่กรอกไว้แล้ว");
+  }
 
   /** Create (detailId == null) or update the row from the current inputs. Toasts on failure. */
   async function persist(id: number | null): Promise<number | null> {
@@ -1214,16 +1348,51 @@ function BookingRowCard({
       {/* Save last — the row is filled top-to-bottom (number → price → files), so the commit
           action belongs at the end. It is also what uploads: a picked file waits on the card
           until this is pressed, so the row and its attachments are written by one action. */}
-      <button
-        type="button"
-        onClick={handleSave}
-        disabled={saving}
-        className="self-start inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-[12.5px] font-bold cursor-pointer disabled:opacity-60"
-        style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)", color: "var(--text-secondary)" }}
-      >
-        {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
-        {uploading ? "กำลังแนบไฟล์..." : saving ? "กำลังบันทึก..." : "บันทึกข้อมูลการจอง"}
-      </button>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving}
+          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-[12.5px] font-bold cursor-pointer disabled:opacity-60"
+          style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)", color: "var(--text-secondary)" }}
+        >
+          {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+          {uploading ? "กำลังแนบไฟล์..." : saving ? "กำลังบันทึก..." : "บันทึกข้อมูลการจอง"}
+        </button>
+
+        {/* Beside Save and only while there is something to undo — the other half of
+            what the Complete gate asks for. A control offering to discard nothing is
+            noise, so it is not rendered on a clean row rather than shown disabled.
+
+            No Dialog: this throws away local edits and nothing else, which is not
+            what the two confirms in this file are for — those delete rows and bytes
+            on the server. A toast says what happened, in the same voice as Save's. */}
+        {unsaved && (
+          <button
+            type="button"
+            onClick={handleRevert}
+            /* Refused mid-read: the call in flight writes the five fields when it
+               lands, so reverting underneath it would put back figures the person
+               had just asked to be rid of. The fields are shut for that moment
+               anyway — see `bookingFieldsLocked`. */
+            disabled={saving || reading}
+            title={
+              detail ?? savedSnapshot
+                ? "ทิ้งการแก้ไขในรายการนี้ แล้วกลับไปใช้ข้อมูลที่บันทึกไว้ล่าสุด"
+                : "ล้างข้อมูลที่กรอกไว้ในรายการนี้"
+            }
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-[12.5px] font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{
+              background: "transparent",
+              border: "1px solid var(--border-info-yellow)",
+              color: "var(--text-info-yellow)",
+            }}
+          >
+            <Undo2 size={13} />
+            {detail ?? savedSnapshot ? "ใช้ข้อมูลที่บันทึกไว้ล่าสุด" : "ล้างข้อมูลที่กรอก"}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
