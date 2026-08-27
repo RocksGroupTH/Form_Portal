@@ -51,7 +51,9 @@ function isTypeComplete(rows: BookingDetail[]): boolean {
 
 /**
  * Admin fill-in panel (spec §7/§8.1) — rendered on the detail page only for account-area
- * viewers while `Status === 'ManagerApproved'`. One group per REQUIRED booking (room/ticket/
+ * viewers while the request is on the Admin booking step (`Status === 'ManagerApproved'` **and**
+ * `CurrentStepCode === 'ADMIN'` — the status alone also covers accounting's sign-off, where
+ * every control below is refused by the server). One group per REQUIRED booking (room/ticket/
  * rent, gated by `REQUIRED_BOOKING_RULES` against the request's Needs*Booking flags).
  *
  * A group holds as many rows as the trip needs (two hotels, two tickets, …) — "เพิ่ม…" adds

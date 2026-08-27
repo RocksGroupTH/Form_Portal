@@ -337,6 +337,16 @@ interface TravelBookingDetailProps {
    * placeholder for anything not filled in yet.
    */
   readOnlyBooking?: boolean;
+  /**
+   * Whether the read-only booking summary prints each row's ราคา (ก่อน VAT).
+   *
+   * Defaults to `!readOnlyBooking`, which is the rule this used to be: price is
+   * Admin/accounting information and the requester's drawer must not show it.
+   * It is a separate prop because the accounting sign-off queue needs both
+   * halves at once — the fill-in panel frozen *and* the prices visible, since
+   * that is the payout being approved.
+   */
+  showBookingPrice?: boolean;
   /** Set on the copy rendered inside the per-diem panel — see `siblingId`. */
   nested?: boolean;
 }
@@ -345,6 +355,7 @@ export function TravelBookingDetail({
   request,
   onChanged,
   readOnlyBooking = false,
+  showBookingPrice,
   nested = false,
 }: TravelBookingDetailProps) {
   /**
@@ -528,15 +539,21 @@ export function TravelBookingDetail({
 
   /* ── Booking cards — Admin fills them in; everyone else only ever sees them read-only ── */
   const bookingRules = useMemo(() => REQUIRED_BOOKING_RULES.filter((r) => r.needed(request)), [request]);
-  const showAdminPanel =
-    !readOnlyBooking && request.status === "ManagerApproved" && canAccount && request.id != null;
+  /* `ManagerApproved` alone is not the Admin stage — it is also accounting's
+     sign-off, where every control this panel renders (add/edit/delete a booking
+     row, upload/delete an attachment, เสร็จสิ้น) is refused by the server with a
+     Thai error. `CurrentStepCode` is what separates the two stages. */
+  const atAdminStep = request.status === "ManagerApproved" && request.currentStepCode === "ADMIN";
+  const atAccountStep = request.status === "ManagerApproved" && request.currentStepCode === "ACCOUNT";
+  const showAdminPanel = !readOnlyBooking && atAdminStep && canAccount && request.id != null;
+  const showPrice = showBookingPrice ?? !readOnlyBooking;
   /* A rejected /access fetch leaves `canAccount` false, which is indistinguishable
      from a genuine refusal. The panel still fails closed, but the banner below is
      then addressed to someone we never established is not an operator, so it gets
      a variant that adds the caveat instead. Only the operator-facing view is
      affected: in `readOnlyBooking` the viewer is the requester, who is waiting for
      Admin whatever the roster says. */
-  const bookingAreaUnknown = !readOnlyBooking && Boolean(accessError);
+  const bookingAreaUnknown = !readOnlyBooking && atAdminStep && Boolean(accessError);
   const showBookingSummary =
     !showAdminPanel &&
     (readOnlyBooking || !accessLoading) &&
@@ -575,8 +592,8 @@ export function TravelBookingDetail({
         </div>
       )}
 
-      {/* ── ManagerApproved, permission check unavailable ── */}
-      {request.status === "ManagerApproved" && bookingAreaUnknown && (
+      {/* ── Admin booking stage, permission check unavailable ── */}
+      {bookingAreaUnknown && (
         <div
           className="rounded-2xl p-4 mb-4 flex items-start gap-2.5"
           style={{ background: "var(--bg-info-yellow)", border: "1px solid var(--border-info-yellow)" }}
@@ -588,15 +605,30 @@ export function TravelBookingDetail({
         </div>
       )}
 
-      {/* ── ManagerApproved, not-account-area banner ── */}
-      {request.status === "ManagerApproved" && !accessLoading && !canAccount && !bookingAreaUnknown && (
+      {/* ── Admin booking stage, not-account-area banner ── */}
+      {atAdminStep && !accessLoading && !canAccount && !bookingAreaUnknown && (
         <div
           className="rounded-2xl p-4 mb-4 flex items-start gap-2.5"
           style={{ background: "var(--bg-info-yellow)", border: "1px solid var(--border-info-yellow)" }}
         >
           <AlertCircle size={16} style={{ color: "var(--text-info-yellow)", marginTop: 2 }} className="shrink-0" />
           <p className="text-[13px] m-0" style={{ color: "var(--text-info-yellow)" }}>
-            รอ Admin กรอกข้อมูลการจอง — ทีมบัญชีจะดำเนินการจองตามรายการที่ร้องขอ แล้วอัปเดตสถานะเป็น &quot;เสร็จสิ้น&quot;
+            รอ Admin กรอกข้อมูลการจอง — ทีมบัญชีจะดำเนินการจองตามรายการที่ร้องขอ แล้วส่งต่อให้บัญชีตรวจสอบ
+          </p>
+        </div>
+      )}
+
+      {/* ── Accounting stage — Admin has finished; the two banners above are no
+             longer true of this request, and neither is anything about เสร็จสิ้น
+             being Admin's to press. ── */}
+      {atAccountStep && (
+        <div
+          className="rounded-2xl p-4 mb-4 flex items-start gap-2.5"
+          style={{ background: "var(--bg-info-yellow)", border: "1px solid var(--border-info-yellow)" }}
+        >
+          <AlertCircle size={16} style={{ color: "var(--text-info-yellow)", marginTop: 2 }} className="shrink-0" />
+          <p className="text-[13px] m-0" style={{ color: "var(--text-info-yellow)" }}>
+            Admin จองให้เรียบร้อยแล้ว — รอบัญชีตรวจสอบและอนุมัติปิดงาน
           </p>
         </div>
       )}
@@ -776,8 +808,9 @@ export function TravelBookingDetail({
                                 )}
                               </p>
                             </div>
-                            {/* Price is Admin/accounting information — not shown in the requester view. */}
-                            {!readOnlyBooking && d.priceExVat != null && (
+                            {/* Price is Admin/accounting information — not shown in the requester
+                                view, but shown wherever the viewer is approving the payout. */}
+                            {showPrice && d.priceExVat != null && (
                               <div className="flex items-baseline gap-2 min-w-0">
                                 <FieldLabel inline>ราคา (ก่อน VAT)</FieldLabel>
                                 <p className="text-[13px] m-0 tabular-nums" style={{ color: "var(--color-action)" }}>

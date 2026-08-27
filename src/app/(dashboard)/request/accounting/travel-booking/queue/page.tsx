@@ -86,12 +86,17 @@ export default function TravelBookingAdminQueuePage() {
   );
 
   /* After any action, refresh both the queue and the open request — and close the panel once
-     the request has left the Admin stage (completed / returned / rejected). */
+     the request has left the Admin stage (handed to accounting / returned / rejected).
+
+     The step, not the status alone: เสร็จสิ้น hands the request to accounting by
+     moving `CurrentStepCode` to 'ACCOUNT' and leaving `Status='ManagerApproved'`
+     exactly where it was, so a status-only test never fires — the row drops out
+     of the queue beneath while the panel stays open on dead Admin controls. */
   const handleChanged = useCallback(async () => {
     void mutate();
     if (openId == null) return;
     const updated = await loadDetail(openId);
-    if (updated && updated.status !== "ManagerApproved") {
+    if (updated && !(updated.status === "ManagerApproved" && updated.currentStepCode === "ADMIN")) {
       setOpenId(null);
       setDetail(null);
     }
