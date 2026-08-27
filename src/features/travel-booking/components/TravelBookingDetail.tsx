@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { SidePanel, SidePanelClose } from "@/components/ui/SidePanel";
 import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -25,6 +25,7 @@ import {
   User,
   Wallet,
   XCircle,
+  Loader2,
 } from "lucide-react";
 import { Dialog } from "@/components/ui";
 import { Avatar } from "@/components/ui/Avatar";
@@ -342,9 +343,47 @@ interface TravelBookingDetailProps {
    * placeholder for anything not filled in yet.
    */
   readOnlyBooking?: boolean;
+  /** Set on the copy rendered inside the per-diem panel — see `siblingId`. */
+  nested?: boolean;
 }
 
-export function TravelBookingDetail({ request, onChanged, readOnlyBooking = false }: TravelBookingDetailProps) {
+export function TravelBookingDetail({
+  request,
+  onChanged,
+  readOnlyBooking = false,
+  nested = false,
+}: TravelBookingDetailProps) {
+  /**
+   * The sibling trip opened from the per-diem note, in a panel over this one.
+   *
+   * A panel rather than a route: this component is mounted three ways — the
+   * detail page, the admin queue's SidePanel and My Requests' — and navigating
+   * would throw away whichever of those the reader is in. One panel here works
+   * the same in all three.
+   *
+   * `nested` is the recursion stop. A continuation chain is short, but the note
+   * inside the sibling would otherwise open a third panel over the second; at
+   * depth one the number renders as plain text instead.
+   */
+  const [siblingId, setSiblingId] = useState<number | null>(null);
+  const [sibling, setSibling] = useState<TravelBookingRequest | null>(null);
+  const [siblingLoading, setSiblingLoading] = useState(false);
+
+  useEffect(() => {
+    if (siblingId == null) return;
+    let cancelled = false;
+    setSiblingLoading(true);
+    setSibling(null);
+    fetch(`/api/request/travel-booking/requests/${siblingId}`)
+      .then((r) => r.json())
+      .then((j: { ok?: boolean; data?: TravelBookingRequest }) => {
+        if (!cancelled && j?.ok && j.data) setSibling(j.data);
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setSiblingLoading(false); });
+    return () => { cancelled = true; };
+  }, [siblingId]);
+
   const { canAccount, loading: accessLoading, error: accessError } = useBookingAccess();
 
   /* ── Viewer identity — mirrors AP-1 RequestDetail.tsx's `/api/me/employee` lookup ── */
@@ -912,14 +951,18 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
                     วันแรก{" "}
                     <strong>{request.departDate ? fmtYmdDisplay(request.departDate) : "—"}</strong>{" "}
                     นับ Per diem ไปแล้วใน{" "}
-                    {request.continuationFromRequestId && request.continuationFromRequestNo ? (
-                      <Link
-                        href={`/request/travel-booking/${request.continuationFromRequestId}`}
-                        className="font-bold underline underline-offset-2"
+                    {request.continuationFromRequestId && request.continuationFromRequestNo && !nested ? (
+                      <button
+                        type="button"
+                        onClick={() => setSiblingId(request.continuationFromRequestId)}
+                        title="ดูรายละเอียดคำขอนั้น"
+                        className="font-bold underline underline-offset-2 cursor-pointer border-none bg-transparent p-0"
                         style={{ color: "var(--nav-active-text)" }}
                       >
                         {request.continuationFromRequestNo}
-                      </Link>
+                      </button>
+                    ) : request.continuationFromRequestNo ? (
+                      <strong>{request.continuationFromRequestNo}</strong>
                     ) : (
                       <strong>ทริปก่อนหน้า</strong>
                     )}
@@ -1148,6 +1191,45 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
       </Dialog>
 
       <ImageLightbox open={lightbox != null} src={lightbox?.src ?? ""} alt={lightbox?.alt} onClose={() => setLightbox(null)} />
+
+      {/* The trip that counted this one's first day — same panel the queue and
+          My Requests open a request in, so the number behaves the same
+          everywhere. `nested` stops the note inside it opening a third. */}
+      <SidePanel
+        open={siblingId != null}
+        onClose={() => setSiblingId(null)}
+        width="min(760px, 100vw)"
+        zIndex={60}
+      >
+        <div
+          className="flex items-center justify-between px-4 py-3 shrink-0"
+          style={{ borderBottom: "1px solid var(--border-light)" }}
+        >
+          <div className="min-w-0">
+            <p className="text-[14px] font-bold truncate m-0" style={{ color: "var(--text-heading)" }}>
+              {sibling?.requestNo ?? request.continuationFromRequestNo ?? "รายละเอียดคำขอ"}
+            </p>
+            <p className="text-[11px] m-0 mt-0.5" style={{ color: "var(--text-muted)" }}>
+              ทริปที่นับ Per diem ของวันแรกไปแล้ว
+            </p>
+          </div>
+          <SidePanelClose onClick={() => setSiblingId(null)} />
+        </div>
+
+        <div className="flex-1 overflow-y-auto no-scrollbar px-4 py-4 acc-theme">
+          {siblingLoading && !sibling ? (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 size={24} className="animate-spin" style={{ color: "var(--text-muted)" }} />
+            </div>
+          ) : sibling ? (
+            <TravelBookingDetail request={sibling} readOnlyBooking nested />
+          ) : (
+            <p className="text-[13px] py-16 text-center" style={{ color: "var(--text-muted)" }}>
+              โหลดรายละเอียดไม่สำเร็จ
+            </p>
+          )}
+        </div>
+      </SidePanel>
     </div>
   );
 }
