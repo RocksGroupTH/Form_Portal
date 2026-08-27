@@ -107,9 +107,34 @@ export async function recomputeGroupPerDiem(
 
     const causeLabel = cause.kind === "cancelled" ? "ถูกยกเลิก" : "ไม่ได้รับอนุมัติ";
     const causeNo = cause.requestNo ?? `#${cause.requestId}`;
-    const note = writable
-      ? `Per diem ${beforeDays} → ${afterDays} วัน (${beforeTotal.toFixed(2)} → ${afterTotal.toFixed(2)}) เพราะ ${causeNo} ${causeLabel}`
-      : `${causeNo} ${causeLabel} แต่คำขอนี้ผ่านบัญชีแล้ว — ไม่ได้แก้ยอด (${beforeDays} วัน / ${beforeTotal.toFixed(2)})`;
+    const figures = `(${beforeDays} วัน / ${beforeTotal.toFixed(2)})`;
+
+    // `writable` can be false for three different reasons, and only one of them
+    // is "accounting already signed this" — a status-blind note lied about the
+    // other two, including on the cause's own row: continuationFlags reports a
+    // dead trip's own flag as false, so whenever the dying request was itself
+    // stored with IsContinuation=true — the ordinary case — it re-enters this
+    // loop and, before this fix, got told it had "already passed accounting"
+    // when what actually happened is that it died.
+    let note: string;
+    if (writable) {
+      note = `Per diem ${beforeDays} → ${afterDays} วัน (${beforeTotal.toFixed(2)} → ${afterTotal.toFixed(2)}) เพราะ ${causeNo} ${causeLabel}`;
+    } else if (!departDate || !returnDate) {
+      note = `${causeNo} ${causeLabel} แต่คำขอนี้ไม่มีวันที่เดินทางครบถ้วน — ไม่ได้แก้ยอด ${figures}`;
+    } else if (status === "Completed") {
+      note = `${causeNo} ${causeLabel} แต่คำขอนี้ผ่านบัญชีแล้ว — ไม่ได้แก้ยอด ${figures}`;
+    } else {
+      // Dead itself (Cancelled/Rejected) — including the self-referencing case
+      // where `requestId === cause.requestId`. Any future terminal status
+      // `perDiemWritable` doesn't recognise falls in here too, named rather
+      // than guessed at, so the sentence stays true even for a status this
+      // file has never heard of.
+      const deathLabel =
+        status === "Cancelled" ? "คำขอนี้เองก็ถูกยกเลิกเช่นกัน"
+        : status === "Rejected" ? "คำขอนี้เองก็ไม่ได้รับอนุมัติเช่นกัน"
+        : `คำขอนี้เองมีสถานะ ${status}`;
+      note = `${causeNo} ${causeLabel} — ${deathLabel} จึงไม่ได้แก้ยอด ${figures}`;
+    }
 
     // AuthorId NULL, deliberately: nobody did this. A cancellation elsewhere
     // caused it, and `causedByRequestId` in the metadata is who to look at.
