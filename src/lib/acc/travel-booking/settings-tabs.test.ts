@@ -9,12 +9,29 @@ import {
 
 /* ── The list ────────────────────────────────────────────────────────────── */
 
-test("exactly four booking tabs are grantable, in the page's order", () => {
-  assert.equal(GRANTABLE_BOOKING_TABS.length, 4);
+test("exactly five booking tabs are grantable, in the page's order", () => {
+  assert.equal(GRANTABLE_BOOKING_TABS.length, 5);
   assert.deepEqual(
     GRANTABLE_BOOKING_TABS.map((t) => t.key),
-    ["reasons", "accommodations", "vehicles", "rent-vehicles"],
+    ["brands", "reasons", "accommodations", "vehicles", "rent-vehicles"],
   );
+});
+
+/**
+ * `brands` is the one grantable key that is **not** a `SettingsKind`. The other
+ * four are served by the generic `[kind]` route, whose map is list/upsert/
+ * reorder over option rows; toggling which brands a form accepts has none of
+ * those shapes and gets its own route, exactly as AP-1's does.
+ *
+ * The other half of that claim — that `isSettingsKind("brands")` is false — is
+ * **not** asserted here on purpose: importing `./settings-route-map` pulls in
+ * `settings-service`, then a pool, then `@/env`, which validates the whole
+ * environment at import and throws in the test runner. The union in
+ * `settings-tabs.ts` is `SettingsKind | "brands"`, so the typecheck already
+ * refuses a `brands` entry in `SETTINGS_KIND_ROUTES` being anything else.
+ */
+test("brands is a grantable tab key", () => {
+  assert.ok(isGrantableBookingTabKey("brands"));
 });
 
 // The labels come from travel-booking-settings/page.tsx, not from the keys.
@@ -23,7 +40,7 @@ test("exactly four booking tabs are grantable, in the page's order", () => {
 test("the labels are the settings page's own", () => {
   assert.deepEqual(
     GRANTABLE_BOOKING_TABS.map((t) => t.label),
-    ["เหตุผลการเดินทาง", "ที่พัก", "การเดินทาง", "เช่ายานพาหนะ"],
+    ["แบรนด์ที่เบิก", "เหตุผลการเดินทาง", "ที่พัก", "การเดินทาง", "เช่ายานพาหนะ"],
   );
 });
 
@@ -47,7 +64,7 @@ test("a non-admin is refused access whatever the grant list says", () => {
   assert.equal(
     decideBookingTabAccess(
       false,
-      ["reasons", "accommodations", "vehicles", "rent-vehicles", "access"],
+      ["brands", "reasons", "accommodations", "vehicles", "rent-vehicles", "access"],
       "access",
     ),
     false,
@@ -180,8 +197,15 @@ async function readBookingRouteFile(route: string): Promise<string> {
  * would not match, and a literal is exactly what a raw `params.kind` inlined by
  * a later hand is not. What it must be is checked below.
  */
+/**
+ * The argument may be an identifier — the `[kind]` routes pass their narrowed
+ * segment — **or a string literal**, which `settings/brands` passes because it
+ * is not a `[kind]` route and has exactly one tab to name. A literal is no
+ * weaker: `requireBookingSettingsTab` takes `GrantableBookingTabKey`, so a
+ * misspelled one fails the typecheck rather than reaching this regex.
+ */
 const BOOKING_GATE =
-  /await (requireBookingSettingsTab\(\s*([A-Za-z_$][\w$]*)\s*\)|requireRole\()/;
+  /await (requireBookingSettingsTab\(\s*([A-Za-z_$][\w$]*|"[^"]+"|'[^']+')\s*\)|requireRole\()/;
 
 /** Each exported HTTP handler in a route file, as `[method, body-from-here]`. */
 function splitHandlers(source: string): { method: string; body: string }[] {
@@ -233,9 +257,17 @@ test("every AP-17 settings handler is gated, and approvers is the admin-only one
         continue;
       }
 
-      // The tab reaching the gate must be the value `isSettingsKind` narrowed,
-      // in that order — never a raw path segment, and never a hand-written
-      // string. `isSettingsKind` is what refuses `__proto__`.
+      // A gate argument that is a string literal names its tab outright: the
+      // route serves exactly one, so there is no path segment to narrow and
+      // `isSettingsKind` has nothing to do. `settings/brands` is that shape —
+      // it is not a `[kind]` route. The literal is still checked, by the
+      // typecheck: the parameter is `GrantableBookingTabKey`.
+      const gateArg = found[2] ?? "";
+      if (gateArg.charAt(0) === '"' || gateArg.charAt(0) === "'") continue;
+
+      // Otherwise the tab reaching the gate must be the value `isSettingsKind`
+      // narrowed, in that order — never a raw path segment, and never a
+      // hand-written string. `isSettingsKind` is what refuses `__proto__`.
       const narrowAt = h.body.indexOf("if (!isSettingsKind(");
       assert.ok(narrowAt !== -1, `${route} ${h.method} gates on a tab it never narrowed`);
       assert.ok(
@@ -270,7 +302,7 @@ test("every AP-17 settings handler is gated, and approvers is the admin-only one
   // at rather than merged on the strength of the file already being gated.
   assert.equal(
     handlerCount,
-    6,
+    8,
     "the AP-17 settings routes gained or lost a handler — check its gate, then update this number",
   );
 });

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
-import { Settings, Compass, Hotel, Car, Plane, ShieldCheck } from "lucide-react";
+import { Settings, Compass, Hotel, Car, Plane, ShieldCheck, Building2 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { backTo } from "@/lib/request-hub-nav";
 import {
@@ -15,6 +15,7 @@ import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { useBookingAccess } from "@/features/travel-booking/hooks/useBookingAccess";
 import { TravelOptionSettings, type TravelOptionKind } from "@/features/travel-booking/components/settings/TravelOptionSettings";
 import { BookingApproverSettings } from "@/features/travel-booking/components/settings/BookingApproverSettings";
+import { BrandSettings } from "@/features/accounting/components/settings/BrandSettings";
 
 /**
  * Four of the five tabs are option tables driven by `TravelOptionSettings`.
@@ -26,7 +27,11 @@ import { BookingApproverSettings } from "@/features/travel-booking/components/se
  * the grants are handed out, so it is absent from `GRANTABLE_BOOKING_TABS` and
  * refused server-side by `decideBookingTabAccess` whatever a grant row says.
  */
-type TabKey = TravelOptionKind | "access";
+/**
+ * `brands` is neither a `TravelOptionKind` (it has no `[kind]` route) nor
+ * `access`; it is AP-1's brand panel pointed at AP-17's rows.
+ */
+type TabKey = TravelOptionKind | "brands" | "access";
 
 /**
  * Icons are the only thing this page still owns about a tab. The **labels come
@@ -35,6 +40,7 @@ type TabKey = TravelOptionKind | "access";
  * and the checkbox that grants it end up naming different things.
  */
 const TAB_ICONS: Record<TabKey, React.ReactNode> = {
+  brands: <Building2 size={15} />,
   reasons: <Compass size={15} />,
   accommodations: <Hotel size={15} />,
   vehicles: <Plane size={15} />,
@@ -162,7 +168,12 @@ export default function TravelBookingSettingsPage() {
   const effectiveTab = visibleTabs.some((t) => t.key === activeTab)
     ? activeTab
     : visibleTabs[0].key;
-  const panel = effectiveTab === "access" ? null : TAB_PANELS[effectiveTab];
+  // `brands` and `access` both render their own component rather than the
+  // generic option list, so neither has a TAB_PANELS entry.
+  const panel =
+    effectiveTab === "access" || effectiveTab === "brands"
+      ? null
+      : TAB_PANELS[effectiveTab];
   const panelLabel = visibleTabs.filter((t) => t.key === effectiveTab)[0]?.label ?? "";
 
   return (
@@ -204,7 +215,12 @@ export default function TravelBookingSettingsPage() {
         </div>
 
         <div className="p-5">
-          {effectiveTab === "access" || panel === null ? (
+          {effectiveTab === "brands" ? (
+            <BrandSettings
+              endpoint="/api/request/travel-booking/settings/brands"
+              description="เลือกแบรนด์ที่พนักงานสามารถเลือกในฟอร์มขอเดินทาง AP-17 — ติ๊กเพื่อเปิด/ปิด แล้วกดบันทึก"
+            />
+          ) : effectiveTab === "access" || panel === null ? (
             <BookingApproverSettings />
           ) : (
             <TravelOptionSettings

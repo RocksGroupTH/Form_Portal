@@ -2,13 +2,6 @@ import sql from "mssql";
 import { env } from "@/env";
 import { applySqlPort } from "@/lib/db/sql-port";
 
-const TH_OFFSET_MS = 7 * 60 * 60 * 1000;
-
-export function fixThaiDate(d: Date | null | undefined): Date | null {
-  if (!d) return null;
-  return new Date(d.getTime() - TH_OFFSET_MS);
-}
-
 /* ── Shared connection options ── */
 
 const isIP = (s: string) => /^\d{1,3}(\.\d{1,3}){3}$/.test(s) || s.includes(":");
@@ -16,6 +9,32 @@ const isIP = (s: string) => /^\d{1,3}(\.\d{1,3}){3}$/.test(s) || s.includes(":")
 const sharedOptions: sql.config["options"] = {
   encrypt: env.MSSQL_ENCRYPT ?? false,
   trustServerCertificate: env.MSSQL_TRUST_CERT !== false,
+  /**
+   * **The one place the app's clock is reconciled with the database's.**
+   *
+   * Every timestamp in these databases is a Thai wall clock: they are written
+   * by `SYSDATETIME()`, and the SQL Server runs at UTC+7 (measured
+   * 2026-08-27 — `DATEDIFF(MINUTE, SYSUTCDATETIME(), SYSDATETIME())` = 420).
+   * The driver's default, `useUTC: true`, reads those naive values *as UTC*,
+   * so a row stored at 22:37 came back as an instant seven hours later and
+   * every screen rendered 05:37 the next day. It broke writes the same way in
+   * reverse: a JS `Date` passed to `sql.DateTime2` was stored as its UTC
+   * parts, seven hours behind the `SYSDATETIME()` values beside it in the
+   * same table — `ErpInterfaceSentAt`, AP-4's `AcceptedAt`, the ERP sync
+   * cutoffs.
+   *
+   * `false` makes the driver read and write in the Node process's own zone,
+   * which matches the SQL Server's. Both directions then agree with
+   * `SYSDATETIME()` and a plain `.toISOString()` is correct everywhere, which
+   * is what the "use local getters, never `fixThaiDate()`" rule in CLAUDE.md
+   * always assumed and was not true until now.
+   *
+   * **This depends on the Node process running in Thai time**, which is the
+   * same assumption the rest of the app already makes. If a host is ever set
+   * to UTC, every timestamp shifts by seven hours and this is the line to
+   * look at.
+   */
+  useUTC: false,
   // Avoid DEP0123: TLS ServerName must not be an IP address (RFC 6066).
   // When host is an IP and trustServerCertificate is on, use 'localhost' for SNI.
   serverName: env.MSSQL_TLS_SERVER_NAME || (isIP(env.MSSQL_HOST) ? "localhost" : undefined),

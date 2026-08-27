@@ -143,6 +143,8 @@ export interface TravelBookingRequest {
   id?: number;
   requestNo: string | null;
   status: TravelBookingStatus;
+  /** `AccRequest.BrandCode` — the company this booking is filed under. */
+  brandCode: string | null;
 
   // requester snapshot (from AccRequest / AccTravelBooking)
   staffId: number | null;
@@ -266,6 +268,15 @@ export interface TravelBookingDraftSummary {
 export interface SaveTravelBookingInput {
   /** AccRequest.Id — present when updating an existing tab within a draft group. */
   id?: number;
+
+  /**
+   * `AccRequest.BrandCode` — the company **this trip** is claimed against.
+   *
+   * Per trip, not per request: a group is one `AccRequest` row per tab, each
+   * with its own `BrandCode`, and one journey can be for a different company
+   * than the next. Nullable on a draft, required at submit.
+   */
+  brandCode: string | null;
 
   reasonId: number | null;
   reasonCustomText: string | null;

@@ -1,5 +1,5 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
-import { fixThaiDate, getAppPool } from "@/lib/db/mssql";
+import { getAppPool } from "@/lib/db/mssql";
 import { loadErpJournalBuildContext } from "@/lib/acc/erp-journal-context";
 import { AP3_FORM_CODE } from "@/features/clear-advance/constants";
 
@@ -233,7 +233,7 @@ export async function listApprovalQueue(step?: string | null): Promise<ClrQueueR
     return {
       id: x.Id as number,
       requestNo: (x.RequestNo as string) ?? null,
-      submittedAt: x.SubmittedAt ? fixThaiDate(x.SubmittedAt as Date)!.toISOString() : null,
+      submittedAt: x.SubmittedAt ? (x.SubmittedAt as Date).toISOString() : null,
       currentStepCode: stepCode,
       stepLabel: stepCode ? (STEP_LABEL[stepCode] ?? stepCode) : "-",
       requesterFullName: (x.RequesterFullName as string) ?? null,

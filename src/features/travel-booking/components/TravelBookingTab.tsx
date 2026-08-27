@@ -1,7 +1,9 @@
 "use client";
 
 import { useMemo } from "react";
-import { Briefcase, Calendar, Car, FileCheck, Hotel, MapPin, StickyNote } from "lucide-react";
+import { Briefcase, Calendar, Car, Check, FileCheck, Hotel, MapPin, StickyNote } from "lucide-react";
+import { BrandMark } from "@/components/BrandMark";
+import type { AccBrandOption } from "@/features/accounting/types";
 import { LocalSearchSelect } from "./LocalSearchSelect";
 import { WorkLocationList } from "./WorkLocationList";
 import { DateRangeField } from "./DateRangeField";
@@ -93,6 +95,15 @@ function departureDefaults(
 
 interface TravelBookingTabProps {
   tab: TabFormState;
+  /**
+   * The brands this form may be claimed against.
+   *
+   * The *chosen* one is `tab.brandCode` — per trip, like every other field
+   * here, because a group is one `AccRequest` row per tab and each carries its
+   * own `BrandCode`. Only the option list is passed in, since it is the same
+   * for every tab and fetching it per tab would repeat the request.
+   */
+  brands: AccBrandOption[];
   isContinuation: boolean;
   perDiemEstimate: { days: number; total: number; groups: { rate: number; days: number }[] };
   allowanceRate: number | null;
@@ -126,6 +137,7 @@ export function TravelBookingTab({
   issues,
   triedSubmit,
   requesterStaffId,
+  brands,
   onChange,
   onSelectPendingIdCard,
   onRemoveIdCardFile,
@@ -212,6 +224,44 @@ export function TravelBookingTab({
     <div className="w-full max-w-full mx-auto flex flex-col gap-4 min-w-0">
       {/* เหตุผล + รายละเอียด + จังหวัด/สถานที่ */}
       <SectionCard dataTour="ap17-trip" icon={<Briefcase size={15} />} title="เหตุผลและรายละเอียดการเดินทาง">
+        {/* Above the reason, and required — per trip, like everything else in
+            this section. */}
+        <div data-field="brand">
+          <label className={labelClass} style={errLabelStyle(hasErr("brand"))}>
+            แบรนด์ที่เบิก{requiredStar}
+          </label>
+          {brands.length === 0 ? (
+            <p className="text-[13px] m-0 mt-1" style={{ color: "var(--text-faint)" }}>
+              ยังไม่ได้ตั้งค่าแบรนด์ที่เบิกได้สำหรับฟอร์มนี้ — ติดต่อผู้ดูแลระบบ
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-2 mt-1">
+                {brands.map((b) => {
+                  const active = tab.brandCode === b.brandCode;
+                  return (
+                    <button
+                      key={b.brandCode}
+                      type="button"
+                      onClick={() => onChange({ brandCode: active ? null : b.brandCode })}
+                      className="flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer text-[14px] font-semibold transition-all"
+                      style={{
+                        borderWidth: 2,
+                        borderStyle: "solid",
+                        borderColor: active ? "var(--nav-active-text)" : "var(--border-card)",
+                        background: active ? "var(--nav-active-bg)" : "var(--bg-card-alt)",
+                        color: active ? "var(--nav-active-text)" : "var(--text-secondary)",
+                      }}
+                    >
+                      <BrandMark src={b.brandLogo} alt="" code={b.brandCode} size={20} rounded="rounded" />
+                      {b.brandName}
+                      {active && <Check size={14} />}
+                    </button>
+                  );
+                })}
+            </div>
+          )}
+        </div>
+
         <div data-field="reason">
           <label className={labelClass} style={errLabelStyle(hasErr("reason"))}>
             เหตุผลการเดินทาง{requiredStar}

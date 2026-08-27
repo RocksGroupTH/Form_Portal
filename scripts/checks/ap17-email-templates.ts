@@ -12,6 +12,7 @@ const mockReq: TravelBookingRequest = {
   id: 123,
   requestNo: "TOF26-0007",
   status: "Submitted",
+  brandCode: "PCTH",
   staffId: 10176,
   requesterFullName: "สัตวัต ใจเย็น",
   requesterPhotoUrl: null,

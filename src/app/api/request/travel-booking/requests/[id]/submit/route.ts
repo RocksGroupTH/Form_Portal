@@ -5,6 +5,7 @@ import { uatActorGate } from "@/lib/acc/travel-booking/uat-gate";
 import { resolveLoginEmail } from "@/lib/auth-email";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { submitTravelBookingGroup } from "@/lib/acc/travel-booking/request-service";
+import { isBrandAllowedForForm } from "@/lib/acc/brand-options";
 import { processQueue } from "@/lib/acc/email-queue";
 import { isSharePointConfigured, moveSharePointFolder } from "@/lib/sharepoint";
 import { buildAccFolderPath, yearFromRequestNo } from "@/lib/acc/sharepoint-path";
@@ -42,6 +43,48 @@ export async function POST(
     const groupKey = await resolveGroupKey(id);
     if (!groupKey) {
       return NextResponse.json({ ok: false, error: "not found" }, { status: 404 });
+    }
+
+    // The brand is checked here, against `AccFormBrand`, and not only in the
+    // picker. A draft can hold a code the allowlist has since dropped — or one
+    // that was never on it — and a client-enforced invariant is not one. AP-4's
+    // submit does the same, for the same reason.
+    //
+    // `isBrandAllowedForForm` reads `AccFormBrand` alone; `getAllowedBrands`
+    // would enrich each row from the brand master over `getCorePool()`, which
+    // would fail an AP-17 submit on a Fast_Core outage over display data the
+    // check never reads.
+    // **Every trip in the group, not the first.** The brand is per trip — a
+    // group is one AccRequest row per tab, each with its own BrandCode — so a
+    // TOP 1 check would pass a group whose second journey names a brand that is
+    // blank, or one the allowlist has since dropped.
+    const pool = await getAccPool();
+    const brandRows = await pool
+      .request()
+      .input("groupKey", sql.NVarChar, groupKey)
+      .query(`SELECT r.Id, r.BrandCode FROM [dbo].[AccRequest] r
+              INNER JOIN [dbo].[AccTravelBooking] b ON b.RequestId = r.Id
+              WHERE b.GroupKey = @groupKey`);
+    const codes: string[] = [];
+    for (const row of brandRows.recordset as { BrandCode: string | null }[]) {
+      const code = (row.BrandCode ?? "").trim();
+      if (!code) {
+        return NextResponse.json(
+          { ok: false, error: "กรุณาเลือกแบรนด์ที่เบิกให้ครบทุกทริปก่อนส่งคำขอ" },
+          { status: 400 },
+        );
+      }
+      if (codes.indexOf(code) === -1) codes.push(code);
+    }
+    // De-duplicated first: two trips under one brand are the common case and
+    // should not cost two round trips to answer the same question.
+    for (const code of codes) {
+      if (!(await isBrandAllowedForForm(AP17_FORM_CODE, code))) {
+        return NextResponse.json(
+          { ok: false, error: `แบรนด์ ${code} ไม่อยู่ในรายการที่เบิกได้แล้ว — กรุณาเลือกใหม่` },
+          { status: 400 },
+        );
+      }
     }
 
     const loginEmail = resolveLoginEmail(session.user, null, { email: session.user.email });

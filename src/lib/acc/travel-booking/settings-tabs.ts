@@ -1,11 +1,16 @@
 /**
  * Which AP-17 settings tabs an admin may hand to an individual booking approver.
  *
- * The grant key IS the `[kind]` URL segment of
+ * Four of the five grant keys ARE the `[kind]` URL segment of
  * `/api/request/travel-booking/settings/[kind]` — `SETTINGS_KIND_ROUTES` in
- * `./settings-route-map` already defines those four and `isSettingsKind`
- * narrows a segment to them, so `GrantableBookingTabKey` reuses that union
- * rather than declaring a parallel one that could drift from it.
+ * `./settings-route-map` defines those and `isSettingsKind` narrows a segment
+ * to them, so the union is built from it rather than declared in parallel where
+ * it could drift.
+ *
+ * `brands` is the exception and has to be. That `[kind]` map is list/upsert/
+ * reorder over option rows; deciding which brands a form accepts has none of
+ * those shapes — it is a set of codes toggled on and off in `AccFormBrand` —
+ * so it gets its own route, exactly as AP-1's does.
  *
  * `access` — the สิทธิ์เข้าถึง tab itself — is deliberately absent, for the same
  * reason `approvers` is absent from AP-1's list: whoever can open it can grant
@@ -22,8 +27,8 @@
 
 import type { SettingsKind } from "./settings-route-map";
 
-/** The four keys an admin can tick — the same union the routes narrow to. */
-export type GrantableBookingTabKey = SettingsKind;
+/** The keys an admin can tick: every `[kind]` segment, plus `brands`. */
+export type GrantableBookingTabKey = SettingsKind | "brands";
 
 /**
  * The label each tab carries.
@@ -36,6 +41,7 @@ export type GrantableBookingTabKey = SettingsKind;
  * the key suggests: the tab covers the whole journey, not just the vehicle.
  */
 const BOOKING_TAB_LABELS: Record<GrantableBookingTabKey, string> = {
+  brands: "แบรนด์ที่เบิก",
   reasons: "เหตุผลการเดินทาง",
   accommodations: "ที่พัก",
   vehicles: "การเดินทาง",
@@ -44,6 +50,9 @@ const BOOKING_TAB_LABELS: Record<GrantableBookingTabKey, string> = {
 
 /** Display order — the order the settings page shows its tabs in. */
 const BOOKING_TAB_ORDER: readonly GrantableBookingTabKey[] = [
+  // First, like AP-1's: a form with no brand granted cannot be submitted at
+  // all, so it is the tab that has to be set before any of the others matter.
+  "brands",
   "reasons",
   "accommodations",
   "vehicles",
