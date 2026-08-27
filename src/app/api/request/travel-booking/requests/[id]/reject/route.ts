@@ -8,13 +8,18 @@ import { getAccPool, sql } from "@/lib/acc/pool";
 import { canAccessBookingArea } from "@/lib/acc/booking-access";
 import { getRequestHost } from "@/lib/acc/erp-environment";
 import { isManagerDevBypassHost } from "@/lib/acc/manager-auth";
-import { rejectRequest, rejectByAdmin, type Actor } from "@/lib/acc/travel-booking/approval";
+import { rejectRequest, rejectByAdmin, rejectByAccount, type Actor } from "@/lib/acc/travel-booking/approval";
 import { processQueue } from "@/lib/acc/email-queue";
 import { AP17_FORM_CODE } from "@/features/travel-booking/constants";
 
 /* ── POST /api/request/travel-booking/requests/[id]/reject ──
-   Manager step (Submitted) → manager rejects. Admin booking step (ManagerApproved) →
-   account-area Admin rejects instead of booking it (spec §8.1). */
+   Manager step (Submitted) → manager rejects. Admin booking step (ManagerApproved/ADMIN) →
+   account-area Admin rejects instead of booking it (spec §8.1). Accounting step
+   (ManagerApproved/ACCOUNT) → the sign-off desk rejects, ending the request as `Rejected`
+   like every other reject path.
+
+   The step, not the status: `ManagerApproved` names both post-manager stages, and each
+   service claims its own `CurrentStepCode` in its own UPDATE. */
 
 export async function POST(
   req: NextRequest,
@@ -45,6 +50,7 @@ export async function POST(
   const row = own.recordset[0] as { ManagerStaffId: number | null; Status: string; CurrentStepCode: string | null };
   const managerStaffId = row.ManagerStaffId ?? null;
   const atAdminStage = row.Status === "ManagerApproved" && row.CurrentStepCode === "ADMIN";
+  const atAccountStage = row.Status === "ManagerApproved" && row.CurrentStepCode === "ACCOUNT";
 
   const loginEmail = resolveLoginEmail(session.user, null, { email: session.user.email });
   const { employee } = await findActiveEmployeeByEmail(loginEmail);
@@ -56,7 +62,9 @@ export async function POST(
   // build — see `isManagerDevBypassHost`. The Host header alone no longer opens
   // this, on any host.
   const devBypass = isManagerDevBypassHost(await getRequestHost());
-  const allowed = atAdminStage
+  // Both post-manager stages are the booking area's own, so both are authorized
+  // the way the ACCOUNT step's other route (`account-approve`) is.
+  const allowed = atAdminStage || atAccountStage
     ? await canAccessBookingArea(loginEmail, session.user.role)
     : isManager || isAdmin || devBypass;
   if (!allowed) {
@@ -82,11 +90,15 @@ export async function POST(
       // the Admin stage, where acting is the actor's own role rather than
       // somebody else's. See `Actor.onBehalfOfManagerStaffId`.
       onBehalfOfManagerStaffId:
-        !atAdminStage && !isManager && managerStaffId != null ? managerStaffId : null,
+        !atAdminStage && !atAccountStage && !isManager && managerStaffId != null
+          ? managerStaffId
+          : null,
     };
-    const updated = atAdminStage
-      ? await rejectByAdmin(id, actor, comment)
-      : await rejectRequest(id, actor, comment);
+    const updated = atAccountStage
+      ? await rejectByAccount(id, actor, comment)
+      : atAdminStage
+        ? await rejectByAdmin(id, actor, comment)
+        : await rejectRequest(id, actor, comment);
     void processQueue().catch(() => {});
     return NextResponse.json({ ok: true, data: updated });
   } catch (e) {

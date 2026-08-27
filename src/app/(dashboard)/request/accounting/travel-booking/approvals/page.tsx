@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
-import { Check, ChevronRight, History, Inbox, Loader2, ThumbsUp } from "lucide-react";
+import { Check, ChevronRight, History, Inbox, Loader2, RotateCcw, ThumbsDown, ThumbsUp } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { backTo } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
@@ -107,6 +107,10 @@ export default function TravelBookingAccountApprovalsPage() {
   const [savingMonthId, setSavingMonthId] = useState<number | null>(null);
   const [approvingId, setApprovingId] = useState<number | null>(null);
   const [batchRunning, setBatchRunning] = useState(false);
+  /** Which of the panel's two non-approve exits is being composed, if either. */
+  const [panelAction, setPanelAction] = useState<"return" | "reject" | null>(null);
+  const [panelComment, setPanelComment] = useState("");
+  const [panelActionRunning, setPanelActionRunning] = useState(false);
 
   const loadDetail = useCallback(async (id: number): Promise<TravelBookingRequest | null> => {
     setLoadingDetail(true);
@@ -128,10 +132,20 @@ export default function TravelBookingAccountApprovalsPage() {
     (id: number) => {
       setOpenId(id);
       setDetail(null);
+      // A half-typed comment must not follow the reader to the next request.
+      setPanelAction(null);
+      setPanelComment("");
       void loadDetail(id);
     },
     [loadDetail],
   );
+
+  const closePanel = useCallback(() => {
+    setOpenId(null);
+    setDetail(null);
+    setPanelAction(null);
+    setPanelComment("");
+  }, []);
 
   const removeFromQueue = useCallback(
     (ids: number[]) => {
@@ -149,20 +163,65 @@ export default function TravelBookingAccountApprovalsPage() {
     [mutate, openId],
   );
 
-  /* After any action taken from the open panel (only account-approve reaches
-     this queue — Manager/Admin actions live on their own stages), refresh the
-     queue and close the panel once the request has left ACCOUNT. */
+  /* After any action taken from the open panel, refresh the queue and close the
+     panel once the request has left ACCOUNT.
+
+     The step, not the status alone: a return hands the request back to Admin and
+     leaves `Status='ManagerApproved'` untouched, so a status-only test would keep
+     the panel open on a request this queue no longer holds. */
   const handleChanged = useCallback(async () => {
     void mutate();
     if (openId == null) return;
     const updated = await loadDetail(openId);
-    if (updated && updated.status !== "ManagerApproved") {
+    if (updated && !(updated.status === "ManagerApproved" && updated.currentStepCode === "ACCOUNT")) {
       setOpenId(null);
       setDetail(null);
     }
   }, [mutate, openId, loadDetail]);
 
+  /* ── The two exits besides approve (see the return/reject routes' ACCOUNT
+     branch): hand it back to Admin to fix the booking, or reject it outright.
+     Both require a comment — the server refuses a blank one, and the person
+     picking the request up needs to be told what was wrong with it. ── */
+  async function submitPanelAction(id: number, action: "return" | "reject", comment: string) {
+    setPanelActionRunning(true);
+    try {
+      const res = await fetch(`/api/request/travel-booking/requests/${id}/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ comment }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!json?.ok) {
+        toast.error(json?.error ?? (action === "return" ? "ส่งกลับไม่สำเร็จ" : "ไม่อนุมัติไม่สำเร็จ"));
+        return;
+      }
+      toast.success(action === "return" ? "ส่งกลับให้ Admin แก้ไขแล้ว" : "ไม่อนุมัติแล้ว");
+      setPanelAction(null);
+      setPanelComment("");
+      removeFromQueue([id]);
+    } catch {
+      toast.error("เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง");
+    } finally {
+      setPanelActionRunning(false);
+    }
+  }
+
   const rows = data ?? [];
+
+  /**
+   * The open request's id, but only while it is genuinely still on this queue's
+   * step. The panel's actions are refused by the server anywhere else, and the
+   * step — not `Status='ManagerApproved'`, which spans two stages — is what says
+   * so.
+   */
+  const panelRequestId =
+    detail != null &&
+    detail.id != null &&
+    detail.status === "ManagerApproved" &&
+    detail.currentStepCode === "ACCOUNT"
+      ? detail.id
+      : null;
 
   const selectedRows = useMemo(() => rows.filter((r) => selectedIds.has(r.id)), [rows, selectedIds]);
   const allSelected = rows.length > 0 && rows.every((r) => selectedIds.has(r.id));
@@ -461,7 +520,7 @@ export default function TravelBookingAccountApprovalsPage() {
         </div>
       )}
 
-      <SidePanel open={openId != null} onClose={() => setOpenId(null)} width="min(760px, 100vw)" zIndex={50}>
+      <SidePanel open={openId != null} onClose={closePanel} width="min(760px, 100vw)" zIndex={50}>
         <div
           className="flex items-center justify-between px-4 py-3 shrink-0"
           style={{ borderBottom: "1px solid var(--border-light)" }}
@@ -474,7 +533,7 @@ export default function TravelBookingAccountApprovalsPage() {
               ตรวจสอบก่อนอนุมัติปิดงาน
             </p>
           </div>
-          <SidePanelClose onClick={() => setOpenId(null)} />
+          <SidePanelClose onClick={closePanel} />
         </div>
 
         <div className="flex-1 overflow-y-auto no-scrollbar px-4 py-4 acc-theme">
@@ -484,12 +543,96 @@ export default function TravelBookingAccountApprovalsPage() {
             </div>
           ) : detail ? (
             // `readOnlyBooking`: at ACCOUNT, Admin's booking fill-in is done — this
-            // view must never let it be re-opened for editing. `TravelBookingDetail`'s
-            // own `showAdminPanel` only checks `Status='ManagerApproved'`, which is
-            // still true at this step (only `CurrentStepCode` moved), so without this
-            // flag an Admin who is also an account approver would see the editable
-            // panel here, past the point Admin's own evidence should be frozen.
-            <TravelBookingDetail request={detail} onChanged={() => void handleChanged()} readOnlyBooking />
+            // view must never let it be re-opened for editing. `showBookingPrice`
+            // undoes the one thing that flag also happens to hide: this reader is
+            // approving the payout, so what the booking cost is exactly what they
+            // are here to check.
+            <>
+              {panelRequestId != null && (
+                <div
+                  className="rounded-2xl p-3 mb-4 flex flex-col gap-2.5"
+                  style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)" }}
+                >
+                  {panelAction === null ? (
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPanelAction("return");
+                          setPanelComment("");
+                        }}
+                        className="inline-flex items-center gap-2 text-[13px] font-medium px-4 py-2 rounded-lg cursor-pointer"
+                        style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}
+                      >
+                        <RotateCcw size={14} /> ส่งกลับให้ Admin แก้ไข
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPanelAction("reject");
+                          setPanelComment("");
+                        }}
+                        className="inline-flex items-center gap-2 text-[13px] font-medium px-4 py-2 rounded-lg cursor-pointer"
+                        style={{ color: "var(--color-danger)", border: "1px solid rgba(220,38,38,0.25)", background: "rgba(220,38,38,0.06)" }}
+                      >
+                        <ThumbsDown size={14} /> ไม่อนุมัติ
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="text-[12.5px] font-semibold m-0" style={{ color: "var(--text-heading)" }}>
+                        {panelAction === "return"
+                          ? "ส่งกลับให้ Admin แก้ไขข้อมูลการจอง"
+                          : "ไม่อนุมัติคำขอนี้"}
+                      </p>
+                      <textarea
+                        value={panelComment}
+                        onChange={(e) => setPanelComment(e.target.value)}
+                        rows={3}
+                        placeholder={panelAction === "return" ? "ระบุสิ่งที่ต้องแก้ไข" : "ระบุเหตุผลที่ไม่อนุมัติ"}
+                        className="w-full text-[13px] px-3 py-2 rounded-lg resize-y"
+                        style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-card)" }}
+                      />
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={panelActionRunning || panelComment.trim() === ""}
+                          onClick={() => void submitPanelAction(panelRequestId, panelAction, panelComment.trim())}
+                          className="inline-flex items-center gap-2 text-[13px] font-semibold px-4 py-2 rounded-lg cursor-pointer"
+                          style={{
+                            background: "var(--color-action)",
+                            color: "#fff",
+                            border: "none",
+                            opacity: panelActionRunning || panelComment.trim() === "" ? 0.55 : 1,
+                          }}
+                        >
+                          {panelActionRunning ? <Loader2 size={14} className="animate-spin" /> : null}
+                          ยืนยัน
+                        </button>
+                        <button
+                          type="button"
+                          disabled={panelActionRunning}
+                          onClick={() => {
+                            setPanelAction(null);
+                            setPanelComment("");
+                          }}
+                          className="inline-flex items-center gap-2 text-[13px] font-medium px-4 py-2 rounded-lg cursor-pointer"
+                          style={{ background: "var(--bg-card-alt)", color: "var(--text-secondary)", border: "1px solid var(--border-card)" }}
+                        >
+                          ยกเลิก
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+              <TravelBookingDetail
+                request={detail}
+                onChanged={() => void handleChanged()}
+                readOnlyBooking
+                showBookingPrice
+              />
+            </>
           ) : (
             <p className="text-[13px] py-16 text-center" style={{ color: "var(--text-muted)" }}>
               โหลดรายละเอียดไม่สำเร็จ
