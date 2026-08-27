@@ -72,10 +72,15 @@ export async function approveManager(requestId: number, actor: Actor): Promise<v
     await tx.commit();
   } catch (e) { await tx.rollback().catch(() => {}); throw e; }
 
-  // Notify every active accounting approver.
+  // Notify every active accounting approver — and the requester, who otherwise
+  // hears nothing between submitting and final approval and has to come back and
+  // look. The same "รอตรวจสอบ (บัญชี)" template answers for both: it says where
+  // the request now is, which is what each of them wants to know.
   for (const a of approvers) {
     await notify(requestId, "ManagerApproved", a.email);
   }
+  const req = await getRequest(requestId);
+  await notify(requestId, "ManagerApproved", req?.requesterEmail ?? null);
 }
 
 /** Step 2 — Account approves: requires Check + a valid PaymentDate. Finalizes the request. */
