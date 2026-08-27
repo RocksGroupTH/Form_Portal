@@ -130,29 +130,20 @@ export const REQUEST_CARDS: NavItem[] = [
     id: "travel-booking",
     label: "จองที่พัก/ตั๋วโดยสาร (ออฟฟิต)",
     icon: "Luggage",
-    desc: "ฟอร์ม AP-17 · คิวจอง · รายงาน · ตั้งค่า",
+    desc: "ฟอร์ม AP-17 · คิวจอง · อนุมัติ (บัญชี) · รายงาน · ตั้งค่า",
     href: "/request/accounting/travel-booking",
     group: "Settings",
     groupTh: "ตั้งค่า",
     badge: "AP-17",
-    devHostOnly: true,
-    manage: true,
-  },
-  {
-    id: "travel-booking-approvals",
-    label: "อนุมัติจองที่พัก/ตั๋วโดยสาร (บัญชี)",
-    icon: "Luggage",
-    desc: "AP-17 · คิวบัญชี — เลือกเดือนจ่าย แล้วอนุมัติปิดงานหลัง Admin จองเสร็จ",
-    href: "/request/accounting/travel-booking/approvals",
-    group: "Settings",
-    groupTh: "ตั้งค่า",
-    badge: "AP-17",
-    // Deliberately **not** `devHostOnly`, unlike the "travel-booking" hub card
-    // above. After the accounting step (task 4), Admin's booking desk hands
-    // requests here instead of closing them — with no notification to say so
-    // (out of scope for that work) — so this queue has to be reachable from
-    // the live host or requests pile up with nobody able to see why. The hub
-    // card it sits beside stays devHostOnly; this is its own front door.
+    // Deliberately **not** devHostOnly, unlike its AP-1 neighbour, and it was
+    // until 2026-08-27. The accounting sign-off queue used to have its own
+    // card here precisely so it stayed reachable on the live host; that card
+    // has moved onto this hub, which makes this the only door to it. Left
+    // devHostOnly, Admin would hand requests to a queue nobody outside
+    // localhost could open, and they would pile up with no visible cause.
+    // Hiding this card hid a link, never data: every page behind it fetches
+    // its own /access and renders "no access" for anyone the roster and the
+    // admin roles do not admit.
     manage: true,
   },
   {
