@@ -32,6 +32,8 @@ export interface AdvanceJournalPreviewItem {
   journalBatchName: string | null;
   paymentDate: string | null;
   payeeName: string | null;
+  matchedVendorNo: string | null;
+  matchedVendorName: string | null;
   environment: ErpBcEnvironment | null;
   ok: boolean;
   error?: string;
@@ -48,7 +50,7 @@ export async function previewAdvanceErpJournal(ids: number[]): Promise<AdvanceJo
   for (const id of ids) {
     try {
       const req = await getRequest(id);
-      if (!req) { out.push({ id, requestNo: null, interfaceTarget: null, journalBatchName: null, paymentDate: null, payeeName: null, environment: null, ok: false, error: "ไม่พบคำขอ", lines: [] }); continue; }
+      if (!req) { out.push({ id, requestNo: null, interfaceTarget: null, journalBatchName: null, paymentDate: null, payeeName: null, matchedVendorNo: null, matchedVendorName: null, environment: null, ok: false, error: "ไม่พบคำขอ", lines: [] }); continue; }
       if (!req.brandCode) throw new Error("ไม่พบแบรนด์ของคำขอ");
       if (!req.advance) throw new Error("ไม่พบข้อมูลเงินทดรองจ่าย");
       const { config, target, erpDeptCode } = await loadAdvanceErpContext(req.brandCode, req.requesterDepartmentCode);
@@ -60,6 +62,8 @@ export async function previewAdvanceErpJournal(ids: number[]): Promise<AdvanceJo
         journalBatchName: config.journalBatchName ?? null,
         paymentDate: req.paymentDate ?? null,
         payeeName: req.advance.payeeName ?? null,
+        matchedVendorNo: req.advance.matchedVendorNo,
+        matchedVendorName: req.advance.matchedVendorName,
         environment: target.environment,
         ok: true,
         lines: payload.lines.map((l) => ({
@@ -78,7 +82,7 @@ export async function previewAdvanceErpJournal(ids: number[]): Promise<AdvanceJo
         })),
       });
     } catch (e) {
-      out.push({ id, requestNo: null, interfaceTarget: null, journalBatchName: null, paymentDate: null, payeeName: null, environment: null, ok: false, error: e instanceof Error ? e.message : "preview error", lines: [] });
+      out.push({ id, requestNo: null, interfaceTarget: null, journalBatchName: null, paymentDate: null, payeeName: null, matchedVendorNo: null, matchedVendorName: null, environment: null, ok: false, error: e instanceof Error ? e.message : "preview error", lines: [] });
     }
   }
   return out;
@@ -264,6 +268,9 @@ export async function sendAdvanceErpBatch(ids: number[], userId: number): Promis
       if (!req.brandCode) throw new Error("ไม่พบแบรนด์ของคำขอ");
       if (!req.advance) throw new Error("ไม่พบข้อมูลเงินทดรองจ่าย");
       if (!req.paymentDate) throw new Error("ยังไม่กำหนดวันจ่าย (PaymentDate)");
+      if (req.advance?.vendorMatchStatus !== "confirmed" || !req.advance?.matchedVendorNo) {
+        throw new Error("ยังไม่ได้ยืนยัน Vendor — แก้ที่ขั้น Accounting Officer ก่อนส่ง");
+      }
 
       const stRes = await pool.request().input("id", sql.Int, id)
         .query(`SELECT ErpInterfaceStatus FROM [dbo].[AccRequest] WHERE Id=@id`);

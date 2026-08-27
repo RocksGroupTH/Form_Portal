@@ -14,6 +14,7 @@ import { statusLabelDisplay } from "@/features/accounting/constants";
 import { STEP_LABEL, type StepType } from "@/lib/adv/approval-steps";
 import { Wallet } from "lucide-react";
 import { PaymentDatePicker } from "@/components/ui/PaymentDatePicker";
+import { AdvanceVendorPicker } from "@/features/advance/components/AdvanceVendorPicker";
 import type { AdvanceRequest } from "@/features/advance/types";
 
 export default function AdvanceDetailPage() {
@@ -39,8 +40,11 @@ function AdvanceDetailContent() {
   // Account-step approval inputs.
   const [paymentDates, setPaymentDates] = useState<string[]>([]);
   const [paymentDate, setPaymentDate] = useState<string>("");
-  const [checked, setChecked] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
+
+  // Vendor selection at the ACC_OFFICER step.
+  const [selectedVendor, setSelectedVendor] = useState<string>("");
+  const [matchingVendor, setMatchingVendor] = useState(false);
 
   const fetchRequest = useCallback(() => {
     if (requestId == null || Number.isNaN(requestId)) {
@@ -96,11 +100,24 @@ function AdvanceDetailContent() {
     }
   }
 
-  function handleApprove() {
+  async function handleApprove() {
     if (request?.currentStepCode === "ACC_OFFICER") {
-      if (!checked) return toast.error("ต้องกด Check ก่อนอนุมัติ");
       if (!paymentDate) return toast.error("กรุณาเลือกวันจ่าย");
-      act("approve", { paymentDate, isChecked: checked });
+      if (!selectedVendor) return toast.error("กรุณาเลือก Vendor");
+      // Approving IS the confirmation: a merely-suggested vendor is only
+      // 'suggested' in the DB, but the gate requires 'confirmed' — confirm the
+      // selected vendor now (idempotent) so the approval passes.
+      try {
+        const res = await fetch("/api/request/advance/vendor-confirm", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: requestId, vendorNo: selectedVendor }),
+        });
+        const j = (await res.json()) as { ok: boolean; error?: string };
+        if (!j.ok) return toast.error(j.error ?? "ยืนยัน Vendor ไม่สำเร็จ");
+      } catch {
+        return toast.error("ยืนยัน Vendor ไม่สำเร็จ");
+      }
+      act("approve", { paymentDate });
     } else {
       act("approve");
     }
@@ -145,6 +162,12 @@ function AdvanceDetailContent() {
 
   return (
     <PageContainer className="acc-theme py-6 px-3 sm:px-0 flex flex-col gap-4">
+      {matchingVendor && (
+        <TravelExpenseLoadingPopup
+          label="AI กำลังจับคู่ Vendor..."
+          subtitle="กำลังค้นหา Vendor ที่ตรงกับผู้รับเงิน"
+        />
+      )}
       <PageHeaderBar
         icon={Wallet}
         title={request.requestNo ?? "ฉบับร่าง"}
@@ -206,10 +229,13 @@ function AdvanceDetailContent() {
                 วันจ่าย:
                 <PaymentDatePicker value={paymentDate} onChange={setPaymentDate} allowedDates={paymentDates} />
               </div>
-              <label className="text-[12px] flex items-center gap-2" style={{ color: "var(--text-secondary)" }}>
-                <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} />
-                ตรวจสอบแล้ว (Check)
-              </label>
+              <AdvanceVendorPicker
+                requestId={requestId!}
+                company={request.brandCode ?? ""}
+                onConfirmed={setSelectedVendor}
+                onSuggested={setSelectedVendor}
+                onMatchingChange={setMatchingVendor}
+              />
             </div>
           )}
           {/* ACC_OFFICER is the final ERP-posting step — only "ดำเนินการ", no

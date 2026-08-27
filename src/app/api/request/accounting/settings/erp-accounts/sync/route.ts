@@ -17,13 +17,13 @@ import {
  *
  * **Admin only, whatever settings tabs the caller holds.** The rest of the
  * Interface ERP tab is opened by the `erpInterface` grant; this one is not. Every
- * phase it can run — `account-sync`'s G/L, bank-card and journal-batch MERGEs
- * and `dimension-sync`'s branch values — opens `getErpDataPool()` and writes
+ * phase it can run — G/L, bank-card, journal-batch and branch
+ * sync — opens `getErpDataPool()` and writes
  * `ErpAccounts`, `ErpBankAccountCard`, `ErpGeneralJournalBatch`,
- * `ErpDimensionValue` and `ErpSyncLog` in `Rocks_ERP_Data` (migrations 101/102).
+ * `ErpDimensionValue` and `ErpSyncLog` in `Rocks_ERP_Data`
+ * (migrations 101/102).
  * Those are not this app's private rows: Rocks Fast writes the same ones and ACC
- * Portal reads them, both naming the tables two-part against `Fast_Data`, where
- * 102 left a permanent synonym per table. A tab grant must not become write
+ * Portal reads them through `Fast_Data` synonyms. A tab grant must not become write
  * access to rows two other applications depend on, so this stays on
  * `requireRole`. Recorded in `SETTINGS_ROUTE_TABS`
  * (`@/lib/acc/settings-tabs`), and the panel hides the Sync button for a

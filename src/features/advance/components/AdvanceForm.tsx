@@ -38,6 +38,7 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
   const [emp, setEmp] = useState<{
     staffId: number | null; fullName: string | null; position: string | null;
     departmentName: string | null; email: string | null; photoUrl: string | null;
+    bankAccountNo?: string | null;
   } | null>(null);
   // On-behalf: same-department colleagues + the selected requester (null = self).
   const [colleagues, setColleagues] = useState<RequesterOption[]>([]);
@@ -146,6 +147,7 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
           staffId: e.staffId ?? null, fullName: e.fullName ?? null,
           position: e.position ?? null, departmentName: e.departmentName ?? null,
           email: m?.data?.email ?? e.email ?? null, photoUrl: e.photoUrl ?? null,
+          bankAccountNo: e.bankAccountNo ?? null,
         });
         if (rq?.ok) {
           setColleagues(rq.data?.colleagues ?? []);
@@ -268,6 +270,8 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
   const reqPhoto = selectedColleague?.photoUrl ?? emp?.photoUrl ?? null;
 
   const effectivePayeeName = payeeType === "employee" ? reqName : payeeName;
+  const employeeBankAccountNo =
+    (selectedColleague?.bankAccountNo ?? emp?.bankAccountNo ?? "").trim() || null;
 
   // Common currencies (incl. MYR for the Malaysia entity) first, then the rest.
   const orderedCurrencies = useMemo(() => {
@@ -305,6 +309,11 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
         baseAmount,
         whtNote: whtNote || null,
         overThresholdReason: overReason || null,
+        matchedVendorNo: null,
+        matchedVendorName: null,
+        vendorMatchStatus: null,
+        vendorMatchConfidence: null,
+        vendorMatchReason: null,
       },
     };
   }
@@ -675,6 +684,7 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
         {payeeType === "employee" && (
           <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
             โอนเข้าบัญชีของผู้ขอเบิก ({effectivePayeeName || "—"}) ตามข้อมูล HR
+            {" · "}เลขบัญชี {employeeBankAccountNo ?? "— ไม่พบใน HR"}
           </p>
         )}
       </div>

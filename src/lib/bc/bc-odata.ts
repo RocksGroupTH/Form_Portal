@@ -12,6 +12,40 @@ import {
 
 const BC_HOST = "api.businesscentral.dynamics.com";
 const DEFAULT_ENVIRONMENT = "Production";
+const BC_GET_TIMEOUT_MS = 30_000;
+const BC_GET_MAX_TRANSIENT_RETRIES = 3;
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function retryDelayMs(res: Response | null, retryNumber: number): number {
+  const retryAfter = res?.headers.get("retry-after")?.trim();
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, 30_000);
+    const dateMs = Date.parse(retryAfter);
+    if (!Number.isNaN(dateMs)) return Math.min(Math.max(dateMs - Date.now(), 0), 30_000);
+  }
+  return Math.min(250 * (2 ** retryNumber), 5_000);
+}
+
+async function fetchBcGet(url: string, token: string): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), BC_GET_TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      },
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 /** Escape company name for OData Company('...') segment. */
 export function escapeODataCompanyName(name: string): string {
@@ -86,28 +120,33 @@ async function fetchBcJsonCollection<T extends Record<string, unknown>>(
 
     let token = await getBcAccessToken(conn.Code);
 
-    let res = await fetch(url, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/json",
-      },
-    });
-
-    if (res.status === 401 && !retried401) {
-      retried401 = true;
-      const refresh = await refreshBcConnectionToken(connectionId);
-      if (!refresh.ok) {
-        throw new Error(refresh.message || "BC token refresh failed");
+    let res: Response;
+    let transientRetries = 0;
+    while (true) {
+      try {
+        res = await fetchBcGet(url, token);
+      } catch (error) {
+        if (transientRetries >= BC_GET_MAX_TRANSIENT_RETRIES) throw error;
+        await wait(retryDelayMs(null, transientRetries));
+        transientRetries += 1;
+        continue;
       }
-      token = await readBcToken(connectionId);
-      res = await fetch(url, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json",
-        },
-      });
+
+      if (res.status === 401 && !retried401) {
+        retried401 = true;
+        const refresh = await refreshBcConnectionToken(connectionId);
+        if (!refresh.ok) throw new Error(refresh.message || "BC token refresh failed");
+        token = await readBcToken(connectionId);
+        continue;
+      }
+
+      const transientStatus = res.status === 408 || res.status === 429 || res.status >= 500;
+      if (transientStatus && transientRetries < BC_GET_MAX_TRANSIENT_RETRIES) {
+        await wait(retryDelayMs(res, transientRetries));
+        transientRetries += 1;
+        continue;
+      }
+      break;
     }
 
     if (!res.ok) {
@@ -157,23 +196,32 @@ export async function fetchBcApiV2Collection<T extends Record<string, unknown>>(
   return fetchBcJsonCollection<T>(connectionId, initialUrl, "BC API error");
 }
 
-function buildPpapJournalActionUrl(
+/** Build an ODataV4 unbound action URL: {root}[/{env}]/ODataV4/{action} */
+function buildBcActionUrl(
   baseUrl: string,
   environment: "Production" | "Sandbox",
+  action: string,
 ): string {
   const root = baseUrl.trim().replace(/\/+$/, "");
   const env = environment === "Sandbox" ? "Sandbox" : "Production";
   const envSegment = `/${env}`;
 
   if (root.toLowerCase().endsWith(envSegment.toLowerCase())) {
-    return `${root}/ODataV4/PPAPJournalCreateAPI_CreateFromJson`;
+    return `${root}/ODataV4/${action}`;
   }
 
   if (!root.toLowerCase().includes(BC_HOST)) {
     throw new Error("BC Base URL must point to api.businesscentral.dynamics.com");
   }
 
-  return `${root}${envSegment}/ODataV4/PPAPJournalCreateAPI_CreateFromJson`;
+  return `${root}${envSegment}/ODataV4/${action}`;
+}
+
+function buildPpapJournalActionUrl(
+  baseUrl: string,
+  environment: "Production" | "Sandbox",
+): string {
+  return buildBcActionUrl(baseUrl, environment, "PPAPJournalCreateAPI_CreateFromJson");
 }
 
 /**
@@ -258,5 +306,86 @@ export async function postBcPpapJournalCreateFromJson(
     } catch {
       return { raw: text };
     }
+  }
+}
+
+/**
+ * POST a RPCCodexStore_* unbound OData V4 action with body { inputJson } and
+ * return the parsed row array.
+ *
+ * Response shape: { "value": "<JSON-array-string>" }
+ * On { "error": "..." } throws. On 401 retries once after token refresh.
+ */
+export async function postBcCodexStoreRpc<T = Record<string, unknown>>(
+  connectionId: number,
+  companyId: string,
+  environment: "Production" | "Sandbox",
+  baseUrl: string,
+  fn: string,
+  input: unknown[] = [],
+): Promise<T[]> {
+  const company = companyId.trim();
+  if (!company) throw new Error("BC Company Id is required");
+
+  const url = assertApiDestination(buildBcActionUrl(baseUrl, environment, fn)).toString();
+  const body = JSON.stringify({ inputJson: JSON.stringify(input) });
+  let retried401 = false;
+
+  while (true) {
+    const conn = await getBcConnectionById(connectionId);
+    if (!conn) throw new Error("BC connection not found");
+
+    const token = await getBcAccessToken(conn.Code);
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        company,
+      },
+      body,
+    });
+
+    if (res.status === 401 && !retried401) {
+      retried401 = true;
+      const refresh = await refreshBcConnectionToken(connectionId);
+      if (!refresh.ok) throw new Error(refresh.message || "BC token refresh failed");
+      continue;
+    }
+
+    const text = await res.text().catch(() => "");
+
+    if (!res.ok) {
+      throw new Error(`BC ${fn} ${res.status}${text ? `: ${text.slice(0, 1500)}` : ""}`);
+    }
+
+    let outer: { value?: string; error?: string };
+    try {
+      outer = JSON.parse(text) as { value?: string; error?: string };
+    } catch {
+      throw new Error(`BC ${fn}: unparseable response: ${text.slice(0, 400)}`);
+    }
+
+    if (outer.error) throw new Error(`BC ${fn}: ${outer.error}`);
+
+    let rows: unknown;
+    try {
+      rows = JSON.parse(outer.value ?? "[]");
+    } catch {
+      throw new Error(`BC ${fn}: value field is not valid JSON`);
+    }
+
+    if (!Array.isArray(rows)) {
+      // Single-object error response embedded in value
+      const r = rows as Record<string, unknown>;
+      if (r && typeof r === "object" && r["error"]) {
+        throw new Error(`BC ${fn}: ${r["error"]}`);
+      }
+      throw new Error(`BC ${fn}: expected array in value, got ${typeof rows}`);
+    }
+
+    return rows as T[];
   }
 }

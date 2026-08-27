@@ -556,6 +556,7 @@ export async function listMyWorkRows(
                 OR (
                   @staffId IS NOT NULL
                   AND aa.Status = 'Pending'
+                  AND aa.StepType = r.CurrentStepCode
                   AND EXISTS (
                     SELECT 1 FROM [dbo].[AccAdvanceApprover] ap
                     WHERE ap.StaffId = @staffId AND ap.IsActive = 1

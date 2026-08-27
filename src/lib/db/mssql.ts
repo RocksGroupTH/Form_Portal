@@ -122,7 +122,7 @@ export function getDataPool(): Promise<sql.ConnectionPool> {
 }
 
 /**
- * Rocks_ERP_Data — the mirror of Business Central: ErpAccounts,
+ * Rocks_ERP_Data — the mirror of Business Central: ErpAccounts, ErpVendors,
  * ErpDimensionValue, ErpGeneralJournalBatch, ErpBankAccountCard and ErpSyncLog.
  *
  * Sync output only. The per-brand and per-form choices this app makes about
@@ -146,10 +146,18 @@ export const getPool = getCorePool;
 
 /* ── Cleanup ── */
 
+export async function closeDatabasePools(): Promise<void> {
+  const openPools = Array.from(pools.values());
+  pools.clear();
+  await Promise.all(openPools.map(async (pool) => {
+    const connection = await pool.catch(() => null);
+    if (connection) await connection.close().catch(() => undefined);
+  }));
+}
+
 if (typeof process !== "undefined") {
   const cleanup = () => {
-    pools.forEach((p) => p.then((c) => c.close()).catch(() => {}));
-    pools.clear();
+    void closeDatabasePools();
   };
   process.on("SIGTERM", cleanup);
   process.on("SIGINT", cleanup);

@@ -212,7 +212,7 @@ export function AdvanceApproveQueue() {
         </>
       )}
 
-      <AdvanceDetailPanel requestId={panelId} onClose={() => setPanelId(null)} />
+      <AdvanceDetailPanel requestId={panelId} onClose={() => setPanelId(null)} onChanged={load} />
     </div>
   );
 }

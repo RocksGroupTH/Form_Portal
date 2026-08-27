@@ -26,6 +26,8 @@ interface ErpRow {
   erpInterfaceSentAt: string | null;
   erpInterfaceEnvironment: string | null;
   erpDocumentNo: string | null;
+  matchedVendorNo: string | null;
+  matchedVendorName: string | null;
 }
 
 type TabKey = "pending" | "sent";
@@ -372,7 +374,7 @@ export function AdvanceErpQueue() {
                       <input type="checkbox" checked={allSelected} onChange={toggleAll}
                         disabled={selectableIds.length === 0} className="cursor-pointer" />
                     </th>
-                    {["เลขที่", "Company", "ผู้รับเงิน", "จำนวน", "วันจ่าย"].map((h) => (
+                    {["เลขที่", "Company", "ผู้รับเงิน", "จำนวน", "Vendor", "วันจ่าย"].map((h) => (
                       <th key={h} className="px-2.5 py-2 text-left font-bold whitespace-nowrap"
                         style={{ color: "var(--text-faint)", borderBottom: "1px solid var(--border-card)" }}>{h}</th>
                     ))}
@@ -392,6 +394,15 @@ export function AdvanceErpQueue() {
                       <td className="px-2.5 py-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{row.interfaceTarget}</td>
                       <td className="px-2.5 py-2" style={{ color: "var(--text-primary)" }}>{row.payeeName ?? "—"}</td>
                       <td className="px-2.5 py-2 whitespace-nowrap text-right tabular-nums font-semibold" style={{ color: "var(--text-secondary)" }}>{fmt(row.baseAmount ?? 0)}</td>
+                      <td className="px-2.5 py-2 whitespace-nowrap">
+                        {/* Read-only: the Vendor is chosen/confirmed at the ACC_OFFICER
+                            approval step (preview drawer), not here. */}
+                        <span className="text-[12px] inline-block min-w-[260px]" style={{ color: "var(--text-secondary)" }}>
+                          {row.matchedVendorName
+                            ? `${row.matchedVendorName}${row.matchedVendorNo ? ` (${row.matchedVendorNo})` : ""}`
+                            : row.matchedVendorNo ?? "—"}
+                        </span>
+                      </td>
                       <td className="px-2.5 py-2 whitespace-nowrap">
                         {paymentDateOpts.length > 0 ? (
                           <PaymentDatePicker

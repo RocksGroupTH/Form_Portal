@@ -10,6 +10,7 @@ import {
   type RequesterSnapshot,
 } from "@/lib/acc/employee-context";
 import { queueEmail } from "@/lib/acc/email-queue";
+import { buildAdvanceEmail } from "@/lib/adv/advance-email-templates";
 import {
   AP2_FORM_CODE,
   AP2_SEQUENCE_PREFIX,
@@ -68,6 +69,11 @@ function mapAdvanceRow(r: Record<string, unknown>): AdvanceDetail {
     payeeName: (r.PayeeName as string) ?? null,
     payeeBankAccount: (r.PayeeBankAccount as string) ?? null,
     payeeBankCode: (r.PayeeBankCode as string) ?? null,
+    matchedVendorNo: (r.MatchedVendorNo as string) ?? null,
+    matchedVendorName: (r.MatchedVendorName as string) ?? null,
+    vendorMatchStatus: (r.VendorMatchStatus as AdvanceDetail["vendorMatchStatus"]) ?? null,
+    vendorMatchConfidence: (r.VendorMatchConfidence as AdvanceDetail["vendorMatchConfidence"]) ?? null,
+    vendorMatchReason: (r.VendorMatchReason as string) ?? null,
     needByDate: r.NeedByDate ? toYmd(r.NeedByDate as Date) : null,
     expectedClearDate: r.ExpectedClearDate ? toYmd(r.ExpectedClearDate as Date) : null,
     purpose: (r.Purpose as string) ?? null,
@@ -108,7 +114,19 @@ export async function getRequest(id: number): Promise<AdvanceRequest | null> {
   const req = mapRequestRow(head.recordset[0] as Record<string, unknown>);
 
   const advance = await loadAdvance(pool, id);
-  if (advance) req.advance = advance;
+  if (advance) {
+    // Employee payees have no stored bank account — resolve it live from HR so
+    // the value always reflects the current Employee record. Select ONLY
+    // BankAccountNo (never the multi-MB PhotoUrl column) keyed by the indexed
+    // StaffId, so this is a sub-millisecond lookup.
+    if (advance.payeeType === "employee" && req.staffId != null) {
+      const bankRes = await pool.request().input("sid", sql.Int, req.staffId)
+        .query(`SELECT TOP 1 BankAccountNo FROM ${hrEmployeeTable()} WHERE StaffId = @sid AND Status = N'Active'`);
+      const acct = ((bankRes.recordset[0]?.BankAccountNo as string) ?? "").trim();
+      if (acct) advance.payeeBankAccount = acct;
+    }
+    req.advance = advance;
+  }
 
   const aRes = await pool.request().input("id", sql.Int, id)
     .query(`SELECT a.*,
@@ -317,7 +335,13 @@ async function persistAdvance(
         PayeeType=@payeeType, PayeeName=@payeeName, PayeeBankAccount=@bankAcct, PayeeBankCode=@bankCode,
         NeedByDate=@needBy, ExpectedClearDate=@clear, Purpose=@purpose,
         Currency=@currency, Amount=@amount, ExchangeRate=@rate, BaseAmount=@base,
-        WhtNote=@wht, OverThresholdReason=@overReason, UpdatedAt=SYSDATETIME()
+        WhtNote=@wht, OverThresholdReason=@overReason,
+        MatchedVendorNo = CASE WHEN ISNULL(PayeeName,'') <> ISNULL(@payeeName,'') THEN NULL ELSE MatchedVendorNo END,
+        MatchedVendorName = CASE WHEN ISNULL(PayeeName,'') <> ISNULL(@payeeName,'') THEN NULL ELSE MatchedVendorName END,
+        VendorMatchConfidence = CASE WHEN ISNULL(PayeeName,'') <> ISNULL(@payeeName,'') THEN NULL ELSE VendorMatchConfidence END,
+        VendorMatchReason = CASE WHEN ISNULL(PayeeName,'') <> ISNULL(@payeeName,'') THEN NULL ELSE VendorMatchReason END,
+        VendorMatchStatus = CASE WHEN ISNULL(PayeeName,'') <> ISNULL(@payeeName,'') THEN 'pending' ELSE VendorMatchStatus END,
+        UpdatedAt=SYSDATETIME()
       WHERE RequestId=@rid`);
   } else {
     await reqBind().query(`
@@ -467,6 +491,8 @@ export async function submitRequest(
 
   const advance = current.advance ?? {
     payeeType: null, payeeName: null, payeeBankAccount: null, payeeBankCode: null,
+    matchedVendorNo: null, matchedVendorName: null, vendorMatchStatus: null,
+    vendorMatchConfidence: null, vendorMatchReason: null,
     needByDate: null, expectedClearDate: null, purpose: null,
     currency: AP2_DEFAULT_CURRENCY, amount: null, exchangeRate: null, baseAmount: null, whtNote: null,
     overThresholdReason: null,
@@ -560,11 +586,16 @@ export async function submitRequest(
     const notifyEmails = firstRole
       ? await listApproverEmailsByRole(firstRole)
       : managerEmail ? [managerEmail] : [];
-    const subject = `เบิกเงินทดรองจ่าย ${requestNo} รออนุมัติ (${STEP_LABEL[firstStep]})`;
-    const bodyHtml =
-      `<p>มีคำขอเบิกเงินทดรองจ่ายเลขที่ <b>${requestNo}</b> รอการอนุมัติของท่าน (${STEP_LABEL[firstStep]})</p>` +
-      `<p>ผู้ขอ: ${updated.requesterFullName ?? "-"} · จำนวนเงิน: ${(updated.totalAmount ?? 0).toLocaleString()} บาท</p>` +
-      `<p><a href="/request/advance/${id}">เปิดคำขอ</a></p>`;
+    const { subject, html: bodyHtml } = buildAdvanceEmail("Submitted", {
+      id,
+      requestNo,
+      requesterFullName: updated.requesterFullName,
+      brandCode: updated.brandCode,
+      payeeName: updated.advance?.payeeName,
+      totalAmount: updated.totalAmount,
+      paymentDate: updated.paymentDate,
+      stepLabel: STEP_LABEL[firstStep],
+    });
     for (const toEmail of notifyEmails) {
       await queueEmail({ requestId: id, toEmail, subject, bodyHtml, triggerType: "Submitted" });
     }

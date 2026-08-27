@@ -3,9 +3,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
-import { CheckCircle2, Circle, Link2, Save, RefreshCw } from "lucide-react";
+import { CheckCircle2, Circle, Link2, Save, RefreshCw, Download } from "lucide-react";
 import { Button, Toggle } from "@/components/ui";
 import { SearchableSelect } from "@/features/accounting/components/settings/SearchableSelect";
+import { ErpAccountSyncPopup, type ErpSyncPopupState } from "@/features/accounting/components/settings/ErpAccountSyncPopup";
+import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
 
 interface ConfigRow {
   brandCode: string;
@@ -18,7 +20,6 @@ interface ConfigRow {
   bcProfileComplete: boolean;
   environment: string | null;
   branchCode: string | null;
-  glAccountNo: string | null;
   bankAccountNo: string | null;
   journalBatchName: string | null;
   ready: boolean;
@@ -114,9 +115,9 @@ function BrandCard({ row, erpByCompany, onSaved }: {
   erpByCompany: Record<string, CompanyErp>;
   onSaved: () => void;
 }) {
-  // AP-2 owns its target Company + G/L + Bank + Branch + Journal Batch.
+  // AP-2 owns its target Company + Bank + Branch + Journal Batch. The Dr line
+  // posts to the matched Vendor, so no G/L account is configured here.
   const [targetSel, setTargetSel] = useState(row.interfaceTarget ?? "");
-  const [gl, setGl] = useState(row.glAccountNo ?? "");
   const [bank, setBank] = useState(row.bankAccountNo ?? "");
   const [branch, setBranch] = useState(row.branchCode ?? "");
   const [batch, setBatch] = useState(row.journalBatchName ?? "");
@@ -128,25 +129,23 @@ function BrandCard({ row, erpByCompany, onSaved }: {
     [erpByCompany],
   );
 
-  // Changing the target Company resets the four picks — accounts are
-  // company-specific, so a G/L from the old Company must never be saved here.
+  // Changing the target Company resets the picks — accounts are company-specific,
+  // so a Bank/Branch/Batch from the old Company must never be saved here.
   function onTargetChange(v: string) {
     if (v === targetSel) return;
     setTargetSel(v);
-    setGl(""); setBank(""); setBranch(""); setBatch("");
+    setBank(""); setBranch(""); setBatch("");
   }
 
-  // All four dropdowns read from Rocks_ERP_Data (via the erp-master endpoint),
-  // keyed by the selected target Company: G/L · Bank · Branch · Journal Batch.
+  // All three dropdowns read from Rocks_ERP_Data (via the erp-master endpoint),
+  // keyed by the selected target Company: Bank · Branch · Journal Batch.
   const target = targetSel;
   const erp = erpByCompany[targetSel];
-  const glOpts = useMemo(() => acctOptions(erp?.gl ?? [], gl), [erp, gl]);
   const bankOpts = useMemo(() => acctOptions(erp?.bank ?? [], bank), [erp, bank]);
   const branchOpts = useMemo(() => branchOptions(erp?.branch ?? [], branch), [erp, branch]);
   const batchOpts = useMemo(() => batchOptions(erp?.journalBatch ?? [], batch), [erp, batch]);
 
   const targetDirty = targetSel.trim() !== (row.interfaceTarget ?? "").trim();
-  const glDirty = gl.trim() !== (row.glAccountNo ?? "").trim();
   const bankDirty = bank.trim() !== (row.bankAccountNo ?? "").trim();
   const branchDirty = branch.trim() !== (row.branchCode ?? "").trim();
   const batchDirty = batch.trim() !== (row.journalBatchName ?? "").trim();
@@ -172,7 +171,6 @@ function BrandCard({ row, erpByCompany, onSaved }: {
 
   async function saveAll() {
     if (!targetSel.trim()) return toast.error("กรุณาเลือก Company ปลายทาง");
-    if (!gl.trim()) return toast.error("กรุณาเลือก G/L Account");
     if (!bank.trim()) return toast.error("กรุณาเลือก Bank Account");
     setBusy("all");
     try {
@@ -182,7 +180,6 @@ function BrandCard({ row, erpByCompany, onSaved }: {
         body: JSON.stringify({
           brandCode: row.brandCode,
           interfaceBrandCode: targetSel.trim(),
-          glAccountNo: gl.trim(),
           bankAccountNo: bank.trim(),
           branchCode: branch.trim(),
           journalBatchName: batch.trim(),
@@ -201,7 +198,7 @@ function BrandCard({ row, erpByCompany, onSaved }: {
 
   const noOpts = !erp;
   const bcLine = [decode(row.bcName), row.bcConnectionName?.trim()].filter((v) => v && v !== "—").join(" · ") || "—";
-  const anyDirty = targetDirty || glDirty || bankDirty || branchDirty || batchDirty;
+  const anyDirty = targetDirty || bankDirty || branchDirty || batchDirty;
 
   return (
     <div className="rounded-xl p-4"
@@ -258,20 +255,8 @@ function BrandCard({ row, erpByCompany, onSaved }: {
         </p>
       )}
 
-      {/* editable: G/L + Bank + Branch + Journal Batch — one Save button per Company */}
+      {/* editable: Bank + Branch + Journal Batch — one Save button per Company */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div className="min-w-0">
-          <FieldLabel>G/L Account (AP-2)</FieldLabel>
-          <SearchableSelect
-            value={gl}
-            onChange={setGl}
-            options={glOpts}
-            placeholder={noOpts ? "เลือกปลายทาง / Sync ERP ก่อน" : "— เลือก G/L —"}
-            emptyLabel={noOpts ? "เลือกปลายทาง / Sync ERP ก่อน" : "— เลือก G/L —"}
-            searchPlaceholder="ค้นหา G/L..."
-            triggerBackground="var(--bg-card)"
-          />
-        </div>
         <div className="min-w-0">
           <FieldLabel>Bank Account (AP-2)</FieldLabel>
           <SearchableSelect value={bank} onChange={setBank} options={bankOpts}
@@ -280,11 +265,14 @@ function BrandCard({ row, erpByCompany, onSaved }: {
             searchPlaceholder="ค้นหา Bank..." triggerBackground="var(--bg-card)" />
         </div>
         <div className="min-w-0">
-          <FieldLabel>Branch (AP-2)</FieldLabel>
+          <FieldLabel>Branch (AP-2) · ไม่บังคับ</FieldLabel>
           <SearchableSelect value={branch} onChange={setBranch} options={branchOpts}
-            placeholder={noOpts ? "เลือกปลายทางก่อน" : "— เลือก Branch —"}
-            emptyLabel={noOpts ? "เลือกปลายทางก่อน" : "— เลือก Branch —"}
+            placeholder={noOpts ? "เลือกปลายทางก่อน" : "— ไม่ระบุ · ใช้แผนกผู้ขอ —"}
+            emptyLabel={noOpts ? "เลือกปลายทางก่อน" : "— ไม่ระบุ · ใช้แผนกผู้ขอ —"}
             searchPlaceholder="ค้นหา Branch..." triggerBackground="var(--bg-card)" />
+          <p className="text-[10px] m-0 mt-0.5" style={{ color: "var(--text-faint)" }}>
+            เลือก “— ไม่ระบุ —” เพื่อใช้แผนกของผู้ขอ (map HR→ERP)
+          </p>
         </div>
         <div className="min-w-0">
           <FieldLabel>Journal Batch (AP-2)</FieldLabel>
@@ -303,7 +291,7 @@ function BrandCard({ row, erpByCompany, onSaved }: {
       <div className="flex items-center justify-between gap-3 mt-3 pt-3"
         style={{ borderTop: "1px solid var(--border-light)" }}>
         <p className="text-[10px] m-0" style={{ color: "var(--text-faint)" }}>
-          AP-2 กำหนดเอง: Company ปลายทาง · G/L · Bank · Branch · Journal Batch
+          AP-2 กำหนดเอง: Company ปลายทาง · Bank · Branch · Journal Batch
         </p>
         <Button variant="primary" icon={<Save size={15} />} onClick={saveAll}
           loading={busy === "all"} disabled={!anyDirty}>บันทึก</Button>
@@ -327,8 +315,8 @@ export function AdvanceErpInterfaceSettings() {
 
   useEffect(() => load(), [load]);
 
-  // G/L · Bank · Branch · Journal Batch — read straight from Rocks_ERP_Data
-  // (4 Erp* tables), keyed by Company (interface target).
+  // Bank · Branch · Journal Batch — read straight from Rocks_ERP_Data
+  // (Erp* tables), keyed by Company (interface target).
   const { data: erpData, isLoading: erpLoading, mutate: mutateErp } =
     useSWR<{ ok: boolean; data?: Record<string, CompanyErp> }>(
       "/api/request/advance/settings/erp-master",
@@ -349,8 +337,77 @@ export function AdvanceErpInterfaceSettings() {
     }
   }
 
+  const [syncingVendor, setSyncingVendor] = useState(false);
+  const [syncPopup, setSyncPopup] = useState<ErpSyncPopupState>({
+    open: false, brandCode: "", part: "", percent: 0, status: "running",
+  });
+  async function syncVendor() {
+    const brands = ERP_INTERFACE_BRANDS;
+    const total = brands.length;
+    let done = 0;
+    let totalRows = 0;
+    const errors: string[] = [];
+
+    setSyncingVendor(true);
+    setSyncPopup({ open: true, brandCode: "", part: "เตรียมข้อมูล", percent: 0, status: "running" });
+
+    try {
+      for (const brand of brands) {
+        setSyncPopup({
+          open: true, brandCode: brand.id, part: "Vendor Master",
+          percent: Math.round((done / total) * 100), status: "running",
+        });
+        try {
+          const res = await fetch("/api/request/advance/settings/vendors/sync", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ brandCode: brand.id }),
+          });
+          const j = (await res.json()) as {
+            ok: boolean;
+            error?: string;
+            data?: { results: { vendorRows: number }[]; errors: unknown[] };
+          };
+          if (!j.ok) errors.push(`${brand.id}: ${j.error ?? "Sync failed"}`);
+          else totalRows += j.data?.results.reduce((s, r) => s + (r.vendorRows ?? 0), 0) ?? 0;
+        } catch {
+          errors.push(`${brand.id}: Sync failed`);
+        }
+        done += 1;
+        setSyncPopup({
+          open: true, brandCode: brand.id, part: "Vendor Master",
+          percent: Math.round((done / total) * 100), status: "running",
+        });
+      }
+
+      await mutateErp();
+
+      if (errors.length > 0) {
+        setSyncPopup({
+          open: true, brandCode: "", part: "", percent: 100, status: "error",
+          detail: errors.slice(0, 3).join(" · "),
+        });
+        toast.warning(`Sync Vendor บางรายการไม่สำเร็จ (${errors.length}) — ดึงได้ ${totalRows} รายการ`);
+      } else {
+        setSyncPopup({
+          open: true, brandCode: "", part: "", percent: 100, status: "done",
+          detail: `ดึง Vendor สำเร็จ ${totalRows} รายการ`,
+        });
+        toast.success(`Sync Vendor สำเร็จ — ${totalRows} รายการ`);
+      }
+      window.setTimeout(() => setSyncPopup((p) => ({ ...p, open: false })), errors.length > 0 ? 3500 : 1800);
+    } catch {
+      setSyncPopup({ open: true, brandCode: "", part: "", percent: 0, status: "error", detail: "Sync Vendor ไม่สำเร็จ" });
+      toast.error("Sync Vendor ไม่สำเร็จ");
+      window.setTimeout(() => setSyncPopup((p) => ({ ...p, open: false })), 2500);
+    } finally {
+      setSyncingVendor(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
+      <ErpAccountSyncPopup state={syncPopup} />
       <div className="rounded-xl px-4 py-3 flex flex-wrap items-start justify-between gap-3"
         style={{ background: "var(--nav-active-bg)", border: "1px solid var(--border-card)" }}>
         <div className="flex-1 min-w-[200px]">
@@ -358,10 +415,20 @@ export function AdvanceErpInterfaceSettings() {
             <Link2 size={15} style={{ color: "var(--nav-active-text)" }} /> Interface ERP (AP-2)
           </p>
           <p className="text-[11px] m-0 mt-1" style={{ color: "var(--text-muted)" }}>
-            G/L · Bank · Branch · Journal Batch ดึงจาก Rocks_ERP_Data (ตาม Company) — Company ใช้ร่วมกับ AP-1
+            Bank · Branch · Journal Batch ดึงจาก Rocks_ERP_Data (ตาม Company) — Dr ลง Vendor (G/L มาจาก Posting Group)
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          <Button
+            type="button"
+            variant="secondary"
+            icon={<Download size={15} className={syncingVendor ? "animate-pulse" : ""} />}
+            onClick={() => void syncVendor()}
+            loading={syncingVendor}
+            disabled={syncingVendor}
+          >
+            Sync Vendor
+          </Button>
           <Button
             type="button"
             variant="secondary"
