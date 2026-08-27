@@ -44,8 +44,10 @@ const BOOKING_TYPE_BY_REFTYPE: Partial<Record<string, BookingType>> =
    multipart: refType (idcard|booking_room|booking_ticket|booking_rent), optional bookingDetailId
    (required for booking_* refTypes — the AccTravelBookingDetail row's Id, used as RefId), one or
    more "files" entries. idcard: owner-only while Draft/Returned. booking_*: account-area only while
-   ManagerApproved. Each file goes through the AP-1 3-step (placeholder row → SharePoint upload →
-   finalize row), formCode AP-17. */
+   ManagerApproved AND CurrentStepCode='ADMIN' — once Admin hands the request to accounting
+   (CurrentStepCode='ACCOUNT'), Status alone no longer says the evidence is still open to change.
+   Each file goes through the AP-1 3-step (placeholder row → SharePoint upload → finalize row),
+   formCode AP-17. */
 
 export async function POST(
   req: NextRequest,
@@ -121,7 +123,7 @@ export async function POST(
       .request()
       .input("requestId", sql.Int, requestId)
       .input("form", sql.NVarChar, AP17_FORM_CODE)
-      .query(`SELECT r.Status, r.CreatedBy, r.RequestNo, t.Id AS TravelBookingId
+      .query(`SELECT r.Status, r.CurrentStepCode, r.CreatedBy, r.RequestNo, t.Id AS TravelBookingId
               FROM [dbo].[AccRequest] r
               INNER JOIN [dbo].[AccTravelBooking] t ON t.RequestId = r.Id
               WHERE r.Id = @requestId AND r.FormCode = @form`);
@@ -133,6 +135,7 @@ export async function POST(
     }
     const reqRow = reqCheck.recordset[0] as {
       Status: string;
+      CurrentStepCode: string | null;
       CreatedBy: number | null;
       RequestNo: string | null;
       TravelBookingId: number;
@@ -169,11 +172,21 @@ export async function POST(
           { status: 403 },
         );
       }
-      if (reqRow.Status !== "ManagerApproved") {
+      // `CurrentStepCode` must be checked alongside `Status`: since the
+      // accounting step split ADMIN and ACCOUNT apart, `Status` alone stays
+      // 'ManagerApproved' through both — without this, an account-area viewer
+      // could still attach "booking evidence" to a request already handed to
+      // accounting for sign-off. Mirrors `requireEditableBooking`
+      // (`admin-service.ts`), which the underlying detail save/delete already
+      // goes through; this route is the separate attachment path that does
+      // not. Scoped to the booking_* branch only — the idcard branch above is
+      // the requester's own file, gated on Draft/Returned + ownership, and has
+      // nothing to do with the ADMIN step.
+      if (reqRow.Status !== "ManagerApproved" || reqRow.CurrentStepCode !== "ADMIN") {
         return NextResponse.json(
           {
             ok: false,
-            error: "แนบไฟล์การจองได้เฉพาะคำขอที่ผู้จัดการอนุมัติแล้วเท่านั้น",
+            error: "แนบไฟล์การจองได้เฉพาะคำขอที่อยู่ในขั้นตอนที่ Admin กรอกข้อมูลการจองเท่านั้น",
           },
           { status: 400 },
         );
@@ -357,7 +370,7 @@ export async function DELETE(
       .input("requestId", sql.Int, requestId)
       .input("form", sql.NVarChar, AP17_FORM_CODE)
       .query(
-        `SELECT Status, CreatedBy FROM AccRequest WHERE Id = @requestId AND FormCode = @form`,
+        `SELECT Status, CurrentStepCode, CreatedBy FROM AccRequest WHERE Id = @requestId AND FormCode = @form`,
       );
     if (reqCheck.recordset.length === 0) {
       return NextResponse.json(
@@ -367,6 +380,7 @@ export async function DELETE(
     }
     const reqRow = reqCheck.recordset[0] as {
       Status: string;
+      CurrentStepCode: string | null;
       CreatedBy: number | null;
     };
 
@@ -413,11 +427,13 @@ export async function DELETE(
           { status: 403 },
         );
       }
-      if (reqRow.Status !== "ManagerApproved") {
+      // Same `CurrentStepCode` scoping as the POST handler above — booking_*
+      // attachments only, not the idcard branch.
+      if (reqRow.Status !== "ManagerApproved" || reqRow.CurrentStepCode !== "ADMIN") {
         return NextResponse.json(
           {
             ok: false,
-            error: "ลบไฟล์การจองได้เฉพาะคำขอที่ผู้จัดการอนุมัติแล้วเท่านั้น",
+            error: "ลบไฟล์การจองได้เฉพาะคำขอที่อยู่ในขั้นตอนที่ Admin กรอกข้อมูลการจองเท่านั้น",
           },
           { status: 400 },
         );
