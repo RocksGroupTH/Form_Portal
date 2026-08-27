@@ -38,7 +38,7 @@ import {
   totalMismatch,
   MAX_BOOKING_AMOUNT,
 } from "@/features/travel-booking/lib/booking-amounts";
-import { bookingFieldsLocked } from "@/features/travel-booking/lib/booking-lock";
+import { bookingFieldsLocked, type SavedBookingEntry } from "@/features/travel-booking/lib/booking-lock";
 import { onFileAttached, onFileRemoved } from "@/features/travel-booking/lib/booking-file-sync";
 import {
   sanitizeBookingNo,
@@ -698,9 +698,17 @@ function BookingRowCard({
      needs the fields typed into first. The same count feeds `booking-file-sync`, so
      a pick is the row's "first file" when nothing is stored yet, and removing the
      last one — held or stored — still clears the figures. */
+  /* What the last successful save wrote, until the parent's refetch supersedes it. */
+  const [savedSnapshot, setSavedSnapshot] = useState<SavedBookingEntry | null>(null);
   const attachedCount = files.length + pendingFiles.length;
   const hasFile = attachedCount > 0;
-  const locked = bookingFieldsLocked({ saved: detail ?? null, hasFile, reading });
+  /* `detail` is the parent's copy and lags a successful save by a refetch. Without
+     the local snapshot a brand-new row re-locks for that gap — held files cleared,
+     `detail` still undefined — and shows "แนบไฟล์ใบยืนยันการจองก่อน" one beat after
+     the save that attached the file. The snapshot is what was just persisted, so the
+     rule sees a row that records something, which it does; `detail` takes over the
+     moment it arrives. */
+  const locked = bookingFieldsLocked({ saved: detail ?? savedSnapshot, hasFile, reading });
 
   /* The read resolves seconds after the attach. These keep its write honest against
      fields that have since been filled in by hand. */
@@ -894,6 +902,13 @@ function BookingRowCard({
       setSaving(false);
       return;
     }
+    setSavedSnapshot({
+      bookingNo: bookingNo.trim() || null,
+      priceExVat: nPrice,
+      vatAmount: nVat,
+      discountAmount: nDiscount,
+      totalAmount: nTotal,
+    });
     const picked = pendingFiles;
     if (picked.length === 0) {
       setSaving(false);
