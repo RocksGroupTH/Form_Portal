@@ -407,8 +407,12 @@ function buildListQuery(
     SELECT ${REQUEST_ROW_SELECT}${extraSelect}
     ${FROM_JOINS}
     WHERE ${where}
+    -- Every non-aggregated column of REQUEST_ROW_SELECT belongs here. The
+    -- correlated subqueries do not: they are scalar and keyed on r.Id, which is
+    -- grouped. RequesterDepartmentCode is a plain column and does.
     GROUP BY r.Id, r.RequestNo, r.FormCode, f.FormNameTh, r.StaffId, r.RequesterFullName,
-      r.RequesterDepartmentName, r.BrandCode, r.TotalAmount, r.Status, r.PaymentDate, r.SubmittedAt,
+      r.RequesterDepartmentName, r.RequesterDepartmentCode, r.BrandCode, r.TotalAmount,
+      r.Status, r.PaymentDate, r.SubmittedAt,
       r.CurrentStepCode, r.ManagerStaffId, r.ManagerEmail
     ORDER BY ${order}
   `;
