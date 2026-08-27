@@ -8,6 +8,8 @@ interface BookingAccessData {
   admin: boolean;
   settingsTabs: string[];
   canSettings: boolean;
+  bookingQueue: boolean;
+  accountApproval: boolean;
 }
 
 const fetcher = async (url: string) => {
@@ -48,5 +50,14 @@ export function useBookingAccess() {
     settingsTabs: access?.settingsTabs ?? [],
     /** admin OR at least one granted tab. */
     canSettings: access?.canSettings ?? false,
+    /**
+     * Menu grant (`AccBookingApproverTab`, `bookingQueue` key) for the Admin
+     * booking-fill queue — admin OR that grant. Separate from `canAccount`
+     * (roster membership, which is what lets somebody act once the page is
+     * open) — see `settings-tabs.ts`.
+     */
+    bookingQueue: access?.bookingQueue ?? false,
+    /** Same shape, for the accounting sign-off queue this page's own gate reads. */
+    accountApproval: access?.accountApproval ?? false,
   };
 }

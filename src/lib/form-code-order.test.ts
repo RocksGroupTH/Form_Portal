@@ -112,7 +112,14 @@ test("every Request hub group comes out in ascending form-number order", () => {
       const prev = parseFormCode(sorted[i - 1].badge);
       const here = parseFormCode(sorted[i].badge);
       assert.ok(prev && here, group + ": " + shown);
-      assert.ok(prev.number < here.number, group + ": " + shown);
+      // Non-decreasing, not strictly ascending: a form can carry more than one
+      // card in the same group (AP-17 has two Settings cards — its admin hub
+      // and its accounting sign-off queue), and `compareFormCodes` already
+      // defines equal codes as a tie (see "the number is compared as a number"
+      // above), preserved in source order by the stable sort. What this test
+      // must never allow is a *later* card sorting before an *earlier* one's
+      // number, which `<=` still catches.
+      assert.ok(prev.number <= here.number, group + ": " + shown);
     }
   }
 });

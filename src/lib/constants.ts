@@ -139,6 +139,23 @@ export const REQUEST_CARDS: NavItem[] = [
     manage: true,
   },
   {
+    id: "travel-booking-approvals",
+    label: "อนุมัติจองที่พัก/ตั๋วโดยสาร (บัญชี)",
+    icon: "Luggage",
+    desc: "AP-17 · คิวบัญชี — เลือกเดือนจ่าย แล้วอนุมัติปิดงานหลัง Admin จองเสร็จ",
+    href: "/request/accounting/travel-booking/approvals",
+    group: "Settings",
+    groupTh: "ตั้งค่า",
+    badge: "AP-17",
+    // Deliberately **not** `devHostOnly`, unlike the "travel-booking" hub card
+    // above. After the accounting step (task 4), Admin's booking desk hands
+    // requests here instead of closing them — with no notification to say so
+    // (out of scope for that work) — so this queue has to be reachable from
+    // the live host or requests pile up with nobody able to see why. The hub
+    // card it sits beside stays devHostOnly; this is its own front door.
+    manage: true,
+  },
+  {
     id: "reimburse-settings",
     label: "ขอเบิกเงินคืนพนักงาน (ออฟฟิต)",
     icon: "Receipt",

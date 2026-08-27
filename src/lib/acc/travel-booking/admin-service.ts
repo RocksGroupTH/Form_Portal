@@ -79,6 +79,99 @@ export async function listAdminQueue(): Promise<AdminQueueItem[]> {
   }));
 }
 
+/* ─────────────────────────── accounting queue ─────────────────────────── */
+
+export interface AccountQueueItem {
+  id: number;
+  requestNo: string | null;
+  /** `AccRequest.BrandCode` — per trip, so two rows of one group can differ. */
+  brandCode: string | null;
+  requesterFullName: string | null;
+  requesterPosition: string | null;
+  requesterDepartmentName: string | null;
+  provinceName: string | null;
+  departDate: string | null;
+  returnDate: string | null;
+  perDiemDays: number;
+  perDiemTotal: number;
+  /** The payout month/date currently scheduled — set at Manager approval, editable here. */
+  paymentDate: string | null;
+  updatedAt: string;
+  /**
+   * `AccActivityLog.Note` for every `perdiem_recalculated` row against this
+   * request, oldest first — already the human-readable Thai sentence
+   * `recomputeGroupPerDiem` writes, so nothing here re-derives it from
+   * `MetadataJson`. Empty when the figure never moved.
+   */
+  perDiemHistory: string[];
+}
+
+/**
+ * AP-17 requests Admin has finished booking and handed to accounting —
+ * `ManagerApproved` / `CurrentStepCode='ACCOUNT'` (set by `completeRequest`,
+ * closed by `approveByAccount` in `approval.ts`). Unlike `listAdminQueue`,
+ * this filters on `CurrentStepCode` as well as `Status`: the two queues sit on
+ * the same status and must not show each other's rows.
+ */
+export async function listAccountQueue(): Promise<AccountQueueItem[]> {
+  const pool = await getAccPool();
+  const res = await pool.request()
+    .input("form", sql.NVarChar, AP17_FORM_CODE)
+    .query(`
+      SELECT r.Id, r.RequestNo, r.BrandCode, r.RequesterFullName, r.RequesterPosition, r.RequesterDepartmentName,
+             r.PaymentDate, r.UpdatedAt,
+             t.ProvinceName, t.DepartDate, t.ReturnDate, t.PerDiemDays, t.PerDiemTotal
+      FROM [dbo].[AccRequest] r
+      INNER JOIN [dbo].[AccTravelBooking] t ON t.RequestId = r.Id
+      WHERE r.FormCode = @form AND r.Status = 'ManagerApproved' AND r.CurrentStepCode = 'ACCOUNT'
+      ORDER BY r.UpdatedAt ASC
+    `);
+  const rows = res.recordset as Record<string, unknown>[];
+  const ids = rows.map((x) => x.Id as number);
+
+  // Batch-loaded rather than a correlated subquery: STRING_AGG would need every
+  // note squeezed through one delimiter and split back apart on the way out,
+  // for no fewer round trips once the queue holds more than a handful of rows.
+  const historyByRequest = new Map<number, string[]>();
+  if (ids.length > 0) {
+    const histReq = pool.request();
+    const placeholders = ids.map((id, i) => {
+      histReq.input(`id${i}`, sql.Int, id);
+      return `@id${i}`;
+    });
+    const histRes = await histReq
+      .input("action", sql.NVarChar(50), "perdiem_recalculated")
+      .query(`
+        SELECT RequestId, Note FROM [dbo].[AccActivityLog]
+        WHERE Action = @action AND RequestId IN (${placeholders.join(", ")})
+        ORDER BY CreatedAt ASC
+      `);
+    for (const h of histRes.recordset as { RequestId: number; Note: string | null }[]) {
+      if (!h.Note) continue;
+      const list = historyByRequest.get(h.RequestId) ?? [];
+      list.push(h.Note);
+      historyByRequest.set(h.RequestId, list);
+    }
+  }
+
+  return rows.map((x) => ({
+    id: x.Id as number,
+    requestNo: (x.RequestNo as string) ?? null,
+    brandCode: (x.BrandCode as string) ?? null,
+    requesterFullName: (x.RequesterFullName as string) ?? null,
+    requesterPosition: (x.RequesterPosition as string) ?? null,
+    requesterDepartmentName: (x.RequesterDepartmentName as string) ?? null,
+    provinceName: (x.ProvinceName as string) ?? null,
+    departDate: x.DepartDate ? toYmd(x.DepartDate as Date) : null,
+    returnDate: x.ReturnDate ? toYmd(x.ReturnDate as Date) : null,
+    perDiemDays: (x.PerDiemDays as number) ?? 0,
+    perDiemTotal: Number(x.PerDiemTotal) || 0,
+    paymentDate: x.PaymentDate ? toYmd(x.PaymentDate as Date) : null,
+    updatedAt: x.UpdatedAt ? (x.UpdatedAt as Date).toISOString() : "",
+    perDiemHistory: historyByRequest.get(x.Id as number) ?? [],
+  }));
+}
+
 /* ─────────────────────────── booking fill-in ─────────────────────────── */
 
 export interface SavedBookingDetail {

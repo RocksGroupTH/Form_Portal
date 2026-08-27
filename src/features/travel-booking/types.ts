@@ -369,3 +369,25 @@ export interface TravelBookingAdminQueueItem {
   paymentDate: string | null;
   updatedAt: string;
 }
+
+/**
+ * Row returned by `GET /api/request/travel-booking/account/queue` — a client-safe
+ * copy of `AccountQueueItem` from `src/lib/acc/travel-booking/admin-service.ts`.
+ */
+export interface TravelBookingAccountQueueItem {
+  id: number;
+  requestNo: string | null;
+  /** `AccRequest.BrandCode` — per trip, so two rows of one group can differ. */
+  brandCode: string | null;
+  requesterFullName: string | null;
+  requesterPosition: string | null;
+  requesterDepartmentName: string | null;
+  provinceName: string | null;
+  departDate: string | null;
+  returnDate: string | null;
+  perDiemDays: number;
+  perDiemTotal: number;
+  paymentDate: string | null;
+  updatedAt: string;
+  perDiemHistory: string[];
+}
