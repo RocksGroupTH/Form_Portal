@@ -85,6 +85,7 @@ function mapTravelBookingRow(
     // Only ever present on the single-request load, which is the one place the
     // note is rendered; the list queries do not pay for the subquery.
     continuationFromRequestNo: (r.ContinuationFromRequestNo as string) ?? null,
+    continuationFromRequestId: (r.ContinuationFromRequestId as number) ?? null,
 
     staffId: (r.StaffId as number) ?? null,
     requesterFullName: (r.RequesterFullName as string) ?? null,
@@ -285,7 +286,15 @@ export async function getTravelBookingRequest(id: number): Promise<TravelBooking
                 WHERE pt.GroupKey = mt.GroupKey
                   AND pt.SortOrder < mt.SortOrder
                   AND pt.ReturnDate = mt.DepartDate
-                ORDER BY pt.SortOrder DESC, pt.Id DESC) AS ContinuationFromRequestNo
+                ORDER BY pt.SortOrder DESC, pt.Id DESC) AS ContinuationFromRequestNo,
+              (SELECT TOP 1 pr.Id
+                 FROM [dbo].[AccTravelBooking] pt
+                 INNER JOIN [dbo].[AccRequest] pr ON pr.Id = pt.RequestId
+                 INNER JOIN [dbo].[AccTravelBooking] mt ON mt.RequestId = r.Id
+                WHERE pt.GroupKey = mt.GroupKey
+                  AND pt.SortOrder < mt.SortOrder
+                  AND pt.ReturnDate = mt.DepartDate
+                ORDER BY pt.SortOrder DESC, pt.Id DESC) AS ContinuationFromRequestId
             FROM [dbo].[AccRequest] r
             LEFT JOIN ${hrEmployeeTable()} e ON e.StaffId = r.StaffId AND e.Status = N'Active'
             WHERE r.Id = @id AND r.FormCode = @form`);

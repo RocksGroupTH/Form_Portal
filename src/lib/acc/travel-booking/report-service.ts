@@ -57,6 +57,17 @@ export interface TravelBookingReportRow {
   paymentDate: string | null;
   /** Set when EmployeeAllowanceLog shows a rate change inside [departDate, returnDate]. */
   rateChangeNote: string | null;
+  /**
+   * The request that already counted this trip's first day, when
+   * `IsContinuation` is set — see `TravelBookingRequest.continuationFromRequestNo`.
+   *
+   * On the report it answers the question a zero per diem raises: a one-day
+   * continuation shows 0 วัน / 0.00 บาท, and without this the row looks like a
+   * mistake rather than a day counted next door.
+   */
+  continuationFromRequestNo: string | null;
+  /** That request's id, so the report can open it rather than print a number. */
+  continuationFromRequestId: number | null;
 }
 
 function ymd(d: Date): string {
@@ -118,6 +129,23 @@ const BASE_CTE = `
       t.ProvinceId, t.ProvinceName,
       t.AccommodationName, t.AccommodationCustomText,
       t.IsContinuation, t.PerDiemDays, t.PerDiemTotal,
+      -- Matched the same way isContinuation was decided at save time: same
+      -- group, an earlier SortOrder, a ReturnDate touching this DepartDate.
+      -- Nearest earlier sibling wins.
+      (SELECT TOP 1 pr.RequestNo
+         FROM [dbo].[AccTravelBooking] pt
+         INNER JOIN [dbo].[AccRequest] pr ON pr.Id = pt.RequestId
+        WHERE pt.GroupKey = t.GroupKey
+          AND pt.SortOrder < t.SortOrder
+          AND pt.ReturnDate = t.DepartDate
+        ORDER BY pt.SortOrder DESC, pt.Id DESC) AS ContinuationFromRequestNo,
+      (SELECT TOP 1 pr.Id
+         FROM [dbo].[AccTravelBooking] pt
+         INNER JOIN [dbo].[AccRequest] pr ON pr.Id = pt.RequestId
+        WHERE pt.GroupKey = t.GroupKey
+          AND pt.SortOrder < t.SortOrder
+          AND pt.ReturnDate = t.DepartDate
+        ORDER BY pt.SortOrder DESC, pt.Id DESC) AS ContinuationFromRequestId,
       (SELECT STRING_AGG(wl.Name, N', ') WITHIN GROUP (ORDER BY wl.SortOrder, wl.Id)
        FROM [dbo].[AccTravelWorkLocation] wl
        WHERE wl.TravelBookingId = t.Id) AS WorkLocationsCsv,
@@ -204,6 +232,14 @@ export async function queryTravelBookingReport(
       id: x.Id as number,
       requestNo: (x.RequestNo as string) ?? null,
       brandCode: (x.BrandCode as string) ?? null,
+      // Only meaningful where the flag is set; a stray sibling match on a
+      // non-continuation row would read as a deduction that never happened.
+      continuationFromRequestNo: x.IsContinuation
+        ? ((x.ContinuationFromRequestNo as string) ?? null)
+        : null,
+      continuationFromRequestId: x.IsContinuation
+        ? ((x.ContinuationFromRequestId as number) ?? null)
+        : null,
       staffId: (x.StaffId as number) ?? null,
       fullName: (x.RequesterFullName as string) ?? null,
       position: (x.RequesterPosition as string) ?? null,
@@ -254,6 +290,7 @@ export function buildTravelBookingReportWorkbook(
     "วันเดินทางขาไป", "วันเดินทางขากลับ", "จังหวัด", "สถานที่พักค้างคืน",
     "สถานที่ไปปฏิบัติงาน", "วันที่อนุมัติ", "สถานะ",
     "เบี้ยเลี้ยง (เรท/วัน)", "เบี้ยเลี้ยง (จำนวนวัน)", "เบี้ยเลี้ยง (ยอดรวม)",
+    "หมายเหตุ Per diem",
     "วันที่จ่าย", "หมายเหตุการเปลี่ยนเรท",
   ];
   aoa.push(columns);
@@ -279,6 +316,7 @@ export function buildTravelBookingReportWorkbook(
       r.approvedDate ? fmtYmdDisplay(r.approvedDate) : null,
       STATUS_LABEL_TH[r.status] ?? r.status,
       r.perDiemRate, r.perDiemDays, r.perDiemTotal,
+      r.continuationFromRequestNo ? `วันแรกนับใน ${r.continuationFromRequestNo}` : null,
       r.paymentDate ? fmtYmdDisplay(r.paymentDate) : null,
       r.rateChangeNote,
     ]);

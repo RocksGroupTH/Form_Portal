@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -896,26 +897,41 @@ export function TravelBookingDetail({ request, onChanged, readOnlyBooking = fals
 
               "ต่อเนื่องจากทริปก่อนหน้า (-1 วัน)" was the whole note, and on a
               one-day trip that leaves Per diem reading 0 วัน · 0.00 บาท with
-              nothing on the page saying why — the reader has to know the rule
-              and go looking for the sibling. Naming the date and the request
-              that already counted it answers both at once.
+              nothing on the page saying why.
 
-              The request number is null when the sibling cannot be matched — a
-              group edited by hand can leave the flag set with nothing touching
-              it — and the note then falls back to the shorter wording rather
-              than printing a blank. */}
+              Two lines rather than one sentence: the fact and the consequence
+              read at different speeds, and as a single run of text it wrapped
+              mid-clause and had to be read twice. The request number is a link
+              — the next thing anybody does with it is go and look. */}
           {request.isContinuation && (
             <DetailRow
               label="หมายเหตุ"
               value={
-                request.departDate
-                  ? request.continuationFromRequestNo
-                    ? `ต่อเนื่องจากทริปก่อนหน้า — วันที่ ${fmtYmdDisplay(request.departDate)} นับ Per diem ไปแล้วในคำขอ ${request.continuationFromRequestNo} จึงไม่นับซ้ำที่นี่ (-1 วัน)`
-                    : `ต่อเนื่องจากทริปก่อนหน้า — วันที่ ${fmtYmdDisplay(request.departDate)} นับ Per diem ไปแล้วในทริปก่อนหน้า จึงไม่นับซ้ำที่นี่ (-1 วัน)`
-                  : "ต่อเนื่องจากทริปก่อนหน้า (นับ Per diem วันแรกซ้ำ -1 วัน)"
+                <span className="flex flex-col gap-0.5">
+                  <span>
+                    วันแรก{" "}
+                    <strong>{request.departDate ? fmtYmdDisplay(request.departDate) : "—"}</strong>{" "}
+                    นับ Per diem ไปแล้วใน{" "}
+                    {request.continuationFromRequestId && request.continuationFromRequestNo ? (
+                      <Link
+                        href={`/request/travel-booking/${request.continuationFromRequestId}`}
+                        className="font-bold underline underline-offset-2"
+                        style={{ color: "var(--nav-active-text)" }}
+                      >
+                        {request.continuationFromRequestNo}
+                      </Link>
+                    ) : (
+                      <strong>ทริปก่อนหน้า</strong>
+                    )}
+                  </span>
+                  <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                    ต่อเนื่องจากทริปก่อนหน้า จึงไม่นับซ้ำที่นี่ (−1 วัน)
+                  </span>
+                </span>
               }
             />
           )}
+
           <DetailRow
             label="ที่พักค้างคืน"
             value={withIcon(

@@ -159,6 +159,8 @@ export interface TravelBookingRequest {
    * with nothing matching it, and the note then says less rather than lying.
    */
   continuationFromRequestNo: string | null;
+  /** That request's id, so the number can be a link rather than a string to copy. */
+  continuationFromRequestId: number | null;
 
   // requester snapshot (from AccRequest / AccTravelBooking)
   staffId: number | null;
