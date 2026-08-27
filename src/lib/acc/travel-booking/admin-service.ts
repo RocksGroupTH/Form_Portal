@@ -1,8 +1,5 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import type { Actor } from "@/lib/acc/approval-engine";
-import { queueEmail, processQueue } from "@/lib/acc/email-queue";
-import { buildTravelBookingEmail } from "@/lib/acc/travel-booking/email-templates";
-import { getRequesterEmail } from "@/lib/acc/travel-booking/approval";
 import { getTravelBookingRequest } from "@/lib/acc/travel-booking/request-service";
 import { deleteStoredFiles, type StoredFileRef } from "@/lib/acc/stored-file";
 import { AP17_FORM_CODE, BOOKING_TYPE_REFTYPE } from "@/features/travel-booking/constants";
@@ -374,27 +371,21 @@ export async function completeRequest(requestId: number, actor: Actor): Promise<
         `ข้อมูลการจองถูกแก้ไขระหว่างปิดงาน — กรุณาตรวจสอบแล้วลองใหม่: ${stillMissing.join(", ")}`,
       );
     }
+    // Not 'completed' — the request is not finished, it is handed to accounting.
+    // No email fires here either: nothing in `TravelBookingTrigger` says "arranged,
+    // awaiting accounting" (the closest is `Completed`, which would tell the
+    // requester the wrong thing), and `approveByAccount` is where the real
+    // "finished" email now belongs — see `approval.ts`.
     await tx.request().input("rid", sql.Int, requestId).input("by", sql.Int, actor.userId)
-      .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action) VALUES (@rid, @by, 'completed')`);
+      .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note)
+              VALUES (@rid, @by, 'sent_to_account', N'ส่งต่อให้บัญชีตรวจสอบ')`);
     await tx.commit();
   } catch (e) {
     await tx.rollback().catch(() => {});
     throw e;
   }
 
-  try {
-    const requesterEmail = await getRequesterEmail(requestId);
-    const updated = requesterEmail ? await getTravelBookingRequest(requestId) : null;
-    if (requesterEmail && updated) {
-      const mail = buildTravelBookingEmail("Completed", updated);
-      await queueEmail({ requestId, toEmail: requesterEmail, subject: mail.subject, bodyHtml: mail.html, triggerType: "Completed" });
-    }
-  } catch {
-    // Notification failures must never fail the completion action itself.
-  }
-  void processQueue().catch(() => {});
-
   const updated = await getTravelBookingRequest(requestId);
-  if (!updated) throw new Error("ไม่พบคำขอหลังปิดงาน");
+  if (!updated) throw new Error("ไม่พบคำขอหลังส่งต่อให้บัญชี");
   return updated;
 }

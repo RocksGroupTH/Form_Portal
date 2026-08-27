@@ -394,7 +394,7 @@ export async function approveByAccount(requestId: number, actor: Actor): Promise
 
     await tx.request()
       .input("rid", sql.Int, requestId)
-      .input("by", sql.Int, actor.staffId ?? null)
+      .input("by", sql.Int, actor.userId)
       .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note)
               VALUES (@rid, @by, 'account_approved', N'บัญชีอนุมัติ')`);
 
@@ -403,6 +403,13 @@ export async function approveByAccount(requestId: number, actor: Actor): Promise
     await tx.rollback();
     throw e;
   }
+
+  // This is the point the request is actually finished, so the `Completed`
+  // template — unlike at Admin's hand-off in `completeRequest` — is honest here.
+  const requesterEmail = await getRequesterEmail(requestId);
+  await notify(requestId, "Completed", requesterEmail);
+  void processQueue().catch(() => {});
+
   const updated = await getTravelBookingRequest(requestId);
   if (!updated) throw new Error("ไม่พบคำขอ");
   return updated;
