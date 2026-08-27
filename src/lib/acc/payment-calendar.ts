@@ -34,20 +34,36 @@ export function shiftPaymentDay(d: Date, holidays: Set<string>): Date {
 }
 
 /** Valid payment dates (2nd & 4th Friday, holiday-shifted) for the next `months`. */
-export async function getPaymentDates(from: Date = new Date(), months = 4): Promise<string[]> {
-  const start = new Date(from.getFullYear(), from.getMonth(), 1);
+export async function getPaymentDates(
+  from: Date = new Date(),
+  months = 4,
+  /**
+   * How many months back to include.
+   *
+   * Zero for the picker a requester sees — nobody schedules a payment into the
+   * past. The payment-date correction route passes a window because an admin
+   * fixing an already-approved claim may need a round that has been and gone.
+   */
+  monthsBack = 0,
+): Promise<string[]> {
+  const start = new Date(from.getFullYear(), from.getMonth() - monthsBack, 1);
   const end = new Date(from.getFullYear(), from.getMonth() + months + 1, 0);
   const holidays = await getHolidaySet(start, end);
 
+  // Hoisted: it does not change per round, and rebuilding it inside the inner
+  // loop was a new Date on every candidate.
+  const todayMidnight = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+
   const out: string[] = [];
-  for (let m = 0; m <= months; m++) {
+  for (let m = -monthsBack; m <= months; m++) {
     const anchor = new Date(from.getFullYear(), from.getMonth() + m, 1);
     for (const nth of [2, 4]) {
       const base = nthFridayOfMonth(anchor.getFullYear(), anchor.getMonth(), nth);
       const shifted = shiftPaymentDay(base, holidays);
       const s = ymd(shifted);
-      const todayMidnight = new Date(from.getFullYear(), from.getMonth(), from.getDate());
-      if (shifted >= todayMidnight && !out.includes(s)) out.push(s);
+      // Past rounds only when explicitly backfilling. A requester's picker asks
+      // for none and so is unchanged.
+      if ((monthsBack > 0 || shifted >= todayMidnight) && !out.includes(s)) out.push(s);
     }
   }
   return out.sort();

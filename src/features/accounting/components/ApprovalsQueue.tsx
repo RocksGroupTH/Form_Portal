@@ -209,6 +209,115 @@ function QueueCheckbox({
 
 /* ── ApprovalsQueue ── */
 
+/**
+ * Was the manager's approval before noon, Bangkok?
+ *
+ * Read back through the Bangkok timezone rather than through the browser's: a
+ * laptop set to another zone would otherwise flip the label right on the
+ * boundary, which is the one place it matters.
+ */
+function managerApprovedBeforeNoon(iso: string): boolean {
+  const hour = Number(
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Bangkok",
+      hour: "2-digit",
+      hour12: false,
+    }).format(new Date(iso)),
+  );
+  return hour < 12;
+}
+
+/** `dd/MM HH:mm` — the year is noise in a queue of this month's work. */
+function fmtDateTimeShort(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  const p2 = (n: number) => String(n).padStart(2, "0");
+  return `${p2(d.getDate())}/${p2(d.getMonth() + 1)} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+}
+
+/**
+ * The payment round for one claim, editable in place.
+ *
+ * Its own component so each row keeps its own saving state — one shared
+ * `saving` flag would grey out every row in the table while one was in flight.
+ * The server re-checks the date against the real calendar and the claim's
+ * status, so this select cannot write a day that is not a round.
+ */
+function PaymentDateCell({
+  requestId,
+  value,
+  options,
+  onSaved,
+}: {
+  requestId: number;
+  value: string | null;
+  options: string[];
+  onSaved: (date: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const save = async (date: string) => {
+    if (!date || date === value) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/request/accounting/requests/${requestId}/payment-date`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paymentDate: date }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!json?.ok) {
+        // The server's own reason — "not a payment round", "already approved".
+        toast.error(json?.error ?? "บันทึกวันจ่ายไม่สำเร็จ");
+        return;
+      }
+      onSaved(date);
+      toast.success(`วันจ่าย ${fmtPaymentLabel(date)}`);
+      setEditing(false);
+    } catch {
+      toast.error("บันทึกวันจ่ายไม่สำเร็จ");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (editing) {
+    return (
+      <select
+        autoFocus
+        disabled={saving}
+        defaultValue={value ?? ""}
+        onChange={(e) => void save(e.target.value)}
+        onBlur={() => setEditing(false)}
+        className="text-[11.5px] rounded-lg px-1.5 py-1 cursor-pointer"
+        style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", color: "var(--text-primary)" }}
+      >
+        <option value="">— เลือกวันจ่าย —</option>
+        {options.map((d) => (
+          <option key={d} value={d}>{fmtPaymentLabel(d)}</option>
+        ))}
+      </select>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      disabled={saving}
+      title="คลิกเพื่อแก้ไขวันจ่าย"
+      className="text-[11.5px] rounded-lg px-1.5 py-1 cursor-pointer border-none bg-transparent hover:underline underline-offset-2"
+      style={{ color: value ? "var(--text-primary)" : "var(--text-faint)" }}
+    >
+      {saving ? "..." : value ? fmtPaymentLabel(value) : "— เลือก —"}
+    </button>
+  );
+}
+
 export function ApprovalsQueue({
   interfaceTarget,
   onInterfaceTargetChange,
@@ -234,6 +343,14 @@ export function ApprovalsQueue({
   const [loadingDrawer, setLoadingDrawer] = useState(false);
 
   const [paymentDates, setPaymentDates] = useState<string[]>([]);
+  /**
+   * Rows whose payment date was edited in place, by request id.
+   *
+   * Held here rather than refetching the whole queue: the edit is one field and
+   * a refetch would rebuild every row, losing the selection the accountant is
+   * part-way through making.
+   */
+  const [rowPaymentDates, setRowPaymentDates] = useState<Record<number, string>>({});
   const [paymentDate, setPaymentDate] = useState("");
   const [paymentDatesLoading, setPaymentDatesLoading] = useState(true);
 
@@ -618,8 +735,11 @@ export function ApprovalsQueue({
                 </th>
                 <th className="text-left px-3 py-2.5 font-semibold whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>เลขที่</th>
                 <th className="text-left px-3 py-2.5 font-semibold whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>วันที่ส่ง</th>
+                <th className="text-center px-3 py-2.5 font-semibold whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>ผจก. อนุมัติ</th>
+                <th className="text-center px-3 py-2.5 font-semibold whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>วันจ่าย</th>
                 <th className="text-left px-3 py-2.5 font-semibold" style={{ color: "var(--text-secondary)" }}>ผู้ขอ</th>
                 <th className="text-left px-3 py-2.5 font-semibold hidden lg:table-cell" style={{ color: "var(--text-secondary)" }}>แผนก</th>
+                <th className="text-center px-3 py-2.5 font-semibold whitespace-nowrap hidden lg:table-cell" style={{ color: "var(--text-secondary)" }}>Dept</th>
                 <th className="text-left px-3 py-2.5 font-semibold whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>แบรนด์</th>
                 <th className="text-left px-3 py-2.5 font-semibold whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>เดินทาง</th>
                 <th className="text-left px-3 py-2.5 font-semibold hidden md:table-cell" style={{ color: "var(--text-secondary)" }}>ยานพาหนะ</th>
@@ -631,7 +751,7 @@ export function ApprovalsQueue({
               {groupedDisplayRows.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={10}
+                    colSpan={13}
                     className="px-4 py-10 text-center text-[13px]"
                     style={{ color: "var(--text-muted)" }}
                   >
@@ -697,11 +817,60 @@ export function ApprovalsQueue({
                         <td className="px-3 py-2.5 whitespace-nowrap" rowSpan={requestGroupSize} style={{ ...sharedCellStyle, color: "var(--text-muted)" }}>
                           {fmtDateOnly(row.submittedAt)}
                         </td>
+                        {/* ผจก. อนุมัติ — with the noon label beneath it. The
+                            cut-off is the company's payment process, not a rule
+                            either app enforces: getDefaultPaymentDate takes the
+                            next round regardless, here and in ACC Portal. This
+                            tells the accountant which round the claim is *meant*
+                            for; วันจ่าย beside it is where they act on that. */}
+                        <td className="px-3 py-2.5 whitespace-nowrap text-center" rowSpan={requestGroupSize} style={sharedCellStyle}>
+                          {row.managerApprovedAt ? (
+                            <>
+                              <p className="m-0 text-[11.5px]" style={{ color: "var(--text-secondary)" }}>
+                                {fmtDateTimeShort(row.managerApprovedAt)}
+                              </p>
+                              <p
+                                className="m-0 text-[10px]"
+                                style={{
+                                  color: managerApprovedBeforeNoon(row.managerApprovedAt)
+                                    ? "var(--color-success)"
+                                    : "var(--color-warning)",
+                                }}
+                              >
+                                {managerApprovedBeforeNoon(row.managerApprovedAt) ? "ก่อนเที่ยง" : "หลังเที่ยง"}
+                              </p>
+                            </>
+                          ) : (
+                            <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>—</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2.5 whitespace-nowrap text-center" rowSpan={requestGroupSize} style={sharedCellStyle}>
+                          <PaymentDateCell
+                            requestId={row.id}
+                            value={rowPaymentDates[row.id] ?? row.paymentDate ?? null}
+                            options={paymentDates}
+                            onSaved={(date) =>
+                              setRowPaymentDates((prev) => ({ ...prev, [row.id]: date }))
+                            }
+                          />
+                        </td>
                         <td className="px-3 py-2.5" rowSpan={requestGroupSize} style={sharedCellStyle}>
                           <CellTruncate text={row.requesterFullName} maxWidth={130} style={{ color: "var(--text-primary)" }} />
                         </td>
                         <td className="px-3 py-2.5 hidden lg:table-cell" rowSpan={requestGroupSize} style={sharedCellStyle}>
                           <CellTruncate text={row.requesterDepartmentName} maxWidth={110} />
+                        </td>
+                        <td className="px-3 py-2.5 whitespace-nowrap text-center hidden lg:table-cell" rowSpan={requestGroupSize} style={sharedCellStyle}>
+                          {row.requesterDepartmentCode ? (
+                            <span
+                              className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
+                              style={{ background: "var(--bg-badge)", color: "var(--text-muted)", border: "1px solid var(--border-light)" }}
+                            >
+                              {row.requesterDepartmentCode}
+                            </span>
+                          ) : (
+                            <span className="text-[10px]" style={{ color: "var(--text-faint)" }}>—</span>
+                          )}
                         </td>
                         <td className="px-3 py-2.5 whitespace-nowrap" rowSpan={requestGroupSize} style={sharedCellStyle}>
                           {row.brandCode ? (

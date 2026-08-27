@@ -70,6 +70,19 @@ export interface ReportRow {
   pendingApproverEmail?: string | null;
   managerStaffId?: number | null;
   managerEmail?: string | null;
+  /**
+   * When the manager approved, as an ISO instant.
+   *
+   * The accounting queue shows it beside the payment round, and labels whether
+   * it landed before noon — the cut-off the company's payment process runs on.
+   * **Nothing in either app enforces that**: `getDefaultPaymentDate` is
+   * identical here and in ACC Portal and takes the next round regardless. The
+   * label explains the round to the accountant choosing it; the choice is the
+   * accountant's.
+   */
+  managerApprovedAt?: string | null;
+  /** HR department code (`AccRequest.RequesterDepartmentCode`), falling back to HR. */
+  requesterDepartmentCode?: string | null;
   /** True when the signed-in user already approved the MANAGER step (My Work API). */
   viewerManagerApproved?: boolean;
   /**
@@ -166,6 +179,16 @@ export const TRAVEL_DAYS_CSV_SELECT = `(SELECT STRING_AGG(
 
 const REQUEST_ROW_SELECT = `r.Id, r.RequestNo, r.FormCode, f.FormNameTh, r.StaffId, r.RequesterFullName, r.RequesterDepartmentName,
   r.BrandCode,
+  -- Stamped on the request at submit, but older rows predate the column
+  -- (migration 047), so fall back to the employee's current department.
+  COALESCE(r.RequesterDepartmentCode, (
+    SELECT TOP 1 emp.DepartmentCode FROM ${hrEmployeeTable()} emp
+    WHERE emp.StaffId = r.StaffId AND emp.Status = N'Active'
+  )) AS RequesterDepartmentCode,
+  (SELECT TOP 1 a.ActionedAt
+   FROM [dbo].[AccApproval] a
+   WHERE a.RequestId = r.Id AND a.StepCode = N'MANAGER' AND a.Status = N'Approved'
+   ORDER BY a.ActionedAt DESC, a.Id DESC) AS ManagerApprovedAt,
   MIN(t.TravelDate) AS TravelDate,
   MAX(t.TravelDate) AS TravelDateTo,
   COUNT(t.Id) AS DayCount,
@@ -351,6 +374,11 @@ function mapRow(
     currentStepCode: (x.CurrentStepCode as string) ?? null,
     pendingStepCode: (x.PendingStepCode as string) ?? null,
     pendingApproverName: (x.PendingApproverName as string) ?? null,
+    // A plain toISOString: the driver reads Thai wall clocks correctly since
+    // useUTC: false, so the fixThaiDate ACC Portal still applies here would
+    // shift it seven hours.
+    managerApprovedAt: x.ManagerApprovedAt ? (x.ManagerApprovedAt as Date).toISOString() : null,
+    requesterDepartmentCode: (x.RequesterDepartmentCode as string) ?? null,
     pendingApproverEmail: (x.PendingApproverEmail as string) ?? null,
     managerStaffId: (x.ManagerStaffId as number) ?? null,
     managerEmail: (x.ManagerEmail as string) ?? null,
