@@ -31,6 +31,7 @@ import {
   totalMismatch,
   MAX_BOOKING_AMOUNT,
 } from "@/features/travel-booking/lib/booking-amounts";
+import { bookingFieldsLocked } from "@/features/travel-booking/lib/booking-lock";
 import {
   sanitizeBookingNo,
   MAX_BOOKING_NO_LENGTH,
@@ -639,12 +640,14 @@ function BookingRowCard({
    * finished. Attaching is what unlocks them — the same shape AP-1's expense row
    * uses, where the receipt is asked for before the money is.
    *
-   * A row saved before this shipped is unaffected: it has its attachment, so
-   * `hasFile` is true and nothing is ever locked retrospectively.
+   * The rule is read against the **saved** row, not the live inputs, and it
+   * exempts a row that already records something. Saving and uploading are
+   * independent here, so a row can hold a booking number and a price with no
+   * file — see `booking-lock.ts`, which owns the rule and the reason.
    */
   const reading = readNote === "reading";
   const hasFile = files.length > 0;
-  const locked = !hasFile || reading;
+  const locked = bookingFieldsLocked({ saved: detail ?? null, hasFile, reading });
 
   /* The read resolves seconds after the attach. These keep its write honest against
      fields that have since been filled in by hand. */
@@ -936,12 +939,24 @@ function BookingRowCard({
         )}
       </div>
 
-      {/* Why the fields are shut. Never shown while they are open, and never while the
-          read is running — the panel above says that itself, and a second line telling
-          somebody to type into a locked box is the exact fault this wording avoids. */}
-      {!hasFile && !reading && !uploading && (
+      {/* Why the fields are shut — gated on `locked`, not on `!hasFile`. A row that
+          already holds saved figures is open despite having no file, and telling its
+          owner the fields unlock after attaching would describe a lock that is not
+          there. Never shown while the read runs either: the fields say that themselves,
+          and a second line about a box that is refusing typing is the exact fault this
+          wording avoids. */}
+      {locked && !reading && !uploading && (
         <p className="m-0 text-[12px]" style={{ color: "var(--text-muted)" }}>
           แนบไฟล์ใบยืนยันการจองก่อน ระบบจะอ่านข้อมูลให้ แล้วจึงแก้ไขช่องต่าง ๆ ได้
+        </p>
+      )}
+
+      {/* Open, but still missing its confirmation — `isTypeComplete` wants one before
+          the booking can be completed, so the prompt stays. It just no longer claims
+          the fields are waiting on it. */}
+      {!locked && !hasFile && !reading && !uploading && (
+        <p className="m-0 text-[12px]" style={{ color: "var(--text-muted)" }}>
+          อย่าลืมแนบไฟล์ใบยืนยันการจอง
         </p>
       )}
 
