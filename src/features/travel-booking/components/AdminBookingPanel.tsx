@@ -1271,8 +1271,8 @@ function PendingFileChip({
         title={file.name + " — ยังไม่ได้อัปโหลด"}
         className={
           kind === "image" && previewUrl
-            ? "w-full h-full rounded-xl overflow-hidden cursor-pointer p-0 border"
-            : "w-full h-full rounded-xl overflow-hidden cursor-pointer p-0 border flex flex-col items-center justify-center gap-1"
+            ? "relative w-full h-full rounded-xl overflow-hidden cursor-pointer p-0 border"
+            : "relative w-full h-full rounded-xl overflow-hidden cursor-pointer p-0 border flex flex-col items-center justify-center gap-1"
         }
         style={{
           borderStyle: "dashed",
@@ -1295,16 +1295,22 @@ function PendingFileChip({
             </span>
           </>
         )}
+        {/* Says which square is only on this page — the same badge language the card's
+            own "ยังไม่ได้บันทึก" uses, one size down so it sits beside it rather than
+            against it.
+
+            **Inside the button, not beside it.** As a sibling it was a square-cornered
+            bar laid over a rounded tile, so the bottom two corners read as square while
+            the top stayed round. In here the button's own `overflow-hidden` clips it to
+            the same `rounded-xl`, which also keeps the two radii from having to be
+            kept in step by hand. `pointer-events-none` keeps the tile clickable. */}
+        <span
+          className="absolute bottom-0 inset-x-0 flex items-center justify-center gap-0.5 text-[8.5px] font-bold py-0.5 pointer-events-none"
+          style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)" }}
+        >
+          <Clock size={9} /> ยังไม่อัปโหลด
+        </span>
       </button>
-      {/* Says which square is only on this page — the same badge language the card's
-          own "ยังไม่ได้บันทึก" uses, one size down so it sits beside it rather than
-          against it. `pointer-events-none` keeps the whole tile clickable. */}
-      <span
-        className="absolute bottom-0 inset-x-0 flex items-center justify-center gap-0.5 text-[8.5px] font-bold py-0.5 pointer-events-none"
-        style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)" }}
-      >
-        <Clock size={9} /> ยังไม่อัปโหลด
-      </span>
       <button
         type="button"
         onClick={onRemove}
