@@ -83,8 +83,6 @@ export function AdvanceErpQueue() {
   const [frozenIds, setFrozenIds] = useState<number[]>([]);
   // Payment-date options for the per-row "รอส่ง" picker (loaded once).
   const [paymentDateOpts, setPaymentDateOpts] = useState<string[]>([]);
-  // Per-company vendor options for the per-row vendor picker.
-  const [vendorOpts, setVendorOpts] = useState<Record<string, { vendorNo: string; displayName: string | null }[]>>({});
   // Pull-back ("ดึงกลับเพื่อยิงใหม่") confirm state.
   const [pullbackId, setPullbackId] = useState<number | null>(null);
   const [pullbackBusy, setPullbackBusy] = useState(false);
@@ -97,22 +95,6 @@ export function AdvanceErpQueue() {
       .then((j: { ok?: boolean; data?: { dates?: string[] } }) => { if (j?.data?.dates) setPaymentDateOpts(j.data.dates); })
       .catch(() => {});
   }, []);
-
-  // Load vendor options for each distinct company present in the pending rows.
-  useEffect(() => {
-    const companies = Array.from(new Set(rows.map((r) => r.interfaceTarget).filter(Boolean)));
-    for (const c of companies) {
-      if (vendorOpts[c]) continue; // already loaded
-      fetch(`/api/request/advance/vendors?company=${encodeURIComponent(c)}`)
-        .then((r) => r.json())
-        .then((j: { ok: boolean; vendors?: { vendorNo: string; displayName: string | null }[] }) => {
-          if (j.ok && j.vendors) setVendorOpts((prev) => ({ ...prev, [c]: j.vendors! }));
-        })
-        .catch(() => {});
-    }
-    // vendorOpts intentionally omitted — we only want to trigger on row changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows]);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -246,19 +228,6 @@ export function AdvanceErpQueue() {
     } catch {
       toast.error("แก้วันจ่ายไม่สำเร็จ");
     }
-  }
-
-  async function changeVendor(id: number, vendorNo: string) {
-    try {
-      const res = await fetch("/api/request/advance/erp-queue/vendor", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, vendorNo }),
-      });
-      const j = (await res.json()) as { ok: boolean; error?: string };
-      if (!j.ok) { toast.error(j.error ?? "แก้ Vendor ไม่สำเร็จ"); return; }
-      toast.success("อัปเดต Vendor แล้ว");
-      load();
-    } catch { toast.error("แก้ Vendor ไม่สำเร็จ"); }
   }
 
   async function doPullback() {
@@ -426,22 +395,13 @@ export function AdvanceErpQueue() {
                       <td className="px-2.5 py-2" style={{ color: "var(--text-primary)" }}>{row.payeeName ?? "—"}</td>
                       <td className="px-2.5 py-2 whitespace-nowrap text-right tabular-nums font-semibold" style={{ color: "var(--text-secondary)" }}>{fmt(row.baseAmount ?? 0)}</td>
                       <td className="px-2.5 py-2 whitespace-nowrap">
-                        {(vendorOpts[row.interfaceTarget] ?? []).length > 0 ? (
-                          <select
-                            aria-label="เลือก Vendor"
-                            value={row.matchedVendorNo ?? ""}
-                            onChange={(e) => { if (e.target.value) changeVendor(row.id, e.target.value); }}
-                            className="text-[12px] rounded-lg px-2 py-1 outline-none cursor-pointer min-w-[260px] max-w-[380px]"
-                            style={{ background: "var(--bg-card)", border: "1px solid var(--border-input)", color: "var(--text-primary)" }}
-                          >
-                            <option value="">— เลือก Vendor —</option>
-                            {(vendorOpts[row.interfaceTarget] ?? []).map((v) => (
-                              <option key={v.vendorNo} value={v.vendorNo}>{v.displayName ?? v.vendorNo} ({v.vendorNo})</option>
-                            ))}
-                          </select>
-                        ) : (
-                          <span className="text-[12px] inline-block min-w-[260px]" style={{ color: "var(--text-secondary)" }}>{row.matchedVendorName ?? row.matchedVendorNo ?? "—"}</span>
-                        )}
+                        {/* Read-only: the Vendor is chosen/confirmed at the ACC_OFFICER
+                            approval step (preview drawer), not here. */}
+                        <span className="text-[12px] inline-block min-w-[260px]" style={{ color: "var(--text-secondary)" }}>
+                          {row.matchedVendorName
+                            ? `${row.matchedVendorName}${row.matchedVendorNo ? ` (${row.matchedVendorNo})` : ""}`
+                            : row.matchedVendorNo ?? "—"}
+                        </span>
                       </td>
                       <td className="px-2.5 py-2 whitespace-nowrap">
                         {paymentDateOpts.length > 0 ? (
