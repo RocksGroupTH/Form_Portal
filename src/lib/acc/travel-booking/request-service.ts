@@ -16,6 +16,7 @@ import { allocateRequestNo } from "@/lib/acc/sequence";
 import { queueEmail } from "@/lib/acc/email-queue";
 import { buildTravelBookingEmail } from "@/lib/acc/travel-booking/email-templates";
 import { computePerDiem } from "@/lib/acc/travel-booking/perdiem";
+import { isTravelDateTooSoon } from "@/features/travel-booking/lib/earliest-travel-date";
 import { getAllowanceLog } from "@/lib/acc/travel-booking/allowance-log";
 import {
   listAccommodations,
@@ -998,6 +999,13 @@ export function validateTravelBookingTab(
   // ข้อ6 — วันเดินทาง (range)
   if (!tab.departDate || !tab.returnDate) return fail("กรุณาเลือกวันเดินทางไปและกลับ");
   if (tab.returnDate < tab.departDate) return fail("วันที่เดินทางกลับต้องไม่ก่อนวันที่เดินทางไป");
+  // A booking desk has to actually book something, so the earliest trip is
+  // tomorrow. Re-asserted here and not only in the picker: a draft saved before
+  // this rule existed still holds whatever date it was given, and a resumed one
+  // must be re-picked rather than silently submitted into the past.
+  if (isTravelDateTooSoon(tab.departDate, new Date())) {
+    return fail("วันเดินทางต้องเป็นวันพรุ่งนี้เป็นต้นไป กรุณาเลือกวันใหม่");
+  }
 
   // ข้อ11 — เวลา (required only when the matching direction flags it, 12.3)
   if (tab.goNeedsDepartTime && !tab.departTime) return fail("กรุณาระบุเวลาออกเดินทางขาไป");

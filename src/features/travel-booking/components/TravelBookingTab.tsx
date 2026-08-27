@@ -36,6 +36,7 @@ import type {
   TravelReasonOption,
   VehicleOption,
 } from "@/features/travel-booking/types";
+import { earliestTravelDate } from "@/features/travel-booking/lib/earliest-travel-date";
 
 /** Sentinel option name for AccTravelRentVehicle's default "no rental" choice — mirrors the server. */
 const NO_RENT_VEHICLE_NAME = "ไม่เช่า";
@@ -355,6 +356,7 @@ export function TravelBookingTab({
             returnDate={tab.returnDate}
             onChange={({ departDate, returnDate }) => onChange({ departDate, returnDate })}
             hasError={hasErr("dateRange")}
+            minDate={earliestTravelDate(new Date())}
             disabledDates={disabledTravelDates}
             continuationHint={
               isContinuation

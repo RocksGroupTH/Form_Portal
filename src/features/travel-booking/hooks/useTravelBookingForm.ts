@@ -19,6 +19,7 @@ import type {
 } from "@/features/travel-booking/types";
 import type { EmployeeContext } from "@/lib/hr/types";
 import type { AccBrandOption } from "@/features/accounting/types";
+import { isTravelDateTooSoon } from "@/features/travel-booking/lib/earliest-travel-date";
 
 /* ── Client-side editable tab state ──
    Writable subset of TravelBookingRequest (mirrors SaveTravelBookingInput) plus
@@ -280,6 +281,10 @@ export function validateTab(tab: TabFormState, settings: TabSettingsMaps): Field
     issues.push({ key: "dateRange", label: "วันเดินทางไป-กลับ" });
   } else if (tab.returnDate < tab.departDate) {
     issues.push({ key: "dateRange", label: "วันที่เดินทางกลับต้องไม่ก่อนวันที่เดินทางไป" });
+  } else if (isTravelDateTooSoon(tab.departDate, new Date())) {
+    // The picker will not offer a past day, but a resumed draft still holds
+    // whatever it was saved with — including a date that has since gone by.
+    issues.push({ key: "dateRange", label: "วันเดินทางต้องเป็นวันพรุ่งนี้เป็นต้นไป" });
   }
 
   if (tab.goNeedsDepartTime && !tab.departTime) issues.push({ key: "departTime", label: "เวลาออกเดินทางขาไป" });
