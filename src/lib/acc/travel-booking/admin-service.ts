@@ -315,13 +315,18 @@ async function missingRequiredBookings(
 }
 
 /**
- * Admin closes the request — ManagerApproved → Completed — once every required booking type
- * (per `REQUIRED_BOOKINGS`) has at least one row and EVERY one of its rows carries a saved
- * `BookingNo` + `PriceExVat` and at least one attached file. A type may hold several rows
- * (two hotels, two tickets, …), and a half-filled extra row blocks completion on purpose —
- * Admin either finishes it or removes it. `getTravelBookingRequest` already joins
- * `AccTravelBookingDetail` with its `AccRequestFile` rows (by RefType/RefId), so the gate is
- * checked against that shape directly rather than re-deriving the RefType↔BookingType mapping.
+ * Admin hands the request on to accounting — ManagerApproved/ADMIN → ManagerApproved/ACCOUNT —
+ * once every required booking type (per `REQUIRED_BOOKINGS`) has at least one row and EVERY one
+ * of its rows carries a saved `BookingNo` + `PriceExVat` and at least one attached file. A type
+ * may hold several rows (two hotels, two tickets, …), and a half-filled extra row blocks
+ * completion on purpose — Admin either finishes it or removes it. `getTravelBookingRequest`
+ * already joins `AccTravelBookingDetail` with its `AccRequestFile` rows (by RefType/RefId), so
+ * the gate is checked against that shape directly rather than re-deriving the RefType↔BookingType
+ * mapping.
+ *
+ * This no longer closes the request — `Status` stays `ManagerApproved` and only
+ * `CurrentStepCode` moves, to `'ACCOUNT'`. Closing it to `Completed` is now
+ * `approveByAccount`'s job (`approval.ts`).
  */
 export async function completeRequest(requestId: number, actor: Actor): Promise<TravelBookingRequest> {
   const req = await getTravelBookingRequest(requestId);
@@ -348,7 +353,7 @@ export async function completeRequest(requestId: number, actor: Actor): Promise<
   await tx.begin();
   try {
     const upd = await tx.request().input("rid", sql.Int, requestId)
-      .query(`UPDATE [dbo].[AccRequest] SET Status='Completed', CurrentStepCode=NULL, UpdatedAt=SYSDATETIME()
+      .query(`UPDATE [dbo].[AccRequest] SET CurrentStepCode='ACCOUNT', UpdatedAt=SYSDATETIME()
               WHERE Id=@rid AND CurrentStepCode='ADMIN' AND Status='ManagerApproved';
               SELECT @@ROWCOUNT AS n`);
     if ((upd.recordset[0].n as number) === 0) {

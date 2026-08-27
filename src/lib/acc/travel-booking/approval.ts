@@ -365,3 +365,45 @@ export async function cancelByRequester(requestId: number, actor: Actor): Promis
 
   return requireTravelBookingRequest(requestId);
 }
+
+/* ── Accounting stage — spec: ผู้จัดการ → Admin จอง → บัญชี → done ── */
+
+/**
+ * Accounting signs the booking off: `ManagerApproved`/`ACCOUNT` → `Completed`.
+ *
+ * The last step, and the point after which the per-diem figure is frozen — see
+ * `recomputeGroupPerDiem`, which refuses a `Completed` request.
+ *
+ * The status and step are the UPDATE's own predicate rather than a read followed
+ * by a write: two accountants pressing approve on the same request both pass a
+ * read, and only one may close it.
+ */
+export async function approveByAccount(requestId: number, actor: Actor): Promise<TravelBookingRequest> {
+  const pool = await getAccPool();
+  const tx = pool.transaction();
+  await tx.begin();
+  try {
+    const res = await tx.request()
+      .input("rid", sql.Int, requestId)
+      .query(`UPDATE [dbo].[AccRequest]
+              SET Status='Completed', CurrentStepCode=NULL, UpdatedAt=SYSDATETIME()
+              WHERE Id=@rid AND Status='ManagerApproved' AND CurrentStepCode='ACCOUNT'`);
+    if ((res.rowsAffected[0] ?? 0) === 0) {
+      throw new Error("คำขอนี้ไม่อยู่ในขั้นตอนอนุมัติของบัญชี");
+    }
+
+    await tx.request()
+      .input("rid", sql.Int, requestId)
+      .input("by", sql.Int, actor.staffId ?? null)
+      .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note)
+              VALUES (@rid, @by, 'account_approved', N'บัญชีอนุมัติ')`);
+
+    await tx.commit();
+  } catch (e) {
+    await tx.rollback();
+    throw e;
+  }
+  const updated = await getTravelBookingRequest(requestId);
+  if (!updated) throw new Error("ไม่พบคำขอ");
+  return updated;
+}
