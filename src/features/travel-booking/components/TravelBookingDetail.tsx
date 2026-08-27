@@ -36,7 +36,7 @@ import { useErpSandboxDevHost } from "@/features/accounting/hooks/useErpSandboxD
 import { useTravelBookingOptionIcons } from "@/features/travel-booking/hooks/useOptionIcons";
 import { InfoStrip, typeInfo } from "@/features/travel-booking/components/BookingInfoStrip";
 import { canActManagerStep } from "@/lib/acc/manager-auth";
-import { formatPayoutMonth } from "@/lib/acc/travel-booking/payment-month";
+import { payoutMonthLabel } from "@/lib/acc/travel-booking/payout-months";
 import { UatDataBanner } from "@/components/UatDataBanner";
 import { AdminBookingPanel } from "./AdminBookingPanel";
 import { TravelBookingStatusBadge } from "./TravelBookingStatusBadge";
@@ -70,12 +70,6 @@ function fmtDateTime(raw: string | null | undefined): string {
   const hh = String(d.getHours()).padStart(2, "0");
   const min = String(d.getMinutes()).padStart(2, "0");
   return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
-}
-
-/** 'YYYY-MM-DD' → local-midnight Date (avoids the UTC-parse shift `new Date(str)` can cause). */
-function ymdToDate(ymd: string): Date {
-  const [y, m, d] = ymd.split("-").map(Number);
-  return new Date(y, (m || 1) - 1, d || 1);
 }
 
 /* ── small layout primitives (mirrors AP-1 RequestDetail.tsx's look — its own Section/DetailRow/
@@ -822,7 +816,7 @@ export function TravelBookingDetail({
           {request.paymentDate && (
             <DetailRow
               label="กำหนดจ่าย"
-              value={`${formatPayoutMonth(ymdToDate(request.paymentDate))} (ภายในวันที่ ${fmtYmdDisplay(request.paymentDate)})`}
+              value={`${payoutMonthLabel(request.paymentDate.slice(0, 7)) ?? request.paymentDate} (ภายในวันที่ ${fmtYmdDisplay(request.paymentDate)})`}
               valueStyle={{ color: "var(--text-info-green)" }}
             />
           )}

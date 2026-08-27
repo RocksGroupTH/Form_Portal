@@ -63,3 +63,22 @@ export function payoutMonthOptions(from: Date = new Date(), count = 12): PayoutM
   }
   return out;
 }
+
+/**
+ * The Buddhist "เดือน ปี" label for any `"YYYY-MM"`, independent of the
+ * forward-looking window `payoutMonthOptions` limits itself to.
+ *
+ * A request's already-scheduled month can fall outside that window (it was
+ * picked a while ago, or the queue sat on it), and it must still render in
+ * the same calendar `payoutMonthOptions`' own labels use elsewhere on the
+ * same screen — see `TravelBookingDetail.tsx`'s "กำหนดจ่าย" row. Pulled out
+ * of `payoutMonthOptions`'s loop body rather than duplicated at the call site.
+ */
+export function payoutMonthLabel(ym: string): string | null {
+  const m = /^(\d{4})-(\d{2})$/.exec(ym ?? "");
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month1 = Number(m[2]);
+  if (month1 < 1 || month1 > 12) return null;
+  return `${THAI_MONTHS[month1 - 1]} ${year + 543}`;
+}

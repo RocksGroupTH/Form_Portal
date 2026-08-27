@@ -46,7 +46,21 @@ export interface AdminQueueItem {
   updatedAt: string;
 }
 
-/** AP-17 requests that finished Manager approval and are waiting on Admin to fill bookings. */
+/**
+ * AP-17 requests that finished Manager approval and are waiting on Admin to
+ * fill bookings — `ManagerApproved` / `CurrentStepCode='ADMIN'`.
+ *
+ * The `CurrentStepCode` filter is load-bearing, not decorative: before the
+ * accounting step existed, `completeRequest` moved a finished request straight
+ * to `Status='Completed'`, so `Status='ManagerApproved'` alone already named
+ * the ADMIN stage exactly. Commit cb8e47e changed that hand-off to
+ * `CurrentStepCode='ACCOUNT'` (`Status` stays `ManagerApproved`) without
+ * updating this query in the same file — so without the filter this list also
+ * shows work Admin has already finished and handed to accounting, and Admin's
+ * เสร็จสิ้น button 400s on those rows (`completeRequest` itself guards on
+ * `CurrentStepCode='ADMIN'`). See `listAccountQueue` below for the sibling
+ * query this pairs with.
+ */
 export async function listAdminQueue(): Promise<AdminQueueItem[]> {
   const pool = await getAccPool();
   const res = await pool.request()
@@ -58,7 +72,7 @@ export async function listAdminQueue(): Promise<AdminQueueItem[]> {
              t.NeedsRoomBooking, t.GoNeedsTicketBooking, t.ReturnNeedsTicketBooking, t.NeedsRentBooking
       FROM [dbo].[AccRequest] r
       INNER JOIN [dbo].[AccTravelBooking] t ON t.RequestId = r.Id
-      WHERE r.FormCode = @form AND r.Status = 'ManagerApproved'
+      WHERE r.FormCode = @form AND r.Status = 'ManagerApproved' AND r.CurrentStepCode = 'ADMIN'
       ORDER BY r.UpdatedAt ASC
     `);
   return (res.recordset as Record<string, unknown>[]).map((x) => ({
@@ -220,13 +234,18 @@ type SqlRunner = Pick<AccPool, "request"> | Pick<AccTx, "request">;
  */
 async function requireEditableBooking(runner: SqlRunner, requestId: number): Promise<number> {
   const tbRes = await runner.request().input("rid", sql.Int, requestId)
-    .query(`SELECT t.Id AS TravelBookingId, r.Status
+    .query(`SELECT t.Id AS TravelBookingId, r.Status, r.CurrentStepCode
             FROM [dbo].[AccTravelBooking] t
             INNER JOIN [dbo].[AccRequest] r WITH (UPDLOCK, HOLDLOCK) ON r.Id = t.RequestId
             WHERE t.RequestId = @rid`);
-  const tbRow = tbRes.recordset[0] as { TravelBookingId: number; Status: string } | undefined;
+  const tbRow = tbRes.recordset[0] as { TravelBookingId: number; Status: string; CurrentStepCode: string | null } | undefined;
   if (!tbRow) throw new Error("ไม่พบคำขอนี้");
-  if (tbRow.Status !== "ManagerApproved") {
+  // `Status` alone used to name the Admin stage exactly (see `listAdminQueue`'s
+  // own note) — since the accounting step split it in two, a request can be
+  // `ManagerApproved` while already handed to accounting (`CurrentStepCode =
+  // 'ACCOUNT'`), and without this check Admin could still save, delete or
+  // re-attach evidence on a request accounting is signing off.
+  if (tbRow.Status !== "ManagerApproved" || tbRow.CurrentStepCode !== "ADMIN") {
     throw new Error("คำขอนี้ไม่อยู่ในขั้นตอนที่ Admin สามารถกรอกข้อมูลการจองได้");
   }
   return tbRow.TravelBookingId;

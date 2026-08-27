@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { payoutDateForMonth, payoutMonthOptions } from "./payout-months";
+import { payoutDateForMonth, payoutMonthLabel, payoutMonthOptions } from "./payout-months";
 
 test("the first option is the current month, not the next", () => {
   const opts = payoutMonthOptions(new Date(2026, 7, 27), 3);
@@ -34,4 +34,24 @@ test("a malformed month yields null rather than a guessed date", () => {
   assert.equal(payoutDateForMonth("2026-13"), null);
   assert.equal(payoutDateForMonth("2026-00"), null);
   assert.equal(payoutDateForMonth(""), null);
+});
+
+test("payoutMonthLabel matches payoutMonthOptions' own label for the same month", () => {
+  assert.equal(payoutMonthLabel("2026-08"), "สิงหาคม 2569");
+  assert.equal(payoutMonthLabel("2026-08"), payoutMonthOptions(new Date(2026, 7, 1), 1)[0].label);
+});
+
+test("payoutMonthLabel works outside payoutMonthOptions' forward window", () => {
+  // A month already in the past, or years out — payoutMonthOptions would never
+  // offer it as a choice, but the label must still exist to describe a
+  // request's already-scheduled month.
+  assert.equal(payoutMonthLabel("2020-01"), "มกราคม 2563");
+  assert.equal(payoutMonthLabel("2030-12"), "ธันวาคม 2573");
+});
+
+test("payoutMonthLabel returns null rather than a guessed month", () => {
+  assert.equal(payoutMonthLabel("nonsense"), null);
+  assert.equal(payoutMonthLabel("2026-13"), null);
+  assert.equal(payoutMonthLabel("2026-00"), null);
+  assert.equal(payoutMonthLabel(""), null);
 });
