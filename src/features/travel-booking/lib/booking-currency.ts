@@ -22,7 +22,7 @@
  * the invoice in front of them is in baht despite the brand.
  */
 
-import { isBaht, THB } from "@/lib/acc/currency";
+import { enabledForeignCurrencies, isBaht, THB, type BrandCurrencyEntry } from "@/lib/acc/currency";
 
 function norm(code: string | null | undefined): string {
   return (code ?? "").trim().toUpperCase();
@@ -30,31 +30,33 @@ function norm(code: string | null | undefined): string {
 
 /** The shape both halves read a brand as — `RegistryBrand` and `AccBrandOption` both satisfy it. */
 export interface BookingCurrencyBrand {
-  currencyCode: string | null;
-  currencyEnabled: boolean;
+  currencies: readonly BrandCurrencyEntry[] | null | undefined;
 }
 
 /**
  * The currencies this request's booking figures may be recorded in, in the
- * order the desk's toggle offers them: the brand's own first, baht second.
+ * order the desk's toggle offers them: the brand's own first, baht last.
+ *
+ * A brand may carry several (`BrandCurrency`, migration 127) and every enabled
+ * one is offered. Baht is appended once, whether or not the brand also carries a
+ * THB row — `enabledForeignCurrencies` drops that row precisely so it cannot be
+ * listed twice.
  *
  * An empty array means **render nothing**. A brand with no currency configured
  * has to leave `AdminBookingPanel` pixel-identical to the day before this
- * shipped, which a one-option toggle would not. `brandCurrencyState` in
+ * shipped, which a one-option toggle would not. `enabledForeignCurrencies` in
  * `@/lib/acc/currency` owns that decision and this defers to it rather than
  * re-deriving the rule.
  *
- * The brand's currency is first here **and** it is the default — unlike AP-1,
- * where baht is the default and the brand's currency merely leads the list.
+ * The brand's first currency leads the list **and** is the default — unlike
+ * AP-1, where baht is the default and the brand's currencies merely lead.
  */
 export function bookingCurrencyOptions(
   brand: BookingCurrencyBrand | null | undefined,
 ): string[] {
-  if (!brand) return [];
-  if (!brand.currencyEnabled) return [];
-  const code = norm(brand.currencyCode);
-  if (code === "" || code === THB) return [];
-  return [code, THB];
+  const foreign = enabledForeignCurrencies(brand?.currencies);
+  if (foreign.length === 0) return [];
+  return foreign.concat([THB]);
 }
 
 /**
@@ -69,10 +71,10 @@ export function bookingCurrencyOptions(
  * `"THB"` is honoured whatever the brand says: it is the desk's deliberate
  * opt-out for an invoice that really is in baht.
  *
- * Anything else — a third currency, a typo, a forged body — resolves to the
- * brand's currency rather than being accepted or throwing. It can therefore
- * never widen what a request may be recorded in beyond the one currency its
- * brand is configured for.
+ * Anything else — a currency the brand does not carry, a typo, a forged body —
+ * resolves to the brand's **first** currency rather than being accepted or
+ * throwing. It can therefore never widen what a request may be recorded in
+ * beyond the currencies its brand is configured for.
  *
  * A brand with nothing configured always answers baht, so an unconfigured brand
  * writes exactly the rows it wrote before this feature existed.

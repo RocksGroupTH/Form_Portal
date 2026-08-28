@@ -14,7 +14,12 @@
  * to know a claim is foreign.
  */
 
-import { isBaht, THB } from "@/lib/acc/currency";
+import { enabledForeignCurrencies, isBaht, THB, type BrandCurrencyEntry } from "@/lib/acc/currency";
+
+/** The shape both halves read a brand as — `RegistryBrand` and `AccBrandOption` both satisfy it. */
+export interface ClaimCurrencyBrand {
+  currencies: readonly BrandCurrencyEntry[] | null | undefined;
+}
 
 /**
  * Whether a rate-based (บาท/กม.) vehicle may be used on a claim in this
@@ -46,38 +51,45 @@ export const RATE_VEHICLE_FOREIGN_ERROR =
  * The currencies a claim against this brand may be entered in, in the order the
  * picker offers them.
  *
+ * **The brand's enabled currencies, then baht.** A brand may carry several
+ * (`BrandCurrency`, migration 127) and every enabled one is offered; baht is
+ * always available and is appended once, whether or not the brand also carries a
+ * THB row — `enabledForeignCurrencies` drops that row precisely so it cannot be
+ * listed twice.
+ *
  * An empty array means **render nothing**: a brand with no currency configured
  * has to leave the form exactly as it looked before this feature shipped, which
- * a one-option dropdown would not. `brandCurrencyState` in `@/lib/acc/currency`
- * is what decides that, and this defers to it rather than re-deriving the rule.
+ * a one-option dropdown would not. `enabledForeignCurrencies` in
+ * `@/lib/acc/currency` is what decides that, and this defers to it rather than
+ * re-deriving the rule.
  *
- * Baht is second, not first, because the brand's own currency is the reason
- * anybody configured it — but baht is the *default*, which is `defaultClaimCurrency`
- * below and deliberately not "the first option".
+ * Baht is last, not first, because the brand's own currencies are the reason
+ * anybody configured them — but baht is still the *default*, which
+ * `effectiveClaimCurrency` below decides and deliberately not "the first
+ * option".
  */
 export function claimCurrencyOptions(
-  brand: { currencyCode: string | null; currencyEnabled: boolean } | null | undefined,
+  brand: ClaimCurrencyBrand | null | undefined,
 ): string[] {
-  if (!brand) return [];
-  if (!brand.currencyEnabled) return [];
-  const code = (brand.currencyCode ?? "").trim().toUpperCase();
-  if (code === "" || code === THB) return [];
-  return [code, THB];
+  const foreign = enabledForeignCurrencies(brand?.currencies);
+  if (foreign.length === 0) return [];
+  return foreign.concat([THB]);
 }
 
 /**
  * The currency a claim is actually in, given what the form holds and what the
  * brand offers.
  *
- * **Always baht unless the brand offers exactly this currency.** That is what
- * makes an admin switching `CurrencyEnabled` off recoverable rather than a trap:
- * a draft still holding `MYR` resolves to baht here, the form stops sending the
- * foreign code, and the next save succeeds. Without it the form would post a
- * currency the server refuses, with no control on screen to change it.
+ * **Always baht unless the brand still offers exactly this currency.** That is
+ * what makes an admin switching a currency off — or removing it — recoverable
+ * rather than a trap: a draft still holding `MYR` resolves to baht here, the
+ * form stops sending the foreign code, and the next save succeeds. Without it
+ * the form would post a currency the server refuses, with no control on screen
+ * to change it.
  */
 export function effectiveClaimCurrency(
   selected: string | null | undefined,
-  brand: { currencyCode: string | null; currencyEnabled: boolean } | null | undefined,
+  brand: ClaimCurrencyBrand | null | undefined,
 ): string {
   const options = claimCurrencyOptions(brand);
   const want = (selected ?? "").trim().toUpperCase();

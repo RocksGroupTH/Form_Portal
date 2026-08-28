@@ -9,6 +9,17 @@
  * - **`Rocks_Portal_Form.dbo.BrandSetting`** (migration 122) holds what *this*
  *   app decides about a brand: whether to offer it, and its logo. Production
  *   only — see the migration for why there is no UAT twin.
+ * - **`Rocks_Portal_Form.dbo.BrandCurrency`** (migration 127) holds the
+ *   currencies a claim against a brand may be entered in — **several per
+ *   brand**, each with its own enable flag. Production only, for the same
+ *   reason, which is why this module is the one place either table is named:
+ *   `currency-pool-guard.test.ts` pins that per file.
+ *
+ * **`BrandSetting.CountryCode` / `.CurrencyCode` / `.CurrencyEnabled` are dead.**
+ * Migration 124 added them on the design that a brand claims in one currency; it
+ * does not. 127 replaced them and 128 drops them, and until then the rule is
+ * that nothing reads them — two places that could answer "which currency" is
+ * exactly the confusion this feature exists to remove.
  *
  * **The master is the registry.** The join runs from it, so a `BrandSetting`
  * row for a code the master does not have is inert rather than a phantom brand,
@@ -19,15 +30,17 @@
  * which is exactly the behaviour that preceded it.
  */
 import { getCorePool, getProductionFormPool, sql } from "@/lib/db/mssql";
-import { brandCurrencyState } from "@/lib/acc/currency";
+import { enabledForeignCurrencies, type BrandCurrencyEntry } from "@/lib/acc/currency";
 import {
-  brandCurrencyChanges,
-  type BrandCurrencyPatch,
+  brandCurrencyLogValue,
+  BRAND_CURRENCY_LOG_FIELD,
+  type BrandCurrencyAdd,
 } from "@/lib/acc/brand-currency-input";
 
 /**
- * A brand-currency save refused for a reason worth showing the person who made
- * it — an unknown brand code, today.
+ * A brand-currency write refused for a reason worth showing the person who made
+ * it — an unknown brand code, a currency the brand already carries, or a row
+ * somebody else removed first.
  *
  * Its own class so a route answers 400 rather than 500 without matching on a
  * message, the way `AccForbiddenError` and friends work in `acc/request-errors`.
@@ -37,6 +50,21 @@ export class BrandCurrencyError extends Error {
     super(message);
     this.name = "BrandCurrencyError";
   }
+}
+
+/**
+ * SQL Server's two "you broke a uniqueness rule" errors — 2627 for a constraint,
+ * 2601 for a unique index.
+ *
+ * **`UQ_BrandCurrency_Brand_Currency` is where "no duplicates" lives** (migration
+ * 127), not in a handler and not in the panel: two admins on two tabs, or one
+ * request replayed, defeat any check made before the insert. What this function
+ * buys is only that the rule reads as a sentence rather than as a 500 — the
+ * refusal happens whether or not anybody translates it.
+ */
+function isUniqueViolation(e: unknown): boolean {
+  const n = (e as { number?: unknown } | null)?.number;
+  return n === 2627 || n === 2601;
 }
 
 export interface RegistryBrand {
@@ -55,12 +83,21 @@ export interface RegistryBrand {
   logo: string | null;
   /** False only where a row says so. */
   isEnabled: boolean;
-  /** ISO-3166-1 alpha-2, or null when nobody has set one. */
-  countryCode: string | null;
-  /** ISO-4217, or null. Null and "THB" both mean baht — see `acc/currency.ts`. */
-  currencyCode: string | null;
-  /** Whether a claim against this brand may be entered in `currencyCode`. */
-  currencyEnabled: boolean;
+  /**
+   * Every currency configured for this brand, in `SortOrder` then id order —
+   * enabled or not, so the settings editor can list what it may switch back on.
+   *
+   * **A list, not a code.** `BrandSetting` carried one `CountryCode` /
+   * `CurrencyCode` / `CurrencyEnabled` triple until 2026-08-28 and cannot say
+   * what KSI needs: Thailand (THB) *and* England (GBP), and more later. Those
+   * three columns still exist — migration 128 drops them — and **nothing reads
+   * them any more**; `BrandCurrency` is the only source of truth.
+   *
+   * Consumers wanting "what may a claim be entered in" call
+   * `enabledForeignCurrencies` or `brandCurrencyState` rather than filtering
+   * this by hand, so the rule has one definition.
+   */
+  currencies: BrandCurrencyEntry[];
   /** True when an uploaded logo is stored for this brand. */
   hasUploadedLogo: boolean;
 }
@@ -70,9 +107,14 @@ interface BrandSettingRow {
   IsEnabled: boolean;
   HasLogo: number;
   LogoUpdatedAt: Date | null;
+}
+
+interface BrandCurrencyRow {
+  Id: number;
+  BrandCode: string;
   CountryCode: string | null;
-  CurrencyCode: string | null;
-  CurrencyEnabled: boolean;
+  CurrencyCode: string;
+  IsEnabled: boolean;
 }
 
 /**
@@ -100,7 +142,7 @@ function localLogoUrl(code: string): string {
 export async function listBrandRegistry(): Promise<RegistryBrand[]> {
   const [corePool, formPool] = await Promise.all([getCorePool(), getProductionFormPool()]);
 
-  const [masterRes, settingRes] = await Promise.all([
+  const [masterRes, settingRes, currencyRes] = await Promise.all([
     corePool.request().query(`
       SELECT Code, Name
       FROM [Rocks_Codex].[dbo].[Brand] WITH (NOLOCK)
@@ -109,18 +151,44 @@ export async function listBrandRegistry(): Promise<RegistryBrand[]> {
     `),
     // DATALENGTH rather than the bytes: this runs on every page that shows a
     // brand, and the images are only wanted by the route that serves one.
+    //
+    // `CountryCode`, `CurrencyCode` and `CurrencyEnabled` are deliberately NOT
+    // selected. They still exist on the table until migration 128 drops them,
+    // and reading them here is how two answers to "which currency" would come
+    // back into existence — the confusion `BrandCurrency` was created to end.
     formPool.request().query(`
       SELECT BrandCode, IsEnabled,
              CASE WHEN LogoBytes IS NULL THEN 0 ELSE 1 END AS HasLogo,
-             LogoUpdatedAt,
-             CountryCode, CurrencyCode, CurrencyEnabled
+             LogoUpdatedAt
       FROM [dbo].[BrandSetting]
+    `),
+    // One query for every brand's currencies rather than one per brand: this
+    // list is read on every page that shows a brand picker.
+    formPool.request().query(`
+      SELECT Id, BrandCode, CountryCode, CurrencyCode, IsEnabled
+      FROM [dbo].[BrandCurrency]
+      ORDER BY BrandCode, SortOrder, Id
     `),
   ]);
 
   const settings = new Map<string, BrandSettingRow>();
   for (const r of settingRes.recordset as BrandSettingRow[]) {
     settings.set(r.BrandCode, r);
+  }
+
+  // CHAR(2)/CHAR(3) come back space-padded, so every consumer would otherwise
+  // be comparing `"MYR"` against `"MYR"` with no padding on one side and some
+  // on the other. Trimmed once, here, where the column shape is known.
+  const currencies = new Map<string, BrandCurrencyEntry[]>();
+  for (const r of currencyRes.recordset as BrandCurrencyRow[]) {
+    const list = currencies.get(r.BrandCode) ?? [];
+    list.push({
+      id: r.Id,
+      countryCode: (r.CountryCode ?? "").trim().toUpperCase() || null,
+      currencyCode: (r.CurrencyCode ?? "").trim().toUpperCase(),
+      isEnabled: !!r.IsEnabled,
+    });
+    currencies.set(r.BrandCode, list);
   }
 
   return (masterRes.recordset as { Code: string; Name: string | null }[]).map((b) => {
@@ -133,12 +201,10 @@ export async function listBrandRegistry(): Promise<RegistryBrand[]> {
       // Absent means enabled — see the module header.
       isEnabled: s ? s.IsEnabled : true,
       hasUploadedLogo,
-      // Absent means NO currency, which is the opposite default to isEnabled
+      // No rows means NO currency, which is the opposite default to isEnabled
       // and deliberately so: a brand nobody has configured claims in baht, and
       // baht is what every row written before this feature holds.
-      countryCode: s?.CountryCode ?? null,
-      currencyCode: s?.CurrencyCode ?? null,
-      currencyEnabled: s ? s.CurrencyEnabled : false,
+      currencies: currencies.get(b.Code) ?? [],
     };
   });
 }
@@ -149,35 +215,33 @@ export async function listSelectableBrands(): Promise<RegistryBrand[]> {
 }
 
 /**
- * The foreign currency a claim against this brand may be entered in, or null.
+ * The foreign currencies a claim against this brand may be entered in.
  *
- * Null covers every way of having no choice: no brand code, a code the master
- * does not carry, nothing configured, configuration staged but switched off,
- * and a brand whose currency is literally baht. `brandCurrencyState` owns that
- * rule and this defers to it rather than re-deriving it — the same function the
- * two forms' pickers call, so what a document read may be trusted with and what
- * the picker offers can never disagree.
+ * **Empty covers every way of having no choice**: no brand code, a code the
+ * master does not carry, nothing configured, rows staged but switched off, and
+ * a brand whose only configured currency is baht. `enabledForeignCurrencies`
+ * owns that rule and this defers to it rather than re-deriving it — the same
+ * function the two forms' pickers reach through, so what a document read may be
+ * trusted with and what the picker offers can never disagree.
  *
  * **This is what the AI document reads resolve server-side.** They must never
  * take a currency from the caller: a body shaped by hand would otherwise have a
  * currency accepted that the brand does not offer. And it must be read here
  * rather than through `getAccPool()`, which resolves `Rocks_Portal_Form_UAT`
- * where `BrandSetting` has no object at all.
+ * where neither `BrandSetting` nor `BrandCurrency` has an object at all.
  */
-export async function getBrandClaimCurrency(
+export async function getBrandClaimCurrencies(
   code: string | null | undefined,
-): Promise<string | null> {
+): Promise<string[]> {
   const want = (code ?? "").trim();
-  if (want === "") return null;
+  if (want === "") return [];
 
   const brands = await listBrandRegistry();
   for (let i = 0; i < brands.length; i++) {
-    const b = brands[i];
-    if (b.code !== want) continue;
-    if (brandCurrencyState(b) !== "configured") return null;
-    return (b.currencyCode ?? "").trim().toUpperCase();
+    if (brands[i].code !== want) continue;
+    return enabledForeignCurrencies(brands[i].currencies);
   }
-  return null;
+  return [];
 }
 
 /** One brand's uploaded logo, or null. Read by the serving route only. */
@@ -247,21 +311,23 @@ export async function saveBrandSetting(
 }
 
 /**
- * One brand's country, claim currency and the switch that turns it on.
+ * The three writes against `BrandCurrency`, and the audit rows that commit with
+ * them.
  *
- * **This lives here rather than in `@/lib/acc/settings-service`, and it must
- * stay here.** `BrandSetting` has no row in `Rocks_Portal_Form_UAT` — it has no
- * *object* there — so a statement naming it from `getAccPool()`/`getFormPool()`
- * throws `Invalid object name` for a UAT tester and for nobody else.
- * `settings-service.ts` imports `getAccPool` on its first line, and
- * `@/lib/acc/currency-pool-guard.test.ts` is per **file**, not per statement:
- * the moment this statement landed there the test would go red. The fix would
- * be to move it back, never to weaken the guard.
+ * **They live here rather than in `@/lib/acc/settings-service`, and they must
+ * stay here.** Neither `BrandSetting` nor `BrandCurrency` has a row in
+ * `Rocks_Portal_Form_UAT` — neither has an *object* there — so a statement
+ * naming either from `getAccPool()`/`getFormPool()` throws `Invalid object
+ * name` for a UAT tester and for nobody else. `settings-service.ts` imports
+ * `getAccPool` on its first line, and `@/lib/acc/currency-pool-guard.test.ts`
+ * is per **file**, not per statement: the moment one of these statements landed
+ * there the test would go red. The fix would be to move it back, never to
+ * weaken the guard.
  *
- * **The change and its audit rows commit together**, one transaction on one
+ * **Each change and its audit row commit together**, one transaction on one
  * connection, the shape `createApiKey` uses. The audit is a requirement rather
- * than tidiness: the value is stored once per brand while the permission to
- * change it is per form (spec §9.3), so an AP-17 booking approver holding the
+ * than tidiness: the values are stored once per brand while the permission to
+ * change them is per form (spec §9.3), so an AP-17 booking approver holding the
  * `brands` grant can change what an AP-1 travel claim converts at, on a roster
  * AP-1's admins do not control. That is a decision the user took knowingly and
  * cannot be expressed as a constraint, so `BrandSettingLog` — with the
@@ -270,99 +336,231 @@ export async function saveBrandSetting(
  * `AccActivityLog` cannot hold these rows: its `RequestId` is `int NOT NULL`
  * with an FK to `AccRequest`, and a brand change has no request.
  *
- * A save that changes nothing writes nothing — neither the row nor a log entry.
- * A log recording *saves* rather than *changes* cannot answer "when did this
- * last change", which is the only question it exists for.
+ * There is no diff-and-skip step of the kind the old single-currency save
+ * needed. Each of these is one deliberate act on one row — add it, switch it,
+ * remove it — so a call that reaches the database is a change, and one that
+ * finds nothing to change refuses or returns rather than logging a save.
  */
-export async function saveBrandCurrency(
-  code: string,
-  patch: BrandCurrencyPatch,
-  context: { formCode: string; userId: number },
+export interface BrandCurrencyContext {
+  /** Which form's tab the change was made from — `AP-1` or `AP-17`. */
+  formCode: string;
+  userId: number;
+}
+
+/** The audit row, on the same connection and inside the same transaction. */
+async function logBrandCurrency(
+  tx: sql.Transaction,
+  brandCode: string,
+  oldValue: string | null,
+  newValue: string | null,
+  context: BrandCurrencyContext,
+): Promise<void> {
+  await tx
+    .request()
+    .input("code", sql.NVarChar(40), brandCode)
+    .input("field", sql.NVarChar(40), BRAND_CURRENCY_LOG_FIELD)
+    .input("old", sql.NVarChar(100), oldValue)
+    .input("new", sql.NVarChar(100), newValue)
+    .input("form", sql.NVarChar(20), context.formCode)
+    .input("user", sql.Int, context.userId || null)
+    .query(`
+      INSERT INTO [dbo].[BrandSettingLog]
+        (BrandCode, Field, OldValue, NewValue, FormCode, ChangedBy)
+      VALUES (@code, @field, @old, @new, @form, @user)
+    `);
+}
+
+/**
+ * Add one currency to a brand. New rows arrive **enabled** — the table's own
+ * default — because adding one is a deliberate act naming a currency, unlike
+ * `BrandSetting.CurrencyEnabled`, which sat on every brand whether anybody had
+ * configured it or not.
+ *
+ * **Duplicates are refused by `UQ_BrandCurrency_Brand_Currency`**, not by a
+ * read-then-write here. A check made first is a rule two admins on two tabs
+ * defeat, and one replayed request defeats on its own; the constraint cannot be.
+ * All this does is turn its violation into a sentence somebody can act on.
+ */
+export async function addBrandCurrency(
+  add: BrandCurrencyAdd,
+  context: BrandCurrencyContext,
 ): Promise<void> {
   // The master is the registry (see the module header), so a row written for a
   // code it does not have would be inert — and invisible, since every read
   // joins from the master. Refuse instead of storing something nothing can show.
   const known = await listBrandRegistry();
-  if (!known.some((b) => b.code === code)) {
-    throw new BrandCurrencyError(`ไม่พบแบรนด์ ${code}`);
+  if (!known.some((b) => b.code === add.brandCode)) {
+    throw new BrandCurrencyError(`ไม่พบแบรนด์ ${add.brandCode}`);
   }
 
   const pool = await getProductionFormPool();
   const tx = pool.transaction();
   await tx.begin();
   try {
+    await tx
+      .request()
+      .input("code", sql.NVarChar(40), add.brandCode)
+      .input("country", sql.Char(2), add.countryCode)
+      .input("currency", sql.Char(3), add.currencyCode)
+      .query(`
+        INSERT INTO [dbo].[BrandCurrency]
+          (BrandCode, CountryCode, CurrencyCode, IsEnabled, SortOrder)
+        SELECT @code, @country, @currency, 1,
+               ISNULL((SELECT MAX(SortOrder) + 1 FROM [dbo].[BrandCurrency] WHERE BrandCode = @code), 0)
+      `);
+
+    await logBrandCurrency(
+      tx,
+      add.brandCode,
+      null,
+      brandCurrencyLogValue({
+        countryCode: add.countryCode,
+        currencyCode: add.currencyCode,
+        isEnabled: true,
+      }),
+      context,
+    );
+
+    await tx.commit();
+  } catch (e) {
+    await tx.rollback();
+    if (isUniqueViolation(e)) {
+      throw new BrandCurrencyError(
+        `แบรนด์ ${add.brandCode} มีสกุลเงิน ${add.currencyCode} อยู่แล้ว`,
+      );
+    }
+    throw e;
+  }
+}
+
+/**
+ * Switch one configured currency on or off.
+ *
+ * The row is read under `UPDLOCK, HOLDLOCK` first because the log needs what it
+ * *was*, and a value read outside the lock could be stale by the time the update
+ * lands — an audit trail stating a transition that never happened is worse than
+ * no audit trail. A row already in the requested state writes nothing and logs
+ * nothing: a log recording *saves* rather than *changes* cannot answer "when did
+ * this last change", which is the only question it exists for.
+ */
+export async function setBrandCurrencyEnabled(
+  id: number,
+  isEnabled: boolean,
+  context: BrandCurrencyContext,
+): Promise<void> {
+  const pool = await getProductionFormPool();
+  const tx = pool.transaction();
+  await tx.begin();
+  try {
     const cur = await tx
       .request()
-      .input("code", sql.NVarChar(40), code)
+      .input("id", sql.Int, id)
       .query(`
-        SELECT CountryCode, CurrencyCode, CurrencyEnabled
-        FROM [dbo].[BrandSetting] WITH (UPDLOCK, HOLDLOCK)
-        WHERE BrandCode = @code
+        SELECT Id, BrandCode, CountryCode, CurrencyCode, IsEnabled
+        FROM [dbo].[BrandCurrency] WITH (UPDLOCK, HOLDLOCK)
+        WHERE Id = @id
       `);
-    const row = cur.recordset[0] as
-      | { CountryCode: string | null; CurrencyCode: string | null; CurrencyEnabled: boolean }
-      | undefined;
+    const row = cur.recordset[0] as BrandCurrencyRow | undefined;
+    if (!row) {
+      await tx.rollback();
+      throw new BrandCurrencyError("ไม่พบสกุลเงินนี้แล้ว — อาจถูกลบไปก่อนหน้านี้");
+    }
 
-    // No row is not "unknown": the column defaults are what such a brand
-    // behaves as today, so they are what the change is measured against.
-    // CHAR(n) comes back space-padded, which would otherwise read as a change
-    // on every save.
-    const before: BrandCurrencyPatch = {
-      countryCode: (row?.CountryCode ?? "").trim() || null,
-      currencyCode: (row?.CurrencyCode ?? "").trim() || null,
-      currencyEnabled: row ? !!row.CurrencyEnabled : false,
+    const before = {
+      countryCode: (row.CountryCode ?? "").trim().toUpperCase() || null,
+      currencyCode: (row.CurrencyCode ?? "").trim().toUpperCase(),
+      isEnabled: !!row.IsEnabled,
     };
-
-    const changes = brandCurrencyChanges(before, patch);
-    if (changes.length === 0) {
+    if (before.isEnabled === isEnabled) {
       await tx.commit();
       return;
     }
 
     await tx
       .request()
-      .input("code", sql.NVarChar(40), code)
-      .input("country", sql.Char(2), patch.countryCode)
-      .input("currency", sql.Char(3), patch.currencyCode)
-      .input("enabled", sql.Bit, patch.currencyEnabled)
-      .input("userId", sql.Int, context.userId || null)
+      .input("id", sql.Int, id)
+      .input("enabled", sql.Bit, isEnabled)
       .query(`
-        MERGE [dbo].[BrandSetting] AS t
-        USING (SELECT @code AS BrandCode) AS s ON t.BrandCode = s.BrandCode
-        WHEN MATCHED THEN UPDATE SET
-          CountryCode     = @country,
-          CurrencyCode    = @currency,
-          CurrencyEnabled = @enabled,
-          UpdatedAt       = SYSDATETIME(),
-          UpdatedBy       = @userId
-        WHEN NOT MATCHED THEN INSERT
-          (BrandCode, IsEnabled, CountryCode, CurrencyCode, CurrencyEnabled, UpdatedAt, UpdatedBy)
-          VALUES (@code, 1, @country, @currency, @enabled, SYSDATETIME(), @userId);
+        UPDATE [dbo].[BrandCurrency]
+        SET IsEnabled = @enabled, UpdatedAt = SYSDATETIME()
+        WHERE Id = @id
       `);
-    // IsEnabled = 1 on the insert is not a new grant: a brand with no row is
-    // already enabled (module header), so this is the value that leaves the
-    // picker exactly as it was. Setting a currency must not change who can see
-    // the brand — that is why CurrencyEnabled is its own column.
 
-    for (const c of changes) {
-      await tx
-        .request()
-        .input("code", sql.NVarChar(40), code)
-        .input("field", sql.NVarChar(40), c.field)
-        .input("old", sql.NVarChar(100), c.oldValue)
-        .input("new", sql.NVarChar(100), c.newValue)
-        .input("form", sql.NVarChar(20), context.formCode)
-        .input("user", sql.Int, context.userId || null)
-        .query(`
-          INSERT INTO [dbo].[BrandSettingLog]
-            (BrandCode, Field, OldValue, NewValue, FormCode, ChangedBy)
-          VALUES (@code, @field, @old, @new, @form, @user)
-        `);
-    }
+    await logBrandCurrency(
+      tx,
+      row.BrandCode,
+      brandCurrencyLogValue(before),
+      brandCurrencyLogValue({
+        countryCode: before.countryCode,
+        currencyCode: before.currencyCode,
+        isEnabled,
+      }),
+      context,
+    );
 
     await tx.commit();
   } catch (e) {
-    await tx.rollback();
+    if (!(e instanceof BrandCurrencyError)) await tx.rollback();
+    throw e;
+  }
+}
+
+/**
+ * Remove one configured currency.
+ *
+ * **A hard delete**, unlike `UatTester` or `AccApprover`, and for a reason those
+ * two do not have: the row *is* the configuration, `IsEnabled = 0` already
+ * expresses "keep it but do not claim in it", and a soft-deleted row would go on
+ * occupying the brand's one slot for that currency under
+ * `UQ_BrandCurrency_Brand_Currency` — so re-adding it would be refused as a
+ * duplicate of something nobody can see. Nothing is lost either: the log row
+ * records the currency, the country it carried and whether it was live, which is
+ * why `BrandSettingLog` carries no FK to this table.
+ *
+ * Requests already submitted keep their own `AccRequest.Currency` and
+ * `ExchangeRate`. Nothing here reprices anything.
+ */
+export async function removeBrandCurrency(
+  id: number,
+  context: BrandCurrencyContext,
+): Promise<void> {
+  const pool = await getProductionFormPool();
+  const tx = pool.transaction();
+  await tx.begin();
+  try {
+    const cur = await tx
+      .request()
+      .input("id", sql.Int, id)
+      .query(`
+        SELECT Id, BrandCode, CountryCode, CurrencyCode, IsEnabled
+        FROM [dbo].[BrandCurrency] WITH (UPDLOCK, HOLDLOCK)
+        WHERE Id = @id
+      `);
+    const row = cur.recordset[0] as BrandCurrencyRow | undefined;
+    if (!row) {
+      await tx.rollback();
+      throw new BrandCurrencyError("ไม่พบสกุลเงินนี้แล้ว — อาจถูกลบไปก่อนหน้านี้");
+    }
+
+    await tx.request().input("id", sql.Int, id).query(`
+      DELETE FROM [dbo].[BrandCurrency] WHERE Id = @id
+    `);
+
+    await logBrandCurrency(
+      tx,
+      row.BrandCode,
+      brandCurrencyLogValue({
+        countryCode: (row.CountryCode ?? "").trim().toUpperCase() || null,
+        currencyCode: (row.CurrencyCode ?? "").trim().toUpperCase(),
+        isEnabled: !!row.IsEnabled,
+      }),
+      null,
+      context,
+    );
+
+    await tx.commit();
+  } catch (e) {
+    if (!(e instanceof BrandCurrencyError)) await tx.rollback();
     throw e;
   }
 }

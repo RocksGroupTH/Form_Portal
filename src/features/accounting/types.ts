@@ -1,4 +1,5 @@
 import type { Direction, RequestStatus, StepCode, TravelItemType } from "./constants";
+import type { BrandCurrencyEntry } from "@/lib/acc/currency";
 
 export interface TravelExpenseItem {
   id?: number;
@@ -155,16 +156,19 @@ export interface AccBrandOption {
   brandName: string;
   brandLogo: string | null;
   /**
-   * The brand's claim currency, or null. Null and "THB" both mean baht.
+   * Every currency configured for this brand — **a list, not a code**.
    *
-   * Carried with `currencyEnabled` rather than alone because every consumer
-   * calls `brandCurrencyState({ currencyCode, currencyEnabled })`, which needs
-   * the pair: a code without the flag is configuration somebody staged but did
-   * not turn on, and rendering a dropdown for it is the one state the flag
-   * exists to prevent.
+   * A brand may be claimed in several (`BrandCurrency`, migration 127): KSI
+   * needs Thailand (THB) and England (GBP), and more later. Each row carries
+   * its own `isEnabled`, so a currency can be configured and switched off
+   * without losing the country beside it.
+   *
+   * Consumers never filter this by hand. `claimCurrencyOptions`,
+   * `bookingCurrencyOptions` and `brandCurrencyState` are what decide "does
+   * this brand offer a choice, and of what" — one definition of the rule, so
+   * the picker and the server's own re-derivation cannot disagree.
    */
-  currencyCode: string | null;
-  currencyEnabled: boolean;
+  currencies: BrandCurrencyEntry[];
 }
 
 export interface AccBrandAccountRow {

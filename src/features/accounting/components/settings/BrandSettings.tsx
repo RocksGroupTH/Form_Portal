@@ -2,16 +2,13 @@
 
 import { useState, useEffect, useMemo } from "react";
 import useSWR from "swr";
-import { Info, Save } from "lucide-react";
+import { Info, Plus, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { SettingOption, SettingOptionGroup } from "@/components/settings/SettingOption";
 import { CurrencyCombobox } from "@/features/advance/components/CurrencyCombobox";
-import {
-  COMMON_COUNTRY_CODES,
-  FALLBACK_CURRENCIES,
-  type BrandCurrencyPatch,
-} from "@/lib/acc/brand-currency-input";
-import { brandCurrencyState, isBaht } from "@/lib/acc/currency";
+import { FALLBACK_CURRENCIES } from "@/lib/acc/brand-currency-input";
+import { COUNTRIES, countryLabel, currencyForCountry } from "@/lib/acc/country-currency";
+import { enabledForeignCurrencies, THB, type BrandCurrencyEntry } from "@/lib/acc/currency";
 import type { AccBrandOption } from "@/features/accounting/types";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
@@ -24,14 +21,15 @@ interface FormBrandRow {
 }
 
 /** One row of what `currencyEndpoint`'s GET returns — every brand in the master. */
-interface BrandCurrencyRow extends BrandCurrencyPatch {
+interface BrandCurrencyRow {
   brandCode: string;
   brandName: string;
   brandLogo: string | null;
+  currencies: BrandCurrencyEntry[];
 }
 
 /**
- * Which brands a form accepts, and what country and currency each brand carries.
+ * Which brands a form accepts, and which currencies each brand may be claimed in.
  *
  * Shared by AP-1 and AP-17. The endpoints are props rather than literals
  * because the two forms keep separate rows in `AccFormBrand` — granting a
@@ -44,13 +42,19 @@ interface BrandCurrencyRow extends BrandCurrencyPatch {
  *
  * **The two halves of this panel write two different tables, and only one of
  * them is per form.** The tick list writes `AccFormBrand`, which is keyed on
- * `(form, brand)`. The editor below it writes one row **per brand**, shared
- * with the other form — the user's choice, spec §2. So a change made from
- * AP-17's tab decides how an AP-1 claim converts, on a roster AP-1's admins do
- * not control. That was taken knowingly (spec §9.3) and cannot be expressed as
- * a constraint, so it is made *visible* instead: `otherFormLabel` is what lets
- * the notice name the form that is also affected, without this component
- * holding either form's name.
+ * `(form, brand)`. The editor below it writes `BrandCurrency` rows, which
+ * belong to the **brand** and are shared with the other form — the user's
+ * choice, spec §2. So a change made from AP-17's tab decides what an AP-1 claim
+ * may be filed in, on a roster AP-1's admins do not control. That was taken
+ * knowingly (spec §9.3) and cannot be expressed as a constraint, so it is made
+ * *visible* instead: `otherFormLabel` is what lets the notice name the form
+ * that is also affected, without this component holding either form's name.
+ *
+ * **The two halves also save differently, deliberately.** The tick list is a
+ * set and is replaced whole on Save. The currency editor writes on every
+ * control, because each control is one row: a Save sweeping a brand's whole
+ * list would silently undo what another admin had just changed from the other
+ * tab.
  */
 export function BrandSettings({
   endpoint = "/api/request/accounting/settings/brands",
@@ -198,31 +202,37 @@ export function BrandSettings({
   );
 }
 
-/* ── the country / currency editor ───────────────────────────────────────── */
+/* ── the currency editor ─────────────────────────────────────────────────── */
 
 const CURRENCY_LIST_URL = "/api/request/advance/currencies";
-const COUNTRY_LIST_ID = "brand-country-codes";
 
-/** A row's values while they are being edited. */
-type Draft = BrandCurrencyPatch;
-
-const BLANK: Draft = { countryCode: null, currencyCode: null, currencyEnabled: false };
-
-function sameDraft(a: Draft, b: Draft): boolean {
-  return (
-    a.countryCode === b.countryCode &&
-    a.currencyCode === b.currencyCode &&
-    a.currencyEnabled === b.currencyEnabled
-  );
+/** What the add row holds for one brand while it is being filled in. */
+interface AddDraft {
+  countryCode: string;
+  currencyCode: string;
 }
 
+const BLANK_ADD: AddDraft = { countryCode: "", currencyCode: "" };
+
 /**
- * Country and currency, one brand per row.
+ * The currencies each brand may be claimed in.
  *
- * **Saved a brand at a time, not in one batch.** The value belongs to the brand
- * rather than to this form, so a Save that swept every row would have one
- * admin's edit to PCMY silently re-write what somebody else had just changed for
- * PCTH — including from the other form's tab, which reaches the same rows.
+ * **Several per brand, each with its own switch.** A brand carried one country
+ * and one currency until 2026-08-28, which cannot say what KSI needs — Thailand
+ * (THB) and England (GBP), and more later. Every row here is one
+ * `BrandCurrency` row (migration 127).
+ *
+ * **Every control writes immediately; there is no Save button and no dirty
+ * state.** Each act is one row — add it, switch it, remove it — so there is
+ * nothing to batch, and a Save that swept a brand's whole list would silently
+ * undo what somebody else had just changed from the other form's tab, which
+ * reaches these same rows.
+ *
+ * **Duplicates are refused by the database, not by this panel.**
+ * `UQ_BrandCurrency_Brand_Currency` is the rule; a currency already configured
+ * is greyed out here so the refusal is rare, but two admins on two tabs would
+ * defeat a check made only on screen, and the server's Thai message is what
+ * they see if they do.
  */
 function BrandCurrencySettings({
   endpoint,
@@ -248,64 +258,37 @@ function BrandCurrencySettings({
   const supported = curData?.ok && curData.data.length > 0 ? curData.data : null;
   const currencyOptions = supported ?? FALLBACK_CURRENCIES.slice();
 
-  const [drafts, setDrafts] = useState<Record<string, Draft>>({});
-  const [savingCode, setSavingCode] = useState<string | null>(null);
+  const [adds, setAdds] = useState<Record<string, AddDraft>>({});
+  /** The one control currently in flight, so only it is disabled. */
+  const [busy, setBusy] = useState<string | null>(null);
 
-  const stored = useMemo(() => {
-    const m: Record<string, Draft> = {};
-    for (const r of rows) {
-      m[r.brandCode] = {
-        countryCode: r.countryCode,
-        currencyCode: r.currencyCode,
-        currencyEnabled: r.currencyEnabled,
-      };
-    }
-    return m;
-  }, [rows]);
-
-  const patch = (code: string, next: Partial<Draft>) => {
-    setDrafts((prev) => {
-      const base = prev[code] ?? stored[code] ?? BLANK;
-      const merged: Draft = {
+  const patchAdd = (code: string, next: Partial<AddDraft>) => {
+    setAdds((prev) => {
+      const base = prev[code] ?? BLANK_ADD;
+      const out: Record<string, AddDraft> = {};
+      for (const k of Object.keys(prev)) out[k] = prev[k];
+      out[code] = {
         countryCode: next.countryCode !== undefined ? next.countryCode : base.countryCode,
         currencyCode: next.currencyCode !== undefined ? next.currencyCode : base.currencyCode,
-        currencyEnabled:
-          next.currencyEnabled !== undefined ? next.currencyEnabled : base.currencyEnabled,
       };
-      // Clearing the currency cannot leave the switch on. The flag without a
-      // code names nothing — `brandCurrencyState` reads that pair as "none" and
-      // the server refuses it outright — so the UI must not be able to post it.
-      if (merged.currencyCode === null) merged.currencyEnabled = false;
-      const out: Record<string, Draft> = {};
-      for (const k of Object.keys(prev)) out[k] = prev[k];
-      out[code] = merged;
       return out;
     });
   };
 
-  const save = async (code: string, draft: Draft) => {
-    setSavingCode(code);
+  /** One request, one toast, one refetch. `key` is what gets disabled while it runs. */
+  const send = async (
+    key: string,
+    init: RequestInit & { url?: string },
+    okMessage: string,
+    onOk?: () => void,
+  ) => {
+    setBusy(key);
     try {
-      const res = await fetch(endpoint, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          brandCode: code,
-          countryCode: draft.countryCode,
-          currencyCode: draft.currencyCode,
-          currencyEnabled: draft.currencyEnabled,
-        }),
-      });
+      const res = await fetch(init.url ?? endpoint, init);
       const json = await res.json();
       if (json.ok) {
-        toast.success(`บันทึกแบรนด์ ${code} แล้ว`);
-        // Drop the draft so the row falls back to what the server now holds —
-        // clearing it before the refetch would flash the old value.
-        setDrafts((prev) => {
-          const out: Record<string, Draft> = {};
-          for (const k of Object.keys(prev)) if (k !== code) out[k] = prev[k];
-          return out;
-        });
+        toast.success(okMessage);
+        onOk?.();
         mutate();
       } else {
         toast.error(json.error ?? "บันทึกไม่สำเร็จ");
@@ -313,18 +296,57 @@ function BrandCurrencySettings({
     } catch {
       toast.error("บันทึกไม่สำเร็จ");
     } finally {
-      setSavingCode(null);
+      setBusy(null);
     }
   };
 
+  const addCurrency = (brandCode: string, draft: AddDraft) =>
+    send(
+      `add:${brandCode}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          brandCode,
+          countryCode: draft.countryCode || null,
+          currencyCode: draft.currencyCode,
+        }),
+      },
+      `เพิ่มสกุลเงิน ${draft.currencyCode} ให้ ${brandCode} แล้ว`,
+      () =>
+        setAdds((prev) => {
+          const out: Record<string, AddDraft> = {};
+          for (const k of Object.keys(prev)) if (k !== brandCode) out[k] = prev[k];
+          return out;
+        }),
+    );
+
+  const toggleCurrency = (row: BrandCurrencyEntry, isEnabled: boolean) =>
+    send(
+      `row:${row.id}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: row.id, isEnabled }),
+      },
+      isEnabled ? `เปิดใช้ ${row.currencyCode} แล้ว` : `ปิดใช้ ${row.currencyCode} แล้ว`,
+    );
+
+  const deleteCurrency = (row: BrandCurrencyEntry) =>
+    send(
+      `row:${row.id}`,
+      { method: "DELETE", url: `${endpoint}?id=${row.id}` },
+      `ลบ ${row.currencyCode} แล้ว`,
+    );
+
   return (
     <SettingOptionGroup
-      title="ประเทศและสกุลเงินของแบรนด์"
-      description="กำหนดประเทศ (ISO-3166-1 เช่น TH, MY) และสกุลเงิน (ISO-4217 เช่น THB, MYR) ของแต่ละแบรนด์ — การเลือกสกุลเงินยังไม่เท่ากับเปิดใช้งาน ต้องเปิดสวิตช์อีกชั้นหนึ่ง"
+      title="สกุลเงินที่เบิกได้ของแต่ละแบรนด์"
+      description="เลือกประเทศแล้วระบบจะใส่สกุลเงินของประเทศนั้นให้เอง — เพิ่มได้หลายสกุลเงินต่อหนึ่งแบรนด์ และเปิด/ปิดใช้งานทีละรายการ (เงินบาทเบิกได้เสมอ ไม่ต้องเพิ่ม)"
     >
       {/*
         Required copy, not decoration. The permission to change these values is
-        per form while the values themselves are one row per brand, shared with
+        per form while the values themselves belong to the brand, shared with
         the other form. Spec §9.3 rules that the asymmetry must be visible on
         screen, because it cannot be removed.
       */}
@@ -337,17 +359,11 @@ function BrandCurrencySettings({
       >
         <Info size={15} className="shrink-0 mt-0.5" style={{ color: "var(--text-info-yellow)" }} />
         <p className="text-[11.5px] leading-relaxed m-0" style={{ color: "var(--text-info-yellow)" }}>
-          ค่าประเทศและสกุลเงินเก็บไว้ที่แบรนด์เพียงชุดเดียว และ
+          สกุลเงินเก็บไว้ที่แบรนด์เพียงชุดเดียว และ
           <strong>ใช้ร่วมกับฟอร์ม {otherFormLabel}</strong> — การแก้ไขที่นี่มีผลกับฟอร์ม {otherFormLabel} ทันที
           ทุกการเปลี่ยนแปลงจะถูกบันทึกไว้ว่าใครแก้ แก้จากฟอร์มใด และแก้จากค่าใดเป็นค่าใด
         </p>
       </div>
-
-      <datalist id={COUNTRY_LIST_ID}>
-        {COMMON_COUNTRY_CODES.map((c) => (
-          <option key={c} value={c} />
-        ))}
-      </datalist>
 
       {rows.length === 0 && (
         <p className="text-[12px] py-6 text-center" style={{ color: "var(--text-muted)" }}>
@@ -355,33 +371,38 @@ function BrandCurrencySettings({
         </p>
       )}
 
-      {rows.map((row) => {
-        const saved = stored[row.brandCode] ?? BLANK;
-        const draft = drafts[row.brandCode] ?? saved;
-        const dirty = !sameDraft(draft, saved);
-        const busy = savingCode === row.brandCode;
-        // Read off the *saved* row: the badge says what the forms do today, not
-        // what an unsaved edit would make them do.
-        const live = brandCurrencyState(saved) === "configured";
-        const chosen = draft.currencyCode;
-        const foreign = !!chosen && !isBaht(chosen);
-        const unsupported = foreign && !!supported && !supported.some((o) => o.code === chosen);
+      {rows.map((brand) => {
+        const add = adds[brand.brandCode] ?? BLANK_ADD;
+        // Read off what the server holds: the badge says what the forms do
+        // today. `brandCurrencyState` owns the rule — a brand is "configured"
+        // only while at least one non-baht currency is switched on.
+        const live = enabledForeignCurrencies(brand.currencies);
+        const taken = brand.currencies.map((c) => c.currencyCode);
+        // THB is offered to every brand already and is never a row, so it is
+        // not addable — a THB row would be a second answer to a question the
+        // form has always answered the same way.
+        const addable = currencyOptions.filter(
+          (o) => o.code !== THB && taken.indexOf(o.code) === -1,
+        );
+        const chosen = add.currencyCode.trim().toUpperCase();
+        const duplicate = chosen !== "" && taken.indexOf(chosen) !== -1;
+        const unsupported =
+          chosen !== "" && !!supported && !supported.some((o) => o.code === chosen);
+        const canAdd = chosen !== "" && !duplicate && busy !== `add:${brand.brandCode}`;
 
         return (
           <div
-            key={row.brandCode}
+            key={brand.brandCode}
             className="rounded-xl px-3.5 py-3 flex flex-col gap-3"
             style={{
-              background: dirty ? "var(--bg-info-yellow)" : "var(--bg-card-alt)",
-              borderWidth: 1,
-              borderStyle: "solid",
-              borderColor: dirty ? "var(--border-info-yellow)" : "var(--border-card)",
+              background: "var(--bg-card-alt)",
+              border: "1px solid var(--border-card)",
             }}
           >
             <div className="flex items-center gap-2.5 min-w-0">
-              {row.brandLogo && (
+              {brand.brandLogo && (
                 <img
-                  src={row.brandLogo}
+                  src={brand.brandLogo}
                   alt=""
                   className="h-6 w-auto object-contain shrink-0"
                   onError={(e) => {
@@ -390,44 +411,120 @@ function BrandCurrencySettings({
                 />
               )}
               <span className="text-[13px] font-semibold truncate" style={{ color: "var(--text-primary)" }}>
-                {row.brandName}
+                {brand.brandName}
               </span>
               <span className="text-[11px] shrink-0" style={{ color: "var(--text-muted)" }}>
-                {row.brandCode}
+                {brand.brandCode}
               </span>
               <span
                 className="ml-auto text-[11px] font-semibold shrink-0"
-                style={{ color: live ? "var(--text-info-green)" : "var(--text-muted)" }}
+                style={{ color: live.length > 0 ? "var(--text-info-green)" : "var(--text-muted)" }}
               >
-                {live
-                  ? `เบิกเป็น ${saved.currencyCode} ได้`
-                  : saved.currencyCode && !isBaht(saved.currencyCode)
+                {live.length > 0
+                  ? `เบิกเป็น ${live.join(", ")} ได้`
+                  : brand.currencies.length > 0
                     ? "ตั้งค่าไว้ — ยังไม่เปิดใช้"
                     : "บาทเท่านั้น"}
               </span>
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
+            {brand.currencies.length > 0 && (
+              <div className="flex flex-col gap-1.5">
+                {brand.currencies.map((c) => {
+                  const rowBusy = busy === `row:${c.id}`;
+                  const label = countryLabel(c.countryCode);
+                  const rateless = !!supported && !supported.some((o) => o.code === c.currencyCode);
+                  return (
+                    <div
+                      key={c.id}
+                      className="flex items-center gap-3 rounded-xl px-3 py-2"
+                      style={{
+                        background: "var(--bg-card)",
+                        border: "1px solid var(--border-card)",
+                        opacity: rowBusy ? 0.6 : 1,
+                      }}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[13px] font-semibold" style={{ color: "var(--text-primary)" }}>
+                          {c.currencyCode}
+                        </div>
+                        <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                          {/* A country the list does not carry cannot happen —
+                              the add refuses one — but a row written before this
+                              rule existed would show its bare code rather than
+                              nothing at all. */}
+                          {label ?? c.countryCode ?? "ไม่ได้ระบุประเทศ"}
+                          {rateless && " — ไม่พบในแหล่งอัตราอ้างอิง"}
+                        </div>
+                      </div>
+
+                      <label className="flex items-center gap-2 text-[11.5px] cursor-pointer shrink-0">
+                        <input
+                          type="checkbox"
+                          checked={c.isEnabled}
+                          disabled={rowBusy}
+                          onChange={(e) => toggleCurrency(c, e.target.checked)}
+                          className="cursor-pointer"
+                        />
+                        <span style={{ color: c.isEnabled ? "var(--text-info-green)" : "var(--text-muted)" }}>
+                          {c.isEnabled ? "เปิดใช้งาน" : "ปิดอยู่"}
+                        </span>
+                      </label>
+
+                      <button
+                        type="button"
+                        title={`ลบ ${c.currencyCode}`}
+                        aria-label={`ลบ ${c.currencyCode}`}
+                        disabled={rowBusy}
+                        onClick={() => deleteCurrency(c)}
+                        className="shrink-0 rounded-lg p-1.5 border-none"
+                        style={{
+                          background: "transparent",
+                          color: "var(--text-danger)",
+                          cursor: rowBusy ? "not-allowed" : "pointer",
+                        }}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
               <label className="flex flex-col gap-1">
                 <span className="text-[11px] font-semibold" style={{ color: "var(--text-muted)" }}>
-                  ประเทศ (ISO-3166-1)
+                  ประเทศ
                 </span>
-                <input
-                  list={COUNTRY_LIST_ID}
-                  value={draft.countryCode ?? ""}
-                  maxLength={2}
-                  placeholder="เช่น TH"
+                <select
+                  value={add.countryCode}
                   onChange={(e) => {
-                    const v = e.target.value.trim().toUpperCase();
-                    patch(row.brandCode, { countryCode: v === "" ? null : v });
+                    const code = e.target.value;
+                    // Picking a country fills the currency in — the whole point
+                    // of the country box. `currencyForCountry` answers null for
+                    // a code the list does not carry, and the currency is then
+                    // left as it is rather than blanked to a guess.
+                    const currency = currencyForCountry(code);
+                    patchAdd(brand.brandCode, {
+                      countryCode: code,
+                      currencyCode: currency ?? add.currencyCode,
+                    });
                   }}
-                  className="w-full text-[13px] px-3 py-2 rounded-xl outline-none uppercase"
+                  className="w-full text-[13px] px-3 py-2 rounded-xl outline-none"
                   style={{
                     background: "var(--bg-input, var(--bg-card))",
                     color: "var(--text-primary)",
                     border: "1px solid var(--border-card)",
                   }}
-                />
+                >
+                  <option value="">— เลือกประเทศ —</option>
+                  {COUNTRIES.map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {countryLabel(c.code)}
+                    </option>
+                  ))}
+                </select>
               </label>
 
               <label className="flex flex-col gap-1">
@@ -435,63 +532,47 @@ function BrandCurrencySettings({
                   สกุลเงิน (ISO-4217)
                 </span>
                 <CurrencyCombobox
-                  options={currencyOptions.slice()}
-                  value={draft.currencyCode ?? ""}
-                  onChange={(code) => patch(row.brandCode, { currencyCode: code || null })}
+                  options={addable.slice()}
+                  value={add.currencyCode}
+                  onChange={(code) => patchAdd(brand.brandCode, { currencyCode: code })}
                 />
               </label>
+
+              <button
+                type="button"
+                onClick={() => addCurrency(brand.brandCode, { ...add, currencyCode: chosen })}
+                disabled={!canAdd}
+                className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl border-none text-[12px] font-bold"
+                style={{
+                  background: "var(--btn-primary-bg)",
+                  color: "var(--btn-primary-text)",
+                  border: "1px solid var(--btn-primary-border)",
+                  opacity: canAdd ? 1 : 0.5,
+                  cursor: canAdd ? "pointer" : "not-allowed",
+                }}
+              >
+                <Plus size={13} />
+                {busy === `add:${brand.brandCode}` ? "กำลังเพิ่ม..." : "เพิ่ม"}
+              </button>
             </div>
 
-            <SettingOption
-              variant="switch"
-              checked={draft.currencyEnabled}
-              disabled={!foreign}
-              onChange={(next) => patch(row.brandCode, { currencyEnabled: next })}
-              label="เปิดให้เบิกเป็นสกุลเงินนี้"
-              description={
-                !chosen
-                  ? "เลือกสกุลเงินก่อนจึงจะเปิดใช้งานได้"
-                  : !foreign
-                    ? "THB เป็นสกุลเงินหลักอยู่แล้ว ไม่ต้องเปิดใช้งาน"
-                    : "ปิดอยู่ = ตั้งค่าไว้เฉยๆ ฟอร์มยังเบิกเป็นบาทเท่านั้น"
-              }
-            />
+            {duplicate && (
+              <p className="text-[11px] m-0" style={{ color: "var(--text-warning)" }}>
+                แบรนด์นี้มีสกุลเงิน {chosen} อยู่แล้ว
+              </p>
+            )}
 
-            {unsupported && (
+            {unsupported && !duplicate && (
               <p className="text-[11px] m-0" style={{ color: "var(--text-warning)" }}>
                 ไม่พบ {chosen} ในแหล่งอัตราอ้างอิง — ระบบจะดึงอัตราแลกเปลี่ยนให้ไม่ได้
               </p>
             )}
 
-            {foreign && (
+            {live.length > 0 && (
               <p className="text-[11px] m-0" style={{ color: "var(--text-muted)" }}>
                 อัตราที่ใช้แปลงเป็นบาทเป็น<strong>อัตราอ้างอิง</strong> ฝ่ายบัญชีปรับได้ในขั้นตอนอนุมัติ
               </p>
             )}
-
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => save(row.brandCode, draft)}
-                disabled={!dirty || busy}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl border-none text-[12px] font-bold"
-                style={{
-                  background: "var(--btn-primary-bg)",
-                  color: "var(--btn-primary-text)",
-                  border: "1px solid var(--btn-primary-border)",
-                  opacity: !dirty || busy ? 0.5 : 1,
-                  cursor: !dirty || busy ? "not-allowed" : "pointer",
-                }}
-              >
-                <Save size={13} />
-                {busy ? "กำลังบันทึก..." : "บันทึก"}
-              </button>
-              {dirty && !busy && (
-                <span className="text-[11px]" style={{ color: "var(--text-info-yellow)" }}>
-                  ยังไม่บันทึก
-                </span>
-              )}
-            </div>
           </div>
         );
       })}

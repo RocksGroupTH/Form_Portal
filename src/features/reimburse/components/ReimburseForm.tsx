@@ -457,7 +457,7 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
     // A code the allowlist has since dropped: no currency this app can vouch
     // for, so it claims in baht like every row written before the feature.
     return list.concat([
-      { brandCode: saved, brandName: saved, brandLogo: null, currencyCode: null, currencyEnabled: false },
+      { brandCode: saved, brandName: saved, brandLogo: null, currencies: [] },
     ]);
   }, [allowedBrands, initial?.brandCode]);
 

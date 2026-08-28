@@ -6,17 +6,23 @@ import {
   effectiveBookingCurrency,
   referenceRateNote,
 } from "./booking-currency";
+import type { BrandCurrencyEntry } from "@/lib/acc/currency";
 
-const MYR = { currencyCode: "MYR", currencyEnabled: true };
-const STAGED = { currencyCode: "MYR", currencyEnabled: false };
-const NOTHING = { currencyCode: null, currencyEnabled: false };
-const BAHT_BRAND = { currencyCode: "THB", currencyEnabled: true };
+function entry(code: string, isEnabled: boolean, id = 1): BrandCurrencyEntry {
+  return { id, countryCode: null, currencyCode: code, isEnabled };
+}
+
+const MYR = { currencies: [entry("MYR", true)] };
+const MYR_AND_GBP = { currencies: [entry("MYR", true, 1), entry("GBP", true, 2)] };
+const STAGED = { currencies: [entry("MYR", false)] };
+const NOTHING = { currencies: [] };
+const BAHT_BRAND = { currencies: [entry("THB", true)] };
 
 /**
  * An unconfigured brand must leave `AdminBookingPanel` exactly as it looked
  * before this shipped, which an empty option list is what produces.
  */
-test("only a brand with a currency AND the flag on offers a choice", () => {
+test("only a brand with an enabled foreign currency offers a choice", () => {
   assert.deepEqual(bookingCurrencyOptions(MYR), ["MYR", "THB"]);
   assert.deepEqual(bookingCurrencyOptions(STAGED), []);
   assert.deepEqual(bookingCurrencyOptions(NOTHING), []);
@@ -25,11 +31,20 @@ test("only a brand with a currency AND the flag on offers a choice", () => {
   assert.deepEqual(bookingCurrencyOptions(undefined), []);
 });
 
+/** A brand may carry several; every enabled one is on the toggle. */
+test("every enabled currency is offered, in row order, with baht last", () => {
+  assert.deepEqual(bookingCurrencyOptions(MYR_AND_GBP), ["MYR", "GBP", "THB"]);
+});
+
+test("a THB row does not produce a second baht option", () => {
+  assert.deepEqual(
+    bookingCurrencyOptions({ currencies: [entry("THB", true, 1), entry("GBP", true, 2)] }),
+    ["GBP", "THB"],
+  );
+});
+
 test("the brand's code is normalised and offered before baht", () => {
-  assert.deepEqual(bookingCurrencyOptions({ currencyCode: " myr ", currencyEnabled: true }), [
-    "MYR",
-    "THB",
-  ]);
+  assert.deepEqual(bookingCurrencyOptions({ currencies: [entry(" myr ", true)] }), ["MYR", "THB"]);
 });
 
 /**
@@ -57,13 +72,23 @@ test("the brand's own currency is admitted, case-insensitively", () => {
 });
 
 /**
- * A third currency was never on the toggle, so it is a forged body or a bug.
- * Resolving it to the brand's own currency is what makes this function unable
- * to widen what a request may be recorded in, whatever is posted.
+ * A currency the brand does not carry was never on the toggle, so it is a
+ * forged body or a bug. Resolving it to the brand's first currency is what
+ * makes this function unable to widen what a request may be recorded in,
+ * whatever is posted.
  */
-test("a currency the brand does not offer resolves to the brand's own", () => {
+test("a currency the brand does not offer resolves to the brand's first", () => {
   assert.equal(effectiveBookingCurrency("USD", MYR), "MYR");
   assert.equal(effectiveBookingCurrency("SGD", MYR), "MYR");
+  assert.equal(effectiveBookingCurrency("USD", MYR_AND_GBP), "MYR");
+});
+
+/** Each configured currency is honoured; the first is the default. */
+test("a multi-currency brand honours either code and defaults to the first", () => {
+  assert.equal(effectiveBookingCurrency(null, MYR_AND_GBP), "MYR");
+  assert.equal(effectiveBookingCurrency("GBP", MYR_AND_GBP), "GBP");
+  assert.equal(effectiveBookingCurrency("MYR", MYR_AND_GBP), "MYR");
+  assert.equal(effectiveBookingCurrency("THB", MYR_AND_GBP), "THB");
 });
 
 /**

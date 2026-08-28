@@ -58,45 +58,107 @@ export function sameCurrency(
 /**
  * The currency a document read may be trusted with.
  *
- * Only the brand's own currency, or baht. A third currency is a misread rather
- * than a discovery — the claim is against one company, operating in one country,
- * and the picker never offered a third option. Returning null means **the user
- * must choose**, which is the same answer `sanitizeReceiptAmount` gives for a
- * figure it cannot trust: a blank editable field beats a wrong one on a document
- * about to be submitted.
+ * Only one of the currencies the brand actually offers, or baht. Anything else
+ * is a misread rather than a discovery — the document is being attached to a
+ * claim against one company, and the picker never offered it. Returning null
+ * means **the user must choose**, which is the same answer
+ * `sanitizeReceiptAmount` gives for a figure it cannot trust: a blank editable
+ * field beats a wrong one on a document about to be submitted.
  *
- * A brand whose configured currency is itself baht admits baht alone — there is
- * nothing to choose between, so an `MYR` answer against it is still a misread.
+ * **It takes the whole list**, because a brand may carry several currencies
+ * (`BrandCurrency`, migration 127). A single-code parameter would have admitted
+ * whichever one happened to be first and refused every other currency the same
+ * brand genuinely offers — a misread invented by the shape of this argument
+ * rather than by the model.
+ *
+ * A brand offering nothing, or only baht, admits baht alone: there is nothing
+ * to choose between, so an `MYR` answer against it is still a misread.
  */
 export function admitModelCurrency(
   answer: string | null | undefined,
-  brandCurrency: string | null,
+  brandCurrencies: readonly string[] | null | undefined,
 ): string | null {
   const a = norm(answer);
   if (a === "") return null;
   if (a === THB) return THB;
-  const b = norm(brandCurrency);
-  if (b !== "" && b !== THB && a === b) return b;
+  const list = brandCurrencies ?? [];
+  for (let i = 0; i < list.length; i++) {
+    const b = norm(list[i]);
+    if (b !== "" && b !== THB && a === b) return b;
+  }
   return null;
+}
+
+/**
+ * One row of `BrandCurrency` (migration 127) as everything downstream reads it.
+ *
+ * **A brand carries several of these, not one.** `BrandSetting` held a single
+ * `CountryCode` / `CurrencyCode` / `CurrencyEnabled` triple until 2026-08-28,
+ * and that shape cannot say what KSI actually needs — Thailand (THB) *and*
+ * England (GBP), and more later. Nothing may read those three columns any more;
+ * migration 128 drops them, and `brand-registry.ts` is the only module that
+ * reads this table.
+ *
+ * `isEnabled` is per row, so a brand can carry a currency it is not currently
+ * claiming in without losing the country configured alongside it.
+ */
+export interface BrandCurrencyEntry {
+  /** `BrandCurrency.Id` — what the settings editor toggles and removes by. */
+  id: number;
+  /** ISO-3166-1 alpha-2, or null. Display only; `currencyCode` is what decides money. */
+  countryCode: string | null;
+  /** ISO-4217, upper case. */
+  currencyCode: string;
+  /** Whether a claim against this brand may be entered in it. */
+  isEnabled: boolean;
+}
+
+/**
+ * The currencies a brand actually offers a choice of: enabled, not baht,
+ * deduplicated, in the order the rows arrive.
+ *
+ * **Baht is dropped rather than listed.** It is not a choice — it is always
+ * available and always the default — so a `THB` row adds nothing a picker can
+ * offer. That is the same reason a brand whose only configured currency is baht
+ * offers no choice at all, which `brandCurrencyState` answers `"none"` to.
+ *
+ * The dedupe is belt and braces over `UQ_BrandCurrency_Brand_Currency`: the
+ * constraint is the rule. This only ensures a picker cannot render the same
+ * code twice if a row ever reached the table around it.
+ */
+export function enabledForeignCurrencies(
+  currencies: readonly BrandCurrencyEntry[] | null | undefined,
+): string[] {
+  const out: string[] = [];
+  const list = currencies ?? [];
+  for (let i = 0; i < list.length; i++) {
+    const c = list[i];
+    if (!c || !c.isEnabled) continue;
+    const code = norm(c.currencyCode);
+    if (code === "" || code === THB) continue;
+    if (out.indexOf(code) !== -1) continue;
+    out.push(code);
+  }
+  return out;
 }
 
 /**
  * Whether a brand offers a currency choice at all — and so whether either form
  * renders a dropdown.
  *
- * Both halves are required. A code without the flag is configuration somebody
- * has staged but not turned on; the flag without a code names nothing. A brand
- * whose currency is literally baht is `"none"` for the same reason: a dropdown
- * offering THB and THB is worse than no dropdown.
+ * **It answers exactly the question it always answered**: is there a foreign
+ * currency a claim against this brand may be entered in today. What changed is
+ * where the answer is read from. The two halves that used to be required
+ * together — a code, and a flag turning it on — are now one row's
+ * `currencyCode` and that same row's own `isEnabled`, so a row missing either
+ * is simply not counted rather than being a contradictory pair.
  *
  * `"none"` must leave both forms looking exactly as they did before this
- * feature shipped.
+ * feature shipped: no dropdown, no extra field, no extra request. A brand with
+ * no rows, with only disabled rows, or with only a THB row is `"none"`.
  */
-export function brandCurrencyState(b: {
-  currencyCode: string | null;
-  currencyEnabled: boolean;
-}): "none" | "configured" {
-  if (!b.currencyEnabled) return "none";
-  if (isBaht(b.currencyCode)) return "none";
-  return "configured";
+export function brandCurrencyState(
+  b: { currencies: readonly BrandCurrencyEntry[] | null | undefined } | null | undefined,
+): "none" | "configured" {
+  return enabledForeignCurrencies(b?.currencies).length > 0 ? "configured" : "none";
 }

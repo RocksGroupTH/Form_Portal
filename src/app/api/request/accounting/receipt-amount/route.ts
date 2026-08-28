@@ -8,7 +8,7 @@ import { sanitizeReceiptAmount, MAX_RECEIPT_AMOUNT } from "@/features/accounting
 import { admitModelCurrency, isBaht, THB } from "@/lib/acc/currency";
 import { admitReadAmount } from "@/lib/acc/vision-amount";
 import { resolveRate } from "@/lib/acc/fx";
-import { getBrandClaimCurrency } from "@/lib/brand-registry";
+import { getBrandClaimCurrencies } from "@/lib/brand-registry";
 import { pdfPagesToPng } from "@/lib/pdf-to-image";
 import { MAX_PDF_PAGES, sheetToText } from "@/lib/acc/sheet-text";
 
@@ -40,18 +40,18 @@ import { MAX_PDF_PAGES, sheetToText } from "@/lib/acc/sheet-text";
  * totalled as baht. It now asks which currency the figure is in — but only
  * where there is an answer worth having.
  *
- * **The brand's currency is resolved here, server-side, through
- * `getBrandClaimCurrency`.** A currency posted by the caller would let somebody
+ * **The brand's currencies are resolved here, server-side, through
+ * `getBrandClaimCurrencies`.** A currency posted by the caller would let somebody
  * shape their own request into having one accepted that the brand does not
  * offer; `?brandCode=` names a brand, and what that brand may claim in is this
  * side's decision alone. So this route **does** read the database — two of
  * them, through `listBrandRegistry` — which the note here denied until the
  * currency work landed. `getProductionFormPool()`, never `getAccPool()`:
- * `BrandSetting` has no object in `Rocks_Portal_Form_UAT`.
+ * `BrandCurrency` has no object in `Rocks_Portal_Form_UAT`.
  *
  * `ROUTE_RULES` needs no entry even so: the `/api/request/accounting` prefix
  * already classifies as `AP-1`, and nothing read here is per-environment —
- * `BrandSetting` has exactly one copy.
+ * `BrandCurrency` has exactly one copy.
  */
 
 /**
@@ -98,19 +98,23 @@ const BAHT_PROMPT = [
 ].join("\n");
 
 /**
- * The same question, plus which of the two currencies this claim may be in.
+ * The same question, plus which of the currencies this claim may be in.
  *
- * Only two codes are offered, because only two exist for this claim: the
- * brand's own and baht. A third is a misread rather than a discovery — the
- * receipt is being attached to a claim against one company — and
- * `admitModelCurrency` refuses it whatever this prompt says. Naming them here
- * is what keeps that refusal rare rather than routine.
+ * Only the codes this brand actually carries are offered, plus baht. Anything
+ * else is a misread rather than a discovery — the receipt is being attached to
+ * a claim against one company — and `admitModelCurrency` refuses it whatever
+ * this prompt says. Naming them here is what keeps that refusal rare rather
+ * than routine.
  *
  * The ceiling is stated **after conversion**, because that is where it is
  * applied: bounding the raw figure would be the wrong measurement, in the
  * direction that loses real money (`vision-amount.ts`).
  */
-function multiPrompt(brandCurrency: string): string {
+function multiPrompt(brandCurrencies: readonly string[]): string {
+  const allowed = brandCurrencies
+    .concat([THB])
+    .map((c) => `"${c}"`)
+    .join(" หรือ ");
   return [
     "เอกสารนี้คือใบเสร็จรับเงิน สลิป ใบกำกับภาษี หรือใบแจ้งหนี้",
     "ให้ตอบ 'ยอดรวมสุทธิ' ที่ผู้จ่ายต้องจ่ายจริง และสกุลเงินของยอดนั้น",
@@ -120,7 +124,7 @@ function multiPrompt(brandCurrency: string): string {
     "- amount: ตอบตัวเลขตามที่พิมพ์บนเอกสาร ห้ามแปลงสกุลเงินเอง",
     "- ห้ามตอบเป็นเลขประจำตัวผู้เสียภาษี เลขที่ใบเสร็จ เบอร์โทร วันที่ เวลา หรือจำนวนชิ้น",
     "- ถ้าอ่านยอดไม่ออก หรือไม่แน่ใจ ให้ตอบ amount = null — อย่าเดา",
-    `- currency: ตอบได้เฉพาะ "${brandCurrency}" หรือ "${THB}" เท่านั้น`,
+    `- currency: ตอบได้เฉพาะ ${allowed} เท่านั้น`,
     "  ดูจากสัญลักษณ์หรือรหัสสกุลเงินที่พิมพ์บนเอกสาร",
     "  ถ้าเอกสารเป็นสกุลเงินอื่น หรือระบุไม่ชัดเจน ให้ตอบ currency = null — อย่าเดา",
     `- ยอดที่สมเหตุสมผลต้องมากกว่า 0 และเมื่อคิดเป็นเงินบาทแล้วไม่เกิน ${MAX_RECEIPT_AMOUNT} บาท`,
@@ -149,8 +153,8 @@ export async function POST(req: NextRequest) {
     // of them until an admin turns one on — and for a caller that sent no brand
     // code at all. That is the baht path below, byte for byte what this route
     // did before.
-    const brandCurrency = await getBrandClaimCurrency(brandCode);
-    const prompt = brandCurrency ? multiPrompt(brandCurrency) : BAHT_PROMPT;
+    const brandCurrencies = await getBrandClaimCurrencies(brandCode);
+    const prompt = brandCurrencies.length > 0 ? multiPrompt(brandCurrencies) : BAHT_PROMPT;
 
     // Built per kind and then asked the same question, so a new input kind
     // cannot arrive with its own idea of what an answer is.
@@ -178,7 +182,7 @@ export async function POST(req: NextRequest) {
       max_tokens: 1024,
       messages: [{ role: "user", content: content as never }],
       output_config: {
-        format: zodOutputFormat(brandCurrency ? MultiAnswerSchema : BahtAnswerSchema),
+        format: zodOutputFormat(brandCurrencies.length > 0 ? MultiAnswerSchema : BahtAnswerSchema),
       },
     });
     const parsed = response.parsed_output as
@@ -188,7 +192,7 @@ export async function POST(req: NextRequest) {
 
     // `sanitizeReceiptAmount` is the last gate — a model can misread, and the
     // tax id on every Thai receipt is the number most likely to come back.
-    if (!brandCurrency) {
+    if (brandCurrencies.length === 0) {
       const amount = sanitizeReceiptAmount(parsed?.amount);
       return NextResponse.json({ ok: true, data: { amount, currency: THB } });
     }
@@ -197,7 +201,7 @@ export async function POST(req: NextRequest) {
     // decides — the same answer `sanitizeReceiptAmount` gives for a figure it
     // cannot trust. A blank editable field beats a figure whose currency is a
     // guess, on a form about to be submitted.
-    const currency = admitModelCurrency(parsed?.currency, brandCurrency);
+    const currency = admitModelCurrency(parsed?.currency, brandCurrencies);
     if (currency === null) {
       return NextResponse.json({ ok: true, data: { amount: null, currency: null } });
     }

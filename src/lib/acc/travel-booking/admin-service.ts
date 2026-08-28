@@ -11,7 +11,7 @@ import {
   BOOKING_FX_UNAVAILABLE_ERROR,
   effectiveBookingCurrency,
 } from "@/features/travel-booking/lib/booking-currency";
-import { THB, toBaht } from "@/lib/acc/currency";
+import { THB, toBaht, type BrandCurrencyEntry } from "@/lib/acc/currency";
 import { needsRate, resolveRate } from "@/lib/acc/fx";
 import { listBrandRegistry } from "@/lib/brand-registry";
 import type { BookingType, TravelBookingRequest } from "@/features/travel-booking/types";
@@ -235,7 +235,7 @@ const BAHT_FX: BookingFx = { currency: null, rate: null };
  * for it.
  *
  * Reads the brand through `listBrandRegistry()`, which opens
- * `getProductionFormPool()` — `BrandSetting` has no row in
+ * `getProductionFormPool()` — `BrandCurrency` has no row in
  * `Rocks_Portal_Form_UAT`, so a `getAccPool()` read of it throws `Invalid
  * object name` for every UAT tester and for nobody else. This file must
  * therefore never name that table itself; `currency-pool-guard.test.ts`
@@ -266,11 +266,11 @@ async function resolveBookingFx(
   if ((posted ?? "").trim().toUpperCase() === THB) return BAHT_FX;
   if (!brandCode) return BAHT_FX;
 
-  let brand: { currencyCode: string | null; currencyEnabled: boolean } | null = null;
+  let brand: { currencies: BrandCurrencyEntry[] } | null = null;
   const brands = await listBrandRegistry();
   for (const b of brands) {
     if (b.code === brandCode) {
-      brand = { currencyCode: b.currencyCode, currencyEnabled: b.currencyEnabled };
+      brand = { currencies: b.currencies };
       break;
     }
   }

@@ -22,7 +22,7 @@ import { queueEmail } from "@/lib/acc/email-queue";
 import { AccConflictError, SUBMIT_ALREADY_CLAIMED } from "@/lib/acc/request-errors";
 import { buildEmail } from "@/lib/acc/email-templates";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
-import { isBaht, toBaht } from "@/lib/acc/currency";
+import { isBaht, toBaht, type BrandCurrencyEntry } from "@/lib/acc/currency";
 import { needsRate, resolveRate } from "@/lib/acc/fx";
 import { listBrandRegistry } from "@/lib/brand-registry";
 import {
@@ -99,7 +99,7 @@ const BAHT_FX: ClaimFx = { currency: null, rate: null };
  * today's rate fetched for it.
  *
  * Reads the brand through `listBrandRegistry()`, which opens
- * `getProductionFormPool()` — `BrandSetting` has no row in
+ * `getProductionFormPool()` — `BrandCurrency` has no row in
  * `Rocks_Portal_Form_UAT` and a `getAccPool()` read of it throws
  * `Invalid object name` for every UAT tester. This file must therefore never
  * name that table itself; `currency-pool-guard.test.ts` enforces exactly that,
@@ -107,9 +107,9 @@ const BAHT_FX: ClaimFx = { currency: null, rate: null };
  *
  * **Anything the brand does not offer resolves to baht rather than throwing.**
  * `effectiveClaimCurrency` is the same function the form applies before it
- * posts, so the two agree: an admin switching `CurrencyEnabled` off leaves a
- * draft holding `MYR` savable — as a baht claim — instead of stranding it
- * behind a dropdown that no longer renders.
+ * posts, so the two agree: an admin switching a `BrandCurrency` row off — or
+ * removing it — leaves a draft holding `MYR` savable, as a baht claim, instead
+ * of stranding it behind a dropdown that no longer renders.
  *
  * Called **outside** the transaction, deliberately: this reaches two databases
  * and the network, and holding row locks across an 8-second FX timeout is how a
@@ -122,11 +122,11 @@ async function resolveClaimFx(
   if (isBaht(posted)) return BAHT_FX;
   if (!brandCode) return BAHT_FX;
 
-  let brand: { currencyCode: string | null; currencyEnabled: boolean } | null = null;
+  let brand: { currencies: BrandCurrencyEntry[] } | null = null;
   const brands = await listBrandRegistry();
   for (const b of brands) {
     if (b.code === brandCode) {
-      brand = { currencyCode: b.currencyCode, currencyEnabled: b.currencyEnabled };
+      brand = { currencies: b.currencies };
       break;
     }
   }
