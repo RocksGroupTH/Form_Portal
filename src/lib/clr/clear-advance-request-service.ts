@@ -1,3 +1,5 @@
+import { env } from "@/env";
+import { documentButton, documentUrl } from "@/lib/acc/mail-link";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { hrEmployeeTable } from "@/lib/hr/constants";
 import { allocateRequestNo } from "@/lib/acc/sequence";
@@ -790,7 +792,7 @@ export async function submitRequest(
       `<p>มีคำขอเคลียร์คืนเงินทดรองจ่ายเลขที่ <b>${requestNo}</b> รอการอนุมัติของท่าน</p>` +
       `<p>ผู้ขอ: ${updated.requesterFullName ?? "-"} · ค่าใช้จ่ายจริง: ${(updated.clear?.actualTotal ?? 0).toLocaleString()} บาท` +
       ` · ต้องโอนคืนบริษัท: ${(updated.clear?.refundToCompany ?? 0).toLocaleString()} บาท</p>` +
-      `<p><a href="/request/clear-advance/${id}">เปิดคำขอ</a></p>`;
+      documentButton(documentUrl(env.NEXT_PUBLIC_APP_URL, "/request/clear-advance", id));
     await queueEmail({
       requestId: id, toEmail: managerEmail,
       subject, bodyHtml, triggerType: "Submitted",
