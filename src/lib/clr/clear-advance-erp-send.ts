@@ -207,7 +207,7 @@ export async function previewClrErpJournal(ids: number[]): Promise<ClrPreviewIte
       if (!req.clear.items || req.clear.items.length === 0) throw new Error("ไม่มีรายการค่าใช้จ่าย");
 
       const postingDate = req.clear.refundTransferDate ?? req.clear.paymentDate ?? todayYmd();
-      const { config, target, departmentCode } = await loadClearAdvanceErpContext(req.brandCode, req.requesterDepartmentCode);
+      const { config, target, departmentCode } = await loadClearAdvanceErpContext(req.brandCode, req.requesterDepartmentCode, req.clear.advanceRequestId);
       const journalItems = toJournalItems(req.clear.items);
       const itemBranch = journalItems.find((it) => it.branchCode)?.branchCode ?? null;
       const payload = buildClearAdvanceJournalPayload({
@@ -326,7 +326,7 @@ export async function sendClrErpBatch(ids: number[], userId: number): Promise<Cl
     let bcEnvironment: ErpBcEnvironment | null = null;
     try {
       const postingDate = req.clear.refundTransferDate ?? req.clear.paymentDate ?? todayYmd();
-      const { config, target, departmentCode } = await loadClearAdvanceErpContext(req.brandCode, req.requesterDepartmentCode);
+      const { config, target, departmentCode } = await loadClearAdvanceErpContext(req.brandCode, req.requesterDepartmentCode, req.clear.advanceRequestId);
       bcEnvironment = target.environment;
 
       const journalItems = toJournalItems(req.clear.items);

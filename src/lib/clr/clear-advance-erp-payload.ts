@@ -1,7 +1,8 @@
 import type { PpapJournalPayload, PpapJournalLinePayload } from "@/lib/acc/erp-ppap-payload";
 
 export interface ClrJournalConfig {
-  advanceGlAccountNo: string;
+  /** The vendor AP-2 debited — this clearing credits the same one. */
+  advanceVendorNo: string;
   bankAccountNo: string;
   vatInputGlAccountNo: string | null;
   whtPayableGlAccountNo: string | null;
@@ -29,12 +30,12 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 
 /**
  * Build the PPAP CreateFromJson payload for ONE AP-3 clearing.
- * Dr expenses (per item) + Dr VAT input - Cr WHT payable - Cr advance +/- Bank diff.
+ * Dr expenses (per item) + Dr VAT input - Cr WHT payable - Cr advance Vendor +/- Bank diff.
  * Line amount sign: >0 = debit, <0 = credit; the lines always sum to 0.
  */
 export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJournalPayload {
   const { config: c, items, requestNo, postingDate, departmentCode } = input;
-  if (!c.advanceGlAccountNo) throw new Error("ยังไม่ได้ตั้งค่า G/L เงินทดรองจ่าย (จาก AP-2) สำหรับแบรนด์นี้");
+  if (!c.advanceVendorNo) throw new Error("ยังไม่ได้เลือก Vendor ในใบเบิก AP-2 ที่เคลียร์ใบนี้ — เปิดใบ AP-2 แล้วเลือก Vendor ก่อนส่ง");
   if (!c.bankAccountNo) throw new Error("ยังไม่ได้ตั้งค่า Bank Account (จาก AP-2) สำหรับแบรนด์นี้");
   if (!c.journalBatchName) throw new Error("ยังไม่ได้ตั้งค่า Journal Batch ของ AP-3 สำหรับแบรนด์นี้");
   if (items.length === 0) throw new Error("ไม่มีรายการค่าใช้จ่ายสำหรับสร้าง journal");
@@ -67,7 +68,16 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
     lines.push(glLine(c.whtPayableGlAccountNo, -whtTotal, null));
   }
 
-  lines.push(glLine(c.advanceGlAccountNo, -r2(input.advanceAmount), null));
+  // Cr the vendor AP-2 debited. Built inline rather than via glLine because the
+  // vendor line must carry accountType "Vendor" and NO balAccountType — the
+  // two-explicit-lines shape BC accepted for AP-2 (doc PVA2608-0012).
+  lines.push({
+    groupNo: "G1", postingDate, documentType: "Payment",
+    accountType: "Vendor", accountNo: c.advanceVendorNo,
+    description: `เคลียร์เงินทดรองจ่าย ${requestNo}`.slice(0, 100),
+    paymentMethodCode: "BANK", amount: -r2(input.advanceAmount),
+    employeeCode, branchCode: defaultBranch, departmentCode,
+  });
 
   const actualNet = r2(items.reduce((s, it) => s + it.amountBeforeVat + (it.vatAmount || 0) - (it.whtAmount || 0), 0));
   const bankAmount = r2(input.advanceAmount - actualNet);
