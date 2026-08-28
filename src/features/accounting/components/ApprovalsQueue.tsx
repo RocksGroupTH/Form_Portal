@@ -15,6 +15,10 @@ import { Dialog } from "@/components/ui/Dialog";
 import { SidePanel, SidePanelClose } from "@/components/ui/SidePanel";
 import { RequestDetail } from "@/features/accounting/components/RequestDetail";
 import { PaymentDatePicker } from "@/features/accounting/components/PaymentDatePicker";
+import {
+  ExchangeRateOverride,
+  type RateOverrideSaved,
+} from "@/features/accounting/components/ExchangeRateOverride";
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
 import {
   ApprovalQueueFilters,
@@ -480,6 +484,35 @@ export function ApprovalsQueue({
     } finally {
       setSavingPaymentId(null);
     }
+  }, []);
+
+  /**
+   * The rate accounting just corrected, reflected without closing the drawer.
+   *
+   * Both halves matter, and both are patched in place rather than refetched —
+   * a refetch would rebuild every row and flash the whole table while the
+   * accountant is part-way through a selection, which is the reason
+   * `savePaymentDate` does not refetch either.
+   *
+   * The queue row is the half a reader would skip. `AccRequest.TotalAmount` has
+   * changed, and the row's ยอดรวม, the selected-total on the batch bar and the
+   * confirm dialog all read it — leaving them stale would show the figure the
+   * *uncorrected* rate produced at the exact moment somebody presses approve.
+   */
+  const handleRateSaved = useCallback((saved: RateOverrideSaved) => {
+    setDrawerDetail((prev) =>
+      prev && prev.id === saved.id
+        ? {
+            ...prev,
+            exchangeRate: saved.rate,
+            totalAmount: saved.totalRewritten ? saved.totalAmount : prev.totalAmount,
+          }
+        : prev,
+    );
+    if (!saved.totalRewritten) return;
+    setRows((prev) =>
+      prev.map((r) => (r.id === saved.id ? { ...r, totalAmount: saved.totalAmount } : r)),
+    );
   }, []);
 
   const selectedRows = useMemo(
@@ -1141,7 +1174,24 @@ export function ApprovalsQueue({
               <Loader2 size={24} className="animate-spin" style={{ color: "var(--text-muted)" }} />
             </div>
           ) : drawerDetail ? (
-            <RequestDetail request={drawerDetail} hideCancel />
+            <>
+              {/* Accounting's rate correction. Renders nothing for a baht claim
+                  or one not at the ACCOUNT step — and it sits above the detail
+                  because the baht figure below it is what the correction
+                  changes. */}
+              <ExchangeRateOverride
+                endpoint={`/api/request/accounting/requests/${drawerDetail.id}/exchange-rate`}
+                atAccountStep={
+                  drawerDetail.status === "ManagerApproved" &&
+                  drawerDetail.currentStepCode === "ACCOUNT"
+                }
+                currency={drawerDetail.currency}
+                rate={drawerDetail.exchangeRate}
+                foreignAmount={drawerDetail.foreignAmount}
+                onSaved={handleRateSaved}
+              />
+              <RequestDetail request={drawerDetail} hideCancel />
+            </>
           ) : null}
         </div>
 

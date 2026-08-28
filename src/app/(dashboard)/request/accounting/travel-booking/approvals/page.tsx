@@ -14,6 +14,14 @@ import { useBookingAccess } from "@/features/travel-booking/hooks/useBookingAcce
 import { fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
 import { fmtBaht } from "@/features/travel-booking/components/shared";
 import { TravelBookingDetail } from "@/features/travel-booking/components/TravelBookingDetail";
+// AP-1's component, used unchanged: the correction is the same act on both
+// forms, and two copies would drift on the sentence explaining what the stored
+// rate actually is. This page already reaches into `@/features/accounting` for
+// `fmtYmdDisplay` above.
+import {
+  ExchangeRateOverride,
+  type RateOverrideSaved,
+} from "@/features/accounting/components/ExchangeRateOverride";
 import { payoutMonthOptions, type PayoutMonth } from "@/lib/acc/travel-booking/payout-months";
 // Pure, import-free (its own type import is erased) — the same sentences the
 // server refuses with, so the queue and the 400 can never disagree.
@@ -212,6 +220,18 @@ export default function TravelBookingAccountApprovalsPage() {
       setDetail(null);
     }
   }, [mutate, openId, loadDetail]);
+
+  /**
+   * The rate accounting just corrected.
+   *
+   * Patched into the open request rather than refetched, so the booking figures
+   * below re-convert at the corrected rate at once. Nothing on the queue row
+   * moves: AP-17's `AccRequest.TotalAmount` is the per-diem total, which is
+   * always baht and which this override deliberately does not touch.
+   */
+  const handleRateSaved = useCallback((saved: RateOverrideSaved) => {
+    setDetail((prev) => (prev && prev.id === saved.id ? { ...prev, exchangeRate: saved.rate } : prev));
+  }, []);
 
   /* ── The two exits besides approve (see the return/reject routes' ACCOUNT
      branch): hand it back to Admin to fix the booking, or reject it outright.
@@ -631,6 +651,21 @@ export default function TravelBookingAccountApprovalsPage() {
             // approving the payout, so what the booking cost is exactly what they
             // are here to check.
             <>
+              {/* Accounting's rate correction. Renders nothing for a baht
+                  request or one that has left the ACCOUNT step — `panelRequestId`
+                  is already exactly that test, and the server repeats it in the
+                  UPDATE's own predicate. `foreignAmount` is deliberately null:
+                  AP-17's header total is per diem, always baht, so the rate
+                  changes what the booking figures convert *to* on screen and
+                  rewrites no stored total. */}
+              <ExchangeRateOverride
+                endpoint={`/api/request/travel-booking/requests/${detail.id}/exchange-rate`}
+                atAccountStep={panelRequestId != null}
+                currency={detail.currency}
+                rate={detail.exchangeRate}
+                foreignAmount={null}
+                onSaved={handleRateSaved}
+              />
               {panelRequestId != null && (
                 <div
                   className="rounded-2xl p-3 mb-4 flex flex-col gap-2.5"
