@@ -36,7 +36,7 @@ import { FilterMultiDatePicker } from "@/features/accounting/components/FilterMu
 import { fmtTravelDatesList } from "@/features/accounting/lib/format-travel-dates";
 import { DistanceMapField } from "./DistanceMapField";
 import { ExpenseRows } from "./ExpenseRows";
-import { computeTotalAmount } from "@/lib/acc/calc";
+import { computeTotalAmount, computeTotalDistance } from "@/lib/acc/calc";
 import {
   allDayItems,
   formatDayVehicleNames,
@@ -1427,7 +1427,15 @@ export function TravelExpenseForm({
           </div>
         )}
 
-        {/* ระยะทางรวม — rate-based vehicles only */}
+        {/* ระยะทางรวม — rate-based vehicles only.
+
+            Read from `computeTotalDistance`, the same function the payable amount
+            is computed from, so the two cannot disagree. This box used to add both
+            legs inline regardless of direction: picking ขาไป displayed the round
+            trip while the claim was calculated — correctly — on the onward leg
+            alone. The number on screen was not the number being paid, and it
+            silently stopped updating when the direction changed, which is what
+            was reported. */}
         {hasRateVehicle(travel) && (
           <div>
             <label className={labelClass} style={labelStyle}>
@@ -1436,7 +1444,7 @@ export function TravelExpenseForm({
             <input
               className={inputClass}
               style={readonlyStyle}
-              value={`${(travel.onwardDistanceKm ?? 0) + (travel.returnDistanceKm ?? 0)} กม.`}
+              value={`${computeTotalDistance(travel)} กม.`}
               readOnly
             />
           </div>
