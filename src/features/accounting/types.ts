@@ -104,7 +104,7 @@ export interface AccRequest {
   /** THB per 1 unit of `currency`, as fetched when the claim was submitted. */
   exchangeRate: number | null;
   /** The claim's own figure, before conversion. `totalAmount` is this × the rate. */
-  baseAmount: number | null;
+  foreignAmount: number | null;
   submittedBy: number | null; submittedAt: string | null;
   createdAt: string; updatedAt: string;
   /** One row per travel day (sorted by sortOrder). */

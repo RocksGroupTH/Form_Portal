@@ -81,7 +81,7 @@ const FX_STORED_MISSING_ERROR =
  * What a claim is in, and what one unit of it is worth in baht.
  *
  * `currency === null` means baht, and a baht claim stores **all three** of
- * `Currency` / `ExchangeRate` / `BaseAmount` as NULL: nobody recorded a
+ * `Currency` / `ExchangeRate` / `ForeignAmount` as NULL: nobody recorded a
  * currency, and writing `'THB'` would claim somebody had. It also keeps a brand
  * with no currency configured writing byte-identical rows to the ones it wrote
  * before this feature existed.
@@ -173,15 +173,15 @@ function bahtTotalOrThrow(amount: number, fx: ClaimFx): number {
 function bindFx(
   req: ReturnType<Awaited<ReturnType<typeof getAccPool>>["request"]>,
   fx: ClaimFx,
-  baseAmount: number,
+  foreignAmount: number,
 ) {
   return req
     .input("currency", sql.Char(3), fx.currency)
     .input("fxRate", sql.Decimal(18, 6), fx.currency === null ? null : fx.rate)
-    .input("baseAmt", sql.Decimal(18, 2), fx.currency === null ? null : baseAmount);
+    .input("foreignAmt", sql.Decimal(18, 2), fx.currency === null ? null : foreignAmount);
 }
 
-const FX_SET = `Currency=@currency, ExchangeRate=@fxRate, BaseAmount=@baseAmt`;
+const FX_SET = `Currency=@currency, ExchangeRate=@fxRate, ForeignAmount=@foreignAmt`;
 
 /* ─────────────────────────── helpers ─────────────────────────── */
 
@@ -221,10 +221,10 @@ function mapRequestRow(r: Record<string, unknown>): AccRequest {
     managerEmail: (r.ManagerEmail as string) ?? null,
     companyName: (r.CompanyName as string) ?? null,
     totalAmount: num(r.TotalAmount),
-    // Always baht. `baseAmount` is the figure the requester actually typed.
+    // Always baht. `foreignAmount` is the figure the requester actually typed.
     currency: ((r.Currency as string | null) ?? "").trim() || null,
     exchangeRate: num(r.ExchangeRate),
-    baseAmount: num(r.BaseAmount),
+    foreignAmount: num(r.ForeignAmount),
     paymentDate: r.PaymentDate ? toYmd(r.PaymentDate as Date) : null,
     submittedBy: (r.SubmittedBy as number) ?? null,
     submittedAt: r.SubmittedAt ? (r.SubmittedAt as Date).toISOString() : null,
