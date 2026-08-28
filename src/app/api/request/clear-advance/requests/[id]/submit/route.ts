@@ -9,6 +9,8 @@ import { resolveLoginEmail } from "@/lib/auth-email";
 import { resolveFormEnvironment } from "@/lib/form-environment";
 import { getAccPool } from "@/lib/acc/pool";
 import { sql } from "@/lib/db/mssql";
+import { authorizeAccRequest } from "@/lib/acc/request-acl";
+import { AP3_FORM_CODE } from "@/features/clear-advance/constants";
 
 /* ── POST /api/request/clear-advance/requests/[id]/submit ── */
 
@@ -24,6 +26,13 @@ export async function POST(
   if (Number.isNaN(id)) {
     return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
   }
+
+  // Creator + Draft/Returned — the same gap AP-2's submit carried, and the same
+  // fix. `submitRequest` tests the status alone, so any signed-in session could
+  // submit anyone else's AP-3 draft, allocate its running number and have its
+  // SharePoint draft folder moved under the resulting request number.
+  const gate = await authorizeAccRequest(session, id, "mutate", AP3_FORM_CODE);
+  if (gate instanceof Response) return gate;
 
   try {
     const loginEmail = resolveLoginEmail(session.user, null, { email: session.user.email }) ?? "";

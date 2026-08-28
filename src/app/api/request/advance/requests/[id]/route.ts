@@ -3,6 +3,8 @@ import { requireAuth } from "@/lib/api-auth";
 import { getRequest, saveDraft, deleteDraft } from "@/lib/adv/advance-request-service";
 import type { AdvanceSaveInput } from "@/features/advance/types";
 import { resolveLoginEmail } from "@/lib/auth-email";
+import { authorizeAccRequest } from "@/lib/acc/request-acl";
+import { AP2_FORM_CODE } from "@/features/advance/constants";
 
 function parseId(rawId: string): number | null {
   const id = Number(rawId);
@@ -20,6 +22,14 @@ export async function GET(
   const { id: rawId } = await params;
   const id = parseId(rawId);
   if (id === null) return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
+
+  // The record is the payee, the amounts and — for an employee payee — the bank
+  // account resolved live from HR. `requireAuth()` alone let any signed-in
+  // session read all of it by guessing a small integer. Pinned to AP-2 so an id
+  // belonging to another form reads as "not found" rather than being decided
+  // against the wrong form's roster.
+  const gate = await authorizeAccRequest(session, id, "read", AP2_FORM_CODE);
+  if (gate instanceof Response) return gate;
 
   try {
     const req = await getRequest(id);
@@ -44,6 +54,12 @@ export async function PUT(
   const id = parseId(rawId);
   if (id === null) return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
 
+  // Creator + Draft/Returned, before the body is read. `saveDraft` asserts the
+  // same two things inside its transaction and still does; this moves the
+  // refusal in front of the JSON parse and answers 403 rather than 400.
+  const gate = await authorizeAccRequest(session, id, "mutate", AP2_FORM_CODE);
+  if (gate instanceof Response) return gate;
+
   try {
     const body = (await req.json()) as AdvanceSaveInput;
     body.id = id;
@@ -67,6 +83,11 @@ export async function DELETE(
   const { id: rawId } = await params;
   const id = parseId(rawId);
   if (id === null) return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
+
+  // `deleteDraft` cascades through five tables. The gate runs before any of it,
+  // and pins the form so an AP-2 delete cannot reach another form's row.
+  const gate = await authorizeAccRequest(session, id, "mutate", AP2_FORM_CODE);
+  if (gate instanceof Response) return gate;
 
   try {
     await deleteDraft(id, Number(session.user.id));
