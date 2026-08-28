@@ -1444,7 +1444,7 @@ export function TravelExpenseForm({
             <input
               className={inputClass}
               style={readonlyStyle}
-              value={`${computeTotalDistance(travel)} กม.`}
+              value={computeTotalDistance(travel)}
               readOnly
             />
           </div>
