@@ -11,6 +11,16 @@ const BOT_URL =
   "https://apigw1.bot.or.th/bot/public/Stat-ExchangeRate/v2/DAILY_AVG_EXG_RATE/";
 const FRANKFURTER_URL = "https://api.frankfurter.dev/v1";
 
+/**
+ * How long any FX call may take before it is abandoned.
+ *
+ * Every fetch below carries it, including the currency list — that one is on
+ * AP-2's picker and hangs its page exactly as the rate calls hang a save. A
+ * provider that stops answering without closing the socket otherwise hangs
+ * whatever called it, for as long as the platform allows.
+ */
+const FX_TIMEOUT_MS = 8000;
+
 export type FxSource = "BOT" | "ECB";
 
 export interface FxRate {
@@ -28,7 +38,7 @@ function ymd(d: Date): string {
 let currencyCache: { code: string; name: string }[] | null = null;
 export async function fetchSupportedCurrencies(): Promise<{ code: string; name: string }[]> {
   if (currencyCache) return currencyCache;
-  const res = await fetch(`${FRANKFURTER_URL}/currencies`);
+  const res = await fetch(`${FRANKFURTER_URL}/currencies`, { signal: AbortSignal.timeout(FX_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`FX currencies ${res.status}`);
   const json = (await res.json()) as Record<string, string>;
   const list = Object.entries(json)
@@ -51,7 +61,10 @@ async function fetchBotRate(cur: string, date?: string): Promise<FxRate> {
   const start = new Date(end);
   start.setDate(start.getDate() - 10);
   const url = `${BOT_URL}?start_period=${ymd(start)}&end_period=${ymd(end)}&currency=${encodeURIComponent(cur)}`;
-  const res = await fetch(url, { headers: { "X-IBM-Client-Id": key, Accept: "application/json" } });
+  const res = await fetch(url, {
+    headers: { "X-IBM-Client-Id": key, Accept: "application/json" },
+    signal: AbortSignal.timeout(FX_TIMEOUT_MS),
+  });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`BOT API ${res.status}${text ? `: ${text.slice(0, 200)}` : ""}`);
@@ -68,7 +81,10 @@ async function fetchBotRate(cur: string, date?: string): Promise<FxRate> {
 async function fetchEcbRate(cur: string, date?: string): Promise<FxRate> {
   const path = date ? date : "latest";
   const url = `${FRANKFURTER_URL}/${path}?base=${encodeURIComponent(cur)}&symbols=THB`;
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  const res = await fetch(url, {
+    headers: { Accept: "application/json" },
+    signal: AbortSignal.timeout(FX_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`FX API ${res.status}`);
   const json = (await res.json()) as { date?: string; rates?: Record<string, number> };
   const rate = json.rates?.THB;
