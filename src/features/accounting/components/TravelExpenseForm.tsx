@@ -293,11 +293,17 @@ export function TravelExpenseForm({
       ? "กรุณาเลือกแบรนด์ที่เบิกก่อน"
       : "กรุณาเลือกวันเดินทางก่อน";
 
+  // Whose blocked days to grey out. `requesterStaffId` is in the dependency list
+  // and in the query string because the answer changes the moment เปลี่ยนผู้ขอเบิก
+  // picks somebody else: without it the picker showed the filer's own conflicts
+  // while filing for a colleague — hiding the colleague's real ones, which then
+  // surfaced as a rejection at submit.
   useEffect(() => {
     let cancelled = false;
     const params = new URLSearchParams();
     if (requestId != null) params.set("excludeId", String(requestId));
     if (brandCode) params.set("brandCode", brandCode);
+    if (requesterStaffId) params.set("requesterStaffId", String(requesterStaffId));
     const qs = params.toString();
     fetch(`/api/request/accounting/requests/blocked-travel-dates${qs ? `?${qs}` : ""}`)
       .then((r) => r.json())
@@ -307,7 +313,7 @@ export function TravelExpenseForm({
       })
       .catch(() => { if (!cancelled) setBlockedTravelDates([]); });
     return () => { cancelled = true; };
-  }, [requestId, brandCode]);
+  }, [requestId, brandCode, requesterStaffId]);
 
   const sessionPhoto = useUserPhoto();
   const requesterPhoto = employee?.photoUrl ?? sessionPhoto;

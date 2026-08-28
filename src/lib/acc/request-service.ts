@@ -388,9 +388,21 @@ export async function isDuplicateTravelDate(
   return r.recordset.length > 0;
 }
 
-/** Travel dates already used in another non-rejected request for this user/staff. */
+/**
+ * Travel dates already used by **this requester** in another non-rejected request.
+ *
+ * Keyed on `StaffId` alone, and deliberately: this list is what greys days out in
+ * the picker, and `isDuplicateTravelDate` is what actually refuses a submit. The
+ * two must agree, or the picker lies. It used to also match `CreatedBy` and
+ * `SubmittedBy`, so filing on behalf of a colleague blocked that day in the
+ * filer's **own** calendar — a day the submit rule would have accepted, because
+ * the filer did not travel on it.
+ *
+ * Dropping those two arms cannot loosen anything. The picker is an affordance;
+ * the rule is enforced server-side on every submit regardless of what the
+ * calendar offered.
+ */
 export async function listBlockedTravelDates(
-  userId: number,
   staffId: number | null,
   excludeRequestId: number | null,
   brandCode?: string | null,
@@ -398,9 +410,11 @@ export async function listBlockedTravelDates(
   const pool = await getAccPool();
   const allowMultiBrand =
     !!brandCode && staffId != null && (await isSameDayMultiBrandStaff(staffId));
+  // No staff id means nobody to compare against — an empty list, never every
+  // row this session's user happens to have touched.
+  if (staffId == null) return [];
   const res = await pool.request()
-    .input("uid", sql.Int, userId)
-    .input("staff", sql.Int, staffId ?? null)
+    .input("staff", sql.Int, staffId)
     .input("exclude", sql.Int, excludeRequestId ?? 0)
     .input("brand", sql.NVarChar(20), brandCode ?? null)
     .query(`
@@ -410,11 +424,7 @@ export async function listBlockedTravelDates(
       WHERE r.Status <> N'Rejected'
         AND r.Id <> @exclude
         AND t.TravelDate IS NOT NULL
-        AND (
-          r.CreatedBy = @uid
-          OR r.SubmittedBy = @uid
-          OR (@staff IS NOT NULL AND r.StaffId = @staff)
-        )
+        AND r.StaffId = @staff
         ${allowMultiBrand ? "AND r.BrandCode = @brand" : ""}
       ORDER BY t.TravelDate
     `);

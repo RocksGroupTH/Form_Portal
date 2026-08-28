@@ -3,6 +3,8 @@ import { requireAuth } from "@/lib/api-auth";
 import { getRequest, saveDraft, deleteDraft } from "@/lib/clr/clear-advance-request-service";
 import type { ClearAdvanceSaveInput } from "@/features/clear-advance/types";
 import { resolveLoginEmail } from "@/lib/auth-email";
+import { authorizeAccRequest } from "@/lib/acc/request-acl";
+import { AP3_FORM_CODE } from "@/features/clear-advance/constants";
 
 /* ── GET /api/request/clear-advance/requests/[id] ── */
 
@@ -18,6 +20,13 @@ export async function GET(
   if (Number.isNaN(id)) {
     return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
   }
+
+  // The record carries the settled advance, every expense line and the payee's
+  // banking detail. `requireAuth()` alone let any signed-in session read all of
+  // it by guessing a small integer. Pinned to AP-3, which is also what
+  // `getRequest` scopes to.
+  const gate = await authorizeAccRequest(session, id, "read", AP3_FORM_CODE);
+  if (gate instanceof Response) return gate;
 
   try {
     const req = await getRequest(id);
@@ -47,6 +56,12 @@ export async function PUT(
     return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
   }
 
+  // Creator + Draft/Returned, before the body is read. `saveDraft` asserts the
+  // same two things inside its transaction and still does; this moves the
+  // refusal in front of the JSON parse and answers 403 rather than 400.
+  const gate = await authorizeAccRequest(session, id, "mutate", AP3_FORM_CODE);
+  if (gate instanceof Response) return gate;
+
   try {
     const body = (await req.json()) as ClearAdvanceSaveInput;
     body.id = id;
@@ -73,6 +88,10 @@ export async function DELETE(
   if (Number.isNaN(id)) {
     return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
   }
+
+  // `deleteDraft` cascades through six tables. The gate runs before any of it.
+  const gate = await authorizeAccRequest(session, id, "mutate", AP3_FORM_CODE);
+  if (gate instanceof Response) return gate;
 
   try {
     await deleteDraft(id, Number(session.user.id));
