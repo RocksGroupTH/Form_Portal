@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { buildClearAdvanceJournalPayload, type ClrJournalInput } from "./clear-advance-erp-payload";
 
 const cfg = {
-  advanceGlAccountNo: "115010", bankAccountNo: "BBL-CA6332",
+  advanceVendorNo: "ADV0001", bankAccountNo: "BBL-CA6332",
   vatInputGlAccountNo: "115030", whtPayableGlAccountNo: "213050",
   journalBatchName: "PPAP",
 };
@@ -22,7 +22,8 @@ test("refund=0, no VAT/WHT -> 2 balanced lines", () => {
   assert.equal(sum(p), 0);
   const exp = p.lines.find((l) => l.accountNo === "610322005")!;
   assert.equal(exp.amount, 2000);
-  const adv = p.lines.find((l) => l.accountNo === "115010")!;
+  const adv = p.lines.find((l) => l.accountType === "Vendor")!;
+  assert.equal(adv.accountNo, "ADV0001");
   assert.equal(adv.amount, -2000);
   assert.equal(exp.documentType, "Payment");
   assert.equal(exp.employeeCode, "ADC26-09005");
@@ -63,4 +64,30 @@ test("VAT present but no VAT account configured -> throws", () => {
     config: { ...cfg, vatInputGlAccountNo: null },
     items: [{ glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 0, branchCode: null }],
   })), /VAT/);
+});
+
+test("advance reversal credits the Vendor with no balAccountType", () => {
+  const p = buildClearAdvanceJournalPayload(base({}));
+  const adv = p.lines.find((l) => l.accountType === "Vendor")!;
+  assert.equal(adv.accountNo, "ADV0001");
+  assert.equal(adv.amount, -2000);
+  // AP-2's proven BC shape: two explicit lines, no bal account on the vendor line.
+  assert.equal(adv.balAccountType, undefined);
+  assert.equal(adv.documentType, "Payment");
+  assert.equal(adv.employeeCode, "ADC26-09005");
+});
+
+test("exactly one Vendor line, and no G/L line carries the advance amount", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    advanceAmount: 1000,
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 30, branchCode: "HQ01" }],
+  }));
+  assert.equal(p.lines.filter((l) => l.accountType === "Vendor").length, 1);
+  assert.equal(sum(p), 0);
+});
+
+test("no vendor on the cleared advance -> throws", () => {
+  assert.throws(() => buildClearAdvanceJournalPayload(base({
+    config: { ...cfg, advanceVendorNo: "" },
+  })), /Vendor/);
 });
