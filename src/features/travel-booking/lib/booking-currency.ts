@@ -22,7 +22,8 @@
  * the invoice in front of them is in baht despite the brand.
  */
 
-import { enabledForeignCurrencies, isBaht, THB, type BrandCurrencyEntry } from "@/lib/acc/currency";
+import { enabledForeignCurrencies, THB, type BrandCurrencyEntry } from "@/lib/acc/currency";
+import { currencyWord, referenceRateNote } from "@/lib/acc/currency-display";
 
 function norm(code: string | null | undefined): string {
   return (code ?? "").trim().toUpperCase();
@@ -92,31 +93,20 @@ export function effectiveBookingCurrency(
 }
 
 /**
- * The word to put after a figure — `บาท`, or the currency code.
+ * The word to put after a figure — `บาท`, or the currency code — and the
+ * reference-rate caption.
  *
- * Display only. Used for the four amount captions, the computed-total line and
- * the out-of-range toast, all of which said `บาท` unconditionally and would
- * otherwise caption a ringgit figure as baht on the one screen where the
- * distinction is being decided.
+ * **Neither is defined here any more.** Task 12 needed both on AP-1's detail,
+ * on the ERP prep queue and in both Excel exports, and the sentence saying the
+ * rate is *not* a Bank of Thailand rate is the one thing that must never exist
+ * twice — so the definitions moved to `@/lib/acc/currency-display`, which has no
+ * feature in its import path. This file keeps the AP-17 name its eleven call
+ * sites already read by.
  */
-export function bookingCurrencyWord(currency: string | null | undefined): string {
-  return isBaht(currency) ? "บาท" : norm(currency);
-}
+export { referenceRateNote };
 
-/**
- * The reference-rate caption. **Never "อัตราแลกเปลี่ยนธนาคารแห่งประเทศไทย".**
- *
- * `BOT_API_CLIENT_ID` is deliberately unprovisioned (spec §9.1), so every rate
- * this app records comes from `bot-fx`'s keyless ECB fallback — a mid-market
- * reference rate, which is not what a bank settles at. Captioning it as a Bank
- * of Thailand rate would state something false on a screen accounting signs
- * off against.
- */
-export function referenceRateNote(currency: string, rate: number): string {
-  return `อัตราอ้างอิง 1 ${norm(currency)} = ${rate.toLocaleString("th-TH", {
-    minimumFractionDigits: 4,
-    maximumFractionDigits: 6,
-  })} บาท`;
+export function bookingCurrencyWord(currency: string | null | undefined): string {
+  return currencyWord(currency);
 }
 
 /**

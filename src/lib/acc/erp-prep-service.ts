@@ -78,7 +78,21 @@ export interface ErpPrepRow {
   travelDayLines?: ReportTravelDayLine[];
   vehicleName: string | null;
   workDetail: string | null;
+  /**
+   * **Thai baht** — `AccRequest.TotalAmount`, which is what
+   * `erp-journal-builder.ts` posts. `travelDayLines[].totalAmount` above is
+   * *not*: those are `AccTravelExpense.TotalAmount`, in the claim's own
+   * currency, so on a foreign claim they do not sum to this. `currency` and
+   * `exchangeRate` are carried so the queue can convert them before showing
+   * them beside this figure — see `ErpPrepQueue.tsx`.
+   */
   totalAmount: number | null;
+  /** `AccRequest.Currency`. Null and `"THB"` both mean baht. */
+  currency: string | null;
+  /** THB per 1 unit of `currency`, as stored (or as accounting corrected it). */
+  exchangeRate: number | null;
+  /** The claim's own figure, of which `totalAmount` is the conversion. */
+  foreignAmount: number | null;
   paymentDate: string | null;
   submittedAt: string | null;
   erpDeptCode: string | null;
@@ -193,6 +207,15 @@ function toPrepRow(
     vehicleName: firstDay?.vehicleNames?.[0] ?? (raw.VehicleName as string) ?? null,
     workDetail: firstDay?.workDetail ?? (raw.WorkDetail as string) ?? null,
     totalAmount,
+    currency: (raw.Currency as string | null) ?? null,
+    exchangeRate:
+      raw.ExchangeRate === null || raw.ExchangeRate === undefined
+        ? null
+        : Number(raw.ExchangeRate),
+    foreignAmount:
+      raw.ForeignAmount === null || raw.ForeignAmount === undefined
+        ? null
+        : Number(raw.ForeignAmount),
     paymentDate,
     submittedAt: raw.SubmittedAt ? (raw.SubmittedAt as Date).toISOString() : null,
     erpDeptCode,
@@ -344,6 +367,11 @@ export async function listErpPrepRows(
                WHERE emp.StaffId = r.StaffId AND emp.Status = N'Active'
              )) AS RequesterDepartmentCode,
              r.TotalAmount, r.PaymentDate, r.SubmittedAt,
+             -- r.TotalAmount is baht and is what posts. These say what the
+             -- per-day figures inside TRAVEL_DAYS_CSV_SELECT are denominated
+             -- in, which on a foreign claim is not baht — the queue converts
+             -- them before showing them under the same ยอด heading.
+             r.Currency, r.ExchangeRate, r.ForeignAmount,
              r.ErpInterfaceStatus, r.ErpInterfaceError, r.ErpInterfaceSentAt,
              MIN(t.TravelDate) AS TravelDate,
              COUNT(t.Id) AS DayCount,
@@ -358,6 +386,7 @@ export async function listErpPrepRows(
       GROUP BY r.Id, r.RequestNo, r.StaffId, r.BrandCode, r.RequesterFullName,
                r.RequesterDepartmentName, r.RequesterDepartmentCode,
                r.TotalAmount, r.PaymentDate, r.SubmittedAt,
+               r.Currency, r.ExchangeRate, r.ForeignAmount,
                r.ErpInterfaceStatus, r.ErpInterfaceError, r.ErpInterfaceSentAt
       ORDER BY r.PaymentDate DESC, r.SubmittedAt DESC, r.Id DESC
     `),
@@ -442,6 +471,9 @@ export async function getErpPrepDetail(id: number): Promise<ErpPrepDetail | null
     requesterDepartmentCode: deptCode,
     travelDate: accReq.travel?.travelDate ?? null,
     totalAmount,
+    currency: accReq.currency,
+    exchangeRate: accReq.exchangeRate,
+    foreignAmount: accReq.foreignAmount,
     paymentDate,
     erpDeptCode,
     erpDeptDisplayName,

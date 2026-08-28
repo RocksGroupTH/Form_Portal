@@ -29,7 +29,7 @@ export interface AdvanceDetail {
   purpose: string | null;           // รายละเอียดค่าใช้จ่าย (free text)
   currency: string;                 // "THB" หรือสกุลต่างประเทศ
   amount: number | null;            // จำนวนเงิน (สกุลที่เลือก)
-  exchangeRate: number | null;      // อัตราแลกเปลี่ยน (BOT) — THB=1
+  exchangeRate: number | null;      // อัตราอ้างอิง (mid-market; ไม่ใช่อัตรา ธปท.) — THB=1
   baseAmount: number | null;        // ยอดเป็นบาท = amount × rate (ตัวที่ post journal)
   whtNote: string | null;           // หมายเหตุ WHT (manual — ไม่ post journal)
   overThresholdReason: string | null; // เหตุผลเพิ่มเติมเมื่อยอด > 3,000 บาท

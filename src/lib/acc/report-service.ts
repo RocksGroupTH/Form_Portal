@@ -1,3 +1,5 @@
+import { isBaht } from "@/lib/acc/currency";
+import { amountInBaht, currencyWord } from "@/lib/acc/currency-display";
 import { getPaymentDates } from "@/lib/acc/payment-calendar";
 import { paymentDateForApproval } from "@/lib/acc/payment-cycle";
 import { getAccPool, sql } from "@/lib/acc/pool";
@@ -33,11 +35,24 @@ export interface ReportFilters {
 
 export interface ReportTravelVehicleLine {
   vehicleName: string;
+  /** The claim's own currency, like `ReportTravelDayLine.totalAmount`. */
   amount: number;
 }
 
 export interface ReportTravelDayLine {
   travelDate: string;
+  /**
+   * **The claim's own currency, not baht.** It comes from
+   * `AccTravelExpense.TotalAmount`, which AP-1 writes in whatever currency the
+   * claim was entered in — only `AccRequest.TotalAmount` is converted.
+   *
+   * So on a foreign claim these day figures do not sum to the row's
+   * `totalAmount`, and captioning one `บาท` states something false. Convert with
+   * `amountInBaht(amount, row.currency, row.exchangeRate)` before printing it as
+   * baht or adding it to a baht total — `displayDayAmountBaht`
+   * (`features/accounting/lib/expand-travel-table-rows.ts`) is that call, made
+   * once.
+   */
   totalAmount: number;
   vehicleNames: string[];
   vehicles: ReportTravelVehicleLine[];
@@ -62,7 +77,38 @@ export interface ReportRow {
   vehicleNames?: string[];
   workDetail: string | null;
   totalDistanceKm: number | null;
+  /**
+   * **Thai baht, always** — in both views, whatever currency the claim was
+   * entered in. Every summer, KPI and Excel cell downstream may treat it as baht
+   * without asking, which is the invariant the whole currency feature rests on.
+   *
+   * The request view takes it straight from `AccRequest.TotalAmount`, which is
+   * baht by construction. The **day** view cannot: its figure is
+   * `AccTravelExpense.TotalAmount`, one row per travel day, in the claim's own
+   * currency. `mapRow` therefore converts it here and puts the unconverted
+   * figure in `foreignAmount`, so the two views mean the same thing and no
+   * consumer has to know which one it was handed. A foreign day figure with no
+   * usable rate reads null rather than being passed through unconverted.
+   */
   totalAmount: number | null;
+  /**
+   * The currency the claim was entered in. **Null and `"THB"` both mean baht**,
+   * and a baht claim leaves it null: nobody recorded a currency on it.
+   *
+   * It is here because `travelDayLines[].totalAmount` is **not** baht — those
+   * come from `AccTravelExpense.TotalAmount`, which is in the claim's own
+   * currency. A surface printing a day figure needs this to know what it is
+   * printing; `amountInBaht` in `@/lib/acc/currency-display` is what converts it.
+   */
+  currency?: string | null;
+  /** THB per 1 unit of `currency`, as stored. Null for a baht claim. */
+  exchangeRate?: number | null;
+  /**
+   * The claim's own figure, of which `totalAmount` is the conversion — the
+   * request's `ForeignAmount` in the request view, this day's own figure in the
+   * day view. Null for a baht claim in both.
+   */
+  foreignAmount?: number | null;
   status: string;
   paymentDate: string | null;
   submittedAt: string | null;
@@ -109,8 +155,12 @@ const FROM_JOINS = `FROM [dbo].[AccRequest] r
     LEFT JOIN [dbo].[AccTravelExpense] t ON t.RequestId = r.Id
     LEFT JOIN [dbo].[AccFormMaster] f ON f.FormCode = r.FormCode`;
 
+// t.TotalAmount here is the *day's* figure, in the claim's own currency — which
+// is why r.Currency travels beside it. In the request view below, r.TotalAmount
+// is selected instead and is baht.
 const DAY_ROW_SELECT = `r.Id, r.RequestNo, r.FormCode, f.FormNameTh, r.StaffId, r.RequesterFullName, r.RequesterDepartmentName,
   r.BrandCode, t.TravelDate, t.VehicleName, t.WorkDetail, t.TotalDistanceKm, t.TotalAmount,
+  r.Currency, r.ExchangeRate, r.ForeignAmount,
   r.Status, r.PaymentDate, r.SubmittedAt`;
 
 /** Correlated subquery: per-day amounts, vehicles, work detail for request-level rows. */
@@ -230,6 +280,10 @@ const REQUEST_ROW_SELECT = `r.Id, r.RequestNo, r.FormCode, f.FormNameTh, r.Staff
    WHERE te.RequestId = r.Id ORDER BY te.SortOrder, te.TravelDate, te.Id) AS WorkDetail,
   SUM(t.TotalDistanceKm) AS TotalDistanceKm,
   r.TotalAmount,
+  -- Baht is r.TotalAmount; these say what the *per-day* figures in
+  -- TravelDaysCsv above are denominated in, which is not the same thing on a
+  -- foreign claim. Every screen rendering that breakdown reads them.
+  r.Currency, r.ExchangeRate, r.ForeignAmount,
   r.Status, r.PaymentDate, r.SubmittedAt, r.CurrentStepCode,
   r.ManagerStaffId, r.ManagerEmail,
   (SELECT TOP 1 a.StepCode
@@ -323,6 +377,15 @@ function mapRow(
   x: Record<string, unknown>,
   view: "request" | "day",
 ): ReportRow {
+  const rawAmount =
+    x.TotalAmount === null || x.TotalAmount === undefined ? null : Number(x.TotalAmount);
+  const rate =
+    x.ExchangeRate === null || x.ExchangeRate === undefined ? null : Number(x.ExchangeRate);
+  // Only the day view needs this: there `rawAmount` is AccTravelExpense's
+  // per-day figure, in the claim's own currency. In the request view it is
+  // AccRequest.TotalAmount, which is already baht and must not be multiplied by
+  // a rate a second time.
+  const dayBaht = amountInBaht(rawAmount, x.Currency as string | null, rate);
   const travelDayLines =
     view === "request"
       ? parseTravelDayLines(x.TravelDaysCsv)
@@ -372,10 +435,23 @@ function mapRow(
       x.TotalDistanceKm === null || x.TotalDistanceKm === undefined
         ? null
         : Number(x.TotalDistanceKm),
-    totalAmount:
-      x.TotalAmount === null || x.TotalAmount === undefined
-        ? null
-        : Number(x.TotalAmount),
+    // Baht in both views — the day view's raw figure is the claim's own
+    // currency, so it converts here and the unconverted figure moves to
+    // `foreignAmount`. A baht claim takes the identity branch of `amountInBaht`,
+    // so nothing about it moves by so much as a satang.
+    totalAmount: view === "day" ? dayBaht : rawAmount,
+    // `NULLIF` is not applied in SQL because a blank CHAR(3) is not a state the
+    // writers can produce; `isBaht` treats "" and null alike anyway.
+    currency: (x.Currency as string | null) ?? null,
+    exchangeRate: rate,
+    foreignAmount:
+      view === "day"
+        ? isBaht(x.Currency as string | null)
+          ? null
+          : rawAmount
+        : x.ForeignAmount === null || x.ForeignAmount === undefined
+          ? null
+          : Number(x.ForeignAmount),
     status: x.Status as string,
     paymentDate: x.PaymentDate ? ymd(x.PaymentDate as Date) : null,
     submittedAt: x.SubmittedAt ? (x.SubmittedAt as Date).toISOString() : null,
@@ -420,6 +496,7 @@ function buildListQuery(
     -- grouped. RequesterDepartmentCode is a plain column and does.
     GROUP BY r.Id, r.RequestNo, r.FormCode, f.FormNameTh, r.StaffId, r.RequesterFullName,
       r.RequesterDepartmentName, r.RequesterDepartmentCode, r.BrandCode, r.TotalAmount,
+      r.Currency, r.ExchangeRate, r.ForeignAmount,
       r.Status, r.PaymentDate, r.SubmittedAt,
       r.CurrentStepCode, r.ManagerStaffId, r.ManagerEmail
     ORDER BY ${order}
@@ -734,11 +811,21 @@ export function buildReportWorkbook(
     font: { bold: true },
     alignment: { horizontal: "center" as const },
   };
+  // Alignment only — no numFmt, deliberately: the sheet has always shown the
+  // total exactly as the database holds it and adding a format here would change
+  // every historical export's appearance for no gain.
   const moneyStyle = { alignment: { horizontal: "right" as const } };
   // Total distance (km) — always show 2 decimal places in Excel.
   const distanceStyle = {
     alignment: { horizontal: "right" as const },
     numFmt: "#,##0.00",
+  };
+  // The reference rate. Six places, because AccRequest.ExchangeRate is
+  // DECIMAL(18,6) and a rate truncated in the export cannot be reconciled
+  // against the one the claim was converted at.
+  const rateStyle = {
+    alignment: { horizontal: "right" as const },
+    numFmt: "#,##0.000000",
   };
 
   const aoa: (string | number | null)[][] = [];
@@ -758,12 +845,30 @@ export function buildReportWorkbook(
     "วันเดินทาง",
     "พาหนะ",
     "ระยะทางรวม (กม.)",
+    // Stays baht and stays where it is. `ReportRow.totalAmount` is baht in both
+    // views (`mapRow` converts the day view's figure), so the heading is true of
+    // every row and no existing formula moves.
     "ยอดรวม (บาท)",
+    // The three that make a foreign claim identifiable rather than a baht claim
+    // with a surprising total. They sit immediately after the total because that
+    // is the figure they qualify — and *after* it, so the two style rules below
+    // keep naming columns 7 and 8.
+    "สกุลเงิน",
+    "ยอดตามสกุลเงิน",
+    "อัตราอ้างอิง",
     "สถานะ",
     "วันที่จ่าย",
     "วันที่ส่ง",
   ];
   aoa.push(columns);
+
+  // Found by heading rather than written as a number — the trap AP-17's export
+  // already had sprung on it once. Inserting a column above silently moves a
+  // numeric literal onto somebody else's data.
+  const DIST_COL = columns.indexOf("ระยะทางรวม (กม.)");
+  const AMOUNT_COL = columns.indexOf("ยอดรวม (บาท)");
+  const FOREIGN_COL = columns.indexOf("ยอดตามสกุลเงิน");
+  const RATE_COL = columns.indexOf("อัตราอ้างอิง");
 
   for (const r of rows) {
     const travelDisplay =
@@ -784,6 +889,14 @@ export function buildReportWorkbook(
       fmtReportVehicleNames(r),
       r.totalDistanceKm,
       r.totalAmount,
+      // Always filled, never blank for baht. A column of blanks beside a column
+      // of MYR reads as "not recorded" rather than "baht", and a filter on it
+      // would silently drop every ordinary claim.
+      isBaht(r.currency) ? "THB" : currencyWord(r.currency),
+      // Blank for a baht claim — the figure is already in ยอดรวม and repeating it
+      // would invite somebody to add the two columns together.
+      r.foreignAmount ?? null,
+      r.exchangeRate ?? null,
       r.status,
       r.paymentDate,
       r.submittedAt ? r.submittedAt.slice(0, 10) : null,
@@ -797,11 +910,14 @@ export function buildReportWorkbook(
     if (ws[addr]) ws[addr].s = headerStyle;
   }
   for (let rr = headerRowIndex + 1; rr <= range.e.r; rr++) {
-    // Col 7 = ระยะทางรวม (กม.) → 2-decimal format; col 8 = ยอดรวม → right-aligned.
-    const distAddr = XLSX.utils.encode_cell({ r: rr, c: 7 });
+    const distAddr = XLSX.utils.encode_cell({ r: rr, c: DIST_COL });
     if (ws[distAddr]) ws[distAddr].s = distanceStyle;
-    const amtAddr = XLSX.utils.encode_cell({ r: rr, c: 8 });
+    const amtAddr = XLSX.utils.encode_cell({ r: rr, c: AMOUNT_COL });
     if (ws[amtAddr]) ws[amtAddr].s = moneyStyle;
+    const foreignAddr = XLSX.utils.encode_cell({ r: rr, c: FOREIGN_COL });
+    if (ws[foreignAddr]) ws[foreignAddr].s = moneyStyle;
+    const rateAddr = XLSX.utils.encode_cell({ r: rr, c: RATE_COL });
+    if (ws[rateAddr]) ws[rateAddr].s = rateStyle;
   }
   ws["!cols"] = columns.map(() => ({ wch: 16 }));
 

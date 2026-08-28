@@ -41,6 +41,15 @@ import {
   countRowsByInterfaceTarget,
   filterRowsByInterfaceTarget,
 } from "@/features/accounting/lib/erp-interface-target";
+import {
+  displayDayAmountBaht,
+  displayDayAmountCell,
+} from "@/features/accounting/lib/expand-travel-table-rows";
+import {
+  fmtAmountWithCurrency,
+  referenceRateNote,
+  showsForeignCurrency,
+} from "@/lib/acc/currency-display";
 
 /* ── Helpers ── */
 
@@ -138,14 +147,33 @@ function displayTravelDate(row: ReportRow, dayLine: ReportTravelDayLine | null):
   return fmtReportTravelDate(row);
 }
 
+/**
+ * The row's figure, twice: in baht, and in the claim's own currency.
+ *
+ * This file used to carry its own third copy of the "vehicle, then day, then
+ * request" fallback. It is gone — `expand-travel-table-rows.ts` owns it, and it
+ * is the copy that knows a day figure is `AccTravelExpense.TotalAmount` and so
+ * is *not* baht on a foreign claim. Three copies of that rule with one of them
+ * taught the currency is how a ringgit figure ends up under the ยอด heading on
+ * the accounting queue.
+ *
+ * `ReportRow` satisfies `TravelTableSourceRow` structurally; no adapter needed.
+ */
 function displayDayAmount(
   row: ReportRow,
   dayLine: ReportTravelDayLine | null,
   vehicleLine: ReportTravelVehicleLine | null,
 ): number | null {
-  if (vehicleLine) return vehicleLine.amount;
-  if (dayLine) return dayLine.totalAmount;
-  return row.totalAmount;
+  return displayDayAmountBaht(row, dayLine, vehicleLine);
+}
+
+function displayDayAmountOwnCurrency(
+  row: ReportRow,
+  dayLine: ReportTravelDayLine | null,
+  vehicleLine: ReportTravelVehicleLine | null,
+): number | null {
+  if (!showsForeignCurrency(row.currency)) return null;
+  return displayDayAmountCell(row, dayLine, vehicleLine);
 }
 
 function displayRowVehicle(
@@ -797,6 +825,9 @@ export function ApprovalsQueue({
               }) => {
                 const isSelected = selectedIds.has(row.id);
                 const dayAmount = displayDayAmount(row, dayLine, vehicleLine);
+                // Null on every baht claim, so the extra line below never
+                // renders on one.
+                const dayAmountForeign = displayDayAmountOwnCurrency(row, dayLine, vehicleLine);
                 const isRequestGroupStart = requestGroupIndex === 0;
                 const isDayGroupStart = dayGroupIndex === 0;
                 const travelDayCount = row.dayCount ?? row.travelDayLines?.length ?? 0;
@@ -907,6 +938,28 @@ export function ApprovalsQueue({
                           ) : (
                             <span style={{ color: "var(--text-faint)" }}>—</span>
                           )}
+                          {/* Foreign claims only — a baht claim keeps the single
+                              badge it has always had. The title carries the rate
+                              and the baht total, which is the figure the batch
+                              bar below sums and the approval commits to. */}
+                          {showsForeignCurrency(row.currency) && (
+                            <span
+                              className="text-[10px] font-bold px-1.5 py-0.5 rounded block mt-1 text-center"
+                              style={{
+                                background: "color-mix(in srgb, var(--color-warning) 14%, transparent)",
+                                color: "var(--color-warning)",
+                                border: "1px solid color-mix(in srgb, var(--color-warning) 35%, transparent)",
+                              }}
+                              title={
+                                (row.exchangeRate != null
+                                  ? `${referenceRateNote(row.currency, row.exchangeRate)} · `
+                                  : "ยังไม่มีอัตราแลกเปลี่ยนที่บันทึกไว้ · ") +
+                                `ยอดรวม ${fmtMoney(row.totalAmount)} บาท`
+                              }
+                            >
+                              {(row.currency ?? "").trim().toUpperCase()}
+                            </span>
+                          )}
                         </td>
                       </>
                     ) : null}
@@ -937,6 +990,19 @@ export function ApprovalsQueue({
                       <span className="tabular-nums font-bold whitespace-nowrap" style={{ color: "var(--color-action)" }}>
                         {fmtMoney(dayAmount)}
                       </span>
+                      {dayAmountForeign != null && (
+                        <span
+                          className="text-[10px] font-semibold block tabular-nums whitespace-nowrap"
+                          style={{ color: "var(--text-muted)" }}
+                          title={
+                            row.exchangeRate != null
+                              ? referenceRateNote(row.currency, row.exchangeRate)
+                              : "ยังไม่มีอัตราแลกเปลี่ยนที่บันทึกไว้ — แปลงเป็นเงินบาทไม่ได้"
+                          }
+                        >
+                          {fmtAmountWithCurrency(dayAmountForeign, row.currency)}
+                        </span>
+                      )}
                     </td>
                   </tr>
                 );

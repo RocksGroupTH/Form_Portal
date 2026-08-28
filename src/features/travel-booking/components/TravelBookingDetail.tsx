@@ -42,6 +42,13 @@ import { useErpSandboxDevHost } from "@/features/accounting/hooks/useErpSandboxD
 import { useTravelBookingOptionIcons } from "@/features/travel-booking/hooks/useOptionIcons";
 import { InfoStrip, typeInfo } from "@/features/travel-booking/components/BookingInfoStrip";
 import { canActManagerStep } from "@/lib/acc/manager-auth";
+import {
+  amountInBaht,
+  currencyWord,
+  fmtMoneyTh,
+  referenceRateNote,
+  showsForeignCurrency,
+} from "@/lib/acc/currency-display";
 import { payoutMonthLabel } from "@/lib/acc/travel-booking/payout-months";
 import { UatDataBanner } from "@/components/UatDataBanner";
 import { AdminBookingPanel } from "./AdminBookingPanel";
@@ -573,6 +580,21 @@ export function TravelBookingDetail({
   const atAccountStep = request.status === "ManagerApproved" && request.currentStepCode === "ACCOUNT";
   const showAdminPanel = !readOnlyBooking && atAdminStep && canAccount && request.id != null;
   const showPrice = showBookingPrice ?? !readOnlyBooking;
+  /**
+   * What the four booking figures below are denominated in.
+   *
+   * `AccTravelBookingDetail`'s columns are written in the request's currency —
+   * `admin-service.ts` records `AccRequest.Currency` / `.ExchangeRate` beside
+   * them precisely because the figures themselves are not converted. This page
+   * captioned all four `บาท` unconditionally, which is false the moment the
+   * booking desk records a Malaysian invoice. `currencyWord` answers `บาท` for
+   * every baht request, so nothing about one changes.
+   *
+   * Per diem is **not** in this — `EmployeeAllowanceLog` has no currency column
+   * and the per-diem line below keeps its literal `บาท`.
+   */
+  const bookingWord = currencyWord(request.currency);
+  const bookingIsForeign = showsForeignCurrency(request.currency);
   /* A rejected /access fetch leaves `canAccount` false, which is indistinguishable
      from a genuine refusal. The panel still fails closed, but the banner below is
      then addressed to someone we never established is not an operator, so it gets
@@ -845,7 +867,7 @@ export function TravelBookingDetail({
                               <div className="flex items-baseline gap-2 min-w-0">
                                 <FieldLabel inline>ราคา (ก่อน VAT)</FieldLabel>
                                 <p className="text-[13px] m-0 tabular-nums" style={{ color: "var(--color-action)" }}>
-                                  {fmtBaht(d.priceExVat)} บาท
+                                  {fmtBaht(d.priceExVat)} {bookingWord}
                                 </p>
                               </div>
                             )}
@@ -853,7 +875,7 @@ export function TravelBookingDetail({
                               <div className="flex items-baseline gap-2 min-w-0">
                                 <FieldLabel inline>ภาษี (VAT)</FieldLabel>
                                 <p className="text-[13px] m-0 tabular-nums" style={{ color: "var(--text-primary)" }}>
-                                  {fmtBaht(d.vatAmount)} บาท
+                                  {fmtBaht(d.vatAmount)} {bookingWord}
                                 </p>
                               </div>
                             )}
@@ -861,7 +883,7 @@ export function TravelBookingDetail({
                               <div className="flex items-baseline gap-2 min-w-0">
                                 <FieldLabel inline>ส่วนลด</FieldLabel>
                                 <p className="text-[13px] m-0 tabular-nums" style={{ color: "var(--text-primary)" }}>
-                                  {fmtBaht(d.discountAmount)} บาท
+                                  {fmtBaht(d.discountAmount)} {bookingWord}
                                 </p>
                               </div>
                             )}
@@ -869,11 +891,42 @@ export function TravelBookingDetail({
                               <div className="flex items-baseline gap-2 min-w-0">
                                 <FieldLabel inline>ราคารวม</FieldLabel>
                                 <p className="text-[13px] m-0 tabular-nums font-bold" style={{ color: "var(--color-action)" }}>
-                                  {fmtBaht(d.totalAmount)} บาท
+                                  {fmtBaht(d.totalAmount)} {bookingWord}
                                 </p>
                               </div>
                             )}
                           </div>
+                          {/* The baht equivalent, foreign requests only. It is
+                              display arithmetic and nothing else: AP-17 never
+                              writes a booking cost to AccRequest.TotalAmount,
+                              which stays the per-diem figure — see
+                              admin-service.ts. Absent when no rate is stored,
+                              rather than showing the ringgit figure twice. */}
+                          {bookingIsForeign && showPrice && d.totalAmount != null && (
+                            <p
+                              className="text-[11.5px] m-0"
+                              style={{ color: "var(--text-muted)" }}
+                              title={
+                                request.exchangeRate != null
+                                  ? referenceRateNote(request.currency, request.exchangeRate)
+                                  : undefined
+                              }
+                            >
+                              {(() => {
+                                const baht = amountInBaht(
+                                  d.totalAmount,
+                                  request.currency,
+                                  request.exchangeRate,
+                                );
+                                return baht == null
+                                  ? "ยังไม่มีอัตราแลกเปลี่ยนที่บันทึกไว้ — แปลงเป็นเงินบาทไม่ได้"
+                                  : `≈ ${fmtMoneyTh(baht)} บาท (${referenceRateNote(
+                                      request.currency,
+                                      request.exchangeRate ?? 0,
+                                    )})`;
+                              })()}
+                            </p>
+                          )}
                           {d.files.length > 0 && (
                             <div className="pt-2" style={{ borderTop: "1px solid var(--border-light)" }}>
                               <FieldLabel>ไฟล์แนบ (ใบยืนยันการจอง) — {d.files.length} ไฟล์</FieldLabel>

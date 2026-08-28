@@ -1,4 +1,9 @@
 import { env } from "@/env";
+import {
+  currencyWord,
+  referenceRateNote,
+  showsForeignCurrency,
+} from "@/lib/acc/currency-display";
 import type { AccRequest } from "@/features/accounting/types";
 
 export function esc(s: unknown): string {
@@ -40,6 +45,20 @@ export function buildEmail(
     row("แบรนด์", req.brandCode ?? "-"),
     row("วันเดินทาง", req.travel?.travelDate ?? "-"),
     row("ยอดรวม (บาท)", req.totalAmount ?? "-"),
+    // Foreign claims only — a baht claim's mail is byte-identical to what it has
+    // always been. The heading above stays true either way (TotalAmount is baht
+    // by construction); what this adds is the figure the requester actually
+    // spent and the rate it was converted at, which is the thing an approver
+    // reading only the baht line cannot check.
+    showsForeignCurrency(req.currency)
+      ? row(
+          `ยอดตามสกุลเงิน (${currencyWord(req.currency)})`,
+          req.foreignAmount ?? "-",
+        )
+      : "",
+    showsForeignCurrency(req.currency) && req.exchangeRate != null
+      ? row("อัตราแลกเปลี่ยน", referenceRateNote(req.currency, req.exchangeRate))
+      : "",
     req.paymentDate ? row("วันที่จ่าย", req.paymentDate) : "",
     note ? row("หมายเหตุ", note) : "",
   ].join("");

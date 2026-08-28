@@ -745,15 +745,15 @@ This is **required in the first release** (spec §9.1): with no BOT key every ra
 - Modify: `src/lib/acc/report-service.ts` (AP-1 Excel export), `src/lib/acc/travel-booking/report-service.ts`
 - Modify: `AccountingReport.tsx`, `ApprovalsQueue.tsx`, `RequestDetail.tsx`, `TravelBookingReport.tsx`
 
-- [ ] **Step 1: The AP-1 export**
+- [x] **Step 1: The AP-1 export**
 
 Its money column is headed `ยอดรวม (บาท)` and carries `moneyStyle`, which is **alignment only — it has no `numFmt`** (`report-service.ts:736`; the `numFmt` at `:739-742` is `distanceStyle`, for the distance column). The header stays correct because the column stays baht; add a **currency column** beside it so a foreign claim is identifiable.
 
-- [ ] **Step 2: AP-17's export** does carry a `numFmt` (`travel-booking/report-service.ts:283`). Same treatment: a currency column, the money column still baht.
+- [x] **Step 2: AP-17's export** does carry a `numFmt` (`travel-booking/report-service.ts:283`). Same treatment: a currency column, the money column still baht.
 
-- [ ] **Step 3: The detail and queue screens** show the foreign figure and the baht equivalent where a claim has one, and are unchanged for a baht claim.
+- [x] **Step 3: The detail and queue screens** show the foreign figure and the baht equivalent where a claim has one, and are unchanged for a baht claim.
 
-- [ ] **Step 4: The ERP prep queue's per-day breakdown**
+- [x] **Step 4: The ERP prep queue's per-day breakdown**
 
 This is the one the spec's §4 justification missed, and it is on the posting path. `TRAVEL_DAYS_CSV_SELECT` (`report-service.ts:121-137`) aggregates `te.TotalAmount` — the **per-day** column, which holds the claim's own currency — and is interpolated into the ERP prep query (`erp-prep-service.ts:350`, parsed at `:171-179`) and rendered in `ErpPrepQueue.tsx`.
 
@@ -761,7 +761,9 @@ So on a foreign claim an approver sees day figures in MYR that do not sum to the
 
 **The posting itself is unaffected** — `erp-journal-builder.ts:144-147` builds it from `AccRequest.TotalAmount`, which is baht. Only the displayed breakdown is wrong. Correct spec §4's claim too, which the next reader would otherwise trust.
 
-- [ ] **Step 5: Full `npm test`, `npx tsc --noEmit`, `npm run build`, `npm run check:alignment`, commit**
+**Built as: convert, and print the claim's own figure beneath.** Of the two options, converting is the only one that makes the *footer* true — it sums day amounts across requests, so labelling alone would have left it adding MYR to THB and printing the result as one figure with no unit anywhere on it. `displayDayAmountBaht` (`features/accounting/lib/expand-travel-table-rows.ts`) applies the request's stored rate once, and the cell, the footer and `AccountingReport`/`ApprovalsQueue` all read it, so the three tables cannot drift. A baht claim takes `amountInBaht`'s identity branch — no rate read, no rounding applied — so nothing about one moves. Nothing is hidden: the claim's own figure is on a second line under each amount, a currency chip sits beside the brand carrying the rate and the baht header total in its title, and a foreign day whose rate is missing shows a dash rather than an unconverted number and contributes nothing to the total. `currency-surface-guard.test.ts` fails if the footer goes back to summing the claim's own currency.
+
+- [x] **Step 5: Full `npm test`, `npx tsc --noEmit`, `npm run build`, `npm run check:alignment`, commit**
 
 ---
 

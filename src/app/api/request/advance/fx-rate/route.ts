@@ -2,7 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { fetchFxRate } from "@/lib/adv/bot-fx";
 
-/** GET /api/request/advance/fx-rate?currency=USD[&date=YYYY-MM-DD] — BOT buying-transfer rate. */
+/**
+ * GET /api/request/advance/fx-rate?currency=USD[&date=YYYY-MM-DD]
+ *
+ * A **mid-market reference rate**, not a Bank of Thailand buying-transfer rate:
+ * `BOT_API_CLIENT_ID` is deliberately unprovisioned, so `fetchFxRate` always
+ * takes its keyless ECB fallback. The response carries `source`, and no caller
+ * may caption the figure as a BOT rate — see `src/lib/acc/currency-display.ts`.
+ */
 export async function GET(req: NextRequest) {
   const session = await requireAuth();
   if (session instanceof Response) return session;

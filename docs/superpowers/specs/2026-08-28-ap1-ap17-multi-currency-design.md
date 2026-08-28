@@ -115,12 +115,16 @@ it is why the currency sits on the request rather than the line.
 
 ### The claim
 
-AP-1 gains three columns on `AccTravelExpense`; AP-17 on `AccTravelBooking`:
+**As built, the three columns are on `AccRequest`, not on the detail tables** —
+one row per request rather than one per travel day, which is what the plan's
+Task 2 settled and what migration 125 applied. `BaseAmount` was renamed
+`ForeignAmount` by migration 126 before anything could read it as "the base
+currency's amount", which is the opposite of what it holds.
 
 ```
-Currency      CHAR(3)        NULL   -- NULL and 'THB' both mean baht
-ExchangeRate  DECIMAL(18,6)  NULL   -- THB per 1 unit; NULL for baht
-BaseAmount    DECIMAL(18,2)  NULL   -- the foreign figure, before conversion
+AccRequest.Currency       CHAR(3)        NULL   -- NULL and 'THB' both mean baht
+AccRequest.ExchangeRate   DECIMAL(18,6)  NULL   -- THB per 1 unit; NULL for baht
+AccRequest.ForeignAmount  DECIMAL(18,2)  NULL   -- the claim's own figure, before conversion
 ```
 
 `AccRequest.TotalAmount` keeps its meaning and its type, and every existing
@@ -135,12 +139,34 @@ reasons, in order of weight:
    `calc.ts:computeTotalAmount`, the T-SQL `TRAVEL_DAYS_CSV_SELECT`
    (`report-service.ts:117-188`), the ERP journal builder, and the approval
    queue's per-vehicle cell (`ApprovalsQueue.tsx:75,142`). Per-line means all
-   four must learn currency. Per-request means none of them do — they keep
-   summing a baht column.
+   four must learn currency. Per-request means **two** of them do not — and this
+   sentence originally said all four, which was wrong and is corrected below.
 2. **The T-SQL one is not just a report.** It is interpolated into the ERP prep
    query (`erp-prep-service.ts:350`, parsed at `:171`) and is the figure an
    approver reads **before pressing Send**. A wrong number there is a wrong
    posting nobody caught.
+
+> **Correction, 2026-08-29 (plan Task 12).** Reason 1 claimed per-request left
+> all four summers "summing a baht column". Two of them are not:
+> `TRAVEL_DAYS_CSV_SELECT` aggregates `AccTravelExpense.TotalAmount` and
+> `calc.ts:computeTotalAmount` adds `AccTravelExpenseItem.Amount`, and **neither
+> column is ever converted** — only `AccRequest.TotalAmount` is. So on a foreign
+> claim the per-day breakdown is in the claim's own currency and does not sum to
+> the baht header, which is exactly what reason 2 warned about, on exactly the
+> screen it named.
+>
+> **The posting itself was never affected.** `erp-journal-builder.ts` builds
+> every line from `ErpPrepRow.totalAmount`, which is `AccRequest.TotalAmount`
+> and is baht; the ERP journal builder and the approval queue's baht totals were
+> and are correct. What was wrong was the **displayed** breakdown, and Task 12
+> fixed it by converting each day figure at the request's stored rate before it
+> is shown or summed (`displayDayAmountBaht`,
+> `features/accounting/lib/expand-travel-table-rows.ts`), with the claim's own
+> figure printed beneath it and a currency chip on the row.
+>
+> The choice per-request avoids is still real: it is a **write**-side choice.
+> Nothing had to learn to *store* a currency per line. Two things had to learn to
+> *display* one, which is a far smaller cost and is what §4 should have said.
 3. **AP-2 is per-request** and this is meant to match it.
 
 A trip whose receipts genuinely span two currencies must be filed as two claims.

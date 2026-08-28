@@ -17,6 +17,11 @@ import { ReimburseDetail } from "@/features/reimburse/components/ReimburseDetail
 import type { ReimburseDetail as ReimburseDetailData } from "@/features/reimburse/types";
 import { AdvanceDetailPanel } from "@/features/advance/components/AdvanceDetailPanel";
 import { useFormEnvironments } from "@/lib/hooks/useFormEnvironments";
+import {
+  fmtAmountWithCurrency,
+  referenceRateNote,
+  showsForeignCurrency,
+} from "@/lib/acc/currency-display";
 import { toast } from "sonner";
 
 /* ── Helpers ── */
@@ -535,8 +540,25 @@ function RequestRowList({
                   </p>
                 )}
               </div>
-              <span className="text-[13px] font-bold tabular-nums shrink-0" style={{ color: "var(--color-action)" }}>
+              {/* `฿` is correct on every row — `totalAmount` is baht in both
+                  views. What a foreign claim needs beside it is the figure its
+                  owner actually spent, which is the number they are checking
+                  this list against. Nothing renders on a baht claim. */}
+              <span className="text-[13px] font-bold tabular-nums shrink-0 text-right" style={{ color: "var(--color-action)" }}>
                 {fmtMoney(row.totalAmount)} ฿
+                {showsForeignCurrency(row.currency) && row.foreignAmount != null && (
+                  <span
+                    className="text-[10px] font-semibold block"
+                    style={{ color: "var(--text-muted)" }}
+                    title={
+                      row.exchangeRate != null
+                        ? referenceRateNote(row.currency, row.exchangeRate)
+                        : undefined
+                    }
+                  >
+                    {fmtAmountWithCurrency(row.foreignAmount, row.currency)}
+                  </span>
+                )}
               </span>
               <ChevronRight size={15} className="shrink-0" style={{ color: "var(--text-faint)" }} />
             </button>

@@ -15,7 +15,8 @@ import {
   RECEIPT_FAILURE_TEXT,
   type ReceiptFailure,
 } from "@/features/accounting/lib/read-receipt-amount";
-import { THB } from "@/lib/acc/currency";
+import { isBaht, THB } from "@/lib/acc/currency";
+import { currencyWord } from "@/lib/acc/currency-display";
 import type { TravelExpenseItem, PendingFile } from "@/features/accounting/types";
 import type { TravelItemType } from "@/features/accounting/constants";
 
@@ -82,16 +83,15 @@ interface ExpenseRowsProps {
   brandCode?: string | null;
 }
 
-/** The symbol or code to put beside a figure. `฿` for baht, the code otherwise. */
+/**
+ * The symbol or code to put beside a figure. `฿` for baht, the code otherwise.
+ *
+ * The *word* form is `currencyWord`, imported from `@/lib/acc/currency-display`
+ * rather than repeated here — this file used to carry its own copy, and by task
+ * 12 there were four surfaces needing the same answer.
+ */
 function currencyMark(currency: string | null | undefined): string {
-  const c = (currency ?? "").trim().toUpperCase();
-  return c === "" || c === "THB" ? "฿" : c;
-}
-
-/** The word after a figure — `บาท`, or the code on a foreign claim. */
-function currencyWord(currency: string | null | undefined): string {
-  const c = (currency ?? "").trim().toUpperCase();
-  return c === "" || c === "THB" ? "บาท" : c;
+  return isBaht(currency) ? "฿" : (currency ?? "").trim().toUpperCase();
 }
 
 const inputStyle: React.CSSProperties = {

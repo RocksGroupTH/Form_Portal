@@ -766,9 +766,14 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
                     disabled={readOnly || !currencyCode.trim()}
                     onClick={() => fetchFxRate(currencyCode)}>ดึงอัตรา</Button>
                 </div>
+                {/* `อัตราอ้างอิง`, not `อัตรา ธปท.`. BOT_API_CLIENT_ID is
+                    deliberately unprovisioned, so `bot-fx` always takes its
+                    keyless ECB fallback — and `fxAsOf` already carries the real
+                    source in brackets, which made the old caption contradict the
+                    text two characters to its right. */}
                 {fxAsOf && (
                   <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                    อัตรา ธปท. ณ {fxAsOf}
+                    อัตราอ้างอิง ณ {fxAsOf}
                   </span>
                 )}
               </Field>
@@ -779,7 +784,7 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
             </Field>
           </div>
           <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-            ยอดเกิน {AP2_PRPO_THRESHOLD.toLocaleString()} บาท ต้องระบุเหตุผลเพิ่มเติมด้านล่าง · สกุลต่างประเทศใช้ rate ธปท. วันศุกร์ก่อนจ่าย
+            ยอดเกิน {AP2_PRPO_THRESHOLD.toLocaleString()} บาท ต้องระบุเหตุผลเพิ่มเติมด้านล่าง · สกุลต่างประเทศใช้อัตราอ้างอิงวันศุกร์ก่อนจ่าย
           </span>
         </div>
 

@@ -55,6 +55,7 @@ import {
   type ErpInterfaceSendTarget,
 } from "@/features/accounting/components/ErpInterfaceSendDialog";
 import {
+  displayDayAmountBaht,
   displayDayAmountCell,
   displayDayWorkDetailCell,
   displayRowVehicleCell,
@@ -62,6 +63,11 @@ import {
   expandTravelDisplayRows,
   withTravelGroupMeta,
 } from "@/features/accounting/lib/expand-travel-table-rows";
+import {
+  fmtAmountWithCurrency,
+  referenceRateNote,
+  showsForeignCurrency,
+} from "@/lib/acc/currency-display";
 
 type ErpViewMode = "journal" | "documents";
 
@@ -484,13 +490,34 @@ export function ErpPrepQueue({
     [sortedTableRows],
   );
 
+  /**
+   * The footer, in **baht** — the currency the journal posts in.
+   *
+   * It used to add `displayDayAmountCell`, which is the claim's own currency, so
+   * one foreign claim in the queue made this a sum of ringgit and baht printed
+   * as a single figure with no unit on it. `displayDayAmountBaht` converts each
+   * row first and answers null where it cannot; a null contributes nothing
+   * rather than folding a foreign number in, and the cell beside it says so.
+   */
   const tableTotal = useMemo(
     () =>
       groupedDisplayRows.reduce(
-        (s, r) => s + (displayDayAmountCell(r.row, r.dayLine, r.vehicleLine) ?? 0),
+        (s, r) => s + (displayDayAmountBaht(r.row, r.dayLine, r.vehicleLine) ?? 0),
         0,
       ),
     [groupedDisplayRows],
+  );
+
+  /**
+   * Whether anything on screen is in a currency other than baht.
+   *
+   * The footer only names its unit when the answer is yes. A queue of ordinary
+   * Thai claims therefore reads word-for-word as it did before the currency
+   * shipped, and the one that needs the unit spelled out gets it.
+   */
+  const hasForeignRow = useMemo(
+    () => sortedTableRows.some((r) => showsForeignCurrency(r.currency)),
+    [sortedTableRows],
   );
 
   const summary = useMemo(() => {
@@ -757,7 +784,13 @@ export function ErpPrepQueue({
                   dayGroupSize,
                   dayGroupIndex,
                 }) => {
-                  const dayAmount = displayDayAmountCell(row, dayLine, vehicleLine);
+                  // Two figures, deliberately: what will post (baht) and what
+                  // was spent (the claim's currency). `foreign` is null for
+                  // every baht claim, so the second line never renders on one.
+                  const dayAmount = displayDayAmountBaht(row, dayLine, vehicleLine);
+                  const foreign = showsForeignCurrency(row.currency)
+                    ? displayDayAmountCell(row, dayLine, vehicleLine)
+                    : null;
                   const isRequestGroupStart = requestGroupIndex === 0;
                   const isDayGroupStart = dayGroupIndex === 0;
                   const travelDayCount = row.dayCount ?? row.travelDayLines?.length ?? 0;
@@ -803,6 +836,30 @@ export function ErpPrepQueue({
                       ) : (
                         <span style={{ color: "var(--text-faint)" }}>—</span>
                       )}
+                      {/* Foreign claims only — a baht claim keeps exactly the
+                          single badge it has always had. The chip says what the
+                          day figures below were entered in; the title carries
+                          the rate and the baht header total the journal will
+                          actually post, which is the number an approver is
+                          about to send. */}
+                      {showsForeignCurrency(row.currency) && (
+                        <span
+                          className="text-[10px] font-bold px-1.5 py-0.5 rounded block mt-1 text-center"
+                          style={{
+                            background: "color-mix(in srgb, var(--color-warning) 14%, transparent)",
+                            color: "var(--color-warning)",
+                            border: "1px solid color-mix(in srgb, var(--color-warning) 35%, transparent)",
+                          }}
+                          title={
+                            (row.exchangeRate != null
+                              ? `${referenceRateNote(row.currency, row.exchangeRate)} · `
+                              : "ยังไม่มีอัตราแลกเปลี่ยนที่บันทึกไว้ · ") +
+                            `ยอดที่จะโพสต์ ${fmtMoney(row.totalAmount)} บาท`
+                          }
+                        >
+                          {(row.currency ?? "").trim().toUpperCase()}
+                        </span>
+                      )}
                     </td>
                       </>
                     ) : null}
@@ -844,6 +901,19 @@ export function ErpPrepQueue({
                     ) : null}
                     <td className="px-3 py-2.5 text-right tabular-nums font-bold whitespace-nowrap" style={{ color: "var(--color-action)" }}>
                       {fmtMoney(dayAmount)}
+                      {foreign != null && (
+                        <span
+                          className="text-[10px] font-semibold block tabular-nums"
+                          style={{ color: "var(--text-muted)" }}
+                          title={
+                            row.exchangeRate != null
+                              ? referenceRateNote(row.currency, row.exchangeRate)
+                              : "ยังไม่มีอัตราแลกเปลี่ยนที่บันทึกไว้ — แปลงเป็นเงินบาทไม่ได้"
+                          }
+                        >
+                          {fmtAmountWithCurrency(foreign, row.currency)}
+                        </span>
+                      )}
                     </td>
                   </tr>
                   );
@@ -864,6 +934,7 @@ export function ErpPrepQueue({
                     style={{ color: "var(--text-heading)" }}
                   >
                     รวมทั้งหมด ({sortedTableRows.length} รายการ)
+                    {hasForeignRow ? " — แปลงเป็นเงินบาทตามอัตราที่บันทึกไว้" : ""}
                   </td>
                   <td
                     className="px-3 py-2.5 text-right tabular-nums font-bold whitespace-nowrap"

@@ -20,6 +20,8 @@ import type {
   TravelBookingStatus,
   TravelReasonOption,
 } from "@/features/travel-booking/types";
+import { isBaht } from "@/lib/acc/currency";
+import { currencyWord, referenceRateNote } from "@/lib/acc/currency-display";
 import type { TravelBookingReportRow } from "@/lib/acc/travel-booking/report-service";
 
 type DateBasis = "travel" | "submit" | "approve" | "payment";
@@ -61,7 +63,20 @@ type ColKey =
   | "requestNo" | "brandCode" | "staffId" | "fullName" | "position" | "departmentName"
   | "reasonName" | "workDetail" | "departDate" | "returnDate" | "provinceName"
   | "accommodationName" | "workLocationsCsv" | "approvedDate" | "status"
-  | "perDiemRate" | "perDiemDays" | "perDiemTotal" | "continuationNote" | "paymentDate" | "rateChangeNote";
+  | "perDiemRate" | "perDiemDays" | "perDiemTotal" | "continuationNote"
+  | "bookingCurrency" | "bookingTotal" | "bookingTotalBaht"
+  | "paymentDate" | "rateChangeNote";
+
+/**
+ * The three columns that only exist once a currency does.
+ *
+ * They are filtered out of both the table **and** the column-toggle menu unless
+ * the rows on screen actually contain a foreign request — so a report of
+ * ordinary Thai trips is column-for-column what it was before the currency
+ * shipped, which is this feature's standing constraint. A request against a
+ * brand with no configured currency can never turn them on.
+ */
+const CURRENCY_COLUMNS: ColKey[] = ["bookingCurrency", "bookingTotal", "bookingTotalBaht"];
 
 const ALL_COLUMNS: (ColumnToggleOption<ColKey> & { align?: "right" })[] = [
   { key: "requestNo", label: "เลขที่คำขอ" },
@@ -84,10 +99,17 @@ const ALL_COLUMNS: (ColumnToggleOption<ColKey> & { align?: "right" })[] = [
   { key: "status", label: "สถานะ" },
   { key: "perDiemRate", label: "เบี้ยเลี้ยง (เรท/วัน)", align: "right" },
   { key: "perDiemDays", label: "เบี้ยเลี้ยง (จำนวนวัน)", align: "right" },
+  // Per diem is baht always — EmployeeAllowanceLog has no currency column — so
+  // this heading needs no qualification even beside the booking columns below.
   { key: "perDiemTotal", label: "เบี้ยเลี้ยง (ยอดรวม)", align: "right" },
   // Beside the figures it explains, not with the other notes at the end: a
   // 0.00 total two columns from its own reason is the confusion this removes.
   { key: "continuationNote", label: "หมายเหตุ Per diem" },
+  // The booking cost — the figures the request's currency actually applies to,
+  // and the only ones on this report that are not baht.
+  { key: "bookingCurrency", label: "สกุลเงินค่าจอง" },
+  { key: "bookingTotal", label: "ค่าจอง (ตามสกุลเงิน)", align: "right" },
+  { key: "bookingTotalBaht", label: "ค่าจอง (บาท)", align: "right" },
   { key: "paymentDate", label: "วันที่จ่าย" },
   { key: "rateChangeNote", label: "หมายเหตุการเปลี่ยนเรท" },
 ];
@@ -160,6 +182,30 @@ function cellValue(
     case "perDiemRate": return row.perDiemRate ?? "—";
     case "perDiemDays": return row.perDiemDays;
     case "perDiemTotal": return fmtBaht(row.perDiemTotal);
+    case "bookingCurrency":
+      return isBaht(row.currency) ? (
+        "THB"
+      ) : (
+        <span
+          className="inline-block px-1.5 py-0.5 rounded text-[11px] font-bold"
+          style={{
+            background: "color-mix(in srgb, var(--color-warning) 14%, transparent)",
+            color: "var(--color-warning)",
+          }}
+          title={
+            row.exchangeRate != null
+              ? referenceRateNote(row.currency, row.exchangeRate)
+              : "ยังไม่มีอัตราแลกเปลี่ยนที่บันทึกไว้"
+          }
+        >
+          {currencyWord(row.currency)}
+        </span>
+      );
+    case "bookingTotal":
+      return row.bookingTotal == null ? "—" : fmtBaht(row.bookingTotal);
+    // Null where no rate is stored — a dash, never the unconverted figure.
+    case "bookingTotalBaht":
+      return row.bookingTotalBaht == null ? "—" : fmtBaht(row.bookingTotalBaht);
     case "paymentDate": return row.paymentDate ? fmtYmdDisplay(row.paymentDate) : "—";
     case "continuationNote":
       if (!row.continuationFromRequestNo) return "—";
@@ -357,7 +403,33 @@ export function TravelBookingReport() {
     [filteredRows],
   );
 
-  const visibleColumns = useMemo(() => ALL_COLUMNS.filter((c) => visible[c.key] ?? true), [visible]);
+  const totalBookingBaht = useMemo(
+    () => filteredRows.reduce((sum, r) => sum + (r.bookingTotalBaht ?? 0), 0),
+    [filteredRows],
+  );
+
+  /**
+   * Whether anything in the current result is in a currency other than baht.
+   *
+   * Read off `rows` rather than `filteredRows` so the three booking columns do
+   * not appear and vanish as somebody narrows the client-side filters —
+   * `ColumnToggleMenu` below is keyed on the same list, and a toggle that
+   * disappears mid-session is worse than one that is simply absent.
+   */
+  const hasForeignRow = useMemo(() => rows.some((r) => !isBaht(r.currency)), [rows]);
+
+  const offeredColumns = useMemo(
+    () =>
+      hasForeignRow
+        ? ALL_COLUMNS
+        : ALL_COLUMNS.filter((c) => CURRENCY_COLUMNS.indexOf(c.key) === -1),
+    [hasForeignRow],
+  );
+
+  const visibleColumns = useMemo(
+    () => offeredColumns.filter((c) => visible[c.key] ?? true),
+    [offeredColumns, visible],
+  );
 
   const resetFilters = useCallback(() => {
     setServerFilters(defaultServerFilters());
@@ -521,7 +593,7 @@ export function TravelBookingReport() {
               )}
             </div>
             <div className="flex items-center gap-2">
-              <ColumnToggleMenu columns={ALL_COLUMNS} visible={visible} onChange={handleVisibleChange} />
+              <ColumnToggleMenu columns={offeredColumns} visible={visible} onChange={handleVisibleChange} />
               <Button
                 variant="secondary"
                 size="sm"
@@ -612,6 +684,11 @@ export function TravelBookingReport() {
                     }}
                   >
                     รวมทั้งหมด ({filteredRows.length} รายการ) — เบี้ยเลี้ยงรวม {fmtBaht(totalPerDiem)} บาท
+                    {/* Baht, and only once a foreign trip is on screen. Summed
+                        from `bookingTotalBaht`, which is null where no rate is
+                        stored — such a trip contributes nothing rather than
+                        contributing a ringgit figure to a baht total. */}
+                    {hasForeignRow ? ` · ค่าจองรวม ${fmtBaht(totalBookingBaht)} บาท` : ""}
                   </td>
                 </tr>
               </tfoot>

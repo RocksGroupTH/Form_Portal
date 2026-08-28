@@ -67,6 +67,12 @@ import { useErpSandboxDevHost } from "@/features/accounting/hooks/useErpSandboxD
 import { useRole } from "@/lib/hooks/useRole";
 import { computeTotalAmount, computeTotalDistance } from "@/lib/acc/calc";
 import {
+  currencyWord,
+  fmtAmountWithCurrency,
+  referenceRateNote,
+  showsForeignCurrency,
+} from "@/lib/acc/currency-display";
+import {
   formatDayVehicleNames,
   hasRateVehicle,
   normalizeTravelDay,
@@ -923,8 +929,14 @@ function TravelDaySection({
         {/* Expenses — same card */}
         {expenseGroups.length > 0 && (
           <div className="flex flex-col gap-2.5 pt-1" style={{ borderTop: "1px solid var(--border-light)" }}>
+            {/* The figures below carry no unit — they never have. On a foreign
+                claim that is no longer safe to leave implicit, so the heading
+                says which money they are in. A baht claim adds nothing. */}
             <p className="text-[10px] font-semibold uppercase tracking-wide m-0 pt-3" style={{ color: "var(--text-muted)" }}>
               รายการค่าใช้จ่าย
+              {showsForeignCurrency(request.currency)
+                ? ` (${currencyWord(request.currency)})`
+                : ""}
             </p>
             {expenseGroups.map((group) => (
               <div
@@ -1172,6 +1184,30 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
     : request.travel
       ? [request.travel]
       : [];
+
+  /**
+   * What the per-day and per-line figures on this page are denominated in.
+   *
+   * They are **not** baht on a foreign claim: `AccTravelExpense.TotalAmount` and
+   * its items are stored in the claim's own currency and only
+   * `AccRequest.TotalAmount` is converted. `currencyWord` answers `บาท` for
+   * every claim written before migration 125 and for every baht claim since, so
+   * this page is character-for-character what it was for all of them.
+   */
+  const claimCurrencyWord = currencyWord(request.currency);
+  const claimIsForeign = showsForeignCurrency(request.currency);
+  /**
+   * The claim's own total, for the strip above the baht line.
+   *
+   * `ForeignAmount` is written at submit, so a draft has none yet and the days
+   * are the only source. Summing them is exactly what `computeTotalAmount` does
+   * per day, in the currency the days are already in — no rate is involved.
+   */
+  const claimForeignTotal =
+    request.foreignAmount ??
+    (travelDays.length > 0
+      ? travelDays.reduce((s, d) => s + (computeTotalAmount(normalizeTravelDay(d)) || 0), 0)
+      : null);
 
   /* Enrich requester + manager (AD photo / name / title) by their emails. */
   type People = {
@@ -1683,8 +1719,14 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
                           </p>
                         )}
                       </div>
+                      {/* The day's own figure, in the claim's own currency —
+                          `AccTravelExpense.TotalAmount` is never converted, only
+                          the request header is. This said `บาท` unconditionally,
+                          so a ringgit day read as baht and the days did not sum
+                          to the total below. `currencyWord` answers `บาท` for
+                          every baht claim, so nothing about one moved. */}
                       <span className="text-[13px] font-bold tabular-nums shrink-0" style={{ color: "var(--color-action)" }}>
-                        {fmtMoney(computeTotalAmount(d))} บาท
+                        {fmtMoney(computeTotalAmount(d))} {claimCurrencyWord}
                       </span>
                     </div>
                   );
@@ -1692,15 +1734,42 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
               </div>
             </>
           )}
+          {/* Only a foreign claim renders this strip. It exists because the line
+              below it is baht while every figure above it is not, and without it
+              the two look like the same number gone wrong. */}
+          {claimIsForeign && (
+            <div
+              className="px-5 py-3 flex flex-col gap-1"
+              style={{
+                borderTop: "1px solid var(--border-card)",
+                background: "var(--bg-card-alt)",
+              }}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[12px] font-semibold" style={{ color: "var(--text-secondary)" }}>
+                  ยอดรวมตามสกุลเงินที่เบิก
+                </span>
+                <span className="text-[14px] font-bold tabular-nums" style={{ color: "var(--text-primary)" }}>
+                  {fmtAmountWithCurrency(claimForeignTotal, request.currency)}
+                </span>
+              </div>
+              <p className="text-[11.5px] m-0" style={{ color: "var(--text-muted)" }}>
+                {request.exchangeRate != null
+                  ? referenceRateNote(request.currency, request.exchangeRate)
+                  : "ยังไม่มีอัตราแลกเปลี่ยนที่บันทึกไว้"}
+              </p>
+            </div>
+          )}
           <div
             className="px-5 py-4 flex items-center justify-between gap-3"
             style={{
-              borderTop: travelDays.length > 1 ? "1px solid var(--border-card)" : undefined,
-              background: travelDays.length > 1 ? "var(--nav-active-bg)" : "var(--bg-card)",
+              borderTop: travelDays.length > 1 || claimIsForeign ? "1px solid var(--border-card)" : undefined,
+              background: travelDays.length > 1 || claimIsForeign ? "var(--nav-active-bg)" : "var(--bg-card)",
             }}
           >
             <span className="text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>
               ค่าเดินทางรวม{travelDays.length > 1 ? ` (${travelDays.length} วัน)` : ""}
+              {claimIsForeign ? " (เงินบาท)" : ""}
             </span>
             <span className="text-[18px] font-bold tabular-nums" style={{ color: "var(--color-action)" }}>
               {fmtMoney(request.totalAmount)} บาท

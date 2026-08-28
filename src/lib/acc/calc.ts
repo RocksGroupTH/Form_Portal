@@ -14,7 +14,19 @@ export function computeTotalDistance(d: TravelExpenseDetail): number {
   return onward + ret;
 }
 
-/** Grand total (baht) — rate vehicle + all manual sections. */
+/**
+ * Grand total for one travel day — rate vehicle + all manual sections.
+ *
+ * **In the claim's own currency, not necessarily baht.** The items it adds are
+ * `AccTravelExpenseItem.Amount`, which AP-1 stores exactly as the requester
+ * typed it; only `AccRequest.TotalAmount` is converted, and `request-service.ts`
+ * is what applies `toBaht` to this figure on its way there. A caller printing
+ * this next to `บาท`, or adding it to a baht total, must convert first —
+ * `amountInBaht` in `@/lib/acc/currency-display`.
+ *
+ * A rate-based vehicle is refused on a foreign claim (`CK_AccVehicle_Rate` and
+ * `rateVehicleAllowed`), so the `km × rate` branch above is always baht × baht.
+ */
 export function computeTotalAmount(d: TravelExpenseDetail): number {
   const day = normalizeTravelDay(d);
   let total = 0;

@@ -1,5 +1,6 @@
 import { fmtReportTravelDate, fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
 import { fmtReportVehicleNames } from "@/features/accounting/lib/travel-sections";
+import { amountInBaht } from "@/lib/acc/currency-display";
 import type { ReportTravelDayLine, ReportTravelVehicleLine } from "@/lib/acc/report-service";
 
 export interface TravelTableSourceRow {
@@ -9,7 +10,17 @@ export interface TravelTableSourceRow {
   travelDate?: string | null;
   vehicleName?: string | null;
   workDetail?: string | null;
+  /** Baht. `ReportRow` and `ErpPrepRow` both guarantee it. */
   totalAmount?: number | null;
+  /**
+   * `AccRequest.Currency` / `.ExchangeRate` — what the *day* and *vehicle*
+   * figures inside `travelDayLines` are denominated in, and what converts them.
+   *
+   * Optional so a caller with no currency in hand still compiles; absent reads
+   * as baht, which is what every row written before migration 125 is.
+   */
+  currency?: string | null;
+  exchangeRate?: number | null;
 }
 
 export interface TravelDisplayRow<T extends TravelTableSourceRow> {
@@ -112,6 +123,18 @@ export function displayTravelDateCell<T extends TravelTableSourceRow>(
   });
 }
 
+/**
+ * The figure for this table row **in the claim's own currency**.
+ *
+ * On a baht claim that is baht, which is every claim written before migration
+ * 125. On a foreign one it is ringgit, or whatever the brand is configured for,
+ * because `travelDayLines[]` comes from `AccTravelExpense.TotalAmount` and only
+ * `AccRequest.TotalAmount` is converted.
+ *
+ * **Do not print this next to a `บาท` caption or add it to a baht total.** Use
+ * `displayDayAmountBaht` for that, and this one for the "and here is what the
+ * claimant actually spent" line beside it.
+ */
 export function displayDayAmountCell<T extends TravelTableSourceRow>(
   row: T,
   dayLine: ReportTravelDayLine | null,
@@ -120,6 +143,36 @@ export function displayDayAmountCell<T extends TravelTableSourceRow>(
   if (vehicleLine) return vehicleLine.amount;
   if (dayLine) return dayLine.totalAmount;
   return row.totalAmount ?? null;
+}
+
+/**
+ * The same figure in Thai baht — the currency every one of these tables sums,
+ * totals and posts in.
+ *
+ * A baht claim takes `amountInBaht`'s identity branch, so its cells and its
+ * footer are bit-identical to what they were before the currency shipped: no
+ * rate is read and no rounding is applied.
+ *
+ * **Null means "cannot be known", never zero and never the raw figure.** A
+ * foreign claim whose rate is missing has no baht value, and showing the
+ * unconverted number under a baht heading — on the ERP prep queue, immediately
+ * before Send — is the failure this whole feature exists to prevent. Callers
+ * render a dash and the claim's own figure, and leave the row out of the total
+ * rather than folding a foreign number into it.
+ */
+export function displayDayAmountBaht<T extends TravelTableSourceRow>(
+  row: T,
+  dayLine: ReportTravelDayLine | null,
+  vehicleLine: ReportTravelVehicleLine | null,
+): number | null {
+  // The no-day-line branch is already `AccRequest.TotalAmount`, which is baht by
+  // construction — converting it a second time would multiply by the rate twice.
+  if (!dayLine && !vehicleLine) return row.totalAmount ?? null;
+  return amountInBaht(
+    displayDayAmountCell(row, dayLine, vehicleLine),
+    row.currency,
+    row.exchangeRate,
+  );
 }
 
 export function displayRowVehicleCell<T extends TravelTableSourceRow>(

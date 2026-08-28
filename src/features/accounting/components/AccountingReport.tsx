@@ -32,12 +32,18 @@ import {
 import { RequestStatusBadge, reportStatusFilterStyle } from "@/features/accounting/components/RequestStatusBadge";
 import type { ReportRow } from "@/lib/acc/report-service";
 import {
+  displayDayAmountBaht,
   displayDayAmountCell,
   displayRowVehicleCell,
   displayTravelDateCell,
   expandTravelDisplayRows,
   withTravelGroupMeta,
 } from "@/features/accounting/lib/expand-travel-table-rows";
+import {
+  fmtAmountWithCurrency,
+  referenceRateNote,
+  showsForeignCurrency,
+} from "@/lib/acc/currency-display";
 import { reportVehicleNames } from "@/features/accounting/lib/travel-sections";
 import {
   countRowsByInterfaceTarget,
@@ -933,7 +939,14 @@ export function AccountingReport() {
                   dayGroupSize,
                   dayGroupIndex,
                 }, idx) => {
-                  const dayAmount = displayDayAmountCell(row, dayLine, vehicleLine);
+                  // Baht in the ยอดรวม column, because the footer and every KPI
+                  // above it are baht; the claim's own figure follows it on its
+                  // own line. `foreign` is null on a baht claim, so the cell is
+                  // exactly what it always was.
+                  const dayAmount = displayDayAmountBaht(row, dayLine, vehicleLine);
+                  const foreign = showsForeignCurrency(row.currency)
+                    ? displayDayAmountCell(row, dayLine, vehicleLine)
+                    : null;
                   const isRequestGroupStart = requestGroupIndex === 0;
                   const isDayGroupStart = dayGroupIndex === 0;
                   const travelDayCount = row.dayCount ?? row.travelDayLines?.length ?? 0;
@@ -1000,6 +1013,25 @@ export function AccountingReport() {
                       ) : (
                         <span style={{ color: "var(--text-muted)" }}>—</span>
                       )}
+                      {/* Foreign claims only — a baht claim keeps the single
+                          badge it has always had. */}
+                      {showsForeignCurrency(row.currency) && (
+                        <span
+                          className="text-[10px] font-bold px-1.5 py-0.5 rounded block mt-1 text-center"
+                          style={{
+                            background: "color-mix(in srgb, var(--color-warning) 14%, transparent)",
+                            color: "var(--color-warning)",
+                            border: "1px solid color-mix(in srgb, var(--color-warning) 35%, transparent)",
+                          }}
+                          title={
+                            row.exchangeRate != null
+                              ? referenceRateNote(row.currency, row.exchangeRate)
+                              : "ยังไม่มีอัตราแลกเปลี่ยนที่บันทึกไว้"
+                          }
+                        >
+                          {(row.currency ?? "").trim().toUpperCase()}
+                        </span>
+                      )}
                     </td>
                       </>
                     ) : null}
@@ -1027,6 +1059,19 @@ export function AccountingReport() {
                       style={{ color: "var(--color-action)" }}
                     >
                       {fmtMoney(dayAmount)}
+                      {foreign != null && (
+                        <span
+                          className="text-[10px] font-medium block tabular-nums"
+                          style={{ color: "var(--text-muted)" }}
+                          title={
+                            row.exchangeRate != null
+                              ? referenceRateNote(row.currency, row.exchangeRate)
+                              : "ยังไม่มีอัตราแลกเปลี่ยนที่บันทึกไว้ — แปลงเป็นเงินบาทไม่ได้"
+                          }
+                        >
+                          {fmtAmountWithCurrency(foreign, row.currency)}
+                        </span>
+                      )}
                     </td>
                     {isRequestGroupStart ? (
                     <td className="px-3 py-2 whitespace-nowrap" rowSpan={requestGroupSize} style={sharedCellStyle}>
