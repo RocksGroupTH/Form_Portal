@@ -4,7 +4,7 @@
 
 **Goal:** A company brand can carry a country and a currency; a claim against that brand can be entered in that currency and is converted to Thai baht at a recorded rate.
 
-**Architecture:** Currency lives once per brand on `BrandSetting`, read only through `brand-registry.ts` (production pool). One currency per *request*, stored on `AccTravelExpense` / `AccTravelBooking` as `Currency` + `ExchangeRate` + `BaseAmount`. `AccRequest.TotalAmount` stays Thai baht always, which is what leaves every existing summer, report, export and ERP path untouched. The FX lookup is AP-2's `bot-fx.ts`, called server-side.
+**Architecture:** Currency lives once per brand on `BrandSetting`, read only through `brand-registry.ts` (production pool). One currency per *request*, stored on **`AccRequest`** as `Currency` + `ExchangeRate` + `BaseAmount` — not on `AccTravelExpense`, which carries `UQ_AccTravel_Request_Date` and is one row **per travel day**, so three columns there would be N rows per claim with nothing saying which is authoritative. `AccRequest.TotalAmount` stays Thai baht always, which is what leaves every existing summer, report, export and ERP path untouched. The FX lookup is AP-2's `bot-fx.ts`, called server-side.
 
 **Tech Stack:** Next.js 16 App Router, React 19, TypeScript (ES5 target), MSSQL, `node:test` via `npm test`.
 
@@ -21,6 +21,9 @@
 - TypeScript **ES5 target**: `Array.from(...)`, never `[...someSet]`.
 - Parameterised SQL only. CSS `var(--token)` only. Icons `lucide-react`. Toasts `sonner`. Thai user-facing copy.
 - A brand with no configured currency must behave **exactly** as today: no dropdown, no extra field, no new request.
+- **Tasks 1 and 2 need live database credentials.** If `npm run apply-sql` fails, STOP and report — do not proceed to Task 4. Task 4 widens the only `SELECT` on `BrandSetting` (`brand-registry.ts:72-90`), which every brand picker in the app reads: an `Invalid column name` there takes down AP-1, AP-2, AP-3, AP-4, AP-17 and `BrandGate` at once.
+- **`AccActivityLog` cannot hold a brand-currency audit row.** `RequestId` is `int NOT NULL` with `FK_AccActivity_Request` (verified in the live database), and a brand change has no request. Task 1 creates `BrandSettingLog` for it, in the shape `ApiKeyLog` already uses.
+- **Task 4's pool guard is per *file*, not per statement.** Any module that touches `BrandSetting` must not also import `getAccPool`/`getFormPool`. Brand writes therefore live in `brand-registry.ts`, never in `settings-service.ts` (which imports `getAccPool` at line 1). A later task that "fixes" a red guard by weakening it has removed the only check that catches a UAT-only failure.
 
 ---
 
@@ -30,7 +33,7 @@
 - Create: `migrations/124_brand_setting_currency.sql`
 
 **Interfaces:**
-- Produces: `BrandSetting.CountryCode`, `.CurrencyCode`, `.CurrencyEnabled` — consumed by Task 3.
+- Produces: `BrandSetting.CountryCode`, `.CurrencyCode`, `.CurrencyEnabled`, and the table `BrandSettingLog` — consumed by Tasks 4 and 6.
 
 - [ ] **Step 1: Write the migration**
 
@@ -79,6 +82,29 @@ IF COL_LENGTH('dbo.BrandSetting', 'CurrencyEnabled') IS NULL
   ALTER TABLE [dbo].[BrandSetting] ADD [CurrencyEnabled] BIT NOT NULL
     CONSTRAINT [DF_BrandSetting_CurrencyEnabled] DEFAULT (0);
 
+-- The audit trail spec 9.3 requires, and the reason it is its own table.
+--
+-- AccActivityLog cannot hold it: RequestId is int NOT NULL with
+-- FK_AccActivity_Request (verified in the live database), and a brand-currency
+-- change has no request. There is no id to supply and no nullable column to omit.
+--
+-- 9.3 is why this matters more than tidiness: the value is stored once per brand
+-- while the permission to change it is per form, so an AP-17 approver can change
+-- what an AP-1 claim converts at. That cannot be constrained away, so it is made
+-- traceable instead. Shape copied from ApiKeyLog
+-- (Id, ApiKeyId, Code, Action, Detail, ChangedBy, ChangedAt).
+IF OBJECT_ID('dbo.BrandSettingLog', 'U') IS NULL
+CREATE TABLE [dbo].[BrandSettingLog] (
+  [Id]        int IDENTITY(1,1) NOT NULL CONSTRAINT [PK_BrandSettingLog] PRIMARY KEY,
+  [BrandCode] nvarchar(40)  NOT NULL,
+  [Field]     nvarchar(40)  NOT NULL,   -- 'CountryCode' | 'CurrencyCode' | 'CurrencyEnabled'
+  [OldValue]  nvarchar(100) NULL,
+  [NewValue]  nvarchar(100) NULL,
+  [FormCode]  nvarchar(20)  NULL,       -- which form's tab it was changed from
+  [ChangedBy] int           NULL,
+  [ChangedAt] datetime2(7)  NOT NULL CONSTRAINT [DF_BrandSettingLog_ChangedAt] DEFAULT (sysdatetime())
+);
+
 COMMIT TRANSACTION;
 GO
 
@@ -96,6 +122,8 @@ GO
 Run: `npm run apply-sql -- --db Rocks_Portal_Form --file migrations/124_brand_setting_currency.sql`
 Expected: `applied ... OK`, then three non-NULL lengths and six rows with `CurrencyEnabled = 0`.
 
+Then confirm the log table: `SELECT COUNT(*) FROM dbo.BrandSettingLog` returns 0 rather than erroring.
+
 - [ ] **Step 3: Commit**
 
 ```bash
@@ -105,37 +133,51 @@ git commit -m "feat(currency): BrandSetting carries a country and a currency"
 
 ---
 
-### Task 2: Migration 125 — the two claim tables carry a currency
+### Task 2: Migration 125 — the request header carries the currency
 
 **Files:**
-- Create: `migrations/125_travel_currency.sql`
+- Create: `migrations/125_request_currency.sql`
 
 **Interfaces:**
-- Produces: `AccTravelExpense.Currency|ExchangeRate|BaseAmount` and the same three on `AccTravelBooking` — consumed by Tasks 8, 9, 11.
+- Produces: `AccRequest.Currency`, `.ExchangeRate`, `.BaseAmount` — consumed by Tasks 8, 9, 11, 12.
+
+**Why `AccRequest` and not the detail tables.** The design is one currency per
+*request*. `AccRequest` is one row per request by definition and already holds
+`TotalAmount`. `AccTravelExpense` is **not** — it carries
+`UQ_AccTravel_Request_Date` and `saveDraft` deletes and re-inserts one row per
+travel day (`request-service.ts:685-719`), so three columns there would be N rows
+per claim with nothing saying which is authoritative and nothing keeping them
+equal. Putting them on the header also means one migration serves both forms and
+no `bindTravel` / `TRAVEL_COLUMNS` / `TRAVEL_VALUES` / `TRAVEL_SET` surgery
+(`:516-561`).
 
 - [ ] **Step 1: Write the migration**
 
 ```sql
--- One currency per claim, on AP-1's and AP-17's own detail tables.
+-- One currency per request, on the shared request header.
 --
 -- Apply to BOTH form databases, before the code deploy:
---   npm run apply-sql -- --db Rocks_Portal_Form     --file migrations/125_travel_currency.sql
---   npm run apply-sql -- --db Rocks_Portal_Form_UAT --file migrations/125_travel_currency.sql
+--   npm run apply-sql -- --db Rocks_Portal_Form     --file migrations/125_request_currency.sql
+--   npm run apply-sql -- --db Rocks_Portal_Form_UAT --file migrations/125_request_currency.sql
 --
--- BOTH SIDES, even though these are transactional tables that are neither
--- dual-written nor in MASTER_TABLES. SQL Server binds object names at compile
--- time, so a query naming Currency fails outright against whichever database is
--- missing it — and both forms resolve either database depending on who is asking.
+-- BOTH SIDES. AccRequest is transactional — neither dual-written nor in
+-- MASTER_TABLES, so check:alignment is unaffected and its table count must not
+-- move. But SQL Server binds object names at compile time, so a query naming
+-- Currency fails outright against whichever database is missing it, and both
+-- forms resolve either database depending on who is asking.
 --
--- WHY NOT ON THE ITEM ROWS. AP-1 money is summed by four separate
--- implementations: calc.ts, the T-SQL TRAVEL_DAYS_CSV_SELECT
--- (report-service.ts:117-188), the ERP journal builder, and the approval queue's
--- per-vehicle cell. Per-line would make all four currency-aware; per-request
--- makes none of them, because AccRequest.TotalAmount stays baht. The T-SQL one
--- also feeds the ERP prep queue an approver reads before pressing Send.
+-- WHY THE HEADER AND NOT AccTravelExpense. That table is one row per travel DAY
+-- (UQ_AccTravel_Request_Date), and saveDraft deletes and re-inserts N of them per
+-- request. Three columns there would be N copies with no rule about which is
+-- authoritative. AccRequest is one row per request by definition and is where
+-- TotalAmount already lives.
+--
+-- AP-2 and AP-3 keep their own Currency/ExchangeRate/BaseAmount on AccAdvance and
+-- AccClearAdvance and are untouched by this. The columns here are nullable and
+-- unread by those forms.
 --
 -- NULL Currency and 'THB' both mean baht. No backfill: an existing row reads
--- NULL, which is correct — nobody recorded a currency, and writing 'THB' would
+-- NULL, which is correct -- nobody recorded a currency, and writing 'THB' would
 -- claim somebody had.
 
 SET XACT_ABORT ON;
@@ -145,45 +187,37 @@ IF DB_NAME() NOT LIKE 'Rocks[_]Portal[_]Form%'
   THROW 50000, 'Run this against Rocks_Portal_Form or Rocks_Portal_Form_UAT only.', 1;
 GO
 
-IF OBJECT_ID('dbo.AccTravelExpense', 'U') IS NULL OR OBJECT_ID('dbo.AccTravelBooking', 'U') IS NULL
-  THROW 50000, 'AccTravelExpense or AccTravelBooking is missing — apply 059 first.', 1;
+IF OBJECT_ID('dbo.AccRequest', 'U') IS NULL
+  THROW 50000, 'dbo.AccRequest is missing -- apply 059 first.', 1;
 GO
 
 BEGIN TRANSACTION;
 
-IF COL_LENGTH('dbo.AccTravelExpense', 'Currency') IS NULL
-  ALTER TABLE [dbo].[AccTravelExpense] ADD [Currency] CHAR(3) NULL;
-IF COL_LENGTH('dbo.AccTravelExpense', 'ExchangeRate') IS NULL
-  ALTER TABLE [dbo].[AccTravelExpense] ADD [ExchangeRate] DECIMAL(18,6) NULL;
-IF COL_LENGTH('dbo.AccTravelExpense', 'BaseAmount') IS NULL
-  ALTER TABLE [dbo].[AccTravelExpense] ADD [BaseAmount] DECIMAL(18,2) NULL;
-
-IF COL_LENGTH('dbo.AccTravelBooking', 'Currency') IS NULL
-  ALTER TABLE [dbo].[AccTravelBooking] ADD [Currency] CHAR(3) NULL;
-IF COL_LENGTH('dbo.AccTravelBooking', 'ExchangeRate') IS NULL
-  ALTER TABLE [dbo].[AccTravelBooking] ADD [ExchangeRate] DECIMAL(18,6) NULL;
-IF COL_LENGTH('dbo.AccTravelBooking', 'BaseAmount') IS NULL
-  ALTER TABLE [dbo].[AccTravelBooking] ADD [BaseAmount] DECIMAL(18,2) NULL;
+IF COL_LENGTH('dbo.AccRequest', 'Currency') IS NULL
+  ALTER TABLE [dbo].[AccRequest] ADD [Currency] CHAR(3) NULL;
+IF COL_LENGTH('dbo.AccRequest', 'ExchangeRate') IS NULL
+  ALTER TABLE [dbo].[AccRequest] ADD [ExchangeRate] DECIMAL(18,6) NULL;
+IF COL_LENGTH('dbo.AccRequest', 'BaseAmount') IS NULL
+  ALTER TABLE [dbo].[AccRequest] ADD [BaseAmount] DECIMAL(18,2) NULL;
 
 COMMIT TRANSACTION;
 GO
 
 SELECT
-  COL_LENGTH('dbo.AccTravelExpense','Currency')  AS ExpCurrency,
-  COL_LENGTH('dbo.AccTravelExpense','BaseAmount') AS ExpBase,
-  COL_LENGTH('dbo.AccTravelBooking','Currency')  AS BkCurrency,
-  COL_LENGTH('dbo.AccTravelBooking','BaseAmount') AS BkBase;
+  COL_LENGTH('dbo.AccRequest','Currency')     AS Currency,
+  COL_LENGTH('dbo.AccRequest','ExchangeRate') AS ExchangeRate,
+  COL_LENGTH('dbo.AccRequest','BaseAmount')   AS BaseAmount;
 GO
 ```
 
 - [ ] **Step 2: Apply to both databases, then check alignment**
 
 ```bash
-npm run apply-sql -- --db Rocks_Portal_Form     --file migrations/125_travel_currency.sql
-npm run apply-sql -- --db Rocks_Portal_Form_UAT --file migrations/125_travel_currency.sql
+npm run apply-sql -- --db Rocks_Portal_Form     --file migrations/125_request_currency.sql
+npm run apply-sql -- --db Rocks_Portal_Form_UAT --file migrations/125_request_currency.sql
 npm run check:alignment
 ```
-Expected: both applied; `check:alignment` still PASS at 25 tables (neither table is in `MASTER_TABLES`, so the count must not move).
+Expected: both applied; `check:alignment` still PASS **at 25 tables** — `AccRequest` is not in `MASTER_TABLES`, so the count must not move. A changed count means the wrong table was altered.
 
 - [ ] **Step 3: Commit**
 
@@ -359,7 +393,7 @@ Then `npm test` → the whole suite still green.
 
 **Interfaces:**
 - Consumes: Task 1's columns, Task 3's `brandCurrencyState`.
-- Produces: `RegistryBrand.currencyCode: string | null`, `.currencyEnabled: boolean`; `AccBrandOption.currencyCode: string | null` — consumed by Tasks 6-10.
+- Produces: `RegistryBrand.countryCode|currencyCode|currencyEnabled`; **`AccBrandOption.currencyCode: string | null` AND `.currencyEnabled: boolean`** — both, because Tasks 8, 9 and 12 call `brandCurrencyState({ currencyCode, currencyEnabled })`, which needs the pair. Producing only the code would leave the client unable to call the function the plan tells it to call, and would render the dropdown for a brand whose currency is staged but switched off — the exact state `CurrencyEnabled` exists to represent.
 
 - [ ] **Step 1: Extend the registry**
 
@@ -374,7 +408,15 @@ Add `CountryCode`, `CurrencyCode`, `CurrencyEnabled` to `BrandSettingRow`, to th
 
 - [ ] **Step 2: Widen `AccBrandOption`**
 
-`AccBrandOption` is `{ brandCode, brandName, brandLogo }` today and drops everything else. Add `currencyCode: string | null`, populated in **both** `listAllBrands` and `getAllowedBrands`. `getAllowedBrands` already builds a `byCode` map from `listAllBrands()`, so take it from there — do not add a second query.
+`AccBrandOption` is `{ brandCode, brandName, brandLogo }` today and drops everything else. Add **both** `currencyCode: string | null` and `currencyEnabled: boolean`.
+
+**There are three construction sites, and missing the third fails `npm run build` in a feature this task never otherwise touches:**
+
+1. `src/lib/acc/brand-options.ts:20-24` — `listAllBrands`
+2. `src/lib/acc/brand-options.ts:46-50` — `getAllowedBrands` (take the values from the `byCode` map it already builds; do **not** add a second query)
+3. `src/features/reimburse/components/ReimburseForm.tsx:457` — AP-4's fallback option for a saved brand no longer on the allowlist. Give it `currencyCode: null, currencyEnabled: false`: a code the allowlist has dropped has no currency this app can vouch for.
+
+Adding a required field to this type is `TS2739` at every site, so the build is the check — but a subagent told the file list is complete will not expect a failure in `src/features/reimburse`.
 
 - [ ] **Step 3: Write the guard test**
 
@@ -443,7 +485,7 @@ Temporarily add `getFormPool` to `brand-registry.ts`'s import and a dead call; r
 
 - [ ] **Step 1: Add a timeout to bot-fx**
 
-Both `fetch` calls take `AbortSignal.timeout(8000)`. A hanging provider currently hangs the request that called it.
+**All three** `fetch` calls in `bot-fx.ts` take `signal: AbortSignal.timeout(8000)` — `:31` (`fetchSupportedCurrencies`), `:54` (`fetchBotRate`) and `:71` (`fetchEcbRate`). The first is on AP-2's currency picker and hangs the same way; it is the one most likely skipped.
 
 - [ ] **Step 2: Write the failing test for the pure half**
 
@@ -508,41 +550,64 @@ export async function resolveRate(
 
 ---
 
-### Task 6: AP-1's brand tab edits the currency
+### Task 6: The brand tab edits the currency — ONE component, both forms
 
 **Files:**
-- Modify: `src/features/accounting/components/settings/BrandSettings.tsx` (or the AP-1 brands panel — locate it from `settings/brands/route.ts`'s consumer)
-- Modify: `src/app/api/request/accounting/settings/brands/route.ts`
-- Modify: `src/lib/acc/settings-service.ts` — the brand write
+- Modify: `src/features/accounting/components/settings/BrandSettings.tsx` — **one shared component**, not two
+- Modify: `src/app/(dashboard)/request/accounting/travel-booking-settings/page.tsx:219-221` — where AP-17 renders it
+- Modify: `src/app/api/request/accounting/settings/brands/route.ts:30-42`
+- Modify: `src/app/api/request/travel-booking/settings/brands/route.ts:33-45`
+- Modify: `src/lib/brand-registry.ts` — the write, beside `saveBrandSetting` (`:142-179`)
 
 **Interfaces:**
-- Consumes: Task 4's `currencyCode`.
-- Produces: a `PATCH`-style write of `{ brandCode, countryCode, currencyCode, currencyEnabled }`.
+- Consumes: Task 1's columns and `BrandSettingLog`, Task 4's registry fields.
+- Produces: one service function writing `{ brandCode, countryCode, currencyCode, currencyEnabled }`.
 
-- [ ] **Step 1: The write, with its activity row**
+**This was two tasks and is one, because there is one panel.** `BrandSettings.tsx`
+takes its `endpoint` as a prop and AP-17's settings page renders the same
+component (`travel-booking-settings/page.tsx:219`). There is no second file to
+modify, and two tasks would have demanded different copy from one component.
 
-The write goes to `BrandSetting` through `getProductionFormPool()`. **In one transaction it also writes an `AccActivityLog` row** naming the brand, the old value and the new. Spec §9.3: the permission is per form while the value is per brand, so an AP-17 approver can change what an AP-1 claim converts at — the log is the only way that is traceable.
+- [ ] **Step 1: The write lives in `brand-registry.ts`, not `settings-service.ts`**
 
-- [ ] **Step 2: The gate stays as it is**
+`settings-service.ts` imports `getAccPool` on line 1 and calls it seven times.
+Task 4's guard is **per file**: the moment a `BrandSetting` statement lands there,
+`npm test` goes red — and every task from here on ends with `npm test`. Put the
+write beside `saveBrandSetting` in `brand-registry.ts`, which already uses
+`getProductionFormPool()` and imports no `getAccPool`. **Do not weaken the guard
+to make this pass.**
 
-`requireSettingsTab("brands")`. **Do not tighten this to `requireRole`** — the user chose it knowingly (spec §9.3).
+- [ ] **Step 2: The audit row, in the same transaction, on the same connection**
 
-- [ ] **Step 3: The shared-value line**
+One row in **`BrandSettingLog`** per changed field, on the same
+`getProductionFormPool()` connection as the `BrandSetting` write, in one
+transaction. **Not `AccActivityLog`** — its `RequestId` is `int NOT NULL` with
+`FK_AccActivity_Request` and a brand change has no request, so the insert is
+impossible. Record `FormCode` too: spec §9.3's whole point is that the value is
+per brand while the permission is per form, and the log is how a change is traced
+back to which form's tab it came from.
 
-Under the currency field, in Thai: that the value is shared with AP-17's form and changing it here changes it there.
+- [ ] **Step 3: Both routes keep their own gate**
 
-- [ ] **Step 4: Tests, typecheck, build, commit**
+`requireSettingsTab("brands")` for AP-1, `requireBookingSettingsTab("brands")`
+for AP-17, both calling the single service function. **Do not tighten either to
+`requireRole`** — the user chose this knowingly (spec §9.3), and a reviewer who
+"fixes" it is undoing a decision, not closing a hole.
+
+- [ ] **Step 4: The component learns two props**
+
+`currencyEndpoint` and `otherFormLabel` (`'AP-17'` from AP-1's page, `'AP-1'`
+from AP-17's). Under the currency field, a Thai line saying the value is shared
+with the other form and changing it here changes it there. Both pages pass their
+own values; the component holds no literal form name.
+
+- [ ] **Step 5: `npm test`, `npx tsc --noEmit`, `npm run build`, commit**
 
 ---
 
-### Task 7: AP-17's brand tab edits the same value
+### Task 7: (merged into Task 6)
 
-**Files:**
-- Modify: AP-17's brands panel + `src/app/api/request/travel-booking/settings/brands/route.ts`
-
-Same as Task 6, gated by `requireBookingSettingsTab("brands")`, with the shared-value line naming AP-1. **Reuse Task 6's service function** — do not write a second one.
-
-- [ ] **Steps:** mirror Task 6, then `npm test`, `npx tsc --noEmit`, `npm run build`, commit.
+Left numbered so later task references do not shift. Nothing to do.
 
 ---
 
@@ -568,9 +633,15 @@ Global Constraints: `CK_AccVehicle_Rate` refuses `RatePerKm < 1`, and the rate i
 
 `saveDraft` calls `resolveRate(currency)` and writes `Currency`, `ExchangeRate`, `BaseAmount`. `submitRequest` re-fetches and overwrites. **A failed fetch at submit throws** with a Thai message; a baht claim never calls `resolveRate` at all.
 
-- [ ] **Step 4: `TotalAmount` stays baht**
+- [ ] **Step 4: `TotalAmount` stays baht — at all THREE writers**
 
-`computeTotalAmount` keeps returning the claim's own figure; the service converts with `toBaht` before writing `AccRequest.TotalAmount`. **If `toBaht` returns null the submit fails** — it must never write the unconverted figure.
+`computeTotalAmount` keeps returning the claim's own figure; the service converts with `toBaht` before writing `AccRequest.TotalAmount`. **If `toBaht` returns null the write throws** — it must never store the unconverted figure.
+
+There are three writers in `request-service.ts`, not two. The third is the one that gets missed:
+
+1. `persistTravelDays` (`:722-726`), reached from `saveDraft` (`:734`)
+2. **`deleteItem` (`:953-956`)** — the recompute that runs when a requester removes a receipt row, outside the transaction. On a foreign draft this re-stamps the **unconverted** figure into the baht column, on an ordinary edit. It must load the stored `Currency`/`ExchangeRate`, convert, and throw rather than write when `toBaht` returns null.
+3. `submitRequest` (`:1062`)
 
 - [ ] **Step 5: Show both figures**
 
@@ -583,14 +654,23 @@ The form shows the foreign total and the baht equivalent with the rate and `อ�
 ### Task 9: AP-17 claims in a currency
 
 **Files:**
-- Modify: `src/features/travel-booking/components/TravelBookingTab.tsx`, `AdminBookingPanel.tsx`
-- Modify: `src/lib/acc/travel-booking/request-service.ts`
+- Modify: `src/features/travel-booking/components/AdminBookingPanel.tsx`
+- Modify: `src/lib/acc/travel-booking/admin-service.ts` (the booking writer, `:288-347`)
+
+**Not `TravelBookingTab.tsx`** — it contains no money field at all. AP-17's amounts are entered later, by the booking desk, in `AdminBookingPanel`. The requester picks the brand and a different person enters the amounts at a later step, so **the currency is derived from the request's brand and is not chosen by the requester.** The desk sees it read-only beside the four amount fields and may switch it to THB there; the rate is fetched server-side when the desk saves.
 
 Mirror Task 8 with two differences:
 
 - [ ] **Step 1: Per diem is always baht.** `EmployeeAllowanceLog` has no currency column. The per-diem figure is not converted and not selectable; only booking costs carry the claim's currency.
-- [ ] **Step 2: `AccRequest.TotalAmount` is the baht sum of the baht per diem and the converted booking cost.**
-- [ ] **Step 3: The amount lock survives.** A request past the ACCOUNT step (`Status = 'Completed'`) has its currency, rate and converted total frozen with everything else.
+- [ ] **Step 2: `AccRequest.TotalAmount` keeps its current meaning and is NOT changed**
+
+Today it is the **per-diem total alone** — the booking cost lives in `AccTravelBookingDetail.TotalAmount` and never reaches the header (`travel-booking/request-service.ts:1215-1219`). Adding the booking cost would double the figure on My Requests, My Work and the header **for every AP-17 request including baht ones**, breaking this plan's own promise that an unconfigured brand behaves exactly as today. It would also be silently undone: `perdiem-recompute.ts:98-114` rewrites `AccRequest.TotalAmount` from the recomputed per diem, and `perdiem-recompute.test.ts:200-228` asserts that statement.
+
+So the booking cost's currency, rate and baht equivalent are **displayed**, not summed into the header. If the business wants the sum, that is a separate task that must also amend `perdiem-recompute.ts` and its test, and it is a behaviour change for baht requests too.
+
+- [ ] **Step 3: No new lock — the step gate already is one**
+
+There is no `Status = 'Completed'` amount freeze in AP-17 and none is to be invented. `AdminBookingPanel` renders only while `status === 'ManagerApproved' && currentStepCode === 'ADMIN'` (`TravelBookingDetail.tsx:572-574`), so the currency and rate fields are unreachable once accounting has signed off. `bookingFieldsLocked` is a per-row emptiness rule, explicitly **not** status-based (`booking-lock.ts:1-19`), and must not be given a currency arm.
 - [ ] **Step 4:** tests, typecheck, build, commit.
 
 ---
@@ -600,7 +680,10 @@ Mirror Task 8 with two differences:
 **Files:**
 - Modify: `src/app/api/request/accounting/receipt-amount/route.ts`
 - Modify: `src/app/api/request/travel-booking/booking-fields/route.ts`
-- Modify: `src/features/accounting/lib/receipt-amount.ts`, `src/features/travel-booking/lib/booking-amounts.ts`
+- Modify: `src/features/accounting/lib/read-receipt-amount.ts` (`:78`, `:85-92`)
+- Modify: `src/features/travel-booking/lib/read-booking-fields.ts` (`:100`, `:109-114`)
+- Modify: `src/features/accounting/components/ExpenseRows.tsx` (props at `:45-70`)
+- Modify: `src/features/accounting/components/TravelExpenseForm.tsx` (five `<ExpenseRows` call sites: `:1478, :1489, :1504, :1515, :1531`)
 
 **Interfaces:**
 - Consumes: Task 3's `admitModelCurrency`, Task 4's `currencyCode`.
@@ -609,13 +692,23 @@ Mirror Task 8 with two differences:
 
 Both currently assert Thai baht in prompt and schema, so a foreign receipt attached **today** already yields a bare number stored as baht. Add a nullable `currency` to each schema and stop asserting baht in the prompt.
 
-- [ ] **Step 2: The brand's currency is resolved server-side**
+- [ ] **Step 2: The brand code has to be threaded to AP-1's call — it is not in scope today**
 
-The route resolves it via `brand-registry.ts`, from a brand code passed as a query parameter, and applies `admitModelCurrency`. Resolving server-side is what stops a caller shaping their own prompt to have a currency accepted.
+`readReceiptAmount(file)` and `readBookingFields(file)` take only a file and build the FormData themselves, and `ExpenseRowsProps` carries no brand at all. Without this the route reads no brand, `admitModelCurrency` sees `brandCurrency = null`, admits THB alone, and **every foreign receipt silently stays baht** — the live defect §8 exists to fix.
 
-- [ ] **Step 3: The ceilings apply to the converted figure**
+Both readers gain a `brandCode` argument and append `?brandCode=` to the fetch URL. `ExpenseRowsProps` gains `brandCode?: string | null`, passed from `TravelExpenseForm` (where it is already in scope at `:223`) at all five call sites. AP-17 takes it from `request.brandCode`, already in scope in `AdminBookingPanel`.
 
-`MAX_RECEIPT_AMOUNT` (1,000,000฿) and `MAX_BOOKING_AMOUNT` (10,000,000฿) are baht bounds. Applied to a raw foreign figure they silently null legitimate amounts. Convert first, then bound.
+The route then resolves the brand's currency via `brand-registry.ts` and applies `admitModelCurrency`. Resolving server-side is what stops a caller shaping their own prompt to have a currency accepted.
+
+- [ ] **Step 3: Bound the converted figure — without touching the sanitisers**
+
+`MAX_RECEIPT_AMOUNT` (1,000,000฿) and `MAX_BOOKING_AMOUNT` (10,000,000฿) are baht bounds; applied to a raw foreign figure they silently null legitimate amounts.
+
+**Leave `sanitizeReceiptAmount` and `sanitizeBookingAmount` unchanged.** The latter has nine non-test call sites — the browser's typed-entry validation, the admin save service, `booking-dirty.ts` — and all of them deal in the claim's own currency. Changing its semantics changes all nine.
+
+Instead, in the **route**: after the model answers, resolve the rate with `resolveRate(admittedCurrency)` (Task 5) and bound `toBaht(figure, rate)` against the MAX. If `resolveRate` returns null, return the figure as null so the field opens blank — never guess and never skip the bound.
+
+**Both route docblocks currently state the route reads no database** (`receipt-amount/route.ts:32-33`, `booking-fields/route.ts:47-49`). That stops being true once `brand-registry.ts` and `resolveRate` are called. Update them.
 
 - [ ] **Step 4: An inadmissible answer leaves the field blank**
 
@@ -660,7 +753,15 @@ Its money column is headed `ยอดรวม (บาท)` and carries `moneySt
 
 - [ ] **Step 3: The detail and queue screens** show the foreign figure and the baht equivalent where a claim has one, and are unchanged for a baht claim.
 
-- [ ] **Step 4: Full `npm test`, `npx tsc --noEmit`, `npm run build`, `npm run check:alignment`, commit**
+- [ ] **Step 4: The ERP prep queue's per-day breakdown**
+
+This is the one the spec's §4 justification missed, and it is on the posting path. `TRAVEL_DAYS_CSV_SELECT` (`report-service.ts:121-137`) aggregates `te.TotalAmount` — the **per-day** column, which holds the claim's own currency — and is interpolated into the ERP prep query (`erp-prep-service.ts:350`, parsed at `:171-179`) and rendered in `ErpPrepQueue.tsx`.
+
+So on a foreign claim an approver sees day figures in MYR that do not sum to the baht header, with no currency label, immediately before pressing Send. Label the breakdown with the request's `Currency` and show the baht header beside it, or convert the parsed day lines with the stored rate before display.
+
+**The posting itself is unaffected** — `erp-journal-builder.ts:144-147` builds it from `AccRequest.TotalAmount`, which is baht. Only the displayed breakdown is wrong. Correct spec §4's claim too, which the next reader would otherwise trust.
+
+- [ ] **Step 5: Full `npm test`, `npx tsc --noEmit`, `npm run build`, `npm run check:alignment`, commit**
 
 ---
 
