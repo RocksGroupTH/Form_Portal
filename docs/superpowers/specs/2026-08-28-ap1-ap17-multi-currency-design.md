@@ -274,8 +274,17 @@ Required, therefore:
 
 - Both brand tabs carry a line saying the value is shared with the other form
   and that changing it here changes it there.
-- Every write records who changed it, from what to what, in `AccActivityLog` —
-  the only way an unexpected change can be traced back across two rosters.
+- Every write records who changed it, from what to what, in **`BrandSettingLog`**
+  (migration 124), together with which form's tab it came from — the only way an
+  unexpected change can be traced back across two rosters.
+
+  **Not `AccActivityLog`, which cannot hold it.** That table's `RequestId` is
+  `int NOT NULL` with `FK_AccActivity_Request` referencing `AccRequest(Id)` —
+  verified in the live database — and a brand-currency change has no request.
+  There is no id to supply and no nullable column to omit, so the insert is
+  impossible rather than merely untidy. This paragraph named `AccActivityLog`
+  until 2026-08-28; it was wrong, and it is corrected here because §9.3 is
+  where a reviewer is sent.
 - The rule is **not** representable as a constraint and must not be presented as
   one. A reviewer who "tightens" the gate to System Admin is undoing a decision
   the user took knowingly, not fixing a hole.
