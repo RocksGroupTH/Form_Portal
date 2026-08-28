@@ -305,7 +305,7 @@ test("every AP-17 settings handler is gated, and approvers is the admin-only one
   // at rather than merged on the strength of the file already being gated.
   assert.equal(
     handlerCount,
-    8,
+    10,
     "the AP-17 settings routes gained or lost a handler — check its gate, then update this number",
   );
 });

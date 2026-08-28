@@ -104,6 +104,17 @@ export interface SettingsRouteTabRule {
  */
 export const SETTINGS_ROUTE_TABS: readonly SettingsRouteTabRule[] = [
   { route: "brands", tab: "brands" },
+  {
+    route: "brands/currency",
+    tab: "brands",
+    // The same grant as the tick list above, because it is the same tab. Spec
+    // §9.3 ruled that a brand's currency is edited wherever its form grant is
+    // edited; a later hand moving this to `null` is undoing that decision, not
+    // closing a hole. What the decision costs — the value is per brand while
+    // the permission is per form — is answered by `BrandSettingLog`, which
+    // records which form's tab each change came from.
+    note: "the country/currency editor on the same tab — see spec §9.3",
+  },
   { route: "same-day-brand", tab: "sameDayBrand" },
   { route: "vehicles", tab: "vehicles" },
   { route: "vehicles/reorder", tab: "vehicles" },

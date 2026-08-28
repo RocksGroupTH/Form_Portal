@@ -216,9 +216,15 @@ export default function TravelBookingSettingsPage() {
 
         <div className="p-5">
           {effectiveTab === "brands" ? (
+            // The same panel AP-1's settings page renders. `currencyEndpoint`
+            // is AP-17's own — it is gated on AP-17's roster and stamps AP-17
+            // into the audit row — but it writes the same shared brand row, so
+            // `otherFormLabel` names AP-1 as the form also affected.
             <BrandSettings
               endpoint="/api/request/travel-booking/settings/brands"
               description="เลือกแบรนด์ที่พนักงานสามารถเลือกในฟอร์มขอเดินทาง AP-17 — ติ๊กเพื่อเปิด/ปิด แล้วกดบันทึก"
+              currencyEndpoint="/api/request/travel-booking/settings/brands/currency"
+              otherFormLabel="AP-1"
             />
           ) : effectiveTab === "access" || panel === null ? (
             <BookingApproverSettings />

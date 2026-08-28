@@ -19,6 +19,24 @@
  * which is exactly the behaviour that preceded it.
  */
 import { getCorePool, getProductionFormPool, sql } from "@/lib/db/mssql";
+import {
+  brandCurrencyChanges,
+  type BrandCurrencyPatch,
+} from "@/lib/acc/brand-currency-input";
+
+/**
+ * A brand-currency save refused for a reason worth showing the person who made
+ * it — an unknown brand code, today.
+ *
+ * Its own class so a route answers 400 rather than 500 without matching on a
+ * message, the way `AccForbiddenError` and friends work in `acc/request-errors`.
+ */
+export class BrandCurrencyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BrandCurrencyError";
+  }
+}
 
 export interface RegistryBrand {
   code: string;
@@ -193,4 +211,125 @@ export async function saveBrandSetting(
       VALUES (@code, COALESCE(@isEnabled, 1), @logoBytes, @logoType, @logoName,
               CASE WHEN @logoBytes IS NULL THEN NULL ELSE SYSDATETIME() END, SYSDATETIME(), @userId);
   `);
+}
+
+/**
+ * One brand's country, claim currency and the switch that turns it on.
+ *
+ * **This lives here rather than in `@/lib/acc/settings-service`, and it must
+ * stay here.** `BrandSetting` has no row in `Rocks_Portal_Form_UAT` — it has no
+ * *object* there — so a statement naming it from `getAccPool()`/`getFormPool()`
+ * throws `Invalid object name` for a UAT tester and for nobody else.
+ * `settings-service.ts` imports `getAccPool` on its first line, and
+ * `@/lib/acc/currency-pool-guard.test.ts` is per **file**, not per statement:
+ * the moment this statement landed there the test would go red. The fix would
+ * be to move it back, never to weaken the guard.
+ *
+ * **The change and its audit rows commit together**, one transaction on one
+ * connection, the shape `createApiKey` uses. The audit is a requirement rather
+ * than tidiness: the value is stored once per brand while the permission to
+ * change it is per form (spec §9.3), so an AP-17 booking approver holding the
+ * `brands` grant can change what an AP-1 travel claim converts at, on a roster
+ * AP-1's admins do not control. That is a decision the user took knowingly and
+ * cannot be expressed as a constraint, so `BrandSettingLog` — with the
+ * `FormCode` of the tab the change came from — is how it is traced instead.
+ *
+ * `AccActivityLog` cannot hold these rows: its `RequestId` is `int NOT NULL`
+ * with an FK to `AccRequest`, and a brand change has no request.
+ *
+ * A save that changes nothing writes nothing — neither the row nor a log entry.
+ * A log recording *saves* rather than *changes* cannot answer "when did this
+ * last change", which is the only question it exists for.
+ */
+export async function saveBrandCurrency(
+  code: string,
+  patch: BrandCurrencyPatch,
+  context: { formCode: string; userId: number },
+): Promise<void> {
+  // The master is the registry (see the module header), so a row written for a
+  // code it does not have would be inert — and invisible, since every read
+  // joins from the master. Refuse instead of storing something nothing can show.
+  const known = await listBrandRegistry();
+  if (!known.some((b) => b.code === code)) {
+    throw new BrandCurrencyError(`ไม่พบแบรนด์ ${code}`);
+  }
+
+  const pool = await getProductionFormPool();
+  const tx = pool.transaction();
+  await tx.begin();
+  try {
+    const cur = await tx
+      .request()
+      .input("code", sql.NVarChar(40), code)
+      .query(`
+        SELECT CountryCode, CurrencyCode, CurrencyEnabled
+        FROM [dbo].[BrandSetting] WITH (UPDLOCK, HOLDLOCK)
+        WHERE BrandCode = @code
+      `);
+    const row = cur.recordset[0] as
+      | { CountryCode: string | null; CurrencyCode: string | null; CurrencyEnabled: boolean }
+      | undefined;
+
+    // No row is not "unknown": the column defaults are what such a brand
+    // behaves as today, so they are what the change is measured against.
+    // CHAR(n) comes back space-padded, which would otherwise read as a change
+    // on every save.
+    const before: BrandCurrencyPatch = {
+      countryCode: (row?.CountryCode ?? "").trim() || null,
+      currencyCode: (row?.CurrencyCode ?? "").trim() || null,
+      currencyEnabled: row ? !!row.CurrencyEnabled : false,
+    };
+
+    const changes = brandCurrencyChanges(before, patch);
+    if (changes.length === 0) {
+      await tx.commit();
+      return;
+    }
+
+    await tx
+      .request()
+      .input("code", sql.NVarChar(40), code)
+      .input("country", sql.Char(2), patch.countryCode)
+      .input("currency", sql.Char(3), patch.currencyCode)
+      .input("enabled", sql.Bit, patch.currencyEnabled)
+      .input("userId", sql.Int, context.userId || null)
+      .query(`
+        MERGE [dbo].[BrandSetting] AS t
+        USING (SELECT @code AS BrandCode) AS s ON t.BrandCode = s.BrandCode
+        WHEN MATCHED THEN UPDATE SET
+          CountryCode     = @country,
+          CurrencyCode    = @currency,
+          CurrencyEnabled = @enabled,
+          UpdatedAt       = SYSDATETIME(),
+          UpdatedBy       = @userId
+        WHEN NOT MATCHED THEN INSERT
+          (BrandCode, IsEnabled, CountryCode, CurrencyCode, CurrencyEnabled, UpdatedAt, UpdatedBy)
+          VALUES (@code, 1, @country, @currency, @enabled, SYSDATETIME(), @userId);
+      `);
+    // IsEnabled = 1 on the insert is not a new grant: a brand with no row is
+    // already enabled (module header), so this is the value that leaves the
+    // picker exactly as it was. Setting a currency must not change who can see
+    // the brand — that is why CurrencyEnabled is its own column.
+
+    for (const c of changes) {
+      await tx
+        .request()
+        .input("code", sql.NVarChar(40), code)
+        .input("field", sql.NVarChar(40), c.field)
+        .input("old", sql.NVarChar(100), c.oldValue)
+        .input("new", sql.NVarChar(100), c.newValue)
+        .input("form", sql.NVarChar(20), context.formCode)
+        .input("user", sql.Int, context.userId || null)
+        .query(`
+          INSERT INTO [dbo].[BrandSettingLog]
+            (BrandCode, Field, OldValue, NewValue, FormCode, ChangedBy)
+          VALUES (@code, @field, @old, @new, @form, @user)
+        `);
+    }
+
+    await tx.commit();
+  } catch (e) {
+    await tx.rollback();
+    throw e;
+  }
 }

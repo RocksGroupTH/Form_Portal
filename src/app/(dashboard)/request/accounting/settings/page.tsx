@@ -199,7 +199,18 @@ function AccountingSettingsContent() {
             admin สงวนไว้สำหรับผู้ดูแลระบบ and no Sync button in exactly the
             failure this page already defends against.
           */}
-          {effectiveTab === "brands" && <BrandSettings />}
+          {/*
+            `otherFormLabel` is AP-17 here and AP-1 on the booking settings
+            page: a brand's country and currency are one shared row, so the
+            panel has to name the *other* form it also changes. The component
+            holds neither name.
+          */}
+          {effectiveTab === "brands" && (
+            <BrandSettings
+              currencyEndpoint="/api/request/accounting/settings/brands/currency"
+              otherFormLabel="AP-17"
+            />
+          )}
           {effectiveTab === "sameDayBrand" && <SameDayBrandSettings isAdmin={isAdmin} />}
           {effectiveTab === "vehicles" && <VehicleSettings />}
           {effectiveTab === "departments" && <DepartmentMappingSettings isAdmin={isAdmin} />}
