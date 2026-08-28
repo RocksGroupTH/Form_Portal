@@ -9,6 +9,12 @@ import {
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { Avatar } from "@/components/ui/Avatar";
+import {
+  AttachmentViewer,
+  attachmentKind,
+  type AttachmentKind,
+  type AttachmentSource,
+} from "@/components/ui/AttachmentViewer";
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
 import { PoweredByClaude } from "@/components/ui/PoweredByClaude";
 import type { AccBrandOption, AccFileMeta } from "@/features/accounting/types";
@@ -215,6 +221,25 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
 
   const [savedId, setSavedId] = useState<number | null>(initial?.id ?? null);
   const requestId = savedId;
+  /* One viewer for the whole form, not one per thumbnail — a modal rendered
+     inside a list item is a modal per item. Both `FileArea` instances (receipts
+     and the refund slip) report clicks here.
+
+     Every kind opens it, including PDFs, which used to be an `<a target="_blank">`
+     pointed at the download route: that route serves anything non-raster as
+     `Content-Disposition: attachment` under `nosniff`, so the new tab downloaded
+     the file and closed. The viewer fetches the bytes itself and renders them
+     from a Blob inside our own origin, which is why no server header is relaxed. */
+  const [viewing, setViewing] = useState<{ source: AttachmentSource; kind: AttachmentKind } | null>(
+    null,
+  );
+  const openFileViewer = (f: AccFileMeta) =>
+    setViewing({
+      source: { name: f.fileName, url: f.url },
+      // Declared type first, then the name — SharePoint returns
+      // `application/octet-stream` often enough that the fallback matters.
+      kind: attachmentKind(f.fileName, f.contentType),
+    });
   const readOnly = !!initial && initial.status !== "Draft" && initial.status !== "Returned";
 
   // "เป็นค่าใช้จ่ายของ" is the selected brand: home brands book their own G/L,
@@ -985,6 +1010,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
             lockedHint="กรุณาเลือก “เงินทดรองจ่ายที่จะเคลียร์” ก่อน จึงจะแนบใบเสร็จได้"
             onPick={(list) => uploadFiles(list, "clear_doc")}
             onRemove={(id) => removeFile(id, "clear_doc")}
+            onView={openFileViewer}
           />
           {!readOnly && advanceRequestId != null && (
             <div className="flex items-start justify-between gap-2 mt-1">
@@ -1386,6 +1412,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
               files={refundProofFiles} readOnly={readOnly} uploading={uploadingProof}
               onPick={(list) => uploadFiles(list, "refund_proof")}
               onRemove={(id) => removeFile(id, "refund_proof")}
+              onView={openFileViewer}
             />
             <div className="flex items-start justify-between gap-2 mt-1">
               <p className="text-[11px] m-0" style={{ color: "var(--text-faint)" }}>
@@ -1464,6 +1491,13 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           subtitle="AI กำลังอ่านข้อมูลจากสลิปโอนเงิน"
         />
       )}
+
+      <AttachmentViewer
+        open={viewing != null}
+        source={viewing?.source ?? null}
+        kind={viewing?.kind ?? "other"}
+        onClose={() => setViewing(null)}
+      />
     </div>
   );
 }
@@ -1738,14 +1772,25 @@ function BranchPicker({
   );
 }
 
+/**
+ * The attach controls plus the thumbnail strip.
+ *
+ * **Every kind opens the shared in-page viewer** — the one AP-1, AP-4 and AP-17
+ * use — so "view" means view. A thumbnail used to be an `<a target="_blank">`
+ * pointed at the download route, where `attachmentResponseHeaders` serves
+ * anything non-raster as `Content-Disposition: attachment`: the tab downloaded
+ * the file and closed, which is not viewing it. The viewer itself lives once in
+ * the parent; this only reports which file was clicked.
+ */
 function FileArea({
-  files, readOnly, uploading, onPick, onRemove, locked, lockedHint,
+  files, readOnly, uploading, onPick, onRemove, onView, locked, lockedHint,
 }: {
   files: AccFileMeta[];
   readOnly: boolean;
   uploading: boolean;
   onPick: (list: FileList | null) => void;
   onRemove: (id: number) => void;
+  onView: (f: AccFileMeta) => void;
   /** Disable attaching until a prerequisite is met (e.g. pick the advance first). */
   locked?: boolean;
   lockedHint?: string;
@@ -1779,22 +1824,27 @@ function FileArea({
       {files.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {files.map((f) => {
-            const isPdf = f.contentType === "application/pdf" || f.fileName?.toLowerCase().endsWith(".pdf");
+            // Declared type first, then the name — SharePoint returns
+            // `application/octet-stream` often enough that the fallback matters.
+            const isImage = attachmentKind(f.fileName, f.contentType) === "image";
             return (
             <div key={f.id} className="relative rounded-lg overflow-hidden"
               style={{ width: 76, height: 76, border: "1px solid var(--border-card)", background: "var(--bg-card)" }}>
-              <a href={f.url} target="_blank" rel="noreferrer" title={f.fileName} className="block w-full h-full">
-                {isPdf ? (
+              <button type="button" onClick={() => onView(f)} title={f.fileName}
+                className="block w-full h-full cursor-pointer border-none p-0 bg-transparent">
+                {isImage ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={f.url} alt={f.fileName} className="w-full h-full object-cover" />
+                ) : (
                   <span className="w-full h-full flex flex-col items-center justify-center gap-1 px-1"
                     style={{ color: "var(--text-muted)" }}>
                     <FileText size={22} />
-                    <span className="text-[9px] font-semibold leading-tight text-center truncate w-full">PDF</span>
+                    <span className="text-[9px] font-semibold leading-tight text-center truncate w-full">
+                      {(f.fileName.split(".").pop() ?? "").toUpperCase().slice(0, 4) || "FILE"}
+                    </span>
                   </span>
-                ) : (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={f.url} alt={f.fileName} className="w-full h-full object-cover" />
                 )}
-              </a>
+              </button>
               {!readOnly && (
                 <button type="button" onClick={() => onRemove(f.id)}
                   className="absolute top-0.5 right-0.5 leading-none p-0.5 rounded-full cursor-pointer border-none"

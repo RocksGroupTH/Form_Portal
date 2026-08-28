@@ -6,6 +6,8 @@ import { isSharePointConfigured, uploadFileToSharePoint } from "@/lib/sharepoint
 import { uploadFile } from "@/lib/storage";
 import { AP2_FORM_CODE } from "@/features/advance/constants";
 import { resolveFormEnvironment } from "@/lib/form-environment";
+import { authorizeAccRequest } from "@/lib/acc/request-acl";
+import { checkAttachment, checkAttachmentBatch } from "@/lib/acc/attachment-guard";
 import {
   AP2_FILE_REFTYPE,
   AP2_MAX_FILE_BYTES,
@@ -19,6 +21,13 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   const { id } = await params;
   const requestId = Number(id);
   if (Number.isNaN(requestId)) return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
+
+  // The list names every attachment id on the request, which is the map to the
+  // download route — so it is gated by the same object ACL, not by `requireAuth`
+  // alone.
+  const gate = await authorizeAccRequest(session, requestId, "read", AP2_FORM_CODE);
+  if (gate instanceof Response) return gate;
+
   try {
     return NextResponse.json({ ok: true, data: await listAdvanceFiles(requestId) });
   } catch (e) {
@@ -41,12 +50,26 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
   }
 
+  // Owner + editable state, in one place and pinned to AP-2. This replaces a
+  // hand-rolled `CreatedBy !== userId` plus a Draft/Returned test that ran
+  // *after* the whole multipart body had been read off the wire.
+  const gate = await authorizeAccRequest(session, requestId, "mutate", AP2_FORM_CODE);
+  if (gate instanceof Response) return gate;
+
   const form = await req.formData();
   const files = form.getAll("files").filter((f): f is File => f instanceof File);
   if (files.length === 0) {
     return NextResponse.json({ ok: false, error: "ไม่พบไฟล์" }, { status: 400 });
   }
+  const batchRejection = checkAttachmentBatch(files);
+  if (batchRejection) {
+    return NextResponse.json({ ok: false, error: batchRejection.error }, { status: batchRejection.status });
+  }
   for (const f of files) {
+    // Kept as the first-pass message for somebody who picked the wrong thing in
+    // the file dialog. It is **not** the admission decision — `file.type` is a
+    // string the caller writes — and it is deliberately not narrowed either,
+    // since it is what this slot has accepted for months.
     if (!f.type.startsWith("image/") && f.type !== "application/pdf") {
       return NextResponse.json({ ok: false, error: "รองรับเฉพาะไฟล์รูปภาพหรือ PDF" }, { status: 400 });
     }
@@ -58,22 +81,36 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const pool = await getAccPool();
   const reqCheck = await pool.request()
     .input("rid", sql.Int, requestId).input("form", sql.NVarChar, AP2_FORM_CODE)
-    .query(`SELECT Status, CreatedBy, RequestNo FROM [dbo].[AccRequest] WHERE Id=@rid AND FormCode=@form`);
+    .query(`SELECT RequestNo FROM [dbo].[AccRequest] WHERE Id=@rid AND FormCode=@form`);
   if (reqCheck.recordset.length === 0) {
     return NextResponse.json({ ok: false, error: "ไม่พบคำขอ" }, { status: 404 });
   }
-  const reqRow = reqCheck.recordset[0] as { Status: string; CreatedBy: number | null; RequestNo: string | null };
-  if (reqRow.CreatedBy !== userId) {
-    return NextResponse.json({ ok: false, error: "แนบไฟล์ได้เฉพาะเจ้าของคำขอ" }, { status: 403 });
-  }
-  if (reqRow.Status !== "Draft" && reqRow.Status !== "Returned") {
-    return NextResponse.json({ ok: false, error: "แนบไฟล์ได้เฉพาะฉบับร่าง" }, { status: 400 });
-  }
+  const reqRow = reqCheck.recordset[0] as { RequestNo: string | null };
 
   try {
     for (const file of files) {
       const buffer = Buffer.from(await file.arrayBuffer());
-      const contentType = file.type || "application/octet-stream";
+
+      // The bytes decide, not `file.type`. `"any"` switches off the *kind*
+      // check and nothing else — the slot has taken whatever the browser
+      // labelled `image/*` since it shipped, and narrowing it to the sniff
+      // allowlist would start refusing real work (a BMP or TIFF receipt). The
+      // empty-file and size limits still apply, the bytes are still sniffed, and
+      // it is the **sniffed** type that gets stored, so an HTML or SVG payload
+      // is `application/octet-stream` with `inlineSafe: false`.
+      // `attachmentResponseHeaders` re-sniffs on download and reaches the same
+      // verdict, serving it as `attachment` under `nosniff` and a
+      // `default-src 'none'; sandbox` CSP. **That is the control here.**
+      const check = checkAttachment({
+        fileName: file.name,
+        declaredType: file.type,
+        bytes: buffer,
+        allowedKinds: "any",
+      });
+      if (!check.ok) {
+        return NextResponse.json({ ok: false, error: check.error }, { status: check.status });
+      }
+      const contentType = check.type.contentType;
 
       const ins = await pool.request()
         .input("rid", sql.Int, requestId).input("rt", sql.NVarChar(50), AP2_FILE_REFTYPE)

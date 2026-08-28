@@ -1,13 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
-import { getAccPool, sql } from "@/lib/adv/pool";
-import { downloadFileFromSharePoint, deleteFileFromSharePoint } from "@/lib/sharepoint";
-import { downloadFile, deleteFile } from "@/lib/storage";
+import { authorizeAccRequest } from "@/lib/acc/request-acl";
+import { attachmentResponseHeaders } from "@/lib/acc/attachment-guard";
+import { downloadFileFromSharePoint } from "@/lib/sharepoint";
+import { downloadFile } from "@/lib/storage";
+import { deleteStoredFiles } from "@/lib/acc/stored-file";
+import { AP2_FORM_CODE } from "@/features/advance/constants";
 import { getAdvanceFile, deleteAdvanceFileRow } from "@/lib/adv/advance-file-service";
+
+/* ── /api/request/advance/files/[fileId] ──
+   One AP-2 attachment: GET streams it, DELETE removes it.
+
+   Both authorize on the file's **parent request**, never on the file id — the
+   same rule AP-4's route states. A numeric file id is a small sequential
+   integer shared across every form in `AccRequestFile`, so guessing one is not
+   a control: until 2026-08-28 this route ran `requireAuth()` and then streamed
+   the bytes, which made every AP-2 attachment readable by any signed-in user.
+
+   `getAdvanceFile` already pins `RefType`, and `authorizeAccRequest` is pinned
+   again by `AP2_FORM_CODE`, so a file whose parent is not an AP-2 request 404s
+   here rather than being served out of whichever database the
+   `/api/request/advance/**` prefix happens to resolve to. */
+
+const NOT_FOUND = () => NextResponse.json({ ok: false, error: "not found" }, { status: 404 });
 
 function parseId(raw: string): number | null {
   const n = Number(raw);
-  return Number.isNaN(n) ? null : n;
+  return Number.isInteger(n) && n > 0 ? n : null;
 }
 
 /* ── GET /api/request/advance/files/[fileId] — stream the attachment ── */
@@ -16,21 +35,27 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ fil
   if (session instanceof Response) return session;
   const { fileId: raw } = await params;
   const fileId = parseId(raw);
-  if (fileId == null) return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
+  if (fileId == null) return NOT_FOUND();
 
   const file = await getAdvanceFile(fileId);
-  if (!file) return NextResponse.json({ ok: false, error: "not found" }, { status: 404 });
+  if (!file) return NOT_FOUND();
+  // An orphaned row (parent already deleted) is unreadable rather than unowned —
+  // there is nothing left to authorize against.
+  if (file.requestId == null) return NOT_FOUND();
+
+  const gate = await authorizeAccRequest(session, Number(file.requestId), "read", AP2_FORM_CODE);
+  if (gate instanceof Response) return gate;
 
   try {
     const buffer = file.storageBackend === "sharepoint"
       ? await downloadFileFromSharePoint(file.storagePath)
       : await downloadFile(file.storagePath);
+    // The type is re-derived from the bytes, never echoed from the stored
+    // `ContentType` — rows written before the upload guard carry whatever the
+    // browser declared. Only real raster images stay inline; everything else is
+    // a forced download under `nosniff` and a `default-src 'none'; sandbox` CSP.
     return new NextResponse(new Uint8Array(buffer), {
-      headers: {
-        "Content-Type": file.contentType,
-        "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
-        "Cache-Control": "private, max-age=60",
-      },
+      headers: attachmentResponseHeaders({ bytes: buffer, fileName: file.fileName }),
     });
   } catch (e) {
     console.error("[advance/files/[fileId]] GET", e);
@@ -42,29 +67,28 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ fil
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ fileId: string }> }) {
   const session = await requireAuth();
   if (session instanceof Response) return session;
-  const userId = Number(session.user.id);
   const { fileId: raw } = await params;
   const fileId = parseId(raw);
-  if (fileId == null) return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
+  if (fileId == null) return NOT_FOUND();
 
   const file = await getAdvanceFile(fileId);
-  if (!file) return NextResponse.json({ ok: false, error: "not found" }, { status: 404 });
+  if (!file) return NOT_FOUND();
+  if (file.requestId == null) return NOT_FOUND();
 
-  const pool = await getAccPool();
-  const rc = await pool.request().input("rid", sql.Int, file.requestId)
-    .query(`SELECT Status, CreatedBy FROM [dbo].[AccRequest] WHERE Id=@rid`);
-  const row = rc.recordset[0] as { Status: string; CreatedBy: number | null } | undefined;
-  if (!row || row.CreatedBy !== userId) {
-    return NextResponse.json({ ok: false, error: "ลบได้เฉพาะเจ้าของคำขอ" }, { status: 403 });
-  }
-  if (row.Status !== "Draft" && row.Status !== "Returned") {
-    return NextResponse.json({ ok: false, error: "ลบไฟล์ได้เฉพาะฉบับร่าง" }, { status: 400 });
-  }
+  // "mutate" is creator-only and Draft/Returned-only — the same pair of
+  // conditions this route checked by hand, now decided in one place and pinned
+  // to AP-2 so an id belonging to another form cannot be reached through it.
+  const gate = await authorizeAccRequest(session, Number(file.requestId), "mutate", AP2_FORM_CODE);
+  if (gate instanceof Response) return gate;
 
   try {
-    if (file.storageBackend === "sharepoint") await deleteFileFromSharePoint(file.storagePath).catch(() => {});
-    else await deleteFile(file.storagePath).catch(() => {});
     await deleteAdvanceFileRow(fileId);
+    // Row first, bytes second, and dispatched on the backend: a Graph driveItem
+    // id handed to `fs.unlink` silently misses and orphans the object.
+    await deleteStoredFiles(
+      [{ storagePath: file.storagePath, storageBackend: file.storageBackend }],
+      `AP-2 attachment ${fileId} deleted from request ${file.requestId}`,
+    );
     return NextResponse.json({ ok: true });
   } catch (e) {
     console.error("[advance/files/[fileId]] DELETE", e);

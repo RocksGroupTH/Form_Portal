@@ -2,10 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { X, ExternalLink, Paperclip, FileText } from "lucide-react";
+import { X, ExternalLink, Maximize2, Paperclip, FileText } from "lucide-react";
 import { toast } from "sonner";
 import { statusLabelDisplay } from "@/features/accounting/constants";
 import type { AdvanceRequest } from "@/features/advance/types";
+import {
+  AttachmentViewer,
+  attachmentKind,
+  type AttachmentKind,
+  type AttachmentSource,
+} from "@/components/ui/AttachmentViewer";
 import { PaymentDatePicker } from "@/components/ui/PaymentDatePicker";
 import { AdvanceVendorPicker } from "./AdvanceVendorPicker";
 
@@ -47,6 +53,17 @@ export function AdvanceDetailPanel({ requestId, onClose, onChanged }:
   const [paymentDate, setPaymentDate] = useState<string>("");
   const [approving, setApproving] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
+  /* One viewer for the whole panel, not one per chip — a modal rendered inside a
+     list item is a modal per item. The chips only report which file was clicked.
+
+     Every kind opens it, including PDFs, which used to be an `<a target="_blank">`
+     pointed at the download route: that route serves anything non-raster as
+     `Content-Disposition: attachment` under `nosniff`, so the new tab downloaded
+     the file and closed. The viewer fetches the bytes itself and renders them
+     from a Blob inside our own origin, which is why no server header is relaxed. */
+  const [viewing, setViewing] = useState<{ source: AttachmentSource; kind: AttachmentKind } | null>(
+    null,
+  );
 
   // ADV↔PV send history (only meaningful once a row has been pulled back and re-sent).
   useEffect(() => {
@@ -236,15 +253,19 @@ export function AdvanceDetailPanel({ requestId, onClose, onChanged }:
                   <div className="grid grid-cols-3 gap-2">
                     {files.map((f) => {
                       const href = `/api/request/advance/files/${f.id}`;
-                      const isImg = (f.contentType ?? "").toLowerCase().startsWith("image/");
+                      // Declared type first, then the name — SharePoint returns
+                      // `application/octet-stream` often enough that a bare
+                      // `contentType.startsWith("image/")` mislabels a plain PDF.
+                      const kind = attachmentKind(f.fileName, f.contentType);
                       const ext = (f.fileName.split(".").pop() ?? "").toUpperCase().slice(0, 4);
                       return (
-                        <a key={f.id} href={href} target="_blank" rel="noopener noreferrer" title={f.fileName}
-                          className="group flex flex-col rounded-lg overflow-hidden no-underline"
+                        <button key={f.id} type="button" title={f.fileName}
+                          onClick={() => setViewing({ source: { name: f.fileName, url: href }, kind })}
+                          className="group flex flex-col rounded-lg overflow-hidden cursor-pointer p-0 text-left"
                           style={{ border: "1px solid var(--border-card)", background: "var(--bg-card-alt)" }}>
                           <div className="relative w-full aspect-square flex items-center justify-center overflow-hidden"
                             style={{ background: "var(--bg-badge)" }}>
-                            {isImg ? (
+                            {kind === "image" ? (
                               // eslint-disable-next-line @next/next/no-img-element
                               <img src={href} alt={f.fileName} loading="lazy" className="w-full h-full object-cover" />
                             ) : (
@@ -255,11 +276,11 @@ export function AdvanceDetailPanel({ requestId, onClose, onChanged }:
                             )}
                             <span className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity rounded p-0.5"
                               style={{ background: "rgba(0,0,0,0.55)" }}>
-                              <ExternalLink size={11} color="#fff" />
+                              <Maximize2 size={11} color="#fff" />
                             </span>
                           </div>
-                          <span className="text-[10px] px-1.5 py-1 truncate" style={{ color: "var(--text-secondary)" }}>{f.fileName}</span>
-                        </a>
+                          <span className="text-[10px] px-1.5 py-1 truncate w-full" style={{ color: "var(--text-secondary)" }}>{f.fileName}</span>
+                        </button>
                       );
                     })}
                   </div>
@@ -396,6 +417,13 @@ export function AdvanceDetailPanel({ requestId, onClose, onChanged }:
           </button>
         </div>
       </aside>
+
+      <AttachmentViewer
+        open={viewing != null}
+        source={viewing?.source ?? null}
+        kind={viewing?.kind ?? "other"}
+        onClose={() => setViewing(null)}
+      />
     </>
   );
 }

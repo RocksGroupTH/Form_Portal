@@ -12,8 +12,12 @@ import { canAccessAccountArea } from "@/lib/acc/access";
 import { resolveFormEnvironment } from "@/lib/form-environment";
 import { getActiveUatTesterFor } from "@/lib/uat-tester/service";
 import { AP4_FORM_CODE } from "@/features/reimburse/constants";
+import { AP2_FORM_CODE } from "@/features/advance/constants";
+import { AP3_FORM_CODE } from "@/features/clear-advance/constants";
 import { findActiveApprover } from "@/lib/acc/reimburse/approval-policy";
 import { listReimburseApprovers } from "@/lib/acc/reimburse/settings-service";
+import { ADVANCE_APPROVER_ROLES, isAdvanceApprover } from "@/lib/adv/advance-approver-service";
+import { isClrApprover } from "@/lib/clr/clear-advance-approver-service";
 import {
   decideRequestMutate,
   decideRequestRead,
@@ -66,6 +70,55 @@ export async function loadAccRequestAcl(
 }
 
 /**
+ * The approver roster a form keeps for itself, asked only when the row being
+ * decided belongs to that form.
+ *
+ * `canAccessAccountArea` answers `AccApprover`, which is **AP-1's** list. Four
+ * forms now keep their own instead, so a form's configured approver is not on
+ * AP-1's list and would otherwise fail `decideRequestRead` on the very document
+ * they are the assigned approver for:
+ *
+ *   - **AP-4** — `AccReimburseApprover` (the arm this generalises).
+ *   - **AP-2** — `AccAdvanceApprover`, three roles. Any active role counts:
+ *     which role may *act* is decided per step by the approve/reject routes
+ *     (`canAct` in `.../advance/requests/[id]/approve`), and a DIRECTOR must be
+ *     able to read the attachments of a request still sitting at HEAD_ACC.
+ *   - **AP-3** — `AccClearAdvanceApprover`, roles ACCOUNT and HEAD. The MANAGER
+ *     step is not on that roster; it comes from HR and is already covered by
+ *     `isAssignedManager` against `AccRequest.ManagerStaffId`, which AP-3's
+ *     submit populates. This mirrors the gate AP-3's own approval-queue route
+ *     already applies (`canAccessAccountArea || isClrApprover(ACCOUNT|HEAD)`).
+ *
+ * The widening is one-way in both directions: the lookup runs only when the
+ * *row* is that form's, so an AP-2 approver gains nothing on an AP-1, AP-3 or
+ * AP-4 row, and reading is not acting — every approve/reject route keeps its own
+ * per-step check.
+ */
+async function isOwnFormRosterApprover(
+  formCode: string | null | undefined,
+  email: string | null,
+  staffId: number | null,
+): Promise<boolean> {
+  if (formCode === AP4_FORM_CODE) {
+    const roster = await listReimburseApprovers();
+    return findActiveApprover(roster, staffId, email) != null;
+  }
+  if (formCode === AP2_FORM_CODE) {
+    const hits = await Promise.all(
+      ADVANCE_APPROVER_ROLES.map((role) => isAdvanceApprover(email, role)),
+    );
+    return hits.some(Boolean);
+  }
+  if (formCode === AP3_FORM_CODE) {
+    const hits = await Promise.all(
+      (["ACCOUNT", "HEAD"] as const).map((role) => isClrApprover(email, role)),
+    );
+    return hits.some(Boolean);
+  }
+  return false;
+}
+
+/**
  * Assemble the viewer once per route.
  *
  * `staffId` is passed in rather than looked up here: the callers that need it
@@ -73,14 +126,10 @@ export async function loadAccRequestAcl(
  * second HR round-trip per request is measurable on the detail pages.
  *
  * `formCode` names the form of the row being decided, and it changes one thing:
- * which approver roster counts as the accounting area. `canAccessAccountArea`
- * asks `AccApprover`, which is **AP-1's** list — AP-4 deliberately owns its own
- * pool (`AccReimburseApprover`, spec decision 3) so that editing one form's
- * approvers cannot silently change the other's. Without this, an AP-4 approver
- * who is not also an AP-1 approver could not open, let alone action, the
- * requests they are the configured approver for. The widening is one-way: an
- * AP-4 approver gains nothing on an AP-1 or AP-17 row, because the extra lookup
- * only runs when the row itself is AP-4.
+ * which approver roster counts as the accounting area — see
+ * `isOwnFormRosterApprover` above for the four forms that keep their own and why
+ * asking AP-1's `AccApprover` alone would lock each form's real approvers out of
+ * the documents they are configured to approve.
  */
 export async function buildAccAclViewer(input: {
   userId: number;
@@ -90,16 +139,12 @@ export async function buildAccAclViewer(input: {
   formCode?: string | null;
 }): Promise<AccAclViewer> {
   const environment = await resolveFormEnvironment();
-  const [isSharedAccountArea, tester, reimburseApprover] = await Promise.all([
+  const [isSharedAccountArea, tester, ownFormApprover] = await Promise.all([
     canAccessAccountArea(input.email, input.role),
     environment === "UAT"
       ? getActiveUatTesterFor(input.email, input.staffId)
       : Promise.resolve(null),
-    input.formCode === AP4_FORM_CODE
-      ? listReimburseApprovers().then((roster) =>
-          findActiveApprover(roster, input.staffId, input.email),
-        )
-      : Promise.resolve(null),
+    isOwnFormRosterApprover(input.formCode, input.email, input.staffId),
   ]);
 
   return {
@@ -107,7 +152,7 @@ export async function buildAccAclViewer(input: {
     email: input.email,
     staffId: input.staffId,
     role: input.role,
-    isAccountArea: isSharedAccountArea || reimburseApprover != null,
+    isAccountArea: isSharedAccountArea || ownFormApprover,
     environment,
     isActiveUatTester: tester != null,
   };
