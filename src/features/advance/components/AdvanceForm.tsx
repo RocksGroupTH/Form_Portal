@@ -8,6 +8,12 @@ import { Dialog } from "@/components/ui/Dialog";
 import { Avatar } from "@/components/ui/Avatar";
 import { DateRangePicker } from "@/components/ui/DateRangePicker";
 import { RequesterPickerModal, type RequesterOption } from "@/components/RequesterPickerModal";
+import {
+  AttachmentViewer,
+  attachmentKind,
+  type AttachmentKind,
+  type AttachmentSource,
+} from "@/components/ui/AttachmentViewer";
 import { CurrencyCombobox } from "@/features/advance/components/CurrencyCombobox";
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
 import type { AccBrandOption } from "@/features/accounting/types";
@@ -53,6 +59,17 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
   const [uploading, setUploading] = useState(false);
   const [deleteFileId, setDeleteFileId] = useState<number | null>(null);
   const [deletingFile, setDeletingFile] = useState(false);
+  /* One viewer for the whole form, not one per thumbnail — a modal rendered
+     inside a list item is a modal per item.
+
+     Every kind opens it, including PDFs, which used to be an `<a target="_blank">`
+     pointed at the download route: that route serves anything non-raster as
+     `Content-Disposition: attachment` under `nosniff`, so the new tab downloaded
+     the file and closed. The viewer fetches the bytes itself and renders them
+     from a Blob inside our own origin, which is why no server header is relaxed. */
+  const [viewing, setViewing] = useState<{ source: AttachmentSource; kind: AttachmentKind } | null>(
+    null,
+  );
 
   const [brandCode, setBrandCode] = useState(initial?.brandCode ?? "");
   // Empty until chosen — the form reveals lower fields step by step (brand → โอนให้ → rest).
@@ -813,15 +830,20 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
                 <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                   {files.map((f) => {
                     const href = `/api/request/advance/files/${f.id}`;
-                    const isImg = (f.contentType ?? "").toLowerCase().startsWith("image/");
+                    // Declared type first, then the name — SharePoint returns
+                    // `application/octet-stream` often enough that a bare
+                    // `contentType.startsWith("image/")` mislabels a plain PDF.
+                    const kind = attachmentKind(f.fileName, f.contentType);
                     const ext = (f.fileName.split(".").pop() ?? "").toUpperCase().slice(0, 4);
                     return (
                       <div key={f.id} className="group relative flex flex-col rounded-lg overflow-hidden"
                         style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)" }}>
-                        <a href={href} target="_blank" rel="noreferrer" title={f.fileName} className="block">
+                        <button type="button" title={f.fileName}
+                          onClick={() => setViewing({ source: { name: f.fileName, url: href }, kind })}
+                          className="block w-full cursor-pointer border-none p-0 bg-transparent">
                           <div className="w-full aspect-square flex items-center justify-center overflow-hidden"
                             style={{ background: "var(--bg-badge)" }}>
-                            {isImg ? (
+                            {kind === "image" ? (
                               // eslint-disable-next-line @next/next/no-img-element
                               <img src={href} alt={f.fileName} loading="lazy" className="w-full h-full object-cover" />
                             ) : (
@@ -831,7 +853,7 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
                               </div>
                             )}
                           </div>
-                        </a>
+                        </button>
                         <div className="flex items-center gap-1 px-1.5 py-1">
                           <span className="flex-1 min-w-0 truncate text-[10px]" style={{ color: "var(--text-primary)" }} title={f.fileName}>{f.fileName}</span>
                           <span className="text-[9px] shrink-0" style={{ color: "var(--text-faint)" }}>{Math.max(1, Math.round(f.fileSize / 1024))}KB</span>
@@ -912,6 +934,13 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
           </div>
         </div>
       </Dialog>
+
+      <AttachmentViewer
+        open={viewing != null}
+        source={viewing?.source ?? null}
+        kind={viewing?.kind ?? "other"}
+        onClose={() => setViewing(null)}
+      />
     </div>
   );
 }

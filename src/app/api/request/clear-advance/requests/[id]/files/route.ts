@@ -9,6 +9,9 @@ import {
 } from "@/lib/sharepoint";
 import { buildAccFolderPath, buildAccFileName } from "@/lib/acc/sharepoint-path";
 import { resolveFormEnvironment } from "@/lib/form-environment";
+import { authorizeAccRequest } from "@/lib/acc/request-acl";
+import { checkAttachment, checkAttachmentBatch } from "@/lib/acc/attachment-guard";
+import { AP3_FORM_CODE } from "@/features/clear-advance/constants";
 import type { AccFileMeta } from "@/features/accounting/types";
 
 /* ── POST /api/request/clear-advance/requests/[id]/files — attach a receipt/tax invoice ── */
@@ -24,6 +27,14 @@ export async function POST(
   const { id } = await params;
   const requestId = Number(id);
 
+  // Owner + editable state, before anything is read off the wire. The route
+  // used to check only that the AccRequest row existed, so any authenticated
+  // session could attach a file to anyone's request in any status. "mutate"
+  // matches what the form already does on the client — `FileArea` is read-only
+  // once the claim leaves Draft/Returned.
+  const gate = await authorizeAccRequest(session, requestId, "mutate", AP3_FORM_CODE);
+  if (gate instanceof Response) return gate;
+
   try {
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
@@ -31,12 +42,23 @@ export async function POST(
     if (!file) {
       return NextResponse.json({ ok: false, error: "No file provided" }, { status: 400 });
     }
+    // Kept as the first-pass message for somebody who picked the wrong thing in
+    // the file dialog. It is **not** the admission decision — `file.type` is a
+    // string the caller writes — and it is deliberately not narrowed either,
+    // since it is what this slot has accepted for months.
     const isImage = file.type.startsWith("image/");
     const isPdf = file.type === "application/pdf" || file.name?.toLowerCase().endsWith(".pdf");
     if (!isImage && !isPdf) {
       return NextResponse.json(
         { ok: false, error: "แนบได้เฉพาะไฟล์รูปภาพหรือ PDF" },
         { status: 400 },
+      );
+    }
+    const batchRejection = checkAttachmentBatch([file]);
+    if (batchRejection) {
+      return NextResponse.json(
+        { ok: false, error: batchRejection.error },
+        { status: batchRejection.status },
       );
     }
 
@@ -56,7 +78,27 @@ export async function POST(
     const requestNo: string | null = reqCheck.recordset[0].RequestNo ?? null;
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const contentType = file.type || "application/octet-stream";
+
+    // The bytes decide, not `file.type`. `"any"` switches off the *kind* check
+    // and nothing else — this slot has taken whatever the browser labelled
+    // `image/*` since it shipped, and narrowing it to the sniff allowlist would
+    // start refusing real work (a BMP or TIFF receipt, a phone's HEIC). The
+    // empty-file and size limits still apply, the bytes are still sniffed, and
+    // it is the **sniffed** type that gets stored, so an HTML or SVG payload is
+    // `application/octet-stream` with `inlineSafe: false`.
+    // `attachmentResponseHeaders` re-sniffs on download and reaches the same
+    // verdict, serving it as `attachment` under `nosniff` and a
+    // `default-src 'none'; sandbox` CSP. **That is the control here.**
+    const check = checkAttachment({
+      fileName: file.name,
+      declaredType: file.type,
+      bytes: buffer,
+      allowedKinds: "any",
+    });
+    if (!check.ok) {
+      return NextResponse.json({ ok: false, error: check.error }, { status: check.status });
+    }
+    const contentType = check.type.contentType;
 
     const insertRes = await pool
       .request()
@@ -123,7 +165,9 @@ export async function POST(
       id: newId,
       fileName: file.name,
       fileSize: file.size,
-      contentType: file.type || "application/octet-stream",
+      // The sniffed type, matching what was stored and what the download route
+      // will re-derive — not the browser's claim.
+      contentType,
       url: `/api/request/clear-advance/files/${newId}`,
     };
 
@@ -152,23 +196,14 @@ export async function DELETE(
     return NextResponse.json({ ok: false, error: "fileId is required" }, { status: 400 });
   }
 
+  // Creator + Draft/Returned, in one place and pinned to AP-3. The old check was
+  // the status alone, so any authenticated session could delete the evidence off
+  // a draft that was not theirs.
+  const gate = await authorizeAccRequest(session, requestId, "mutate", AP3_FORM_CODE);
+  if (gate instanceof Response) return gate;
+
   try {
     const pool = await getAccPool();
-
-    const statusCheck = await pool
-      .request()
-      .input("requestId", sql.Int, requestId)
-      .query(`SELECT Status FROM AccRequest WHERE Id = @requestId`);
-    if (statusCheck.recordset.length === 0) {
-      return NextResponse.json({ ok: false, error: "Request not found" }, { status: 404 });
-    }
-    const status = statusCheck.recordset[0].Status as string;
-    if (status !== "Draft" && status !== "Returned") {
-      return NextResponse.json(
-        { ok: false, error: "ลบรูปได้เฉพาะคำขอที่เป็นฉบับร่างเท่านั้น" },
-        { status: 400 },
-      );
-    }
 
     const result = await pool
       .request()

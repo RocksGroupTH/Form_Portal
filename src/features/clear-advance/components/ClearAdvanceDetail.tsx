@@ -10,7 +10,12 @@ import {
 import type { ClearAdvanceDetail as ClearDetail } from "@/features/clear-advance/types";
 import { Dialog } from "@/components/ui/Dialog";
 import { Avatar } from "@/components/ui/Avatar";
-import { ImageLightbox } from "@/features/accounting/components/ImageLightbox";
+import {
+  AttachmentViewer,
+  attachmentKind,
+  type AttachmentKind,
+  type AttachmentSource,
+} from "@/components/ui/AttachmentViewer";
 import { RequestStatusBadge } from "@/features/accounting/components/RequestStatusBadge";
 import { CLR_STEP_CODES, CLR_STEP_LABEL_TH, type ClrStepCode } from "@/features/clear-advance/constants";
 import type { AccFileMeta } from "@/features/accounting/types";
@@ -47,10 +52,6 @@ function fmtDateOnly(raw: string | null | undefined): string {
 function todayYmd(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-function isImage(f: AccFileMeta): boolean {
-  return (f.contentType ?? "").startsWith("image/") || /\.(png|jpe?g|gif|webp)$/i.test(f.fileName);
 }
 
 const box = { background: "var(--bg-card)", border: "1px solid var(--border-card)", boxShadow: "var(--shadow-sm)" } as const;
@@ -112,7 +113,17 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
 
   const [viewerStaffId, setViewerStaffId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
-  const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
+  /* One viewer for the whole page, not one per thumbnail. It replaces the
+     image-only lightbox: every kind now opens in page, because the download
+     route serves anything non-raster as `Content-Disposition: attachment`. */
+  const [viewing, setViewing] = useState<{ source: AttachmentSource; kind: AttachmentKind } | null>(
+    null,
+  );
+  const openFileViewer = (f: AccFileMeta) =>
+    setViewing({
+      source: { name: f.fileName, url: f.url },
+      kind: attachmentKind(f.fileName, f.contentType),
+    });
 
   // Manager step dialogs.
   const [mgAction, setMgAction] = useState<"approve" | "return" | "reject" | null>(null);
@@ -666,7 +677,7 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
               <p className="text-[10px] font-semibold uppercase tracking-wide m-0 mb-1.5" style={{ color: "var(--text-muted)" }}>
                 หลักฐานการโอนคืน ({refundProofFiles.length})
               </p>
-              <FileThumbs files={refundProofFiles} onImage={(f) => setLightbox({ src: f.url, alt: f.fileName })} />
+              <FileThumbs files={refundProofFiles} onView={openFileViewer} />
             </div>
           </div>
         </Section>
@@ -674,7 +685,7 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
 
       {/* Receipts */}
       <Section title={`ใบเสร็จ / ใบกำกับภาษี (${files.length})`} icon={<Paperclip size={15} />}>
-        <FileThumbs files={files} onImage={(f) => setLightbox({ src: f.url, alt: f.fileName })} />
+        <FileThumbs files={files} onView={openFileViewer} />
       </Section>
 
       {/* Manager approve confirm dialog */}
@@ -753,7 +764,12 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
         </div>
       </Dialog>
 
-      <ImageLightbox open={lightbox != null} src={lightbox?.src ?? ""} alt={lightbox?.alt} onClose={() => setLightbox(null)} />
+      <AttachmentViewer
+        open={viewing != null}
+        source={viewing?.source ?? null}
+        kind={viewing?.kind ?? "other"}
+        onClose={() => setViewing(null)}
+      />
     </div>
   );
 }
@@ -839,25 +855,36 @@ function ExpenseTable({ items, advanceAmount }: { items: ClearAdvanceItem[]; adv
   );
 }
 
-function FileThumbs({ files, onImage }: { files: AccFileMeta[]; onImage: (f: AccFileMeta) => void }) {
+/**
+ * Thumbnails. **Every kind opens the shared in-page viewer** — the one AP-1,
+ * AP-4 and AP-17 use — so "view" means view. A non-image used to be an
+ * `<a target="_blank">` pointed at the download route, where
+ * `attachmentResponseHeaders` serves it `Content-Disposition: attachment`: the
+ * tab downloaded the file and closed, which is not viewing it.
+ *
+ * `attachmentKind` derives the kind from the declared type and then the name —
+ * SharePoint hands back `application/octet-stream` often enough that the
+ * filename fallback is load-bearing.
+ */
+function FileThumbs({ files, onView }: { files: AccFileMeta[]; onView: (f: AccFileMeta) => void }) {
   if (files.length === 0) {
     return <p className="text-[12px] m-0" style={{ color: "var(--text-muted)" }}>— ไม่มีเอกสารแนบ</p>;
   }
   return (
     <div className="flex flex-wrap gap-2">
-      {files.map((f) => isImage(f) ? (
-        <button key={f.id} type="button" onClick={() => onImage(f)}
+      {files.map((f) => attachmentKind(f.fileName, f.contentType) === "image" ? (
+        <button key={f.id} type="button" onClick={() => onView(f)} title={f.fileName}
           className="w-20 h-20 rounded-lg overflow-hidden cursor-pointer border-none p-0" style={{ background: "var(--bg-card-alt)" }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={f.url} alt={f.fileName} className="w-full h-full object-cover" />
         </button>
       ) : (
-        <a key={f.id} href={f.url} target="_blank" rel="noreferrer"
-          className="flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] no-underline"
+        <button key={f.id} type="button" onClick={() => onView(f)} title={f.fileName}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] cursor-pointer"
           style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)", color: "var(--text-primary)" }}>
           <ImageIcon size={13} style={{ color: "var(--nav-active-text)" }} />
           <span className="truncate max-w-[180px]">{f.fileName}</span>
-        </a>
+        </button>
       ))}
     </div>
   );
