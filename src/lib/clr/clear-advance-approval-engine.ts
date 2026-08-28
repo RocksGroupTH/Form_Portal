@@ -1,3 +1,5 @@
+import { env } from "@/env";
+import { documentButton, documentUrl } from "@/lib/acc/mail-link";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { queueEmail } from "@/lib/acc/email-queue";
 import { requireActorStaffId } from "@/lib/acc/actor-context";
@@ -22,8 +24,17 @@ async function notify(
   await queueEmail({ requestId, toEmail, subject, bodyHtml, triggerType });
 }
 
+/**
+ * The "open the document" button.
+ *
+ * Built through `documentButton`, which refuses a relative URL. This function
+ * used to emit `<a href="/request/clear-advance/42">` — relative, so it
+ * resolved against the mail client, which is nowhere, and the link was dead in
+ * every client. AP-1, AP-2, AP-4 and AP-17 all built theirs off
+ * NEXT_PUBLIC_APP_URL; AP-3 was the one that did not.
+ */
 function link(id: number): string {
-  return `<p><a href="/request/clear-advance/${id}">เปิดคำขอ</a></p>`;
+  return documentButton(documentUrl(env.NEXT_PUBLIC_APP_URL, "/request/clear-advance", id));
 }
 
 /**
