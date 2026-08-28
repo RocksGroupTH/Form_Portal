@@ -134,7 +134,22 @@ export interface AccSameDayBrandRow {
   displayName: string | null;
   isActive: boolean;
 }
-export interface AccBrandOption { brandCode: string; brandName: string; brandLogo: string | null; }
+export interface AccBrandOption {
+  brandCode: string;
+  brandName: string;
+  brandLogo: string | null;
+  /**
+   * The brand's claim currency, or null. Null and "THB" both mean baht.
+   *
+   * Carried with `currencyEnabled` rather than alone because every consumer
+   * calls `brandCurrencyState({ currencyCode, currencyEnabled })`, which needs
+   * the pair: a code without the flag is configuration somebody staged but did
+   * not turn on, and rendering a dropdown for it is the one state the flag
+   * exists to prevent.
+   */
+  currencyCode: string | null;
+  currencyEnabled: boolean;
+}
 
 export interface AccBrandAccountRow {
   id: number;

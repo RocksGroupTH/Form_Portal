@@ -21,6 +21,8 @@ export async function listAllBrands(): Promise<AccBrandOption[]> {
     brandCode: b.code,
     brandName: b.name,
     brandLogo: b.logo,
+    currencyCode: b.currencyCode,
+    currencyEnabled: b.currencyEnabled,
   }));
 }
 
@@ -47,6 +49,9 @@ export async function getAllowedBrands(formCode: string): Promise<AccBrandOption
       brandCode: row.BrandCode,
       brandName: b?.brandName ?? row.BrandCode,
       brandLogo: b?.brandLogo ?? null,
+      // From the map this function already builds — not a second query.
+      currencyCode: b?.currencyCode ?? null,
+      currencyEnabled: b?.currencyEnabled ?? false,
     };
   });
 }

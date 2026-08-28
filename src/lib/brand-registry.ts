@@ -36,6 +36,12 @@ export interface RegistryBrand {
   logo: string | null;
   /** False only where a row says so. */
   isEnabled: boolean;
+  /** ISO-3166-1 alpha-2, or null when nobody has set one. */
+  countryCode: string | null;
+  /** ISO-4217, or null. Null and "THB" both mean baht — see `acc/currency.ts`. */
+  currencyCode: string | null;
+  /** Whether a claim against this brand may be entered in `currencyCode`. */
+  currencyEnabled: boolean;
   /** True when an uploaded logo is stored for this brand. */
   hasUploadedLogo: boolean;
 }
@@ -45,6 +51,9 @@ interface BrandSettingRow {
   IsEnabled: boolean;
   HasLogo: number;
   LogoUpdatedAt: Date | null;
+  CountryCode: string | null;
+  CurrencyCode: string | null;
+  CurrencyEnabled: boolean;
 }
 
 /**
@@ -84,7 +93,8 @@ export async function listBrandRegistry(): Promise<RegistryBrand[]> {
     formPool.request().query(`
       SELECT BrandCode, IsEnabled,
              CASE WHEN LogoBytes IS NULL THEN 0 ELSE 1 END AS HasLogo,
-             LogoUpdatedAt
+             LogoUpdatedAt,
+             CountryCode, CurrencyCode, CurrencyEnabled
       FROM [dbo].[BrandSetting]
     `),
   ]);
@@ -104,6 +114,12 @@ export async function listBrandRegistry(): Promise<RegistryBrand[]> {
       // Absent means enabled — see the module header.
       isEnabled: s ? s.IsEnabled : true,
       hasUploadedLogo,
+      // Absent means NO currency, which is the opposite default to isEnabled
+      // and deliberately so: a brand nobody has configured claims in baht, and
+      // baht is what every row written before this feature holds.
+      countryCode: s?.CountryCode ?? null,
+      currencyCode: s?.CurrencyCode ?? null,
+      currencyEnabled: s ? s.CurrencyEnabled : false,
     };
   });
 }
