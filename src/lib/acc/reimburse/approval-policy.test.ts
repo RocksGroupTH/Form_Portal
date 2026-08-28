@@ -421,14 +421,18 @@ test("saveDraft and deleteDraft read the row they are about to write by form as 
   // same question, deliberately: `POST /api/request/accounting/requests` takes a
   // body-supplied `id` into the very same `saveDraft` and has no gate of its
   // own, so the SQL is what closes that path.
+  //
+  // Matched on `SELECT CreatedBy, Status … FROM [dbo].[AccRequest]` rather than
+  // on an exact column list: `deleteItem` also reads `Currency, ExchangeRate`
+  // there, so that it can refuse a foreign claim whose stored rate is unusable
+  // *before* it deletes anything. The invariant being counted is the
+  // `FormCode=@form` predicate on every ownership read, not which columns come
+  // back — pinning the column list made an unrelated read stop being counted at
+  // all, which is the one failure mode a counting test must not have.
   const src = readSrc("lib/acc/request-service.ts");
-  const opener = "SELECT CreatedBy, Status FROM [dbo].[AccRequest]";
-  const found: string[] = [];
-  let from = src.indexOf(opener);
-  while (from >= 0) {
-    found.push(src.slice(from, src.indexOf(String.fromCharCode(96), from)));
-    from = src.indexOf(opener, from + opener.length);
-  }
+  const found = src.match(
+    /SELECT CreatedBy, Status[^`]*?FROM \[dbo\]\.\[AccRequest\][^`]*/g,
+  ) ?? [];
   // saveDraft's update branch, deleteDraft, and deleteItem — the third was
   // found by this assertion rather than by the review that asked for the first
   // two, which is the whole point of counting them.

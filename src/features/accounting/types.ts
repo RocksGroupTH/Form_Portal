@@ -88,7 +88,23 @@ export interface AccRequest {
   requesterPosition: string | null;
   requesterDepartmentName: string | null; managerStaffId: number | null; managerEmail: string | null;
   companyName: string | null;
+  /**
+   * **`totalAmount` is Thai baht, always** — whatever currency the claim was
+   * entered in. Every summer, report, export and ERP journal reads it, and none
+   * of them knows about currency; that is the whole point of converting on the
+   * way in. See `src/lib/acc/currency.ts`.
+   */
   totalAmount: number | null; paymentDate: string | null;
+  /**
+   * The currency the claim was entered in. **Null and `"THB"` both mean baht**,
+   * and a baht claim leaves all three of these null — nobody recorded a
+   * currency, and writing `"THB"` would claim somebody had.
+   */
+  currency: string | null;
+  /** THB per 1 unit of `currency`, as fetched when the claim was submitted. */
+  exchangeRate: number | null;
+  /** The claim's own figure, before conversion. `totalAmount` is this × the rate. */
+  baseAmount: number | null;
   submittedBy: number | null; submittedAt: string | null;
   createdAt: string; updatedAt: string;
   /** One row per travel day (sorted by sortOrder). */

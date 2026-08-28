@@ -60,6 +60,28 @@ interface ExpenseRowsProps {
    * same `[data-field]` mechanism AP-17's form uses.
    */
   dataField?: string;
+  /**
+   * The currency these amounts are entered in. Null/absent/`"THB"` all mean
+   * baht, which is what every existing call site gets by leaving it out.
+   *
+   * Display only — it changes the `฿` adornment and the `บาท` on the block
+   * total, nothing about what is stored. Amounts on a foreign claim are held in
+   * the claim's own currency and converted once, on the request header, by
+   * `request-service.ts`.
+   */
+  currency?: string | null;
+}
+
+/** The symbol or code to put beside a figure. `฿` for baht, the code otherwise. */
+function currencyMark(currency: string | null | undefined): string {
+  const c = (currency ?? "").trim().toUpperCase();
+  return c === "" || c === "THB" ? "฿" : c;
+}
+
+/** The word after a figure — `บาท`, or the code on a foreign claim. */
+function currencyWord(currency: string | null | undefined): string {
+  const c = (currency ?? "").trim().toUpperCase();
+  return c === "" || c === "THB" ? "บาท" : c;
 }
 
 const inputStyle: React.CSSProperties = {
@@ -78,6 +100,7 @@ export function ExpenseRows({
   highlightMissingReceipt = false,
   requestId,
   dataField,
+  currency,
 }: ExpenseRowsProps) {
   const rowItems = items.filter((it) => it.itemType === type);
   const allItems = items;
@@ -136,6 +159,7 @@ export function ExpenseRows({
             key={filteredIdx}
             item={item}
             requestId={requestId}
+            currency={currency}
             highlightMissingReceipt={highlightMissingReceipt}
             onAmountChange={(val) => handleAmountChange(filteredIdx, val)}
             onRemove={() => handleRemove(filteredIdx)}
@@ -175,7 +199,7 @@ export function ExpenseRows({
                 .reduce((s, i) => s + (Number(i.amount) || 0), 0)
                 .toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>{" "}
-            บาท
+            {currencyWord(currency)}
           </span>
         </div>
       )}
@@ -188,6 +212,8 @@ export function ExpenseRows({
 interface ExpenseRowProps {
   item: TravelExpenseItem;
   requestId?: number;
+  /** Display only — decides whether the field's adornment reads `฿` or a code. */
+  currency?: string | null;
   highlightMissingReceipt?: boolean;
   onAmountChange: (val: string) => void;
   onRemove: () => void;
@@ -199,6 +225,7 @@ interface ExpenseRowProps {
 function ExpenseRow({
   item,
   requestId,
+  currency,
   highlightMissingReceipt = false,
   onAmountChange,
   onRemove,
@@ -548,14 +575,19 @@ function ExpenseRow({
                 value={item.amount || ""}
                 onChange={(e) => onAmountChange(e.target.value)}
                 disabled={readNote === "reading"}
-                className="w-full rounded-lg pl-3 pr-7 py-2 text-[15px] font-bold outline-none tabular-nums text-right"
+                // A three-letter code needs more room than `฿` does; baht keeps
+                // the padding it has always had, so nothing moves on an
+                // ordinary Thai claim.
+                className={`w-full rounded-lg pl-3 py-2 text-[15px] font-bold outline-none tabular-nums text-right ${
+                  currencyMark(currency) === "฿" ? "pr-7" : "pr-12"
+                }`}
                 style={inputStyle}
               />
               <span
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-[14px] font-bold pointer-events-none"
                 style={{ color: "var(--text-muted)" }}
               >
-                ฿
+                {currencyMark(currency)}
               </span>
               {/* Covers the whole field rather than a hairline at its edge, so
                   the state is unmistakable at a glance. Laid over a disabled

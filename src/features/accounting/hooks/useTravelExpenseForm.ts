@@ -15,6 +15,11 @@ import {
   cloneSectionsForDayCopy,
 } from "@/features/accounting/lib/travel-sections";
 import { syncReturnOriginFromOnward } from "@/features/accounting/lib/route-waypoints";
+import { THB } from "@/lib/acc/currency";
+import {
+  claimCurrencyOptions,
+  effectiveClaimCurrency,
+} from "@/features/accounting/lib/claim-currency";
 import type {
   TravelExpenseDetail,
   TravelExpenseItem,
@@ -99,6 +104,31 @@ interface UseTravelExpenseFormResult {
 
   brandCode: string | null;
   setBrandCode: (code: string | null) => void;
+
+  /**
+   * The currency this claim is entered in — always one of `currencyOptions`,
+   * and `"THB"` whenever that list is empty.
+   *
+   * Derived rather than stored raw, so a brand whose currency an admin has since
+   * switched off can never leave the form posting a code the server refuses with
+   * no control on screen to change it.
+   */
+  currency: string;
+  setCurrency: (code: string) => void;
+  /**
+   * What the currency picker offers, or **empty — render nothing**. A brand with
+   * no currency configured must leave this form exactly as it looked before the
+   * feature shipped.
+   */
+  currencyOptions: string[];
+  /**
+   * The rate the **server** recorded for this claim, once there is one.
+   *
+   * The client never fetches or posts a rate; this arrives from
+   * `reloadFromServer` after a save and is display only — an ECB mid-market
+   * reference rate (`อัตราอ้างอิง`), never a Bank of Thailand rate.
+   */
+  exchangeRate: number | null;
 
   brands: AccBrandOption[];
   vehicles: AccVehicle[];
@@ -268,6 +298,25 @@ export function useTravelExpenseForm(
   const [brandCode, setBrandCode] = useState<string | null>(
     initial?.brandCode ?? null
   );
+  // What the user picked. `currency` below is this reconciled against what the
+  // brand actually offers — never this value raw.
+  const [pickedCurrency, setPickedCurrency] = useState<string>(
+    initial?.currency ?? THB,
+  );
+  /**
+   * The rate the server recorded, **kept with the currency it was recorded
+   * for**.
+   *
+   * A bare number goes wrong the moment the currency changes without a save:
+   * pick MYR, save (rate 8.25), switch the brand to an SGD one, and a bare rate
+   * would be captioned `1 SGD = 8.25 บาท` — a made-up figure on a money screen.
+   * Pairing them lets the caption simply disappear until the next save answers.
+   */
+  const [storedRate, setStoredRate] = useState<{ currency: string; rate: number } | null>(
+    initial?.currency && initial?.exchangeRate
+      ? { currency: initial.currency.trim().toUpperCase(), rate: initial.exchangeRate }
+      : null,
+  );
 
   const activeIndex = Math.min(activeDayIndex, Math.max(0, travelDays.length - 1));
   const travel = travelDays[activeIndex] ?? travelDays[0] ?? emptyTravel();
@@ -347,6 +396,34 @@ export function useTravelExpenseForm(
 
   const brands = brandsData ?? [];
   const vehicles = vehiclesData ?? [];
+
+  /* ── The selected brand's currency configuration, and what follows from it ──
+   *
+   * Derived on every render rather than mirrored into state: the brands list
+   * arrives asynchronously and an admin may change it under a resumed draft, and
+   * a mirrored copy would go stale in exactly those two cases.
+   *
+   * **`brandsData` being undefined is not "no currency".** Nothing disables Save
+   * while the brands list is in flight, and `brandCode` is seeded from the
+   * resumed draft synchronously — so a foreign draft is savable for the moment
+   * before SWR answers. Reconciling against an empty list there would post
+   * `THB` for a claim entered in ringgit and silently re-price it. Until the
+   * list is known the draft's own stored currency stands.
+   *
+   * The server re-derives all of this from the registry regardless
+   * (`resolveClaimFx`), so this cannot widen what a claim may be filed in — only
+   * narrow it wrongly, which is what the guard prevents.
+   */
+  const brandsKnown = !!brandsData;
+  const selectedBrand = brandsKnown
+    ? brands.find((b) => b.brandCode === brandCode) ?? null
+    : null;
+  const currencyOptions = brandsKnown ? claimCurrencyOptions(selectedBrand) : [];
+  const currency = brandsKnown
+    ? effectiveClaimCurrency(pickedCurrency, selectedBrand)
+    : (pickedCurrency || THB).trim().toUpperCase();
+  // Null unless the stored rate was recorded for the currency now selected.
+  const exchangeRate = storedRate && storedRate.currency === currency ? storedRate.rate : null;
   const loading = !brandsData || !vehiclesData || !employeeApiData;
 
   const employee = employeeApiData?.employee ?? null;
@@ -626,6 +703,14 @@ export function useTravelExpenseForm(
       const res = await fetch(`/api/request/accounting/requests/${id}`);
       const json: { ok: boolean; data?: AccRequest; error?: string } = await res.json();
       if (!json.ok || !json.data) return;
+      // The rate the server just recorded, with the currency it belongs to. It
+      // is the only way the form learns one — the client never calls the FX
+      // provider and never posts a rate.
+      const savedCurrency = (json.data.currency ?? "").trim().toUpperCase();
+      const savedRate = json.data.exchangeRate;
+      setStoredRate(
+        savedCurrency && savedRate ? { currency: savedCurrency, rate: savedRate } : null,
+      );
       const days = json.data.travelDays?.length
         ? json.data.travelDays
         : json.data.travel
@@ -692,6 +777,10 @@ export function useTravelExpenseForm(
     setTravel,
     brandCode,
     setBrandCode,
+    currency,
+    setCurrency: setPickedCurrency,
+    currencyOptions,
+    exchangeRate,
     brands,
     vehicles,
     employee,

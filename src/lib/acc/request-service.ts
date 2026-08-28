@@ -22,6 +22,14 @@ import { queueEmail } from "@/lib/acc/email-queue";
 import { AccConflictError, SUBMIT_ALREADY_CLAIMED } from "@/lib/acc/request-errors";
 import { buildEmail } from "@/lib/acc/email-templates";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
+import { isBaht, toBaht } from "@/lib/acc/currency";
+import { needsRate, resolveRate } from "@/lib/acc/fx";
+import { listBrandRegistry } from "@/lib/brand-registry";
+import {
+  RATE_VEHICLE_FOREIGN_ERROR,
+  effectiveClaimCurrency,
+  rateVehicleAllowed,
+} from "@/features/accounting/lib/claim-currency";
 import type {
   AccApproval,
   AccFileMeta,
@@ -41,7 +49,139 @@ export interface SaveInput {
   travel?: TravelExpenseDetail;
   /** Optional: open on behalf of a same-department colleague (their HR StaffId). */
   requesterStaffId?: number | null;
+  /**
+   * The currency the claim is entered in, as the form's dropdown has it.
+   *
+   * **The rate is never posted** — only the choice of currency is, and even that
+   * is re-checked against the brand here (`resolveClaimFx`). The server fetches
+   * the rate itself, which is the one part of AP-2's approach deliberately not
+   * reused: its stored rate is whatever the browser sent.
+   */
+  currency?: string | null;
 }
+
+/* ─────────────────────────── currency ─────────────────────────── */
+
+/**
+ * The rate could not be had, so nothing may be written.
+ *
+ * Fail-closed is the whole design: the alternative is a header total in baht
+ * that is really a foreign figure, which no screen would ever reveal. A baht
+ * claim never reaches this — `needsRate` is false for it — so an FX outage
+ * cannot stop the ordinary Thai claims that are almost all of them.
+ */
+const FX_UNAVAILABLE_ERROR =
+  "ไม่สามารถดึงอัตราแลกเปลี่ยนได้ในขณะนี้ — กรุณาลองใหม่อีกครั้ง หรือเปลี่ยนเป็นสกุลเงินบาท";
+
+/** A stored foreign claim whose rate is missing or nonsensical. */
+const FX_STORED_MISSING_ERROR =
+  "คำขอนี้ไม่มีอัตราแลกเปลี่ยนที่ใช้ได้ — กรุณาบันทึกร่างใหม่อีกครั้ง";
+
+/**
+ * What a claim is in, and what one unit of it is worth in baht.
+ *
+ * `currency === null` means baht, and a baht claim stores **all three** of
+ * `Currency` / `ExchangeRate` / `BaseAmount` as NULL: nobody recorded a
+ * currency, and writing `'THB'` would claim somebody had. It also keeps a brand
+ * with no currency configured writing byte-identical rows to the ones it wrote
+ * before this feature existed.
+ */
+interface ClaimFx {
+  currency: string | null;
+  /** THB per 1 unit. Null only alongside a null currency. */
+  rate: number | null;
+}
+
+const BAHT_FX: ClaimFx = { currency: null, rate: null };
+
+/**
+ * The claim's currency, checked against what the brand actually offers, with
+ * today's rate fetched for it.
+ *
+ * Reads the brand through `listBrandRegistry()`, which opens
+ * `getProductionFormPool()` — `BrandSetting` has no row in
+ * `Rocks_Portal_Form_UAT` and a `getAccPool()` read of it throws
+ * `Invalid object name` for every UAT tester. This file must therefore never
+ * name that table itself; `currency-pool-guard.test.ts` enforces exactly that,
+ * per file, and `request-service.ts` imports `getAccPool` on line 1.
+ *
+ * **Anything the brand does not offer resolves to baht rather than throwing.**
+ * `effectiveClaimCurrency` is the same function the form applies before it
+ * posts, so the two agree: an admin switching `CurrencyEnabled` off leaves a
+ * draft holding `MYR` savable — as a baht claim — instead of stranding it
+ * behind a dropdown that no longer renders.
+ *
+ * Called **outside** the transaction, deliberately: this reaches two databases
+ * and the network, and holding row locks across an 8-second FX timeout is how a
+ * save turns into a deadlock.
+ */
+async function resolveClaimFx(
+  brandCode: string | null,
+  posted: string | null | undefined,
+): Promise<ClaimFx> {
+  if (isBaht(posted)) return BAHT_FX;
+  if (!brandCode) return BAHT_FX;
+
+  let brand: { currencyCode: string | null; currencyEnabled: boolean } | null = null;
+  const brands = await listBrandRegistry();
+  for (const b of brands) {
+    if (b.code === brandCode) {
+      brand = { currencyCode: b.currencyCode, currencyEnabled: b.currencyEnabled };
+      break;
+    }
+  }
+
+  const currency = effectiveClaimCurrency(posted, brand);
+  if (!needsRate(currency)) return BAHT_FX;
+
+  const fx = await resolveRate(currency);
+  if (!fx) throw new Error(FX_UNAVAILABLE_ERROR);
+  return { currency, rate: fx.rate };
+}
+
+/** A stored row's currency and rate, for the paths that must not re-fetch one. */
+function storedFx(row: { Currency: unknown; ExchangeRate: unknown }): ClaimFx {
+  const currency = ((row.Currency as string | null) ?? "").trim().toUpperCase();
+  if (isBaht(currency)) return BAHT_FX;
+  const rate = row.ExchangeRate === null || row.ExchangeRate === undefined
+    ? null
+    : Number(row.ExchangeRate);
+  if (rate === null || !Number.isFinite(rate) || rate <= 0) {
+    throw new Error(FX_STORED_MISSING_ERROR);
+  }
+  return { currency, rate };
+}
+
+/**
+ * The claim's own figure turned into the baht `AccRequest.TotalAmount` must
+ * always hold — **or an exception**.
+ *
+ * There is no third branch on purpose. `toBaht` returns null when it cannot
+ * know, and the one thing that must never happen is falling back to the
+ * unconverted figure: that writes a foreign number into a baht column, on the
+ * path that feeds every report, export and Business Central journal, and leaves
+ * no trace on any screen. Every one of this file's three `AccRequest.TotalAmount`
+ * writers goes through here.
+ */
+function bahtTotalOrThrow(amount: number, fx: ClaimFx): number {
+  const baht = toBaht(amount, fx.currency === null ? 1 : fx.rate);
+  if (baht === null) throw new Error(FX_UNAVAILABLE_ERROR);
+  return baht;
+}
+
+/** Bind the three currency columns, spelled the same way at all three writers. */
+function bindFx(
+  req: ReturnType<Awaited<ReturnType<typeof getAccPool>>["request"]>,
+  fx: ClaimFx,
+  baseAmount: number,
+) {
+  return req
+    .input("currency", sql.Char(3), fx.currency)
+    .input("fxRate", sql.Decimal(18, 6), fx.currency === null ? null : fx.rate)
+    .input("baseAmt", sql.Decimal(18, 2), fx.currency === null ? null : baseAmount);
+}
+
+const FX_SET = `Currency=@currency, ExchangeRate=@fxRate, BaseAmount=@baseAmt`;
 
 /* ─────────────────────────── helpers ─────────────────────────── */
 
@@ -81,6 +221,10 @@ function mapRequestRow(r: Record<string, unknown>): AccRequest {
     managerEmail: (r.ManagerEmail as string) ?? null,
     companyName: (r.CompanyName as string) ?? null,
     totalAmount: num(r.TotalAmount),
+    // Always baht. `baseAmount` is the figure the requester actually typed.
+    currency: ((r.Currency as string | null) ?? "").trim() || null,
+    exchangeRate: num(r.ExchangeRate),
+    baseAmount: num(r.BaseAmount),
     paymentDate: r.PaymentDate ? toYmd(r.PaymentDate as Date) : null,
     submittedBy: (r.SubmittedBy as number) ?? null,
     submittedAt: r.SubmittedAt ? (r.SubmittedAt as Date).toISOString() : null,
@@ -444,6 +588,11 @@ export async function validateForSubmit(
   const errs: string[] = [];
   const days = normalizeTravelDays(input);
   const dayLabel = (i: number) => (days.length > 1 ? ` (วันที่ ${i + 1})` : "");
+  // The picker disables these, but a control removed from a page is not a rule:
+  // a draft saved in baht with a rate vehicle and then switched to MYR would
+  // otherwise submit a kilometre count multiplied by a บาท/กม. rate and call the
+  // product ringgit. See `claim-currency.ts` for why there is no second rate.
+  const rateVehicleOk = rateVehicleAllowed(input.currency);
 
   // In UAT a missing manager is a UAT-list problem, not an HR one — pointing at
   // HR would invite somebody to attach a real manager to test data.
@@ -485,6 +634,9 @@ export async function validateForSubmit(
       (day.sections?.length ?? 0) > 0 ||
       !!(day.vehicleId && day.isManualEntry);
     if (!hasVehicle) errs.push(`กรุณาเลือกพาหนะ${lbl}`);
+    if (!rateVehicleOk && hasRateVehicle(day)) {
+      errs.push(`${RATE_VEHICLE_FOREIGN_ERROR}${lbl}`);
+    }
     if (allDayItems(day).some((it) => Number(it.amount) > 0 && !(it.files && it.files.length > 0))) {
       errs.push(`กรุณาแนบรูปใบเสร็จสำหรับรายการค่าใช้จ่ายที่กรอกจำนวนเงิน${lbl}`);
     }
@@ -676,10 +828,20 @@ async function persistTravelSections(
   }
 }
 
+/**
+ * `AccTravelExpense.TotalAmount` — the **per-day** column — stays in the claim's
+ * own currency, deliberately. Only the header is converted.
+ *
+ * That is what keeps `calc.ts`, the T-SQL `TRAVEL_DAYS_CSV_SELECT` and the
+ * approval queue's per-vehicle cell summing the same thing they summed before:
+ * the day rows and the figures on the form agree, and the one number every
+ * downstream consumer actually reads — `AccRequest.TotalAmount` — is baht.
+ */
 async function persistTravelDays(
   tx: AccTx,
   requestId: number,
   days: TravelExpenseDetail[],
+  fx: ClaimFx,
 ): Promise<void> {
   const existingRes = await tx.request().input("rid", sql.Int, requestId)
     .query(`SELECT Id FROM [dbo].[AccTravelExpense] WHERE RequestId = @rid`);
@@ -719,11 +881,13 @@ async function persistTravelDays(
       .query(`DELETE FROM [dbo].[AccTravelExpense] WHERE Id=@teid`);
   }
 
+  // Writer 1 of 3. The claim's own figure, then baht — never the raw figure.
   const requestTotal = computeRequestTotalAmount(days);
-  await tx.request()
+  await bindFx(tx.request(), fx, requestTotal)
     .input("rid", sql.Int, requestId)
-    .input("total", sql.Decimal(18, 2), requestTotal)
-    .query(`UPDATE [dbo].[AccRequest] SET TotalAmount=@total, UpdatedAt=SYSDATETIME() WHERE Id=@rid`);
+    .input("total", sql.Decimal(18, 2), bahtTotalOrThrow(requestTotal, fx))
+    .query(`UPDATE [dbo].[AccRequest]
+            SET TotalAmount=@total, ${FX_SET}, UpdatedAt=SYSDATETIME() WHERE Id=@rid`);
 }
 
 /**
@@ -740,6 +904,9 @@ export async function saveDraft(
   const pool = await getAccPool();
   const days = normalizeTravelDays(input);
   const requester = await resolveRequesterForActor(loginEmail, input.requesterStaffId ?? null);
+  // Before the transaction: this reads the production form pool and, for a
+  // foreign claim, the FX provider. A baht claim makes no call at all.
+  const fx = await resolveClaimFx(input.brandCode ?? null, input.currency ?? null);
   const tx = pool.transaction();
   await tx.begin();
   try {
@@ -812,7 +979,7 @@ export async function saveDraft(
                   UpdatedAt=SYSDATETIME() WHERE Id=@id`);
     }
 
-    await persistTravelDays(tx, requestId, days);
+    await persistTravelDays(tx, requestId, days, fx);
 
     await tx.commit();
     return requestId;
@@ -900,13 +1067,28 @@ export async function deleteItem(requestId: number, itemId: number, userId: numb
   // invariant untestable and the next statement added here a real one.
   const own = await pool.request().input("id", sql.Int, requestId)
     .input("form", sql.NVarChar, AP1_FORM_CODE)
-    .query(`SELECT CreatedBy, Status FROM [dbo].[AccRequest] WHERE Id=@id AND FormCode=@form`);
+    .query(`SELECT CreatedBy, Status, Currency, ExchangeRate
+            FROM [dbo].[AccRequest] WHERE Id=@id AND FormCode=@form`);
   if (own.recordset.length === 0) throw new Error("ไม่พบคำขอ");
-  const row = own.recordset[0] as { CreatedBy: number | null; Status: string };
+  const row = own.recordset[0] as {
+    CreatedBy: number | null; Status: string;
+    Currency: string | null; ExchangeRate: unknown;
+  };
   if (row.CreatedBy !== userId) throw new Error("ไม่มีสิทธิ์แก้ไขคำขอนี้");
   if (row.Status !== "Draft" && row.Status !== "Returned") {
     throw new Error("ลบรายการได้เฉพาะคำขอที่เป็นฉบับร่างเท่านั้น");
   }
+
+  // The claim's **stored** rate, not a fresh one. Removing a receipt row is not
+  // an occasion to re-price the claim, and a re-fetch here would silently move
+  // the rate on an ordinary edit.
+  //
+  // Resolved up here rather than beside the recompute at the foot of this
+  // function, because that recompute runs *after* the delete has committed and
+  // the SharePoint bytes have gone: a foreign row with no usable rate must
+  // refuse before anything is destroyed, not leave the item deleted and the
+  // header stale.
+  const fx = storedFx(row);
 
   // Collect attachment storage references for this item before deleting the
   // rows — backend included, because these are SharePoint driveItem ids and the
@@ -950,10 +1132,16 @@ export async function deleteItem(requestId: number, itemId: number, userId: numb
         .input("dist", sql.Decimal(18, 2), dist)
         .query(`UPDATE [dbo].[AccTravelExpense] SET TotalAmount=@total, TotalDistanceKm=@dist WHERE Id=@teid`);
     }
+    // Writer 2 of 3, and the one that gets missed — it is a recompute on an
+    // ordinary edit rather than a save or a submit, and it runs outside a
+    // transaction. Unconverted, it re-stamps the foreign figure straight into
+    // the baht column of a claim that was already correct.
     const requestTotal = computeRequestTotalAmount(updated.travelDays);
-    await pool.request().input("rid", sql.Int, requestId)
-      .input("total", sql.Decimal(18, 2), requestTotal)
-      .query(`UPDATE [dbo].[AccRequest] SET TotalAmount=@total, UpdatedAt=SYSDATETIME() WHERE Id=@rid`);
+    await bindFx(pool.request(), fx, requestTotal)
+      .input("rid", sql.Int, requestId)
+      .input("total", sql.Decimal(18, 2), bahtTotalOrThrow(requestTotal, fx))
+      .query(`UPDATE [dbo].[AccRequest]
+              SET TotalAmount=@total, ${FX_SET}, UpdatedAt=SYSDATETIME() WHERE Id=@rid`);
   }
 }
 
@@ -976,8 +1164,18 @@ export async function submitRequest(
     : current.travel
       ? [current.travel]
       : [emptyTravel()];
+  // Re-fetched, never trusted from the draft: a draft may sit for weeks and the
+  // rate that matters is the one on the day the claim was actually made. A
+  // failed fetch **throws** — the claim is not submitted at a rate we guessed.
+  //
+  // The currency comes from the stored row, not from a payload: `submitRequest`
+  // accepts none. It still goes through `resolveClaimFx`, so a brand whose
+  // currency has been switched off since the draft was written resolves to baht
+  // here exactly as the form now resolves it.
+  const fx = await resolveClaimFx(current.brandCode, current.currency);
+
   const errors = await validateForSubmit(
-    { id, brandCode: current.brandCode, travelDays },
+    { id, brandCode: current.brandCode, travelDays, currency: fx.currency },
     requester.staffId,
     requester.managerStaffId ?? null,
   );
@@ -992,6 +1190,7 @@ export async function submitRequest(
     );
   }
 
+  // The claim's own figure; `bahtTotalOrThrow` below is what reaches the column.
   const totalAmount = computeRequestTotalAmount(travelDays);
 
   const pool = await getAccPool();
@@ -1035,7 +1234,8 @@ export async function submitRequest(
     const existingNo = ((claim.recordset?.[0]?.RequestNo as string | null) ?? "").trim();
     const requestNo = existingNo || (await allocateRequestNo("TOF", new Date(), tx));
 
-    await tx.request()
+    // Writer 3 of 3. `@total` is baht; `@baseAmt` is what the requester typed.
+    await bindFx(tx.request(), fx, totalAmount)
       .input("id", sql.Int, id)
       .input("no", sql.NVarChar, requestNo)
       .input("empId", sql.UniqueIdentifier, requester.employeeId ?? null)
@@ -1051,7 +1251,7 @@ export async function submitRequest(
       .input("mgrStaff", sql.Int, requester.managerStaffId ?? null)
       .input("mgrEmail", sql.NVarChar, managerEmail)
       .input("company", sql.NVarChar, requester.companyName ?? null)
-      .input("total", sql.Decimal(18, 2), totalAmount)
+      .input("total", sql.Decimal(18, 2), bahtTotalOrThrow(totalAmount, fx))
       .input("by", sql.Int, userId || null)
       .query(`UPDATE [dbo].[AccRequest] SET
         RequestNo=@no,
@@ -1059,7 +1259,8 @@ export async function submitRequest(
         RequesterFullName=@full, RequesterEmail=@email, RequesterPosition=@pos,
         RequesterDepartmentId=@deptId, RequesterDepartmentName=@deptName, RequesterDepartmentCode=@deptCode,
         ManagerStaffId=@mgrStaff, ManagerEmail=@mgrEmail, CompanyName=@company,
-        TotalAmount=@total, SubmittedBy=@by, SubmittedAt=SYSDATETIME(), UpdatedAt=SYSDATETIME()
+        TotalAmount=@total, ${FX_SET},
+        SubmittedBy=@by, SubmittedAt=SYSDATETIME(), UpdatedAt=SYSDATETIME()
         WHERE Id=@id`);
 
     // Reset any prior approvals (e.g. resubmit after Return), then create MANAGER step.
