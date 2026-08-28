@@ -1,7 +1,7 @@
 # AP-1 / AP-17 — per-brand currency, and claiming in it
 
 **Date:** 2026-08-28
-**Status:** design proposed, not built — three decisions still open (§9)
+**Status:** design agreed, not built — all three open decisions answered (§9)
 **Survey:** 9 agents, 285 cited facts, 65 risks. Every live-database claim below
 was re-measured against the real databases afterwards, because the survey
 agents' own probes all failed on `Login failed for user 'saai'`.
@@ -165,9 +165,11 @@ a baht claim never fetches anything, so an FX outage cannot stop ordinary work.
 `bot-fx.ts` gains a timeout as part of this.
 
 **Accounting may override the rate** at the ACCOUNT step, as AP-2 allows, with
-the override recorded in `AccActivityLog`. The ECB fallback is a mid-market
-rate, not the official Bank of Thailand one — `bot-fx.ts`'s own header says so —
-so an override has to exist.
+the override recorded in `AccActivityLog`. This is **required in the first
+release, not deferred**: §9.1 settles that no Bank of Thailand key will be
+provisioned, so every rate here is an ECB mid-market reference rate rather than
+the rate a bank settles at. The override is the only place that difference can
+be corrected.
 
 ---
 
@@ -224,19 +226,59 @@ AP-17 store and total as baht. This is a live defect, not a future one.
 
 ---
 
-## 9. Open questions
+## 9. Decisions taken (2026-08-28)
 
-1. **Is `BOT_API_CLIENT_ID` set in production?** It is unset here and absent
-   from `src/env.ts`. If unset, every rate is the ECB mid-market rate while the
-   UI captions it as Bank of Thailand. Either provision it, or change the
-   caption. This is the only item that affects what a figure *means*.
-2. **Should the six disabled `BrandSetting` rows be re-enabled?** §3 — unrelated
-   to this feature, currently leaving `BrandGate` with one brand.
-3. **Who may edit a brand's currency?** Putting the editor in the two forms'
-   brand tabs widens it from IT Admin to any approver holding the `brands` tab
-   grant on either roster. Recommended: **System Admin only**, edited at
-   Settings → Brand Configuration, with the forms' brand tabs showing the value
-   read-only and a line saying where to change it.
+All three were put to the user and answered. Two overrule the recommendation
+that was made here; both are recorded with what they cost.
+
+### 9.1 No Bank of Thailand key — every rate is ECB mid-market
+
+`BOT_API_CLIENT_ID` will **not** be provisioned. `bot-fx.ts` therefore always
+takes its keyless fallback, and every rate this feature records is
+**frankfurter's ECB mid-market reference rate**.
+
+Three things follow, and all three are requirements, not notes:
+
+- **No screen may caption a rate as a Bank of Thailand rate.** The copy says it
+  is a reference rate (`อัตราอ้างอิง`) and that accounting may adjust it.
+- **The accounting override in §5 becomes load-bearing rather than a
+  convenience.** A mid-market rate is not the rate a bank settles at, so the
+  figure the company actually pays will differ. The override is the only place
+  that difference can be corrected, and it must be present from the first
+  release rather than deferred.
+- **The BOT branch in `bot-fx.ts` stays.** It is existing, working code and
+  deleting it would have to be undone the day a key is bought. It is simply
+  never taken.
+
+### 9.2 The six disabled brands stay disabled
+
+`BrandSetting` keeps all six rows at `IsEnabled = 0`. The consequence recorded
+in §3 stands and is accepted: **`BrandGate` offers `ROCKS` alone** to anyone
+whose brand cookie is not already set. This is unrelated to currency and is not
+changed by this work.
+
+### 9.3 The currency is edited wherever แบรนด์ที่เบิกได้ is edited
+
+Not System Admin only. The editor sits in **each form's own brand tab**, behind
+the same gate that already guards that tab — `requireSettingsTab("brands")` for
+AP-1, `requireBookingSettingsTab("brands")` for AP-17 — so anyone who may grant
+a brand to a form may also set its currency.
+
+**The asymmetry this creates must be visible on screen, because it cannot be
+removed.** The value is stored **once per brand** (§2, the user's choice) while
+the permission to change it is **per form**. So an AP-17 booking approver
+holding the `brands` grant can change a currency that decides how an **AP-1**
+travel claim converts, on a roster AP-1's admins do not control.
+
+Required, therefore:
+
+- Both brand tabs carry a line saying the value is shared with the other form
+  and that changing it here changes it there.
+- Every write records who changed it, from what to what, in `AccActivityLog` —
+  the only way an unexpected change can be traced back across two rosters.
+- The rule is **not** representable as a constraint and must not be presented as
+  one. A reviewer who "tightens" the gate to System Admin is undoing a decision
+  the user took knowingly, not fixing a hole.
 
 ---
 
