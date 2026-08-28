@@ -35,16 +35,18 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
  */
 export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJournalPayload {
   const { config: c, items, requestNo, postingDate, departmentCode } = input;
-  if (!c.advanceVendorNo) throw new Error("ยังไม่ได้เลือก Vendor ในใบเบิก AP-2 ที่เคลียร์ใบนี้ — เปิดใบ AP-2 แล้วเลือก Vendor ก่อนส่ง");
+  const advanceVendorNo = c.advanceVendorNo?.trim() ?? "";
+  if (!advanceVendorNo) throw new Error("ยังไม่ได้เลือก Vendor ในใบเบิก AP-2 ที่เคลียร์ใบนี้ — เปิดใบ AP-2 แล้วเลือก Vendor ก่อนส่ง");
   if (!c.bankAccountNo) throw new Error("ยังไม่ได้ตั้งค่า Bank Account (จาก AP-2) สำหรับแบรนด์นี้");
   if (!c.journalBatchName) throw new Error("ยังไม่ได้ตั้งค่า Journal Batch ของ AP-3 สำหรับแบรนด์นี้");
   if (items.length === 0) throw new Error("ไม่มีรายการค่าใช้จ่ายสำหรับสร้าง journal");
 
   const employeeCode = requestNo.slice(0, 35);
   const defaultBranch = input.defaultBranchCode ?? "";
+  const description = `เคลียร์เงินทดรองจ่าย ${requestNo}`.slice(0, 100);
   const glLine = (accountNo: string, amount: number, branchCode: string | null): PpapJournalLinePayload => ({
     groupNo: "G1", postingDate, documentType: "Payment", accountType: "G/L Account",
-    accountNo, description: `เคลียร์เงินทดรองจ่าย ${requestNo}`.slice(0, 100),
+    accountNo, description,
     paymentMethodCode: "BANK", amount: r2(amount), balAccountType: "G/L Account",
     employeeCode, branchCode: branchCode ?? defaultBranch, departmentCode,
   });
@@ -73,8 +75,8 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
   // two-explicit-lines shape BC accepted for AP-2 (doc PVA2608-0012).
   lines.push({
     groupNo: "G1", postingDate, documentType: "Payment",
-    accountType: "Vendor", accountNo: c.advanceVendorNo,
-    description: `เคลียร์เงินทดรองจ่าย ${requestNo}`.slice(0, 100),
+    accountType: "Vendor", accountNo: advanceVendorNo,
+    description,
     paymentMethodCode: "BANK", amount: -r2(input.advanceAmount),
     employeeCode, branchCode: defaultBranch, departmentCode,
   });
@@ -84,7 +86,7 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
   if (bankAmount !== 0) {
     lines.push({
       groupNo: "G1", postingDate, documentType: "Payment", accountType: "Bank Account",
-      accountNo: c.bankAccountNo, description: `เคลียร์เงินทดรองจ่าย ${requestNo}`.slice(0, 100),
+      accountNo: c.bankAccountNo, description,
       paymentMethodCode: "BANK", amount: bankAmount,
       employeeCode, branchCode: defaultBranch, departmentCode,
     });

@@ -84,6 +84,7 @@ test("exactly one Vendor line, and no G/L line carries the advance amount", () =
   }));
   assert.equal(p.lines.filter((l) => l.accountType === "Vendor").length, 1);
   assert.equal(sum(p), 0);
+  assert.ok(!p.lines.some((l) => l.accountType === "G/L Account" && l.amount === -1000));
 });
 
 test("no vendor on the cleared advance -> throws", () => {
