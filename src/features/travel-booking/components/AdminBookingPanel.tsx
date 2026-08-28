@@ -1006,7 +1006,12 @@ function BookingRowCard({
     readingRef.current = true;
     setReadNote("reading");
     try {
-      const read = await readBookingFields(file);
+      // `brandCode` is what lets the route ask which currency the document is
+      // in at all; `currency` is what decides whether the answer belongs in
+      // these fields. It is null while the brand is still unidentified — the
+      // same window in which the save posts no currency either — and the
+      // reader then skips the comparison rather than assuming baht.
+      const read = await readBookingFields(file, { brandCode, claimCurrency: currency });
       if (!aliveRef.current) return;
       if (read.failure) {
         // The reason is carried through so the note names the right remedy: a

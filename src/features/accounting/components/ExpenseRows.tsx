@@ -15,6 +15,7 @@ import {
   RECEIPT_FAILURE_TEXT,
   type ReceiptFailure,
 } from "@/features/accounting/lib/read-receipt-amount";
+import { THB } from "@/lib/acc/currency";
 import type { TravelExpenseItem, PendingFile } from "@/features/accounting/types";
 import type { TravelItemType } from "@/features/accounting/constants";
 
@@ -70,6 +71,15 @@ interface ExpenseRowsProps {
    * `request-service.ts`.
    */
   currency?: string | null;
+  /**
+   * The claim's brand, forwarded to the receipt read.
+   *
+   * **Not display, and not optional in practice.** The route resolves what this
+   * brand may claim in server-side and only then asks the model which currency
+   * the document is in; with no brand code it admits baht alone and every
+   * foreign receipt silently stays baht. Nothing else here uses it.
+   */
+  brandCode?: string | null;
 }
 
 /** The symbol or code to put beside a figure. `฿` for baht, the code otherwise. */
@@ -101,6 +111,7 @@ export function ExpenseRows({
   requestId,
   dataField,
   currency,
+  brandCode,
 }: ExpenseRowsProps) {
   const rowItems = items.filter((it) => it.itemType === type);
   const allItems = items;
@@ -160,6 +171,7 @@ export function ExpenseRows({
             item={item}
             requestId={requestId}
             currency={currency}
+            brandCode={brandCode}
             highlightMissingReceipt={highlightMissingReceipt}
             onAmountChange={(val) => handleAmountChange(filteredIdx, val)}
             onRemove={() => handleRemove(filteredIdx)}
@@ -212,8 +224,14 @@ export function ExpenseRows({
 interface ExpenseRowProps {
   item: TravelExpenseItem;
   requestId?: number;
-  /** Display only — decides whether the field's adornment reads `฿` or a code. */
+  /**
+   * The claim's currency. Decides whether the field's adornment reads `฿` or a
+   * code — and, since the read learned to answer one, whether the figure a
+   * receipt gives back belongs in this field at all.
+   */
   currency?: string | null;
+  /** Forwarded to the read so the route can resolve what this brand may claim in. */
+  brandCode?: string | null;
   highlightMissingReceipt?: boolean;
   onAmountChange: (val: string) => void;
   onRemove: () => void;
@@ -226,6 +244,7 @@ function ExpenseRow({
   item,
   requestId,
   currency,
+  brandCode,
   highlightMissingReceipt = false,
   onAmountChange,
   onRemove,
@@ -289,7 +308,14 @@ function ExpenseRow({
     readingRef.current = true;
     setReadNote("reading");
     try {
-      const read = await readReceiptAmount(file);
+      // `brandCode` is what lets the route ask which currency the document is
+      // in at all; `claimCurrency` is what decides whether the answer belongs
+      // in this field. An absent `currency` prop means baht on this form — the
+      // reader's null means "not known", which is AP-17's case and not ours.
+      const read = await readReceiptAmount(file, {
+        brandCode,
+        claimCurrency: currency ?? THB,
+      });
       if (!aliveRef.current) return;
       if (read.amount != null) {
         // Skipped when a figure arrived while this was in flight — typed by

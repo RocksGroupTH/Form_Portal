@@ -19,6 +19,7 @@
  * which is exactly the behaviour that preceded it.
  */
 import { getCorePool, getProductionFormPool, sql } from "@/lib/db/mssql";
+import { brandCurrencyState } from "@/lib/acc/currency";
 import {
   brandCurrencyChanges,
   type BrandCurrencyPatch,
@@ -145,6 +146,38 @@ export async function listBrandRegistry(): Promise<RegistryBrand[]> {
 /** The brands a user may pick. */
 export async function listSelectableBrands(): Promise<RegistryBrand[]> {
   return (await listBrandRegistry()).filter((b) => b.isEnabled);
+}
+
+/**
+ * The foreign currency a claim against this brand may be entered in, or null.
+ *
+ * Null covers every way of having no choice: no brand code, a code the master
+ * does not carry, nothing configured, configuration staged but switched off,
+ * and a brand whose currency is literally baht. `brandCurrencyState` owns that
+ * rule and this defers to it rather than re-deriving it — the same function the
+ * two forms' pickers call, so what a document read may be trusted with and what
+ * the picker offers can never disagree.
+ *
+ * **This is what the AI document reads resolve server-side.** They must never
+ * take a currency from the caller: a body shaped by hand would otherwise have a
+ * currency accepted that the brand does not offer. And it must be read here
+ * rather than through `getAccPool()`, which resolves `Rocks_Portal_Form_UAT`
+ * where `BrandSetting` has no object at all.
+ */
+export async function getBrandClaimCurrency(
+  code: string | null | undefined,
+): Promise<string | null> {
+  const want = (code ?? "").trim();
+  if (want === "") return null;
+
+  const brands = await listBrandRegistry();
+  for (let i = 0; i < brands.length; i++) {
+    const b = brands[i];
+    if (b.code !== want) continue;
+    if (brandCurrencyState(b) !== "configured") return null;
+    return (b.currencyCode ?? "").trim().toUpperCase();
+  }
+  return null;
 }
 
 /** One brand's uploaded logo, or null. Read by the serving route only. */

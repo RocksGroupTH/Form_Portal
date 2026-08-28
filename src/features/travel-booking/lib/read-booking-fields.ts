@@ -17,6 +17,7 @@
  * Anthropic is down is a desk that cannot work — so every path here returns,
  * and the caller unlocks the fields on the way out.
  */
+import { sameCurrency } from "@/lib/acc/currency";
 import { toDownscaledCanvas } from "@/lib/image/downscale";
 
 /** The five fields one booking row carries. Every one is independently nullable. */
@@ -31,6 +32,17 @@ export interface BookingFields {
 export type BookingFieldsFailure =
   /** The call worked; nothing on this file could be trusted. */
   | "not-found"
+  /**
+   * The figures are real, and they are in a different currency from the one
+   * this request records.
+   *
+   * Filling them would put ringgit figures into fields captioned in baht, on
+   * the screen accounting signs off against — the defect this read carried
+   * until it asked which currency the document was in. Converting instead is
+   * not the alternative: the four figures are stored in the request's own
+   * currency and stated in baht from the recorded rate.
+   */
+  | "currency-mismatch"
   /** Our side is not configured — a missing or revoked key (503). */
   | "unavailable"
   /** Upstream trouble or no network. Retrying later might work. */
@@ -47,6 +59,7 @@ export type BookingFieldsFailure =
  */
 export const BOOKING_FIELDS_FAILURE_TEXT: Record<BookingFieldsFailure, string> = {
   "not-found": "อ่านข้อมูลจากไฟล์นี้ไม่เจอ — กรอกเองได้เลย",
+  "currency-mismatch": "เอกสารนี้เป็นคนละสกุลเงินกับคำขอ — กรอกเองได้เลย",
   unavailable: "ระบบอ่านเอกสารยังไม่พร้อมใช้งาน — กรอกเองได้เลย",
   error: "อ่านเอกสารไม่ได้ตอนนี้ — กรอกเองได้เลย",
 };
@@ -54,8 +67,34 @@ export const BOOKING_FIELDS_FAILURE_TEXT: Record<BookingFieldsFailure, string> =
 export interface BookingFieldsRead {
   /** Every field null when `failure` is set. */
   fields: BookingFields;
+  /**
+   * The currency the four figures are in, as the **server** decided it — never
+   * as the caller suggested. Null when no figure was admitted.
+   */
+  currency: string | null;
   /** Set whenever nothing usable came back. */
   failure?: BookingFieldsFailure;
+}
+
+export interface BookingFieldsReadOptions {
+  /**
+   * The request's brand. Sent as `?brandCode=`, and the route resolves what
+   * that brand may be recorded in **server-side** — a currency posted from here
+   * would let a hand-shaped request have one accepted that the brand does not
+   * offer.
+   *
+   * Without it the route sees no brand, admits baht alone, and every foreign
+   * invoice silently stays baht: the whole defect.
+   */
+  brandCode?: string | null;
+  /**
+   * The currency this request records its booking figures in. Null or absent
+   * means **not known here** — `AdminBookingPanel` has a real window where its
+   * brand is still unidentified — and the mismatch check is then skipped rather
+   * than assuming baht, which is the same reason the panel posts no currency at
+   * all in that window.
+   */
+  claimCurrency?: string | null;
 }
 
 const NOTHING: BookingFields = {
@@ -97,28 +136,40 @@ async function toUploadBlob(file: File): Promise<{ blob: Blob; name: string } | 
   return blob ? { blob, name: "booking.jpg" } : null;
 }
 
-export async function readBookingFields(file: File): Promise<BookingFieldsRead> {
+export async function readBookingFields(
+  file: File,
+  options?: BookingFieldsReadOptions,
+): Promise<BookingFieldsRead> {
   // A file the browser cannot decode yields nothing for the same reason a blank
   // page does — from where the booking desk sits it is this file, and the
   // remedy is to type the figures. Reported as `not-found` rather than
-  // inventing a fourth line of copy for it.
+  // inventing another line of copy for it.
   const upload = await toUploadBlob(file);
-  if (!upload) return { fields: NOTHING, failure: "not-found" };
+  if (!upload) return { fields: NOTHING, currency: null, failure: "not-found" };
 
   const form = new FormData();
   form.append("file", upload.blob, upload.name);
 
+  // A query parameter rather than a form field, so the route can read it before
+  // it reads the body — which is what lets the rate limit run before the brand
+  // lookup does any database work.
+  const brandCode = (options?.brandCode ?? "").trim();
+  const url =
+    "/api/request/travel-booking/booking-fields" +
+    (brandCode ? `?brandCode=${encodeURIComponent(brandCode)}` : "");
+
   try {
-    const res = await fetch("/api/request/travel-booking/booking-fields", {
-      method: "POST",
-      body: form,
-    });
+    const res = await fetch(url, { method: "POST", body: form });
     const json = await res.json().catch(() => null);
     if (!json?.ok) {
       // 503 is `statusForVisionError`'s "only an operator can fix this" — a
       // missing or revoked key. Telling the desk to try again would be advice
       // that can never work.
-      return { fields: NOTHING, failure: res.status === 503 ? "unavailable" : "error" };
+      return {
+        fields: NOTHING,
+        currency: null,
+        failure: res.status === 503 ? "unavailable" : "error",
+      };
     }
 
     // Re-narrowed rather than trusted: this is a network boundary. The server
@@ -132,19 +183,32 @@ export async function readBookingFields(file: File): Promise<BookingFieldsRead> 
       discount: typeof d.discount === "number" ? d.discount : null,
       total: typeof d.total === "number" ? d.total : null,
     };
+    const currency = typeof d.currency === "string" ? d.currency : null;
 
-    const anything =
-      fields.bookingNo !== null ||
+    const anyAmount =
       fields.priceExVat !== null ||
       fields.vat !== null ||
       fields.discount !== null ||
       fields.total !== null;
+    // Real figures in a currency this request does not record are not this
+    // request's figures. Skipped where the currency is not known here — see
+    // `claimCurrency`. **The booking number goes with them**: the caller
+    // applies nothing on a failure, and a five-field answer whose four money
+    // fields are wrong is not one to half-apply.
+    const claimCurrency = options?.claimCurrency;
+    if (anyAmount && claimCurrency != null && !sameCurrency(currency, claimCurrency)) {
+      return { fields: NOTHING, currency, failure: "currency-mismatch" };
+    }
+
+    const anything = fields.bookingNo !== null || anyAmount;
     // "The call worked and this document said nothing we could use" is a
     // different thing to tell somebody than "we could not ask", so it gets its
     // own reason even though the fields are identical.
-    return anything ? { fields } : { fields: NOTHING, failure: "not-found" };
+    return anything
+      ? { fields, currency }
+      : { fields: NOTHING, currency: null, failure: "not-found" };
   } catch {
     // Offline, DNS, a proxy eating the request.
-    return { fields: NOTHING, failure: "error" };
+    return { fields: NOTHING, currency: null, failure: "error" };
   }
 }

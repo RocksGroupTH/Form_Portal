@@ -1597,6 +1597,7 @@ export function TravelExpenseForm({
               highlightMissingReceipt={triedSubmit}
               requestId={requestId ?? undefined}
               currency={currency}
+              brandCode={brandCode}
             />
             <ExpenseRows
               label="ค่าผ่านทาง / ทางด่วน"
@@ -1608,6 +1609,7 @@ export function TravelExpenseForm({
               highlightMissingReceipt={triedSubmit}
               requestId={requestId ?? undefined}
               currency={currency}
+              brandCode={brandCode}
             />
           </div>
         ))}
@@ -1624,6 +1626,7 @@ export function TravelExpenseForm({
               highlightMissingReceipt={triedSubmit}
               requestId={requestId ?? undefined}
               currency={currency}
+              brandCode={brandCode}
             />
             {visible.parking && (
               <ExpenseRows
@@ -1636,6 +1639,7 @@ export function TravelExpenseForm({
                 highlightMissingReceipt={triedSubmit}
                 requestId={requestId ?? undefined}
                 currency={currency}
+                brandCode={brandCode}
               />
             )}
           </>
@@ -1654,6 +1658,7 @@ export function TravelExpenseForm({
             highlightMissingReceipt={triedSubmit}
             requestId={requestId ?? undefined}
             currency={currency}
+            brandCode={brandCode}
           />
         )}
 

@@ -4,6 +4,10 @@ import { z } from "zod";
 import { requireAuth } from "@/lib/api-auth";
 import { guardVisionRequest, visionImageBlock } from "@/lib/acc/vision-guard";
 import { statusForVisionError } from "@/lib/acc/vision-error";
+import { admitModelCurrency, isBaht, THB } from "@/lib/acc/currency";
+import { admitReadAmount } from "@/lib/acc/vision-amount";
+import { resolveRate } from "@/lib/acc/fx";
+import { getBrandClaimCurrency } from "@/lib/brand-registry";
 import { pdfPagesToPng } from "@/lib/pdf-to-image";
 import { MAX_PDF_PAGES, sheetToText } from "@/lib/acc/sheet-text";
 import {
@@ -44,16 +48,44 @@ import {
  * Nothing is stored. The file is uploaded to SharePoint separately, by the
  * attachment route, exactly as before.
  *
- * `ROUTE_RULES` needs no entry: the `/api/request/travel-booking` prefix already
- * classifies as `AP-17` (`src/lib/form-environment/classify-path.ts`), and this
- * route reads no database at all.
+ * ── The currency, and why the brand code is a query parameter ──
+ *
+ * All four money fields used to be asserted to be Thai baht in both the prompt
+ * and the schema, so a foreign invoice yielded bare numbers that AP-17 recorded
+ * and totalled as baht. The currency is now asked for — but only where the
+ * request's brand actually offers a choice.
+ *
+ * **The brand's currency is resolved here, server-side, through
+ * `getBrandClaimCurrency`.** A currency posted by the caller would let somebody
+ * shape their own request into having one accepted that the brand does not
+ * offer; `?brandCode=` names a brand, and what that brand may be recorded in is
+ * this side's decision alone. So this route **does** read the database — two of
+ * them, through `listBrandRegistry` — which the note here denied until the
+ * currency work landed. `getProductionFormPool()`, never `getAccPool()`:
+ * `BrandSetting` has no object in `Rocks_Portal_Form_UAT`.
+ *
+ * `ROUTE_RULES` needs no entry even so: the `/api/request/travel-booking`
+ * prefix already classifies as `AP-17` (`src/lib/form-environment/classify-path.ts`),
+ * and nothing read here is per-environment — `BrandSetting` has one copy.
  */
 
-const AnswerSchema = z.object({
-  bookingNo: z
-    .string()
-    .nullable()
-    .describe("The booking / reservation / confirmation number printed on the document, or null."),
+/** The four money fields, whose descriptions are the only per-currency difference. */
+const bookingNoField = z
+  .string()
+  .nullable()
+  .describe("The booking / reservation / confirmation number printed on the document, or null.");
+
+/**
+ * The schema for a request whose brand offers no currency choice — **today's
+ * schema, unchanged**, and the one almost every read uses.
+ *
+ * Such a request can only be recorded in baht: `AdminBookingPanel` renders no
+ * currency toggle for it (`bookingCurrencyOptions` is empty), so there is no
+ * control that could hold another answer, and asking for one would only give
+ * the model something new to get wrong.
+ */
+const BahtAnswerSchema = z.object({
+  bookingNo: bookingNoField,
   priceExVat: z
     .number()
     .nullable()
@@ -72,11 +104,32 @@ const AnswerSchema = z.object({
     .describe("The grand total actually charged in Thai baht, or null."),
 });
 
-const PROMPT = [
-  "เอกสารนี้คือใบยืนยันการจอง (โรงแรม / ตั๋วโดยสาร / รถเช่า) ใบแจ้งหนี้ หรือใบกำกับภาษี",
-  "ให้อ่านข้อมูล 5 ช่องต่อไปนี้ตามที่พิมพ์อยู่บนเอกสาร",
-  "",
-  "กติกาของแต่ละช่อง:",
+/** The schema for a brand whose currency an admin has configured and switched on. */
+const MultiAnswerSchema = z.object({
+  bookingNo: bookingNoField,
+  priceExVat: z
+    .number()
+    .nullable()
+    .describe("The price BEFORE VAT as printed, in the document's own currency, or null."),
+  vat: z
+    .number()
+    .nullable()
+    .describe("The VAT figure as printed, in the document's own currency, or null."),
+  discount: z
+    .number()
+    .nullable()
+    .describe("The discount as a positive number in the document's own currency, or null."),
+  total: z
+    .number()
+    .nullable()
+    .describe("The grand total actually charged, as printed and not converted, or null."),
+  currency: z
+    .string()
+    .nullable()
+    .describe("ISO-4217 code the four figures are in, or null if it cannot be told."),
+});
+
+const SHARED_RULES = [
   "- bookingNo: เลขที่การจอง / Booking No. / Reservation No. / Confirmation No.",
   "  ตามที่พิมพ์ไว้ ห้ามตอบเลขประจำตัวผู้เสียภาษี (13 หลัก) เลขที่ห้อง เลขเที่ยวบิน",
   "  เบอร์โทร หรือเลขที่บัญชีธนาคาร",
@@ -90,15 +143,64 @@ const PROMPT = [
   "- ห้ามคำนวณตัวเลขเอง ถ้าเอกสารไม่ได้พิมพ์ช่องไหนไว้ ให้ตอบ null เฉพาะช่องนั้น",
   "  เช่น เอกสารมีแต่ยอดรวม ก็ตอบ total อย่างเดียว ที่เหลือเป็น null",
   "- ห้ามเดา ช่องไหนอ่านไม่ออกหรือไม่แน่ใจ ให้ตอบ null",
+];
+
+const BAHT_PROMPT = [
+  "เอกสารนี้คือใบยืนยันการจอง (โรงแรม / ตั๋วโดยสาร / รถเช่า) ใบแจ้งหนี้ หรือใบกำกับภาษี",
+  "ให้อ่านข้อมูล 5 ช่องต่อไปนี้ตามที่พิมพ์อยู่บนเอกสาร",
+  "",
+  "กติกาของแต่ละช่อง:",
+  ...SHARED_RULES,
   `- ตัวเลขเงินที่สมเหตุสมผลต้องไม่ติดลบ และไม่เกิน ${MAX_BOOKING_AMOUNT} บาท`,
 ].join("\n");
 
+/**
+ * The same five questions, plus which of the two currencies the figures are in.
+ *
+ * Only two codes are offered, because only two exist for this request: the
+ * brand's own and baht. A third is a misread rather than a discovery — the
+ * invoice is being attached to a request against one company — and
+ * `admitModelCurrency` refuses it whatever this prompt says.
+ *
+ * The ceiling is stated **after conversion**, because that is where it is
+ * applied: bounding the raw figures would be the wrong measurement, in the
+ * direction that loses real money (`vision-amount.ts`).
+ */
+function multiPrompt(brandCurrency: string): string {
+  return [
+    "เอกสารนี้คือใบยืนยันการจอง (โรงแรม / ตั๋วโดยสาร / รถเช่า) ใบแจ้งหนี้ หรือใบกำกับภาษี",
+    "ให้อ่านข้อมูล 6 ช่องต่อไปนี้ตามที่พิมพ์อยู่บนเอกสาร",
+    "",
+    "กติกาของแต่ละช่อง:",
+    ...SHARED_RULES,
+    "- ห้ามแปลงสกุลเงินเอง ให้ตอบตัวเลขตามที่พิมพ์บนเอกสาร",
+    "",
+    "สกุลเงิน:",
+    `- currency: ตอบได้เฉพาะ "${brandCurrency}" หรือ "${THB}" เท่านั้น`,
+    "  ดูจากสัญลักษณ์หรือรหัสสกุลเงินที่พิมพ์บนเอกสาร",
+    "  ถ้าเอกสารเป็นสกุลเงินอื่น หรือระบุไม่ชัดเจน ให้ตอบ currency = null — อย่าเดา",
+    `- ตัวเลขเงินที่สมเหตุสมผลต้องไม่ติดลบ และเมื่อคิดเป็นเงินบาทแล้วไม่เกิน ${MAX_BOOKING_AMOUNT} บาท`,
+  ].join("\n");
+}
+
 /** What the client gets back. Every field is independently nullable. */
-const EMPTY = { bookingNo: null, priceExVat: null, vat: null, discount: null, total: null };
+const EMPTY = {
+  bookingNo: null,
+  priceExVat: null,
+  vat: null,
+  discount: null,
+  total: null,
+  currency: null,
+};
 
 export async function POST(req: NextRequest) {
   const session = await requireAuth();
   if (session instanceof Response) return session;
+
+  // Read before the guard, used after it: a query parameter costs nothing, but
+  // the brand lookup is a database read and an unauthenticated or rate-limited
+  // caller must not be able to make this route do one.
+  const brandCode = (req.nextUrl.searchParams.get("brandCode") ?? "").trim() || null;
 
   const guard = await guardVisionRequest(req, {
     userId: session.user.id,
@@ -110,16 +212,23 @@ export async function POST(req: NextRequest) {
   if (!guard.ok) return guard.response;
 
   try {
+    // Null for every brand nobody has configured a currency for — which is all
+    // of them until an admin turns one on — and for a caller that sent no brand
+    // code at all. That is the baht path below, byte for byte what this route
+    // did before.
+    const brandCurrency = await getBrandClaimCurrency(brandCode);
+    const prompt = brandCurrency ? multiPrompt(brandCurrency) : BAHT_PROMPT;
+
     // Built per kind and then asked the same question, so a new input kind
     // cannot arrive with its own idea of what an answer is.
     let content: Array<Record<string, unknown>>;
     if (guard.kind === "image") {
-      content = [visionImageBlock(guard.bytes, guard.mediaType), { type: "text", text: PROMPT }];
+      content = [visionImageBlock(guard.bytes, guard.mediaType), { type: "text", text: prompt }];
     } else if (guard.kind === "pdf") {
       const pages = await pdfPagesToPng(guard.bytes, MAX_PDF_PAGES);
       content = [
         ...pages.map((page) => visionImageBlock(page, "image/png")),
-        { type: "text", text: PROMPT },
+        { type: "text", text: prompt },
       ];
     } else {
       const sheet = await sheetToText(guard.bytes);
@@ -128,14 +237,16 @@ export async function POST(req: NextRequest) {
       // a null answer leaves the booking desk anyway. An error here would put a
       // red note on a perfectly good file.
       if (!sheet) return NextResponse.json({ ok: true, data: EMPTY });
-      content = [{ type: "text", text: `${PROMPT}\n\n${sheet}` }];
+      content = [{ type: "text", text: `${prompt}\n\n${sheet}` }];
     }
 
     const response = await guard.client.messages.parse({
       model: "claude-sonnet-5",
       max_tokens: 2048,
       messages: [{ role: "user", content: content as never }],
-      output_config: { format: zodOutputFormat(AnswerSchema) },
+      output_config: {
+        format: zodOutputFormat(brandCurrency ? MultiAnswerSchema : BahtAnswerSchema),
+      },
     });
 
     // The last gate, and the model is not trusted with the ceiling. Each field
@@ -143,15 +254,80 @@ export async function POST(req: NextRequest) {
     // one bad number — four good figures and a blank beat five blanks.
     // `sanitizeBookingAmount` keeps zero, unlike AP-1's: "no VAT" and "no
     // discount" are real answers a booking row must be able to record.
-    const parsed = response.parsed_output;
+    const parsed = response.parsed_output as
+      | {
+          bookingNo?: unknown;
+          priceExVat?: unknown;
+          vat?: unknown;
+          discount?: unknown;
+          total?: unknown;
+          currency?: string | null;
+        }
+      | null
+      | undefined;
+    const bookingNo = sanitizeBookingNo(parsed?.bookingNo);
+
+    if (!brandCurrency) {
+      return NextResponse.json({
+        ok: true,
+        data: {
+          bookingNo,
+          priceExVat: sanitizeBookingAmount(parsed?.priceExVat),
+          vat: sanitizeBookingAmount(parsed?.vat),
+          discount: sanitizeBookingAmount(parsed?.discount),
+          total: sanitizeBookingAmount(parsed?.total),
+          currency: THB,
+        },
+      });
+    }
+
+    // A currency the brand does not offer, or none legible, means the desk
+    // decides. **The booking number survives it**: it is not a money field, the
+    // same reason each figure is already sanitized on its own rather than the
+    // answer being discarded whole.
+    const currency = admitModelCurrency(parsed?.currency, brandCurrency);
+    if (currency === null) {
+      return NextResponse.json({ ok: true, data: { ...EMPTY, bookingNo } });
+    }
+    if (isBaht(currency)) {
+      return NextResponse.json({
+        ok: true,
+        data: {
+          bookingNo,
+          priceExVat: sanitizeBookingAmount(parsed?.priceExVat),
+          vat: sanitizeBookingAmount(parsed?.vat),
+          discount: sanitizeBookingAmount(parsed?.discount),
+          total: sanitizeBookingAmount(parsed?.total),
+          currency: THB,
+        },
+      });
+    }
+
+    // The ceiling is a baht ceiling, so it is the CONVERTED figure that is
+    // bounded. `sanitizeBookingAmount` is left exactly as it is — nine other
+    // call sites read it, all of them in the claim's own currency — and
+    // `admitReadAmount` moves which figure is measured, not what counts as
+    // usable, so zero is still kept here and a negative still refused. No rate
+    // means no bound can be applied, and unbounded figures are not offered: the
+    // fields open blank.
+    const fx = await resolveRate(currency);
+    const rate = fx ? fx.rate : null;
+    const priceExVat = admitReadAmount(parsed?.priceExVat, rate, sanitizeBookingAmount);
+    const vat = admitReadAmount(parsed?.vat, rate, sanitizeBookingAmount);
+    const discount = admitReadAmount(parsed?.discount, rate, sanitizeBookingAmount);
+    const total = admitReadAmount(parsed?.total, rate, sanitizeBookingAmount);
+    const anyAmount =
+      priceExVat !== null || vat !== null || discount !== null || total !== null;
     return NextResponse.json({
       ok: true,
       data: {
-        bookingNo: sanitizeBookingNo(parsed?.bookingNo),
-        priceExVat: sanitizeBookingAmount(parsed?.priceExVat),
-        vat: sanitizeBookingAmount(parsed?.vat),
-        discount: sanitizeBookingAmount(parsed?.discount),
-        total: sanitizeBookingAmount(parsed?.total),
+        bookingNo,
+        priceExVat,
+        vat,
+        discount,
+        total,
+        // Naming a currency beside five nulls would caption nothing.
+        currency: anyAmount ? currency : null,
       },
     });
   } catch (err: unknown) {

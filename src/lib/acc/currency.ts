@@ -39,6 +39,23 @@ export function toBaht(amount: number, rate: number | null): number | null {
 }
 
 /**
+ * Whether two codes name the same money.
+ *
+ * Baht has three spellings here — null, `""` and `"THB"` — so a bare `===` is
+ * wrong in the place it matters most: deciding whether a figure read off a
+ * document belongs in the claim in front of somebody. A mismatch there leaves
+ * the field blank rather than taking a ringgit total into a baht claim, which
+ * is the defect the AI reads carried until the currency was asked for at all.
+ */
+export function sameCurrency(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean {
+  if (isBaht(a) || isBaht(b)) return isBaht(a) && isBaht(b);
+  return norm(a) === norm(b);
+}
+
+/**
  * The currency a document read may be trusted with.
  *
  * Only the brand's own currency, or baht. A third currency is a misread rather

@@ -1,6 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { THB, isBaht, toBaht, admitModelCurrency, brandCurrencyState } from "./currency";
+import {
+  THB,
+  isBaht,
+  toBaht,
+  admitModelCurrency,
+  brandCurrencyState,
+  sameCurrency,
+} from "./currency";
 
 test("null, empty and THB all mean baht", () => {
   assert.equal(isBaht(null), true);
@@ -75,4 +82,19 @@ test("a brand is configured only when it has a foreign currency AND the flag is 
   assert.equal(brandCurrencyState({ currencyCode: null, currencyEnabled: true }), "none");
   assert.equal(brandCurrencyState({ currencyCode: "", currencyEnabled: true }), "none");
   assert.equal(brandCurrencyState({ currencyCode: "THB", currencyEnabled: true }), "none");
+});
+
+/**
+ * The three spellings of baht are why this exists: a bare `===` on the codes
+ * would call a null claim currency different from a `"THB"` read and blank a
+ * field that was perfectly fillable.
+ */
+test("sameCurrency treats null, empty and THB as one currency", () => {
+  assert.equal(sameCurrency(null, THB), true);
+  assert.equal(sameCurrency("", null), true);
+  assert.equal(sameCurrency(undefined, "thb"), true);
+  assert.equal(sameCurrency("MYR", "myr"), true);
+  assert.equal(sameCurrency("MYR", THB), false);
+  assert.equal(sameCurrency("MYR", null), false);
+  assert.equal(sameCurrency("MYR", "USD"), false);
 });
