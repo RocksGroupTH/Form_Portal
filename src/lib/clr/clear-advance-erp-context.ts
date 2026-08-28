@@ -12,18 +12,24 @@ export interface ClrErpContext {
 }
 
 /**
- * The vendor AP-2 debited for the advance this AP-3 clears.
+ * The confirmed vendor on the AP-2 this AP-3 clears.
  *
- * Read live from `AccAdvance` rather than copied onto the AP-3 row: the officer
- * can still change the vendor on the AP-2 up to its approval, and the clearing
- * must credit whatever was actually posted.
+ * Only a `confirmed` match counts — the same bar AP-2's own send applies before
+ * it posts the debit. A merely `suggested` vendor, or one reset by a later
+ * re-match or a PayeeName edit, must not be credited here.
+ *
+ * Read live rather than copied onto the AP-3 row. That is still not a true
+ * snapshot of what AP-2 posted: if the confirmed vendor is changed after the
+ * advance was sent, this reads the new one. Snapshotting the posted vendor at
+ * AP-2 send time is the proper fix and is tracked separately.
  */
 async function resolveAdvanceVendorNo(advanceRequestId: number): Promise<string | null> {
   const pool = await getAccPool();
   const res = await pool
     .request()
     .input("rid", sql.Int, advanceRequestId)
-    .query(`SELECT TOP 1 MatchedVendorNo FROM [dbo].[AccAdvance] WHERE RequestId = @rid`);
+    .query(`SELECT TOP 1 MatchedVendorNo FROM [dbo].[AccAdvance]
+            WHERE RequestId = @rid AND VendorMatchStatus = 'confirmed'`);
   const raw = (res.recordset[0]?.MatchedVendorNo as string) ?? "";
   return raw.trim() || null;
 }
@@ -37,8 +43,8 @@ async function resolveAdvanceVendorNo(advanceRequestId: number): Promise<string 
  */
 export async function loadClearAdvanceErpContext(
   brandCode: string,
-  hrDeptCode?: string | null,
-  advanceRequestId?: number | null,
+  hrDeptCode: string | null,
+  advanceRequestId: number | null,
 ): Promise<ClrErpContext> {
   const code = brandCode.trim().toUpperCase();
   if (advanceRequestId == null) {

@@ -72,7 +72,7 @@ The vendor line mirrors AP-2's proven shape: `accountType: "Vendor"`, `accountNo
 
 ### 3. `clear-advance-erp-send.ts`
 
-Both call sites pass the id through: `loadClearAdvanceErpContext(req.brandCode, req.requesterDepartmentCode, req.clear.advanceRequestId)`. Nothing else changes — the pre-flight/two-phase guards already treat a context throw as a refusal that never stamps `Failed`.
+Both call sites pass the id through: `loadClearAdvanceErpContext(req.brandCode, req.requesterDepartmentCode, req.clear.advanceRequestId)`. Nothing else changes. A context throw is handled by the existing Phase B error path (stamps `Failed`, sends nothing to BC).
 
 ### Blocking, not falling back
 
@@ -82,7 +82,7 @@ An AP-2 without a matched vendor **cannot be cleared to ERP**; the send is refus
 
 ## Error handling
 
-Every failure is a pre-flight context/payload throw, surfaced in the AP-3 ERP queue and preview as a refusal. The request keeps its current status; nothing is stamped `Failed` and nothing is sent to BC. No partial journal can be produced, because the throw happens before the payload is built.
+Every failure is a context/payload throw raised before the BC call, so **nothing is ever sent to BC** and no partial journal can exist. In `sendClrErpBatch` the throw is caught by Phase B's handler, which stamps `ErpInterfaceStatus='Failed'` and writes an `erp_interface_failed` activity row — the same treatment a missing Bank or Journal Batch already gets, and recoverable by fixing the AP-2 vendor and re-sending. The preview path (`previewClrErpJournal`) surfaces the message and stamps nothing. Moving the vendor/link check into Phase A so a refusal never stamps `Failed` is a possible follow-up, not part of this change.
 
 ## Testing
 
