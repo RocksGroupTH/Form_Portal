@@ -178,6 +178,32 @@ export interface TravelBookingRequest {
   /** `AccRequest.BrandCode` — the company this booking is filed under. */
   brandCode: string | null;
   /**
+   * `AccRequest.Currency` — the currency the **booking figures** on
+   * `AccTravelBookingDetail` are recorded in. **Null and `"THB"` both mean
+   * baht**, and a baht request leaves it null: nobody recorded a currency, and
+   * writing `"THB"` would claim somebody had.
+   *
+   * Derived from the brand and written by the booking desk's save
+   * (`admin-service.ts`), never posted by the requester — `TravelBookingTab`
+   * has no money field at all.
+   *
+   * **It does not describe `perDiemTotal`, which is always baht** — and nor
+   * does it describe `AccRequest.TotalAmount`, which for AP-17 holds the per
+   * diem alone and is deliberately untouched by this feature.
+   * `EmployeeAllowanceLog` has no currency column, so there is no data that
+   * could make an allowance anything else.
+   */
+  currency: string | null;
+  /**
+   * THB per 1 unit of `currency`, as fetched when the desk last saved a booking
+   * row. Null for a baht request.
+   *
+   * An **ECB mid-market reference rate** — `อัตราอ้างอิง`, never captioned as a
+   * Bank of Thailand rate (spec §9.1). Display only: nothing multiplies it into
+   * a stored column, because AP-17 stores no converted figure.
+   */
+  exchangeRate: number | null;
+  /**
    * Where this trip's uncounted first day went, when `isContinuation` is set.
    *
    * A continuation trip departs on the day the one before it returned, and one

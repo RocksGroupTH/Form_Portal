@@ -39,6 +39,14 @@ import {
   totalMismatch,
   MAX_BOOKING_AMOUNT,
 } from "@/features/travel-booking/lib/booking-amounts";
+import {
+  BOOKING_CURRENCY_NOTE,
+  bookingCurrencyOptions,
+  bookingCurrencyWord,
+  effectiveBookingCurrency,
+  referenceRateNote,
+} from "@/features/travel-booking/lib/booking-currency";
+import { THB, toBaht } from "@/lib/acc/currency";
 import { bookingFieldsLocked, type SavedBookingEntry } from "@/features/travel-booking/lib/booking-lock";
 import { bookingRowDirty } from "@/features/travel-booking/lib/booking-dirty";
 import { onFileAttached, onFileRemoved } from "@/features/travel-booking/lib/booking-file-sync";
@@ -57,6 +65,7 @@ import type {
   TravelBookingFileMeta,
   TravelBookingRequest,
 } from "@/features/travel-booking/types";
+import type { AccBrandOption } from "@/features/accounting/types";
 
 const TYPE_ICON: Record<BookingType, ReactNode> = {
   room: <BedDouble size={15} />,
@@ -90,32 +99,54 @@ function FieldCaption({ children }: { children: ReactNode }) {
  * One money field. Four of the five are identical apart from their caption, and
  * writing them out four times is how one of them ends up without the `disabled`
  * that locks it while the read is running.
+ *
+ * `unit` is the currency code, and **only ever set for a foreign request**. A
+ * baht field renders exactly the markup it rendered before this feature — same
+ * `px-3`, no adornment — because a brand with no currency configured has to
+ * leave this panel pixel-identical. `฿`/`บาท` is not added for baht for the same
+ * reason. It was called `BahtField` until a request could hold ringgit.
  */
-function BahtField({
+function AmountField({
   label,
   value,
   onChange,
   disabled,
+  unit,
 }: {
   label: string;
   value: string;
   onChange: (next: string) => void;
   disabled: boolean;
+  unit?: string | null;
 }) {
   return (
     <div>
       <FieldCaption>{label}</FieldCaption>
-      <input
-        type="number"
-        step="0.01"
-        min="0"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={disabled}
-        className="w-full rounded-lg px-3 py-2 text-[13px] outline-none tabular-nums text-right disabled:opacity-60 disabled:cursor-not-allowed"
-        style={fieldStyle}
-        placeholder="0.00"
-      />
+      <div className="relative">
+        <input
+          type="number"
+          step="0.01"
+          min="0"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          disabled={disabled}
+          // A three-letter code needs room a bare figure does not; baht keeps
+          // the padding it has always had.
+          className={`w-full rounded-lg py-2 text-[13px] outline-none tabular-nums text-right disabled:opacity-60 disabled:cursor-not-allowed ${
+            unit ? "pl-3 pr-11" : "px-3"
+          }`}
+          style={fieldStyle}
+          placeholder="0.00"
+        />
+        {unit && (
+          <span
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] font-bold pointer-events-none"
+            style={{ color: "var(--text-muted)" }}
+          >
+            {unit}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -174,6 +205,74 @@ export function AdminBookingPanel({
     }
     return map;
   }, [request.bookingDetails]);
+
+  /* ── The request's currency ──
+   *
+   * **Derived from the brand, never chosen by the requester.** AP-17's fill-in
+   * form carries no money field at all: the amounts are typed here, weeks later,
+   * by the booking desk. So the toggle below offers the brand's own currency and
+   * baht, and defaults to the brand's — the opposite of AP-1, where the
+   * requester picks and baht is the default. `booking-currency.ts` owns that
+   * rule and says why.
+   *
+   * A brand with nothing configured yields an empty option list, and then
+   * nothing here renders and nothing below changes: `currency` is `THB`, every
+   * `unit` is null, and the panel is the one that shipped before this feature.
+   */
+  /**
+   * The request's brand as the options endpoint describes it, or **undefined
+   * for "not identified"** — still in flight, the fetch failed, or the brand's
+   * AP-17 grant has since been withdrawn.
+   *
+   * Undefined is a distinct state from "configured with no currency", and the
+   * distinction is the whole point: it makes `currency` below null, the panel
+   * posts no currency at all, and the **server** derives one from the brand
+   * through the full registry. Posting `THB` in that window is what would
+   * silently record a ringgit invoice as baht, which is the AP-1 `brandsKnown`
+   * hazard in its AP-17 shape.
+   */
+  const [brandOption, setBrandOption] = useState<AccBrandOption | undefined>(undefined);
+  const brandCode = request.brandCode;
+  useEffect(() => {
+    if (!brandCode) return;
+    // A local `cancelled` inside the effect, fresh per run — not a ref set on
+    // mount, which StrictMode's mount → cleanup → mount would leave false for
+    // the component's life (see `aliveRef` below for where that bit).
+    let cancelled = false;
+    fetch("/api/request/travel-booking/options/brands")
+      .then((r) => r.json())
+      .then((j: { ok?: boolean; data?: AccBrandOption[] }) => {
+        if (cancelled || !j?.ok || !Array.isArray(j.data)) return;
+        setBrandOption(j.data.filter((b) => b.brandCode === brandCode)[0]);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [brandCode]);
+
+  const currencyOptions = bookingCurrencyOptions(brandOption);
+  /** What the header already records, normalised. `""` means nobody has yet. */
+  const storedCurrency = (request.currency ?? "").trim().toUpperCase();
+  const [pickedCurrency, setPickedCurrency] = useState<string | null>(null);
+  /* Reconciled against what the brand offers rather than used raw, so a brand
+     whose currency an admin has since switched off can never leave the desk
+     posting a code the server no longer accepts.
+
+     Null while the brand is unidentified — see `brandOption`. An identified
+     brand with nothing configured resolves to `THB`, which the save then posts
+     explicitly, and `resolveBookingFx` short-circuits on it without opening a
+     pool: an unconfigured brand costs not one extra round trip. */
+  const currency = brandOption
+    ? effectiveBookingCurrency(pickedCurrency ?? storedCurrency, brandOption)
+    : null;
+  const currencyUnit = currency !== null && currency !== THB ? currency : null;
+  /* The rate the SERVER recorded, and only while it still belongs to the
+     currency now on screen. A bare number goes wrong the moment the toggle
+     moves: switch MYR → THB and a bare rate would caption `1 THB = 8.25 บาท`,
+     a made-up figure on a money screen. */
+  const exchangeRate =
+    storedCurrency !== "" && storedCurrency === currency && request.exchangeRate && request.exchangeRate > 0
+      ? request.exchangeRate
+      : null;
 
   const [completing, setCompleting] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<{ detailId: number; label: string } | null>(null);
@@ -344,6 +443,11 @@ export function AdminBookingPanel({
               requestId={requestId}
               info={typeInfo(request, rule.type, optionIcons)}
               rows={rowsByType.get(rule.type) ?? []}
+              currency={currency}
+              currencyOptions={currencyOptions}
+              brandCode={brandCode}
+              exchangeRate={exchangeRate}
+              onCurrencyChange={setPickedCurrency}
               onChanged={onChanged}
               onRowDirty={reportRowDirty}
               onRequestDelete={(detailId) => setPendingDelete({ detailId, label: rule.label })}
@@ -541,6 +645,11 @@ function BookingTypeGroup({
   requestId,
   info,
   rows,
+  currency,
+  currencyOptions,
+  brandCode,
+  exchangeRate,
+  onCurrencyChange,
   onChanged,
   onRowDirty,
   onRequestDelete,
@@ -553,6 +662,15 @@ function BookingTypeGroup({
   requestId: number;
   info: InfoGroup[];
   rows: BookingDetail[];
+  /** The request's currency, or **null while the brand is unidentified** — post nothing and let the server derive it. */
+  currency: string | null;
+  /** Empty for a brand with no currency configured, which renders nothing new. */
+  currencyOptions: string[];
+  /** Named in the currency caption, so the desk can see where the value came from. */
+  brandCode: string | null;
+  /** The rate the server recorded, or null. Display only. */
+  exchangeRate: number | null;
+  onCurrencyChange: (code: string) => void;
   onChanged: () => void;
   /** Report one row's unsaved-edits answer to the panel, which owns Complete. */
   onRowDirty: (key: string, dirty: boolean) => void;
@@ -647,6 +765,11 @@ function BookingTypeGroup({
             detail={detail}
             position={idx + 1}
             total={total}
+            currency={currency}
+            currencyOptions={currencyOptions}
+            brandCode={brandCode}
+            exchangeRate={exchangeRate}
+            onCurrencyChange={onCurrencyChange}
             onChanged={onChanged}
             onDirtyChange={reportDirty}
             onDelete={() => onRequestDelete(detail.id)}
@@ -664,6 +787,11 @@ function BookingTypeGroup({
             detail={undefined}
             position={rows.length + 1}
             total={total}
+            currency={currency}
+            currencyOptions={currencyOptions}
+            brandCode={brandCode}
+            exchangeRate={exchangeRate}
+            onCurrencyChange={onCurrencyChange}
             onChanged={onChanged}
             onDirtyChange={reportDirty}
             onCreated={(id) => slotOfRow.current.set(id, draftSlot)}
@@ -703,6 +831,11 @@ function BookingRowCard({
   detail,
   position,
   total,
+  currency,
+  currencyOptions,
+  brandCode,
+  exchangeRate,
+  onCurrencyChange,
   onChanged,
   onDirtyChange,
   onCreated,
@@ -717,6 +850,21 @@ function BookingRowCard({
   detail: BookingDetail | undefined;
   position: number;
   total: number;
+  /**
+   * The currency these four figures are in. **Per request, not per row** — it
+   * lives on `AccRequest` and every row of the request shares it, which is why
+   * the toggle changes the panel's state rather than this card's.
+   *
+   * **Null means "not known here"**, not baht: the save then posts no currency
+   * and the server derives one from the brand. See `brandOption` in the panel.
+   */
+  currency: string | null;
+  /** Empty for a brand with no currency configured: the toggle is not rendered. */
+  currencyOptions: string[];
+  /** Named in the currency caption — where the value came from, not a control. */
+  brandCode: string | null;
+  exchangeRate: number | null;
+  onCurrencyChange: (code: string) => void;
   onChanged: () => void;
   /** Tell the panel whether this row is carrying unsaved edits. */
   onDirtyChange: (key: string, dirty: boolean) => void;
@@ -773,6 +921,22 @@ function BookingRowCard({
      A half-filled row is deliberately not a mismatch — see `booking-amounts.ts`. */
   const computedTotal = suggestedTotal(nPrice, nVat, nDiscount);
   const mismatch = totalMismatch(nPrice, nVat, nDiscount, nTotal);
+
+  /* Null for baht, so every adornment, caption and extra line below disappears
+     on a request whose brand has no currency configured. */
+  const currencyUnit = currency === THB ? null : currency;
+  const currencyWord = bookingCurrencyWord(currency);
+  /* The four figures stay in the request's own currency — nothing here is
+     stored converted. This is the reading beside them, and it exists only once
+     the SERVER has recorded a rate: the client never calls the FX provider, so
+     before the first save there is nothing honest to show.
+
+     `toBaht` and not a bare multiplication, so an unusable rate produces no line
+     rather than a wrong one — the same refusal the save applies server-side. */
+  const totalInBaht =
+    currencyUnit !== null && exchangeRate !== null && nTotal !== null
+      ? toBaht(nTotal, exchangeRate)
+      : null;
 
   /**
    * The fields open only once there is a file behind them and the read of it has
@@ -952,7 +1116,12 @@ function BookingRowCard({
     ];
     for (const [label, raw, value] of figures) {
       if (raw.trim() !== "" && value === null) {
-        toast.error(`${label}: กรอกเป็นตัวเลขไม่ติดลบ และไม่เกิน ${MAX_BOOKING_AMOUNT.toLocaleString()} บาท`);
+        // `MAX_BOOKING_AMOUNT` is a ceiling on the figure as typed, whatever the
+        // currency — `sanitizeBookingAmount` is deliberately unchanged by this
+        // feature (it has nine call sites, all in the request's own currency).
+        // The word after it therefore has to name the currency being typed, not
+        // baht, or the message describes a rule that is not the one applied.
+        toast.error(`${label}: กรอกเป็นตัวเลขไม่ติดลบ และไม่เกิน ${MAX_BOOKING_AMOUNT.toLocaleString()} ${currencyWord}`);
         return null;
       }
     }
@@ -972,6 +1141,9 @@ function BookingRowCard({
           vatAmount: nVat,
           discountAmount: nDiscount,
           totalAmount: nTotal,
+          // The currency only. The rate is the server's to fetch and write —
+          // AP-2 lets the browser post one and nothing verifies it there.
+          currency,
         }),
       });
       const json: { ok: boolean; error?: string; data?: { id: number } } = await res.json();
@@ -1209,10 +1381,70 @@ function BookingRowCard({
               placeholder="เช่น AGD-123456"
             />
           </div>
-          <BahtField label="ราคา (ก่อน VAT)" value={priceExVat} onChange={setPriceExVat} disabled={locked} />
-          <BahtField label="ภาษี (VAT)" value={vat} onChange={setVat} disabled={locked} />
-          <BahtField label="ส่วนลด" value={discount} onChange={setDiscount} disabled={locked} />
-          <BahtField label="ราคารวม" value={totalAmount} onChange={setTotalAmount} disabled={locked} />
+          {/* สกุลเงิน — rendered ONLY for a brand whose currency an admin has
+              configured AND switched on (`currencyOptions` is empty otherwise).
+              A brand with nothing set leaves this panel exactly as it looked
+              before the feature shipped, which is why there is no disabled
+              one-option control here and no placeholder.
+
+              The value is the REQUEST's, not this row's: it lives on
+              `AccRequest` and every booking row of the request shares it, which
+              is what the note under the toggle says out loud. It is not chosen
+              by the requester at any point — AP-17's fill-in form has no money
+              field — so what the desk gets is the brand's currency, already
+              selected, and baht as the deliberate opt-out for an invoice that
+              really is in baht.
+
+              `disabled={locked}` shares the fields' rule rather than inventing
+              one — and it earns its keep during a read: `locked` is true while
+              one is in flight, and moving the currency underneath it would
+              re-label figures the model is in the middle of writing. There is no
+              status arm here and none is wanted; the panel itself renders only at
+              ManagerApproved/ADMIN, so all of this is already unreachable once
+              accounting has signed off. */}
+          {currencyOptions.length > 0 && (
+            <div className="col-span-2 sm:col-span-4">
+              <FieldCaption>
+                สกุลเงิน{brandCode ? ` (จากแบรนด์ ${brandCode})` : ""}
+              </FieldCaption>
+              <div className="flex flex-wrap items-center gap-2">
+                {currencyOptions.map((code) => {
+                  const active = currency === code;
+                  return (
+                    <button
+                      key={code}
+                      type="button"
+                      onClick={() => onCurrencyChange(code)}
+                      disabled={locked}
+                      className="px-3 py-1.5 rounded-lg text-[12.5px] font-bold cursor-pointer transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                      style={{
+                        borderWidth: 1,
+                        borderStyle: "solid",
+                        borderColor: active ? "var(--nav-active-text)" : "var(--border-card)",
+                        background: active ? "var(--nav-active-bg)" : "var(--bg-card-alt)",
+                        color: active ? "var(--nav-active-text)" : "var(--text-secondary)",
+                      }}
+                    >
+                      {code}
+                    </button>
+                  );
+                })}
+                {exchangeRate !== null && currencyUnit && (
+                  <span className="text-[11.5px] tabular-nums" style={{ color: "var(--text-muted)" }}>
+                    {referenceRateNote(currencyUnit, exchangeRate)}
+                  </span>
+                )}
+              </div>
+              <p className="m-0 mt-1.5 text-[11.5px]" style={{ color: "var(--text-muted)" }}>
+                {BOOKING_CURRENCY_NOTE}
+              </p>
+            </div>
+          )}
+
+          <AmountField label="ราคา (ก่อน VAT)" value={priceExVat} onChange={setPriceExVat} disabled={locked} unit={currencyUnit} />
+          <AmountField label="ภาษี (VAT)" value={vat} onChange={setVat} disabled={locked} unit={currencyUnit} />
+          <AmountField label="ส่วนลด" value={discount} onChange={setDiscount} disabled={locked} unit={currencyUnit} />
+          <AmountField label="ราคารวม" value={totalAmount} onChange={setTotalAmount} disabled={locked} unit={currencyUnit} />
         </div>
 
         {/* AP-1's treatment: a 40% band sweeping across a tinted panel, laid over
@@ -1273,8 +1505,26 @@ function BookingRowCard({
           style={{ color: mismatch ? "var(--text-info-yellow)" : "var(--text-muted)" }}
         >
           {mismatch && <AlertTriangle size={12} className="shrink-0" />}
-          ราคารวมที่คำนวณได้ (ราคา + VAT − ส่วนลด): {computedTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท
+          ราคารวมที่คำนวณได้ (ราคา + VAT − ส่วนลด): {computedTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {currencyWord}
           {mismatch && " — ไม่ตรงกับราคารวมที่กรอกไว้ ตรวจสอบกับเอกสารอีกครั้ง"}
+        </p>
+      )}
+
+      {/* The baht reading of what was typed. **Beside the figure, never instead
+          of it** — the invoice states ringgit and that is what is stored; this
+          is the conversion accounting needs, at the rate the server recorded.
+
+          It appears only on a foreign request that already has a rate, so a
+          baht request and an unconfigured brand render nothing here at all.
+
+          The rate itself is stated once, beside the toggle above, rather than
+          repeated on every row — but the `(อัตราอ้างอิง)` qualifier stays here,
+          because a bare `≈` figure on a money screen reads as what a bank will
+          settle at, and it is not: every rate is an ECB mid-market reference
+          rate and none of them may be called a Bank of Thailand rate. */}
+      {totalInBaht !== null && (
+        <p className="m-0 text-[11.5px] tabular-nums" style={{ color: "var(--text-muted)" }}>
+          ราคารวมคิดเป็นเงินบาท ≈ {totalInBaht.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท (อัตราอ้างอิง)
         </p>
       )}
 

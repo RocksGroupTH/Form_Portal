@@ -7,6 +7,13 @@ import type { PerDiemDependency } from "@/lib/acc/travel-booking/perdiem-depende
 import { AP17_FORM_CODE, BOOKING_TYPE_REFTYPE } from "@/features/travel-booking/constants";
 import { sanitizeBookingAmount } from "@/features/travel-booking/lib/booking-amounts";
 import { sanitizeBookingNo } from "@/features/travel-booking/lib/booking-no";
+import {
+  BOOKING_FX_UNAVAILABLE_ERROR,
+  effectiveBookingCurrency,
+} from "@/features/travel-booking/lib/booking-currency";
+import { THB, toBaht } from "@/lib/acc/currency";
+import { needsRate, resolveRate } from "@/lib/acc/fx";
+import { listBrandRegistry } from "@/lib/brand-registry";
 import type { BookingType, TravelBookingRequest } from "@/features/travel-booking/types";
 
 type AccPool = Awaited<ReturnType<typeof getAccPool>>;
@@ -204,6 +211,120 @@ export async function listAccountQueue(): Promise<AccountQueueItem[]> {
   }));
 }
 
+/* ─────────────────────────── currency ─────────────────────────── */
+
+/**
+ * What this request's booking figures are recorded in, and what one unit is
+ * worth in baht.
+ *
+ * `currency === null` means baht, and a baht request stores **both** columns as
+ * NULL: nobody recorded a currency, and writing `'THB'` would claim somebody
+ * had. That is also what keeps a brand with no currency configured writing
+ * byte-identical rows to the ones it wrote before this feature existed.
+ */
+interface BookingFx {
+  currency: string | null;
+  /** THB per 1 unit. Null only alongside a null currency. */
+  rate: number | null;
+}
+
+const BAHT_FX: BookingFx = { currency: null, rate: null };
+
+/**
+ * The request's currency, derived from its **brand**, with today's rate fetched
+ * for it.
+ *
+ * Reads the brand through `listBrandRegistry()`, which opens
+ * `getProductionFormPool()` — `BrandSetting` has no row in
+ * `Rocks_Portal_Form_UAT`, so a `getAccPool()` read of it throws `Invalid
+ * object name` for every UAT tester and for nobody else. This file must
+ * therefore never name that table itself; `currency-pool-guard.test.ts`
+ * enforces exactly that, per file, and `admin-service.ts` imports `getAccPool`
+ * on line 1.
+ *
+ * **`posted` is the desk's opt-out, not its choice.** Absent means "derive it",
+ * which resolves to the brand's own currency — see `effectiveBookingCurrency`
+ * for why that is the opposite of AP-1's rule. Only an explicit `THB` moves it
+ * to baht, and nothing else can widen it: a third currency resolves back to the
+ * brand's.
+ *
+ * Called **outside** the transaction, deliberately: it reaches two databases
+ * and the network, and holding the `AccRequest` row lock across an 8-second FX
+ * timeout is how a booking save turns into a deadlock against `completeRequest`.
+ */
+async function resolveBookingFx(
+  brandCode: string | null,
+  posted: string | null | undefined,
+): Promise<BookingFx> {
+  // An explicit `THB` needs no brand read: `effectiveBookingCurrency` answers
+  // baht for it whatever the brand says, so the registry could not change the
+  // outcome. That is what keeps a brand with no currency configured making
+  // **no** extra round trip — the panel posts `THB` for one — and it is why the
+  // short-circuit tests the string rather than calling `isBaht`, which would
+  // also swallow an ABSENT currency. Absent means "derive it from the brand",
+  // and deriving is exactly what the rest of this function does.
+  if ((posted ?? "").trim().toUpperCase() === THB) return BAHT_FX;
+  if (!brandCode) return BAHT_FX;
+
+  let brand: { currencyCode: string | null; currencyEnabled: boolean } | null = null;
+  const brands = await listBrandRegistry();
+  for (const b of brands) {
+    if (b.code === brandCode) {
+      brand = { currencyCode: b.currencyCode, currencyEnabled: b.currencyEnabled };
+      break;
+    }
+  }
+
+  const currency = effectiveBookingCurrency(posted, brand);
+  if (!needsRate(currency)) return BAHT_FX;
+
+  const fx = await resolveRate(currency);
+  // Fail closed. Recording a foreign currency with no rate would leave every
+  // screen showing MYR figures with no way to express them in baht, on the
+  // request accounting is about to sign off.
+  if (!fx) throw new Error(BOOKING_FX_UNAVAILABLE_ERROR);
+  return { currency, rate: fx.rate };
+}
+
+/**
+ * Refuse the save unless every figure on the row can actually be stated in baht
+ * at the rate about to be recorded.
+ *
+ * **`toBaht` returning null is a refusal, never a fallback to the unconverted
+ * figure.** AP-17 stores no converted column of its own — the four figures stay
+ * in the request's own currency, exactly as AP-1's per-day
+ * `AccTravelExpense.TotalAmount` does — so what this protects is the *pair* the
+ * screens multiply: `Currency` plus `ExchangeRate`. Committing a rate that
+ * cannot convert these figures would put an unusable pair on the request and
+ * leave the desk with nothing on screen saying so.
+ *
+ * A baht request never reaches the loop: `fx.currency` is null and there is
+ * nothing to convert.
+ */
+function assertConvertible(fx: BookingFx, amounts: (number | null)[]): void {
+  if (fx.currency === null) return;
+  for (const amount of amounts) {
+    if (amount === null) continue;
+    if (toBaht(amount, fx.rate) === null) throw new Error(BOOKING_FX_UNAVAILABLE_ERROR);
+  }
+}
+
+/**
+ * The brand this request is filed under, read before the transaction opens so
+ * the FX lookup can happen outside it.
+ *
+ * Deliberately not taken from the client: the currency is derived from the
+ * brand, so a posted brand code would let a caller pick the currency after all.
+ */
+async function loadBrandCode(pool: AccPool, requestId: number): Promise<string | null> {
+  const res = await pool.request()
+    .input("rid", sql.Int, requestId)
+    .input("form", sql.NVarChar, AP17_FORM_CODE)
+    .query(`SELECT BrandCode FROM [dbo].[AccRequest] WHERE Id=@rid AND FormCode=@form`);
+  const row = res.recordset[0] as { BrandCode: string | null } | undefined;
+  return (row?.BrandCode ?? null) || null;
+}
+
 /* ─────────────────────────── booking fill-in ─────────────────────────── */
 
 export interface SavedBookingDetail {
@@ -291,6 +412,27 @@ async function requireEditableBooking(runner: SqlRunner, requestId: number): Pro
  * total is stored as entered and never reconciled against the other three here: a supplier's
  * own total is a fact about the transaction, and `totalMismatch` flags a disagreement for a
  * person to judge rather than correcting it (see `features/travel-booking/lib/booking-amounts.ts`).
+ *
+ * ── Currency ──
+ *
+ * The four figures are stored **in the request's own currency, unconverted** —
+ * the same treatment AP-1 gives its per-day `AccTravelExpense.TotalAmount`.
+ * What this save also records, on the request header, is *which* currency and
+ * at *what* rate, so every screen can state the baht equivalent beside them.
+ *
+ * The currency is derived from the brand and re-derived here whatever the
+ * client posted (`resolveBookingFx`); `input.currency` can only ever say "the
+ * desk chose baht instead". The rate is fetched **server-side** — the client
+ * never posts one, which is the single part of AP-2's approach this feature
+ * deliberately does not reuse.
+ *
+ * **`AccRequest.TotalAmount` is not touched, and must not be.** For AP-17 it
+ * holds the *per-diem total alone* — the booking cost has never reached the
+ * header — so summing this row into it would double the figure on My Requests,
+ * My Work and the header for **every** AP-17 request including baht ones, and
+ * `recomputeGroupPerDiem` would silently rewrite it back from the per diem
+ * anyway (`perdiem-recompute.ts`, asserted by its own test). Per diem is always
+ * baht: `EmployeeAllowanceLog` has no currency column.
  */
 export async function saveBookingDetail(
   requestId: number,
@@ -302,10 +444,31 @@ export async function saveBookingDetail(
     vatAmount?: number | null;
     discountAmount?: number | null;
     totalAmount?: number | null;
+    /**
+     * What the desk's toggle held. **Not a choice of rate, and not really a
+     * choice of currency** — anything other than `'THB'` resolves to the
+     * brand's own currency, so this can only opt out, never widen.
+     */
+    currency?: string | null;
   },
   actor: Actor,
 ): Promise<SavedBookingDetail> {
   const pool = await getAccPool();
+
+  // Both before the transaction: this reads the production form pool and, for a
+  // foreign request, the FX provider. A brand with no currency configured makes
+  // no FX call at all and writes NULL into both columns, exactly as before.
+  const fx = await resolveBookingFx(await loadBrandCode(pool, requestId), input.currency ?? null);
+  const amounts = [
+    sanitizeBookingAmount(input.priceExVat),
+    sanitizeBookingAmount(input.vatAmount),
+    sanitizeBookingAmount(input.discountAmount),
+    sanitizeBookingAmount(input.totalAmount),
+  ];
+  // Refuses before anything is written, rather than committing a currency and a
+  // rate that cannot express the figures beside them.
+  assertConvertible(fx, amounts);
+
   const tx = pool.transaction();
   await tx.begin();
   try {
@@ -321,10 +484,12 @@ export async function saveBookingDetail(
         // silently, which would store the first hundred characters of the wrong
         // thing as a booking reference.
         .input("no", sql.NVarChar(100), sanitizeBookingNo(input.bookingNo))
-        .input("price", sql.Decimal(18, 2), sanitizeBookingAmount(input.priceExVat))
-        .input("vat", sql.Decimal(18, 2), sanitizeBookingAmount(input.vatAmount))
-        .input("disc", sql.Decimal(18, 2), sanitizeBookingAmount(input.discountAmount))
-        .input("total", sql.Decimal(18, 2), sanitizeBookingAmount(input.totalAmount));
+        // The figures stay in the request's own currency — `Currency` and
+        // `ExchangeRate` on the header say which, and the screens convert.
+        .input("price", sql.Decimal(18, 2), amounts[0])
+        .input("vat", sql.Decimal(18, 2), amounts[1])
+        .input("disc", sql.Decimal(18, 2), amounts[2])
+        .input("total", sql.Decimal(18, 2), amounts[3]);
 
     const OUTPUT_COLS = `OUTPUT inserted.Id AS Id, inserted.TravelBookingId AS TravelBookingId,
                inserted.BookingType AS BookingType, inserted.BookingNo AS BookingNo, inserted.PriceExVat AS PriceExVat,
@@ -348,6 +513,26 @@ export async function saveBookingDetail(
                 VALUES (@tbid, @type, @no, @price, @vat, @disc, @total, @user)`);
       saved = ins.recordset[0] as SavedRow;
     }
+
+    /* The two header columns, in the same transaction as the row whose figures
+       they describe — a committed figure with no currency beside it is a number
+       every screen would read as baht.
+
+       `TotalAmount` is deliberately absent: for AP-17 it is the per-diem total
+       alone and this feature does not change what it means. `ForeignAmount` is
+       absent too, and that is not an oversight — AP-1 documents it as "the claim's
+       own figure, of which TotalAmount is the conversion", and here TotalAmount is
+       a *different* quantity in a *different* currency, so filling it in would
+       assert a relationship that does not hold.
+
+       `UpdatedAt` is not touched either: `listAdminQueue` and `listAccountQueue`
+       both `ORDER BY r.UpdatedAt ASC`, so bumping it would send a request to the
+       back of the work queue every time the desk saved a row. */
+    await tx.request()
+      .input("rid", sql.Int, requestId)
+      .input("currency", sql.Char(3), fx.currency)
+      .input("fxRate", sql.Decimal(18, 6), fx.currency === null ? null : fx.rate)
+      .query(`UPDATE [dbo].[AccRequest] SET Currency=@currency, ExchangeRate=@fxRate WHERE Id=@rid`);
 
     await tx.commit();
     return mapSavedRow(saved);

@@ -89,6 +89,13 @@ function mapTravelBookingRow(
     // status alone acts on the wrong one.
     currentStepCode: (r.CurrentStepCode as TravelBookingStepCode) ?? null,
     brandCode: (r.BrandCode as string) ?? null,
+    // The currency the booking figures are recorded in, and the rate the desk's
+    // last save recorded for it. Written by `admin-service.saveBookingDetail`
+    // and read here only to be displayed — AP-17 stores no converted figure, so
+    // nothing downstream multiplies these into a column. `AccRequest.TotalAmount`
+    // is the per-diem total and stays baht whatever these say.
+    currency: ((r.Currency as string | null) ?? "").trim() || null,
+    exchangeRate: num(r.ExchangeRate),
     // Only ever present on the single-request load, which is the one place the
     // note is rendered; the list queries do not pay for the subquery.
     continuationFromRequestNo: (r.ContinuationFromRequestNo as string) ?? null,
@@ -354,6 +361,7 @@ export async function listMyTravelBookings(userId: number): Promise<TravelBookin
     .query(`
       SELECT
         r.Id, r.RequestNo, r.Status, r.CurrentStepCode, r.BrandCode, r.StaffId, r.RequesterFullName, r.RequesterEmail, r.RequesterPosition, r.RequesterDepartmentName,
+        r.Currency, r.ExchangeRate,
         r.PaymentDate, r.SubmittedAt,
         t.Phone, t.AllowanceSnapshot, t.ReasonId, t.ReasonName, t.ReasonCustomText, t.WorkDetail,
         t.ProvinceId, t.ProvinceName, t.AccommodationId, t.AccommodationName, t.AccommodationCustomText, t.NeedsRoomBooking,

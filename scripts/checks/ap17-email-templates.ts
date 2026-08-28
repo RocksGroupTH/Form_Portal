@@ -14,6 +14,11 @@ const mockReq: TravelBookingRequest = {
   status: "Submitted",
   currentStepCode: "MANAGER",
   brandCode: "PCTH",
+  // A baht request: nobody recorded a currency, which is what every AP-17 row
+  // written before the multi-currency work holds and what an unconfigured brand
+  // keeps writing.
+  currency: null,
+  exchangeRate: null,
   continuationFromRequestNo: null,
   continuationFromRequestId: null,
   staffId: 10176,

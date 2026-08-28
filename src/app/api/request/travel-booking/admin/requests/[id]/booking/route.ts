@@ -36,6 +36,12 @@ async function requireAdminContext(
  * The body is read permissively here and narrowed in the service, which is where
  * `sanitizeBookingNo` / `sanitizeBookingAmount` run. The client applies the same functions;
  * that is a convenience for the person typing, not the gate.
+ *
+ * `currency` is the desk's toggle, and **no rate is ever accepted** — the service
+ * fetches one itself, so a caller cannot choose what their own figures are worth.
+ * The four figures are stored in the request's own currency; which currency, and
+ * at what rate, lands on the request header. `AccRequest.TotalAmount` is untouched
+ * by all of it: for AP-17 that column holds the per-diem total alone.
  */
 export async function POST(
   req: NextRequest,
@@ -53,6 +59,7 @@ export async function POST(
       vatAmount?: number | null;
       discountAmount?: number | null;
       totalAmount?: number | null;
+      currency?: string | null;
     };
     if (!body.bookingType || !BOOKING_TYPES.has(body.bookingType)) {
       return NextResponse.json({ ok: false, error: "Invalid bookingType" }, { status: 400 });
@@ -73,6 +80,10 @@ export async function POST(
         vatAmount: body.vatAmount ?? null,
         discountAmount: body.discountAmount ?? null,
         totalAmount: body.totalAmount ?? null,
+        // Re-derived from the request's brand in the service. Anything other
+        // than 'THB' resolves to the brand's own currency, so a body naming a
+        // third currency cannot file the request in it — this can only opt out.
+        currency: body.currency ?? null,
       },
       actor,
     );
