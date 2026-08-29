@@ -65,14 +65,19 @@ import { UatDataBanner } from "@/components/UatDataBanner";
 import { canActManagerStep } from "@/lib/acc/manager-auth";
 import { useErpSandboxDevHost } from "@/features/accounting/hooks/useErpSandboxDevHost";
 import { useRole } from "@/lib/hooks/useRole";
-import { computeTotalAmount, computeTotalDistance } from "@/lib/acc/calc";
+import { computeTotalAmount, computeTotalDistance, dayCostBreakdown } from "@/lib/acc/calc";
 import {
   currencyWord,
   fmtAmountWithCurrency,
   fmtMoneyTh,
+  fmtRateAsOfTh,
+  fmtRateTh,
   referenceRateNote,
   showsForeignCurrency,
 } from "@/lib/acc/currency-display";
+import { isOverriddenRate } from "@/lib/acc/currency";
+import { claimRateFacts, multiRateCurrencies } from "@/features/accounting/lib/claim-rates";
+import type { ClaimRateFact } from "@/features/accounting/lib/claim-rates";
 import {
   formatDayVehicleNames,
   hasRateVehicle,
@@ -791,6 +796,117 @@ function VehicleChip({
   );
 }
 
+/**
+ * What a day's total is made of, under the day's own figure.
+ *
+ * **`dayCostBreakdown` is the only source**, exactly as it is on the form's
+ * pre-submit summary. It is built branch-for-branch alongside
+ * `computeTotalAmount` and `calc.test.ts` asserts the parts sum to it, so the
+ * list here cannot drift from the figure printed above it. Re-deriving the parts
+ * on this page would be a second answer to what a day cost, on the screen an
+ * approver reads before deciding to pay — and the first thing anybody would do
+ * with two disagreeing figures is trust the wrong one.
+ *
+ * The parts carry no currency word. They sit directly beneath the day total,
+ * which names it, and repeating it on every row is noise — the same shape the
+ * form uses.
+ */
+function DayCostParts({ day }: { day: TravelExpenseDetail }) {
+  const parts = dayCostBreakdown(day);
+  if (parts.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-0.5 mt-1.5">
+      {parts.map((part, pi) => (
+        <div key={`${part.label}-${pi}`} className="flex items-baseline gap-2">
+          <span className="text-[11px] min-w-0 flex-1" style={{ color: "var(--text-muted)" }}>
+            {part.label}
+            {part.detail && (
+              <span className="ml-1.5" style={{ color: "var(--text-faint)" }}>
+                {part.detail}
+              </span>
+            )}
+          </span>
+          <span
+            className="text-[11px] font-semibold tabular-nums shrink-0"
+            style={{ color: "var(--text-secondary)" }}
+          >
+            {fmtMoney(part.amount)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The rates this claim was converted at, **as stored** — never as they are today.
+ *
+ * This is the half of the requirement that a fresh fetch would quietly get
+ * wrong. Migration 130 records, per expense line, the rate used and which day's
+ * rate it was; re-asking the provider on render would print today's number
+ * beside a figure converted weeks ago, and nothing on screen would say the two
+ * were different questions. So every number here comes off the claim.
+ *
+ * **Never captioned as a Bank of Thailand rate.** `BOT_API_CLIENT_ID` is
+ * deliberately unprovisioned, so every rate is an ECB mid-market reference
+ * figure, which is not what a bank settles at. `referenceRateNote` is the one
+ * place that sentence is written — including the `ณ <date>` clause — and it is
+ * reused rather than retyped.
+ *
+ * **A date nobody recorded prints nothing.** Every line written before 130 reads
+ * null, and `referenceRateNote` simply omits the clause; a rate with no date is
+ * shown as a rate with no date rather than as one dated today.
+ *
+ * **One row per distinct rate**, because since migration 129 the currency is per
+ * line and a claim can honestly hold more than one — a draft saved on one day
+ * and submitted on another, or a line accounting has corrected by hand. Each row
+ * names the lines it actually governs, so no rate is ever presented as though it
+ * priced the whole claim.
+ */
+function ClaimRateNotes({ facts }: { facts: ClaimRateFact[] }) {
+  if (facts.length === 0) return null;
+  const repeated = multiRateCurrencies(facts);
+  const single = facts.length === 1;
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <p className="text-[10px] font-semibold uppercase tracking-wide m-0" style={{ color: "var(--text-muted)" }}>
+        อัตราแลกเปลี่ยนที่ใช้คำนวณ
+      </p>
+
+      {facts.map((f, i) => (
+        <div key={`${f.currency}-${f.rate ?? "none"}-${f.asOf ?? "none"}-${i}`} className="flex flex-col">
+          <p className="text-[11.5px] m-0" style={{ color: "var(--text-secondary)" }}>
+            {f.rate === null
+              ? `${f.currency} — ไม่มีอัตราแลกเปลี่ยนที่บันทึกไว้`
+              : referenceRateNote(f.currency, f.rate, f.asOf)}
+            {f.rate !== null && isOverriddenRate(f.source) && (
+              <span style={{ color: "var(--text-info-yellow)" }}> · แก้โดยฝ่ายบัญชีแล้ว</span>
+            )}
+          </p>
+          {/* Which lines this rate priced. Omitted when the claim has just one
+              rate: there is nothing it could be confused with, and listing every
+              line under it would only bury the sentence above. */}
+          {!single && (
+            <p className="text-[10.5px] m-0 mt-0.5" style={{ color: "var(--text-faint)" }}>
+              ใช้กับ: {f.lines.join(" · ")}
+            </p>
+          )}
+        </div>
+      ))}
+
+      {/* Two currencies on one claim is ordinary and needs no explaining. The
+          *same* currency at two rates does — otherwise the second row reads as a
+          contradiction rather than as a fact about how the claim was filed. */}
+      {repeated.length > 0 && (
+        <p className="text-[10.5px] m-0" style={{ color: "var(--text-muted)" }}>
+          บางรายการบันทึกอัตราคนละวันกัน ({repeated.join(", ")}) — แต่ละรายการคิดตามอัตราที่กำกับไว้
+        </p>
+      )}
+    </div>
+  );
+}
+
 function TravelDaySection({
   request,
   day,
@@ -1250,6 +1366,20 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
     (travelDays.length > 0
       ? travelDays.reduce((s, d) => s + (computeTotalAmount(normalizeTravelDay(d)) || 0), 0)
       : null);
+
+  /**
+   * The rates the claim's **lines** were converted at, as stored.
+   *
+   * This is where a modern claim's provenance lives: since migration 129 the
+   * currency is on the expense line, so `request.currency` is NULL and the
+   * legacy header strip above renders for nothing. Without this the detail page
+   * showed a foreign claim's converted baht with no way to see what it was
+   * converted at, or when — which is the gap migration 130 was written to close.
+   *
+   * A baht claim answers `[]` and adds no markup at all.
+   */
+  const rateFacts = useMemo(() => claimRateFacts(travelDays), [travelDays]);
+  const showsRateStrip = claimIsForeign || rateFacts.length > 0;
 
   /* Enrich requester + manager (AD photo / name / title) by their emails. */
   type People = {
@@ -1745,31 +1875,37 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
                   return (
                     <div
                       key={day.id ?? i}
-                      className="flex items-start justify-between gap-3"
                       style={{
                         borderTop: i > 0 ? "1px solid var(--border-light)" : undefined,
                         paddingTop: i > 0 ? 12 : 0,
                       }}
                     >
-                      <div className="min-w-0 flex-1">
-                        <p className="text-[12px] font-semibold m-0" style={{ color: "var(--text-primary)" }}>
-                          {d.travelDate ? fmtDateOnly(d.travelDate) : `วัน ${i + 1}`}
-                        </p>
-                        {formatDayVehicleNames(d) && (
-                          <p className="text-[11px] m-0 mt-0.5" style={{ color: "var(--text-muted)" }}>
-                            {formatDayVehicleNames(d)}
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[12px] font-semibold m-0" style={{ color: "var(--text-primary)" }}>
+                            {d.travelDate ? fmtDateOnly(d.travelDate) : `วัน ${i + 1}`}
                           </p>
-                        )}
+                          {formatDayVehicleNames(d) && (
+                            <p className="text-[11px] m-0 mt-0.5" style={{ color: "var(--text-muted)" }}>
+                              {formatDayVehicleNames(d)}
+                            </p>
+                          )}
+                        </div>
+                        {/* The day's own figure, in the claim's own currency —
+                            `AccTravelExpense.TotalAmount` is never converted, only
+                            the request header is. This said `บาท` unconditionally,
+                            so a ringgit day read as baht and the days did not sum
+                            to the total below. `currencyWord` answers `บาท` for
+                            every baht claim, so nothing about one moved. */}
+                        <span className="text-[13px] font-bold tabular-nums shrink-0" style={{ color: "var(--color-action)" }}>
+                          {fmtMoney(computeTotalAmount(d))} {claimCurrencyWord}
+                        </span>
                       </div>
-                      {/* The day's own figure, in the claim's own currency —
-                          `AccTravelExpense.TotalAmount` is never converted, only
-                          the request header is. This said `บาท` unconditionally,
-                          so a ringgit day read as baht and the days did not sum
-                          to the total below. `currencyWord` answers `บาท` for
-                          every baht claim, so nothing about one moved. */}
-                      <span className="text-[13px] font-bold tabular-nums shrink-0" style={{ color: "var(--color-action)" }}>
-                        {fmtMoney(computeTotalAmount(d))} {claimCurrencyWord}
-                      </span>
+                      {/* The same itemisation the form shows before the claim is
+                          sent, so the requester recognises what they submitted
+                          and the approver reads the figure's parts rather than
+                          only its total. */}
+                      <DayCostParts day={d} />
                     </div>
                   );
                 })}
@@ -1778,35 +1914,55 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
           )}
           {/* Only a foreign claim renders this strip. It exists because the line
               below it is baht while every figure above it is not, and without it
-              the two look like the same number gone wrong. */}
-          {claimIsForeign && (
+              the two look like the same number gone wrong.
+
+              A **baht claim renders none of it** — neither half — which is the
+              promise the whole currency feature is held to and the one most
+              easily broken by a later edit. `showsRateStrip` is the single
+              predicate, so it stays checkable rather than hoped for. */}
+          {showsRateStrip && (
             <div
-              className="px-5 py-3 flex flex-col gap-1"
+              className="px-5 py-3 flex flex-col gap-2.5"
               style={{
                 borderTop: "1px solid var(--border-card)",
                 background: "var(--bg-card-alt)",
               }}
             >
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-[12px] font-semibold" style={{ color: "var(--text-secondary)" }}>
-                  ยอดรวมตามสกุลเงินที่เบิก
-                </span>
-                <span className="text-[14px] font-bold tabular-nums" style={{ color: "var(--text-primary)" }}>
-                  {fmtAmountWithCurrency(claimForeignTotal, request.currency)}
-                </span>
-              </div>
-              <p className="text-[11.5px] m-0" style={{ color: "var(--text-muted)" }}>
-                {request.exchangeRate != null
-                  ? referenceRateNote(request.currency, request.exchangeRate)
-                  : "ยังไม่มีอัตราแลกเปลี่ยนที่บันทึกไว้"}
-              </p>
+              {/* The legacy half: a claim filed during migration 125's
+                  request-level design, where the whole request carried one
+                  currency. `request.rateAsOf` is passed because it exists and
+                  was being thrown away here — this was the only
+                  `referenceRateNote` call in the application still omitting the
+                  date, so this screen alone showed a rate with no day against
+                  it. */}
+              {claimIsForeign && (
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[12px] font-semibold" style={{ color: "var(--text-secondary)" }}>
+                      ยอดรวมตามสกุลเงินที่เบิก
+                    </span>
+                    <span className="text-[14px] font-bold tabular-nums" style={{ color: "var(--text-primary)" }}>
+                      {fmtAmountWithCurrency(claimForeignTotal, request.currency)}
+                    </span>
+                  </div>
+                  <p className="text-[11.5px] m-0" style={{ color: "var(--text-muted)" }}>
+                    {request.exchangeRate != null
+                      ? referenceRateNote(request.currency, request.exchangeRate, request.rateAsOf)
+                      : "ยังไม่มีอัตราแลกเปลี่ยนที่บันทึกไว้"}
+                  </p>
+                </div>
+              )}
+
+              {/* The modern half: one row per rate the claim's lines were
+                  actually converted at, each with the day it was that rate. */}
+              <ClaimRateNotes facts={rateFacts} />
             </div>
           )}
           <div
             className="px-5 py-4 flex items-center justify-between gap-3"
             style={{
-              borderTop: travelDays.length > 1 || claimIsForeign ? "1px solid var(--border-card)" : undefined,
-              background: travelDays.length > 1 || claimIsForeign ? "var(--nav-active-bg)" : "var(--bg-card)",
+              borderTop: travelDays.length > 1 || showsRateStrip ? "1px solid var(--border-card)" : undefined,
+              background: travelDays.length > 1 || showsRateStrip ? "var(--nav-active-bg)" : "var(--bg-card)",
             }}
           >
             <span className="text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>
