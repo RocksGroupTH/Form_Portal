@@ -1032,7 +1032,7 @@ function TravelDaySection({
                   buttons for the same decision. */}
               <Globe size={14} className="shrink-0" style={{ color: "var(--nav-active-text)" }} />
               <CountryCodeBadge code={claimCountry} />
-              <span className="break-words">
+              <span className="break-words leading-none">
                 {countryName(claimCountry) ?? claimCountry}
               </span>
             </span>
@@ -1864,7 +1864,10 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
                   buttons for the same decision. */}
               <Globe size={14} className="shrink-0" style={{ color: "var(--nav-active-text)" }} />
               <CountryCodeBadge code={request.countryCode} />
-              <span className="text-[12px] font-bold" style={{ color: "var(--text-primary)" }}>
+              <span
+                className="text-[12px] font-bold leading-none"
+                style={{ color: "var(--text-primary)" }}
+              >
                 {countryName(request.countryCode) ?? request.countryCode}
               </span>
             </div>
