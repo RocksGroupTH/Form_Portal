@@ -5,6 +5,7 @@ import {
   currencyForCountry,
   countryLabel,
   isKnownCountry,
+  isRateSourceCurrency,
 } from "./country-currency";
 
 test("a country resolves to its currency", () => {
@@ -77,4 +78,38 @@ test("the list is sorted by Thai name, so the picker needs no sort", () => {
 
 test("Thailand is present, because it is the default everything falls back to", () => {
   assert.equal(isKnownCountry("TH"), true);
+});
+
+/**
+ * The gap that produced "ไม่พบ KHR ในแหล่งอัตราอ้างอิง" on a live form: the list
+ * carried ten countries the rate source does not quote, so a person could pick
+ * one and only then be told the claim could never be converted. A country that
+ * cannot be converted must not be on the menu.
+ */
+test("every country's currency is one the rate source will quote", () => {
+  for (const c of COUNTRIES) {
+    assert.equal(
+      isRateSourceCurrency(c.currency),
+      true,
+      `${c.nameTh} (${c.currency}) is offered but the rate source does not quote it`,
+    );
+  }
+});
+
+test("the removed currencies stay removed", () => {
+  for (const gone of ["KHR", "LAK", "VND", "MMK", "TWD", "BND", "QAR", "BHD", "RUB", "AED"]) {
+    assert.equal(isRateSourceCurrency(gone), false, `${gone} is not quotable`);
+    assert.equal(
+      COUNTRIES.some((c) => c.currency === gone),
+      false,
+      `a country using ${gone} is back on the menu`,
+    );
+  }
+});
+
+test("baht is quotable, since it is what everything converts to", () => {
+  assert.equal(isRateSourceCurrency("THB"), true);
+  assert.equal(isRateSourceCurrency("thb"), true);
+  assert.equal(isRateSourceCurrency(""), false);
+  assert.equal(isRateSourceCurrency(null), false);
 });
