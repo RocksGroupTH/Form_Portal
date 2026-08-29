@@ -2014,9 +2014,25 @@ export function TravelExpenseForm({
         </div>
       </Dialog>
 
+      {/* Submit takes precedence: the two states cannot overlap today, but if a
+          future path ever set both, showing "saving a draft" over a submit in
+          flight would be the more misleading of the two.
+
+          The draft save earns an overlay now in a way it did not before. It used
+          to be a single round trip; a foreign-currency claim also fetches an
+          exchange rate per line from an external provider, which can take
+          seconds and has an 8s timeout behind it. A button spinner alone left
+          the page looking idle while the form was mid-write — and the same
+          overlay already covers submit, so this is the pattern rather than a new
+          one. */}
       {submitting ? (
         <TravelExpenseLoadingPopup
           label="กำลังส่งคำขอ..."
+          subtitle="กรุณารอสักครู่ อย่าปิดหน้านี้"
+        />
+      ) : saving ? (
+        <TravelExpenseLoadingPopup
+          label="กำลังบันทึกแบบร่าง..."
           subtitle="กรุณารอสักครู่ อย่าปิดหน้านี้"
         />
       ) : null}
