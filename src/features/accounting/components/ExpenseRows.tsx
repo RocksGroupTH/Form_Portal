@@ -204,7 +204,7 @@ function LineCurrencyChoice({
     <div
       role="radiogroup"
       aria-label="สกุลเงินของรายการนี้"
-      className="flex w-auto shrink-0 rounded-lg p-[3px] gap-[3px]"
+      className="flex w-auto shrink-0 h-10 items-stretch rounded-lg p-[3px] gap-[3px]"
       style={{
         background: unanswered
           ? "color-mix(in srgb, var(--color-danger) 8%, var(--bg-card-alt))"
@@ -223,7 +223,7 @@ function LineCurrencyChoice({
             aria-checked={active}
             disabled={disabled}
             onClick={() => onChange(code)}
-            className="flex-1 min-w-0 px-2 py-1.5 rounded-md text-[12px] font-bold leading-none tabular-nums transition-all border-none cursor-pointer disabled:cursor-default"
+            className="flex-1 min-w-0 h-full px-2.5 rounded-md text-[12px] font-bold leading-none tabular-nums transition-all border-none cursor-pointer disabled:cursor-default"
             style={
               active
                 ? {
@@ -930,7 +930,7 @@ function ExpenseRow({
         <div className={`relative shrink-0 ${showsCurrency ? "w-56 sm:w-60" : "w-32 sm:w-44"}`}>
           {showAmount ? (
             showsCurrency ? (
-              <div className="flex flex-col items-stretch gap-1">
+              <div className="flex flex-col items-stretch justify-center gap-1 h-14">
                 {/* The amount and the currency, always side by side.
 
                     They used to stack below `sm` to keep the amount field wide,
@@ -966,7 +966,7 @@ function ExpenseRow({
                     total would look wrong for no visible reason. */}
                 {(isForeignLine || needsCurrency) && (
                   <span
-                    className="text-[12px] font-semibold text-right tabular-nums"
+                    className="text-[12px] font-semibold text-right tabular-nums leading-none pt-0.5 pr-1"
                     style={{ color: "var(--text-muted)" }}
                   >
                     {convertedBaht === null ? "= —" : `= ${fmtAmountWithCurrency(convertedBaht, THB)}`}
@@ -993,7 +993,7 @@ function ExpenseRow({
           onClick={handleRowRemove}
           aria-label="ลบแถวนี้"
           title="ลบแถวนี้"
-          className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center cursor-pointer acc-draft-del"
+          className="shrink-0 w-10 h-10 rounded-lg flex items-center justify-center cursor-pointer acc-draft-del"
           style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", color: "var(--text-muted)" }}
         >
           <Trash2 size={14} />
