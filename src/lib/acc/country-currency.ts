@@ -95,10 +95,30 @@ export function isKnownCountry(code: string | null | undefined): boolean {
   return BY_CODE.has(norm(code));
 }
 
-/** `ไทย (THB)` — how the picker and the configured list both read. */
+/**
+ * `ไทย (THB)` — how the **settings** list reads it.
+ *
+ * The currency belongs in the label there and only there: that page is where a
+ * brand's currencies are configured, so the code beside the country is the very
+ * thing being chosen. On the claim form it is noise — the requester is naming
+ * where they went, not picking money — and each expense line asks for its own
+ * currency a few centimetres below. Use `countryName` there.
+ */
 export function countryLabel(code: string | null | undefined): string | null {
   const c = BY_CODE.get(norm(code));
   return c ? `${c.nameTh} (${c.currency})` : null;
+}
+
+/**
+ * `ไทย` — the country's Thai name alone, with no currency suffix.
+ *
+ * What AP-1's ประเทศ picker shows. It is a **separate function rather than a
+ * flag on `countryLabel`**, because the two surfaces want different things
+ * permanently: a boolean parameter reads at each call site as a styling choice
+ * and gets flipped by whoever preferred the other, where two names cannot be.
+ */
+export function countryName(code: string | null | undefined): string | null {
+  return BY_CODE.get(norm(code))?.nameTh ?? null;
 }
 
 /**

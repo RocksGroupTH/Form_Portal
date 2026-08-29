@@ -45,7 +45,7 @@ import {
   selectedVehicleCount,
 } from "@/features/accounting/lib/travel-sections";
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
-import { countryLabel } from "@/lib/acc/country-currency";
+import { countryName } from "@/lib/acc/country-currency";
 import { referenceRateNote } from "@/lib/acc/currency-display";
 import { lineNeedsCurrency, typedLineFigure } from "@/features/accounting/lib/claim-currency";
 import type { AccRequest, TravelDraftSummary, TravelExpenseDetail, TravelExpenseItem, AccVehicle } from "@/features/accounting/types";
@@ -1094,39 +1094,55 @@ export function TravelExpenseForm({
           )}
         </div>
 
-        {/* ประเทศที่เดินทาง — the first band, right under the brand, because it
-            is what decides whether any of the money controls below appear at
-            all.
+        {/* ประเทศ — the first band, right under the brand, because it is what
+            decides whether any of the money controls below appear at all.
 
-            Rendered ONLY where the brand offers somewhere other than Thailand
-            (`claimCountryOptions` returns `["TH"]` alone otherwise). A brand
-            with no currency configured must leave this form exactly as it looked
-            before the feature shipped, which is why there is no disabled
-            one-option control here and no placeholder. Thailand is preselected
-            either way, so nothing is ever unanswered. */}
-        {countryOptions.length > 1 && (
+            Two conditions, and the second is not redundant. **More than one
+            country** is the ordinary case: a brand offering Thailand and
+            somewhere else, where there is a choice to make. **`fxNote`** covers
+            the one-country brand that is nonetheless foreign — a brand which
+            has switched Thailand off (migration 131) and claims only in
+            ringgit. There is nothing to choose there, but the country is still
+            not Thailand and the expense rows below still carry a currency
+            control, so saying which country in one disabled chip is what keeps
+            the note about them attached to something.
+
+            A brand with **no currency configured** matches neither: one country
+            and no `fxNote`, so this whole band disappears and the form is
+            exactly what it was before any of this shipped. That is the promise
+            most easily broken by a later edit here. The brand's default is
+            preselected in every case, so nothing is ever unanswered.
+
+            The options read `ไทย`, not `ไทย (THB)`: this asks where the trip
+            went, and each expense line asks for its own currency a few
+            centimetres below — `countryName`, not `countryLabel`, which is what
+            the settings editor still wants. */}
+        {(countryOptions.length > 1 || fxNote) && (
           <div>
             <label className={labelClass} style={labelStyle}>
-              ประเทศที่เดินทาง
+              ประเทศ
             </label>
             <div className="flex flex-wrap gap-2 mt-1">
               {countryOptions.map((code) => {
                 const active = countryCode === code;
+                const only = countryOptions.length === 1;
                 return (
                   <button
                     key={code}
                     type="button"
+                    disabled={only}
                     onClick={() => setCountryCode(code)}
-                    className="px-3.5 py-2 rounded-xl cursor-pointer text-[14px] font-semibold transition-all"
+                    className="px-3.5 py-2 rounded-xl text-[14px] font-semibold transition-all"
                     style={{
                       borderWidth: 2,
                       borderStyle: "solid",
                       borderColor: active ? "var(--nav-active-text)" : "var(--border-card)",
                       background: active ? "var(--nav-active-bg)" : "var(--bg-card-alt)",
                       color: active ? "var(--nav-active-text)" : "var(--text-secondary)",
+                      cursor: only ? "default" : "pointer",
                     }}
                   >
-                    {countryLabel(code) ?? code}
+                    {countryName(code) ?? code}
                   </button>
                 );
               })}

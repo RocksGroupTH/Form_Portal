@@ -4,6 +4,7 @@ import {
   COUNTRIES,
   currencyForCountry,
   countryLabel,
+  countryName,
   isKnownCountry,
   isRateSourceCurrency,
 } from "./country-currency";
@@ -112,4 +113,24 @@ test("baht is quotable, since it is what everything converts to", () => {
   assert.equal(isRateSourceCurrency("thb"), true);
   assert.equal(isRateSourceCurrency(""), false);
   assert.equal(isRateSourceCurrency(null), false);
+});
+
+/**
+ * The claim form asks where the trip went; the settings editor asks which
+ * currency a brand is configured for. Two labels, so neither surface can be
+ * changed into the other by flipping a flag.
+ */
+test("countryName is the plain Thai name, with no currency suffix", () => {
+  assert.equal(countryName("TH"), "ไทย");
+  assert.equal(countryName("MY"), "มาเลเซีย");
+  assert.equal(countryName(" gb "), "อังกฤษ");
+  assert.equal(countryName("ZZ"), null);
+  assert.equal(countryName(null), null);
+});
+
+test("every country has both labels, and the long one is the short one plus its currency", () => {
+  for (const c of COUNTRIES) {
+    assert.equal(countryName(c.code), c.nameTh);
+    assert.equal(countryLabel(c.code), `${c.nameTh} (${c.currency})`);
+  }
 });
