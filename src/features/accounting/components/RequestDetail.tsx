@@ -30,7 +30,7 @@ import {
   type AttachmentKind,
   type AttachmentSource,
 } from "@/components/ui/AttachmentViewer";
-import { FileSpreadsheet } from "lucide-react";
+import { FileSpreadsheet, Globe } from "lucide-react";
 
 /**
  * One attachment tile.
@@ -75,7 +75,8 @@ import {
   referenceRateNote,
   showsForeignCurrency,
 } from "@/lib/acc/currency-display";
-import { isOverriddenRate } from "@/lib/acc/currency";
+import { isOverriddenRate, isBaht } from "@/lib/acc/currency";
+import { countryLabel, currencyForCountry } from "@/lib/acc/country-currency";
 import { claimRateFacts, multiRateCurrencies } from "@/features/accounting/lib/claim-rates";
 import type { ClaimRateFact } from "@/features/accounting/lib/claim-rates";
 import {
@@ -954,6 +955,29 @@ function TravelDaySection({
                 onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
               />
               <span className="break-words">{request.brandCode}</span>
+            </span>
+          </TravelMetaTile>
+        )}
+
+        {/* The country the claim was filed against.
+
+            Only when it is not Thailand: `resolveClaimCountry` stores a code on
+            every claim, so a `TH` tile would appear on every Thai claim ever
+            filed and say nothing. What it earns its place for is the foreign
+            case, where it is the reason a line could be in another currency at
+            all — and where its absence on the detail page left an approver
+            looking at converted figures with nothing saying where the trip was.
+
+            A code the country list does not know still renders, as the bare
+            code: it is what the claim was filed against, and hiding it would be
+            worse than showing something unfamiliar. */}
+        {showBrand && request.countryCode && !isBaht(currencyForCountry(request.countryCode)) && (
+          <TravelMetaTile label="ประเทศ">
+            <span className="flex items-center gap-1.5 min-w-0">
+              <Globe size={14} className="shrink-0" style={{ color: "var(--nav-active-text)" }} />
+              <span className="break-words">
+                {countryLabel(request.countryCode) ?? request.countryCode}
+              </span>
             </span>
           </TravelMetaTile>
         )}
