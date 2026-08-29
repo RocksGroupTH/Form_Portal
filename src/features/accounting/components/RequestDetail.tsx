@@ -945,10 +945,14 @@ function TravelDaySection({
   /**
    * Whether to name the country the claim was filed against.
    *
-   * **Not gated on `showBrand`.** That prop is `travelDays.length === 1`: on a
-   * multi-day claim the brand moves to a chip beside the day selector, and the
-   * country followed it into hiding — which is how this shipped invisible on
-   * exactly the multi-day foreign claim it was added for.
+   * **Follows the brand, deliberately.** The country is a property of the whole
+   * request, so it belongs wherever the brand is shown — which is two places:
+   * this tile on a single-day claim, and a chip beside the day selector when
+   * there are several. `showBrand` is `travelDays.length === 1`, so gating the
+   * tile on it is right; the day bar carries its own copy.
+   *
+   * It shipped once gated on `showBrand` with no chip, which hid it on exactly
+   * the multi-day foreign claim it was added for.
    *
    * Only for a country that does not pay in baht. `resolveClaimCountry` stamps
    * a code on every claim, so an unconditional tile would say "ไทย" on every
@@ -958,7 +962,7 @@ function TravelDaySection({
    * the request, so `dayIdx === 0` keeps a three-day trip from repeating it.
    */
   const showForeignCountry =
-    dayIdx === 0 &&
+    showBrand &&
     !!request.countryCode &&
     !isBaht(currencyForCountry(request.countryCode));
 
@@ -1807,6 +1811,22 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
               />
               <span className="text-[12px] font-bold" style={{ color: "var(--text-primary)" }}>
                 {request.brandCode}
+              </span>
+            </div>
+          )}
+          {/* Country — like the brand, one fact about the whole claim, so it sits
+              in this bar rather than repeating inside each day's section. Only
+              when it does not pay in baht: every claim carries a code, and "ไทย"
+              on every Thai claim tells nobody anything. */}
+          {request.countryCode && !isBaht(currencyForCountry(request.countryCode)) && (
+            <div
+              className="shrink-0 flex items-center gap-1.5 h-10 pl-2 pr-2.5 rounded-xl"
+              style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}
+              title={`ประเทศ: ${countryLabel(request.countryCode) ?? request.countryCode}`}
+            >
+              <Globe size={14} className="shrink-0" style={{ color: "var(--nav-active-text)" }} />
+              <span className="text-[12px] font-bold" style={{ color: "var(--text-primary)" }}>
+                {countryLabel(request.countryCode) ?? request.countryCode}
               </span>
             </div>
           )}
