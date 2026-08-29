@@ -525,6 +525,16 @@ function ExpenseRow({
    * unanswered question the form itself has just asked.
    */
   const needsCurrency = lineNeedsCurrency(item, currencyOptions);
+  /**
+   * Whether the converted-baht line renders — and therefore whether the amount
+   * cell is taller than the 56px attach tile beside it.
+   *
+   * The delete button's alignment reads this same flag, which is the point: it
+   * was keyed on `showsCurrency` and got the THB case wrong, because a THB line
+   * on a foreign claim shows no converted figure, leaving the cell at 40px with
+   * the tile tallest again. One flag, two consumers, no way for them to drift.
+   */
+  const showsConverted = isForeignLine || needsCurrency;
 
   const uploaded = item.files ?? [];
   const pending = item.pendingFiles ?? [];
@@ -964,7 +974,7 @@ function ExpenseRow({
                     figure rather than a placeholder: the block total below sums
                     baht, this line contributes none, and without the dash the
                     total would look wrong for no visible reason. */}
-                {(isForeignLine || needsCurrency) && (
+                {showsConverted && (
                   <span
                     className="text-[12px] font-semibold text-right tabular-nums leading-none pt-0.5 pr-1"
                     style={{ color: "var(--text-muted)" }}
@@ -994,7 +1004,7 @@ function ExpenseRow({
           aria-label="ลบแถวนี้"
           title="ลบแถวนี้"
           className={`shrink-0 w-10 h-10 rounded-lg flex items-center justify-center cursor-pointer acc-draft-del ${
-            showsCurrency ? "self-start" : "self-center"
+            showsConverted ? "self-start" : "self-center"
           }`}
           style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", color: "var(--text-muted)" }}
         >
