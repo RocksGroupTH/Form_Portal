@@ -4,26 +4,33 @@ import fs from "node:fs";
 import path from "node:path";
 
 /**
- * **`AccRequest.TotalAmount` is Thai baht, always.**
+ * **`AccTravelExpenseItem.Amount` is Thai baht, always** — and therefore so is
+ * every total built from it.
  *
- * Every summer, report, Excel export and Business Central journal in this
- * application reads that column and none of them knows what a currency is. A
- * foreign figure written into it is therefore not a display bug — it is a wrong
+ * Migration 129 moved the currency from the request to the line, and the reason
+ * the change was small is that the *baht* column did not move with it. `Amount`
+ * never stops being baht, so `calc.ts`'s `sum()`, the T-SQL `SUM(i.Amount)` in
+ * `TRAVEL_DAYS_CSV_SELECT` that feeds the ERP prep queue an approver reads
+ * immediately before pressing Send, the journal builder, and the approval
+ * queue's per-vehicle cell all keep working with no idea a currency exists. A
+ * foreign figure written into that column is not a display bug — it is a wrong
  * number in a financial posting, and no screen anywhere would reveal it.
  *
- * AP-1 has **three** writers of that column and the middle one is the trap: it
- * is not a save and not a submit, it is the recompute after a requester deletes
- * a receipt row, it runs outside a transaction, and it fires on an ordinary edit
- * of a claim that was already correct. Two separate reviews of this plan listed
- * two writers.
+ * The conversion therefore has exactly **one** place it may happen on the way
+ * in, `toBahtDays`, and the three `AccRequest.TotalAmount` writers must then be
+ * plain sums. The middle writer is the trap: it is not a save and not a submit,
+ * it is the recompute after a requester deletes a receipt row, it runs outside a
+ * transaction, and it fires on an ordinary edit of a claim that was already
+ * correct. Two separate reviews of the predecessor design listed two writers.
  *
  * Neither the writers nor the conversion is unit-testable — `request-service.ts`
  * needs a pool, and `@/env` validates the whole environment at import. So this
  * reads the source, in the shape `blocked-dates-parity.test.ts` and
- * `currency-pool-guard.test.ts` already use.
+ * `currency-pool-guard.test.ts` already use. The rule *itself* is pure and
+ * tested for real in `features/accounting/lib/claim-currency.test.ts`.
  *
- * If this goes red the fix is to route the new writer through
- * `bahtTotalOrThrow`, never to relax the count.
+ * If this goes red the fix is to route the new writer through the same single
+ * conversion, never to relax a count.
  */
 
 const SERVICE = path.join(process.cwd(), "src/lib/acc/request-service.ts");
@@ -35,81 +42,172 @@ function code(): string {
     .replace(/^\s*\/\/.*$/gm, "");
 }
 
-test("AP-1 has exactly three AccRequest.TotalAmount writers, and every one converts", () => {
+test("AP-1 has exactly three AccRequest.TotalAmount writers", () => {
   const src = code();
 
   // `[dbo].[AccRequest] SET ... TotalAmount=@total` — the header column. The
-  // per-day `AccTravelExpense` writes are deliberately NOT matched: that column
-  // holds the claim's own currency and must stay unconverted.
+  // per-day `AccTravelExpense` write is deliberately NOT matched here; it has
+  // its own test below.
   const headerWrites = src.match(/\[dbo\]\.\[AccRequest\][\s\S]{0,600}?TotalAmount=@total/g) ?? [];
   assert.equal(
     headerWrites.length,
     3,
     `expected 3 AccRequest.TotalAmount writers (persistTravelDays, deleteItem, submitRequest), found ${headerWrites.length}. ` +
-      "A new one must convert with bahtTotalOrThrow before it binds @total.",
-  );
-
-  const converted = src.match(/\.input\("total",\s*sql\.Decimal\(18,\s*2\),\s*bahtTotalOrThrow\(/g) ?? [];
-  assert.equal(
-    converted.length,
-    3,
-    `every AccRequest.TotalAmount writer must bind @total from bahtTotalOrThrow; found ${converted.length} of 3`,
-  );
-});
-
-test("no writer binds the claim's raw figure straight to @total", () => {
-  const src = code();
-  // The exact shape this feature replaced, at all three sites.
-  assert.equal(
-    /\.input\("total",\s*sql\.Decimal\(18,\s*2\),\s*(requestTotal|totalAmount)\s*\)/.test(src),
-    false,
-    "an unconverted claim figure is being bound to AccRequest.TotalAmount",
+      "A new one must bind @total from a sum of already-converted lines.",
   );
 });
 
 /**
- * `toBaht` returns null when it cannot know, and the one thing that must never
- * happen is a fallback to the unconverted figure — see `acc/currency.ts`.
+ * Every one of the three binds a **plain sum**, because the lines it adds are
+ * already baht. A conversion here would be a second copy of the rule and would
+ * double-convert whatever `toBahtDays` had already done.
  */
-test("bahtTotalOrThrow has no fallback branch", () => {
+test("every header writer binds a plain sum of already-converted lines", () => {
   const src = code();
-  const start = src.indexOf("function bahtTotalOrThrow");
-  assert.notEqual(start, -1, "bahtTotalOrThrow not found");
+  // Four `@total` bindings in the file: the three header writers, plus
+  // `deleteItem`'s per-day `AccTravelExpense` recompute, which the test below
+  // owns. None of the four may convert.
+  const bound = src.match(/\.input\("total",\s*sql\.Decimal\(18,\s*2\),\s*[^)]*\)+/g) ?? [];
+  assert.equal(bound.length, 4, `expected 4 @total bindings, found ${bound.length}`);
+  for (const b of bound) {
+    assert.equal(
+      /toBaht|ExchangeRate|\*\s*rate/.test(b),
+      false,
+      "a total is being converted; the lines it sums are already baht: " + b,
+    );
+  }
+  // The three header ones are the sum across days, and nothing else.
+  const headerTotals = bound.filter((b) => /computeRequestTotalAmount\(|,\s*totalAmount\)/.test(b));
+  assert.equal(
+    headerTotals.length,
+    3,
+    `expected 3 header totals summed across days, found ${headerTotals.length}: ${bound.join(" | ")}`,
+  );
+});
+
+/**
+ * The single conversion. `toBaht` returns null when it cannot know, and the one
+ * thing that must never happen is a fallback to the unconverted figure — see
+ * `acc/currency.ts`.
+ */
+test("lineFxOrThrow is the only conversion, and it has no fallback branch", () => {
+  const src = code();
+  const start = src.indexOf("function lineFxOrThrow");
+  assert.notEqual(start, -1, "lineFxOrThrow not found");
   const body = src.slice(start, src.indexOf("\n}", start));
   assert.ok(/if \(baht === null\) throw/.test(body), "must throw on null, not fall back");
-  assert.ok(!/\?\?\s*amount/.test(body), "must never fall back to the unconverted amount");
+  assert.ok(!/\?\?\s*(typed|amount)/.test(body), "must never fall back to the unconverted figure");
+
+  // Exactly one `toBaht` call in the whole file: a second would be a second
+  // rounding, on the path that decides what a claim is worth.
+  const calls = src.match(/toBaht\(/g) ?? [];
+  assert.equal(calls.length, 1, `expected one toBaht call, found ${calls.length}`);
 });
 
 /**
- * The per-day column is the other half of the rule, and it is the half a reader
- * "tidying up" would break: converting it too would double-convert the header
- * and put baht into rows the ERP prep breakdown reads as the claim's currency.
+ * A baht line takes an identity branch that consults no rate at all. That is
+ * what keeps an FX outage away from the Thai claims that are almost all of
+ * them, and what makes a Thai claim's arithmetic bit-identical to what it was
+ * before migration 129.
  */
-test("the per-day AccTravelExpense.TotalAmount stays in the claim's own currency", () => {
+test("a baht line is converted by nothing and records no currency", () => {
+  const src = code();
+  const start = src.indexOf("function lineFxOrThrow");
+  const body = src.slice(start, src.indexOf("\n}", start));
+  assert.ok(
+    /if \(isBaht\(currency\)\)[\s\S]{0,200}?currency: null, rate: null, foreignAmount: null/.test(body),
+    "the baht branch must return the typed figure with all three columns null",
+  );
+});
+
+/**
+ * The rate is fetched once per save and only when a line actually needs one, so
+ * a trip whose every line is in baht makes no FX call — and a fetch that fails
+ * throws rather than letting the save through at a guessed rate.
+ */
+test("toBahtDays fetches at most one rate, and refuses when it cannot", () => {
+  const src = code();
+  const start = src.indexOf("async function toBahtDays");
+  assert.notEqual(start, -1, "toBahtDays not found");
+  const body = src.slice(start, src.indexOf("\nasync function", start + 10));
+  const fetches = body.match(/await resolveRate\(/g) ?? [];
+  assert.equal(fetches.length, 1, `expected exactly one rate fetch, found ${fetches.length}`);
+  assert.ok(/if \(foreign\)/.test(body), "the fetch must be behind a test for a foreign line");
+  assert.ok(/if \(!fx\) throw new Error\(FX_UNAVAILABLE_ERROR\)/.test(body), "a failed fetch must throw");
+
+  // Only `resolveRate` may reach the provider from this file, and only there.
+  const all = code().match(/resolveRate\(/g) ?? [];
+  assert.equal(all.length, 1, `resolveRate is called ${all.length} times; it belongs in toBahtDays alone`);
+});
+
+/**
+ * The per-day column is the other half of the rule and it is now baht too,
+ * because the items it sums are. A reader "fixing" it to hold the claim's own
+ * currency would reintroduce exactly the thing 129 removed.
+ */
+test("the per-day AccTravelExpense.TotalAmount is the same converted sum", () => {
   const src = code();
   assert.ok(
     /\.input\("totalAmt", sql\.Decimal\(18, 2\), computeTotalAmount\(day\)\)/.test(src),
-    "bindTravel must bind the day's own figure unconverted",
+    "bindTravel must bind the day's sum of already-converted lines",
   );
   assert.ok(
     /UPDATE \[dbo\]\.\[AccTravelExpense\] SET TotalAmount=@total, TotalDistanceKm=@dist/.test(src),
-    "deleteItem's per-day recompute must stay unconverted",
+    "deleteItem's per-day recompute must stay a plain sum",
   );
 });
 
 /**
- * The client picks a currency; it never picks a rate. AP-2 lets the browser post
- * one and nothing verifies it there, which is the single part of that design
- * this feature deliberately does not reuse.
+ * AP-1 records no request-level currency any more. All three header writers
+ * clear 125's columns instead, so a draft saved under the old design cannot keep
+ * a header currency beside per-line baht amounts — every display surface reads
+ * that header to decide what a day figure is denominated in, and would convert
+ * an already-converted figure a second time.
  */
-test("SaveInput carries a currency and no rate", () => {
+test("every header writer clears the request-level currency columns", () => {
+  const src = code();
+  const clears = src.match(/Currency=NULL, ExchangeRate=NULL, ForeignAmount=NULL/g) ?? [];
+  assert.equal(
+    clears.length,
+    1,
+    "the clear belongs in one shared fragment (FX_CLEAR), used by all three writers",
+  );
+  const uses = src.match(/\$\{FX_CLEAR\}/g) ?? [];
+  assert.equal(uses.length, 3, `expected all 3 header writers to use FX_CLEAR, found ${uses.length}`);
+
+  // And nothing here writes a value into them.
+  assert.equal(
+    /Currency=@(currency|fxRate|foreignAmt)/.test(src),
+    false,
+    "AP-1 must not record a request-level currency; the currency lives on the line",
+  );
+});
+
+/**
+ * The client picks a country and each line picks a currency; **neither ever
+ * picks a rate.** AP-2 lets the browser post one and nothing verifies it there,
+ * which is the single part of that design this feature deliberately does not
+ * reuse.
+ */
+test("SaveInput carries a country and no rate", () => {
   const src = code();
   const start = src.indexOf("export interface SaveInput");
   assert.notEqual(start, -1);
   const body = src.slice(start, src.indexOf("\n}", start));
-  assert.ok(/currency\?:/.test(body), "SaveInput must accept the chosen currency");
+  assert.ok(/countryCode\?:/.test(body), "SaveInput must accept the chosen country");
   assert.ok(
-    !/exchangeRate|rate\?:/.test(body),
-    "SaveInput must NOT accept a rate — the server fetches it",
+    !/exchangeRate|rate\?:|currency\?:/.test(body),
+    "SaveInput must NOT accept a rate or a request-level currency",
   );
+});
+
+/**
+ * The posted line currency is never trusted as written: `effectiveLineCurrency`
+ * re-derives it from the country, so a hand-shaped body cannot file a line in a
+ * currency the picker never offered. Same for the country against the brand.
+ */
+test("both the country and each line's currency are re-derived server-side", () => {
+  const src = code();
+  assert.ok(/effectiveClaimCountry\(/.test(src), "the posted country must be checked against the brand");
+  assert.ok(/effectiveLineCurrency\(it\.currency, country\)/.test(src), "each line's currency must be re-derived");
 });

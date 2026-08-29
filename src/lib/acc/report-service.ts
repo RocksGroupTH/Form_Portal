@@ -42,14 +42,21 @@ export interface ReportTravelVehicleLine {
 export interface ReportTravelDayLine {
   travelDate: string;
   /**
-   * **The claim's own currency, not baht.** It comes from
-   * `AccTravelExpense.TotalAmount`, which AP-1 writes in whatever currency the
-   * claim was entered in — only `AccRequest.TotalAmount` is converted.
+   * **The claim's own currency, which is baht on everything written since
+   * migration 129** — AP-1 converts each expense line on the way in, so
+   * `AccTravelExpense.TotalAmount` is a sum of baht and `row.currency` is NULL.
    *
-   * So on a foreign claim these day figures do not sum to the row's
-   * `totalAmount`, and captioning one `บาท` states something false. Convert with
-   * `amountInBaht(amount, row.currency, row.exchangeRate)` before printing it as
-   * baht or adding it to a baht total — `displayDayAmountBaht`
+   * It is **not** baht on a claim filed during migration 125's request-level
+   * design: there AP-1 wrote the day in whatever currency the claim was entered
+   * in and converted only `AccRequest.TotalAmount`, so those day figures do not
+   * sum to the row's `totalAmount` and captioning one `บาท` states something
+   * false. Those rows still carry `Currency` and `ExchangeRate`, and AP-17 still
+   * writes both for its booking desk.
+   *
+   * So the conversion stays, and stays mandatory: `amountInBaht(amount,
+   * row.currency, row.exchangeRate)` before printing this as baht or adding it
+   * to a baht total. It takes its identity branch for a NULL currency, which is
+   * every AP-1 row from here on — `displayDayAmountBaht`
    * (`features/accounting/lib/expand-travel-table-rows.ts`) is that call, made
    * once.
    */

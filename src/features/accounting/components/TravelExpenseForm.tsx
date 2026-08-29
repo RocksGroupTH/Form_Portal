@@ -45,11 +45,8 @@ import {
   selectedVehicleCount,
 } from "@/features/accounting/lib/travel-sections";
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
-import {
-  RATE_VEHICLE_FOREIGN_ERROR,
-  RATE_VEHICLE_FOREIGN_NOTE,
-  rateVehicleAllowed,
-} from "@/features/accounting/lib/claim-currency";
+import { countryLabel } from "@/lib/acc/country-currency";
+import { referenceRateNote } from "@/lib/acc/currency-display";
 import type { AccRequest, TravelDraftSummary, TravelExpenseDetail, TravelExpenseItem, AccVehicle } from "@/features/accounting/types";
 import { AP1_HEADER_MESSAGE_LINES, MAPS_UNAVAILABLE_USER_MESSAGE } from "@/features/accounting/constants";
 
@@ -227,10 +224,10 @@ export function TravelExpenseForm({
     setField,
     brandCode,
     setBrandCode,
-    currency,
-    setCurrency,
-    currencyOptions,
-    exchangeRate,
+    countryCode,
+    setCountryCode,
+    countryOptions,
+    lineCurrency,
     brands,
     vehicles,
     employee,
@@ -282,27 +279,22 @@ export function TravelExpenseForm({
     [setActiveDayIndex, travelDays.length, activeDayIndex],
   );
 
-  /**
-   * A rate-based (บาท/กม.) vehicle is unusable on a foreign claim: the rate is
-   * one shared `AccVehicle` row in baht and `CK_AccVehicle_Rate` refuses
-   * anything below 1, so there is nowhere to put a second one. The picker
-   * disables them; `validateForSubmit` refuses them again server-side, because
-   * a control removed from a page is not a rule.
+  /*
+   * A rate-based (บาท/กม.) vehicle used to be refused on a foreign claim, and is
+   * not any more. The reason is gone rather than relaxed: the whole claim used
+   * to be in one currency, so `km × บาท/กม.` was a baht product that would have
+   * been called ringgit. Per line (migration 129) the product is baht,
+   * `AccTravelExpenseItem.Amount` is baht, and a trip to Malaysia may perfectly
+   * well include the drive to the airport.
    */
-  const rateVehiclesUsable = rateVehicleAllowed(currency);
-
   const handleToggleVehicle = useCallback(
     (v: AccVehicle) => {
-      if (!v.isManualEntry && !rateVehicleAllowed(currency)) {
-        toast.error(RATE_VEHICLE_FOREIGN_NOTE);
-        return;
-      }
       if (!v.isManualEntry && !mapsKeyLoading && !mapsConfigured) {
         toast.error(MAPS_UNAVAILABLE_USER_MESSAGE);
       }
       toggleVehicle(v.id);
     },
-    [toggleVehicle, mapsConfigured, mapsKeyLoading, currency],
+    [toggleVehicle, mapsConfigured, mapsKeyLoading],
   );
 
   const showMapsUnavailableNotice =
@@ -411,29 +403,26 @@ export function TravelExpenseForm({
   const dayLabel = (i: number) =>
     travelDays.length > 1 ? ` (${fmtDayTabLabel(travelDays[i], i)})` : "";
 
-  /* ── The two figures on a foreign claim ──
+  /* ── Every total on this form is baht ──
    *
-   * `requestTotalAmount` is the claim's own figure, in `currency`. The baht
-   * equivalent is shown beside it, never instead of it, and only once the
-   * server has recorded a rate — the client never fetches one, so before the
-   * first save there is nothing honest to show.
+   * `requestTotalAmount` sums `AccTravelExpenseItem.amount`, which is baht on
+   * every line whatever it was typed in (migration 129). So there is no second
+   * figure to show beside it any more and no conversion at this level at all —
+   * the claim-level pair of figures the request-level design needed is gone
+   * with the design.
    *
-   * The rate is an **ECB mid-market reference rate**: `BOT_API_CLIENT_ID` is
-   * deliberately unprovisioned, so `bot-fx` always takes its keyless fallback.
-   * `อัตราอ้างอิง`, never captioned as a Bank of Thailand rate. */
-  const isForeignClaim = !rateVehiclesUsable;
-  const bahtEquivalent =
-    isForeignClaim && exchangeRate !== null && exchangeRate > 0
-      ? Math.round(requestTotalAmount * exchangeRate * 100) / 100
-      : null;
-  const fxNote = isForeignClaim
-    ? exchangeRate !== null && exchangeRate > 0
-      ? `อัตราอ้างอิง 1 ${currency} = ${exchangeRate.toLocaleString("th-TH", {
-          minimumFractionDigits: 4,
-          maximumFractionDigits: 6,
-        })} บาท`
-      : "อัตราอ้างอิงจะถูกบันทึกเมื่อบันทึกร่างหรือส่งคำขอ"
-    : null;
+   * What a foreign claim does still say, once, is the rate its lines were
+   * converted at. It is an **ECB mid-market reference rate**:
+   * `BOT_API_CLIENT_ID` is deliberately unprovisioned, so `bot-fx` always takes
+   * its keyless fallback. `อัตราอ้างอิง`, never captioned as a Bank of Thailand
+   * rate, and `referenceRateNote` is the one place that sentence is written. */
+  const foreignLineCurrency = lineCurrency.options.length > 0 ? lineCurrency.defaultCurrency : null;
+  const fxNote =
+    foreignLineCurrency === null
+      ? null
+      : lineCurrency.rate !== null
+        ? referenceRateNote(foreignLineCurrency, lineCurrency.rate)
+        : "ยังดึงอัตราอ้างอิงไม่ได้ในขณะนี้ — ยอดเป็นเงินบาทจะคำนวณตอนบันทึก";
 
   const missing: { key: string; label: string }[] = [];
   // `shownManager`, not `manager`: on behalf of a colleague the submit assigns
@@ -455,11 +444,6 @@ export function TravelExpenseForm({
     if (!day.workDetail?.trim()) missing.push({ key: `${dayKey}-workDetail`, label: `รายละเอียดการไปปฏิบัติงาน${lbl}` });
     if (selectedVehicleCount(day) === 0) {
       missing.push({ key: `${dayKey}-vehicle`, label: `พาหนะ${lbl}` });
-    }
-    // Reachable without touching the disabled picker: pick a rate vehicle in
-    // baht, then switch the currency. Mirrors `validateForSubmit`'s own arm.
-    if (!rateVehiclesUsable && hasRateVehicle(day)) {
-      missing.push({ key: `${dayKey}-vehicle`, label: `${RATE_VEHICLE_FOREIGN_ERROR}${lbl}` });
     }
     if (hasRateVehicle(day)) {
       if (!day.direction) missing.push({ key: `${dayKey}-direction`, label: `ทิศทางการเดินทาง${lbl}` });
@@ -586,12 +570,24 @@ export function TravelExpenseForm({
     });
   }, [missing, setActiveDayIndex]);
 
+  /**
+   * `foreignAmount` and `currency` are the two the server actually reads: it
+   * re-resolves the currency against the country and fetches its own rate, so
+   * `amount` — the baht previewed on screen — is overwritten on the way in. It
+   * is sent anyway because a Thai line has no `foreignAmount` and `amount` *is*
+   * the typed figure there, which is the shape every draft written before
+   * migration 129 also has. `exchangeRate` is deliberately **not** sent: a
+   * client-chosen rate is what AP-2 does, and the one part of it this feature
+   * refuses to reuse.
+   */
   const buildItemsForSave = useCallback(
     (items: TravelExpenseItem[]) =>
       items.map((it, i) => ({
         id: it.id,
         itemType: it.itemType,
         amount: it.amount,
+        currency: it.currency ?? null,
+        foreignAmount: it.foreignAmount ?? null,
         sortOrder: i,
       })),
     [],
@@ -725,9 +721,9 @@ export function TravelExpenseForm({
       const body = {
         id: requestId ?? undefined,
         brandCode,
-        // The currency only. The rate is the server's to fetch and write —
+        // The country only. Every rate is the server’s to fetch and write —
         // AP-2 posts one and nothing verifies it there.
-        currency,
+        countryCode,
         travelDays: buildTravelDaysForSave(),
         requesterStaffId,
       };
@@ -765,7 +761,7 @@ export function TravelExpenseForm({
     } finally {
       setSaving(false);
     }
-  }, [requestId, brandCode, currency, travelDays, buildTravelDaysForSave, requesterStaffId, uploadPendingFiles, onSaved, reloadFromServer, onDuplicateDraftDate]);
+  }, [requestId, brandCode, countryCode, travelDays, buildTravelDaysForSave, requesterStaffId, uploadPendingFiles, onSaved, reloadFromServer, onDuplicateDraftDate]);
 
   /* ── Submit ── */
   const handleSubmit = useCallback(async () => {
@@ -786,7 +782,7 @@ export function TravelExpenseForm({
         id = savedId;
       } else {
         // Re-save to flush latest changes, then upload any pending images.
-        const body = { id, brandCode, currency, travelDays: buildTravelDaysForSave(), requesterStaffId };
+        const body = { id, brandCode, countryCode, travelDays: buildTravelDaysForSave(), requesterStaffId };
         const res = await fetch(`/api/request/accounting/requests/${id}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -818,7 +814,7 @@ export function TravelExpenseForm({
     } finally {
       setSubmitting(false);
     }
-  }, [requestId, brandCode, currency, buildTravelDaysForSave, requesterStaffId, uploadPendingFiles, handleSaveDraft, onSubmitted, canSubmit, focusFirstMissing]);
+  }, [requestId, brandCode, countryCode, buildTravelDaysForSave, requesterStaffId, uploadPendingFiles, handleSaveDraft, onSubmitted, canSubmit, focusFirstMissing]);
 
   const requesterCard = (
     <SectionCard
@@ -1071,24 +1067,29 @@ export function TravelExpenseForm({
           )}
         </div>
 
-        {/* สกุลเงินที่เบิก — rendered ONLY for a brand whose currency an admin has
-            configured AND switched on (`claimCurrencyOptions` is empty
-            otherwise). A brand with nothing set must leave this form exactly as
-            it looked before the feature shipped, which is why there is no
-            disabled one-option control here and no placeholder. */}
-        {currencyOptions.length > 0 && (
+        {/* ประเทศที่เดินทาง — the first band, right under the brand, because it
+            is what decides whether any of the money controls below appear at
+            all.
+
+            Rendered ONLY where the brand offers somewhere other than Thailand
+            (`claimCountryOptions` returns `["TH"]` alone otherwise). A brand
+            with no currency configured must leave this form exactly as it looked
+            before the feature shipped, which is why there is no disabled
+            one-option control here and no placeholder. Thailand is preselected
+            either way, so nothing is ever unanswered. */}
+        {countryOptions.length > 1 && (
           <div>
             <label className={labelClass} style={labelStyle}>
-              สกุลเงินที่เบิก
+              ประเทศที่เดินทาง
             </label>
             <div className="flex flex-wrap gap-2 mt-1">
-              {currencyOptions.map((code) => {
-                const active = currency === code;
+              {countryOptions.map((code) => {
+                const active = countryCode === code;
                 return (
                   <button
                     key={code}
                     type="button"
-                    onClick={() => setCurrency(code)}
+                    onClick={() => setCountryCode(code)}
                     className="px-3.5 py-2 rounded-xl cursor-pointer text-[14px] font-semibold transition-all"
                     style={{
                       borderWidth: 2,
@@ -1098,14 +1099,18 @@ export function TravelExpenseForm({
                       color: active ? "var(--nav-active-text)" : "var(--text-secondary)",
                     }}
                   >
-                    {code}
+                    {countryLabel(code) ?? code}
                   </button>
                 );
               })}
             </div>
-            <p className="text-[12px] mt-1.5 m-0" style={{ color: "var(--text-muted)" }}>
-              กรอกยอดเป็นสกุลเงินที่เลือก ระบบจะแปลงเป็นเงินบาทด้วยอัตราอ้างอิงตอนส่งคำขอ
-            </p>
+            {/* Only for somewhere other than Thailand. A Thai claim says nothing
+                extra at all — no dropdown below, no rate, no note. */}
+            {fxNote && (
+              <p className="text-[12px] mt-1.5 m-0" style={{ color: "var(--text-muted)" }}>
+                เลือกสกุลเงินได้ในแต่ละรายการค่าใช้จ่าย · ยอดที่เบิกทั้งหมดเป็นเงินบาท · {fxNote}
+              </p>
+            )}
           </div>
         )}
 
@@ -1377,23 +1382,17 @@ export function TravelExpenseForm({
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-1">
               {vehicles.map((v) => {
                 const active = isVehicleActive(v.id);
-                const blocked = !v.isManualEntry && !rateVehiclesUsable;
                 return (
                   <button
                     key={v.id}
                     type="button"
                     onClick={() => handleToggleVehicle(v)}
-                    disabled={blocked}
-                    title={blocked ? RATE_VEHICLE_FOREIGN_NOTE : undefined}
-                    className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all ${
-                      blocked ? "cursor-not-allowed" : "cursor-pointer"
-                    }`}
+                    className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all cursor-pointer"
                     style={{
                       borderWidth: 2,
                       borderStyle: "solid",
                       borderColor: active ? "var(--nav-active-text)" : "var(--border-card)",
                       background: active ? "var(--nav-active-bg)" : "var(--bg-card-alt)",
-                      opacity: blocked ? 0.45 : 1,
                     }}
                   >
                     <span
@@ -1416,19 +1415,6 @@ export function TravelExpenseForm({
                   </button>
                 );
               })}
-            </div>
-          )}
-          {!rateVehiclesUsable && vehicles.some((v) => !v.isManualEntry) && (
-            <div
-              className="mt-2 flex items-start gap-2 rounded-xl px-3 py-2.5 text-[13px]"
-              style={{
-                background: "color-mix(in srgb, var(--color-warning) 8%, var(--bg-card-alt))",
-                border: "1px solid color-mix(in srgb, var(--color-warning) 25%, var(--border-card))",
-                color: "var(--text-secondary)",
-              }}
-            >
-              <Info size={15} className="shrink-0 mt-0.5" style={{ color: "var(--color-warning)" }} />
-              <span>{RATE_VEHICLE_FOREIGN_NOTE}</span>
             </div>
           )}
           {showMapsUnavailableNotice && (
@@ -1596,7 +1582,7 @@ export function TravelExpenseForm({
               onRemove={(idx) => removeSectionItem(si, idx)}
               highlightMissingReceipt={triedSubmit}
               requestId={requestId ?? undefined}
-              currency={currency}
+              lineCurrency={lineCurrency}
               brandCode={brandCode}
             />
             <ExpenseRows
@@ -1608,7 +1594,7 @@ export function TravelExpenseForm({
               onRemove={(idx) => removeSectionItem(si, idx)}
               highlightMissingReceipt={triedSubmit}
               requestId={requestId ?? undefined}
-              currency={currency}
+              lineCurrency={lineCurrency}
               brandCode={brandCode}
             />
           </div>
@@ -1625,7 +1611,7 @@ export function TravelExpenseForm({
               onRemove={removeItem}
               highlightMissingReceipt={triedSubmit}
               requestId={requestId ?? undefined}
-              currency={currency}
+              lineCurrency={lineCurrency}
               brandCode={brandCode}
             />
             {visible.parking && (
@@ -1638,7 +1624,7 @@ export function TravelExpenseForm({
                 onRemove={removeItem}
                 highlightMissingReceipt={triedSubmit}
                 requestId={requestId ?? undefined}
-                currency={currency}
+                lineCurrency={lineCurrency}
                 brandCode={brandCode}
               />
             )}
@@ -1657,7 +1643,7 @@ export function TravelExpenseForm({
             onRemove={removeItem}
             highlightMissingReceipt={triedSubmit}
             requestId={requestId ?? undefined}
-            currency={currency}
+            lineCurrency={lineCurrency}
             brandCode={brandCode}
           />
         )}
@@ -1724,7 +1710,7 @@ export function TravelExpenseForm({
                     className="text-[14px] font-bold tabular-nums shrink-0"
                     style={{ color: "var(--text-primary)" }}
                   >
-                    {fmtDayAmount(dayAmount)} {isForeignClaim ? currency : "บาท"}
+                    {fmtDayAmount(dayAmount)} บาท
                   </span>
                   {dayOk ? (
                     <CircleCheck size={15} className="shrink-0" style={{ color: "var(--color-success)" }} />
@@ -1761,17 +1747,18 @@ export function TravelExpenseForm({
                 className="text-[14px] font-semibold ml-1.5"
                 style={{ opacity: 0.7 }}
               >
-                {isForeignClaim ? currency : "บาท"}
+                บาท
               </span>
             </p>
+            {/* The rate the lines were converted at, said once for the claim
+                rather than repeated on every row. Nothing at all on a Thai
+                claim. */}
             {fxNote && (
               <p
                 className="text-[12px] mt-1.5 m-0 leading-relaxed"
                 style={{ color: "var(--nav-active-text)", opacity: 0.8 }}
               >
-                {bahtEquivalent !== null
-                  ? `≈ ${fmtDayAmount(bahtEquivalent)} บาท · ${fxNote}`
-                  : fxNote}
+                {fxNote}
               </p>
             )}
           </div>
@@ -1871,16 +1858,10 @@ export function TravelExpenseForm({
           <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
             ค่าเดินทางรวม{travelDays.length > 1 ? ` (${travelDays.length} วัน)` : ""}
           </span>
+          {/* Baht on every claim, because `AccTravelExpenseItem.Amount` is. */}
           <span className="text-[16px] font-bold" style={{ color: "var(--text-heading)" }}>
-            {isForeignClaim
-              ? `${fmtDayAmount(requestTotalAmount)} ${currency}`
-              : `฿${fmtDayAmount(requestTotalAmount)}`}
+            ฿{fmtDayAmount(requestTotalAmount)}
           </span>
-          {isForeignClaim && bahtEquivalent !== null && (
-            <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-              ≈ ฿{fmtDayAmount(bahtEquivalent)} · อัตราอ้างอิง
-            </span>
-          )}
         </div>
         <div className="flex items-center gap-2">
           <Button

@@ -16,7 +16,13 @@ import {
   type ReceiptFailure,
 } from "@/features/accounting/lib/read-receipt-amount";
 import { isBaht, THB } from "@/lib/acc/currency";
-import { currencyWord } from "@/lib/acc/currency-display";
+import { fmtAmountWithCurrency } from "@/lib/acc/currency-display";
+import {
+  lineMoney,
+  resolveLineCurrency,
+  typedLineFigure,
+  type LineCurrencyContext,
+} from "@/features/accounting/lib/claim-currency";
 import type { TravelExpenseItem, PendingFile } from "@/features/accounting/types";
 import type { TravelItemType } from "@/features/accounting/constants";
 
@@ -63,15 +69,16 @@ interface ExpenseRowsProps {
    */
   dataField?: string;
   /**
-   * The currency these amounts are entered in. Null/absent/`"THB"` all mean
-   * baht, which is what every existing call site gets by leaving it out.
+   * What each line's money controls may offer, computed once for the whole
+   * request by `useTravelExpenseForm`.
    *
-   * Display only — it changes the `฿` adornment and the `บาท` on the block
-   * total, nothing about what is stored. Amounts on a foreign claim are held in
-   * the claim's own currency and converted once, on the request header, by
-   * `request-service.ts`.
+   * **Absent, or `options` empty, is the Thailand case and must render exactly
+   * what this block rendered before migration 129**: one amount input with a
+   * `฿` adornment, no dropdown, no converted figure, no note. Every conditional
+   * below is behind that one test, so the promise is checkable rather than
+   * hoped for.
    */
-  currency?: string | null;
+  lineCurrency?: LineCurrencyContext;
   /**
    * The claim's brand, forwarded to the receipt read.
    *
@@ -81,17 +88,6 @@ interface ExpenseRowsProps {
    * foreign receipt silently stays baht. Nothing else here uses it.
    */
   brandCode?: string | null;
-}
-
-/**
- * The symbol or code to put beside a figure. `฿` for baht, the code otherwise.
- *
- * The *word* form is `currencyWord`, imported from `@/lib/acc/currency-display`
- * rather than repeated here — this file used to carry its own copy, and by task
- * 12 there were four surfaces needing the same answer.
- */
-function currencyMark(currency: string | null | undefined): string {
-  return isBaht(currency) ? "฿" : (currency ?? "").trim().toUpperCase();
 }
 
 const inputStyle: React.CSSProperties = {
@@ -110,11 +106,15 @@ export function ExpenseRows({
   highlightMissingReceipt = false,
   requestId,
   dataField,
-  currency,
+  lineCurrency,
   brandCode,
 }: ExpenseRowsProps) {
   const rowItems = items.filter((it) => it.itemType === type);
   const allItems = items;
+  // The single Thailand test. `[]` when no context was passed at all, which is
+  // what every call site outside AP-1's foreign path produces.
+  const currencyOptions = lineCurrency?.options ?? [];
+  const previewRate = lineCurrency?.rate ?? null;
 
   // Get the global index for a filtered item (to pass to onUpdate/onRemove)
   const globalIndex = (filteredIdx: number): number => {
@@ -128,10 +128,30 @@ export function ExpenseRows({
     return -1;
   };
 
+  /**
+   * The typed figure, re-expressed as the four fields a line carries.
+   *
+   * On a Thai claim `lineMoney` takes its identity branch and this is the
+   * `{ amount }` patch it always was, plus three nulls that were already null.
+   * On a foreign line it also fills `foreignAmount` and previews the baht, so
+   * the day and claim totals — which sum `amount` — stay live while somebody
+   * types. The server recomputes all four on save from its own rate.
+   */
   const handleAmountChange = (filteredIdx: number, raw: string) => {
-    const amount = parseFloat(raw) || 0;
     const gi = globalIndex(filteredIdx);
-    if (gi >= 0) onUpdate(gi, { amount });
+    if (gi < 0) return;
+    const item = allItems[gi];
+    const cur = resolveLineCurrency(item.currency, currencyOptions);
+    onUpdate(gi, lineMoney(parseFloat(raw) || 0, cur, previewRate));
+  };
+
+  /** Same rule, keeping the figure as typed and changing only what it is in. */
+  const handleCurrencyChange = (filteredIdx: number, code: string) => {
+    const gi = globalIndex(filteredIdx);
+    if (gi < 0) return;
+    const item = allItems[gi];
+    const typed = typedLineFigure(item, currencyOptions);
+    onUpdate(gi, lineMoney(typed, resolveLineCurrency(code, currencyOptions), previewRate));
   };
 
   const handleRemove = (filteredIdx: number) => {
@@ -170,10 +190,11 @@ export function ExpenseRows({
             key={filteredIdx}
             item={item}
             requestId={requestId}
-            currency={currency}
+            currencyOptions={currencyOptions}
             brandCode={brandCode}
             highlightMissingReceipt={highlightMissingReceipt}
             onAmountChange={(val) => handleAmountChange(filteredIdx, val)}
+            onCurrencyChange={(code) => handleCurrencyChange(filteredIdx, code)}
             onRemove={() => handleRemove(filteredIdx)}
             onPendingAdd={(pf) => {
               const gi = globalIndex(filteredIdx);
@@ -204,6 +225,10 @@ export function ExpenseRows({
           className="flex justify-end mt-2 pt-2"
           style={{ borderTop: "1px solid var(--border-light)" }}
         >
+          {/* Baht, unconditionally — `amount` is baht on every line, whatever
+              currency it was typed in, which is the whole point of converting on
+              the way in (migration 129). The block total on a Thai claim is
+              therefore the same figure and the same word it has always been. */}
           <span className="text-[13px]" style={{ color: "var(--text-muted)" }}>
             รวม:{" "}
             <span className="font-bold" style={{ color: "var(--text-primary)" }}>
@@ -211,7 +236,7 @@ export function ExpenseRows({
                 .reduce((s, i) => s + (Number(i.amount) || 0), 0)
                 .toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>{" "}
-            {currencyWord(currency)}
+            บาท
           </span>
         </div>
       )}
@@ -225,15 +250,16 @@ interface ExpenseRowProps {
   item: TravelExpenseItem;
   requestId?: number;
   /**
-   * The claim's currency. Decides whether the field's adornment reads `฿` or a
-   * code — and, since the read learned to answer one, whether the figure a
-   * receipt gives back belongs in this field at all.
+   * What this line's currency dropdown may offer. **Empty means Thailand** — no
+   * dropdown, no converted figure, and the `฿` adornment this row has always
+   * had.
    */
-  currency?: string | null;
+  currencyOptions: string[];
   /** Forwarded to the read so the route can resolve what this brand may claim in. */
   brandCode?: string | null;
   highlightMissingReceipt?: boolean;
   onAmountChange: (val: string) => void;
+  onCurrencyChange: (code: string) => void;
   onRemove: () => void;
   onPendingAdd: (file: PendingFile) => void;
   onPendingRemove: (localId: string) => void;
@@ -243,10 +269,11 @@ interface ExpenseRowProps {
 function ExpenseRow({
   item,
   requestId,
-  currency,
+  currencyOptions,
   brandCode,
   highlightMissingReceipt = false,
   onAmountChange,
+  onCurrencyChange,
   onRemove,
   onPendingAdd,
   onPendingRemove,
@@ -267,10 +294,37 @@ function ExpenseRow({
    */
   const [readNote, setReadNote] = useState<"reading" | ReceiptFailure | null>(null);
 
+  /* ── What this line is in ──
+   *
+   * `showsCurrency` is the single Thailand test, and everything the currency
+   * work added to this row sits behind it. `lineCurrency` resolves a line with
+   * no recorded currency to the country's own — see `effectiveLineCurrency` for
+   * why that, and not baht. */
+  const showsCurrency = currencyOptions.length > 0;
+  const lineCurrency = resolveLineCurrency(item.currency, currencyOptions);
+  const isForeignLine = showsCurrency && !isBaht(lineCurrency);
+  /** The figure the input shows and the requester typed — never the baht. */
+  const typedAmount = typedLineFigure(item, currencyOptions);
+  /**
+   * The baht this line contributes, or null to show `—`.
+   *
+   * Read off `item.amount` rather than recomputed, because after a save that is
+   * the figure the **server** wrote at the rate it fetched — the authority. The
+   * one case with nothing honest to show is a figure typed while no rate was
+   * available at all: `lineMoney` leaves `amount` at 0 there rather than
+   * previewing the unconverted number, and a `0.00 บาท` beside a `20` would
+   * read as a converted figure rather than as a missing one.
+   */
+  const convertedBaht = !isForeignLine
+    ? null
+    : typedAmount > 0 && !(Number(item.amount) > 0)
+      ? null
+      : Number(item.amount) || 0;
+
   const uploaded = item.files ?? [];
   const pending = item.pendingFiles ?? [];
   const totalFiles = uploaded.length + pending.length;
-  const needsReceipt = highlightMissingReceipt && Number(item.amount) > 0 && totalFiles === 0;
+  const needsReceipt = highlightMissingReceipt && typedAmount > 0 && totalFiles === 0;
   // A row is "saved" once it has a DB id (persisted by a previous save/submit).
   const isSaved = item.id != null;
   /**
@@ -282,12 +336,12 @@ function ExpenseRow({
    * the field came first still holds its figure, and hiding it would take money
    * off a form its owner had already filled in.
    */
-  const showAmount = totalFiles > 0 || Number(item.amount) > 0 || readNote === "reading";
+  const showAmount = totalFiles > 0 || typedAmount > 0 || readNote === "reading";
 
   // The read resolves seconds after the attach. These keep its write honest
   // against a row that has since been filled in by hand, or removed altogether.
-  const amountRef = useRef(item.amount);
-  amountRef.current = item.amount;
+  const amountRef = useRef(typedAmount);
+  amountRef.current = typedAmount;
   const aliveRef = useRef(true);
   useEffect(() => {
     // Set on mount, not just cleared on unmount. StrictMode runs effects
@@ -314,7 +368,7 @@ function ExpenseRow({
       // reader's null means "not known", which is AP-17's case and not ours.
       const read = await readReceiptAmount(file, {
         brandCode,
-        claimCurrency: currency ?? THB,
+        claimCurrency: lineCurrency,
       });
       if (!aliveRef.current) return;
       if (read.amount != null) {
@@ -426,6 +480,73 @@ function ExpenseRow({
     // the field simply opens blank.
     if (!readingRef.current && !(Number(amountRef.current) > 0)) void prefillAmountFrom(file);
   };
+
+  /**
+   * The money input, as a fragment.
+   *
+   * A variable rather than two copies of the markup: on a Thai claim it is
+   * dropped straight into the same fixed-width `relative` box it has always sat
+   * in — so the adornment and the reading overlay still position against that
+   * box and the rendered DOM is unchanged — and on a foreign claim it goes into
+   * a `relative` cell beside the dropdown instead. Two copies would drift, and
+   * this is the control the receipt read writes into.
+   */
+  const amountField = (
+    <>
+      {/* Locked while the read is in flight, and released the moment it lands
+          either way — a figure, or a failure that says to type it in. Typing
+          over an answer that is one second away only creates a race about whose
+          number wins. */}
+      <input
+        type="number"
+        min="0"
+        step="any"
+        placeholder={showsCurrency ? "จำนวนเงินต้นทาง" : "จำนวนเงิน"}
+        value={typedAmount || ""}
+        onChange={(e) => onAmountChange(e.target.value)}
+        disabled={readNote === "reading"}
+        // With a dropdown beside it the code is already on screen, so the field
+        // carries no adornment and keeps its ordinary right padding. Baht keeps
+        // the `฿` and the padding it has always had, so nothing moves on an
+        // ordinary Thai claim.
+        className={`w-full rounded-lg pl-3 py-2 text-[15px] font-bold outline-none tabular-nums text-right ${
+          showsCurrency ? "pr-3" : "pr-7"
+        }`}
+        style={inputStyle}
+      />
+      {!showsCurrency && (
+        <span
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-[14px] font-bold pointer-events-none"
+          style={{ color: "var(--text-muted)" }}
+        >
+          ฿
+        </span>
+      )}
+      {/* Covers the whole field rather than a hairline at its edge, so the state
+          is unmistakable at a glance. Laid over a disabled input of the same
+          size instead of replacing it, so nothing below shifts when the read
+          finishes. `acc-progress` is a 40% band that sweeps across — the same
+          animation the loading popup uses. */}
+      {readNote === "reading" && (
+        <div
+          className="absolute inset-0 rounded-lg overflow-hidden pointer-events-none"
+          style={{ background: "color-mix(in srgb, var(--color-action) 10%, var(--bg-input))" }}
+        >
+          <div
+            className="acc-progress h-full"
+            style={{ background: "color-mix(in srgb, var(--color-action) 26%, transparent)" }}
+          />
+          <span
+            className="absolute inset-0 flex items-center justify-center gap-1.5 text-[11.5px] font-semibold"
+            style={{ color: "var(--color-action)" }}
+          >
+            <Loader2 size={12} className="animate-spin" />
+            กำลังอ่านยอด...
+          </span>
+        </div>
+      )}
+    </>
+  );
 
   return (
     <div
@@ -585,61 +706,53 @@ function ExpenseRow({
         {/* Amount — revealed by the attach, prefilled from the receipt.
             Deliberately not gated on the read: once there is a receipt the
             requester can type the figure, and the read either beats them to it
-            or does not. */}
-        <div className="relative w-32 sm:w-44 shrink-0">
+            or does not.
+
+            On a Thai claim (`showsCurrency` false) this is one input in a fixed
+            box, exactly as it has always been: the `฿` adornment, the same
+            widths, the same padding, no dropdown and no second line. Everything
+            else is inside a `showsCurrency` branch. */}
+        <div className={`relative shrink-0 ${showsCurrency ? "w-48 sm:w-60" : "w-32 sm:w-44"}`}>
           {showAmount ? (
-            <>
-              {/* Locked while the read is in flight, and released the moment it
-                  lands either way — a figure, or a failure that says to type it
-                  in. Typing over an answer that is one second away only creates
-                  a race about whose number wins. */}
-              <input
-                type="number"
-                min="0"
-                step="any"
-                placeholder="จำนวนเงิน"
-                value={item.amount || ""}
-                onChange={(e) => onAmountChange(e.target.value)}
-                disabled={readNote === "reading"}
-                // A three-letter code needs more room than `฿` does; baht keeps
-                // the padding it has always had, so nothing moves on an
-                // ordinary Thai claim.
-                className={`w-full rounded-lg pl-3 py-2 text-[15px] font-bold outline-none tabular-nums text-right ${
-                  currencyMark(currency) === "฿" ? "pr-7" : "pr-12"
-                }`}
-                style={inputStyle}
-              />
-              <span
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-[14px] font-bold pointer-events-none"
-                style={{ color: "var(--text-muted)" }}
-              >
-                {currencyMark(currency)}
-              </span>
-              {/* Covers the whole field rather than a hairline at its edge, so
-                  the state is unmistakable at a glance. Laid over a disabled
-                  input of the same size instead of replacing it, so nothing
-                  below shifts when the read finishes. `acc-progress` is a 40%
-                  band that sweeps across — the same animation the loading
-                  popup uses. */}
-              {readNote === "reading" && (
-                <div
-                  className="absolute inset-0 rounded-lg overflow-hidden pointer-events-none"
-                  style={{ background: "color-mix(in srgb, var(--color-action) 10%, var(--bg-input))" }}
-                >
-                  <div
-                    className="acc-progress h-full"
-                    style={{ background: "color-mix(in srgb, var(--color-action) 26%, transparent)" }}
-                  />
-                  <span
-                    className="absolute inset-0 flex items-center justify-center gap-1.5 text-[11.5px] font-semibold"
-                    style={{ color: "var(--color-action)" }}
+            showsCurrency ? (
+              <div className="flex flex-col items-stretch gap-1">
+                <div className="flex items-center gap-1.5">
+                  <div className="relative flex-1 min-w-0">{amountField}</div>
+                  {/* Locked alongside the input while the read is running: the
+                      read was asked whether the document is in *this* currency,
+                      so changing it mid-flight would have the answer admitted
+                      against a question nobody asked. */}
+                  <select
+                    aria-label="สกุลเงินของรายการนี้"
+                    value={lineCurrency}
+                    onChange={(e) => onCurrencyChange(e.target.value)}
+                    disabled={readNote === "reading"}
+                    className="shrink-0 rounded-lg px-1.5 py-2 text-[13px] font-bold outline-none cursor-pointer"
+                    style={inputStyle}
                   >
-                    <Loader2 size={12} className="animate-spin" />
-                    กำลังอ่านยอด...
-                  </span>
+                    {currencyOptions.map((code) => (
+                      <option key={code} value={code}>
+                        {code}
+                      </option>
+                    ))}
+                  </select>
                 </div>
-              )}
-            </>
+                {/* The baht this line is worth. A THB line shows nothing — it is
+                    already baht, and `= 20.00 บาท` beside a `20` would be noise.
+                    `—` while no rate is known: the figure is never guessed, and
+                    the save refuses on its own if its own fetch also fails. */}
+                {isForeignLine && (
+                  <span
+                    className="text-[12px] font-semibold text-right tabular-nums"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    {convertedBaht === null ? "= —" : `= ${fmtAmountWithCurrency(convertedBaht, THB)}`}
+                  </span>
+                )}
+              </div>
+            ) : (
+              amountField
+            )
           ) : (
             /* Sits where the input will be, so the empty slot explains itself
                rather than looking like something failed to render. */
@@ -676,7 +789,7 @@ function ExpenseRow({
           used to sit here told people to type in a box that is locked. */}
       {/* Self-clearing: once there is a figure the note is stale, however it
           got there. Re-attaching the image is the retry. */}
-      {readNote != null && readNote !== "reading" && !(Number(item.amount) > 0) && (
+      {readNote != null && readNote !== "reading" && !(typedAmount > 0) && (
         <p className="m-0 text-[12px]" style={{ color: "var(--text-muted)" }}>
           {RECEIPT_FAILURE_TEXT[readNote]}
         </p>

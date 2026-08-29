@@ -77,7 +77,7 @@ import {
   hasRateVehicle,
   normalizeTravelDay,
 } from "@/features/accounting/lib/travel-sections";
-import type { AccRequest, AccApproval, AccFileMeta, AccVehicle, TravelExpenseDetail, RouteWaypoint } from "@/features/accounting/types";
+import type { AccRequest, AccApproval, AccFileMeta, AccVehicle, TravelExpenseDetail, TravelExpenseItem, RouteWaypoint } from "@/features/accounting/types";
 import { extraDestinationLabel, ROUTE_FIRST_DEST_LABEL, ROUTE_ORIGIN_LABEL } from "@/features/accounting/lib/route-waypoints";
 import { fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
 
@@ -255,6 +255,32 @@ function clusterEntriesByVehicle(entries: ExpenseLine[]): ExpenseVehicleCluster[
   return clusters;
 }
 
+/**
+ * A line's subtitle, with the figure the requester actually typed appended when
+ * this line was not entered in baht.
+ *
+ * `amount` is baht on every line written since migration 129, which is what lets
+ * the day figure and the request total agree without anybody converting
+ * anything. But a claim whose whole point is that somebody spent ringgit would
+ * then show only the converted baht, and the approver reading it has no way back
+ * to the figure on the receipt in front of them. So the original goes here, with
+ * its own code beside it — `fmtAmountWithCurrency` rather than a bare number,
+ * because a figure without its currency is exactly the defect this feature
+ * exists to remove.
+ *
+ * A baht line adds nothing at all, so every claim written before 129 and every
+ * Thai claim since renders character-for-character what it always did.
+ */
+function withLineCurrency(
+  vehicleName: string | null | undefined,
+  item: TravelExpenseItem,
+): string | undefined {
+  const base = vehicleName ?? undefined;
+  if (!showsForeignCurrency(item.currency) || item.foreignAmount == null) return base;
+  const own = fmtAmountWithCurrency(item.foreignAmount, item.currency);
+  return base ? `${base} · ${own}` : own;
+}
+
 function buildExpenseLines(day: TravelExpenseDetail): ExpenseLine[] {
   const d = normalizeTravelDay(day);
   const lines: ExpenseLine[] = [];
@@ -278,7 +304,7 @@ function buildExpenseLines(day: TravelExpenseDetail): ExpenseLine[] {
       lines.push({
         key: `rate-item-${item.id ?? i}`,
         title: TRAVEL_ITEM_LABEL[item.itemType] ?? item.itemType,
-        subtitle: d.vehicleName ?? undefined,
+        subtitle: withLineCurrency(d.vehicleName, item),
         sectionKey: "rate",
         amount: Number(item.amount) || 0,
         files: item.files ?? [],
@@ -294,7 +320,7 @@ function buildExpenseLines(day: TravelExpenseDetail): ExpenseLine[] {
       lines.push({
         key: `sec-${si}-${item.id ?? i}`,
         title: TRAVEL_ITEM_LABEL[item.itemType] ?? item.itemType,
-        subtitle: sec.vehicleName ?? undefined,
+        subtitle: withLineCurrency(sec.vehicleName, item),
         sectionKey: `sec-${sec.id ?? si}`,
         amount: Number(item.amount) || 0,
         files: item.files ?? [],
@@ -309,7 +335,7 @@ function buildExpenseLines(day: TravelExpenseDetail): ExpenseLine[] {
       lines.push({
         key: `legacy-${item.id ?? i}`,
         title: TRAVEL_ITEM_LABEL[item.itemType] ?? item.itemType,
-        subtitle: d.vehicleName ?? undefined,
+        subtitle: withLineCurrency(d.vehicleName, item),
         sectionKey: "legacy",
         amount: Number(item.amount) || 0,
         files: item.files ?? [],
@@ -1188,11 +1214,15 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
   /**
    * What the per-day and per-line figures on this page are denominated in.
    *
-   * They are **not** baht on a foreign claim: `AccTravelExpense.TotalAmount` and
-   * its items are stored in the claim's own currency and only
-   * `AccRequest.TotalAmount` is converted. `currencyWord` answers `บาท` for
-   * every claim written before migration 125 and for every baht claim since, so
-   * this page is character-for-character what it was for all of them.
+   * **Baht on everything written since migration 129**, where the currency moved
+   * to the expense line and `AccTravelExpenseItem.Amount` became baht always —
+   * so `request.currency` is NULL on those and `currencyWord` answers `บาท`.
+   *
+   * It is not baht on a claim filed during 125's request-level design: there
+   * `AccTravelExpense.TotalAmount` and its items hold the claim's own currency
+   * and only `AccRequest.TotalAmount` was converted. Those claims still carry a
+   * header `Currency`, and reading it here is what keeps their days from being
+   * misread as baht. Nothing on AP-1's write path records one any more.
    */
   const claimCurrencyWord = currencyWord(request.currency);
   const claimIsForeign = showsForeignCurrency(request.currency);

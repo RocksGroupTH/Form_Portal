@@ -279,9 +279,18 @@ export function cloneSectionsForDayCopy(sections: TravelVehicleSection[] | undef
     vehicleName: sec.vehicleName,
     ratePerKm: sec.ratePerKm,
     isManualEntry: sec.isManualEntry,
+    // The line's money travels as a set. Copying `amount` alone would carry the
+    // baht across while leaving the copy with no currency — which resolves to
+    // the country's (see `effectiveLineCurrency`), so a 164.47 baht line copied
+    // onto the next day would be re-read as 164.47 **ringgit** and converted
+    // again on the next save. The files deliberately do not travel: a receipt
+    // belongs to the day it was issued on.
     items: (sec.items ?? []).map((it, i) => ({
       itemType: it.itemType,
       amount: Number(it.amount) || 0,
+      currency: it.currency ?? null,
+      exchangeRate: it.exchangeRate ?? null,
+      foreignAmount: it.foreignAmount ?? null,
       sortOrder: i,
       files: [],
       pendingFiles: [],

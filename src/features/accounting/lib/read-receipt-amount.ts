@@ -23,12 +23,13 @@ export type ReceiptFailure =
   /** The call worked; this image has no total we can trust. */
   | "not-found"
   /**
-   * The figure is real, and it is in a different currency from the claim.
+   * The figure is real, and it is in a different currency from **this line**.
    *
-   * Prefilling it would put a ringgit total into a baht field and total it as
-   * baht — the defect this read carried until it asked which currency the
-   * document was in. Converting instead is not the alternative: a claim's rows
-   * are held in the claim's own currency and converted once, on the header.
+   * Prefilling it would put a ringgit total into a field the line says is baht
+   * and convert it as baht — the defect this read carried until it asked which
+   * currency the document was in. Converting instead is not the alternative:
+   * the line's own dropdown is one click away, and a rate applied here would be
+   * a second copy of the conversion `request-service.ts` owns.
    */
   | "currency-mismatch"
   /** Our side is not configured — a missing or revoked key (503). */
@@ -42,7 +43,7 @@ export type ReceiptFailure =
  */
 export const RECEIPT_FAILURE_TEXT: Record<ReceiptFailure, string> = {
   "not-found": "อ่านยอดจากรูปนี้ไม่เจอ — กรอกจำนวนเงินเองได้เลย",
-  "currency-mismatch": "ใบเสร็จนี้เป็นคนละสกุลเงินกับคำขอ — กรอกจำนวนเงินเองได้เลย",
+  "currency-mismatch": "ใบเสร็จนี้เป็นคนละสกุลเงินกับรายการนี้ — เปลี่ยนสกุลเงินของรายการ หรือกรอกจำนวนเงินเอง",
   unavailable: "ระบบอ่านใบเสร็จยังไม่พร้อมใช้งาน — กรอกจำนวนเงินเองได้เลย",
   error: "อ่านใบเสร็จไม่ได้ตอนนี้ — กรอกจำนวนเงินเองได้เลย",
 };

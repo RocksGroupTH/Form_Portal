@@ -17,15 +17,19 @@ export function computeTotalDistance(d: TravelExpenseDetail): number {
 /**
  * Grand total for one travel day — rate vehicle + all manual sections.
  *
- * **In the claim's own currency, not necessarily baht.** The items it adds are
- * `AccTravelExpenseItem.Amount`, which AP-1 stores exactly as the requester
- * typed it; only `AccRequest.TotalAmount` is converted, and `request-service.ts`
- * is what applies `toBaht` to this figure on its way there. A caller printing
- * this next to `บาท`, or adding it to a baht total, must convert first —
- * `amountInBaht` in `@/lib/acc/currency-display`.
+ * **Thai baht**, on everything written since migration 129. The items it adds
+ * are `AccTravelExpenseItem.Amount`, which is baht whatever currency the line
+ * was typed in — `request-service.ts` converts each line on the way in and
+ * refuses the save rather than storing an unconverted figure. The `km × rate`
+ * branch is baht × baht for the same reason it always was.
  *
- * A rate-based vehicle is refused on a foreign claim (`CK_AccVehicle_Rate` and
- * `rateVehicleAllowed`), so the `km × rate` branch above is always baht × baht.
+ * That invariant is why this function never learned what a currency is, and it
+ * is what every other summer in the application depends on. **The one exception
+ * is a claim filed during migration 125's request-level design**, where the
+ * items hold the claim's own currency and only `AccRequest.TotalAmount` was
+ * converted; those rows still carry `AccRequest.Currency`, and the display
+ * surfaces that read it (`amountInBaht` in `@/lib/acc/currency-display`) are
+ * what keep them from being misread as baht.
  */
 export function computeTotalAmount(d: TravelExpenseDetail): number {
   const day = normalizeTravelDay(d);

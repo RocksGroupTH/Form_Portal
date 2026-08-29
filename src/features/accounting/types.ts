@@ -4,7 +4,30 @@ import type { BrandCurrencyEntry } from "@/lib/acc/currency";
 export interface TravelExpenseItem {
   id?: number;
   itemType: TravelItemType;
+  /**
+   * **Thai baht, always** — whatever currency the line was entered in.
+   *
+   * That is the whole trick of the per-line currency (migration 129), and it is
+   * what left every existing summer untouched: `calc.ts`'s `sum()`, the T-SQL
+   * `SUM(i.Amount)` in `TRAVEL_DAYS_CSV_SELECT` that feeds the ERP prep queue an
+   * approver reads before pressing Send, the journal builder, and the approval
+   * queue's per-vehicle cell. Not one of them has to learn what a currency is.
+   *
+   * The figure as it was typed is `foreignAmount`; `request-service.ts` is the
+   * only thing that turns one into the other, and it refuses the write rather
+   * than falling back to the unconverted figure.
+   */
   amount: number;
+  /**
+   * The currency this line was entered in. **Null and `"THB"` both mean baht**,
+   * and a baht line leaves all three of these null — nobody recorded a currency
+   * on it, and writing `"THB"` would claim somebody had.
+   */
+  currency?: string | null;
+  /** THB per 1 unit of `currency`, as the server fetched it. Null on a baht line. */
+  exchangeRate?: number | null;
+  /** The figure as typed, before conversion. `amount` is this × `exchangeRate`. */
+  foreignAmount?: number | null;
   sortOrder: number;
   /** AccTravelVehicleSection.Id — manual vehicle rows only. */
   vehicleSectionId?: number | null;
@@ -97,14 +120,32 @@ export interface AccRequest {
    */
   totalAmount: number | null; paymentDate: string | null;
   /**
-   * The currency the claim was entered in. **Null and `"THB"` both mean baht**,
-   * and a baht claim leaves all three of these null — nobody recorded a
-   * currency, and writing `"THB"` would claim somebody had.
+   * ISO-3166-1 alpha-2 — the country the trip was to, and the only thing that
+   * decides which currencies an expense line may be entered in. **Null means
+   * Thailand**, which is every claim written before migration 129 and every
+   * claim filed from here since.
+   */
+  countryCode: string | null;
+  /**
+   * **Legacy. Read only, and only for AP-1 claims filed before the currency
+   * moved to the line.**
+   *
+   * 125 put one currency on the request; 129 moved it to
+   * `AccTravelExpenseItem`, and nothing on AP-1's write path records one any
+   * more — all three of AP-1's `AccRequest` writers set these back to NULL, so a
+   * resumed draft cannot keep a header currency beside per-line baht amounts.
+   * They stay on this interface because a claim submitted under the old design
+   * still carries them and its detail page still has to print the right money.
+   *
+   * AP-17 writes `AccRequest.Currency` / `.ExchangeRate` for its own booking
+   * desk, which is why migration 130 cannot simply drop the columns.
+   *
+   * Null and `"THB"` both mean baht.
    */
   currency: string | null;
-  /** THB per 1 unit of `currency`, as fetched when the claim was submitted. */
+  /** THB per 1 unit of `currency`. Legacy — see above. */
   exchangeRate: number | null;
-  /** The claim's own figure, before conversion. `totalAmount` is this × the rate. */
+  /** The claim's own figure, before conversion. Legacy — see above. */
   foreignAmount: number | null;
   submittedBy: number | null; submittedAt: string | null;
   createdAt: string; updatedAt: string;

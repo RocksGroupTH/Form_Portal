@@ -17,8 +17,11 @@ import {
 import { syncReturnOriginFromOnward } from "@/features/accounting/lib/route-waypoints";
 import { THB } from "@/lib/acc/currency";
 import {
-  claimCurrencyOptions,
-  effectiveClaimCurrency,
+  DEFAULT_COUNTRY,
+  claimCountryOptions,
+  effectiveClaimCountry,
+  lineCurrencyOptions,
+  type LineCurrencyContext,
 } from "@/features/accounting/lib/claim-currency";
 import type {
   TravelExpenseDetail,
@@ -106,29 +109,26 @@ interface UseTravelExpenseFormResult {
   setBrandCode: (code: string | null) => void;
 
   /**
-   * The currency this claim is entered in — always one of `currencyOptions`,
-   * and `"THB"` whenever that list is empty.
+   * The country this trip was to — always one of `countryOptions`, and `"TH"`
+   * whenever that list holds nothing else.
    *
    * Derived rather than stored raw, so a brand whose currency an admin has since
-   * switched off can never leave the form posting a code the server refuses with
-   * no control on screen to change it.
+   * switched off can never leave the form posting a country the server refuses
+   * with no control on screen to change it.
    */
-  currency: string;
-  setCurrency: (code: string) => void;
+  countryCode: string;
+  setCountryCode: (code: string) => void;
   /**
-   * What the currency picker offers, or **empty — render nothing**. A brand with
-   * no currency configured must leave this form exactly as it looked before the
-   * feature shipped.
+   * The countries the picker offers. **Thailand alone means render nothing** —
+   * a brand with no currency configured must leave this form exactly as it
+   * looked before the feature shipped.
    */
-  currencyOptions: string[];
+  countryOptions: string[];
   /**
-   * The rate the **server** recorded for this claim, once there is one.
-   *
-   * The client never fetches or posts a rate; this arrives from
-   * `reloadFromServer` after a save and is display only — an ECB mid-market
-   * reference rate (`อัตราอ้างอิง`), never a Bank of Thailand rate.
+   * What each expense line's money controls need. `options` empty is the
+   * Thailand answer: no dropdown, no rate column, no conversion note anywhere.
    */
-  exchangeRate: number | null;
+  lineCurrency: LineCurrencyContext;
 
   brands: AccBrandOption[];
   vehicles: AccVehicle[];
@@ -298,24 +298,10 @@ export function useTravelExpenseForm(
   const [brandCode, setBrandCode] = useState<string | null>(
     initial?.brandCode ?? null
   );
-  // What the user picked. `currency` below is this reconciled against what the
-  // brand actually offers — never this value raw.
-  const [pickedCurrency, setPickedCurrency] = useState<string>(
-    initial?.currency ?? THB,
-  );
-  /**
-   * The rate the server recorded, **kept with the currency it was recorded
-   * for**.
-   *
-   * A bare number goes wrong the moment the currency changes without a save:
-   * pick MYR, save (rate 8.25), switch the brand to an SGD one, and a bare rate
-   * would be captioned `1 SGD = 8.25 บาท` — a made-up figure on a money screen.
-   * Pairing them lets the caption simply disappear until the next save answers.
-   */
-  const [storedRate, setStoredRate] = useState<{ currency: string; rate: number } | null>(
-    initial?.currency && initial?.exchangeRate
-      ? { currency: initial.currency.trim().toUpperCase(), rate: initial.exchangeRate }
-      : null,
+  // What the user picked. `countryCode` below is this reconciled against what
+  // the brand actually offers — never this value raw.
+  const [pickedCountry, setPickedCountry] = useState<string>(
+    initial?.countryCode ?? DEFAULT_COUNTRY,
   );
 
   const activeIndex = Math.min(activeDayIndex, Math.max(0, travelDays.length - 1));
@@ -406,24 +392,53 @@ export function useTravelExpenseForm(
    * **`brandsData` being undefined is not "no currency".** Nothing disables Save
    * while the brands list is in flight, and `brandCode` is seeded from the
    * resumed draft synchronously — so a foreign draft is savable for the moment
-   * before SWR answers. Reconciling against an empty list there would post
-   * `THB` for a claim entered in ringgit and silently re-price it. Until the
-   * list is known the draft's own stored currency stands.
+   * before SWR answers. Reconciling against an empty list there would post `TH`
+   * for a trip to Malaysia and silently re-read every ringgit line as baht.
+   * Until the list is known the draft's own stored country stands.
    *
    * The server re-derives all of this from the registry regardless
-   * (`resolveClaimFx`), so this cannot widen what a claim may be filed in — only
-   * narrow it wrongly, which is what the guard prevents.
+   * (`resolveClaimCountry`), so this cannot widen where a claim may be filed
+   * from — only narrow it wrongly, which is what the guard prevents.
    */
   const brandsKnown = !!brandsData;
   const selectedBrand = brandsKnown
     ? brands.find((b) => b.brandCode === brandCode) ?? null
     : null;
-  const currencyOptions = brandsKnown ? claimCurrencyOptions(selectedBrand) : [];
-  const currency = brandsKnown
-    ? effectiveClaimCurrency(pickedCurrency, selectedBrand)
-    : (pickedCurrency || THB).trim().toUpperCase();
-  // Null unless the stored rate was recorded for the currency now selected.
-  const exchangeRate = storedRate && storedRate.currency === currency ? storedRate.rate : null;
+  const countryOptions = brandsKnown
+    ? claimCountryOptions(selectedBrand)
+    : [DEFAULT_COUNTRY];
+  const countryCode = brandsKnown
+    ? effectiveClaimCountry(pickedCountry, selectedBrand)
+    : (pickedCountry || DEFAULT_COUNTRY).trim().toUpperCase();
+
+  /* ── The preview rate ──
+   *
+   * Display only, and the client's single currency-shaped fetch. The server
+   * fetches its own rate on every save and never trusts one from here — AP-2
+   * stores whatever the browser posted, which is the one part of its approach
+   * this feature deliberately does not reuse.
+   *
+   * **A Thai claim passes `null` as the SWR key, so it makes no request at
+   * all.** That is what keeps the promise that Thailand looks and behaves
+   * exactly as it did before this feature shipped.
+   */
+  const foreignCurrency = lineCurrencyOptions(countryCode)[0] ?? null;
+  const { data: fxData } = useSWR<{ rate: number }>(
+    foreignCurrency ? `/api/request/accounting/fx-rate?currency=${foreignCurrency}` : null,
+    jsonFetcher,
+    { revalidateOnFocus: false },
+  );
+  const previewRate =
+    fxData && Number.isFinite(fxData.rate) && fxData.rate > 0 ? fxData.rate : null;
+  const lineCurrency: LineCurrencyContext = useMemo(
+    () => ({
+      options: lineCurrencyOptions(countryCode),
+      defaultCurrency: foreignCurrency ?? THB,
+      rate: previewRate,
+    }),
+    [countryCode, foreignCurrency, previewRate],
+  );
+
   const loading = !brandsData || !vehiclesData || !employeeApiData;
 
   const employee = employeeApiData?.employee ?? null;
@@ -703,14 +718,11 @@ export function useTravelExpenseForm(
       const res = await fetch(`/api/request/accounting/requests/${id}`);
       const json: { ok: boolean; data?: AccRequest; error?: string } = await res.json();
       if (!json.ok || !json.data) return;
-      // The rate the server just recorded, with the currency it belongs to. It
-      // is the only way the form learns one — the client never calls the FX
-      // provider and never posts a rate.
-      const savedCurrency = (json.data.currency ?? "").trim().toUpperCase();
-      const savedRate = json.data.exchangeRate;
-      setStoredRate(
-        savedCurrency && savedRate ? { currency: savedCurrency, rate: savedRate } : null,
-      );
+      // The country as the **server** reconciled it. A draft naming one the
+      // brand no longer offers comes back as Thailand, so the picker and the
+      // stored row cannot disagree after a save. Each line's own currency and
+      // rate arrive with the items below.
+      setPickedCountry((json.data.countryCode ?? DEFAULT_COUNTRY).trim().toUpperCase());
       const days = json.data.travelDays?.length
         ? json.data.travelDays
         : json.data.travel
@@ -777,10 +789,10 @@ export function useTravelExpenseForm(
     setTravel,
     brandCode,
     setBrandCode,
-    currency,
-    setCurrency: setPickedCurrency,
-    currencyOptions,
-    exchangeRate,
+    countryCode,
+    setCountryCode: setPickedCountry,
+    countryOptions,
+    lineCurrency,
     brands,
     vehicles,
     employee,
