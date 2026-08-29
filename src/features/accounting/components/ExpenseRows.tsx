@@ -930,7 +930,7 @@ function ExpenseRow({
         <div className={`relative shrink-0 ${showsCurrency ? "w-56 sm:w-60" : "w-32 sm:w-44"}`}>
           {showAmount ? (
             showsCurrency ? (
-              <div className="flex flex-col items-stretch justify-center gap-1 h-14">
+              <div className="flex flex-col items-stretch gap-1">
                 {/* The amount and the currency, always side by side.
 
                     They used to stack below `sm` to keep the amount field wide,
@@ -993,7 +993,9 @@ function ExpenseRow({
           onClick={handleRowRemove}
           aria-label="ลบแถวนี้"
           title="ลบแถวนี้"
-          className="shrink-0 w-10 h-10 rounded-lg flex items-center justify-center cursor-pointer acc-draft-del"
+          className={`shrink-0 w-10 h-10 rounded-lg flex items-center justify-center cursor-pointer acc-draft-del ${
+            showsCurrency ? "self-start" : "self-center"
+          }`}
           style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", color: "var(--text-muted)" }}
         >
           <Trash2 size={14} />
