@@ -204,7 +204,7 @@ function LineCurrencyChoice({
     <div
       role="radiogroup"
       aria-label="สกุลเงินของรายการนี้"
-      className="flex w-full sm:w-auto shrink-0 rounded-lg p-[3px] gap-[3px]"
+      className="flex w-auto shrink-0 rounded-lg p-[3px] gap-[3px]"
       style={{
         background: unanswered
           ? "color-mix(in srgb, var(--color-danger) 8%, var(--bg-card-alt))"
@@ -235,8 +235,10 @@ function LineCurrencyChoice({
                     background: "transparent",
                     // Danger on BOTH halves while unanswered, so the group reads
                     // as an open question rather than as one option having been
-                    // rejected.
-                    color: unanswered ? "var(--color-danger)" : "var(--text-secondary)",
+                    // rejected. Otherwise muted — `--text-secondary` sat close
+                    // enough to the chosen segment's own colour to read as a
+                    // second live choice rather than as the one not taken.
+                    color: unanswered ? "var(--color-danger)" : "var(--text-muted)",
                   }
             }
           >
@@ -914,21 +916,21 @@ function ExpenseRow({
             box, exactly as it has always been: the `฿` adornment, the same
             widths, the same padding, no currency control and no second line. Everything
             else is inside a `showsCurrency` branch. */}
-        <div className={`relative shrink-0 ${showsCurrency ? "w-48 sm:w-60" : "w-32 sm:w-44"}`}>
+        <div className={`relative shrink-0 ${showsCurrency ? "w-56 sm:w-60" : "w-32 sm:w-44"}`}>
           {showAmount ? (
             showsCurrency ? (
               <div className="flex flex-col items-stretch gap-1">
-                {/* The amount and the currency, side by side where the cell is
-                    wide enough and stacked where it is not.
+                {/* The amount and the currency, always side by side.
 
-                    The cell is `w-48` on a phone and shares the row with the
-                    receipt tile and the delete button, so it cannot grow. Two
-                    segments beside the field there would leave the amount about
-                    90px — narrower than the figures it has to show — which is
-                    why the narrow layout takes a second line instead. From `sm`
-                    (`w-60`) both fit on one, and the converted-baht line stays
-                    beneath either way. */}
-                <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-1.5">
+                    They used to stack below `sm` to keep the amount field wide,
+                    and that is what put the delete button — which is centred
+                    against this whole cell — level with the gap between the two
+                    lines instead of with the input. The row is wider on a phone
+                    now (`w-56`) to pay for it. Never reintroduce the stack
+                    without moving the delete button inside this row: "the bin is
+                    always on the input's line" is the requirement, and a
+                    two-line cell breaks it silently at one breakpoint. */}
+                <div className="flex flex-row items-center gap-1 sm:gap-1.5">
                   <div className="relative w-full sm:flex-1 sm:min-w-0">{amountField}</div>
                   {/* Locked alongside the input while the read is running: the
                       read was asked whether the document is in *this* currency,
