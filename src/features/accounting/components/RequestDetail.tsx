@@ -76,7 +76,7 @@ import {
   showsForeignCurrency,
 } from "@/lib/acc/currency-display";
 import { isOverriddenRate } from "@/lib/acc/currency";
-import { countryName } from "@/lib/acc/country-currency";
+import { countryName, isKnownCountry } from "@/lib/acc/country-currency";
 import { claimRateFacts, multiRateCurrencies } from "@/features/accounting/lib/claim-rates";
 import type { ClaimRateFact } from "@/features/accounting/lib/claim-rates";
 import {
@@ -579,6 +579,15 @@ function GridField({
  * plain letters beside the name that already spells the country out.
  */
 function CountryCodeBadge({ code }: { code: string }) {
+  // A globe ONLY where there is no flag to show. Every country `COUNTRIES`
+  // offers has one — `flag-asset-coverage.test.ts` fails otherwise — so the
+  // globe is for a code that is not on that list: a claim filed against
+  // something hand-edited, or a country since removed. Deciding on
+  // `isKnownCountry` rather than on the image's `onError` means the fallback is
+  // settled at render instead of after a failed request, so nothing flickers.
+  if (!isKnownCountry(code)) {
+    return <Globe size={14} className="shrink-0" style={{ color: "var(--nav-active-text)" }} />;
+  }
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
@@ -1030,11 +1039,6 @@ function TravelDaySection({
         {claimCountry && (
           <TravelMetaTile label="ประเทศ">
             <span className="flex items-center gap-1.5 min-w-0">
-              {/* Globe, not a flag emoji: Windows ships no flag glyphs, so an
-                  emoji renders there as two plain letters beside the country
-                  name that already spells it out. See the form's country
-                  buttons for the same decision. */}
-              <Globe size={14} className="shrink-0" style={{ color: "var(--nav-active-text)" }} />
               <CountryCodeBadge code={claimCountry} />
               <span className="break-words leading-none">
                 {countryName(claimCountry) ?? claimCountry}
@@ -1866,7 +1870,6 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
                   emoji renders there as two plain letters beside the country
                   name that already spells it out. See the form's country
                   buttons for the same decision. */}
-              <Globe size={14} className="shrink-0" style={{ color: "var(--nav-active-text)" }} />
               <CountryCodeBadge code={request.countryCode} />
               <span
                 className="text-[12px] font-bold leading-none"
