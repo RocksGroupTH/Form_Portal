@@ -237,20 +237,19 @@ function LineCurrencyChoice({
                     // as an open question rather than as one option having been
                     // rejected.
                     //
-                    // Otherwise `--text-faint`, the lightest text token, and it
-                    // took two goes to get here: `--text-secondary` read as a
-                    // second live option, and `--text-muted` was still close
-                    // enough to the chosen segment to make the pair hard to tell
-                    // apart at a glance. The chosen one carries a filled
-                    // background as well, so the unchosen one can afford to
-                    // recede this far — and it must, because which currency a
-                    // figure is in is the whole question this control answers.
+                    // Otherwise `--text-ghost`, and it took three goes to get
+                    // here: `--text-secondary` read as a second live option,
+                    // `--text-muted` as a slightly quieter one, and even
+                    // `--text-faint` left the pair hard to tell apart at a
+                    // glance. The chosen segment carries a filled background as
+                    // well, so the unchosen one can afford to recede this far —
+                    // and it must, because which currency a figure is in is the
+                    // whole question this control answers.
                     //
-                    // A token rather than a hand-picked grey: `--text-faint` is
-                    // defined in both themes (#8695ab light, #5b6675 dark), so
-                    // this stays legible on the dark ground where a literal
-                    // would not.
-                    color: unanswered ? "var(--color-danger)" : "var(--text-faint)",
+                    // `--text-ghost` was added for this, in both themes, rather
+                    // than a hex being written here: the light value would be
+                    // invisible on the dark ground.
+                    color: unanswered ? "var(--color-danger)" : "var(--text-ghost)",
                   }
             }
           >

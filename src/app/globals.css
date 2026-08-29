@@ -127,6 +127,10 @@
   --text-secondary: #4b566b;
   --text-muted: #687591;
   --text-faint: #8695ab;
+  /* Lighter than --text-faint: a label that is present but not the
+     answer — the unchosen half of a two-option control, where the chosen
+     half also carries a filled background. */
+  --text-ghost: #b3bfd0;
   --text-heading: #1f2735;
   --text-inverse: #ffffff;
   --text-warning: #b5793a;
@@ -304,6 +308,9 @@
   --text-secondary: #b9c3d1;
   --text-muted: #8592a3;
   --text-faint: #5b6675;
+  /* See the light theme. Recedes by the same amount on a dark ground,
+     which a literal copied from the light value would not. */
+  --text-ghost: #4a5462;
   --text-heading: #f1f5fb;
   --text-inverse: #0f1319;
   --text-warning: #e8b96a;
