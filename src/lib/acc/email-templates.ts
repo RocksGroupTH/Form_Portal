@@ -57,7 +57,7 @@ export function buildEmail(
         )
       : "",
     showsForeignCurrency(req.currency) && req.exchangeRate != null
-      ? row("อัตราแลกเปลี่ยน", referenceRateNote(req.currency, req.exchangeRate))
+      ? row("อัตราแลกเปลี่ยน", referenceRateNote(req.currency, req.exchangeRate, req.rateAsOf))
       : "",
     req.paymentDate ? row("วันที่จ่าย", req.paymentDate) : "",
     note ? row("หมายเหตุ", note) : "",
