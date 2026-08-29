@@ -942,6 +942,26 @@ function TravelDaySection({
       ? `วันเดินทางที่ ${dayIdx + 1}`
       : "ข้อมูลการเดินทาง";
 
+  /**
+   * Whether to name the country the claim was filed against.
+   *
+   * **Not gated on `showBrand`.** That prop is `travelDays.length === 1`: on a
+   * multi-day claim the brand moves to a chip beside the day selector, and the
+   * country followed it into hiding — which is how this shipped invisible on
+   * exactly the multi-day foreign claim it was added for.
+   *
+   * Only for a country that does not pay in baht. `resolveClaimCountry` stamps
+   * a code on every claim, so an unconditional tile would say "ไทย" on every
+   * Thai claim ever filed and tell nobody anything.
+   *
+   * Shown once per claim rather than once per day: the country is a property of
+   * the request, so `dayIdx === 0` keeps a three-day trip from repeating it.
+   */
+  const showForeignCountry =
+    dayIdx === 0 &&
+    !!request.countryCode &&
+    !isBaht(currencyForCountry(request.countryCode));
+
   return (
     <Section title={sectionTitle} icon={<Car size={15} />}>
       <div className="flex flex-col gap-4">
@@ -971,7 +991,7 @@ function TravelDaySection({
             A code the country list does not know still renders, as the bare
             code: it is what the claim was filed against, and hiding it would be
             worse than showing something unfamiliar. */}
-        {showBrand && request.countryCode && !isBaht(currencyForCountry(request.countryCode)) && (
+        {showForeignCountry && (
           <TravelMetaTile label="ประเทศ">
             <span className="flex items-center gap-1.5 min-w-0">
               <Globe size={14} className="shrink-0" style={{ color: "var(--nav-active-text)" }} />
