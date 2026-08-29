@@ -708,7 +708,16 @@ export function useTravelExpenseForm(
     patchActiveDay((prev) => ({
       ...prev,
       items: [
-        { itemType: type, amount: 0, sortOrder: 0, files: [] },
+        // `localId` because this prepends: without a stable identity the rows
+        // below would all shift index and React would rebind each component —
+        // and its in-flight receipt read — to a different row.
+        {
+          itemType: type,
+          amount: 0,
+          sortOrder: 0,
+          files: [],
+          localId: `row_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+        },
         ...prev.items,
       ],
     }));

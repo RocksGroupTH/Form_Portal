@@ -369,9 +369,18 @@ export function ExpenseRows({
       </button>
 
       <div className="flex flex-col gap-2">
+        {/* Keyed on the row's own identity, never on its index. `addItem`
+            prepends, so an index key made React keep each component instance at
+            its position and rebind it to the row that had moved into that slot —
+            taking the in-flight receipt read with it. The reading indicator then
+            sat on one row while the file it was reading sat on another, and the
+            amount arrived in the wrong one.
+
+            `id` for a row that has been saved, `localId` for one that has not.
+            The index remains only as a last resort for rows predating either. */}
         {rowItems.map((item, filteredIdx) => (
           <ExpenseRow
-            key={filteredIdx}
+            key={item.id != null ? `db-${item.id}` : (item.localId ?? `idx-${filteredIdx}`)}
             item={item}
             requestId={requestId}
             currencyOptions={currencyOptions}

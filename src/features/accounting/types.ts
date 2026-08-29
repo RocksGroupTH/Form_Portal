@@ -3,6 +3,18 @@ import type { BrandCurrencyEntry } from "@/lib/acc/currency";
 
 export interface TravelExpenseItem {
   id?: number;
+  /**
+   * A client-side identity for a row that has no `id` yet.
+   *
+   * **Not sent to the server and never stored.** It exists because
+   * `ExpenseRows` used to key its rows on the array index while `addItem`
+   * prepends: adding a row shifted every index, React kept each component
+   * instance at its position, and an in-flight receipt read — which lives in
+   * that component's state — ended up bound to a different row. The reading
+   * indicator sat on one line while the file it was reading sat on another, and
+   * the amount landed in the wrong place.
+   */
+  localId?: string;
   itemType: TravelItemType;
   /**
    * **Thai baht, always** — whatever currency the line was entered in.
