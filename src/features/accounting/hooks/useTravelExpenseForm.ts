@@ -13,6 +13,7 @@ import {
   updateSectionItem as updateSectionItemOnDay,
   removeSectionItem as removeSectionItemOnDay,
   cloneSectionsForDayCopy,
+  newRowLocalId,
 } from "@/features/accounting/lib/travel-sections";
 import { syncReturnOriginFromOnward } from "@/features/accounting/lib/route-waypoints";
 import { THB } from "@/lib/acc/currency";
@@ -716,7 +717,7 @@ export function useTravelExpenseForm(
           amount: 0,
           sortOrder: 0,
           files: [],
-          localId: `row_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+          localId: newRowLocalId(),
         },
         ...prev.items,
       ],

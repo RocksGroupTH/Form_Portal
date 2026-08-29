@@ -229,6 +229,27 @@ export function patchManualSection(
   return normalizeTravelDay({ ...normalized, sections });
 }
 
+/**
+ * The client-side identity every new expense row needs.
+ *
+ * **Both row creators must use this**, and there are two: `addSectionItem`
+ * below and `addItem` in `useTravelExpenseForm`. Both PREPEND, so a row with
+ * no identity leaves `ExpenseRows` keying on the array index — and an index key
+ * makes React keep each component instance at its position and rebind it to
+ * whichever row moved into the slot, carrying an in-flight receipt read with it.
+ * The reading indicator then sits on one row while the file it is reading sits
+ * on another.
+ *
+ * That bug was fixed once for `addItem` and stayed alive in the Grab sections,
+ * because the fix was written at the call site instead of here. Hence one
+ * function, and `travel-row-identity.test.ts` checking no creator skips it.
+ *
+ * Never sent to the server: the save path builds each item field by field.
+ */
+export function newRowLocalId(): string {
+  return `row_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+}
+
 export function addSectionItem(
   day: TravelExpenseDetail,
   sectionIndex: number,
@@ -236,7 +257,7 @@ export function addSectionItem(
 ): TravelExpenseDetail {
   return patchManualSection(day, sectionIndex, {
     items: [
-      { itemType, amount: 0, sortOrder: 0, files: [] },
+      { itemType, amount: 0, sortOrder: 0, files: [], localId: newRowLocalId() },
       ...(normalizeTravelDay(day).sections?.[sectionIndex]?.items ?? []),
     ],
   });
