@@ -4,14 +4,12 @@ import {
   addBrandCurrency,
   BrandCurrencyError,
   listBrandRegistry,
-  removeBrandCurrency,
   setBrandCurrencyDefault,
   setBrandCurrencyEnabled,
 } from "@/lib/brand-registry";
 import {
   parseBrandCurrencyAdd,
   parseBrandCurrencyDefault,
-  parseBrandCurrencyId,
   parseBrandCurrencyToggle,
 } from "@/lib/acc/brand-currency-input";
 import { AP17_FORM_CODE } from "@/features/travel-booking/constants";
@@ -29,6 +27,11 @@ import { AP17_FORM_CODE } from "@/features/travel-booking/constants";
  * the panel says the values are shared with the other form — and traceable,
  * because every write stamps `AP-17` into the `BrandSettingLog` row it commits
  * with.
+ *
+ * **It has no `DELETE` either**, and for the reason AP-1's twin gives: a
+ * configured currency cannot be removed, only switched off. That matters more
+ * here than there, because these rows are the *other* form's configuration too
+ * — a removal made from this tab would have been unrecoverable from AP-1's.
  */
 export async function GET() {
   const session = await requireBookingSettingsTab("brands");
@@ -112,29 +115,6 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ ok: false, error: err.message }, { status: 400 });
     }
     console.error("[api/request/travel-booking/settings/brands/currency] PATCH", err);
-    return NextResponse.json({ ok: false, error: "Internal server error" }, { status: 500 });
-  }
-}
-
-/** Remove one configured currency. `?id=` — see AP-1's twin for why not a body. */
-export async function DELETE(req: NextRequest) {
-  const session = await requireBookingSettingsTab("brands");
-  if (session instanceof Response) return session;
-
-  try {
-    const parsed = parseBrandCurrencyId(req.nextUrl.searchParams.get("id"));
-    if (!parsed.ok) return NextResponse.json({ ok: false, error: parsed.error }, { status: 400 });
-
-    await removeBrandCurrency(parsed.id, {
-      formCode: AP17_FORM_CODE,
-      userId: Number(session.user.id),
-    });
-    return NextResponse.json({ ok: true });
-  } catch (err) {
-    if (err instanceof BrandCurrencyError) {
-      return NextResponse.json({ ok: false, error: err.message }, { status: 400 });
-    }
-    console.error("[api/request/travel-booking/settings/brands/currency] DELETE", err);
     return NextResponse.json({ ok: false, error: "Internal server error" }, { status: 500 });
   }
 }

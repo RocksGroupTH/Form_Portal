@@ -4,14 +4,12 @@ import {
   addBrandCurrency,
   BrandCurrencyError,
   listBrandRegistry,
-  removeBrandCurrency,
   setBrandCurrencyDefault,
   setBrandCurrencyEnabled,
 } from "@/lib/brand-registry";
 import {
   parseBrandCurrencyAdd,
   parseBrandCurrencyDefault,
-  parseBrandCurrencyId,
   parseBrandCurrencyToggle,
 } from "@/lib/acc/brand-currency-input";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
@@ -26,11 +24,17 @@ import { AP1_FORM_CODE } from "@/features/accounting/constants";
  * table shared with AP-17. Two different tables, two different shapes, and the
  * panel needs both at once.
  *
- * **Four methods because a brand carries several currencies.** `PUT` replaced
- * one triple on `BrandSetting`; a list needs adding to, switching and removing
- * from, and each of those is one row. `DELETE` takes `?id=` rather than a body:
- * a request body on DELETE is legal but not carried by every intermediary, and
- * an id is the whole payload.
+ * **Three methods because a brand carries several currencies.** `PUT` replaced
+ * one triple on `BrandSetting`; a list needs reading, adding to and switching,
+ * and each of the last two is one row.
+ *
+ * **There is no `DELETE`, and its absence is the feature.** A configured
+ * currency cannot be removed (the user's rule, 2026-08-29): `IsEnabled` is the
+ * whole lifecycle, so retiring one is a `PATCH` like any other switch and the
+ * row keeps its slot under `UQ_BrandCurrency_Brand_Currency`. The handler was
+ * deleted rather than left in place answering 405 or 403, because a route that
+ * still accepts the method and refuses reads as a permission problem to the
+ * next person who calls it — the method simply not existing does not.
  *
  * **The gate is `requireSettingsTab("brands")` on every method, deliberately,
  * and must not be tightened to `requireRole`.** Spec §9.3: the currency is
@@ -122,29 +126,6 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ ok: false, error: err.message }, { status: 400 });
     }
     console.error("[api/request/accounting/settings/brands/currency] PATCH", err);
-    return NextResponse.json({ ok: false, error: "Internal server error" }, { status: 500 });
-  }
-}
-
-/** Remove one configured currency. `?id=` — see the note at the top of this file. */
-export async function DELETE(req: NextRequest) {
-  const session = await requireSettingsTab("brands");
-  if (session instanceof Response) return session;
-
-  try {
-    const parsed = parseBrandCurrencyId(req.nextUrl.searchParams.get("id"));
-    if (!parsed.ok) return NextResponse.json({ ok: false, error: parsed.error }, { status: 400 });
-
-    await removeBrandCurrency(parsed.id, {
-      formCode: AP1_FORM_CODE,
-      userId: Number(session.user.id),
-    });
-    return NextResponse.json({ ok: true });
-  } catch (err) {
-    if (err instanceof BrandCurrencyError) {
-      return NextResponse.json({ ok: false, error: err.message }, { status: 400 });
-    }
-    console.error("[api/request/accounting/settings/brands/currency] DELETE", err);
     return NextResponse.json({ ok: false, error: "Internal server error" }, { status: 500 });
   }
 }

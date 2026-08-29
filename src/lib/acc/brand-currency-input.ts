@@ -1,7 +1,13 @@
 /**
- * Parsing and validating the four writes AP-1's and AP-17's แบรนด์ที่เบิกได้ tab
- * makes against `BrandCurrency` — add a currency, switch one on or off, make one
- * the brand's default, and remove one.
+ * Parsing and validating the three writes AP-1's and AP-17's แบรนด์ที่เบิกได้ tab
+ * makes against `BrandCurrency` — add a currency, switch one on or off, and make
+ * one the brand's default.
+ *
+ * **There is no fourth: a configured currency cannot be removed** (the user's
+ * rule, 2026-08-29). Switching a row off retires it and switching it back on
+ * restores it, so the retired row goes on holding the brand's one slot for that
+ * currency under `UQ_BrandCurrency_Brand_Currency` — which is what a re-add
+ * collides with, and what the collision's message points at.
  *
  * Imports only `./country-currency`, which itself imports nothing, so this is
  * still unit-tested without a database — anything reachable from a pool drags
@@ -185,20 +191,19 @@ export function parseBrandCurrencyToggle(body: unknown): BrandCurrencyTogglePars
   return { ok: true, id, isEnabled: b.isEnabled };
 }
 
-export function parseBrandCurrencyId(raw: unknown): BrandCurrencyIdParse {
-  const id = parseId(raw);
-  if (id === null) return { ok: false, error: "ไม่พบรายการสกุลเงินที่ต้องการลบ" };
-  return { ok: true, id };
-}
-
 /**
  * How one `BrandCurrency` row is written into `BrandSettingLog`'s `OldValue` /
  * `NewValue`.
  *
  * `MYR (MY) 1` — the currency, the country it was configured from, and whether
  * it was on. All three, because the log has to answer what the row *was* and
- * not merely that something changed: an entry reading only `MYR` cannot tell a
- * currency being switched off from one being removed outright.
+ * not merely that something changed: an entry reading only `MYR` cannot tell an
+ * add from a switch.
+ *
+ * **Entries whose `NewValue` is `NULL` are historical.** They were written by
+ * the removal path, which existed between 2026-08-28 and 2026-08-29 and is
+ * gone; nothing produces one now. The rows are left exactly as they are — a log
+ * that is rewritten when the code changes answers nothing.
  *
  * `-` for an absent country rather than a blank, so the shape is fixed and a
  * value is never mistaken for a truncation. Fits `nvarchar(100)` with room to
@@ -213,7 +218,7 @@ export function brandCurrencyLogValue(row: {
   return `${row.currencyCode.trim().toUpperCase()} (${country}) ${row.isEnabled ? "1" : "0"}`;
 }
 
-/** The `BrandSettingLog.Field` value an add, a toggle or a removal writes. */
+/** The `BrandSettingLog.Field` value an add or a toggle writes. */
 export const BRAND_CURRENCY_LOG_FIELD = "BrandCurrency";
 
 /**
@@ -249,8 +254,8 @@ export function brandCurrencyDefaultLogValue(
  * The refusal when a change would leave a brand with nothing to claim in.
  *
  * **A brand nobody can file against is a broken configuration, not a valid
- * state**, so this is a refusal rather than a warning: removing or disabling
- * the last enabled currency answers 400 and changes nothing. The alternative —
+ * state**, so this is a refusal rather than a warning: switching off the last
+ * enabled currency answers 400 and changes nothing. The alternative —
  * letting it happen and having the forms cope — means every picker downstream
  * needs an answer for "no currencies at all", and each one would invent its
  * own.

@@ -47,8 +47,8 @@ import {
 
 /**
  * A brand-currency write refused for a reason worth showing the person who made
- * it — an unknown brand code, a currency the brand already carries, or a row
- * somebody else removed first.
+ * it — an unknown brand code, a currency the brand already carries, or a change
+ * that would leave the brand claimable in nothing.
  *
  * Its own class so a route answers 400 rather than 500 without matching on a
  * message, the way `AccForbiddenError` and friends work in `acc/request-errors`.
@@ -59,6 +59,18 @@ export class BrandCurrencyError extends Error {
     this.name = "BrandCurrencyError";
   }
 }
+
+/**
+ * The refusal when a row named by id is not on the table.
+ *
+ * **It does not say "somebody deleted it", because nothing in this application
+ * can.** A configured currency is never removed — `IsEnabled = 0` is the
+ * retired state and the row stays — so the only ways to reach this are a direct
+ * SQL edit and a stale screen, and both are answered by reloading. A message
+ * naming a deletion would send the reader looking for an act that did not
+ * happen.
+ */
+const MISSING_CURRENCY_ERROR = "ไม่พบสกุลเงินนี้แล้ว — กรุณารีเฟรชหน้าจอแล้วลองใหม่";
 
 /**
  * SQL Server's two "you broke a uniqueness rule" errors — 2627 for a constraint,
@@ -329,7 +341,19 @@ export async function saveBrandSetting(
 
 /**
  * The three writes against `BrandCurrency`, and the audit rows that commit with
- * them.
+ * them: add a currency, switch one on or off, and make one the brand's default.
+ *
+ * **There is no fourth. A configured currency cannot be removed** — the user's
+ * rule, 2026-08-29 — so `IsEnabled` is the whole lifecycle: switching a row off
+ * retires it, switching it back on restores it, and the row itself stays for
+ * good. That is why the enable flag was never merely a convenience, and why
+ * there is no soft-delete column to go with it: two states, not three, so no
+ * read anywhere has to decide which of "off" and "gone" it is looking at.
+ *
+ * The slot a retired row keeps under `UQ_BrandCurrency_Brand_Currency` is the
+ * point rather than the cost. Re-adding a currency the brand already carries is
+ * refused, and the refusal names the row that is already there — which is the
+ * row to switch back on.
  *
  * **They live here rather than in `@/lib/acc/settings-service`, and they must
  * stay here.** Neither `BrandSetting` nor `BrandCurrency` has a row in
@@ -355,7 +379,7 @@ export async function saveBrandSetting(
  *
  * There is no diff-and-skip step of the kind the old single-currency save
  * needed. Each of these is one deliberate act on one row — add it, switch it,
- * remove it — so a call that reaches the database is a change, and one that
+ * mark it — so a call that reaches the database is a change, and one that
  * finds nothing to change refuses or returns rather than logging a save.
  */
 export interface BrandCurrencyContext {
@@ -423,7 +447,7 @@ async function lockBrandRows(
   return (res.recordset as BrandCurrencyRow[]).map(toEntry);
 }
 
-/** The brand a row belongs to, locked, or null if somebody removed it first. */
+/** The brand a row belongs to, locked, or null if no such row is on the table. */
 async function lockBrandCodeOf(tx: sql.Transaction, id: number): Promise<string | null> {
   const res = await tx
     .request()
@@ -459,8 +483,10 @@ function markedRow(rows: readonly BrandCurrencyEntry[]): BrandCurrencyEntry | nu
  * move if it moved.
  *
  * Called after **every** write, with `rows` describing the brand as it now is
- * and `previous` naming whatever carried the flag before — which may be a row
- * that has just been deleted, and so is passed in rather than looked for.
+ * and `previous` naming whatever carried the flag before. It is passed in
+ * rather than looked for because `rows` is mutated in place by the caller and
+ * again here: by the time this runs, the flag may already have moved, and the
+ * log needs the value it moved *from*.
  *
  * Two rules, in this order:
  *
@@ -548,6 +574,13 @@ async function reconcileDefault(
  * read-then-write here. A check made first is a rule two admins on two tabs
  * defeat, and one replayed request defeats on its own; the constraint cannot be.
  * All this does is turn its violation into a sentence somebody can act on.
+ *
+ * **A retired row is one of the things that violation now means**, and the
+ * message says so. Currencies are never deleted, so a brand that once carried
+ * `GBP` still carries it, disabled — and the answer is to switch that row back
+ * on, not to add a second one the index would refuse anyway. The panel greys
+ * out every configured code, live or retired, so this is the rare path rather
+ * than the usual one.
  */
 export async function addBrandCurrency(
   add: BrandCurrencyAdd,
@@ -644,7 +677,8 @@ export async function addBrandCurrency(
     await tx.rollback();
     if (isUniqueViolation(e)) {
       throw new BrandCurrencyError(
-        `แบรนด์ ${add.brandCode} มีสกุลเงิน ${add.currencyCode} อยู่แล้ว`,
+        `แบรนด์ ${add.brandCode} มีสกุลเงิน ${add.currencyCode} อยู่แล้ว — ` +
+          "หากรายการเดิมปิดใช้งานอยู่ ให้เปิดใช้งานรายการนั้นแทนการเพิ่มใหม่",
       );
     }
     throw e;
@@ -653,6 +687,12 @@ export async function addBrandCurrency(
 
 /**
  * Switch one configured currency on or off.
+ *
+ * **This is the whole lifecycle.** Off is as far as a currency goes: the row
+ * stays, the forms stop offering it, and switching it back on restores it
+ * exactly as it was, default flag apart — `reconcileDefault` will have moved
+ * that, because a default the picker does not offer is the one state this
+ * feature exists to prevent.
  *
  * The brand's rows are read under `UPDLOCK, HOLDLOCK` first because the log
  * needs what the row *was*, and a value read outside the lock could be stale by
@@ -677,12 +717,12 @@ export async function setBrandCurrencyEnabled(
   try {
     const brandCode = await lockBrandCodeOf(tx, id);
     if (!brandCode) {
-      throw new BrandCurrencyError("ไม่พบสกุลเงินนี้แล้ว — อาจถูกลบไปก่อนหน้านี้");
+      throw new BrandCurrencyError(MISSING_CURRENCY_ERROR);
     }
     const rows = await lockBrandRows(tx, brandCode);
     const row = rows.find((r) => r.id === id) ?? null;
     if (!row) {
-      throw new BrandCurrencyError("ไม่พบสกุลเงินนี้แล้ว — อาจถูกลบไปก่อนหน้านี้");
+      throw new BrandCurrencyError(MISSING_CURRENCY_ERROR);
     }
 
     const before = { ...row };
@@ -753,12 +793,12 @@ export async function setBrandCurrencyDefault(
   try {
     const brandCode = await lockBrandCodeOf(tx, id);
     if (!brandCode) {
-      throw new BrandCurrencyError("ไม่พบสกุลเงินนี้แล้ว — อาจถูกลบไปก่อนหน้านี้");
+      throw new BrandCurrencyError(MISSING_CURRENCY_ERROR);
     }
     const rows = await lockBrandRows(tx, brandCode);
     const row = rows.find((r) => r.id === id) ?? null;
     if (!row) {
-      throw new BrandCurrencyError("ไม่พบสกุลเงินนี้แล้ว — อาจถูกลบไปก่อนหน้านี้");
+      throw new BrandCurrencyError(MISSING_CURRENCY_ERROR);
     }
     if (!row.isEnabled) {
       throw new BrandCurrencyError(
@@ -797,76 +837,6 @@ export async function setBrandCurrencyDefault(
       BRAND_CURRENCY_DEFAULT_LOG_FIELD,
       brandCurrencyDefaultLogValue(previous),
       brandCurrencyDefaultLogValue(row),
-      context,
-    );
-
-    await tx.commit();
-  } catch (e) {
-    await tx.rollback();
-    throw e;
-  }
-}
-
-/**
- * Remove one configured currency.
- *
- * **A hard delete**, unlike `UatTester` or `AccApprover`, and for a reason those
- * two do not have: the row *is* the configuration, `IsEnabled = 0` already
- * expresses "keep it but do not claim in it", and a soft-deleted row would go on
- * occupying the brand's one slot for that currency under
- * `UQ_BrandCurrency_Brand_Currency` — so re-adding it would be refused as a
- * duplicate of something nobody can see. Nothing is lost either: the log row
- * records the currency, the country it carried and whether it was live, which is
- * why `BrandSettingLog` carries no FK to this table.
- *
- * **Removing the `THB` row switches baht back on**, since baht is claimable
- * while no row says otherwise. So this can never be the change that leaves a
- * brand with nothing to claim in — but the guard is applied all the same,
- * because that reasoning lives in `bahtEnabled` and not here.
- *
- * Requests already submitted keep their own `AccRequest.CountryCode` and each
- * line's `ExchangeRate`. Nothing here reprices anything.
- */
-export async function removeBrandCurrency(
-  id: number,
-  context: BrandCurrencyContext,
-): Promise<void> {
-  const pool = await getProductionFormPool();
-  const tx = pool.transaction();
-  await tx.begin();
-  try {
-    const brandCode = await lockBrandCodeOf(tx, id);
-    if (!brandCode) {
-      throw new BrandCurrencyError("ไม่พบสกุลเงินนี้แล้ว — อาจถูกลบไปก่อนหน้านี้");
-    }
-    const rows = await lockBrandRows(tx, brandCode);
-    const row = rows.find((r) => r.id === id) ?? null;
-    if (!row) {
-      throw new BrandCurrencyError("ไม่พบสกุลเงินนี้แล้ว — อาจถูกลบไปก่อนหน้านี้");
-    }
-
-    const previous = markedRow(rows);
-    const after = rows.filter((r) => r.id !== id);
-    assertStillClaimable(after);
-
-    await tx.request().input("id", sql.Int, id).query(`
-      DELETE FROM [dbo].[BrandCurrency] WHERE Id = @id
-    `);
-
-    await logBrandCurrency(
-      tx,
-      brandCode,
-      BRAND_CURRENCY_LOG_FIELD,
-      brandCurrencyLogValue(row),
-      null,
-      context,
-    );
-
-    await reconcileDefault(
-      tx,
-      brandCode,
-      after,
-      previous,
       context,
     );
 

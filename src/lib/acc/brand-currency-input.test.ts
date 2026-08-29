@@ -9,7 +9,6 @@ import {
   LAST_CLAIM_CURRENCY_ERROR,
   parseBrandCurrencyAdd,
   parseBrandCurrencyDefault,
-  parseBrandCurrencyId,
   parseBrandCurrencyToggle,
   type BrandCurrencyAdd,
 } from "./brand-currency-input";
@@ -121,14 +120,6 @@ test("a toggle needs a positive integer id and a real boolean", () => {
   }
 });
 
-test("a remove needs a positive integer id, from a query string or a body", () => {
-  assert.deepEqual(parseBrandCurrencyId("7"), { ok: true, id: 7 });
-  assert.deepEqual(parseBrandCurrencyId(7), { ok: true, id: 7 });
-  for (const bad of ["", "0", "-3", "1.5", "abc", null, undefined]) {
-    assert.equal(parseBrandCurrencyId(bad).ok, false, `expected ${String(bad)} to be refused`);
-  }
-});
-
 /**
  * The log has to answer what the row *was*, not merely that something changed:
  * a value reading only `GBP` cannot tell a currency being switched off from one
@@ -217,6 +208,12 @@ test("a disabled row cannot arrive as the default", () => {
 /**
  * There is deliberately no "clear the default": a brand always has one, and it
  * is chosen by naming a different row.
+ *
+ * This and the toggle are also the *only* id parses left. A configured currency
+ * cannot be removed — off is the retired state and the row stays — so
+ * `parseBrandCurrencyId` was deleted with the `DELETE` handlers on 2026-08-29
+ * rather than left exported with no caller; the test that covered it is gone
+ * for the same reason.
  */
 test("only an explicit isDefault:true is a default change", () => {
   const ok = parseBrandCurrencyDefault({ id: 7, isDefault: true });

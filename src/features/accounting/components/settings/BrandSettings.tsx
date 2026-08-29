@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import useSWR from "swr";
-import { Info, Plus, Save, Trash2 } from "lucide-react";
+import { Info, Plus, Save } from "lucide-react";
 import { toast } from "sonner";
 import { SettingOption, SettingOptionGroup } from "@/components/settings/SettingOption";
 import { CurrencyCombobox } from "@/features/advance/components/CurrencyCombobox";
@@ -257,10 +257,18 @@ const IMPLICIT_THB_ID = 0;
  * `IMPLICIT_THB_ID`, and its controls write the row into existence.
  *
  * **Every control writes immediately; there is no Save button and no dirty
- * state.** Each act is one row — add it, switch it, make it the default, remove
- * it — so there is nothing to batch, and a Save that swept a brand's whole list
- * would silently undo what somebody else had just changed from the other form's
- * tab, which reaches these same rows.
+ * state.** Each act is one row — add it, switch it, make it the default — so
+ * there is nothing to batch, and a Save that swept a brand's whole list would
+ * silently undo what somebody else had just changed from the other form's tab,
+ * which reaches these same rows.
+ *
+ * **A fourth act was removed on 2026-08-29: there is no delete.** A configured
+ * currency is retired by switching it off and restored by switching it back on,
+ * which is why the switch is the only lifecycle control on a row and why the
+ * copy says so in three places — the group description, the row itself once it
+ * is off, and the refusal when somebody tries to re-add what is already there
+ * disabled. Without that copy the missing bin icon reads as an oversight, and
+ * the retired row reads as clutter rather than as the record it is.
  *
  * **Duplicates, and "a brand must be claimable in something", are refused by the
  * server.** `UQ_BrandCurrency_Brand_Currency` is the first rule and
@@ -313,13 +321,13 @@ function BrandCurrencySettings({
   /** One request, one toast, one refetch. `key` is what gets disabled while it runs. */
   const send = async (
     key: string,
-    init: RequestInit & { url?: string },
+    init: RequestInit,
     okMessage: string,
     onOk?: () => void,
   ) => {
     setBusy(key);
     try {
-      const res = await fetch(init.url ?? endpoint, init);
+      const res = await fetch(endpoint, init);
       const json = await res.json();
       if (json.ok) {
         toast.success(okMessage);
@@ -416,17 +424,10 @@ function BrandCurrencySettings({
           `ตั้ง ${row.currencyCode} เป็นค่าเริ่มต้นแล้ว`,
         );
 
-  const deleteCurrency = (row: BrandCurrencyEntry) =>
-    send(
-      `row:${row.id}`,
-      { method: "DELETE", url: `${endpoint}?id=${row.id}` },
-      `ลบ ${row.currencyCode} แล้ว`,
-    );
-
   return (
     <SettingOptionGroup
       title="สกุลเงินที่เบิกได้ของแต่ละแบรนด์"
-      description="เลือกประเทศแล้วระบบจะใส่สกุลเงินของประเทศนั้นให้เอง — เพิ่มได้หลายสกุลเงินต่อหนึ่งแบรนด์ เปิด/ปิดใช้งานทีละรายการ และเลือกได้ว่าจะให้ฟอร์มเริ่มต้นที่สกุลเงินใด (รวมถึงไทยที่ปิดใช้งานได้เช่นกัน แต่ต้องเหลือสกุลเงินที่เปิดใช้งานอย่างน้อยหนึ่งสกุล)"
+      description="เลือกประเทศแล้วระบบจะใส่สกุลเงินของประเทศนั้นให้เอง — เพิ่มได้หลายสกุลเงินต่อหนึ่งแบรนด์ เปิด/ปิดใช้งานทีละรายการ และเลือกได้ว่าจะให้ฟอร์มเริ่มต้นที่สกุลเงินใด (รวมถึงไทยที่ปิดใช้งานได้เช่นกัน แต่ต้องเหลือสกุลเงินที่เปิดใช้งานอย่างน้อยหนึ่งสกุล) — สกุลเงินที่เพิ่มแล้วจะลบทิ้งไม่ได้ ปิดใช้งานคือการเลิกใช้ และเปิดกลับได้ทุกเมื่อ"
     >
       {/*
         Required copy, not decoration. The permission to change these values is
@@ -464,6 +465,13 @@ function BrandCurrencySettings({
         const taken = brand.currencies.map((c) => c.currencyCode);
         const chosen = add.currencyCode.trim().toUpperCase();
         const duplicate = chosen !== "" && taken.indexOf(chosen) !== -1;
+        // Which row it collides with, so the refusal can name its state. A
+        // currency is never removed, so "the brand already has this" now
+        // includes "…switched off, up there" — and that row is the one to turn
+        // back on rather than a reason to add a second the index would refuse.
+        const duplicateRow = duplicate
+          ? brand.currencies.find((c) => c.currencyCode === chosen) ?? null
+          : null;
         // Two different "we cannot convert this" answers, and only the first is
         // a refusal. `isRateSourceCurrency` is the same predicate the server
         // parses with, so a code it rejects can never be added; `supported` is
@@ -568,6 +576,12 @@ function BrandCurrencySettings({
                             nothing at all. */}
                         {label ?? c.countryCode ?? "ไม่ได้ระบุประเทศ"}
                         {implicit && " — เปิดใช้อยู่เป็นค่าตั้งต้น"}
+                        {/* The retired state, said on the row itself. Switching
+                            a currency off is as far as it goes — the row stays
+                            and the same switch brings it back — so the reader
+                            looking for a delete button finds the answer here
+                            rather than concluding one is missing. */}
+                        {!c.isEnabled && " — เลิกใช้แล้ว เปิดกลับได้ทุกเมื่อ"}
                         {noRate && " — ไม่พบในแหล่งอัตราอ้างอิง"}
                       </div>
                     </div>
@@ -605,7 +619,9 @@ function BrandCurrencySettings({
                       title={
                         lockedOn
                           ? "ต้องเหลือสกุลเงินที่เปิดใช้งานอย่างน้อยหนึ่งสกุล"
-                          : undefined
+                          : c.isEnabled
+                            ? "ปิดใช้งานเพื่อเลิกใช้สกุลเงินนี้ — ลบทิ้งไม่ได้ แต่เปิดกลับได้ทุกเมื่อ"
+                            : "เปิดกลับมาใช้งานอีกครั้ง"
                       }
                     >
                       <input
@@ -620,31 +636,6 @@ function BrandCurrencySettings({
                       </span>
                     </label>
 
-                    {/* An implicit row has nothing to delete. Removing a real
-                        THB row is allowed and puts the brand back here: baht is
-                        claimable while nothing says otherwise. */}
-                    {implicit ? (
-                      // Keeps the toggles above and below this row in one
-                      // column: the same footprint the delete button occupies
-                      // (14px icon inside 6px of padding each side).
-                      <span className="shrink-0" style={{ width: 26, height: 26 }} />
-                    ) : (
-                      <button
-                        type="button"
-                        title={`ลบ ${c.currencyCode}`}
-                        aria-label={`ลบ ${c.currencyCode}`}
-                        disabled={rowBusy}
-                        onClick={() => deleteCurrency(c)}
-                        className="shrink-0 rounded-lg p-1.5 border-none"
-                        style={{
-                          background: "transparent",
-                          color: "var(--text-danger)",
-                          cursor: rowBusy ? "not-allowed" : "pointer",
-                        }}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    )}
                   </div>
                 );
               })}
@@ -716,7 +707,9 @@ function BrandCurrencySettings({
 
             {duplicate && (
               <p className="text-[11px] m-0" style={{ color: "var(--text-warning)" }}>
-                แบรนด์นี้มีสกุลเงิน {chosen} อยู่แล้ว
+                {duplicateRow && !duplicateRow.isEnabled
+                  ? `แบรนด์นี้มีสกุลเงิน ${chosen} อยู่แล้วแต่ปิดใช้งานอยู่ — เปิดใช้งานรายการเดิมด้านบนแทนการเพิ่มใหม่`
+                  : `แบรนด์นี้มีสกุลเงิน ${chosen} อยู่แล้ว`}
               </p>
             )}
 
