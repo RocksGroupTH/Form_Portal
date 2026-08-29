@@ -235,10 +235,22 @@ function LineCurrencyChoice({
                     background: "transparent",
                     // Danger on BOTH halves while unanswered, so the group reads
                     // as an open question rather than as one option having been
-                    // rejected. Otherwise muted — `--text-secondary` sat close
-                    // enough to the chosen segment's own colour to read as a
-                    // second live choice rather than as the one not taken.
-                    color: unanswered ? "var(--color-danger)" : "var(--text-muted)",
+                    // rejected.
+                    //
+                    // Otherwise `--text-faint`, the lightest text token, and it
+                    // took two goes to get here: `--text-secondary` read as a
+                    // second live option, and `--text-muted` was still close
+                    // enough to the chosen segment to make the pair hard to tell
+                    // apart at a glance. The chosen one carries a filled
+                    // background as well, so the unchosen one can afford to
+                    // recede this far — and it must, because which currency a
+                    // figure is in is the whole question this control answers.
+                    //
+                    // A token rather than a hand-picked grey: `--text-faint` is
+                    // defined in both themes (#8695ab light, #5b6675 dark), so
+                    // this stays legible on the dark ground where a literal
+                    // would not.
+                    color: unanswered ? "var(--color-danger)" : "var(--text-faint)",
                   }
             }
           >
