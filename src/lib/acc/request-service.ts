@@ -32,6 +32,7 @@ import {
   effectiveLineCurrency,
   lineCurrencyOptions,
   lineNeedsCurrency,
+  resolveLineCurrency,
   LINE_CURRENCY_MISSING_ERROR,
 } from "@/features/accounting/lib/claim-currency";
 import type {
@@ -169,11 +170,30 @@ function lineFxOrThrow(
   };
 }
 
-/** The figure the requester actually typed, wherever the client put it. */
-function typedFigure(it: TravelExpenseItem): number {
-  const raw = it.foreignAmount === null || it.foreignAmount === undefined
-    ? it.amount
-    : it.foreignAmount;
+/**
+ * The figure the requester actually typed, wherever the client put it.
+ *
+ * **Decided by the line's effective currency**, exactly as `typedLineFigure`
+ * decides it on the client. It used to branch on `foreignAmount` alone, and the
+ * two then disagreed in one case with real money in it: a line storing
+ * `amount 163.71, currency 'MYR', foreignAmount 20` on a claim whose country had
+ * since been switched back to Thailand. `resolveLineCurrency` answers THB there,
+ * so the row showed 163.71 while the next save re-read 20 and stored it as baht
+ * — the figure changing under the requester with only a "บันทึกร่างแล้ว" toast,
+ * and submit doing the same without pausing.
+ *
+ * The baht `amount` wins because it is money that was really converted at a
+ * recorded rate; the foreign figure is only the input it came from.
+ *
+ * `typed-figure-parity.test.ts` holds the two implementations together.
+ */
+function typedFigure(it: TravelExpenseItem, currency: string | null): number {
+  const raw =
+    currency !== null && isBaht(currency)
+      ? it.amount
+      : it.foreignAmount === null || it.foreignAmount === undefined
+        ? it.amount
+        : it.foreignAmount;
   const n = Number(raw);
   return Number.isFinite(n) ? n : 0;
 }
@@ -289,7 +309,7 @@ async function toBahtDays(
   }
 
   const convert = (it: TravelExpenseItem): TravelExpenseItem => {
-    const fx = lineFxOrThrow(typedFigure(it), currencyOf(it), resolved, recordBaht);
+    const fx = lineFxOrThrow(typedFigure(it, currencyOf(it)), currencyOf(it), resolved, recordBaht);
     return {
       ...it,
       amount: fx.amount,
@@ -788,7 +808,10 @@ export async function validateForSubmit(
    * the rate lookup was down. Asking about the baht would have told somebody
    * they had not entered a fare they had plainly entered.
    */
-  const typedOf = (it: TravelExpenseItem) => typedFigure(it);
+  // Same currency the save will resolve, from the same option list — so what the
+  // validator calls the typed figure is what gets stored.
+  const typedOf = (it: TravelExpenseItem) =>
+    typedFigure(it, resolveLineCurrency(it.currency, lineCurrencies));
   // A rate-based vehicle used to be refused on a foreign claim, because the
   // whole claim was in one currency and `km × บาท/กม.` would have been a baht
   // product called ringgit. Per line (migration 129) that reason is gone rather
