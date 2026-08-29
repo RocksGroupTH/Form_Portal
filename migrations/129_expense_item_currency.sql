@@ -31,10 +31,18 @@
 -- the default and shows no dropdown at all — a Thai claim looks exactly as it
 -- always has.
 --
--- 125's AccRequest.Currency / ExchangeRate / ForeignAmount are NOT dropped here.
--- Code still reads them until the follow-up lands; migration 130 drops them once
--- nothing does, the same two-step 127/128 used. Do not skip it: two places that
--- could answer "which currency" is the confusion this feature exists to avoid.
+-- 125's AccRequest.Currency / ExchangeRate / ForeignAmount are NOT dropped here,
+-- and a later migration can drop LESS of them than this header first claimed.
+--
+-- Corrected 2026-08-29 after the code landed: AP-17 writes AccRequest.Currency
+-- and .ExchangeRate itself (travel-booking/admin-service.ts:535) — its booking
+-- desk records one currency for the whole booking, which is right for it. Those
+-- two columns are therefore live, not dead, and must NOT be dropped.
+--
+-- Only AccRequest.ForeignAmount becomes unwritten once AP-1 moved to per-line,
+-- and applyRateOverride still reads it for legacy rows. So the follow-up is
+-- narrower than "drop 125's three columns", and is better left until the rate
+-- override is rebuilt per line.
 --
 -- NULL Currency and 'THB' both mean baht. No backfill: every existing line was
 -- baht and reads NULL, which is the truth — nobody recorded a currency for it.
