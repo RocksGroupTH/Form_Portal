@@ -5,7 +5,7 @@ import {
   currencyWord,
   fmtAmountWithCurrency,
   fmtMoneyTh,
-  fmtRateAsOfTh,
+  fmtRateAsOf,
   fmtRateTh,
   rateAsOfYmd,
   referenceRateNote,
@@ -82,11 +82,13 @@ test("a day the month does not have is refused, not rolled forward", () => {
 });
 
 test("a rate date reads as a Thai date, and an absent one as nothing at all", () => {
-  assert.equal(fmtRateAsOfTh("2026-08-28"), "28 ส.ค. 2569");
-  assert.equal(fmtRateAsOfTh("2026-01-01"), "1 ม.ค. 2569");
-  assert.equal(fmtRateAsOfTh("2026-12-31"), "31 ธ.ค. 2569");
-  assert.equal(fmtRateAsOfTh(null), "");
-  assert.equal(fmtRateAsOfTh(""), "");
+  // Common era, not Buddhist: the reader checking this is looking at the rate
+  // source's own site, where the year is 2026.
+  assert.equal(fmtRateAsOf("2026-08-28"), "28 Aug 2026");
+  assert.equal(fmtRateAsOf("2026-01-01"), "1 Jan 2026");
+  assert.equal(fmtRateAsOf("2026-12-31"), "31 Dec 2026");
+  assert.equal(fmtRateAsOf(null), "");
+  assert.equal(fmtRateAsOf(""), "");
 });
 
 /**
@@ -96,7 +98,7 @@ test("a rate date reads as a Thai date, and an absent one as nothing at all", ()
 test("the caption names the day the rate was published, when one is known", () => {
   assert.equal(
     referenceRateNote("MYR", 8.1856, "2026-08-28"),
-    "อัตราอ้างอิง 1 MYR = 8.1856 บาท (ณ 28 ส.ค. 2569)",
+    "อัตราอ้างอิง 1 MYR = 8.1856 บาท (ณ 28 Aug 2026)",
   );
 });
 

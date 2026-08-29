@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Coins } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { isBaht, isOverriddenRate, toBaht } from "@/lib/acc/currency";
-import { fmtMoneyTh, fmtRateAsOfTh, fmtRateTh } from "@/lib/acc/currency-display";
+import { fmtMoneyTh, fmtRateAsOf, fmtRateTh } from "@/lib/acc/currency-display";
 import { sanitizeOverrideRate } from "@/lib/acc/rate-override-policy";
 import { allDayItems, normalizeTravelDay } from "@/features/accounting/lib/travel-sections";
 import { TRAVEL_ITEM_TYPE_LABEL_TH } from "@/features/accounting/constants";
@@ -245,8 +245,8 @@ function LineRow({
         <strong style={{ color: "var(--text-primary)" }}>
           {line.rate === null ? "—" : `1 ${line.currency} = ${fmtRateTh(line.rate)} บาท`}
         </strong>
-        {line.rate !== null && fmtRateAsOfTh(line.rateAsOf) !== "" && (
-          <span> · ณ {fmtRateAsOfTh(line.rateAsOf)}</span>
+        {line.rate !== null && fmtRateAsOf(line.rateAsOf) !== "" && (
+          <span> · ณ {fmtRateAsOf(line.rateAsOf)}</span>
         )}
         {line.rate !== null && isOverriddenRate(line.rateSource) && (
           <span style={{ color: "var(--text-info-yellow)" }}> · แก้โดยฝ่ายบัญชีแล้ว</span>

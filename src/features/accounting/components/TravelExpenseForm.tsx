@@ -1119,10 +1119,13 @@ export function TravelExpenseForm({
             the settings editor still wants. */}
         {countryOptions.length > 0 && (
           <div>
-            <label className={labelClass} style={labelStyle}>
+            <label
+              className="block text-[11px] font-semibold mb-1 uppercase tracking-wide"
+              style={labelStyle}
+            >
               ประเทศ
             </label>
-            <div className="flex flex-wrap gap-2 mt-1">
+            <div className="flex flex-wrap gap-1.5">
               {countryOptions.map((code) => {
                 const active = countryCode === code;
                 const only = countryOptions.length === 1;
@@ -1132,9 +1135,12 @@ export function TravelExpenseForm({
                     type="button"
                     disabled={only}
                     onClick={() => setCountryCode(code)}
-                    className="px-3.5 py-2 rounded-xl text-[14px] font-semibold transition-all"
+                    className="px-2.5 py-1 rounded-lg text-[12.5px] font-semibold transition-all"
                     style={{
-                      borderWidth: 2,
+                      // One-pixel border and a smaller radius, against the
+                      // brand's two and its xl: the same family of control,
+                      // plainly a rank below it.
+                      borderWidth: 1,
                       borderStyle: "solid",
                       borderColor: active ? "var(--nav-active-text)" : "var(--border-card)",
                       background: active ? "var(--nav-active-bg)" : "var(--bg-card-alt)",
@@ -1143,15 +1149,24 @@ export function TravelExpenseForm({
                     }}
                   >
                     <span className="inline-flex items-center gap-1.5">
-                      {/* Derived from the two letters, so there is no image to
-                          ship and nothing to maintain beside COUNTRIES. Some
-                          Windows builds render the letters instead of a glyph,
-                          which is legible and needs no fallback. */}
-                      {countryFlag(code) && (
-                        <span aria-hidden className="text-[15px] leading-none">
-                          {countryFlag(code)}
-                        </span>
-                      )}
+                      {/* The ISO code as a badge, not a flag emoji.
+                          `countryFlag` produces a correct emoji, and **Windows
+                          ships no flag glyphs at all** — Chrome and Edge there
+                          fall back to the two letters as plain text, which is
+                          what made this look broken rather than deliberate. A
+                          badge is the same information, rendered on purpose.
+                          Real flags need an image set or a flag-capable webfont
+                          under `src/assets/fonts`; neither is here. */}
+                      <span
+                        aria-hidden
+                        className="inline-flex items-center justify-center px-1 h-[15px] rounded text-[9px] font-bold leading-none tracking-wide"
+                        style={{
+                          background: active ? "var(--nav-active-text)" : "var(--bg-badge)",
+                          color: active ? "var(--text-inverse)" : "var(--text-muted)",
+                        }}
+                      >
+                        {code}
+                      </span>
                       {countryName(code) ?? code}
                     </span>
                   </button>

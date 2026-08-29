@@ -117,20 +117,36 @@ export function rateAsOfYmd(v: string | Date | null | undefined): string | null 
  * bundle. `features/accounting/lib/thai-calendar.ts` carries the same table,
  * but it sits in a feature and `lib/` must not reach up into one.
  */
-const TH_MONTHS_SHORT = [
-  "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
-  "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค.",
+/**
+ * English months, and common-era years, for the rate date alone.
+ *
+ * **Every other date this app shows a Thai reader is Thai and Buddhist-era.**
+ * This one is deliberately not, and it is the only such date: it is the day an
+ * international rate source published a rate, and the person who checks it will
+ * be on the ECB's own page, where it reads "28 Aug 2026". Printing "28 ส.ค.
+ * 2569" beside a figure taken from there asks somebody to reconcile two
+ * calendars and two languages in their head, over an exchange rate.
+ *
+ * Do not "make this consistent" with the rest of the app without knowing that.
+ */
+const RATE_MONTHS_EN = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
-/** `"2026-08-28"` → `"28 ส.ค. 2569"`. `""` for a date nobody recorded. */
-export function fmtRateAsOfTh(v: string | Date | null | undefined): string {
+/**
+ * `"2026-08-28"` → `"28 Aug 2026"`. `""` for a date nobody recorded.
+ *
+ * Named `...AsOf` and not `...Th`: it is the one date in this app that is
+ * neither Thai nor Buddhist-era. See `RATE_MONTHS_EN` for why.
+ */
+export function fmtRateAsOf(v: string | Date | null | undefined): string {
   const ymd = rateAsOfYmd(v);
   if (ymd === null) return "";
   const year = Number(ymd.slice(0, 4));
   const month0 = Number(ymd.slice(5, 7)) - 1;
   const day = Number(ymd.slice(8, 10));
-  // Buddhist era, as every other date this app shows a Thai reader.
-  return `${day} ${TH_MONTHS_SHORT[month0]} ${year + 543}`;
+  return `${day} ${RATE_MONTHS_EN[month0]} ${year}`;
 }
 
 /**
@@ -162,7 +178,7 @@ export function referenceRateNote(
   asOf?: string | Date | null,
 ): string {
   const note = `อัตราอ้างอิง 1 ${norm(currency)} = ${fmtRateTh(rate)} บาท`;
-  const on = fmtRateAsOfTh(asOf);
+  const on = fmtRateAsOf(asOf);
   return on === "" ? note : `${note} (ณ ${on})`;
 }
 
