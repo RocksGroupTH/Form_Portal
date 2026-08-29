@@ -39,6 +39,13 @@ const PANEL = "features/accounting/components/ExchangeRateOverride.tsx";
 const AP1_QUEUE = "features/accounting/components/ApprovalsQueue.tsx";
 const AP17_QUEUE = "app/(dashboard)/request/accounting/travel-booking/approvals/page.tsx";
 
+/* ── The per-line override, AP-1's since migration 129 ── */
+
+const LINE_SERVICE = "lib/acc/line-rate-override.ts";
+const LINE_ROUTE =
+  "app/api/request/accounting/requests/[id]/items/[itemId]/exchange-rate/route.ts";
+const LINE_PANEL = "features/accounting/components/LineExchangeRateOverride.tsx";
+
 /**
  * The one rule the whole feature exists for. `planRateOverride` is the only
  * thing that decides the new total, and it converts with `toBaht` and refuses
@@ -202,9 +209,174 @@ test("AP-17's route carries the gate its account-approve carries", () => {
 /** The client posts a rate here and nowhere else — this is the one place a
     human is allowed to choose one, and the gate above is what makes it safe. */
 test("the override is the only client-posted rate, and it is refused off the step", () => {
-  for (const route of [AP1_ROUTE, AP17_ROUTE]) {
+  for (const route of [AP1_ROUTE, AP17_ROUTE, LINE_ROUTE]) {
     const src = code(route);
     assert.ok(/body\.rate/.test(src), `${route} must read the posted rate`);
     assert.ok(/statusForAccError\(e\)/.test(src), `${route} must answer 409 on a stale step, not 400`);
   }
+});
+
+/* ─────────────── the per-line override (AP-1, migration 129) ─────────────── */
+
+/**
+ * Migration 129 moved AP-1's currency onto the expense line and every AP-1
+ * `AccRequest` writer clears the header's currency columns, so
+ * `rate-override.ts` — which reads them — stopped rendering for AP-1 entirely.
+ * This is the same correction rebuilt one level down.
+ *
+ * `AccTravelExpenseItem.Amount` is Thai baht always, so the line's new figure
+ * has to come from `toBaht` and from nothing else. A null conversion refuses.
+ */
+test("a line's new baht comes from toBaht, and a null conversion refuses the save", () => {
+  const policy = code(POLICY);
+  const start = policy.indexOf("export function planLineRateOverride");
+  assert.notEqual(start, -1, "planLineRateOverride not found");
+  const body = policy.slice(start, policy.indexOf("\n}", start));
+  assert.ok(/toBaht\(/.test(body), "planLineRateOverride must actually convert");
+  assert.ok(
+    /if \(baht === null\) return \{ ok: false, reason: "unconvertible" \}/.test(body),
+    "a null conversion must refuse, not fall back",
+  );
+  // A foreign line with no figure to convert is refused outright rather than
+  // being given a rate its stored baht then disagrees with.
+  assert.ok(
+    /if \(line\.foreignAmount === null\) return \{ ok: false, reason: "no-foreign-amount" \}/.test(body),
+    "a foreign line with nothing to convert must refuse",
+  );
+
+  const service = code(LINE_SERVICE);
+  assert.ok(/planLineRateOverride\(/.test(service), "the service must plan through the pure rule");
+  assert.ok(
+    /if \(!decision\.ok\) \{[\s\S]{0,200}?throw/.test(service),
+    "a refused plan must throw before anything is written",
+  );
+  assert.equal(
+    /toBaht|foreignAmount\s*\*/.test(service),
+    false,
+    "the conversion belongs to the pure rule — a second copy here would drift",
+  );
+});
+
+/**
+ * Every statement is pinned to the form **and** to the ACCOUNT step, on the
+ * request row it reaches through the item's two joins. AP-4 parks a claim on
+ * the very same (ManagerApproved, ACCOUNT) tuple, so without `FormCode=@form`
+ * an AP-1 accountant could rewrite an AP-4 claim's total through AP-1's URL.
+ */
+test("every per-line statement is pinned to the form AND to the ACCOUNT step", () => {
+  const src = code(LINE_SERVICE);
+  const statements =
+    src.match(/(SELECT|UPDATE)[\s\S]*?\[dbo\]\.\[AccRequest\][\s\S]*?CurrentStepCode='ACCOUNT'/g) ?? [];
+  assert.equal(
+    statements.length,
+    3,
+    `expected the guarded read, the line update and the header rewrite, found ${statements.length}`,
+  );
+  for (const stmt of statements) {
+    assert.ok(/FormCode=@form/.test(stmt), "not pinned to a form: " + stmt);
+    assert.ok(/Status='ManagerApproved'/.test(stmt), "not pinned to the status: " + stmt);
+  }
+  assert.ok(
+    /WITH \(UPDLOCK, ROWLOCK\)/.test(src),
+    "the read must lock the request row it is about to rewrite",
+  );
+  const claims = src.match(/rowsAffected\[0\] \?\? 0\) === 0/g) ?? [];
+  assert.equal(claims.length, 2, "both updates must check they actually claimed their row");
+});
+
+/** Parameterised SQL only — the house rule, and these statements carry money. */
+test("the per-line override's SQL binds every value", () => {
+  const src = code(LINE_SERVICE);
+  const statements = src.match(/query\(`[\s\S]*?`\)/g) ?? [];
+  assert.ok(statements.length >= 4, "expected the read, both updates and the activity insert");
+  for (const stmt of statements) {
+    assert.equal(/\$\{/.test(stmt), false, "an interpolated fragment reached the SQL: " + stmt);
+  }
+});
+
+/**
+ * The claim's stored totals are rebuilt from the lines through the **shared**
+ * `computeTotalAmount`, not adjusted by a delta and not re-implemented in SQL.
+ * That function is the one definition of what a travel day is worth — it knows
+ * a rate vehicle's `fare` rows do not count and a manual section's `parking`
+ * rows do not either — and a second copy here would drift from `saveDraft`,
+ * `submitRequest` and `deleteItem` on the path that decides what a claim pays.
+ */
+test("the totals are recomputed from the lines through the shared rule", () => {
+  const src = code(LINE_SERVICE);
+  assert.ok(/computeTotalAmount\(day\)/.test(src), "the per-day total must use the shared rule");
+  assert.ok(
+    /computeRequestTotalAmount\(days\)/.test(src),
+    "the header total must be the same sum across days",
+  );
+  // Read back inside the transaction, so what it totals is the line as this
+  // statement has just left it.
+  assert.ok(/loadTravelDays\(tx, requestId\)/.test(src), "the recompute must read within the tx");
+});
+
+/**
+ * The line's new baht, both stored totals and the audit row are one
+ * transaction. A corrected rate must never exist without the line saying who
+ * corrected it and from what, and a corrected line must never exist beside a
+ * total that still counts the old figure.
+ */
+test("the line, the totals and the audit row commit together", () => {
+  const src = code(LINE_SERVICE);
+  assert.ok(
+    /INSERT INTO \[dbo\]\.\[AccActivityLog\][\s\S]*?'exchange_rate_overridden'/.test(src),
+    "no exchange_rate_overridden activity row",
+  );
+  const begin = src.indexOf("await tx.begin()");
+  const lineUpdate = src.indexOf("UPDATE i SET i.Amount=@amount");
+  const insert = src.indexOf("exchange_rate_overridden");
+  const commit = src.indexOf("await tx.commit()");
+  assert.ok(begin !== -1 && lineUpdate !== -1 && insert !== -1 && commit !== -1, "transaction shape not found");
+  assert.ok(begin < lineUpdate && lineUpdate < insert && insert < commit, "everything must sit inside the transaction");
+
+  // The note names the line, both rates and who made the correction.
+  assert.ok(/itemId/.test(src) && /previousRate/.test(src) && /rate\.toFixed\(6\)/.test(src),
+    "the note must name the line and carry both rates");
+  assert.ok(/input\("by", sql\.Int, actor\.userId\)/.test(src), "the note must record who made it");
+});
+
+/** The gate is AP-1's own ACCOUNT-step gate, reproduced rather than reached around. */
+test("the per-line route carries the ACCOUNT branch of approve, verbatim", () => {
+  const src = code(LINE_ROUTE);
+  assert.ok(/authorizeAccRequest\(session, id, "read", AP1_FORM_CODE\)/.test(src), "object ACL, pinned to AP-1");
+  assert.ok(/canAccessAccountArea\(/.test(src), "account-area membership");
+  assert.ok(/canActOnClaimBrand\(/.test(src), "interface scope — whose books these are");
+  assert.ok(/applyLineRateOverride\(id, itemId, AP1_FORM_CODE,/.test(src), "the service call must name AP-1");
+});
+
+/**
+ * A baht claim, or one off the step, shows nothing new at all — and neither
+ * does one with no foreign line, which is every Thai claim.
+ */
+test("the per-line panel renders nothing without a foreign line at the ACCOUNT step", () => {
+  const src = code(LINE_PANEL);
+  assert.ok(
+    /if \(!atAccountStep \|\| lines\.length === 0\) return null;/.test(src),
+    "the panel must bail out before rendering anything",
+  );
+  assert.ok(
+    /isBaht\(it\.currency\) \|\| it\.foreignAmount == null/.test(src),
+    "only a foreign line with a figure to convert may be offered a field",
+  );
+  assert.ok(src.indexOf("อัตราอ้างอิง") !== -1, "the panel must caption the figure as a reference rate");
+  assert.equal(/ธนาคารแห่งประเทศไทย|Bank of Thailand/.test(src), false, "the panel names the BOT");
+  assert.ok(
+    src.indexOf("ไม่ใช่อัตราที่ธนาคารใช้จ่ายจริง") !== -1,
+    "the panel must say the rate is not a settled one",
+  );
+});
+
+/**
+ * Both panels are on AP-1's queue and both stay. The per-line one is what a
+ * claim filed since 129 uses; the request-level one still answers for the ones
+ * filed during 125's design, which are just as approvable.
+ */
+test("AP-1's queue renders both overrides", () => {
+  const src = code(AP1_QUEUE);
+  assert.ok(/LineExchangeRateOverride/.test(src), "AP-1's queue must render the per-line override");
+  assert.ok(/ExchangeRateOverride/.test(src), "the request-level override must not be removed");
 });

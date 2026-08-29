@@ -19,6 +19,10 @@ import {
   ExchangeRateOverride,
   type RateOverrideSaved,
 } from "@/features/accounting/components/ExchangeRateOverride";
+import {
+  LineExchangeRateOverride,
+  type LineRateSaved,
+} from "@/features/accounting/components/LineExchangeRateOverride";
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
 import {
   ApprovalQueueFilters,
@@ -34,7 +38,7 @@ import {
 import { fmtReportTravelDate, fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
 import { fmtReportVehicleNames, reportVehicleNames } from "@/features/accounting/lib/travel-sections";
 import type { ReportRow, ReportTravelDayLine, ReportTravelVehicleLine } from "@/lib/acc/report-service";
-import type { AccRequest } from "@/features/accounting/types";
+import type { AccRequest, TravelExpenseItem } from "@/features/accounting/types";
 import { ErpInterfaceBrandTabs } from "@/features/accounting/components/ErpInterfaceBrandTabs";
 import type { ErpJournalBuildContext } from "@/lib/acc/erp-journal-builder";
 import {
@@ -540,6 +544,41 @@ export function ApprovalsQueue({
     if (!saved.totalRewritten) return;
     setRows((prev) =>
       prev.map((r) => (r.id === saved.id ? { ...r, totalAmount: saved.totalAmount } : r)),
+    );
+  }, []);
+
+  /**
+   * The same, for the per-line correction AP-1 actually uses since migration 129
+   * moved its currency onto the expense line.
+   *
+   * Three things move and all three are patched in place, for the reason above:
+   * a refetch would rebuild every row and flash the table while the accountant
+   * is part-way through a selection. The **line's** own `amount` is the extra
+   * one here — `RequestDetail` recomputes each day's figure and the claim's
+   * total from the items it is handed (`computeTotalAmount`), so patching the
+   * item is what keeps the detail below the panel honest. The queue row still
+   * takes `totalAmount` from the server, which recomputed it from every line
+   * rather than adjusting it by a delta.
+   */
+  const handleLineRateSaved = useCallback((saved: LineRateSaved) => {
+    setDrawerDetail((prev) => {
+      if (!prev || prev.id !== saved.requestId) return prev;
+      const patchItems = (items: TravelExpenseItem[] | undefined) =>
+        (items ?? []).map((it) =>
+          it.id === saved.itemId ? { ...it, amount: saved.amount, exchangeRate: saved.rate } : it,
+        );
+      return {
+        ...prev,
+        totalAmount: saved.totalAmount,
+        travelDays: (prev.travelDays ?? []).map((d) => ({
+          ...d,
+          items: patchItems(d.items),
+          sections: (d.sections ?? []).map((s) => ({ ...s, items: patchItems(s.items) })),
+        })),
+      };
+    });
+    setRows((prev) =>
+      prev.map((r) => (r.id === saved.requestId ? { ...r, totalAmount: saved.totalAmount } : r)),
     );
   }, []);
 
@@ -1241,10 +1280,21 @@ export function ApprovalsQueue({
             </div>
           ) : drawerDetail ? (
             <>
-              {/* Accounting's rate correction. Renders nothing for a baht claim
-                  or one not at the ACCOUNT step — and it sits above the detail
-                  because the baht figure below it is what the correction
-                  changes. */}
+              {/* Accounting's rate correction, per expense line — where AP-1's
+                  currency has lived since migration 129. Renders nothing unless
+                  the claim is at the ACCOUNT step with at least one line that is
+                  not baht, and it sits above the detail because the baht figures
+                  below it are what the correction changes. */}
+              <LineExchangeRateOverride
+                request={drawerDetail}
+                onSaved={handleLineRateSaved}
+              />
+              {/* The request-level correction, for the claims that still have a
+                  header currency: AP-1 claims filed during migration 125's
+                  design. Nothing AP-1 writes today sets those columns, so on a
+                  modern claim this renders nothing and the panel above does the
+                  work. Left in place rather than removed — the old claims are
+                  still approvable and still need correcting. */}
               <ExchangeRateOverride
                 endpoint={`/api/request/accounting/requests/${drawerDetail.id}/exchange-rate`}
                 atAccountStep={

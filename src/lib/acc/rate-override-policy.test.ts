@@ -2,7 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   MAX_OVERRIDE_RATE,
+  planLineRateOverride,
   planRateOverride,
+  LINE_RATE_REFUSAL_TEXT,
+  type LineRateRefusal,
   RATE_DECIMALS,
   RATE_OVERRIDE_REFUSAL_TEXT,
   sanitizeOverrideRate,
@@ -130,5 +133,81 @@ test("no refusal copy names the Bank of Thailand", () => {
     (k) => RATE_OVERRIDE_REFUSAL_TEXT[k as keyof typeof RATE_OVERRIDE_REFUSAL_TEXT],
   )) {
     assert.equal(/ธนาคารแห่งประเทศไทย|BOT/.test(text), false, `caption names the BOT: ${text}`);
+  }
+});
+
+/* ── planLineRateOverride — AP-1, since the currency moved onto the line ── */
+
+/**
+ * The whole point of the per-line rule: `AccTravelExpenseItem.Amount` is Thai
+ * baht always, so the corrected figure is `toBaht(ForeignAmount, rate)` and
+ * nothing else. The line's own figure is carried through unchanged — only what
+ * it is worth in baht moves.
+ */
+test("a line's corrected baht is its own figure at the new rate", () => {
+  const decision = planLineRateOverride({ currency: "MYR", foreignAmount: 20 }, "8.5");
+  assert.deepEqual(decision, { ok: true, plan: { rate: 8.5, foreignAmount: 20, amount: 170 } });
+});
+
+test("a line's rate is rounded to the six places the column holds", () => {
+  const decision = planLineRateOverride({ currency: "MYR", foreignAmount: 20 }, "8.12345678");
+  assert.equal(decision.ok && decision.plan.rate, 8.123457);
+});
+
+/** A zero line is a real figure, and zero baht is the right answer for it. */
+test("a zero figure converts to zero rather than being refused", () => {
+  const decision = planLineRateOverride({ currency: "MYR", foreignAmount: 0 }, 8.25);
+  assert.equal(decision.ok && decision.plan.amount, 0);
+});
+
+/**
+ * A baht line has no rate to correct — and both spellings of baht mean baht, so
+ * a line recording `'THB'` is refused exactly as one recording nothing is.
+ */
+test("a baht line is refused, however baht is spelt", () => {
+  for (const currency of ["THB", "thb", "", null]) {
+    const decision = planLineRateOverride({ currency, foreignAmount: 20 }, 8.25);
+    assert.deepEqual(decision, { ok: false, reason: "not-foreign" }, `for ${JSON.stringify(currency)}`);
+  }
+});
+
+test("an unusable rate is refused before anything is converted", () => {
+  for (const bad of [0, -1, "", "abc", null, undefined, MAX_OVERRIDE_RATE + 1]) {
+    const decision = planLineRateOverride({ currency: "MYR", foreignAmount: 20 }, bad);
+    assert.deepEqual(decision, { ok: false, reason: "invalid-rate" }, `for ${JSON.stringify(bad)}`);
+  }
+});
+
+/**
+ * **The one place the line rule and the request rule deliberately differ.** A
+ * request with no `ForeignAmount` means "leave `TotalAmount` alone" — that is
+ * AP-17, whose header total is per diem and always baht. A *line* with none is
+ * a contradiction: `ForeignAmount` is written beside `Currency` by the only
+ * thing that writes either, so a row with one and not the other has been
+ * hand-edited, and storing a rate against it would leave the rate and the baht
+ * disagreeing with nothing on screen to say so.
+ */
+test("a foreign line with nothing to convert is refused, where a request is not", () => {
+  assert.deepEqual(
+    planLineRateOverride({ currency: "MYR", foreignAmount: null }, 8.25),
+    { ok: false, reason: "no-foreign-amount" },
+  );
+  // The request-level rule, for contrast — it stores the rate and rewrites no total.
+  assert.deepEqual(
+    planRateOverride({ currency: "MYR", foreignAmount: null }, 8.25),
+    { ok: true, plan: { rate: 8.25, totalAmount: null } },
+  );
+});
+
+/** Each refusal says its own thing, so a `Record` keeps them honest. */
+test("every line refusal has its own sentence, and none names the Bank of Thailand", () => {
+  const reasons: LineRateRefusal[] = ["not-foreign", "invalid-rate", "unconvertible", "no-foreign-amount"];
+  const seen: string[] = [];
+  for (const r of reasons) {
+    const text = LINE_RATE_REFUSAL_TEXT[r];
+    assert.ok(text && text.length > 0, `${r} has no copy`);
+    assert.equal(seen.indexOf(text), -1, `${r} reuses another refusal's sentence`);
+    assert.equal(/ธนาคารแห่งประเทศไทย|BOT/.test(text), false, `caption names the BOT: ${text}`);
+    seen.push(text);
   }
 });

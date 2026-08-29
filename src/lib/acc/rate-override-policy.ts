@@ -124,3 +124,83 @@ export const RATE_OVERRIDE_REFUSAL_TEXT: Record<RateOverrideRefusal, string> = {
 /** The step a claim must be sitting on for accounting to correct its rate. */
 export const RATE_OVERRIDE_WRONG_STEP_TEXT =
   "คำขอนี้ไม่อยู่ในขั้นตรวจสอบของบัญชี จึงแก้อัตราแลกเปลี่ยนไม่ได้";
+
+/* ─────────────────── the same correction, one expense line ─────────────────── */
+
+/**
+ * AP-1's correction, since migration 129 moved the currency onto the line.
+ *
+ * `planRateOverride` above still answers for a **request-level** rate, which is
+ * what AP-17's booking desk records and what AP-1 claims filed during
+ * migration 125's design carry. AP-1 writes no such header any more, so its
+ * override had to move down a level with the currency — this is that rule, and
+ * the two are deliberately separate functions rather than one with a flag,
+ * because they differ on the thing that matters most: what a **missing figure
+ * to convert** means.
+ *
+ * For a request it means "leave `TotalAmount` alone" — AP-17's header total is
+ * per diem, always baht, and rewriting it from a booking cost would double the
+ * figure on every screen. For a **line** it is a contradiction: a foreign line
+ * exists precisely because somebody typed a foreign figure, and `ForeignAmount`
+ * is written beside `Currency` by the one place that writes either. A row with
+ * one and not the other has been hand-edited, and storing a new rate against it
+ * would leave the rate and the baht disagreeing with nothing on screen to say
+ * so. So it refuses.
+ */
+export type LineRateRefusal = RateOverrideRefusal | "no-foreign-amount";
+
+export interface LineRateOverridePlan {
+  /** The rate to store, already rounded to what `DECIMAL(18,6)` holds. */
+  rate: number;
+  /**
+   * The line's own figure, carried through unchanged.
+   *
+   * On the plan rather than left for the caller to re-read, because it is the
+   * one that reaching this branch has already proved is not null — a caller
+   * digging it back out of its own row would need a cast to say so.
+   */
+  foreignAmount: number;
+  /** The line's new `AccTravelExpenseItem.Amount`. **Baht, always.** */
+  amount: number;
+}
+
+export type LineRateOverrideDecision =
+  | { ok: true; plan: LineRateOverridePlan }
+  | { ok: false; reason: LineRateRefusal };
+
+/**
+ * What a corrected rate does to one expense line, or why it may not happen.
+ *
+ * Converts through `toBaht` and refuses on null, exactly as the request-level
+ * rule does and for exactly the same reason: `AccTravelExpenseItem.Amount` is
+ * Thai baht always, and the unconverted figure reaching it is a wrong number in
+ * a Business Central journal that no screen would ever reveal.
+ */
+export function planLineRateOverride(
+  line: { currency: string | null; foreignAmount: number | null },
+  posted: unknown,
+): LineRateOverrideDecision {
+  if (isBaht(line.currency)) return { ok: false, reason: "not-foreign" };
+
+  const rate = sanitizeOverrideRate(posted);
+  if (rate === null) return { ok: false, reason: "invalid-rate" };
+
+  if (line.foreignAmount === null) return { ok: false, reason: "no-foreign-amount" };
+
+  const baht = toBaht(line.foreignAmount, rate);
+  if (baht === null) return { ok: false, reason: "unconvertible" };
+  return { ok: true, plan: { rate, foreignAmount: line.foreignAmount, amount: baht } };
+}
+
+/**
+ * One sentence per refusal, over the wider union. The three shared reasons take
+ * the same wording as the request-level ones by reference rather than by
+ * retyping, so a correction to any of them lands in both places.
+ */
+export const LINE_RATE_REFUSAL_TEXT: Record<LineRateRefusal, string> = {
+  "not-foreign": "รายการนี้เป็นเงินบาท จึงไม่มีอัตราแลกเปลี่ยนให้แก้ไข",
+  "invalid-rate": RATE_OVERRIDE_REFUSAL_TEXT["invalid-rate"],
+  "unconvertible": RATE_OVERRIDE_REFUSAL_TEXT["unconvertible"],
+  "no-foreign-amount":
+    "รายการนี้ไม่มียอดสกุลเงินต่างประเทศให้แปลง จึงแก้อัตราแลกเปลี่ยนไม่ได้",
+};

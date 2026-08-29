@@ -408,7 +408,17 @@ function mapItemRow(x: Record<string, unknown>, filesByItem: Map<number, AccFile
   };
 }
 
-async function loadTravelDays(pool: Awaited<ReturnType<typeof getAccPool>>, requestId: number): Promise<TravelExpenseDetail[]> {
+/**
+ * Every travel day of a request, with its sections, its items and their files.
+ *
+ * **Takes anything that can issue a request** — the pool, or an open
+ * transaction. `AccTx` is that structural shape and `ConnectionPool` satisfies
+ * it, which is what lets `line-rate-override.ts` recompute a claim's stored
+ * totals from the same day objects `getRequest` builds, inside the transaction
+ * that changed a line. A second loader there would be a second answer to "what
+ * is on this claim", on the path that decides what it is worth.
+ */
+export async function loadTravelDays(pool: AccTx, requestId: number): Promise<TravelExpenseDetail[]> {
   const tRes = await pool.request().input("id", sql.Int, requestId)
     .query(`SELECT * FROM [dbo].[AccTravelExpense] WHERE RequestId = @id ORDER BY SortOrder, TravelDate, Id`);
   if (tRes.recordset.length === 0) return [];
