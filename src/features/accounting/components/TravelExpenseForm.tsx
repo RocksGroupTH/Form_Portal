@@ -45,7 +45,7 @@ import {
   selectedVehicleCount,
 } from "@/features/accounting/lib/travel-sections";
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
-import { countryName } from "@/lib/acc/country-currency";
+import { countryName, countryFlag } from "@/lib/acc/country-currency";
 import { referenceRateNote } from "@/lib/acc/currency-display";
 import { lineNeedsCurrency, typedLineFigure } from "@/features/accounting/lib/claim-currency";
 import type { AccRequest, TravelDraftSummary, TravelExpenseDetail, TravelExpenseItem, AccVehicle } from "@/features/accounting/types";
@@ -1117,7 +1117,7 @@ export function TravelExpenseForm({
             went, and each expense line asks for its own currency a few
             centimetres below — `countryName`, not `countryLabel`, which is what
             the settings editor still wants. */}
-        {(countryOptions.length > 1 || fxNote) && (
+        {countryOptions.length > 0 && (
           <div>
             <label className={labelClass} style={labelStyle}>
               ประเทศ
@@ -1142,7 +1142,18 @@ export function TravelExpenseForm({
                       cursor: only ? "default" : "pointer",
                     }}
                   >
-                    {countryName(code) ?? code}
+                    <span className="inline-flex items-center gap-1.5">
+                      {/* Derived from the two letters, so there is no image to
+                          ship and nothing to maintain beside COUNTRIES. Some
+                          Windows builds render the letters instead of a glyph,
+                          which is legible and needs no fallback. */}
+                      {countryFlag(code) && (
+                        <span aria-hidden className="text-[15px] leading-none">
+                          {countryFlag(code)}
+                        </span>
+                      )}
+                      {countryName(code) ?? code}
+                    </span>
                   </button>
                 );
               })}

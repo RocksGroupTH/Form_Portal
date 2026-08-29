@@ -7,6 +7,7 @@ import {
   countryName,
   isKnownCountry,
   isRateSourceCurrency,
+  countryFlag,
 } from "./country-currency";
 
 test("a country resolves to its currency", () => {
@@ -132,5 +133,32 @@ test("every country has both labels, and the long one is the short one plus its 
   for (const c of COUNTRIES) {
     assert.equal(countryName(c.code), c.nameTh);
     assert.equal(countryLabel(c.code), `${c.nameTh} (${c.currency})`);
+  }
+});
+
+test("a flag is derived from the country code, with no asset to ship", () => {
+  assert.equal(countryFlag("TH"), "🇹🇭");
+  assert.equal(countryFlag("MY"), "🇲🇾");
+  assert.equal(countryFlag("gb"), "🇬🇧");
+  assert.equal(countryFlag(" jp "), "🇯🇵");
+});
+
+/**
+ * A code the list does not know still gets a flag — the mapping is arithmetic
+ * on the two letters, not a lookup — but anything that is not two letters is
+ * refused rather than turned into stray symbols.
+ */
+test("only a two-letter code becomes a flag", () => {
+  assert.equal(countryFlag("ZZ"), "🇿🇿");
+  assert.equal(countryFlag("T"), null);
+  assert.equal(countryFlag("THA"), null);
+  assert.equal(countryFlag("12"), null);
+  assert.equal(countryFlag(""), null);
+  assert.equal(countryFlag(null), null);
+});
+
+test("every country in the list produces a flag", () => {
+  for (const c of COUNTRIES) {
+    assert.ok(countryFlag(c.code), `no flag for ${c.code}`);
   }
 });

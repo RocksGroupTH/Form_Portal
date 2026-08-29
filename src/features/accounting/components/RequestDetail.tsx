@@ -76,7 +76,7 @@ import {
   showsForeignCurrency,
 } from "@/lib/acc/currency-display";
 import { isOverriddenRate, isBaht } from "@/lib/acc/currency";
-import { countryLabel, currencyForCountry } from "@/lib/acc/country-currency";
+import { countryLabel, currencyForCountry, countryFlag } from "@/lib/acc/country-currency";
 import { claimRateFacts, multiRateCurrencies } from "@/features/accounting/lib/claim-rates";
 import type { ClaimRateFact } from "@/features/accounting/lib/claim-rates";
 import {
@@ -998,7 +998,15 @@ function TravelDaySection({
         {showForeignCountry && (
           <TravelMetaTile label="ประเทศ">
             <span className="flex items-center gap-1.5 min-w-0">
-              <Globe size={14} className="shrink-0" style={{ color: "var(--nav-active-text)" }} />
+              {/* The flag where there is one; Globe as the fallback for a code
+                  the pair-of-letters rule cannot turn into one. */}
+              {countryFlag(request.countryCode) ? (
+                <span aria-hidden className="text-[15px] leading-none shrink-0">
+                  {countryFlag(request.countryCode)}
+                </span>
+              ) : (
+                <Globe size={14} className="shrink-0" style={{ color: "var(--nav-active-text)" }} />
+              )}
               <span className="break-words">
                 {countryLabel(request.countryCode) ?? request.countryCode}
               </span>
@@ -1824,7 +1832,15 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
               style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}
               title={`ประเทศ: ${countryLabel(request.countryCode) ?? request.countryCode}`}
             >
-              <Globe size={14} className="shrink-0" style={{ color: "var(--nav-active-text)" }} />
+              {/* The flag where there is one; Globe as the fallback for a code
+                  the pair-of-letters rule cannot turn into one. */}
+              {countryFlag(request.countryCode) ? (
+                <span aria-hidden className="text-[15px] leading-none shrink-0">
+                  {countryFlag(request.countryCode)}
+                </span>
+              ) : (
+                <Globe size={14} className="shrink-0" style={{ color: "var(--nav-active-text)" }} />
+              )}
               <span className="text-[12px] font-bold" style={{ color: "var(--text-primary)" }}>
                 {countryLabel(request.countryCode) ?? request.countryCode}
               </span>

@@ -131,3 +131,25 @@ export function isRateSourceCurrency(code: string | null | undefined): boolean {
   const c = norm(code);
   return c !== "" && RATE_SOURCE_CURRENCIES.indexOf(c) !== -1;
 }
+
+/**
+ * The country's flag as an emoji, or null.
+ *
+ * **Arithmetic on the two letters, not a lookup and not an image.** Each ASCII
+ * letter maps to its regional indicator symbol, and a pair of those is what a
+ * flag emoji is — so this needs no asset, no CDN request, and no entry to
+ * maintain beside `COUNTRIES`. A code the list has never heard of still gets a
+ * flag, which is right: the code is what the claim was filed against.
+ *
+ * Anything that is not exactly two letters returns null rather than a pair of
+ * stray symbols, which is what a naive version renders for `THA` or `12`.
+ *
+ * Rendering is the caller's business: some Windows builds ship no flag glyphs
+ * and show the two letters instead, which is legible and needs no fallback.
+ */
+export function countryFlag(code: string | null | undefined): string | null {
+  const c = norm(code);
+  if (!/^[A-Z]{2}$/.test(c)) return null;
+  const A = 0x1f1e6; // REGIONAL INDICATOR SYMBOL LETTER A
+  return String.fromCodePoint(A + (c.charCodeAt(0) - 65), A + (c.charCodeAt(1) - 65));
+}
