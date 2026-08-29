@@ -1608,6 +1608,44 @@ export function TravelExpenseForm({
       <SectionCard icon={<Receipt size={15} />} title="ค่าใช้จ่าย" dataTour="ap1-expense">
         {travelDetailsReady ? (
           <>
+        {/* The rate-based vehicle first, then the manual ones.
+
+            The order follows how the claim is built: the distance leg is
+            measured on the map at the top of this form, so the costs that
+            attach to it belong directly under it. A Grab block sitting
+            between the map and the car's own tolls made the reader hunt
+            upwards for the vehicle those tolls belonged to. */}
+        {hasRateVehicle(travel) && (
+          <>
+            <ExpenseRows
+              label={`ค่าผ่านทาง / ทางด่วน (${travel.vehicleName ?? "รถ"})`}
+              type="toll"
+              items={travel.items}
+              onAdd={() => addItem("toll")}
+              onUpdate={updateItem}
+              onRemove={removeItem}
+              highlightMissingReceipt={triedSubmit}
+              requestId={requestId ?? undefined}
+              lineCurrency={lineCurrency}
+              brandCode={brandCode}
+            />
+            {visible.parking && (
+              <ExpenseRows
+                label={`ค่าจอดรถ (${travel.vehicleName ?? "รถ"})`}
+                type="parking"
+                items={travel.items}
+                onAdd={() => addItem("parking")}
+                onUpdate={updateItem}
+                onRemove={removeItem}
+                highlightMissingReceipt={triedSubmit}
+                requestId={requestId ?? undefined}
+                lineCurrency={lineCurrency}
+                brandCode={brandCode}
+              />
+            )}
+          </>
+        )}
+
         {manualSections.map((sec, si) => (
           <div
             key={`${sec.vehicleId ?? "sec"}-${si}`}
@@ -1650,37 +1688,6 @@ export function TravelExpenseForm({
             />
           </div>
         ))}
-
-        {hasRateVehicle(travel) && (
-          <>
-            <ExpenseRows
-              label={`ค่าผ่านทาง / ทางด่วน (${travel.vehicleName ?? "รถ"})`}
-              type="toll"
-              items={travel.items}
-              onAdd={() => addItem("toll")}
-              onUpdate={updateItem}
-              onRemove={removeItem}
-              highlightMissingReceipt={triedSubmit}
-              requestId={requestId ?? undefined}
-              lineCurrency={lineCurrency}
-              brandCode={brandCode}
-            />
-            {visible.parking && (
-              <ExpenseRows
-                label={`ค่าจอดรถ (${travel.vehicleName ?? "รถ"})`}
-                type="parking"
-                items={travel.items}
-                onAdd={() => addItem("parking")}
-                onUpdate={updateItem}
-                onRemove={removeItem}
-                highlightMissingReceipt={triedSubmit}
-                requestId={requestId ?? undefined}
-                lineCurrency={lineCurrency}
-                brandCode={brandCode}
-              />
-            )}
-          </>
-        )}
 
         {/* Legacy single manual vehicle without sections */}
         {visible.fareRows && manualSections.length === 0 && (
