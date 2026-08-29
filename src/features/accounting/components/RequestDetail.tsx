@@ -76,7 +76,7 @@ import {
   showsForeignCurrency,
 } from "@/lib/acc/currency-display";
 import { isOverriddenRate } from "@/lib/acc/currency";
-import { countryLabel } from "@/lib/acc/country-currency";
+import { countryName } from "@/lib/acc/country-currency";
 import { claimRateFacts, multiRateCurrencies } from "@/features/accounting/lib/claim-rates";
 import type { ClaimRateFact } from "@/features/accounting/lib/claim-rates";
 import {
@@ -562,6 +562,34 @@ function GridField({
 
 /* ── Travel info sub-components ── */
 
+/**
+ * The two-letter country code, as a badge.
+ *
+ * **The code, not the currency.** `countryLabel` renders `มาเลเซีย (MYR)`, which
+ * is right in the settings editor — that screen is configuring a currency. On a
+ * claim the currency belongs to each expense line, and printing one beside the
+ * country implies the whole claim is in it, which per-line currency is precisely
+ * not. The form has shown the code since it gained its picker; this is the
+ * detail page catching up.
+ *
+ * One component for both surfaces — the single-day tile and the multi-day chip —
+ * so a third rendering is not invented next time.
+ *
+ * Not a flag: Windows ships no flag glyphs, so an emoji renders there as two
+ * plain letters beside the name that already spells the country out.
+ */
+function CountryCodeBadge({ code }: { code: string }) {
+  return (
+    <span
+      aria-hidden
+      className="inline-flex items-center justify-center shrink-0 px-1 h-[16px] rounded text-[9px] font-bold leading-none tracking-wide"
+      style={{ background: "var(--bg-badge)", color: "var(--text-muted)" }}
+    >
+      {code}
+    </span>
+  );
+}
+
 function TravelMetaTile({
   label,
   children,
@@ -964,7 +992,7 @@ function TravelDaySection({
    * Only a claim with no country at all stays silent, which is every claim filed
    * before migration 129 — there is nothing to show, not a default to invent.
    */
-  const showForeignCountry = showBrand && !!request.countryCode;
+  const claimCountry = showBrand ? request.countryCode : null;
 
   return (
     <Section title={sectionTitle} icon={<Car size={15} />}>
@@ -995,7 +1023,7 @@ function TravelDaySection({
             A code the country list does not know still renders, as the bare
             code: it is what the claim was filed against, and hiding it would be
             worse than showing something unfamiliar. */}
-        {showForeignCountry && (
+        {claimCountry && (
           <TravelMetaTile label="ประเทศ">
             <span className="flex items-center gap-1.5 min-w-0">
               {/* Globe, not a flag emoji: Windows ships no flag glyphs, so an
@@ -1003,8 +1031,9 @@ function TravelDaySection({
                   name that already spells it out. See the form's country
                   buttons for the same decision. */}
               <Globe size={14} className="shrink-0" style={{ color: "var(--nav-active-text)" }} />
+              <CountryCodeBadge code={claimCountry} />
               <span className="break-words">
-                {countryLabel(request.countryCode) ?? request.countryCode}
+                {countryName(claimCountry) ?? claimCountry}
               </span>
             </span>
           </TravelMetaTile>
@@ -1827,15 +1856,16 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
             <div
               className="shrink-0 flex items-center gap-1.5 h-10 pl-2 pr-2.5 rounded-xl"
               style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}
-              title={`ประเทศ: ${countryLabel(request.countryCode) ?? request.countryCode}`}
+              title={`ประเทศ: ${countryName(request.countryCode) ?? request.countryCode}`}
             >
               {/* Globe, not a flag emoji: Windows ships no flag glyphs, so an
                   emoji renders there as two plain letters beside the country
                   name that already spells it out. See the form's country
                   buttons for the same decision. */}
               <Globe size={14} className="shrink-0" style={{ color: "var(--nav-active-text)" }} />
+              <CountryCodeBadge code={request.countryCode} />
               <span className="text-[12px] font-bold" style={{ color: "var(--text-primary)" }}>
-                {countryLabel(request.countryCode) ?? request.countryCode}
+                {countryName(request.countryCode) ?? request.countryCode}
               </span>
             </div>
           )}

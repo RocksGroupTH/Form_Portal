@@ -1117,7 +1117,7 @@ export function TravelExpenseForm({
             went, and each expense line asks for its own currency a few
             centimetres below — `countryName`, not `countryLabel`, which is what
             the settings editor still wants. */}
-        {countryOptions.length > 0 && (
+        {brandCode && countryOptions.length > 0 && (
           <div>
             <label
               className="block text-[11px] font-semibold mb-1 uppercase tracking-wide"
