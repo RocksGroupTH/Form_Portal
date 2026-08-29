@@ -7,8 +7,22 @@ import { toast } from "sonner";
 import { SettingOption, SettingOptionGroup } from "@/components/settings/SettingOption";
 import { CurrencyCombobox } from "@/features/advance/components/CurrencyCombobox";
 import { FALLBACK_CURRENCIES } from "@/lib/acc/brand-currency-input";
-import { COUNTRIES, countryLabel, currencyForCountry } from "@/lib/acc/country-currency";
-import { enabledForeignCurrencies, THB, type BrandCurrencyEntry } from "@/lib/acc/currency";
+import {
+  COUNTRIES,
+  countryLabel,
+  currencyForCountry,
+  isRateSourceCurrency,
+} from "@/lib/acc/country-currency";
+import {
+  enabledForeignCurrencies,
+  resolvedDefaultCurrency,
+  THB,
+  type BrandCurrencyEntry,
+} from "@/lib/acc/currency";
+// Thailand's ISO-3166-1 code, which the implicit THB row is written with. Taken
+// from the claim rules rather than retyped: that module owns what "TH" means to
+// this feature, and it imports nothing but data, so a client component is safe.
+import { DEFAULT_COUNTRY as THAILAND } from "@/features/accounting/lib/claim-currency";
 import type { AccBrandOption } from "@/features/accounting/types";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
@@ -215,24 +229,45 @@ interface AddDraft {
 const BLANK_ADD: AddDraft = { countryCode: "", currencyCode: "" };
 
 /**
- * The currencies each brand may be claimed in.
+ * The id given to the **implicit Thailand row** — the one every brand has until
+ * somebody configures baht explicitly.
+ *
+ * Zero is safe as a sentinel because `BrandCurrency.Id` is `IDENTITY(1,1)`, so
+ * no real row can ever carry it. The row is rendered like any other and its two
+ * controls both materialise it: switching it off posts a disabled `THB` row,
+ * marking it default posts an enabled one already flagged. Doing either as an
+ * add followed by a second request would leave the brand momentarily in a state
+ * the admin had just refused.
+ */
+const IMPLICIT_THB_ID = 0;
+
+/**
+ * The currencies each brand may be claimed in, and which one its claims start
+ * in.
  *
  * **Several per brand, each with its own switch.** A brand carried one country
  * and one currency until 2026-08-28, which cannot say what KSI needs — Thailand
  * (THB) and England (GBP), and more later. Every row here is one
  * `BrandCurrency` row (migration 127).
  *
- * **Every control writes immediately; there is no Save button and no dirty
- * state.** Each act is one row — add it, switch it, remove it — so there is
- * nothing to batch, and a Save that swept a brand's whole list would silently
- * undo what somebody else had just changed from the other form's tab, which
- * reaches these same rows.
+ * **Thailand is a row like any other, and it is the one that may not exist.**
+ * Baht is claimable while nothing says otherwise, so a brand nobody has
+ * configured has no `THB` row at all — see `bahtEnabled`. Hiding it would make
+ * "switch Thailand off" unexpressible, so it is rendered from nothing, with
+ * `IMPLICIT_THB_ID`, and its controls write the row into existence.
  *
- * **Duplicates are refused by the database, not by this panel.**
- * `UQ_BrandCurrency_Brand_Currency` is the rule; a currency already configured
- * is greyed out here so the refusal is rare, but two admins on two tabs would
- * defeat a check made only on screen, and the server's Thai message is what
- * they see if they do.
+ * **Every control writes immediately; there is no Save button and no dirty
+ * state.** Each act is one row — add it, switch it, make it the default, remove
+ * it — so there is nothing to batch, and a Save that swept a brand's whole list
+ * would silently undo what somebody else had just changed from the other form's
+ * tab, which reaches these same rows.
+ *
+ * **Duplicates, and "a brand must be claimable in something", are refused by the
+ * server.** `UQ_BrandCurrency_Brand_Currency` is the first rule and
+ * `assertStillClaimable` the second; a configured currency is greyed out here
+ * and the last live switch is left disabled, so both refusals are rare — but two
+ * admins on two tabs defeat any check made only on screen, and the server's Thai
+ * message is what they see if they do.
  */
 function BrandCurrencySettings({
   endpoint,
@@ -300,18 +335,34 @@ function BrandCurrencySettings({
     }
   };
 
-  const addCurrency = (brandCode: string, draft: AddDraft) =>
+  const postCurrency = (
+    key: string,
+    brandCode: string,
+    body: {
+      countryCode: string | null;
+      currencyCode: string;
+      isEnabled?: boolean;
+      isDefault?: boolean;
+    },
+    okMessage: string,
+    onOk?: () => void,
+  ) =>
     send(
-      `add:${brandCode}`,
+      key,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          brandCode,
-          countryCode: draft.countryCode || null,
-          currencyCode: draft.currencyCode,
-        }),
+        body: JSON.stringify({ brandCode, ...body }),
       },
+      okMessage,
+      onOk,
+    );
+
+  const addCurrency = (brandCode: string, draft: AddDraft) =>
+    postCurrency(
+      `add:${brandCode}`,
+      brandCode,
+      { countryCode: draft.countryCode || null, currencyCode: draft.currencyCode },
       `เพิ่มสกุลเงิน ${draft.currencyCode} ให้ ${brandCode} แล้ว`,
       () =>
         setAdds((prev) => {
@@ -321,16 +372,49 @@ function BrandCurrencySettings({
         }),
     );
 
-  const toggleCurrency = (row: BrandCurrencyEntry, isEnabled: boolean) =>
-    send(
-      `row:${row.id}`,
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: row.id, isEnabled }),
-      },
-      isEnabled ? `เปิดใช้ ${row.currencyCode} แล้ว` : `ปิดใช้ ${row.currencyCode} แล้ว`,
-    );
+  /**
+   * Switch one row on or off.
+   *
+   * The implicit Thailand row is only ever switched **off** — it renders as on
+   * because nothing has said otherwise — and doing so creates the `THB` row
+   * already disabled, in one write.
+   */
+  const toggleCurrency = (brandCode: string, row: BrandCurrencyEntry, isEnabled: boolean) =>
+    row.id === IMPLICIT_THB_ID
+      ? postCurrency(
+          `row:${brandCode}:${THB}`,
+          brandCode,
+          { countryCode: THAILAND, currencyCode: THB, isEnabled },
+          isEnabled ? `เปิดใช้ ${THB} แล้ว` : `ปิดใช้ ${THB} แล้ว`,
+        )
+      : send(
+          `row:${row.id}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: row.id, isEnabled }),
+          },
+          isEnabled ? `เปิดใช้ ${row.currencyCode} แล้ว` : `ปิดใช้ ${row.currencyCode} แล้ว`,
+        );
+
+  /** Make one row the brand's default — the country AP-1's form opens on. */
+  const makeDefault = (brandCode: string, row: BrandCurrencyEntry) =>
+    row.id === IMPLICIT_THB_ID
+      ? postCurrency(
+          `row:${brandCode}:${THB}`,
+          brandCode,
+          { countryCode: THAILAND, currencyCode: THB, isEnabled: true, isDefault: true },
+          `ตั้ง ${THB} เป็นค่าเริ่มต้นของ ${brandCode} แล้ว`,
+        )
+      : send(
+          `row:${row.id}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: row.id, isDefault: true }),
+          },
+          `ตั้ง ${row.currencyCode} เป็นค่าเริ่มต้นแล้ว`,
+        );
 
   const deleteCurrency = (row: BrandCurrencyEntry) =>
     send(
@@ -342,7 +426,7 @@ function BrandCurrencySettings({
   return (
     <SettingOptionGroup
       title="สกุลเงินที่เบิกได้ของแต่ละแบรนด์"
-      description="เลือกประเทศแล้วระบบจะใส่สกุลเงินของประเทศนั้นให้เอง — เพิ่มได้หลายสกุลเงินต่อหนึ่งแบรนด์ และเปิด/ปิดใช้งานทีละรายการ (เงินบาทเบิกได้เสมอ ไม่ต้องเพิ่ม)"
+      description="เลือกประเทศแล้วระบบจะใส่สกุลเงินของประเทศนั้นให้เอง — เพิ่มได้หลายสกุลเงินต่อหนึ่งแบรนด์ เปิด/ปิดใช้งานทีละรายการ และเลือกได้ว่าจะให้ฟอร์มเริ่มต้นที่สกุลเงินใด (รวมถึงไทยที่ปิดใช้งานได้เช่นกัน แต่ต้องเหลือสกุลเงินที่เปิดใช้งานอย่างน้อยหนึ่งสกุล)"
     >
       {/*
         Required copy, not decoration. The permission to change these values is
@@ -378,17 +462,41 @@ function BrandCurrencySettings({
         // only while at least one non-baht currency is switched on.
         const live = enabledForeignCurrencies(brand.currencies);
         const taken = brand.currencies.map((c) => c.currencyCode);
-        // THB is offered to every brand already and is never a row, so it is
-        // not addable — a THB row would be a second answer to a question the
-        // form has always answered the same way.
-        const addable = currencyOptions.filter(
-          (o) => o.code !== THB && taken.indexOf(o.code) === -1,
-        );
         const chosen = add.currencyCode.trim().toUpperCase();
         const duplicate = chosen !== "" && taken.indexOf(chosen) !== -1;
+        // Two different "we cannot convert this" answers, and only the first is
+        // a refusal. `isRateSourceCurrency` is the same predicate the server
+        // parses with, so a code it rejects can never be added; `supported` is
+        // the live provider list, which may lag or be unreachable, so a code
+        // missing only from that is warned about rather than blocked.
+        const rateless = chosen !== "" && !isRateSourceCurrency(chosen);
         const unsupported =
-          chosen !== "" && !!supported && !supported.some((o) => o.code === chosen);
-        const canAdd = chosen !== "" && !duplicate && busy !== `add:${brand.brandCode}`;
+          !rateless && chosen !== "" && !!supported && !supported.some((o) => o.code === chosen);
+        const addable = currencyOptions.filter(
+          (o) => taken.indexOf(o.code) === -1 && isRateSourceCurrency(o.code),
+        );
+        const canAdd =
+          chosen !== "" && !duplicate && !rateless && busy !== `add:${brand.brandCode}`;
+
+        // Thailand is a row whether or not one exists — see IMPLICIT_THB_ID.
+        const hasThbRow = taken.indexOf(THB) !== -1;
+        const listed: BrandCurrencyEntry[] = hasThbRow
+          ? brand.currencies
+          : ([
+              {
+                id: IMPLICIT_THB_ID,
+                countryCode: THAILAND,
+                currencyCode: THB,
+                isEnabled: true,
+                isDefault: false,
+              },
+            ] as BrandCurrencyEntry[]).concat(brand.currencies);
+
+        // What is in force, not merely what is flagged: no brand configured
+        // before migration 131 has a flag at all and baht is the answer for all
+        // of them.
+        const defaultCode = resolvedDefaultCurrency(brand.currencies);
+        const enabledCount = listed.filter((c) => c.isEnabled).length;
 
         return (
           <div
@@ -428,49 +536,99 @@ function BrandCurrencySettings({
               </span>
             </div>
 
-            {brand.currencies.length > 0 && (
-              <div className="flex flex-col gap-1.5">
-                {brand.currencies.map((c) => {
-                  const rowBusy = busy === `row:${c.id}`;
-                  const label = countryLabel(c.countryCode);
-                  const rateless = !!supported && !supported.some((o) => o.code === c.currencyCode);
-                  return (
-                    <div
-                      key={c.id}
-                      className="flex items-center gap-3 rounded-xl px-3 py-2"
-                      style={{
-                        background: "var(--bg-card)",
-                        border: "1px solid var(--border-card)",
-                        opacity: rowBusy ? 0.6 : 1,
-                      }}
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[13px] font-semibold" style={{ color: "var(--text-primary)" }}>
-                          {c.currencyCode}
-                        </div>
-                        <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                          {/* A country the list does not carry cannot happen —
-                              the add refuses one — but a row written before this
-                              rule existed would show its bare code rather than
-                              nothing at all. */}
-                          {label ?? c.countryCode ?? "ไม่ได้ระบุประเทศ"}
-                          {rateless && " — ไม่พบในแหล่งอัตราอ้างอิง"}
-                        </div>
+            <div className="flex flex-col gap-1.5">
+              {listed.map((c) => {
+                const implicit = c.id === IMPLICIT_THB_ID;
+                const rowBusy =
+                  busy === (implicit ? `row:${brand.brandCode}:${THB}` : `row:${c.id}`);
+                const label = countryLabel(c.countryCode);
+                const noRate = !!supported && !supported.some((o) => o.code === c.currencyCode);
+                const isDefault = c.currencyCode === defaultCode;
+                // The last live switch is left on. `assertStillClaimable` is the
+                // rule; this is only so the refusal is rare rather than routine.
+                const lockedOn = c.isEnabled && enabledCount <= 1;
+                return (
+                  <div
+                    key={implicit ? `implicit-${THB}` : c.id}
+                    className="flex items-center gap-3 rounded-xl px-3 py-2"
+                    style={{
+                      background: "var(--bg-card)",
+                      border: "1px solid var(--border-card)",
+                      opacity: rowBusy ? 0.6 : 1,
+                    }}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[13px] font-semibold" style={{ color: "var(--text-primary)" }}>
+                        {c.currencyCode}
                       </div>
+                      <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                        {/* A country the list does not carry cannot happen —
+                            the add refuses one — but a row written before this
+                            rule existed would show its bare code rather than
+                            nothing at all. */}
+                        {label ?? c.countryCode ?? "ไม่ได้ระบุประเทศ"}
+                        {implicit && " — เปิดใช้อยู่เป็นค่าตั้งต้น"}
+                        {noRate && " — ไม่พบในแหล่งอัตราอ้างอิง"}
+                      </div>
+                    </div>
 
-                      <label className="flex items-center gap-2 text-[11.5px] cursor-pointer shrink-0">
-                        <input
-                          type="checkbox"
-                          checked={c.isEnabled}
-                          disabled={rowBusy}
-                          onChange={(e) => toggleCurrency(c, e.target.checked)}
-                          className="cursor-pointer"
-                        />
-                        <span style={{ color: c.isEnabled ? "var(--text-info-green)" : "var(--text-muted)" }}>
-                          {c.isEnabled ? "เปิดใช้งาน" : "ปิดอยู่"}
-                        </span>
-                      </label>
+                    <label
+                      className="flex items-center gap-1.5 text-[11.5px] shrink-0"
+                      style={{ cursor: c.isEnabled && !rowBusy ? "pointer" : "not-allowed" }}
+                      title={
+                        c.isEnabled
+                          ? "ให้ฟอร์มเริ่มต้นที่สกุลเงินนี้"
+                          : "ต้องเปิดใช้งานก่อนจึงจะตั้งเป็นค่าเริ่มต้นได้"
+                      }
+                    >
+                      <input
+                        type="radio"
+                        name={`default-${brand.brandCode}`}
+                        checked={isDefault}
+                        disabled={rowBusy || !c.isEnabled || isDefault}
+                        onChange={() => makeDefault(brand.brandCode, c)}
+                        style={{ cursor: c.isEnabled && !rowBusy ? "pointer" : "not-allowed" }}
+                      />
+                      <span
+                        style={{
+                          color: isDefault ? "var(--nav-active-text)" : "var(--text-muted)",
+                          fontWeight: isDefault ? 700 : 400,
+                        }}
+                      >
+                        ค่าเริ่มต้น
+                      </span>
+                    </label>
 
+                    <label
+                      className="flex items-center gap-2 text-[11.5px] shrink-0"
+                      style={{ cursor: rowBusy || lockedOn ? "not-allowed" : "pointer" }}
+                      title={
+                        lockedOn
+                          ? "ต้องเหลือสกุลเงินที่เปิดใช้งานอย่างน้อยหนึ่งสกุล"
+                          : undefined
+                      }
+                    >
+                      <input
+                        type="checkbox"
+                        checked={c.isEnabled}
+                        disabled={rowBusy || lockedOn}
+                        onChange={(e) => toggleCurrency(brand.brandCode, c, e.target.checked)}
+                        style={{ cursor: rowBusy || lockedOn ? "not-allowed" : "pointer" }}
+                      />
+                      <span style={{ color: c.isEnabled ? "var(--text-info-green)" : "var(--text-muted)" }}>
+                        {c.isEnabled ? "เปิดใช้งาน" : "ปิดอยู่"}
+                      </span>
+                    </label>
+
+                    {/* An implicit row has nothing to delete. Removing a real
+                        THB row is allowed and puts the brand back here: baht is
+                        claimable while nothing says otherwise. */}
+                    {implicit ? (
+                      // Keeps the toggles above and below this row in one
+                      // column: the same footprint the delete button occupies
+                      // (14px icon inside 6px of padding each side).
+                      <span className="shrink-0" style={{ width: 26, height: 26 }} />
+                    ) : (
                       <button
                         type="button"
                         title={`ลบ ${c.currencyCode}`}
@@ -486,11 +644,11 @@ function BrandCurrencySettings({
                       >
                         <Trash2 size={14} />
                       </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+                    )}
+                  </div>
+                );
+              })}
+            </div>
 
             <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
               <label className="flex flex-col gap-1">
@@ -562,9 +720,15 @@ function BrandCurrencySettings({
               </p>
             )}
 
+            {rateless && (
+              <p className="text-[11px] m-0" style={{ color: "var(--text-warning)" }}>
+                ไม่พบ {chosen} ในแหล่งอัตราอ้างอิง — เพิ่มไม่ได้ เพราะระบบจะแปลงเป็นเงินบาทให้ไม่ได้
+              </p>
+            )}
+
             {unsupported && !duplicate && (
               <p className="text-[11px] m-0" style={{ color: "var(--text-warning)" }}>
-                ไม่พบ {chosen} ในแหล่งอัตราอ้างอิง — ระบบจะดึงอัตราแลกเปลี่ยนให้ไม่ได้
+                ขณะนี้ยังดึงรายชื่อสกุลเงินจากแหล่งอัตราอ้างอิงไม่ได้ — {chosen} อาจดึงอัตราแลกเปลี่ยนไม่ได้ในตอนนี้
               </p>
             )}
 

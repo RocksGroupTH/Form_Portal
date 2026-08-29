@@ -30,10 +30,18 @@
  * which is exactly the behaviour that preceded it.
  */
 import { getCorePool, getProductionFormPool, sql } from "@/lib/db/mssql";
-import { enabledForeignCurrencies, type BrandCurrencyEntry } from "@/lib/acc/currency";
 import {
+  bahtEnabled,
+  enabledClaimCurrencies,
+  enabledForeignCurrencies,
+  type BrandCurrencyEntry,
+} from "@/lib/acc/currency";
+import {
+  brandCurrencyDefaultLogValue,
   brandCurrencyLogValue,
+  BRAND_CURRENCY_DEFAULT_LOG_FIELD,
   BRAND_CURRENCY_LOG_FIELD,
+  LAST_CLAIM_CURRENCY_ERROR,
   type BrandCurrencyAdd,
 } from "@/lib/acc/brand-currency-input";
 
@@ -115,6 +123,23 @@ interface BrandCurrencyRow {
   CountryCode: string | null;
   CurrencyCode: string;
   IsEnabled: boolean;
+  IsDefault: boolean;
+}
+
+/**
+ * `CHAR(2)`/`CHAR(3)` come back space-padded, so every consumer would otherwise
+ * compare `"MYR"` against `"MYR "` — trimmed once, here, where the column shape
+ * is known. Used by the list read and by every write's own locked re-read, so
+ * the two can never disagree about what a row says.
+ */
+function toEntry(r: BrandCurrencyRow): BrandCurrencyEntry {
+  return {
+    id: r.Id,
+    countryCode: (r.CountryCode ?? "").trim().toUpperCase() || null,
+    currencyCode: (r.CurrencyCode ?? "").trim().toUpperCase(),
+    isEnabled: !!r.IsEnabled,
+    isDefault: !!r.IsDefault,
+  };
 }
 
 /**
@@ -165,7 +190,7 @@ export async function listBrandRegistry(): Promise<RegistryBrand[]> {
     // One query for every brand's currencies rather than one per brand: this
     // list is read on every page that shows a brand picker.
     formPool.request().query(`
-      SELECT Id, BrandCode, CountryCode, CurrencyCode, IsEnabled
+      SELECT Id, BrandCode, CountryCode, CurrencyCode, IsEnabled, IsDefault
       FROM [dbo].[BrandCurrency]
       ORDER BY BrandCode, SortOrder, Id
     `),
@@ -176,18 +201,10 @@ export async function listBrandRegistry(): Promise<RegistryBrand[]> {
     settings.set(r.BrandCode, r);
   }
 
-  // CHAR(2)/CHAR(3) come back space-padded, so every consumer would otherwise
-  // be comparing `"MYR"` against `"MYR"` with no padding on one side and some
-  // on the other. Trimmed once, here, where the column shape is known.
   const currencies = new Map<string, BrandCurrencyEntry[]>();
   for (const r of currencyRes.recordset as BrandCurrencyRow[]) {
     const list = currencies.get(r.BrandCode) ?? [];
-    list.push({
-      id: r.Id,
-      countryCode: (r.CountryCode ?? "").trim().toUpperCase() || null,
-      currencyCode: (r.CurrencyCode ?? "").trim().toUpperCase(),
-      isEnabled: !!r.IsEnabled,
-    });
+    list.push(toEntry(r));
     currencies.set(r.BrandCode, list);
   }
 
@@ -347,10 +364,19 @@ export interface BrandCurrencyContext {
   userId: number;
 }
 
-/** The audit row, on the same connection and inside the same transaction. */
+/**
+ * The audit row, on the same connection and inside the same transaction.
+ *
+ * `field` distinguishes the two things that get logged here: a currency row
+ * changing (`BrandCurrency`) and the brand's default moving
+ * (`BrandCurrencyDefault`). One write can produce both — disabling the default
+ * currency changes that row *and* moves the default — and they are two separate
+ * facts, so they are two rows rather than one composite value nobody can query.
+ */
 async function logBrandCurrency(
   tx: sql.Transaction,
   brandCode: string,
+  field: string,
   oldValue: string | null,
   newValue: string | null,
   context: BrandCurrencyContext,
@@ -358,7 +384,7 @@ async function logBrandCurrency(
   await tx
     .request()
     .input("code", sql.NVarChar(40), brandCode)
-    .input("field", sql.NVarChar(40), BRAND_CURRENCY_LOG_FIELD)
+    .input("field", sql.NVarChar(40), field)
     .input("old", sql.NVarChar(100), oldValue)
     .input("new", sql.NVarChar(100), newValue)
     .input("form", sql.NVarChar(20), context.formCode)
@@ -371,10 +397,152 @@ async function logBrandCurrency(
 }
 
 /**
- * Add one currency to a brand. New rows arrive **enabled** — the table's own
- * default — because adding one is a deliberate act naming a currency, unlike
+ * Every row of one brand, locked for the rest of the transaction, in the order
+ * `listBrandRegistry` returns them.
+ *
+ * **The whole brand, not the one row being changed**, because every rule here
+ * is about the set: whether anything is left to claim in, and which row is the
+ * default. `UPDLOCK, HOLDLOCK` over that range is also what serialises two
+ * admins editing the same brand from AP-1's tab and AP-17's at once — without
+ * it, both could read "MYR is still enabled" and each disable a different last
+ * currency.
+ */
+async function lockBrandRows(
+  tx: sql.Transaction,
+  brandCode: string,
+): Promise<BrandCurrencyEntry[]> {
+  const res = await tx
+    .request()
+    .input("code", sql.NVarChar(40), brandCode)
+    .query(`
+      SELECT Id, BrandCode, CountryCode, CurrencyCode, IsEnabled, IsDefault
+      FROM [dbo].[BrandCurrency] WITH (UPDLOCK, HOLDLOCK)
+      WHERE BrandCode = @code
+      ORDER BY SortOrder, Id
+    `);
+  return (res.recordset as BrandCurrencyRow[]).map(toEntry);
+}
+
+/** The brand a row belongs to, locked, or null if somebody removed it first. */
+async function lockBrandCodeOf(tx: sql.Transaction, id: number): Promise<string | null> {
+  const res = await tx
+    .request()
+    .input("id", sql.Int, id)
+    .query(`
+      SELECT BrandCode FROM [dbo].[BrandCurrency] WITH (UPDLOCK, HOLDLOCK) WHERE Id = @id
+    `);
+  const row = res.recordset[0] as { BrandCode: string } | undefined;
+  return row ? row.BrandCode : null;
+}
+
+/**
+ * Refuse a change that would leave the brand with nothing to claim in.
+ *
+ * Applied to the **simulated** result rather than to what is on the table, so
+ * the refusal happens before the write instead of being noticed after it. See
+ * `LAST_CLAIM_CURRENCY_ERROR` for why this is a refusal and not a warning.
+ */
+function assertStillClaimable(next: readonly BrandCurrencyEntry[]): void {
+  if (enabledClaimCurrencies(next).length === 0) {
+    throw new BrandCurrencyError(LAST_CLAIM_CURRENCY_ERROR);
+  }
+}
+
+/** The row currently marked as the brand's default, enabled or not. */
+function markedRow(rows: readonly BrandCurrencyEntry[]): BrandCurrencyEntry | null {
+  for (let i = 0; i < rows.length; i++) if (rows[i].isDefault) return rows[i];
+  return null;
+}
+
+/**
+ * Put the brand's default back in step with what is now enabled, and log the
+ * move if it moved.
+ *
+ * Called after **every** write, with `rows` describing the brand as it now is
+ * and `previous` naming whatever carried the flag before — which may be a row
+ * that has just been deleted, and so is passed in rather than looked for.
+ *
+ * Two rules, in this order:
+ *
+ * 1. **A default that is no longer enabled loses the flag.** Disabling the row
+ *    the form opens on must move the default, not leave it pointing at a
+ *    country the picker will not offer. `defaultCurrencyRow` ignores such a row
+ *    on read as well, so a flag that outlives this by way of a direct SQL edit
+ *    still cannot mislead a requester — this is what keeps the *stored* state
+ *    honest, so the settings page shows what is actually in force.
+ * 2. **With baht switched off, something has to be marked.** Rule 2 of
+ *    `defaultClaimCountry` — "Thailand, whenever it is still offered" — is what
+ *    lets a default be optional, and it is gone the moment a brand stops
+ *    claiming in baht. The first enabled row takes it, which is the same row
+ *    that function would have fallen through to anyway; writing it down makes
+ *    the choice visible on the settings page instead of implicit in a sort
+ *    order.
+ *
+ * With baht still on, nothing is marked in its place: no flag *is* Thailand,
+ * and inventing a marker for the state every brand has been in since migration
+ * 127 would make the log unreadable.
+ */
+async function reconcileDefault(
+  tx: sql.Transaction,
+  brandCode: string,
+  rows: BrandCurrencyEntry[],
+  previous: BrandCurrencyEntry | null,
+  context: BrandCurrencyContext,
+): Promise<void> {
+  let cleared = false;
+  for (const r of rows) {
+    if (r.isDefault && !r.isEnabled) {
+      r.isDefault = false;
+      cleared = true;
+    }
+  }
+  if (cleared) {
+    await tx
+      .request()
+      .input("code", sql.NVarChar(40), brandCode)
+      .query(`
+        UPDATE [dbo].[BrandCurrency]
+        SET IsDefault = 0, UpdatedAt = SYSDATETIME()
+        WHERE BrandCode = @code AND IsDefault = 1 AND IsEnabled = 0
+      `);
+  }
+
+  let marked: BrandCurrencyEntry | null = null;
+  for (const r of rows) if (r.isDefault && r.isEnabled) { marked = r; break; }
+
+  if (!marked && !bahtEnabled(rows)) {
+    for (const r of rows) if (r.isEnabled) { marked = r; break; }
+    if (marked) {
+      marked.isDefault = true;
+      await tx
+        .request()
+        .input("id", sql.Int, marked.id)
+        .query(`
+          UPDATE [dbo].[BrandCurrency]
+          SET IsDefault = 1, UpdatedAt = SYSDATETIME()
+          WHERE Id = @id
+        `);
+    }
+  }
+
+  const was = brandCurrencyDefaultLogValue(previous);
+  const now = brandCurrencyDefaultLogValue(marked);
+  if (was !== now) {
+    await logBrandCurrency(tx, brandCode, BRAND_CURRENCY_DEFAULT_LOG_FIELD, was, now, context);
+  }
+}
+
+/**
+ * Add one currency to a brand. New rows arrive **enabled and not the default**
+ * unless the caller says otherwise — the table's own defaults — because adding
+ * one is a deliberate act naming a currency, unlike
  * `BrandSetting.CurrencyEnabled`, which sat on every brand whether anybody had
  * configured it or not.
+ *
+ * **The two exceptions are both about Thailand**, which has no row until
+ * somebody makes one. Switching baht off, and marking baht as the default, each
+ * have to create that row in the state they want in a single write — see
+ * `BrandCurrencyAdd.isEnabled`.
  *
  * **Duplicates are refused by `UQ_BrandCurrency_Brand_Currency`**, not by a
  * read-then-write here. A check made first is a rule two admins on two tabs
@@ -397,29 +565,79 @@ export async function addBrandCurrency(
   const tx = pool.transaction();
   await tx.begin();
   try {
-    await tx
+    const before = await lockBrandRows(tx, add.brandCode);
+    const previous = markedRow(before);
+
+    // What the brand looks like once this row exists. The guard runs against
+    // that rather than against the table, so a disabled THB row that would
+    // leave nothing claimable is refused before it is written.
+    const after = before.concat([
+      {
+        id: 0,
+        countryCode: add.countryCode,
+        currencyCode: add.currencyCode,
+        isEnabled: add.isEnabled,
+        isDefault: add.isDefault,
+      },
+    ]);
+    assertStillClaimable(after);
+
+    const ins = await tx
       .request()
       .input("code", sql.NVarChar(40), add.brandCode)
       .input("country", sql.Char(2), add.countryCode)
       .input("currency", sql.Char(3), add.currencyCode)
+      .input("enabled", sql.Bit, add.isEnabled)
       .query(`
         INSERT INTO [dbo].[BrandCurrency]
           (BrandCode, CountryCode, CurrencyCode, IsEnabled, SortOrder)
-        SELECT @code, @country, @currency, 1,
+        OUTPUT INSERTED.Id
+        SELECT @code, @country, @currency, @enabled,
                ISNULL((SELECT MAX(SortOrder) + 1 FROM [dbo].[BrandCurrency] WHERE BrandCode = @code), 0)
       `);
+    const newId = Number((ins.recordset[0] as { Id: number }).Id);
+    after[after.length - 1].id = newId;
 
     await logBrandCurrency(
       tx,
       add.brandCode,
+      BRAND_CURRENCY_LOG_FIELD,
       null,
       brandCurrencyLogValue({
         countryCode: add.countryCode,
         currencyCode: add.currencyCode,
-        isEnabled: true,
+        isEnabled: add.isEnabled,
       }),
       context,
     );
+
+    if (add.isDefault) {
+      // Cleared first: `UQ_BrandCurrency_Brand_Default` refuses two, and the
+      // index is the rule rather than this ordering — which is what makes the
+      // ordering checkable instead of merely believed.
+      await tx
+        .request()
+        .input("code", sql.NVarChar(40), add.brandCode)
+        .query(`
+          UPDATE [dbo].[BrandCurrency]
+          SET IsDefault = 0, UpdatedAt = SYSDATETIME()
+          WHERE BrandCode = @code AND IsDefault = 1
+        `);
+      for (const r of after) r.isDefault = false;
+      await tx
+        .request()
+        .input("id", sql.Int, newId)
+        .query(`
+          UPDATE [dbo].[BrandCurrency]
+          SET IsDefault = 1, UpdatedAt = SYSDATETIME()
+          WHERE Id = @id
+        `);
+      after[after.length - 1].isDefault = true;
+    }
+
+    // Adding a disabled THB row switches baht off, which can strand the
+    // default on Thailand — nothing having been marked. This is what moves it.
+    await reconcileDefault(tx, add.brandCode, after, previous, context);
 
     await tx.commit();
   } catch (e) {
@@ -436,12 +654,17 @@ export async function addBrandCurrency(
 /**
  * Switch one configured currency on or off.
  *
- * The row is read under `UPDLOCK, HOLDLOCK` first because the log needs what it
- * *was*, and a value read outside the lock could be stale by the time the update
- * lands — an audit trail stating a transition that never happened is worse than
- * no audit trail. A row already in the requested state writes nothing and logs
- * nothing: a log recording *saves* rather than *changes* cannot answer "when did
- * this last change", which is the only question it exists for.
+ * The brand's rows are read under `UPDLOCK, HOLDLOCK` first because the log
+ * needs what the row *was*, and a value read outside the lock could be stale by
+ * the time the update lands — an audit trail stating a transition that never
+ * happened is worse than no audit trail. A row already in the requested state
+ * writes nothing and logs nothing: a log recording *saves* rather than *changes*
+ * cannot answer "when did this last change", which is the only question it
+ * exists for.
+ *
+ * **Two rules apply to the whole brand rather than to this row**, which is why
+ * every row is read and not just this one: the change is refused if it would
+ * leave nothing to claim in, and the default moves if this was it.
  */
 export async function setBrandCurrencyEnabled(
   id: number,
@@ -452,29 +675,28 @@ export async function setBrandCurrencyEnabled(
   const tx = pool.transaction();
   await tx.begin();
   try {
-    const cur = await tx
-      .request()
-      .input("id", sql.Int, id)
-      .query(`
-        SELECT Id, BrandCode, CountryCode, CurrencyCode, IsEnabled
-        FROM [dbo].[BrandCurrency] WITH (UPDLOCK, HOLDLOCK)
-        WHERE Id = @id
-      `);
-    const row = cur.recordset[0] as BrandCurrencyRow | undefined;
+    const brandCode = await lockBrandCodeOf(tx, id);
+    if (!brandCode) {
+      throw new BrandCurrencyError("ไม่พบสกุลเงินนี้แล้ว — อาจถูกลบไปก่อนหน้านี้");
+    }
+    const rows = await lockBrandRows(tx, brandCode);
+    const row = rows.find((r) => r.id === id) ?? null;
     if (!row) {
-      await tx.rollback();
       throw new BrandCurrencyError("ไม่พบสกุลเงินนี้แล้ว — อาจถูกลบไปก่อนหน้านี้");
     }
 
-    const before = {
-      countryCode: (row.CountryCode ?? "").trim().toUpperCase() || null,
-      currencyCode: (row.CurrencyCode ?? "").trim().toUpperCase(),
-      isEnabled: !!row.IsEnabled,
-    };
+    const before = { ...row };
+    // Read before anything is mutated. Only `isEnabled` changes below, so the
+    // marked row is the same either way — computing it up front makes that true
+    // by construction rather than by inspection.
+    const previous = markedRow(rows);
     if (before.isEnabled === isEnabled) {
       await tx.commit();
       return;
     }
+
+    row.isEnabled = isEnabled;
+    assertStillClaimable(rows);
 
     await tx
       .request()
@@ -488,7 +710,8 @@ export async function setBrandCurrencyEnabled(
 
     await logBrandCurrency(
       tx,
-      row.BrandCode,
+      brandCode,
+      BRAND_CURRENCY_LOG_FIELD,
       brandCurrencyLogValue(before),
       brandCurrencyLogValue({
         countryCode: before.countryCode,
@@ -498,9 +721,88 @@ export async function setBrandCurrencyEnabled(
       context,
     );
 
+    await reconcileDefault(tx, brandCode, rows, previous, context);
+
     await tx.commit();
   } catch (e) {
-    if (!(e instanceof BrandCurrencyError)) await tx.rollback();
+    await tx.rollback();
+    throw e;
+  }
+}
+
+/**
+ * Make one configured currency the brand's default — the country AP-1's form
+ * opens on.
+ *
+ * **Only an enabled row may be it.** The alternative is a default the picker
+ * does not offer, which is the dangling pointer this whole flag exists to
+ * remove. Clearing the old one and setting the new one happen in one
+ * transaction, and `UQ_BrandCurrency_Brand_Default` refuses a second live flag
+ * whatever this code does.
+ *
+ * A row that is already the default writes nothing and logs nothing, for the
+ * reason the enable toggle gives.
+ */
+export async function setBrandCurrencyDefault(
+  id: number,
+  context: BrandCurrencyContext,
+): Promise<void> {
+  const pool = await getProductionFormPool();
+  const tx = pool.transaction();
+  await tx.begin();
+  try {
+    const brandCode = await lockBrandCodeOf(tx, id);
+    if (!brandCode) {
+      throw new BrandCurrencyError("ไม่พบสกุลเงินนี้แล้ว — อาจถูกลบไปก่อนหน้านี้");
+    }
+    const rows = await lockBrandRows(tx, brandCode);
+    const row = rows.find((r) => r.id === id) ?? null;
+    if (!row) {
+      throw new BrandCurrencyError("ไม่พบสกุลเงินนี้แล้ว — อาจถูกลบไปก่อนหน้านี้");
+    }
+    if (!row.isEnabled) {
+      throw new BrandCurrencyError(
+        `กรุณาเปิดใช้งาน ${row.currencyCode} ก่อนตั้งเป็นค่าเริ่มต้น`,
+      );
+    }
+    if (row.isDefault) {
+      await tx.commit();
+      return;
+    }
+
+    const previous = markedRow(rows);
+
+    await tx
+      .request()
+      .input("code", sql.NVarChar(40), brandCode)
+      .query(`
+        UPDATE [dbo].[BrandCurrency]
+        SET IsDefault = 0, UpdatedAt = SYSDATETIME()
+        WHERE BrandCode = @code AND IsDefault = 1
+      `);
+    await tx
+      .request()
+      .input("id", sql.Int, id)
+      .query(`
+        UPDATE [dbo].[BrandCurrency]
+        SET IsDefault = 1, UpdatedAt = SYSDATETIME()
+        WHERE Id = @id
+      `);
+
+    for (const r of rows) r.isDefault = r.id === id;
+
+    await logBrandCurrency(
+      tx,
+      brandCode,
+      BRAND_CURRENCY_DEFAULT_LOG_FIELD,
+      brandCurrencyDefaultLogValue(previous),
+      brandCurrencyDefaultLogValue(row),
+      context,
+    );
+
+    await tx.commit();
+  } catch (e) {
+    await tx.rollback();
     throw e;
   }
 }
@@ -517,8 +819,13 @@ export async function setBrandCurrencyEnabled(
  * records the currency, the country it carried and whether it was live, which is
  * why `BrandSettingLog` carries no FK to this table.
  *
- * Requests already submitted keep their own `AccRequest.Currency` and
- * `ExchangeRate`. Nothing here reprices anything.
+ * **Removing the `THB` row switches baht back on**, since baht is claimable
+ * while no row says otherwise. So this can never be the change that leaves a
+ * brand with nothing to claim in — but the guard is applied all the same,
+ * because that reasoning lives in `bahtEnabled` and not here.
+ *
+ * Requests already submitted keep their own `AccRequest.CountryCode` and each
+ * line's `ExchangeRate`. Nothing here reprices anything.
  */
 export async function removeBrandCurrency(
   id: number,
@@ -528,19 +835,19 @@ export async function removeBrandCurrency(
   const tx = pool.transaction();
   await tx.begin();
   try {
-    const cur = await tx
-      .request()
-      .input("id", sql.Int, id)
-      .query(`
-        SELECT Id, BrandCode, CountryCode, CurrencyCode, IsEnabled
-        FROM [dbo].[BrandCurrency] WITH (UPDLOCK, HOLDLOCK)
-        WHERE Id = @id
-      `);
-    const row = cur.recordset[0] as BrandCurrencyRow | undefined;
-    if (!row) {
-      await tx.rollback();
+    const brandCode = await lockBrandCodeOf(tx, id);
+    if (!brandCode) {
       throw new BrandCurrencyError("ไม่พบสกุลเงินนี้แล้ว — อาจถูกลบไปก่อนหน้านี้");
     }
+    const rows = await lockBrandRows(tx, brandCode);
+    const row = rows.find((r) => r.id === id) ?? null;
+    if (!row) {
+      throw new BrandCurrencyError("ไม่พบสกุลเงินนี้แล้ว — อาจถูกลบไปก่อนหน้านี้");
+    }
+
+    const previous = markedRow(rows);
+    const after = rows.filter((r) => r.id !== id);
+    assertStillClaimable(after);
 
     await tx.request().input("id", sql.Int, id).query(`
       DELETE FROM [dbo].[BrandCurrency] WHERE Id = @id
@@ -548,19 +855,24 @@ export async function removeBrandCurrency(
 
     await logBrandCurrency(
       tx,
-      row.BrandCode,
-      brandCurrencyLogValue({
-        countryCode: (row.CountryCode ?? "").trim().toUpperCase() || null,
-        currencyCode: (row.CurrencyCode ?? "").trim().toUpperCase(),
-        isEnabled: !!row.IsEnabled,
-      }),
+      brandCode,
+      BRAND_CURRENCY_LOG_FIELD,
+      brandCurrencyLogValue(row),
       null,
+      context,
+    );
+
+    await reconcileDefault(
+      tx,
+      brandCode,
+      after,
+      previous,
       context,
     );
 
     await tx.commit();
   } catch (e) {
-    if (!(e instanceof BrandCurrencyError)) await tx.rollback();
+    await tx.rollback();
     throw e;
   }
 }

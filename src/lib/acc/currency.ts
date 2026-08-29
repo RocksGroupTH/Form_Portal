@@ -111,16 +111,41 @@ export interface BrandCurrencyEntry {
   currencyCode: string;
   /** Whether a claim against this brand may be entered in it. */
   isEnabled: boolean;
+  /**
+   * Whether this row is the brand's **default** — the country AP-1's picker
+   * starts on (migration 131).
+   *
+   * **Optional, and absent means "not the default"**, which is the state every
+   * row was in before 131 and the state 131 leaves every existing row in.
+   * Thailand used to be the default by construction; it is now the default
+   * because no row claims to be and baht is still claimable — a rule
+   * `defaultClaimCountry` states once, rather than a special case retyped in
+   * every picker.
+   *
+   * At most one row per brand may carry it. `UQ_BrandCurrency_Brand_Default`, a
+   * filtered unique index, is where that rule lives, for the same reason
+   * `UQ_BrandCurrency_Brand_Currency` holds the no-duplicates one: a check made
+   * in a handler is defeated by two admins on two tabs, and by one replayed
+   * request on its own.
+   */
+  isDefault?: boolean;
 }
 
 /**
  * The currencies a brand actually offers a choice of: enabled, not baht,
  * deduplicated, in the order the rows arrive.
  *
- * **Baht is dropped rather than listed.** It is not a choice — it is always
- * available and always the default — so a `THB` row adds nothing a picker can
- * offer. That is the same reason a brand whose only configured currency is baht
- * offers no choice at all, which `brandCurrencyState` answers `"none"` to.
+ * **Baht is dropped rather than listed.** A line's control asks which *foreign*
+ * money was spent; baht is what the claim is denominated in either way, so a
+ * `THB` row adds nothing a picker can offer. That is the same reason a brand
+ * whose only configured currency is baht offers no choice at all, which
+ * `brandCurrencyState` answers `"none"` to.
+ *
+ * Since migration 131 a `THB` row is not inert, though — it is how baht is
+ * switched **off** for a brand. That question is `bahtEnabled`'s, and this
+ * function deliberately does not answer it: the two are asked in different
+ * places, by the line control and by the country picker respectively, and
+ * folding them together is how one of them would end up wrong.
  *
  * The dedupe is belt and braces over `UQ_BrandCurrency_Brand_Currency`: the
  * constraint is the rule. This only ensures a picker cannot render the same
@@ -140,6 +165,104 @@ export function enabledForeignCurrencies(
     out.push(code);
   }
   return out;
+}
+
+/**
+ * Whether a claim against this brand may be entered in **baht**.
+ *
+ * **An absent `THB` row means yes.** That is not a convenience, it is the only
+ * rule compatible with the rows already in the table: every brand configured
+ * before migration 131 carries foreign rows only, and baht was claimable
+ * against all of them. So switching Thailand off is a deliberate act that
+ * *creates* a `THB` row and disables it, and removing that row restores baht
+ * rather than removing it.
+ *
+ * A brand with no rows at all is therefore baht-only, exactly as before, which
+ * is what keeps both forms pixel-identical for the brands nobody has
+ * configured.
+ */
+export function bahtEnabled(
+  currencies: readonly BrandCurrencyEntry[] | null | undefined,
+): boolean {
+  const list = currencies ?? [];
+  for (let i = 0; i < list.length; i++) {
+    const c = list[i];
+    if (c && norm(c.currencyCode) === THB) return !!c.isEnabled;
+  }
+  return true;
+}
+
+/**
+ * Every currency a claim against this brand may be entered in — baht first
+ * where it is still on, then the enabled foreign codes.
+ *
+ * **Its emptiness is the state a brand must never be left in.** A brand nobody
+ * can claim against is a broken configuration rather than a valid setting, so
+ * the writes in `brand-registry.ts` simulate their change against this and
+ * refuse instead of committing an empty answer.
+ *
+ * It is deliberately *not* what either form's picker reads — those want
+ * `enabledForeignCurrencies`, which drops baht because baht is not one of the
+ * choices a line's control offers.
+ */
+export function enabledClaimCurrencies(
+  currencies: readonly BrandCurrencyEntry[] | null | undefined,
+): string[] {
+  const out: string[] = [];
+  if (bahtEnabled(currencies)) out.push(THB);
+  const foreign = enabledForeignCurrencies(currencies);
+  for (let i = 0; i < foreign.length; i++) out.push(foreign[i]);
+  return out;
+}
+
+/**
+ * The row a brand has marked as its default — **only while that row is still
+ * enabled**.
+ *
+ * A disabled row is never the answer even if its flag outlived the switch: the
+ * flag and the enable state are two columns, and a reader trusting the flag
+ * alone would start a claim on a country the picker no longer offers. The
+ * writes keep the two in step (`reconcileDefault` clears the flag as it
+ * disables a row); this makes a *read* correct even where they have not.
+ *
+ * Null is the ordinary case, not an error: no brand had a default before
+ * migration 131 and none needs one while Thailand is on.
+ */
+export function defaultCurrencyRow(
+  currencies: readonly BrandCurrencyEntry[] | null | undefined,
+): BrandCurrencyEntry | null {
+  const list = currencies ?? [];
+  for (let i = 0; i < list.length; i++) {
+    const c = list[i];
+    if (c && c.isDefault && c.isEnabled && norm(c.currencyCode) !== "") return c;
+  }
+  return null;
+}
+
+/**
+ * Which of a brand's currencies its claims **start** in, as a code — the same
+ * three-step rule `defaultClaimCountry` applies, expressed in currencies so the
+ * settings editor can put a tick beside the right row.
+ *
+ * The settings page must show the default that is actually in force, not only
+ * the one somebody has explicitly marked. Those are usually different: nothing
+ * is marked for any brand configured before migration 131, and baht is the
+ * answer for all of them. A panel that ticked only `isDefault` rows would show
+ * every brand as having no default at all, which is both wrong and unfixable
+ * from the screen.
+ *
+ * `THB` here may name a row that does not exist — see `bahtEnabled`. Null is
+ * only reachable for a brand with nothing enabled, which the writes refuse to
+ * create.
+ */
+export function resolvedDefaultCurrency(
+  currencies: readonly BrandCurrencyEntry[] | null | undefined,
+): string | null {
+  const marked = defaultCurrencyRow(currencies);
+  if (marked) return norm(marked.currencyCode);
+  if (bahtEnabled(currencies)) return THB;
+  const foreign = enabledForeignCurrencies(currencies);
+  return foreign.length > 0 ? foreign[0] : null;
 }
 
 /**

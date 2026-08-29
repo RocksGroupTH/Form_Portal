@@ -5,10 +5,12 @@ import {
   BrandCurrencyError,
   listBrandRegistry,
   removeBrandCurrency,
+  setBrandCurrencyDefault,
   setBrandCurrencyEnabled,
 } from "@/lib/brand-registry";
 import {
   parseBrandCurrencyAdd,
+  parseBrandCurrencyDefault,
   parseBrandCurrencyId,
   parseBrandCurrencyToggle,
 } from "@/lib/acc/brand-currency-input";
@@ -82,19 +84,38 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/** Switch one configured currency on or off. */
+/**
+ * Change one configured currency: switch it on or off, or make it the brand's
+ * default.
+ *
+ * **Two bodies on one method rather than a fifth method.** `{ id, isEnabled }`
+ * and `{ id, isDefault: true }` are the same act — "this row's state changes" —
+ * and the alternative was `PUT` for the default, which reads as "replace the
+ * collection" and is the shape this route deliberately stopped being on
+ * 2026-08-28. The presence of `isDefault` picks the branch; a body carrying
+ * neither is a 400 from `parseBrandCurrencyToggle`.
+ */
 export async function PATCH(req: NextRequest) {
   const session = await requireSettingsTab("brands");
   if (session instanceof Response) return session;
 
   try {
-    const parsed = parseBrandCurrencyToggle(await req.json().catch(() => null));
+    const body = await req.json().catch(() => null);
+    const context = { formCode: AP1_FORM_CODE, userId: Number(session.user.id) };
+
+    if (body && typeof body === "object" && "isDefault" in (body as object)) {
+      const asDefault = parseBrandCurrencyDefault(body);
+      if (!asDefault.ok) {
+        return NextResponse.json({ ok: false, error: asDefault.error }, { status: 400 });
+      }
+      await setBrandCurrencyDefault(asDefault.id, context);
+      return NextResponse.json({ ok: true });
+    }
+
+    const parsed = parseBrandCurrencyToggle(body);
     if (!parsed.ok) return NextResponse.json({ ok: false, error: parsed.error }, { status: 400 });
 
-    await setBrandCurrencyEnabled(parsed.id, parsed.isEnabled, {
-      formCode: AP1_FORM_CODE,
-      userId: Number(session.user.id),
-    });
+    await setBrandCurrencyEnabled(parsed.id, parsed.isEnabled, context);
     return NextResponse.json({ ok: true });
   } catch (err) {
     if (err instanceof BrandCurrencyError) {

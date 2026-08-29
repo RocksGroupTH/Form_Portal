@@ -1,10 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  BRAND_CURRENCY_DEFAULT_LOG_FIELD,
   BRAND_CURRENCY_LOG_FIELD,
+  brandCurrencyDefaultLogValue,
   brandCurrencyLogValue,
   FALLBACK_CURRENCIES,
+  LAST_CLAIM_CURRENCY_ERROR,
   parseBrandCurrencyAdd,
+  parseBrandCurrencyDefault,
   parseBrandCurrencyId,
   parseBrandCurrencyToggle,
   type BrandCurrencyAdd,
@@ -27,6 +31,8 @@ test("an add is trimmed and upper-cased on both codes", () => {
     brandCode: "KSI",
     countryCode: "GB",
     currencyCode: "GBP",
+    isEnabled: true,
+    isDefault: false,
   });
 });
 
@@ -35,6 +41,8 @@ test("the country is optional; the currency is not", () => {
     brandCode: "KSI",
     countryCode: null,
     currencyCode: "GBP",
+    isEnabled: true,
+    isDefault: false,
   });
   for (const empty of [null, undefined, "", "   "]) {
     assert.deepEqual(added({ brandCode: "KSI", countryCode: empty, currencyCode: "GBP" }).countryCode, null);
@@ -163,4 +171,81 @@ test("the fallback currency list is well formed and holds baht", () => {
     seen[c.code] = true;
   }
   assert.ok(seen.THB);
+});
+
+/* ── The default flag, and the rate-source gate (migration 131) ──────────── */
+
+/**
+ * Refused at configuration time rather than on the requester's form. A currency
+ * the reference source will not quote produces a claim that can be started and
+ * never converted, and the admin is the only person who can act on that.
+ */
+test("a currency the rate source will not quote is refused", () => {
+  // Ten countries were dropped from COUNTRIES for exactly this reason.
+  for (const gone of ["KHR", "LAK", "VND", "MMK", "TWD", "AED", "RUB"]) {
+    assert.match(refusedAdd({ brandCode: "KSI", currencyCode: gone }), /แหล่งอัตราอ้างอิง/);
+  }
+  // …while every code the source does quote is accepted, baht included.
+  assert.equal(added({ brandCode: "KSI", currencyCode: "THB" }).currencyCode, "THB");
+  assert.equal(added({ brandCode: "KSI", currencyCode: "NOK" }).currencyCode, "NOK");
+});
+
+/**
+ * Adding baht as a real row is how a brand switches Thailand off, and the row
+ * has to arrive already disabled — an add followed by a toggle would leave the
+ * brand momentarily claimable in a currency the admin had just refused.
+ */
+test("an add carries its own enabled and default state", () => {
+  assert.equal(added({ brandCode: "KSI", currencyCode: "THB" }).isEnabled, true);
+  assert.equal(added({ brandCode: "KSI", currencyCode: "THB", isEnabled: false }).isEnabled, false);
+  assert.equal(added({ brandCode: "KSI", currencyCode: "THB", isDefault: true }).isDefault, true);
+  // Absent, null and anything non-boolean all mean the table's own default.
+  for (const empty of [null, undefined]) {
+    assert.equal(added({ brandCode: "KSI", currencyCode: "THB", isEnabled: empty }).isEnabled, true);
+  }
+  assert.equal(added({ brandCode: "KSI", currencyCode: "THB", isDefault: "yes" }).isDefault, false);
+});
+
+/** The dangling pointer, refused at the door rather than quietly corrected. */
+test("a disabled row cannot arrive as the default", () => {
+  assert.match(
+    refusedAdd({ brandCode: "KSI", currencyCode: "THB", isEnabled: false, isDefault: true }),
+    /ปิดใช้งาน/,
+  );
+});
+
+/**
+ * There is deliberately no "clear the default": a brand always has one, and it
+ * is chosen by naming a different row.
+ */
+test("only an explicit isDefault:true is a default change", () => {
+  const ok = parseBrandCurrencyDefault({ id: 7, isDefault: true });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.ok ? ok.id : 0, 7);
+  assert.equal(parseBrandCurrencyDefault({ id: 7, isDefault: false }).ok, false);
+  assert.equal(parseBrandCurrencyDefault({ id: 7 }).ok, false);
+  assert.equal(parseBrandCurrencyDefault({ id: 0, isDefault: true }).ok, false);
+  assert.equal(parseBrandCurrencyDefault({ id: "x", isDefault: true }).ok, false);
+  assert.equal(parseBrandCurrencyDefault(null).ok, false);
+});
+
+/**
+ * Its own log value, and no enable flag on it: a default is only ever an
+ * enabled row, so a third part could carry one value and would say nothing.
+ */
+test("the default log value names the currency and its country, or nothing", () => {
+  assert.equal(brandCurrencyDefaultLogValue({ countryCode: "MY", currencyCode: "MYR" }), "MYR (MY)");
+  assert.equal(brandCurrencyDefaultLogValue({ countryCode: null, currencyCode: "myr" }), "MYR (-)");
+  assert.equal(brandCurrencyDefaultLogValue(null), "-");
+  assert.ok(brandCurrencyDefaultLogValue({ countryCode: "MY", currencyCode: "MYR" }).length <= 100);
+});
+
+test("the two log fields are distinct and fit the column", () => {
+  assert.notEqual(BRAND_CURRENCY_LOG_FIELD, BRAND_CURRENCY_DEFAULT_LOG_FIELD);
+  assert.ok(BRAND_CURRENCY_DEFAULT_LOG_FIELD.length <= 40);
+});
+
+/** A brand nobody can claim against is a broken configuration, not a setting. */
+test("the last-currency refusal is Thai and names the remedy", () => {
+  assert.match(LAST_CLAIM_CURRENCY_ERROR, /อย่างน้อยหนึ่งสกุล/);
 });

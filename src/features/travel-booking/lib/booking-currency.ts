@@ -50,7 +50,17 @@ export interface BookingCurrencyBrand {
  * re-deriving the rule.
  *
  * The brand's first currency leads the list **and** is the default — unlike
- * AP-1, where baht is the default and the brand's currencies merely lead.
+ * AP-1, where the brand's own default decides and baht is where that lands
+ * when nothing is marked.
+ *
+ * **Baht is appended even for a brand that has switched Thailand off**
+ * (migration 131), and that is deliberate rather than an oversight. The `THB`
+ * row answers "may an AP-1 claim be *filed from* Thailand"; this toggle answers
+ * "is the invoice on the desk denominated in baht", which is a fact about a
+ * document rather than a permission. A hotel in Kuala Lumpur that bills in baht
+ * still has to be recordable, and refusing it would leave the desk unable to
+ * enter what it is holding. AP-1's country picker is where the brand's decision
+ * is enforced.
  */
 export function bookingCurrencyOptions(
   brand: BookingCurrencyBrand | null | undefined,

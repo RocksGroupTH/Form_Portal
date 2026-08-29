@@ -24,20 +24,44 @@
  * to one country, and what the country decides is which currencies a line may
  * be entered in.
  *
- * Thailand is the default and offers no choice at all: `lineCurrencyOptions`
- * answers `[]`, every line resolves to baht, and the form renders precisely the
- * markup it rendered before any of this existed. That is the promise most likely
- * to be broken by a later edit, so it is one predicate rather than a condition
- * retyped per surface.
+ * Thailand offers no choice at all: `lineCurrencyOptions` answers `[]`, every
+ * line resolves to baht, and the form renders precisely the markup it rendered
+ * before any of this existed. That is the promise most likely to be broken by a
+ * later edit, so it is one predicate rather than a condition retyped per
+ * surface.
+ *
+ * ── Which country the picker starts on ──
+ *
+ * Thailand *was* the default by construction — it was hard-coded first and
+ * unconditional. Since migration 131 a brand may switch baht off, so there has
+ * to be somewhere else to start, and the answer is a **row marked as the
+ * brand's default** rather than a second special case beside the Thai one.
+ * `defaultClaimCountry` is the single definition: a marked, enabled row wins;
+ * otherwise Thailand while it is still offered; otherwise the first country the
+ * brand does offer. A brand nobody has configured therefore still answers `TH`
+ * through the same code path everything else uses.
  */
 
-import { enabledForeignCurrencies, isBaht, toBaht, THB, type BrandCurrencyEntry } from "@/lib/acc/currency";
+import {
+  bahtEnabled,
+  defaultCurrencyRow,
+  enabledForeignCurrencies,
+  isBaht,
+  toBaht,
+  THB,
+  type BrandCurrencyEntry,
+} from "@/lib/acc/currency";
 import { COUNTRIES, currencyForCountry } from "@/lib/acc/country-currency";
 
 /**
- * Thailand. The default country of every claim, and the one that must always be
- * offered — a brand configured for nothing but ringgit still files Thai claims,
- * which are almost all of them.
+ * Thailand — the country almost every claim is filed from, and the fallback
+ * every other rule here ends at.
+ *
+ * It is **no longer unconditional**. A brand configured for nothing but ringgit
+ * still files Thai claims, and that is still the default; but migration 131
+ * lets an admin say a brand does *not*, by carrying a disabled `THB` row. When
+ * they do, `claimCountryOptions` leaves Thailand out and `defaultClaimCountry`
+ * starts the picker somewhere the brand actually offers.
  */
 export const DEFAULT_COUNTRY = "TH";
 
@@ -90,8 +114,9 @@ function norm(code: string | null | undefined): string {
 }
 
 /**
- * The countries a claim against this brand may be filed from: **Thailand first,
- * then every country whose currency the brand actually offers.**
+ * The countries a claim against this brand may be filed from: **Thailand first
+ * where the brand still claims in baht, then every country whose currency the
+ * brand offers.**
  *
  * A brand only claims where it is set up to claim, so the list is
  * `BrandCurrency` (migration 127) read back through the country table rather
@@ -99,15 +124,24 @@ function norm(code: string | null | undefined): string {
  * — EUR gives the Netherlands, France, Germany, Spain and Italy — which is the
  * point: the requester names where they went, and the currency follows.
  *
- * Thailand is unconditional and first. A brand with nothing configured
- * therefore offers exactly one country, and `claimCountryOptions(...).length <= 1`
- * is what the form uses to render no picker at all.
+ * Thailand leads whenever it is there, and it is there unless a disabled `THB`
+ * row says otherwise (`bahtEnabled`, migration 131). A brand with nothing
+ * configured therefore offers exactly one country, and
+ * `claimCountryOptions(...).length <= 1` is what the form uses to render no
+ * picker at all — which is now also the answer for a brand claiming in one
+ * foreign currency and no baht.
+ *
+ * **The list is never empty for a brand the settings editor produced**: those
+ * writes refuse to leave a brand with nothing enabled. It can still be empty
+ * here — a row edited directly in SQL — and every caller treats that as
+ * Thailand rather than as a form with no country at all.
  */
 export function claimCountryOptions(
   brand: ClaimCurrencyBrand | null | undefined,
 ): string[] {
   const foreign = enabledForeignCurrencies(brand?.currencies);
-  const out: string[] = [DEFAULT_COUNTRY];
+  const out: string[] = [];
+  if (bahtEnabled(brand?.currencies)) out.push(DEFAULT_COUNTRY);
   for (let i = 0; i < COUNTRIES.length; i++) {
     const c = COUNTRIES[i];
     if (c.code === DEFAULT_COUNTRY) continue;
@@ -117,23 +151,70 @@ export function claimCountryOptions(
 }
 
 /**
+ * The country a claim against this brand **starts on** — what the picker
+ * preselects, and what an unanswered or no-longer-offered choice falls back to.
+ *
+ * Three steps, in order, and the first two are the whole feature:
+ *
+ * 1. **A row marked as the brand's default**, while it is still enabled and
+ *    still yields a country the brand offers. The row's own `countryCode` wins
+ *    — several countries can share a currency and the admin picked one of them
+ *    — and its currency is read back through the country table only where that
+ *    code is missing or no longer offered.
+ * 2. **Thailand**, whenever it is still offered. This is what makes marking a
+ *    default *optional*: a brand claiming in baht needs no flag set, and every
+ *    brand configured before migration 131 is in exactly that state.
+ * 3. **The first country the brand does offer** — the answer once baht is off
+ *    and nothing is marked, which the settings editor tries not to leave behind
+ *    but a direct SQL edit can.
+ *
+ * `DEFAULT_COUNTRY` is the last resort rather than a fourth step: it is reached
+ * only for a brand offering nothing at all, and a form has to open on some
+ * country.
+ */
+export function defaultClaimCountry(
+  brand: ClaimCurrencyBrand | null | undefined,
+): string {
+  const options = claimCountryOptions(brand);
+  if (options.length === 0) return DEFAULT_COUNTRY;
+
+  const marked = defaultCurrencyRow(brand?.currencies);
+  if (marked) {
+    const own = norm(marked.countryCode);
+    if (own !== "" && options.indexOf(own) !== -1) return own;
+    const code = norm(marked.currencyCode);
+    for (let i = 0; i < options.length; i++) {
+      if (currencyForCountry(options[i]) === code) return options[i];
+    }
+  }
+
+  if (options.indexOf(DEFAULT_COUNTRY) !== -1) return DEFAULT_COUNTRY;
+  return options[0];
+}
+
+/**
  * The country a claim is actually filed from, given what the form holds and
  * what the brand offers.
  *
- * **Always Thailand unless the brand still offers exactly this country.** That
- * is what makes an admin switching a `BrandCurrency` row off — or removing it —
- * recoverable rather than a trap: a draft still holding `MY` resolves to `TH`
- * here, every line resolves to baht with it, and the next save succeeds.
- * Without it the form would post a country the server refuses, with no control
- * on screen to change it.
+ * **The brand's default unless the brand still offers exactly this country.**
+ * That is what makes an admin switching a `BrandCurrency` row off — or removing
+ * it — recoverable rather than a trap: a draft still holding `MY` resolves to
+ * something the brand does offer, every line resolves with it, and the next
+ * save succeeds. Without it the form would post a country the server refuses,
+ * with no control on screen to change it.
+ *
+ * **A blank selection is not a choice of Thailand.** It is what a new claim
+ * holds before anybody has answered, and it must land on the brand's default —
+ * which is why the form seeds its state with `""` rather than with `"TH"`. The
+ * two were the same answer until migration 131 and are not any more.
  */
 export function effectiveClaimCountry(
   selected: string | null | undefined,
   brand: ClaimCurrencyBrand | null | undefined,
 ): string {
   const want = norm(selected);
-  if (want === "" || want === DEFAULT_COUNTRY) return DEFAULT_COUNTRY;
-  return claimCountryOptions(brand).indexOf(want) === -1 ? DEFAULT_COUNTRY : want;
+  if (want !== "" && claimCountryOptions(brand).indexOf(want) !== -1) return want;
+  return defaultClaimCountry(brand);
 }
 
 /**

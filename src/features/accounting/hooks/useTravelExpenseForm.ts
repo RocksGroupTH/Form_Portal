@@ -110,8 +110,8 @@ interface UseTravelExpenseFormResult {
   setBrandCode: (code: string | null) => void;
 
   /**
-   * The country this trip was to — always one of `countryOptions`, and `"TH"`
-   * whenever that list holds nothing else.
+   * The country this trip was to — always one of `countryOptions`, and the
+   * brand's own default whenever nothing else has been answered.
    *
    * Derived rather than stored raw, so a brand whose currency an admin has since
    * switched off can never leave the form posting a country the server refuses
@@ -120,9 +120,11 @@ interface UseTravelExpenseFormResult {
   countryCode: string;
   setCountryCode: (code: string) => void;
   /**
-   * The countries the picker offers. **Thailand alone means render nothing** —
-   * a brand with no currency configured must leave this form exactly as it
-   * looked before the feature shipped.
+   * The countries the picker offers. **One option means render nothing** — for
+   * a brand with no currency configured that option is Thailand, and the form
+   * looks exactly as it did before the feature shipped; for a brand claiming in
+   * one foreign currency and no baht it is that country, and there is still
+   * nothing to choose between.
    */
   countryOptions: string[];
   /**
@@ -301,8 +303,15 @@ export function useTravelExpenseForm(
   );
   // What the user picked. `countryCode` below is this reconciled against what
   // the brand actually offers — never this value raw.
+  //
+  // **Blank, not `"TH"`, for a claim nobody has answered yet.** The two were
+  // the same thing until migration 131; they are not now, because a brand may
+  // switch baht off and open on somewhere else. Seeding `"TH"` would look like
+  // a deliberate choice of Thailand and beat the brand's own default wherever
+  // Thailand happened to still be offered. `effectiveClaimCountry` reads blank
+  // as "unanswered" and answers `defaultClaimCountry`.
   const [pickedCountry, setPickedCountry] = useState<string>(
-    initial?.countryCode ?? DEFAULT_COUNTRY,
+    initial?.countryCode ?? "",
   );
 
   const activeIndex = Math.min(activeDayIndex, Math.max(0, travelDays.length - 1));
@@ -726,10 +735,11 @@ export function useTravelExpenseForm(
       const json: { ok: boolean; data?: AccRequest; error?: string } = await res.json();
       if (!json.ok || !json.data) return;
       // The country as the **server** reconciled it. A draft naming one the
-      // brand no longer offers comes back as Thailand, so the picker and the
-      // stored row cannot disagree after a save. Each line's own currency and
-      // rate arrive with the items below.
-      setPickedCountry((json.data.countryCode ?? DEFAULT_COUNTRY).trim().toUpperCase());
+      // brand no longer offers comes back as the brand's default, so the picker
+      // and the stored row cannot disagree after a save. Each line's own
+      // currency and rate arrive with the items below. A null lands as blank,
+      // which is "unanswered" and resolves to that same default.
+      setPickedCountry((json.data.countryCode ?? "").trim().toUpperCase());
       const days = json.data.travelDays?.length
         ? json.data.travelDays
         : json.data.travel

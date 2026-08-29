@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   DEFAULT_COUNTRY,
   claimCountryOptions,
+  defaultClaimCountry,
   effectiveClaimCountry,
   effectiveLineCurrency,
   lineCurrencyOptions,
@@ -330,4 +331,126 @@ test("the input shows what was typed, from whichever field holds it", () => {
   // Unanswered, and written before the claim was foreign: `amount` holds it.
   // Showing 0 would take money off a form its owner had already filled in.
   assert.equal(typedLineFigure({ amount: 55 }, opts), 55);
+});
+
+/* ── Switching Thailand off, and the default that replaces it (131) ──────── */
+
+function withDefault(
+  code: string,
+  countryCode: string | null,
+  id = 9,
+): BrandCurrencyEntry {
+  return { id, countryCode, currencyCode: code, isEnabled: true, isDefault: true };
+}
+
+/** A disabled THB row is the only thing that takes Thailand off the picker. */
+const NO_BAHT = {
+  currencies: [
+    { id: 1, countryCode: "TH", currencyCode: "THB", isEnabled: false } as BrandCurrencyEntry,
+    entry("MYR", true, 2),
+  ],
+};
+
+/** An *enabled* THB row changes nothing — baht was always claimable. */
+const EXPLICIT_BAHT = {
+  currencies: [
+    { id: 1, countryCode: "TH", currencyCode: "THB", isEnabled: true } as BrandCurrencyEntry,
+    entry("MYR", true, 2),
+  ],
+};
+
+test("a disabled THB row takes Thailand off the picker", () => {
+  assert.deepEqual(claimCountryOptions(NO_BAHT), ["MY"]);
+});
+
+test("an enabled THB row leaves the picker exactly as it was", () => {
+  assert.deepEqual(claimCountryOptions(EXPLICIT_BAHT), ["TH", "MY"]);
+});
+
+/**
+ * The reason a default had to exist at all: with Thailand off there is nowhere
+ * to fall back to, and the picker has to open on something the brand offers.
+ */
+test("with baht off the form opens on what the brand does offer", () => {
+  assert.equal(defaultClaimCountry(NO_BAHT), "MY");
+  assert.equal(effectiveClaimCountry(null, NO_BAHT), "MY");
+  assert.equal(effectiveClaimCountry("", NO_BAHT), "MY");
+  // A draft written while Thailand was still on, or a hand-made body.
+  assert.equal(effectiveClaimCountry("TH", NO_BAHT), "MY");
+});
+
+test("Thailand stays the default wherever it is offered and nothing is marked", () => {
+  assert.equal(defaultClaimCountry(NOTHING), "TH");
+  assert.equal(defaultClaimCountry(MYR), "TH");
+  assert.equal(defaultClaimCountry(EXPLICIT_BAHT), "TH");
+  assert.equal(defaultClaimCountry(null), "TH");
+});
+
+/**
+ * A marked row wins over Thailand even where Thailand is still on: that is the
+ * whole point of being able to mark one.
+ */
+test("a marked row wins over Thailand", () => {
+  const brand = { currencies: [withDefault("MYR", "MY", 1)] };
+  assert.deepEqual(claimCountryOptions(brand), ["TH", "MY"]);
+  assert.equal(defaultClaimCountry(brand), "MY");
+  assert.equal(effectiveClaimCountry("", brand), "MY");
+  // …and an explicit choice of Thailand is still honoured, because it is offered.
+  assert.equal(effectiveClaimCountry("TH", brand), "TH");
+});
+
+/**
+ * One currency, several countries. The row records which of them the admin
+ * picked, so `EUR` marked from Germany does not open the form on the
+ * Netherlands merely because that sorts first.
+ */
+test("the marked row's own country decides, not the first that shares its currency", () => {
+  assert.equal(defaultClaimCountry({ currencies: [withDefault("EUR", "DE", 1)] }), "DE");
+  // With no country recorded, the currency is read back through the table and
+  // the first offered country answers.
+  assert.equal(defaultClaimCountry({ currencies: [withDefault("EUR", null, 1)] }), "NL");
+});
+
+/**
+ * The dangling pointer this feature exists to remove. `reconcileDefault` clears
+ * such a flag as it disables the row; this proves a *read* is correct even
+ * where that has not happened — a row edited directly in SQL.
+ */
+test("a default flag on a disabled row is ignored, not followed", () => {
+  const brand = {
+    currencies: [
+      { id: 1, countryCode: "MY", currencyCode: "MYR", isEnabled: false, isDefault: true } as BrandCurrencyEntry,
+      entry("GBP", true, 2),
+    ],
+  };
+  assert.deepEqual(claimCountryOptions(brand), ["TH", "GB"]);
+  assert.equal(defaultClaimCountry(brand), "TH");
+});
+
+/**
+ * Both halves of the "pixel-identical" promise, restated against the default:
+ * a brand nobody has configured offers one country and opens on it, so the
+ * picker still renders nothing.
+ */
+test("an unconfigured brand still offers exactly Thailand", () => {
+  assert.deepEqual(claimCountryOptions(NOTHING), ["TH"]);
+  assert.equal(defaultClaimCountry(NOTHING), DEFAULT_COUNTRY);
+  assert.equal(effectiveClaimCountry("", NOTHING), DEFAULT_COUNTRY);
+});
+
+/**
+ * A brand nobody can claim against is what the settings writes refuse to
+ * create. If one reaches a form anyway, it must open somewhere rather than on
+ * nothing.
+ */
+test("a brand offering nothing still answers Thailand", () => {
+  const broken = {
+    currencies: [
+      { id: 1, countryCode: "TH", currencyCode: "THB", isEnabled: false } as BrandCurrencyEntry,
+      entry("MYR", false, 2),
+    ],
+  };
+  assert.deepEqual(claimCountryOptions(broken), []);
+  assert.equal(defaultClaimCountry(broken), DEFAULT_COUNTRY);
+  assert.equal(effectiveClaimCountry("MY", broken), DEFAULT_COUNTRY);
 });

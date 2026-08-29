@@ -1,7 +1,7 @@
 /**
- * Parsing and validating the three writes AP-1's and AP-17's แบรนด์ที่เบิกได้ tab
- * makes against `BrandCurrency` — add a currency, switch one on or off, remove
- * one.
+ * Parsing and validating the four writes AP-1's and AP-17's แบรนด์ที่เบิกได้ tab
+ * makes against `BrandCurrency` — add a currency, switch one on or off, make one
+ * the brand's default, and remove one.
  *
  * Imports only `./country-currency`, which itself imports nothing, so this is
  * still unit-tested without a database — anything reachable from a pool drags
@@ -24,7 +24,7 @@
  * rule (migration 127) and the handler translates its violation; a check in this
  * module would be a second, weaker answer that two admins on two tabs defeat.
  */
-import { isKnownCountry } from "./country-currency";
+import { isKnownCountry, isRateSourceCurrency } from "./country-currency";
 
 /** What an add posts: which brand, which currency, and the country it came from. */
 export interface BrandCurrencyAdd {
@@ -33,6 +33,28 @@ export interface BrandCurrencyAdd {
   countryCode: string | null;
   /** ISO-4217, upper case. Required — adding a row names a currency. */
   currencyCode: string;
+  /**
+   * Whether the new row is live. Defaults to **true** — adding a currency is a
+   * deliberate act naming one, which is why `BrandCurrency.IsEnabled` defaults
+   * to 1 as well.
+   *
+   * `false` exists for exactly one gesture, and it is the reason this field is
+   * here at all: **switching Thailand off for a brand that has no `THB` row**.
+   * Baht is claimable while no row says otherwise (`bahtEnabled`), so turning
+   * it off means creating the row already disabled. Doing that as an add
+   * followed by a toggle would be two requests, and the brand would be
+   * momentarily claimable in a currency the admin had just refused.
+   */
+  isEnabled: boolean;
+  /**
+   * Whether the new row becomes the brand's default at the same time.
+   *
+   * Same argument as `isEnabled`: the settings panel offers Thailand as a
+   * default even for a brand with no `THB` row, and choosing it has to create
+   * that row *and* mark it in one atomic write rather than leaving a window
+   * where the row exists and the default has moved nowhere.
+   */
+  isDefault: boolean;
 }
 
 export type BrandCurrencyAddParse =
@@ -96,7 +118,54 @@ export function parseBrandCurrencyAdd(body: unknown): BrandCurrencyAddParse {
   }
   if (currency === null) return { ok: false, error: "กรุณาเลือกสกุลเงิน" };
 
-  return { ok: true, value: { brandCode, countryCode: country, currencyCode: currency } };
+  // Refused HERE rather than on the requester's form. A currency the reference
+  // source will not quote produces a claim that can be started and never
+  // converted — `resolveRate` answers null, `toBaht` refuses, and the person is
+  // told so only after choosing the country. The admin configuring it is the
+  // one who can act on the message, so this is where it belongs. The panel
+  // greys such a code out too; this is the rule, that is the courtesy.
+  if (!isRateSourceCurrency(currency)) {
+    return {
+      ok: false,
+      error: `ไม่พบ ${currency} ในแหล่งอัตราอ้างอิง — ระบบจะแปลงเป็นเงินบาทให้ไม่ได้ กรุณาเลือกสกุลเงินอื่น`,
+    };
+  }
+
+  // Absent means live, which is what every add before migration 131 meant.
+  const isEnabled = b.isEnabled === undefined || b.isEnabled === null ? true : b.isEnabled === true;
+  const isDefault = b.isDefault === true;
+
+  // A disabled default is the dangling pointer this feature exists to remove,
+  // so it is refused at the door rather than quietly corrected. Nothing the
+  // panel can do produces it — the radio is only offered on a live row — which
+  // is exactly why it must be a rule and not a UI habit.
+  if (isDefault && !isEnabled) {
+    return { ok: false, error: "สกุลเงินที่ปิดใช้งานอยู่ตั้งเป็นค่าเริ่มต้นไม่ได้" };
+  }
+
+  return {
+    ok: true,
+    value: { brandCode, countryCode: country, currencyCode: currency, isEnabled, isDefault },
+  };
+}
+
+/**
+ * The id out of a `{ id, isDefault: true }` PATCH — "make this row the brand's
+ * default".
+ *
+ * **Only `true` is accepted.** There is no "clear the default": a brand always
+ * has one, and it is chosen by naming a different row. Accepting `false` would
+ * create a state the picker has to invent an answer for, which is exactly the
+ * dangling pointer this feature exists to remove.
+ */
+export function parseBrandCurrencyDefault(body: unknown): BrandCurrencyIdParse {
+  const b = (body ?? {}) as Record<string, unknown>;
+  if (b.isDefault !== true) {
+    return { ok: false, error: "ค่าเริ่มต้นของสกุลเงินไม่ถูกต้อง" };
+  }
+  const id = parseId(b.id);
+  if (id === null) return { ok: false, error: "ไม่พบรายการสกุลเงินที่ต้องการตั้งเป็นค่าเริ่มต้น" };
+  return { ok: true, id };
 }
 
 /** `BrandCurrency.Id` out of a body or a query string, or the Thai 400. */
@@ -144,8 +213,53 @@ export function brandCurrencyLogValue(row: {
   return `${row.currencyCode.trim().toUpperCase()} (${country}) ${row.isEnabled ? "1" : "0"}`;
 }
 
-/** The single `BrandSettingLog.Field` value every `BrandCurrency` write uses. */
+/** The `BrandSettingLog.Field` value an add, a toggle or a removal writes. */
 export const BRAND_CURRENCY_LOG_FIELD = "BrandCurrency";
+
+/**
+ * The `BrandSettingLog.Field` value a **default** change writes.
+ *
+ * Its own field rather than a fourth part on `brandCurrencyLogValue`, because
+ * the two answer different questions and one of them is asked far more often:
+ * "when did this brand's currencies last change" reads `BrandCurrency`, and
+ * "why does this form open on Malaysia" reads `BrandCurrencyDefault`. Widening
+ * the existing value would also silently change what every row written since
+ * 2026-08-28 means.
+ */
+export const BRAND_CURRENCY_DEFAULT_LOG_FIELD = "BrandCurrencyDefault";
+
+/**
+ * How a default change is written into `BrandSettingLog`'s `OldValue` /
+ * `NewValue`: `MYR (MY)`, or `-` for none.
+ *
+ * No enable flag, unlike `brandCurrencyLogValue` — a default is only ever an
+ * enabled row, so a third part could carry only one value and would say
+ * nothing. `-` covers the honest "nothing was marked", which is where every
+ * brand starts and is not the same as Thailand having been chosen.
+ */
+export function brandCurrencyDefaultLogValue(
+  row: { countryCode: string | null; currencyCode: string } | null,
+): string {
+  if (!row) return "-";
+  const country = (row.countryCode ?? "").trim().toUpperCase() || "-";
+  return `${row.currencyCode.trim().toUpperCase()} (${country})`;
+}
+
+/**
+ * The refusal when a change would leave a brand with nothing to claim in.
+ *
+ * **A brand nobody can file against is a broken configuration, not a valid
+ * state**, so this is a refusal rather than a warning: removing or disabling
+ * the last enabled currency answers 400 and changes nothing. The alternative —
+ * letting it happen and having the forms cope — means every picker downstream
+ * needs an answer for "no currencies at all", and each one would invent its
+ * own.
+ *
+ * Note what it is *not*: a rule that Thailand must stay on. A brand may claim
+ * in ringgit alone. What it cannot do is claim in nothing.
+ */
+export const LAST_CLAIM_CURRENCY_ERROR =
+  "แบรนด์ต้องมีสกุลเงินที่เปิดใช้งานอย่างน้อยหนึ่งสกุล — กรุณาเปิดใช้งานสกุลเงินอื่นก่อน";
 
 /**
  * The currency list to offer when the FX source cannot be reached.

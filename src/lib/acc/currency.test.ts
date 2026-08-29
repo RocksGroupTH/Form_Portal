@@ -2,12 +2,17 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   THB,
+  bahtEnabled,
+  defaultCurrencyRow,
+  enabledClaimCurrencies,
   isBaht,
+  resolvedDefaultCurrency,
   toBaht,
   admitModelCurrency,
   brandCurrencyState,
   enabledForeignCurrencies,
   sameCurrency,
+  type BrandCurrencyEntry,
 } from "./currency";
 
 test("null, empty and THB all mean baht", () => {
@@ -150,4 +155,104 @@ test("sameCurrency treats null, empty and THB as one currency", () => {
   assert.equal(sameCurrency("MYR", THB), false);
   assert.equal(sameCurrency("MYR", null), false);
   assert.equal(sameCurrency("MYR", "USD"), false);
+});
+
+/* ── The default a brand's claims start in (migration 131) ───────────────── */
+
+function row(
+  code: string,
+  isEnabled: boolean,
+  extra: { id?: number; countryCode?: string | null; isDefault?: boolean } = {},
+): BrandCurrencyEntry {
+  return {
+    id: extra.id ?? 1,
+    countryCode: extra.countryCode ?? null,
+    currencyCode: code,
+    isEnabled,
+    isDefault: extra.isDefault,
+  };
+}
+
+/**
+ * The rule that makes every brand configured before 131 behave exactly as it
+ * did: baht is claimable while no row says otherwise.
+ */
+test("baht is claimable unless an explicit THB row is switched off", () => {
+  assert.equal(bahtEnabled([]), true);
+  assert.equal(bahtEnabled(null), true);
+  assert.equal(bahtEnabled(undefined), true);
+  assert.equal(bahtEnabled([row("MYR", true)]), true);
+  assert.equal(bahtEnabled([row("MYR", false)]), true);
+  assert.equal(bahtEnabled([row("THB", true)]), true);
+  assert.equal(bahtEnabled([row("THB", false)]), false);
+  assert.equal(bahtEnabled([row("THB", false, { id: 1 }), row("MYR", true, { id: 2 })]), false);
+});
+
+/** Padding and case are the shapes `CHAR(3)` actually hands back. */
+test("bahtEnabled recognises a THB row however it is spelt", () => {
+  assert.equal(bahtEnabled([row(" thb ", false)]), false);
+});
+
+test("the claim currencies are baht first, then the enabled foreign codes", () => {
+  assert.deepEqual(enabledClaimCurrencies([]), ["THB"]);
+  assert.deepEqual(enabledClaimCurrencies([row("MYR", true)]), ["THB", "MYR"]);
+  assert.deepEqual(
+    enabledClaimCurrencies([row("THB", false, { id: 1 }), row("MYR", true, { id: 2 })]),
+    ["MYR"],
+  );
+  assert.deepEqual(enabledClaimCurrencies([row("MYR", false)]), ["THB"]);
+});
+
+/**
+ * The state the settings writes refuse to create, and the only one for which
+ * this list is empty. It is asserted here because `assertStillClaimable` is
+ * defined in terms of it.
+ */
+test("a brand with baht off and nothing else enabled can claim in nothing", () => {
+  assert.deepEqual(
+    enabledClaimCurrencies([row("THB", false, { id: 1 }), row("MYR", false, { id: 2 })]),
+    [],
+  );
+});
+
+test("a marked default only counts while its row is enabled", () => {
+  const on = row("MYR", true, { id: 7, countryCode: "MY", isDefault: true });
+  assert.equal(defaultCurrencyRow([on])?.id, 7);
+  assert.equal(defaultCurrencyRow([row("MYR", false, { id: 7, isDefault: true })]), null);
+  assert.equal(defaultCurrencyRow([row("MYR", true, { id: 7 })]), null);
+  assert.equal(defaultCurrencyRow([]), null);
+  assert.equal(defaultCurrencyRow(null), null);
+});
+
+/**
+ * What the settings panel ticks. It has to be the default **in force**, not the
+ * one somebody flagged: no brand configured before migration 131 carries a flag
+ * at all, and baht is the answer for every one of them.
+ */
+test("the resolved default is baht until something says otherwise", () => {
+  assert.equal(resolvedDefaultCurrency([]), "THB");
+  assert.equal(resolvedDefaultCurrency([row("MYR", true)]), "THB");
+  assert.equal(
+    resolvedDefaultCurrency([row("MYR", true, { id: 1, isDefault: true })]),
+    "MYR",
+  );
+  // Baht off and nothing marked: the first enabled foreign code answers. The
+  // writes reconcile this away, but a direct SQL edit can produce it.
+  assert.equal(
+    resolvedDefaultCurrency([row("THB", false, { id: 1 }), row("GBP", true, { id: 2 })]),
+    "GBP",
+  );
+  // Nothing enabled at all — the state the writes refuse to create.
+  assert.equal(resolvedDefaultCurrency([row("THB", false, { id: 1 })]), null);
+});
+
+/** A flag on a row somebody has since switched off must not win. */
+test("the resolved default ignores a stale flag on a disabled row", () => {
+  assert.equal(
+    resolvedDefaultCurrency([
+      row("THB", true, { id: 1 }),
+      row("MYR", false, { id: 2, isDefault: true }),
+    ]),
+    "THB",
+  );
 });

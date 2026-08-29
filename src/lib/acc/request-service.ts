@@ -189,21 +189,32 @@ function typedFigure(it: TravelExpenseItem): number {
  * name that table itself; `currency-pool-guard.test.ts` enforces exactly that,
  * per file, and `request-service.ts` imports `getAccPool` on line 1.
  *
- * **Anything the brand does not offer resolves to Thailand rather than
- * throwing.** `effectiveClaimCountry` is the same function the form applies
- * before it posts, so the two agree: an admin switching a `BrandCurrency` row
- * off — or removing it — leaves a draft holding `MY` savable, as a Thai claim,
- * instead of stranding it behind a picker that no longer offers it.
+ * **Anything the brand does not offer resolves to the brand's default rather
+ * than throwing.** `effectiveClaimCountry` is the same function the form
+ * applies before it posts, so the two agree: an admin switching a
+ * `BrandCurrency` row off — or removing it — leaves a draft holding `MY`
+ * savable, filed from wherever the brand still claims, instead of stranding it
+ * behind a picker that no longer offers it.
  *
- * Thailand short-circuits before any pool is opened, so an ordinary Thai claim
- * makes no extra call at all.
+ * **`"TH"` is no longer a short-circuit, and that costs a read.** It used to
+ * return before any pool was opened, because Thailand was offered by every
+ * brand unconditionally. Since migration 131 a brand may switch baht off, so a
+ * posted `TH` — or a blank, which is what a claim holds before anybody answers
+ * — has to be checked against the brand like any other value. Accepting it
+ * unchecked would let a hand-made body file a Thai claim against a brand that
+ * does not take one, and would make a blank resolve to Thailand where the form
+ * had shown Malaysia. `listBrandRegistry` is three queries; an AP-1 save is not
+ * a hot path, and the alternative is a rule the server states and does not
+ * enforce.
+ *
+ * A claim with **no brand** still answers Thailand without a read: there is no
+ * configuration to consult, and one has to be picked.
  */
 async function resolveClaimCountry(
   brandCode: string | null,
   posted: string | null | undefined,
 ): Promise<string> {
   const want = (posted ?? "").trim().toUpperCase();
-  if (want === "" || want === DEFAULT_COUNTRY) return DEFAULT_COUNTRY;
   if (!brandCode) return DEFAULT_COUNTRY;
 
   let brand: { currencies: BrandCurrencyEntry[] } | null = null;
