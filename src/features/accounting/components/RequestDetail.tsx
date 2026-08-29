@@ -563,7 +563,7 @@ function GridField({
 /* ── Travel info sub-components ── */
 
 /**
- * The two-letter country code, as a badge.
+ * The country's flag.
  *
  * **The code, not the currency.** `countryLabel` renders `มาเลเซีย (MYR)`, which
  * is right in the settings editor — that screen is configuring a currency. On a
@@ -580,13 +580,17 @@ function GridField({
  */
 function CountryCodeBadge({ code }: { code: string }) {
   return (
-    <span
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={`/flags/${code.toLowerCase()}.svg`}
+      alt=""
       aria-hidden
-      className="inline-flex items-center justify-center shrink-0 px-1 h-[16px] rounded text-[9px] font-bold leading-none tracking-wide"
-      style={{ background: "var(--bg-badge)", color: "var(--text-muted)" }}
-    >
-      {code}
-    </span>
+      className="shrink-0 h-[12px] w-[18px] rounded-[2px] object-cover"
+      style={{ border: "1px solid var(--border-card)" }}
+      // A country with no file renders nothing rather than a broken image.
+      // `flag-asset-coverage.test.ts` is what stops that happening at all.
+      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+    />
   );
 }
 

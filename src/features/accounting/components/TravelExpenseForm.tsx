@@ -1149,24 +1149,21 @@ export function TravelExpenseForm({
                     }}
                   >
                     <span className="inline-flex items-center gap-1.5">
-                      {/* The ISO code as a badge, not a flag emoji.
-                          `countryFlag` produces a correct emoji, and **Windows
-                          ships no flag glyphs at all** — Chrome and Edge there
-                          fall back to the two letters as plain text, which is
-                          what made this look broken rather than deliberate. A
-                          badge is the same information, rendered on purpose.
-                          Real flags need an image set or a flag-capable webfont
-                          under `src/assets/fonts`; neither is here. */}
-                      <span
+                      {/* A real flag, served from `public/flags` — 25 SVGs
+                          copied from country-flag-icons rather than depended on,
+                          the same arrangement `public/brandlogo` uses. Emoji
+                          flags were tried first and do not work: Windows ships
+                          no flag glyphs, so Chrome and Edge there render the two
+                          letters as plain text. */}
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={`/flags/${code.toLowerCase()}.svg`}
+                        alt=""
                         aria-hidden
-                        className="inline-flex items-center justify-center px-1 h-[15px] rounded text-[9px] font-bold leading-none tracking-wide"
-                        style={{
-                          background: active ? "var(--nav-active-text)" : "var(--bg-badge)",
-                          color: active ? "var(--text-inverse)" : "var(--text-muted)",
-                        }}
-                      >
-                        {code}
-                      </span>
+                        className="shrink-0 h-[11px] w-[16px] rounded-[2px] object-cover"
+                        style={{ border: "1px solid var(--border-card)" }}
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                      />
                       {countryName(code) ?? code}
                     </span>
                   </button>
