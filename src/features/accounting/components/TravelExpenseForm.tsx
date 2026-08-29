@@ -36,7 +36,7 @@ import { FilterMultiDatePicker } from "@/features/accounting/components/FilterMu
 import { fmtTravelDatesList } from "@/features/accounting/lib/format-travel-dates";
 import { DistanceMapField } from "./DistanceMapField";
 import { ExpenseRows } from "./ExpenseRows";
-import { computeTotalAmount, computeTotalDistance } from "@/lib/acc/calc";
+import { computeTotalAmount, computeTotalDistance, dayCostBreakdown } from "@/lib/acc/calc";
 import {
   allDayItems,
   formatDayVehicleNames,
@@ -1739,17 +1739,19 @@ export function TravelExpenseForm({
             </p>
             {travelDays.map((d, i) => {
               const dayAmount = computeTotalAmount(d);
+              const dayParts = dayCostBreakdown(d);
               const dayMissing = dayMissingByIndex[i];
               const dayOk = dayMissing.length === 0;
               return (
                 <div
                   key={d.travelDate ?? i}
-                  className="flex items-center gap-2 py-1"
+                  className="py-1"
                   style={{
                     borderTop: i > 0 ? "1px solid var(--border-light)" : undefined,
                     paddingTop: i > 0 ? 8 : 0,
                   }}
                 >
+                  <div className="flex items-center gap-2">
                   <span
                     className="text-[13px] font-semibold shrink-0 min-w-[52px]"
                     style={{ color: "var(--text-primary)" }}
@@ -1774,6 +1776,43 @@ export function TravelExpenseForm({
                     <CircleCheck size={15} className="shrink-0" style={{ color: "var(--color-success)" }} />
                   ) : (
                     <CircleAlert size={15} className="shrink-0" style={{ color: "var(--color-danger)" }} />
+                  )}
+                  </div>
+
+                  {/* What the day's figure is made of.
+
+                      `dayCostBreakdown` is built branch-for-branch alongside
+                      `computeTotalAmount` and `calc.test.ts` asserts the parts
+                      sum to it: a breakdown that does not add up to the total
+                      printed above it is worse than none, because it invites
+                      somebody to trust the wrong number.
+
+                      Indented to the date column's width so the figures line up
+                      under the day total rather than starting a second grid. */}
+                  {dayParts.length > 0 && (
+                    <div className="flex flex-col gap-0.5 mt-1 pl-[60px]">
+                      {dayParts.map((part, pi) => (
+                        <div key={`${part.label}-${pi}`} className="flex items-baseline gap-2">
+                          <span
+                            className="text-[12px] truncate min-w-0 flex-1"
+                            style={{ color: "var(--text-muted)" }}
+                          >
+                            {part.label}
+                            {part.detail && (
+                              <span className="ml-1.5" style={{ color: "var(--text-faint)" }}>
+                                {part.detail}
+                              </span>
+                            )}
+                          </span>
+                          <span
+                            className="text-[12px] font-semibold tabular-nums shrink-0"
+                            style={{ color: "var(--text-secondary)" }}
+                          >
+                            {fmtDayAmount(part.amount)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
               );

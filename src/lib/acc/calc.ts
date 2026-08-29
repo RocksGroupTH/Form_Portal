@@ -72,3 +72,54 @@ export function computeRequestTotalAmount(days: TravelExpenseDetail[]): number {
 
 /** All expense rows on a day (rate + manual sections) — for receipt validation. */
 export { allDayItems };
+
+/** One named part of a day's cost, for the summary breakdown. */
+export interface DayCostPart {
+  label: string;
+  /** How the figure was arrived at, where that is not obvious. `null` otherwise. */
+  detail: string | null;
+  /** Thai baht, like everything `computeTotalAmount` adds. */
+  amount: number;
+}
+
+/**
+ * What a day's total is made of, itemised.
+ *
+ * **Deliberately built branch-for-branch alongside `computeTotalAmount`**, and
+ * `calc.test.ts` asserts the parts sum to it for every shape. A breakdown whose
+ * parts do not add up to the figure printed beside them is worse than no
+ * breakdown at all: it invites somebody to trust the wrong number, and the two
+ * would drift the first time either function learned a new cost.
+ *
+ * Zero-value parts are omitted. A list of `0.00` rows is noise, and the reader
+ * is looking for where the money went.
+ */
+export function dayCostBreakdown(d: TravelExpenseDetail): DayCostPart[] {
+  const day = normalizeTravelDay(d);
+  const parts: DayCostPart[] = [];
+  const push = (label: string, amount: number, detail: string | null = null) => {
+    if (amount > 0) parts.push({ label, detail, amount });
+  };
+  const trim = (n: number) => Math.round(n * 100) / 100;
+
+  if (hasRateVehicle(day)) {
+    const km = computeTotalDistance(day);
+    const rate = Number(day.ratePerKm) || 0;
+    const name = day.vehicleName ?? "รถ";
+    push(name, trim(km * rate), `${trim(km)} กม. × ${trim(rate)} บาท`);
+    push(`ค่าผ่านทาง / ทางด่วน (${name})`, trim(sum(day.items, "toll")));
+    push(`ค่าจอดรถ (${name})`, trim(sum(day.items, "parking")));
+  }
+
+  for (const sec of day.sections ?? []) {
+    if (!sec.isManualEntry) continue;
+    push(sec.vehicleName ?? "พาหนะ", trim(sum(sec.items, "fare") + sum(sec.items, "toll")));
+  }
+
+  // The legacy shape: one manual vehicle, no sections.
+  if ((!day.sections || day.sections.length === 0) && day.isManualEntry) {
+    push(day.vehicleName ?? "พาหนะ", trim(sum(day.items, "fare") + sum(day.items, "toll")));
+  }
+
+  return parts;
+}
