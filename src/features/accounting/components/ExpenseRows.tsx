@@ -582,6 +582,28 @@ function ExpenseRow({
   const readingRef = useRef(false);
 
   /** Read the receipt's total and its currency, and offer both — never over a figure already there. */
+  /**
+   * The **latest** row callbacks, not the ones a given render closed over.
+   *
+   * `prefillAmountFrom` starts on the render where the file was picked and
+   * resolves seconds later. The callback it captured is
+   * `(typed, code) => handleReadFilled(filteredIdx, ...)` — `filteredIdx`
+   * frozen at that moment. `addItem` and `addSectionItem` both PREPEND, so
+   * pressing เพิ่มรายการ while a read is in flight shifts every row down one and
+   * that captured index now names somebody else's row: the amount lands there.
+   *
+   * Stable React keys (6c39e76) made the component follow its row and were
+   * necessary, but not sufficient — the component was still calling a stale
+   * function. Reading through a ref at call time is what completes it.
+   *
+   * **Every callback invoked after an `await` belongs here**, not just the
+   * read: removing an uploaded file and removing the row both round-trip to the
+   * server first, and both would land on the wrong row for exactly the same
+   * reason. They are grouped so the next one added is obvious.
+   */
+  const latest = useRef({ onReadFilled, onUploadedRemove, onRemove });
+  latest.current = { onReadFilled, onUploadedRemove, onRemove };
+
   const prefillAmountFrom = async (file: File) => {
     readingRef.current = true;
     setReadNote("reading");
@@ -607,7 +629,7 @@ function ExpenseRow({
           const answered = showsCurrency
             ? resolveLineCurrency(read.currency, currencyOptions)
             : THB;
-          onReadFilled(read.amount, answered);
+          latest.current.onReadFilled(read.amount, answered);
         }
         setReadNote(null);
         return;
@@ -637,7 +659,7 @@ function ExpenseRow({
         toast.error(json.error ?? "ลบรูปไม่สำเร็จ");
         return;
       }
-      onUploadedRemove(fileId);
+      latest.current.onUploadedRemove(fileId);
       toast.success("ลบรูปแล้ว");
     } catch {
       toast.error("ลบรูปไม่สำเร็จ");
@@ -667,7 +689,7 @@ function ExpenseRow({
           }
           toast.success("ลบรายการแล้ว");
         }
-        onRemove();
+        latest.current.onRemove();
       }
       setConfirm(null);
     } finally {
