@@ -144,7 +144,7 @@ export function enabledForeignCurrencies(
 
 /**
  * Whether a brand offers a currency choice at all — and so whether either form
- * renders a dropdown.
+ * renders a currency control (AP-1's per-line segments, AP-17's desk toggle).
  *
  * **It answers exactly the question it always answered**: is there a foreign
  * currency a claim against this brand may be entered in today. What changed is
@@ -154,7 +154,7 @@ export function enabledForeignCurrencies(
  * is simply not counted rather than being a contradictory pair.
  *
  * `"none"` must leave both forms looking exactly as they did before this
- * feature shipped: no dropdown, no extra field, no extra request. A brand with
+ * feature shipped: no control, no extra field, no extra request. A brand with
  * no rows, with only disabled rows, or with only a THB row is `"none"`.
  */
 export function brandCurrencyState(

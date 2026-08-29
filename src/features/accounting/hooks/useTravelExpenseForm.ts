@@ -127,7 +127,7 @@ interface UseTravelExpenseFormResult {
   countryOptions: string[];
   /**
    * What each expense line's money controls need. `options` empty is the
-   * Thailand answer: no dropdown, no rate column, no conversion note anywhere.
+   * Thailand answer: no currency control, no rate column, no conversion note anywhere.
    */
   lineCurrency: LineCurrencyContext;
 

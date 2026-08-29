@@ -1132,7 +1132,7 @@ export function TravelExpenseForm({
               })}
             </div>
             {/* Only for somewhere other than Thailand. A Thai claim says nothing
-                extra at all — no dropdown below, no rate, no note. */}
+                extra at all — no currency control below, no rate, no note. */}
             {fxNote && (
               <p className="text-[12px] mt-1.5 m-0" style={{ color: "var(--text-muted)" }}>
                 เลือกสกุลเงินได้ในแต่ละรายการค่าใช้จ่าย · ยอดที่เบิกทั้งหมดเป็นเงินบาท · {fxNote}

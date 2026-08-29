@@ -250,7 +250,7 @@ async function toBahtDays(
   country: string,
 ): Promise<TravelExpenseDetail[]> {
   const currencyOf = (it: TravelExpenseItem) => effectiveLineCurrency(it.currency, country);
-  // True exactly where the form renders a line-currency dropdown, and the one
+  // True exactly where the form renders a line-currency control, and the one
   // thing that decides whether a baht line records `'THB'` — see `LineFx`.
   const recordBaht = lineCurrencyOptions(country).length > 0;
 

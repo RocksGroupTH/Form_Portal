@@ -31,6 +31,7 @@ function code(rel: string): string {
 }
 
 const PREP_QUEUE = "features/accounting/components/ErpPrepQueue.tsx";
+const EXPENSE_ROWS = "features/accounting/components/ExpenseRows.tsx";
 const REPORT_TABLE = "features/accounting/components/AccountingReport.tsx";
 const APPROVALS = "features/accounting/components/ApprovalsQueue.tsx";
 const AP1_REPORT_SERVICE = "lib/acc/report-service.ts";
@@ -155,4 +156,85 @@ test("every AP-1 table that shows a day figure also shows its currency", () => {
       `${rel}: never prints a figure with its own currency beside it`,
     );
   }
+});
+
+/* ── The line's own currency control ── */
+
+/** `LineCurrencyChoice`'s body, ending at the next top-level declaration. */
+function lineCurrencyChoiceBody(): string {
+  const src = code(EXPENSE_ROWS);
+  const start = src.indexOf("function LineCurrencyChoice");
+  assert.notEqual(start, -1, "LineCurrencyChoice not found");
+  // Not `\n}` — the destructured parameter list closes with `}: {` at column 0,
+  // which would cut the body off at the signature and pass every check below
+  // against an empty string.
+  const next = src.indexOf("\nexport function ", start);
+  assert.notEqual(next, -1, "no declaration follows LineCurrencyChoice");
+  return src.slice(start, next);
+}
+
+/**
+ * **A Thai claim renders no currency control at all**, and that promise is one
+ * predicate rather than a condition retyped per branch. It is the thing most
+ * likely to be broken by a later edit — a one-option control, a disabled
+ * placeholder, an empty group — and none of them would fail a type check.
+ */
+test("the line's currency control is gated on the single Thailand predicate", () => {
+  const src = code(EXPENSE_ROWS);
+  assert.ok(
+    /const showsCurrency = currencyOptions\.length > 0;/.test(src),
+    "the one Thailand test must stay one test",
+  );
+  const uses = src.match(/<LineCurrencyChoice/g) ?? [];
+  assert.equal(uses.length, 1, `expected one currency control in the row, found ${uses.length}`);
+});
+
+/**
+ * Segments or dropdown is decided by the pure rule, not by a length compared
+ * against a number typed here. A second copy is how the control and the test
+ * that fixes the threshold come to disagree about where a strip stops being
+ * usable.
+ */
+test("the control picks its shape from the shared threshold", () => {
+  const body = lineCurrencyChoiceBody();
+  assert.ok(/usesCurrencySegments\(options\)/.test(body), "the threshold must come from claim-currency");
+  assert.equal(
+    /options\.length\s*[<>=]/.test(body),
+    false,
+    "a hand-written length test here is a second copy of the threshold",
+  );
+  // And the dropdown it degrades to is the one that was already there.
+  assert.ok(/<select/.test(body), "the fallback dropdown must survive, not be rebuilt later");
+});
+
+/**
+ * `a5a2234` made "no currency yet" a stored state that refuses submit, so a
+ * group with nothing filled in has to read as an **open question** rather than
+ * as a control that failed to render. The frame and both segments say so.
+ */
+test("the unanswered currency reads as a question, not as an absence", () => {
+  const body = lineCurrencyChoiceBody();
+  const signals = body.match(/unanswered/g) ?? [];
+  assert.ok(
+    signals.length >= 4,
+    `the blank state must be visibly distinct in more than one way, found ${signals.length}`,
+  );
+  assert.ok(/var\(--color-danger\)/.test(body), "the blank state must be marked with the danger token");
+  // Tokens only — never a raw hex, per the house rule.
+  assert.equal(
+    /#[0-9a-fA-F]{3,8}\b/.test(body),
+    false,
+    "a raw colour reached the control; use var(--token)",
+  );
+});
+
+/**
+ * The read fills the currency in, so changing it mid-flight would have the
+ * model's answer admitted against a question nobody asked. Every segment is
+ * locked with the amount field, not only the group.
+ */
+test("the control is locked while the receipt read is in flight", () => {
+  const body = lineCurrencyChoiceBody();
+  const locks = body.match(/disabled=\{disabled\}/g) ?? [];
+  assert.ok(locks.length >= 2, `both the dropdown and the segments must lock, found ${locks.length}`);
 });

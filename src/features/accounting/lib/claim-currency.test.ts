@@ -10,6 +10,8 @@ import {
   lineNeedsCurrency,
   resolveLineCurrency,
   typedLineFigure,
+  usesCurrencySegments,
+  LINE_CURRENCY_SEGMENT_MAX,
 } from "./claim-currency";
 import type { BrandCurrencyEntry } from "@/lib/acc/currency";
 
@@ -94,7 +96,7 @@ test("Thailand resolves without needing a brand", () => {
   assert.equal(effectiveClaimCountry("th", undefined), "TH");
 });
 
-/* ── The line dropdown ── */
+/* ── What a line's currency control offers ── */
 
 /** The load-bearing one: Thailand renders no currency control anywhere. */
 test("Thailand offers no line currency choice at all", () => {
@@ -110,6 +112,47 @@ test("a foreign country offers its own currency and baht, in that order", () => 
   assert.deepEqual(lineCurrencyOptions("MY"), ["MYR", "THB"]);
   assert.deepEqual(lineCurrencyOptions("jp"), ["JPY", "THB"]);
   assert.deepEqual(lineCurrencyOptions("FR"), ["EUR", "THB"]);
+});
+
+/* ── Which control asks the question ── */
+
+/**
+ * Two options is what the design actually produces, and it is the case the
+ * segmented control exists for: a `<select>` for two answers hides half the
+ * question behind a click, on the control a requester touches once per receipt.
+ */
+test("the two options a country produces are asked as segments", () => {
+  assert.equal(usesCurrencySegments(lineCurrencyOptions("MY")), true);
+  assert.equal(usesCurrencySegments(["MYR", "THB"]), true);
+  assert.equal(usesCurrencySegments(["GBP"]), true);
+});
+
+/**
+ * **Thailand is not "a control with no options"** — it is no control at all,
+ * which is the promise the whole feature is held to. Callers still test
+ * `options.length > 0` first; this only ever decides *which* control.
+ */
+test("Thailand asks for no control of either kind", () => {
+  assert.equal(usesCurrencySegments([]), false);
+  assert.equal(usesCurrencySegments(lineCurrencyOptions("TH")), false);
+});
+
+/**
+ * Above the threshold it degrades to the dropdown rather than wrapping into a
+ * strip. The line's money cell is 192px wide on a phone and cannot grow — it
+ * shares the row with the receipt tile and the delete button — so a fourth
+ * segment leaves each about 45px, which is not a control anybody can hit.
+ *
+ * Nothing reaches this today: `lineCurrencyOptions` answers two codes and never
+ * more. It is here because that is a property of one function rather than of
+ * the design, and a control that degrades on its own beats one that has to be
+ * remembered about.
+ */
+test("above the threshold the question goes back to a dropdown", () => {
+  assert.equal(LINE_CURRENCY_SEGMENT_MAX, 3);
+  assert.equal(usesCurrencySegments(["MYR", "SGD", "THB"]), true);
+  assert.equal(usesCurrencySegments(["MYR", "SGD", "GBP", "THB"]), false);
+  assert.equal(usesCurrencySegments(["A", "B", "C", "D", "E"]), false);
 });
 
 test("a Thai claim's every line is baht, whatever the line says", () => {
@@ -174,7 +217,7 @@ test("a figure with no currency is refused; an empty row is not", () => {
   assert.equal(lineNeedsCurrency({ amount: 55, currency: "THB" }, opts), false);
 });
 
-/** Thailand can never produce one — it has no dropdown to leave unanswered. */
+/** Thailand can never produce one — it has no control to leave unanswered. */
 test("a Thai claim never needs a line currency", () => {
   assert.equal(lineNeedsCurrency({ amount: 55 }, []), false);
   assert.equal(lineNeedsCurrency({ amount: 0, foreignAmount: 20 }, []), false);

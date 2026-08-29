@@ -23,6 +23,7 @@ import {
   LINE_CURRENCY_MISSING_NOTE,
   resolveLineCurrency,
   typedLineFigure,
+  usesCurrencySegments,
   type LineCurrencyContext,
 } from "@/features/accounting/lib/claim-currency";
 import type { TravelExpenseItem, PendingFile } from "@/features/accounting/types";
@@ -76,7 +77,7 @@ interface ExpenseRowsProps {
    *
    * **Absent, or `options` empty, is the Thailand case and must render exactly
    * what this block rendered before migration 129**: one amount input with a
-   * `฿` adornment, no dropdown, no converted figure, no note. Every conditional
+   * `฿` adornment, no currency control, no converted figure, no note. Every conditional
    * below is behind that one test, so the promise is checkable rather than
    * hoped for.
    */
@@ -97,6 +98,155 @@ const inputStyle: React.CSSProperties = {
   color: "var(--text-primary)",
   border: "1px solid var(--border-input)",
 };
+
+/**
+ * Which money one expense line is in — **both answers on screen, one tap
+ * apart**.
+ *
+ * ── Why not a dropdown ──
+ *
+ * A claim is to one country, so `lineCurrencyOptions` offers exactly two codes:
+ * the country's own and baht. A `<select>` for two options hides half the
+ * question behind a click, on the control a requester touches once per receipt.
+ * Segments are the pattern this form already uses twice — the brand chips and
+ * ทิศทางการเดินทาง in `TravelExpenseForm.tsx` — so this is that shape a size
+ * down, not a third idea.
+ *
+ * ── Where it sits ──
+ *
+ * Beside the amount from `sm` up, and under it below that. The cell is 192px
+ * wide on a phone, shared with the receipt tile and the delete button, and it
+ * cannot grow without pushing one of them off the row — so the narrow layout
+ * takes the second line rather than squeezing the amount field to nothing. Both
+ * layouts keep the converted-baht line beneath, which is the figure the block
+ * total sums.
+ *
+ * ── The unanswered state is a state, not an absence ──
+ *
+ * `a5a2234` made "no currency yet" something that survives a save: the receipt
+ * read fills the figure and leaves the currency blank where the document does
+ * not say, and `validateForSubmit` refuses the claim until somebody answers. So
+ * a group with nothing filled in has to read as a question rather than as a
+ * control that failed to render. Three signals say it at once — a danger border,
+ * a danger-tinted ground, and danger text on *both* segments — and the row
+ * repeats it in words underneath.
+ *
+ * That styling arrives with the question, not before it. A row whose amount is
+ * still empty is not being asked anything yet (`lineNeedsCurrency` ignores it,
+ * exactly as the "an amount needs a receipt" rule always has), so it shows a
+ * plain group with neither half filled: distinct from a chosen one, without
+ * scolding somebody who has not typed a figure.
+ *
+ * ── Above three, it goes back to being a dropdown ──
+ *
+ * `usesCurrencySegments` is the threshold and it is pure and unit-tested. A
+ * fourth option leaves each segment about 45px, which is a strip of
+ * abbreviations rather than a control; the `<select>` below is kept intact for
+ * exactly that case rather than being rebuilt when it happens.
+ *
+ * ── One deliberate ARIA compromise ──
+ *
+ * `radiogroup` states the single-choice semantics the `<select>` used to state
+ * for free, and every segment stays in the tab order rather than taking the
+ * roving-tabindex treatment the pattern normally asks for. Roving tabindex
+ * without arrow-key handling would make the *unselected* option unreachable by
+ * keyboard, which is worse than costing one extra tab stop on a two-option
+ * control. The pattern this replaces — `DIRECTIONS` in `TravelExpenseForm.tsx`
+ * — announces nothing at all.
+ */
+function LineCurrencyChoice({
+  options,
+  value,
+  unanswered,
+  disabled,
+  onChange,
+}: {
+  options: string[];
+  /** The recorded code, or **null meaning nobody has said yet**. */
+  value: string | null;
+  /** This line claims money and its currency is unanswered — `lineNeedsCurrency`. */
+  unanswered: boolean;
+  /** Locked while the receipt read is in flight — see the amount field. */
+  disabled: boolean;
+  onChange: (code: string) => void;
+}) {
+  if (!usesCurrencySegments(options)) {
+    return (
+      <select
+        aria-label="สกุลเงินของรายการนี้"
+        // `""` is the unanswered state and it is a real option rather than a
+        // coincidence of an empty string: without a matching `<option>` the
+        // browser would show the first code and the row would silently claim an
+        // answer nobody gave.
+        value={value ?? ""}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        className="shrink-0 rounded-lg px-1.5 py-2 text-[13px] font-bold outline-none cursor-pointer"
+        style={unanswered ? { ...inputStyle, border: "1px solid var(--color-danger)" } : inputStyle}
+      >
+        {/* `disabled`, because an answered line cannot be un-answered — only
+            changed to another code. */}
+        {value === null && (
+          <option value="" disabled>
+            เลือก
+          </option>
+        )}
+        {options.map((code) => (
+          <option key={code} value={code}>
+            {code}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  return (
+    <div
+      role="radiogroup"
+      aria-label="สกุลเงินของรายการนี้"
+      className="flex w-full sm:w-auto shrink-0 rounded-lg p-[3px] gap-[3px]"
+      style={{
+        background: unanswered
+          ? "color-mix(in srgb, var(--color-danger) 8%, var(--bg-card-alt))"
+          : "var(--bg-card-alt)",
+        border: `1px solid ${unanswered ? "var(--color-danger)" : "var(--border-card)"}`,
+        opacity: disabled ? 0.6 : 1,
+      }}
+    >
+      {options.map((code) => {
+        const active = value === code;
+        return (
+          <button
+            key={code}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            disabled={disabled}
+            onClick={() => onChange(code)}
+            className="flex-1 min-w-0 px-2 py-1.5 rounded-md text-[12px] font-bold leading-none tabular-nums transition-all border-none cursor-pointer disabled:cursor-default"
+            style={
+              active
+                ? {
+                    background: "var(--nav-active-bg)",
+                    color: "var(--nav-active-text)",
+                    boxShadow: "var(--shadow-sm)",
+                  }
+                : {
+                    background: "transparent",
+                    // Danger on BOTH halves while unanswered, so the group reads
+                    // as an open question rather than as one option having been
+                    // rejected.
+                    color: unanswered ? "var(--color-danger)" : "var(--text-secondary)",
+                  }
+            }
+          >
+            {code}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 export function ExpenseRows({
   label,
@@ -272,9 +422,10 @@ interface ExpenseRowProps {
   item: TravelExpenseItem;
   requestId?: number;
   /**
-   * What this line's currency dropdown may offer. **Empty means Thailand** — no
-   * dropdown, no converted figure, and the `฿` adornment this row has always
-   * had.
+   * What this line's currency control may offer. **Empty means Thailand** — no
+   * control at all, no converted figure, and the `฿` adornment this row has
+   * always had. One or two of them read as segments; four or more go back to a
+   * dropdown — `LineCurrencyChoice`.
    */
   currencyOptions: string[];
   /** Forwarded to the read so the route can resolve what this brand may claim in. */
@@ -539,7 +690,7 @@ function ExpenseRow({
    * dropped straight into the same fixed-width `relative` box it has always sat
    * in — so the adornment and the reading overlay still position against that
    * box and the rendered DOM is unchanged — and on a foreign claim it goes into
-   * a `relative` cell beside the dropdown instead. Two copies would drift, and
+   * a `relative` cell beside the currency control instead. Two copies would drift, and
    * this is the control the receipt read writes into.
    */
   const amountField = (
@@ -556,7 +707,7 @@ function ExpenseRow({
         value={typedAmount || ""}
         onChange={(e) => onAmountChange(e.target.value)}
         disabled={readNote === "reading"}
-        // With a dropdown beside it the code is already on screen, so the field
+        // With the currency control beside it the code is already on screen, so the field
         // carries no adornment and keeps its ordinary right padding. Baht keeps
         // the `฿` and the padding it has always had, so nothing moves on an
         // ordinary Thai claim.
@@ -761,47 +912,35 @@ function ExpenseRow({
 
             On a Thai claim (`showsCurrency` false) this is one input in a fixed
             box, exactly as it has always been: the `฿` adornment, the same
-            widths, the same padding, no dropdown and no second line. Everything
+            widths, the same padding, no currency control and no second line. Everything
             else is inside a `showsCurrency` branch. */}
         <div className={`relative shrink-0 ${showsCurrency ? "w-48 sm:w-60" : "w-32 sm:w-44"}`}>
           {showAmount ? (
             showsCurrency ? (
               <div className="flex flex-col items-stretch gap-1">
-                <div className="flex items-center gap-1.5">
-                  <div className="relative flex-1 min-w-0">{amountField}</div>
+                {/* The amount and the currency, side by side where the cell is
+                    wide enough and stacked where it is not.
+
+                    The cell is `w-48` on a phone and shares the row with the
+                    receipt tile and the delete button, so it cannot grow. Two
+                    segments beside the field there would leave the amount about
+                    90px — narrower than the figures it has to show — which is
+                    why the narrow layout takes a second line instead. From `sm`
+                    (`w-60`) both fit on one, and the converted-baht line stays
+                    beneath either way. */}
+                <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-1.5">
+                  <div className="relative w-full sm:flex-1 sm:min-w-0">{amountField}</div>
                   {/* Locked alongside the input while the read is running: the
                       read was asked whether the document is in *this* currency,
                       so changing it mid-flight would have the answer admitted
                       against a question nobody asked. */}
-                  <select
-                    aria-label="สกุลเงินของรายการนี้"
-                    // `""` is the unanswered state and it is a real option
-                    // rather than a coincidence of an empty string: without a
-                    // matching `<option>` the browser would show the first code
-                    // and the row would silently claim an answer nobody gave.
-                    value={lineCurrency ?? ""}
-                    onChange={(e) => onCurrencyChange(e.target.value)}
+                  <LineCurrencyChoice
+                    options={currencyOptions}
+                    value={lineCurrency}
+                    unanswered={needsCurrency}
                     disabled={readNote === "reading"}
-                    className="shrink-0 rounded-lg px-1.5 py-2 text-[13px] font-bold outline-none cursor-pointer"
-                    style={
-                      needsCurrency
-                        ? { ...inputStyle, border: "1px solid var(--color-danger)" }
-                        : inputStyle
-                    }
-                  >
-                    {/* `disabled`, because an answered line cannot be
-                        un-answered — only changed to the other code. */}
-                    {lineCurrency === null && (
-                      <option value="" disabled>
-                        เลือก
-                      </option>
-                    )}
-                    {currencyOptions.map((code) => (
-                      <option key={code} value={code}>
-                        {code}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={onCurrencyChange}
+                  />
                 </div>
                 {/* The baht this line is worth. A THB line shows nothing — it is
                     already baht, and `= 20.00 บาท` beside a `20` would be noise.

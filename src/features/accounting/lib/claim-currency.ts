@@ -12,7 +12,7 @@
  *
  * In particular it does **not** import `@/lib/acc/fx`. `needsRate(c)` there is
  * `!isBaht(c)`, the same predicate — but `fx.ts` pulls in `bot-fx.ts` and the
- * network with it, and neither the picker nor the line dropdown needs a rate to
+ * network with it, and neither the picker nor the line's own control needs a rate to
  * know a line is foreign.
  *
  * ── Why a country and not a currency ──
@@ -53,10 +53,10 @@ export interface ClaimCurrencyBrand {
  * **`options.length === 0` means render nothing.** It is the Thailand case, and
  * it is also a brand with no currency configured — both must leave the expense
  * rows byte-identical to what they were before this feature shipped, which a
- * one-option dropdown would not.
+ * one-option control would not.
  */
 export interface LineCurrencyContext {
-  /** What a line's dropdown offers, or empty — see above. */
+  /** What a line's currency control offers, or empty — see above. */
   options: string[];
   /**
    * The country's own currency — the one the rate below is for, and the one the
@@ -137,7 +137,7 @@ export function effectiveClaimCountry(
 }
 
 /**
- * What one expense line's dropdown offers: **the country's currency, then
+ * What one expense line's currency control offers: **the country's currency, then
  * baht** — and **nothing at all for Thailand**.
  *
  * Two options rather than the brand's whole list, because the country is
@@ -146,7 +146,7 @@ export function effectiveClaimCountry(
  * brand's other currencies would invite a line filed in one the requester never
  * held.
  *
- * Empty is the Thailand answer and it is load-bearing: no dropdown, no rate
+ * Empty is the Thailand answer and it is load-bearing: no control, no rate
  * column, no conversion note anywhere on the form.
  */
 export function lineCurrencyOptions(country: string | null | undefined): string[] {
@@ -168,8 +168,8 @@ export function lineCurrencyOptions(country: string | null | undefined): string[
  *
  * **Thailand answers `THB` for everything**, since `lineCurrencyOptions` is
  * empty there and there is no other money to be in. That is what keeps the
- * blank state off an ordinary Thai claim altogether: no dropdown, so no
- * unanswered dropdown.
+ * blank state off an ordinary Thai claim altogether: no control, so nothing to
+ * leave unanswered.
  *
  * This replaces a rule that resolved an unrecorded currency to the **country's**
  * own. That was a defensible default while nothing could fill the field in, and
@@ -232,6 +232,36 @@ export function lineNeedsCurrency(
   if (options.length === 0) return false;
   if (resolveLineCurrency(item.currency, options) !== null) return false;
   return typedLineFigure(item, options) > 0;
+}
+
+/**
+ * How many currencies a **segmented control** can show before it stops being
+ * readable and has to become a dropdown again.
+ *
+ * A line's money control sits in a cell 192px wide on a phone, sharing the row
+ * with the receipt tile and the delete button. Two codes take half of that each
+ * and read as two buttons; three still read as three. A fourth gives every
+ * segment about 45px — a strip of abbreviations nobody can hit accurately, and
+ * worse than the dropdown it replaced.
+ *
+ * **Today nothing reaches it**: `lineCurrencyOptions` answers the country's own
+ * currency and baht, and never more. The threshold exists because that is a
+ * property of one function rather than of the design — a country offering three
+ * currencies is a plausible next change, and a control that silently degrades
+ * is better than one that has to be remembered about.
+ */
+export const LINE_CURRENCY_SEGMENT_MAX = 3;
+
+/**
+ * Whether this line's currency is asked as **segments** rather than a dropdown.
+ *
+ * False for an empty list too, which is the Thailand answer: there is no
+ * control at all there, not an empty one. Callers still test
+ * `options.length > 0` first — this only decides *which* control, never
+ * *whether*.
+ */
+export function usesCurrencySegments(options: readonly string[]): boolean {
+  return options.length > 0 && options.length <= LINE_CURRENCY_SEGMENT_MAX;
 }
 
 /** The submit-time refusal. A control absent from a page is not a rule. */
