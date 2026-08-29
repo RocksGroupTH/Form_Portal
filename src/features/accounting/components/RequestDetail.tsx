@@ -75,8 +75,8 @@ import {
   referenceRateNote,
   showsForeignCurrency,
 } from "@/lib/acc/currency-display";
-import { isOverriddenRate, isBaht } from "@/lib/acc/currency";
-import { countryLabel, currencyForCountry, countryFlag } from "@/lib/acc/country-currency";
+import { isOverriddenRate } from "@/lib/acc/currency";
+import { countryLabel } from "@/lib/acc/country-currency";
 import { claimRateFacts, multiRateCurrencies } from "@/features/accounting/lib/claim-rates";
 import type { ClaimRateFact } from "@/features/accounting/lib/claim-rates";
 import {
@@ -954,17 +954,17 @@ function TravelDaySection({
    * It shipped once gated on `showBrand` with no chip, which hid it on exactly
    * the multi-day foreign claim it was added for.
    *
-   * Only for a country that does not pay in baht. `resolveClaimCountry` stamps
-   * a code on every claim, so an unconditional tile would say "ไทย" on every
-   * Thai claim ever filed and tell nobody anything.
+   * **Shown for every country, Thailand included.** It was hidden for baht
+   * countries on the argument that "ไทย" tells nobody anything — but the form
+   * shows it on a Thai claim for the opposite and better reason: a field that
+   * appears for some claims and not others makes the reader wonder what is
+   * different about theirs, and a claim that says ไทย has said something, namely
+   * that every figure on it is baht. The two surfaces now agree.
    *
-   * Shown once per claim rather than once per day: the country is a property of
-   * the request, so `dayIdx === 0` keeps a three-day trip from repeating it.
+   * Only a claim with no country at all stays silent, which is every claim filed
+   * before migration 129 — there is nothing to show, not a default to invent.
    */
-  const showForeignCountry =
-    showBrand &&
-    !!request.countryCode &&
-    !isBaht(currencyForCountry(request.countryCode));
+  const showForeignCountry = showBrand && !!request.countryCode;
 
   return (
     <Section title={sectionTitle} icon={<Car size={15} />}>
@@ -1819,10 +1819,11 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
             </div>
           )}
           {/* Country — like the brand, one fact about the whole claim, so it sits
-              in this bar rather than repeating inside each day's section. Only
-              when it does not pay in baht: every claim carries a code, and "ไทย"
-              on every Thai claim tells nobody anything. */}
-          {request.countryCode && !isBaht(currencyForCountry(request.countryCode)) && (
+              in this bar rather than repeating inside each day's section. Shown
+              for every country including Thailand, matching the form and the
+              single-day tile: a field that comes and goes makes the reader
+              wonder what is different about their claim. */}
+          {request.countryCode && (
             <div
               className="shrink-0 flex items-center gap-1.5 h-10 pl-2 pr-2.5 rounded-xl"
               style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}
