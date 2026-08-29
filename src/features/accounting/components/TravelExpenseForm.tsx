@@ -47,6 +47,7 @@ import {
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
 import { countryLabel } from "@/lib/acc/country-currency";
 import { referenceRateNote } from "@/lib/acc/currency-display";
+import { lineNeedsCurrency, typedLineFigure } from "@/features/accounting/lib/claim-currency";
 import type { AccRequest, TravelDraftSummary, TravelExpenseDetail, TravelExpenseItem, AccVehicle } from "@/features/accounting/types";
 import { AP1_HEADER_MESSAGE_LINES, MAPS_UNAVAILABLE_USER_MESSAGE } from "@/features/accounting/constants";
 
@@ -424,6 +425,17 @@ export function TravelExpenseForm({
         ? referenceRateNote(foreignLineCurrency, lineCurrency.rate)
         : "ยังดึงอัตราอ้างอิงไม่ได้ในขณะนี้ — ยอดเป็นเงินบาทจะคำนวณตอนบันทึก";
 
+  /**
+   * The figure the requester typed on a line, whichever field holds it.
+   *
+   * Every money test below asks this rather than `amount`, which is **baht** and
+   * is legitimately 0 on a line whose currency is still unanswered as well as on
+   * one typed while the rate lookup was down. Asking the baht told somebody they
+   * had not entered a fare they had plainly entered. `validateForSubmit` was
+   * changed the same way and on the same reasoning, so the two agree.
+   */
+  const typedFigureOf = (it: TravelExpenseItem) => typedLineFigure(it, lineCurrency.options);
+
   const missing: { key: string; label: string }[] = [];
   // `shownManager`, not `manager`: on behalf of a colleague the submit assigns
   // *their* manager, so gating on the actor's would both block a submit that is
@@ -456,7 +468,7 @@ export function TravelExpenseForm({
     }
     for (let si = 0; si < (day.sections ?? []).length; si++) {
       const sec = day.sections![si];
-      if (!sec.items.some((i) => i.itemType === "fare" && i.amount > 0)) {
+      if (!sec.items.some((i) => i.itemType === "fare" && typedFigureOf(i) > 0)) {
         missing.push({
           key: `${dayKey}-fare-${si}`,
           label: `ค่าโดยสาร (${sec.vehicleName ?? "พาหนะ"})${lbl}`,
@@ -467,14 +479,22 @@ export function TravelExpenseForm({
       !hasRateVehicle(day) &&
       day.isManualEntry &&
       (!day.sections || day.sections.length === 0) &&
-      !day.items.some((i) => i.itemType === "fare" && i.amount > 0)
+      !day.items.some((i) => i.itemType === "fare" && typedFigureOf(i) > 0)
     ) {
       missing.push({ key: `${dayKey}-fare`, label: `ค่าโดยสาร / ค่าเดินทาง${lbl}` });
     }
     const itemHasImage = (it: { files?: unknown[]; pendingFiles?: unknown[] }) =>
       (it.files?.length ?? 0) > 0 || (it.pendingFiles?.length ?? 0) > 0;
-    if (allDayItems(day).some((it) => Number(it.amount) > 0 && !itemHasImage(it))) {
+    if (allDayItems(day).some((it) => typedFigureOf(it) > 0 && !itemHasImage(it))) {
       missing.push({ key: `${dayKey}-receipt`, label: `แนบรูปใบเสร็จรายการค่าใช้จ่าย${lbl}` });
+    }
+    // The receipt read fills a line's currency in where the document says so
+    // and leaves it blank where it cannot tell — deliberately, rather than
+    // guessing. `validateForSubmit` refuses those lines on the same shared
+    // predicate; this is what says so before the round trip, and it is empty on
+    // a Thai claim because `lineCurrency.options` is.
+    if (allDayItems(day).some((it) => lineNeedsCurrency(it, lineCurrency.options))) {
+      missing.push({ key: `${dayKey}-currency`, label: `สกุลเงินของรายการค่าใช้จ่าย${lbl}` });
     }
   }
   }
@@ -1552,8 +1572,16 @@ export function TravelExpenseForm({
         )}
       </SectionCard>
 
-      {/* ── Section 4: ค่าใช้จ่าย ── */}
-      <div ref={receiptRef} className="min-w-0">
+      {/* ── Section 4: ค่าใช้จ่าย ──
+
+          `data-field="currency"` is how `focusFirstMissing` finds an unanswered
+          line currency. Markup claiming its own key is the documented way in:
+          the ternary chain in that function knows only the handful of names
+          somebody remembered to add to it, and **everything else falls through
+          to the vehicle picker** — which is exactly the bug its own comment
+          records. The currency question lives inside these rows, so this is the
+          right thing to scroll to. */}
+      <div ref={receiptRef} data-field="currency" className="min-w-0">
       <SectionCard icon={<Receipt size={15} />} title="ค่าใช้จ่าย" dataTour="ap1-expense">
         {travelDetailsReady ? (
           <>

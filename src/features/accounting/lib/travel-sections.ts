@@ -280,11 +280,14 @@ export function cloneSectionsForDayCopy(sections: TravelVehicleSection[] | undef
     ratePerKm: sec.ratePerKm,
     isManualEntry: sec.isManualEntry,
     // The line's money travels as a set. Copying `amount` alone would carry the
-    // baht across while leaving the copy with no currency — which resolves to
-    // the country's (see `effectiveLineCurrency`), so a 164.47 baht line copied
-    // onto the next day would be re-read as 164.47 **ringgit** and converted
-    // again on the next save. The files deliberately do not travel: a receipt
-    // belongs to the day it was issued on.
+    // baht across while leaving the copy with no currency, which is now the
+    // *unanswered* state (see `effectiveLineCurrency`) — so a copied line would
+    // arrive holding a baht figure the form insists somebody name a currency
+    // for, and the day it was copied from would be the only place to look it up.
+    // Under the rule this replaced the same omission was worse still: a 164.47
+    // baht line was re-read as 164.47 **ringgit** and converted a second time.
+    // The files deliberately do not travel: a receipt belongs to the day it was
+    // issued on.
     items: (sec.items ?? []).map((it, i) => ({
       itemType: it.itemType,
       amount: Number(it.amount) || 0,

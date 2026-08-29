@@ -19,6 +19,8 @@ import { isBaht, THB } from "@/lib/acc/currency";
 import { fmtAmountWithCurrency } from "@/lib/acc/currency-display";
 import {
   lineMoney,
+  lineNeedsCurrency,
+  LINE_CURRENCY_MISSING_NOTE,
   resolveLineCurrency,
   typedLineFigure,
   type LineCurrencyContext,
@@ -142,7 +144,7 @@ export function ExpenseRows({
     if (gi < 0) return;
     const item = allItems[gi];
     const cur = resolveLineCurrency(item.currency, currencyOptions);
-    onUpdate(gi, lineMoney(parseFloat(raw) || 0, cur, previewRate));
+    onUpdate(gi, lineMoney(parseFloat(raw) || 0, cur, previewRate, currencyOptions));
   };
 
   /** Same rule, keeping the figure as typed and changing only what it is in. */
@@ -151,7 +153,26 @@ export function ExpenseRows({
     if (gi < 0) return;
     const item = allItems[gi];
     const typed = typedLineFigure(item, currencyOptions);
-    onUpdate(gi, lineMoney(typed, resolveLineCurrency(code, currencyOptions), previewRate));
+    onUpdate(
+      gi,
+      lineMoney(typed, resolveLineCurrency(code, currencyOptions), previewRate, currencyOptions),
+    );
+  };
+
+  /**
+   * What the receipt read decided, written as one patch.
+   *
+   * **One `onUpdate`, not an amount call followed by a currency call.** Both
+   * read `allItems[gi]` out of this render's closure, so the second would
+   * compute its patch from the state the first has just replaced — the classic
+   * way a figure and the currency it is in end up disagreeing. `lineMoney` is
+   * the same rule the two hand-editing paths above use, given the read's answer
+   * instead of a person's.
+   */
+  const handleReadFilled = (filteredIdx: number, typed: number, currency: string | null) => {
+    const gi = globalIndex(filteredIdx);
+    if (gi < 0) return;
+    onUpdate(gi, lineMoney(typed, currency, previewRate, currencyOptions));
   };
 
   const handleRemove = (filteredIdx: number) => {
@@ -195,6 +216,7 @@ export function ExpenseRows({
             highlightMissingReceipt={highlightMissingReceipt}
             onAmountChange={(val) => handleAmountChange(filteredIdx, val)}
             onCurrencyChange={(code) => handleCurrencyChange(filteredIdx, code)}
+            onReadFilled={(typed, code) => handleReadFilled(filteredIdx, typed, code)}
             onRemove={() => handleRemove(filteredIdx)}
             onPendingAdd={(pf) => {
               const gi = globalIndex(filteredIdx);
@@ -260,6 +282,12 @@ interface ExpenseRowProps {
   highlightMissingReceipt?: boolean;
   onAmountChange: (val: string) => void;
   onCurrencyChange: (code: string) => void;
+  /**
+   * What the receipt read decided — the figure **and** the currency, in one
+   * patch. `null` is a real answer: the total was legible and its currency was
+   * not, so the line is left unpriced for the requester to state.
+   */
+  onReadFilled: (typed: number, currency: string | null) => void;
   onRemove: () => void;
   onPendingAdd: (file: PendingFile) => void;
   onPendingRemove: (localId: string) => void;
@@ -274,6 +302,7 @@ function ExpenseRow({
   highlightMissingReceipt = false,
   onAmountChange,
   onCurrencyChange,
+  onReadFilled,
   onRemove,
   onPendingAdd,
   onPendingRemove,
@@ -297,12 +326,13 @@ function ExpenseRow({
   /* ── What this line is in ──
    *
    * `showsCurrency` is the single Thailand test, and everything the currency
-   * work added to this row sits behind it. `lineCurrency` resolves a line with
-   * no recorded currency to the country's own — see `effectiveLineCurrency` for
-   * why that, and not baht. */
+   * work added to this row sits behind it. `lineCurrency` is **null until
+   * somebody or something has said** — the receipt read fills it in where the
+   * document is clear, and leaves it blank where it is not. See
+   * `effectiveLineCurrency` for why blank rather than the country's own. */
   const showsCurrency = currencyOptions.length > 0;
   const lineCurrency = resolveLineCurrency(item.currency, currencyOptions);
-  const isForeignLine = showsCurrency && !isBaht(lineCurrency);
+  const isForeignLine = showsCurrency && lineCurrency !== null && !isBaht(lineCurrency);
   /** The figure the input shows and the requester typed — never the baht. */
   const typedAmount = typedLineFigure(item, currencyOptions);
   /**
@@ -320,6 +350,17 @@ function ExpenseRow({
     : typedAmount > 0 && !(Number(item.amount) > 0)
       ? null
       : Number(item.amount) || 0;
+  /**
+   * This line claims money and nobody has said what money it is.
+   *
+   * The same predicate the submit refuses on (`lineNeedsCurrency`), asked of
+   * what is on screen rather than of what was posted — so the row says what is
+   * wrong at the moment the read comes back blank, not later at the submit. It
+   * is deliberately **not** behind `highlightMissingReceipt`: that flag defers
+   * a nag until somebody has tried to submit, and this is not a nag, it is an
+   * unanswered question the form itself has just asked.
+   */
+  const needsCurrency = lineNeedsCurrency(item, currencyOptions);
 
   const uploaded = item.files ?? [];
   const pending = item.pendingFiles ?? [];
@@ -357,24 +398,34 @@ function ExpenseRow({
   // tick actually sees.
   const readingRef = useRef(false);
 
-  /** Read the receipt's total and offer it — never over a figure already there. */
+  /** Read the receipt's total and its currency, and offer both — never over a figure already there. */
   const prefillAmountFrom = async (file: File) => {
     readingRef.current = true;
     setReadNote("reading");
     try {
       // `brandCode` is what lets the route ask which currency the document is
-      // in at all; `claimCurrency` is what decides whether the answer belongs
-      // in this field. An absent `currency` prop means baht on this form — the
-      // reader's null means "not known", which is AP-17's case and not ours.
-      const read = await readReceiptAmount(file, {
-        brandCode,
-        claimCurrency: lineCurrency,
-      });
+      // in at all. What it may answer is the whole brand's list; what this line
+      // may be in is narrower, and `resolveLineCurrency` below is where that
+      // narrowing happens — a GBP receipt on a trip to Malaysia is a question,
+      // not a discovery.
+      const read = await readReceiptAmount(file, { brandCode });
       if (!aliveRef.current) return;
       if (read.amount != null) {
         // Skipped when a figure arrived while this was in flight — typed by
         // hand, which outranks the read. Not a failure; say nothing.
-        if (!(Number(amountRef.current) > 0)) onAmountChange(String(read.amount));
+        if (!(Number(amountRef.current) > 0)) {
+          // A Thai claim has no currency to establish and must be left exactly
+          // as it was before any of this: `THB` here makes `lineMoney` take the
+          // identity branch and write the `{ amount }` patch it always wrote.
+          //
+          // Everywhere else the read's own answer decides, and **null is an
+          // answer**: the figure lands on the row and the currency stays blank
+          // for the requester to choose, which is precisely what was asked for.
+          const answered = showsCurrency
+            ? resolveLineCurrency(read.currency, currencyOptions)
+            : THB;
+          onReadFilled(read.amount, answered);
+        }
         setReadNote(null);
         return;
       }
@@ -724,12 +775,27 @@ function ExpenseRow({
                       against a question nobody asked. */}
                   <select
                     aria-label="สกุลเงินของรายการนี้"
-                    value={lineCurrency}
+                    // `""` is the unanswered state and it is a real option
+                    // rather than a coincidence of an empty string: without a
+                    // matching `<option>` the browser would show the first code
+                    // and the row would silently claim an answer nobody gave.
+                    value={lineCurrency ?? ""}
                     onChange={(e) => onCurrencyChange(e.target.value)}
                     disabled={readNote === "reading"}
                     className="shrink-0 rounded-lg px-1.5 py-2 text-[13px] font-bold outline-none cursor-pointer"
-                    style={inputStyle}
+                    style={
+                      needsCurrency
+                        ? { ...inputStyle, border: "1px solid var(--color-danger)" }
+                        : inputStyle
+                    }
                   >
+                    {/* `disabled`, because an answered line cannot be
+                        un-answered — only changed to the other code. */}
+                    {lineCurrency === null && (
+                      <option value="" disabled>
+                        เลือก
+                      </option>
+                    )}
                     {currencyOptions.map((code) => (
                       <option key={code} value={code}>
                         {code}
@@ -740,8 +806,13 @@ function ExpenseRow({
                 {/* The baht this line is worth. A THB line shows nothing — it is
                     already baht, and `= 20.00 บาท` beside a `20` would be noise.
                     `—` while no rate is known: the figure is never guessed, and
-                    the save refuses on its own if its own fetch also fails. */}
-                {isForeignLine && (
+                    the save refuses on its own if its own fetch also fails.
+
+                    An unanswered line shows the same `—`, and it is the honest
+                    figure rather than a placeholder: the block total below sums
+                    baht, this line contributes none, and without the dash the
+                    total would look wrong for no visible reason. */}
+                {(isForeignLine || needsCurrency) && (
                   <span
                     className="text-[12px] font-semibold text-right tabular-nums"
                     style={{ color: "var(--text-muted)" }}
@@ -780,6 +851,16 @@ function ExpenseRow({
       {needsReceipt && (
         <p className="text-[12px] font-medium" style={{ color: "var(--color-danger)" }}>
           ต้องแนบรูปใบเสร็จสำหรับรายการที่กรอกจำนวนเงิน
+        </p>
+      )}
+
+      {/* The unanswered currency, said where it can be fixed. It survives a
+          save and a reload because the blank is stored as a blank — a line with
+          a figure and no currency — rather than being a transient bit of read
+          state. `validateForSubmit` refuses the same lines server-side. */}
+      {needsCurrency && (
+        <p className="m-0 text-[12px] font-medium" style={{ color: "var(--color-danger)" }}>
+          {LINE_CURRENCY_MISSING_NOTE}
         </p>
       )}
 

@@ -7,6 +7,7 @@ import {
   effectiveLineCurrency,
   lineCurrencyOptions,
   lineMoney,
+  lineNeedsCurrency,
   resolveLineCurrency,
   typedLineFigure,
 } from "./claim-currency";
@@ -118,35 +119,65 @@ test("a Thai claim's every line is baht, whatever the line says", () => {
 });
 
 /**
- * A line with no recorded currency is in the **country's** currency, not baht.
- * Somebody who names Malaysia did so because they spent ringgit; the example
- * this feature was asked for is a 20 MYR ride beside a 20 THB one, and the
- * second is the one that gets switched.
+ * **A line with no recorded currency is unanswered, not defaulted.** The read
+ * fills the currency in when it can tell, and leaves it blank when it cannot;
+ * blanking has to mean something the form can then insist on, which resolving
+ * to the country's own currency would have destroyed — a line nobody had priced
+ * would have been converted as ringgit because somebody named Malaysia.
  */
-test("a line with no currency takes the country's, and baht must be chosen", () => {
-  assert.equal(effectiveLineCurrency(null, "MY"), "MYR");
-  assert.equal(effectiveLineCurrency("", "MY"), "MYR");
+test("a line with no currency is unanswered rather than defaulted", () => {
+  assert.equal(effectiveLineCurrency(null, "MY"), null);
+  assert.equal(effectiveLineCurrency("", "MY"), null);
   assert.equal(effectiveLineCurrency("MYR", "MY"), "MYR");
   assert.equal(effectiveLineCurrency("myr", "MY"), "MYR");
   assert.equal(effectiveLineCurrency("THB", "MY"), "THB");
 });
 
 /**
- * A currency the country does not offer — a draft whose country was changed, or
- * a hand-shaped request — falls back to the country's currency rather than to
- * baht. Calling a foreign figure baht converts nothing and shows nothing, which
- * is the silent failure the feature exists to prevent.
+ * A currency the country does not offer — a draft whose country was changed, a
+ * brand code this trip could not have been in, a hand-shaped request — is a
+ * question, never an assumption. Calling a foreign figure baht converts nothing
+ * and shows nothing, which is the silent failure the feature exists to prevent;
+ * calling it ringgit on no evidence is the same failure the other way round.
  */
-test("a currency the country does not offer falls back to the country's own", () => {
-  assert.equal(effectiveLineCurrency("GBP", "MY"), "MYR");
-  assert.equal(effectiveLineCurrency("USD", "JP"), "JPY");
+test("a currency the country does not offer is unanswered", () => {
+  assert.equal(effectiveLineCurrency("GBP", "MY"), null);
+  assert.equal(effectiveLineCurrency("USD", "JP"), null);
 });
 
 test("resolveLineCurrency is the same rule against a ready-made option list", () => {
   assert.equal(resolveLineCurrency("THB", ["MYR", "THB"]), "THB");
-  assert.equal(resolveLineCurrency("GBP", ["MYR", "THB"]), "MYR");
-  assert.equal(resolveLineCurrency(null, ["MYR", "THB"]), "MYR");
+  assert.equal(resolveLineCurrency("GBP", ["MYR", "THB"]), null);
+  assert.equal(resolveLineCurrency(null, ["MYR", "THB"]), null);
+  // No options at all is Thailand, where there is no question to leave open.
   assert.equal(resolveLineCurrency("MYR", []), "THB");
+  assert.equal(resolveLineCurrency(null, []), "THB");
+});
+
+/* ── Which lines the submit refuses ── */
+
+/**
+ * The rule the whole blank state exists for: a claim may not be filed carrying
+ * a figure nobody has said the currency of.
+ */
+test("a figure with no currency is refused; an empty row is not", () => {
+  const opts = ["MYR", "THB"];
+  assert.equal(lineNeedsCurrency({ amount: 0, foreignAmount: 20 }, opts), true);
+  assert.equal(lineNeedsCurrency({ amount: 0, currency: "GBP", foreignAmount: 20 }, opts), true);
+  // A row written before this claim was foreign: its typed figure is the baht.
+  assert.equal(lineNeedsCurrency({ amount: 55 }, opts), true);
+  // Blank rows are added freely and are nobody's problem until they carry money.
+  assert.equal(lineNeedsCurrency({ amount: 0 }, opts), false);
+  assert.equal(lineNeedsCurrency({ amount: 0, foreignAmount: 0 }, opts), false);
+  // Answered, either way.
+  assert.equal(lineNeedsCurrency({ amount: 164.47, currency: "MYR", foreignAmount: 20 }, opts), false);
+  assert.equal(lineNeedsCurrency({ amount: 55, currency: "THB" }, opts), false);
+});
+
+/** Thailand can never produce one — it has no dropdown to leave unanswered. */
+test("a Thai claim never needs a line currency", () => {
+  assert.equal(lineNeedsCurrency({ amount: 55 }, []), false);
+  assert.equal(lineNeedsCurrency({ amount: 0, foreignAmount: 20 }, []), false);
 });
 
 /* ── The line's four fields ── */
@@ -156,7 +187,7 @@ test("resolveLineCurrency is the same rule against a ready-made option list", ()
  * its arithmetic is bit-identical to what it was before migration 129.
  */
 test("a baht line passes the figure straight through and records no currency", () => {
-  assert.deepEqual(lineMoney(20, "THB", 8.25), {
+  assert.deepEqual(lineMoney(20, "THB", 8.25, []), {
     amount: 20,
     currency: null,
     exchangeRate: null,
@@ -164,7 +195,7 @@ test("a baht line passes the figure straight through and records no currency", (
   });
   // Even a rate of null cannot disturb it — that is what keeps an FX outage
   // from touching the Thai claims that are almost all of them.
-  assert.deepEqual(lineMoney(1234.56, "THB", null), {
+  assert.deepEqual(lineMoney(1234.56, "THB", null, []), {
     amount: 1234.56,
     currency: null,
     exchangeRate: null,
@@ -172,11 +203,41 @@ test("a baht line passes the figure straight through and records no currency", (
   });
 });
 
+/**
+ * On a claim that offers a choice, choosing baht is an **answer** and has to be
+ * written down as one — otherwise it is indistinguishable from a line nobody
+ * has priced, and the submit would refuse a line whose currency the requester
+ * had positively picked.
+ */
+test("a baht line on a foreign claim records THB, so the answer survives a reload", () => {
+  assert.deepEqual(lineMoney(20, "THB", 8.25, ["MYR", "THB"]), {
+    amount: 20,
+    currency: "THB",
+    exchangeRate: null,
+    foreignAmount: null,
+  });
+});
+
 test("a foreign line keeps the typed figure and previews the baht", () => {
-  assert.deepEqual(lineMoney(20, "MYR", 8.2235), {
+  assert.deepEqual(lineMoney(20, "MYR", 8.2235, ["MYR", "THB"]), {
     amount: 164.47,
     currency: "MYR",
     exchangeRate: 8.2235,
+    foreignAmount: 20,
+  });
+});
+
+/**
+ * The receipt read's blank answer. The figure is kept — it was legible — and no
+ * baht is claimed for it, because nobody knows what it is worth. `amount` at 0
+ * is the truth here rather than a failed preview, and the submit refuses the
+ * line until somebody says.
+ */
+test("an unanswered currency banks the typed figure and no baht", () => {
+  assert.deepEqual(lineMoney(20, null, 8.2235, ["MYR", "THB"]), {
+    amount: 0,
+    currency: null,
+    exchangeRate: null,
     foreignAmount: 20,
   });
 });
@@ -188,23 +249,25 @@ test("a foreign line keeps the typed figure and previews the baht", () => {
  * conversion corrects it on the next save.
  */
 test("a foreign line with no rate previews zero, not the foreign figure", () => {
-  assert.deepEqual(lineMoney(20, "MYR", null), {
+  const opts = ["MYR", "THB"];
+  assert.deepEqual(lineMoney(20, "MYR", null, opts), {
     amount: 0,
     currency: "MYR",
     exchangeRate: null,
     foreignAmount: 20,
   });
-  assert.equal(lineMoney(20, "MYR", 0).amount, 0);
-  assert.equal(lineMoney(20, "MYR", -1).amount, 0);
+  assert.equal(lineMoney(20, "MYR", 0, opts).amount, 0);
+  assert.equal(lineMoney(20, "MYR", -1, opts).amount, 0);
 });
 
 test("a non-finite figure is zero rather than NaN", () => {
-  assert.equal(lineMoney(Number.NaN, "THB", null).amount, 0);
-  assert.equal(lineMoney(Number.NaN, "MYR", 8.25).foreignAmount, 0);
+  assert.equal(lineMoney(Number.NaN, "THB", null, []).amount, 0);
+  assert.equal(lineMoney(Number.NaN, "MYR", 8.25, ["MYR", "THB"]).foreignAmount, 0);
+  assert.equal(lineMoney(Number.NaN, null, null, ["MYR", "THB"]).foreignAmount, 0);
 });
 
 test("zero converts to zero — a nil line is a real figure, not an absent one", () => {
-  assert.deepEqual(lineMoney(0, "MYR", 8.25), {
+  assert.deepEqual(lineMoney(0, "MYR", 8.25, ["MYR", "THB"]), {
     amount: 0,
     currency: "MYR",
     exchangeRate: 8.25,
@@ -219,7 +282,9 @@ test("the input shows what was typed, from whichever field holds it", () => {
   assert.equal(typedLineFigure({ amount: 55, currency: "THB", foreignAmount: null }, opts), 55);
   // No options at all — the Thailand case, where `amount` is the typed figure.
   assert.equal(typedLineFigure({ amount: 55, currency: "MYR", foreignAmount: 20 }, []), 55);
-  // A legacy row on a foreign claim: no currency recorded, so it resolves to
-  // the country's and reads its (absent) foreign figure as 0.
-  assert.equal(typedLineFigure({ amount: 55 }, opts), 0);
+  // Unanswered: the read banked its figure in `foreignAmount`.
+  assert.equal(typedLineFigure({ amount: 0, foreignAmount: 20 }, opts), 20);
+  // Unanswered, and written before the claim was foreign: `amount` holds it.
+  // Showing 0 would take money off a form its owner had already filled in.
+  assert.equal(typedLineFigure({ amount: 55 }, opts), 55);
 });

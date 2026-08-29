@@ -58,7 +58,11 @@ export interface ClaimCurrencyBrand {
 export interface LineCurrencyContext {
   /** What a line's dropdown offers, or empty — see above. */
   options: string[];
-  /** The country's own currency. What a line with no recorded currency is in. */
+  /**
+   * The country's own currency — the one the rate below is for, and the one the
+   * claim's reference-rate note names. It is **not** a default: a line with no
+   * recorded currency is unanswered, not assumed to be in this.
+   */
   defaultCurrency: string;
   /**
    * THB per 1 unit of `defaultCurrency`, for the on-screen preview **only**.
@@ -142,31 +146,35 @@ export function lineCurrencyOptions(country: string | null | undefined): string[
 }
 
 /**
- * The currency one line is actually in.
+ * The currency one line is actually in — or **null, meaning nobody has said
+ * yet**.
  *
- * **A line with no recorded currency is in the country's currency, not baht.**
- * That is deliberate and it is the opposite of the request-level rule this
- * replaces. A requester who names Malaysia did so because they spent ringgit,
- * and the alternative — every line silently staying baht until each one is
- * changed by hand — is both more work and less visible: a THB line shows no
- * converted figure, so nothing on screen would mark the ones still to be fixed.
- * Switching a single line back to THB is one click, and the example this
- * feature was asked for has exactly that shape (a 20 MYR ride beside a 20 THB
- * ride).
+ * Null is a real and expected state, not an error. Attaching a receipt asks the
+ * model which currency the document is in, and *"I cannot tell"* is an answer it
+ * is required to give rather than guess at; the amount is still filled in, the
+ * currency is left blank, and the requester chooses. `lineNeedsCurrency` marks
+ * such a line and `validateForSubmit` refuses the claim until it is answered,
+ * because a line whose worth in baht nobody knows must not be filed.
  *
- * The same fallback catches a line holding a currency the country does not
- * offer — a draft whose country was changed, or a hand-shaped request. It
- * resolves to the country's currency rather than to baht for the same reason:
- * calling a foreign figure baht converts nothing and shows nothing, which is
- * the silent failure this whole feature exists to prevent.
+ * **Thailand answers `THB` for everything**, since `lineCurrencyOptions` is
+ * empty there and there is no other money to be in. That is what keeps the
+ * blank state off an ordinary Thai claim altogether: no dropdown, so no
+ * unanswered dropdown.
  *
- * Thailand answers `THB` for everything, because `lineCurrencyOptions` is empty
- * there and there is no other money to be in.
+ * This replaces a rule that resolved an unrecorded currency to the **country's**
+ * own. That was a defensible default while nothing could fill the field in, and
+ * it is the wrong one now that the read can: it made a line nobody had priced
+ * indistinguishable from one deliberately entered in ringgit, so a `20` typed
+ * under an unanswered question would have been converted as though somebody had
+ * answered it. A currency the country does not offer lands in the same place
+ * and for the same reason — a draft whose country was changed, or a code the
+ * brand carries but this trip could not have been in, is a question to ask, not
+ * a fact to assume.
  */
 export function effectiveLineCurrency(
   selected: string | null | undefined,
   country: string | null | undefined,
-): string {
+): string | null {
   return resolveLineCurrency(selected, lineCurrencyOptions(country));
 }
 
@@ -177,15 +185,52 @@ export function effectiveLineCurrency(
  * `LineCurrencyContext`; re-deriving them from the country in every row would be
  * a second path to the same answer, which is how the row and the save come to
  * disagree about what a line is in.
+ *
+ * It doubles as the admission gate for whatever the receipt read answered: a
+ * code this line was never offered — the brand carries GBP, the trip was to
+ * Malaysia — is not a discovery, so it comes back null and the requester
+ * chooses, exactly as an illegible one does.
  */
 export function resolveLineCurrency(
   selected: string | null | undefined,
   options: readonly string[],
-): string {
+): string | null {
   if (options.length === 0) return THB;
   const want = norm(selected);
-  return options.indexOf(want) === -1 ? options[0] : want;
+  return options.indexOf(want) === -1 ? null : want;
 }
+
+/** The three money fields both the row and the submit validation read a line by. */
+export interface LineCurrencyItem {
+  amount: number;
+  currency?: string | null;
+  foreignAmount?: number | null;
+}
+
+/**
+ * Whether this line claims money whose currency nobody has stated.
+ *
+ * **An empty row is not one.** Rows are added freely and sit blank until a
+ * receipt is attached, so the question is only asked of a line that carries a
+ * figure — the same shape as the long-standing "an amount needs a receipt"
+ * rule, which likewise says nothing about an empty row.
+ */
+export function lineNeedsCurrency(
+  item: LineCurrencyItem,
+  options: readonly string[],
+): boolean {
+  if (options.length === 0) return false;
+  if (resolveLineCurrency(item.currency, options) !== null) return false;
+  return typedLineFigure(item, options) > 0;
+}
+
+/** The submit-time refusal. A control absent from a page is not a rule. */
+export const LINE_CURRENCY_MISSING_ERROR =
+  "กรุณาเลือกสกุลเงินของรายการค่าใช้จ่ายที่กรอกจำนวนเงิน";
+
+/** The same thing said on the row itself, where it can actually be fixed. */
+export const LINE_CURRENCY_MISSING_NOTE =
+  "ยังไม่ได้ระบุสกุลเงินของรายการนี้ — กรุณาเลือกสกุลเงินก่อนส่งคำขอ";
 
 /** One line's four money fields, as the form holds them between saves. */
 export interface LineMoney {
@@ -207,9 +252,18 @@ export interface LineMoney {
  * deliberately not reused).
  *
  * A baht line takes the identity branch: the typed figure straight through, and
- * the other three null. No rate is consulted and no rounding is applied, so a
- * Thai claim's arithmetic is bit-identical to what it was before this feature
- * shipped — the same guarantee `lineFxOrThrow` gives on the server.
+ * the other three null **on a claim that offers no choice**. On one that does,
+ * the same line records `"THB"` — because there the absence of a currency is
+ * how an *unanswered* line is written down, and a baht line that recorded
+ * nothing would be indistinguishable from one nobody has priced. A Thai claim
+ * still writes all three null, so its arithmetic and its rows are bit-identical
+ * to what they were before this feature shipped — the same guarantee
+ * `lineFxOrThrow` gives on the server, which reproduces this split.
+ *
+ * **An unanswered currency banks the typed figure and no baht at all**: the
+ * figure goes to `foreignAmount`, `amount` is 0, and the submit refuses. It is
+ * the one state where 0 is not a preview failure but the truth — the line's
+ * worth in baht is not a number anybody has.
  *
  * **An unknown rate previews as 0, never as the unconverted figure.** Returning
  * the figure would show a ringgit number under a baht total. Zero is visibly
@@ -219,12 +273,21 @@ export interface LineMoney {
  */
 export function lineMoney(
   typed: number,
-  currency: string,
+  currency: string | null,
   rate: number | null,
+  options: readonly string[],
 ): LineMoney {
   const n = Number.isFinite(typed) ? typed : 0;
+  if (currency === null) {
+    return { amount: 0, currency: null, exchangeRate: null, foreignAmount: n };
+  }
   if (isBaht(currency)) {
-    return { amount: n, currency: null, exchangeRate: null, foreignAmount: null };
+    return {
+      amount: n,
+      currency: options.length === 0 ? null : THB,
+      exchangeRate: null,
+      foreignAmount: null,
+    };
   }
   return {
     amount: toBaht(n, rate) ?? 0,
@@ -234,11 +297,22 @@ export function lineMoney(
   };
 }
 
-/** The figure a line's input shows: what was typed, in whichever field holds it. */
+/**
+ * The figure a line's input shows: what was typed, in whichever field holds it.
+ *
+ * An unanswered line reads `foreignAmount` first and falls back to `amount`,
+ * which covers both of the ways one arises: the receipt read banking a figure
+ * whose currency it could not tell, and a row written before this claim was
+ * foreign at all — whose typed figure is the baht in `amount`. Falling back is
+ * safe here and nowhere else: this decides what to *show* in an input, never
+ * what a line is worth.
+ */
 export function typedLineFigure(
-  item: { amount: number; currency?: string | null; foreignAmount?: number | null },
+  item: LineCurrencyItem,
   options: readonly string[],
 ): number {
-  if (isBaht(resolveLineCurrency(item.currency, options))) return Number(item.amount) || 0;
+  const cur = resolveLineCurrency(item.currency, options);
+  if (cur === null) return Number(item.foreignAmount ?? item.amount) || 0;
+  if (isBaht(cur)) return Number(item.amount) || 0;
   return Number(item.foreignAmount) || 0;
 }

@@ -12,26 +12,30 @@
  *
  * Never throws. Every failure comes back as `amount: null` and the caller shows
  * an empty, editable field — but it also comes back **saying why**, because one
- * line of copy cannot serve all four cases honestly. "ไม่สำเร็จ" reads as
+ * line of copy cannot serve all three cases honestly. "ไม่สำเร็จ" reads as
  * "your receipt is no good" even when the fault is a revoked key on our side,
  * which is exactly what happened to AP-17's ID-card dialog on 2026-08-24.
+ *
+ * ── The currency is an answer, not a filter ──
+ *
+ * The read used to be told which currency the line was in and to **withhold**
+ * the amount when the document disagreed (`currency-mismatch`). That was right
+ * while a read could not change the line: prefilling a ringgit total into a
+ * field the line called baht would have converted it as baht. It is the wrong
+ * shape now, because the read fills the currency in too — a MYR receipt on a
+ * line still reading THB sets the line to MYR rather than refusing.
+ *
+ * And when the document's currency **cannot be told**, the amount is still
+ * handed back, with `currency: null`. That is the requested behaviour and it is
+ * a legitimate outcome rather than a failure: the figure was legible, the
+ * currency was not, so the requester states it. Nothing is converted and no
+ * baht is claimed until they do.
  */
-import { sameCurrency } from "@/lib/acc/currency";
 import { toDownscaledCanvas } from "@/lib/image/downscale";
 
 export type ReceiptFailure =
   /** The call worked; this image has no total we can trust. */
   | "not-found"
-  /**
-   * The figure is real, and it is in a different currency from **this line**.
-   *
-   * Prefilling it would put a ringgit total into a field the line says is baht
-   * and convert it as baht — the defect this read carried until it asked which
-   * currency the document was in. Converting instead is not the alternative:
-   * the line's own dropdown is one click away, and a rate applied here would be
-   * a second copy of the conversion `request-service.ts` owns.
-   */
-  | "currency-mismatch"
   /** Our side is not configured — a missing or revoked key (503). */
   | "unavailable"
   /** Upstream trouble or no network. Retrying later might work. */
@@ -43,7 +47,6 @@ export type ReceiptFailure =
  */
 export const RECEIPT_FAILURE_TEXT: Record<ReceiptFailure, string> = {
   "not-found": "อ่านยอดจากรูปนี้ไม่เจอ — กรอกจำนวนเงินเองได้เลย",
-  "currency-mismatch": "ใบเสร็จนี้เป็นคนละสกุลเงินกับรายการนี้ — เปลี่ยนสกุลเงินของรายการ หรือกรอกจำนวนเงินเอง",
   unavailable: "ระบบอ่านใบเสร็จยังไม่พร้อมใช้งาน — กรอกจำนวนเงินเองได้เลย",
   error: "อ่านใบเสร็จไม่ได้ตอนนี้ — กรอกจำนวนเงินเองได้เลย",
 };
@@ -52,7 +55,12 @@ export interface ReceiptRead {
   amount: number | null;
   /**
    * The currency `amount` is in, as the **server** decided it — never as the
-   * caller suggested. Null when nothing was admitted.
+   * caller suggested.
+   *
+   * **Null beside a real amount is the expected blank case**, not an absence of
+   * data: the document was legible and its currency was not. The caller leaves
+   * the line's currency unset and makes the requester choose. It is also null
+   * whenever nothing was admitted at all.
    */
   currency: string | null;
   /** Always set when `amount` is null. */
@@ -68,15 +76,13 @@ export interface ReceiptReadOptions {
    * Without it the route sees no brand, admits baht alone, and every foreign
    * receipt silently stays baht: the whole defect. `ExpenseRows` therefore
    * carries a `brandCode` prop for no other purpose.
+   *
+   * The brand is deliberately wider than one line's two options — it is what
+   * the model is allowed to *say*. Narrowing that answer to what this
+   * particular line may be in is `resolveLineCurrency`'s job at the caller,
+   * because only the caller knows which country the trip was to.
    */
   brandCode?: string | null;
-  /**
-   * The currency the claim is being entered in. Null or absent means **not
-   * known here**, and the mismatch check is skipped rather than assuming baht —
-   * AP-17's panel has a real window where its brand is still unidentified.
-   * AP-1's form always knows, and passes `THB` rather than nothing.
-   */
-  claimCurrency?: string | null;
 }
 
 /** Enough for a receipt's digits at 1600px; well below the API's 5 MB image cap. */
@@ -151,13 +157,10 @@ export async function readReceiptAmount(
     const currency = typeof json.data?.currency === "string" ? json.data.currency : null;
     if (typeof amount !== "number") return { amount: null, currency: null, failure: "not-found" };
 
-    // The figure is real but belongs to another currency, so it is not this
-    // claim's figure. Skipped where the claim's currency is not known here —
-    // see `claimCurrency`.
-    const claimCurrency = options?.claimCurrency;
-    if (claimCurrency != null && !sameCurrency(currency, claimCurrency)) {
-      return { amount: null, currency, failure: "currency-mismatch" };
-    }
+    // A null `currency` here is the blank case and travels as it is — the
+    // caller leaves the line unpriced and asks. Nothing is guessed, and in
+    // particular nothing falls back to baht: that is the exact defect this read
+    // carried before it asked which currency the document was in.
     return { amount, currency };
   } catch {
     // Offline, DNS, a proxy eating the request.

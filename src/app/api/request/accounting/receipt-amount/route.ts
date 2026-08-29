@@ -40,6 +40,12 @@ import { MAX_PDF_PAGES, sheetToText } from "@/lib/acc/sheet-text";
  * totalled as baht. It now asks which currency the figure is in — but only
  * where there is an answer worth having.
  *
+ * **A `null` currency is returned beside a real amount**, not instead of one.
+ * The model is told to answer `null` rather than guess, and when it does the
+ * figure is still the figure: the requester gets it filled in and states what
+ * it is in. Withholding the amount as well — which is what this route did until
+ * 2026-08-29 — made the commonest legitimate outcome look like a failed read.
+ *
  * **The brand's currencies are resolved here, server-side, through
  * `getBrandClaimCurrencies`.** A currency posted by the caller would let somebody
  * shape their own request into having one accepted that the brand does not
@@ -197,13 +203,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, data: { amount, currency: THB } });
     }
 
-    // A currency the brand does not offer, or none legible, means the requester
-    // decides — the same answer `sanitizeReceiptAmount` gives for a figure it
-    // cannot trust. A blank editable field beats a figure whose currency is a
-    // guess, on a form about to be submitted.
+    // A currency the brand does not offer, or none legible, means **the
+    // requester decides** — and the figure still comes back so they only have
+    // to decide the one thing that is actually unknown. That is the whole of
+    // what was asked for: fill the amount in, leave the currency blank, make
+    // the person choose.
+    //
+    // The ceiling below is a baht ceiling and there is no rate to apply it
+    // through, so the raw figure is gated on its own. It is a looser bound than
+    // a converted one, and it is still the bound that matters here: a Thai tax
+    // id is thirteen digits and fails it outright, which is the misread this
+    // gate exists for. Nothing is at risk from the looseness, because a line
+    // with no currency banks no baht at all — `lineMoney` leaves its `amount`
+    // at 0 and `validateForSubmit` refuses the claim until it is answered.
     const currency = admitModelCurrency(parsed?.currency, brandCurrencies);
     if (currency === null) {
-      return NextResponse.json({ ok: true, data: { amount: null, currency: null } });
+      const amount = sanitizeReceiptAmount(parsed?.amount);
+      return NextResponse.json({ ok: true, data: { amount, currency: null } });
     }
     if (isBaht(currency)) {
       const amount = sanitizeReceiptAmount(parsed?.amount);

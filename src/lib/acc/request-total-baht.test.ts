@@ -109,14 +109,73 @@ test("lineFxOrThrow is the only conversion, and it has no fallback branch", () =
  * what keeps an FX outage away from the Thai claims that are almost all of
  * them, and what makes a Thai claim's arithmetic bit-identical to what it was
  * before migration 129.
+ *
+ * **The figure and the rate are still absolutes; only the `Currency` column is
+ * conditional.** On a Thai claim it is null, exactly as before. On a claim that
+ * offers a choice it is `'THB'`, because there a missing currency is how an
+ * *unanswered* line is written down — and a baht line recording nothing would
+ * be indistinguishable from one nobody had priced, which is the state
+ * `validateForSubmit` refuses. `recordBaht` is the only thing that may vary it.
  */
-test("a baht line is converted by nothing and records no currency", () => {
+test("a baht line is converted by nothing and takes the typed figure through", () => {
   const src = code();
   const start = src.indexOf("function lineFxOrThrow");
   const body = src.slice(start, src.indexOf("\n}", start));
   assert.ok(
-    /if \(isBaht\(currency\)\)[\s\S]{0,200}?currency: null, rate: null, foreignAmount: null/.test(body),
-    "the baht branch must return the typed figure with all three columns null",
+    /if \(isBaht\(currency\)\)[\s\S]{0,200}?amount: typed, currency: recordBaht \? THB : null, rate: null, foreignAmount: null/.test(body),
+    "the baht branch must return the typed figure, no rate, no foreign figure",
+  );
+});
+
+/**
+ * The third state, and the reason the second one had to change: a line whose
+ * currency nobody has stated banks **no baht at all** and keeps the typed
+ * figure where it can be asked about. It is savable — a draft is where the
+ * question gets answered — and `validateForSubmit` refuses to submit it.
+ *
+ * Zero here is the truth rather than a fallback. The one thing that must never
+ * happen is the typed figure reaching `amount`, which is the baht column every
+ * total, export and Business Central journal reads.
+ */
+test("an unanswered line banks no baht and keeps the typed figure", () => {
+  const src = code();
+  const start = src.indexOf("function lineFxOrThrow");
+  const body = src.slice(start, src.indexOf("\n}", start));
+  assert.ok(
+    /if \(currency === null\) \{[\s\S]{0,200}?amount: 0, currency: null, rate: null, foreignAmount: typed/.test(body),
+    "the unanswered branch must bank zero baht and keep the typed figure",
+  );
+
+  // And the submit refuses exactly those lines, on the shared pure predicate.
+  assert.ok(
+    /lineNeedsCurrency\(it, lineCurrencies\)/.test(src),
+    "validateForSubmit must refuse a line whose currency nobody has stated",
+  );
+  // The country it derives those options from is the brand-checked one, not the
+  // posted string — the same rule the save applies.
+  assert.ok(
+    /lineCurrencyOptions\(\s*await resolveClaimCountry\(/.test(src),
+    "the submit's option list must be re-derived against the brand",
+  );
+});
+
+/**
+ * `ForeignAmount` outlives a null `Currency` in the bind, because that pair
+ * *is* the unanswered line. Dropping the figure with the currency would lose
+ * the number the requester is being asked about, and the row would come back
+ * from a reload as an empty one.
+ */
+test("the line bind keeps the typed figure when no currency was stated", () => {
+  const src = code();
+  const start = src.indexOf("function bindLineFx");
+  const body = src.slice(start, src.indexOf("\n}", start));
+  assert.ok(
+    /const foreign = it\.foreignAmount \?\? null;/.test(body),
+    "ForeignAmount must not be dropped along with a null Currency",
+  );
+  assert.ok(
+    /const rate = currency === null \? null : it\.exchangeRate/.test(body),
+    "a rate must not be stored for a currency nobody stated",
   );
 });
 

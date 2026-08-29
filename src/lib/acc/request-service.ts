@@ -22,13 +22,16 @@ import { queueEmail } from "@/lib/acc/email-queue";
 import { AccConflictError, SUBMIT_ALREADY_CLAIMED } from "@/lib/acc/request-errors";
 import { buildEmail } from "@/lib/acc/email-templates";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
-import { isBaht, toBaht, type BrandCurrencyEntry } from "@/lib/acc/currency";
+import { isBaht, toBaht, THB, type BrandCurrencyEntry } from "@/lib/acc/currency";
 import { resolveRate } from "@/lib/acc/fx";
 import { listBrandRegistry } from "@/lib/brand-registry";
 import {
   DEFAULT_COUNTRY,
   effectiveClaimCountry,
   effectiveLineCurrency,
+  lineCurrencyOptions,
+  lineNeedsCurrency,
+  LINE_CURRENCY_MISSING_ERROR,
 } from "@/features/accounting/lib/claim-currency";
 import type {
   AccApproval,
@@ -80,10 +83,15 @@ const FX_UNAVAILABLE_ERROR =
  * The line's own money, already converted, exactly as it is written.
  *
  * `amount` is the baht that reaches `AccTravelExpenseItem.Amount`; the other
- * three are the record of where it came from and are **all null together** on a
- * baht line — nobody recorded a currency for it, and writing `'THB'` would claim
- * somebody had. That is also what keeps a Thai claim writing byte-identical rows
- * to the ones it wrote before this feature existed.
+ * three are the record of where it came from. On a **Thai** claim's baht line
+ * all three are null together — nobody recorded a currency for it, and writing
+ * `'THB'` would claim somebody had — which is what keeps such a claim writing
+ * byte-identical rows to the ones it wrote before this feature existed.
+ *
+ * On a claim that *offers* a choice they are not, and cannot be. There a
+ * missing `Currency` is how an **unanswered** line is written down, so a baht
+ * line has to record `'THB'` or the two become indistinguishable and the submit
+ * would refuse a currency the requester had positively chosen.
  */
 interface LineFx {
   amount: number;
@@ -96,18 +104,36 @@ interface LineFx {
  * One line's figure turned into the baht its `Amount` column must hold — **or
  * an exception**.
  *
- * There is no third branch on purpose. `toBaht` returns null when it cannot
+ * There is no fallback branch on purpose. `toBaht` returns null when it cannot
  * know, and the one thing that must never happen is falling back to the
  * unconverted figure: that writes a foreign number into a baht column, on the
  * path that feeds `AccRequest.TotalAmount`, every report, every export and every
  * Business Central journal, and it leaves no trace on any screen.
+ *
+ * **A `null` currency is a line nobody has priced**, and it is written rather
+ * than refused: `Amount` 0, `Currency` NULL, the typed figure kept in
+ * `ForeignAmount`. That has to be *savable* — a draft is where the question is
+ * asked and answered — while being unsubmittable, which `validateForSubmit`
+ * enforces on exactly the same predicate. Zero baht is the truth for it, not a
+ * guess: nobody knows what the line is worth, so it is worth nothing to every
+ * total until somebody says.
+ *
+ * `recordBaht` is `lineCurrencyOptions(country).length > 0` — see `LineFx`.
  */
-function lineFxOrThrow(typed: number, currency: string, rate: number | null): LineFx {
+function lineFxOrThrow(
+  typed: number,
+  currency: string | null,
+  rate: number | null,
+  recordBaht: boolean,
+): LineFx {
+  if (currency === null) {
+    return { amount: 0, currency: null, rate: null, foreignAmount: typed };
+  }
   if (isBaht(currency)) {
     // The identity branch. No rate is consulted and no rounding is applied, so
     // a Thai line's arithmetic is bit-identical to what it was before migration
     // 129 — which is the promise the whole per-line design rests on.
-    return { amount: typed, currency: null, rate: null, foreignAmount: null };
+    return { amount: typed, currency: recordBaht ? THB : null, rate: null, foreignAmount: null };
   }
   const baht = toBaht(typed, rate);
   if (baht === null) throw new Error(FX_UNAVAILABLE_ERROR);
@@ -173,13 +199,18 @@ async function resolveClaimCountry(
  * of their own.
  *
  * **One rate is enough, and it is fetched only if a line actually needs it.**
- * `effectiveLineCurrency` can only ever answer the country's own currency or
- * baht, so every foreign line on a claim is in the same currency — a second
- * lookup could only ask for the same code again. And a trip to Malaysia whose
- * every line happens to be in baht makes no FX call at all, so an outage at the
- * provider cannot stop work that does not depend on it (the point `needsRate` in
- * `@/lib/acc/fx` makes for the whole feature). A fetch that fails **throws**:
- * the claim is not saved at a rate we guessed.
+ * `effectiveLineCurrency` can only ever answer the country's own currency, baht,
+ * or nothing at all, so every foreign line on a claim is in the same currency —
+ * a second lookup could only ask for the same code again. And a trip to Malaysia
+ * whose every line happens to be in baht makes no FX call at all, so an outage
+ * at the provider cannot stop work that does not depend on it (the point
+ * `needsRate` in `@/lib/acc/fx` makes for the whole feature). A fetch that fails
+ * **throws**: the claim is not saved at a rate we guessed.
+ *
+ * A line whose currency is still unanswered needs no rate either — there is
+ * nothing to convert from — so a draft full of blanks saves without touching the
+ * provider, which is what makes answering them a calm job rather than one that
+ * can fail.
  *
  * Called **outside** the transaction, deliberately: this reaches the network,
  * and holding row locks across an 8-second FX timeout is how a save turns into a
@@ -190,13 +221,18 @@ async function toBahtDays(
   country: string,
 ): Promise<TravelExpenseDetail[]> {
   const currencyOf = (it: TravelExpenseItem) => effectiveLineCurrency(it.currency, country);
+  // True exactly where the form renders a line-currency dropdown, and the one
+  // thing that decides whether a baht line records `'THB'` — see `LineFx`.
+  const recordBaht = lineCurrencyOptions(country).length > 0;
 
-  // One pass to find out whether any rate is needed at all.
+  // One pass to find out whether any rate is needed at all. `isBaht(null)` is
+  // true, so an unanswered line is skipped here as well as a baht one: neither
+  // has a figure this rate would convert.
   let foreign: string | null = null;
   for (const day of days) {
     for (const it of allDayItems(day)) {
       const cur = currencyOf(it);
-      if (!isBaht(cur)) { foreign = cur; break; }
+      if (cur !== null && !isBaht(cur)) { foreign = cur; break; }
     }
     if (foreign) break;
   }
@@ -209,7 +245,7 @@ async function toBahtDays(
   }
 
   const convert = (it: TravelExpenseItem): TravelExpenseItem => {
-    const fx = lineFxOrThrow(typedFigure(it), currencyOf(it), rate);
+    const fx = lineFxOrThrow(typedFigure(it), currencyOf(it), rate, recordBaht);
     return {
       ...it,
       amount: fx.amount,
@@ -666,6 +702,28 @@ export async function validateForSubmit(
   const errs: string[] = [];
   const days = normalizeTravelDays(input);
   const dayLabel = (i: number) => (days.length > 1 ? ` (วันที่ ${i + 1})` : "");
+  /**
+   * What a line on this claim may be entered in — `[]` for Thailand, where none
+   * of the currency rules below can fire at all.
+   *
+   * Re-derived against the brand through the same `resolveClaimCountry` the save
+   * uses, not read off the posted body: a claim's country is not the client's to
+   * assert at submit any more than it is at save. Thailand short-circuits before
+   * any pool is opened, so the ordinary claim pays nothing for this.
+   */
+  const lineCurrencies = lineCurrencyOptions(
+    await resolveClaimCountry(input.brandCode ?? null, input.countryCode ?? null),
+  );
+  /**
+   * The figure the requester typed, whichever field holds it.
+   *
+   * Every money rule below asks about this rather than about `amount`, because
+   * `amount` is **baht** and is legitimately 0 on two kinds of line that do
+   * carry a figure: one whose currency is still unanswered, and one typed while
+   * the rate lookup was down. Asking about the baht would have told somebody
+   * they had not entered a fare they had plainly entered.
+   */
+  const typedOf = (it: TravelExpenseItem) => typedFigure(it);
   // A rate-based vehicle used to be refused on a foreign claim, because the
   // whole claim was in one currency and `km × บาท/กม.` would have been a baht
   // product called ringgit. Per line (migration 129) that reason is gone rather
@@ -712,8 +770,18 @@ export async function validateForSubmit(
       (day.sections?.length ?? 0) > 0 ||
       !!(day.vehicleId && day.isManualEntry);
     if (!hasVehicle) errs.push(`กรุณาเลือกพาหนะ${lbl}`);
-    if (allDayItems(day).some((it) => Number(it.amount) > 0 && !(it.files && it.files.length > 0))) {
+    if (allDayItems(day).some((it) => typedOf(it) > 0 && !(it.files && it.files.length > 0))) {
       errs.push(`กรุณาแนบรูปใบเสร็จสำหรับรายการค่าใช้จ่ายที่กรอกจำนวนเงิน${lbl}`);
+    }
+    // A claim may not be filed carrying a figure nobody has said the currency
+    // of: its worth in baht is not a number anybody has, so `Amount` is 0 and
+    // every total, report and journal downstream would quietly be short by it.
+    // The receipt read leaves exactly this state behind when a document's total
+    // is legible and its currency is not — deliberately, rather than guessing —
+    // and this is the other half of that decision. Thailand offers no choice, so
+    // `lineCurrencies` is empty there and this can never fire.
+    if (allDayItems(day).some((it) => lineNeedsCurrency(it, lineCurrencies))) {
+      errs.push(`${LINE_CURRENCY_MISSING_ERROR}${lbl}`);
     }
     if (hasRateVehicle(day)) {
       if (!day.direction) errs.push(`กรุณาเลือกทิศทางการเดินทาง${lbl}`);
@@ -721,7 +789,7 @@ export async function validateForSubmit(
       if (day.direction !== "onward" && !day.returnDistanceKm) errs.push(`กรุณาระบุระยะทางขากลับ${lbl}`);
     }
     for (const sec of day.sections ?? []) {
-      if (!sec.items.some((it) => it.itemType === "fare" && it.amount > 0)) {
+      if (!sec.items.some((it) => it.itemType === "fare" && typedOf(it) > 0)) {
         errs.push(`กรุณากรอกค่าเดินทาง (${sec.vehicleName ?? "พาหนะ"})${lbl}`);
       }
     }
@@ -729,7 +797,7 @@ export async function validateForSubmit(
       !hasRateVehicle(day) &&
       day.isManualEntry &&
       (!day.sections || day.sections.length === 0) &&
-      !day.items.some((it) => it.itemType === "fare" && it.amount > 0)
+      !day.items.some((it) => it.itemType === "fare" && typedOf(it) > 0)
     ) {
       errs.push(`กรุณากรอกค่าเดินทาง${lbl}`);
     }
@@ -797,15 +865,21 @@ type AccTx = {
  * `@amount` is **baht** and comes off the item `toBahtDays` has already
  * converted — there is no conversion here and there must never be one, because a
  * second copy of the rule is how the insert and the update come to disagree.
- * The other three are the record of what was typed, and are all null together on
- * a baht line.
+ * The other three are the record of what was typed.
+ *
+ * **`ForeignAmount` survives a null `Currency`; the rate does not.** That pair
+ * is exactly how an unanswered line is stored — a figure whose currency nobody
+ * has stated — so dropping the figure with the currency would lose the number
+ * the requester is being asked about. A rate is a different matter: without a
+ * currency there is nothing it could be a rate *of*, and a stored one would be
+ * a claim that a conversion happened.
  */
 function bindLineFx(
   req: ReturnType<Awaited<ReturnType<typeof getAccPool>>["request"]>,
   it: TravelExpenseItem,
 ) {
   const currency = (it.currency ?? "").trim().toUpperCase() || null;
-  const foreign = currency === null ? null : it.foreignAmount ?? null;
+  const foreign = it.foreignAmount ?? null;
   const rate = currency === null ? null : it.exchangeRate ?? null;
   return req
     .input("amount", sql.Decimal(18, 2), it.amount || 0)

@@ -69,6 +69,7 @@ import { computeTotalAmount, computeTotalDistance } from "@/lib/acc/calc";
 import {
   currencyWord,
   fmtAmountWithCurrency,
+  fmtMoneyTh,
   referenceRateNote,
   showsForeignCurrency,
 } from "@/lib/acc/currency-display";
@@ -270,14 +271,25 @@ function clusterEntriesByVehicle(entries: ExpenseLine[]): ExpenseVehicleCluster[
  *
  * A baht line adds nothing at all, so every claim written before 129 and every
  * Thai claim since renders character-for-character what it always did.
+ *
+ * **A figure with no currency at all is the third case**, and it is named
+ * rather than shown as a bare number: the receipt read banks a total whose
+ * currency it could not tell, and until somebody states it the line is worth
+ * nothing in baht — which is why its `amount` is 0 and the day total is short by
+ * it. `validateForSubmit` refuses to submit such a claim, so this only ever
+ * appears on a draft or a returned one, which is exactly where it needs to be
+ * read. Telling those two apart takes no extra field: a baht line records no
+ * `foreignAmount`, so a `foreignAmount` with no `currency` can only be this.
  */
 function withLineCurrency(
   vehicleName: string | null | undefined,
   item: TravelExpenseItem,
 ): string | undefined {
   const base = vehicleName ?? undefined;
-  if (!showsForeignCurrency(item.currency) || item.foreignAmount == null) return base;
-  const own = fmtAmountWithCurrency(item.foreignAmount, item.currency);
+  if (item.foreignAmount == null) return base;
+  const own = showsForeignCurrency(item.currency)
+    ? fmtAmountWithCurrency(item.foreignAmount, item.currency)
+    : `${fmtMoneyTh(item.foreignAmount)} — ยังไม่ระบุสกุลเงิน`;
   return base ? `${base} · ${own}` : own;
 }
 
