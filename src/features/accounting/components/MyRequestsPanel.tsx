@@ -552,7 +552,7 @@ function RequestRowList({
                     style={{ color: "var(--text-muted)" }}
                     title={
                       row.exchangeRate != null
-                        ? referenceRateNote(row.currency, row.exchangeRate)
+                        ? referenceRateNote(row.currency, row.exchangeRate, row.rateAsOf)
                         : undefined
                     }
                   >

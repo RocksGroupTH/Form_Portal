@@ -4,8 +4,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Coins } from "lucide-react";
 import { Button } from "@/components/ui/Button";
-import { isBaht, toBaht } from "@/lib/acc/currency";
-import { fmtMoneyTh, fmtRateTh } from "@/lib/acc/currency-display";
+import { isBaht, isOverriddenRate, toBaht } from "@/lib/acc/currency";
+import { fmtMoneyTh, fmtRateAsOfTh, fmtRateTh } from "@/lib/acc/currency-display";
 import { sanitizeOverrideRate } from "@/lib/acc/rate-override-policy";
 import { allDayItems, normalizeTravelDay } from "@/features/accounting/lib/travel-sections";
 import { TRAVEL_ITEM_TYPE_LABEL_TH } from "@/features/accounting/constants";
@@ -43,6 +43,16 @@ export interface LineRateSaved {
   requestId: number;
   itemId: number;
   rate: number;
+  /**
+   * The provenance the server just wrote (migration 130) — the date of the
+   * correction, and `RATE_SOURCE_OVERRIDE`.
+   *
+   * The queue patches its open drawer from this rather than refetching, so
+   * without these the panel would go on showing the day the *provider*
+   * published the rate this correction has just replaced.
+   */
+  rateAsOf: string | null;
+  rateSource: string;
   /** The line's new baht. */
   amount: number;
   /** The claim's new baht total, recomputed from every line. */
@@ -57,6 +67,20 @@ interface ForeignLine {
   label: string;
   currency: string;
   rate: number | null;
+  /**
+   * Which day's rate `rate` is, and who said so (migration 130).
+   *
+   * The source publishes on working days only, so a line saved on a Saturday
+   * was priced at Friday's rate — which is precisely what an accountant about
+   * to decide whether to correct it needs to know, and what nothing on this
+   * panel could tell them before.
+   *
+   * `rateSource` names a feed, or **this panel itself** once somebody has
+   * corrected the line: a hand-entered rate is one person's figure and is not
+   * reproducible from any provider, so it must never read as a published one.
+   */
+  rateAsOf: string | null;
+  rateSource: string | null;
   foreignAmount: number;
   amount: number;
 }
@@ -83,6 +107,8 @@ export function foreignLinesOf(days: TravelExpenseDetail[] | null | undefined): 
         label: TRAVEL_ITEM_TYPE_LABEL_TH[it.itemType] ?? it.itemType,
         currency: (it.currency ?? "").trim().toUpperCase(),
         rate: it.exchangeRate ?? null,
+        rateAsOf: it.rateAsOf ?? null,
+        rateSource: it.rateSource ?? null,
         foreignAmount: Number(it.foreignAmount) || 0,
         amount: Number(it.amount) || 0,
       });
@@ -208,11 +234,23 @@ function LineRow({
         </span>
       </div>
 
+      {/* Which day's rate this is, and whose. Both are the accountant's actual
+          question — the reference rate is not what the bank settled at, so
+          "when was this priced" and "has somebody already corrected it" are
+          what decide whether to touch the field below at all. A line with
+          neither reads exactly as it did before migration 130: nobody recorded
+          the provenance, and there is none to invent. */}
       <p className="text-[11.5px] m-0" style={{ color: "var(--text-muted)" }}>
         อัตราที่บันทึกไว้:{" "}
         <strong style={{ color: "var(--text-primary)" }}>
           {line.rate === null ? "—" : `1 ${line.currency} = ${fmtRateTh(line.rate)} บาท`}
         </strong>
+        {line.rate !== null && fmtRateAsOfTh(line.rateAsOf) !== "" && (
+          <span> · ณ {fmtRateAsOfTh(line.rateAsOf)}</span>
+        )}
+        {line.rate !== null && isOverriddenRate(line.rateSource) && (
+          <span style={{ color: "var(--text-info-yellow)" }}> · แก้โดยฝ่ายบัญชีแล้ว</span>
+        )}
       </p>
 
       <div className="flex flex-wrap items-center gap-2">

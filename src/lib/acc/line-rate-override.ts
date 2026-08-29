@@ -1,4 +1,6 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
+import { RATE_SOURCE_OVERRIDE } from "@/lib/acc/currency";
+import { rateAsOfYmd } from "@/lib/acc/currency-display";
 import { AccConflictError } from "@/lib/acc/request-errors";
 import type { Actor } from "@/lib/acc/approval-engine";
 import { computeRequestTotalAmount, computeTotalAmount } from "@/lib/acc/calc";
@@ -60,6 +62,18 @@ export interface LineRateOverrideResult {
   /** The rate this replaces. Null only where an earlier save left none. */
   previousRate: number | null;
   rate: number;
+  /**
+   * The provenance this correction just wrote (migration 130): the date of the
+   * correction, read back out of the statement that wrote it, and
+   * `RATE_SOURCE_OVERRIDE`.
+   *
+   * Returned rather than left to the caller to guess, because the queue patches
+   * its open drawer from this result instead of refetching — and a drawer
+   * showing the **new** rate beside the **old** date would state exactly the
+   * thing this column exists to make impossible.
+   */
+  rateAsOf: string | null;
+  rateSource: string;
   /** The line's own figure, unchanged — only what it is worth in baht moved. */
   foreignAmount: number;
   /** The line's new `Amount`. Baht. */
@@ -157,7 +171,23 @@ export async function applyLineRateOverride(
       .input("form", sql.NVarChar, formCode)
       .input("rate", sql.Decimal(18, 6), rate)
       .input("amount", sql.Decimal(18, 2), amount)
-      .query(`UPDATE i SET i.Amount=@amount, i.ExchangeRate=@rate
+      .input("rateSource", sql.NVarChar(20), RATE_SOURCE_OVERRIDE)
+      /* The provenance is rewritten with the rate, never left behind (migration
+         130). Two different things would go wrong if it were:
+
+         `RateSource` would still read `ECB`, and a hand-entered figure would be
+         indistinguishable from a published one — the whole reason that column
+         exists, since a corrected rate is one person's number and is not
+         reproducible from any feed.
+
+         `RateAsOf` would still name the day the provider published the rate
+         this correction just replaced, which is a statement about a figure that
+         is no longer in the row. `CAST(SYSDATETIME() AS DATE)` is the server's
+         own clock — a Thai wall clock, per the driver's `useUTC: false` — and
+         it is the date of the correction, which is the only date this rate has. */
+      .query(`UPDATE i SET i.Amount=@amount, i.ExchangeRate=@rate,
+                  i.RateAsOf=CAST(SYSDATETIME() AS DATE), i.RateSource=@rateSource
+              OUTPUT inserted.RateAsOf AS RateAsOf
               FROM [dbo].[AccTravelExpenseItem] i
               INNER JOIN [dbo].[AccTravelExpense] t ON t.Id = i.TravelExpenseId
               INNER JOIN [dbo].[AccRequest] r ON r.Id = t.RequestId
@@ -167,6 +197,13 @@ export async function applyLineRateOverride(
       await tx.rollback();
       throw new AccConflictError(RATE_OVERRIDE_WRONG_STEP_TEXT);
     }
+    // The date as the database actually stored it, not one recomputed here.
+    // `SYSDATETIME()` is the clock that stamped it and the two could disagree
+    // across midnight, which is the one moment a rate date being wrong by a day
+    // is least likely to be noticed.
+    const rateAsOf = rateAsOfYmd(
+      (upd.recordset?.[0]?.RateAsOf as string | Date | null | undefined) ?? null,
+    );
 
     // Read back through the shared loader, so the totals below are built from
     // exactly the day objects `getRequest` would hand any other caller.
@@ -213,6 +250,8 @@ export async function applyLineRateOverride(
         currency,
         oldRate: previousRate,
         newRate: rate,
+        newRateAsOf: rateAsOf,
+        newRateSource: RATE_SOURCE_OVERRIDE,
         oldAmount: previousAmount,
         newAmount: amount,
         foreignAmount,
@@ -231,6 +270,8 @@ export async function applyLineRateOverride(
       currency,
       previousRate,
       rate,
+      rateAsOf,
+      rateSource: RATE_SOURCE_OVERRIDE,
       foreignAmount: converted,
       amount,
       totalAmount,

@@ -1,6 +1,6 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { isBaht } from "@/lib/acc/currency";
-import { amountInBaht, currencyWord } from "@/lib/acc/currency-display";
+import { amountInBaht, currencyWord, rateAsOfYmd } from "@/lib/acc/currency-display";
 import { getAllowanceLog } from "@/lib/acc/travel-booking/allowance-log";
 import { rateForDay, type AllowanceLogEntry } from "@/lib/acc/travel-booking/perdiem";
 import { enumerateTravelDates, fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
@@ -70,6 +70,14 @@ export interface TravelBookingReportRow {
   currency: string | null;
   /** THB per 1 unit of `currency`, as stored (or as accounting corrected it). */
   exchangeRate: number | null;
+  /**
+   * **Which day's rate that is**, `YYYY-MM-DD` (migration 130).
+   *
+   * The source publishes on working days only, so a booking priced on a
+   * Saturday carries Friday's rate. Null on a baht request and on everything
+   * written before 130.
+   */
+  rateAsOf: string | null;
   /**
    * The trip's booking cost — `SUM(AccTravelBookingDetail.TotalAmount)` — **in
    * `currency`**, not baht.
@@ -161,7 +169,7 @@ const BASE_CTE = `
       -- currency and AccRequest.Currency / .ExchangeRate are what say which and
       -- at what rate. Without them this report cannot tell a 500 ringgit hotel
       -- from a 500 baht one.
-      r.Currency, r.ExchangeRate,
+      r.Currency, r.ExchangeRate, r.RateAsOf,
       (SELECT SUM(bd.TotalAmount)
          FROM [dbo].[AccTravelBookingDetail] bd
         WHERE bd.TravelBookingId = t.Id) AS BookingTotal,
@@ -302,6 +310,7 @@ export async function queryTravelBookingReport(
         x.ExchangeRate === null || x.ExchangeRate === undefined
           ? null
           : Number(x.ExchangeRate),
+      rateAsOf: rateAsOfYmd((x.RateAsOf as string | Date | null) ?? null),
       bookingTotal,
       // Converted once here rather than at each of the two surfaces, so the
       // export and the screen cannot disagree about what a trip cost in baht.

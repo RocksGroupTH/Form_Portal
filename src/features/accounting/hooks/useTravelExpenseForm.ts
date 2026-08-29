@@ -16,6 +16,7 @@ import {
 } from "@/features/accounting/lib/travel-sections";
 import { syncReturnOriginFromOnward } from "@/features/accounting/lib/route-waypoints";
 import { THB } from "@/lib/acc/currency";
+import { rateAsOfYmd } from "@/lib/acc/currency-display";
 import {
   DEFAULT_COUNTRY,
   claimCountryOptions,
@@ -423,20 +424,26 @@ export function useTravelExpenseForm(
    * exactly as it did before this feature shipped.
    */
   const foreignCurrency = lineCurrencyOptions(countryCode)[0] ?? null;
-  const { data: fxData } = useSWR<{ rate: number }>(
+  const { data: fxData } = useSWR<{ rate: number; asOf?: string | null }>(
     foreignCurrency ? `/api/request/accounting/fx-rate?currency=${foreignCurrency}` : null,
     jsonFetcher,
     { revalidateOnFocus: false },
   );
   const previewRate =
     fxData && Number.isFinite(fxData.rate) && fxData.rate > 0 ? fxData.rate : null;
+  /* Which day's rate that is. The route has always answered it — `resolveRate`
+     returns `{ rate, asOf, source }` — and this is where it stops being thrown
+     away. The ECB publishes on working days only, so the figure a Saturday
+     preview shows is Friday's, and the note is where somebody can see that. */
+  const previewRateAsOf = previewRate === null ? null : rateAsOfYmd(fxData?.asOf ?? null);
   const lineCurrency: LineCurrencyContext = useMemo(
     () => ({
       options: lineCurrencyOptions(countryCode),
       defaultCurrency: foreignCurrency ?? THB,
       rate: previewRate,
+      rateAsOf: previewRateAsOf,
     }),
-    [countryCode, foreignCurrency, previewRate],
+    [countryCode, foreignCurrency, previewRate, previewRateAsOf],
   );
 
   const loading = !brandsData || !vehiclesData || !employeeApiData;

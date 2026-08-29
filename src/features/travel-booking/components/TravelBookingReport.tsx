@@ -194,7 +194,7 @@ function cellValue(
           }}
           title={
             row.exchangeRate != null
-              ? referenceRateNote(row.currency, row.exchangeRate)
+              ? referenceRateNote(row.currency, row.exchangeRate, row.rateAsOf)
               : "ยังไม่มีอัตราแลกเปลี่ยนที่บันทึกไว้"
           }
         >

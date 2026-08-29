@@ -75,6 +75,65 @@ export function fmtAmountWithCurrency(
 }
 
 /**
+ * A stored rate date as `YYYY-MM-DD`, or **null when there is none**.
+ *
+ * Takes what the provider answered (`ResolvedRate.asOf`, already `YYYY-MM-DD`)
+ * or what the driver read back out of a `DATE` column (a `Date`), so the write
+ * and the read normalise through one definition. Anything else — `""`, a
+ * half-typed string, a day the month does not have — is null rather than a
+ * guess: `RateAsOf` exists to say which day's rate a figure used, and a wrong
+ * date there is worse than an admitted absence. That is the same reasoning
+ * migration 130 backfilled nothing on.
+ *
+ * Local getters on the `Date`, never `toISOString()`. Every timestamp in these
+ * databases is a Thai wall clock and the Node process runs in the same zone
+ * (`useUTC: false`), so a UTC conversion would move a Bangkok date backwards
+ * across midnight.
+ */
+export function rateAsOfYmd(v: string | Date | null | undefined): string | null {
+  if (v == null) return null;
+  if (v instanceof Date) {
+    if (Number.isNaN(v.getTime())) return null;
+    return `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, "0")}-${String(v.getDate()).padStart(2, "0")}`;
+  }
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v).trim());
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  if (month < 1 || month > 12 || day < 1) return null;
+  // `new Date(2026, 1, 29)` rolls forward to 1 March rather than failing, so a
+  // day the month does not have would otherwise be accepted here and then shown
+  // as a different date than the one stored.
+  if (day > new Date(year, month, 0).getDate()) return null;
+  return m[0];
+}
+
+/**
+ * The twelve Thai month abbreviations, spelled out here rather than imported.
+ *
+ * This module imports only `@/lib/acc/currency`, which imports nothing at all —
+ * that is what makes every rule in it unit-testable and safe in a client
+ * bundle. `features/accounting/lib/thai-calendar.ts` carries the same table,
+ * but it sits in a feature and `lib/` must not reach up into one.
+ */
+const TH_MONTHS_SHORT = [
+  "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
+  "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค.",
+];
+
+/** `"2026-08-28"` → `"28 ส.ค. 2569"`. `""` for a date nobody recorded. */
+export function fmtRateAsOfTh(v: string | Date | null | undefined): string {
+  const ymd = rateAsOfYmd(v);
+  if (ymd === null) return "";
+  const year = Number(ymd.slice(0, 4));
+  const month0 = Number(ymd.slice(5, 7)) - 1;
+  const day = Number(ymd.slice(8, 10));
+  // Buddhist era, as every other date this app shows a Thai reader.
+  return `${day} ${TH_MONTHS_SHORT[month0]} ${year + 543}`;
+}
+
+/**
  * The reference-rate caption. **Never "อัตราแลกเปลี่ยนธนาคารแห่งประเทศไทย".**
  *
  * `BOT_API_CLIENT_ID` is deliberately unprovisioned (spec §9.1), so every rate
@@ -83,12 +142,28 @@ export function fmtAmountWithCurrency(
  * of Thailand rate would state something false on a screen accounting signs off
  * against, and it would be stated on every screen at once, which is why the
  * sentence lives here rather than being retyped per surface.
+ *
+ * **`asOf` says which day's rate that was, and it matters more than it looks.**
+ * The ECB publishes on working days only, so a claim saved on a Saturday
+ * carries Friday's rate, and one saved after a long weekend can carry a
+ * three-day-old one. That behaviour is correct and deliberate — there is no
+ * rate for a day the market did not trade — but without the date on screen
+ * nobody can tell afterwards which day a figure was converted at. Migration 130
+ * is what stores it; this is where it is read out.
+ *
+ * **Optional, and silently omitted when absent.** Every row written before 130
+ * reads NULL, which is the truth: nobody recorded the provenance. The caption
+ * then reads exactly as it always did, rather than printing an invented date or
+ * an empty bracket.
  */
 export function referenceRateNote(
   currency: string | null | undefined,
   rate: number,
+  asOf?: string | Date | null,
 ): string {
-  return `อัตราอ้างอิง 1 ${norm(currency)} = ${fmtRateTh(rate)} บาท`;
+  const note = `อัตราอ้างอิง 1 ${norm(currency)} = ${fmtRateTh(rate)} บาท`;
+  const on = fmtRateAsOfTh(asOf);
+  return on === "" ? note : `${note} (ณ ${on})`;
 }
 
 /**

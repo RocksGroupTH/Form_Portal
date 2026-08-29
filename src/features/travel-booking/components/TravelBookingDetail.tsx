@@ -908,7 +908,7 @@ export function TravelBookingDetail({
                               style={{ color: "var(--text-muted)" }}
                               title={
                                 request.exchangeRate != null
-                                  ? referenceRateNote(request.currency, request.exchangeRate)
+                                  ? referenceRateNote(request.currency, request.exchangeRate, request.rateAsOf)
                                   : undefined
                               }
                             >
@@ -923,6 +923,7 @@ export function TravelBookingDetail({
                                   : `≈ ${fmtMoneyTh(baht)} บาท (${referenceRateNote(
                                       request.currency,
                                       request.exchangeRate ?? 0,
+                                      request.rateAsOf,
                                     )})`;
                               })()}
                             </p>

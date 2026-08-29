@@ -19,6 +19,10 @@ const mockReq: TravelBookingRequest = {
   // keeps writing.
   currency: null,
   exchangeRate: null,
+  // No rate, so no day it was the rate on and nobody to have published it
+  // (migration 130). The three are null together on every baht request.
+  rateAsOf: null,
+  rateSource: null,
   continuationFromRequestNo: null,
   continuationFromRequestId: null,
   staffId: 10176,

@@ -413,16 +413,23 @@ export function TravelExpenseForm({
    * with the design.
    *
    * What a foreign claim does still say, once, is the rate its lines were
-   * converted at. It is an **ECB mid-market reference rate**:
-   * `BOT_API_CLIENT_ID` is deliberately unprovisioned, so `bot-fx` always takes
-   * its keyless fallback. `อัตราอ้างอิง`, never captioned as a Bank of Thailand
-   * rate, and `referenceRateNote` is the one place that sentence is written. */
+   * converted at — and, since migration 130, **which day's rate that is**. It
+   * is an **ECB mid-market reference rate**: `BOT_API_CLIENT_ID` is
+   * deliberately unprovisioned, so `bot-fx` always takes its keyless fallback.
+   * `อัตราอ้างอิง`, never captioned as a Bank of Thailand rate, and
+   * `referenceRateNote` is the one place that sentence is written.
+   *
+   * The date is not decoration. That source publishes on **working days only**,
+   * so a claim filled in on a Saturday is priced at Friday's rate and one filled
+   * in after a long weekend at a three-day-old one. That is correct — there is
+   * no rate for a day the market did not trade — but until the note said so,
+   * the figure read as today's and nothing afterwards could tell. */
   const foreignLineCurrency = lineCurrency.options.length > 0 ? lineCurrency.defaultCurrency : null;
   const fxNote =
     foreignLineCurrency === null
       ? null
       : lineCurrency.rate !== null
-        ? referenceRateNote(foreignLineCurrency, lineCurrency.rate)
+        ? referenceRateNote(foreignLineCurrency, lineCurrency.rate, lineCurrency.rateAsOf)
         : "ยังดึงอัตราอ้างอิงไม่ได้ในขณะนี้ — ยอดเป็นเงินบาทจะคำนวณตอนบันทึก";
 
   /**

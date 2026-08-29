@@ -204,6 +204,23 @@ export interface TravelBookingRequest {
    */
   exchangeRate: number | null;
   /**
+   * **Which day's rate `exchangeRate` is** — `YYYY-MM-DD` (migration 130) — and
+   * where it came from.
+   *
+   * Not the day the desk saved the booking. The source publishes on working
+   * days only, so a row saved on a Saturday carries Friday's rate and one saved
+   * after a long weekend can carry a three-day-old one. That is correct; the
+   * two dates are simply different facts, and only this one says what the
+   * figures were priced at.
+   *
+   * Null on a baht request and on everything written before 130, which
+   * backfilled nothing: nobody recorded it, and inventing a date would be worse
+   * than admitting there is none.
+   */
+  rateAsOf: string | null;
+  /** Where that rate came from — `"ECB"` today. See `rateAsOf`. */
+  rateSource: string | null;
+  /**
    * Where this trip's uncounted first day went, when `isContinuation` is set.
    *
    * A continuation trip departs on the day the one before it returned, and one

@@ -28,6 +28,30 @@ export interface TravelExpenseItem {
   exchangeRate?: number | null;
   /** The figure as typed, before conversion. `amount` is this × `exchangeRate`. */
   foreignAmount?: number | null;
+  /**
+   * **Which day's rate `exchangeRate` is** — `YYYY-MM-DD` (migration 130).
+   *
+   * Not the day the claim was saved. The ECB publishes on working days only, so
+   * a line entered on a Saturday carries Friday's rate and one entered after a
+   * long weekend can carry a three-day-old one. That is correct — there is no
+   * rate for a day the market did not trade — but the two dates are different
+   * facts and only this one says what the figure was actually converted at.
+   *
+   * Null on a baht line, on an unanswered one, and on every row written before
+   * 130, which backfilled nothing: nobody recorded it, and inventing a date
+   * would be worse than admitting there is none.
+   */
+  rateAsOf?: string | null;
+  /**
+   * Who said so — `"ECB"` today, `"BOT"` if `BOT_API_CLIENT_ID` is ever
+   * provisioned, `RATE_SOURCE_OVERRIDE` when accounting corrected it by hand.
+   *
+   * A hand-corrected rate must never be mistaken for a published one: it is one
+   * person's figure and is not reproducible from the date beside it. And if a
+   * BOT key is ever bought, rows either side of that day are converted on
+   * different bases, which this column is the only thing that could distinguish.
+   */
+  rateSource?: string | null;
   sortOrder: number;
   /** AccTravelVehicleSection.Id — manual vehicle rows only. */
   vehicleSectionId?: number | null;
@@ -147,6 +171,20 @@ export interface AccRequest {
   exchangeRate: number | null;
   /** The claim's own figure, before conversion. Legacy — see above. */
   foreignAmount: number | null;
+  /**
+   * Which day's rate `exchangeRate` is, `YYYY-MM-DD` (migration 130), and where
+   * it came from.
+   *
+   * **Live for AP-17, always null for AP-1.** AP-17's booking desk records one
+   * rate for a whole booking and `saveBookingDetail` writes these beside it;
+   * AP-1's three header writers clear the whole group, because its currency
+   * lives on the expense line and a header rate date beside a cleared currency
+   * would assert a conversion that is not there. AP-1's own provenance is on
+   * `TravelExpenseItem`.
+   */
+  rateAsOf: string | null;
+  /** Where that rate came from — see `rateAsOf`. */
+  rateSource: string | null;
   submittedBy: number | null; submittedAt: string | null;
   createdAt: string; updatedAt: string;
   /** One row per travel day (sorted by sortOrder). */

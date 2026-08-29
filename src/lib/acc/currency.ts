@@ -162,3 +162,22 @@ export function brandCurrencyState(
 ): "none" | "configured" {
   return enabledForeignCurrencies(b?.currencies).length > 0 ? "configured" : "none";
 }
+
+/**
+ * What `AccTravelExpenseItem.RateSource` / `AccRequest.RateSource` holds when a
+ * human corrected the rate rather than a provider publishing it (migration 130).
+ *
+ * **A hand-corrected rate must never be mistaken for a published one.** Every
+ * other value in that column names a feed — `ECB` today, `BOT` if
+ * `BOT_API_CLIENT_ID` is ever provisioned — and both are reproducible from the
+ * date beside them. This one is not: it is one person's figure, entered at the
+ * ACCOUNT step because the mid-market reference rate is not what the bank
+ * settled at, and the only thing that can tell it apart afterwards is this
+ * string. `NVARCHAR(20)`, so it must stay short.
+ */
+export const RATE_SOURCE_OVERRIDE = "OVERRIDE";
+
+/** Whether this row's rate was entered by hand — see `RATE_SOURCE_OVERRIDE`. */
+export function isOverriddenRate(source: string | null | undefined): boolean {
+  return norm(source) === RATE_SOURCE_OVERRIDE;
+}

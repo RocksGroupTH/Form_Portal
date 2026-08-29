@@ -273,6 +273,11 @@ export function AdminBookingPanel({
     storedCurrency !== "" && storedCurrency === currency && request.exchangeRate && request.exchangeRate > 0
       ? request.exchangeRate
       : null;
+  /* Which day's rate that is (migration 130). It follows `exchangeRate` through
+     the same gate rather than being read off the request directly: a date left
+     standing beside a rate that has just been ruled out by the toggle would
+     caption a figure that is no longer on screen. */
+  const exchangeRateAsOf = exchangeRate === null ? null : request.rateAsOf;
 
   const [completing, setCompleting] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<{ detailId: number; label: string } | null>(null);
@@ -447,6 +452,7 @@ export function AdminBookingPanel({
               currencyOptions={currencyOptions}
               brandCode={brandCode}
               exchangeRate={exchangeRate}
+              exchangeRateAsOf={exchangeRateAsOf}
               onCurrencyChange={setPickedCurrency}
               onChanged={onChanged}
               onRowDirty={reportRowDirty}
@@ -649,6 +655,7 @@ function BookingTypeGroup({
   currencyOptions,
   brandCode,
   exchangeRate,
+  exchangeRateAsOf,
   onCurrencyChange,
   onChanged,
   onRowDirty,
@@ -670,6 +677,14 @@ function BookingTypeGroup({
   brandCode: string | null;
   /** The rate the server recorded, or null. Display only. */
   exchangeRate: number | null;
+  /**
+   * Which day's rate that is, `YYYY-MM-DD` (migration 130), or null.
+   *
+   * It travels beside `exchangeRate` rather than being read off the request in
+   * here, so it is gated by the same currency test: a date shown beside a rate
+   * the toggle has just ruled out would caption a figure no longer on screen.
+   */
+  exchangeRateAsOf: string | null;
   onCurrencyChange: (code: string) => void;
   onChanged: () => void;
   /** Report one row's unsaved-edits answer to the panel, which owns Complete. */
@@ -769,6 +784,7 @@ function BookingTypeGroup({
             currencyOptions={currencyOptions}
             brandCode={brandCode}
             exchangeRate={exchangeRate}
+            exchangeRateAsOf={exchangeRateAsOf}
             onCurrencyChange={onCurrencyChange}
             onChanged={onChanged}
             onDirtyChange={reportDirty}
@@ -791,6 +807,7 @@ function BookingTypeGroup({
             currencyOptions={currencyOptions}
             brandCode={brandCode}
             exchangeRate={exchangeRate}
+            exchangeRateAsOf={exchangeRateAsOf}
             onCurrencyChange={onCurrencyChange}
             onChanged={onChanged}
             onDirtyChange={reportDirty}
@@ -835,6 +852,7 @@ function BookingRowCard({
   currencyOptions,
   brandCode,
   exchangeRate,
+  exchangeRateAsOf,
   onCurrencyChange,
   onChanged,
   onDirtyChange,
@@ -864,6 +882,8 @@ function BookingRowCard({
   /** Named in the currency caption — where the value came from, not a control. */
   brandCode: string | null;
   exchangeRate: number | null;
+  /** Which day's rate that is, `YYYY-MM-DD` (migration 130). See the panel. */
+  exchangeRateAsOf: string | null;
   onCurrencyChange: (code: string) => void;
   onChanged: () => void;
   /** Tell the panel whether this row is carrying unsaved edits. */
@@ -1436,7 +1456,7 @@ function BookingRowCard({
                 })}
                 {exchangeRate !== null && currencyUnit && (
                   <span className="text-[11.5px] tabular-nums" style={{ color: "var(--text-muted)" }}>
-                    {referenceRateNote(currencyUnit, exchangeRate)}
+                    {referenceRateNote(currencyUnit, exchangeRate, exchangeRateAsOf)}
                   </span>
                 )}
               </div>

@@ -6,6 +6,7 @@ import { resolveEmployeeForActor } from "@/lib/hr/employee-lookup";
 import type { EmployeeContext } from "@/lib/hr/types";
 import { deleteStoredFiles, type StoredFileRef } from "@/lib/acc/stored-file";
 import { resolveManagerEmail } from "@/lib/acc/employee-context";
+import { rateAsOfYmd } from "@/lib/acc/currency-display";
 import {
   assertFormWritable,
   isUatRequest,
@@ -96,6 +97,10 @@ function mapTravelBookingRow(
     // is the per-diem total and stays baht whatever these say.
     currency: ((r.Currency as string | null) ?? "").trim() || null,
     exchangeRate: num(r.ExchangeRate),
+    // Migration 130 — which day's rate that is, and who published it. NULL on a
+    // baht request and on every row written before 130.
+    rateAsOf: rateAsOfYmd((r.RateAsOf as string | Date | null) ?? null),
+    rateSource: ((r.RateSource as string | null) ?? "").trim() || null,
     // Only ever present on the single-request load, which is the one place the
     // note is rendered; the list queries do not pay for the subquery.
     continuationFromRequestNo: (r.ContinuationFromRequestNo as string) ?? null,
@@ -361,7 +366,7 @@ export async function listMyTravelBookings(userId: number): Promise<TravelBookin
     .query(`
       SELECT
         r.Id, r.RequestNo, r.Status, r.CurrentStepCode, r.BrandCode, r.StaffId, r.RequesterFullName, r.RequesterEmail, r.RequesterPosition, r.RequesterDepartmentName,
-        r.Currency, r.ExchangeRate,
+        r.Currency, r.ExchangeRate, r.RateAsOf, r.RateSource,
         r.PaymentDate, r.SubmittedAt,
         t.Phone, t.AllowanceSnapshot, t.ReasonId, t.ReasonName, t.ReasonCustomText, t.WorkDetail,
         t.ProvinceId, t.ProvinceName, t.AccommodationId, t.AccommodationName, t.AccommodationCustomText, t.NeedsRoomBooking,

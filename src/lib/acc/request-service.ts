@@ -23,7 +23,8 @@ import { AccConflictError, SUBMIT_ALREADY_CLAIMED } from "@/lib/acc/request-erro
 import { buildEmail } from "@/lib/acc/email-templates";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import { isBaht, toBaht, THB, type BrandCurrencyEntry } from "@/lib/acc/currency";
-import { resolveRate } from "@/lib/acc/fx";
+import { resolveRate, type ResolvedRate } from "@/lib/acc/fx";
+import { rateAsOfYmd } from "@/lib/acc/currency-display";
 import { listBrandRegistry } from "@/lib/brand-registry";
 import {
   DEFAULT_COUNTRY,
@@ -98,6 +99,20 @@ interface LineFx {
   currency: string | null;
   rate: number | null;
   foreignAmount: number | null;
+  /**
+   * **Which day's rate that was, and who published it** (migration 130).
+   *
+   * `resolveRate` has always answered all three and this file used to keep only
+   * the number, so a claim recorded that it converted at 8.1856 and nothing
+   * about when that was the rate. The ECB publishes on working days only, so a
+   * line saved on a Saturday carries Friday's — correct, and unreconstructable
+   * afterwards without this.
+   *
+   * They travel with the rate and are null exactly where it is: a baht line
+   * consults no rate, and an unanswered one has no conversion to describe.
+   */
+  asOf: string | null;
+  source: string | null;
 }
 
 /**
@@ -123,21 +138,35 @@ interface LineFx {
 function lineFxOrThrow(
   typed: number,
   currency: string | null,
-  rate: number | null,
+  fx: ResolvedRate | null,
   recordBaht: boolean,
 ): LineFx {
+  const rate = fx?.rate ?? null;
   if (currency === null) {
-    return { amount: 0, currency: null, rate: null, foreignAmount: typed };
+    return { amount: 0, currency: null, rate: null, foreignAmount: typed, asOf: null, source: null };
   }
   if (isBaht(currency)) {
     // The identity branch. No rate is consulted and no rounding is applied, so
     // a Thai line's arithmetic is bit-identical to what it was before migration
-    // 129 — which is the promise the whole per-line design rests on.
-    return { amount: typed, currency: recordBaht ? THB : null, rate: null, foreignAmount: null };
+    // 129 — which is the promise the whole per-line design rests on. The
+    // provenance columns stay null with the rate for the same reason: there is
+    // no conversion here to describe.
+    return { amount: typed, currency: recordBaht ? THB : null, rate: null, foreignAmount: null, asOf: null, source: null };
   }
   const baht = toBaht(typed, rate);
   if (baht === null) throw new Error(FX_UNAVAILABLE_ERROR);
-  return { amount: baht, currency, rate, foreignAmount: typed };
+  return {
+    amount: baht,
+    currency,
+    rate,
+    foreignAmount: typed,
+    // `rateAsOfYmd` refuses anything that is not a real `YYYY-MM-DD`, so a
+    // provider answering `""` or a malformed date stores nothing rather than a
+    // date nobody can trust — the same choice migration 130 made in not
+    // backfilling.
+    asOf: rateAsOfYmd(fx?.asOf),
+    source: (fx?.source ?? "").trim().slice(0, 20) || null,
+  };
 }
 
 /** The figure the requester actually typed, wherever the client put it. */
@@ -237,21 +266,27 @@ async function toBahtDays(
     if (foreign) break;
   }
 
-  let rate: number | null = null;
+  // The whole answer is kept, not just the number. `asOf` and `source` are what
+  // migration 130 records beside each converted line, and discarding them here
+  // is exactly what left every claim before it saying it converted at 8.1856
+  // and nothing about which day that was the rate.
+  let resolved: ResolvedRate | null = null;
   if (foreign) {
     const fx = await resolveRate(foreign);
     if (!fx) throw new Error(FX_UNAVAILABLE_ERROR);
-    rate = fx.rate;
+    resolved = fx;
   }
 
   const convert = (it: TravelExpenseItem): TravelExpenseItem => {
-    const fx = lineFxOrThrow(typedFigure(it), currencyOf(it), rate, recordBaht);
+    const fx = lineFxOrThrow(typedFigure(it), currencyOf(it), resolved, recordBaht);
     return {
       ...it,
       amount: fx.amount,
       currency: fx.currency,
       exchangeRate: fx.rate,
       foreignAmount: fx.foreignAmount,
+      rateAsOf: fx.asOf,
+      rateSource: fx.source,
     };
   };
 
@@ -283,7 +318,7 @@ async function toBahtDays(
  * AP-17 still writes those two columns for its booking desk, which is why they
  * cannot simply be dropped.
  */
-const FX_CLEAR = `Currency=NULL, ExchangeRate=NULL, ForeignAmount=NULL`;
+const FX_CLEAR = `Currency=NULL, ExchangeRate=NULL, ForeignAmount=NULL, RateAsOf=NULL, RateSource=NULL`;
 
 /* ─────────────────────────── helpers ─────────────────────────── */
 
@@ -332,6 +367,10 @@ function mapRequestRow(r: Record<string, unknown>): AccRequest {
     currency: ((r.Currency as string | null) ?? "").trim() || null,
     exchangeRate: num(r.ExchangeRate),
     foreignAmount: num(r.ForeignAmount),
+    // Migration 130, and legacy in the same way the three above are: AP-1's
+    // header writers clear them, AP-17's booking desk fills them in.
+    rateAsOf: rateAsOfYmd((r.RateAsOf as string | Date | null) ?? null),
+    rateSource: ((r.RateSource as string | null) ?? "").trim() || null,
     paymentDate: r.PaymentDate ? toYmd(r.PaymentDate as Date) : null,
     submittedBy: (r.SubmittedBy as number) ?? null,
     submittedAt: r.SubmittedAt ? (r.SubmittedAt as Date).toISOString() : null,
@@ -404,6 +443,11 @@ function mapItemRow(x: Record<string, unknown>, filesByItem: Map<number, AccFile
     currency: ((x.Currency as string | null) ?? "").trim() || null,
     exchangeRate: num(x.ExchangeRate),
     foreignAmount: num(x.ForeignAmount),
+    // Migration 130. Absent on the legacy SELECT below and NULL on every row
+    // written before it — which is the truth rather than a gap: nobody recorded
+    // which day's rate those figures used.
+    rateAsOf: rateAsOfYmd((x.RateAsOf as string | Date | null) ?? null),
+    rateSource: ((x.RateSource as string | null) ?? "").trim() || null,
     files: filesByItem.get(x.Id as number) ?? [],
   };
 }
@@ -472,7 +516,7 @@ export async function loadTravelDays(pool: AccTx, requestId: number): Promise<Tr
     try {
       const itemsRes = await pool.request().query(
         `SELECT Id, TravelExpenseId, ItemType, Amount, SortOrder, VehicleSectionId,
-                Currency, ExchangeRate, ForeignAmount
+                Currency, ExchangeRate, ForeignAmount, RateAsOf, RateSource
          FROM [dbo].[AccTravelExpenseItem]
          WHERE TravelExpenseId IN (${idList})
          ORDER BY TravelExpenseId, SortOrder, Id`,
@@ -891,16 +935,29 @@ function bindLineFx(
   const currency = (it.currency ?? "").trim().toUpperCase() || null;
   const foreign = it.foreignAmount ?? null;
   const rate = currency === null ? null : it.exchangeRate ?? null;
+  // The provenance follows the rate, not the currency: a baht line and an
+  // unanswered one both consulted no provider, so there is no day and no source
+  // to record. `rateAsOfYmd` is the same normaliser the read uses, so a value
+  // that survives a save survives a reload unchanged.
+  const asOf = rate === null ? null : rateAsOfYmd(it.rateAsOf);
+  const source = rate === null ? null : (it.rateSource ?? "").trim().slice(0, 20) || null;
   return req
     .input("amount", sql.Decimal(18, 2), it.amount || 0)
     .input("lineCur", sql.Char(3), currency)
     .input("lineRate", sql.Decimal(18, 6), rate)
-    .input("lineForeign", sql.Decimal(18, 2), foreign);
+    .input("lineForeign", sql.Decimal(18, 2), foreign)
+    // `sql.Date` takes the `YYYY-MM-DD` string directly, exactly as
+    // `bindTravel` binds `travelDate`. ISO 8601 is the one literal form SQL
+    // Server reads into a `date` regardless of language setting, and it carries
+    // no time, so nothing can shift it across midnight.
+    .input("lineAsOf", sql.Date, asOf)
+    .input("lineSource", sql.NVarChar(20), source);
 }
 
-const LINE_FX_COLUMNS = `Currency, ExchangeRate, ForeignAmount`;
-const LINE_FX_VALUES = `@lineCur, @lineRate, @lineForeign`;
-const LINE_FX_SET = `Currency=@lineCur, ExchangeRate=@lineRate, ForeignAmount=@lineForeign`;
+const LINE_FX_COLUMNS = `Currency, ExchangeRate, ForeignAmount, RateAsOf, RateSource`;
+const LINE_FX_VALUES = `@lineCur, @lineRate, @lineForeign, @lineAsOf, @lineSource`;
+const LINE_FX_SET = `Currency=@lineCur, ExchangeRate=@lineRate, ForeignAmount=@lineForeign,
+  RateAsOf=@lineAsOf, RateSource=@lineSource`;
 
 async function persistTravelItems(
   tx: AccTx,

@@ -565,7 +565,19 @@ export function ApprovalsQueue({
       if (!prev || prev.id !== saved.requestId) return prev;
       const patchItems = (items: TravelExpenseItem[] | undefined) =>
         (items ?? []).map((it) =>
-          it.id === saved.itemId ? { ...it, amount: saved.amount, exchangeRate: saved.rate } : it,
+          // The provenance moves with the rate. Patching the rate alone would
+          // leave the panel showing the new figure beside the day the provider
+          // published the old one — which is the exact claim migration 130
+          // exists to stop anybody making.
+          it.id === saved.itemId
+            ? {
+                ...it,
+                amount: saved.amount,
+                exchangeRate: saved.rate,
+                rateAsOf: saved.rateAsOf,
+                rateSource: saved.rateSource,
+              }
+            : it,
         );
       return {
         ...prev,
@@ -991,7 +1003,7 @@ export function ApprovalsQueue({
                               }}
                               title={
                                 (row.exchangeRate != null
-                                  ? `${referenceRateNote(row.currency, row.exchangeRate)} · `
+                                  ? `${referenceRateNote(row.currency, row.exchangeRate, row.rateAsOf)} · `
                                   : "ยังไม่มีอัตราแลกเปลี่ยนที่บันทึกไว้ · ") +
                                 `ยอดรวม ${fmtMoney(row.totalAmount)} บาท`
                               }
@@ -1035,7 +1047,7 @@ export function ApprovalsQueue({
                           style={{ color: "var(--text-muted)" }}
                           title={
                             row.exchangeRate != null
-                              ? referenceRateNote(row.currency, row.exchangeRate)
+                              ? referenceRateNote(row.currency, row.exchangeRate, row.rateAsOf)
                               : "ยังไม่มีอัตราแลกเปลี่ยนที่บันทึกไว้ — แปลงเป็นเงินบาทไม่ได้"
                           }
                         >

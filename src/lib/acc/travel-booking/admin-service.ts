@@ -12,6 +12,7 @@ import {
   effectiveBookingCurrency,
 } from "@/features/travel-booking/lib/booking-currency";
 import { THB, toBaht, type BrandCurrencyEntry } from "@/lib/acc/currency";
+import { rateAsOfYmd } from "@/lib/acc/currency-display";
 import { needsRate, resolveRate } from "@/lib/acc/fx";
 import { listBrandRegistry } from "@/lib/brand-registry";
 import type { BookingType, TravelBookingRequest } from "@/features/travel-booking/types";
@@ -226,9 +227,21 @@ interface BookingFx {
   currency: string | null;
   /** THB per 1 unit. Null only alongside a null currency. */
   rate: number | null;
+  /**
+   * **Which day's rate that is**, `YYYY-MM-DD`, and who published it (migration
+   * 130). Null alongside a null currency, for the same reason the rate is:
+   * nothing was fetched and there is no conversion to describe.
+   *
+   * The source publishes on working days only, so a booking saved on a Saturday
+   * records Friday's rate. That is correct — there is no rate for a day the
+   * market did not trade — but without the date nobody can tell afterwards
+   * which day the desk's figures were priced at.
+   */
+  asOf: string | null;
+  source: string | null;
 }
 
-const BAHT_FX: BookingFx = { currency: null, rate: null };
+const BAHT_FX: BookingFx = { currency: null, rate: null, asOf: null, source: null };
 
 /**
  * The request's currency, derived from its **brand**, with today's rate fetched
@@ -283,7 +296,10 @@ async function resolveBookingFx(
   // screen showing MYR figures with no way to express them in baht, on the
   // request accounting is about to sign off.
   if (!fx) throw new Error(BOOKING_FX_UNAVAILABLE_ERROR);
-  return { currency, rate: fx.rate };
+  // `rateAsOfYmd` refuses anything that is not a real `YYYY-MM-DD`, so a
+  // provider answering an empty or malformed date records nothing rather than a
+  // date nobody can trust.
+  return { currency, rate: fx.rate, asOf: rateAsOfYmd(fx.asOf), source: (fx.source ?? "").trim().slice(0, 20) || null };
 }
 
 /**
@@ -532,7 +548,15 @@ export async function saveBookingDetail(
       .input("rid", sql.Int, requestId)
       .input("currency", sql.Char(3), fx.currency)
       .input("fxRate", sql.Decimal(18, 6), fx.currency === null ? null : fx.rate)
-      .query(`UPDATE [dbo].[AccRequest] SET Currency=@currency, ExchangeRate=@fxRate WHERE Id=@rid`);
+      // Migration 130, and in the same statement as the rate they qualify — a
+      // rate whose day nobody recorded is exactly what this replaces, and a date
+      // that could arrive a commit later than the rate would describe a figure
+      // that is not there. `sql.Date` takes the `YYYY-MM-DD` string directly.
+      .input("rateAsOf", sql.Date, fx.currency === null ? null : fx.asOf)
+      .input("rateSource", sql.NVarChar(20), fx.currency === null ? null : fx.source)
+      .query(`UPDATE [dbo].[AccRequest] SET Currency=@currency, ExchangeRate=@fxRate,
+                  RateAsOf=@rateAsOf, RateSource=@rateSource
+              WHERE Id=@rid`);
 
     await tx.commit();
     return mapSavedRow(saved);

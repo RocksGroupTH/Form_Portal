@@ -1,5 +1,5 @@
 import { isBaht } from "@/lib/acc/currency";
-import { amountInBaht, currencyWord } from "@/lib/acc/currency-display";
+import { amountInBaht, currencyWord, rateAsOfYmd } from "@/lib/acc/currency-display";
 import { getPaymentDates } from "@/lib/acc/payment-calendar";
 import { paymentDateForApproval } from "@/lib/acc/payment-cycle";
 import { getAccPool, sql } from "@/lib/acc/pool";
@@ -111,6 +111,19 @@ export interface ReportRow {
   /** THB per 1 unit of `currency`, as stored. Null for a baht claim. */
   exchangeRate?: number | null;
   /**
+   * **Which day's rate that is**, `YYYY-MM-DD` (migration 130).
+   *
+   * The source publishes on working days only, so a figure priced on a Saturday
+   * used Friday's rate — correct, and unreconstructable afterwards without this.
+   *
+   * In practice it is an **AP-17** row that carries one here. These lists are
+   * form-agnostic (`listMyRequestRows` filters on ownership, not `FormCode`) and
+   * AP-1's three header writers clear the whole currency group, because its
+   * currency lives on the expense line; so on an AP-1 row this is null beside a
+   * null `currency`, and nothing renders either way.
+   */
+  rateAsOf?: string | null;
+  /**
    * The claim's own figure, of which `totalAmount` is the conversion — the
    * request's `ForeignAmount` in the request view, this day's own figure in the
    * day view. Null for a baht claim in both.
@@ -167,7 +180,7 @@ const FROM_JOINS = `FROM [dbo].[AccRequest] r
 // is selected instead and is baht.
 const DAY_ROW_SELECT = `r.Id, r.RequestNo, r.FormCode, f.FormNameTh, r.StaffId, r.RequesterFullName, r.RequesterDepartmentName,
   r.BrandCode, t.TravelDate, t.VehicleName, t.WorkDetail, t.TotalDistanceKm, t.TotalAmount,
-  r.Currency, r.ExchangeRate, r.ForeignAmount,
+  r.Currency, r.ExchangeRate, r.ForeignAmount, r.RateAsOf,
   r.Status, r.PaymentDate, r.SubmittedAt`;
 
 /** Correlated subquery: per-day amounts, vehicles, work detail for request-level rows. */
@@ -290,7 +303,7 @@ const REQUEST_ROW_SELECT = `r.Id, r.RequestNo, r.FormCode, f.FormNameTh, r.Staff
   -- Baht is r.TotalAmount; these say what the *per-day* figures in
   -- TravelDaysCsv above are denominated in, which is not the same thing on a
   -- foreign claim. Every screen rendering that breakdown reads them.
-  r.Currency, r.ExchangeRate, r.ForeignAmount,
+  r.Currency, r.ExchangeRate, r.ForeignAmount, r.RateAsOf,
   r.Status, r.PaymentDate, r.SubmittedAt, r.CurrentStepCode,
   r.ManagerStaffId, r.ManagerEmail,
   (SELECT TOP 1 a.StepCode
@@ -451,6 +464,7 @@ function mapRow(
     // writers can produce; `isBaht` treats "" and null alike anyway.
     currency: (x.Currency as string | null) ?? null,
     exchangeRate: rate,
+    rateAsOf: rateAsOfYmd((x.RateAsOf as string | Date | null) ?? null),
     foreignAmount:
       view === "day"
         ? isBaht(x.Currency as string | null)
@@ -503,7 +517,7 @@ function buildListQuery(
     -- grouped. RequesterDepartmentCode is a plain column and does.
     GROUP BY r.Id, r.RequestNo, r.FormCode, f.FormNameTh, r.StaffId, r.RequesterFullName,
       r.RequesterDepartmentName, r.RequesterDepartmentCode, r.BrandCode, r.TotalAmount,
-      r.Currency, r.ExchangeRate, r.ForeignAmount,
+      r.Currency, r.ExchangeRate, r.ForeignAmount, r.RateAsOf,
       r.Status, r.PaymentDate, r.SubmittedAt,
       r.CurrentStepCode, r.ManagerStaffId, r.ManagerEmail
     ORDER BY ${order}

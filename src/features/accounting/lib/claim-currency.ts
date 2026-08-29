@@ -73,6 +73,16 @@ export interface LineCurrencyContext {
    * stores whatever the browser sent, verified by nothing).
    */
   rate: number | null;
+  /**
+   * Which day's rate `rate` is, `YYYY-MM-DD` — or null while it is not known.
+   *
+   * Display only, like the rate it qualifies. It matters because the source
+   * publishes on **working days only**: a claim opened on a Saturday previews
+   * Friday's rate, and over a long weekend a three-day-old one. That is correct
+   * — there is no rate for a day the market did not trade — but the note has to
+   * say so, or the requester reads a figure as today's when it is not.
+   */
+  rateAsOf: string | null;
 }
 
 function norm(code: string | null | undefined): string {

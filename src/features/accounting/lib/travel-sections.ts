@@ -294,6 +294,12 @@ export function cloneSectionsForDayCopy(sections: TravelVehicleSection[] | undef
       currency: it.currency ?? null,
       exchangeRate: it.exchangeRate ?? null,
       foreignAmount: it.foreignAmount ?? null,
+      // The rate's provenance is part of the same set (migration 130). The next
+      // save re-fetches and overwrites all five, so this is not what makes the
+      // copy correct — it is what stops the copy from showing a rate with no
+      // date beside it in the meantime.
+      rateAsOf: it.rateAsOf ?? null,
+      rateSource: it.rateSource ?? null,
       sortOrder: i,
       files: [],
       pendingFiles: [],

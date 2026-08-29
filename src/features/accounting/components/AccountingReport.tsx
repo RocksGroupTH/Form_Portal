@@ -1025,7 +1025,7 @@ export function AccountingReport() {
                           }}
                           title={
                             row.exchangeRate != null
-                              ? referenceRateNote(row.currency, row.exchangeRate)
+                              ? referenceRateNote(row.currency, row.exchangeRate, row.rateAsOf)
                               : "ยังไม่มีอัตราแลกเปลี่ยนที่บันทึกไว้"
                           }
                         >
@@ -1065,7 +1065,7 @@ export function AccountingReport() {
                           style={{ color: "var(--text-muted)" }}
                           title={
                             row.exchangeRate != null
-                              ? referenceRateNote(row.currency, row.exchangeRate)
+                              ? referenceRateNote(row.currency, row.exchangeRate, row.rateAsOf)
                               : "ยังไม่มีอัตราแลกเปลี่ยนที่บันทึกไว้ — แปลงเป็นเงินบาทไม่ได้"
                           }
                         >
