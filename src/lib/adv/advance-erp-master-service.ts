@@ -109,6 +109,43 @@ export async function listVendors(company: string): Promise<AdvErpVendorOption[]
   }));
 }
 
+/**
+ * The selectable ADV vendor whose Home Page holds this staff code.
+ *
+ * Accounting types the employee's code, plain, into the vendor's Home Page in
+ * BC (synced into `Website`). Returns null when nothing matches — and also when
+ * **more than one** vendor claims the same code: an ambiguous code must never
+ * silently pick one, so the caller falls back to name matching instead.
+ *
+ * Same selectability rules as `listVendors`, so a blocked or non-ADV vendor is
+ * never returned here either.
+ */
+export async function findVendorByEmployeeCode(
+  company: string,
+  staffId: number,
+): Promise<AdvErpVendorOption | null> {
+  const c = company.trim().toUpperCase();
+  if (!c || !Number.isInteger(staffId) || staffId <= 0) return null;
+  const pool = await getAppPool(ERP_DATA_DB);
+  const r = await pool.request()
+    .input("c", sql.NVarChar, c)
+    .input("pg", sql.NVarChar, ADVANCE_VENDOR_POSTING_GROUP)
+    .input("code", sql.NVarChar, String(staffId))
+    .query(`
+    SELECT TOP 2 VendorNo, DisplayName FROM [dbo].[ErpVendors]
+    WHERE BrandCode = @c
+      AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
+      AND VendorPostingGroup = @pg
+      AND LTRIM(RTRIM(COALESCE(Website, ''))) = @code
+    ORDER BY VendorNo`);
+  const rows = r.recordset as Record<string, unknown>[];
+  if (rows.length !== 1) return null;
+  return {
+    vendorNo: rows[0].VendorNo as string,
+    displayName: (rows[0].DisplayName as string) ?? null,
+  };
+}
+
 /** Prefilter candidates for the matcher: active ADV vendors whose name shares a token
  *  with the payee. Caps the set so the LLM prompt stays small. */
 export async function prefilterVendors(company: string, payeeName: string, limit = 10): Promise<AdvErpVendorOption[]> {
