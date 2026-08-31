@@ -1,5 +1,7 @@
 import type { TravelExpenseDetail } from "@/features/accounting/types";
 import { allDayItems, hasRateVehicle, normalizeTravelDay } from "@/features/accounting/lib/travel-sections";
+import { summariseLineCurrency } from "./expense-currency-summary";
+import { fmtAmountWithCurrency } from "./currency-display";
 
 function sum(items: { itemType: string; amount: number }[], type: string): number {
   return items.filter((i) => i.itemType === type).reduce((a, b) => a + (Number(b.amount) || 0), 0);
@@ -102,6 +104,20 @@ export function dayCostBreakdown(d: TravelExpenseDetail): DayCostPart[] {
   };
   const trim = (n: number) => Math.round(n * 100) / 100;
 
+  /**
+   * What a manual vehicle's rows were paid in, when they were all paid in the
+   * same foreign currency. `null` for baht rows and for a mixed block —
+   * `summariseLineCurrency` refuses to describe a block whose lines cannot be
+   * added, and the caller then names the vehicle alone. See that module for why
+   * a header must not borrow one line's currency.
+   */
+  const foreignDetail = (items: { foreignAmount?: number | null; currency?: string | null }[]) => {
+    const s = summariseLineCurrency(items);
+    return s.currency && s.foreignTotal != null
+      ? fmtAmountWithCurrency(s.foreignTotal, s.currency)
+      : null;
+  };
+
   if (hasRateVehicle(day)) {
     const km = computeTotalDistance(day);
     const rate = Number(day.ratePerKm) || 0;
@@ -113,12 +129,20 @@ export function dayCostBreakdown(d: TravelExpenseDetail): DayCostPart[] {
 
   for (const sec of day.sections ?? []) {
     if (!sec.isManualEntry) continue;
-    push(sec.vehicleName ?? "พาหนะ", trim(sum(sec.items, "fare") + sum(sec.items, "toll")));
+    push(
+      sec.vehicleName ?? "พาหนะ",
+      trim(sum(sec.items, "fare") + sum(sec.items, "toll")),
+      foreignDetail(sec.items ?? []),
+    );
   }
 
   // The legacy shape: one manual vehicle, no sections.
   if ((!day.sections || day.sections.length === 0) && day.isManualEntry) {
-    push(day.vehicleName ?? "พาหนะ", trim(sum(day.items, "fare") + sum(day.items, "toll")));
+    push(
+      day.vehicleName ?? "พาหนะ",
+      trim(sum(day.items, "fare") + sum(day.items, "toll")),
+      foreignDetail(day.items ?? []),
+    );
   }
 
   return parts;

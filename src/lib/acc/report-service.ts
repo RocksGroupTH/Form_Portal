@@ -1,5 +1,6 @@
 import { isBaht } from "@/lib/acc/currency";
-import { amountInBaht, currencyWord, rateAsOfYmd } from "@/lib/acc/currency-display";
+import { exportCurrencyCells } from "@/lib/acc/export-currency-cells";
+import { amountInBaht, rateAsOfYmd } from "@/lib/acc/currency-display";
 import { getPaymentDates } from "@/lib/acc/payment-calendar";
 import { paymentDateForApproval } from "@/lib/acc/payment-cycle";
 import { getAccPool, sql } from "@/lib/acc/pool";
@@ -129,6 +130,18 @@ export interface ReportRow {
    * day view. Null for a baht claim in both.
    */
   foreignAmount?: number | null;
+  /**
+   * The claim's currency **as its expense lines record it** (migration 129),
+   * summed — or null when the lines cannot be described by one figure.
+   *
+   * Deliberately separate keys from `currency`/`exchangeRate`/`foreignAmount`
+   * above, which are the *header's* (migration 125) and are what the day view
+   * converts with. Overwriting those with line facts would double-convert a
+   * legacy claim, because `mapRow`'s day branch divides by `exchangeRate`.
+   */
+  lineCurrency?: string | null;
+  lineForeignAmount?: number | null;
+  lineExchangeRate?: number | null;
   status: string;
   paymentDate: string | null;
   submittedAt: string | null;
@@ -182,6 +195,62 @@ const DAY_ROW_SELECT = `r.Id, r.RequestNo, r.FormCode, f.FormNameTh, r.StaffId, 
   r.BrandCode, t.TravelDate, t.VehicleName, t.WorkDetail, t.TotalDistanceKm, t.TotalAmount,
   r.Currency, r.ExchangeRate, r.ForeignAmount, r.RateAsOf,
   r.Status, r.PaymentDate, r.SubmittedAt`;
+
+/**
+ * The claim's line-level currency, summed — or nothing.
+ *
+ * Since migration 129 AP-1 records currency per expense LINE and `FX_CLEAR`
+ * nulls the header's, so `r.Currency` is NULL on every modern AP-1 claim and
+ * anything reading it alone concludes "baht". These three subqueries ask the
+ * lines instead.
+ *
+ * **It asks a different question from `summariseLineCurrency` on the client,
+ * and the difference is deliberate.** That one guards a *header sitting above a
+ * total*, so it refuses a mixed block: printing "20.00 MYR" above a sum that
+ * includes a baht toll invites the reader to divide one by the other. A
+ * spreadsheet column has no such adjacency. Its question is "was any of this
+ * claim filed in a foreign currency, and how much of it" — and a claim mixing a
+ * ringgit fare with a baht toll answers **MYR, 40.00**, because those lines
+ * really did total 40 ringgit.
+ *
+ * Mixed claims are the normal case, not the exception: a Malaysian trip books
+ * Grab in ringgit and pays a Thai toll in baht on the same day. Refusing to
+ * describe them would have left the export saying THB for exactly the claims the
+ * column exists to surface — which is the bug this replaces, with a different
+ * cause and the same output.
+ *
+ * So: the code is the single distinct non-baht currency among the lines (the
+ * claim-level design bounds it to one — `lineCurrencyOptions` offers the trip
+ * country's currency and THB and nothing else), and the figure is the sum of
+ * *those* lines only. Baht lines are simply not part of it; their money is in
+ * `ยอดรวม (บาท)` where it belongs.
+ *
+ * The rate is likewise only reported when every line agrees on it. A draft
+ * saved across two days, or an accounting override, legitimately gives one
+ * claim two rates, and naming one of them as governing all lines would be false.
+ */
+const LINE_CURRENCY_SELECT = `
+  (SELECT CASE WHEN COUNT(DISTINCT UPPER(LTRIM(RTRIM(li.Currency)))) = 1
+                THEN MAX(UPPER(LTRIM(RTRIM(li.Currency)))) END
+   FROM [dbo].[AccTravelExpenseItem] li
+   JOIN [dbo].[AccTravelExpense] lt ON lt.Id = li.TravelExpenseId
+   WHERE lt.RequestId = r.Id
+     AND li.Currency IS NOT NULL
+     AND UPPER(LTRIM(RTRIM(li.Currency))) <> N'THB') AS LineCurrency,
+  (SELECT CASE WHEN COUNT(DISTINCT UPPER(LTRIM(RTRIM(li.Currency)))) = 1
+                THEN SUM(li.ForeignAmount) END
+   FROM [dbo].[AccTravelExpenseItem] li
+   JOIN [dbo].[AccTravelExpense] lt ON lt.Id = li.TravelExpenseId
+   WHERE lt.RequestId = r.Id
+     AND li.Currency IS NOT NULL
+     AND UPPER(LTRIM(RTRIM(li.Currency))) <> N'THB'
+     AND li.ForeignAmount IS NOT NULL) AS LineForeignAmount,
+  (SELECT CASE WHEN COUNT(DISTINCT li.ExchangeRate) = 1 THEN MAX(li.ExchangeRate) END
+   FROM [dbo].[AccTravelExpenseItem] li
+   JOIN [dbo].[AccTravelExpense] lt ON lt.Id = li.TravelExpenseId
+   WHERE lt.RequestId = r.Id
+     AND li.ExchangeRate IS NOT NULL
+     AND UPPER(LTRIM(RTRIM(li.Currency))) <> N'THB') AS LineExchangeRate`;
 
 /** Correlated subquery: per-day amounts, vehicles, work detail for request-level rows. */
 export const TRAVEL_DAYS_CSV_SELECT = `(SELECT STRING_AGG(
@@ -304,6 +373,7 @@ const REQUEST_ROW_SELECT = `r.Id, r.RequestNo, r.FormCode, f.FormNameTh, r.Staff
   -- TravelDaysCsv above are denominated in, which is not the same thing on a
   -- foreign claim. Every screen rendering that breakdown reads them.
   r.Currency, r.ExchangeRate, r.ForeignAmount, r.RateAsOf,
+  ${LINE_CURRENCY_SELECT},
   r.Status, r.PaymentDate, r.SubmittedAt, r.CurrentStepCode,
   r.ManagerStaffId, r.ManagerEmail,
   (SELECT TOP 1 a.StepCode
@@ -464,6 +534,15 @@ function mapRow(
     // writers can produce; `isBaht` treats "" and null alike anyway.
     currency: (x.Currency as string | null) ?? null,
     exchangeRate: rate,
+    lineCurrency: (x.LineCurrency as string | null) ?? null,
+    lineForeignAmount:
+      x.LineForeignAmount === null || x.LineForeignAmount === undefined
+        ? null
+        : Number(x.LineForeignAmount),
+    lineExchangeRate:
+      x.LineExchangeRate === null || x.LineExchangeRate === undefined
+        ? null
+        : Number(x.LineExchangeRate),
     rateAsOf: rateAsOfYmd((x.RateAsOf as string | Date | null) ?? null),
     foreignAmount:
       view === "day"
@@ -913,11 +992,15 @@ export function buildReportWorkbook(
       // Always filled, never blank for baht. A column of blanks beside a column
       // of MYR reads as "not recorded" rather than "baht", and a filter on it
       // would silently drop every ordinary claim.
-      isBaht(r.currency) ? "THB" : currencyWord(r.currency),
-      // Blank for a baht claim — the figure is already in ยอดรวม and repeating it
-      // would invite somebody to add the two columns together.
-      r.foreignAmount ?? null,
-      r.exchangeRate ?? null,
+      //
+      // The facts come from exportCurrencyCells, which asks the LINES first.
+      // Reading r.currency alone printed the literal "THB" against every
+      // ringgit claim — AP-1 stopped writing the header currency when it moved
+      // to the line (migration 129), so isBaht(null) was true for all of them.
+      // That was the one place in the app that stated a wrong currency for a
+      // figure rather than merely omitting one, and it left the app in a
+      // spreadsheet with no link back to the detail page that would correct it.
+      ...exportCurrencyCells(r),
       r.status,
       r.paymentDate,
       r.submittedAt ? r.submittedAt.slice(0, 10) : null,

@@ -75,6 +75,7 @@ import {
   referenceRateNote,
   showsForeignCurrency,
 } from "@/lib/acc/currency-display";
+import { summariseLineCurrency } from "@/lib/acc/expense-currency-summary";
 import { isOverriddenRate } from "@/lib/acc/currency";
 import { countryNames, countryNameBoth, isKnownCountry } from "@/lib/acc/country-currency";
 import { claimRateFacts, multiRateCurrencies } from "@/features/accounting/lib/claim-rates";
@@ -193,6 +194,17 @@ interface ExpenseLine {
   key: string;
   title: string;
   subtitle?: string;
+  /**
+   * The vehicle alone, without the line's own currency appended.
+   *
+   * `subtitle` is what a single row displays and carries "Grab · 20.00 MYR";
+   * clustering must key on the vehicle instead, or three Grab fares of 20, 10
+   * and 10 MYR become three clusters that each look like a different vehicle.
+   */
+  vehicleName?: string | null;
+  /** The line's own money, so a cluster can decide whether its rows are summable. */
+  foreignAmount?: number | null;
+  currency?: string | null;
   /** Distinguishes vehicle blocks — only merge rows within the same section. */
   sectionKey?: string;
   amount: number;
@@ -238,14 +250,27 @@ interface ExpenseVehicleCluster {
   totalAmount: number;
 }
 
-/** Cluster expense rows by vehicle section — keeps each line item separate. */
+/**
+ * Cluster expense rows by vehicle section — keeps each line item separate.
+ *
+ * **Keyed on the vehicle, not on `subtitle`.** `subtitle` carries the line's own
+ * currency ("Grab · 20.00 MYR"), so keying on it split three Grab fares of 20,
+ * 10 and 10 MYR into two clusters that read as two different vehicles — and gave
+ * the two-row cluster the header "Grab · 10.00 MYR" above a total of both rows.
+ *
+ * The header's own currency is then *derived* from the rows it actually
+ * contains, via `summariseLineCurrency`, which refuses to answer for a block
+ * whose rows cannot be added — a foreign row beside a baht one, or two
+ * currencies. In that case the header names the vehicle alone and each row
+ * states its own money, which is the only honest rendering available.
+ */
 function clusterEntriesByVehicle(entries: ExpenseLine[]): ExpenseVehicleCluster[] {
   const byCluster = new Map<string, ExpenseVehicleCluster>();
   const order: string[] = [];
 
   for (const entry of entries) {
-    const vehicleLabel = entry.subtitle?.trim() || "—";
-    const clusterKey = `${entry.sectionKey ?? "default"}|${vehicleLabel}`;
+    const vehicle = entry.vehicleName?.trim() || entry.subtitle?.trim() || "—";
+    const clusterKey = `${entry.sectionKey ?? "default"}|${vehicle}`;
     const existing = byCluster.get(clusterKey);
     if (existing) {
       existing.entries.push(entry);
@@ -254,7 +279,7 @@ function clusterEntriesByVehicle(entries: ExpenseLine[]): ExpenseVehicleCluster[
       order.push(clusterKey);
       byCluster.set(clusterKey, {
         key: clusterKey,
-        label: vehicleLabel === "—" ? "—" : (entry.subtitle ?? vehicleLabel),
+        label: vehicle,
         entries: [entry],
         totalAmount: entry.amount,
       });
@@ -264,7 +289,12 @@ function clusterEntriesByVehicle(entries: ExpenseLine[]): ExpenseVehicleCluster[
   const clusters: ExpenseVehicleCluster[] = [];
   for (let i = 0; i < order.length; i++) {
     const cluster = byCluster.get(order[i]);
-    if (cluster) clusters.push(cluster);
+    if (!cluster) continue;
+    const summary = summariseLineCurrency(cluster.entries);
+    if (summary.currency && summary.foreignTotal != null) {
+      cluster.label = `${cluster.label} · ${fmtAmountWithCurrency(summary.foreignTotal, summary.currency)}`;
+    }
+    clusters.push(cluster);
   }
   return clusters;
 }
@@ -330,6 +360,9 @@ function buildExpenseLines(day: TravelExpenseDetail): ExpenseLine[] {
         key: `rate-item-${item.id ?? i}`,
         title: TRAVEL_ITEM_LABEL[item.itemType] ?? item.itemType,
         subtitle: withLineCurrency(d.vehicleName, item),
+        vehicleName: d.vehicleName ?? null,
+        foreignAmount: item.foreignAmount ?? null,
+        currency: item.currency ?? null,
         sectionKey: "rate",
         amount: Number(item.amount) || 0,
         files: item.files ?? [],
@@ -346,6 +379,9 @@ function buildExpenseLines(day: TravelExpenseDetail): ExpenseLine[] {
         key: `sec-${si}-${item.id ?? i}`,
         title: TRAVEL_ITEM_LABEL[item.itemType] ?? item.itemType,
         subtitle: withLineCurrency(sec.vehicleName, item),
+        vehicleName: sec.vehicleName ?? null,
+        foreignAmount: item.foreignAmount ?? null,
+        currency: item.currency ?? null,
         sectionKey: `sec-${sec.id ?? si}`,
         amount: Number(item.amount) || 0,
         files: item.files ?? [],
@@ -361,6 +397,9 @@ function buildExpenseLines(day: TravelExpenseDetail): ExpenseLine[] {
         key: `legacy-${item.id ?? i}`,
         title: TRAVEL_ITEM_LABEL[item.itemType] ?? item.itemType,
         subtitle: withLineCurrency(d.vehicleName, item),
+        vehicleName: d.vehicleName ?? null,
+        foreignAmount: item.foreignAmount ?? null,
+        currency: item.currency ?? null,
         sectionKey: "legacy",
         amount: Number(item.amount) || 0,
         files: item.files ?? [],
@@ -1188,10 +1227,14 @@ function TravelDaySection({
                 claim that is no longer safe to leave implicit, so the heading
                 says which money they are in. A baht claim adds nothing. */}
             <p className="text-[10px] font-semibold uppercase tracking-wide m-0 pt-3" style={{ color: "var(--text-muted)" }}>
-              รายการค่าใช้จ่าย
-              {showsForeignCurrency(request.currency)
-                ? ` (${currencyWord(request.currency)})`
-                : ""}
+              {/* Always บาท. Every figure under this heading is
+                  AccTravelExpenseItem.Amount, which is baht by design (migration
+                  129) — the foreign figures beside them are labelled per row.
+                  This used to read request.currency, which AP-1 stopped writing
+                  when currency moved to the line, so it silently said nothing on
+                  exactly the claims that needed it — and would have captioned
+                  baht figures "MYR" if it ever fired. */}
+              รายการค่าใช้จ่าย (บาท)
             </p>
             {expenseGroups.map((group) => (
               <div
@@ -1272,6 +1315,17 @@ function TravelDaySection({
                                   <div className="flex items-start justify-between gap-2">
                                     <span className="text-[10px] min-w-0" style={{ color: "var(--text-muted)" }}>
                                       รายการที่ {li + 1}
+                                      {/* The row's own money, not the cluster's. A cluster
+                                          header may be unable to state a currency at all
+                                          (mixed rows); the row always can. */}
+                                      {entry.foreignAmount != null && (
+                                        <span className="ml-1" style={{ color: "var(--text-faint)" }}>
+                                          ·{" "}
+                                          {showsForeignCurrency(entry.currency)
+                                            ? fmtAmountWithCurrency(entry.foreignAmount, entry.currency)
+                                            : `${fmtMoneyTh(entry.foreignAmount)} — ยังไม่ระบุสกุลเงิน`}
+                                        </span>
+                                      )}
                                     </span>
                                     <span className="text-[12px] font-bold tabular-nums shrink-0" style={{ color: "var(--color-action)" }}>
                                       {fmtMoney(entry.amount)}
