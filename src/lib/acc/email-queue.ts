@@ -14,15 +14,26 @@ import { env } from "@/env";
 import { sendEmail } from "@/lib/graph";
 import { esc } from "@/lib/acc/email-templates";
 
+/**
+ * Queue one message.
+ *
+ * `on` names the database to queue it in, and defaults to the current route's
+ * — which is what the ~12 per-action callers want, since they run inside the
+ * request that resolved that database. It is passed explicitly by callers with
+ * no request scope: the stale-request sweep walks both form databases in turn,
+ * and `getAccPool()` would file every one of its UAT notifications in
+ * Production, where the drain would send them with no `[UAT]` prefix and no
+ * redirect.
+ */
 export async function queueEmail(p: {
   requestId: number | null;
   toEmail: string;
   subject: string;
   bodyHtml: string;
   triggerType: string;
-}): Promise<void> {
+}, on?: ConnectionPool): Promise<void> {
   if (!p.toEmail) return;
-  const pool = await getAccPool();
+  const pool = on ?? (await getAccPool());
   await pool
     .request()
     .input("rid", sql.Int, p.requestId)

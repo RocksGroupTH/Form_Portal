@@ -153,8 +153,15 @@ function approvalActorLabel(approval: AccApproval): string | null {
     return approval.assignedEmail;
   }
   const name = approval.actionedByHrName?.trim();
-  const email = approval.actionedByHrEmail ?? approval.assignedEmail;
   const staffId = approval.actionedByStaffId;
+  // No actioning identity at all — nobody human closed this row. The automatic
+  // stale-request expiry (`stale-request-sweep.ts`) writes exactly that: it
+  // closes the pending row as 'Returned' with ActionedByStaffId NULL, because
+  // there is no person to name. Falling back to `assignedEmail` here would
+  // render "ส่งกลับโดย {the manager}" over an action the manager conspicuously
+  // did not take. The row's Comment says what happened instead.
+  if (!name && staffId == null && !approval.actionedByHrEmail) return null;
+  const email = approval.actionedByHrEmail ?? approval.assignedEmail;
   if (name && staffId != null) return `${name} · StaffId ${staffId}`;
   if (name && email) return `${name} (${email})`;
   if (name) return name;
