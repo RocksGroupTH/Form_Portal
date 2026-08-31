@@ -24,6 +24,7 @@ export function LocalSearchSelect({
   placeholder = "พิมพ์เพื่อค้นหา...",
   hasError,
   emptyLabel = "ไม่พบผลลัพธ์",
+  freeText,
 }: {
   options: LocalOption[];
   value: string;
@@ -31,6 +32,20 @@ export function LocalSearchSelect({
   placeholder?: string;
   hasError?: boolean;
   emptyLabel?: string;
+  /**
+   * Opt-in: let the typed text be committed as itself when it matches no option.
+   *
+   * `value` stays the option id and is untouched by this — a caller using it
+   * carries the typed name in its own state, so a chosen id and a typed name
+   * can never both be live. Omitted, the component behaves exactly as it did.
+   */
+  freeText?: {
+    /** The typed name currently committed, shown when no option is selected. */
+    value: string | null;
+    onCommit: (name: string) => void;
+    /** The row's label, given the text typed so far. */
+    label: (typed: string) => string;
+  };
 }) {
   const selected = options.find((o) => o.value === value) ?? null;
   const [query, setQuery] = useState("");
@@ -47,7 +62,7 @@ export function LocalSearchSelect({
     : options;
 
   // Show the selected label when idle; show the typed query while the list is open.
-  const inputValue = open ? query : selected?.label ?? "";
+  const inputValue = open ? query : selected?.label ?? freeText?.value ?? "";
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -110,8 +125,29 @@ export function LocalSearchSelect({
             }}
           >
             <div className="overflow-y-auto py-1" style={{ maxHeight: pos.maxH }}>
+              {/* Offered ABOVE the list, not only when the list is empty: a
+                  typed name may legitimately be a near-match of something
+                  listed — "London" beside "Londonderry" — and burying the
+                  option behind an exact miss would make it unreachable there. */}
+              {freeText && q.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    freeText.onCommit(query.trim());
+                    setOpen(false);
+                    setQuery("");
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-left cursor-pointer border-none text-[13px]"
+                  style={{ background: "transparent", color: "var(--nav-active-text)" }}
+                >
+                  <span className="w-4 shrink-0" />
+                  <span className="min-w-0 flex-1 truncate">{freeText.label(query.trim())}</span>
+                </button>
+              )}
               {filtered.length === 0 ? (
-                <p className="px-3 py-2 text-[12.5px]" style={{ color: "var(--text-muted)" }}>{emptyLabel}</p>
+                freeText && q.length > 0 ? null : (
+                  <p className="px-3 py-2 text-[12.5px]" style={{ color: "var(--text-muted)" }}>{emptyLabel}</p>
+                )
               ) : (
                 filtered.map((o) => {
                   const isSel = o.value === value;

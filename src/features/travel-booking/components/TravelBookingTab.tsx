@@ -155,8 +155,15 @@ export function TravelBookingTab({
     });
   };
 
+  // Picking from the list clears any typed name, and vice versa. The two are
+  // mutually exclusive by construction rather than by resolveProvinceChoice's
+  // precedence alone — that precedence is the server's backstop, not the UI's
+  // way of leaving a stale name lying beside a chosen id.
   const selectProvince = (id: number | null) => {
-    onChange({ provinceId: id });
+    onChange({ provinceId: id, provinceName: null });
+  };
+  const typeProvince = (name: string) => {
+    onChange({ provinceId: null, provinceName: name || null });
   };
 
   // The sub-label is rendered AND searched by LocalSearchSelect, so naming the
@@ -406,11 +413,16 @@ export function TravelBookingTab({
             options={provinceOptions}
             value={tab.provinceId != null ? String(tab.provinceId) : ""}
             onChange={(v) => selectProvince(v ? Number(v) : null)}
-            placeholder="พิมพ์ค้นหาจังหวัดหรือเมือง..."
-            // A requester travelling somewhere nobody has added is told today
-             // that it does not exist, beside a required field, with no remedy
-             // named. Now it names one.
-             emptyLabel="ไม่พบจังหวัดหรือเมืองนี้ — ติดต่อผู้ดูแลระบบเพื่อเพิ่ม"
+            placeholder="พิมพ์ค้นหา หรือพิมพ์ชื่อเมืองเอง..."
+            // Typing a place the list does not have used to end at "contact an
+            // administrator", beside a required field — a blocked form rather
+            // than a validation message. It can now be committed as itself.
+            freeText={{
+              value: tab.provinceName,
+              onCommit: typeProvince,
+              label: (typed) => `ใช้ "${typed}"`,
+            }}
+            emptyLabel="ไม่พบในรายการ — พิมพ์ชื่อเมืองแล้วเลือก “ใช้…” ได้เลย"
             hasError={hasErr("province")}
           />
         </div>

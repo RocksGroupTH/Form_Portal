@@ -398,6 +398,8 @@ export interface SaveTravelBookingInput {
   workDetail: string | null;
 
   provinceId: number | null;
+  /** A destination typed by hand. Ignored when `provinceId` is set. */
+  provinceName?: string | null;
   workLocations: { name: string; sortOrder: number }[];
 
   accommodationId: number | null;
