@@ -38,3 +38,16 @@ test("LLM throws → pending (officer picks manually)", async () => {
   const r = await runVendorMatch("ACME BKK", async () => cands, failLlm);
   assert.equal(r.status, "pending");
 });
+
+// Employee-code matching (matchAdvanceVendor in vendor-match-service.ts) is not
+// exercised here: it is DB-bound (findVendorByEmployeeCode, getRequest) and this
+// repo's tests don't mock modules, so it isn't unit-testable at this level. What
+// IS testable, and what that new branch depends on, is the fallback contract
+// below: when an employee's staff code has no Home Page match, the branch falls
+// through to this same runVendorMatch with the employee's (Thai) name — so a
+// zero-candidate result for a Thai name must resolve to "none" without ever
+// throwing, exactly as it already does for an English name above.
+test("employee-code miss falls through to name match: zero candidates for a Thai name → none, no LLM", async () => {
+  const r = await runVendorMatch("สมชาย ใจดี", async () => [], failLlm);
+  assert.deepEqual(r, { status: "none", vendorNo: null, vendorName: null, confidence: null, reason: null });
+});
