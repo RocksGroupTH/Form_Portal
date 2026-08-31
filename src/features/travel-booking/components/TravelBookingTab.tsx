@@ -2,7 +2,6 @@
 
 import { useMemo } from "react";
 import { Briefcase, Calendar, Car, FileCheck, Hotel, MapPin, StickyNote } from "lucide-react";
-import { BrandMark } from "@/components/BrandMark";
 import type { AccBrandOption } from "@/features/accounting/types";
 import { LocalSearchSelect } from "./LocalSearchSelect";
 import { WorkLocationList } from "./WorkLocationList";
@@ -186,7 +185,21 @@ export function TravelBookingTab({
                         color: active ? "var(--nav-active-text)" : "var(--text-secondary)",
                       }}
                     >
-                      <BrandMark src={b.brandLogo} alt="" code={b.brandCode} size={20} rounded="rounded" />
+                      {/* Height-constrained with a natural width, exactly as
+                          AP-1's chip renders it. BrandMark drew the logo into a
+                          20x20 SQUARE, which squashes any mark that is not
+                          square — and most brand logos are wider than they are
+                          tall. Its code-letter fallback goes with it: AP-1 hides
+                          a broken image rather than substituting text, and the
+                          brand name is right there beside it either way. */}
+                      {b.brandLogo && (
+                        <img
+                          src={b.brandLogo}
+                          alt=""
+                          className="h-5 w-auto object-contain"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                        />
+                      )}
                       {b.brandName}
                     </button>
                   );
@@ -195,50 +208,14 @@ export function TravelBookingTab({
           )}
         </div>
 
-        <div data-field="reason">
-          <label className={labelClass} style={errLabelStyle(hasErr("reason"))}>
-            เหตุผลการเดินทาง{requiredStar}
-          </label>
-          <OptionCardSelect
-            options={reasonOptions}
-            value={tab.reasonId != null ? String(tab.reasonId) : ""}
-            onChange={(v) => onChange({ reasonId: Number(v), reasonCustomText: tab.reasonCustomText })}
-            hasError={hasErr("reason")}
-          />
-        </div>
+        {/* ประเทศที่เดินทาง — directly under the brand, above everything the trip
+            is described with, because it bounds the place search below it and
+            prices the per diem.
 
-        {selectedReason?.requiresCustomReason && (
-          <div data-field="reasonCustom">
-            <label className={labelClass} style={errLabelStyle(hasErr("reasonCustom"))}>
-              ระบุเหตุผลเพิ่มเติม{requiredStar}
-            </label>
-            <input
-              value={tab.reasonCustomText ?? ""}
-              onChange={(e) => onChange({ reasonCustomText: e.target.value || null })}
-              placeholder="ระบุรายละเอียด..."
-              className={inputClass}
-              style={{ ...inputStyle, ...errInputStyle(hasErr("reasonCustom")) }}
-            />
-          </div>
-        )}
-
-        <div data-field="workDetail">
-          <label className={labelClass} style={errLabelStyle(hasErr("workDetail"))}>
-            รายละเอียดการไปปฏิบัติงาน{requiredStar}
-          </label>
-          <textarea
-            rows={3}
-            value={tab.workDetail ?? ""}
-            onChange={(e) => onChange({ workDetail: e.target.value || null })}
-            placeholder="อธิบายจุดประสงค์การเดินทางและงานที่ไปปฏิบัติ..."
-            className={inputClass}
-            style={{ ...inputStyle, resize: "vertical", ...errInputStyle(hasErr("workDetail")) }}
-          />
-        </div>
-
-        {/* ประเทศที่เดินทาง — under the brand, above everything the trip is
-            described with, because it bounds the place search below it and (once
-            per-diem-by-country lands) prices the trip.
+            **Shown only once a brand is chosen**, which is AP-1's rule for its
+            own country band. It is also the honest order: the brand is the
+            required field above, and offering a country before one is picked
+            asks a question about a trip that has not started being described.
 
             **It does not choose the booking currency.** That is derived from the
             brand and typed by the desk from the invoice — `booking-currency.ts`
@@ -246,9 +223,13 @@ export function TravelBookingTab({
             the opposite of AP-1. Where somebody went and what an invoice is
             denominated in are two questions.
 
-            Every country the list knows, not the brand's configured currencies:
-            AP-17 converts nothing, so the ECB-quotability that shapes the list
-            for AP-1 has no bearing here. The list is still the same 25. */}
+            Every country the list knows, NOT the brand's configured currencies —
+            which is where this deliberately differs from AP-1. AP-17 converts
+            nothing, so the ECB-quotability that shapes that list has no bearing
+            on where somebody travelled, and a brand with no currency rows would
+            otherwise be able to travel only to Thailand. The list is the same
+            25 countries; what is not the same is the filter. */}
+        {tab.brandCode && (
         <div data-field="country">
           <label className={labelClass}>ประเทศ</label>
           <div className="flex flex-wrap gap-1.5 mt-1">
@@ -301,6 +282,48 @@ export function TravelBookingTab({
               );
             })}
           </div>
+        </div>
+        )}
+
+        <div data-field="reason">
+          <label className={labelClass} style={errLabelStyle(hasErr("reason"))}>
+            เหตุผลการเดินทาง{requiredStar}
+          </label>
+          <OptionCardSelect
+            options={reasonOptions}
+            value={tab.reasonId != null ? String(tab.reasonId) : ""}
+            onChange={(v) => onChange({ reasonId: Number(v), reasonCustomText: tab.reasonCustomText })}
+            hasError={hasErr("reason")}
+          />
+        </div>
+
+        {selectedReason?.requiresCustomReason && (
+          <div data-field="reasonCustom">
+            <label className={labelClass} style={errLabelStyle(hasErr("reasonCustom"))}>
+              ระบุเหตุผลเพิ่มเติม{requiredStar}
+            </label>
+            <input
+              value={tab.reasonCustomText ?? ""}
+              onChange={(e) => onChange({ reasonCustomText: e.target.value || null })}
+              placeholder="ระบุรายละเอียด..."
+              className={inputClass}
+              style={{ ...inputStyle, ...errInputStyle(hasErr("reasonCustom")) }}
+            />
+          </div>
+        )}
+
+        <div data-field="workDetail">
+          <label className={labelClass} style={errLabelStyle(hasErr("workDetail"))}>
+            รายละเอียดการไปปฏิบัติงาน{requiredStar}
+          </label>
+          <textarea
+            rows={3}
+            value={tab.workDetail ?? ""}
+            onChange={(e) => onChange({ workDetail: e.target.value || null })}
+            placeholder="อธิบายจุดประสงค์การเดินทางและงานที่ไปปฏิบัติ..."
+            className={inputClass}
+            style={{ ...inputStyle, resize: "vertical", ...errInputStyle(hasErr("workDetail")) }}
+          />
         </div>
 
         <div data-field="workLocations">
