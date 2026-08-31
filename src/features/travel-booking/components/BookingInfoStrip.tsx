@@ -48,7 +48,7 @@ export function tripInfo(req: TravelBookingRequest): InfoGroup[] {
           value: fmtRange(req.departDate, req.returnDate) + (days ? ` (${days} วัน)` : ""),
         },
         { label: "สถานที่ปฏิบัติงาน", value: dash(req.workLocations.map((w) => w.name).join(", ")) },
-        { label: "จังหวัด", value: dash(req.provinceName) },
+        { label: "จังหวัด/เมือง", value: dash(req.provinceName) },
       ],
     },
   ];

@@ -355,7 +355,7 @@ export function buildTravelBookingReportWorkbook(
   const columns = [
     "เลขที่คำขอ", "แบรนด์ที่เบิก", "รหัสพนักงาน", "ชื่อ-นามสกุล", "ตำแหน่ง", "แผนก",
     "เหตุผลในการเดินทาง", "รายละเอียดการไปปฏิบัติงาน",
-    "วันเดินทางขาไป", "วันเดินทางขากลับ", "จังหวัด", "สถานที่พักค้างคืน",
+    "วันเดินทางขาไป", "วันเดินทางขากลับ", "จังหวัด/เมือง", "สถานที่พักค้างคืน",
     "สถานที่ไปปฏิบัติงาน", "วันที่อนุมัติ", "สถานะ",
     // "(บาท)" is now stated rather than assumed. Per diem has no currency —
     // EmployeeAllowanceLog has no such column — so this heading was already

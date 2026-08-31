@@ -157,7 +157,7 @@ export function invalidOptionMessage(selection: OptionSelection): string {
 
 const INVALID_OPTION_LABELS: Record<string, string> = {
   reasonId: "เหตุผลการเดินทาง",
-  provinceId: "จังหวัด",
+  provinceId: "จังหวัด/เมือง",
   accommodationId: "ที่พัก",
   goVehicleId: "ยานพาหนะขาไป",
   returnVehicleId: "ยานพาหนะขากลับ",

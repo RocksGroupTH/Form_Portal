@@ -9,6 +9,7 @@ import { WorkLocationList } from "./WorkLocationList";
 import { DateRangeField } from "./DateRangeField";
 import { TransportSection } from "./TransportSection";
 import { ORS_WORLDWIDE } from "@/lib/ors-scope";
+import { countryNameBoth } from "@/lib/acc/country-currency";
 import { IdCardUpload } from "./IdCardUpload";
 import {
   OptionCardSelect,
@@ -138,7 +139,15 @@ export function TravelBookingTab({
     onChange({ provinceId: id });
   };
 
-  const provinceOptions = provinces.map((p) => ({ value: String(p.id), label: p.nameTh, subLabel: p.nameEn }));
+  // The sub-label is rendered AND searched by LocalSearchSelect, so naming the
+  // country here makes the list typable in either language and stops a foreign
+  // city reading as a Thai province. A Thai row keeps its English name, which is
+  // what somebody typing "chiang" is looking for.
+  const provinceOptions = provinces.map((p) => ({
+    value: String(p.id),
+    label: p.nameTh,
+    subLabel: p.countryCode === "TH" ? p.nameEn : countryNameBoth(p.countryCode) ?? p.nameEn,
+  }));
   const reasonOptions = reasons.map((r) => ({ value: String(r.id), label: r.name, icon: r.icon }));
   const accommodationOptions = accommodations.map((a) => ({ value: String(a.id), label: a.name, icon: a.icon }));
   const vehicleOptions = vehicles.map((v) => ({ value: String(v.id), label: v.name, icon: v.icon }));
@@ -253,6 +262,11 @@ export function TravelBookingTab({
                   }) ?? provinces.find((p) => h.includes(p.nameTh.trim().toLowerCase()))
                 );
               };
+              // Only ever a convenience. A foreign place usually matches
+              // nothing here — the list holds the cities somebody has added, not
+              // every city — and the right behaviour then is to leave the field
+              // alone for the requester to pick, never to clear a choice they
+              // already made.
               const match = (region ? matchIn(region) : undefined) ?? matchIn(label);
               if (match && match.id !== tab.provinceId) selectProvince(match.id);
             }}
@@ -261,14 +275,17 @@ export function TravelBookingTab({
 
         <div data-field="province">
           <label className={labelClass} style={errLabelStyle(hasErr("province"))}>
-            จังหวัด{requiredStar}
+            จังหวัด/เมือง{requiredStar}
           </label>
           <LocalSearchSelect
             options={provinceOptions}
             value={tab.provinceId != null ? String(tab.provinceId) : ""}
             onChange={(v) => selectProvince(v ? Number(v) : null)}
-            placeholder="พิมพ์ค้นหาจังหวัด..."
-            emptyLabel="ไม่พบจังหวัด"
+            placeholder="พิมพ์ค้นหาจังหวัดหรือเมือง..."
+            // A requester travelling somewhere nobody has added is told today
+             // that it does not exist, beside a required field, with no remedy
+             // named. Now it names one.
+             emptyLabel="ไม่พบจังหวัดหรือเมืองนี้ — ติดต่อผู้ดูแลระบบเพื่อเพิ่ม"
             hasError={hasErr("province")}
           />
         </div>

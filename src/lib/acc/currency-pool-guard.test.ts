@@ -52,7 +52,7 @@ function codeOf(source: string): string {
 }
 
 /**
- * The two production-only tables, each matched as a **whole word**.
+ * The production-only tables, each matched as a **whole word**.
  *
  * `\b` on both ends is what keeps `BrandCurrencyEntry`, `BrandCurrencyError` and
  * `brandCurrencyLogValue` out of it: those are types and helpers that travel
@@ -61,7 +61,18 @@ function codeOf(source: string): string {
  * by the same mechanism and needs no separate rule — it is written only from
  * `brand-registry.ts`, which the `BrandSetting` arm already covers.
  */
-const PRODUCTION_ONLY_TABLES = ["BrandSetting", "BrandCurrency"];
+const PRODUCTION_ONLY_TABLES = ["BrandSetting", "BrandCurrency", "TravelProvince"];
+
+/*
+ * `TravelProvince` joined on 2026-08-31 and could not have before. It is absent
+ * from `Rocks_Portal_Form_UAT` exactly like the other two — migration 104 refuses
+ * that database outright and 132 refuses it again — but
+ * `travel-booking/request-service.ts` held a `resolveProvinceName` naming it in
+ * real SQL while importing `getAccPool` at the top of the same file. Moving that
+ * function into `province-service.ts`, where every statement opens
+ * `getProductionFormPool()`, is what let this arm be added — and adding it is
+ * what stops it drifting back.
+ */
 
 for (const table of PRODUCTION_ONLY_TABLES) {
   test(`${table} is only ever reached through the production pool`, () => {

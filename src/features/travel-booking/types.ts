@@ -87,6 +87,11 @@ export interface ProvinceOption {
   id: number;
   nameTh: string;
   nameEn: string | null;
+  /**
+   * ISO-3166-1 alpha-2 (migration 132). Every row predating that migration is
+   * `TH`; the column is NOT NULL with no default, so a new row must name one.
+   */
+  countryCode: string;
 }
 
 /** ข้อ9 — สถานที่ไปปฏิบัติงาน (AccTravelWorkLocation), free-text multi-add. */

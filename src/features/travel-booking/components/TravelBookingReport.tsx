@@ -92,7 +92,7 @@ const ALL_COLUMNS: (ColumnToggleOption<ColKey> & { align?: "right" })[] = [
   { key: "workDetail", label: "รายละเอียดการไปปฏิบัติงาน" },
   { key: "departDate", label: "วันเดินทางขาไป" },
   { key: "returnDate", label: "วันเดินทางขากลับ" },
-  { key: "provinceName", label: "จังหวัด" },
+  { key: "provinceName", label: "จังหวัด/เมือง" },
   { key: "accommodationName", label: "สถานที่พักค้างคืน" },
   { key: "workLocationsCsv", label: "สถานที่ไปปฏิบัติงาน" },
   { key: "approvedDate", label: "วันที่อนุมัติ" },

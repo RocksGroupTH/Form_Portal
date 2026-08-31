@@ -257,7 +257,7 @@ export function validateTab(tab: TabFormState, settings: TabSettingsMaps): Field
 
   if (!tab.workDetail?.trim()) issues.push({ key: "workDetail", label: "รายละเอียดการไปปฏิบัติงาน" });
 
-  if (!tab.provinceId) issues.push({ key: "province", label: "จังหวัด" });
+  if (!tab.provinceId) issues.push({ key: "province", label: "จังหวัด/เมือง" });
 
   if (!tab.workLocations.some((w) => w.name?.trim())) {
     issues.push({ key: "workLocations", label: "สถานที่ไปปฏิบัติงาน (อย่างน้อย 1 แห่ง)" });

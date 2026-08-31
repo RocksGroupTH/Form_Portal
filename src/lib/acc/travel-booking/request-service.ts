@@ -1,5 +1,4 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
-import { getProductionFormPool } from "@/lib/db/mssql";
 import { hrEmployeeTable } from "@/lib/hr/constants";
 import { pickEmployeePhotoUrl } from "@/lib/hr/photo-url";
 import { resolveEmployeeForActor } from "@/lib/hr/employee-lookup";
@@ -32,6 +31,11 @@ import {
   type DerivedBookingFlags,
 } from "@/lib/acc/travel-booking/derive-flags";
 import { AP17_FORM_CODE, FILE_REFTYPES, RUNNING_PREFIX } from "@/features/travel-booking/constants";
+// Moved out of this file on 2026-08-31: TravelProvince exists only in
+// Rocks_Portal_Form, and this module also imports getAccPool, which resolves the
+// UAT twin for a tester. Real SQL naming that table must not live beside a pool
+// that can point somewhere it does not exist.
+import { resolveProvinceName } from "@/lib/acc/travel-booking/province-service";
 import type {
   Accommodation,
   BookingDetail,
@@ -498,20 +502,6 @@ async function resolveSettingOption(
     needsVehicleRent: flag("NeedsVehicleRent"),
     needsRentBooking: flag("NeedsRentBooking"),
   };
-}
-
-/** Rocks_Portal_Form.dbo.TravelProvince, migration 104 — resolved via its own pool (always Production; the caller's AccTx may be the UAT twin). */
-async function resolveProvinceName(id: number | null): Promise<string | null> {
-  if (!id) return null;
-  // TravelProvince moved to Rocks_Portal_Form in migrations 104/105; Fast_Data
-  // keeps a synonym for the Rocks Fast and ACC Portal siblings. This app names
-  // the new home directly. getProductionFormPool() and never getFormPool():
-  // there is one physical copy, so the environment-varying pool has nothing to
-  // choose between.
-  const pool = await getProductionFormPool();
-  const r = await pool.request().input("id", sql.Int, id)
-    .query(`SELECT TOP 1 NameTh FROM [dbo].[TravelProvince] WHERE Id=@id`);
-  return (r.recordset[0]?.NameTh as string) ?? null;
 }
 
 interface ResolvedNames {
@@ -1006,7 +996,7 @@ export function validateTravelBookingTab(
   if (!tab.workDetail?.trim()) return fail("กรุณากรอกรายละเอียดการไปปฏิบัติงาน");
 
   // ข้อ8 — จังหวัด
-  if (!tab.provinceId) return fail("กรุณาเลือกจังหวัด");
+  if (!tab.provinceId) return fail("กรุณาเลือกจังหวัด/เมืองปลายทาง");
 
   // ข้อ9 — สถานที่ไปปฏิบัติงาน (>=1)
   if (!(tab.workLocations ?? []).some((w) => w.name?.trim())) {

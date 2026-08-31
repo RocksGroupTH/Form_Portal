@@ -70,7 +70,7 @@ export function buildTravelBookingEmail(
       const rows = [
         row("เลขที่", no),
         row("ผู้ขอ", req.requesterFullName ?? "-"),
-        row("จังหวัด", req.provinceName ?? "-"),
+        row("จังหวัด/เมือง", req.provinceName ?? "-"),
         row("วันเดินทาง", dateRangeLabel(req)),
         row("เบี้ยเลี้ยง", perDiemLabel(req)),
       ].join("");
@@ -93,7 +93,7 @@ export function buildTravelBookingEmail(
       const rows = [
         row("เลขที่", no),
         row("ผู้ขอ", req.requesterFullName ?? "-"),
-        row("จังหวัด", req.provinceName ?? "-"),
+        row("จังหวัด/เมือง", req.provinceName ?? "-"),
         row("วันเดินทาง", dateRangeLabel(req)),
         row("รายการที่ต้องจอง", needsBookingLabel(req)),
       ].join("");
@@ -124,7 +124,7 @@ export function buildTravelBookingEmail(
       const subject = `การจองเสร็จสิ้น ${no}`;
       const rows = [
         row("เลขที่", no),
-        row("จังหวัด", req.provinceName ?? "-"),
+        row("จังหวัด/เมือง", req.provinceName ?? "-"),
         row("วันเดินทาง", dateRangeLabel(req)),
       ].join("");
       return { subject, html: shell(subject, rows, url) };

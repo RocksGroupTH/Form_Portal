@@ -294,18 +294,31 @@ test("every AP-17 settings handler is gated, and approvers is the admin-only one
     }
   }
 
-  // สิทธิ์เข้าถึง hands out the grants, so it can never be opened by one.
+  // Two routes may stay admin-only, for two different reasons.
+  //
+  //   approvers — สิทธิ์เข้าถึง hands out the grants, so it can never be opened
+  //               by one.
+  //   provinces — TravelProvince's rows are SHARED with the Rocks Fast sibling
+  //               through Fast_Data's permanent synonym (migration 105), and
+  //               that application reads them with no country filter. A row
+  //               added here changes what its users see in their own form, so a
+  //               tab grant must not become write access to another
+  //               application's data. Same rule settings/departments/map
+  //               carries for DepartmentErpMap.
+  //
+  // Sorted, because the order these are discovered in is the route-file walk
+  // order and says nothing.
   assert.deepEqual(
-    roleGated,
-    ["approvers"],
-    "only settings/approvers may stay on requireRole",
+    roleGated.slice().sort(),
+    ["approvers", "provinces"],
+    "only settings/approvers and settings/provinces may stay on requireRole — see the note above before adding a third",
   );
 
   // Pinning the count means a new handler on an existing route has to be looked
   // at rather than merged on the strength of the file already being gated.
   assert.equal(
     handlerCount,
-    11,
+    14,
     "the AP-17 settings routes gained or lost a handler — check its gate, then update this number",
   );
 });

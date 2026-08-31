@@ -1053,7 +1053,7 @@ export function TravelBookingDetail({
               )
             }
           />
-          <DetailRow label="จังหวัด" value={request.provinceName} />
+          <DetailRow label="จังหวัด/เมือง" value={request.provinceName} />
         </div>
       </Section>
 
