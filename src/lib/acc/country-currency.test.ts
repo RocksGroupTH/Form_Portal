@@ -9,6 +9,7 @@ import {
   isRateSourceCurrency,
   countryFlag,
   countryNameBoth,
+  countryNames,
 } from "./country-currency";
 
 test("a country resolves to its currency", () => {
@@ -181,4 +182,11 @@ test("a country whose names match is not repeated", () => {
 
 test("countryName still answers Thai alone, for callers that want one line", () => {
   assert.equal(countryName("MY"), "มาเลเซีย");
+});
+
+test("countryNames hands back the pair, for a two-line label", () => {
+  assert.deepEqual(countryNames("MY"), { th: "มาเลเซีย", en: "Malaysia" });
+  assert.deepEqual(countryNames("TH"), { th: "ไทย", en: "Thailand" });
+  assert.equal(countryNames("ZZ"), null);
+  assert.equal(countryNames(null), null);
 });

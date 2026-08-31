@@ -171,3 +171,18 @@ export function countryNameBoth(code: string | null | undefined): string | null 
   if (!c) return null;
   return c.nameEn === c.nameTh ? c.nameTh : `${c.nameTh} · ${c.nameEn}`;
 }
+
+/**
+ * Both names, unjoined, for a caller that stacks them on two lines.
+ *
+ * `countryNameBoth` joins them for a single line; this is the same data for the
+ * pickers, which put English on top and Thai beneath it in a smaller, quieter
+ * face. Thai script is the wider of the two at the same size, so stacking is
+ * what keeps a row of country buttons from pushing the form sideways.
+ */
+export function countryNames(
+  code: string | null | undefined,
+): { th: string; en: string } | null {
+  const c = BY_CODE.get(norm(code));
+  return c ? { th: c.nameTh, en: c.nameEn } : null;
+}

@@ -76,7 +76,7 @@ import {
   showsForeignCurrency,
 } from "@/lib/acc/currency-display";
 import { isOverriddenRate } from "@/lib/acc/currency";
-import { countryNameBoth, isKnownCountry } from "@/lib/acc/country-currency";
+import { countryNames, countryNameBoth, isKnownCountry } from "@/lib/acc/country-currency";
 import { claimRateFacts, multiRateCurrencies } from "@/features/accounting/lib/claim-rates";
 import type { ClaimRateFact } from "@/features/accounting/lib/claim-rates";
 import {
@@ -1040,8 +1040,13 @@ function TravelDaySection({
           <TravelMetaTile label="ประเทศ">
             <span className="flex items-center gap-1.5 min-w-0">
               <CountryCodeBadge code={claimCountry} />
-              <span className="break-words leading-none">
-                {countryNameBoth(claimCountry) ?? claimCountry}
+              <span className="flex flex-col items-start leading-tight break-words">
+                <span>{countryNames(claimCountry)?.en ?? claimCountry}</span>
+                {countryNames(claimCountry) && (
+                  <span className="text-[10px] font-medium leading-none" style={{ color: "var(--text-ghost)" }}>
+                    {countryNames(claimCountry)!.th}
+                  </span>
+                )}
               </span>
             </span>
           </TravelMetaTile>
@@ -1871,11 +1876,15 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
                   name that already spells it out. See the form's country
                   buttons for the same decision. */}
               <CountryCodeBadge code={request.countryCode} />
-              <span
-                className="text-[12px] font-bold leading-none"
-                style={{ color: "var(--text-primary)" }}
-              >
-                {countryNameBoth(request.countryCode) ?? request.countryCode}
+              <span className="flex flex-col items-start leading-tight">
+                <span className="text-[12px] font-bold" style={{ color: "var(--text-primary)" }}>
+                  {countryNames(request.countryCode)?.en ?? request.countryCode}
+                </span>
+                {countryNames(request.countryCode) && (
+                  <span className="text-[10px] font-medium leading-none" style={{ color: "var(--text-ghost)" }}>
+                    {countryNames(request.countryCode)!.th}
+                  </span>
+                )}
               </span>
             </div>
           )}

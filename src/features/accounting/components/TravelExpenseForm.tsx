@@ -45,7 +45,7 @@ import {
   selectedVehicleCount,
 } from "@/features/accounting/lib/travel-sections";
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
-import { countryNameBoth, countryFlag } from "@/lib/acc/country-currency";
+import { countryNames, countryFlag } from "@/lib/acc/country-currency";
 import { referenceRateNote } from "@/lib/acc/currency-display";
 import { lineNeedsCurrency, typedLineFigure } from "@/features/accounting/lib/claim-currency";
 import type { AccRequest, TravelDraftSummary, TravelExpenseDetail, TravelExpenseItem, AccVehicle } from "@/features/accounting/types";
@@ -1164,7 +1164,24 @@ export function TravelExpenseForm({
                         style={{ border: "1px solid var(--border-card)" }}
                         onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                       />
-                      {countryNameBoth(code) ?? code}
+                      {/* Two lines, English over Thai. Thai script is the
+                          wider of the two at the same size, so stacking is what
+                          keeps a row of country buttons from pushing the whole
+                          form sideways — and the Thai line, being the quieter
+                          one, can take the smaller quieter face without losing
+                          anything: the reader who needs it is reading a name
+                          they already know. */}
+                      <span className="flex flex-col items-start leading-tight">
+                        <span>{countryNames(code)?.en ?? code}</span>
+                        {countryNames(code) && (
+                          <span
+                            className="text-[10px] font-medium leading-none"
+                            style={{ color: active ? "var(--nav-active-text)" : "var(--text-ghost)" }}
+                          >
+                            {countryNames(code)!.th}
+                          </span>
+                        )}
+                      </span>
                     </span>
                   </button>
                 );
