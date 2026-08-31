@@ -1,5 +1,20 @@
 -- Which parts of AP-17 each person on the roster may see.
 --
+-- THE NUMBER 124 IS SHARED WITH 124_brand_setting_currency.sql, AND STAYS THAT WAY.
+--
+-- Both files exist on master. This one was applied to Rocks_Portal_Form and
+-- Rocks_Portal_Form_UAT on 2026-08-29, so it is NOT renumbered: the header of
+-- 120_acc_reimburse_access.sql sets the rule that renumbering is safe only while a
+-- migration has not been applied anywhere, and this one has. The number is a name for
+-- humans, not a key -- apply-sql takes an explicit --file and keeps no record -- so a
+-- shared one is untidy rather than broken, and renaming the file now would make the repo
+-- disagree with what was actually run.
+--
+-- How it happened: this file sat untracked while the currency work was planned, was swept
+-- into 035f116 by an unrelated commit, reverted in 2fb19f0 as accidental, and then
+-- committed deliberately in 131bef5 -- by which time the currency spec had already claimed
+-- 124 on the reading that the number was free.
+--
 -- Apply with (BOTH databases):
 --   npm run apply-sql -- --db Rocks_Portal_Form     --file migrations/124_acc_booking_approver_areas.sql
 --   npm run apply-sql -- --db Rocks_Portal_Form_UAT --file migrations/124_acc_booking_approver_areas.sql
