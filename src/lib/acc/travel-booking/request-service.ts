@@ -36,6 +36,7 @@ import { AP17_FORM_CODE, FILE_REFTYPES, RUNNING_PREFIX } from "@/features/travel
 // UAT twin for a tester. Real SQL naming that table must not live beside a pool
 // that can point somewhere it does not exist.
 import { resolveProvinceName } from "@/lib/acc/travel-booking/province-service";
+import { resolveBookingCountry } from "@/lib/acc/travel-booking/booking-country";
 import type {
   Accommodation,
   BookingDetail,
@@ -94,6 +95,10 @@ function mapTravelBookingRow(
     // status alone acts on the wrong one.
     currentStepCode: (r.CurrentStepCode as TravelBookingStepCode) ?? null,
     brandCode: (r.BrandCode as string) ?? null,
+    // Normalised on the way out as well as in: rows written before 2026-08-31
+    // hold NULL, and a CHAR(2) pads, so "" and "  " both have to read as null
+    // rather than as a country nobody chose.
+    countryCode: ((r.CountryCode as string | null) ?? "").trim().toUpperCase() || null,
     // The currency the booking figures are recorded in, and the rate the desk's
     // last save recorded for it. Written by `admin-service.saveBookingDetail`
     // and read here only to be displayed — AP-17 stores no converted figure, so
@@ -369,7 +374,7 @@ export async function listMyTravelBookings(userId: number): Promise<TravelBookin
     .input("form", sql.NVarChar, AP17_FORM_CODE)
     .query(`
       SELECT
-        r.Id, r.RequestNo, r.Status, r.CurrentStepCode, r.BrandCode, r.StaffId, r.RequesterFullName, r.RequesterEmail, r.RequesterPosition, r.RequesterDepartmentName,
+        r.Id, r.RequestNo, r.Status, r.CurrentStepCode, r.BrandCode, r.CountryCode, r.StaffId, r.RequesterFullName, r.RequesterEmail, r.RequesterPosition, r.RequesterDepartmentName,
         r.Currency, r.ExchangeRate, r.RateAsOf, r.RateSource,
         r.PaymentDate, r.SubmittedAt,
         t.Phone, t.AllowanceSnapshot, t.ReasonId, t.ReasonName, t.ReasonCustomText, t.WorkDetail,
@@ -852,11 +857,17 @@ export async function saveTravelBookingDraft(
           .input("deptId", sql.Int, emp.departmentId ?? null)
           .input("deptName", sql.NVarChar, emp.departmentName ?? null)
           .input("brandCode", sql.NVarChar(40), (tab.brandCode ?? "").trim() || null)
+          // resolveBookingCountry runs on both writers and nowhere else, so a
+          // stored value is already either a country the list knows or TH. A
+          // second check at submit would be a second copy of the rule, and only
+          // one of the two would ever get corrected.
+          .input("country", sql.Char(2), resolveBookingCountry(tab.countryCode))
           .query(`UPDATE [dbo].[AccRequest] SET
                   EmployeeId=@empId, StaffId=@staffId, RequesterFirstName=@fname, RequesterLastName=@lname,
                   RequesterFullName=@full, RequesterEmail=@email, RequesterPosition=@pos,
                   RequesterDepartmentId=@deptId, RequesterDepartmentName=@deptName,
-                  CurrentStepCode='MANAGER', BrandCode=@brandCode, UpdatedAt=SYSDATETIME()
+                  CurrentStepCode='MANAGER', BrandCode=@brandCode, CountryCode=@country,
+                  UpdatedAt=SYSDATETIME()
                   WHERE Id=@id`);
       } else {
         const ins = await tx.request()
@@ -872,11 +883,12 @@ export async function saveTravelBookingDraft(
           .input("deptName", sql.NVarChar, emp.departmentName ?? null)
           .input("user", sql.Int, userId || null)
           .input("brandCode", sql.NVarChar(40), (tab.brandCode ?? "").trim() || null)
+          .input("country", sql.Char(2), resolveBookingCountry(tab.countryCode))
           .query(`INSERT INTO [dbo].[AccRequest]
                   (FormCode, Status, CurrentStepCode, EmployeeId, StaffId, RequesterFirstName, RequesterLastName,
-                   RequesterFullName, RequesterEmail, RequesterPosition, RequesterDepartmentId, RequesterDepartmentName, CreatedBy, BrandCode)
+                   RequesterFullName, RequesterEmail, RequesterPosition, RequesterDepartmentId, RequesterDepartmentName, CreatedBy, BrandCode, CountryCode)
                   OUTPUT inserted.Id AS Id
-                  VALUES (@form, 'Draft', 'MANAGER', @empId, @staffId, @fname, @lname, @full, @email, @pos, @deptId, @deptName, @user, @brandCode)`);
+                  VALUES (@form, 'Draft', 'MANAGER', @empId, @staffId, @fname, @lname, @full, @email, @pos, @deptId, @deptName, @user, @brandCode, @country)`);
         finalRequestId = ins.recordset[0].Id as number;
       }
 

@@ -39,7 +39,7 @@ function Flag({ code }: { code: string }) {
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
-      src={"/flags/" + code.toUpperCase() + ".svg"}
+      src={"/flags/" + code.toLowerCase() + ".svg"}
       alt=""
       width={18}
       height={13}

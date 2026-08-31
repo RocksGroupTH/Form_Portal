@@ -9,7 +9,8 @@ import { WorkLocationList } from "./WorkLocationList";
 import { DateRangeField } from "./DateRangeField";
 import { TransportSection } from "./TransportSection";
 import { ORS_WORLDWIDE } from "@/lib/ors-scope";
-import { countryNameBoth } from "@/lib/acc/country-currency";
+import { COUNTRIES, countryNameBoth } from "@/lib/acc/country-currency";
+import { BOOKING_DEFAULT_COUNTRY } from "@/lib/acc/travel-booking/booking-country";
 import { IdCardUpload } from "./IdCardUpload";
 import {
   OptionCardSelect,
@@ -235,6 +236,73 @@ export function TravelBookingTab({
           />
         </div>
 
+        {/* ประเทศที่เดินทาง — under the brand, above everything the trip is
+            described with, because it bounds the place search below it and (once
+            per-diem-by-country lands) prices the trip.
+
+            **It does not choose the booking currency.** That is derived from the
+            brand and typed by the desk from the invoice — `booking-currency.ts`
+            falls back to the brand's currency rather than to baht, deliberately
+            the opposite of AP-1. Where somebody went and what an invoice is
+            denominated in are two questions.
+
+            Every country the list knows, not the brand's configured currencies:
+            AP-17 converts nothing, so the ECB-quotability that shapes the list
+            for AP-1 has no bearing here. The list is still the same 25. */}
+        <div data-field="country">
+          <label className={labelClass}>ประเทศ</label>
+          <div className="flex flex-wrap gap-1.5 mt-1">
+            {COUNTRIES.map((c) => {
+              const active = (tab.countryCode ?? BOOKING_DEFAULT_COUNTRY) === c.code;
+              return (
+                <button
+                  key={c.code}
+                  type="button"
+                  onClick={() => onChange({ countryCode: c.code })}
+                  className="px-2.5 py-1 rounded-lg text-[12.5px] font-semibold transition-all cursor-pointer"
+                  style={{
+                    // One-pixel border and a smaller radius against the brand's
+                    // two and its xl: the same family of control, plainly a rank
+                    // below it. Same treatment AP-1's band uses.
+                    borderWidth: 1,
+                    borderStyle: "solid",
+                    borderColor: active ? "var(--nav-active-text)" : "var(--border-card)",
+                    background: active ? "var(--nav-active-bg)" : "var(--bg-card-alt)",
+                    color: active ? "var(--nav-active-text)" : "var(--text-secondary)",
+                  }}
+                >
+                  <span className="inline-flex items-center gap-1.5">
+                    {/* Real SVGs from `public/flags`, lower-cased filenames.
+                        Emoji flags do not work: Windows ships no flag glyphs, so
+                        Chrome and Edge there render the two letters as text. */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={`/flags/${c.code.toLowerCase()}.svg`}
+                      alt=""
+                      aria-hidden
+                      className="shrink-0 h-[11px] w-[16px] rounded-[2px] object-cover"
+                      style={{ border: "1px solid var(--border-card)" }}
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                    />
+                    {/* English over Thai. Thai script is the wider of the two at
+                        the same size, so stacking is what keeps a row of 25
+                        countries from pushing the form sideways. */}
+                    <span className="flex flex-col items-start leading-tight">
+                      <span>{c.nameEn}</span>
+                      <span
+                        className="text-[10px] font-medium leading-none"
+                        style={{ color: active ? "var(--nav-active-text)" : "var(--text-ghost)" }}
+                      >
+                        {c.nameTh}
+                      </span>
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         <div data-field="workLocations">
           <label className={labelClass} style={errLabelStyle(hasErr("workLocations"))}>
             <MapPin size={11} className="inline mr-1 -mt-0.5" />
@@ -244,11 +312,12 @@ export function TravelBookingTab({
             items={tab.workLocations}
             onChange={(workLocations) => onChange({ workLocations })}
             hasError={hasErr("workLocations")}
-            // Unbounded, so "london" finds London. Until the trip carries a
-            // country of its own (spec S3) there is nothing narrower to pass,
-            // and a boundary guessed from the province would be wrong for
-            // exactly the foreign trips this change exists for.
-            country={ORS_WORLDWIDE}
+            // Bounded to the trip's own country once one is chosen — which it
+            // is by default — and unbounded only while nothing has been picked.
+            // A boundary guessed from the province would be wrong for exactly
+            // the foreign trips this exists for; the country is the one field
+            // that actually knows.
+            country={tab.countryCode ?? ORS_WORLDWIDE}
             onProvinceDetected={({ label, region }) => {
               // Prefer the region field, else scan the label (Bangkok often has no region).
               // English province names first (ORS labels are English) — they're less ambiguous
@@ -370,7 +439,7 @@ export function TravelBookingTab({
               onChangeTime={(v) => onChange({ departTime: v })}
               onChangeDepartureLocations={(all) => onChange({ departureLocations: all })}
               errorKeys={displayErrorKeys}
-              country={ORS_WORLDWIDE}
+              country={tab.countryCode ?? ORS_WORLDWIDE}
             />
             <TransportSection
               direction="return"
@@ -380,7 +449,7 @@ export function TravelBookingTab({
               onChangeTime={(v) => onChange({ returnTime: v })}
               onChangeDepartureLocations={(all) => onChange({ departureLocations: all })}
               errorKeys={displayErrorKeys}
-              country={ORS_WORLDWIDE}
+              country={tab.countryCode ?? ORS_WORLDWIDE}
             />
           </>
         )}

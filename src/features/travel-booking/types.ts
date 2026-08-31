@@ -183,6 +183,17 @@ export interface TravelBookingRequest {
   /** `AccRequest.BrandCode` — the company this booking is filed under. */
   brandCode: string | null;
   /**
+   * `AccRequest.CountryCode` — where the trip goes (migration 129's column,
+   * written by AP-17 since 2026-08-31).
+   *
+   * **It does not decide the booking currency.** That is derived from the brand
+   * and set by the desk from the invoice — see `booking-currency.ts`, which
+   * deliberately falls back to the brand's currency rather than to baht. Where
+   * somebody travelled and what an invoice is denominated in are two questions,
+   * and this answers only the first. What it does feed is the per-diem rate.
+   */
+  countryCode: string | null;
+  /**
    * `AccRequest.Currency` — the currency the **booking figures** on
    * `AccTravelBookingDetail` are recorded in. **Null and `"THB"` both mean
    * baht**, and a baht request leaves it null: nobody recorded a currency, and
@@ -373,6 +384,13 @@ export interface SaveTravelBookingInput {
    * than the next. Nullable on a draft, required at submit.
    */
   brandCode: string | null;
+
+  /**
+   * ISO-3166-1 alpha-2, or null. Never trusted as posted: `resolveBookingCountry`
+   * admits a code the list knows and turns everything else into `TH`, on the two
+   * writers and nowhere else.
+   */
+  countryCode?: string | null;
 
   reasonId: number | null;
   reasonCustomText: string | null;

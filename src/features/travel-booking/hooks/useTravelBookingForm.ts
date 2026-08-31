@@ -46,6 +46,12 @@ export interface TabFormState {
 
   /** `AccRequest.BrandCode` — the company this trip is claimed against. */
   brandCode: string | null;
+  /**
+   * Where the trip goes. Null until the requester picks — `resolveBookingCountry`
+   * on the server turns that into TH — and it is what bounds the ORS place
+   * search and, once per-diem-by-country lands, what prices the trip.
+   */
+  countryCode: string | null;
 
   reasonId: number | null;
   reasonCustomText: string | null;
@@ -96,6 +102,7 @@ export interface TabFormState {
 export function emptyTab(): TabFormState {
   return {
     brandCode: null,
+    countryCode: null,
     reasonId: null,
     reasonCustomText: null,
     workDetail: null,
@@ -139,6 +146,7 @@ function tabFromRequest(r: TravelBookingRequest): TabFormState {
     // A resumed trip keeps the brand its own row was saved with — no seeding
     // effect is needed now that the value belongs to the tab.
     brandCode: r.brandCode,
+    countryCode: r.countryCode,
     reasonId: r.reasonId,
     reasonCustomText: r.reasonCustomText,
     workDetail: r.workDetail,
@@ -183,6 +191,7 @@ function buildSaveInput(tab: TabFormState, sortOrder: number): SaveTravelBooking
   return {
     id: tab.id,
     brandCode: tab.brandCode,
+    countryCode: tab.countryCode,
     reasonId: tab.reasonId,
     reasonCustomText: tab.reasonCustomText,
     workDetail: tab.workDetail,
