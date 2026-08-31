@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { Briefcase, Calendar, Car, Check, FileCheck, Hotel, MapPin, StickyNote } from "lucide-react";
+import { Briefcase, Calendar, Car, FileCheck, Hotel, MapPin, StickyNote } from "lucide-react";
 import { BrandMark } from "@/components/BrandMark";
 import type { AccBrandOption } from "@/features/accounting/types";
 import { LocalSearchSelect } from "./LocalSearchSelect";
@@ -255,7 +255,6 @@ export function TravelBookingTab({
                     >
                       <BrandMark src={b.brandLogo} alt="" code={b.brandCode} size={20} rounded="rounded" />
                       {b.brandName}
-                      {active && <Check size={14} />}
                     </button>
                   );
                 })}

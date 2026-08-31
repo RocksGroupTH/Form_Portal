@@ -1086,7 +1086,6 @@ export function TravelExpenseForm({
                       />
                     )}
                     {b.brandName}
-                    {active && <Check size={14} />}
                   </button>
                 );
               })}
