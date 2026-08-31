@@ -9,7 +9,6 @@ import { WorkLocationList } from "./WorkLocationList";
 import { DateRangeField } from "./DateRangeField";
 import { TransportSection } from "./TransportSection";
 import { IdCardUpload } from "./IdCardUpload";
-import { nextDeparturePlace } from "@/features/travel-booking/lib/departure-default";
 import {
   OptionCardSelect,
   SectionCard,
@@ -22,7 +21,6 @@ import {
   labelStyle,
   requiredStar,
 } from "./shared";
-import { GO_DEFAULT_DEPARTURE_PLACE } from "@/features/travel-booking/constants";
 import type {
   DepartureLocationInput,
   FieldIssue,
@@ -40,59 +38,6 @@ import { earliestTravelDate } from "@/features/travel-booking/lib/earliest-trave
 
 /** Sentinel option name for AccTravelRentVehicle's default "no rental" choice — mirrors the server. */
 const NO_RENT_VEHICLE_NAME = "ไม่เช่า";
-
-function placeOf(all: DepartureLocationInput[], direction: TravelDirection): string {
-  return all.find((d) => d.direction === direction)?.name ?? "";
-}
-
-function writePlace(
-  all: DepartureLocationInput[],
-  direction: TravelDirection,
-  name: string,
-): DepartureLocationInput[] {
-  return [...all.filter((d) => d.direction !== direction), { direction, name, sortOrder: 0 }];
-}
-
-/**
- * The tab fields to merge so จุดขึ้นรถ/ขึ้นเครื่อง carries its defaults — ขาไป
- * from head office, ขากลับ from the province being travelled to. `{}` when
- * neither direction should be touched.
- *
- * Deliberately **not** an effect watching `departureLocations`.
- * `OrsPlaceField` commits on every keystroke, so a fill that watched the value
- * would put the default straight back the moment somebody cleared the field.
- * The three callers below are the only moments the right default can change:
- * picking a vehicle that asks for a place, choosing a province, and the ORS
- * province auto-detect. `nextDeparturePlace` then decides whether the field is
- * still the form's to write.
- */
-function departureDefaults(
-  locations: DepartureLocationInput[],
-  appliedGo: string | null,
-  appliedReturn: string | null,
-  provinceName: string | null,
-): Partial<TabFormState> {
-  const go = nextDeparturePlace({
-    current: placeOf(locations, "go"),
-    appliedDefault: appliedGo,
-    nextDefault: GO_DEFAULT_DEPARTURE_PLACE,
-  });
-  const back = nextDeparturePlace({
-    current: placeOf(locations, "return"),
-    appliedDefault: appliedReturn,
-    nextDefault: provinceName,
-  });
-  if (go == null && back == null) return {};
-
-  let next = locations;
-  if (go != null) next = writePlace(next, "go", go);
-  if (back != null) next = writePlace(next, "return", back);
-  return {
-    departureLocations: next,
-    ...(go != null ? { goAppliedDeparturePlace: go } : {}),
-    ...(back != null ? { returnAppliedDeparturePlace: back } : {}),
-  };
-}
 
 interface TravelBookingTabProps {
   tab: TabFormState;
@@ -154,7 +99,6 @@ export function TravelBookingTab({
   const selectedGoVehicle = vehicles.find((v) => v.id === tab.goVehicleId);
   const selectedReturnVehicle = vehicles.find((v) => v.id === tab.returnVehicleId);
   const selectedRentVehicle = rentVehicles.find((v) => v.id === tab.rentVehicleId);
-  const selectedProvinceName = provinces.find((p) => p.id === tab.provinceId)?.nameTh ?? null;
 
   const showRentBlock = tab.goNeedsVehicleRent || tab.returnNeedsVehicleRent;
   const showRentDates = showRentBlock && !!selectedRentVehicle && selectedRentVehicle.name !== NO_RENT_VEHICLE_NAME;
@@ -183,36 +127,14 @@ export function TravelBookingTab({
       returnNeedsVehicleRent: !!v?.needsVehicleRent,
       departTime: needTime ? tab.departTime : null,
       returnTime: needTime ? tab.returnTime : null,
+      // Switching vehicle still clears both directions' places; it just no
+      // longer refills either with a guess (2026-08-31).
       departureLocations: [],
-      goAppliedDeparturePlace: null,
-      returnAppliedDeparturePlace: null,
-      // Seed the cleared field. Merged last so it wins over the three lines
-      // above, which are what it is seeding from.
-      //
-      // Gated on `needDep`, the same flag the two lines above persist and
-      // `validateTab` reads — not on `v.needsDepartureLocations`, which is what
-      // `TransportSection` shows the field on. The two differ for a vehicle
-      // configured to ask for a place but given none: there the field appears
-      // and is optional, and defaulting it would write a place onto a leg whose
-      // own flag says it needs none.
-      ...(needDep ? departureDefaults([], null, null, selectedProvinceName) : {}),
     });
   };
 
   const selectProvince = (id: number | null) => {
-    onChange({
-      provinceId: id,
-      // ขากลับ defaults to the province — follow the change while the field is
-      // still the one this form filled in.
-      ...(tab.goNeedsDepartureLocations
-        ? departureDefaults(
-            tab.departureLocations,
-            tab.goAppliedDeparturePlace,
-            tab.returnAppliedDeparturePlace,
-            provinces.find((p) => p.id === id)?.nameTh ?? null,
-          )
-        : {}),
-    });
+    onChange({ provinceId: id });
   };
 
   const provinceOptions = provinces.map((p) => ({ value: String(p.id), label: p.nameTh, subLabel: p.nameEn }));

@@ -83,14 +83,6 @@ export const DIRECTION_LABEL_TH: Record<TravelDirection, string> = {
 };
 
 /**
- * Default จุดขึ้นรถ/ขึ้นเครื่อง for ขาไป — nearly every trip starts from head
- * office. ขากลับ has no constant: its default is the province being travelled
- * to. Spelt as the province master spells it (migration 049), not the everyday
- * short "กรุงเทพ", so the two directions read alike.
- */
-export const GO_DEFAULT_DEPARTURE_PLACE = "กรุงเทพมหานคร";
-
-/**
  * Header message shown on the AP-17 form (spec §1), verbatim.
  * Rendered as separate lines/bullets by the form UI.
  */
