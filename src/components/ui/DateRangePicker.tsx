@@ -154,7 +154,9 @@ export function DateRangePicker({ startDate, endDate, onChange, minDate, maxDays
               <ChevronLeft size={14} />
             </button>
             <span className="text-[12px] font-semibold" style={{ color: "var(--text-primary)" }}>
-              {MONTHS_TH[month]} {year + 543}
+              {/* AD, not BE — AP-2 shows คริสต์ศักราช so the year matches ERP and
+                  the ISO values the form actually stores. */}
+              {MONTHS_TH[month]} {year}
             </span>
             <button type="button" onClick={next} className="p-1 rounded hover:opacity-70" style={{ color: "var(--text-muted)" }}>
               <ChevronRight size={14} />
