@@ -8,8 +8,11 @@ import { WorkLocationList } from "./WorkLocationList";
 import { DateRangeField } from "./DateRangeField";
 import { TransportSection } from "./TransportSection";
 import { ORS_WORLDWIDE } from "@/lib/ors-scope";
-import { COUNTRIES, countryNameBoth } from "@/lib/acc/country-currency";
-import { BOOKING_DEFAULT_COUNTRY } from "@/lib/acc/travel-booking/booking-country";
+import { countryNameBoth, countryNames } from "@/lib/acc/country-currency";
+import {
+  claimCountryOptions,
+  effectiveClaimCountry,
+} from "@/features/accounting/lib/claim-currency";
 import { IdCardUpload } from "./IdCardUpload";
 import {
   OptionCardSelect,
@@ -95,6 +98,23 @@ export function TravelBookingTab({
   // TransportSection applies error styling unconditionally on the keys it's given,
   // so only hand it the issue set once the user has attempted a submit.
   const displayErrorKeys = useMemo(() => (triedSubmit ? errorKeys : new Set<string>()), [triedSubmit, errorKeys]);
+
+  /**
+   * The brand this trip is filed against, and the countries it offers.
+   *
+   * Both come from AP-1's own rules rather than a second copy: the brand rows
+   * are the same `AccBrandOption` shape, so `claimCountryOptions` answers here
+   * exactly what it answers there for the same brand.
+   */
+  const selectedBrand = brands.find((b) => b.brandCode === tab.brandCode) ?? null;
+  const countryOptions = claimCountryOptions(selectedBrand);
+  /**
+   * The country this trip actually resolves to — the same value the server will
+   * store, so the chips, the place search and the database cannot disagree.
+   * Null only while no brand has been chosen, which is when the band is not
+   * rendered either.
+   */
+  const tripCountry = tab.brandCode ? effectiveClaimCountry(tab.countryCode, selectedBrand) : null;
 
   const selectedReason = reasons.find((r) => r.id === tab.reasonId);
   const selectedAccommodation = accommodations.find((a) => a.id === tab.accommodationId);
@@ -223,24 +243,37 @@ export function TravelBookingTab({
             the opposite of AP-1. Where somebody went and what an invoice is
             denominated in are two questions.
 
-            Every country the list knows, NOT the brand's configured currencies —
-            which is where this deliberately differs from AP-1. AP-17 converts
-            nothing, so the ECB-quotability that shapes that list has no bearing
-            on where somebody travelled, and a brand with no currency rows would
-            otherwise be able to travel only to Thailand. The list is the same
-            25 countries; what is not the same is the filter. */}
-        {tab.brandCode && (
+            **The countries the BRAND offers**, through AP-1's own
+            `claimCountryOptions` — one rule, not a second copy of it. A brand
+            configured for Thailand and England offers those two and nothing
+            else, exactly as AP-1's band does for the same brand.
+
+            The consequence to know: a brand with **no** `BrandCurrency` rows
+            offers nothing, so this band does not render at all and every trip
+            against it is Thailand. That is not a bug to work around — it is the
+            configuration saying nobody has told the system this brand travels
+            anywhere. Adding a country means adding its currency at Settings →
+            ตั้งค่าแบบฟอร์มขอเดินทาง → แบรนด์ที่เบิกได้, the same place AP-1's
+            countries come from. Per-diem-by-country only reaches a country this
+            list offers, so a brand that travels needs its currencies set. */}
+        {tab.brandCode && countryOptions.length > 0 && (
         <div data-field="country">
           <label className={labelClass}>ประเทศ</label>
           <div className="flex flex-wrap gap-1.5 mt-1">
-            {COUNTRIES.map((c) => {
-              const active = (tab.countryCode ?? BOOKING_DEFAULT_COUNTRY) === c.code;
+            {countryOptions.map((code) => {
+              const c = { code, nameEn: countryNames(code)?.en ?? code, nameTh: countryNames(code)?.th ?? "" };
+              // effectiveClaimCountry, not the raw stored value: a draft holding
+              // a country the brand no longer offers resolves to one it does,
+              // rather than leaving a selection with no chip to show it.
+              const active = effectiveClaimCountry(tab.countryCode, selectedBrand) === c.code;
+              const only = countryOptions.length === 1;
               return (
                 <button
                   key={c.code}
                   type="button"
+                  disabled={only}
                   onClick={() => onChange({ countryCode: c.code })}
-                  className="px-2.5 py-1 rounded-lg text-[12.5px] font-semibold transition-all cursor-pointer"
+                  className="px-2.5 py-1 rounded-lg text-[12.5px] font-semibold transition-all"
                   style={{
                     // One-pixel border and a smaller radius against the brand's
                     // two and its xl: the same family of control, plainly a rank
@@ -340,7 +373,7 @@ export function TravelBookingTab({
             // A boundary guessed from the province would be wrong for exactly
             // the foreign trips this exists for; the country is the one field
             // that actually knows.
-            country={tab.countryCode ?? ORS_WORLDWIDE}
+            country={tripCountry ?? ORS_WORLDWIDE}
             onProvinceDetected={({ label, region }) => {
               // Prefer the region field, else scan the label (Bangkok often has no region).
               // English province names first (ORS labels are English) — they're less ambiguous
@@ -462,7 +495,7 @@ export function TravelBookingTab({
               onChangeTime={(v) => onChange({ departTime: v })}
               onChangeDepartureLocations={(all) => onChange({ departureLocations: all })}
               errorKeys={displayErrorKeys}
-              country={tab.countryCode ?? ORS_WORLDWIDE}
+              country={tripCountry ?? ORS_WORLDWIDE}
             />
             <TransportSection
               direction="return"
@@ -472,7 +505,7 @@ export function TravelBookingTab({
               onChangeTime={(v) => onChange({ returnTime: v })}
               onChangeDepartureLocations={(all) => onChange({ departureLocations: all })}
               errorKeys={displayErrorKeys}
-              country={tab.countryCode ?? ORS_WORLDWIDE}
+              country={tripCountry ?? ORS_WORLDWIDE}
             />
           </>
         )}

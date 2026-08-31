@@ -37,6 +37,7 @@ import { AP17_FORM_CODE, FILE_REFTYPES, RUNNING_PREFIX } from "@/features/travel
 // that can point somewhere it does not exist.
 import { resolveProvinceName } from "@/lib/acc/travel-booking/province-service";
 import { resolveBookingCountry } from "@/lib/acc/travel-booking/booking-country";
+import { listBrandRegistry } from "@/lib/brand-registry";
 import { perDiemLogFor } from "@/lib/acc/travel-booking/perdiem-country";
 import { listPerDiemCountryRates } from "@/lib/acc/travel-booking/perdiem-source";
 import type {
@@ -840,8 +841,23 @@ export async function saveTravelBookingDraft(
 
     const keptRequestIds = new Set<number>();
 
+    // Once for the whole group, not once per tab: the registry is a small list
+    // read from the production pool, and a group of five trips would otherwise
+    // read it five times inside the transaction.
+    const brandRegistry = await listBrandRegistry();
+
     for (let i = 0; i < resolvedTabs.length; i++) {
       const { tab, names } = resolvedTabs[i];
+      // The country is resolved against THIS tab's brand, the same way AP-1's
+      // resolveClaimCountry does — a group can hold two trips on two brands, so
+      // the registry is loaded once above and the match happens per tab.
+      const tabBrand = brandRegistry.find(
+        (b) => b.code === (tab.brandCode ?? "").trim().toUpperCase(),
+      );
+      const tabCountry = resolveBookingCountry(
+        tab.countryCode,
+        tabBrand ? { currencies: tabBrand.currencies } : null,
+      );
       const requestId = tab.id && existingByRequestId.has(tab.id) ? tab.id : 0;
       let finalRequestId: number;
 
@@ -863,7 +879,7 @@ export async function saveTravelBookingDraft(
           // stored value is already either a country the list knows or TH. A
           // second check at submit would be a second copy of the rule, and only
           // one of the two would ever get corrected.
-          .input("country", sql.Char(2), resolveBookingCountry(tab.countryCode))
+          .input("country", sql.Char(2), tabCountry)
           .query(`UPDATE [dbo].[AccRequest] SET
                   EmployeeId=@empId, StaffId=@staffId, RequesterFirstName=@fname, RequesterLastName=@lname,
                   RequesterFullName=@full, RequesterEmail=@email, RequesterPosition=@pos,
@@ -885,7 +901,7 @@ export async function saveTravelBookingDraft(
           .input("deptName", sql.NVarChar, emp.departmentName ?? null)
           .input("user", sql.Int, userId || null)
           .input("brandCode", sql.NVarChar(40), (tab.brandCode ?? "").trim() || null)
-          .input("country", sql.Char(2), resolveBookingCountry(tab.countryCode))
+          .input("country", sql.Char(2), tabCountry)
           .query(`INSERT INTO [dbo].[AccRequest]
                   (FormCode, Status, CurrentStepCode, EmployeeId, StaffId, RequesterFirstName, RequesterLastName,
                    RequesterFullName, RequesterEmail, RequesterPosition, RequesterDepartmentId, RequesterDepartmentName, CreatedBy, BrandCode, CountryCode)
