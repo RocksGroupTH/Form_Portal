@@ -45,7 +45,7 @@ import {
   selectedVehicleCount,
 } from "@/features/accounting/lib/travel-sections";
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
-import { countryName, countryFlag } from "@/lib/acc/country-currency";
+import { countryNameBoth, countryFlag } from "@/lib/acc/country-currency";
 import { referenceRateNote } from "@/lib/acc/currency-display";
 import { lineNeedsCurrency, typedLineFigure } from "@/features/accounting/lib/claim-currency";
 import type { AccRequest, TravelDraftSummary, TravelExpenseDetail, TravelExpenseItem, AccVehicle } from "@/features/accounting/types";
@@ -1115,7 +1115,7 @@ export function TravelExpenseForm({
 
             The options read `ไทย`, not `ไทย (THB)`: this asks where the trip
             went, and each expense line asks for its own currency a few
-            centimetres below — `countryName`, not `countryLabel`, which is what
+            centimetres below — `countryNameBoth`, not `countryLabel`, which is what
             the settings editor still wants. */}
         {brandCode && countryOptions.length > 0 && (
           <div>
@@ -1164,7 +1164,7 @@ export function TravelExpenseForm({
                         style={{ border: "1px solid var(--border-card)" }}
                         onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                       />
-                      {countryName(code) ?? code}
+                      {countryNameBoth(code) ?? code}
                     </span>
                   </button>
                 );

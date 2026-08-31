@@ -76,7 +76,7 @@ import {
   showsForeignCurrency,
 } from "@/lib/acc/currency-display";
 import { isOverriddenRate } from "@/lib/acc/currency";
-import { countryName, isKnownCountry } from "@/lib/acc/country-currency";
+import { countryNameBoth, isKnownCountry } from "@/lib/acc/country-currency";
 import { claimRateFacts, multiRateCurrencies } from "@/features/accounting/lib/claim-rates";
 import type { ClaimRateFact } from "@/features/accounting/lib/claim-rates";
 import {
@@ -1041,7 +1041,7 @@ function TravelDaySection({
             <span className="flex items-center gap-1.5 min-w-0">
               <CountryCodeBadge code={claimCountry} />
               <span className="break-words leading-none">
-                {countryName(claimCountry) ?? claimCountry}
+                {countryNameBoth(claimCountry) ?? claimCountry}
               </span>
             </span>
           </TravelMetaTile>
@@ -1864,7 +1864,7 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
             <div
               className="shrink-0 flex items-center gap-1.5 h-10 pl-2 pr-2.5 rounded-xl"
               style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}
-              title={`ประเทศ: ${countryName(request.countryCode) ?? request.countryCode}`}
+              title={`ประเทศ: ${countryNameBoth(request.countryCode) ?? request.countryCode}`}
             >
               {/* Globe, not a flag emoji: Windows ships no flag glyphs, so an
                   emoji renders there as two plain letters beside the country
@@ -1875,7 +1875,7 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
                 className="text-[12px] font-bold leading-none"
                 style={{ color: "var(--text-primary)" }}
               >
-                {countryName(request.countryCode) ?? request.countryCode}
+                {countryNameBoth(request.countryCode) ?? request.countryCode}
               </span>
             </div>
           )}

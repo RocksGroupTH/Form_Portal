@@ -153,3 +153,21 @@ export function countryFlag(code: string | null | undefined): string | null {
   const A = 0x1f1e6; // REGIONAL INDICATOR SYMBOL LETTER A
   return String.fromCodePoint(A + (c.charCodeAt(0) - 65), A + (c.charCodeAt(1) - 65));
 }
+
+/**
+ * The country in both languages — `"มาเลเซีย · Malaysia"` — or null.
+ *
+ * Both, because the two readerships are different and both are real: the person
+ * filling the form reads Thai, and the figure they produce is checked against a
+ * rate source, a bank statement and a Business Central company that all name the
+ * country in English. A claim that says only มาเลเซีย makes somebody translate
+ * before they can reconcile.
+ *
+ * The English half is dropped where it would only repeat the Thai, so a country
+ * added with one name for both never renders "X · X".
+ */
+export function countryNameBoth(code: string | null | undefined): string | null {
+  const c = BY_CODE.get(norm(code));
+  if (!c) return null;
+  return c.nameEn === c.nameTh ? c.nameTh : `${c.nameTh} · ${c.nameEn}`;
+}

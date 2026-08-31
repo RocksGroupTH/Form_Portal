@@ -8,6 +8,7 @@ import {
   isKnownCountry,
   isRateSourceCurrency,
   countryFlag,
+  countryNameBoth,
 } from "./country-currency";
 
 test("a country resolves to its currency", () => {
@@ -161,4 +162,23 @@ test("every country in the list produces a flag", () => {
   for (const c of COUNTRIES) {
     assert.ok(countryFlag(c.code), `no flag for ${c.code}`);
   }
+});
+
+test("a country reads in both languages", () => {
+  assert.equal(countryNameBoth("TH"), "ไทย · Thailand");
+  assert.equal(countryNameBoth("MY"), "มาเลเซีย · Malaysia");
+  assert.equal(countryNameBoth("GB"), "อังกฤษ · United Kingdom");
+});
+
+/**
+ * A country whose two names are the same word would read "X · X". None in the
+ * list is, but the rule is here so adding one cannot produce it.
+ */
+test("a country whose names match is not repeated", () => {
+  assert.equal(countryNameBoth("ZZ"), null);
+  assert.equal(countryNameBoth(null), null);
+});
+
+test("countryName still answers Thai alone, for callers that want one line", () => {
+  assert.equal(countryName("MY"), "มาเลเซีย");
 });
