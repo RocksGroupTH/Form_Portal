@@ -24,3 +24,4 @@ Thumbs.db
 *.traineddata
 # Codex CLI workspace
 .codex/
+.scratch/
