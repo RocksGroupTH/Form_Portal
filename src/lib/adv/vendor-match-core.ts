@@ -25,6 +25,31 @@ export interface VendorMatchResult {
 export interface LlmPick { vendorNo: string; confidence: VendorMatchConfidence; reason: string }
 export type FetchCandidates = (payeeName: string) => Promise<VendorCandidate[]>;
 export type AskLlm = (payeeName: string, candidates: VendorCandidate[]) => Promise<LlmPick | null>;
+export type FindVendorByCode = (staffId: number) => Promise<VendorCandidate | null>;
+
+/**
+ * The employee-code match, with its IO injected so it can be tested.
+ *
+ * Returns null for every case that must fall through to the name matcher: a
+ * non-employee payee, a missing staff id, or no vendor carrying that code.
+ * Never returns `confirmed` — the officer still confirms.
+ */
+export async function runEmployeeCodeMatch(
+  payeeType: string | null | undefined,
+  staffId: number | null | undefined,
+  findByCode: FindVendorByCode,
+): Promise<VendorMatchResult | null> {
+  if (payeeType !== "employee" || staffId == null) return null;
+  const hit = await findByCode(staffId);
+  if (!hit) return null;
+  return {
+    status: "suggested",
+    vendorNo: hit.vendorNo,
+    vendorName: hit.displayName,
+    confidence: "high",
+    reason: `จับคู่จากรหัสพนักงาน ${staffId} (Home Page)`,
+  };
+}
 
 /** Pure-ish orchestration (IO injected) — token-economical branching. */
 export async function runVendorMatch(

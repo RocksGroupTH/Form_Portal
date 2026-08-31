@@ -216,25 +216,39 @@ async function insertVendorSyncLog(
  * previous values in place and the sync still counts as a success.
  */
 async function enrichVendorHomePages(ctx: BrandVendorSyncContext): Promise<number> {
-  const url = new URL(buildBcApiV2CompanyEntityUrl(
+  const url = `${buildBcApiV2CompanyEntityUrl(
     ctx.baseUrl,
     ctx.bcCompanyId,
     "vendors",
     ERP_VENDOR_SOURCE_ENVIRONMENT,
-  ));
-  url.searchParams.set("$select", "number,website");
+  )}?$select=number,website`;
 
   const rows = await fetchBcApiV2Collection<{ number?: string; website?: string }>(
     ctx.bcConnectionId,
-    url.toString(),
+    url,
   );
 
   const pool = await getErpDataPool();
+  const existing = await pool.request()
+    .input("environment", sql.NVarChar, ERP_VENDOR_SOURCE_ENVIRONMENT)
+    .input("brand", sql.NVarChar, ctx.brandCode)
+    .query(`
+      SELECT VendorNo, Website FROM [dbo].[ErpVendors]
+      WHERE SourceEnvironment = @environment AND BrandCode = @brand
+    `);
+  const current = new Map<string, string | null>();
+  for (const row of existing.recordset as { VendorNo: string; Website: string | null }[]) {
+    current.set(row.VendorNo.trim().toUpperCase(), row.Website);
+  }
+
   let updated = 0;
   for (const row of rows) {
     const vendorNo = (row.number ?? "").trim();
     if (!vendorNo) continue;
     const website = (row.website ?? "").trim() || null;
+    const key = vendorNo.toUpperCase();
+    // Only vendors this sync actually wrote, and only when the value moved.
+    if (!current.has(key) || current.get(key) === website) continue;
     const res = await pool.request()
       .input("environment", sql.NVarChar, ERP_VENDOR_SOURCE_ENVIRONMENT)
       .input("brand", sql.NVarChar, ctx.brandCode)
@@ -328,7 +342,8 @@ export async function syncBrandErpVendors(
     // After the commit: the rows exist, so this only ever updates one column.
     // Non-fatal by design — see enrichVendorHomePages.
     try {
-      await enrichVendorHomePages(ctx);
+      const homePagesUpdated = await enrichVendorHomePages(ctx);
+      console.info(`[vendor-sync] ${ctx.brandCode}: Home Page updated on ${homePagesUpdated} vendor(s)`);
     } catch (err) {
       console.error(`[vendor-sync] Home Page enrich failed for ${ctx.brandCode}`, err);
     }

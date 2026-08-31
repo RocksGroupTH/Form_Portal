@@ -9,6 +9,7 @@ import { resolveAdvanceInterfaceCompany } from "@/lib/adv/advance-erp-context";
 import type { VendorCandidate } from "@/lib/adv/vendor-match-normalize";
 import {
   runVendorMatch,
+  runEmployeeCodeMatch,
   type VendorMatchResult,
   type VendorMatchStatus,
   type VendorMatchConfidence,
@@ -133,19 +134,14 @@ export async function matchAdvanceVendor(requestId: number): Promise<VendorMatch
   // of the 181 ADV vendors carry Thai names. Falls through to the name matcher
   // when no code is on file, which is every vendor until accounting fills the
   // field in, so nothing regresses on the day this ships.
-  if (a.payeeType === "employee" && req.staffId != null) {
-    const byCode = await findVendorByEmployeeCode(company, req.staffId);
-    if (byCode) {
-      const codeResult: VendorMatchResult = {
-        status: "suggested",
-        vendorNo: byCode.vendorNo,
-        vendorName: byCode.displayName,
-        confidence: "high",
-        reason: `จับคู่จากรหัสพนักงาน ${req.staffId} (Home Page)`,
-      };
-      await writeMatch(requestId, codeResult);
-      return codeResult;
-    }
+  const byCode = await runEmployeeCodeMatch(
+    a.payeeType,
+    req.staffId,
+    (id) => findVendorByEmployeeCode(company, id),
+  );
+  if (byCode) {
+    await writeMatch(requestId, byCode);
+    return byCode;
   }
 
   const result = await runVendorMatch(
