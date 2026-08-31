@@ -44,6 +44,34 @@ const d = (s: string | null) => (s ? new Date(s).toLocaleDateString("th-TH", { d
 const n = (v: number | null) => (v == null ? "" : v.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 }));
 
 // filter → คอลัมน์ไฮไลต์เหลืองใน sheet AP-2-Control ("dates" = เลือกได้หลายวัน)
+/** Labels the report service produces — matched, never re-derived, so the two stay in step. */
+const STATUS_APPROVED = "อนุมัติแล้ว (Completed)";
+const CLEAR_STATUS_CLEARED = "เคลียร์แล้ว (Cleared)";
+
+/** Local YYYY-MM-DD — comparing ISO date strings avoids a timezone round-trip. */
+const todayYmd = (): string => {
+  const t = new Date();
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+};
+
+/**
+ * An advance the company is still owed a clearing for, past its due date.
+ *
+ * All three must hold:
+ *  - the advance was **approved** — money actually went out, so a clearing is
+ *    genuinely owed; a rejected or cancelled request owes nothing and must not
+ *    be chased.
+ *  - there is no **approved** AP-3 against it. `advanceStatus` is null when no
+ *    clearing exists at all and "กำลังเคลียร์" while one is in flight — neither
+ *    settles the advance.
+ *  - the promised clear date has already passed.
+ */
+function isOverdueClearing(r: Row, today: string): boolean {
+  if (r.overallStatus !== STATUS_APPROVED) return false;
+  if (r.advanceStatus === CLEAR_STATUS_CLEARED) return false;
+  return !!r.expectedClearDate && r.expectedClearDate < today;
+}
+
 type Col = {
   key: string; h: string; get: (r: Row) => string; num?: boolean;
   filter?: "text" | "select" | "dates"; rawDate?: (r: Row) => string | null;
@@ -87,6 +115,7 @@ export default function AdvanceReportPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState<Record<string, string>>({});
+  const [overdueOnly, setOverdueOnly] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -109,7 +138,9 @@ export default function AdvanceReportPage() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
+    const today = todayYmd();
     return rows.filter((r) => {
+      if (overdueOnly && !isOverdueClearing(r, today)) return false;
       // ค้นหาเอกสาร: เลขที่ Request / ชื่อ / รหัสพนักงาน
       if (q) {
         const hay = `${r.requestNo ?? ""} ${r.requesterName ?? ""} ${r.staffId ?? ""}`.toLowerCase();
@@ -135,7 +166,14 @@ export default function AdvanceReportPage() {
       }
       return true;
     });
-  }, [rows, search, filters]);
+  }, [rows, search, filters, overdueOnly]);
+
+  /** Standing count over the whole dataset, so the badge reads as a KPI rather
+   *  than a reflection of whatever else is filtered right now. */
+  const overdueCount = useMemo(() => {
+    const today = todayYmd();
+    return rows.filter((r) => isOverdueClearing(r, today)).length;
+  }, [rows]);
 
   // Export เฉพาะข้อมูลที่กรองอยู่ (filtered) เป็น .xlsx
   function exportExcel() {
@@ -161,7 +199,7 @@ export default function AdvanceReportPage() {
     XLSX.writeFile(wb, `AP-2-Report-${stamp}.xlsx`);
   }
 
-  const activeFilters = Object.values(filters).filter(Boolean).length + (search.trim() ? 1 : 0);
+  const activeFilters = Object.values(filters).filter(Boolean).length + (search.trim() ? 1 : 0) + (overdueOnly ? 1 : 0);
   const setF = (k: string, v: string) => setFilters((p) => ({ ...p, [k]: v }));
   /** Add one value to a CSV-valued filter — shared by the date and select filters. */
   const addValue = (k: string, v: string) => setFilters((p) => {
@@ -207,8 +245,18 @@ export default function AdvanceReportPage() {
             placeholder="ค้นหาเอกสาร (เลขที่ Request / ชื่อ / รหัสพนักงาน)..."
             className="flex-1 text-[13px] outline-none bg-transparent" style={{ color: "var(--text-primary)" }} />
         </div>
+        <button
+          onClick={() => setOverdueOnly((v) => !v)}
+          aria-pressed={overdueOnly}
+          title="เบิกแล้วอนุมัติ แต่ยังไม่มีการเคลียร์ที่อนุมัติ และเลยวันที่คาดเคลียร์แล้ว"
+          className="flex items-center gap-1.5 text-[12px] font-semibold px-3 py-2 rounded-xl cursor-pointer"
+          style={overdueOnly
+            ? { background: "var(--color-danger)", color: "#fff", border: "1px solid var(--color-danger)" }
+            : { background: "var(--bg-card)", color: "var(--color-danger)", border: "1px solid color-mix(in srgb, var(--color-danger) 40%, transparent)" }}>
+          ค้างเคลียร์เกินกำหนด ({overdueCount})
+        </button>
         {activeFilters > 0 && (
-          <button onClick={() => { setSearch(""); setFilters({}); }}
+          <button onClick={() => { setSearch(""); setFilters({}); setOverdueOnly(false); }}
             className="flex items-center gap-1.5 text-[12px] px-3 py-2 rounded-xl cursor-pointer border-none"
             style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", color: "var(--text-secondary)" }}>
             <X size={13} /> ล้างตัวกรอง ({activeFilters})

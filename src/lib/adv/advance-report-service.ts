@@ -36,7 +36,20 @@ export interface AdvanceReportRow {
   overallStatus: string;
 }
 
-const ymd = (d: unknown) => (d ? new Date(d as string).toISOString().slice(0, 10) : null);
+/**
+ * A DATE column as YYYY-MM-DD, read with **local** getters.
+ *
+ * `toISOString()` converts to UTC, and the server runs Thai time (UTC+7), so a
+ * date-only column came back a day early: 2026-08-31 arrives as midnight local,
+ * becomes 2026-08-30T17:00Z, and sliced to a day that is simply wrong. Every
+ * date in this report was off by one. `advance-request-service.toYmd` has always
+ * done it this way; this matches it.
+ */
+const ymd = (d: unknown) => {
+  if (!d) return null;
+  const dt = new Date(d as string);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+};
 const iso = (d: unknown) => (d ? new Date(d as string).toISOString() : null);
 const num = (v: unknown) => (v == null ? null : Number(v));
 
