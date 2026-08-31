@@ -67,6 +67,18 @@ function resolveTarget(map: Record<string, string>, brandCode: string | null): s
   return map[b] || b || "";
 }
 
+/**
+ * A DATE column as YYYY-MM-DD, read with **local** getters.
+ *
+ * `toISOString()` converts to UTC and the server runs Thai time (UTC+7), so a
+ * date-only column came back a day early — a payment date of 2026-09-11 arrives
+ * as midnight local, becomes 2026-09-10T17:00Z, and sliced to the wrong day.
+ * Same rule as `advance-request-service.toYmd`.
+ */
+function toYmd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function mapRow(row: Record<string, unknown>, map: Record<string, string>): AdvanceQueueRow {
   const step = (row.CurrentStepCode as StepType) ?? null;
   return {
@@ -89,7 +101,7 @@ function mapRow(row: Record<string, unknown>, map: Record<string, string>): Adva
     erpInterfaceSentAt: row.ErpInterfaceSentAt ? (row.ErpInterfaceSentAt as Date).toISOString() : null,
     erpInterfaceEnvironment: (row.ErpInterfaceEnvironment as string) ?? null,
     erpDocumentNo: (row.ErpDocumentNo as string) ?? null,
-    paymentDate: row.PaymentDate ? (row.PaymentDate as Date).toISOString().slice(0, 10) : null,
+    paymentDate: row.PaymentDate ? toYmd(row.PaymentDate as Date) : null,
     updatedAt: row.UpdatedAt ? (row.UpdatedAt as Date).toISOString() : "",
     matchedVendorNo: (row.MatchedVendorNo as string) ?? null,
     matchedVendorName: (row.MatchedVendorName as string) ?? null,
