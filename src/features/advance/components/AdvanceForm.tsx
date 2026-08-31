@@ -684,9 +684,12 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
                 onChange={(e) => { setPayeeName(e.target.value); clearError("payeeName"); }} />
             </Field>
             <Field label="เลขที่บัญชี *" error={errors.payeeBankAccount} errorId="err-payeeBankAccount">
+              {/* Digits only: the account number is imported into ERP as a number,
+                  so letters typed or pasted here are dropped rather than rejected. */}
               <input ref={payeeBankAccountRef} className={fieldClass} style={fieldStyle} value={payeeBankAccount} disabled={readOnly}
+                inputMode="numeric"
                 aria-invalid={!!errors.payeeBankAccount} aria-describedby={errors.payeeBankAccount ? "err-payeeBankAccount" : undefined}
-                onChange={(e) => { setPayeeBankAccount(e.target.value); clearError("payeeBankAccount"); }} />
+                onChange={(e) => { setPayeeBankAccount(e.target.value.replace(/\D+/g, "")); clearError("payeeBankAccount"); }} />
             </Field>
             <Field label="ธนาคาร *" error={errors.payeeBankCode} errorId="err-payeeBankCode">
               <select ref={payeeBankCodeRef} className={fieldClass} style={fieldStyle} value={payeeBankCode} disabled={readOnly}
