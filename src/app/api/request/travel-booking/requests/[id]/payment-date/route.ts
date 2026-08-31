@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { uatActorGate } from "@/lib/acc/travel-booking/uat-gate";
 import { canAccessBookingArea } from "@/lib/acc/booking-access";
+import { requireBookingBrandScope } from "@/lib/acc/travel-booking/require-booking-brand-scope";
 import { buildAccActor } from "@/lib/acc/actor-context";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { payoutMonthOptions, payoutDateForMonth } from "@/lib/acc/travel-booking/payout-months";
@@ -55,6 +56,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!(await canAccessBookingArea(session.user.email, session.user.role))) {
     return NextResponse.json({ ok: false, error: "ไม่มีสิทธิ์เข้าถึงคำขอนี้" }, { status: 403 });
   }
+
+  // Being in the area is not the same as being allowed this request's brand. A
+  // scoped approver holding the id from a link or a page loaded before the scope
+  // was narrowed is refused here, where the queue would merely not have shown it.
+  const scoped = await requireBookingBrandScope(session.user, id);
+  if (scoped) return scoped;
 
   try {
     const body = (await req.json().catch(() => ({}))) as { ym?: unknown };

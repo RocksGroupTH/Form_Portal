@@ -18,6 +18,8 @@ interface BookingApproverRow {
   displayName: string;
   isActive: boolean;
   settingsTabs: string[];
+  /** null = every brand. There is no "no brands" — see booking-brand-access-shared.ts. */
+  brandCodes: string[] | null;
 }
 
 /* ── Confirm Modal — same shape as the UAT Users panel's ── */
@@ -143,6 +145,167 @@ const ALL_GRANT_COLUMNS: readonly { key: string; label: string }[] = [
   ...GRANTABLE_BOOKING_TABS,
   ...GRANTABLE_BOOKING_MENUS,
 ];
+
+/**
+ * One approver's brand scope.
+ *
+ * **No rows means every brand**, so the resting state reads "ทุกแบรนด์" rather
+ * than an empty set of ticks — the opposite of the grant columns beside it,
+ * where empty means none. Unticking everything therefore restores full access
+ * rather than removing it, which is why the dialog says so.
+ */
+function BrandScopeCell({
+  row,
+  onSaved,
+}: {
+  row: BookingApproverRow;
+  onSaved: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(() => new Set(row.brandCodes ?? []));
+  const { data: brandData } = useSWR<{ ok: boolean; data?: { brandCode: string; isActive: boolean }[] }>(
+    open ? "/api/request/travel-booking/settings/brands" : null,
+    (url: string) => fetch(url).then((r) => r.json()),
+  );
+
+  useEffect(() => {
+    setPicked(new Set(row.brandCodes ?? []));
+  }, [row.id, row.brandCodes]);
+
+  const brands = brandData?.data ?? [];
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const codes = Array.from(picked);
+      const res = await fetch(ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: row.email,
+          displayName: row.displayName,
+          isActive: row.isActive,
+          // Nothing ticked posts null, which CLEARS the scope — every brand.
+          // Posting [] would mean the same thing server-side, but saying null
+          // here keeps the intent readable in a network log.
+          brandCodes: codes.length > 0 ? codes : null,
+        }),
+      });
+      const json = await res.json();
+      if (!json.ok) {
+        toast.error(json.error ?? "บันทึกไม่สำเร็จ");
+        return;
+      }
+      setOpen(false);
+      onSaved();
+    } catch {
+      toast.error("บันทึกไม่สำเร็จ");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const label =
+    row.brandCodes === null || row.brandCodes.length === 0
+      ? "ทุกแบรนด์"
+      : row.brandCodes.join(", ");
+
+  return (
+    <td className="px-3 py-2.5 text-center">
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="text-[11px] font-semibold rounded-lg px-2.5 py-1.5 cursor-pointer whitespace-nowrap"
+        style={{
+          background: row.brandCodes === null ? "var(--bg-card-alt)" : "var(--nav-active-bg)",
+          color: row.brandCodes === null ? "var(--text-muted)" : "var(--nav-active-text)",
+          border: "1px solid var(--border-card)",
+        }}
+      >
+        {label}
+      </button>
+
+      {open && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.35)" }}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl p-5 flex flex-col gap-3 text-left"
+            style={{ background: "var(--bg-card)", boxShadow: "var(--shadow-card)" }}
+          >
+            <h3 className="text-[15px] font-bold m-0" style={{ color: "var(--text-heading)" }}>
+              แบรนด์ที่ {row.displayName || row.email} เห็น
+            </h3>
+            <p className="text-[12px] leading-relaxed m-0" style={{ color: "var(--text-muted)" }}>
+              ไม่ติ๊กเลย = เห็น<strong>ทุกแบรนด์</strong> · ติ๊กบางอัน = เห็นเฉพาะที่ติ๊ก ·
+              มีผลกับคิวจอง คิวบัญชี รายงาน และการกดอนุมัติ
+            </p>
+            <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
+              {brands.length === 0 ? (
+                <span className="text-[12px]" style={{ color: "var(--text-faint)" }}>
+                  กำลังโหลด...
+                </span>
+              ) : (
+                brands.map((b) => (
+                  <label
+                    key={b.brandCode}
+                    className="flex items-center gap-2 text-[13px] cursor-pointer rounded-lg px-2 py-1.5"
+                    style={{ color: "var(--text-primary)", background: "var(--bg-card-alt)" }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={picked.has(b.brandCode)}
+                      onChange={() => {
+                        const next = new Set(picked);
+                        if (next.has(b.brandCode)) next.delete(b.brandCode);
+                        else next.add(b.brandCode);
+                        setPicked(next);
+                      }}
+                    />
+                    {b.brandCode}
+                    {!b.isActive && (
+                      <span className="text-[10px]" style={{ color: "var(--text-faint)" }}>
+                        (ปิดใช้งานอยู่)
+                      </span>
+                    )}
+                  </label>
+                ))
+              )}
+            </div>
+            <div className="flex items-center gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setPicked(new Set(row.brandCodes ?? []));
+                  setOpen(false);
+                }}
+                className="text-[13px] font-semibold rounded-xl px-4 py-2 cursor-pointer"
+                style={{
+                  background: "var(--bg-card-alt)",
+                  color: "var(--text-secondary)",
+                  border: "1px solid var(--border-card)",
+                }}
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={() => void save()}
+                disabled={saving}
+                className="text-[13px] font-semibold rounded-xl px-4 py-2 cursor-pointer"
+                style={{ background: "var(--color-action)", color: "#fff", opacity: saving ? 0.6 : 1 }}
+              >
+                บันทึก
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </td>
+  );
+}
 
 function TabGrantCells({
   row,
@@ -476,6 +639,17 @@ export function BookingApproverSettings() {
                       {menu.label}
                     </th>
                   ))}
+                  {/* Not a checkbox column, deliberately. The tick columns above
+                      are a CLOSED vocabulary — a fixed list of tabs and menus —
+                      while brands are data that changes at Settings →
+                      แบรนด์ที่เบิก. Extending ALL_GRANT_COLUMNS with them would
+                      mix the two and route brand ticks through the tab writer. */}
+                  <th
+                    className="text-center px-3 py-2 font-semibold whitespace-nowrap"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    แบรนด์ที่เห็น
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -506,6 +680,7 @@ export function BookingApproverSettings() {
                         switching them on. The save cannot flip the status: the
                         payload echoes `isActive` back unchanged. */}
                     <TabGrantCells row={r} onSaved={() => void mutate()} />
+                    <BrandScopeCell row={r} onSaved={() => void mutate()} />
                     <td className="px-4 py-2.5">
                       <div className="flex items-center justify-center gap-2">
                         <span

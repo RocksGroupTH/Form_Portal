@@ -3,6 +3,11 @@ import { isBaht } from "@/lib/acc/currency";
 import { amountInBaht, currencyWord, rateAsOfYmd } from "@/lib/acc/currency-display";
 import { getAllowanceLog } from "@/lib/acc/travel-booking/allowance-log";
 import { perDiemLogFor } from "@/lib/acc/travel-booking/perdiem-country";
+import {
+  bookingBrandScope,
+  type BookingBrandAccess,
+} from "@/lib/acc/travel-booking/booking-brand-access-shared";
+import { bookingBrandScopeSql } from "@/lib/acc/travel-booking/booking-approver-brands";
 import { listPerDiemCountryRates } from "@/lib/acc/travel-booking/perdiem-source";
 import { rateForDay, type AllowanceLogEntry } from "@/lib/acc/travel-booking/perdiem";
 import { enumerateTravelDates, fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
@@ -215,12 +220,26 @@ function dateBasisColumn(basis: TravelBookingReportFilters["dateBasis"]): string
   }
 }
 
+/**
+ * `access` is a separate required parameter and is deliberately NOT folded into
+ * `TravelBookingReportFilters`. Filters arrive from the query string and are a
+ * request; the scope is a decision. Merging them would put the scope one
+ * `sp.getAll(...)` away from being widened by whoever builds the filters.
+ */
 export async function queryTravelBookingReport(
   f: TravelBookingReportFilters,
+  access: BookingBrandAccess,
 ): Promise<TravelBookingReportRow[]> {
+  const scope = bookingBrandScope(access);
+  if (scope.kind === "none") return [];
   const pool = await getAccPool();
   const req = pool.request();
   const where: string[] = [];
+  // Scopes both the report and its Excel export: neither route accepts an id
+  // list, so they build their filters from the same named params and this one
+  // predicate covers both.
+  const brandFilter = bookingBrandScopeSql(scope, req, "r.BrandCode");
+  if (brandFilter) where.push(brandFilter);
 
   /** `col IN (@p0, @p1, …)` — one bound parameter per value, never string-interpolated. */
   function whereIn<T>(column: string, prefix: string, values: T[] | null | undefined, type: sql.ISqlType | (() => sql.ISqlType)): void {

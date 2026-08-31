@@ -1,5 +1,6 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { writeBothPools } from "@/lib/acc/dual-write";
+import { loadBookingBrandsByApproverIds } from "@/lib/acc/travel-booking/booking-approver-brands";
 import { loadBookingTabsByApproverIds } from "@/lib/acc/travel-booking/booking-approver-tabs";
 
 export interface BookingApproverRow {
@@ -14,6 +15,16 @@ export interface BookingApproverRow {
    * never "all". An admin's own tabs do not come from here; they see every one.
    */
   settingsTabs: string[];
+  /**
+   * Which brands' AP-17 requests this person may see, from
+   * `AccBookingApproverBrand` (migration 134).
+   *
+   * **`null` means EVERY brand**, and that is the opposite of `settingsTabs`
+   * above, where `[]` means none. Those rows grant something new; these narrow
+   * something the roster already carries, so no rows has to mean no narrowing.
+   * There is deliberately no representable "sees no brands".
+   */
+  brandCodes: string[] | null;
 }
 
 /**
@@ -48,8 +59,19 @@ export async function listBookingApprovers(
   // must show its error state rather than render an unreadable grant list as
   // every box unticked, because the next tick would then POST a one-element set
   // and revoke the rest.
-  const tabMap = await loadBookingTabsByApproverIds(rows.map((row) => row.id));
-  return rows.map((row) => ({ ...row, settingsTabs: tabMap.get(row.id) ?? [] }));
+  const ids = rows.map((row) => row.id);
+  const tabMap = await loadBookingTabsByApproverIds(ids);
+  // The brand scope, alongside. `null` means every brand — the rows ARE the
+  // scope, and there is no "no brands" state to render. Its own loader degrades
+  // a missing table to null (unrestricted) and rethrows everything else, the
+  // opposite direction from the tab loader above and for the opposite reason:
+  // those rows grant, these narrow.
+  const brandMap = await loadBookingBrandsByApproverIds(ids);
+  return rows.map((row) => ({
+    ...row,
+    settingsTabs: tabMap.get(row.id) ?? [],
+    brandCodes: brandMap.get(row.id) ?? null,
+  }));
 }
 
 /**

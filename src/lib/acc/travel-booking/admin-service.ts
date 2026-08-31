@@ -4,6 +4,11 @@ import { getTravelBookingRequest } from "@/lib/acc/travel-booking/request-servic
 import { deleteStoredFiles, type StoredFileRef } from "@/lib/acc/stored-file";
 import { loadPerDiemDependencies } from "@/lib/acc/travel-booking/perdiem-dependency-load";
 import type { PerDiemDependency } from "@/lib/acc/travel-booking/perdiem-dependency";
+import {
+  bookingBrandScope,
+  type BookingBrandAccess,
+} from "@/lib/acc/travel-booking/booking-brand-access-shared";
+import { bookingBrandScopeSql } from "@/lib/acc/travel-booking/booking-approver-brands";
 import { AP17_FORM_CODE, BOOKING_TYPE_REFTYPE } from "@/features/travel-booking/constants";
 import { sanitizeBookingAmount } from "@/features/travel-booking/lib/booking-amounts";
 import { sanitizeBookingNo } from "@/features/travel-booking/lib/booking-no";
@@ -73,10 +78,25 @@ export interface AdminQueueItem {
  * `CurrentStepCode='ADMIN'`). See `listAccountQueue` below for the sibling
  * query this pairs with.
  */
-export async function listAdminQueue(): Promise<AdminQueueItem[]> {
+/**
+ * `access` is REQUIRED and has no default. An optional parameter defaulting to
+ * unrestricted is exactly how a caller added later gets an unscoped queue with
+ * no error and no test failure.
+ *
+ * The filter is pushed into SQL rather than applied afterwards, which matters
+ * for listAccountQueue below: its per-diem batch and dependency loader run over
+ * the id set this query returns, so scoping here means they never fetch rows
+ * that are about to be discarded.
+ */
+export async function listAdminQueue(access: BookingBrandAccess): Promise<AdminQueueItem[]> {
+  const scope = bookingBrandScope(access);
+  // Nothing in scope means nothing to show — and returning early is what keeps
+  // the empty case from ever reaching SQL as `IN ()`.
+  if (scope.kind === "none") return [];
   const pool = await getAccPool();
-  const res = await pool.request()
-    .input("form", sql.NVarChar, AP17_FORM_CODE)
+  const req0 = pool.request().input("form", sql.NVarChar, AP17_FORM_CODE);
+  const brandFilter = bookingBrandScopeSql(scope, req0, "r.BrandCode");
+  const res = await req0
     .query(`
       SELECT r.Id, r.RequestNo, r.BrandCode, r.RequesterFullName, r.RequesterPosition, r.RequesterDepartmentName,
              r.PaymentDate, r.UpdatedAt,
@@ -85,6 +105,7 @@ export async function listAdminQueue(): Promise<AdminQueueItem[]> {
       FROM [dbo].[AccRequest] r
       INNER JOIN [dbo].[AccTravelBooking] t ON t.RequestId = r.Id
       WHERE r.FormCode = @form AND r.Status = 'ManagerApproved' AND r.CurrentStepCode = 'ADMIN'
+        ${brandFilter ? `AND ${brandFilter}` : ""}
       ORDER BY r.UpdatedAt ASC
     `);
   return (res.recordset as Record<string, unknown>[]).map((x) => ({
@@ -146,10 +167,14 @@ export interface AccountQueueItem {
  * this filters on `CurrentStepCode` as well as `Status`: the two queues sit on
  * the same status and must not show each other's rows.
  */
-export async function listAccountQueue(): Promise<AccountQueueItem[]> {
+/** Required `access`, for the reason on `listAdminQueue`. */
+export async function listAccountQueue(access: BookingBrandAccess): Promise<AccountQueueItem[]> {
+  const scope = bookingBrandScope(access);
+  if (scope.kind === "none") return [];
   const pool = await getAccPool();
-  const res = await pool.request()
-    .input("form", sql.NVarChar, AP17_FORM_CODE)
+  const req0 = pool.request().input("form", sql.NVarChar, AP17_FORM_CODE);
+  const brandFilter = bookingBrandScopeSql(scope, req0, "r.BrandCode");
+  const res = await req0
     .query(`
       SELECT r.Id, r.RequestNo, r.BrandCode, r.RequesterFullName, r.RequesterPosition, r.RequesterDepartmentName,
              r.PaymentDate, r.UpdatedAt,
@@ -157,6 +182,7 @@ export async function listAccountQueue(): Promise<AccountQueueItem[]> {
       FROM [dbo].[AccRequest] r
       INNER JOIN [dbo].[AccTravelBooking] t ON t.RequestId = r.Id
       WHERE r.FormCode = @form AND r.Status = 'ManagerApproved' AND r.CurrentStepCode = 'ACCOUNT'
+        ${brandFilter ? `AND ${brandFilter}` : ""}
       ORDER BY r.UpdatedAt ASC
     `);
   const rows = res.recordset as Record<string, unknown>[];

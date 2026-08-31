@@ -95,6 +95,10 @@ const MASTER_TABLES = [
   // absent from migrations 061/064: a CHECK (Id >= 900000) in the UAT twin would
   // reject every row production allocated a low id for, which is every row.
   "AccTravelPerDiemCountry",
+  // Which brands each AP-17 approver may see (migration 134). Dual-written by
+  // booking-approver-brands.ts, so the same lockstep argument applies: absent
+  // from 061/064, no identity floor.
+  "AccBookingApproverBrand",
 ];
 
 /**

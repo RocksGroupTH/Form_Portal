@@ -9,6 +9,7 @@ import {
 } from "@/lib/acc/attachment-guard";
 import { resolveLoginEmail } from "@/lib/auth-email";
 import { canAccessBookingArea } from "@/lib/acc/booking-access";
+import { requireBookingBrandScope } from "@/lib/acc/travel-booking/require-booking-brand-scope";
 import { deleteFile } from "@/lib/storage";
 import {
   isSharePointConfigured,
@@ -172,6 +173,10 @@ export async function POST(
           { status: 403 },
         );
       }
+      // Booking evidence belongs to the request's brand. Being on the roster
+      // opens the area; the scope decides which requests inside it.
+      const scoped = await requireBookingBrandScope(session.user, requestId);
+      if (scoped) return scoped;
       // `CurrentStepCode` must be checked alongside `Status`: since the
       // accounting step split ADMIN and ACCOUNT apart, `Status` alone stays
       // 'ManagerApproved' through both — without this, an account-area viewer
@@ -427,6 +432,10 @@ export async function DELETE(
           { status: 403 },
         );
       }
+      // Booking evidence belongs to the request's brand. Being on the roster
+      // opens the area; the scope decides which requests inside it.
+      const scoped = await requireBookingBrandScope(session.user, requestId);
+      if (scoped) return scoped;
       // Same `CurrentStepCode` scoping as the POST handler above — booking_*
       // attachments only, not the idcard branch.
       if (reqRow.Status !== "ManagerApproved" || reqRow.CurrentStepCode !== "ADMIN") {

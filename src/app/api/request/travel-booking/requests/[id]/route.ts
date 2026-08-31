@@ -4,6 +4,7 @@ import { uatActorGate } from "@/lib/acc/travel-booking/uat-gate";
 import { resolveLoginEmail } from "@/lib/auth-email";
 import { isAdminRole } from "@/lib/roles";
 import { canAccessBookingArea } from "@/lib/acc/booking-access";
+import { requireBookingBrandScope } from "@/lib/acc/travel-booking/require-booking-brand-scope";
 import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import {
@@ -84,6 +85,16 @@ export async function GET(
 
     if (!isOwner && !isManager && !isAdmin && !isBookingArea) {
       return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+    }
+
+    // Somebody admitted ONLY by the roster is subject to its brand scope: the
+    // queue would not have listed this request, and the act paths would refuse
+    // it, so opening it would be the one place a brand they cannot work leaked.
+    // An owner, a manager or an admin is not scoped — none of them got here
+    // through the roster.
+    if (isBookingArea) {
+      const scoped = await requireBookingBrandScope(session.user, id);
+      if (scoped) return scoped;
     }
 
     return NextResponse.json({ ok: true, data });

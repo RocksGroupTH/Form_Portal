@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { canAccessBookingArea } from "@/lib/acc/booking-access";
+import { resolveBookingBrandAccess } from "@/lib/acc/travel-booking/booking-approver-brands";
 import {
   queryTravelBookingReport,
   buildTravelBookingReportWorkbook,
@@ -37,7 +38,12 @@ export async function GET(req: NextRequest) {
       staffId: rawStaffId ? Number(rawStaffId) || null : null,
     };
 
-    const rows = await queryTravelBookingReport(filters);
+    const rows = await queryTravelBookingReport(
+      filters,
+      // The scope is resolved here and passed separately from the filters, so a
+      // query-string parameter can never widen it.
+      await resolveBookingBrandAccess(session.user.email, session.user.role),
+    );
 
     const generatedAt = new Date().toLocaleString("th-TH");
     const filterSummary = sp.get("summary") ?? undefined;

@@ -6,6 +6,7 @@ import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
 import { isAdminRole } from "@/lib/roles";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { canAccessBookingArea } from "@/lib/acc/booking-access";
+import { requireBookingBrandScope } from "@/lib/acc/travel-booking/require-booking-brand-scope";
 import { getRequestHost } from "@/lib/acc/erp-environment";
 import { isManagerDevBypassHost } from "@/lib/acc/manager-auth";
 import { returnRequest, returnByAdmin, returnByAccount, type Actor } from "@/lib/acc/travel-booking/approval";
@@ -72,6 +73,14 @@ export async function POST(
     : isManager || isAdmin || devBypass;
   if (!allowed) {
     return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+  }
+
+  // The brand scope applies to the booking area's own two stages. A manager
+  // acting on their own report, or an owner, is not scoped by it — they are
+  // authorized by the branch above, which the roster never entered.
+  if (atAdminStage || atAccountStage) {
+    const scoped = await requireBookingBrandScope(session.user, id);
+    if (scoped) return scoped;
   }
 
   try {

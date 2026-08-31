@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { canAccessBookingArea } from "@/lib/acc/booking-access";
+import { requireBookingBrandScope } from "@/lib/acc/travel-booking/require-booking-brand-scope";
 import { buildAccActor } from "@/lib/acc/actor-context";
 import { saveBookingDetail, deleteBookingDetail } from "@/lib/acc/travel-booking/admin-service";
 import type { BookingType } from "@/features/travel-booking/types";
@@ -23,6 +24,11 @@ async function requireAdminContext(
   if (Number.isNaN(requestId)) {
     return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
   }
+  // Being in the area is not the same as being allowed this request's brand.
+  // A scoped approver holding the id from a link or a stale page is refused
+  // here, where the queue would merely not have shown it to them.
+  const scoped = await requireBookingBrandScope(session.user, requestId);
+  if (scoped) return scoped;
   return { requestId, userId: Number(session.user.id), email: session.user.email ?? null };
 }
 

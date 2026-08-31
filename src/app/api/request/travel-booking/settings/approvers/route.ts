@@ -8,6 +8,7 @@ import {
 } from "@/lib/acc/booking-approver-service";
 import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
 import { setBookingApproverTabs } from "@/lib/acc/travel-booking/booking-approver-tabs";
+import { setBookingApproverBrands } from "@/lib/acc/travel-booking/booking-approver-brands";
 import { filterStorableBookingKeys } from "@/lib/acc/travel-booking/settings-tabs";
 
 /*
@@ -138,6 +139,30 @@ export async function POST(req: NextRequest) {
             (body.settingsTabs as unknown[]).map((k) => String(k)),
           ),
         );
+      }
+    }
+
+    // THREE STATES, detected with `in` and not Array.isArray. null is a
+    // meaningful value here — it clears the scope, restoring every brand — and
+    // Array.isArray(null) is false, so an Array.isArray test alone would make
+    // "clear it" indistinguishable from "omitted" and silently leave a narrowed
+    // approver narrowed. settingsTabs above keeps its own Array.isArray test,
+    // where null has no meaning; the two fields are read differently on purpose.
+    if ("brandCodes" in body) {
+      const approverId = await getBookingApproverIdByStaffId(employee.staffId);
+      if (approverId) {
+        const raw = (body as { brandCodes?: unknown }).brandCodes;
+        // [] is treated as null: an empty scope would mean "sees nothing", which
+        // is not a state this feature has — see the type's own note.
+        const codes =
+          Array.isArray(raw) && raw.length > 0 ? raw.map((c) => String(c)) : null;
+        if (Array.isArray(raw) && raw.length === 0) {
+          console.warn(
+            "[settings/approvers] empty brandCodes treated as unrestricted for approver",
+            approverId,
+          );
+        }
+        await setBookingApproverBrands(approverId, codes);
       }
     }
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { canAccessBookingArea } from "@/lib/acc/booking-access";
+import { resolveBookingBrandAccess } from "@/lib/acc/travel-booking/booking-approver-brands";
 import { listAdminQueue } from "@/lib/acc/travel-booking/admin-service";
 
 /**
@@ -17,7 +18,11 @@ export async function GET(_req: NextRequest) {
   }
 
   try {
-    const data = await listAdminQueue();
+    // Membership decides whether this area opens at all; the brand scope
+    // decides which of its rows this person sees. Two questions, resolved
+    // separately and in that order.
+    const access = await resolveBookingBrandAccess(session.user.email, session.user.role);
+    const data = await listAdminQueue(access);
     return NextResponse.json({ ok: true, data });
   } catch (err) {
     console.error("[api/request/travel-booking/admin/queue] GET", err);
