@@ -228,6 +228,15 @@ async function enrichVendorHomePages(ctx: BrandVendorSyncContext): Promise<numbe
     url,
   );
 
+  // Report what BC actually returned, not just what changed. Without this an
+  // update count of 0 is ambiguous: it reads the same whether nobody has filled
+  // a Home Page in yet or the field is being read wrongly and always arrives
+  // empty — and the skip-if-unchanged rule below hides the difference.
+  const withHomePage = rows.filter((r) => (r.website ?? "").trim() !== "").length;
+  console.info(
+    `[vendor-sync] ${ctx.brandCode}: BC returned ${rows.length} vendor(s), ${withHomePage} with a Home Page`,
+  );
+
   const pool = await getErpDataPool();
   const existing = await pool.request()
     .input("environment", sql.NVarChar, ERP_VENDOR_SOURCE_ENVIRONMENT)
