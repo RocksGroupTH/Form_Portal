@@ -3,7 +3,7 @@ import { resolveApiKey } from "@/lib/api-keys/service";
 import { getAccPool, sql } from "@/lib/adv/pool";
 import { getRequest } from "@/lib/adv/advance-request-service";
 import {
-  prefilterVendors, listVendors, findSelectableVendor, isVendorSelectable,
+  prefilterVendors, listVendors, findSelectableVendor, isVendorSelectable, findVendorByEmployeeCode,
 } from "@/lib/adv/advance-erp-master-service";
 import { resolveAdvanceInterfaceCompany } from "@/lib/adv/advance-erp-context";
 import type { VendorCandidate } from "@/lib/adv/vendor-match-normalize";
@@ -128,6 +128,26 @@ export async function matchAdvanceVendor(requestId: number): Promise<VendorMatch
     return { status: st, vendorNo: a.matchedVendorNo, vendorName: a.matchedVendorName,
       confidence: a.vendorMatchConfidence, reason: a.vendorMatchReason };
   }
+  // An employee payee IS the requester, and accounting records their staff code
+  // on the vendor's Home Page — an exact key beats guessing at a name, and 175
+  // of the 181 ADV vendors carry Thai names. Falls through to the name matcher
+  // when no code is on file, which is every vendor until accounting fills the
+  // field in, so nothing regresses on the day this ships.
+  if (a.payeeType === "employee" && req.staffId != null) {
+    const byCode = await findVendorByEmployeeCode(company, req.staffId);
+    if (byCode) {
+      const codeResult: VendorMatchResult = {
+        status: "suggested",
+        vendorNo: byCode.vendorNo,
+        vendorName: byCode.displayName,
+        confidence: "high",
+        reason: `จับคู่จากรหัสพนักงาน ${req.staffId} (Home Page)`,
+      };
+      await writeMatch(requestId, codeResult);
+      return codeResult;
+    }
+  }
+
   const result = await runVendorMatch(
     a.payeeName ?? "",
     makeFetchCandidates(company),
