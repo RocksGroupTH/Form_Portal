@@ -2,6 +2,8 @@ import { getAccPool, sql } from "@/lib/acc/pool";
 import { continuationFlags, type ChainTrip } from "@/lib/acc/travel-booking/continuation-chain";
 import { computePerDiem } from "@/lib/acc/travel-booking/perdiem";
 import { getAllowanceLog } from "@/lib/acc/travel-booking/allowance-log";
+import { perDiemLogFor, type PerDiemCountryRate } from "@/lib/acc/travel-booking/perdiem-country";
+import { listPerDiemCountryRates } from "@/lib/acc/travel-booking/perdiem-source";
 import { perDiemWritable } from "@/lib/acc/travel-booking/perdiem-window";
 
 type AccPool = Awaited<ReturnType<typeof getAccPool>>;
@@ -40,9 +42,17 @@ export async function recomputeGroupPerDiem(
 ): Promise<void> {
   const rows = await tx.request()
     .input("gk", sql.NVarChar(40), groupKey)
+    // r.CountryCode is load-bearing. Without it perDiemLogFor is handed null,
+    // and cancelling any trip in a group re-prices its surviving siblings at the
+    // employee's Thai allowance — writing that to AccTravelBooking.PerDiemTotal
+    // AND AccRequest.TotalAmount inside the cancelling transaction, with an
+    // activity row that records the figure moved and not why. A London trip
+    // would silently revert to a domestic rate and nothing on any screen would
+    // contradict it. Deleting this column from the SELECT fails no typecheck:
+    // the value simply arrives undefined.
     .query(`SELECT t.RequestId, t.SortOrder, t.DepartDate, t.ReturnDate,
                    t.IsContinuation, t.PerDiemDays, t.PerDiemTotal,
-                   r.Status, r.EmployeeId
+                   r.Status, r.EmployeeId, r.CountryCode
               FROM [dbo].[AccTravelBooking] t
               INNER JOIN [dbo].[AccRequest] r ON r.Id = t.RequestId
              WHERE t.GroupKey = @gk`);
@@ -61,6 +71,23 @@ export async function recomputeGroupPerDiem(
   }));
 
   const flags = continuationFlags(trips);
+
+  /**
+   * The country rates, loaded once and **only if some row in this group names a
+   * country other than TH**.
+   *
+   * That condition is not an optimisation. `perdiem-recompute.test.ts`'s
+   * preamble records that it runs with no database because no fixture row
+   * carries an `EmployeeId`, so `getAllowanceLog` — the only real network call
+   * this module can make — is never reached. Loading rates unconditionally would
+   * break that and force the test to grow a second stub for a list that, on
+   * every domestic group, cannot change the answer.
+   */
+  let countryRates: PerDiemCountryRate[] | null = null;
+  const loadRates = async (): Promise<PerDiemCountryRate[]> => {
+    if (countryRates === null) countryRates = await listPerDiemCountryRates();
+    return countryRates;
+  };
 
   for (const x of raw) {
     const requestId = x.RequestId as number;
@@ -82,6 +109,11 @@ export async function recomputeGroupPerDiem(
 
     let afterDays = beforeDays;
     let afterTotal = beforeTotal;
+    // Recorded on the audit row: a figure that moved because a country rate
+    // applies is a different event from one that moved because a day was given
+    // back, and the timeline is where somebody reconciling this will look.
+    let rateSource: "country" | "employee" = "employee";
+    let rateCountry: string | null = null;
 
     if (writable) {
       // `getAllowanceLog` from `./allowance-log` — the same reader
@@ -90,7 +122,18 @@ export async function recomputeGroupPerDiem(
       // the allowance history is not something this transaction is changing.
       const employeeId = x.EmployeeId as string | null;
       const log = employeeId ? await getAllowanceLog(employeeId) : [];
-      const computed = computePerDiem(departDate!, returnDate!, nowContinuation, log);
+      // Same resolver the submit used, handed this trip's own country — so a
+      // recompute cannot price a trip differently from the way it was first
+      // priced. A trip with no foreign country never loads the rate list at all.
+      const country = ((x.CountryCode as string | null) ?? "").trim().toUpperCase();
+      const resolved = perDiemLogFor(
+        country,
+        log,
+        country && country !== "TH" ? await loadRates() : [],
+      );
+      rateSource = resolved.source;
+      rateCountry = resolved.countryCode;
+      const computed = computePerDiem(departDate!, returnDate!, nowContinuation, resolved.log);
       afterDays = computed.days;
       afterTotal = computed.total;
 
@@ -158,6 +201,13 @@ export async function recomputeGroupPerDiem(
         causedByRequestNo: cause.requestNo,
         cause: cause.kind,
         locked: !writable,
+        // Which rate priced the recomputed figure. A per-diem total that moved
+        // because a country rate applies is a different event from one that
+        // moved because a day was given back, and without this the two are
+        // indistinguishable in the timeline — which is the only place anybody
+        // reconciling a changed payment will look.
+        rateSource,
+        rateCountry,
       }))
       .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note, MetadataJson)
               VALUES (@rid, NULL, 'perdiem_recalculated', @note, @meta)`);

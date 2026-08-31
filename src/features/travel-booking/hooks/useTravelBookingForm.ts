@@ -4,6 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
 import { computePerDiem, type AllowanceLogEntry } from "@/lib/acc/travel-booking/perdiem";
+import {
+  isPerDiemCountry,
+  perDiemLogFor,
+  type PerDiemCountryRate,
+} from "@/lib/acc/travel-booking/perdiem-country";
 import type {
   Accommodation,
   ProvinceOption,
@@ -559,12 +564,25 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
   // Real effective-dated allowance history for the requester (rates change over time), so the
   // estimate uses the rate for each travel day — not just the current rate. Falls back to the
   // flat current rate only while the log is still loading.
-  const { data: allowanceLogData } = useSWR<{ entries: AllowanceLogEntry[] }>(
+  const { data: allowanceLogData } = useSWR<{
+    entries: AllowanceLogEntry[];
+    countryRates?: PerDiemCountryRate[];
+  }>(
     ["/api/request/travel-booking/allowance-log", requesterStaffId ?? 0],
     ([url, sid]: [string, number]) => jsonFetcher(`${url}?requesterStaffId=${sid || ""}`),
     { revalidateOnFocus: false },
   );
   const estimateLog = allowanceLogData?.entries?.length ? allowanceLogData.entries : flatRateLog;
+  const countryRates = allowanceLogData?.countryRates ?? [];
+  /**
+   * Whether the real answer has arrived. `flatRateLog` is a stand-in built from
+   * the employee's *current* allowance while the fetch is in flight, and it is
+   * only ever right for a domestic trip — a foreign one may be priced by a
+   * country rate this has not seen yet. So a foreign tab shows no estimated
+   * money until the fetch lands, rather than a confident domestic figure that
+   * then changes. Same guard, same reason, as AP-1's `brandsKnown`.
+   */
+  const ratesKnown = allowanceLogData != null;
 
   const continuationFlags = useMemo(
     () =>
@@ -579,9 +597,16 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
     () =>
       tabs.map((t, i) => {
         if (!t.departDate || !t.returnDate || t.returnDate < t.departDate) return { days: 0, total: 0, groups: [] };
-        return computePerDiem(t.departDate, t.returnDate, continuationFlags[i], estimateLog);
+        const resolved = perDiemLogFor(t.countryCode, estimateLog, countryRates);
+        // Days are always honest — they come from the dates alone. The money is
+        // withheld for a foreign trip until the rates have arrived, because
+        // pricing it from the domestic stand-in would show a figure that is
+        // wrong and then silently changes.
+        const foreignPending = !ratesKnown && resolved.source === "employee" && isPerDiemCountry(t.countryCode);
+        const computed = computePerDiem(t.departDate, t.returnDate, continuationFlags[i], resolved.log);
+        return foreignPending ? { ...computed, total: 0, groups: [] } : computed;
       }),
-    [tabs, continuationFlags, estimateLog],
+    [tabs, continuationFlags, estimateLog, countryRates, ratesKnown],
   );
 
   const totalPerDiemEstimate = useMemo(

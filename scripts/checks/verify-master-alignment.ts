@@ -89,6 +89,12 @@ const MASTER_TABLES = [
   "AccReimburseRule",
   "AccReimburseAccess",
   "AccReimburseAccessTab",
+  // AP-17's per-diem-by-country rates (migration 133). Dual-written by
+  // perdiem-source.ts through writeBothPools, which reads no id back — so the
+  // two identity counters must stay in lockstep, and the table is deliberately
+  // absent from migrations 061/064: a CHECK (Id >= 900000) in the UAT twin would
+  // reject every row production allocated a low id for, which is every row.
+  "AccTravelPerDiemCountry",
 ];
 
 /**

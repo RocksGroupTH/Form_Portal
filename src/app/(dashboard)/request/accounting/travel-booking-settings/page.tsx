@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
-import { Settings, Compass, Hotel, Car, Plane, ShieldCheck, Building2, Globe } from "lucide-react";
+import { Settings, Compass, Hotel, Car, Plane, ShieldCheck, Building2, Globe, Wallet } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { backTo } from "@/lib/request-hub-nav";
 import {
@@ -16,6 +16,7 @@ import { useBookingAccess } from "@/features/travel-booking/hooks/useBookingAcce
 import { TravelOptionSettings, type TravelOptionKind } from "@/features/travel-booking/components/settings/TravelOptionSettings";
 import { BookingApproverSettings } from "@/features/travel-booking/components/settings/BookingApproverSettings";
 import { TravelPlaceSettings } from "@/features/travel-booking/components/settings/TravelPlaceSettings";
+import { PerDiemCountrySettings } from "@/features/travel-booking/components/settings/PerDiemCountrySettings";
 import { BrandSettings } from "@/features/accounting/components/settings/BrandSettings";
 
 /**
@@ -32,7 +33,7 @@ import { BrandSettings } from "@/features/accounting/components/settings/BrandSe
  * `brands` is neither a `TravelOptionKind` (it has no `[kind]` route) nor
  * `access`; it is AP-1's brand panel pointed at AP-17's rows.
  */
-type TabKey = TravelOptionKind | "brands" | "access" | "provinces";
+type TabKey = TravelOptionKind | "brands" | "access" | "provinces" | "per-diem";
 
 /**
  * Icons are the only thing this page still owns about a tab. The **labels come
@@ -48,6 +49,7 @@ const TAB_ICONS: Record<TabKey, React.ReactNode> = {
   "rent-vehicles": <Car size={15} />,
   access: <ShieldCheck size={15} />,
   provinces: <Globe size={15} />,
+  "per-diem": <Wallet size={15} />,
 };
 
 const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] =
@@ -63,6 +65,7 @@ const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] =
     // them — no extra code.
     .concat([
       { key: "provinces", label: "จังหวัด/เมือง", icon: TAB_ICONS.provinces },
+      { key: "per-diem", label: "เบี้ยเลี้ยงต่างประเทศ", icon: TAB_ICONS["per-diem"] },
       { key: "access", label: "สิทธิ์เข้าถึง", icon: TAB_ICONS.access },
     ]);
 
@@ -182,7 +185,10 @@ export default function TravelBookingSettingsPage() {
   // `brands` and `access` both render their own component rather than the
   // generic option list, so neither has a TAB_PANELS entry.
   const panel =
-    effectiveTab === "access" || effectiveTab === "brands" || effectiveTab === "provinces"
+    effectiveTab === "access" ||
+    effectiveTab === "brands" ||
+    effectiveTab === "provinces" ||
+    effectiveTab === "per-diem"
       ? null
       : TAB_PANELS[effectiveTab];
   const panelLabel = visibleTabs.filter((t) => t.key === effectiveTab)[0]?.label ?? "";
@@ -237,6 +243,11 @@ export default function TravelBookingSettingsPage() {
               currencyEndpoint="/api/request/travel-booking/settings/brands/currency"
               otherFormLabel="AP-1"
             />
+          ) : effectiveTab === "per-diem" ? (
+            // Its own branch, ABOVE the panel === null arm below — see the note
+            // on the provinces branch. A tab left in the null list renders the
+            // approver roster under this heading and nothing complains.
+            <PerDiemCountrySettings />
           ) : effectiveTab === "provinces" ? (
             // Its own branch, and it must stay ABOVE the arm below. That one
             // treats `panel === null` as "show the approver roster", so a tab

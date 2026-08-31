@@ -2,6 +2,8 @@ import { getAccPool, sql } from "@/lib/acc/pool";
 import { isBaht } from "@/lib/acc/currency";
 import { amountInBaht, currencyWord, rateAsOfYmd } from "@/lib/acc/currency-display";
 import { getAllowanceLog } from "@/lib/acc/travel-booking/allowance-log";
+import { perDiemLogFor } from "@/lib/acc/travel-booking/perdiem-country";
+import { listPerDiemCountryRates } from "@/lib/acc/travel-booking/perdiem-source";
 import { rateForDay, type AllowanceLogEntry } from "@/lib/acc/travel-booking/perdiem";
 import { enumerateTravelDates, fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
 import { travelBookingStatusLabel } from "@/features/travel-booking/constants";
@@ -157,7 +159,7 @@ const BASE_CTE = `
   WITH Base AS (
     SELECT
       r.Id, r.RequestNo, r.BrandCode, r.StaffId, r.RequesterFullName, r.RequesterPosition, r.RequesterDepartmentName,
-      r.EmployeeId, r.Status, r.CurrentStepCode, r.PaymentDate, r.SubmittedAt,
+      r.EmployeeId, r.CountryCode, r.Status, r.CurrentStepCode, r.PaymentDate, r.SubmittedAt,
       t.ReasonId, t.ReasonName, t.ReasonCustomText, t.WorkDetail,
       t.DepartDate, t.ReturnDate,
       t.ProvinceId, t.ProvinceName,
@@ -255,11 +257,17 @@ export async function queryTravelBookingReport(
     new Set(raw.map((x) => x.EmployeeId as string | null).filter((id): id is string => !!id)),
   );
   const logByEmployee = new Map<string, AllowanceLogEntry[]>();
-  await Promise.all(
-    employeeIds.map(async (id) => {
+  // One list for the whole report, beside the per-employee batch. This column
+  // re-derives the rate from scratch rather than reading what was stored, so it
+  // has to be given the same input the write had — otherwise it prints the
+  // employee's Thai rate against a country-rate total, and a reader dividing one
+  // by the other gets a day count that contradicts the column beside it.
+  const [countryRates] = await Promise.all([
+    listPerDiemCountryRates(),
+    ...employeeIds.map(async (id) => {
       logByEmployee.set(id, await getAllowanceLog(id));
     }),
-  );
+  ]);
 
   return raw.map((x) => {
     const departDate = x.DepartDate ? ymd(x.DepartDate as Date) : null;
@@ -269,7 +277,7 @@ export async function queryTravelBookingReport(
       departDate,
       returnDate,
       !!x.IsContinuation,
-      log,
+      perDiemLogFor(x.CountryCode as string | null, log, countryRates).log,
     );
     const bookingTotal =
       x.BookingTotal === null || x.BookingTotal === undefined

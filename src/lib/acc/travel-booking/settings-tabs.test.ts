@@ -305,20 +305,25 @@ test("every AP-17 settings handler is gated, and approvers is the admin-only one
   //               tab grant must not become write access to another
   //               application's data. Same rule settings/departments/map
   //               carries for DepartmentErpMap.
+  //   per-diem  — a row here changes what the company PAYS a travelling
+  //               employee per day, on the path that writes
+  //               AccRequest.TotalAmount. AP-17's tab grants hand out sight of a
+  //               queue and a report; that is a different kind of power and must
+  //               not be the same tick.
   //
   // Sorted, because the order these are discovered in is the route-file walk
   // order and says nothing.
   assert.deepEqual(
     roleGated.slice().sort(),
-    ["approvers", "provinces"],
-    "only settings/approvers and settings/provinces may stay on requireRole — see the note above before adding a third",
+    ["approvers", "per-diem", "provinces"],
+    "only these three settings routes may stay on requireRole — read the note above before adding a fourth",
   );
 
   // Pinning the count means a new handler on an existing route has to be looked
   // at rather than merged on the strength of the file already being gated.
   assert.equal(
     handlerCount,
-    14,
+    17,
     "the AP-17 settings routes gained or lost a handler — check its gate, then update this number",
   );
 });

@@ -37,6 +37,8 @@ import { AP17_FORM_CODE, FILE_REFTYPES, RUNNING_PREFIX } from "@/features/travel
 // that can point somewhere it does not exist.
 import { resolveProvinceName } from "@/lib/acc/travel-booking/province-service";
 import { resolveBookingCountry } from "@/lib/acc/travel-booking/booking-country";
+import { perDiemLogFor } from "@/lib/acc/travel-booking/perdiem-country";
+import { listPerDiemCountryRates } from "@/lib/acc/travel-booking/perdiem-source";
 import type {
   Accommodation,
   BookingDetail,
@@ -1200,14 +1202,27 @@ export async function submitTravelBookingGroup(
   }
 
   // Continuation detection + per-diem, over the SortOrder-ordered tabs.
+  //
+  // TWO queries, not two per tab. The employee's HR log is one per person and
+  // the country rates are one list; the country itself is per TAB, because a
+  // group can hold a Kuala Lumpur trip and a Bangkok one, so the resolution
+  // happens inside the loop and the loading does not.
   const log = await getAllowanceLog(emp.id);
+  const countryRates = await listPerDiemCountryRates();
   const continuationFlags: boolean[] = [];
   const perDiems: { days: number; total: number }[] = [];
   for (let i = 0; i < tabs.length; i++) {
     const prev = i > 0 ? tabs[i - 1] : null;
     const isContinuation = !!(prev && tabs[i].departDate === prev.returnDate);
     continuationFlags.push(isContinuation);
-    perDiems.push(computePerDiem(tabs[i].departDate as string, tabs[i].returnDate as string, isContinuation, log));
+    // perDiemLogFor is the single decision — the estimate on the form, this
+    // write, the recompute after a cancellation and the report's rate column all
+    // go through it, so none of them can price a trip differently from the
+    // figure actually stored here.
+    const resolved = perDiemLogFor(tabs[i].countryCode, log, countryRates);
+    perDiems.push(
+      computePerDiem(tabs[i].departDate as string, tabs[i].returnDate as string, isContinuation, resolved.log),
+    );
   }
 
   const tx = pool.transaction();
