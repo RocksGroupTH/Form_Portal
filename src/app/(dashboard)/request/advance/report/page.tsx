@@ -72,7 +72,9 @@ const COLS: Col[] = [
   { key: "actionedByName", h: "Actioned By", get: (r) => r.actionedByName ?? "" },
   { key: "actionedDate", h: "Actioned Date", get: (r) => dt(r.actionedDate) },
   { key: "actionedRemark", h: "Actioned Remark", get: (r) => r.actionedRemark ?? "", filter: "text" },
-  { key: "paymentDate", h: "Payment Date", get: (r) => d(r.paymentDate), filter: "text" },
+  // A date filter, not a text one: payments land on the 2nd and 4th Friday, so
+  // picking rounds is how accounting narrows a report to a payment week.
+  { key: "paymentDate", h: "Payment Date", get: (r) => d(r.paymentDate), filter: "dates", rawDate: (r) => r.paymentDate },
   { key: "clearAdvanceNo", h: "Clear Advance no.", get: (r) => r.clearAdvanceNo ?? "", filter: "text" },
   { key: "advanceStatus", h: "Advance status", get: (r) => r.advanceStatus ?? "", filter: "text" },
   { key: "pendingOn", h: "Pending on", get: (r) => r.pendingOn ?? "" },
@@ -123,7 +125,12 @@ export default function AdvanceReportPage() {
           continue;
         }
         const v = c.get(r).toLowerCase();
-        if (c.filter === "select") { if (v !== f.toLowerCase()) return false; }
+        if (c.filter === "select") {
+          // Multi-value, stored as CSV like the date filter: any selected value
+          // matches, so a report can cover two statuses at once.
+          const sel = f.split(",").filter(Boolean).map((s) => s.toLowerCase());
+          if (sel.length && !sel.includes(v)) return false;
+        }
         else if (!v.includes(f.toLowerCase())) return false;
       }
       return true;
@@ -156,12 +163,13 @@ export default function AdvanceReportPage() {
 
   const activeFilters = Object.values(filters).filter(Boolean).length + (search.trim() ? 1 : 0);
   const setF = (k: string, v: string) => setFilters((p) => ({ ...p, [k]: v }));
-  const addDate = (k: string, v: string) => setFilters((p) => {
+  /** Add one value to a CSV-valued filter — shared by the date and select filters. */
+  const addValue = (k: string, v: string) => setFilters((p) => {
     const cur = (p[k] ?? "").split(",").filter(Boolean);
     if (!cur.includes(v)) cur.push(v);
     return { ...p, [k]: cur.sort().join(",") };
   });
-  const removeDate = (k: string, v: string) => setFilters((p) => ({
+  const removeValue = (k: string, v: string) => setFilters((p) => ({
     ...p, [k]: (p[k] ?? "").split(",").filter(Boolean).filter((x) => x !== v).join(","),
   }));
 
@@ -230,22 +238,39 @@ export default function AdvanceReportPage() {
                         <input value={filters[c.key] ?? ""} onChange={(e) => setF(c.key, e.target.value)}
                           placeholder="กรอง..." className={fInput} style={fStyle} />
                       ) : c.filter === "select" ? (
-                        <select value={filters[c.key] ?? ""} onChange={(e) => setF(c.key, e.target.value)}
-                          className={fInput} style={fStyle}>
-                          <option value="">ทั้งหมด</option>
-                          {(selectOptions[c.key] ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
-                        </select>
+                        // Pick repeatedly to build a set; each pick becomes a chip.
+                        <div className="flex flex-col gap-1 min-w-[130px]">
+                          <select value="" onChange={(e) => { if (e.target.value) addValue(c.key, e.target.value); e.target.value = ""; }}
+                            className={fInput} style={fStyle}>
+                            <option value="">ทั้งหมด</option>
+                            {(selectOptions[c.key] ?? [])
+                              .filter((o) => !(filters[c.key] ?? "").split(",").includes(o))
+                              .map((o) => <option key={o} value={o}>{o}</option>)}
+                          </select>
+                          {(filters[c.key] ?? "").split(",").filter(Boolean).length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                              {(filters[c.key] ?? "").split(",").filter(Boolean).map((sv) => (
+                                <span key={sv} className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded"
+                                  style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}>
+                                  {sv}
+                                  <button type="button" aria-label={`ลบตัวกรอง ${sv}`} onClick={() => removeValue(c.key, sv)}
+                                    className="border-none bg-transparent cursor-pointer p-0 leading-none" style={{ color: "inherit" }}>×</button>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       ) : c.filter === "dates" ? (
                         <div className="flex flex-col gap-1 min-w-[130px]">
                           <input type="date" className={fInput} style={fStyle}
-                            onChange={(e) => { if (e.target.value) addDate(c.key, e.target.value); e.target.value = ""; }} />
+                            onChange={(e) => { if (e.target.value) addValue(c.key, e.target.value); e.target.value = ""; }} />
                           {(filters[c.key] ?? "").split(",").filter(Boolean).length > 0 && (
                             <div className="flex flex-wrap gap-1">
                               {(filters[c.key] ?? "").split(",").filter(Boolean).map((dv) => (
                                 <span key={dv} className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded"
                                   style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}>
                                   {new Date(dv).toLocaleDateString("th-TH", { day: "2-digit", month: "2-digit" })}
-                                  <button type="button" onClick={() => removeDate(c.key, dv)}
+                                  <button type="button" aria-label={`ลบตัวกรองวันที่ ${dv}`} onClick={() => removeValue(c.key, dv)}
                                     className="border-none bg-transparent cursor-pointer p-0 leading-none" style={{ color: "inherit" }}>×</button>
                                 </span>
                               ))}
