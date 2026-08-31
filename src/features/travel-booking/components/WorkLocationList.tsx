@@ -9,6 +9,7 @@ export function WorkLocationList({
   onChange,
   hasError,
   onProvinceDetected,
+  country,
   placeholder = "เช่น สาขาเชียงใหม่ ถ.นิมมานเหมินท์",
 }: {
   items: WorkLocationInput[];
@@ -16,6 +17,8 @@ export function WorkLocationList({
   hasError?: boolean;
   /** A picked ORS place (label + region) — parent uses it to set จังหวัด. */
   onProvinceDetected?: (place: { label: string; region: string | null }) => void;
+  /** Country to bound the search to; `ORS_WORLDWIDE` for no boundary. */
+  country?: string | null;
   placeholder?: string;
 }) {
   const name = items[0]?.name ?? "";
@@ -25,6 +28,7 @@ export function WorkLocationList({
       value={name || null}
       onChange={(v) => onChange([{ name: v ?? "", sortOrder: 0 }])}
       onSelectPlace={(p) => onProvinceDetected?.({ label: p.label, region: p.region ?? null })}
+      country={country}
       placeholder={placeholder}
       hasError={!!hasError && !name.trim()}
     />

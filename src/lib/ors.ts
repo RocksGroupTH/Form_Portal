@@ -1,8 +1,32 @@
 import { resolveApiKey } from "@/lib/api-keys/service";
+import { ORS_DEFAULT_COUNTRY } from "@/lib/ors-scope";
 
 const ORS_BASE = "https://api.openrouteservice.org";
-/** Bias geocoding toward Thailand / Bangkok. */
+/**
+ * Bias geocoding toward Thailand / Bangkok.
+ *
+ * Applied on every search, worldwide ones included. It is a *bias*, not a
+ * filter — ORS ranks nearer results higher and still returns distant ones — and
+ * a Thai company's searches start in Thailand often enough that dropping it for
+ * unbounded queries would make the common case worse to make the rare case
+ * marginally tidier. A judgement, not a measurement; revisit it if somebody
+ * reports a foreign city ranking below a Thai near-match.
+ */
 const FOCUS = { lat: 13.7563, lon: 100.5018 };
+
+/**
+ * The boundary and focus fragments of a geocoding URL.
+ *
+ * `country` is `null` for no boundary at all. It is encoded even though every
+ * value `resolveOrsCountry` returns is `^[A-Z]{2}: this module is exported and
+ * the next caller will not necessarily come through the route that sanitises it.
+ */
+function scopeParams(country: string | null): string {
+  return (
+    (country ? `&boundary.country=${encodeURIComponent(country)}` : "") +
+    `&focus.point.lat=${FOCUS.lat}&focus.point.lon=${FOCUS.lon}`
+  );
+}
 
 export interface OrsPlace {
   label: string;
@@ -57,7 +81,10 @@ export async function testOrsKey(key: string): Promise<number> {
 }
 
 /** Autocomplete place search (ORS / Pelias). Returns up to ~6 suggestions. */
-export async function orsGeocode(text: string): Promise<OrsPlace[]> {
+export async function orsGeocode(
+  text: string,
+  country: string | null = ORS_DEFAULT_COUNTRY,
+): Promise<OrsPlace[]> {
   const q = text.trim();
   if (q.length < 2) return [];
   const key = await requireKey();
@@ -65,8 +92,7 @@ export async function orsGeocode(text: string): Promise<OrsPlace[]> {
     `${ORS_BASE}/geocode/autocomplete` +
     `?api_key=${encodeURIComponent(key)}` +
     `&text=${encodeURIComponent(q)}` +
-    `&boundary.country=TH` +
-    `&focus.point.lat=${FOCUS.lat}&focus.point.lon=${FOCUS.lon}` +
+    scopeParams(country) +
     `&size=6`;
 
   const res = await fetch(url, { headers: { Accept: "application/json" } });
@@ -96,7 +122,10 @@ const PLACE_SYNONYMS: { term: string; officials: string[] }[] = [
   { term: "หมอชิต", officials: ["สถานีขนส่งผู้โดยสารกรุงเทพ (จตุจักร)"] },
 ];
 
-export async function orsSearch(text: string): Promise<OrsPlace[]> {
+export async function orsSearch(
+  text: string,
+  country: string | null = ORS_DEFAULT_COUNTRY,
+): Promise<OrsPlace[]> {
   const q = text.trim();
   if (q.length < 2) return [];
   const key = await requireKey();
@@ -115,8 +144,7 @@ export async function orsSearch(text: string): Promise<OrsPlace[]> {
 
   const common =
     `?api_key=${encodeURIComponent(key)}` +
-    `&boundary.country=TH` +
-    `&focus.point.lat=${FOCUS.lat}&focus.point.lon=${FOCUS.lon}` +
+    scopeParams(country) +
     // POIs/addresses over whole cities, so a bare name surfaces venues (the mall/airport).
     `&layers=venue,address,street,neighbourhood`;
 

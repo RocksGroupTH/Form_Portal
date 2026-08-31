@@ -23,6 +23,7 @@ export function OrsPlaceField({
   onChange,
   onSelectPlace,
   filter,
+  country,
   suggestions = [],
   hasError,
   placeholder = "พิมพ์ค้นหาสถานที่ (เช่น สนามบินสุวรรณภูมิ)...",
@@ -33,6 +34,13 @@ export function OrsPlaceField({
   onSelectPlace?: (place: OrsPlace) => void;
   /** Keep only results matching this predicate (e.g. same province). */
   filter?: (place: OrsPlace) => boolean;
+  /**
+   * ISO-3166-1 alpha-2 to bound the search to, or `ORS_WORLDWIDE` ("*") for no
+   * boundary. Omitted means Thailand — the server applies the same default, so
+   * a caller that says nothing gets exactly the behaviour this field had before
+   * AP-17 went worldwide.
+   */
+  country?: string | null;
   /** Admin-configured places for this vehicle, shown as quick picks. */
   suggestions?: string[];
   hasError?: boolean;
@@ -62,7 +70,10 @@ export function OrsPlaceField({
     setLoading(true);
     const t = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/ors/geocode?mode=search&q=${encodeURIComponent(q)}`);
+        const res = await fetch(
+          `/api/ors/geocode?mode=search&q=${encodeURIComponent(q)}` +
+            (country ? `&country=${encodeURIComponent(country)}` : ""),
+        );
         const json = await res.json();
         setResults(json.ok && Array.isArray(json.data) ? (json.data as OrsPlace[]) : []);
       } catch {
@@ -72,7 +83,10 @@ export function OrsPlaceField({
       }
     }, 350);
     return () => clearTimeout(t);
-  }, [query, open]);
+    // `country` is in here because the effect reads it: changing the trip's
+    // country while the dropdown is open must re-search, not leave the previous
+    // country's results standing.
+  }, [query, open, country]);
 
   useLayoutEffect(() => {
     if (!open) return;

@@ -20,6 +20,7 @@ export function TransportSection({
   onChangeTime,
   onChangeDepartureLocations,
   errorKeys,
+  country,
 }: {
   direction: TravelDirection;
   /** The trip's selected vehicle (source of the needs* flags + place suggestions). */
@@ -29,6 +30,8 @@ export function TransportSection({
   onChangeTime: (v: string | null) => void;
   onChangeDepartureLocations: (all: DepartureLocationInput[]) => void;
   errorKeys: Set<string>;
+  /** Country to bound the place search to; `ORS_WORLDWIDE` for no boundary. */
+  country?: string | null;
 }) {
   const prefix = direction === "go" ? "go" : "return";
   const departureKey = `${prefix}DepartureLocations`;
@@ -61,6 +64,7 @@ export function TransportSection({
             value={selectedPlace || null}
             onChange={setPlace}
             suggestions={placeSuggestions}
+            country={country}
             hasError={errorKeys.has(departureKey)}
           />
         </div>

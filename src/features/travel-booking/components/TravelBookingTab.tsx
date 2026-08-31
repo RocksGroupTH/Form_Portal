@@ -8,6 +8,7 @@ import { LocalSearchSelect } from "./LocalSearchSelect";
 import { WorkLocationList } from "./WorkLocationList";
 import { DateRangeField } from "./DateRangeField";
 import { TransportSection } from "./TransportSection";
+import { ORS_WORLDWIDE } from "@/lib/ors-scope";
 import { IdCardUpload } from "./IdCardUpload";
 import {
   OptionCardSelect,
@@ -234,6 +235,11 @@ export function TravelBookingTab({
             items={tab.workLocations}
             onChange={(workLocations) => onChange({ workLocations })}
             hasError={hasErr("workLocations")}
+            // Unbounded, so "london" finds London. Until the trip carries a
+            // country of its own (spec S3) there is nothing narrower to pass,
+            // and a boundary guessed from the province would be wrong for
+            // exactly the foreign trips this change exists for.
+            country={ORS_WORLDWIDE}
             onProvinceDetected={({ label, region }) => {
               // Prefer the region field, else scan the label (Bangkok often has no region).
               // English province names first (ORS labels are English) — they're less ambiguous
@@ -347,6 +353,7 @@ export function TravelBookingTab({
               onChangeTime={(v) => onChange({ departTime: v })}
               onChangeDepartureLocations={(all) => onChange({ departureLocations: all })}
               errorKeys={displayErrorKeys}
+              country={ORS_WORLDWIDE}
             />
             <TransportSection
               direction="return"
@@ -356,6 +363,7 @@ export function TravelBookingTab({
               onChangeTime={(v) => onChange({ returnTime: v })}
               onChangeDepartureLocations={(all) => onChange({ departureLocations: all })}
               errorKeys={displayErrorKeys}
+              country={ORS_WORLDWIDE}
             />
           </>
         )}
