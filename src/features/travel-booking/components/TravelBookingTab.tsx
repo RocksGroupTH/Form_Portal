@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import { Briefcase, Calendar, Car, FileCheck, Hotel, MapPin, StickyNote } from "lucide-react";
 import type { AccBrandOption } from "@/features/accounting/types";
-import { GooglePlaceField } from "./GooglePlaceField";
+import { GooglePinView } from "./GooglePinView";
 import { WorkLocationList } from "./WorkLocationList";
 import { DateRangeField } from "./DateRangeField";
 import { TransportSection } from "./TransportSection";
@@ -258,7 +258,17 @@ export function TravelBookingTab({
                   key={c.code}
                   type="button"
                   disabled={only}
-                  onClick={() => onChange({ countryCode: c.code })}
+                  onClick={() => {
+                    if (c.code === tripCountry) return;
+                    // A place is meaningless once the country changes — a Chiang
+                    // Mai mall on a trip to England — and its coordinates would
+                    // put the pin in the wrong country. Cleared together, because
+                    // keeping the name without the pin is the worse half.
+                    onChange({
+                      countryCode: c.code,
+                      workLocations: [{ name: "", sortOrder: 0, lat: null, lng: null }],
+                    });
+                  }}
                   className="px-2.5 py-1 rounded-lg text-[12.5px] font-semibold transition-all"
                   style={{
                     // One-pixel border and a smaller radius against the brand's
@@ -345,6 +355,11 @@ export function TravelBookingTab({
           />
         </div>
 
+        {/* Waits for the brand AND the country above it. Searching before
+            either is answered means searching the whole world and then having
+            the answer thrown away by the country change that follows, which is
+            a billed Google call spent on a place nobody will keep. */}
+        {tab.brandCode && tripCountry && (
         <div data-field="workLocations">
           <label className={labelClass} style={errLabelStyle(hasErr("workLocations"))}>
             <MapPin size={11} className="inline mr-1 -mt-0.5" />
@@ -362,7 +377,22 @@ export function TravelBookingTab({
             // to.
             country={tripCountry}
           />
+          {/* The pin, as soon as a place is picked — the requester sees where
+              the booking desk will be sent before they submit, not only
+              afterwards on the detail page. Renders nothing for a place typed
+              rather than picked, which has no coordinates to pin. */}
+          <div className="mt-2">
+            <GooglePinView
+              places={tab.workLocations.map((w) => ({
+                name: w.name,
+                lat: w.lat ?? null,
+                lng: w.lng ?? null,
+              }))}
+              height={180}
+            />
+          </div>
         </div>
+        )}
 
       </SectionCard>
 
