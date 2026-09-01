@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { PoweredByClaude } from "@/components/ui/PoweredByClaude";
 import type { BranchOption, GlAccountOption } from "@/features/clear-advance/types";
+import type { ReceiptKind } from "@/lib/clr/ai-receipt-core";
 import { BranchPicker, GlPicker, cellClass, cellStyle } from "./LinePickers";
 
 /** One OCR candidate awaiting the user's confirmation. Mirrors the editable half
@@ -13,6 +14,10 @@ import { BranchPicker, GlPicker, cellClass, cellStyle } from "./LinePickers";
 export interface OcrRow {
   /** Stable React key — the rows are reordered by nothing, but a row can be dropped. */
   key: string;
+  /** What the model decided this page is. The reviewer can correct it here. */
+  kind: ReceiptKind;
+  /** Ticked rows are the ones that get written. "other" arrives unticked. */
+  include: boolean;
   /** The attached receipt this candidate came from. */
   sourceFileId?: number;
   fileName?: string;
@@ -34,6 +39,12 @@ export interface OcrRow {
   /** The account was pre-filled from the AI suggestion (§10) — advisory, editable. */
   glSuggested?: boolean;
 }
+
+const KIND_LABEL: Record<ReceiptKind, string> = {
+  receipt: "ใบเสร็จ / ใบกำกับภาษี",
+  slip: "สลิปโอนเงิน",
+  other: "อื่นๆ (ไม่นำเข้า)",
+};
 
 function money(v: string): string {
   const n = Number(v);
@@ -123,7 +134,7 @@ export function OcrConfirmModal({
   useEffect(() => {
     if (glForced) return;
     const targets = rows.filter(
-      (r) => r.branchCode && r.description.trim() && !r.glAccountNo
+      (r) => r.kind === "receipt" && r.branchCode && r.description.trim() && !r.glAccountNo
         && !suggestRequested.current.has(`${r.key}|${r.branchCode}`),
     );
     if (targets.length === 0) return;
@@ -164,7 +175,7 @@ export function OcrConfirmModal({
       <div className="flex flex-col min-h-0 flex-1">
         <div className="px-5 pt-4 flex items-center justify-between gap-2 flex-wrap">
           <p className="text-[12px] m-0" style={{ color: "var(--text-muted)" }}>
-            AI อ่านได้ {rows.length} รายการ — แก้ไขให้ถูกต้องแล้วกด “ยืนยันบันทึก” จึงจะเพิ่มลงตารางค่าใช้จ่าย
+            AI อ่านได้ {rows.length} รายการ · จะบันทึก {rows.filter((r) => r.include).length} รายการ — ตรวจสอบชนิดเอกสารและแก้ไขให้ถูกต้อง แล้วกด “ยืนยันบันทึก”
           </p>
           <PoweredByClaude />
         </div>
@@ -173,57 +184,81 @@ export function OcrConfirmModal({
           {rows.map((r, idx) => (
             <div key={r.key} className="rounded-xl p-3 flex flex-col gap-2.5"
               style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}>
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] font-bold" style={{ color: "var(--text-muted)" }}>
-                  รายการที่ {idx + 1}
-                </span>
-                {r.fileName && (
-                  <span className="text-[11px] truncate max-w-[55%]" style={{ color: "var(--text-faint)" }}>
-                    {r.fileName}
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={r.include}
+                    onChange={(e) => update(r.key, { include: e.target.checked })} />
+                  <span className="text-[11px] font-bold" style={{ color: "var(--text-muted)" }}>
+                    รายการที่ {idx + 1}
                   </span>
-                )}
+                </label>
+                <div className="flex items-center gap-2 min-w-0">
+                  {/* The model classified the page; a wrong guess is cheaper to fix
+                      here than by re-uploading. Re-labelling re-ticks the row. */}
+                  <select className={cellClass} style={{ ...cellStyle }} value={r.kind}
+                    aria-label="ชนิดเอกสาร"
+                    onChange={(e) => update(r.key, {
+                      kind: e.target.value as ReceiptKind,
+                      include: e.target.value !== "other",
+                    })}>
+                    {(Object.keys(KIND_LABEL) as ReceiptKind[]).map((k) => (
+                      <option key={k} value={k}>{KIND_LABEL[k]}</option>
+                    ))}
+                  </select>
+                  {r.fileName && (
+                    <span className="text-[11px] truncate max-w-[40%]" style={{ color: "var(--text-faint)" }}>
+                      {r.fileName}
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                <F label="วันที่">
+                <F label={r.kind === "slip" ? "วันที่โอน" : "วันที่"}>
                   <input type="date" className={cellClass} style={{ ...cellStyle, width: "100%" }}
                     value={r.expenseDate} onChange={(e) => update(r.key, { expenseDate: e.target.value })} />
                 </F>
-                <F label="เลขที่เอกสาร">
+                <F label={r.kind === "slip" ? "เลขที่รายการ" : "เลขที่เอกสาร"}>
                   <input className={cellClass} style={{ ...cellStyle, width: "100%" }} placeholder="—"
                     value={r.docNo} onChange={(e) => update(r.key, { docNo: e.target.value })} />
                 </F>
-                <F label="สาขา">
-                  <BranchPicker options={branches} value={r.branchCode} noBrand={!brandChosen}
-                    disabled={!brandChosen} inline
-                    onPick={(code) => update(r.key, { branchCode: code })} />
-                </F>
-                <F label="รายการ">
-                  {glForced ? (
-                    <div className="text-[12px] px-2 py-1.5 rounded-lg"
-                      style={{ background: "var(--bg-card)", color: "var(--text-muted)", border: "1px dashed var(--border-card)" }}>
-                      {forcedGlLabel}
-                    </div>
-                  ) : (
-                    <>
-                      <GlPicker
-                        options={(r.branchCode && glByBranch[r.branchCode]) || []}
-                        valueNo={r.glAccountNo}
-                        disabled={!r.branchCode}
-                        noBranch={!r.branchCode}
-                        inline
-                        onPick={(o) => update(r.key, {
-                          glAccountNo: o?.glAccountNo ?? "", glAccountName: o?.nameTh ?? "", glSuggested: false,
-                        })}
-                      />
-                      {r.glSuggested && (
-                        <span className="text-[10px]" style={{ color: "var(--text-faint)" }}>
-                          AI แนะนำจากรายละเอียด — เปลี่ยนได้
-                        </span>
+                {/* Branch and account belong to an expense line; a slip only carries
+                    a date and an amount, and an "other" page carries nothing. */}
+                {r.kind === "receipt" && (
+                  <>
+                    <F label="สาขา">
+                      <BranchPicker options={branches} value={r.branchCode} noBrand={!brandChosen}
+                        disabled={!brandChosen} inline
+                        onPick={(code) => update(r.key, { branchCode: code })} />
+                    </F>
+                    <F label="รายการ">
+                      {glForced ? (
+                        <div className="text-[12px] px-2 py-1.5 rounded-lg"
+                          style={{ background: "var(--bg-card)", color: "var(--text-muted)", border: "1px dashed var(--border-card)" }}>
+                          {forcedGlLabel}
+                        </div>
+                      ) : (
+                        <>
+                          <GlPicker
+                            options={(r.branchCode && glByBranch[r.branchCode]) || []}
+                            valueNo={r.glAccountNo}
+                            disabled={!r.branchCode}
+                            noBranch={!r.branchCode}
+                            inline
+                            onPick={(o) => update(r.key, {
+                              glAccountNo: o?.glAccountNo ?? "", glAccountName: o?.nameTh ?? "", glSuggested: false,
+                            })}
+                          />
+                          {r.glSuggested && (
+                            <span className="text-[10px]" style={{ color: "var(--text-faint)" }}>
+                              AI แนะนำจากรายละเอียด — เปลี่ยนได้
+                            </span>
+                          )}
+                        </>
                       )}
-                    </>
-                  )}
-                </F>
+                    </F>
+                  </>
+                )}
               </div>
 
               <F label="รายละเอียด">
@@ -233,27 +268,37 @@ export function OcrConfirmModal({
                   onChange={(e) => update(r.key, { description: e.target.value })} />
               </F>
 
-              <div className="grid grid-cols-3 gap-2.5">
-                <F label="ก่อน VAT">
+              {r.kind === "receipt" ? (
+                <div className="grid grid-cols-3 gap-2.5">
+                  <F label="ก่อน VAT">
+                    <input type="number" min="0" step="0.01" inputMode="decimal"
+                      className={`${cellClass} text-right`} style={{ ...cellStyle, width: "100%" }} placeholder="0.00"
+                      value={r.amountBeforeVat} onChange={(e) => update(r.key, { amountBeforeVat: e.target.value })} />
+                  </F>
+                  <F label="VAT">
+                    <input type="number" min="0" step="0.01" inputMode="decimal"
+                      className={`${cellClass} text-right`} style={{ ...cellStyle, width: "100%" }} placeholder="0.00"
+                      value={r.vatAmount} onChange={(e) => update(r.key, { vatAmount: e.target.value })} />
+                  </F>
+                  <F label="WHT">
+                    <input type="number" min="0" step="0.01" inputMode="decimal"
+                      className={`${cellClass} text-right`} style={{ ...cellStyle, width: "100%" }} placeholder="0.00"
+                      value={r.whtAmount} onChange={(e) => update(r.key, { whtAmount: e.target.value })} />
+                  </F>
+                </div>
+              ) : r.kind === "slip" ? (
+                <F label="ยอดที่โอน">
                   <input type="number" min="0" step="0.01" inputMode="decimal"
                     className={`${cellClass} text-right`} style={{ ...cellStyle, width: "100%" }} placeholder="0.00"
                     value={r.amountBeforeVat} onChange={(e) => update(r.key, { amountBeforeVat: e.target.value })} />
                 </F>
-                <F label="VAT">
-                  <input type="number" min="0" step="0.01" inputMode="decimal"
-                    className={`${cellClass} text-right`} style={{ ...cellStyle, width: "100%" }} placeholder="0.00"
-                    value={r.vatAmount} onChange={(e) => update(r.key, { vatAmount: e.target.value })} />
-                </F>
-                <F label="WHT">
-                  <input type="number" min="0" step="0.01" inputMode="decimal"
-                    className={`${cellClass} text-right`} style={{ ...cellStyle, width: "100%" }} placeholder="0.00"
-                    value={r.whtAmount} onChange={(e) => update(r.key, { whtAmount: e.target.value })} />
-                </F>
-              </div>
+              ) : null}
 
-              <div className="text-[11px] text-right" style={{ color: "var(--text-muted)" }}>
-                รวม ฿{money(String(Number(r.amountBeforeVat || 0) + Number(r.vatAmount || 0)))}
-              </div>
+              {r.kind === "receipt" && (
+                <div className="text-[11px] text-right" style={{ color: "var(--text-muted)" }}>
+                  รวม ฿{money(String(Number(r.amountBeforeVat || 0) + Number(r.vatAmount || 0)))}
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -261,7 +306,7 @@ export function OcrConfirmModal({
         <div className="shrink-0 flex items-center justify-end gap-2 px-5 py-3.5"
           style={{ borderTop: "1px solid var(--border-light)" }}>
           <Button variant="secondary" size="sm" onClick={onCancel}>ยกเลิก</Button>
-          <Button variant="primary" size="sm" onClick={() => onConfirm(rows)}>ยืนยันบันทึก</Button>
+          <Button variant="primary" size="sm" onClick={() => onConfirm(rows.filter((r) => r.include))}>ยืนยันบันทึก</Button>
         </div>
       </div>
     </Dialog>

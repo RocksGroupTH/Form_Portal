@@ -46,6 +46,29 @@ test("unparseable output yields no rows rather than throwing", () => {
   assert.deepEqual(parseReceiptDocs(""), []);
 });
 
+test("each document carries the kind the model classified it as", () => {
+  const docs = parseReceiptDocs(`[
+    {"kind":"other","description":"Payment Voucher PrePost","docNo":"PVA2601-0021"},
+    {"kind":"slip","date":"2026-01-06","amountBeforeVat":8969,"docNo":"016006114139DTF04569"},
+    {"kind":"receipt","docNo":"EBYC25120005297","amountBeforeVat":1031}
+  ]`);
+  assert.deepEqual(docs.map((d) => d.kind), ["other", "slip", "receipt"]);
+});
+
+test("an unlabelled or unknown kind falls back to receipt", () => {
+  assert.equal(parseReceiptDocs('[{"docNo":"A1","amountBeforeVat":10}]')[0].kind, "receipt");
+  assert.equal(parseReceiptDocs('[{"kind":"invoice","docNo":"A1","amountBeforeVat":10}]')[0].kind, "receipt");
+});
+
+test("one invoice printed across four pages collapses to one row", () => {
+  // The KEX receipt in the AP-3 sample bundle: the same number on every page.
+  const page = (n: number) =>
+    `{"kind":"receipt","docNo":"EBYC25120005297","description":"Transportation .1KG","amountBeforeVat":${n}}`;
+  const docs = parseReceiptDocs(`[${page(19)},${page(19)},${page(19)},${page(1031)}]`);
+  assert.equal(docs.length, 1);
+  assert.equal(docs[0].beforeVat, 19);
+});
+
 const ALLOWED = ["610322005", "610101001", "115030"];
 
 test("a suggestion from the candidate list is kept", () => {

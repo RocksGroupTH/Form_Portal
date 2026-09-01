@@ -140,7 +140,6 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   const [ocrScanning, setOcrScanning] = useState(false);
   // OCR candidates awaiting confirmation (§7) — null while the modal is closed.
   const [ocrRows, setOcrRows] = useState<OcrRow[] | null>(null);
-  const [slipScanning, setSlipScanning] = useState(false);
 
   const [brandCode, setBrandCode] = useState(initial?.brandCode ?? "");
   const [advanceRequestId, setAdvanceRequestId] = useState<number | null>(initial?.clear?.advanceRequestId ?? null);
@@ -640,7 +639,6 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       if (f.size > 4 * 1024 * 1024) return toast.error(`${f.name}: ไฟล์ใหญ่เกิน 4MB`);
     }
     const isProof = refType === "refund_proof";
-    const firstFile = filesArr[0];
     (isProof ? setUploadingProof : setUploading)(true);
     if (isProof) setSlipWarn(null);
     try {
@@ -675,13 +673,13 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           (isProof ? setRefundProofFiles : setFiles)((prev) =>
             prev.some((x) => x.id === newFile.id) ? prev : [...prev, newFile],
           );
-          if (!isProof && isOcrable(f)) ocrDocs.push({ file: f, fileId: j.data.id });
+          if (isOcrable(f)) ocrDocs.push({ file: f, fileId: j.data.id });
         }
       }
       toast.success("แนบไฟล์แล้ว");
-      // Auto-verify the refund slip amount against the required refund (best-effort).
-      if (isProof && firstFile && isOcrable(firstFile)) void verifyRefundSlip(firstFile);
-      // Read each receipt / tax invoice → one expense line per file (best-effort).
+      // Both boxes go through the same reader: the model says what each page is
+      // (receipt / slip / other), and that — not the box it was dropped in —
+      // decides where the values land (decision: 2026-09-01).
       if (ocrDocs.length) void verifyReceipts(ocrDocs);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "อัปโหลดไม่สำเร็จ");
@@ -691,6 +689,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   }
 
   interface ReceiptData {
+    kind: "receipt" | "slip" | "other";
     date: string | null; description: string | null; docNo: string | null;
     wht: number | null; taxId: string | null; payeeName: string | null; payeeAddress: string | null;
     total: number | null; vat: number | null; beforeVat: number | null;
@@ -726,6 +725,10 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
         const read = await ocrReceipt(d.file); // serialized — the OCR worker is shared
         read.forEach((r, i) => candidates.push({
           key: `${d.fileId}-${i}`,
+          kind: r.kind,
+          // "other" pages are listed so the reviewer sees they were found, but
+          // start unticked — nothing vanishes without being shown.
+          include: r.kind !== "other",
           sourceFileId: d.fileId,
           fileName: d.file.name,
           expenseDate: r.date ?? "",
@@ -750,12 +753,38 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
     }
   }
 
-  /** The user accepted (possibly edited) OCR rows — each fills the next empty
-   *  expense line, appending one when none is free. Never overwrites a line the
-   *  user already filled. */
-  function acceptOcrRows(rows: OcrRow[]) {
+  /** The user accepted (possibly re-classified, possibly edited) OCR rows. A
+   *  receipt fills the next empty expense line, appending one when none is free
+   *  and never overwriting a line the user already filled; a slip fills the
+   *  refund-transfer fields. The row's kind decides, not the upload box. */
+  function acceptOcrRows(accepted: OcrRow[]) {
     setOcrRows(null);
-    if (rows.length === 0) return;
+    if (accepted.length === 0) return;
+
+    const rows = accepted.filter((r) => r.kind === "receipt");
+    const slips = accepted.filter((r) => r.kind === "slip");
+
+    // A slip is the proof of money going back to the company: take its amount
+    // and date as the editable defaults, and say so when it disagrees with the
+    // refund the form computed.
+    const slip = slips[0];
+    if (slip) {
+      const amount = num(slip.amountBeforeVat);
+      if (amount > 0) setRefundTransferAmount(String(amount));
+      if (slip.expenseDate) setRefundTransferDate(slip.expenseDate);
+      if (refundToCompany > 0 && amount > 0 && round2(amount) !== round2(refundToCompany)) {
+        setSlipWarn(
+          `ยอดในสลิปไม่ตรงกับที่ต้องโอนคืน (฿${refundToCompany.toLocaleString()}) — อ่านจากสลิปได้ ฿${amount.toLocaleString()}`,
+        );
+      } else {
+        setSlipWarn(null);
+      }
+    }
+
+    if (rows.length === 0) {
+      if (slip) toast.success("เติมยอด/วันที่จากสลิปโอนเงินให้แล้ว — กรุณาตรวจสอบ");
+      return;
+    }
 
     setLines((prev) => {
       const next = [...prev];
@@ -801,50 +830,8 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
     }
 
     toast.success(
-      rows.length === 1
-        ? "เพิ่ม 1 รายการลงตารางค่าใช้จ่ายแล้ว"
-        : `เพิ่ม ${rows.length} รายการลงตารางค่าใช้จ่ายแล้ว`,
+      `เพิ่ม ${rows.length} รายการลงตารางค่าใช้จ่ายแล้ว` + (slip ? " · เติมข้อมูลสลิปโอนเงินให้แล้ว" : ""),
     );
-  }
-
-  /** OCR the refund slip: Claude vision first, fallback Tesseract. */
-  async function verifyRefundSlip(file: File) {
-    if (!(refundToCompany > 0)) return;
-    setSlipScanning(true);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("expected", String(refundToCompany));
-      const res = await fetch("/api/request/clear-advance/verify-slip", { method: "POST", body: fd });
-      const j = (await res.json()) as {
-        ok: boolean;
-        data?: {
-          configured: boolean; matched: boolean; expected: number;
-          bestAmount: number | null; date: string | null; amounts: number[];
-        };
-      };
-      if (!j.ok || !j.data || !j.data.configured) { setSlipWarn(null); return; }
-      const { matched, bestAmount, date, amounts } = j.data;
-
-      // Read-from-file → default the editable fields (user can still edit).
-      if (bestAmount != null) setRefundTransferAmount(String(bestAmount));
-      if (date) setRefundTransferDate(date);
-
-      if (matched) {
-        setSlipWarn(null);
-        toast.success(`อ่านสลิปแล้ว: ฿${(bestAmount ?? refundToCompany).toLocaleString()} ตรงกับยอดที่ต้องโอนคืน`);
-      } else {
-        const found = amounts.length
-          ? amounts.slice(0, 5).map((a) => `฿${a.toLocaleString()}`).join(", ")
-          : "ไม่พบตัวเลขยอดเงิน";
-        setSlipWarn(`ยอดในสลิปไม่ตรงกับที่ต้องโอนคืน (฿${refundToCompany.toLocaleString()}) — อ่านจากสลิปได้: ${found}`);
-        if (bestAmount != null) toast("เติมยอด/วันที่จากสลิปให้แล้ว — กรุณาตรวจสอบก่อนส่ง");
-      }
-    } catch {
-      setSlipWarn(null); // OCR unavailable — never block the flow.
-    } finally {
-      setSlipScanning(false);
-    }
   }
 
   /** Clicking the ✕ opens a confirm popup; the actual delete runs on confirm. */
@@ -1093,7 +1080,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           {!readOnly && advanceRequestId != null && (
             <div className="flex items-start justify-between gap-2 mt-1">
               <p className="text-[11px] m-0" style={{ color: "var(--text-faint)" }}>
-              แนบใบเสร็จ/ใบกำกับภาษี (รูปภาพหรือ PDF · ไทย/อังกฤษ) — <b>1 ไฟล์ = 1 รายการ</b> ระบบจะอ่าน “วันที่ · เลขที่เอกสาร · รายละเอียด · ยอดก่อน VAT · VAT · หัก ณ ที่จ่าย (พร้อมเลขผู้เสียภาษี/ชื่อผู้รับ ถ้ามี)” มาเติมให้ (แก้ไขได้)
+              แนบใบเสร็จ/ใบกำกับภาษี (รูปภาพหรือ PDF · ไทย/อังกฤษ) — <b>1 ใบกำกับ = 1 รายการ</b> (ไฟล์เดียวมีหลายใบได้ · PDF อ่านได้สูงสุด 15 หน้า) ระบบจะอ่าน “วันที่ · เลขที่เอกสาร · รายละเอียด · ยอดก่อน VAT · VAT · หัก ณ ที่จ่าย (พร้อมเลขผู้เสียภาษี/ชื่อผู้รับ ถ้ามี)” มาเติมให้ (แก้ไขได้)
               </p>
               <PoweredByClaude />
             </div>
@@ -1109,7 +1096,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
         </div>
         {!readOnly && (
           <p className="text-[11px] m-0 -mt-2 leading-relaxed" style={{ color: "var(--text-faint)" }}>
-            1 ไฟล์ = 1 รายการ · ระบบจะอ่าน “วันที่ · เลขที่เอกสาร · รายละเอียด · ยอดก่อน VAT · VAT · หัก ณ ที่จ่าย” มาเติมให้ Auto (สามารถแก้ไขได้)
+            1 ใบกำกับ = 1 รายการ · ระบบจะอ่าน “วันที่ · เลขที่เอกสาร · รายละเอียด · ยอดก่อน VAT · VAT · หัก ณ ที่จ่าย” มาเติมให้ Auto (สามารถแก้ไขได้)
           </p>
         )}
         <FieldError msg={fieldErrors.lines} />
@@ -1582,13 +1569,6 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           subtitle="AI กำลังอ่านข้อมูลจากใบเสร็จ / ใบกำกับภาษี"
         />
       )}
-      {slipScanning && (
-        <TravelExpenseLoadingPopup
-          label="กำลังตรวจสอบ..."
-          subtitle="AI กำลังอ่านข้อมูลจากสลิปโอนเงิน"
-        />
-      )}
-
       <AttachmentViewer
         open={viewing != null}
         source={viewing?.source ?? null}

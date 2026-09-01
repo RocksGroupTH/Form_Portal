@@ -22,15 +22,17 @@ import {
 const MODEL = process.env.ANTHROPIC_RECEIPT_MODEL || "claude-haiku-4-5-20251001";
 
 /**
- * Read every document in a receipt image (PNG/JPEG/WebP buffer) with Claude
- * vision. One image can hold several tax invoices, so this returns one entry per
- * invoice number — empty when the key is missing or the call/parse fails, so the
- * caller can fall back cleanly.
+ * Read every document in an upload with Claude vision. `images` is one image, or
+ * the consecutive pages of one PDF — they go in a single call so a tax invoice
+ * printed across four pages is recognised as ONE document, not four. Returns one
+ * entry per invoice number, empty when the key is missing or the call/parse
+ * fails, so the caller can fall back cleanly.
  */
 export async function extractReceiptsWithAI(
-  buffer: Buffer,
+  images: Buffer[],
   mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif" = "image/png",
 ): Promise<ReceiptDoc[]> {
+  if (images.length === 0) return [];
   try {
     const { value: apiKey } = await resolveApiKey("ANTHROPIC_API_KEY");
     if (!apiKey) return [];
@@ -38,14 +40,17 @@ export async function extractReceiptsWithAI(
     const client = new Anthropic({ apiKey });
     const res = await client.messages.create({
       model: MODEL,
-      max_tokens: 2048,
+      max_tokens: 4096,
       system: RECEIPT_SYSTEM,
       messages: [
         {
           role: "user",
           content: [
-            { type: "image", source: { type: "base64", media_type: mediaType, data: buffer.toString("base64") } },
-            { type: "text", text: RECEIPT_USER_TEXT },
+            ...images.map((img) => ({
+              type: "image" as const,
+              source: { type: "base64" as const, media_type: mediaType, data: img.toString("base64") },
+            })),
+            { type: "text" as const, text: RECEIPT_USER_TEXT },
           ],
         },
       ],

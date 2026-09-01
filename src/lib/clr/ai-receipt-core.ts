@@ -7,32 +7,55 @@ import type { ReceiptExtractResult } from "./slip-verify";
  * ai-receipt.ts (server-only) wraps this with the real Claude vision call.
  */
 
-/** One document read off an uploaded image. A single photo can hold several. */
-export type ReceiptDoc = ReceiptExtractResult;
+/** What a page actually is. The user does not tell us which upload box holds a
+ *  slip and which holds a receipt — the model classifies each page on what it
+ *  shows, and this is what routes the row (decision: 2026-09-01). */
+export type ReceiptKind = "receipt" | "slip" | "other";
+
+const KINDS: readonly ReceiptKind[] = ["receipt", "slip", "other"];
+
+/** One document read off an upload. A single file routinely holds several. */
+export interface ReceiptDoc extends ReceiptExtractResult {
+  kind: ReceiptKind;
+}
 
 export const RECEIPT_SYSTEM = [
-  "You read Thai/English receipts & tax invoices and return ONE JSON array only.",
+  "You read Thai/English accounting paperwork and return ONE JSON array only.",
   "No prose, no markdown fences. Use null when a value is not present — never guess.",
-  "An image can hold SEVERAL documents. Return one array entry per document / tax-invoice",
-  "number you can see. An image with a single invoice returns an array of one entry.",
+  "You may be given several images. They are the consecutive PAGES of ONE upload, in order.",
+  "One uploaded file normally MIXES several kinds of page — a cover voucher, an internal",
+  "clearing form, a bank transfer slip and one or more receipts, in any order. That is the",
+  "normal case, not an exception. Judge every page by what it actually shows, never by where",
+  "it sits in the file.",
+  "Classify each document you find with a \"kind\":",
+  '- "receipt": a receipt, tax invoice, ใบเสร็จรับเงิน or ใบกำกับภาษี from a seller.',
+  '- "slip": a bank transfer / payment slip (PromptPay, mobile banking, โอนเงินสำเร็จ).',
+  '- "other": anything else — payment vouchers, internal clearing/approval forms, blank or',
+  "  unreadable scans. Still return the entry, with a short description saying what the page",
+  "  is, so the person reviewing can see it was found and skipped.",
+  "Return one array entry per distinct document across all the pages.",
+  "A single document printed over several pages is ONE entry — take its totals from the page",
+  "that carries the grand total, not from each page.",
   "Never merge two invoice numbers into one entry, and never split one invoice into two.",
   "Rules for EACH entry:",
-  '- date: that document\'s date as "YYYY-MM-DD". Convert Buddhist year (พ.ศ.) to CE (−543).',
+  '- date: the document date as "YYYY-MM-DD". Convert Buddhist year (พ.ศ.) to CE (−543).',
+  '  For a "slip" this is the transfer date.',
   "- description: if that document lists several line items, use the description of the",
   "  single line item with the LARGEST amount (keep original language). If there is only",
   "  one item, use that item's description.",
-  "- docNo: that document's own document / tax-invoice number.",
+  "- docNo: that document's own document / tax-invoice number; for a slip, its reference no.",
   "- amountBeforeVat, vat, wht: numbers in THB (no commas). If the document lists several",
   "  line items, amountBeforeVat and vat must reflect the TOTAL of that WHOLE document (the",
   "  grand total across all its lines) — NOT just the amount of the largest line item chosen",
-  "  above for description. wht = ภาษีหัก ณ ที่จ่าย amount.",
+  '  above for description. wht = ภาษีหัก ณ ที่จ่าย amount. For a "slip", amountBeforeVat is',
+  "  the transferred amount and vat and wht are null.",
   "- taxId: payee 13-digit tax id, digits only.",
   "- payeeName, payeeAddress: the seller/payee name and address (original language).",
 ].join("\n");
 
 export const RECEIPT_USER_TEXT =
-  "Extract every document in this image. Return only a JSON array; each entry has the keys: " +
-  "date, description, docNo, amountBeforeVat, vat, wht, taxId, payeeName, payeeAddress.";
+  "Extract every document in these pages. Return only a JSON array; each entry has the keys: " +
+  "kind, date, description, docNo, amountBeforeVat, vat, wht, taxId, payeeName, payeeAddress.";
 
 /** An account the line's branch is allowed to charge (§6 decides the set). */
 export interface GlCandidate {
@@ -69,6 +92,7 @@ export function pickSuggestedGl(raw: string, allowed: readonly string[]): string
 }
 
 type AiJson = {
+  kind?: string | null;
   date?: string | null;
   description?: string | null;
   docNo?: string | null;
@@ -106,10 +130,18 @@ function extractJson(raw: string): unknown {
   return null;
 }
 
+function toKind(v: unknown): ReceiptKind {
+  const k = typeof v === "string" ? v.trim().toLowerCase() : "";
+  // An unlabelled entry is treated as a receipt: that is what the expense table
+  // is for, and the reviewer can re-label it in the confirm modal either way.
+  return (KINDS as readonly string[]).includes(k) ? (k as ReceiptKind) : "receipt";
+}
+
 function toDoc(entry: AiJson): ReceiptDoc {
   const beforeVat = toNum(entry.amountBeforeVat);
   const vat = toNum(entry.vat);
   return {
+    kind: toKind(entry.kind),
     date: toStr(entry.date),
     description: toStr(entry.description),
     docNo: toStr(entry.docNo),
@@ -137,9 +169,20 @@ export function parseReceiptDocs(raw: string): ReceiptDoc[] {
         ? ((json as { documents: unknown[] }).documents)
         : [json]
       : [];
-  return list
+  const docs = list
     .filter((e): e is AiJson => !!e && typeof e === "object")
     .map(toDoc)
-    // An entry with nothing identifying on it is noise, not a receipt.
+    // An entry with nothing identifying on it is noise, not a document.
     .filter((d) => d.date || d.docNo || d.description || d.beforeVat != null || d.payeeName);
+
+  // One row per invoice number: a document read off four consecutive pages must
+  // not come back four times if the model answers per page after all.
+  const seen = new Set<string>();
+  return docs.filter((d) => {
+    if (!d.docNo) return true;
+    const key = `${d.kind}|${d.docNo}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
