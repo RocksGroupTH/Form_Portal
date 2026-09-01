@@ -48,8 +48,15 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
   const employeeCode = requestNo.slice(0, 35);
   const defaultBranch = input.defaultBranchCode ?? "";
   const description = `เคลียร์เงินทดรองจ่าย ${requestNo}`.slice(0, 100);
+
+  const actualNet = r2(items.reduce((s, it) => s + it.amountBeforeVat + (it.vatAmount || 0) - (it.whtAmount || 0), 0));
+  const bankAmount = r2(input.advanceAmount - actualNet);
+  // Spec §3.2: Refund when the employee returns money, Payment when the company pays more.
+  // It describes the whole clearing, so every line carries the same value.
+  const documentType = bankAmount > 0 ? "Refund" : "Payment";
+
   const glLine = (accountNo: string, amount: number, branchCode: string | null): PpapJournalLinePayload => ({
-    groupNo: "G1", postingDate, documentType: "Payment", accountType: "G/L Account",
+    groupNo: "G1", postingDate, documentType, accountType: "G/L Account",
     accountNo, description,
     paymentMethodCode: "BANK", amount: r2(amount), balAccountType: "G/L Account",
     employeeCode, branchCode: branchCode ?? defaultBranch, departmentCode,
@@ -81,18 +88,16 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
   // Spec §3.2: the clear-advance vendor line is always 0 too. The line still has to
   // be here, pointing at the vendor AP-2 debited, so accounting can match it.
   lines.push({
-    groupNo: "G1", postingDate, documentType: "Payment",
+    groupNo: "G1", postingDate, documentType,
     accountType: "Vendor", accountNo: advanceVendorNo,
     description,
     paymentMethodCode: "BANK", amount: 0,
     employeeCode, branchCode: defaultBranch, departmentCode,
   });
 
-  const actualNet = r2(items.reduce((s, it) => s + it.amountBeforeVat + (it.vatAmount || 0) - (it.whtAmount || 0), 0));
-  const bankAmount = r2(input.advanceAmount - actualNet);
   if (bankAmount !== 0) {
     lines.push({
-      groupNo: "G1", postingDate, documentType: "Payment", accountType: "Bank Account",
+      groupNo: "G1", postingDate, documentType, accountType: "Bank Account",
       accountNo: c.bankAccountNo, description,
       paymentMethodCode: "BANK", amount: bankAmount,
       employeeCode, branchCode: defaultBranch, departmentCode,

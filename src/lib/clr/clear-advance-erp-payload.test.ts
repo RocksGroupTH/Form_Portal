@@ -87,6 +87,25 @@ test("exactly one Vendor line, and no G/L line carries the advance amount", () =
   assert.ok(!p.lines.some((l) => l.accountType === "G/L Account" && l.amount === -1000));
 });
 
+test("money returned to the company -> Refund on every line", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 1500, vatAmount: 0, whtAmount: 0, branchCode: null }],
+  }));
+  assert.ok(p.lines.every((l) => l.documentType === "Refund"));
+});
+
+test("company pays extra -> Payment on every line", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 2500, vatAmount: 0, whtAmount: 0, branchCode: null }],
+  }));
+  assert.ok(p.lines.every((l) => l.documentType === "Payment"));
+});
+
+test("spent exactly the advance -> Payment", () => {
+  const p = buildClearAdvanceJournalPayload(base({}));
+  assert.ok(p.lines.every((l) => l.documentType === "Payment"));
+});
+
 test("no vendor on the cleared advance -> throws", () => {
   assert.throws(() => buildClearAdvanceJournalPayload(base({
     config: { ...cfg, advanceVendorNo: "" },
