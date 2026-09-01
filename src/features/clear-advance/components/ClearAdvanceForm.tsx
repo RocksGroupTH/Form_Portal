@@ -1044,9 +1044,10 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                 <Th w={34}>#</Th>
                 <Th w={120}>วันที่</Th>
                 <Th w={210}>เลขที่เอกสาร</Th>
+                {/* Branch comes before the G/L account: it filters the account list. */}
+                <Th w={190}>สาขา</Th>
                 <Th w={220}>รายการ</Th>
                 <Th w={240}>รายละเอียด</Th>
-                <Th w={190}>สาขา</Th>
                 <Th w={100} right>ก่อน VAT</Th>
                 <Th w={90} right>VAT</Th>
                 <Th w={100} right>รวม</Th>
@@ -1072,6 +1073,11 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                         onChange={(e) => updateLine(idx, { docNo: e.target.value })} />
                     </Td>
                     <Td>
+                      <BranchPicker options={branches} value={l.branchCode}
+                        disabled={readOnly || !brandCode} noBrand={!brandCode}
+                        onPick={(code) => updateLine(idx, { branchCode: code })} />
+                    </Td>
+                    <Td>
                       {glForced ? (
                         <div className="text-[12px] px-2 py-1.5 rounded-lg"
                           style={{ background: "var(--bg-card-alt)", color: "var(--text-muted)", border: "1px dashed var(--border-card)" }}>
@@ -1081,7 +1087,8 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                         <GlPicker
                           options={glAccounts}
                           valueNo={l.glAccountNo}
-                          disabled={readOnly}
+                          disabled={readOnly || !l.branchCode}
+                          noBranch={!l.branchCode}
                           onPick={(o) => updateLine(idx, { glAccountNo: o?.glAccountNo ?? "", glAccountName: o?.nameTh ?? "" })}
                         />
                       )}
@@ -1092,11 +1099,6 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                         value={l.description} disabled={readOnly} placeholder="—"
                         ref={(el) => autoGrow(el)}
                         onChange={(e) => { autoGrow(e.target); updateLine(idx, { description: e.target.value }); }} />
-                    </Td>
-                    <Td>
-                      <BranchPicker options={branches} value={l.branchCode}
-                        disabled={readOnly || !brandCode} noBrand={!brandCode}
-                        onPick={(code) => updateLine(idx, { branchCode: code })} />
                     </Td>
                     <Td right>
                       <input type="number" min="0" step="0.01" className={`${cellClass} text-right`} style={{ ...cellStyle, width: "100%" }}
@@ -1154,6 +1156,11 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                     value={l.docNo} disabled={readOnly} placeholder="—"
                     onChange={(e) => updateLine(idx, { docNo: e.target.value })} />
                 </MField>
+                <MField label="สาขา">
+                  <BranchPicker options={branches} value={l.branchCode}
+                    disabled={readOnly || !brandCode} noBrand={!brandCode}
+                    onPick={(code) => updateLine(idx, { branchCode: code })} />
+                </MField>
                 <MField label="รายการ">
                   {glForced ? (
                     <div className="text-[12px] px-3 py-2 rounded-xl"
@@ -1162,7 +1169,8 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                     </div>
                   ) : (
                     <GlPicker
-                      options={glAccounts} valueNo={l.glAccountNo} disabled={readOnly}
+                      options={glAccounts} valueNo={l.glAccountNo}
+                      disabled={readOnly || !l.branchCode} noBranch={!l.branchCode}
                       onPick={(o) => updateLine(idx, { glAccountNo: o?.glAccountNo ?? "", glAccountName: o?.nameTh ?? "" })}
                     />
                   )}
@@ -1173,11 +1181,6 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                     value={l.description} disabled={readOnly} placeholder="—"
                     ref={(el) => autoGrow(el)}
                     onChange={(e) => { autoGrow(e.target); updateLine(idx, { description: e.target.value }); }} />
-                </MField>
-                <MField label="สาขา">
-                  <BranchPicker options={branches} value={l.branchCode}
-                    disabled={readOnly || !brandCode} noBrand={!brandCode}
-                    onPick={(code) => updateLine(idx, { branchCode: code })} />
                 </MField>
                 <div className="grid grid-cols-2 gap-2">
                   <MField label="ก่อน VAT">
@@ -1549,11 +1552,13 @@ function FootVal({ value, accent, tone }: { value: string; accent?: boolean; ton
 
 /** Searchable G/L account picker (`glAccountNo — nameTh`). */
 function GlPicker({
-  options, valueNo, disabled, onPick,
+  options, valueNo, disabled, noBranch, onPick,
 }: {
   options: GlAccountOption[];
   valueNo: string;
   disabled?: boolean;
+  /** The line has no branch yet, so the account list cannot be narrowed. */
+  noBranch?: boolean;
   onPick: (o: GlAccountOption | null) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -1611,10 +1616,10 @@ function GlPicker({
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="listbox" aria-expanded={open}
         aria-label={selected ? `รายการ: ${selected.glAccountNo} ${selected.nameTh ?? ""}` : "เลือกรายการบัญชี"}
-        className={`${cellClass} w-full text-left flex items-center gap-1.5 disabled:cursor-not-allowed`}
+        className={`${cellClass} w-full text-left flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-60`}
         style={{ ...cellStyle, minHeight: 32 }}>
         <span className="flex-1 min-w-0 truncate" style={{ color: selected ? "var(--text-primary)" : "var(--text-faint)" }}>
-          {selected ? `${selected.glAccountNo} — ${selected.nameTh ?? ""}` : "— เลือกรายการ —"}
+          {selected ? `${selected.glAccountNo} — ${selected.nameTh ?? ""}` : (noBranch ? "เลือกสาขาก่อน" : "— เลือกรายการ —")}
         </span>
         <Search size={12} className="shrink-0" style={{ color: "var(--text-faint)" }} />
       </button>
