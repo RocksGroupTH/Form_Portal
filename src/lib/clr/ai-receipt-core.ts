@@ -35,6 +35,23 @@ export interface ReceiptRead {
   skippedPages: number;
 }
 
+/**
+ * How Thai paperwork writes a date. Spelled out because the model was reading
+ * "6 ม.ค. 69" as 2026-04-06 — day and month swapped — and a slip's date becomes
+ * the journal's Posting Date for a Refund (§3.2), so a swap posts months into the
+ * wrong period. Shared by the receipt and the slip prompt: same documents.
+ */
+export const THAI_DATE_RULES = [
+  "Thai dates are written DAY month YEAR, never month/day: 6 ม.ค. 69 is the 6th of January,",
+  "not the 1st of June. 23/12/2568 is the 23rd of December.",
+  "The month is usually a Thai abbreviation: ม.ค.=01 ก.พ.=02 มี.ค.=03 เม.ย.=04 พ.ค.=05",
+  "มิ.ย.=06 ก.ค.=07 ส.ค.=08 ก.ย.=09 ต.ค.=10 พ.ย.=11 ธ.ค.=12.",
+  "The year is Buddhist (พ.ศ.) — subtract 543 to get the Christian year. A two-digit year is",
+  "the tail of the Buddhist year: 69 → 2569 → 2026. A four-digit year is Buddhist too:",
+  "2568 → 2025. Only a year already below 2400 is Christian and stays as it is.",
+  'Always answer with "YYYY-MM-DD" in the Christian era (ค.ศ.).',
+].join("\n");
+
 export const RECEIPT_SYSTEM = [
   "You read Thai/English accounting paperwork and return ONE JSON array only.",
   "No prose, no markdown fences. Use null when a value is not present — never guess.",
@@ -57,8 +74,7 @@ export const RECEIPT_SYSTEM = [
   "Never merge two invoice numbers into one entry, and never split one invoice into two.",
   "Rules for EACH entry:",
   "- pages: how many pages of this upload the document covers (1 unless it runs over several).",
-  '- date: the document date as "YYYY-MM-DD". Convert Buddhist year (พ.ศ.) to CE (−543).',
-  '  For a "slip" this is the transfer date.',
+  '- date: the document date. For a "slip" this is the transfer date.',
   "- description: if that document lists several line items, use the description of the",
   "  single line item with the LARGEST amount (keep original language). If there is only",
   "  one item, use that item's description.",
@@ -70,6 +86,8 @@ export const RECEIPT_SYSTEM = [
   "  the transferred amount and vat and wht are null.",
   "- taxId: payee 13-digit tax id, digits only.",
   "- payeeName, payeeAddress: the seller/payee name and address (original language).",
+  "Reading a date:",
+  THAI_DATE_RULES,
 ].join("\n");
 
 export const RECEIPT_USER_TEXT =
@@ -136,6 +154,35 @@ export function toStr(v: unknown): string | null {
   return s ? s.slice(0, 300) : null;
 }
 
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const DAY_MS = 86_400_000;
+
+/**
+ * A date the model read, or null. Nothing here can catch a swapped day and month
+ * — 2026-04-06 is a perfectly good date — but a date that cannot exist, or that
+ * has not happened yet, is certainly a misread. An empty field the user fills in
+ * is cheap; a wrong Posting Date on a Refund journal (§3.2) is not.
+ */
+export function toDate(v: unknown, now: Date = new Date()): string | null {
+  const m = toStr(v)?.match(ISO_DATE);
+  if (!m) return null;
+  let year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  // The prompt asks for the Christian era, but a Buddhist year is unmistakable
+  // and is the conversion the model was asked to make — finish it rather than
+  // throw the date away as "600 years in the future".
+  if (year >= 2400) year -= 543;
+  const d = new Date(Date.UTC(year, month - 1, day));
+  // Round-trip: Date rolls 2026-02-30 forward into March instead of refusing it.
+  if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) {
+    return null;
+  }
+  // No one clears an advance against paperwork dated a year out.
+  if (d.getTime() > now.getTime() + 366 * DAY_MS) return null;
+  return `${String(year).padStart(4, "0")}-${m[2]}-${m[3]}`;
+}
+
 /** First JSON value in a model reply — array preferred, single object accepted. */
 function extractJson(raw: string): unknown {
   const text = raw.replace(/```[a-z]*\n?/gi, "");
@@ -170,7 +217,7 @@ function toDoc(entry: AiJson, kind: ReceiptKind): ReceiptDoc {
   const vat = toNum(entry.vat);
   return {
     kind,
-    date: toStr(entry.date),
+    date: toDate(entry.date),
     description: toStr(entry.description),
     docNo: toStr(entry.docNo),
     wht: toNum(entry.wht),
