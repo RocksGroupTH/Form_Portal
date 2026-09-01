@@ -32,11 +32,19 @@ export function WorkLocationList({
   return (
     <GooglePlaceField
       value={name || null}
-      onChange={(v) => onChange([{ name: v ?? "", sortOrder: 0 }])}
+      // Typed, not picked — so no coordinates, and any the previous pick left
+      // are dropped rather than kept against a different place.
+      onChange={(v) => onChange([{ name: v ?? "", sortOrder: 0, lat: null, lng: null }])}
+      withCoordinates
       // Google's secondary text is where the place is — "Chiang Mai, Thailand"
       // — which is what the parent matches against the จังหวัด/เมือง list. ORS
       // called the same thing `region`; the shape differs, the use does not.
-      onSelectPlace={(p) => onProvinceDetected?.({ label: p.label, region: p.secondaryText })}
+      onSelectPlace={(p) => {
+        // The label was already committed by onChange above; this adds the
+        // coordinates to the row it just wrote.
+        onChange([{ name: p.label, sortOrder: 0, lat: p.lat, lng: p.lng }]);
+        onProvinceDetected?.({ label: p.label, region: p.secondaryText });
+      }}
       country={country}
       placeholder={placeholder}
       hasError={!!hasError && !name.trim()}

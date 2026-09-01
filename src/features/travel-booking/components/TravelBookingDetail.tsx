@@ -56,6 +56,7 @@ import { TravelBookingStatusBadge } from "./TravelBookingStatusBadge";
 import { REQUIRED_BOOKING_RULES } from "@/features/travel-booking/lib/booking-requirements";
 import { DIRECTION_LABEL_TH } from "@/features/travel-booking/constants";
 import { fmtBaht } from "./shared";
+import { GooglePinView } from "./GooglePinView";
 import { countryNameBoth } from "@/lib/acc/country-currency";
 import { BOOKING_DEFAULT_COUNTRY } from "@/lib/acc/travel-booking/booking-country";
 import type {
@@ -1055,7 +1056,18 @@ export function TravelBookingDetail({
               )
             }
           />
-          <DetailRow label="จังหวัด/เมือง" value={request.provinceName} />
+          {/* The pin, directly under the places it pins. Renders nothing at all
+              for a trip whose places were typed rather than picked, or filed
+              before coordinates were captured (migration 135) — those cannot be
+              backfilled, so the names above stand alone exactly as they did. */}
+          <GooglePinView
+            places={request.workLocations.map((w) => ({ name: w.name, lat: w.lat, lng: w.lng }))}
+          />
+          {/* History only: ข้อ8 was removed on 2026-09-01, so a newer trip has
+              no province and this row disappears rather than reading "—". */}
+          {request.provinceName && (
+            <DetailRow label="จังหวัด/เมือง (เดิม)" value={request.provinceName} />
+          )}
           {/* Only when it is not Thailand. A domestic trip saying "ไทย" is a row
               that adds nothing to every request anybody ever files; a foreign
               one saying nothing is the omission that matters. Null reads as

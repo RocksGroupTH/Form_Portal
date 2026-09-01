@@ -99,6 +99,16 @@ export interface WorkLocation {
   id: number;
   name: string;
   sortOrder: number;
+  /**
+   * Where the place is, when Google was asked (migration 135).
+   *
+   * **Null for every row stored before 2026-09-01 and for every place typed
+   * rather than picked**, and it can never be backfilled: the Google key is
+   * HTTP-referrer restricted, so coordinates exist only if a browser captured
+   * them at the moment of the pick. The map renders nothing for a null.
+   */
+  lat: number | null;
+  lng: number | null;
 }
 
 /** ข้อ13 — จุดขึ้นรถ/ขึ้นเครื่อง per direction (AccTravelDepartureLocation), when *NeedsDepartureLocations. */
@@ -398,7 +408,7 @@ export interface SaveTravelBookingInput {
 
   workDetail: string | null;
 
-  workLocations: { name: string; sortOrder: number }[];
+  workLocations: { name: string; sortOrder: number; lat?: number | null; lng?: number | null }[];
 
   accommodationId: number | null;
   accommodationCustomText: string | null;

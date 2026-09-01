@@ -33,6 +33,7 @@ export function GooglePlaceField({
   onSelectPlace,
   cities,
   country,
+  withCoordinates,
   hasError,
   placeholder = "พิมพ์ค้นหาสถานที่จาก Google Maps...",
 }: {
@@ -50,6 +51,9 @@ export function GooglePlaceField({
     mainText: string | null;
     secondaryText: string | null;
     label: string;
+    /** Null unless Place Details answered — see `take` below. */
+    lat: number | null;
+    lng: number | null;
   }) => void;
   /** Narrow Google to cities, for a จังหวัด/เมือง picker. */
   cities?: boolean;
@@ -60,6 +64,14 @@ export function GooglePlaceField({
    * had (`boundary.country`) and which was dropped when it moved to Google.
    */
   country?: string | null;
+  /**
+   * Ask Google for the picked place's coordinates.
+   *
+   * **A second billed call** — Place Details, priced apart from autocomplete —
+   * so it is opt-in and fires only on a pick, never while typing. Set it only
+   * where a pin is actually rendered.
+   */
+  withCoordinates?: boolean;
   hasError?: boolean;
   placeholder?: string;
 }) {
@@ -93,6 +105,7 @@ export function GooglePlaceField({
           onSelectPlace={onSelectPlace}
           cities={cities}
           country={country}
+          withCoordinates={withCoordinates}
           hasError={hasError}
           placeholder={placeholder}
         />
@@ -131,6 +144,7 @@ function Inner({
   onSelectPlace,
   cities,
   country,
+  withCoordinates,
   hasError,
   placeholder,
 }: {
@@ -141,9 +155,12 @@ function Inner({
     mainText: string | null;
     secondaryText: string | null;
     label: string;
+    lat: number | null;
+    lng: number | null;
   }) => void;
   cities?: boolean;
   country?: string | null;
+  withCoordinates?: boolean;
   hasError?: boolean;
   placeholder: string;
 }) {
@@ -195,18 +212,49 @@ function Inner({
     if (typed) onChange(typed);
   }
 
-  function take(s: google.maps.places.AutocompleteSuggestion) {
+  async function take(s: google.maps.places.AutocompleteSuggestion) {
     const p = s.placePrediction;
     if (!p) return;
     const label = p.text?.toString() ?? "";
     const mainText = p.mainText?.toString() ?? null;
     const secondaryText = p.secondaryText?.toString() ?? null;
     onChange(label || null);
-    onSelectPlace?.({ mainText, secondaryText, label });
     // Ends the billing session — the next keystroke starts a new one.
     ac.resetToken();
     ac.setQuery("");
     setOpen(false);
+
+    // Coordinates, when the caller wants a pin. THIS IS A SECOND BILLED CALL
+    // — Place Details, priced apart from autocomplete — so it is made only
+    // when `withCoordinates` is set, and only on a pick. AP-1's route picker
+    // does exactly this; the shape is copied rather than reinvented.
+    //
+    // It never blocks the answer: the label is committed above, so a Details
+    // call that fails leaves a work location with no pin rather than a form
+    // that swallowed the selection.
+    let lat: number | null = null;
+    let lng: number | null = null;
+    if (withCoordinates) {
+      try {
+        const place = await p.toPlace();
+        await place.fetchFields({ fields: ["location"] });
+        const loc = place.location;
+        if (loc) {
+          const la = loc.lat();
+          const ln = loc.lng();
+          // (0,0) is a real point in the Gulf of Guinea, so it is refused
+          // rather than treated as "unset" — the same rule AP-1's two
+          // coordinate validators apply.
+          if (Number.isFinite(la) && Number.isFinite(ln) && !(la === 0 && ln === 0)) {
+            lat = la;
+            lng = ln;
+          }
+        }
+      } catch {
+        // No pin for this one. The place is still recorded.
+      }
+    }
+    onSelectPlace?.({ mainText, secondaryText, label, lat, lng });
   }
 
   return (

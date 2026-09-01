@@ -34,6 +34,9 @@ import { isTravelDateTooSoon } from "@/features/travel-booking/lib/earliest-trav
 export interface WorkLocationInput {
   name: string;
   sortOrder: number;
+  /** Captured from Google on a pick; null for a typed place. */
+  lat?: number | null;
+  lng?: number | null;
 }
 
 export interface DepartureLocationInput {
@@ -154,7 +157,14 @@ function tabFromRequest(r: TravelBookingRequest): TabFormState {
     reasonCustomText: r.reasonCustomText,
     workDetail: r.workDetail,
     workLocations: r.workLocations.length
-      ? r.workLocations.map((w, i) => ({ name: w.name, sortOrder: w.sortOrder ?? i }))
+      // Coordinates come back with the row: a resumed draft that is saved again
+      // without touching the place must not lose its pin.
+      ? r.workLocations.map((w, i) => ({
+          name: w.name,
+          sortOrder: w.sortOrder ?? i,
+          lat: w.lat,
+          lng: w.lng,
+        }))
       : [{ name: "", sortOrder: 0 }],
     accommodationId: r.accommodationId,
     accommodationCustomText: r.accommodationCustomText,
@@ -199,7 +209,7 @@ function buildSaveInput(tab: TabFormState, sortOrder: number): SaveTravelBooking
     workDetail: tab.workDetail,
     workLocations: tab.workLocations
       .filter((w) => w.name?.trim())
-      .map((w, i) => ({ name: w.name.trim(), sortOrder: i })),
+      .map((w, i) => ({ name: w.name.trim(), sortOrder: i, lat: w.lat ?? null, lng: w.lng ?? null })),
     accommodationId: tab.accommodationId,
     accommodationCustomText: tab.accommodationCustomText,
     needsRoomBooking: tab.needsRoomBooking,

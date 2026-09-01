@@ -195,9 +195,14 @@ function mapFileRow(x: Record<string, unknown>): TravelBookingFileMeta {
 
 async function loadWorkLocations(pool: AccPool, travelBookingId: number): Promise<WorkLocation[]> {
   const r = await pool.request().input("tbid", sql.Int, travelBookingId)
-    .query(`SELECT Id, Name, SortOrder FROM [dbo].[AccTravelWorkLocation] WHERE TravelBookingId=@tbid ORDER BY SortOrder, Id`);
+    .query(`SELECT Id, Name, SortOrder, Lat, Lng FROM [dbo].[AccTravelWorkLocation] WHERE TravelBookingId=@tbid ORDER BY SortOrder, Id`);
   return (r.recordset as Record<string, unknown>[]).map((x) => ({
     id: x.Id as number, name: x.Name as string, sortOrder: (x.SortOrder as number) ?? 0,
+    // DECIMAL comes back as a string from the driver on some paths; Number()
+    // both times, and null stays null rather than becoming 0 — which is a real
+    // point in the Gulf of Guinea, not "no coordinates".
+    lat: x.Lat === null || x.Lat === undefined ? null : Number(x.Lat),
+    lng: x.Lng === null || x.Lng === undefined ? null : Number(x.Lng),
   }));
 }
 
@@ -624,10 +629,18 @@ async function upsertTravelBooking(
 }
 
 /** Full replace — work locations have no downstream references, so delete + reinsert is simplest. */
+/** A coordinate pair worth storing: both finite, and not the (0,0) null island. */
+function usableCoord(lat: number | null | undefined, lng: number | null | undefined): boolean {
+  return (
+    typeof lat === "number" && typeof lng === "number" &&
+    Number.isFinite(lat) && Number.isFinite(lng) && !(lat === 0 && lng === 0)
+  );
+}
+
 async function persistWorkLocations(
   tx: AccTx,
   travelBookingId: number,
-  items: { name: string; sortOrder: number }[],
+  items: { name: string; sortOrder: number; lat?: number | null; lng?: number | null }[],
 ): Promise<void> {
   await tx.request().input("tbid", sql.Int, travelBookingId)
     .query(`DELETE FROM [dbo].[AccTravelWorkLocation] WHERE TravelBookingId=@tbid`);
@@ -637,7 +650,12 @@ async function persistWorkLocations(
       .input("tbid", sql.Int, travelBookingId)
       .input("name", sql.NVarChar(300), it.name)
       .input("sort", sql.Int, it.sortOrder ?? i)
-      .query(`INSERT INTO [dbo].[AccTravelWorkLocation] (TravelBookingId, Name, SortOrder) VALUES (@tbid, @name, @sort)`);
+      // (0,0) is refused rather than stored: it is a real point, so letting it
+      // through would put a pin in the Gulf of Guinea instead of showing none.
+      .input("lat", sql.Decimal(10, 7), usableCoord(it.lat, it.lng) ? it.lat! : null)
+      .input("lng", sql.Decimal(10, 7), usableCoord(it.lat, it.lng) ? it.lng! : null)
+      .query(`INSERT INTO [dbo].[AccTravelWorkLocation] (TravelBookingId, Name, SortOrder, Lat, Lng)
+              VALUES (@tbid, @name, @sort, @lat, @lng)`);
   }
 }
 
