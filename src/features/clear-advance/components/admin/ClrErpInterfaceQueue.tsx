@@ -93,7 +93,6 @@ function ClrErpPreviewModal({ items, onClose }: { items: ClrPreviewItem[]; onClo
           {items.map((item) => {
             const totalDebit = item.lines.reduce((s, l) => s + (l.debit ?? 0), 0);
             const totalCredit = item.lines.reduce((s, l) => s + (l.credit ?? 0), 0);
-            const balanced = Math.abs(totalDebit - totalCredit) < 0.01;
             return (
               <div key={item.id} className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border-card)" }}>
                 <div className="flex flex-wrap items-center gap-2 px-3 py-2.5"
@@ -113,6 +112,7 @@ function ClrErpPreviewModal({ items, onClose }: { items: ClrPreviewItem[]; onClo
                   </div>
                 )}
                 {item.ok && item.lines.length > 0 && (
+                  <>
                   <div className="overflow-x-auto">
                     <table className="w-full text-[11px] min-w-[700px]" style={{ borderCollapse: "collapse" }}>
                       <thead>
@@ -144,9 +144,6 @@ function ClrErpPreviewModal({ items, onClose }: { items: ClrPreviewItem[]; onClo
                         <tr style={{ borderTop: "2px solid var(--border-card)", background: "var(--bg-card-alt)" }}>
                           <td colSpan={5} className="px-2.5 py-1.5 text-[11px] font-bold" style={{ color: "var(--text-heading)" }}>
                             รวม ({item.lines.length} บรรทัด)
-                            {balanced
-                              ? <span className="ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{ background: "var(--bg-info-green)", color: "var(--text-info-green)" }}>Dr = Cr ✓</span>
-                              : <span className="ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{ background: "var(--bg-info-red)", color: "var(--status-bad-text)" }}>Dr ≠ Cr !</span>}
                           </td>
                           <td className="px-2.5 py-1.5 text-right tabular-nums font-bold whitespace-nowrap" style={{ color: "var(--text-heading)" }}>{fmtMoney(totalDebit)}</td>
                           <td className="px-2.5 py-1.5 text-right tabular-nums font-bold whitespace-nowrap" style={{ color: "var(--text-heading)" }}>{fmtMoney(totalCredit)}</td>
@@ -154,6 +151,12 @@ function ClrErpPreviewModal({ items, onClose }: { items: ClrPreviewItem[]; onClo
                       </tfoot>
                     </table>
                   </div>
+                  {/* An AP-3 journal never balances by design, so a Dr≠Cr warning here would
+                      train reviewers to ignore the preview. Explain it instead of flagging it. */}
+                  <p className="px-3 py-2 text-[10px] leading-snug" style={{ color: "var(--text-faint)" }}>
+                    ยอด Debit/Credit ไม่เท่ากันเป็นเรื่องปกติ — WHT และบรรทัดล้างเวนเดอร์ส่งเป็น 0 ตามข้อกำหนด (บัญชีล้างเองใน ERP)
+                  </p>
+                  </>
                 )}
               </div>
             );
