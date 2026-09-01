@@ -6,6 +6,12 @@ import { allocateRequestNo } from "@/lib/acc/sequence";
 import { listClrErpBranchOptions } from "@/lib/clr/clear-advance-admin-service";
 import { allowedDimensionTypes } from "@/lib/clr/clear-advance-gl-filter";
 import {
+  isFilledLine,
+  validateLineGlBranch,
+  validateLineMoney,
+  type GlDimensionTypes,
+} from "@/lib/clr/clear-advance-line-validation";
+import {
   resolveManagerEmail,
   resolveRequesterForActor,
   type RequesterSnapshot,
@@ -342,6 +348,40 @@ export async function listBranches(brandCode: string | null): Promise<BranchOpti
 
 /* ─────────────────────────── validation ─────────────────────────── */
 
+/**
+ * DimensionType of every G/L account in the AP-3 master, active or not.
+ * Inactive rows are included on purpose: a draft written while an account was
+ * still open must stay saveable and submittable — what is being checked here is
+ * that the branch may charge the account, not that the picker still offers it.
+ */
+async function loadGlDimensionTypes(): Promise<GlDimensionTypes> {
+  const pool = await getAccPool();
+  const res = await pool.request()
+    .query(`SELECT GlAccountNo, DimensionType FROM [dbo].[AccClearAdvanceGl]`);
+  return new Map(
+    (res.recordset as Record<string, unknown>[]).map((x) => [
+      String(x.GlAccountNo ?? "").trim(),
+      (x.DimensionType as string) ?? "Employee",
+    ]),
+  );
+}
+
+/**
+ * The line checks the client cannot be trusted to have made, on the request
+ * being written. Throws the Thai messages joined, like the other write guards.
+ */
+async function assertLinesWritable(c: ClearAdvanceDetail, brandCode: string | null): Promise<void> {
+  const lines = (c.items ?? []).filter(isFilledLine);
+  const errs = validateLineMoney(lines);
+  // A non-home brand has every line's G/L overwritten with FORCE_GL_NON_ROCKS_PC
+  // on the way in, so the account the client sent is never stored and checking
+  // it would refuse a request over a value that gets thrown away.
+  if (isRocksPcBrand(brandCode) && lines.some((it) => it.glAccountNo?.trim())) {
+    errs.push(...validateLineGlBranch(lines, await loadGlDimensionTypes()));
+  }
+  if (errs.length) throw new Error(errs.join("\n"));
+}
+
 /** Strict checks run at submit time. Returns Thai error messages (empty = valid). */
 export function validateForSubmit(
   input: ClearAdvanceSaveInput,
@@ -354,15 +394,14 @@ export function validateForSubmit(
   if (!c.advanceRequestId) errs.push("กรุณาเลือกเลขที่ Advance ที่ต้องการเคลียร์");
   // "เป็นค่าใช้จ่ายของ" is derived from the brand — no separate check needed.
 
-  const lines = (c.items ?? []).filter(
-    (it) => it.glAccountNo || it.description?.trim() || n0(it.amountBeforeVat) > 0,
-  );
+  const lines = (c.items ?? []).filter(isFilledLine);
   if (lines.length === 0) errs.push("กรุณาระบุรายละเอียดค่าใช้จ่ายจริงอย่างน้อย 1 รายการ");
   for (const it of lines) {
     if (!it.expenseDate) errs.push("มีรายการค่าใช้จ่ายที่ยังไม่ได้ระบุวันที่");
     if (!it.glAccountNo) errs.push("มีรายการค่าใช้จ่ายที่ยังไม่ได้เลือกหมวด (รายการ)");
     if (!(n0(it.amountBeforeVat) > 0)) errs.push("มีรายการค่าใช้จ่ายที่จำนวนเงินก่อน VAT ไม่ถูกต้อง");
   }
+  errs.push(...validateLineMoney(lines));
 
   // WHT: the certificate section total must equal the line WHT total (AP-3.1 rule).
   const lineWht = round2(lines.reduce((s, it) => s + n0(it.whtAmount), 0));
@@ -420,9 +459,7 @@ async function persistClear(
   // every other brand forces 110723001 (จ่ายแทนบ.อื่น).
   const isRocksPc = isRocksPcBrand(brandCode);
   const expenseOf = brandCode ?? c.expenseOf ?? null;
-  const items = (c.items ?? []).filter(
-    (it) => it.glAccountNo || it.description?.trim() || n0(it.amountBeforeVat) > 0,
-  );
+  const items = (c.items ?? []).filter(isFilledLine);
   const actualTotal = computeActualTotal(items);
   const refund = computeRefund(c.advanceAmount, actualTotal);
 
@@ -553,6 +590,8 @@ export async function saveDraft(
 ): Promise<number> {
   const pool = await getAccPool();
   const requester = await resolveRequesterForActor(loginEmail, null);
+
+  await assertLinesWritable(input.clear, input.brandCode ?? null);
 
   const snap = await snapshotAdvance(pool, input.clear.advanceRequestId ?? null);
   input.clear.advanceRequestNo = snap.requestNo;
@@ -697,6 +736,11 @@ export async function submitRequest(
     { managerStaffId: requester.managerStaffId ?? null },
   );
   if (errors.length) throw new Error(errors.join("\n"));
+
+  // Branch/GL compatibility needs the G/L master, so it cannot live in the pure
+  // validateForSubmit — a draft saved before a branch was changed can still be
+  // carrying an account that branch may not charge.
+  await assertLinesWritable(clear, current.brandCode ?? null);
 
   const managerEmail = await resolveManagerEmail(requester.managerStaffId);
   if (!managerEmail) throw new Error("ไม่พบอีเมลผู้จัดการ (ManagerStaffId) — ไม่สามารถส่งอนุมัติได้");
@@ -848,6 +892,10 @@ export async function saveAccountEdit(
     .query(`SELECT TOP 1 AdvanceAmount FROM [dbo].[AccClearAdvance] WHERE RequestId = @id`);
   if (advRes.recordset.length === 0) throw new Error("ไม่พบข้อมูลเคลียร์");
   input.clear.advanceAmount = num((advRes.recordset[0] as Record<string, unknown>).AdvanceAmount);
+
+  // Checked against input.brandCode — the same brand persistClear books by, so
+  // the accounts validated here are exactly the ones about to be stored.
+  await assertLinesWritable(input.clear, input.brandCode ?? null);
 
   await persistClearOnly(input);
 }
