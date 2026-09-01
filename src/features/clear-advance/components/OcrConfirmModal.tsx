@@ -31,6 +31,8 @@ export interface OcrRow {
   payeeAddress: string;
   /** Grand total as read, used when the WHT certificate has no before-VAT amount. */
   totalAmount: string;
+  /** The account was pre-filled from the AI suggestion (§10) — advisory, editable. */
+  glSuggested?: boolean;
 }
 
 function money(v: string): string {
@@ -114,6 +116,40 @@ export function OcrConfirmModal({
     });
   }, [glByBranch]);
 
+  // Ask for a suggested account once a row has a branch (§10). The branch decides
+  // which accounts are allowed, so this cannot run any earlier; the server picks
+  // from that branch's list only, and the answer is a pre-fill the user can change.
+  const suggestRequested = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (glForced) return;
+    const targets = rows.filter(
+      (r) => r.branchCode && r.description.trim() && !r.glAccountNo
+        && !suggestRequested.current.has(`${r.key}|${r.branchCode}`),
+    );
+    if (targets.length === 0) return;
+    targets.forEach((r) => suggestRequested.current.add(`${r.key}|${r.branchCode}`));
+    let cancelled = false;
+    for (const r of targets) {
+      fetch("/api/request/clear-advance/suggest-gl", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: r.description, branch: r.branchCode }),
+      })
+        .then((res) => res.json())
+        .then((j: { ok: boolean; data?: { glAccountNo: string; nameTh: string | null } | null }) => {
+          if (cancelled || !j.ok || !j.data) return;
+          const s = j.data;
+          setRows((prev) => prev.map((x) =>
+            // Only fill a row that is still empty and still on the branch we asked about.
+            x.key === r.key && x.branchCode === r.branchCode && !x.glAccountNo
+              ? { ...x, glAccountNo: s.glAccountNo, glAccountName: s.nameTh ?? "", glSuggested: true }
+              : x));
+        })
+        .catch(() => {});
+    }
+    return () => { cancelled = true; };
+  }, [rows, glForced]);
+
   const update = (key: string, patch: Partial<OcrRow>) =>
     setRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
 
@@ -159,7 +195,7 @@ export function OcrConfirmModal({
                 </F>
                 <F label="สาขา">
                   <BranchPicker options={branches} value={r.branchCode} noBrand={!brandChosen}
-                    disabled={!brandChosen}
+                    disabled={!brandChosen} inline
                     onPick={(code) => update(r.key, { branchCode: code })} />
                 </F>
                 <F label="รายการ">
@@ -169,13 +205,23 @@ export function OcrConfirmModal({
                       {forcedGlLabel}
                     </div>
                   ) : (
-                    <GlPicker
-                      options={(r.branchCode && glByBranch[r.branchCode]) || []}
-                      valueNo={r.glAccountNo}
-                      disabled={!r.branchCode}
-                      noBranch={!r.branchCode}
-                      onPick={(o) => update(r.key, { glAccountNo: o?.glAccountNo ?? "", glAccountName: o?.nameTh ?? "" })}
-                    />
+                    <>
+                      <GlPicker
+                        options={(r.branchCode && glByBranch[r.branchCode]) || []}
+                        valueNo={r.glAccountNo}
+                        disabled={!r.branchCode}
+                        noBranch={!r.branchCode}
+                        inline
+                        onPick={(o) => update(r.key, {
+                          glAccountNo: o?.glAccountNo ?? "", glAccountName: o?.nameTh ?? "", glSuggested: false,
+                        })}
+                      />
+                      {r.glSuggested && (
+                        <span className="text-[10px]" style={{ color: "var(--text-faint)" }}>
+                          AI แนะนำจากรายละเอียด — เปลี่ยนได้
+                        </span>
+                      )}
+                    </>
                   )}
                 </F>
               </div>

@@ -34,6 +34,40 @@ export const RECEIPT_USER_TEXT =
   "Extract every document in this image. Return only a JSON array; each entry has the keys: " +
   "date, description, docNo, amountBeforeVat, vat, wht, taxId, payeeName, payeeAddress.";
 
+/** An account the line's branch is allowed to charge (§6 decides the set). */
+export interface GlCandidate {
+  glAccountNo: string;
+  nameTh: string | null;
+  nameEn: string | null;
+}
+
+export const GL_SUGGEST_SYSTEM = [
+  "You map a Thai/English expense description to ONE expense G/L account.",
+  "You are given the complete list of accounts this expense line is allowed to charge.",
+  "Answer with the account number alone — no prose, no punctuation, no explanation.",
+  "The number MUST be copied from that list. If none of them fits, answer with nothing at all.",
+].join("\n");
+
+export function buildGlSuggestUserText(description: string, candidates: GlCandidate[]): string {
+  const list = candidates
+    .map((c) => `${c.glAccountNo} = ${c.nameTh ?? c.nameEn ?? ""}`)
+    .join("\n");
+  return `Expense description:\n${description}\n\nAllowed accounts:\n${list}\n\nAnswer with one account number from the list, or nothing.`;
+}
+
+/**
+ * The account number the model chose, but only if it is one of the candidates.
+ * Anything else — an invented number, a refusal, an explanation — becomes "" so
+ * the user is never offered an account they could not have picked by hand.
+ */
+export function pickSuggestedGl(raw: string, allowed: readonly string[]): string {
+  const set = new Set(allowed);
+  for (const token of raw.match(/[A-Za-z0-9._-]+/g) ?? []) {
+    if (set.has(token)) return token;
+  }
+  return "";
+}
+
 type AiJson = {
   date?: string | null;
   description?: string | null;

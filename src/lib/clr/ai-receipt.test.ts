@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseReceiptDocs } from "./ai-receipt-core";
+import { buildGlSuggestUserText, parseReceiptDocs, pickSuggestedGl } from "./ai-receipt-core";
 
 const TWO_DOCS = `[
   {"date":"2026-08-04","description":"ค่าแท็กซี่","docNo":"INV-001","amountBeforeVat":"1,000","vat":70,"wht":null,
@@ -44,4 +44,29 @@ test("unparseable output yields no rows rather than throwing", () => {
   assert.deepEqual(parseReceiptDocs("I cannot read this image."), []);
   assert.deepEqual(parseReceiptDocs("[{oops}]"), []);
   assert.deepEqual(parseReceiptDocs(""), []);
+});
+
+const ALLOWED = ["610322005", "610101001", "115030"];
+
+test("a suggestion from the candidate list is kept", () => {
+  assert.equal(pickSuggestedGl("610322005", ALLOWED), "610322005");
+  assert.equal(pickSuggestedGl("610322005 — ค่าเดินทาง\n", ALLOWED), "610322005");
+});
+
+test("a suggestion outside the candidate list is discarded", () => {
+  assert.equal(pickSuggestedGl("610999999", ALLOWED), "");
+  // Not a prefix/substring match either — a longer number is a different account.
+  assert.equal(pickSuggestedGl("6103220050", ALLOWED), "");
+  assert.equal(pickSuggestedGl("ไม่มีบัญชีที่ตรง", ALLOWED), "");
+  assert.equal(pickSuggestedGl("", ALLOWED), "");
+});
+
+test("the prompt lists exactly the accounts the branch allows", () => {
+  const text = buildGlSuggestUserText("ค่าแท็กซี่", [
+    { glAccountNo: "610322005", nameTh: "ค่าเดินทาง", nameEn: null },
+    { glAccountNo: "115030", nameTh: null, nameEn: "VAT" },
+  ]);
+  assert.ok(text.includes("610322005 = ค่าเดินทาง"));
+  assert.ok(text.includes("115030 = VAT"));
+  assert.ok(text.includes("ค่าแท็กซี่"));
 });

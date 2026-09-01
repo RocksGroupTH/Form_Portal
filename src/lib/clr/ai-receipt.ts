@@ -1,11 +1,15 @@
 import "server-only";
 import { resolveApiKey } from "@/lib/api-keys/service";
 import {
+  GL_SUGGEST_SYSTEM,
   RECEIPT_SYSTEM,
   RECEIPT_USER_TEXT,
+  buildGlSuggestUserText,
   parseReceiptDocs,
+  pickSuggestedGl,
   toNum,
   toStr,
+  type GlCandidate,
   type ReceiptDoc,
 } from "./ai-receipt-core";
 
@@ -50,6 +54,37 @@ export async function extractReceiptsWithAI(
     return parseReceiptDocs(textPart && "text" in textPart ? textPart.text : "");
   } catch {
     return [];
+  }
+}
+
+/**
+ * Suggest ONE expense account for a receipt description (§10). `candidates` must
+ * already be the branch-filtered set the line is allowed to charge — the model
+ * only ever chooses from it, and anything it answers that is not in the list is
+ * dropped here. Returns "" when there is nothing to suggest; advisory only.
+ */
+export async function suggestGlAccountWithAI(
+  description: string,
+  candidates: GlCandidate[],
+): Promise<string> {
+  const text = description.trim();
+  if (!text || candidates.length === 0) return "";
+  try {
+    const { value: apiKey } = await resolveApiKey("ANTHROPIC_API_KEY");
+    if (!apiKey) return "";
+    const { default: Anthropic } = await import("@anthropic-ai/sdk");
+    const client = new Anthropic({ apiKey });
+    const res = await client.messages.create({
+      model: MODEL,
+      max_tokens: 32,
+      system: GL_SUGGEST_SYSTEM,
+      messages: [{ role: "user", content: buildGlSuggestUserText(text, candidates) }],
+    });
+    const textPart = res.content.find((c) => c.type === "text");
+    const raw = textPart && "text" in textPart ? textPart.text : "";
+    return pickSuggestedGl(raw, candidates.map((c) => c.glAccountNo));
+  } catch {
+    return "";
   }
 }
 
