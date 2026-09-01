@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Search } from "lucide-react";
 import type { BranchOption, GlAccountOption } from "@/features/clear-advance/types";
@@ -18,7 +18,7 @@ export const cellStyle = {
  *  ABOVE the table's overflow container / the dialog instead of being clipped. */
 type Anchor = { top: number; left: number; width: number; above: boolean };
 
-function useAnchoredPopup(open: boolean, setOpen: (v: boolean) => void) {
+function useAnchoredPopup(open: boolean, setOpen: (v: boolean) => void, inline: boolean) {
   const btnRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<Anchor | null>(null);
@@ -26,6 +26,7 @@ function useAnchoredPopup(open: boolean, setOpen: (v: boolean) => void) {
   useEffect(() => {
     if (!open) return;
     const place = () => {
+      if (inline) return;
       const r = btnRef.current?.getBoundingClientRect();
       if (!r) return;
       const width = Math.max(260, Math.min(320, window.innerWidth - 16));
@@ -48,37 +49,72 @@ function useAnchoredPopup(open: boolean, setOpen: (v: boolean) => void) {
       window.removeEventListener("scroll", place, true);
       window.removeEventListener("resize", place);
     };
-  }, [open, setOpen]);
+  }, [open, setOpen, inline]);
 
   return { btnRef, popRef, pos };
 }
 
-function popupStyle(pos: Anchor) {
-  return {
-    top: pos.above ? undefined : pos.top,
-    bottom: pos.above ? window.innerHeight - pos.top : undefined,
-    left: pos.left,
-    width: pos.width,
-    background: "var(--bg-dropdown, var(--bg-card))",
-    border: "1px solid var(--border-card)",
-    boxShadow: "var(--shadow-dropdown)",
-  } as const;
+const PANEL_SURFACE = {
+  background: "var(--bg-dropdown, var(--bg-card))",
+  border: "1px solid var(--border-card)",
+  boxShadow: "var(--shadow-dropdown)",
+} as const;
+
+/**
+ * The dropdown panel. Outside a dialog it is portalled to <body> and positioned
+ * in viewport coords so the table's overflow container cannot clip it. Inside a
+ * dialog that is impossible: Radix puts `pointer-events: none` on <body> while a
+ * modal is open and traps focus inside the content, which leaves a body-level
+ * panel unclickable — so there it renders inline, under its own field.
+ */
+function PickerPanel({
+  inline, pos, panelRef, children,
+}: {
+  inline: boolean;
+  pos: Anchor | null;
+  panelRef: React.RefObject<HTMLDivElement | null>;
+  children: ReactNode;
+}) {
+  if (inline) {
+    return (
+      <div ref={panelRef} className="absolute left-0 right-0 top-full mt-1 z-30 rounded-xl overflow-hidden"
+        style={PANEL_SURFACE}>
+        {children}
+      </div>
+    );
+  }
+  if (!pos) return null;
+  return createPortal(
+    <div ref={panelRef} className="fixed z-[80] rounded-xl overflow-hidden"
+      style={{
+        ...PANEL_SURFACE,
+        top: pos.above ? undefined : pos.top,
+        bottom: pos.above ? window.innerHeight - pos.top : undefined,
+        left: pos.left,
+        width: pos.width,
+      }}>
+      {children}
+    </div>,
+    document.body,
+  );
 }
 
 /** Searchable G/L account picker (`glAccountNo — nameTh`). */
 export function GlPicker({
-  options, valueNo, disabled, noBranch, onPick,
+  options, valueNo, disabled, noBranch, inline = false, onPick,
 }: {
   options: GlAccountOption[];
   valueNo: string;
   disabled?: boolean;
   /** The line has no branch yet, so the account list cannot be narrowed. */
   noBranch?: boolean;
+  /** Render the panel under the field instead of portalling it (inside a dialog). */
+  inline?: boolean;
   onPick: (o: GlAccountOption | null) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
-  const { btnRef, popRef, pos } = useAnchoredPopup(open, setOpen);
+  const { btnRef, popRef, pos } = useAnchoredPopup(open, setOpen, inline);
   const selected = options.find((o) => o.glAccountNo === valueNo) ?? null;
 
   const filtered = useMemo(() => {
@@ -105,8 +141,8 @@ export function GlPicker({
         </span>
         <Search size={12} className="shrink-0" style={{ color: "var(--text-faint)" }} />
       </button>
-      {open && pos && createPortal(
-        <div ref={popRef} className="fixed z-[80] rounded-xl overflow-hidden" style={popupStyle(pos)}>
+      {open && (
+        <PickerPanel inline={inline} pos={pos} panelRef={popRef}>
           <div className="p-2" style={{ borderBottom: "1px solid var(--border-light)" }}>
             <input autoFocus className={cellClass} style={{ ...cellStyle, width: "100%" }}
               aria-label="ค้นหาเลขบัญชี / ชื่อบัญชี"
@@ -132,8 +168,7 @@ export function GlPicker({
               </button>
             ))}
           </div>
-        </div>,
-        document.body,
+        </PickerPanel>
       )}
     </div>
   );
@@ -141,17 +176,19 @@ export function GlPicker({
 
 /** Branch dimension picker — searchable, shows only the Code in the field. */
 export function BranchPicker({
-  options, value, disabled, noBrand, onPick,
+  options, value, disabled, noBrand, inline = false, onPick,
 }: {
   options: BranchOption[];
   value: string;
   disabled?: boolean;
   noBrand?: boolean;
+  /** Render the panel under the field instead of portalling it (inside a dialog). */
+  inline?: boolean;
   onPick: (code: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
-  const { btnRef, popRef, pos } = useAnchoredPopup(open, setOpen);
+  const { btnRef, popRef, pos } = useAnchoredPopup(open, setOpen, inline);
   const selected = options.find((o) => o.code === value) ?? null;
 
   const filtered = useMemo(() => {
@@ -177,8 +214,8 @@ export function BranchPicker({
         </span>
         <Search size={12} className="shrink-0" style={{ color: "var(--text-faint)" }} />
       </button>
-      {open && pos && createPortal(
-        <div ref={popRef} className="fixed z-[80] rounded-xl overflow-hidden" style={popupStyle(pos)}>
+      {open && (
+        <PickerPanel inline={inline} pos={pos} panelRef={popRef}>
           <div className="p-2" style={{ borderBottom: "1px solid var(--border-light)" }}>
             <input autoFocus className={cellClass} style={{ ...cellStyle, width: "100%" }}
               aria-label="ค้นหาสาขา"
@@ -204,8 +241,7 @@ export function BranchPicker({
               </button>
             ))}
           </div>
-        </div>,
-        document.body,
+        </PickerPanel>
       )}
     </div>
   );
