@@ -171,6 +171,30 @@ export async function prefilterVendors(company: string, payeeName: string, limit
   }));
 }
 
+/**
+ * Does this code exist as a usable BRANCH dimension value for the company?
+ *
+ * The AP-2 journal falls back to the requester's ERP **department** when no
+ * Branch is configured, and BRANCH and DEPT are different dimensions — of
+ * PCTH's 24 department codes only 8 also exist as branches. BC rejects the
+ * line when it validates the branch dimension, and its per-line reason never
+ * reaches us, so check before sending instead of after.
+ */
+export async function isBranchSelectable(company: string, branchCode: string): Promise<boolean> {
+  const c = company.trim().toUpperCase();
+  const b = (branchCode ?? "").trim();
+  if (!c || !b) return false;
+  const pool = await getAppPool(ERP_DATA_DB);
+  const r = await pool.request()
+    .input("c", sql.NVarChar, c)
+    .input("b", sql.NVarChar, b)
+    .query(`
+    SELECT TOP 1 1 AS Ok FROM [dbo].[ErpDimensionValue]
+    WHERE BrandCode = @c AND DimensionCode = 'BRANCH' AND Code = @b
+      AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)`);
+  return r.recordset.length > 0;
+}
+
 /** Is this vendor still selectable (active + not blocked + ADV posting group) for the company? */
 export async function isVendorSelectable(company: string, vendorNo: string): Promise<boolean> {
   const c = company.trim().toUpperCase();
