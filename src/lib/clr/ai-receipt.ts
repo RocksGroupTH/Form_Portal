@@ -4,11 +4,12 @@ import {
   GL_SUGGEST_SYSTEM,
   RECEIPT_SYSTEM,
   RECEIPT_USER_TEXT,
+  THAI_DATE_RULES,
   buildGlSuggestUserText,
   parseReceiptDocs,
   pickSuggestedGl,
+  toDate,
   toNum,
-  toStr,
   type GlCandidate,
   type ReceiptRead,
 } from "./ai-receipt-core";
@@ -100,7 +101,9 @@ const SLIP_SYSTEM = [
   "No prose, no markdown fences. Use null when a value is not present — never guess.",
   "Rules:",
   '- amount: the transferred amount as a number in THB (no commas, no currency symbol).',
-  '- date: the transaction date as "YYYY-MM-DD". Convert Buddhist year (พ.ศ.) to CE (−543).',
+  "- date: the transaction date.",
+  "Reading a date:",
+  THAI_DATE_RULES,
 ].join("\n");
 
 const SLIP_USER_TEXT =
@@ -146,7 +149,7 @@ export async function extractSlipWithAI(
     if (!match) return null;
     const j = JSON.parse(match[0]) as SlipAiJson;
     const amount = toNum(j.amount);
-    const date = toStr(j.date);
+    const date = toDate(j.date);
     if (amount == null && !date) return null;
     return { amount, date };
   } catch {

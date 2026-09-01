@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildGlSuggestUserText, parseReceiptDocs, pickSuggestedGl } from "./ai-receipt-core";
+import {
+  RECEIPT_SYSTEM,
+  buildGlSuggestUserText,
+  parseReceiptDocs,
+  pickSuggestedGl,
+  toDate,
+} from "./ai-receipt-core";
 
 /** Most tests only care about the rows; the skip count has its own tests. */
 const docsOf = (raw: string) => parseReceiptDocs(raw).docs;
@@ -101,6 +107,53 @@ test("one invoice printed across four pages collapses to one row", () => {
   const docs = docsOf(`[${page(19)},${page(19)},${page(19)},${page(1031)}]`);
   assert.equal(docs.length, 1);
   assert.equal(docs[0].beforeVat, 19);
+});
+
+const NOW = new Date("2026-09-01T00:00:00Z");
+
+test("a date the model already converted is kept as it is", () => {
+  // The K+ slip in the AP-3 sample: "โอนเงินสำเร็จ 6 ม.ค. 69" = 6 January 2026.
+  assert.equal(toDate("2026-01-06", NOW), "2026-01-06");
+  assert.equal(toDate("2025-12-23", NOW), "2025-12-23");
+});
+
+test("a Buddhist year the model forgot to convert is finished off", () => {
+  assert.equal(toDate("2569-01-06", NOW), "2026-01-06");
+  assert.equal(toDate("2568-12-23", NOW), "2025-12-23");
+});
+
+test("a date that cannot exist is refused rather than rolled over", () => {
+  assert.equal(toDate("2026-02-30", NOW), null);
+  assert.equal(toDate("2026-13-01", NOW), null);
+  assert.equal(toDate("2026-00-10", NOW), null);
+  assert.equal(toDate("2026-01-32", NOW), null);
+});
+
+test("a date more than a year out is a misread, not a document date", () => {
+  assert.equal(toDate("2027-08-31", NOW), "2027-08-31");
+  assert.equal(toDate("2028-01-06", NOW), null);
+});
+
+test("anything that is not an ISO date is refused", () => {
+  assert.equal(toDate("6 ม.ค. 69", NOW), null);
+  assert.equal(toDate("06/01/2569", NOW), null);
+  assert.equal(toDate("", NOW), null);
+  assert.equal(toDate(null, NOW), null);
+  assert.equal(toDate(20260106, NOW), null);
+});
+
+test("a document keeps only a date that survived the guard", () => {
+  const docs = docsOf('[{"docNo":"A1","date":"2569-01-06","amountBeforeVat":10}]');
+  assert.equal(docs[0].date, "2026-01-06");
+  const bad = docsOf('[{"docNo":"A2","date":"2026-02-30","amountBeforeVat":10}]');
+  assert.equal(bad[0].date, null);
+});
+
+test("the prompt spells out the Thai day-month-year order", () => {
+  assert.ok(RECEIPT_SYSTEM.includes("DAY month YEAR"));
+  assert.ok(RECEIPT_SYSTEM.includes("ม.ค.=01"));
+  assert.ok(RECEIPT_SYSTEM.includes("ธ.ค.=12"));
+  assert.ok(RECEIPT_SYSTEM.includes("subtract 543"));
 });
 
 const ALLOWED = ["610322005", "610101001", "115030"];
