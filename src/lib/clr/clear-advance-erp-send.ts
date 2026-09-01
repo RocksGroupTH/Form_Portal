@@ -25,6 +25,8 @@ export interface ClrPreviewItem {
   interfaceTarget: string | null;
   environment: ErpBcEnvironment | null;
   journalBatchName: string | null;
+  /** Refund or Payment — the whole clearing's type, blank on a failed preview. */
+  documentType?: string;
   ok: boolean;
   error?: string;
   lines: ClrPreviewLine[];
@@ -229,6 +231,10 @@ export async function previewClrErpJournal(ids: number[]): Promise<ClrPreviewIte
         interfaceTarget: target.interfaceTarget,
         environment: target.environment,
         journalBatchName: config.journalBatchName,
+        // Every line carries the same document type, so it belongs to the
+        // clearing, not to a row. Accounting needs to see Refund vs Payment
+        // before sending — BC treats the two differently once posted.
+        documentType: payload.lines[0]?.documentType ?? "",
         ok: true,
         lines: payload.lines.map((l) => ({
           accountType: l.accountType,
