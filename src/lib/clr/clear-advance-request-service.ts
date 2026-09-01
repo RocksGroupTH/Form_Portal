@@ -4,6 +4,7 @@ import { getAccPool, sql } from "@/lib/acc/pool";
 import { hrEmployeeTable } from "@/lib/hr/constants";
 import { allocateRequestNo } from "@/lib/acc/sequence";
 import { listClrErpBranchOptions } from "@/lib/clr/clear-advance-admin-service";
+import { isHqBranch } from "@/lib/clr/clear-advance-gl-filter";
 import {
   resolveManagerEmail,
   resolveRequesterForActor,
@@ -307,12 +308,19 @@ export async function listPendingAdvances(
   }));
 }
 
-/** AP-3.2 G/L expense-category master (active). */
-export async function listGlAccounts(): Promise<GlAccountOption[]> {
+/** AP-3.2 G/L expense-category master (active), narrowed to the line's branch.
+ *  Filtering happens here rather than in the client so the browser is never handed
+ *  accounts the user is not allowed to charge. */
+export async function listGlAccounts(branchCode?: string | null): Promise<GlAccountOption[]> {
   const pool = await getAccPool();
+  const hq = isHqBranch(branchCode);
   const res = await pool.request()
+    .input("branchWord", sql.NVarChar(20), "%สาขา%")
     .query(`SELECT GlAccountNo, NameTh, NameEn, DimensionType
-            FROM [dbo].[AccClearAdvanceGl] WHERE IsActive = 1 ORDER BY SortOrder, GlAccountNo`);
+            FROM [dbo].[AccClearAdvanceGl]
+            WHERE IsActive = 1
+              AND ISNULL(NameTh, N'') ${hq ? "NOT LIKE" : "LIKE"} @branchWord
+            ORDER BY SortOrder, GlAccountNo`);
   return (res.recordset as Record<string, unknown>[]).map((x) => ({
     glAccountNo: x.GlAccountNo as string,
     nameTh: (x.NameTh as string) ?? null,
