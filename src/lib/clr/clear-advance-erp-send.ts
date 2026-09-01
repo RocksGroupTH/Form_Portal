@@ -183,6 +183,7 @@ function toJournalItems(
       vatAmount: it.vatAmount ?? 0,
       whtAmount: it.whtAmount ?? 0,
       branchCode: it.branchCode ?? null,
+      description: it.description ?? null,
     }));
 }
 
@@ -218,6 +219,8 @@ export async function previewClrErpJournal(ids: number[]): Promise<ClrPreviewIte
         config,
         departmentCode,
         defaultBranchCode: itemBranch,
+        advanceRequestNo: req.clear.advanceRequestNo,
+        requesterName: req.requesterFullName,
       });
 
       out.push({
@@ -339,6 +342,8 @@ export async function sendClrErpBatch(ids: number[], userId: number): Promise<Cl
         config,
         departmentCode,
         defaultBranchCode: itemBranch,
+        advanceRequestNo: req.clear.advanceRequestNo,
+        requesterName: req.requesterFullName,
       });
 
       // Mark Pending (only when NULL/Failed — guard is in the SQL WHERE)
