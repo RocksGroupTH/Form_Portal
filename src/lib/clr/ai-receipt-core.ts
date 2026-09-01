@@ -21,6 +21,12 @@ const KINDS: readonly RawKind[] = ["receipt", "slip", "other"];
 /** One document read off an upload. A single file routinely holds several. */
 export interface ReceiptDoc extends ReceiptExtractResult {
   kind: ReceiptKind;
+  /**
+   * How many model entries were folded into this row. Absent on a document that
+   * arrived as one entry; set when a multi-page document was answered per page,
+   * so the confirm modal can tell the reviewer the row is a merge of several.
+   */
+  mergedEntries?: number;
 }
 
 /** Everything one upload yielded. */
@@ -235,7 +241,59 @@ function toDoc(entry: AiJson, kind: ReceiptKind): ReceiptDoc {
 }
 
 /**
- * Validate a model reply into one row per invoice number. Anything unparseable
+ * A document number as an identity, not as printed. OCR breaks a long number
+ * apart at random — "KEX1001273 07371" for KEX100127307371 — and the same
+ * number in two cases is the same document.
+ *
+ * Deliberately exact after that: a one-character misread (EBYC25120005297 vs
+ * EBYC2512Q005297) stays a separate row, because a rule loose enough to join
+ * those two would also join two genuinely different invoices, and the reviewer
+ * can merge them by hand in the confirm modal (decision: QA, 2026-09-02).
+ */
+export function normalizeDocNo(docNo: string): string {
+  return docNo.replace(/\s+/g, "").toUpperCase();
+}
+
+/**
+ * What makes two entries the same document. The payee is in the key because two
+ * vendors do issue an invoice "001": without it the second one silently vanishes
+ * into the first, and a lost expense line is worse than a duplicate row the user
+ * deletes. Null for an entry with no number — those never merge.
+ */
+function docKey(d: ReceiptDoc): string | null {
+  if (!d.docNo) return null;
+  return `${d.kind}|${normalizeDocNo(d.docNo)}|${(d.payeeName ?? "").replace(/\s+/g, " ").trim().toUpperCase()}`;
+}
+
+/**
+ * One row per document. A four-page invoice answered per page arrives as four
+ * entries carrying 19, 19, 19 and 1031 — only the last page prints the grand
+ * total — so the group is merged onto its LARGEST beforeVat rather than its
+ * first: a grand total is never smaller than one page's partial. Keeping the
+ * first entry was throwing 1031 away and clearing 19 baht.
+ */
+function mergeDocs(docs: ReceiptDoc[]): ReceiptDoc[] {
+  const out: ReceiptDoc[] = [];
+  const at = new Map<string, number>();
+  for (const doc of docs) {
+    const key = docKey(doc);
+    const i = key == null ? undefined : at.get(key);
+    if (i === undefined) {
+      if (key != null) at.set(key, out.length);
+      out.push(doc);
+      continue;
+    }
+    const kept = out[i];
+    // The winning entry supplies every field — its description, date, docNo and
+    // vat belong to the same page as its total.
+    const winner = (doc.beforeVat ?? 0) > (kept.beforeVat ?? 0) ? doc : kept;
+    out[i] = { ...winner, mergedEntries: (kept.mergedEntries ?? 1) + 1 };
+  }
+  return out;
+}
+
+/**
+ * Validate a model reply into one row per document. Anything unparseable
  * yields no rows, so the caller falls back rather than showing invented values.
  */
 export function parseReceiptDocs(raw: string): ReceiptRead {
@@ -265,17 +323,5 @@ export function parseReceiptDocs(raw: string): ReceiptRead {
     }
   }
 
-  // One row per invoice number: a document read off four consecutive pages must
-  // not come back four times if the model answers per page after all.
-  const seen = new Set<string>();
-  return {
-    docs: docs.filter((d) => {
-      if (!d.docNo) return true;
-      const key = `${d.kind}|${d.docNo}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    }),
-    skippedPages,
-  };
+  return { docs: mergeDocs(docs), skippedPages };
 }
