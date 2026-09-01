@@ -696,36 +696,36 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
     total: number | null; vat: number | null; beforeVat: number | null;
   }
 
-  /** OCR a single receipt image → parsed fields (or null on failure). */
-  async function ocrReceipt(file: File): Promise<ReceiptData | null> {
+  /** OCR one receipt image → one entry per document found in it (§8). */
+  async function ocrReceipt(file: File): Promise<ReceiptData[]> {
     try {
       const fd = new FormData();
       fd.append("file", file);
       const res = await fetch("/api/request/clear-advance/verify-receipt", { method: "POST", body: fd });
-      const j = (await res.json()) as { ok: boolean; data?: ReceiptData };
-      if (!j.ok || !j.data) return null;
-      const d = j.data;
-      if (d.date == null && d.docNo == null && d.beforeVat == null && d.description == null) return null;
-      return d;
+      const j = (await res.json()) as { ok: boolean; data?: ReceiptData[] };
+      if (!j.ok || !j.data) return [];
+      return j.data.filter(
+        (d) => d.date != null || d.docNo != null || d.beforeVat != null || d.description != null,
+      );
     } catch {
-      return null;
+      return [];
     }
   }
 
   /**
-   * OCR each uploaded receipt / tax invoice — ONE expense line per file. The
-   * parsed values do NOT reach the expense table: they open the confirmation
-   * modal (§7), and only ยืนยันบันทึก writes them.
+   * OCR each uploaded receipt / tax invoice — ONE expense line per invoice
+   * number, so a photo holding two invoices yields two rows (§8). The parsed
+   * values do NOT reach the expense table: they open the confirmation modal
+   * (§7), and only ยืนยันบันทึก writes them.
    */
   async function verifyReceipts(docs: { file: File; fileId: number }[]) {
     setOcrScanning(true);
     try {
       const candidates: OcrRow[] = [];
       for (const d of docs) {
-        const r = await ocrReceipt(d.file); // serialized — the OCR worker is shared
-        if (!r) continue;
-        candidates.push({
-          key: `${d.fileId}`,
+        const read = await ocrReceipt(d.file); // serialized — the OCR worker is shared
+        read.forEach((r, i) => candidates.push({
+          key: `${d.fileId}-${i}`,
           sourceFileId: d.fileId,
           fileName: d.file.name,
           expenseDate: r.date ?? "",
@@ -741,7 +741,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           payeeName: r.payeeName ?? "",
           payeeAddress: r.payeeAddress ?? "",
           totalAmount: r.total != null ? String(r.total) : "",
-        });
+        }));
       }
       if (candidates.length === 0) return;
       setOcrRows(candidates);
