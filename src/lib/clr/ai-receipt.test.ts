@@ -190,9 +190,20 @@ test("a date that cannot exist is refused rather than rolled over", () => {
   assert.equal(toDate("2026-01-32", NOW), null);
 });
 
-test("a date more than a year out is a misread, not a document date", () => {
-  assert.equal(toDate("2027-08-31", NOW), "2027-08-31");
-  assert.equal(toDate("2028-01-06", NOW), null);
+test("a date that has not happened yet is a misread, not a document date", () => {
+  // NOW is 2026-09-01 07:00 in Bangkok.
+  assert.equal(toDate("2026-09-01", NOW), "2026-09-01");
+  assert.equal(toDate("2026-08-31", NOW), "2026-08-31");
+  assert.equal(toDate("2026-09-02", NOW), null);
+  assert.equal(toDate("2027-08-31", NOW), null);
+});
+
+test("today is judged in Bangkok, not UTC", () => {
+  // 18:00 UTC is already the 2nd in Thailand — a slip dated today must not be
+  // refused just because the server's own clock has not turned over.
+  const lateEvening = new Date("2026-09-01T18:00:00Z");
+  assert.equal(toDate("2026-09-02", lateEvening), "2026-09-02");
+  assert.equal(toDate("2026-09-03", lateEvening), null);
 });
 
 test("anything that is not an ISO date is refused", () => {
