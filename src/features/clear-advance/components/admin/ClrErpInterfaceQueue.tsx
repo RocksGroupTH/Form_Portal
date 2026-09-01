@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { toast } from "sonner";
 import { Loader2, FileX, Eye, SendHorizonal, X, Search, Download, Building2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { PaymentDatePicker } from "@/components/ui/PaymentDatePicker";
 import { FilterMonthPicker } from "@/features/accounting/components/FilterMonthPicker";
 import { sentMonthKey } from "@/features/accounting/components/ApprovalQueueFilters";
 import type { ClrErpQueueRow } from "@/lib/clr/clear-advance-erp-queue-service";
@@ -213,6 +214,30 @@ export function ClrErpInterfaceQueue() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [sentMonth, setSentMonth] = useState<string>("");
   const [exporting, setExporting] = useState(false);
+
+  // Payment-date options for the per-row "รอส่ง" picker (loaded once, shared calendar).
+  const [paymentDateOpts, setPaymentDateOpts] = useState<string[]>([]);
+  React.useEffect(() => {
+    fetch("/api/request/advance/payment-dates")
+      .then((r) => r.json())
+      .then((j: { ok?: boolean; data?: { dates?: string[] } }) => { if (j?.data?.dates) setPaymentDateOpts(j.data.dates); })
+      .catch(() => {});
+  }, []);
+
+  const changePaymentDate = useCallback(async (id: number, paymentDate: string) => {
+    try {
+      const res = await fetch("/api/request/clear-advance/erp/payment-date", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, paymentDate }),
+      });
+      const j = (await res.json()) as { ok: boolean; error?: string };
+      if (!j.ok) { toast.error(j.error ?? "แก้วันจ่ายไม่สำเร็จ"); return; }
+      toast.success("อัปเดตวันจ่ายแล้ว");
+      await mutate();
+    } catch {
+      toast.error("แก้วันจ่ายไม่สำเร็จ");
+    }
+  }, [mutate]);
 
   // split rows (after brand filter)
   const sendableRows = useMemo(() => filteredByBrand.filter(isSelectable), [filteredByBrand]);
@@ -434,7 +459,7 @@ export function ClrErpInterfaceQueue() {
                         <input type="checkbox" checked={allSelected} onChange={toggleAll}
                           disabled={selectableIds.length === 0} className="cursor-pointer" />
                       </th>
-                      {["เลขที่", "แบรนด์", "ผู้ยื่น", "Advance", "ใช้จริง", "คืน/จ่ายเพิ่ม", "สถานะ ERP", "Doc No"].map((h) => (
+                      {["เลขที่", "แบรนด์", "ผู้ยื่น", "Advance", "ใช้จริง", "คืน/จ่ายเพิ่ม", "วันจ่าย", "สถานะ ERP", "Doc No"].map((h) => (
                         <th key={h} className="px-3 py-2.5 font-semibold whitespace-nowrap text-left"
                           style={{ color: "var(--text-secondary)" }}>{h}</th>
                       ))}
@@ -473,6 +498,17 @@ export function ClrErpInterfaceQueue() {
                             style={{ color: (row.refundToCompany ?? 0) > 0 ? "var(--text-info-green)" : (row.refundToCompany ?? 0) < 0 ? "var(--text-info-yellow)" : "var(--text-faint)" }}>
                             {row.refundToCompany != null && row.refundToCompany !== 0 ? fmtMoney(row.refundToCompany) : "—"}
                           </td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            {paymentDateOpts.length > 0 ? (
+                              <PaymentDatePicker
+                                value={row.paymentDate ?? ""}
+                                onChange={(d) => changePaymentDate(row.id, d)}
+                                allowedDates={paymentDateOpts}
+                              />
+                            ) : (
+                              <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>{row.paymentDate ?? "—"}</span>
+                            )}
+                          </td>
                           <td className="px-3 py-2 whitespace-nowrap"><ErpStatusBadge row={row} /></td>
                           <td className="px-3 py-2 whitespace-nowrap font-mono text-[11px]" style={{ color: "var(--text-secondary)" }}>
                             {row.erpDocumentNo ?? <span style={{ color: "var(--text-faint)" }}>—</span>}
@@ -483,7 +519,7 @@ export function ClrErpInterfaceQueue() {
                   </tbody>
                   <tfoot className="sticky bottom-0 z-10">
                     <tr style={{ borderTop: "2px solid var(--border-card)", background: "color-mix(in srgb, var(--bg-card) 80%, var(--bg-page))", boxShadow: "0 -1px 0 var(--border-card), 0 -8px 16px -10px rgba(0,0,0,0.25)" }}>
-                      <td colSpan={9} className="px-3 py-2.5 font-bold" style={{ color: "var(--text-heading)" }}>
+                      <td colSpan={10} className="px-3 py-2.5 font-bold" style={{ color: "var(--text-heading)" }}>
                         รอส่ง {sendableRows.length} รายการ
                       </td>
                     </tr>
@@ -542,7 +578,7 @@ export function ClrErpInterfaceQueue() {
                   <thead className="sticky top-0 z-10"
                     style={{ background: "var(--bg-card-alt)", boxShadow: "0 1px 0 var(--border-light)" }}>
                     <tr style={{ borderBottom: "1px solid var(--border-light)" }}>
-                      {["เลขที่", "แบรนด์", "ผู้ยื่น", "Advance", "ใช้จริง", "คืน/จ่ายเพิ่ม", "Doc No (ERP)", "วันที่ส่ง", "สถานะ", "Env"].map((h) => (
+                      {["เลขที่", "แบรนด์", "ผู้ยื่น", "Advance", "ใช้จริง", "คืน/จ่ายเพิ่ม", "วันจ่าย", "Doc No (ERP)", "วันที่ส่ง", "สถานะ", "Env"].map((h) => (
                         <th key={h} className="px-3 py-2.5 font-semibold whitespace-nowrap text-left"
                           style={{ color: "var(--text-secondary)" }}>{h}</th>
                       ))}
@@ -574,6 +610,9 @@ export function ClrErpInterfaceQueue() {
                             style={{ color: (row.refundToCompany ?? 0) > 0 ? "var(--text-info-green)" : (row.refundToCompany ?? 0) < 0 ? "var(--text-info-yellow)" : "var(--text-faint)" }}>
                             {row.refundToCompany != null && row.refundToCompany !== 0 ? fmtMoney(row.refundToCompany) : "—"}
                           </td>
+                          <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-muted)" }}>
+                            {row.paymentDate ?? "—"}
+                          </td>
                           <td className="px-3 py-2 whitespace-nowrap font-mono font-semibold text-[11px]"
                             style={{ color: row.erpDocumentNo ? "var(--text-secondary)" : "var(--text-faint)" }}>
                             {row.erpDocumentNo ?? "—"}
@@ -591,7 +630,7 @@ export function ClrErpInterfaceQueue() {
                   </tbody>
                   <tfoot className="sticky bottom-0 z-10">
                     <tr style={{ borderTop: "2px solid var(--border-card)", background: "color-mix(in srgb, var(--bg-card) 80%, var(--bg-page))", boxShadow: "0 -1px 0 var(--border-card), 0 -8px 16px -10px rgba(0,0,0,0.25)" }}>
-                      <td colSpan={10} className="px-3 py-2.5 font-bold" style={{ color: "var(--text-heading)" }}>
+                      <td colSpan={11} className="px-3 py-2.5 font-bold" style={{ color: "var(--text-heading)" }}>
                         ทั้งหมด {sentFiltered.length} รายการ · ส่งแล้ว {sentFiltered.filter(isSent).length} · ล้มเหลว {sentFiltered.filter((r) => r.erpStatus === "Failed").length}
                       </td>
                     </tr>
