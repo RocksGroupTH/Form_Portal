@@ -30,8 +30,18 @@
 -- Neither sibling SELECTs *. Rocks Fast names three columns —
 --   SELECT Id, NameTh, NameEn FROM [dbo].[TravelProvince] WHERE IsActive = 1
 -- (../RocksFast/src/lib/acc/travel-booking/province-service.ts) and NameTh
--- alone in its own request-service.ts. ACC_Portal never mentions the table at
--- all. So this ALTER changes nothing for either of them.
+-- alone in its own request-service.ts. So this ALTER changes nothing for it.
+--
+-- CORRECTION, 2026-09-01. The line that stood here said "ACC_Portal never
+-- mentions the table at all". THAT WAS WRONG, and wrong in the direction that
+-- matters: ACC Portal reads this table DIRECTLY out of Rocks_Portal_Form
+-- through its own getProductionFormPool(), not through Fast_Data's synonym
+-- (ACC_Portal/src/lib/acc/travel-booking/province-service.ts), and it selects
+-- Id, NameTh, NameEn the same way. The ALTER is still safe for it — no
+-- SELECT * anywhere — but the row hazard below applies to ACC Portal as well,
+-- and there it CANNOT be fixed by filtering a synonym, because it reads the
+-- base table. ACC Portal was committed against on 2026-08-31; it is not
+-- frozen. This migration is left applied and only its comment corrected.
 --
 -- What DOES change for them is the first foreign row somebody adds through the
 -- new admin screen. That Rocks Fast query has NO country filter, so a city in

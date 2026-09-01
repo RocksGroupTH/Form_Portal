@@ -13,11 +13,18 @@ import { COUNTRIES, countryNames } from "@/lib/acc/country-currency";
  * trip goes as a Google place on ข้อ9, and nothing in THIS application reads
  * these rows any more.
  *
- * The screen stays because the rows are shared: Rocks Fast reads them through
- * `Fast_Data`'s permanent synonym (migration 105) and still has a จังหวัด field
- * of its own. So this is now an editor for the SIBLING application's list,
- * hosted here because this is where the table lives. Deleting it would leave
- * that list with no editor anywhere.
+ * The screen stays because the rows are shared, and **ACC Portal is the reason**
+ * — corrected 2026-09-01, having first been written naming Rocks Fast alone.
+ * ACC Portal reads this table DIRECTLY out of `Rocks_Portal_Form` through its own
+ * `getProductionFormPool()` (`ACC_Portal/src/lib/acc/travel-booking/
+ * province-service.ts`), not through `Fast_Data`'s synonym, and it was committed
+ * against on 2026-08-31 — it is not a frozen sibling. Its AP-17 form and report
+ * both still have a จังหวัด field.
+ *
+ * So this is an editor for ACC Portal's list, hosted here because this is where
+ * the table lives, and deleting it would leave that list with no editor anywhere.
+ * Rocks Fast reads the same rows through the synonym, but its own database has
+ * had no new request since 2026-08-05, so it is not what keeps this alive.
  *
  * Deliberately **not** `TravelOptionSettings`. That component drives the four
  * dual-written option tables through a `[kind]` route with a `SortOrder` and a
@@ -159,8 +166,8 @@ export function TravelPlaceSettings() {
         />
         <p className="text-[12px] leading-relaxed m-0" style={{ color: "var(--text-secondary)" }}>
           รายการนี้<strong>ไม่ได้ใช้ในแบบฟอร์ม AP-17 ของระบบนี้แล้ว</strong> — ตั้งแต่ 1 ก.ย. 2569 ช่องจังหวัดถูกยกเลิก
-          และใช้ “สถานที่ไปปฏิบัติงาน” จาก Google Maps แทน · รายการนี้ยังใช้ร่วมกับระบบ <strong>Rocks Fast</strong>
-          ซึ่งยังมีช่องจังหวัดอยู่ การแก้ที่นี่จึงมีผลกับระบบนั้น
+          และใช้ “สถานที่ไปปฏิบัติงาน” จาก Google Maps แทน · แต่ <strong>ACC Portal</strong> ยังอ่านรายการนี้อยู่
+          ทั้งในแบบฟอร์มและรายงานของระบบนั้น การเพิ่มหรือปิดเมืองที่นี่จึงมีผลกับ ACC Portal โดยตรง
         </p>
       </div>
 
