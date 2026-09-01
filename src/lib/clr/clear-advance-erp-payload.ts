@@ -14,6 +14,7 @@ export interface ClrJournalItem {
   vatAmount: number;
   whtAmount: number;
   branchCode: string | null;
+  description?: string | null;
 }
 export interface ClrJournalInput {
   requestNo: string;
@@ -24,6 +25,10 @@ export interface ClrJournalInput {
   departmentCode: string;
   /** Fallback branch for lines that have no per-item branch (VAT, WHT, advance reversal, bank diff). */
   defaultBranchCode?: string | null;
+  /** The AP-2 number being cleared — the number accounting reconciles against. */
+  advanceRequestNo?: string | null;
+  /** Full name of the person clearing, for the line description. */
+  requesterName?: string | null;
 }
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -47,7 +52,16 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
 
   const employeeCode = requestNo.slice(0, 35);
   const defaultBranch = input.defaultBranchCode ?? "";
-  const description = `เคลียร์เงินทดรองจ่าย ${requestNo}`.slice(0, 100);
+  // Spec §3.2 format: [ADV no] เบิก เคลียร์เงินทดลอง [employee] [document detail].
+  // Gen. Journal Line Description is 100 chars, so the trailing detail is what gets
+  // cut — the identifying half has to survive.
+  const advNo = (input.advanceRequestNo ?? "").trim() || requestNo;
+  const who = (input.requesterName ?? "").trim();
+  const describe = (detail?: string | null) =>
+    [advNo, "เบิก", "เคลียร์เงินทดลอง", who, (detail ?? "").trim()]
+      .filter((s) => s !== "")
+      .join(" ")
+      .slice(0, 100);
 
   const actualNet = r2(items.reduce((s, it) => s + it.amountBeforeVat + (it.vatAmount || 0) - (it.whtAmount || 0), 0));
   const bankAmount = r2(input.advanceAmount - actualNet);
@@ -55,9 +69,9 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
   // It describes the whole clearing, so every line carries the same value.
   const documentType = bankAmount > 0 ? "Refund" : "Payment";
 
-  const glLine = (accountNo: string, amount: number, branchCode: string | null): PpapJournalLinePayload => ({
+  const glLine = (accountNo: string, amount: number, branchCode: string | null, detail?: string | null): PpapJournalLinePayload => ({
     groupNo: "G1", postingDate, documentType, accountType: "G/L Account",
-    accountNo, description,
+    accountNo, description: describe(detail),
     paymentMethodCode: "BANK", amount: r2(amount), balAccountType: "G/L Account",
     employeeCode, branchCode: branchCode ?? defaultBranch, departmentCode,
   });
@@ -66,7 +80,7 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
   let vatTotal = 0, whtTotal = 0;
 
   for (const it of items) {
-    if (r2(it.amountBeforeVat) !== 0) lines.push(glLine(it.glAccountNo, it.amountBeforeVat, it.branchCode));
+    if (r2(it.amountBeforeVat) !== 0) lines.push(glLine(it.glAccountNo, it.amountBeforeVat, it.branchCode, it.description));
     vatTotal += it.vatAmount || 0;
     whtTotal += it.whtAmount || 0;
   }
@@ -90,7 +104,7 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
   lines.push({
     groupNo: "G1", postingDate, documentType,
     accountType: "Vendor", accountNo: advanceVendorNo,
-    description,
+    description: describe(),
     paymentMethodCode: "BANK", amount: 0,
     employeeCode, branchCode: defaultBranch, departmentCode,
   });
@@ -98,7 +112,7 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
   if (bankAmount !== 0) {
     lines.push({
       groupNo: "G1", postingDate, documentType, accountType: "Bank Account",
-      accountNo: c.bankAccountNo, description,
+      accountNo: c.bankAccountNo, description: describe(),
       paymentMethodCode: "BANK", amount: bankAmount,
       employeeCode, branchCode: defaultBranch, departmentCode,
     });
