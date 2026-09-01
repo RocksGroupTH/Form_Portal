@@ -46,11 +46,18 @@ export function cityNameFromPlace(
 }
 
 /**
- * The list row this city is, or null.
+ * The list row this place is, or null.
  *
- * The query is compared whole, and also on its first comma-separated segment —
- * Google returns "Bangkok, Thailand" in some shapes and that is still Bangkok.
- * Nothing else is tried: no prefix, no contains.
+ * The query is compared whole, and then EVERY comma-separated segment of it,
+ * each still compared whole. Google puts the province at a different end
+ * depending on the shape it hands back:
+ *
+ *   a city suggestion's text  → "Bangkok, Thailand"            (province first)
+ *   a venue's secondary text  → "ถ.พระรามที่ 4, กรุงเทพมหานคร"  (province last)
+ *
+ * Trying only the first segment — which this did until the venue shape was
+ * traced — matched nothing for any real place, because the first segment there
+ * is a road. Nothing looser is tried even so: no prefix, no contains.
  */
 export function matchProvinceOption(
   query: string | null | undefined,
@@ -59,8 +66,11 @@ export function matchProvinceOption(
   const full = norm(query);
   if (!full) return null;
 
-  const head = norm(full.split(",")[0]);
-  const wanted = head && head !== full ? [full, head] : [full];
+  const wanted: string[] = [full];
+  for (const part of full.split(",")) {
+    const seg = norm(part);
+    if (seg && wanted.indexOf(seg) === -1) wanted.push(seg);
+  }
 
   for (const want of wanted) {
     for (const o of options) {

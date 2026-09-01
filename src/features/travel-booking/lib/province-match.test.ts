@@ -51,12 +51,27 @@ test("case and surrounding space do not matter", () => {
 });
 
 /**
- * Google returns "Bangkok, Thailand" as one string in some shapes. A leading
- * exact segment is still that city.
+ * Google hands back comma-separated text in two shapes and the province is at a
+ * different end of each:
+ *
+ *   a city suggestion's own text  → "Bangkok, Thailand"        (province FIRST)
+ *   a venue's secondary text      → "ถ.พระรามที่ 4, กรุงเทพมหานคร" (province LAST)
+ *
+ * So every segment is tried, each still compared whole. Trying only the first —
+ * which is what this did until the venue case was traced — matched nothing for
+ * any real place, because the first segment there is a road.
  */
-test("a comma-separated label matches on its first segment", () => {
+test("a comma-separated label matches on any of its segments", () => {
   assert.equal(matchProvinceOption("Bangkok, Thailand", OPTIONS)?.id, 2);
   assert.equal(matchProvinceOption("London, United Kingdom", OPTIONS)?.id, 3);
+  assert.equal(matchProvinceOption("ถ.พระรามที่ 4, กรุงเทพมหานคร", OPTIONS)?.id, 2);
+  assert.equal(matchProvinceOption("123 Nimman Rd, Chiang Mai, Thailand", OPTIONS)?.id, 1);
+});
+
+/** Segments are still whole names — a segment that merely contains one is not a match. */
+test("a segment is compared whole, not searched", () => {
+  assert.equal(matchProvinceOption("Greater London Authority, England", OPTIONS), null);
+  assert.equal(matchProvinceOption("Nantes, France", OPTIONS), null);
 });
 
 test("somewhere the list does not have matches nothing", () => {

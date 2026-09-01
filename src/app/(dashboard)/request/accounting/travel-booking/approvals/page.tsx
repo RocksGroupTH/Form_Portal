@@ -506,7 +506,11 @@ export default function TravelBookingAccountApprovalsPage() {
                       </button>
 
                       <div className="flex items-center gap-2 flex-wrap text-[11.5px] mb-2" style={{ color: "var(--text-muted)" }}>
-                        <span>{item.provinceName ?? "-"}</span>
+                        {/* The place, not the province. A booking desk books a hotel near where
+                            somebody is actually going; the province is a report axis, and it
+                            stays on the row for that. Falls back to the province for trips
+                            filed before ข้อ9 became a Google place. */}
+                        <span>{item.workLocationNames ?? item.provinceName ?? "-"}</span>
                         {item.departDate && (
                           <span>
                             · {fmtYmdDisplay(item.departDate)}

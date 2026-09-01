@@ -51,6 +51,14 @@ export interface AdminQueueItem {
   requesterPosition: string | null;
   requesterDepartmentName: string | null;
   provinceName: string | null;
+  /**
+   * ข้อ9 — every work location on the trip, joined with " · ".
+   *
+   * What the booking desk actually works against: a hotel is booked near the
+   * place somebody is going to, not near the province. The province stays on
+   * the row because the report filters on it.
+   */
+  workLocationNames: string | null;
   departDate: string | null;
   returnDate: string | null;
   /** ข้อ10.1 — a room booking is required for this request. */
@@ -101,6 +109,9 @@ export async function listAdminQueue(access: BookingBrandAccess): Promise<AdminQ
       SELECT r.Id, r.RequestNo, r.BrandCode, r.RequesterFullName, r.RequesterPosition, r.RequesterDepartmentName,
              r.PaymentDate, r.UpdatedAt,
              t.ProvinceName, t.DepartDate, t.ReturnDate,
+             (SELECT STRING_AGG(wl.Name, N' · ') WITHIN GROUP (ORDER BY wl.SortOrder, wl.Id)
+              FROM [dbo].[AccTravelWorkLocation] wl
+              WHERE wl.TravelBookingId = t.Id) AS WorkLocationNames,
              t.NeedsRoomBooking, t.GoNeedsTicketBooking, t.ReturnNeedsTicketBooking, t.NeedsRentBooking
       FROM [dbo].[AccRequest] r
       INNER JOIN [dbo].[AccTravelBooking] t ON t.RequestId = r.Id
@@ -116,6 +127,10 @@ export async function listAdminQueue(access: BookingBrandAccess): Promise<AdminQ
     requesterPosition: (x.RequesterPosition as string) ?? null,
     requesterDepartmentName: (x.RequesterDepartmentName as string) ?? null,
     provinceName: (x.ProvinceName as string) ?? null,
+    // What the desk is actually booking against — the place, not the province.
+    // A trip can carry more than one, joined here rather than in the page so
+    // both queues render it identically.
+    workLocationNames: (x.WorkLocationNames as string) ?? null,
     departDate: x.DepartDate ? toYmd(x.DepartDate as Date) : null,
     returnDate: x.ReturnDate ? toYmd(x.ReturnDate as Date) : null,
     needsRoomBooking: !!x.NeedsRoomBooking,
@@ -137,6 +152,14 @@ export interface AccountQueueItem {
   requesterPosition: string | null;
   requesterDepartmentName: string | null;
   provinceName: string | null;
+  /**
+   * ข้อ9 — every work location on the trip, joined with " · ".
+   *
+   * What the booking desk actually works against: a hotel is booked near the
+   * place somebody is going to, not near the province. The province stays on
+   * the row because the report filters on it.
+   */
+  workLocationNames: string | null;
   departDate: string | null;
   returnDate: string | null;
   perDiemDays: number;
@@ -178,7 +201,10 @@ export async function listAccountQueue(access: BookingBrandAccess): Promise<Acco
     .query(`
       SELECT r.Id, r.RequestNo, r.BrandCode, r.RequesterFullName, r.RequesterPosition, r.RequesterDepartmentName,
              r.PaymentDate, r.UpdatedAt,
-             t.ProvinceName, t.DepartDate, t.ReturnDate, t.PerDiemDays, t.PerDiemTotal
+             t.ProvinceName, t.DepartDate, t.ReturnDate, t.PerDiemDays, t.PerDiemTotal,
+             (SELECT STRING_AGG(wl.Name, N' · ') WITHIN GROUP (ORDER BY wl.SortOrder, wl.Id)
+              FROM [dbo].[AccTravelWorkLocation] wl
+              WHERE wl.TravelBookingId = t.Id) AS WorkLocationNames
       FROM [dbo].[AccRequest] r
       INNER JOIN [dbo].[AccTravelBooking] t ON t.RequestId = r.Id
       WHERE r.FormCode = @form AND r.Status = 'ManagerApproved' AND r.CurrentStepCode = 'ACCOUNT'
@@ -227,6 +253,7 @@ export async function listAccountQueue(access: BookingBrandAccess): Promise<Acco
     requesterPosition: (x.RequesterPosition as string) ?? null,
     requesterDepartmentName: (x.RequesterDepartmentName as string) ?? null,
     provinceName: (x.ProvinceName as string) ?? null,
+    workLocationNames: (x.WorkLocationNames as string) ?? null,
     departDate: x.DepartDate ? toYmd(x.DepartDate as Date) : null,
     returnDate: x.ReturnDate ? toYmd(x.ReturnDate as Date) : null,
     perDiemDays: (x.PerDiemDays as number) ?? 0,

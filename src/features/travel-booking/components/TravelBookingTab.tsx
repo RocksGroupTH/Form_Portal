@@ -379,6 +379,13 @@ export function TravelBookingTab({
             items={tab.workLocations}
             onChange={(workLocations) => onChange({ workLocations })}
             hasError={hasErr("workLocations")}
+            // Search inside the country the trip is to. Without it a search for
+            // "central" on a UK trip offers Central World in Bangkok, because
+            // the location bias points at Bangkok for everybody. Null only while
+            // no brand has been chosen, when the country band is not shown
+            // either — the world is searched until there is a country to narrow
+            // to.
+            country={tripCountry}
             onProvinceDetected={({ label, region }) => {
               // Only ever a convenience, and only ever an addition: it fills the
               // จังหวัด/เมือง field when it recognises the place, and leaves a
@@ -420,6 +427,7 @@ export function TravelBookingTab({
               if (hit) selectProvince(hit.id);
               else typeProvince(city ?? "");
             }}
+            country={tripCountry}
             placeholder="พิมพ์ค้นหาจังหวัดหรือเมืองจาก Google Maps..."
             hasError={hasErr("province")}
           />

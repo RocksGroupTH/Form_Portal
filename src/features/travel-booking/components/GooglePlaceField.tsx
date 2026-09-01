@@ -32,15 +32,34 @@ export function GooglePlaceField({
   onChange,
   onSelectPlace,
   cities,
+  country,
   hasError,
   placeholder = "พิมพ์ค้นหาสถานที่จาก Google Maps...",
 }: {
   value: string | null;
   onChange: (name: string | null) => void;
-  /** The picked suggestion's two halves — the place, and where it is. */
-  onSelectPlace?: (place: { mainText: string | null; label: string }) => void;
+  /**
+   * The picked suggestion, in its three parts.
+   *
+   * `mainText` is the PLACE'S OWN NAME ("โรงแรมดุสิตธานี"); `secondaryText` is
+   * where it is ("ถนนพระรามที่ 4, กรุงเทพมหานคร"). A caller deriving a province
+   * wants the second — passing the first found nothing for every real place,
+   * which is the bug this signature exists to make impossible to repeat.
+   */
+  onSelectPlace?: (place: {
+    mainText: string | null;
+    secondaryText: string | null;
+    label: string;
+  }) => void;
   /** Narrow Google to cities, for a จังหวัด/เมือง picker. */
   cities?: boolean;
+  /**
+   * ISO-3166-1 alpha-2 to search inside — the trip's own country.
+   *
+   * Omitted, the whole world. This restores what the ORS version of this field
+   * had (`boundary.country`) and which was dropped when it moved to Google.
+   */
+  country?: string | null;
   hasError?: boolean;
   placeholder?: string;
 }) {
@@ -73,6 +92,7 @@ export function GooglePlaceField({
           onChange={onChange}
           onSelectPlace={onSelectPlace}
           cities={cities}
+          country={country}
           hasError={hasError}
           placeholder={placeholder}
         />
@@ -110,21 +130,27 @@ function Inner({
   onChange,
   onSelectPlace,
   cities,
+  country,
   hasError,
   placeholder,
 }: {
   isLoaded: boolean;
   value: string | null;
   onChange: (name: string | null) => void;
-  onSelectPlace?: (place: { mainText: string | null; label: string }) => void;
+  onSelectPlace?: (place: {
+    mainText: string | null;
+    secondaryText: string | null;
+    label: string;
+  }) => void;
   cities?: boolean;
+  country?: string | null;
   hasError?: boolean;
   placeholder: string;
 }) {
-  const ac = usePlaceAutocomplete(
-    isLoaded,
-    cities ? { includedPrimaryTypes: ["(cities)"] } : undefined,
-  );
+  const ac = usePlaceAutocomplete(isLoaded, {
+    includedPrimaryTypes: cities ? ["(cities)"] : undefined,
+    regionCode: country,
+  });
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number; width: number; maxH: number } | null>(
     null,
@@ -174,8 +200,9 @@ function Inner({
     if (!p) return;
     const label = p.text?.toString() ?? "";
     const mainText = p.mainText?.toString() ?? null;
+    const secondaryText = p.secondaryText?.toString() ?? null;
     onChange(label || null);
-    onSelectPlace?.({ mainText, label });
+    onSelectPlace?.({ mainText, secondaryText, label });
     // Ends the billing session — the next keystroke starts a new one.
     ac.resetToken();
     ac.setQuery("");

@@ -35,6 +35,16 @@ export function usePlaceAutocomplete(
      * Omitted, every kind of place is offered.
      */
     includedPrimaryTypes?: string[];
+    /**
+     * ISO-3166-1 alpha-2, lower-cased by this hook. Restricts results to that
+     * country.
+     *
+     * A **restriction**, not the Bangkok bias below — the trip's country is a
+     * deliberate answer on the form above, so a search for "central" on a UK
+     * trip should not offer Central World in Bangkok. Omitted, the world is
+     * searched with the bias only.
+     */
+    regionCode?: string | null;
   },
 ) {
   const [query, setQuery] = useState("");
@@ -45,6 +55,8 @@ export function usePlaceAutocomplete(
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const typesRef = useRef(options?.includedPrimaryTypes);
   typesRef.current = options?.includedPrimaryTypes;
+  const regionRef = useRef(options?.regionCode);
+  regionRef.current = options?.regionCode;
 
   const search = useCallback(
     async (input: string) => {
@@ -60,12 +72,15 @@ export function usePlaceAutocomplete(
         const req: google.maps.places.AutocompleteRequest = {
           input,
           sessionToken: sessionTokenRef.current,
-          // A bias, not a restriction: a Thai company's searches start in
-          // Thailand often enough to rank it first, and a trip to London must
-          // still find London.
+          // Ranking, not filtering — and it composes with the region
+          // restriction below rather than fighting it: inside the trip's own
+          // country, nearer-to-Bangkok still ranks first, which is right for a
+          // Thai trip and irrelevant for a foreign one.
           locationBias: { lat: BANGKOK_CENTER.lat, lng: BANGKOK_CENTER.lng, radius: 200000 },
         };
         if (typesRef.current?.length) req.includedPrimaryTypes = typesRef.current;
+        const region = (regionRef.current ?? "").trim().toLowerCase();
+        if (/^[a-z]{2}$/.test(region)) req.includedRegionCodes = [region];
         const response =
           await google.maps.places.AutocompleteSuggestion.fetchAutocompleteSuggestions(req);
         setSuggestions(response.suggestions || []);

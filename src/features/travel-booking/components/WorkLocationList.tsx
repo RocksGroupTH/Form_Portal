@@ -9,13 +9,22 @@ export function WorkLocationList({
   onChange,
   hasError,
   onProvinceDetected,
+  country,
   placeholder = "เช่น สาขาเชียงใหม่ ถ.นิมมานเหมินท์",
 }: {
   items: WorkLocationInput[];
   onChange: (items: WorkLocationInput[]) => void;
   hasError?: boolean;
-  /** A picked ORS place (label + region) — parent uses it to set จังหวัด. */
+  /**
+   * A picked place — the parent uses it to fill จังหวัด/เมือง.
+   *
+   * `region` is Google's SECONDARY text, which is where the place is. It used
+   * to be handed the main text — the place's own name — so the auto-fill
+   * silently matched nothing for every hotel and office anybody ever picked.
+   */
   onProvinceDetected?: (place: { label: string; region: string | null }) => void;
+  /** ISO-3166-1 alpha-2 to search inside — the trip's own country. */
+  country?: string | null;
   placeholder?: string;
 }) {
   const name = items[0]?.name ?? "";
@@ -27,7 +36,8 @@ export function WorkLocationList({
       // Google's secondary text is where the place is — "Chiang Mai, Thailand"
       // — which is what the parent matches against the จังหวัด/เมือง list. ORS
       // called the same thing `region`; the shape differs, the use does not.
-      onSelectPlace={(p) => onProvinceDetected?.({ label: p.label, region: p.mainText })}
+      onSelectPlace={(p) => onProvinceDetected?.({ label: p.label, region: p.secondaryText })}
+      country={country}
       placeholder={placeholder}
       hasError={!!hasError && !name.trim()}
     />

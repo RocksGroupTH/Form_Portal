@@ -461,6 +461,14 @@ export interface TravelBookingAdminQueueItem {
   requesterPosition: string | null;
   requesterDepartmentName: string | null;
   provinceName: string | null;
+  /**
+   * ข้อ9 — every work location on the trip, joined with " · ".
+   *
+   * What the booking desk works against: a hotel is booked near the place
+   * somebody is going to, not near the province. Null on a trip filed before
+   * ข้อ9 carried one, which is why the queues fall back to provinceName.
+   */
+  workLocationNames: string | null;
   departDate: string | null;
   returnDate: string | null;
   needsRoomBooking: boolean;
@@ -483,6 +491,14 @@ export interface TravelBookingAccountQueueItem {
   requesterPosition: string | null;
   requesterDepartmentName: string | null;
   provinceName: string | null;
+  /**
+   * ข้อ9 — every work location on the trip, joined with " · ".
+   *
+   * What the booking desk works against: a hotel is booked near the place
+   * somebody is going to, not near the province. Null on a trip filed before
+   * ข้อ9 carried one, which is why the queues fall back to provinceName.
+   */
+  workLocationNames: string | null;
   departDate: string | null;
   returnDate: string | null;
   perDiemDays: number;
