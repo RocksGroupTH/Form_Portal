@@ -5,6 +5,7 @@ import { GoogleMap, DirectionsRenderer, Marker } from "@react-google-maps/api";
 import { MapPin, RotateCcw, Crosshair, Loader2, Plus, X, Building2 } from "lucide-react";
 import { OFFICE_LOCATION, type LegValue } from "@/features/accounting/hooks/useTravelExpenseForm";
 import { extraDestinationLabel, ROUTE_FIRST_DEST_LABEL, ROUTE_ORIGIN_LABEL, buildRouteStopChain } from "@/features/accounting/lib/route-waypoints";
+import { usePlaceAutocomplete } from "@/components/maps/usePlaceAutocomplete";
 import { GoogleMapsJsLoader } from "@/components/maps/GoogleMapsJsLoader";
 import {
   BANGKOK_CENTER,
@@ -51,57 +52,6 @@ function placeFromValue(
   if (!label?.trim() || lat == null || lng == null) return null;
   if (!isValidCoord(lat, lng)) return null;
   return { label: label.trim(), lat, lng };
-}
-
-function usePlaceAutocomplete(isLoaded: boolean) {
-  const [query, setQuery] = useState("");
-  const [suggestions, setSuggestions] = useState<google.maps.places.AutocompleteSuggestion[]>([]);
-  const [showDropdown, setShowDropdown] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const sessionTokenRef = useRef<google.maps.places.AutocompleteSessionToken | null>(null);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const search = useCallback(async (input: string) => {
-    if (!isLoaded || input.trim().length < 2) {
-      setSuggestions([]);
-      return;
-    }
-    setLoading(true);
-    try {
-      if (!sessionTokenRef.current) {
-        sessionTokenRef.current = new google.maps.places.AutocompleteSessionToken();
-      }
-      const response = await google.maps.places.AutocompleteSuggestion.fetchAutocompleteSuggestions({
-        input,
-        sessionToken: sessionTokenRef.current,
-        locationBias: { lat: BANGKOK_CENTER.lat, lng: BANGKOK_CENTER.lng, radius: 200000 },
-      });
-      setSuggestions(response.suggestions || []);
-      setShowDropdown(true);
-    } catch {
-      setSuggestions([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [isLoaded]);
-
-  const handleInputChange = useCallback((text: string) => {
-    setQuery(text);
-    if (timerRef.current) clearTimeout(timerRef.current);
-    if (text.trim().length < 2) {
-      setSuggestions([]);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    timerRef.current = setTimeout(() => search(text), 300);
-  }, [search]);
-
-  const resetToken = useCallback(() => {
-    sessionTokenRef.current = null;
-  }, []);
-
-  return { query, setQuery, suggestions, showDropdown, setShowDropdown, handleInputChange, resetToken, loading };
 }
 
 function PlaceSearchBox({

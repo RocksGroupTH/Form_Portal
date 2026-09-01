@@ -3,12 +3,16 @@
 import { useMemo } from "react";
 import { Briefcase, Calendar, Car, FileCheck, Hotel, MapPin, StickyNote } from "lucide-react";
 import type { AccBrandOption } from "@/features/accounting/types";
-import { LocalSearchSelect } from "./LocalSearchSelect";
+import { GooglePlaceField } from "./GooglePlaceField";
+import {
+  cityNameFromPlace,
+  matchProvinceOption,
+} from "@/features/travel-booking/lib/province-match";
 import { WorkLocationList } from "./WorkLocationList";
 import { DateRangeField } from "./DateRangeField";
 import { TransportSection } from "./TransportSection";
 import { ORS_WORLDWIDE } from "@/lib/ors-scope";
-import { countryNameBoth, countryNames } from "@/lib/acc/country-currency";
+import { countryNames } from "@/lib/acc/country-currency";
 import {
   claimCountryOptions,
   effectiveClaimCountry,
@@ -116,6 +120,15 @@ export function TravelBookingTab({
    */
   const tripCountry = tab.brandCode ? effectiveClaimCountry(tab.countryCode, selectedBrand) : null;
 
+  /**
+   * What the จังหวัด/เมือง field shows: the list row's Thai name when one is
+   * chosen, otherwise whatever was typed. One value, because the field holds
+   * one — `provinceId` and `provinceName` are mutually exclusive by
+   * construction (see `selectProvince` / `typeProvince`).
+   */
+  const selectedProvinceLabel =
+    provinces.find((p) => p.id === tab.provinceId)?.nameTh ?? tab.provinceName ?? null;
+
   const selectedReason = reasons.find((r) => r.id === tab.reasonId);
   const selectedAccommodation = accommodations.find((a) => a.id === tab.accommodationId);
   const selectedGoVehicle = vehicles.find((v) => v.id === tab.goVehicleId);
@@ -166,15 +179,6 @@ export function TravelBookingTab({
     onChange({ provinceId: null, provinceName: name || null });
   };
 
-  // The sub-label is rendered AND searched by LocalSearchSelect, so naming the
-  // country here makes the list typable in either language and stops a foreign
-  // city reading as a Thai province. A Thai row keeps its English name, which is
-  // what somebody typing "chiang" is looking for.
-  const provinceOptions = provinces.map((p) => ({
-    value: String(p.id),
-    label: p.nameTh,
-    subLabel: p.countryCode === "TH" ? p.nameEn : countryNameBoth(p.countryCode) ?? p.nameEn,
-  }));
   const reasonOptions = reasons.map((r) => ({ value: String(r.id), label: r.name, icon: r.icon }));
   const accommodationOptions = accommodations.map((a) => ({ value: String(a.id), label: a.name, icon: a.icon }));
   const vehicleOptions = vehicles.map((v) => ({ value: String(v.id), label: v.name, icon: v.icon }));
@@ -375,31 +379,13 @@ export function TravelBookingTab({
             items={tab.workLocations}
             onChange={(workLocations) => onChange({ workLocations })}
             hasError={hasErr("workLocations")}
-            // Bounded to the trip's own country once one is chosen — which it
-            // is by default — and unbounded only while nothing has been picked.
-            // A boundary guessed from the province would be wrong for exactly
-            // the foreign trips this exists for; the country is the one field
-            // that actually knows.
-            country={tripCountry ?? ORS_WORLDWIDE}
             onProvinceDetected={({ label, region }) => {
-              // Prefer the region field, else scan the label (Bangkok often has no region).
-              // English province names first (ORS labels are English) — they're less ambiguous
-              // than short Thai names — with a Thai fallback.
-              const matchIn = (hay: string) => {
-                const h = hay.toLowerCase();
-                return (
-                  provinces.find((p) => {
-                    const en = (p.nameEn ?? "").trim().toLowerCase();
-                    return en.length >= 3 && h.includes(en);
-                  }) ?? provinces.find((p) => h.includes(p.nameTh.trim().toLowerCase()))
-                );
-              };
-              // Only ever a convenience. A foreign place usually matches
-              // nothing here — the list holds the cities somebody has added, not
-              // every city — and the right behaviour then is to leave the field
-              // alone for the requester to pick, never to clear a choice they
-              // already made.
-              const match = (region ? matchIn(region) : undefined) ?? matchIn(label);
+              // Only ever a convenience, and only ever an addition: it fills the
+              // จังหวัด/เมือง field when it recognises the place, and leaves a
+              // choice already made alone. `matchProvinceOption` compares whole
+              // names — a substring rule would file a trip to Londonderry under
+              // London and the report would count it as one.
+              const match = matchProvinceOption(region, provinces) ?? matchProvinceOption(label, provinces);
               if (match && match.id !== tab.provinceId) selectProvince(match.id);
             }}
           />
@@ -409,20 +395,32 @@ export function TravelBookingTab({
           <label className={labelClass} style={errLabelStyle(hasErr("province"))}>
             จังหวัด/เมือง{requiredStar}
           </label>
-          <LocalSearchSelect
-            options={provinceOptions}
-            value={tab.provinceId != null ? String(tab.provinceId) : ""}
-            onChange={(v) => selectProvince(v ? Number(v) : null)}
-            placeholder="พิมพ์ค้นหา หรือพิมพ์ชื่อเมืองเอง..."
-            // Typing a place the list does not have used to end at "contact an
-            // administrator", beside a required field — a blocked form rather
-            // than a validation message. It can now be committed as itself.
-            freeText={{
-              value: tab.provinceName,
-              onCommit: typeProvince,
-              label: (typed) => `ใช้ "${typed}"`,
+          {/* Google's city index rather than the managed list alone — the list
+              holds the places somebody has added, which can never be every city.
+
+              **A pick is matched back against the list first.** A hit stores the
+              row's id, so the request keeps its place in the report's
+              by-province filter; a miss stores the name. That is the whole
+              reason `matchProvinceOption` exists, and why it compares whole
+              names only: a substring rule would file Londonderry under London
+              and the report would count it as a London trip. */}
+          <GooglePlaceField
+            cities
+            value={selectedProvinceLabel}
+            onChange={(name) => {
+              // Typed and committed without taking a suggestion. Still matched:
+              // somebody typing "เชียงใหม่" should get the row, not free text.
+              const hit = matchProvinceOption(name, provinces);
+              if (hit) selectProvince(hit.id);
+              else typeProvince(name ?? "");
             }}
-            emptyLabel="ไม่พบในรายการ — พิมพ์ชื่อเมืองแล้วเลือก “ใช้…” ได้เลย"
+            onSelectPlace={({ mainText, label }) => {
+              const city = cityNameFromPlace(mainText, label);
+              const hit = matchProvinceOption(city, provinces) ?? matchProvinceOption(label, provinces);
+              if (hit) selectProvince(hit.id);
+              else typeProvince(city ?? "");
+            }}
+            placeholder="พิมพ์ค้นหาจังหวัดหรือเมืองจาก Google Maps..."
             hasError={hasErr("province")}
           />
         </div>
