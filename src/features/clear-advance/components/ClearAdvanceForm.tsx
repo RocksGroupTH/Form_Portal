@@ -140,6 +140,8 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   const [ocrScanning, setOcrScanning] = useState(false);
   // OCR candidates awaiting confirmation (§7) — null while the modal is closed.
   const [ocrRows, setOcrRows] = useState<OcrRow[] | null>(null);
+  // Pages the reader dropped for being neither receipt nor slip — shown as a count.
+  const [ocrSkipped, setOcrSkipped] = useState(0);
 
   const [brandCode, setBrandCode] = useState(initial?.brandCode ?? "");
   const [advanceRequestId, setAdvanceRequestId] = useState<number | null>(initial?.clear?.advanceRequestId ?? null);
@@ -689,25 +691,29 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   }
 
   interface ReceiptData {
-    kind: "receipt" | "slip" | "other";
+    kind: "receipt" | "slip";
     date: string | null; description: string | null; docNo: string | null;
     wht: number | null; taxId: string | null; payeeName: string | null; payeeAddress: string | null;
     total: number | null; vat: number | null; beforeVat: number | null;
   }
 
-  /** OCR one receipt image → one entry per document found in it (§8). */
-  async function ocrReceipt(file: File): Promise<ReceiptData[]> {
+  /** OCR one receipt image → one entry per receipt/slip found in it, plus the
+   *  count of pages that were neither (§8). */
+  async function ocrReceipt(file: File): Promise<{ rows: ReceiptData[]; skipped: number }> {
     try {
       const fd = new FormData();
       fd.append("file", file);
       const res = await fetch("/api/request/clear-advance/verify-receipt", { method: "POST", body: fd });
-      const j = (await res.json()) as { ok: boolean; data?: ReceiptData[] };
-      if (!j.ok || !j.data) return [];
-      return j.data.filter(
-        (d) => d.date != null || d.docNo != null || d.beforeVat != null || d.description != null,
-      );
+      const j = (await res.json()) as { ok: boolean; data?: ReceiptData[]; skippedPages?: number };
+      if (!j.ok || !j.data) return { rows: [], skipped: 0 };
+      return {
+        rows: j.data.filter(
+          (d) => d.date != null || d.docNo != null || d.beforeVat != null || d.description != null,
+        ),
+        skipped: j.skippedPages ?? 0,
+      };
     } catch {
-      return [];
+      return { rows: [], skipped: 0 };
     }
   }
 
@@ -721,14 +727,14 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
     setOcrScanning(true);
     try {
       const candidates: OcrRow[] = [];
+      let skipped = 0;
       for (const d of docs) {
         const read = await ocrReceipt(d.file); // serialized — the OCR worker is shared
-        read.forEach((r, i) => candidates.push({
+        skipped += read.skipped;
+        read.rows.forEach((r, i) => candidates.push({
           key: `${d.fileId}-${i}`,
           kind: r.kind,
-          // "other" pages are listed so the reviewer sees they were found, but
-          // start unticked — nothing vanishes without being shown.
-          include: r.kind !== "other",
+          include: true,
           sourceFileId: d.fileId,
           fileName: d.file.name,
           expenseDate: r.date ?? "",
@@ -746,7 +752,10 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           totalAmount: r.total != null ? String(r.total) : "",
         }));
       }
-      if (candidates.length === 0) return;
+      // Open even with no rows when pages were dropped: the count is the only
+      // report the reviewer gets that something was thrown away.
+      if (candidates.length === 0 && skipped === 0) return;
+      setOcrSkipped(skipped);
       setOcrRows(candidates);
     } finally {
       setOcrScanning(false);
@@ -1553,6 +1562,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       <OcrConfirmModal
         open
         rows={ocrRows}
+        skippedPages={ocrSkipped}
         branches={branches}
         brandChosen={!!brandCode}
         glForced={glForced}

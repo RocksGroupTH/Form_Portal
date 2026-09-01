@@ -16,7 +16,7 @@ export interface OcrRow {
   key: string;
   /** What the model decided this page is. The reviewer can correct it here. */
   kind: ReceiptKind;
-  /** Ticked rows are the ones that get written. "other" arrives unticked. */
+  /** Ticked rows are the ones that get written. */
   include: boolean;
   /** The attached receipt this candidate came from. */
   sourceFileId?: number;
@@ -43,7 +43,6 @@ export interface OcrRow {
 const KIND_LABEL: Record<ReceiptKind, string> = {
   receipt: "ใบเสร็จ / ใบกำกับภาษี",
   slip: "สลิปโอนเงิน",
-  other: "อื่นๆ (ไม่นำเข้า)",
 };
 
 function money(v: string): string {
@@ -66,10 +65,14 @@ function F({ label, children }: { label: string; children: ReactNode }) {
  * uploaded file stays attached to the request.
  */
 export function OcrConfirmModal({
-  open, rows: incoming, branches, brandChosen, glForced, forcedGlLabel, onConfirm, onCancel,
+  open, rows: incoming, skippedPages, branches, brandChosen, glForced, forcedGlLabel, onConfirm, onCancel,
 }: {
   open: boolean;
   rows: OcrRow[];
+  /** Pages the reader dropped for being neither a receipt nor a slip. Stated as a
+   *  count, never as rows: discarding silently is not acceptable, and junk rows
+   *  are worse than none. */
+  skippedPages: number;
   branches: BranchOption[];
   /** No brand picked yet — the branch list is brand-scoped, so the picker says so. */
   brandChosen: boolean;
@@ -175,7 +178,9 @@ export function OcrConfirmModal({
       <div className="flex flex-col min-h-0 flex-1">
         <div className="px-5 pt-4 flex items-center justify-between gap-2 flex-wrap">
           <p className="text-[12px] m-0" style={{ color: "var(--text-muted)" }}>
-            AI อ่านได้ {rows.length} รายการ · จะบันทึก {rows.filter((r) => r.include).length} รายการ — ตรวจสอบชนิดเอกสารและแก้ไขให้ถูกต้อง แล้วกด “ยืนยันบันทึก”
+            AI อ่านได้ {rows.length} รายการ · จะบันทึก {rows.filter((r) => r.include).length} รายการ
+            {skippedPages > 0 && ` · ข้ามไป ${skippedPages} หน้า (ไม่ใช่ใบเสร็จหรือสลิป)`}
+            {" "}— ตรวจสอบชนิดเอกสารและแก้ไขให้ถูกต้อง แล้วกด “ยืนยันบันทึก”
           </p>
           <PoweredByClaude />
         </div>
@@ -194,13 +199,10 @@ export function OcrConfirmModal({
                 </label>
                 <div className="flex items-center gap-2 min-w-0">
                   {/* The model classified the page; a wrong guess is cheaper to fix
-                      here than by re-uploading. Re-labelling re-ticks the row. */}
+                      here than by re-uploading. */}
                   <select className={cellClass} style={{ ...cellStyle }} value={r.kind}
                     aria-label="ชนิดเอกสาร"
-                    onChange={(e) => update(r.key, {
-                      kind: e.target.value as ReceiptKind,
-                      include: e.target.value !== "other",
-                    })}>
+                    onChange={(e) => update(r.key, { kind: e.target.value as ReceiptKind })}>
                     {(Object.keys(KIND_LABEL) as ReceiptKind[]).map((k) => (
                       <option key={k} value={k}>{KIND_LABEL[k]}</option>
                     ))}
@@ -223,7 +225,7 @@ export function OcrConfirmModal({
                     value={r.docNo} onChange={(e) => update(r.key, { docNo: e.target.value })} />
                 </F>
                 {/* Branch and account belong to an expense line; a slip only carries
-                    a date and an amount, and an "other" page carries nothing. */}
+                    a date and an amount. */}
                 {r.kind === "receipt" && (
                   <>
                     <F label="สาขา">
@@ -286,13 +288,13 @@ export function OcrConfirmModal({
                       value={r.whtAmount} onChange={(e) => update(r.key, { whtAmount: e.target.value })} />
                   </F>
                 </div>
-              ) : r.kind === "slip" ? (
+              ) : (
                 <F label="ยอดที่โอน">
                   <input type="number" min="0" step="0.01" inputMode="decimal"
                     className={`${cellClass} text-right`} style={{ ...cellStyle, width: "100%" }} placeholder="0.00"
                     value={r.amountBeforeVat} onChange={(e) => update(r.key, { amountBeforeVat: e.target.value })} />
                 </F>
-              ) : null}
+              )}
 
               {r.kind === "receipt" && (
                 <div className="text-[11px] text-right" style={{ color: "var(--text-muted)" }}>

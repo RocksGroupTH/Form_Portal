@@ -10,7 +10,7 @@ import {
   toNum,
   toStr,
   type GlCandidate,
-  type ReceiptDoc,
+  type ReceiptRead,
 } from "./ai-receipt-core";
 
 /**
@@ -25,17 +25,19 @@ const MODEL = process.env.ANTHROPIC_RECEIPT_MODEL || "claude-haiku-4-5-20251001"
  * Read every document in an upload with Claude vision. `images` is one image, or
  * the consecutive pages of one PDF — they go in a single call so a tax invoice
  * printed across four pages is recognised as ONE document, not four. Returns one
- * entry per invoice number, empty when the key is missing or the call/parse
- * fails, so the caller can fall back cleanly.
+ * entry per invoice number plus the count of pages that were neither a receipt
+ * nor a slip; an empty read means the key is missing or the call/parse failed, so
+ * the caller can fall back cleanly.
  */
 export async function extractReceiptsWithAI(
   images: Buffer[],
   mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif" = "image/png",
-): Promise<ReceiptDoc[]> {
-  if (images.length === 0) return [];
+): Promise<ReceiptRead> {
+  const nothing: ReceiptRead = { docs: [], skippedPages: 0 };
+  if (images.length === 0) return nothing;
   try {
     const { value: apiKey } = await resolveApiKey("ANTHROPIC_API_KEY");
-    if (!apiKey) return [];
+    if (!apiKey) return nothing;
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
     const client = new Anthropic({ apiKey });
     const res = await client.messages.create({
@@ -58,7 +60,7 @@ export async function extractReceiptsWithAI(
     const textPart = res.content.find((c) => c.type === "text");
     return parseReceiptDocs(textPart && "text" in textPart ? textPart.text : "");
   } catch {
-    return [];
+    return nothing;
   }
 }
 
