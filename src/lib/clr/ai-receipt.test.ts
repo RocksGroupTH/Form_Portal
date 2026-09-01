@@ -101,12 +101,73 @@ test("an unlabelled or unknown kind falls back to receipt", () => {
 });
 
 test("one invoice printed across four pages collapses to one row", () => {
-  // The KEX receipt in the AP-3 sample bundle: the same number on every page.
+  // The KEX receipt in the AP-3 sample bundle: the same number on every page,
+  // and the grand total printed only on the last one.
   const page = (n: number) =>
     `{"kind":"receipt","docNo":"EBYC25120005297","description":"Transportation .1KG","amountBeforeVat":${n}}`;
   const docs = docsOf(`[${page(19)},${page(19)},${page(19)},${page(1031)}]`);
   assert.equal(docs.length, 1);
-  assert.equal(docs[0].beforeVat, 19);
+  assert.equal(docs[0].beforeVat, 1031);
+  assert.equal(docs[0].mergedEntries, 4);
+});
+
+test("the merged row carries the fields of the page that held the total", () => {
+  const docs = docsOf(`[
+    {"kind":"receipt","docNo":"A-9","description":"หน้าแรก","date":"2026-08-01","amountBeforeVat":19,"vat":1.33},
+    {"kind":"receipt","docNo":"A-9","description":"รวมทั้งสิ้น","date":"2026-08-02","amountBeforeVat":1031,"vat":72.17}
+  ]`);
+  assert.equal(docs.length, 1);
+  assert.equal(docs[0].description, "รวมทั้งสิ้น");
+  assert.equal(docs[0].date, "2026-08-02");
+  assert.equal(docs[0].vat, 72.17);
+  assert.equal(docs[0].total, 1103.17);
+});
+
+test("a document number OCR broke apart is still the same document", () => {
+  // Observed: "KEX1001273 07371" for KEX100127307371 on the same receipt.
+  const docs = docsOf(`[
+    {"kind":"receipt","docNo":"KEX1001273 07371","amountBeforeVat":19},
+    {"kind":"receipt","docNo":"kex100127307371","amountBeforeVat":880}
+  ]`);
+  assert.equal(docs.length, 1);
+  assert.equal(docs[0].beforeVat, 880);
+});
+
+test("a one-character misread stays its own row rather than being guessed at", () => {
+  const docs = docsOf(`[
+    {"kind":"receipt","docNo":"EBYC25120005297","amountBeforeVat":1031},
+    {"kind":"receipt","docNo":"EBYC2512Q005297","amountBeforeVat":1031}
+  ]`);
+  assert.equal(docs.length, 2);
+});
+
+test("two vendors sharing an invoice number keep their own rows", () => {
+  const docs = docsOf(`[
+    {"kind":"receipt","docNo":"001","payeeName":"บจก. เอ","amountBeforeVat":100},
+    {"kind":"receipt","docNo":"001","payeeName":"บจก. บี","amountBeforeVat":200}
+  ]`);
+  assert.equal(docs.length, 2);
+  assert.deepEqual(docs.map((d) => d.payeeName), ["บจก. เอ", "บจก. บี"]);
+});
+
+test("a receipt and a slip carrying the same number are different documents", () => {
+  const docs = docsOf(`[
+    {"kind":"receipt","docNo":"X1","amountBeforeVat":100},
+    {"kind":"slip","docNo":"X1","amountBeforeVat":100}
+  ]`);
+  assert.deepEqual(docs.map((d) => d.kind), ["receipt", "slip"]);
+});
+
+test("entries with no document number are each their own row", () => {
+  const docs = docsOf(`[
+    {"kind":"receipt","description":"ค่าแท็กซี่","amountBeforeVat":100},
+    {"kind":"receipt","description":"ค่าอาหาร","amountBeforeVat":200}
+  ]`);
+  assert.equal(docs.length, 2);
+});
+
+test("a document that arrived once is not marked as merged", () => {
+  assert.equal(docsOf('[{"docNo":"A1","amountBeforeVat":10}]')[0].mergedEntries, undefined);
 });
 
 const NOW = new Date("2026-09-01T00:00:00Z");
