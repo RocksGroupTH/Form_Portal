@@ -164,13 +164,25 @@ export function toStr(v: unknown): string | null {
 }
 
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
-const DAY_MS = 86_400_000;
+/** Bangkok is UTC+7 all year. Shifting the clock by it and reading the UTC parts
+ *  gives the Thai calendar date whatever timezone the process happens to run in
+ *  — the server's own date would be a day out for every evening upload. */
+const THAI_OFFSET_MS = 7 * 60 * 60 * 1000;
+
+/** Today in Bangkok, as the UTC midnight the parsed date is compared against. */
+function thaiToday(now: Date): number {
+  const t = new Date(now.getTime() + THAI_OFFSET_MS);
+  return Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate());
+}
 
 /**
  * A date the model read, or null. Nothing here can catch a swapped day and month
  * — 2026-04-06 is a perfectly good date — but a date that cannot exist, or that
  * has not happened yet, is certainly a misread. An empty field the user fills in
  * is cheap; a wrong Posting Date on a Refund journal (§3.2) is not.
+ *
+ * "Not yet" is judged in Thai local time: the user, the document and the posting
+ * period are all Bangkok.
  */
 export function toDate(v: unknown, now: Date = new Date()): string | null {
   const m = toStr(v)?.match(ISO_DATE);
@@ -187,8 +199,11 @@ export function toDate(v: unknown, now: Date = new Date()): string | null {
   if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) {
     return null;
   }
-  // No one clears an advance against paperwork dated a year out.
-  if (d.getTime() > now.getTime() + 366 * DAY_MS) return null;
+  // A receipt or a transfer slip documents something that has already happened,
+  // so tomorrow is a misread, not a document date. A slip's date becomes the
+  // Posting Date of the Refund journal (§3.2): accepting it would post a
+  // transfer that has not been made.
+  if (d.getTime() > thaiToday(now)) return null;
   return `${String(year).padStart(4, "0")}-${m[2]}-${m[3]}`;
 }
 
