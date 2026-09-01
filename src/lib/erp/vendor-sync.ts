@@ -283,6 +283,7 @@ export async function syncBrandErpVendors(
   const transaction = new sql.Transaction(pool);
   let transactionOpen = false;
   let vendorRows = 0;
+  let homePageNote: string | null = null;
   let snapshotAt = startedAt;
 
   try {
@@ -355,6 +356,12 @@ export async function syncBrandErpVendors(
       console.info(`[vendor-sync] ${ctx.brandCode}: Home Page updated on ${homePagesUpdated} vendor(s)`);
     } catch (err) {
       console.error(`[vendor-sync] Home Page enrich failed for ${ctx.brandCode}`, err);
+      // Staying non-fatal is right — the vendor snapshot itself committed. But
+      // the run must not read as wholly clean: a failure here leaves Home Page
+      // values from an earlier run in place, and a staff code that accounting
+      // has since removed in BC still matches an employee with high confidence.
+      // Console alone is not enough; the log row is what an operator looks at.
+      homePageNote = `Home Page enrich failed: ${err instanceof Error ? err.message : String(err)}`;
     }
   } catch (error) {
     if (transactionOpen) await transaction.rollback().catch(() => undefined);
@@ -364,7 +371,7 @@ export async function syncBrandErpVendors(
     throw error;
   }
 
-  await insertVendorSyncLog(ctx.brandCode, "success", vendorRows, null, triggeredBy, startedAt)
+  await insertVendorSyncLog(ctx.brandCode, "success", vendorRows, homePageNote, triggeredBy, startedAt)
     .catch(() => undefined);
   return { brandCode: ctx.brandCode, vendorRows, syncedAt: snapshotAt.toISOString() };
 }

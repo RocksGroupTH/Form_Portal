@@ -282,7 +282,12 @@ export function validateAdvanceForSubmit(
   if (!a.payeeType) errs.push("กรุณาเลือกผู้รับโอน (โอนให้)");
   if (a.payeeType === "vendor") {
     if (!a.payeeName?.trim()) errs.push("กรุณากรอกชื่อคู่ค้า");
-    if (!a.payeeBankAccount?.trim()) errs.push("กรุณากรอกเลขที่บัญชีคู่ค้า");
+    // The form strips non-digits as you type, but that is a convenience, not a
+    // guarantee: a direct API call, or a draft saved before the field became
+    // numeric, can still carry letters into the number finance transfers to.
+    const acct = a.payeeBankAccount?.trim() ?? "";
+    if (!acct) errs.push("กรุณากรอกเลขที่บัญชีคู่ค้า");
+    else if (!/^\d+$/.test(acct)) errs.push("เลขที่บัญชีคู่ค้าต้องเป็นตัวเลขเท่านั้น");
     if (!a.payeeBankCode?.trim()) errs.push("กรุณาเลือกธนาคารของคู่ค้า");
   }
 
