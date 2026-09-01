@@ -104,6 +104,17 @@ function ClrErpPreviewModal({ items, onClose }: { items: ClrPreviewItem[]; onClo
                       style={{ background: "var(--bg-badge)", color: "var(--text-muted)" }}>{item.interfaceTarget}</span>
                   )}
                   {item.journalBatchName && <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Batch: {item.journalBatchName}</span>}
+                  {/* Refund and Payment post differently in BC, so say which one
+                      this is while it can still be stopped. */}
+                  {item.documentType && (
+                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
+                      style={{
+                        background: item.documentType === "Refund" ? "var(--status-ok-bg)" : "var(--bg-badge)",
+                        color: item.documentType === "Refund" ? "var(--status-ok-text)" : "var(--text-muted)",
+                      }}>
+                      {item.documentType === "Refund" ? "Refund · คืนบริษัท" : "Payment · จ่ายพนักงาน"}
+                    </span>
+                  )}
                   {item.environment && <EnvBadge env={item.environment} />}
                 </div>
                 {!item.ok && (
