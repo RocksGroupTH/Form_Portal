@@ -4,7 +4,7 @@ import { getAccPool, sql } from "@/lib/acc/pool";
 import { hrEmployeeTable } from "@/lib/hr/constants";
 import { allocateRequestNo } from "@/lib/acc/sequence";
 import { listClrErpBranchOptions } from "@/lib/clr/clear-advance-admin-service";
-import { isHqBranch } from "@/lib/clr/clear-advance-gl-filter";
+import { allowedDimensionTypes } from "@/lib/clr/clear-advance-gl-filter";
 import {
   resolveManagerEmail,
   resolveRequesterForActor,
@@ -313,13 +313,15 @@ export async function listPendingAdvances(
  *  accounts the user is not allowed to charge. */
 export async function listGlAccounts(branchCode?: string | null): Promise<GlAccountOption[]> {
   const pool = await getAccPool();
-  const hq = isHqBranch(branchCode);
+  // DimensionType is the real rule, not the "สาขา" in the name. The two agreed
+  // exactly for Branch rows (all 11 of them), but the 6 "Both" rows carry no
+  // "สาขา" in their name, so the name test hid them from every branch line.
+  const types = allowedDimensionTypes(branchCode);
   const res = await pool.request()
-    .input("branchWord", sql.NVarChar(20), "%สาขา%")
     .query(`SELECT GlAccountNo, NameTh, NameEn, DimensionType
             FROM [dbo].[AccClearAdvanceGl]
             WHERE IsActive = 1
-              AND ISNULL(NameTh, N'') ${hq ? "NOT LIKE" : "LIKE"} @branchWord
+              AND DimensionType IN (${types.map((t) => `'${t}'`).join(",")})
             ORDER BY SortOrder, GlAccountNo`);
   return (res.recordset as Record<string, unknown>[]).map((x) => ({
     glAccountNo: x.GlAccountNo as string,
