@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import {
-  Check, Paperclip, Camera, X, Plus, Trash2, Search, Banknote, User, Mail, FileText,
+  Check, Paperclip, Camera, X, Plus, Trash2, Banknote, User, Mail, FileText,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
@@ -17,6 +16,8 @@ import {
 } from "@/components/ui/AttachmentViewer";
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
 import { PoweredByClaude } from "@/components/ui/PoweredByClaude";
+import { BranchPicker, GlPicker, cellClass, cellStyle } from "./LinePickers";
+import { OcrConfirmModal, type OcrRow } from "./OcrConfirmModal";
 import type { AccBrandOption, AccFileMeta } from "@/features/accounting/types";
 import type {
   BranchOption,
@@ -52,13 +53,6 @@ const fieldStyle = {
   color: "var(--text-primary)",
   border: "1px solid var(--border-card)",
 } as const;
-const cellClass = "text-[12px] px-2 py-1.5 rounded-lg outline-none";
-const cellStyle = {
-  background: "var(--bg-input, var(--bg-card))",
-  color: "var(--text-primary)",
-  border: "1px solid var(--border-card)",
-} as const;
-
 const COMPANY_BANK_LINE =
   "โอนคืน: บริษัท ร็อคส์ พีซี จำกัด · กสิกรไทย 772-1-01878-9 สาขาเซ็นทรัลเวิลด์";
 
@@ -144,6 +138,8 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   const [uploading, setUploading] = useState(false);
   const [uploadingProof, setUploadingProof] = useState(false);
   const [ocrScanning, setOcrScanning] = useState(false);
+  // OCR candidates awaiting confirmation (§7) — null while the modal is closed.
+  const [ocrRows, setOcrRows] = useState<OcrRow[] | null>(null);
   const [slipScanning, setSlipScanning] = useState(false);
 
   const [brandCode, setBrandCode] = useState(initial?.brandCode ?? "");
@@ -717,67 +713,98 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   }
 
   /**
-   * OCR each uploaded receipt / tax invoice — ONE expense line per file. Each
-   * file's date / doc no. / amount-before-VAT / VAT fills the next empty line
-   * (a new line is appended when none is free), all as editable defaults. Never
-   * overwrites a line the user already filled.
+   * OCR each uploaded receipt / tax invoice — ONE expense line per file. The
+   * parsed values do NOT reach the expense table: they open the confirmation
+   * modal (§7), and only ยืนยันบันทึก writes them.
    */
   async function verifyReceipts(docs: { file: File; fileId: number }[]) {
     setOcrScanning(true);
     try {
-    const parsed: { data: ReceiptData; fileId: number }[] = [];
-    for (const d of docs) {
-      const r = await ocrReceipt(d.file); // serialized — the OCR worker is shared
-      if (r) parsed.push({ data: r, fileId: d.fileId });
+      const candidates: OcrRow[] = [];
+      for (const d of docs) {
+        const r = await ocrReceipt(d.file); // serialized — the OCR worker is shared
+        if (!r) continue;
+        candidates.push({
+          key: `${d.fileId}`,
+          sourceFileId: d.fileId,
+          fileName: d.file.name,
+          expenseDate: r.date ?? "",
+          docNo: r.docNo ?? "",
+          branchCode: "",
+          glAccountNo: "",
+          glAccountName: "",
+          description: r.description ?? "",
+          amountBeforeVat: r.beforeVat != null ? String(r.beforeVat) : "",
+          vatAmount: r.vat != null ? String(r.vat) : "",
+          whtAmount: r.wht != null && r.wht > 0 ? String(r.wht) : "",
+          taxId: r.taxId ?? "",
+          payeeName: r.payeeName ?? "",
+          payeeAddress: r.payeeAddress ?? "",
+          totalAmount: r.total != null ? String(r.total) : "",
+        });
+      }
+      if (candidates.length === 0) return;
+      setOcrRows(candidates);
+    } finally {
+      setOcrScanning(false);
     }
-    if (parsed.length === 0) return;
+  }
+
+  /** The user accepted (possibly edited) OCR rows — each fills the next empty
+   *  expense line, appending one when none is free. Never overwrites a line the
+   *  user already filled. */
+  function acceptOcrRows(rows: OcrRow[]) {
+    setOcrRows(null);
+    if (rows.length === 0) return;
 
     setLines((prev) => {
       const next = [...prev];
       const isBlank = (l: LineRow) =>
         !l.glAccountNo && !l.expenseDate && !l.docNo && !l.description && !num(l.amountBeforeVat) && !num(l.vatAmount);
-      for (const { data: r, fileId } of parsed) {
+      for (const r of rows) {
         let idx = next.findIndex(isBlank);
         if (idx < 0) { next.push(emptyLine()); idx = next.length - 1; }
-        const l = { ...next[idx], sourceFileId: fileId };
-        if (r.date) l.expenseDate = r.date;
-        if (r.docNo) l.docNo = r.docNo;
-        if (r.description) l.description = r.description;
-        if (r.beforeVat != null) l.amountBeforeVat = String(r.beforeVat);
-        if (r.vat != null) l.vatAmount = String(r.vat);
-        if (r.wht != null && r.wht > 0) l.whtAmount = String(r.wht);
-        next[idx] = l;
+        next[idx] = {
+          ...next[idx],
+          sourceFileId: r.sourceFileId,
+          expenseDate: r.expenseDate,
+          docNo: r.docNo,
+          branchCode: r.branchCode,
+          glAccountNo: r.glAccountNo,
+          glAccountName: r.glAccountName,
+          description: r.description,
+          amountBeforeVat: r.amountBeforeVat,
+          vatAmount: r.vatAmount,
+          whtAmount: r.whtAmount,
+        };
       }
       return next;
     });
 
-    // Docs that carry withholding tax → prefill a WHT-certificate row (opens the
+    // Rows that carry withholding tax → prefill a WHT-certificate row (opens the
     // WHT section; keeps its total matching the line WHT). Payee/tax-id best-effort.
-    const whtDocs = parsed.map((p) => p.data).filter((r) => (r.wht ?? 0) > 0);
-    if (whtDocs.length) {
+    const whtRowsFromOcr = rows.filter((r) => num(r.whtAmount) > 0);
+    if (whtRowsFromOcr.length) {
       setWhtRows((prev) => [
         ...prev,
-        ...whtDocs.map((r) => ({
-          expenseDate: r.date ?? "",
-          docNo: r.docNo ?? "",
-          description: r.description ?? "",
-          taxId: r.taxId ?? "",
-          payeeName: r.payeeName ?? "",
-          payeeAddress: r.payeeAddress ?? "",
-          amount: r.beforeVat != null ? String(r.beforeVat) : r.total != null ? String(r.total) : "",
-          whtAmount: String(r.wht),
+        ...whtRowsFromOcr.map((r) => ({
+          expenseDate: r.expenseDate,
+          docNo: r.docNo,
+          description: r.description,
+          taxId: r.taxId,
+          payeeName: r.payeeName,
+          payeeAddress: r.payeeAddress,
+          amount: r.amountBeforeVat || r.totalAmount,
+          whtAmount: r.whtAmount,
         })),
       ]);
     }
 
     toast.success(
-      parsed.length === 1
-        ? "อ่านเอกสารมาเติมเป็น 1 รายการให้แล้ว — กรุณาตรวจสอบ/แก้ไข"
-        : `อ่าน ${parsed.length} เอกสารมาเติมเป็น ${parsed.length} รายการให้แล้ว — กรุณาตรวจสอบ/แก้ไข`,
+      rows.length === 1
+        ? "เพิ่ม 1 รายการลงตารางค่าใช้จ่ายแล้ว"
+        : `เพิ่ม ${rows.length} รายการลงตารางค่าใช้จ่ายแล้ว`,
     );
-    } finally {
-      setOcrScanning(false);
-    }
   }
 
   /** OCR the refund slip: Claude vision first, fallback Tesseract. */
@@ -1532,6 +1559,22 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
         </div>
       </Dialog>
 
+      {/* OCR results wait here until the user confirms them (§7) */}
+      {/* Mounted only while there are candidates: a fresh `[]` prop on every closed
+          render would re-seed the modal's local copy in a loop. */}
+      {ocrRows !== null && (
+      <OcrConfirmModal
+        open
+        rows={ocrRows}
+        branches={branches}
+        brandChosen={!!brandCode}
+        glForced={glForced}
+        forcedGlLabel={`${FORCE_GL_NON_ROCKS_PC} · เงินจ่ายแทนบริษัทอื่น`}
+        onConfirm={acceptOcrRows}
+        onCancel={() => setOcrRows(null)}
+      />
+      )}
+
       {/* OCR scanning overlays — shown while Claude reads receipts / transfer slips */}
       {ocrScanning && (
         <TravelExpenseLoadingPopup
@@ -1601,243 +1644,6 @@ function FootVal({ value, accent, tone }: { value: string; accent?: boolean; ton
   );
 }
 
-/** Searchable G/L account picker (`glAccountNo — nameTh`). */
-function GlPicker({
-  options, valueNo, disabled, noBranch, onPick,
-}: {
-  options: GlAccountOption[];
-  valueNo: string;
-  disabled?: boolean;
-  /** The line has no branch yet, so the account list cannot be narrowed. */
-  noBranch?: boolean;
-  onPick: (o: GlAccountOption | null) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [q, setQ] = useState("");
-  const btnRef = useRef<HTMLButtonElement>(null);
-  const popRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number; width: number; above: boolean } | null>(null);
-  const selected = options.find((o) => o.glAccountNo === valueNo) ?? null;
-
-  // Anchor the popup to the button in viewport coords (position: fixed) so it
-  // floats ABOVE the table's overflow container instead of being clipped inside it.
-  const place = () => {
-    const r = btnRef.current?.getBoundingClientRect();
-    if (!r) return;
-    const width = Math.max(260, Math.min(320, window.innerWidth - 16));
-    const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
-    const spaceBelow = window.innerHeight - r.bottom;
-    const above = spaceBelow < 280 && r.top > spaceBelow;
-    setPos({ top: above ? r.top - 4 : r.bottom + 4, left, width, above });
-  };
-
-  useEffect(() => {
-    if (!open) return;
-    place();
-    const onDoc = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (btnRef.current?.contains(t) || popRef.current?.contains(t)) return;
-      setOpen(false);
-    };
-    const reflow = () => place();
-    document.addEventListener("mousedown", onDoc);
-    window.addEventListener("scroll", reflow, true); // capture: follows any scroll container
-    window.addEventListener("resize", reflow);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      window.removeEventListener("scroll", reflow, true);
-      window.removeEventListener("resize", reflow);
-    };
-  }, [open]);
-
-  const filtered = useMemo(() => {
-    const term = q.trim().toLowerCase();
-    const base = !term
-      ? options
-      : options.filter((o) =>
-          o.glAccountNo.toLowerCase().includes(term) ||
-          (o.nameTh ?? "").toLowerCase().includes(term) ||
-          (o.nameEn ?? "").toLowerCase().includes(term));
-    return base.slice(0, 60);
-  }, [q, options]);
-
-  return (
-    <div className="relative">
-      <button ref={btnRef} type="button" disabled={disabled}
-        onClick={() => setOpen((v) => !v)}
-        aria-haspopup="listbox" aria-expanded={open}
-        aria-label={selected ? `รายการ: ${selected.glAccountNo} ${selected.nameTh ?? ""}` : "เลือกรายการบัญชี"}
-        className={`${cellClass} w-full text-left flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-60`}
-        style={{ ...cellStyle, minHeight: 32 }}>
-        <span className="flex-1 min-w-0 truncate" style={{ color: selected ? "var(--text-primary)" : "var(--text-faint)" }}>
-          {selected ? `${selected.glAccountNo} — ${selected.nameTh ?? ""}` : (noBranch ? "เลือกสาขาก่อน" : "— เลือกรายการ —")}
-        </span>
-        <Search size={12} className="shrink-0" style={{ color: "var(--text-faint)" }} />
-      </button>
-      {open && pos && createPortal(
-        <div ref={popRef}
-          className="fixed z-[70] rounded-xl overflow-hidden"
-          style={{
-            top: pos.above ? undefined : pos.top,
-            bottom: pos.above ? window.innerHeight - pos.top : undefined,
-            left: pos.left, width: pos.width,
-            background: "var(--bg-dropdown, var(--bg-card))",
-            border: "1px solid var(--border-card)", boxShadow: "var(--shadow-dropdown)",
-          }}>
-          <div className="p-2" style={{ borderBottom: "1px solid var(--border-light)" }}>
-            <input autoFocus className={cellClass} style={{ ...cellStyle, width: "100%" }}
-              aria-label="ค้นหาเลขบัญชี / ชื่อบัญชี"
-              placeholder="ค้นหาเลขบัญชี / ชื่อบัญชี" value={q} onChange={(e) => setQ(e.target.value)} />
-          </div>
-          <div className="max-h-56 overflow-y-auto slim-scroll">
-            {valueNo && (
-              <button type="button" onClick={() => { onPick(null); setOpen(false); setQ(""); }}
-                className="w-full text-left px-3 py-1.5 text-[11px] cursor-pointer border-none bg-transparent"
-                style={{ color: "var(--text-muted)" }}>
-                ล้างการเลือก
-              </button>
-            )}
-            {filtered.length === 0 ? (
-              <p className="px-3 py-2 text-[12px] m-0" style={{ color: "var(--text-muted)" }}>ไม่พบบัญชี</p>
-            ) : filtered.map((o) => (
-              <button key={o.glAccountNo} type="button"
-                onClick={() => { onPick(o); setOpen(false); setQ(""); }}
-                className="w-full text-left px-3 py-1.5 cursor-pointer border-none bg-transparent hover:opacity-80"
-                style={{ background: o.glAccountNo === valueNo ? "var(--nav-active-bg)" : "transparent" }}>
-                <span className="block text-[12px] font-semibold" style={{ color: "var(--text-primary)" }}>{o.glAccountNo}</span>
-                <span className="block text-[11px] truncate" style={{ color: "var(--text-muted)" }}>{o.nameTh ?? o.nameEn ?? ""}</span>
-              </button>
-            ))}
-          </div>
-        </div>,
-        document.body,
-      )}
-    </div>
-  );
-}
-
-/** Branch dimension picker — searchable, shows only the Code in the field.
- *  Same floating-portal behaviour as GlPicker so it isn't clipped by the table. */
-function BranchPicker({
-  options, value, disabled, noBrand, onPick,
-}: {
-  options: BranchOption[];
-  value: string;
-  disabled?: boolean;
-  noBrand?: boolean;
-  onPick: (code: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [q, setQ] = useState("");
-  const btnRef = useRef<HTMLButtonElement>(null);
-  const popRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number; width: number; above: boolean } | null>(null);
-  const selected = options.find((o) => o.code === value) ?? null;
-
-  const place = () => {
-    const r = btnRef.current?.getBoundingClientRect();
-    if (!r) return;
-    const width = Math.max(260, Math.min(320, window.innerWidth - 16));
-    const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
-    const spaceBelow = window.innerHeight - r.bottom;
-    const above = spaceBelow < 280 && r.top > spaceBelow;
-    setPos({ top: above ? r.top - 4 : r.bottom + 4, left, width, above });
-  };
-
-  useEffect(() => {
-    if (!open) return;
-    place();
-    const onDoc = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (btnRef.current?.contains(t) || popRef.current?.contains(t)) return;
-      setOpen(false);
-    };
-    const reflow = () => place();
-    document.addEventListener("mousedown", onDoc);
-    window.addEventListener("scroll", reflow, true);
-    window.addEventListener("resize", reflow);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      window.removeEventListener("scroll", reflow, true);
-      window.removeEventListener("resize", reflow);
-    };
-  }, [open]);
-
-  const filtered = useMemo(() => {
-    const term = q.trim().toLowerCase();
-    const base = !term
-      ? options
-      : options.filter((o) =>
-          o.code.toLowerCase().includes(term) ||
-          (o.name ?? "").toLowerCase().includes(term));
-    return base.slice(0, 80);
-  }, [q, options]);
-
-  return (
-    <div className="relative">
-      <button ref={btnRef} type="button" disabled={disabled}
-        onClick={() => setOpen((v) => !v)}
-        aria-haspopup="listbox" aria-expanded={open}
-        aria-label={selected ? `สาขา: ${selected.code}` : "เลือกสาขา"}
-        className={`${cellClass} w-full text-left flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-60`}
-        style={{ ...cellStyle, minHeight: 32 }}>
-        <span className="flex-1 min-w-0 truncate" style={{ color: selected ? "var(--text-primary)" : "var(--text-faint)" }}>
-          {selected ? selected.code : (noBrand ? "เลือกแบรนด์ก่อน" : "— เลือก —")}
-        </span>
-        <Search size={12} className="shrink-0" style={{ color: "var(--text-faint)" }} />
-      </button>
-      {open && pos && createPortal(
-        <div ref={popRef}
-          className="fixed z-[70] rounded-xl overflow-hidden"
-          style={{
-            top: pos.above ? undefined : pos.top,
-            bottom: pos.above ? window.innerHeight - pos.top : undefined,
-            left: pos.left, width: pos.width,
-            background: "var(--bg-dropdown, var(--bg-card))",
-            border: "1px solid var(--border-card)", boxShadow: "var(--shadow-dropdown)",
-          }}>
-          <div className="p-2" style={{ borderBottom: "1px solid var(--border-light)" }}>
-            <input autoFocus className={cellClass} style={{ ...cellStyle, width: "100%" }}
-              aria-label="ค้นหาสาขา"
-              placeholder="ค้นหาสาขา (Code / ชื่อ)" value={q} onChange={(e) => setQ(e.target.value)} />
-          </div>
-          <div className="max-h-56 overflow-y-auto slim-scroll">
-            {value && (
-              <button type="button" onClick={() => { onPick(""); setOpen(false); setQ(""); }}
-                className="w-full text-left px-3 py-1.5 text-[11px] cursor-pointer border-none bg-transparent"
-                style={{ color: "var(--text-muted)" }}>
-                ล้างการเลือก
-              </button>
-            )}
-            {filtered.length === 0 ? (
-              <p className="px-3 py-2 text-[12px] m-0" style={{ color: "var(--text-muted)" }}>ไม่พบสาขา</p>
-            ) : filtered.map((o) => (
-              <button key={o.code} type="button"
-                onClick={() => { onPick(o.code); setOpen(false); setQ(""); }}
-                className="w-full text-left px-3 py-1.5 cursor-pointer border-none bg-transparent hover:opacity-80"
-                style={{ background: o.code === value ? "var(--nav-active-bg)" : "transparent" }}>
-                <span className="block text-[12px] font-semibold" style={{ color: "var(--text-primary)" }}>{o.code}</span>
-                {o.name && <span className="block text-[11px] truncate" style={{ color: "var(--text-muted)" }}>{o.name}</span>}
-              </button>
-            ))}
-          </div>
-        </div>,
-        document.body,
-      )}
-    </div>
-  );
-}
-
-/**
- * The attach controls plus the thumbnail strip.
- *
- * **Every kind opens the shared in-page viewer** — the one AP-1, AP-4 and AP-17
- * use — so "view" means view. A thumbnail used to be an `<a target="_blank">`
- * pointed at the download route, where `attachmentResponseHeaders` serves
- * anything non-raster as `Content-Disposition: attachment`: the tab downloaded
- * the file and closed, which is not viewing it. The viewer itself lives once in
- * the parent; this only reports which file was clicked.
- */
 function FileArea({
   files, readOnly, uploading, onPick, onRemove, onView, locked, lockedHint,
 }: {
