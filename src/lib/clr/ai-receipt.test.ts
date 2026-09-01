@@ -149,6 +149,15 @@ test("a document keeps only a date that survived the guard", () => {
   assert.equal(bad[0].date, null);
 });
 
+test("the prompt makes the largest line win, not the most repeated one", () => {
+  // The KEX receipt returned "Transportation .1KG" — the wording of its many
+  // repeated 19.00 lines — instead of its one 165.00 line.
+  assert.ok(RECEIPT_SYSTEM.includes("find the single highest one"));
+  assert.ok(RECEIPT_SYSTEM.includes("Never answer with the wording that appears on the"));
+  // The amount half of the rule stays: the totals are the whole document's.
+  assert.ok(RECEIPT_SYSTEM.includes("grand total across all its lines"));
+});
+
 test("the prompt spells out the Thai day-month-year order", () => {
   assert.ok(RECEIPT_SYSTEM.includes("DAY month YEAR"));
   assert.ok(RECEIPT_SYSTEM.includes("ม.ค.=01"));
