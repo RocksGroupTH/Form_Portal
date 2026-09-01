@@ -2,12 +2,13 @@ import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { listGlAccounts } from "@/lib/clr/clear-advance-request-service";
 
-/** GET /api/request/clear-advance/options/gl-accounts — AP-3.2 G/L category master */
-export async function GET() {
+/** GET /api/request/clear-advance/options/gl-accounts?branch=CODE — AP-3.2 G/L category master */
+export async function GET(req: Request) {
   const session = await requireAuth();
   if (session instanceof Response) return session;
   try {
-    const data = await listGlAccounts();
+    const branch = new URL(req.url).searchParams.get("branch");
+    const data = await listGlAccounts(branch);
     return NextResponse.json({ ok: true, data });
   } catch (e) {
     return NextResponse.json(

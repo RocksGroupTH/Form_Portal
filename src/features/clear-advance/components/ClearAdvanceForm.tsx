@@ -134,7 +134,10 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   // True while the brand-scoped pending-advance list is being fetched — avoids
   // flashing the "ไม่มีเงินทดรองจ่าย" empty state before the list has loaded.
   const [pendingLoading, setPendingLoading] = useState(false);
-  const [glAccounts, setGlAccounts] = useState<GlAccountOption[]>([]);
+  // Each line's account list is fetched for that line's branch (§2.4), keyed by
+  // branch code so switching back to a branch already seen costs no round trip.
+  const [glByBranch, setGlByBranch] = useState<Record<string, GlAccountOption[]>>({});
+  const glRequested = useRef<Set<string>>(new Set());
   const [branches, setBranches] = useState<BranchOption[]>([]);
   const [files, setFiles] = useState<AccFileMeta[]>([]);
   const [refundProofFiles, setRefundProofFiles] = useState<AccFileMeta[]>([]);
@@ -263,14 +266,11 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
     // NOT gated — it can be slow (Graph photo fetch returns a large base64 image),
     // so the form renders immediately and the cards show a skeleton until it lands
     // (same concept as AP-1).
-    Promise.all([
-      fetch("/api/request/clear-advance/options/brands").then((r) => r.json()),
-      fetch("/api/request/clear-advance/options/gl-accounts").then((r) => r.json()),
-    ])
-      .then(([b, gl]) => {
+    fetch("/api/request/clear-advance/options/brands")
+      .then((r) => r.json())
+      .then((b) => {
         if (cancelled) return;
         if (b?.ok) setBrands(b.data ?? []);
-        if (gl?.ok) setGlAccounts(gl.data ?? []);
       })
       .catch(() => {})
       .finally(() => { if (!cancelled) setReady(true); });
@@ -287,6 +287,57 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
     }).catch(() => {}).finally(() => { if (!cancelled) setEmployeeLoading(false); });
     return () => { cancelled = true; };
   }, [initial?.id]);
+
+  // Fetch the account list for every branch the lines currently use. The server
+  // decides which accounts a branch may charge, so nothing is filtered here.
+  const branchKeys = useMemo(
+    () => Array.from(new Set(lines.map((l) => l.branchCode).filter(Boolean))).sort().join("|"),
+    [lines],
+  );
+  useEffect(() => {
+    const missing = (branchKeys ? branchKeys.split("|") : []).filter((c) => !glRequested.current.has(c));
+    if (missing.length === 0) return;
+    missing.forEach((c) => glRequested.current.add(c));
+    let cancelled = false;
+    Promise.all(
+      missing.map((code) =>
+        fetch(`/api/request/clear-advance/options/gl-accounts?branch=${encodeURIComponent(code)}`)
+          .then((r) => r.json())
+          .then((j: { ok: boolean; data?: GlAccountOption[] }) => [code, j.ok ? j.data ?? [] : []] as const)
+          .catch(() => {
+            glRequested.current.delete(code); // let a later render retry
+            return [code, [] as GlAccountOption[]] as const;
+          }),
+      ),
+    ).then((entries) => {
+      if (!cancelled) setGlByBranch((prev) => ({ ...prev, ...Object.fromEntries(entries) }));
+    });
+    return () => { cancelled = true; };
+  }, [branchKeys]);
+
+  // Changing a line's branch can invalidate the account already on it — drop the
+  // pick rather than submit an account that branch is not allowed to charge.
+  useEffect(() => {
+    if (readOnly) return;
+    setLines((prev) => {
+      let changed = false;
+      const next = prev.map((l) => {
+        const opts = l.branchCode ? glByBranch[l.branchCode] : undefined;
+        if (!l.glAccountNo || !opts || opts.some((o) => o.glAccountNo === l.glAccountNo)) return l;
+        changed = true;
+        return { ...l, glAccountNo: "", glAccountName: "" };
+      });
+      return changed ? next : prev;
+    });
+  }, [glByBranch, lines, readOnly]);
+
+  /** Options for one line, keeping a stored account visible on a read-only request
+   *  even when the current branch filter would no longer offer it. */
+  const glOptionsFor = (l: LineRow): GlAccountOption[] => {
+    const opts = (l.branchCode && glByBranch[l.branchCode]) || [];
+    if (!l.glAccountNo || opts.some((o) => o.glAccountNo === l.glAccountNo)) return opts;
+    return [{ glAccountNo: l.glAccountNo, nameTh: l.glAccountName || null, nameEn: null, dimensionType: "Employee" }, ...opts];
+  };
 
   // Branch + pending-advance options are scoped to the chosen brand.
   useEffect(() => {
@@ -1085,7 +1136,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                         </div>
                       ) : (
                         <GlPicker
-                          options={glAccounts}
+                          options={glOptionsFor(l)}
                           valueNo={l.glAccountNo}
                           disabled={readOnly || !l.branchCode}
                           noBranch={!l.branchCode}
@@ -1169,7 +1220,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                     </div>
                   ) : (
                     <GlPicker
-                      options={glAccounts} valueNo={l.glAccountNo}
+                      options={glOptionsFor(l)} valueNo={l.glAccountNo}
                       disabled={readOnly || !l.branchCode} noBranch={!l.branchCode}
                       onPick={(o) => updateLine(idx, { glAccountNo: o?.glAccountNo ?? "", glAccountName: o?.nameTh ?? "" })}
                     />
