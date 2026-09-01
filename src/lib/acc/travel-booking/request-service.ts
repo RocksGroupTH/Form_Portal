@@ -33,6 +33,7 @@ import {
 import { AP17_FORM_CODE, FILE_REFTYPES, RUNNING_PREFIX } from "@/features/travel-booking/constants";
 import { resolveBookingCountry } from "@/lib/acc/travel-booking/booking-country";
 import { listBrandRegistry } from "@/lib/brand-registry";
+import { workLocationIssue } from "@/lib/acc/travel-booking/work-location-pin";
 import { perDiemLogFor } from "@/lib/acc/travel-booking/perdiem-country";
 import { listPerDiemCountryRates } from "@/lib/acc/travel-booking/perdiem-source";
 import type {
@@ -1024,9 +1025,17 @@ export function validateTravelBookingTab(
   // ข้อ7 — รายละเอียดการไปปฏิบัติงาน
   if (!tab.workDetail?.trim()) return fail("กรุณากรอกรายละเอียดการไปปฏิบัติงาน");
 
-  // ข้อ9 — สถานที่ไปปฏิบัติงาน (>=1)
-  if (!(tab.workLocations ?? []).some((w) => w.name?.trim())) {
+  // ข้อ9 — สถานที่ไปปฏิบัติงาน (>=1), AND it must be pinned.
+  //
+  // Same question as the client's, from the same module. A submitted trip whose
+  // place cannot be put on a map is one the booking desk has to guess at, and
+  // guessing which "Central" was meant is what this closes.
+  const placeIssue = workLocationIssue(tab.workLocations ?? []);
+  if (placeIssue === "none") {
     return fail("กรุณาระบุสถานที่ไปปฏิบัติงานอย่างน้อย 1 แห่ง");
+  }
+  if (placeIssue === "unpinned") {
+    return fail("สถานที่ไปปฏิบัติงานต้องเลือกจากผลค้นหา Google Maps เพื่อให้ระบุตำแหน่งบนแผนที่ได้");
   }
 
   // ข้อ6 — วันเดินทาง (range)

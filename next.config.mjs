@@ -6,12 +6,16 @@
  * and the failure only shows up once someone submits something.
  *
  * form.portal.rocksgroup.com is this app's own deployed host, added 2026-08-19
- * when it went live. The rest are inherited from the Rocks Fast sibling and are
- * kept because both apps are built from this config lineage.
+ * when it went live.
+ *
+ * `fast.rocksgroup.com` was removed on 2026-09-01: it is the Rocks Fast
+ * sibling's host, inherited when this app was cloned from it, and this app has
+ * never been served there. It only ever widened the set of origins a server
+ * action would accept. The two m-group hosts stay — they are shared staging
+ * addresses this app is reachable on, not the sibling's.
  */
 const PRODUCTION_HOSTS = [
   "form.portal.rocksgroup.com",
-  "fast.rocksgroup.com",
   "test.m-group.com",
   "www.test.m-group.com",
 ];

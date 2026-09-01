@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/AttachmentViewer";
 import { useTravelBookingOptionIcons } from "@/features/travel-booking/hooks/useOptionIcons";
 import { InfoStrip, tripInfo, typeInfo, type InfoGroup } from "@/features/travel-booking/components/BookingInfoStrip";
+import { GooglePinView } from "@/features/travel-booking/components/GooglePinView";
 import { BOOKING_TYPE_REFTYPE } from "@/features/travel-booking/constants";
 import { REQUIRED_BOOKING_RULES } from "@/features/travel-booking/lib/booking-requirements";
 import {
@@ -433,6 +434,21 @@ export function AdminBookingPanel({
       <div className="px-5 py-4 flex flex-col gap-4">
         {/* Trip facts needed to place any booking — saves scrolling down to the request detail. */}
         <InfoStrip groups={tripInfo(request)} />
+
+        {/* Where the trip actually goes. The strip above lists it as text —
+            InfoStrip's InfoItem is { label, value: string } and cannot hold a
+            map — so the pin sits under it. Renders nothing for a trip whose
+            place was filed before coordinates were captured (migration 135);
+            those cannot be backfilled, so the desk sees the address alone,
+            exactly as it did before. */}
+        <GooglePinView
+          places={request.workLocations.map((w) => ({
+            name: w.name,
+            lat: w.lat,
+            lng: w.lng,
+          }))}
+          height={200}
+        />
 
         {requiredRules.length === 0 ? (
           <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>

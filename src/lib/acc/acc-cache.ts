@@ -7,12 +7,12 @@ type CacheEntry = { ts: number; data: unknown };
 
 declare global {
   // eslint-disable-next-line no-var
-  var __rocksfastAccCache: Map<string, CacheEntry> | undefined;
+  var __formPortalAccCache: Map<string, CacheEntry> | undefined;
 }
 
 const cache: Map<string, CacheEntry> =
-  globalThis.__rocksfastAccCache ?? new Map<string, CacheEntry>();
-globalThis.__rocksfastAccCache = cache;
+  globalThis.__formPortalAccCache ?? new Map<string, CacheEntry>();
+globalThis.__formPortalAccCache = cache;
 
 const MAX_ENTRIES = 100;
 

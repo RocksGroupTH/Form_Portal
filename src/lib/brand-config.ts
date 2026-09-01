@@ -270,62 +270,27 @@ export async function getBrandConfig(brandCode: string): Promise<BrandConfigPubl
   return list.find((c) => c.brandCode === brandCode) ?? null;
 }
 
-/**
- * Whether Dashboard SQL is configured, per brand.
- *
- * **Dead in this app** — Intelligence was removed when it was cloned, and
- * nothing in `src/` calls this. Kept because `brand-config.ts` is deliberately
- * frozen against the Rocks Fast sibling, which still reads the Dashboard
- * columns. Its brand list stays the hardcoded four on purpose: those are the
- * brands that ever had an Intelligence dashboard, and reading the master here
- * would report on brands the feature never covered.
- */
-export function isDashboardConfigured(
-  dbConnectionId: number | null | undefined,
-  databaseName: string | null | undefined,
-): boolean {
-  return dbConnectionId != null && !!databaseName?.trim();
-}
-
-/** Per-brand Dashboard readiness for enabled brands in BRANDS registry. */
-export async function getBrandDashboardReadiness(): Promise<Record<string, boolean>> {
-  const pool = await getCorePool();
-  const result = await pool.request().query(`
-    SELECT BrandCode, DashboardDbConnectionId, DashboardDatabaseName
-    FROM BrandConfig
-  `);
-
-  const byCode = new Map<string, { DashboardDbConnectionId: number | null; DashboardDatabaseName: string | null }>();
-  for (const r of result.recordset as Record<string, unknown>[]) {
-    byCode.set(r.BrandCode as string, {
-      DashboardDbConnectionId: (r.DashboardDbConnectionId as number) ?? null,
-      DashboardDatabaseName: (r.DashboardDatabaseName as string) ?? null,
-    });
-  }
-
-  const out: Record<string, boolean> = {};
-  for (const brand of LEGACY_DASHBOARD_BRANDS) {
-    const row = byCode.get(brand.id);
-    out[brand.id] = row
-      ? isDashboardConfigured(row.DashboardDbConnectionId, row.DashboardDatabaseName)
-      : false;
-  }
-  return out;
-}
-
 /** ERP lookups (New Item Inventory, etc.) */
 export async function resolveBrandErpTarget(brandCode: string): Promise<BrandDbTarget> {
-  return resolveBrandSqlTarget(brandCode, "erp");
+  return resolveBrandSqlTarget(brandCode);
 }
 
-/** Dashboard / reporting DB per brand */
-export async function resolveBrandDashboardTarget(brandCode: string): Promise<BrandDbTarget> {
-  return resolveBrandSqlTarget(brandCode, "dashboard");
-}
-
+/**
+ * The brand's ERP database.
+ *
+ * Took a `kind: "erp" | "dashboard"` until 2026-09-01. The dashboard arm served
+ * `resolveBrandDashboardTarget`, which nothing in this app ever called — it was
+ * kept for the Rocks Fast sibling, whose own copy of this file reads the
+ * Dashboard columns. That sibling is no longer connected to this project.
+ *
+ * **The COLUMNS are deliberately still read and still written.** Removing the
+ * round-trip would null DashboardDbConnectionId / DashboardDatabaseName on the
+ * next brand save — a data change nobody would associate with a settings edit,
+ * and irreversible. Deleting dead code is safe; silently clearing a column is
+ * not, and the two do not have to happen together.
+ */
 async function resolveBrandSqlTarget(
   brandCode: string,
-  kind: "erp" | "dashboard",
 ): Promise<BrandDbTarget> {
   const pool = await getCorePool();
   const result = await pool
@@ -349,14 +314,11 @@ async function resolveBrandSqlTarget(
     throw new Error(`Brand "${brandCode}" is not configured`);
   }
 
-  const dbConnectionId =
-    kind === "erp" ? row.DbConnectionId : row.DashboardDbConnectionId;
-  const databaseName =
-    kind === "erp" ? row.DatabaseName : row.DashboardDatabaseName;
+  const dbConnectionId = row.DbConnectionId;
+  const databaseName = row.DatabaseName;
 
   if (dbConnectionId == null || !databaseName?.trim()) {
-    const label = kind === "erp" ? "ERP" : "Dashboard";
-    throw new Error(`Brand "${brandCode}" has no ${label} database configured`);
+    throw new Error(`Brand "${brandCode}" has no ERP database configured`);
   }
 
   const DB_NAME_RE = /^[A-Za-z0-9_]+$/;

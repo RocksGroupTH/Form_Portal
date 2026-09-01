@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
 import { computePerDiem, type AllowanceLogEntry } from "@/lib/acc/travel-booking/perdiem";
+import { workLocationIssue } from "@/lib/acc/travel-booking/work-location-pin";
 import {
   isPerDiemCountry,
   perDiemLogFor,
@@ -278,8 +279,18 @@ export function validateTab(tab: TabFormState, settings: TabSettingsMaps): Field
   if (!tab.workDetail?.trim()) issues.push({ key: "workDetail", label: "รายละเอียดการไปปฏิบัติงาน" });
 
 
-  if (!tab.workLocations.some((w) => w.name?.trim())) {
+  // A name is no longer enough: the place must be one Google pinned, because
+  // the booking desk works from the map. `workLocationIssue` tells the two
+  // cases apart so the message can say which one this is — "fill it in" and
+  // "pick it instead of typing it" are different instructions.
+  const placeIssue = workLocationIssue(tab.workLocations);
+  if (placeIssue === "none") {
     issues.push({ key: "workLocations", label: "สถานที่ไปปฏิบัติงาน (อย่างน้อย 1 แห่ง)" });
+  } else if (placeIssue === "unpinned") {
+    issues.push({
+      key: "workLocations",
+      label: "สถานที่ไปปฏิบัติงาน — ต้องเลือกจากผลค้นหา Google Maps ไม่ใช่พิมพ์เอง",
+    });
   }
 
   if (!tab.departDate || !tab.returnDate) {
