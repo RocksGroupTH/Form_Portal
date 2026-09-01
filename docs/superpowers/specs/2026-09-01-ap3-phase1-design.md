@@ -130,7 +130,7 @@ The modal holds the parsed rows in local state, every field editable, with Confi
 Cancel. Cancel discards; the uploaded file itself stays attached either way. Nothing is
 written to the expense table until Confirm.
 
-## 8. One invoice number per row (§2.2)
+## 8. One invoice number per row, and the AI decides what each page is (§2.2)
 
 Today the rule is one *file* per row. A single photo containing two invoices produces one
 row, silently losing an invoice.
@@ -138,6 +138,30 @@ row, silently losing an invoice.
 The OCR result becomes a list of documents rather than one document, keyed by invoice
 number, and each becomes its own row. This changes the shape returned by the extractor,
 so the prompt asks for an array and the parser validates it.
+
+**Two problems found on a real document** (`R:\ACC Project\Example form\PVA2601-0021.pdf`,
+a 7-page pure scan with no text layer):
+
+**Only page 1 was ever read.** `verify-receipt/route.ts` called `pdfFirstPageToPng`, so
+pages 2-7 never reached the model and nothing told the user they had been dropped. Task 8
+is meaningless without this: it now uses `pdfPagesToPng(buffer, maxPages)` — already in
+the codebase for AP-4 — with an explicit cap, because the vision call is billed per image
+and an unbounded loop turns one careless 40-page upload into 40 billed images.
+
+**One file mixes receipts and a refund slip.** The code decided slip-vs-receipt by which
+upload box the file came from (`isProof`), so on a mixed document one half was always fed
+to the wrong extractor.
+
+**Decision (user, 2026-09-01): the AI classifies each page itself.** The extractor returns
+a `kind` per document — `receipt` (becomes an expense row), `slip` (feeds the refund-slip
+path, never an expense row), or `other` (cover sheets, approval forms, blank scans —
+becomes nothing). The prompt states that one file routinely contains several kinds mixed
+together, and classifies on what the page shows rather than where it sits in the file.
+`isProof` may remain a hint but no longer decides.
+
+Classification will sometimes be wrong, so the confirmation modal (§7) shows the detected
+kind per row and lets the user change it. Rows classified `other` are listed but unticked,
+so nothing is silently discarded without the user seeing that it was.
 
 ## 9. Multi-line receipt: description of the largest line, total of all (§2.2)
 
