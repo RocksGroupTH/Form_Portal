@@ -30,9 +30,10 @@ const MAX_PDF_PAGES = 15;
 
 /**
  * POST /api/request/clear-advance/verify-receipt
- * multipart: file (image or PDF). Returns one entry per document found in the
- * upload, each classified as receipt / slip / other — a bundle of two invoices
- * and a transfer slip pre-fills two expense lines and the refund fields.
+ * multipart: file (image or PDF). Returns one entry per receipt or transfer slip
+ * found in the upload — a bundle of two invoices and a transfer slip pre-fills two
+ * expense lines and the refund fields. Pages that are neither are not returned at
+ * all, only counted in `skippedPages`.
  * If ANTHROPIC_API_KEY is set, Claude vision reads the image; otherwise (or on any
  * failure) it falls back to the free local Tesseract+regex path. Best-effort — never
  * blocks the form; the user edits every value.
@@ -57,10 +58,15 @@ export async function POST(req: NextRequest) {
     // full run is reported as "may be truncated" rather than claimed complete.
     const maybeTruncated = isPdf && pages.length >= MAX_PDF_PAGES;
 
-    // Claude vision first; fall back to Tesseract+regex when absent/failed.
+    // Claude vision first; fall back to Tesseract+regex when absent/failed. A read
+    // that found only non-receipt pages still counts as a read — the skip count is
+    // the answer, and Tesseract would only turn a voucher into a bogus row.
     const ai = await extractReceiptsWithAI(pages, mediaType);
-    if (ai.length > 0) {
-      return NextResponse.json({ ok: true, data: ai, source: "ai", pagesRead: pages.length, maybeTruncated });
+    if (ai.docs.length > 0 || ai.skippedPages > 0) {
+      return NextResponse.json({
+        ok: true, data: ai.docs, source: "ai",
+        pagesRead: pages.length, skippedPages: ai.skippedPages, maybeTruncated,
+      });
     }
 
     // Tesseract fallback — may fail if the CDN model is unavailable; treat as soft
@@ -69,7 +75,7 @@ export async function POST(req: NextRequest) {
       const result = await extractReceipt(pages[0]);
       return NextResponse.json({
         ok: true, data: [{ ...result, kind: "receipt" as const }], source: "ocr",
-        pagesRead: 1, maybeTruncated,
+        pagesRead: 1, skippedPages: 0, maybeTruncated,
       });
     } catch {
       return NextResponse.json({ ok: false, error: "อ่านใบเสร็จไม่สำเร็จ — ไม่มีเครื่องมือ OCR" }, { status: 502 });
