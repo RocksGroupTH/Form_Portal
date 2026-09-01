@@ -207,6 +207,27 @@ new ones.
 
 ---
 
+## Found by QA, deferred to Phase 2 — BC inserts partially and a retry duplicates
+
+An independent review challenged the reasoning in "Why no ERP change is needed" above and
+found a hole in it. The claim that the codeunit never posts is true, and balance
+enforcement really does only happen at posting. But that is not the whole safety story.
+
+`APJournalCreate.al:53` loops the lines and inserts each one through `TryInsertLine`.
+A line that fails increments `FailedCount`; **the lines already inserted stay inserted**,
+and the endpoint returns normally. `clear-advance-erp-send.ts` correctly treats
+`Failed > 0` as a failure and marks the request retryable — but nothing removes what BC
+already wrote, and `AssignDocumentNumbers` allocates a fresh document number on the next
+attempt.
+
+Concretely: the expense line inserts, the vendor line fails because its vendor number does
+not exist in BC, the response is `Inserted: 1, Failed: 1`, and pressing send again writes
+the expense a second time under a new document number.
+
+Fixing this properly means making creation all-or-nothing in AL, or giving it an
+idempotency key so a retry replaces rather than appends. Both change the codeunit, so it
+belongs with the other Phase 2 items below.
+
 ## Out of scope (Phase 2)
 
 - §3.2 VAT detail block (Posting Type, VAT Code, Document Date, Tax ID, Vendor Name, VAT
@@ -216,6 +237,13 @@ new ones.
   field it writes to is still unconfirmed.
 - §3.1 Delete Document No. + overwriting interface — needs a new BC endpoint.
 - §2.3 DBD lookup for พ.ง.ด. 53 vs 3 — not an ERP change, but blocked on DBD API access.
+- All-or-nothing (or idempotent) journal creation, per the QA finding above.
+- The document type carried on the **vendor** line. Every line currently takes the
+  clearing's type, derived from the bank direction. On a pay-extra clearing that makes the
+  vendor line `Payment`, but the amount accounting later fills in credits the vendor,
+  which in BC terms reads as a Refund. Whether the staged line should carry a different
+  type is an accounting question about Vendor Ledger Entry semantics, not a portal
+  decision — ask before changing it.
 
 ## Testing
 
