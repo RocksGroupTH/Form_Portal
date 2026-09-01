@@ -66,6 +66,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         ok: true, data: ai.docs, source: "ai",
         pagesRead: pages.length, skippedPages: ai.skippedPages, maybeTruncated,
+        // Document-level: the page naming the destination is usually the voucher,
+        // which produces no row of its own, so this cannot ride on a row.
+        branchHint: ai.branchHint,
       });
     }
 
@@ -75,7 +78,7 @@ export async function POST(req: NextRequest) {
       const result = await extractReceipt(pages[0]);
       return NextResponse.json({
         ok: true, data: [{ ...result, kind: "receipt" as const }], source: "ocr",
-        pagesRead: 1, skippedPages: 0, maybeTruncated,
+        pagesRead: 1, skippedPages: 0, maybeTruncated, branchHint: null,
       });
     } catch {
       return NextResponse.json({ ok: false, error: "อ่านใบเสร็จไม่สำเร็จ — ไม่มีเครื่องมือ OCR" }, { status: 502 });

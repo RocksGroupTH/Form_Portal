@@ -698,22 +698,49 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   }
 
   /** OCR one receipt image → one entry per receipt/slip found in it, plus the
-   *  count of pages that were neither (§8). */
-  async function ocrReceipt(file: File): Promise<{ rows: ReceiptData[]; skipped: number }> {
+   *  count of pages that were neither (§8) and the document-level branch hint. */
+  async function ocrReceipt(
+    file: File,
+  ): Promise<{ rows: ReceiptData[]; skipped: number; branchHint: string | null }> {
+    const nothing = { rows: [] as ReceiptData[], skipped: 0, branchHint: null };
     try {
       const fd = new FormData();
       fd.append("file", file);
       const res = await fetch("/api/request/clear-advance/verify-receipt", { method: "POST", body: fd });
-      const j = (await res.json()) as { ok: boolean; data?: ReceiptData[]; skippedPages?: number };
-      if (!j.ok || !j.data) return { rows: [], skipped: 0 };
+      const j = (await res.json()) as {
+        ok: boolean; data?: ReceiptData[]; skippedPages?: number; branchHint?: string | null;
+      };
+      if (!j.ok || !j.data) return nothing;
       return {
         rows: j.data.filter(
           (d) => d.date != null || d.docNo != null || d.beforeVat != null || d.description != null,
         ),
         skipped: j.skippedPages ?? 0,
+        branchHint: j.branchHint ?? null,
       };
     } catch {
-      return { rows: [], skipped: 0 };
+      return nothing;
+    }
+  }
+
+  /** Branch suggested for one upload from its hint (§10). One per document: a
+   *  bundle is one spend, and the reviewer re-picks any line that differs. */
+  async function suggestBranch(
+    hint: string | null,
+  ): Promise<{ code: string; name: string | null; close: boolean } | null> {
+    if (!hint || !brandCode) return null;
+    try {
+      const res = await fetch("/api/request/clear-advance/suggest-branch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hint, brand: brandCode }),
+      });
+      const j = (await res.json()) as {
+        ok: boolean; data?: { code: string; name: string | null; close?: boolean } | null;
+      };
+      return j.ok && j.data ? { ...j.data, close: j.data.close === true } : null;
+    } catch {
+      return null;
     }
   }
 
@@ -731,6 +758,11 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       for (const d of docs) {
         const read = await ocrReceipt(d.file); // serialized — the OCR worker is shared
         skipped += read.skipped;
+        // Resolve the branch BEFORE the modal opens. Branch decides which G/L
+        // accounts a line may charge, and the modal asks for a G/L suggestion the
+        // moment a row has a branch — so the branch has to be on the row first,
+        // or the account would be suggested against the wrong (empty-branch) list.
+        const branch = await suggestBranch(read.branchHint);
         read.rows.forEach((r, i) => candidates.push({
           key: `${d.fileId}-${i}`,
           kind: r.kind,
@@ -739,7 +771,9 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           fileName: d.file.name,
           expenseDate: r.date ?? "",
           docNo: r.docNo ?? "",
-          branchCode: "",
+          branchCode: branch?.code ?? "",
+          branchSuggested: !!branch,
+          branchClose: branch?.close ?? false,
           glAccountNo: "",
           glAccountName: "",
           description: r.description ?? "",

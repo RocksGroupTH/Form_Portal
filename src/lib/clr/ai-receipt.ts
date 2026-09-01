@@ -1,15 +1,20 @@
 import "server-only";
 import { resolveApiKey } from "@/lib/api-keys/service";
 import {
+  BRANCH_SUGGEST_SYSTEM,
   GL_SUGGEST_SYSTEM,
   RECEIPT_SYSTEM,
   RECEIPT_USER_TEXT,
   THAI_DATE_RULES,
+  buildBranchSuggestUserText,
   buildGlSuggestUserText,
   parseReceiptDocs,
+  pickSuggestedBranch,
   pickSuggestedGl,
   toDate,
   toNum,
+  type BranchCandidate,
+  type BranchSuggestion,
   type GlCandidate,
   type ReceiptRead,
 } from "./ai-receipt-core";
@@ -34,7 +39,7 @@ export async function extractReceiptsWithAI(
   images: Buffer[],
   mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif" = "image/png",
 ): Promise<ReceiptRead> {
-  const nothing: ReceiptRead = { docs: [], skippedPages: 0 };
+  const nothing: ReceiptRead = { docs: [], skippedPages: 0, branchHint: null };
   if (images.length === 0) return nothing;
   try {
     const { value: apiKey } = await resolveApiKey("ANTHROPIC_API_KEY");
@@ -93,6 +98,39 @@ export async function suggestGlAccountWithAI(
     return pickSuggestedGl(raw, candidates.map((c) => c.glAccountNo));
   } catch {
     return "";
+  }
+}
+
+/**
+ * Suggest ONE branch for an upload from the note saying what the spend was for.
+ * `candidates` is the brand's whole BRANCH list, built on the server; anything
+ * the model answers that is not in it is dropped, so the reviewer is never
+ * offered a branch they could not have picked by hand. Advisory and editable —
+ * `close` says the model had near-ties, which the modal marks for the eye.
+ */
+export async function suggestBranchWithAI(
+  hint: string,
+  candidates: BranchCandidate[],
+): Promise<BranchSuggestion> {
+  const none: BranchSuggestion = { code: "", close: false };
+  const text = hint.trim();
+  if (!text || candidates.length === 0) return none;
+  try {
+    const { value: apiKey } = await resolveApiKey("ANTHROPIC_API_KEY");
+    if (!apiKey) return none;
+    const { default: Anthropic } = await import("@anthropic-ai/sdk");
+    const client = new Anthropic({ apiKey });
+    const res = await client.messages.create({
+      model: MODEL,
+      max_tokens: 64,
+      system: BRANCH_SUGGEST_SYSTEM,
+      messages: [{ role: "user", content: buildBranchSuggestUserText(text, candidates) }],
+    });
+    const textPart = res.content.find((c) => c.type === "text");
+    const raw = textPart && "text" in textPart ? textPart.text : "";
+    return pickSuggestedBranch(raw, candidates.map((c) => c.code));
+  } catch {
+    return none;
   }
 }
 
