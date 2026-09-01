@@ -99,11 +99,26 @@ dependency in the UI: with no branch chosen the GL picker is disabled with a hin
 
 `listGlAccounts()` returns every active row regardless of branch.
 
-Rule: **HQ** shows only accounts whose name does *not* contain "สาขา"; a **PC branch**
-(PC 10xx, PC 20xx, …) shows only accounts whose name *does* contain "สาขา". Filtering is
-done server-side in the query so the client cannot be handed accounts it must not offer.
+The spec words this rule as the word "สาขา" in the account name, but the master table
+already carries the answer in a column: `AccClearAdvanceGl.DimensionType`, which is
+`Employee` (26 rows), `Branch` (11) or `Both` (6). The name test and the column agree
+exactly for the 11 `Branch` rows — but none of the 6 `Both` rows has "สาขา" in its name,
+so the name test hid them from every branch line.
+
+Rule as built: **HQ** takes `Employee` + `Both` (32 accounts, what HQ already saw);
+**a branch** takes `Branch` + `Both` (17). `Both` belongs to each side — those accounts
+come from the BRANCH dimension too (decision: accounting, 2026-09-01).
+
+Filtering is done server-side so the client cannot be handed accounts it must not offer.
 Changing a row's branch after a GL account is already picked clears that pick when the
-account is no longer allowed.
+account is no longer allowed — except on a read-only request, where a stored account is
+merged back into the options so historical requests still display it.
+
+The spec only ever contrasts HQ with PC, but PCTH's BRANCH dimension holds 200 `PC*`
+codes, one `HQ*`, and **24 others** — warehouses (`W001`…`W104`, `W-VENDOR`) and
+affiliates (`KSI`, `RFM`, `UNO`, `SMR`, `PLM`, `RUT`, `ROLLS`). All 24 count as branches
+for now, confirmed by accounting on 2026-09-01 and to be revisited if that turns out
+wrong.
 
 ## 7. OCR confirmation pop-up (§2.2)
 
