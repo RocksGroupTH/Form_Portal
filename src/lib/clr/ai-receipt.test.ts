@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  BRANCH_SUGGEST_SYSTEM,
   RECEIPT_SYSTEM,
+  buildBranchSuggestUserText,
   buildGlSuggestUserText,
   parseReceiptDocs,
+  pickSuggestedBranch,
   pickSuggestedGl,
   toDate,
 } from "./ai-receipt-core";
@@ -260,4 +263,79 @@ test("the prompt lists exactly the accounts the branch allows", () => {
   assert.ok(text.includes("610322005 = ค่าเดินทาง"));
   assert.ok(text.includes("115030 = VAT"));
   assert.ok(text.includes("ค่าแท็กซี่"));
+});
+
+/* ─────────────────────── branch suggestion (§10) ─────────────────────── */
+
+const BRANCHES = ["PC1037", "PC1101", "PC1111"];
+
+test("a branch from the candidate list is kept", () => {
+  assert.deepEqual(pickSuggestedBranch('{"code":"PC1101","close":false}', BRANCHES),
+    { code: "PC1101", close: false });
+  // Fences and stray prose around the object are the model's habit, not an answer.
+  assert.deepEqual(pickSuggestedBranch('```json\n{"code":"PC1101","close":true}\n```', BRANCHES),
+    { code: "PC1101", close: true });
+});
+
+test("a branch outside the candidate list is discarded", () => {
+  assert.deepEqual(pickSuggestedBranch('{"code":"PC9999"}', BRANCHES), { code: "", close: false });
+  assert.deepEqual(pickSuggestedBranch('{"code":""}', BRANCHES), { code: "", close: false });
+  assert.deepEqual(pickSuggestedBranch("PC1101", BRANCHES), { code: "", close: false });
+  assert.deepEqual(pickSuggestedBranch("", BRANCHES), { code: "", close: false });
+  assert.deepEqual(pickSuggestedBranch("ไม่พบสาขาที่ตรง", BRANCHES), { code: "", close: false });
+});
+
+test("a code named inside prose is not a pick", () => {
+  // The whole `code` value must be the branch: a hedged answer names two, and
+  // scanning for a known token would turn "either of these" into a confident pick.
+  assert.deepEqual(pickSuggestedBranch('{"code":"PC1037 หรือ PC1101","close":true}', BRANCHES),
+    { code: "", close: false });
+});
+
+test("close is only reported alongside a branch that survived the re-check", () => {
+  assert.equal(pickSuggestedBranch('{"code":"PC9999","close":true}', BRANCHES).close, false);
+});
+
+test("the branch prompt lists the brand's branches and the note", () => {
+  const text = buildBranchSuggestUserText("ค่าอุปกรณ์ Dec'25 สำหรับCentral Khonkaen2", [
+    { code: "PC1037", name: "CKK-เซ็นทรัล ขอนแก่น" },
+    { code: "PC1101", name: "CKK2-เซนทรัล ขอนแก่น 2" },
+    { code: "PC1111", name: null },
+  ]);
+  assert.ok(text.includes("PC1101 = CKK2-เซนทรัล ขอนแก่น 2"));
+  assert.ok(text.includes("PC1111 = "));
+  assert.ok(text.includes("Central Khonkaen2"));
+});
+
+test("the branch prompt forbids reading the สาขา printed on the receipt", () => {
+  // That field is the buyer's tax-invoice branch (สำนักงานใหญ่), not the cost centre.
+  assert.ok(RECEIPT_SYSTEM.includes("BUYER"));
+  assert.ok(RECEIPT_SYSTEM.includes("สำนักงานใหญ่"));
+  // Near-identical names must still produce a pick, flagged rather than dropped.
+  assert.ok(BRANCH_SUGGEST_SYSTEM.includes("Always give your best branch"));
+});
+
+test("the branch hint survives pages that produce no row", () => {
+  // The payment voucher naming the destination is classified "other" — it must
+  // stay out of the rows and still hand over the hint.
+  const read = parseReceiptDocs(`[
+    {"kind":"other","pages":2,"branchHint":"ค่าอุปกรณ์ Dec'25 สำหรับCentral Khonkaen2"},
+    {"kind":"receipt","docNo":"INV-1","amountBeforeVat":100,"vat":7}
+  ]`);
+  assert.equal(read.branchHint, "ค่าอุปกรณ์ Dec'25 สำหรับCentral Khonkaen2");
+  assert.equal(read.docs.length, 1);
+  assert.equal(read.skippedPages, 2);
+});
+
+test("no branch hint anywhere in the upload is null, not an empty string", () => {
+  assert.equal(parseReceiptDocs(TWO_DOCS).branchHint, null);
+  assert.equal(parseReceiptDocs('[{"kind":"receipt","docNo":"A","branchHint":"  "}]').branchHint, null);
+});
+
+test("the first hint in the upload wins", () => {
+  const read = parseReceiptDocs(`[
+    {"kind":"other","pages":1,"branchHint":"สำหรับ Central Khonkaen2"},
+    {"kind":"receipt","docNo":"INV-1","branchHint":"สำหรับ Central Rama9"}
+  ]`);
+  assert.equal(read.branchHint, "สำหรับ Central Khonkaen2");
 });

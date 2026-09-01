@@ -39,6 +39,18 @@ export interface ReceiptRead {
    * rows is worse than no rows at all (decision: 2026-09-01).
    */
   skippedPages: number;
+  /**
+   * Wording from anywhere in the upload that names which store the spend was
+   * FOR — "ค่าอุปกรณ์ Dec'25 สำหรับCentral Khonkaen2". Document-level, not per
+   * row: a bundle covers one trip or one delivery run, and the reviewer sets any
+   * line that differs.
+   *
+   * Gathered from every page including the ones classified "other" — the payment
+   * voucher that names the destination is exactly such a page, so the hint has to
+   * outlive the row that page never becomes. It fills one field; it is not a
+   * line item, so "other" still yields no row (decision: 2026-09-02).
+   */
+  branchHint: string | null;
 }
 
 /**
@@ -71,9 +83,9 @@ export const RECEIPT_SYSTEM = [
   '- "slip": a bank transfer / payment slip (PromptPay, mobile banking, โอนเงินสำเร็จ).',
   '- "other": ANY page that is neither of those — payment vouchers, internal clearing or',
   "  approval forms, handwritten summaries, blank or unreadable scans.",
-  'Only "receipt" and "slip" are read. For an "other" entry return ONLY the keys "kind" and',
-  '"pages" — no description, no numbers, no names. Never describe or total a page you',
-  'labelled "other": it is counted, not read.',
+  'Only "receipt" and "slip" are read. For an "other" entry return ONLY the keys "kind",',
+  '"pages" and "branchHint" — no description, no numbers, no names. Never describe or total',
+  'a page you labelled "other": it is counted, not read.',
   "Return one array entry per distinct document across all the pages.",
   "A single document printed over several pages is ONE entry — take its totals from the page",
   "that carries the grand total, not from each page.",
@@ -95,14 +107,24 @@ export const RECEIPT_SYSTEM = [
   "  the transferred amount and vat and wht are null.",
   "- taxId: payee 13-digit tax id, digits only.",
   "- payeeName, payeeAddress: the seller/payee name and address (original language).",
+  "- branchHint: EVERY entry may carry this, including an \"other\" one. Copy any wording on",
+  "  the page that says which shop, store, site or outlet the spending was FOR — a purpose",
+  '  line such as "ค่าอุปกรณ์ Dec\'25 สำหรับ Central Khonkaen2", a project or destination',
+  "  name, a delivery address that is one of the company's own shops. Copy it verbatim in",
+  "  its own language and script; do not translate or expand it. null when the page names",
+  "  no such place.",
+  '  NEVER take branchHint from a "สาขา" / "Branch" field printed on a tax invoice or',
+  "  receipt: that field is the BUYER's registered tax-invoice branch (almost always",
+  '  "สำนักงานใหญ่" / "Head Office"), not the shop the money was spent for. Ignore that',
+  "  field completely.",
   "Reading a date:",
   THAI_DATE_RULES,
 ].join("\n");
 
 export const RECEIPT_USER_TEXT =
   "Extract every document in these pages. Return only a JSON array; each entry has the keys: " +
-  "kind, pages, date, description, docNo, amountBeforeVat, vat, wht, taxId, payeeName, payeeAddress " +
-  '(an "other" entry has kind and pages only).';
+  "kind, pages, date, description, docNo, amountBeforeVat, vat, wht, taxId, payeeName, payeeAddress, branchHint " +
+  '(an "other" entry has kind, pages and branchHint only).';
 
 /** An account the line's branch is allowed to charge (§6 decides the set). */
 export interface GlCandidate {
@@ -138,6 +160,71 @@ export function pickSuggestedGl(raw: string, allowed: readonly string[]): string
   return "";
 }
 
+/** A branch (BU) the request's brand may charge — ErpDimensionValue BRANCH rows. */
+export interface BranchCandidate {
+  code: string;
+  /** "SHORTCODE-ชื่อไทย", e.g. "CKK2-เซนทรัล ขอนแก่น 2". */
+  name: string | null;
+}
+
+export const BRANCH_SUGGEST_SYSTEM = [
+  "You map a short Thai/English note about what an expense was FOR to ONE branch (shop)",
+  "from a fixed list. Each list line is: CODE = SHORTCODE-ชื่อไทย.",
+  "The note and the list are often in different languages or scripts: an English or",
+  'transliterated name in the note ("Central Khonkaen2") is the same place as the Thai name',
+  'in the list ("CKK2-เซนทรัล ขอนแก่น 2"). Match on the place, not on the characters.',
+  'Return ONE JSON object only, no prose and no markdown fences: {"code": ..., "close": ...}',
+  "- code: the branch code, copied EXACTLY from the list. Use \"\" only when the note fits",
+  "  none of them at all.",
+  "- close: true when other branches on the list were nearly as good a fit as the one you",
+  "  chose — several branches in the same town differing only by a suffix or a number",
+  "  (Khonkaen vs Khonkaen 2 vs Khonkaen Campus), or a note too vague to separate them.",
+  "  false when the note names your branch beyond doubt.",
+  "Always give your best branch in code even when close is true — the person reviewing can",
+  "change it, and close is what tells them to look. Never put more than one code in code,",
+  "and never explain your choice.",
+].join("\n");
+
+export function buildBranchSuggestUserText(hint: string, candidates: BranchCandidate[]): string {
+  const list = candidates.map((c) => `${c.code} = ${c.name ?? ""}`).join("\n");
+  return `What the expense was for:\n${hint}\n\nBranches:\n${list}\n\nAnswer with the JSON object.`;
+}
+
+/** What the branch suggester settled on, after the answer was checked back
+ *  against the candidate list. */
+export interface BranchSuggestion {
+  /** "" when the model declined or answered something not on the list. */
+  code: string;
+  /** The model reported other branches fitted nearly as well — the modal marks
+   *  the field so the reviewer's eye lands on it. Only ever the model's own
+   *  signal; never inferred here. */
+  close: boolean;
+}
+
+/**
+ * The chosen branch, but only if it is one of the candidates. The code must be
+ * the whole `code` value, not a token found somewhere in the reply: a hedged
+ * answer names two codes, and scanning prose would turn "either of these" into a
+ * confident pick with no marker on it.
+ */
+export function pickSuggestedBranch(raw: string, allowed: readonly string[]): BranchSuggestion {
+  const none: BranchSuggestion = { code: "", close: false };
+  const m = raw.match(/\{[\s\S]*\}/);
+  if (!m) return none;
+  let json: unknown;
+  try {
+    json = JSON.parse(m[0]);
+  } catch {
+    return none;
+  }
+  if (!json || typeof json !== "object") return none;
+  const j = json as { code?: unknown; close?: unknown };
+  const answer = (typeof j.code === "string" ? j.code : "").trim().toUpperCase();
+  const code = allowed.find((c) => c.trim().toUpperCase() === answer) ?? "";
+  // A "close" on a discarded code marks nothing — there is no field to mark.
+  return { code, close: code !== "" && j.close === true };
+}
+
 type AiJson = {
   kind?: string | null;
   pages?: number | string | null;
@@ -150,6 +237,7 @@ type AiJson = {
   taxId?: string | null;
   payeeName?: string | null;
   payeeAddress?: string | null;
+  branchHint?: string | null;
 };
 
 export function toNum(v: unknown): number | null {
@@ -322,11 +410,17 @@ export function parseReceiptDocs(raw: string): ReceiptRead {
       : [];
 
   let skippedPages = 0;
+  let branchHint: string | null = null;
   const docs: ReceiptDoc[] = [];
   for (const entry of list) {
     if (!entry || typeof entry !== "object") continue;
     const e = entry as AiJson;
     const kind = toKind(e.kind);
+    // Read the hint off every entry, "other" included and BEFORE the skip: the
+    // page that names the destination is usually the payment voucher, which is
+    // exactly the page that produces no row. First one wins — the bundle is one
+    // spend, and the voucher that states its purpose leads the file.
+    branchHint ??= toStr(e.branchHint);
     if (kind === "other") {
       skippedPages += toPages(e.pages);
       continue;
@@ -338,5 +432,5 @@ export function parseReceiptDocs(raw: string): ReceiptRead {
     }
   }
 
-  return { docs: mergeDocs(docs), skippedPages };
+  return { docs: mergeDocs(docs), skippedPages, branchHint };
 }

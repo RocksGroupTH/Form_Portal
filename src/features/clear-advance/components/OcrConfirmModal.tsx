@@ -38,6 +38,11 @@ export interface OcrRow {
   totalAmount: string;
   /** The account was pre-filled from the AI suggestion (§10) — advisory, editable. */
   glSuggested?: boolean;
+  /** The branch was pre-filled from the AI suggestion (§10) — advisory, editable. */
+  branchSuggested?: boolean;
+  /** The reader said other branches fitted nearly as well (the CKK / CKK2 / CKC
+   *  case). Its own signal, not a computed score — it only draws the eye. */
+  branchClose?: boolean;
 }
 
 const KIND_LABEL: Record<ReceiptKind, string> = {
@@ -231,7 +236,19 @@ export function OcrConfirmModal({
                     <F label="สาขา">
                       <BranchPicker options={branches} value={r.branchCode} noBrand={!brandChosen}
                         disabled={!brandChosen} inline
-                        onPick={(code) => update(r.key, { branchCode: code })} />
+                        onPick={(code) => update(r.key, {
+                          branchCode: code, branchSuggested: false, branchClose: false,
+                        })} />
+                      {r.branchSuggested && (
+                        // "close" earns a colour: the pick is as likely to be the
+                        // neighbouring branch, and branch decides the account list.
+                        <span className="text-[10px]"
+                          style={{ color: r.branchClose ? "var(--text-warning)" : "var(--text-faint)" }}>
+                          {r.branchClose
+                            ? "AI แนะนำ — มีสาขาชื่อคล้ายกัน โปรดตรวจสอบ"
+                            : "AI แนะนำจากเอกสาร — เปลี่ยนได้"}
+                        </span>
+                      )}
                     </F>
                     <F label="รายการ">
                       {glForced ? (
