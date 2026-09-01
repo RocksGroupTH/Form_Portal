@@ -25,13 +25,27 @@ export interface VendorMatchResult {
 export interface LlmPick { vendorNo: string; confidence: VendorMatchConfidence; reason: string }
 export type FetchCandidates = (payeeName: string) => Promise<VendorCandidate[]>;
 export type AskLlm = (payeeName: string, candidates: VendorCandidate[]) => Promise<LlmPick | null>;
-export type FindVendorByCode = (staffId: number) => Promise<VendorCandidate | null>;
+/** What the Home Page lookup found: the one vendor, nothing, or too many. */
+export type EmployeeCodeLookup =
+  | { kind: "found"; vendor: VendorCandidate }
+  | { kind: "none" }
+  | { kind: "ambiguous" };
+
+export type FindVendorByCode = (staffId: number) => Promise<EmployeeCodeLookup>;
 
 /**
  * The employee-code match, with its IO injected so it can be tested.
  *
- * Returns null for every case that must fall through to the name matcher: a
- * non-employee payee, a missing staff id, or no vendor carrying that code.
+ * Returns null only where the name matcher should take over: a non-employee
+ * payee, a missing staff id, or **no** vendor carrying the code — which is
+ * almost every vendor until accounting fills the Home Page field in, so the
+ * fall-through is what keeps matching working at all today.
+ *
+ * `ambiguous` is different and must NOT fall through: two vendors sharing a
+ * staff code is a data error, and guessing at the name instead would hide it
+ * behind a confident-looking suggestion. It resolves to `none` so the officer
+ * picks by hand, with a reason that says what to fix.
+ *
  * Never returns `confirmed` — the officer still confirms.
  */
 export async function runEmployeeCodeMatch(
@@ -41,11 +55,20 @@ export async function runEmployeeCodeMatch(
 ): Promise<VendorMatchResult | null> {
   if (payeeType !== "employee" || staffId == null) return null;
   const hit = await findByCode(staffId);
-  if (!hit) return null;
+  if (hit.kind === "none") return null;
+  if (hit.kind === "ambiguous") {
+    return {
+      status: "none",
+      vendorNo: null,
+      vendorName: null,
+      confidence: null,
+      reason: `มี vendor มากกว่าหนึ่งใบที่ระบุรหัสพนักงาน ${staffId} ใน Home Page — เลือก vendor เอง แล้วแจ้งบัญชีให้แก้ข้อมูลใน ERP`,
+    };
+  }
   return {
     status: "suggested",
-    vendorNo: hit.vendorNo,
-    vendorName: hit.displayName,
+    vendorNo: hit.vendor.vendorNo,
+    vendorName: hit.vendor.displayName,
     confidence: "high",
     reason: `จับคู่จากรหัสพนักงาน ${staffId} (Home Page)`,
   };

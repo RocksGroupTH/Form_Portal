@@ -50,7 +50,8 @@ test("employee code: no staff id falls through", async () => {
 });
 
 test("employee code: a hit is suggested, never confirmed", async () => {
-  const r = await runEmployeeCodeMatch("employee", 10177, async () => ({ vendorNo: "ADV0004", displayName: "นาย ทดสอบ" }));
+  const r = await runEmployeeCodeMatch("employee", 10177, async () =>
+    ({ kind: "found", vendor: { vendorNo: "ADV0004", displayName: "นาย ทดสอบ" } }));
   assert.equal(r?.status, "suggested");
   assert.equal(r?.vendorNo, "ADV0004");
   assert.equal(r?.confidence, "high");
@@ -58,6 +59,15 @@ test("employee code: a hit is suggested, never confirmed", async () => {
 });
 
 test("employee code: a miss falls through to the name matcher", async () => {
-  const r = await runEmployeeCodeMatch("employee", 10177, async () => null);
+  const r = await runEmployeeCodeMatch("employee", 10177, async () => ({ kind: "none" }));
   assert.equal(r, null);
+});
+
+test("employee code: two vendors on one code refuses instead of guessing", async () => {
+  const r = await runEmployeeCodeMatch("employee", 10177, async () => ({ kind: "ambiguous" }));
+  // Not null — null would hand the payee name to the LLM and hide the data error.
+  assert.notEqual(r, null);
+  assert.equal(r?.status, "none");
+  assert.equal(r?.vendorNo, null);
+  assert.match(r?.reason ?? "", /10177/);
 });

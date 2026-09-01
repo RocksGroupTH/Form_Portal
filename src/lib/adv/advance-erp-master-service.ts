@@ -1,5 +1,6 @@
 import { getAppPool, sql } from "@/lib/db/mssql";
 import { ADVANCE_JOURNAL_TEMPLATE } from "@/lib/adv/advance-batch-service";
+import type { EmployeeCodeLookup } from "@/lib/adv/vendor-match-core";
 
 /**
  * AP-2 Interface ERP master options, read DIRECTLY from the pre-synced
@@ -123,9 +124,9 @@ export async function listVendors(company: string): Promise<AdvErpVendorOption[]
 export async function findVendorByEmployeeCode(
   company: string,
   staffId: number,
-): Promise<AdvErpVendorOption | null> {
+): Promise<EmployeeCodeLookup> {
   const c = company.trim().toUpperCase();
-  if (!c || !Number.isInteger(staffId) || staffId <= 0) return null;
+  if (!c || !Number.isInteger(staffId) || staffId <= 0) return { kind: "none" };
   const pool = await getAppPool(ERP_DATA_DB);
   const r = await pool.request()
     .input("c", sql.NVarChar, c)
@@ -139,10 +140,17 @@ export async function findVendorByEmployeeCode(
       AND LTRIM(RTRIM(COALESCE(Website, ''))) = @code
     ORDER BY VendorNo`);
   const rows = r.recordset as Record<string, unknown>[];
-  if (rows.length !== 1) return null;
+  if (rows.length === 0) return { kind: "none" };
+  // Two vendors carrying the same staff code is a data error in BC. Say so —
+  // reported as "none" it would look identical to an empty Home Page and be
+  // handed to the name matcher, turning a deliberate refusal into a guess.
+  if (rows.length > 1) return { kind: "ambiguous" };
   return {
-    vendorNo: rows[0].VendorNo as string,
-    displayName: (rows[0].DisplayName as string) ?? null,
+    kind: "found",
+    vendor: {
+      vendorNo: rows[0].VendorNo as string,
+      displayName: (rows[0].DisplayName as string) ?? null,
+    },
   };
 }
 
