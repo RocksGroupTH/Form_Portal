@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { extractReceipt } from "@/lib/clr/slip-verify";
 import { extractReceiptsWithAI } from "@/lib/clr/ai-receipt";
-import { isPdfFile, pdfFirstPageToPng } from "@/lib/pdf-to-image";
+import { isPdfFile, pdfPagesToPng } from "@/lib/pdf-to-image";
 
 type AiMedia = "image/png" | "image/jpeg" | "image/webp" | "image/gif";
 function aiMediaType(type: string): AiMedia {
@@ -13,9 +13,26 @@ function aiMediaType(type: string): AiMedia {
 }
 
 /**
+ * How many pages of one uploaded PDF are read.
+ *
+ * An AP-3 clearing is submitted as a bundle, not a single receipt: a BC payment
+ * voucher, the AP-3.1 clearing form, a transfer slip and the receipts, in that
+ * rough order. Page 1 is therefore never the receipt, and reading only it was
+ * dropping the whole document silently.
+ *
+ * 15 is the size of the largest sample bundle that fits under the form's 4MB
+ * attachment limit, so the cap covers every file that can physically be
+ * uploaded. Each A4 page rasterised at scale 2 is ~2.6k vision tokens, so a
+ * worst-case upload bills ~39k input tokens (about $0.04 on Haiku) — the cap is
+ * what keeps one careless 89-page scan from becoming 89 billed images.
+ */
+const MAX_PDF_PAGES = 15;
+
+/**
  * POST /api/request/clear-advance/verify-receipt
  * multipart: file (image or PDF). Returns one entry per document found in the
- * image — a photo of two invoices pre-fills two expense lines, not one.
+ * upload, each classified as receipt / slip / other — a bundle of two invoices
+ * and a transfer slip pre-fills two expense lines and the refund fields.
  * If ANTHROPIC_API_KEY is set, Claude vision reads the image; otherwise (or on any
  * failure) it falls back to the free local Tesseract+regex path. Best-effort — never
  * blocks the form; the user edits every value.
@@ -32,20 +49,28 @@ export async function POST(req: NextRequest) {
     if (!file.type.startsWith("image/") && !isPdf) {
       return NextResponse.json({ ok: false, error: "รองรับเฉพาะไฟล์รูปภาพหรือ PDF" }, { status: 400 });
     }
-    // PDF → rasterise the first page to PNG, then read it like any image.
-    let buffer: Buffer = Buffer.from(await file.arrayBuffer());
-    let mediaType: AiMedia = aiMediaType(file.type);
-    if (isPdf) { buffer = await pdfFirstPageToPng(buffer); mediaType = "image/png"; }
+    // PDF → rasterise its pages to PNG, then read them like any image.
+    const raw = Buffer.from(await file.arrayBuffer());
+    const mediaType: AiMedia = isPdf ? "image/png" : aiMediaType(file.type);
+    const pages: Buffer[] = isPdf ? await pdfPagesToPng(raw, MAX_PDF_PAGES) : [raw];
+    // pdfPagesToPng stops at the cap without saying whether more existed, so a
+    // full run is reported as "may be truncated" rather than claimed complete.
+    const maybeTruncated = isPdf && pages.length >= MAX_PDF_PAGES;
 
     // Claude vision first; fall back to Tesseract+regex when absent/failed.
-    const ai = await extractReceiptsWithAI(buffer, mediaType);
-    if (ai.length > 0) return NextResponse.json({ ok: true, data: ai, source: "ai" });
+    const ai = await extractReceiptsWithAI(pages, mediaType);
+    if (ai.length > 0) {
+      return NextResponse.json({ ok: true, data: ai, source: "ai", pagesRead: pages.length, maybeTruncated });
+    }
 
     // Tesseract fallback — may fail if the CDN model is unavailable; treat as soft
-    // failure. It reads one document per image, so it returns a one-element list.
+    // failure. It reads one page and cannot classify, so it returns one receipt.
     try {
-      const result = await extractReceipt(buffer);
-      return NextResponse.json({ ok: true, data: [result], source: "ocr" });
+      const result = await extractReceipt(pages[0]);
+      return NextResponse.json({
+        ok: true, data: [{ ...result, kind: "receipt" as const }], source: "ocr",
+        pagesRead: 1, maybeTruncated,
+      });
     } catch {
       return NextResponse.json({ ok: false, error: "อ่านใบเสร็จไม่สำเร็จ — ไม่มีเครื่องมือ OCR" }, { status: 502 });
     }
