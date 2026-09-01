@@ -31,7 +31,6 @@ export async function GET(req: NextRequest) {
       dateBasis: (sp.get("dateBasis") as TravelBookingReportFilters["dateBasis"]) ?? "submit",
       from: sp.get("from") ?? null,
       to: sp.get("to") ?? null,
-      provinceIds: numberList(sp.getAll("provinceId")),
       reasonIds: numberList(sp.getAll("reasonId")),
       statuses: sp.getAll("status"),
       departmentNames: sp.getAll("departmentName"),

@@ -38,7 +38,6 @@ const mockReq: TravelBookingRequest = {
   reasonName: "ประชุมงาน",
   reasonCustomText: null,
   workDetail: "ประชุมสาขา",
-  provinceId: 1,
   provinceName: "เชียงใหม่",
   workLocations: [],
   accommodationId: 1,

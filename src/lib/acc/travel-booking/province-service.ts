@@ -126,26 +126,6 @@ export async function setProvinceActive(id: number, isActive: boolean): Promise<
     .query(`UPDATE [dbo].[TravelProvince] SET IsActive = @isActive WHERE Id = @id`);
 }
 
-/**
- * One place's Thai name, for stamping onto a booking.
- *
- * Moved here from `request-service.ts` on 2026-08-31. That file imports
- * `getAccPool`, so it held real SQL naming a production-only table inside a
- * module that also carries the environment-varying pool — the exact adjacency
- * `currency-pool-guard.test.ts` exists to prevent, and the one place it did not
- * cover. The caller's transaction may be the UAT twin; this always resolves
- * against production, which is where the single copy lives.
- */
-export async function resolveProvinceName(id: number | null): Promise<string | null> {
-  if (!id) return null;
-  const pool = await getProductionFormPool();
-  const r = await pool
-    .request()
-    .input("id", sql.Int, id)
-    .query(`SELECT TOP 1 NameTh FROM [dbo].[TravelProvince] WHERE Id=@id`);
-  return (r.recordset[0]?.NameTh as string) ?? null;
-}
-
 function mapOption(x: Record<string, unknown>): ProvinceOption & { countryCode: string } {
   return {
     id: x.Id as number,

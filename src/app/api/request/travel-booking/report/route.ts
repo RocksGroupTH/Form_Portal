@@ -8,7 +8,7 @@ import { queryTravelBookingReport, numberList, type TravelBookingReportFilters }
  * GET /api/request/travel-booking/report
  * AP-17 HR report rows (spec §9). Requires auth + account area access (approver or admin).
  *
- * Query params: dateBasis (travel|submit|approve|payment), from, to, provinceId, reasonId,
+ * Query params: dateBasis (travel|submit|approve|payment), from, to, reasonId,
  *               status, departmentName (all comma-separated multi-value), staffId
  */
 export async function GET(req: NextRequest) {
@@ -27,7 +27,6 @@ export async function GET(req: NextRequest) {
       dateBasis: (sp.get("dateBasis") as TravelBookingReportFilters["dateBasis"]) ?? "submit",
       from: sp.get("from") ?? null,
       to: sp.get("to") ?? null,
-      provinceIds: numberList(sp.getAll("provinceId")),
       reasonIds: numberList(sp.getAll("reasonId")),
       statuses: sp.getAll("status"),
       departmentNames: sp.getAll("departmentName"),

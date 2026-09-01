@@ -27,7 +27,6 @@ export interface TravelBookingReportFilters {
   from?: string | null;
   to?: string | null;
   /** Multi-value filters — empty/omitted means "no filter". */
-  provinceIds?: number[] | null;
   reasonIds?: number[] | null;
   statuses?: string[] | null;
   departmentNames?: string[] | null;
@@ -167,7 +166,7 @@ const BASE_CTE = `
       r.EmployeeId, r.CountryCode, r.Status, r.CurrentStepCode, r.PaymentDate, r.SubmittedAt,
       t.ReasonId, t.ReasonName, t.ReasonCustomText, t.WorkDetail,
       t.DepartDate, t.ReturnDate,
-      t.ProvinceId, t.ProvinceName,
+      t.ProvinceName,
       t.AccommodationName, t.AccommodationCustomText,
       t.IsContinuation, t.PerDiemDays, t.PerDiemTotal,
       -- Per diem is baht always (EmployeeAllowanceLog has no currency column),
@@ -255,7 +254,10 @@ export async function queryTravelBookingReport(
   const dateCol = dateBasisColumn(f.dateBasis);
   if (f.from) { req.input("from", sql.Date, f.from); where.push(`${dateCol} >= @from`); }
   if (f.to) { req.input("to", sql.Date, f.to); where.push(`${dateCol} <= @to`); }
-  whereIn("ProvinceId", "province", f.provinceIds, sql.Int);
+  // The by-province filter is gone with ข้อ8 (2026-09-01). Nothing writes
+  // ProvinceId any more, so filtering on it would return only trips filed
+  // before that day — a filter that looks like it works and silently hides
+  // every new request. The column stays for history; the filter does not.
   whereIn("ReasonId", "reason", f.reasonIds, sql.Int);
   whereIn("Status", "status", f.statuses, sql.NVarChar);
   whereIn("RequesterDepartmentName", "dept", f.departmentNames, sql.NVarChar);

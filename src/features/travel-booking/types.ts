@@ -271,8 +271,9 @@ export interface TravelBookingRequest {
   // ข้อ7 — รายละเอียดการไปปฏิบัติงาน
   workDetail: string | null;
 
-  // ข้อ8/9 — จังหวัด + สถานที่ปฏิบัติงาน
-  provinceId: number | null;
+  // ข้อ9 — สถานที่ปฏิบัติงาน. ข้อ8 จังหวัด was removed on 2026-09-01;
+  // `provinceName` stays READ-ONLY so trips filed before then still show where
+  // they went. Nothing writes it any more.
   provinceName: string | null;
   workLocations: WorkLocation[];
 
@@ -397,9 +398,6 @@ export interface SaveTravelBookingInput {
 
   workDetail: string | null;
 
-  provinceId: number | null;
-  /** A destination typed by hand. Ignored when `provinceId` is set. */
-  provinceName?: string | null;
   workLocations: { name: string; sortOrder: number }[];
 
   accommodationId: number | null;

@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
 import { computePerDiem, type AllowanceLogEntry } from "@/lib/acc/travel-booking/perdiem";
-import { provinceAnswered } from "@/lib/acc/travel-booking/province-choice";
 import {
   isPerDiemCountry,
   perDiemLogFor,
@@ -64,15 +63,6 @@ export interface TabFormState {
 
   workDetail: string | null;
 
-  provinceId: number | null;
-  /**
-   * A destination typed by hand, for somewhere the managed list does not have.
-   *
-   * Mutually exclusive with `provinceId` — `resolveProvinceChoice` gives the id
-   * precedence, and both handlers below clear one when setting the other, so
-   * the two are never both live.
-   */
-  provinceName: string | null;
   workLocations: WorkLocationInput[];
 
   accommodationId: number | null;
@@ -120,8 +110,6 @@ export function emptyTab(): TabFormState {
     reasonId: null,
     reasonCustomText: null,
     workDetail: null,
-    provinceId: null,
-    provinceName: null,
     workLocations: [{ name: "", sortOrder: 0 }],
     accommodationId: null,
     accommodationCustomText: null,
@@ -165,8 +153,6 @@ function tabFromRequest(r: TravelBookingRequest): TabFormState {
     reasonId: r.reasonId,
     reasonCustomText: r.reasonCustomText,
     workDetail: r.workDetail,
-    provinceId: r.provinceId,
-    provinceName: r.provinceId ? null : r.provinceName,
     workLocations: r.workLocations.length
       ? r.workLocations.map((w, i) => ({ name: w.name, sortOrder: w.sortOrder ?? i }))
       : [{ name: "", sortOrder: 0 }],
@@ -211,8 +197,6 @@ function buildSaveInput(tab: TabFormState, sortOrder: number): SaveTravelBooking
     reasonId: tab.reasonId,
     reasonCustomText: tab.reasonCustomText,
     workDetail: tab.workDetail,
-    provinceId: tab.provinceId,
-    provinceName: tab.provinceName,
     workLocations: tab.workLocations
       .filter((w) => w.name?.trim())
       .map((w, i) => ({ name: w.name.trim(), sortOrder: i })),
@@ -283,10 +267,6 @@ export function validateTab(tab: TabFormState, settings: TabSettingsMaps): Field
 
   if (!tab.workDetail?.trim()) issues.push({ key: "workDetail", label: "รายละเอียดการไปปฏิบัติงาน" });
 
-  // Either a place from the list or one typed by hand — the same question the
-  // server asks, from the same module, so the gate and the write cannot
-  // disagree about what counts as answered.
-  if (!provinceAnswered(tab)) issues.push({ key: "province", label: "จังหวัด/เมือง" });
 
   if (!tab.workLocations.some((w) => w.name?.trim())) {
     issues.push({ key: "workLocations", label: "สถานที่ไปปฏิบัติงาน (อย่างน้อย 1 แห่ง)" });
@@ -417,9 +397,6 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
   /** Which leg of `submitAll` is running — drives the progress modal. */
   const [submitPhase, setSubmitPhase] = useState<SubmitPhase | null>(null);
 
-  const { data: provinceData } = useSWR<ProvinceOption[]>(
-    "/api/request/travel-booking/options/provinces", jsonFetcher, { revalidateOnFocus: false },
-  );
   const { data: settingsData } = useSWR<SettingsPayload>(
     "/api/request/travel-booking/options/settings", jsonFetcher, { revalidateOnFocus: false },
   );
@@ -453,12 +430,11 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
     { revalidateOnFocus: false },
   );
 
-  const provinces = provinceData ?? [];
   const reasons = settingsData?.reasons ?? [];
   const accommodations = settingsData?.accommodations ?? [];
   const vehicles = settingsData?.vehicles ?? [];
   const rentVehicles = settingsData?.rentVehicles ?? [];
-  const optionsLoading = !provinceData || !settingsData;
+  const optionsLoading = !settingsData;
 
   const employee = employeeData?.employee ?? null;
   const employeeHint = employeeData?.hint ?? null;
@@ -855,7 +831,6 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
 
   return {
     // options
-    provinces,
     reasons,
     accommodations,
     vehicles,

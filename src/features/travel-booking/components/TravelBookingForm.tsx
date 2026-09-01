@@ -52,7 +52,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
   const {
     anchorRequestId,
     tabs, activeTabIndex, setActiveTabIndex, addTab, removeTab, updateTab,
-    reasons, accommodations, vehicles, rentVehicles, provinces,
+    reasons, accommodations, vehicles, rentVehicles,
     employee, employeeHint, employeeEmail, employeeLoading, manager, managerReason,
     colleagues, colleaguesLoading, requesterEnvironment,
     existingRanges, requesterStaffId, setRequesterStaffId, selectedRequester,
@@ -425,7 +425,6 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
           accommodations={accommodations}
           vehicles={vehicles}
           rentVehicles={rentVehicles}
-          provinces={provinces}
           disabledTravelDates={lockedDates}
           issues={tabIssues[activeTabIndex] ?? []}
           triedSubmit={triedSubmit}
@@ -544,7 +543,9 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
               </p>
               <div className="flex flex-col">
                 {tabs.map((t, i) => {
-                  const province = provinces.find((p) => p.id === t.provinceId)?.nameTh ?? null;
+                  // The place, not the province — ข้อ8 is gone and ข้อ9 is what
+                  // says where this trip goes.
+                  const place = t.workLocations.map((w) => w.name).filter(Boolean).join(" · ") || null;
                   const range = [t.departDate, t.returnDate]
                     .filter((d): d is string => !!d)
                     .map(fmtYmdDisplay)
@@ -565,7 +566,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
                         ทริป {i + 1}
                       </span>
                       <span className="text-[11.5px] truncate min-w-0" style={{ color: "var(--text-muted)" }}>
-                        {[province, range].filter(Boolean).join(" · ") || "—"}
+                        {[place, range].filter(Boolean).join(" · ") || "—"}
                       </span>
                     </div>
                   );

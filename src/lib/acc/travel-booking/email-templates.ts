@@ -22,6 +22,21 @@ function shell(title: string, bodyRows: string, ctaUrl: string): string {
   </div>`;
 }
 
+/**
+ * Where the trip goes, for the three approval mails.
+ *
+ * They carried จังหวัด and nothing else until ข้อ8 was removed on 2026-09-01,
+ * so without this a manager approving from mail would be told nothing about the
+ * destination at all. Falls back to the stored province for a trip filed before
+ * then, which is the only place that value still surfaces.
+ */
+function workLocationLine(req: TravelBookingRequest): string {
+  const places = (req.workLocations ?? [])
+    .map((w) => (w.name ?? "").trim())
+    .filter((n) => n.length > 0);
+  return places.length > 0 ? places.join(" · ") : req.provinceName ?? "-";
+}
+
 function row(k: string, v: unknown): string {
   return `<tr><td style="padding:4px 8px;color:#666">${esc(k)}</td><td style="padding:4px 8px">${esc(v)}</td></tr>`;
 }
@@ -70,7 +85,7 @@ export function buildTravelBookingEmail(
       const rows = [
         row("เลขที่", no),
         row("ผู้ขอ", req.requesterFullName ?? "-"),
-        row("จังหวัด/เมือง", req.provinceName ?? "-"),
+        row("สถานที่ปฏิบัติงาน", workLocationLine(req)),
         row("วันเดินทาง", dateRangeLabel(req)),
         row("เบี้ยเลี้ยง", perDiemLabel(req)),
       ].join("");
@@ -93,7 +108,7 @@ export function buildTravelBookingEmail(
       const rows = [
         row("เลขที่", no),
         row("ผู้ขอ", req.requesterFullName ?? "-"),
-        row("จังหวัด/เมือง", req.provinceName ?? "-"),
+        row("สถานที่ปฏิบัติงาน", workLocationLine(req)),
         row("วันเดินทาง", dateRangeLabel(req)),
         row("รายการที่ต้องจอง", needsBookingLabel(req)),
       ].join("");
@@ -124,7 +139,7 @@ export function buildTravelBookingEmail(
       const subject = `การจองเสร็จสิ้น ${no}`;
       const rows = [
         row("เลขที่", no),
-        row("จังหวัด/เมือง", req.provinceName ?? "-"),
+        row("สถานที่ปฏิบัติงาน", workLocationLine(req)),
         row("วันเดินทาง", dateRangeLabel(req)),
       ].join("");
       return { subject, html: shell(subject, rows, url) };

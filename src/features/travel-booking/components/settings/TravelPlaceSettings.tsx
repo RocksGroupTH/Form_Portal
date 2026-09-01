@@ -7,7 +7,17 @@ import { toast } from "sonner";
 import { COUNTRIES, countryNames } from "@/lib/acc/country-currency";
 
 /**
- * AP-17's จังหวัด/เมือง master.
+ * The จังหวัด/เมือง master — and since 2026-09-01 it is no longer AP-17's.
+ *
+ * AP-17 dropped its ข้อ8 จังหวัด field that day; the form now records where a
+ * trip goes as a Google place on ข้อ9, and nothing in THIS application reads
+ * these rows any more.
+ *
+ * The screen stays because the rows are shared: Rocks Fast reads them through
+ * `Fast_Data`'s permanent synonym (migration 105) and still has a จังหวัด field
+ * of its own. So this is now an editor for the SIBLING application's list,
+ * hosted here because this is where the table lives. Deleting it would leave
+ * that list with no editor anywhere.
  *
  * Deliberately **not** `TravelOptionSettings`. That component drives the four
  * dual-written option tables through a `[kind]` route with a `SortOrder` and a
@@ -148,7 +158,9 @@ export function TravelPlaceSettings() {
           style={{ color: "var(--text-warning)" }}
         />
         <p className="text-[12px] leading-relaxed m-0" style={{ color: "var(--text-secondary)" }}>
-          รายการนี้ใช้ร่วมกับระบบ <strong>Rocks Fast</strong> — เมืองที่เพิ่มที่นี่จะไปปรากฏในแบบฟอร์มของระบบนั้นด้วย
+          รายการนี้<strong>ไม่ได้ใช้ในแบบฟอร์ม AP-17 ของระบบนี้แล้ว</strong> — ตั้งแต่ 1 ก.ย. 2569 ช่องจังหวัดถูกยกเลิก
+          และใช้ “สถานที่ไปปฏิบัติงาน” จาก Google Maps แทน · รายการนี้ยังใช้ร่วมกับระบบ <strong>Rocks Fast</strong>
+          ซึ่งยังมีช่องจังหวัดอยู่ การแก้ที่นี่จึงมีผลกับระบบนั้น
         </p>
       </div>
 

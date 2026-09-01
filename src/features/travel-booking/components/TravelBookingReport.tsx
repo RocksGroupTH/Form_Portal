@@ -38,7 +38,6 @@ interface ServerFilters {
   dateBasis: DateBasis;
   from: string;
   to: string;
-  provinceIds: string[];
   reasonIds: string[];
   statuses: string[];
 }
@@ -56,7 +55,7 @@ function currentMonthRange(): { from: string; to: string } {
 /** Opening state: this month's submissions. Recomputed per call so a long-lived tab isn't stuck. */
 function defaultServerFilters(): ServerFilters {
   const { from, to } = currentMonthRange();
-  return { dateBasis: "submit", from, to, provinceIds: [], reasonIds: [], statuses: [] };
+  return { dateBasis: "submit", from, to, reasonIds: [], statuses: [] };
 }
 
 type ColKey =
@@ -92,7 +91,9 @@ const ALL_COLUMNS: (ColumnToggleOption<ColKey> & { align?: "right" })[] = [
   { key: "workDetail", label: "รายละเอียดการไปปฏิบัติงาน" },
   { key: "departDate", label: "วันเดินทางขาไป" },
   { key: "returnDate", label: "วันเดินทางขากลับ" },
-  { key: "provinceName", label: "จังหวัด/เมือง" },
+  // History only. ข้อ8 was removed on 2026-09-01 and nothing writes this any
+  // more, so a newer trip reads "—" here and its destination is in สถานที่.
+  { key: "provinceName", label: "จังหวัด/เมือง (เดิม)" },
   { key: "accommodationName", label: "สถานที่พักค้างคืน" },
   { key: "workLocationsCsv", label: "สถานที่ไปปฏิบัติงาน" },
   { key: "approvedDate", label: "วันที่อนุมัติ" },
@@ -246,7 +247,6 @@ function buildServerQuery(f: ServerFilters): string {
   if (f.to) qs.set("to", f.to);
   // Repeated params (not comma-joined) so values containing commas stay intact — the route
   // reads them with searchParams.getAll() and turns each list into an IN (...) predicate.
-  for (const v of f.provinceIds) qs.append("provinceId", v);
   for (const v of f.reasonIds) qs.append("reasonId", v);
   for (const v of f.statuses) qs.append("status", v);
   return qs.toString();
@@ -282,7 +282,6 @@ export function TravelBookingReport() {
   const [staffId, setStaffId] = useState("");
   const [departmentNames, setDepartmentNames] = useState<string[]>([]);
 
-  const [provinces, setProvinces] = useState<ProvinceOption[]>([]);
   const [reasons, setReasons] = useState<TravelReasonOption[]>([]);
 
   const [visible, setVisible] = useState<Record<ColKey, boolean>>(DEFAULT_VISIBLE);
@@ -319,12 +318,6 @@ export function TravelBookingReport() {
   }, []);
 
   useEffect(() => {
-    fetch("/api/request/travel-booking/options/provinces")
-      .then((r) => r.json())
-      .then((json: { ok: boolean; data?: ProvinceOption[] }) => {
-        if (json.ok && json.data) setProvinces(json.data);
-      })
-      .catch(() => {});
     fetch("/api/request/travel-booking/options/settings")
       .then((r) => r.json())
       .then((json: { ok: boolean; data?: { reasons?: TravelReasonOption[] } }) => {
@@ -362,10 +355,6 @@ export function TravelBookingReport() {
     fetchReport();
   }, [fetchReport]);
 
-  const provinceOptions = useMemo(
-    () => provinces.map((p) => ({ value: String(p.id), label: p.nameTh })),
-    [provinces],
-  );
   const reasonOptions = useMemo(
     () => reasons.map((r) => ({ value: String(r.id), label: r.name })),
     [reasons],
@@ -443,7 +432,6 @@ export function TravelBookingReport() {
     serverFilters.dateBasis !== defaults.dateBasis ||
     serverFilters.from !== defaults.from ||
     serverFilters.to !== defaults.to ||
-    serverFilters.provinceIds.length > 0 ||
     serverFilters.reasonIds.length > 0 ||
     serverFilters.statuses.length > 0 ||
     !!staffId.trim() ||
@@ -531,14 +519,6 @@ export function TravelBookingReport() {
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            <div className="min-w-0">
-              <FilterLabel>จังหวัด</FilterLabel>
-              <MultiSelectFilter
-                options={provinceOptions}
-                selected={serverFilters.provinceIds}
-                onChange={(next) => setServerFilters((prev) => ({ ...prev, provinceIds: next }))}
-              />
-            </div>
             <div className="min-w-0">
               <FilterLabel>เหตุผลการเดินทาง</FilterLabel>
               <MultiSelectFilter

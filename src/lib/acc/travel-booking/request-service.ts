@@ -31,18 +31,8 @@ import {
   type DerivedBookingFlags,
 } from "@/lib/acc/travel-booking/derive-flags";
 import { AP17_FORM_CODE, FILE_REFTYPES, RUNNING_PREFIX } from "@/features/travel-booking/constants";
-// Moved out of this file on 2026-08-31: TravelProvince exists only in
-// Rocks_Portal_Form, and this module also imports getAccPool, which resolves the
-// UAT twin for a tester. Real SQL naming that table must not live beside a pool
-// that can point somewhere it does not exist.
-import { resolveProvinceName } from "@/lib/acc/travel-booking/province-service";
 import { resolveBookingCountry } from "@/lib/acc/travel-booking/booking-country";
 import { listBrandRegistry } from "@/lib/brand-registry";
-import {
-  PROVINCE_NAME_MAX,
-  provinceAnswered,
-  resolveProvinceChoice,
-} from "@/lib/acc/travel-booking/province-choice";
 import { perDiemLogFor } from "@/lib/acc/travel-booking/perdiem-country";
 import { listPerDiemCountryRates } from "@/lib/acc/travel-booking/perdiem-source";
 import type {
@@ -141,7 +131,8 @@ function mapTravelBookingRow(
 
     workDetail: (t.WorkDetail as string) ?? null,
 
-    provinceId: (t.ProvinceId as number) ?? null,
+    // Read-only since ข้อ8 was removed (2026-09-01): a trip filed before then
+    // still shows where it went, and nothing writes it any more.
     provinceName: (t.ProvinceName as string) ?? null,
 
     accommodationId: (t.AccommodationId as number) ?? null,
@@ -386,7 +377,7 @@ export async function listMyTravelBookings(userId: number): Promise<TravelBookin
         r.Currency, r.ExchangeRate, r.RateAsOf, r.RateSource,
         r.PaymentDate, r.SubmittedAt,
         t.Phone, t.AllowanceSnapshot, t.ReasonId, t.ReasonName, t.ReasonCustomText, t.WorkDetail,
-        t.ProvinceId, t.ProvinceName, t.AccommodationId, t.AccommodationName, t.AccommodationCustomText, t.NeedsRoomBooking,
+        t.ProvinceName, t.AccommodationId, t.AccommodationName, t.AccommodationCustomText, t.NeedsRoomBooking,
         t.DepartDate, t.ReturnDate, t.DepartTime, t.ReturnTime,
         t.GoVehicleId, t.GoVehicleName, t.GoVehicleCustomText, t.GoNeedsDepartureLocations, t.GoNeedsTicketBooking, t.GoNeedsDepartTime, t.GoNeedsVehicleRent,
         t.ReturnVehicleId, t.ReturnVehicleName, t.ReturnVehicleCustomText, t.ReturnNeedsDepartureLocations, t.ReturnNeedsTicketBooking, t.ReturnNeedsDepartTime, t.ReturnNeedsVehicleRent,
@@ -523,15 +514,6 @@ interface ResolvedNames {
   goVehicleName: string | null;
   returnVehicleName: string | null;
   rentVehicleName: string | null;
-  provinceName: string | null;
-  /**
-   * The destination id actually stored — null for a typed place.
-   *
-   * Resolved here rather than taken from `tab.provinceId` at the bind, so the
-   * one place that decides between a listed and a typed destination is the one
-   * whose answer reaches the column.
-   */
-  provinceId: number | null;
   isContinuation: boolean;
   /**
    * Server-derived, never taken from the posted tab. `bindBookingInputs` reads
@@ -557,8 +539,6 @@ function bindBooking(
     .input("reasonName", sql.NVarChar, names.reasonName)
     .input("reasonCustom", sql.NVarChar(500), tab.reasonCustomText ?? null)
     .input("workDetail", sql.NVarChar(sql.MAX), tab.workDetail ?? null)
-    .input("provinceId", sql.Int, names.provinceId)
-    .input("provinceName", sql.NVarChar, names.provinceName)
     .input("accommodationId", sql.Int, tab.accommodationId ?? null)
     .input("accommodationName", sql.NVarChar, names.accommodationName)
     .input("accommodationCustom", sql.NVarChar(500), tab.accommodationCustomText ?? null)
@@ -594,14 +574,14 @@ function bindBooking(
 }
 
 const BOOKING_COLUMNS = `Phone, AllowanceSnapshot, ReasonId, ReasonName, ReasonCustomText, WorkDetail,
-  ProvinceId, ProvinceName, AccommodationId, AccommodationName, AccommodationCustomText, NeedsRoomBooking,
+  AccommodationId, AccommodationName, AccommodationCustomText, NeedsRoomBooking,
   DepartDate, ReturnDate, DepartTime, ReturnTime,
   GoVehicleId, GoVehicleName, GoVehicleCustomText, GoNeedsDepartureLocations, GoNeedsTicketBooking, GoNeedsDepartTime, GoNeedsVehicleRent,
   ReturnVehicleId, ReturnVehicleName, ReturnVehicleCustomText, ReturnNeedsDepartureLocations, ReturnNeedsTicketBooking, ReturnNeedsDepartTime, ReturnNeedsVehicleRent,
   RentVehicleId, RentVehicleName, RentVehicleCustomText, NeedsRentBooking, RentStartDate, RentEndDate,
   Notes, IsContinuation, PerDiemDays, PerDiemTotal, GroupKey, SortOrder`;
 const BOOKING_VALUES = `@phone, @allowance, @reasonId, @reasonName, @reasonCustom, @workDetail,
-  @provinceId, @provinceName, @accommodationId, @accommodationName, @accommodationCustom, @needsRoom,
+  @accommodationId, @accommodationName, @accommodationCustom, @needsRoom,
   @departDate, @returnDate, @departTime, @returnTime,
   @goVehicleId, @goVehicleName, @goVehicleCustom, @goNeedsDep, @goNeedsTicket, @goNeedsTime, @goNeedsRent,
   @returnVehicleId, @returnVehicleName, @returnVehicleCustom, @returnNeedsDep, @returnNeedsTicket, @returnNeedsTime, @returnNeedsRent,
@@ -609,7 +589,7 @@ const BOOKING_VALUES = `@phone, @allowance, @reasonId, @reasonName, @reasonCusto
   @notes, @isContinuation, 0, 0, @groupKey, @sortOrder`;
 // PerDiemDays/PerDiemTotal deliberately excluded from SET — they stay at their current value (0 until Task 5's submit).
 const BOOKING_SET = `Phone=@phone, AllowanceSnapshot=@allowance, ReasonId=@reasonId, ReasonName=@reasonName, ReasonCustomText=@reasonCustom,
-  WorkDetail=@workDetail, ProvinceId=@provinceId, ProvinceName=@provinceName,
+  WorkDetail=@workDetail,
   AccommodationId=@accommodationId, AccommodationName=@accommodationName, AccommodationCustomText=@accommodationCustom, NeedsRoomBooking=@needsRoom,
   DepartDate=@departDate, ReturnDate=@returnDate, DepartTime=@departTime, ReturnTime=@returnTime,
   GoVehicleId=@goVehicleId, GoVehicleName=@goVehicleName, GoVehicleCustomText=@goVehicleCustom,
@@ -756,32 +736,19 @@ export async function saveTravelBookingDraft(
     settingOptionCache.set(key, option);
     return option;
   }
-  const provinceNameCache = new Map<number, string | null>();
-  async function cachedProvinceName(id: number | null): Promise<string | null> {
-    if (!id) return null;
-    if (provinceNameCache.has(id)) return provinceNameCache.get(id)!;
-    const name = await resolveProvinceName(id);
-    provinceNameCache.set(id, name);
-    return name;
-  }
 
   const resolvedTabs: { tab: SaveTravelBookingInput; names: ResolvedNames }[] = [];
   for (let i = 0; i < input.tabs.length; i++) {
     const tab = input.tabs[i];
-    const [reason, accommodation, goVehicle, returnVehicle, rentVehicle, provinceName] =
+    const [reason, accommodation, goVehicle, returnVehicle, rentVehicle] =
       await Promise.all([
         cachedSettingOption("reason", tab.reasonId),
         cachedSettingOption("accommodation", tab.accommodationId),
         cachedSettingOption("vehicle", tab.goVehicleId),
         cachedSettingOption("vehicle", tab.returnVehicleId),
         cachedSettingOption("rentVehicle", tab.rentVehicleId),
-        cachedProvinceName(tab.provinceId),
       ]);
 
-    // A place from the list, or one typed by hand. The id wins where there is
-    // one and the name is then read from TravelProvince, so a client's stale
-    // label can never overwrite a row somebody has renamed.
-    const destination = resolveProvinceChoice(tab);
 
     // Every selected id has to name a row that still exists and is still
     // offered. Refused at save, not only at submit: the flags derived below are
@@ -795,14 +762,6 @@ export async function saveTravelBookingDraft(
       { field: "rentVehicleId", id: tab.rentVehicleId, option: rentVehicle },
     ]);
     if (invalid) throw new Error(invalidOptionMessage(invalid));
-    if (tab.provinceId != null && !provinceName) {
-      throw new Error(invalidOptionMessage({ field: "provinceId", id: tab.provinceId, option: null }));
-    }
-    // Refused rather than truncated: NVARCHAR(100) would accept a clipped place
-    // name, and a clipped name reads as a real one.
-    if (destination.kind === "none" && (tab.provinceName ?? "").trim().length > PROVINCE_NAME_MAX) {
-      throw new Error(`ชื่อจังหวัด/เมืองยาวเกิน ${PROVINCE_NAME_MAX} ตัวอักษร`);
-    }
 
     const prev = i > 0 ? input.tabs[i - 1] : null;
     const isContinuation = !!(prev && tab.departDate && prev.returnDate && tab.departDate === prev.returnDate);
@@ -814,9 +773,6 @@ export async function saveTravelBookingDraft(
         goVehicleName: goVehicle?.name ?? null,
         returnVehicleName: returnVehicle?.name ?? null,
         rentVehicleName: rentVehicle?.name ?? null,
-        // The table's name for a listed place; the typed one otherwise.
-        provinceName: destination.kind === "typed" ? destination.provinceName : provinceName,
-        provinceId: destination.provinceId,
         isContinuation,
         // Derived from the rows just loaded — the posted `tab.needs*` values are
         // ignored entirely. See `./derive-flags` for what they decide.
@@ -1049,11 +1005,6 @@ export function validateTravelBookingTab(
 
   // ข้อ7 — รายละเอียดการไปปฏิบัติงาน
   if (!tab.workDetail?.trim()) return fail("กรุณากรอกรายละเอียดการไปปฏิบัติงาน");
-
-  // ข้อ8 — จังหวัด
-  // Either a place from the list or one typed by hand — the same question the
-  // client's validator asks, from the same module.
-  if (!provinceAnswered(tab)) return fail("กรุณาเลือกหรือพิมพ์จังหวัด/เมืองปลายทาง");
 
   // ข้อ9 — สถานที่ไปปฏิบัติงาน (>=1)
   if (!(tab.workLocations ?? []).some((w) => w.name?.trim())) {
