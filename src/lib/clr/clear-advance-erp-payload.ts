@@ -30,8 +30,12 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 
 /**
  * Build the PPAP CreateFromJson payload for ONE AP-3 clearing.
- * Dr expenses (per item) + Dr VAT input - Cr WHT payable - Cr advance Vendor +/- Bank diff.
- * Line amount sign: >0 = debit, <0 = credit; the lines always sum to 0.
+ * Dr expenses (per item) + Dr VAT input + WHT payable (0) + advance Vendor (0) +/- Bank diff.
+ * Line amount sign: >0 = debit, <0 = credit.
+ *
+ * The lines do NOT sum to 0. Spec §3.2 requires the WHT and clear-advance vendor lines
+ * to carry 0 so accounting matches and clears them by hand in BC; CU 50263 only inserts
+ * (never posts), and BC enforces balance at posting time, so an unbalanced batch is fine.
  */
 export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJournalPayload {
   const { config: c, items, requestNo, postingDate, departmentCode } = input;
@@ -67,17 +71,20 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
   }
   if (whtTotal > 0) {
     if (!c.whtPayableGlAccountNo) throw new Error("มี WHT แต่ยังไม่ได้ตั้งค่าบัญชี WHT payable ของแบรนด์นี้");
-    lines.push(glLine(c.whtPayableGlAccountNo, -whtTotal, null));
+    // Spec §3.2: sent as 0 — accounting posts the real WHT by hand in BC.
+    lines.push(glLine(c.whtPayableGlAccountNo, 0, null));
   }
 
-  // Cr the vendor AP-2 debited. Built inline rather than via glLine because the
+  // The vendor AP-2 debited. Built inline rather than via glLine because the
   // vendor line must carry accountType "Vendor" and NO balAccountType — the
   // two-explicit-lines shape BC accepted for AP-2 (doc PVA2608-0012).
+  // Spec §3.2: the clear-advance vendor line is always 0 too. The line still has to
+  // be here, pointing at the vendor AP-2 debited, so accounting can match it.
   lines.push({
     groupNo: "G1", postingDate, documentType: "Payment",
     accountType: "Vendor", accountNo: advanceVendorNo,
     description,
-    paymentMethodCode: "BANK", amount: -r2(input.advanceAmount),
+    paymentMethodCode: "BANK", amount: 0,
     employeeCode, branchCode: defaultBranch, departmentCode,
   });
 
