@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import {
   FileText, User, Mail, Wallet, CheckCircle, XCircle, Clock, RotateCcw,
   ThumbsUp, ThumbsDown, Ban, Paperclip, Image as ImageIcon, Banknote, ReceiptText,
-  Pencil,
+  Pencil, Printer,
 } from "lucide-react";
 import type { ClearAdvanceDetail as ClearDetail } from "@/features/clear-advance/types";
 import { Dialog } from "@/components/ui/Dialog";
@@ -255,6 +255,16 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
 
   return (
     <div>
+      {/* A new tab, not a route change: the print sheet is a dead end — you look
+          at it, print it, and come back to a detail page that never unmounted. */}
+      <div className="flex justify-end mb-3">
+        <a href={`/request/clear-advance/${request.id}/print`} target="_blank" rel="noreferrer"
+          className="inline-flex items-center gap-2 text-[13px] font-semibold px-4 py-2 rounded-lg no-underline"
+          style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)", color: "var(--text-primary)" }}>
+          <Printer size={14} /> พิมพ์ AP-3.1
+        </a>
+      </div>
+
       {/* Requester self-cancel bar */}
       {canCancel && (
         <div className="rounded-2xl p-4 mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5" style={box}>
