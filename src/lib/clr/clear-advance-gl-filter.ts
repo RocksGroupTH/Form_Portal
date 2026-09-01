@@ -10,7 +10,12 @@ export function allowedDimensionTypes(branchCode: string | null | undefined): re
   return isHqBranch(branchCode) ? ["Employee", "Both"] : ["Branch", "Both"];
 }
 
-/** HQ01 and friends are head office; every other branch code is a branch. */
+/** HQ01 and friends are head office; every other branch code is a branch.
+ *
+ *  PCTH's BRANCH dimension is not only HQ* and PC*: 24 of its codes are
+ *  warehouses (W001…W104, W-VENDOR) and affiliates (KSI, RFM, UNO, SMR, PLM,
+ *  RUT, ROLLS). They all fall on the branch side here — deliberate, not an
+ *  oversight (decision: accounting, 2026-09-01, to be revisited if wrong). */
 export function isHqBranch(branchCode: string | null | undefined): boolean {
   const b = (branchCode ?? "").trim().toUpperCase();
   return b === "" || b.startsWith("HQ");
