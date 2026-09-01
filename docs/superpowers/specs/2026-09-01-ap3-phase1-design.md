@@ -173,6 +173,34 @@ vision path asks for "the main item/service description" and a generic amount, s
 paths disagree. The Claude prompt is corrected to state both halves of the rule
 explicitly.
 
+## 9a. Which model reads the documents
+
+`claude-haiku-4-5-20251001`, overridable per environment with
+`ANTHROPIC_RECEIPT_MODEL` — one model for all four calls (receipt extraction, slip,
+GL suggestion, branch suggestion). The key comes from the portal's own API-key registry;
+with no key the code falls back to Tesseract + regex rather than failing.
+
+**Decision (user, 2026-09-02): stay on Haiku.** Sonnet costs exactly 2× ($2/$10 per MTok
+against $1/$5), which on a 7-page bundle is about ฿0.8 more per document — small enough
+that accuracy would justify it. It was not adopted because nothing shows Sonnet fixes the
+one failure that matters: character-level misreads of long reference numbers on a scan
+(`EBYC25120005297` came back once as `EBYC2512Q005297`), which looks like scan quality
+rather than model capability. Revisit with a measurement, not an assumption.
+
+What the observed failures actually cost is uneven, and that matters more than a raw
+accuracy percentage, because every field is reviewed by a human before it is saved:
+
+- A wrong **amount** is caught — it does not match the receipt in the reviewer's hand.
+- A wrong **document number** is caught — one receipt splits into two rows, which is
+  visibly odd.
+- A wrong **date** is the dangerous one. `2026-04-06` and `2026-01-06` look equally
+  plausible, and the slip's date becomes the journal's Posting Date. Future dates are now
+  refused, but a wrong date in the past still passes.
+
+The cheap defence against the date is arithmetic the portal already has rather than a
+better model: on a refund the slip amount must equal the refund owed (it did — 8,969.00),
+and a transfer cannot predate the newest receipt it settles.
+
 ## 10. AI-suggested GL account (§2.2)
 
 The pop-up from §7 shows a suggested expense GL account per row, derived from the
