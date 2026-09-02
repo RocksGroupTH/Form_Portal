@@ -187,18 +187,26 @@ export async function approveByManager(requestId: number, actor: Actor): Promise
     throw e;
   }
 
-  // Email requester (Approved — carries the payout month + per-diem total, which is the whole
-  // outcome when nothing needs booking) and, only when there IS Admin work, ping every active
-  // accounting/admin approver (spec §7's "Admin (accounting team)" — the same AccApprover
-  // roster AP-1 notifies at its ManagerApproved step).
+  // **The requester, and nobody else.** The `Approved` mail carries the payout
+  // month and the per-diem total, which is the whole outcome when nothing needs
+  // booking.
+  //
+  // Until 2026-09-02 this also mailed every active approver a `ReadyForAdmin`
+  // whenever there was booking work. That is gone by request: Admin and
+  // accounting work from their queues, not from their inboxes, and a mail per
+  // approver per approval is noise to a desk that is already looking at the list.
+  //
+  // It was also going to the wrong people. `listApprovers` reads `AccApprover` —
+  // AP-1's roster — while who may actually open AP-17's booking queue is decided
+  // by `AccBookingApprover`, a separate roster CLAUDE.md says the two forms
+  // deliberately do not share. So the mail reached people who could not act on it
+  // and missed people who could.
+  //
+  // Nothing is left unnotified that was notified before: the ACCOUNT step has
+  // never mailed anybody, and the hand-off from Admin (`completeRequest`) never
+  // did either.
   const requesterEmail = await getRequesterEmail(requestId);
   await notify(requestId, "Approved", requesterEmail);
-  if (needsBooking) {
-    const admins = await listApprovers(true);
-    for (const a of admins) {
-      await notify(requestId, "ReadyForAdmin", a.email);
-    }
-  }
   void processQueue().catch(() => {});
 
   return requireTravelBookingRequest(requestId);
@@ -519,8 +527,17 @@ export async function returnByAccount(requestId: number, actor: Actor, comment: 
   });
 
   // The requester is not being asked for anything — the work is Admin's — so the
-  // roster that gets pinged is the one that gets pinged when a request first
-  // reaches the booking desk.
+  // roster is pinged rather than them.
+  //
+  // **This is now the ONLY mail Admin ever receives, and its shape is odd.** The
+  // equivalent ping when a request first reaches the booking desk was removed on
+  // 2026-09-02 (see `approveByManager`), so the desk hears nothing when work
+  // arrives normally and hears something only when accounting sends it back.
+  // Left deliberately — a bounce is an exception and worth an interruption where
+  // routine arrivals are not — but it inherits the same defect the other one had:
+  // `listApprovers` reads `AccApprover`, AP-1's roster, while who may open AP-17's
+  // booking queue is `AccBookingApprover`. It reaches people who cannot act and
+  // misses people who can, and fixing that is a change nobody has asked for yet.
   const admins = await listApprovers(true);
   for (const a of admins) {
     await notify(requestId, "ReadyForAdmin", a.email, comment);
