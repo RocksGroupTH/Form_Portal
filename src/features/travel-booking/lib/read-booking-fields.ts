@@ -97,11 +97,14 @@ export interface BookingFieldsReadOptions {
    * means **not known here**, and the mismatch check is then skipped rather than
    * assuming baht.
    *
-   * `AdminBookingPanel` always knows it now: it is derived synchronously from
-   * the country in props. The nullable shape stays because skipping the check is
-   * the right answer for a caller that genuinely cannot say, and because
-   * silently defaulting to baht is exactly the failure this parameter exists to
-   * catch.
+   * `AdminBookingPanel` always has an answer, though not always the final one:
+   * it reconciles the stored choice against the destination in props plus the
+   * brand it fetches, so while that fetch is in flight the answer can be baht
+   * where it will shortly be the brand's currency. That costs a discarded read,
+   * never a wrong figure — a mismatch drops the whole answer. The nullable shape
+   * stays because skipping the check is the right answer for a caller that
+   * genuinely cannot say, and because silently defaulting to baht is exactly the
+   * failure this parameter exists to catch.
    */
   claimCurrency?: string | null;
 }

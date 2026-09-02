@@ -218,11 +218,11 @@ export interface TravelBookingRequest {
    * `AccRequest.CountryCode` — where the trip goes (migration 129's column,
    * written by AP-17 since 2026-08-31).
    *
-   * **It decides the booking currency** — since 2026-09-02, and it did not
-   * before. `bookingCurrencyOptions` reads it to offer baht plus this
-   * destination's own currency, and `resolveBookingFx` re-reads it from the
-   * stored row on every save, so it is what bounds the currency a booking can be
-   * recorded in. It also feeds the per-diem rate.
+   * **It is half of what decides the booking currency** — since 2026-09-02, and
+   * it was none of it before. `bookingCurrencyOptions` reads it alongside the
+   * brand's own currencies to offer the union of the two, and `resolveBookingFx`
+   * re-reads both from the stored row on every save. It also feeds the per-diem
+   * rate, which it has done since it arrived.
    */
   countryCode: string | null;
   /**

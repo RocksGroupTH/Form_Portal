@@ -2,6 +2,7 @@ import { getAccPool, sql } from "@/lib/acc/pool";
 import type { Actor } from "@/lib/acc/approval-engine";
 import { getTravelBookingRequest } from "@/lib/acc/travel-booking/request-service";
 import { deleteStoredFiles, type StoredFileRef } from "@/lib/acc/stored-file";
+import { AccConflictError } from "@/lib/acc/request-errors";
 import { loadPerDiemDependencies } from "@/lib/acc/travel-booking/perdiem-dependency-load";
 import type { PerDiemDependency } from "@/lib/acc/travel-booking/perdiem-dependency";
 import {
@@ -14,6 +15,7 @@ import { AP17_FORM_CODE, BOOKING_TYPE_REFTYPE } from "@/features/travel-booking/
 import { sanitizeBookingAmount } from "@/features/travel-booking/lib/booking-amounts";
 import { sanitizeBookingNo } from "@/features/travel-booking/lib/booking-no";
 import {
+  BOOKING_CURRENCY_STALE_ERROR,
   BOOKING_FX_UNAVAILABLE_ERROR,
   effectiveBookingCurrency,
 } from "@/features/travel-booking/lib/booking-currency";
@@ -320,14 +322,26 @@ const BAHT_FX: BookingFx = { currency: null, rate: null, asOf: null, source: nul
  * must therefore never name that table itself; `currency-pool-guard.test.ts`
  * enforces exactly that, per file, and this one imports `getAccPool` on line 1.
  *
- * An explicit `THB` skips the read entirely: `effectiveBookingCurrency` answers
- * baht for it whatever either arm says, so the registry could not change the
- * outcome. Since baht is now the **default** rather than the opt-out, that
- * short-circuit covers the ordinary case rather than the unusual one — the desk
- * posts `THB` unless it deliberately picks otherwise, so almost no booking save
- * opens the second pool at all. The test is on the string rather than
- * `isBaht`, which would also swallow an ABSENT currency; absent means "derive
- * it", and deriving is what the rest of this function does.
+ * **Baht and blank both skip the read entirely.** `effectiveBookingCurrency`
+ * answers baht for either whatever the two arms say, so the registry could not
+ * change the outcome — and since baht is the **default** rather than the opt-out,
+ * that short-circuit now covers the ordinary case rather than the unusual one:
+ * the desk posts `THB` unless it deliberately picks otherwise, so almost no
+ * booking save opens the second pool at all. Blank is in the guard for the same
+ * reason and not merely for speed — without it an absent currency paid two pools
+ * and three whole-table queries to be told baht, and a baht save failed outright
+ * whenever Fast_Core was down.
+ *
+ * ── A pick the union rejects RAISES; only an absent one means baht ──
+ *
+ * The panel reads the brand once at mount and this re-reads it on every save, so
+ * an admin switching a currency off in between leaves the desk posting a code
+ * the union no longer holds. Resolving that to baht would **succeed**, write a
+ * NULL currency and rate, and have `recomputeBookingBaht` store the foreign
+ * figure as baht unconverted. See `BOOKING_CURRENCY_STALE_ERROR`. It is an
+ * `AccConflictError`, so the route answers 409 rather than 400's retry
+ * affordance — the desk must reload, because retrying the same body fails the
+ * same way.
  *
  * Called **outside** the transaction, deliberately: it reaches two databases
  * and the network, and holding the `AccRequest` row lock across an 8-second FX
@@ -338,7 +352,8 @@ async function resolveBookingFx(
   scope: BookingScope,
   posted: string | null | undefined,
 ): Promise<BookingFx> {
-  if ((posted ?? "").trim().toUpperCase() === THB) return BAHT_FX;
+  const want = (posted ?? "").trim().toUpperCase();
+  if (want === THB || want === "") return BAHT_FX;
 
   let brand: { currencies: BrandCurrencyEntry[] } | null = null;
   if (scope.brandCode) {
@@ -352,6 +367,9 @@ async function resolveBookingFx(
   }
 
   const currency = effectiveBookingCurrency(posted, brand, scope.countryCode);
+  // `want` is neither blank nor THB by here, so baht can only mean the union
+  // refused it. Raise rather than record the figures at 1:1.
+  if (currency === THB) throw new AccConflictError(BOOKING_CURRENCY_STALE_ERROR);
   if (!needsRate(currency)) return BAHT_FX;
 
   const fx = await resolveRate(currency);

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { statusForAccError } from "@/lib/acc/request-errors";
 import { requireAuth } from "@/lib/api-auth";
 import { canAccessBookingArea } from "@/lib/acc/booking-access";
 import { requireBookingBrandScope } from "@/lib/acc/travel-booking/require-booking-brand-scope";
@@ -96,7 +97,12 @@ export async function POST(
     return NextResponse.json({ ok: true, data });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Internal server error";
-    return NextResponse.json({ ok: false, error: message }, { status: 400 });
+    // 409 for a currency the request no longer admits, 400 for everything else.
+    // The difference is whether retrying the same body could ever work: a stale
+    // pick fails identically forever until the page is reloaded, and 400's dialog
+    // offers a retry that cannot succeed. `statusForAccError` owns the mapping so
+    // this route does not have to know which errors are conflicts.
+    return NextResponse.json({ ok: false, error: message }, { status: statusForAccError(e) });
   }
 }
 

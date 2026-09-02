@@ -52,7 +52,7 @@
  */
 
 import { enabledForeignCurrencies, THB, type BrandCurrencyEntry } from "@/lib/acc/currency";
-import { currencyForCountry } from "@/lib/acc/country-currency";
+import { currencyForCountry, isRateSourceCurrency } from "@/lib/acc/country-currency";
 import { currencyWord, referenceRateNote } from "@/lib/acc/currency-display";
 
 function norm(code: string | null | undefined): string {
@@ -66,15 +66,15 @@ export interface BookingCurrencyBrand {
 
 /**
  * The currencies this request's booking figures may be recorded in, in the order
- * the desk's toggle offers them: **baht first**, then the destination's own
- * currency, then the brand's remaining ones.
+ * the desk's toggle offers them: the destination's own currency, then the
+ * brand's remaining ones, then **baht last**.
  *
- * Baht leads because baht is the default, not merely an option — see
- * `effectiveBookingCurrency`. The destination's comes next among the foreign
- * ones because it is the likeliest answer for an invoice raised where the trip
- * went; the brand's others follow in the order an admin configured them.
- * Nothing is listed twice, which is the common case rather than an edge one —
- * a KSI trip to Britain has both arms saying GBP.
+ * **Baht is last and still the default** — the two are separate questions, and
+ * AP-1's `lineCurrencyOptions` answers them the same way with `[currency, THB]`.
+ * The destination leads the foreign arm because it is the likeliest answer for
+ * an invoice raised where the trip went; the brand's others follow in the order
+ * an admin configured them. Nothing is listed twice, which is the common case
+ * rather than an edge one — a KSI trip to Britain has both arms saying GBP.
  *
  * An empty array means **render no toggle at all**, and it must keep meaning
  * that: a baht-only brand on a Thai trip leaves the booking card exactly as it
@@ -89,6 +89,18 @@ export interface BookingCurrencyBrand {
  * 131): that row answers "may a claim be *filed from* Thailand", where this
  * toggle answers "is the invoice on this desk denominated in baht" — a fact
  * about a document rather than a permission, and one that must stay recordable.
+ *
+ * ── The brand arm is filtered to what the rate source can quote ──
+ *
+ * `isRateSourceCurrency` gates the settings editor's **add** path
+ * (`brand-currency-input.ts:133`) and nothing else: `parseBrandCurrencyToggle`
+ * checks only the id and the flag, and migration 127 backfilled `CurrencyCode`
+ * from `BrandSetting` with no CHECK. So a row for a currency the provider does
+ * not quote can exist and be switched back on — and offering it would let the
+ * desk pick something whose every save then throws
+ * `BOOKING_FX_UNAVAILABLE_ERROR`, under a message inviting a retry that can
+ * never work. The destination arm needs no such filter: all 25 countries are
+ * quotable, and a test asserts it.
  */
 export function bookingCurrencyOptions(
   brand: BookingCurrencyBrand | null | undefined,
@@ -99,12 +111,13 @@ export function bookingCurrencyOptions(
   if (destination !== null && destination !== THB) out.push(destination);
   const fromBrand = enabledForeignCurrencies(brand?.currencies);
   for (let i = 0; i < fromBrand.length; i++) {
-    if (out.indexOf(fromBrand[i]) === -1) out.push(fromBrand[i]);
+    const code = fromBrand[i];
+    if (out.indexOf(code) === -1 && isRateSourceCurrency(code)) out.push(code);
   }
-  // Baht is prepended rather than appended, and only where there is something
-  // to choose between: a lone THB pill is a control that cannot be operated.
+  // Only where there is something to choose between: a lone THB pill is a
+  // control that cannot be operated.
   if (out.length === 0) return [];
-  return [THB].concat(out);
+  return out.concat([THB]);
 }
 
 /**
@@ -118,10 +131,17 @@ export function bookingCurrencyOptions(
  *
  * Anything on neither arm — a code from another country, a currency the brand
  * does not carry, a typo, a stale page, a forged body — resolves to baht rather
- * than being accepted or throwing. Two properties follow, and both matter: a
- * request can never be recorded in money neither its books nor its destination
- * use, and every refusal lands on the one answer that needs no exchange rate, so
- * an FX outage can never turn a bad input into a save that cannot succeed.
+ * than being accepted or throwing, so this can never widen what a request holds
+ * beyond its own books and destination.
+ *
+ * **Baht here is "not admitted", and only the caller knows whether that means
+ * "nobody chose".** This function cannot tell the two apart and deliberately
+ * does not try: the panel wants the reconciled answer for its own display, where
+ * falling back is right, while `resolveBookingFx` compares the posted string
+ * first and raises `BOOKING_CURRENCY_STALE_ERROR` when a *positive* pick lands
+ * here — because recording it as baht would store the foreign figures
+ * unconverted. Keeping that distinction at the caller is what lets one pure
+ * function serve both without a flag.
  */
 export function effectiveBookingCurrency(
   selected: string | null | undefined,
@@ -163,6 +183,28 @@ export function bookingCurrencyWord(currency: string | null | undefined): string
  */
 export const BOOKING_CURRENCY_NOTE =
   "สกุลเงินนี้ใช้กับทุกรายการจองในคำขอนี้ และบันทึกเมื่อกด “บันทึกข้อมูลการจอง”";
+
+/**
+ * The save refusal when the currency the desk picked is no longer one this
+ * request may be recorded in.
+ *
+ * **It is a 409 and not a silent downgrade to baht, and that distinction is
+ * worth real money.** The panel reads the brand's currencies once, at mount;
+ * `resolveBookingFx` re-reads them on every save. Between the two an admin can
+ * switch a currency off — so the desk posts `GBP`, the server's union no longer
+ * contains it, and `effectiveBookingCurrency` answers `THB`. Left there the save
+ * would succeed: `needsRate(THB)` is false, the header would be written with a
+ * NULL currency and NULL rate, and `recomputeBookingBaht` would then store
+ * `TotalAmountBaht = TotalAmount` **unconverted** — £500 recorded as ฿500, with
+ * no error anywhere, and carried into the accounting sign-off by
+ * `report-service`'s `SUM(TotalAmountBaht)`.
+ *
+ * So a *positive* pick the union rejects raises, and only an **absent** one
+ * means baht. "Nobody chose" and "what you chose is no longer offered" are
+ * different answers and only one of them is baht.
+ */
+export const BOOKING_CURRENCY_STALE_ERROR =
+  "สกุลเงินที่เลือกไม่อยู่ในรายการของคำขอนี้แล้ว — กรุณาโหลดหน้านี้ใหม่แล้วเลือกอีกครั้ง";
 
 /**
  * The save refusal when no rate can be had for a foreign request.

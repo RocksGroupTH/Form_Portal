@@ -230,14 +230,28 @@ export function AdminBookingPanel({
    * including the requester's own, where this panel never renders — so the fetch
    * stays here, on the one screen that needs it.
    *
-   * **`null` while it is in flight, and that is now harmless.** Before 2026-09-02
-   * an unidentified brand had to be a distinct third state, because the default
-   * was the brand's own currency and posting `THB` in that window would have
-   * silently recorded a foreign invoice as baht. The default is baht now, so the
-   * window's behaviour IS the intended answer; all that happens is the toggle
-   * briefly offers the destination arm alone and then grows. Strictly additive,
-   * never wrong — and `resolveBookingFx` re-derives the whole union from the row
-   * regardless, so what the panel posts is a request, not a decision.
+   * **`null` while it is in flight, and the direction of that is safe.** Before
+   * 2026-09-02 an unidentified brand had to be a distinct third state, because
+   * the default was the brand's own currency and posting `THB` in that window
+   * would have silently recorded a foreign invoice as baht. The default is baht
+   * now, so the window's default IS the intended answer.
+   *
+   * What a null brand still costs is the **offer**, not the default, and for the
+   * union's headline case it costs all of it: KSI → Bangkok has the destination
+   * arm contributing nothing, so a null `brandOption` yields `[]` and the toggle
+   * does not render at all rather than rendering a shorter list. For the
+   * milliseconds of a fetch that is invisible. It is **not** always milliseconds:
+   * `.catch(() => {})` below leaves it null for the component's life, as does a
+   * brand since de-granted from `AccFormBrand`, which the options route filters
+   * on and `listBrandRegistry()` does not. A genuinely foreign invoice is then
+   * unrecordable as foreign, with nothing on screen saying why.
+   *
+   * Accepted rather than fixed, because the direction is the safe one: the panel
+   * can only ever offer a **subset** of what `resolveBookingFx` accepts, so
+   * nothing the desk can pick is refused, and the failure is a missing option
+   * rather than a wrong record. The opposite direction — offering more than the
+   * server takes — is the one that costs money, and that one now raises rather
+   * than downgrading; see `BOOKING_CURRENCY_STALE_ERROR`.
    */
   const countryCode = request.countryCode;
   const brandCode = request.brandCode;
@@ -692,9 +706,14 @@ function BookingTypeGroup({
   requestId: number;
   info: InfoGroup[];
   rows: BookingDetail[];
-  /** The request's currency, or **null while the brand is unidentified** — post nothing and let the server derive it. */
+  /**
+   * The request's currency, already reconciled against what this request may
+   * hold. Never null in practice — `effectiveBookingCurrency` always answers a
+   * code — but the nullable shape stays, because the alternative to "not known"
+   * is assuming baht, which is the record that must never be written by accident.
+   */
   currency: string | null;
-  /** Empty for a brand with no currency configured, which renders nothing new. */
+  /** Empty when neither the brand nor the destination offers anything: no toggle. */
   currencyOptions: string[];
   /** The company the request is filed under — half of what decides the currency toggle. */
   brandCode: string | null;

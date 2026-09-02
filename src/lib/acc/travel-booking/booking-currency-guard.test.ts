@@ -228,3 +228,48 @@ test("the AI read sends both codes, and the route reads both", () => {
     "the route must read ?countryCode=",
   );
 });
+
+/**
+ * **A positive currency pick the request no longer admits must RAISE, not fall
+ * back to baht**, and this is the money arm of this file.
+ *
+ * The panel reads the brand's currencies once at mount; `resolveBookingFx`
+ * re-reads them on every save. An admin switching one off in between leaves the
+ * desk posting a code the union no longer holds. Resolved to baht the save
+ * *succeeds*: `needsRate('THB')` is false, so the header is written with a NULL
+ * currency and NULL rate, and `recomputeBookingBaht` then stores
+ * `TotalAmountBaht = TotalAmount` **unconverted** — £500 recorded as ฿500, no
+ * error anywhere, carried into the accounting sign-off by `report-service`'s
+ * `SUM(TotalAmountBaht)`.
+ *
+ * Two halves, and both are needed. The blank/THB short-circuit must come first,
+ * so "nobody chose" still means baht; and the THB result after it must throw, so
+ * "what you chose is gone" does not.
+ */
+test("resolveBookingFx refuses a stale currency rather than recording it as baht", () => {
+  const src = code(ADMIN_SERVICE);
+  const start = src.indexOf("async function resolveBookingFx");
+  assert.notEqual(start, -1, "resolveBookingFx not found");
+  const body = src.slice(start, src.indexOf("\n}", start));
+
+  assert.ok(
+    /want === THB \|\| want === ""/.test(body),
+    "an absent or baht choice must short-circuit before anything else — that is the " +
+      "only case that legitimately means baht",
+  );
+  assert.ok(
+    /if \(currency === THB\) throw/.test(body),
+    "a positive pick that resolves to baht is a stale pick and must throw; falling " +
+      "back would record the foreign figures unconverted",
+  );
+  assert.ok(
+    /AccConflictError/.test(body),
+    "it must be a conflict, so the route answers 409 rather than 400's retry affordance",
+  );
+  // The order is the rule: the throw must come after the short-circuit, or an
+  // absent currency raises instead of meaning baht.
+  assert.ok(
+    body.indexOf('want === ""') < body.indexOf("if (currency === THB) throw"),
+    "the short-circuit must precede the throw",
+  );
+});

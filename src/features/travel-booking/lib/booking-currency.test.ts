@@ -12,7 +12,8 @@ import type { BrandCurrencyEntry } from "@/lib/acc/currency";
 
 /**
  * The toggle offers **the brand's own currencies AND the destination's**, with
- * baht always first and always the default.
+ * baht last in the list and always the default selection — two separate
+ * questions, answered the way AP-1's `lineCurrencyOptions` answers them.
  *
  * Both arms have been the whole answer at some point and each was wrong alone:
  *
@@ -37,14 +38,26 @@ const KSI = { currencies: [entry("THB", true, 11), entry("GBP", true, 15)] };
 const PCMY = { currencies: [entry("MYR", true, 4), entry("THB", false, 8)] };
 const PCTH = { currencies: [entry("THB", true, 10)] };
 
-test("the options are the brand's currencies and the destination's, baht first", () => {
+test("the options are the brand's currencies and the destination's, baht last", () => {
   // KSI to Britain: both arms say GBP, and it is listed once.
-  assert.deepEqual(bookingCurrencyOptions(KSI, "GB"), ["THB", "GBP"]);
+  assert.deepEqual(bookingCurrencyOptions(KSI, "GB"), ["GBP", "THB"]);
   // KSI at home: the destination arm says nothing, the brand's books say GBP.
   // This is the case the destination-only rule got wrong.
-  assert.deepEqual(bookingCurrencyOptions(KSI, "TH"), ["THB", "GBP"]);
-  assert.deepEqual(bookingCurrencyOptions(PCMY, "MY"), ["THB", "MYR"]);
-  assert.deepEqual(bookingCurrencyOptions(PCMY, "TH"), ["THB", "MYR"]);
+  assert.deepEqual(bookingCurrencyOptions(KSI, "TH"), ["GBP", "THB"]);
+  assert.deepEqual(bookingCurrencyOptions(PCMY, "MY"), ["MYR", "THB"]);
+  assert.deepEqual(bookingCurrencyOptions(PCMY, "TH"), ["MYR", "THB"]);
+});
+
+/**
+ * Baht sits **last and is still the default**, which are two separate questions.
+ * AP-1's `lineCurrencyOptions` answers them the same way — `[currency, THB]`
+ * (`claim-currency.ts:233-237`) — and so does the control the request arrived
+ * with, which renders `GBP | THB` with THB selected.
+ */
+test("baht is last in the list and still what an absent choice resolves to", () => {
+  const options = bookingCurrencyOptions(KSI, "GB");
+  assert.equal(options[options.length - 1], "THB");
+  assert.equal(effectiveBookingCurrency(null, KSI, "GB"), "THB");
 });
 
 /**
@@ -63,29 +76,45 @@ test("a baht-only brand on a Thai trip offers nothing", () => {
 
 /** A brand with nothing configured still records a foreign trip's own money. */
 test("the destination arm answers for a brand with no currencies configured", () => {
-  assert.deepEqual(bookingCurrencyOptions(PCTH, "GB"), ["THB", "GBP"]);
-  assert.deepEqual(bookingCurrencyOptions(null, "JP"), ["THB", "JPY"]);
+  assert.deepEqual(bookingCurrencyOptions(PCTH, "GB"), ["GBP", "THB"]);
+  assert.deepEqual(bookingCurrencyOptions(null, "JP"), ["JPY", "THB"]);
 });
 
-test("a brand's several currencies are all offered, after baht", () => {
+test("a brand's several currencies are all offered, before baht", () => {
   const multi = { currencies: [entry("GBP", true, 1), entry("MYR", true, 2)] };
-  assert.deepEqual(bookingCurrencyOptions(multi, "TH"), ["THB", "GBP", "MYR"]);
+  assert.deepEqual(bookingCurrencyOptions(multi, "TH"), ["GBP", "MYR", "THB"]);
   // The destination's own leads the foreign ones: it is the likeliest answer for
   // an invoice raised where the trip actually went.
-  assert.deepEqual(bookingCurrencyOptions(multi, "MY"), ["THB", "MYR", "GBP"]);
+  assert.deepEqual(bookingCurrencyOptions(multi, "MY"), ["MYR", "GBP", "THB"]);
 });
 
 test("a disabled brand row is not offered, and a THB row is never listed twice", () => {
   assert.deepEqual(bookingCurrencyOptions({ currencies: [entry("GBP", false)] }, "TH"), []);
-  assert.deepEqual(bookingCurrencyOptions(PCMY, "TH"), ["THB", "MYR"]);
+  assert.deepEqual(bookingCurrencyOptions(PCMY, "TH"), ["MYR", "THB"]);
+});
+
+/**
+ * A brand row naming a currency the rate source cannot quote is **droppable and
+ * dropped**. `isRateSourceCurrency` gates the settings editor's add path and
+ * nothing else — `parseBrandCurrencyToggle` checks only the id and the flag, and
+ * migration 127 backfilled `CurrencyCode` from `BrandSetting` with no CHECK — so
+ * such a row can exist and be switched back on. Offering it would let the desk
+ * pick a currency whose every save throws `BOOKING_FX_UNAVAILABLE_ERROR`, under
+ * a message inviting a retry that can never work.
+ */
+test("a brand currency the rate source cannot quote is not offered", () => {
+  const legacy = { currencies: [entry("ZWL", true, 1), entry("GBP", true, 2)] };
+  assert.deepEqual(bookingCurrencyOptions(legacy, "TH"), ["GBP", "THB"]);
+  assert.deepEqual(bookingCurrencyOptions({ currencies: [entry("ZWL", true)] }, "TH"), []);
+  assert.equal(effectiveBookingCurrency("ZWL", legacy, "TH"), "THB");
 });
 
 test("codes are normalised", () => {
   assert.deepEqual(
     bookingCurrencyOptions({ currencies: [entry(" gbp ", true)] }, " th "),
-    ["THB", "GBP"],
+    ["GBP", "THB"],
   );
-  assert.deepEqual(bookingCurrencyOptions(PCTH, "gb"), ["THB", "GBP"]);
+  assert.deepEqual(bookingCurrencyOptions(PCTH, "gb"), ["GBP", "THB"]);
 });
 
 /**
