@@ -112,15 +112,22 @@ export function overallStatusTone(overallStatus: string): StatusTone {
   return "bad"; // Rejected / Cancelled / Returned
 }
 
-/** Still in the approval chain (Submitted, but not the final ERP-send step). */
+/** Still moving through the approval chain — nobody has finished with it. */
 export function isAwaitingApproval(r: Row): boolean {
-  return r.overallStatus === STATUS_INPROCESS && r.pendingOn !== ERP_SEND_STEP_LABEL;
+  return r.overallStatus === STATUS_INPROCESS;
 }
 
-/** Approved through the manager chain; only the Accounting Officer's
- *  interfacing action is left. */
+/**
+ * Approved, and the money has not reached BC yet.
+ *
+ * This cannot be read off the approval status. An approved request that was
+ * never sent looks exactly like one already posted — both are อนุมัติแล้ว with
+ * nothing pending — so the two were being counted as the same thing. Only
+ * `erpInterfaceStatus` separates them, and `Failed` still counts as waiting
+ * because it is retried from the same queue.
+ */
 export function isAwaitingErp(r: Row): boolean {
-  return r.overallStatus === STATUS_INPROCESS && r.pendingOn === ERP_SEND_STEP_LABEL;
+  return r.overallStatus === STATUS_APPROVED && r.erpInterfaceStatus !== "Sent";
 }
 
 export interface TileCounts {

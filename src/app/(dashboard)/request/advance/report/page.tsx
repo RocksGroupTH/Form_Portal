@@ -83,6 +83,9 @@ function CountTile({
   );
 }
 
+/** "อนุมัติแล้ว (Completed)" → "อนุมัติแล้ว" — screen only. */
+const shortStatus = (s: string) => s.replace(/\s*\([^)]*\)\s*$/, "").trim() || s;
+
 const PAYEE_TYPE_OPTIONS = [
   { value: "", label: "โอนให้: ทั้งหมด" },
   { value: "คู่ค้า", label: "คู่ค้า" },
@@ -104,6 +107,9 @@ type Col = {
    *  differ from `get` (a derived display bucket rather than the raw export
    *  value). Falls back to `get`. */
   filterValue?: (r: Row) => string;
+  /** On-screen cap in px for a free-text column whose longest value would
+   *  otherwise widen the whole table. Never affects the export. */
+  maxW?: number;
 };
 
 // filter → คอลัมน์ไฮไลต์เหลืองใน sheet AP-2-Control ("dates" = เลือกได้หลายวัน)
@@ -111,14 +117,14 @@ const COLS: Col[] = [
   { key: "submittedAt", h: "Submitted", screenLabel: "วันที่ส่ง", get: (r) => dt(r.submittedAt) },
   { key: "requestNo", h: "เลขที่ Request", screenLabel: "เลขที่ ADV", get: (r) => r.requestNo ?? "", filter: "text" },
   { key: "staffId", h: "รหัสพนักงาน", get: (r) => String(r.staffId ?? ""), filter: "text" },
-  { key: "requesterName", h: "ชื่อ-นามสกุล", screenLabel: "ผู้ขอ", get: (r) => r.requesterName ?? "", filter: "text" },
+  { key: "requesterName", h: "ชื่อ-นามสกุล", screenLabel: "ผู้ขอ", maxW: 130, get: (r) => r.requesterName ?? "", filter: "text" },
   { key: "position", h: "ตำแหน่ง", get: (r) => r.position ?? "" },
   { key: "department", h: "แผนก", get: (r) => r.department ?? "" },
   // Excluded from the on-screen table (TABLE_EXCLUDED_KEYS) — filtered instead
   // via the toolbar toggle below, not a per-column box. Left in COLS
   // unchanged so the export keeps its 28th column exactly as before.
   { key: "payeeType", h: "โอนให้", get: (r) => r.payeeType ?? "" },
-  { key: "payeeName", h: "ชื่อคู่ค้า/พนักงาน", screenLabel: "ผู้รับเงิน", get: (r) => r.payeeName ?? "" },
+  { key: "payeeName", h: "ชื่อคู่ค้า/พนักงาน", screenLabel: "ผู้รับเงิน", maxW: 140, get: (r) => r.payeeName ?? "" },
   { key: "bankAccount", h: "เลขที่บัญชี", get: (r) => r.bankAccount ?? "" },
   { key: "bankName", h: "ธนาคาร", get: (r) => r.bankName ?? "" },
   { key: "needByDate", h: "วันที่เริ่มใช้เงิน", get: (r) => d(r.needByDate) },
@@ -155,7 +161,10 @@ const COLS: Col[] = [
   {
     key: "overallStatus", h: "Overall Status", screenLabel: "สถานะรวม",
     get: (r) => r.overallStatus, filter: "select",
-    render: (r) => <StatusChip label={r.overallStatus} tone={overallStatusTone(r.overallStatus)} />,
+    // The chip drops the English half of "อนุมัติแล้ว (Completed)": on screen it
+    // is a duplicate that costs ~60px of column width. The export keeps `get`,
+    // so the file still carries the full AP-2-Control label.
+    render: (r) => <StatusChip label={shortStatus(r.overallStatus)} tone={overallStatusTone(r.overallStatus)} />,
   },
 ];
 
@@ -422,13 +431,20 @@ export default function AdvanceReportPage() {
                   {visibleColumns.map((c) => (
                     <td key={c.key} style={fth}>
                       {c.filter === "text" ? (
+                        // size={1} drops the input's intrinsic width so the
+                        // column is sized by its data, not by the filter box:
+                        // an 11-character ADV number was reserving 161px.
                         <input value={filters[c.key] ?? ""} onChange={(e) => setF(c.key, e.target.value)}
-                          placeholder="กรอง..." className={fInput} style={fStyle} />
+                          size={1} placeholder="กรอง..." className={fInput} style={fStyle} />
                       ) : c.filter === "select" ? (
                         // Pick repeatedly to build a set; each pick becomes a chip.
-                        <div className="flex flex-col gap-1 min-w-[130px]">
+                        <div className="flex flex-col gap-1 min-w-[108px] max-w-[124px]">
+                          {/* Capped: a native select is as wide as its longest
+                              option, and "Inprocess (อยู่ระหว่างอนุมัติ)" was
+                              setting the whole column. The open list is not
+                              clipped by this. */}
                           <select value="" onChange={(e) => { if (e.target.value) addValue(c.key, e.target.value); e.target.value = ""; }}
-                            className={fInput} style={fStyle}>
+                            className={fInput} style={{ ...fStyle, maxWidth: 124 }}>
                             <option value="">ทั้งหมด</option>
                             {(selectOptions[c.key] ?? [])
                               .filter((o) => !(filters[c.key] ?? "").split(",").includes(o))
@@ -448,7 +464,7 @@ export default function AdvanceReportPage() {
                           )}
                         </div>
                       ) : c.filter === "dates" ? (
-                        <div className="flex flex-col gap-1 min-w-[130px]">
+                        <div className="flex flex-col gap-1 min-w-[108px]">
                           <input type="date" className={fInput} style={fStyle}
                             onChange={(e) => { if (e.target.value) addValue(c.key, e.target.value); e.target.value = ""; }} />
                           {(filters[c.key] ?? "").split(",").filter(Boolean).length > 0 && (
@@ -478,7 +494,14 @@ export default function AdvanceReportPage() {
                     className="cursor-pointer hover:brightness-95 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2"
                     style={{ background: "var(--bg-card)" }}>
                     {visibleColumns.map((c) => (
-                      <td key={c.key} style={{ ...td, textAlign: c.num ? "right" : "left", fontWeight: c.key === "requestNo" ? 700 : 400 }} title={c.get(r)}>
+                      <td key={c.key} style={{
+                        ...td, textAlign: c.num ? "right" : "left",
+                        fontWeight: c.key === "requestNo" ? 700 : 400,
+                        // A long Thai name would otherwise set the column width
+                        // for every row. Capped and clipped; the full value is
+                        // in the title, the row panel and the export.
+                        ...(c.maxW ? { maxWidth: c.maxW, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } : null),
+                      }} title={c.get(r)}>
                         {c.render ? c.render(r) : c.get(r)}
                       </td>
                     ))}

@@ -34,6 +34,8 @@ export interface AdvanceReportRow {
   advanceStatus: string | null;    // AP-3 clearing status label
   pendingOn: string | null;
   overallStatus: string;
+  /** BC interface state — null or 'Failed' means it still has to be sent. */
+  erpInterfaceStatus: string | null;
 }
 
 /**
@@ -79,6 +81,7 @@ export async function listAdvanceReport(): Promise<AdvanceReportRow[]> {
   const head = await pool.request().input("form", sql.NVarChar, AP2_FORM_CODE).query(`
     SELECT r.Id, r.RequestNo, r.SubmittedAt, r.StaffId, r.RequesterFullName, r.RequesterPosition,
            r.RequesterDepartmentName, r.Status, r.CurrentStepCode, r.PaymentDate,
+           r.ErpInterfaceStatus,
            a.PayeeType, a.PayeeName, a.PayeeBankAccount, a.PayeeBankCode, bm.BankName,
            hr.BankAccountNo AS HrBankAccount,
            a.NeedByDate, a.ExpectedClearDate, a.Purpose, a.Currency, a.Amount, a.ExchangeRate, a.BaseAmount
@@ -176,6 +179,10 @@ export async function listAdvanceReport(): Promise<AdvanceReportRow[]> {
       advanceStatus: clr?.status ? clearLabel(clr.status) : null,
       pendingOn: r.Status === "Submitted" && pendingType ? (STEP_LABEL[pendingType] ?? pendingType) : null,
       overallStatus: overall(r.Status as string),
+      // "Approved but not yet in BC" cannot be derived from the two status
+      // fields above: such a request reads as อนุมัติแล้ว with nothing pending,
+      // which is indistinguishable from one already sent.
+      erpInterfaceStatus: (r.ErpInterfaceStatus as string) ?? null,
     };
   });
 }

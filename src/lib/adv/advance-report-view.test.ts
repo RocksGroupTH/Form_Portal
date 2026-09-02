@@ -50,6 +50,7 @@ function row(overrides: Partial<Row>): Row {
     advanceStatus: null,
     pendingOn: null,
     overallStatus: STATUS_INPROCESS,
+    erpInterfaceStatus: null,
     ...overrides,
   };
 }
@@ -129,13 +130,26 @@ test("isOverdueClearing: a request that was never approved owes nothing", () => 
   assert.equal(isOverdueClearing(r, "2026-06-01"), false);
 });
 
-test("isAwaitingApproval / isAwaitingErp partition the Submitted rows", () => {
+test("anything still in the chain is awaiting approval, whatever step it sits on", () => {
   const atManager = row({ overallStatus: STATUS_INPROCESS, pendingOn: "Head Accounting" });
   const atOfficer = row({ overallStatus: STATUS_INPROCESS, pendingOn: "Accounting Officer" });
   assert.equal(isAwaitingApproval(atManager), true);
+  assert.equal(isAwaitingApproval(atOfficer), true);
+  // Neither has been approved yet, so neither is waiting on the ERP send.
   assert.equal(isAwaitingErp(atManager), false);
-  assert.equal(isAwaitingApproval(atOfficer), false);
-  assert.equal(isAwaitingErp(atOfficer), true);
+  assert.equal(isAwaitingErp(atOfficer), false);
+});
+
+test("awaiting ERP is approved-and-not-Sent, which the approval status cannot tell apart", () => {
+  const notSent = row({ overallStatus: STATUS_APPROVED, erpInterfaceStatus: null });
+  const failed = row({ overallStatus: STATUS_APPROVED, erpInterfaceStatus: "Failed" });
+  const sent = row({ overallStatus: STATUS_APPROVED, erpInterfaceStatus: "Sent" });
+  assert.equal(isAwaitingErp(notSent), true);
+  // Failed is retried from the same queue, so it is still outstanding work.
+  assert.equal(isAwaitingErp(failed), true);
+  assert.equal(isAwaitingErp(sent), false);
+  // All three read identically on overallStatus alone — that is the trap.
+  assert.equal(isAwaitingApproval(notSent), false);
 });
 
 test("computeTileCounts matches a known small dataset", () => {
@@ -143,12 +157,14 @@ test("computeTileCounts matches a known small dataset", () => {
     row({ id: 1, overallStatus: STATUS_INPROCESS, pendingOn: "Head Accounting" }),
     row({ id: 2, overallStatus: STATUS_INPROCESS, pendingOn: "ผู้บริหาร" }),
     row({ id: 3, overallStatus: STATUS_INPROCESS, pendingOn: "Accounting Officer" }),
-    row({ id: 4, overallStatus: STATUS_APPROVED, advanceStatus: null, expectedClearDate: "2026-01-01" }), // overdue
-    row({ id: 5, overallStatus: STATUS_APPROVED, advanceStatus: CLEAR_STATUS_CLEARED, expectedClearDate: "2026-01-01" }), // cleared, not overdue
+    // Approved and never sent: overdue AND still waiting on the ERP send.
+    row({ id: 4, overallStatus: STATUS_APPROVED, erpInterfaceStatus: null, advanceStatus: null, expectedClearDate: "2026-01-01" }),
+    // Approved, already in BC, and cleared — counted by neither tile.
+    row({ id: 5, overallStatus: STATUS_APPROVED, erpInterfaceStatus: "Sent", advanceStatus: CLEAR_STATUS_CLEARED, expectedClearDate: "2026-01-01" }),
     row({ id: 6, overallStatus: "ไม่อนุมัติ (Rejected)" }),
   ];
   const counts = computeTileCounts(rows, "2026-06-01");
-  assert.deepEqual(counts, { awaitingApproval: 2, awaitingErp: 1, overdue: 1 });
+  assert.deepEqual(counts, { awaitingApproval: 3, awaitingErp: 1, overdue: 1 });
 });
 
 test("totalAmountThb sums baseAmount over exactly the rows passed in", () => {
