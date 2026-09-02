@@ -1,4 +1,4 @@
-# AP-3 Control report — make it fit the screen
+# AP-3 Control report — make it fit the screen, and let filters stack
 
 ## Why
 
@@ -11,14 +11,23 @@ fault, smaller.
 Measured on the running app: 18 columns, table **1,975px** in a **1,341px** container —
 **634px off-screen**.
 
-## Scope — the width, and nothing else
+## Scope
 
-Reduce the default columns and put the rest behind a picker. That is the whole change.
+Two things: reduce the default columns behind a picker, and make the column filters accept
+several values at once.
+
+### Stacked filters
+
+A column filter takes repeated picks instead of one value; each becomes a removable chip.
+Values OR within a column and AND across columns — the same semantics and the same CSV
+state shape as AP-2, so the two reports behave identically rather than merely similarly.
+
+The from/to submission range **stays a range**. AP-2 uses multi-pick dates because payment
+rounds land on fixed Fridays and accountants pick individual rounds; a submission window is
+not that.
 
 Deliberately **not** included:
 
-- **Stacked multi-value filters.** AP-2 has them; they were considered here and dropped as
-  the lower-value half of the job. The single-value filters stay as they are.
 - **Summary tiles.** Not asked for.
 - **The overdue/aging filter.** In AP-2 it means *money went out and no clearing came back
   past its due date*. Every row in the AP-3 report **is** a clearing that was filed, so
@@ -66,10 +75,17 @@ Target: fits 1,341px with no horizontal scrolling.
 
 **The Excel export keeps all 18 columns in their current order.** Same rule as AP-2: the
 file is the complete record, the screen answers "what needs attention". No change to
-`clear-advance-report-service.ts`, to filter semantics, or to the row data.
+`clear-advance-report-service.ts` or to the row data.
+
+What a filter *means* does not change either — only how many values it takes at once.
 
 ## Testing
 
 The default-visible column set and the direction column are pure functions and get unit
 tests. Live figures on UAT: **7 rows** (5 Approved, 2 Submitted), **2** pay-extra cases,
 **0** refund cases. Verify the rendered table width before and after in the running app.
+
+For the filters, check the two directions explicitly: two picks in one column must *widen*
+the result, and picks in two different columns must *narrow* it. A stacked filter that
+quietly ANDs within a column looks like it works until someone picks two statuses and gets
+nothing.
