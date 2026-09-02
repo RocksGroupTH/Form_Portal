@@ -4,7 +4,9 @@ import { useMemo, useState } from "react";
 import useSWR from "swr";
 import { Check, Info, Loader2, Plus, X } from "lucide-react";
 import { toast } from "sonner";
-import { COUNTRIES, countryNames } from "@/lib/acc/country-currency";
+import { countryNames } from "@/lib/acc/country-currency";
+import { claimCountryOptions } from "@/features/accounting/lib/claim-currency";
+import type { AccBrandOption } from "@/features/accounting/types";
 import { PER_DIEM_HOME_COUNTRY } from "@/lib/acc/travel-booking/perdiem-country";
 
 /**
@@ -28,13 +30,26 @@ interface RateRow {
   isActive: boolean;
 }
 
-type Draft = { countryCode: string; effectiveDate: string; amount: string; note: string };
+type Draft = { brandCode: string; countryCode: string; effectiveDate: string; amount: string; note: string };
 
-/** Every country the claim list knows, except home. */
-const PICKABLE = COUNTRIES.filter((c) => c.code !== PER_DIEM_HOME_COUNTRY);
+/**
+ * The countries a brand travels to, minus home.
+ *
+ * The same `claimCountryOptions` the AP-17 form uses, so the rates that can be
+ * set here are exactly the countries a trip can be filed against — offering
+ * all 25 let somebody configure a rate for a country no brand can reach.
+ *
+ * Thailand is always excluded: the employee's HR allowance answers there, and a
+ * TH row would be a second answer to a question that already has one.
+ * `upsertPerDiemCountryRate` refuses it server-side regardless.
+ */
+function brandCountries(brand: AccBrandOption | null): string[] {
+  return claimCountryOptions(brand).filter((c) => c !== PER_DIEM_HOME_COUNTRY);
+}
 
 const emptyDraft = (): Draft => ({
-  countryCode: PICKABLE[0]?.code ?? "MY",
+  brandCode: "",
+  countryCode: "",
   effectiveDate: "",
   amount: "",
   note: "",
@@ -67,9 +82,30 @@ export function PerDiemCountrySettings() {
 
   const rows = useMemo(() => data?.data ?? [], [data]);
 
+  // The brands AP-17 can be claimed against, with their configured currencies —
+  // the same list the form's brand chips come from.
+  const { data: brandData } = useSWR<{ ok: boolean; data?: AccBrandOption[] }>(
+    draft ? "/api/request/travel-booking/options/brands" : null,
+    fetcher,
+  );
+  const brands = useMemo(() => brandData?.data ?? [], [brandData]);
+  const selectedBrand = useMemo(
+    () => brands.find((b) => b.brandCode === draft?.brandCode) ?? null,
+    [brands, draft?.brandCode],
+  );
+  const countries = useMemo(() => brandCountries(selectedBrand), [selectedBrand]);
+
   const save = async () => {
     if (!draft) return;
     const amount = Number(draft.amount);
+    if (!draft.brandCode) {
+      toast.error("กรุณาเลือกแบรนด์");
+      return;
+    }
+    if (!draft.countryCode) {
+      toast.error("กรุณาเลือกประเทศ");
+      return;
+    }
     if (!draft.effectiveDate) {
       toast.error("กรุณาเลือกวันที่เริ่มมีผล");
       return;
@@ -250,12 +286,41 @@ export function PerDiemCountrySettings() {
               </button>
             </div>
 
+            {/* Brand first: it decides which countries can be picked at all.
+                Offering all 25 let somebody set a rate for a country no brand can
+                travel to — a row that would never price anything. */}
+            <label className="flex flex-col gap-1.5">
+              <span className="text-[12px] font-semibold" style={{ color: "var(--text-secondary)" }}>
+                แบรนด์ <span style={{ color: "var(--text-danger)" }}>*</span>
+              </span>
+              <select
+                value={draft.brandCode}
+                // Changing the brand clears the country: the one that was picked
+                // belongs to the previous brand's list and may not be on this one.
+                onChange={(e) => setDraft({ ...draft, brandCode: e.target.value, countryCode: "" })}
+                className="text-[13px] rounded-xl px-3 py-2.5 outline-none cursor-pointer"
+                style={{
+                  background: "var(--bg-card-alt)",
+                  border: "1px solid var(--border-card)",
+                  color: "var(--text-primary)",
+                }}
+              >
+                <option value="">— เลือกแบรนด์ —</option>
+                {brands.map((b) => (
+                  <option key={b.brandCode} value={b.brandCode}>
+                    {b.brandName}
+                  </option>
+                ))}
+              </select>
+            </label>
+
             <label className="flex flex-col gap-1.5">
               <span className="text-[12px] font-semibold" style={{ color: "var(--text-secondary)" }}>
                 ประเทศ <span style={{ color: "var(--text-danger)" }}>*</span>
               </span>
               <select
                 value={draft.countryCode}
+                disabled={!draft.brandCode || countries.length === 0}
                 onChange={(e) => setDraft({ ...draft, countryCode: e.target.value })}
                 className="text-[13px] rounded-xl px-3 py-2.5 outline-none cursor-pointer"
                 style={{
@@ -264,12 +329,26 @@ export function PerDiemCountrySettings() {
                   color: "var(--text-primary)",
                 }}
               >
-                {PICKABLE.map((c) => (
-                  <option key={c.code} value={c.code}>
-                    {c.nameEn} · {c.nameTh}
-                  </option>
-                ))}
+                <option value="">
+                  {!draft.brandCode ? "— เลือกแบรนด์ก่อน —" : "— เลือกประเทศ —"}
+                </option>
+                {countries.map((code) => {
+                  const n = countryNames(code);
+                  return (
+                    <option key={code} value={code}>
+                      {n ? `${n.en} · ${n.th}` : code}
+                    </option>
+                  );
+                })}
               </select>
+              {/* An empty list is the configuration speaking, not a fault, and it
+                  names the remedy — otherwise it reads as a broken dropdown. */}
+              {draft.brandCode && countries.length === 0 && (
+                <span className="text-[11px]" style={{ color: "var(--text-warning)" }}>
+                  แบรนด์นี้ยังไม่ได้ผูกสกุลเงินต่างประเทศไว้ จึงเดินทางได้เฉพาะในไทย —
+                  เพิ่มได้ที่แท็บ “แบรนด์ที่เบิก”
+                </span>
+              )}
             </label>
 
             <label className="flex flex-col gap-1.5">
