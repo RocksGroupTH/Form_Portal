@@ -81,7 +81,9 @@ export function PaymentDatePicker({ value, onChange, allowedDates }: PaymentDate
   function label() {
     if (!value) return "— เลือกวันจ่าย —";
     const d = new Date(value + "T00:00:00");
-    return `${d.getDate()} ${MONTHS_TH[d.getMonth()]} ${d.getFullYear() + 543}`;
+    // AD, not BE — AP-2 shows คริสต์ศักราช so the year matches ERP and the ISO
+    // values the form actually stores.
+    return `${d.getDate()} ${MONTHS_TH[d.getMonth()]} ${d.getFullYear()}`;
   }
 
   return (
@@ -121,7 +123,7 @@ export function PaymentDatePicker({ value, onChange, allowedDates }: PaymentDate
               <ChevronLeft size={14} />
             </button>
             <span className="text-[12px] font-semibold" style={{ color: "var(--text-primary)" }}>
-              {MONTHS_TH[month]} {year + 543}
+              {MONTHS_TH[month]} {year}
             </span>
             <button type="button" onClick={next} className="p-1 rounded hover:opacity-70" style={{ color: "var(--text-muted)" }}>
               <ChevronRight size={14} />

@@ -67,6 +67,18 @@ function resolveTarget(map: Record<string, string>, brandCode: string | null): s
   return map[b] || b || "";
 }
 
+/**
+ * A DATE column as YYYY-MM-DD, read with **local** getters.
+ *
+ * `toISOString()` converts to UTC and the server runs Thai time (UTC+7), so a
+ * date-only column came back a day early — a payment date of 2026-09-11 arrives
+ * as midnight local, becomes 2026-09-10T17:00Z, and sliced to the wrong day.
+ * Same rule as `advance-request-service.toYmd`.
+ */
+function toYmd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function mapRow(row: Record<string, unknown>, map: Record<string, string>): AdvanceQueueRow {
   const step = (row.CurrentStepCode as StepType) ?? null;
   return {
@@ -89,7 +101,7 @@ function mapRow(row: Record<string, unknown>, map: Record<string, string>): Adva
     erpInterfaceSentAt: row.ErpInterfaceSentAt ? (row.ErpInterfaceSentAt as Date).toISOString() : null,
     erpInterfaceEnvironment: (row.ErpInterfaceEnvironment as string) ?? null,
     erpDocumentNo: (row.ErpDocumentNo as string) ?? null,
-    paymentDate: row.PaymentDate ? (row.PaymentDate as Date).toISOString().slice(0, 10) : null,
+    paymentDate: row.PaymentDate ? toYmd(row.PaymentDate as Date) : null,
     updatedAt: row.UpdatedAt ? (row.UpdatedAt as Date).toISOString() : "",
     matchedVendorNo: (row.MatchedVendorNo as string) ?? null,
     matchedVendorName: (row.MatchedVendorName as string) ?? null,
@@ -172,6 +184,9 @@ export async function listAdvanceErpQueue(): Promise<AdvanceQueueRow[]> {
 
 const ERP_STATUS_TH: Record<string, string> = { Sent: "ส่งแล้ว", Pending: "กำลังส่ง", Failed: "ล้มเหลว" };
 
+/** Thai formatting on the Gregorian calendar — plain "th-TH" prints 2026 as 2569. */
+const TH_CE = "th-TH-u-ca-gregory";
+
 /** Superseded (Resent) PV numbers per request, so the export can show them. */
 export async function listResentDocNos(requestIds: number[]): Promise<Map<number, string[]>> {
   const map = new Map<number, string[]>();
@@ -202,7 +217,7 @@ export async function buildAdvanceErpWorkbook(rows: AdvanceQueueRow[]): Promise<
   const aoa: (string | number | null)[][] = [];
   aoa.push(["Rocks Group"]);
   aoa.push(["รายการเบิกเงินทดรองจ่าย ส่งเข้า ERP (AP-2)"]);
-  aoa.push([`สร้างเมื่อ: ${new Date().toLocaleString("th-TH")}`]);
+  aoa.push([`สร้างเมื่อ: ${new Date().toLocaleString(TH_CE)}`]);
   aoa.push([]);
 
   const resent = await listResentDocNos(rows.map((r) => r.id));
@@ -222,7 +237,7 @@ export async function buildAdvanceErpWorkbook(rows: AdvanceQueueRow[]): Promise<
       r.requestNo,
       r.erpDocumentNo,
       (resent.get(r.id) ?? []).join(", ") || "—",
-      r.erpInterfaceSentAt ? new Date(r.erpInterfaceSentAt).toLocaleString("th-TH") : null,
+      r.erpInterfaceSentAt ? new Date(r.erpInterfaceSentAt).toLocaleString(TH_CE) : null,
       r.erpInterfaceStatus ? (ERP_STATUS_TH[r.erpInterfaceStatus] ?? r.erpInterfaceStatus) : "พร้อมส่ง",
     ]);
   }

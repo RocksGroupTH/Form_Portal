@@ -4,6 +4,7 @@ import { loadDepartmentErpMapsByTarget } from "@/lib/acc/department-map-service"
 import { listBrandAccounts } from "@/lib/acc/brand-account-service";
 import { listBrandBranches } from "@/lib/acc/brand-branch-service";
 import { listBrandJournalBatches } from "@/lib/acc/brand-journal-batch-service";
+import { isBranchSelectable } from "@/lib/adv/advance-erp-master-service";
 import type { ErpBcEnvironment } from "@/lib/acc/erp-environment";
 import type { BrandErpAccountConfig } from "@/lib/acc/erp-journal-builder";
 import { AP2_FORM_CODE } from "@/features/advance/constants";
@@ -111,6 +112,20 @@ export async function loadAdvanceErpContext(
   const erpDeptCode = await resolveAdvanceErpDept(
     config, interfaceTarget, ctx.interfaceByClaim, hrDeptCode ?? null,
   );
+
+  // With no Branch configured the payload posts the department as the branch.
+  // BRANCH and DEPT are separate dimensions, so most department codes are not
+  // valid branches — BC then rejects every line and reports only "Failed: N",
+  // with the per-line reason lost. Refuse here, where we can say what to fix.
+  if (!config.branchCode) {
+    const usable = await isBranchSelectable(interfaceTarget, erpDeptCode);
+    if (!usable) {
+      throw new Error(
+        `แผนก "${erpDeptCode}" ของผู้ขอไม่ใช่รหัสสาขา (BRANCH) ที่ใช้ได้ใน ${interfaceTarget} — ` +
+        `ตั้งค่า BRANCH ของแบรนด์นี้ที่ Settings → AP-2 → Interface ERP`,
+      );
+    }
+  }
 
   return {
     config,

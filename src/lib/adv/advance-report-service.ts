@@ -34,9 +34,24 @@ export interface AdvanceReportRow {
   advanceStatus: string | null;    // AP-3 clearing status label
   pendingOn: string | null;
   overallStatus: string;
+  /** BC interface state — null or 'Failed' means it still has to be sent. */
+  erpInterfaceStatus: string | null;
 }
 
-const ymd = (d: unknown) => (d ? new Date(d as string).toISOString().slice(0, 10) : null);
+/**
+ * A DATE column as YYYY-MM-DD, read with **local** getters.
+ *
+ * `toISOString()` converts to UTC, and the server runs Thai time (UTC+7), so a
+ * date-only column came back a day early: 2026-08-31 arrives as midnight local,
+ * becomes 2026-08-30T17:00Z, and sliced to a day that is simply wrong. Every
+ * date in this report was off by one. `advance-request-service.toYmd` has always
+ * done it this way; this matches it.
+ */
+const ymd = (d: unknown) => {
+  if (!d) return null;
+  const dt = new Date(d as string);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+};
 const iso = (d: unknown) => (d ? new Date(d as string).toISOString() : null);
 const num = (v: unknown) => (v == null ? null : Number(v));
 
@@ -66,6 +81,7 @@ export async function listAdvanceReport(): Promise<AdvanceReportRow[]> {
   const head = await pool.request().input("form", sql.NVarChar, AP2_FORM_CODE).query(`
     SELECT r.Id, r.RequestNo, r.SubmittedAt, r.StaffId, r.RequesterFullName, r.RequesterPosition,
            r.RequesterDepartmentName, r.Status, r.CurrentStepCode, r.PaymentDate,
+           r.ErpInterfaceStatus,
            a.PayeeType, a.PayeeName, a.PayeeBankAccount, a.PayeeBankCode, bm.BankName,
            hr.BankAccountNo AS HrBankAccount,
            a.NeedByDate, a.ExpectedClearDate, a.Purpose, a.Currency, a.Amount, a.ExchangeRate, a.BaseAmount
@@ -163,6 +179,10 @@ export async function listAdvanceReport(): Promise<AdvanceReportRow[]> {
       advanceStatus: clr?.status ? clearLabel(clr.status) : null,
       pendingOn: r.Status === "Submitted" && pendingType ? (STEP_LABEL[pendingType] ?? pendingType) : null,
       overallStatus: overall(r.Status as string),
+      // "Approved but not yet in BC" cannot be derived from the two status
+      // fields above: such a request reads as อนุมัติแล้ว with nothing pending,
+      // which is indistinguishable from one already sent.
+      erpInterfaceStatus: (r.ErpInterfaceStatus as string) ?? null,
     };
   });
 }

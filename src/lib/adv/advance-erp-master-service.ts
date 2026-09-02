@@ -1,5 +1,6 @@
 import { getAppPool, sql } from "@/lib/db/mssql";
 import { ADVANCE_JOURNAL_TEMPLATE } from "@/lib/adv/advance-batch-service";
+import type { EmployeeCodeLookup } from "@/lib/adv/vendor-match-core";
 
 /**
  * AP-2 Interface ERP master options, read DIRECTLY from the pre-synced
@@ -109,6 +110,50 @@ export async function listVendors(company: string): Promise<AdvErpVendorOption[]
   }));
 }
 
+/**
+ * The selectable ADV vendor whose Home Page holds this staff code.
+ *
+ * Accounting types the employee's code, plain, into the vendor's Home Page in
+ * BC (synced into `Website`). Returns null when nothing matches — and also when
+ * **more than one** vendor claims the same code: an ambiguous code must never
+ * silently pick one, so the caller falls back to name matching instead.
+ *
+ * Same selectability rules as `listVendors`, so a blocked or non-ADV vendor is
+ * never returned here either.
+ */
+export async function findVendorByEmployeeCode(
+  company: string,
+  staffId: number,
+): Promise<EmployeeCodeLookup> {
+  const c = company.trim().toUpperCase();
+  if (!c || !Number.isInteger(staffId) || staffId <= 0) return { kind: "none" };
+  const pool = await getAppPool(ERP_DATA_DB);
+  const r = await pool.request()
+    .input("c", sql.NVarChar, c)
+    .input("pg", sql.NVarChar, ADVANCE_VENDOR_POSTING_GROUP)
+    .input("code", sql.NVarChar, String(staffId))
+    .query(`
+    SELECT TOP 2 VendorNo, DisplayName FROM [dbo].[ErpVendors]
+    WHERE BrandCode = @c
+      AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
+      AND VendorPostingGroup = @pg
+      AND LTRIM(RTRIM(COALESCE(Website, ''))) = @code
+    ORDER BY VendorNo`);
+  const rows = r.recordset as Record<string, unknown>[];
+  if (rows.length === 0) return { kind: "none" };
+  // Two vendors carrying the same staff code is a data error in BC. Say so —
+  // reported as "none" it would look identical to an empty Home Page and be
+  // handed to the name matcher, turning a deliberate refusal into a guess.
+  if (rows.length > 1) return { kind: "ambiguous" };
+  return {
+    kind: "found",
+    vendor: {
+      vendorNo: rows[0].VendorNo as string,
+      displayName: (rows[0].DisplayName as string) ?? null,
+    },
+  };
+}
+
 /** Prefilter candidates for the matcher: active ADV vendors whose name shares a token
  *  with the payee. Caps the set so the LLM prompt stays small. */
 export async function prefilterVendors(company: string, payeeName: string, limit = 10): Promise<AdvErpVendorOption[]> {
@@ -132,6 +177,30 @@ export async function prefilterVendors(company: string, payeeName: string, limit
     vendorNo: x.VendorNo as string,
     displayName: (x.DisplayName as string) ?? null,
   }));
+}
+
+/**
+ * Does this code exist as a usable BRANCH dimension value for the company?
+ *
+ * The AP-2 journal falls back to the requester's ERP **department** when no
+ * Branch is configured, and BRANCH and DEPT are different dimensions — of
+ * PCTH's 24 department codes only 8 also exist as branches. BC rejects the
+ * line when it validates the branch dimension, and its per-line reason never
+ * reaches us, so check before sending instead of after.
+ */
+export async function isBranchSelectable(company: string, branchCode: string): Promise<boolean> {
+  const c = company.trim().toUpperCase();
+  const b = (branchCode ?? "").trim();
+  if (!c || !b) return false;
+  const pool = await getAppPool(ERP_DATA_DB);
+  const r = await pool.request()
+    .input("c", sql.NVarChar, c)
+    .input("b", sql.NVarChar, b)
+    .query(`
+    SELECT TOP 1 1 AS Ok FROM [dbo].[ErpDimensionValue]
+    WHERE BrandCode = @c AND DimensionCode = 'BRANCH' AND Code = @b
+      AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)`);
+  return r.recordset.length > 0;
 }
 
 /** Is this vendor still selectable (active + not blocked + ADV posting group) for the company? */

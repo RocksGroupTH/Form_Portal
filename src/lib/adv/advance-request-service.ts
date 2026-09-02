@@ -282,7 +282,12 @@ export function validateAdvanceForSubmit(
   if (!a.payeeType) errs.push("กรุณาเลือกผู้รับโอน (โอนให้)");
   if (a.payeeType === "vendor") {
     if (!a.payeeName?.trim()) errs.push("กรุณากรอกชื่อคู่ค้า");
-    if (!a.payeeBankAccount?.trim()) errs.push("กรุณากรอกเลขที่บัญชีคู่ค้า");
+    // The form strips non-digits as you type, but that is a convenience, not a
+    // guarantee: a direct API call, or a draft saved before the field became
+    // numeric, can still carry letters into the number finance transfers to.
+    const acct = a.payeeBankAccount?.trim() ?? "";
+    if (!acct) errs.push("กรุณากรอกเลขที่บัญชีคู่ค้า");
+    else if (!/^\d+$/.test(acct)) errs.push("เลขที่บัญชีคู่ค้าต้องเป็นตัวเลขเท่านั้น");
     if (!a.payeeBankCode?.trim()) errs.push("กรุณาเลือกธนาคารของคู่ค้า");
   }
 
@@ -327,20 +332,31 @@ async function persistAdvance(
       .input("overReason", sql.NVarChar, a.overThresholdReason ?? null);
 
   const exists = await tx.request().input("rid", sql.Int, requestId)
-    .query(`SELECT TOP 1 Id FROM [dbo].[AccAdvance] WHERE RequestId = @rid`);
+    .query(`SELECT TOP 1 Id, PayeeType, PayeeName FROM [dbo].[AccAdvance] WHERE RequestId = @rid`);
 
   if (exists.recordset.length > 0) {
-    await reqBind().query(`
+    const prev = exists.recordset[0] as { PayeeType: string | null; PayeeName: string | null };
+    const payeeChanged =
+      (prev.PayeeType ?? "") !== (a.payeeType ?? "") ||
+      (prev.PayeeName ?? "") !== (a.payeeName ?? "");
+    await reqBind().input("payeeChanged", sql.Bit, payeeChanged ? 1 : 0).query(`
       UPDATE [dbo].[AccAdvance] SET
         PayeeType=@payeeType, PayeeName=@payeeName, PayeeBankAccount=@bankAcct, PayeeBankCode=@bankCode,
         NeedByDate=@needBy, ExpectedClearDate=@clear, Purpose=@purpose,
         Currency=@currency, Amount=@amount, ExchangeRate=@rate, BaseAmount=@base,
         WhtNote=@wht, OverThresholdReason=@overReason,
-        MatchedVendorNo = CASE WHEN ISNULL(PayeeName,'') <> ISNULL(@payeeName,'') THEN NULL ELSE MatchedVendorNo END,
-        MatchedVendorName = CASE WHEN ISNULL(PayeeName,'') <> ISNULL(@payeeName,'') THEN NULL ELSE MatchedVendorName END,
-        VendorMatchConfidence = CASE WHEN ISNULL(PayeeName,'') <> ISNULL(@payeeName,'') THEN NULL ELSE VendorMatchConfidence END,
-        VendorMatchReason = CASE WHEN ISNULL(PayeeName,'') <> ISNULL(@payeeName,'') THEN NULL ELSE VendorMatchReason END,
-        VendorMatchStatus = CASE WHEN ISNULL(PayeeName,'') <> ISNULL(@payeeName,'') THEN 'pending' ELSE VendorMatchStatus END,
+        -- The payee TYPE matters as much as the name: employee and vendor are
+        -- matched by different rules (staff code vs name), so a type change
+        -- invalidates the match even when the name is untouched. Switching an
+        -- employee request to คู่ค้า used to keep the confirmed vendor and walk
+        -- straight past every gate. VendorConfirmedBy goes too — a confirmation
+        -- of a vendor that is no longer chosen is a misleading audit trail.
+        MatchedVendorNo = CASE WHEN @payeeChanged = 1 THEN NULL ELSE MatchedVendorNo END,
+        MatchedVendorName = CASE WHEN @payeeChanged = 1 THEN NULL ELSE MatchedVendorName END,
+        VendorMatchConfidence = CASE WHEN @payeeChanged = 1 THEN NULL ELSE VendorMatchConfidence END,
+        VendorMatchReason = CASE WHEN @payeeChanged = 1 THEN NULL ELSE VendorMatchReason END,
+        VendorMatchStatus = CASE WHEN @payeeChanged = 1 THEN 'pending' ELSE VendorMatchStatus END,
+        VendorConfirmedBy = CASE WHEN @payeeChanged = 1 THEN NULL ELSE VendorConfirmedBy END,
         UpdatedAt=SYSDATETIME()
       WHERE RequestId=@rid`);
   } else {

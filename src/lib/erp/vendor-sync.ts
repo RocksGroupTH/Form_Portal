@@ -2,7 +2,11 @@
 
 import type { Transaction } from "mssql";
 import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
-import { postBcCodexStoreRpc } from "@/lib/bc/bc-odata";
+import {
+  postBcCodexStoreRpc,
+  buildBcApiV2CompanyEntityUrl,
+  fetchBcApiV2Collection,
+} from "@/lib/bc/bc-odata";
 import { getBcConnectionById } from "@/lib/bc/bc-connection";
 import { getBrandConfig } from "@/lib/brand-config";
 import { getErpDataPool, sql } from "@/lib/db/mssql";
@@ -198,6 +202,77 @@ async function insertVendorSyncLog(
     `);
 }
 
+/**
+ * Copy each vendor's "Home Page" into `ErpVendors.Website`.
+ *
+ * Home Page is a standard BC Vendor field that Standard API v2.0 exposes as
+ * `website`; accounting puts the employee's staff code there so AP-2 can match
+ * an employee payee by code instead of by name. The custom RPC that drives the
+ * rest of this sync does not return it, so this second, `$select`-narrowed call
+ * fetches only what it needs and writes only that one column.
+ *
+ * Deliberately non-fatal: unlike the posting group, which the ADV filter cannot
+ * work without, Home Page is an optional matching aid. A failure here leaves the
+ * previous values in place and the sync still counts as a success.
+ */
+async function enrichVendorHomePages(ctx: BrandVendorSyncContext): Promise<number> {
+  const url = `${buildBcApiV2CompanyEntityUrl(
+    ctx.baseUrl,
+    ctx.bcCompanyId,
+    "vendors",
+    ERP_VENDOR_SOURCE_ENVIRONMENT,
+  )}?$select=number,website`;
+
+  const rows = await fetchBcApiV2Collection<{ number?: string; website?: string }>(
+    ctx.bcConnectionId,
+    url,
+  );
+
+  // Report what BC actually returned, not just what changed. Without this an
+  // update count of 0 is ambiguous: it reads the same whether nobody has filled
+  // a Home Page in yet or the field is being read wrongly and always arrives
+  // empty — and the skip-if-unchanged rule below hides the difference.
+  const withHomePage = rows.filter((r) => (r.website ?? "").trim() !== "").length;
+  console.info(
+    `[vendor-sync] ${ctx.brandCode}: BC returned ${rows.length} vendor(s), ${withHomePage} with a Home Page`,
+  );
+
+  const pool = await getErpDataPool();
+  const existing = await pool.request()
+    .input("environment", sql.NVarChar, ERP_VENDOR_SOURCE_ENVIRONMENT)
+    .input("brand", sql.NVarChar, ctx.brandCode)
+    .query(`
+      SELECT VendorNo, Website FROM [dbo].[ErpVendors]
+      WHERE SourceEnvironment = @environment AND BrandCode = @brand
+    `);
+  const current = new Map<string, string | null>();
+  for (const row of existing.recordset as { VendorNo: string; Website: string | null }[]) {
+    current.set(row.VendorNo.trim().toUpperCase(), row.Website);
+  }
+
+  let updated = 0;
+  for (const row of rows) {
+    const vendorNo = (row.number ?? "").trim();
+    if (!vendorNo) continue;
+    const website = (row.website ?? "").trim() || null;
+    const key = vendorNo.toUpperCase();
+    // Only vendors this sync actually wrote, and only when the value moved.
+    if (!current.has(key) || current.get(key) === website) continue;
+    const res = await pool.request()
+      .input("environment", sql.NVarChar, ERP_VENDOR_SOURCE_ENVIRONMENT)
+      .input("brand", sql.NVarChar, ctx.brandCode)
+      .input("no", sql.NVarChar, vendorNo)
+      .input("website", sql.NVarChar, website)
+      .query(`
+        UPDATE [dbo].[ErpVendors]
+        SET Website = @website
+        WHERE SourceEnvironment = @environment AND BrandCode = @brand AND VendorNo = @no
+      `);
+    updated += res.rowsAffected[0] ?? 0;
+  }
+  return updated;
+}
+
 export async function syncBrandErpVendors(
   brandCode: string,
   triggeredBy: number | null,
@@ -208,6 +283,7 @@ export async function syncBrandErpVendors(
   const transaction = new sql.Transaction(pool);
   let transactionOpen = false;
   let vendorRows = 0;
+  let homePageNote: string | null = null;
   let snapshotAt = startedAt;
 
   try {
@@ -272,6 +348,21 @@ export async function syncBrandErpVendors(
 
     await transaction.commit();
     transactionOpen = false;
+
+    // After the commit: the rows exist, so this only ever updates one column.
+    // Non-fatal by design — see enrichVendorHomePages.
+    try {
+      const homePagesUpdated = await enrichVendorHomePages(ctx);
+      console.info(`[vendor-sync] ${ctx.brandCode}: Home Page updated on ${homePagesUpdated} vendor(s)`);
+    } catch (err) {
+      console.error(`[vendor-sync] Home Page enrich failed for ${ctx.brandCode}`, err);
+      // Staying non-fatal is right — the vendor snapshot itself committed. But
+      // the run must not read as wholly clean: a failure here leaves Home Page
+      // values from an earlier run in place, and a staff code that accounting
+      // has since removed in BC still matches an employee with high confidence.
+      // Console alone is not enough; the log row is what an operator looks at.
+      homePageNote = `Home Page enrich failed: ${err instanceof Error ? err.message : String(err)}`;
+    }
   } catch (error) {
     if (transactionOpen) await transaction.rollback().catch(() => undefined);
     const message = error instanceof Error ? error.message : "Vendor sync failed";
@@ -280,7 +371,7 @@ export async function syncBrandErpVendors(
     throw error;
   }
 
-  await insertVendorSyncLog(ctx.brandCode, "success", vendorRows, null, triggeredBy, startedAt)
+  await insertVendorSyncLog(ctx.brandCode, "success", vendorRows, homePageNote, triggeredBy, startedAt)
     .catch(() => undefined);
   return { brandCode: ctx.brandCode, vendorRows, syncedAt: snapshotAt.toISOString() };
 }
