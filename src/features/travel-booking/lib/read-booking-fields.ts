@@ -78,21 +78,26 @@ export interface BookingFieldsRead {
 
 export interface BookingFieldsReadOptions {
   /**
-   * The request's brand. Sent as `?brandCode=`, and the route resolves what
-   * that brand may be recorded in **server-side** — a currency posted from here
-   * would let a hand-shaped request have one accepted that the brand does not
-   * offer.
+   * Where the trip goes. Sent as `?countryCode=`, and the route derives the
+   * currencies it will admit from it **server-side** — a currency posted from
+   * here would let a hand-shaped request have one accepted that the destination
+   * does not use.
    *
-   * Without it the route sees no brand, admits baht alone, and every foreign
-   * invoice silently stays baht: the whole defect.
+   * Without it the route admits baht alone, and every foreign invoice silently
+   * stays baht: the whole defect. It was `brandCode` until 2026-09-02, which had
+   * the same shape and asked the wrong question — see the route's header.
    */
-  brandCode?: string | null;
+  countryCode?: string | null;
   /**
    * The currency this request records its booking figures in. Null or absent
-   * means **not known here** — `AdminBookingPanel` has a real window where its
-   * brand is still unidentified — and the mismatch check is then skipped rather
-   * than assuming baht, which is the same reason the panel posts no currency at
-   * all in that window.
+   * means **not known here**, and the mismatch check is then skipped rather than
+   * assuming baht.
+   *
+   * `AdminBookingPanel` always knows it now: it is derived synchronously from
+   * the country in props. The nullable shape stays because skipping the check is
+   * the right answer for a caller that genuinely cannot say, and because
+   * silently defaulting to baht is exactly the failure this parameter exists to
+   * catch.
    */
   claimCurrency?: string | null;
 }
@@ -153,10 +158,10 @@ export async function readBookingFields(
   // A query parameter rather than a form field, so the route can read it before
   // it reads the body — which is what lets the rate limit run before the brand
   // lookup does any database work.
-  const brandCode = (options?.brandCode ?? "").trim();
+  const countryCode = (options?.countryCode ?? "").trim();
   const url =
     "/api/request/travel-booking/booking-fields" +
-    (brandCode ? `?brandCode=${encodeURIComponent(brandCode)}` : "");
+    (countryCode ? `?countryCode=${encodeURIComponent(countryCode)}` : "");
 
   try {
     const res = await fetch(url, { method: "POST", body: form });

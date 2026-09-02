@@ -11,95 +11,89 @@
  *
  * ── Why this is not `claim-currency.ts` with a different name ──
  *
- * AP-1's requester **chooses** a currency, so an absent or unrecognised choice
- * there resolves to baht. AP-17 has no such choice to make: `TravelBookingTab`
- * carries no money field at all, the amounts are typed weeks later by the
- * booking desk, and the currency is therefore **derived from the request's
- * brand**. So `effectiveBookingCurrency` falls back to the brand's currency,
- * not to baht — the opposite of its AP-1 twin, and deliberately.
+ * AP-1's requester **chooses** a currency on each expense line, and the choice
+ * is theirs because they are the one who spent the money. AP-17 has no such
+ * field: `TravelBookingTab` carries no money at all, and the amounts are typed
+ * weeks later by a booking desk reading an invoice. So the question here is not
+ * "what did the requester pick" but "what is this invoice denominated in", and
+ * the two are answered differently.
  *
- * Only an explicit `"THB"` opts out, which is what the desk's toggle posts when
- * the invoice in front of them is in baht despite the brand.
+ * ── The currency follows the DESTINATION, and defaults to baht ──
+ *
+ * Until 2026-09-02 it followed the request's **brand** and defaulted to that
+ * brand's own currency. Both were wrong, and for one reason: a brand is a set
+ * of books, not a place. KSI carries GBP, so a KSI desk booking a Bangkok hotel
+ * was offered GBP first and had to correct it on every domestic trip; and a
+ * PCTH trip to London was offered no foreign currency at all, because PCTH
+ * carries only THB. The destination answers both cases correctly with no
+ * configuration at all.
+ *
+ * **Baht is the default, and it leads the toggle.** Almost every invoice this
+ * desk handles is in baht — including on foreign trips booked through a Thai
+ * agent — so baht is right by default and the foreign option is the exception.
+ * It is also the only answer that needs no rate, which is why every refusal
+ * below lands there.
  */
 
-import { enabledForeignCurrencies, THB, type BrandCurrencyEntry } from "@/lib/acc/currency";
+import { THB } from "@/lib/acc/currency";
+import { currencyForCountry } from "@/lib/acc/country-currency";
 import { currencyWord, referenceRateNote } from "@/lib/acc/currency-display";
 
 function norm(code: string | null | undefined): string {
   return (code ?? "").trim().toUpperCase();
 }
 
-/** The shape both halves read a brand as — `RegistryBrand` and `AccBrandOption` both satisfy it. */
-export interface BookingCurrencyBrand {
-  currencies: readonly BrandCurrencyEntry[] | null | undefined;
-}
-
 /**
  * The currencies this request's booking figures may be recorded in, in the
- * order the desk's toggle offers them: the brand's own first, baht last.
+ * order the desk's toggle offers them: **baht first**, the destination's
+ * currency second.
  *
- * A brand may carry several (`BrandCurrency`, migration 127) and every enabled
- * one is offered. Baht is appended once, whether or not the brand also carries a
- * THB row — `enabledForeignCurrencies` drops that row precisely so it cannot be
- * listed twice.
+ * An empty array means **render nothing**, and that is the domestic case — a
+ * Thai trip has one possible currency, and a one-option toggle would be a
+ * control that cannot be operated. It is also what an **unset** country gives,
+ * which is not an edge case: `AccRequest.CountryCode` only arrived on
+ * 2026-08-31, and five of the six AP-17 requests that exist have never had one.
+ * Those keep the panel exactly as it looked before any of this shipped.
  *
- * An empty array means **render nothing**. A brand with no currency configured
- * has to leave `AdminBookingPanel` pixel-identical to the day before this
- * shipped, which a one-option toggle would not. `enabledForeignCurrencies` in
- * `@/lib/acc/currency` owns that decision and this defers to it rather than
- * re-deriving the rule.
+ * Baht leads because baht is the default, not merely an option — see
+ * `effectiveBookingCurrency`. The order here and the fallback there are the
+ * same decision written twice, so the tests assert them against each other.
  *
- * The brand's first currency leads the list **and** is the default — unlike
- * AP-1, where the brand's own default decides and baht is where that lands
- * when nothing is marked.
- *
- * **Baht is appended even for a brand that has switched Thailand off**
- * (migration 131), and that is deliberate rather than an oversight. The `THB`
- * row answers "may an AP-1 claim be *filed from* Thailand"; this toggle answers
- * "is the invoice on the desk denominated in baht", which is a fact about a
- * document rather than a permission. A hotel in Kuala Lumpur that bills in baht
- * still has to be recordable, and refusing it would leave the desk unable to
- * enter what it is holding. AP-1's country picker is where the brand's decision
- * is enforced.
+ * **No brand is consulted, and that is the point.** The old version read the
+ * brand's `BrandCurrency` rows, which meant a KSI desk was offered GBP on a
+ * Bangkok hotel and a PCTH desk was offered nothing at all on a London one. A
+ * destination needs no configuration to answer both correctly.
  */
-export function bookingCurrencyOptions(
-  brand: BookingCurrencyBrand | null | undefined,
-): string[] {
-  const foreign = enabledForeignCurrencies(brand?.currencies);
-  if (foreign.length === 0) return [];
-  return foreign.concat([THB]);
+export function bookingCurrencyOptions(country: string | null | undefined): string[] {
+  const currency = currencyForCountry(country);
+  if (currency === null || currency === THB) return [];
+  return [THB, currency];
 }
 
 /**
  * The currency a request's booking figures are actually recorded in.
  *
- * **Absent means the brand's currency, not baht.** That is the whole difference
- * from `effectiveClaimCurrency`, and it is what lets the panel post nothing at
- * all while its brand list is still in flight and still have the server derive
- * the right answer — the case AP-1 had to guard against with `brandsKnown`,
- * because there an absent choice would silently re-price the claim as baht.
+ * **Absent means baht** — the opposite of what this answered until 2026-09-02,
+ * and the opposite of AP-17's original design, which derived it from the brand.
+ * The booking desk types figures off an invoice weeks after the request was
+ * filed, and almost every one of those invoices is in baht, foreign trips
+ * included: they are commonly booked through a Thai agent who bills in baht.
  *
- * `"THB"` is honoured whatever the brand says: it is the desk's deliberate
- * opt-out for an invoice that really is in baht.
- *
- * Anything else — a currency the brand does not carry, a typo, a forged body —
- * resolves to the brand's **first** currency rather than being accepted or
- * throwing. It can therefore never widen what a request may be recorded in
- * beyond the currencies its brand is configured for.
- *
- * A brand with nothing configured always answers baht, so an unconfigured brand
- * writes exactly the rows it wrote before this feature existed.
+ * Anything that is not this destination's currency — a code from another
+ * country, a typo, a stale page, a forged body — resolves to baht rather than
+ * being accepted or throwing. Two properties follow, and both matter: a request
+ * can never be recorded in a currency its destination does not use, and every
+ * refusal lands on the one answer that needs no exchange rate, so an FX outage
+ * can never turn a bad input into a save that cannot succeed.
  */
 export function effectiveBookingCurrency(
   selected: string | null | undefined,
-  brand: BookingCurrencyBrand | null | undefined,
+  country: string | null | undefined,
 ): string {
-  const options = bookingCurrencyOptions(brand);
-  if (options.length === 0) return THB;
+  const options = bookingCurrencyOptions(country);
   const want = norm(selected);
-  if (want === THB) return THB;
-  if (options.indexOf(want) !== -1) return want;
-  return options[0];
+  if (want === THB || options.indexOf(want) === -1) return THB;
+  return want;
 }
 
 /**

@@ -223,11 +223,12 @@ export function TravelBookingTab({
             required field above, and offering a country before one is picked
             asks a question about a trip that has not started being described.
 
-            **It does not choose the booking currency.** That is derived from the
-            brand and typed by the desk from the invoice — `booking-currency.ts`
-            falls back to the brand's currency rather than to baht, deliberately
-            the opposite of AP-1. Where somebody went and what an invoice is
-            denominated in are two questions.
+            **It also chooses the booking currency**, since 2026-09-02. The
+            desk's toggle offers baht plus this destination's own currency and
+            starts on baht — `booking-currency.ts` owns that. So the country
+            picked here bounds what the invoice can later be recorded in, which
+            it did not before: the brand used to decide, and got both the
+            domestic and the foreign case wrong.
 
             **The countries the BRAND offers**, through AP-1's own
             `claimCountryOptions` — one rule, not a second copy of it. A brand

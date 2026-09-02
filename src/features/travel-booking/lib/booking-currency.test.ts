@@ -6,103 +6,124 @@ import {
   effectiveBookingCurrency,
   referenceRateNote,
 } from "./booking-currency";
-import type { BrandCurrencyEntry } from "@/lib/acc/currency";
-
-function entry(code: string, isEnabled: boolean, id = 1): BrandCurrencyEntry {
-  return { id, countryCode: null, currencyCode: code, isEnabled };
-}
-
-const MYR = { currencies: [entry("MYR", true)] };
-const MYR_AND_GBP = { currencies: [entry("MYR", true, 1), entry("GBP", true, 2)] };
-const STAGED = { currencies: [entry("MYR", false)] };
-const NOTHING = { currencies: [] };
-const BAHT_BRAND = { currencies: [entry("THB", true)] };
+import { COUNTRIES, isRateSourceCurrency } from "@/lib/acc/country-currency";
 
 /**
- * An unconfigured brand must leave `AdminBookingPanel` exactly as it looked
- * before this shipped, which an empty option list is what produces.
+ * The currency follows **where the trip goes**, and baht is always the default.
+ *
+ * Until 2026-09-02 it followed the request's *brand* and defaulted to that
+ * brand's own currency. Both were wrong for the same reason: a brand is a set of
+ * books, not a destination. KSI carries GBP, so a KSI desk booking a hotel in
+ * Bangkok was offered GBP first and had to switch back to baht on every single
+ * domestic trip — and a PCTH trip to London was offered no foreign currency at
+ * all, because PCTH carries only THB.
  */
-test("only a brand with an enabled foreign currency offers a choice", () => {
-  assert.deepEqual(bookingCurrencyOptions(MYR), ["MYR", "THB"]);
-  assert.deepEqual(bookingCurrencyOptions(STAGED), []);
-  assert.deepEqual(bookingCurrencyOptions(NOTHING), []);
-  assert.deepEqual(bookingCurrencyOptions(BAHT_BRAND), []);
+
+
+/**
+ * A domestic trip, an unset country and an unknown code all render **no toggle
+ * at all** — the panel stays exactly as it looked before any of this existed.
+ *
+ * An unset country is the common case, not an edge one: `AccRequest.CountryCode`
+ * arrived on 2026-08-31 and five of the six AP-17 requests that exist have never
+ * had one.
+ */
+test("only a foreign country offers a choice", () => {
+  assert.deepEqual(bookingCurrencyOptions("GB"), ["THB", "GBP"]);
+  assert.deepEqual(bookingCurrencyOptions("MY"), ["THB", "MYR"]);
+  assert.deepEqual(bookingCurrencyOptions("TH"), []);
   assert.deepEqual(bookingCurrencyOptions(null), []);
   assert.deepEqual(bookingCurrencyOptions(undefined), []);
+  assert.deepEqual(bookingCurrencyOptions(""), []);
+  assert.deepEqual(bookingCurrencyOptions("ZZ"), []);
 });
 
-/** A brand may carry several; every enabled one is on the toggle. */
-test("every enabled currency is offered, in row order, with baht last", () => {
-  assert.deepEqual(bookingCurrencyOptions(MYR_AND_GBP), ["MYR", "GBP", "THB"]);
-});
-
-test("a THB row does not produce a second baht option", () => {
-  assert.deepEqual(
-    bookingCurrencyOptions({ currencies: [entry("THB", true, 1), entry("GBP", true, 2)] }),
-    ["GBP", "THB"],
-  );
-});
-
-test("the brand's code is normalised and offered before baht", () => {
-  assert.deepEqual(bookingCurrencyOptions({ currencies: [entry(" myr ", true)] }), ["MYR", "THB"]);
+/** Baht leads, because baht is the default the desk starts on. */
+test("baht is first, the destination's currency second", () => {
+  assert.deepEqual(bookingCurrencyOptions("gb"), ["THB", "GBP"]);
+  assert.deepEqual(bookingCurrencyOptions(" jp "), ["THB", "JPY"]);
 });
 
 /**
- * **The one rule that is the opposite of AP-1's**, and the reason this module
- * exists rather than a second call into `claim-currency.ts`.
+ * Two countries can share a currency and several of the 25 do — every euro
+ * member resolves to EUR. Nothing here dedupes because nothing needs to: one
+ * request has one destination.
+ */
+test("euro-area countries all resolve to EUR", () => {
+  assert.deepEqual(bookingCurrencyOptions("DE"), ["THB", "EUR"]);
+  assert.deepEqual(bookingCurrencyOptions("FR"), ["THB", "EUR"]);
+});
+
+/**
+ * **Baht, always** — the opposite of what this answered until 2026-09-02, and
+ * of AP-17's own first design.
  *
- * AP-17's requester never picks a currency — `TravelBookingTab` has no money
- * field — so an absent choice is not "they chose baht", it is "nobody has been
- * asked yet". The answer is derived from the brand.
+ * The booking desk types figures off an invoice weeks after the request was
+ * filed. Almost every one of those invoices is in baht, including on foreign
+ * trips booked through a Thai agent, so baht is the answer that is right by
+ * default and the toggle is the exception.
  */
-test("absent means the BRAND's currency, never baht", () => {
-  assert.equal(effectiveBookingCurrency(null, MYR), "MYR");
-  assert.equal(effectiveBookingCurrency(undefined, MYR), "MYR");
-  assert.equal(effectiveBookingCurrency("", MYR), "MYR");
+test("absent means baht, never the destination's currency", () => {
+  assert.equal(effectiveBookingCurrency(null, "GB"), "THB");
+  assert.equal(effectiveBookingCurrency(undefined, "GB"), "THB");
+  assert.equal(effectiveBookingCurrency("", "GB"), "THB");
 });
 
-test("baht is honoured as the desk's explicit opt-out", () => {
-  assert.equal(effectiveBookingCurrency("THB", MYR), "THB");
-  assert.equal(effectiveBookingCurrency("thb", MYR), "THB");
+test("the destination's currency is admitted, case-insensitively", () => {
+  assert.equal(effectiveBookingCurrency("GBP", "GB"), "GBP");
+  assert.equal(effectiveBookingCurrency(" gbp ", "GB"), "GBP");
+  assert.equal(effectiveBookingCurrency("JPY", "JP"), "JPY");
 });
 
-test("the brand's own currency is admitted, case-insensitively", () => {
-  assert.equal(effectiveBookingCurrency("MYR", MYR), "MYR");
-  assert.equal(effectiveBookingCurrency(" myr ", MYR), "MYR");
+test("baht is honoured whatever the destination", () => {
+  assert.equal(effectiveBookingCurrency("THB", "GB"), "THB");
+  assert.equal(effectiveBookingCurrency("thb", "GB"), "THB");
+  assert.equal(effectiveBookingCurrency("THB", null), "THB");
 });
 
 /**
- * A currency the brand does not carry was never on the toggle, so it is a
- * forged body or a bug. Resolving it to the brand's first currency is what
- * makes this function unable to widen what a request may be recorded in,
- * whatever is posted.
+ * A currency that is not this destination's was never on the toggle, so it is a
+ * forged body or a stale page. It resolves to **baht**, which is what makes this
+ * function unable to record a request in a currency its destination does not
+ * use, whatever is posted — and baht is the safe direction, because it is the
+ * only answer that needs no rate and can never be converted twice.
  */
-test("a currency the brand does not offer resolves to the brand's first", () => {
-  assert.equal(effectiveBookingCurrency("USD", MYR), "MYR");
-  assert.equal(effectiveBookingCurrency("SGD", MYR), "MYR");
-  assert.equal(effectiveBookingCurrency("USD", MYR_AND_GBP), "MYR");
-});
-
-/** Each configured currency is honoured; the first is the default. */
-test("a multi-currency brand honours either code and defaults to the first", () => {
-  assert.equal(effectiveBookingCurrency(null, MYR_AND_GBP), "MYR");
-  assert.equal(effectiveBookingCurrency("GBP", MYR_AND_GBP), "GBP");
-  assert.equal(effectiveBookingCurrency("MYR", MYR_AND_GBP), "MYR");
-  assert.equal(effectiveBookingCurrency("THB", MYR_AND_GBP), "THB");
+test("a currency the destination does not use resolves to baht", () => {
+  assert.equal(effectiveBookingCurrency("USD", "GB"), "THB");
+  assert.equal(effectiveBookingCurrency("MYR", "GB"), "THB");
+  assert.equal(effectiveBookingCurrency("GBP", "TH"), "THB");
+  assert.equal(effectiveBookingCurrency("GBP", null), "THB");
+  assert.equal(effectiveBookingCurrency("GBP", "ZZ"), "THB");
 });
 
 /**
- * The recovery path, and the one place the fallback IS baht: with nothing
- * configured there is no brand currency to fall back to, so every answer is
- * baht and the panel renders nothing new.
+ * Every country the picker offers must be convertible, or the desk could select
+ * a currency whose save then fails with `BOOKING_FX_UNAVAILABLE_ERROR` forever
+ * and no amount of retrying would help. Measured clean over all 25 on
+ * 2026-09-02; this is here so a 26th added without a rate is caught at `npm
+ * test` rather than by whoever is holding the invoice.
  */
-test("an unconfigured or switched-off brand always answers baht", () => {
-  assert.equal(effectiveBookingCurrency("MYR", STAGED), "THB");
-  assert.equal(effectiveBookingCurrency("MYR", NOTHING), "THB");
-  assert.equal(effectiveBookingCurrency("MYR", BAHT_BRAND), "THB");
-  assert.equal(effectiveBookingCurrency("MYR", null), "THB");
-  assert.equal(effectiveBookingCurrency(null, null), "THB");
+test("every offerable country's currency can actually be quoted", () => {
+  for (const c of COUNTRIES) {
+    const options = bookingCurrencyOptions(c.code);
+    for (const code of options) {
+      if (code === "THB") continue;
+      assert.ok(
+        isRateSourceCurrency(code),
+        `${c.code} offers ${code}, which the rate source cannot quote`,
+      );
+    }
+  }
 });
+
+/**
+ * The brand decides nothing here any more, and the signature is what enforces
+ * it — a brand-shaped argument is a compile error, checked by `npm run
+ * typecheck` rather than asserted at runtime. There is deliberately no runtime
+ * assertion for it: passing one throws inside `currencyForCountry` rather than
+ * returning `[]`, and a test that pinned that would be pinning the behaviour of
+ * a call TypeScript already forbids.
+ */
 
 test("the word after a figure is บาท for baht and the code otherwise", () => {
   assert.equal(bookingCurrencyWord(null), "บาท");

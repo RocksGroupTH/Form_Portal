@@ -297,51 +297,34 @@ interface BookingFx {
 const BAHT_FX: BookingFx = { currency: null, rate: null, asOf: null, source: null };
 
 /**
- * The request's currency, derived from its **brand**, with today's rate fetched
- * for it.
+ * The request's currency, derived from **where the trip goes**, with today's
+ * rate fetched for it.
  *
- * Reads the brand through `listBrandRegistry()`, which opens
- * `getProductionFormPool()` — `BrandCurrency` has no row in
- * `Rocks_Portal_Form_UAT`, so a `getAccPool()` read of it throws `Invalid
- * object name` for every UAT tester and for nobody else. This file must
- * therefore never name that table itself; `currency-pool-guard.test.ts`
- * enforces exactly that, per file, and `admin-service.ts` imports `getAccPool`
- * on line 1.
+ * **No database read and no network call to decide the currency.** Until
+ * 2026-09-02 this loaded the whole brand registry through `listBrandRegistry()`
+ * — a second pool, on `getProductionFormPool()`, because `BrandCurrency` has no
+ * row in `Rocks_Portal_Form_UAT` — on every single booking save. The country is
+ * already on the `AccRequest` row this function's caller reads anyway, and
+ * `currencyForCountry` is a lookup over a frozen 25-entry list, so the registry
+ * read is simply gone.
  *
- * **`posted` is the desk's opt-out, not its choice.** Absent means "derive it",
- * which resolves to the brand's own currency — see `effectiveBookingCurrency`
- * for why that is the opposite of AP-1's rule. Only an explicit `THB` moves it
- * to baht, and nothing else can widen it: a third currency resolves back to the
- * brand's.
+ * **`posted` is the desk's opt-in, not merely an opt-out.** Absent means baht,
+ * so a client that posts nothing records exactly what an unconfigured request
+ * always recorded. Only this destination's own currency moves it off baht, and
+ * nothing can widen that: a code from another country resolves back to THB.
+ * That is the reverse of the rule this held until 2026-09-02 — see
+ * `effectiveBookingCurrency` for why the reversal was right.
  *
- * Called **outside** the transaction, deliberately: it reaches two databases
- * and the network, and holding the `AccRequest` row lock across an 8-second FX
- * timeout is how a booking save turns into a deadlock against `completeRequest`.
+ * Called **outside** the transaction, deliberately: it still reaches the
+ * network for the rate, and holding the `AccRequest` row lock across an
+ * 8-second FX timeout is how a booking save turns into a deadlock against
+ * `completeRequest`.
  */
 async function resolveBookingFx(
-  brandCode: string | null,
+  countryCode: string | null,
   posted: string | null | undefined,
 ): Promise<BookingFx> {
-  // An explicit `THB` needs no brand read: `effectiveBookingCurrency` answers
-  // baht for it whatever the brand says, so the registry could not change the
-  // outcome. That is what keeps a brand with no currency configured making
-  // **no** extra round trip — the panel posts `THB` for one — and it is why the
-  // short-circuit tests the string rather than calling `isBaht`, which would
-  // also swallow an ABSENT currency. Absent means "derive it from the brand",
-  // and deriving is exactly what the rest of this function does.
-  if ((posted ?? "").trim().toUpperCase() === THB) return BAHT_FX;
-  if (!brandCode) return BAHT_FX;
-
-  let brand: { currencies: BrandCurrencyEntry[] } | null = null;
-  const brands = await listBrandRegistry();
-  for (const b of brands) {
-    if (b.code === brandCode) {
-      brand = { currencies: b.currencies };
-      break;
-    }
-  }
-
-  const currency = effectiveBookingCurrency(posted, brand);
+  const currency = effectiveBookingCurrency(posted, countryCode);
   if (!needsRate(currency)) return BAHT_FX;
 
   const fx = await resolveRate(currency);
@@ -379,19 +362,20 @@ function assertConvertible(fx: BookingFx, amounts: (number | null)[]): void {
 }
 
 /**
- * The brand this request is filed under, read before the transaction opens so
- * the FX lookup can happen outside it.
+ * Where this request is going, read before the transaction opens so the FX
+ * lookup can happen outside it.
  *
  * Deliberately not taken from the client: the currency is derived from the
- * brand, so a posted brand code would let a caller pick the currency after all.
+ * destination, so a posted country code would let a caller pick the currency
+ * after all — the same reason this read the brand from here before 2026-09-02.
  */
-async function loadBrandCode(pool: AccPool, requestId: number): Promise<string | null> {
+async function loadCountryCode(pool: AccPool, requestId: number): Promise<string | null> {
   const res = await pool.request()
     .input("rid", sql.Int, requestId)
     .input("form", sql.NVarChar, AP17_FORM_CODE)
-    .query(`SELECT BrandCode FROM [dbo].[AccRequest] WHERE Id=@rid AND FormCode=@form`);
-  const row = res.recordset[0] as { BrandCode: string | null } | undefined;
-  return (row?.BrandCode ?? null) || null;
+    .query(`SELECT CountryCode FROM [dbo].[AccRequest] WHERE Id=@rid AND FormCode=@form`);
+  const row = res.recordset[0] as { CountryCode: string | null } | undefined;
+  return (row?.CountryCode ?? null) || null;
 }
 
 /* ─────────────────────────── booking fill-in ─────────────────────────── */
@@ -489,11 +473,12 @@ async function requireEditableBooking(runner: SqlRunner, requestId: number): Pro
  * What this save also records, on the request header, is *which* currency and
  * at *what* rate, so every screen can state the baht equivalent beside them.
  *
- * The currency is derived from the brand and re-derived here whatever the
- * client posted (`resolveBookingFx`); `input.currency` can only ever say "the
- * desk chose baht instead". The rate is fetched **server-side** — the client
- * never posts one, which is the single part of AP-2's approach this feature
- * deliberately does not reuse.
+ * The currency is bounded by the request's stored destination and re-derived
+ * here whatever the client posted (`resolveBookingFx`); `input.currency` can
+ * only ever say "the desk says this invoice is in the destination's currency",
+ * and everything else lands on baht. The rate is fetched **server-side** — the
+ * client never posts one, which is the single part of AP-2's approach this
+ * feature deliberately does not reuse.
  *
  * **`AccRequest.TotalAmount` is not touched, and must not be.** For AP-17 it
  * holds the *per-diem total alone* — the booking cost has never reached the
@@ -527,7 +512,7 @@ export async function saveBookingDetail(
   // Both before the transaction: this reads the production form pool and, for a
   // foreign request, the FX provider. A brand with no currency configured makes
   // no FX call at all and writes NULL into both columns, exactly as before.
-  const fx = await resolveBookingFx(await loadBrandCode(pool, requestId), input.currency ?? null);
+  const fx = await resolveBookingFx(await loadCountryCode(pool, requestId), input.currency ?? null);
   const amounts = [
     sanitizeBookingAmount(input.priceExVat),
     sanitizeBookingAmount(input.vatAmount),

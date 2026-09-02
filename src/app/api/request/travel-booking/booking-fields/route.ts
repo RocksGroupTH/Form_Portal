@@ -7,7 +7,7 @@ import { statusForVisionError } from "@/lib/acc/vision-error";
 import { admitModelCurrency, isBaht, THB } from "@/lib/acc/currency";
 import { admitReadAmount } from "@/lib/acc/vision-amount";
 import { resolveRate } from "@/lib/acc/fx";
-import { getBrandClaimCurrencies } from "@/lib/brand-registry";
+import { bookingCurrencyOptions } from "@/features/travel-booking/lib/booking-currency";
 import { pdfPagesToPng } from "@/lib/pdf-to-image";
 import { MAX_PDF_PAGES, sheetToText } from "@/lib/acc/sheet-text";
 import {
@@ -48,25 +48,36 @@ import {
  * Nothing is stored. The file is uploaded to SharePoint separately, by the
  * attachment route, exactly as before.
  *
- * ── The currency, and why the brand code is a query parameter ──
+ * ── The currency, and why the country code is a query parameter ──
  *
  * All four money fields used to be asserted to be Thai baht in both the prompt
  * and the schema, so a foreign invoice yielded bare numbers that AP-17 recorded
- * and totalled as baht. The currency is now asked for — but only where the
- * request's brand actually offers a choice.
+ * and totalled as baht. The currency is now asked for — but only where the trip
+ * actually goes somewhere that could produce one.
  *
- * **The brand's currencies are resolved here, server-side, through
- * `getBrandClaimCurrencies`.** A currency posted by the caller would let somebody
- * shape their own request into having one accepted that the brand does not
- * offer; `?brandCode=` names a brand, and what that brand may be recorded in is
- * this side's decision alone. So this route **does** read the database — two of
- * them, through `listBrandRegistry` — which the note here denied until the
- * currency work landed. `getProductionFormPool()`, never `getAccPool()`:
- * `BrandCurrency` has no object in `Rocks_Portal_Form_UAT`.
+ * **The candidates come from the destination, and they must be the same
+ * candidates the panel can record.** `?countryCode=` runs through the very
+ * function the toggle uses, `bookingCurrencyOptions`, so the set the model is
+ * allowed to answer from and the set `effectiveBookingCurrency` will accept on
+ * save are one list by construction rather than two that agree today. They were
+ * two until 2026-09-02, when the panel moved to the destination and this was
+ * left on the brand: a PCTH trip to London then offered the desk GBP while this
+ * route — PCTH carrying only baht — asked the baht-only question, so a GBP
+ * invoice came back reported as baht and its figures were recorded as baht.
  *
- * `ROUTE_RULES` needs no entry even so: the `/api/request/travel-booking`
- * prefix already classifies as `AP-17` (`src/lib/form-environment/classify-path.ts`),
- * and nothing read here is per-environment — `BrandCurrency` has one copy.
+ * A currency posted by the caller would let somebody shape their own request
+ * into having one accepted; a country code cannot, because the answer is
+ * re-derived from the stored `AccRequest.CountryCode` when the row is saved
+ * (`resolveBookingFx`). The worst a forged one does is offer the model a
+ * currency the save then refuses back to baht.
+ *
+ * **This route reads no database at all.** It did until 2026-09-02, through
+ * `getBrandClaimCurrencies` → `listBrandRegistry` → `getProductionFormPool()`,
+ * on every attachment. `currencyForCountry` is a lookup over a frozen 25-entry
+ * list, so that read is simply gone.
+ *
+ * `ROUTE_RULES` needs no entry: the `/api/request/travel-booking` prefix
+ * already classifies as `AP-17` (`src/lib/form-environment/classify-path.ts`).
  */
 
 /** The four money fields, whose descriptions are the only per-currency difference. */
@@ -157,17 +168,16 @@ const BAHT_PROMPT = [
 /**
  * The same five questions, plus which of the currencies the figures are in.
  *
- * Only the codes this request's brand actually carries are offered, plus baht.
- * Anything else is a misread rather than a discovery — the invoice is being
- * attached to a request against one company — and `admitModelCurrency` refuses
- * it whatever this prompt says.
+ * Only the destination's own currency is offered, plus baht. Anything else is a
+ * misread rather than a discovery — the invoice is being attached to a trip to
+ * one country — and `admitModelCurrency` refuses it whatever this prompt says.
  *
  * The ceiling is stated **after conversion**, because that is where it is
  * applied: bounding the raw figures would be the wrong measurement, in the
  * direction that loses real money (`vision-amount.ts`).
  */
-function multiPrompt(brandCurrencies: readonly string[]): string {
-  const allowed = brandCurrencies
+function multiPrompt(foreign: readonly string[]): string {
+  const allowed = foreign
     .concat([THB])
     .map((c) => `"${c}"`)
     .join(" หรือ ");
@@ -201,10 +211,11 @@ export async function POST(req: NextRequest) {
   const session = await requireAuth();
   if (session instanceof Response) return session;
 
-  // Read before the guard, used after it: a query parameter costs nothing, but
-  // the brand lookup is a database read and an unauthenticated or rate-limited
-  // caller must not be able to make this route do one.
-  const brandCode = (req.nextUrl.searchParams.get("brandCode") ?? "").trim() || null;
+  // A query parameter rather than a form field, so it can be read before the
+  // body is. It no longer needs to be — resolving it costs no database read —
+  // but the guard still has to run before the body is read for the rate limit
+  // to mean anything, so the shape stays.
+  const countryCode = (req.nextUrl.searchParams.get("countryCode") ?? "").trim() || null;
 
   const guard = await guardVisionRequest(req, {
     userId: session.user.id,
@@ -216,12 +227,14 @@ export async function POST(req: NextRequest) {
   if (!guard.ok) return guard.response;
 
   try {
-    // Null for every brand nobody has configured a currency for — which is all
-    // of them until an admin turns one on — and for a caller that sent no brand
-    // code at all. That is the baht path below, byte for byte what this route
-    // did before.
-    const brandCurrencies = await getBrandClaimCurrencies(brandCode);
-    const prompt = brandCurrencies.length > 0 ? multiPrompt(brandCurrencies) : BAHT_PROMPT;
+    // Empty for a domestic trip, for a request filed before `CountryCode`
+    // existed, and for a caller that sent no country at all. That is the baht
+    // path below, byte for byte what this route did before any of this.
+    // `bookingCurrencyOptions` puts THB first and the destination's currency
+    // second; the foreign half alone is what the prompt and `admitModelCurrency`
+    // want, since both append baht themselves.
+    const foreign = bookingCurrencyOptions(countryCode).filter((c) => c !== THB);
+    const prompt = foreign.length > 0 ? multiPrompt(foreign) : BAHT_PROMPT;
 
     // Built per kind and then asked the same question, so a new input kind
     // cannot arrive with its own idea of what an answer is.
@@ -249,7 +262,7 @@ export async function POST(req: NextRequest) {
       max_tokens: 2048,
       messages: [{ role: "user", content: content as never }],
       output_config: {
-        format: zodOutputFormat(brandCurrencies.length > 0 ? MultiAnswerSchema : BahtAnswerSchema),
+        format: zodOutputFormat(foreign.length > 0 ? MultiAnswerSchema : BahtAnswerSchema),
       },
     });
 
@@ -271,7 +284,7 @@ export async function POST(req: NextRequest) {
       | undefined;
     const bookingNo = sanitizeBookingNo(parsed?.bookingNo);
 
-    if (brandCurrencies.length === 0) {
+    if (foreign.length === 0) {
       return NextResponse.json({
         ok: true,
         data: {
@@ -285,11 +298,11 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // A currency the brand does not offer, or none legible, means the desk
+    // A currency the destination does not use, or none legible, means the desk
     // decides. **The booking number survives it**: it is not a money field, the
     // same reason each figure is already sanitized on its own rather than the
     // answer being discarded whole.
-    const currency = admitModelCurrency(parsed?.currency, brandCurrencies);
+    const currency = admitModelCurrency(parsed?.currency, foreign);
     if (currency === null) {
       return NextResponse.json({ ok: true, data: { ...EMPTY, bookingNo } });
     }

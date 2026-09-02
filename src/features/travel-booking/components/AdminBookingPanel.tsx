@@ -66,7 +66,7 @@ import type {
   TravelBookingFileMeta,
   TravelBookingRequest,
 } from "@/features/travel-booking/types";
-import type { AccBrandOption } from "@/features/accounting/types";
+import { countryName } from "@/lib/acc/country-currency";
 
 const TYPE_ICON: Record<BookingType, ReactNode> = {
   room: <BedDouble size={15} />,
@@ -209,63 +209,36 @@ export function AdminBookingPanel({
 
   /* ── The request's currency ──
    *
-   * **Derived from the brand, never chosen by the requester.** AP-17's fill-in
-   * form carries no money field at all: the amounts are typed here, weeks later,
-   * by the booking desk. So the toggle below offers the brand's own currency and
-   * baht, and defaults to the brand's — the opposite of AP-1, where the
-   * requester picks and baht is the default. `booking-currency.ts` owns that
-   * rule and says why.
+   * **Follows where the trip goes, and defaults to baht.** AP-17's fill-in form
+   * carries no money field at all: the amounts are typed here, weeks later, by
+   * the booking desk reading an invoice. So the toggle offers baht and the
+   * destination's currency, starting on baht — almost every invoice that reaches
+   * this desk is in baht, foreign trips included, because they are commonly
+   * booked through a Thai agent. `booking-currency.ts` owns the rule.
    *
-   * A brand with nothing configured yields an empty option list, and then
-   * nothing here renders and nothing below changes: `currency` is `THB`, every
-   * `unit` is null, and the panel is the one that shipped before this feature.
-   */
-  /**
-   * The request's brand as the options endpoint describes it, or **undefined
-   * for "not identified"** — still in flight, the fetch failed, or the brand's
-   * AP-17 grant has since been withdrawn.
+   * A domestic trip — and a request filed before `CountryCode` existed — yields
+   * an empty option list, and then nothing here renders and nothing below
+   * changes: `currency` is `THB`, every `unit` is null, and the panel is the one
+   * that shipped before any of this.
    *
-   * Undefined is a distinct state from "configured with no currency", and the
-   * distinction is the whole point: it makes `currency` below null, the panel
-   * posts no currency at all, and the **server** derives one from the brand
-   * through the full registry. Posting `THB` in that window is what would
-   * silently record a ringgit invoice as baht, which is the AP-1 `brandsKnown`
-   * hazard in its AP-17 shape.
+   * **It is synchronous, and there is no third state.** Until 2026-09-02 the
+   * options came from the brand's `BrandCurrency` rows, which had to be fetched;
+   * that fetch carried an `undefined` "brand not identified yet" state whose
+   * whole job was to stop the panel posting `THB` over a ringgit invoice while
+   * it was in flight. The country arrives in props, so the window that hazard
+   * lived in no longer exists.
    */
-  const [brandOption, setBrandOption] = useState<AccBrandOption | undefined>(undefined);
-  const brandCode = request.brandCode;
-  useEffect(() => {
-    if (!brandCode) return;
-    // A local `cancelled` inside the effect, fresh per run — not a ref set on
-    // mount, which StrictMode's mount → cleanup → mount would leave false for
-    // the component's life (see `aliveRef` below for where that bit).
-    let cancelled = false;
-    fetch("/api/request/travel-booking/options/brands")
-      .then((r) => r.json())
-      .then((j: { ok?: boolean; data?: AccBrandOption[] }) => {
-        if (cancelled || !j?.ok || !Array.isArray(j.data)) return;
-        setBrandOption(j.data.filter((b) => b.brandCode === brandCode)[0]);
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [brandCode]);
-
-  const currencyOptions = bookingCurrencyOptions(brandOption);
+  const countryCode = request.countryCode;
+  const currencyOptions = useMemo(() => bookingCurrencyOptions(countryCode), [countryCode]);
   /** What the header already records, normalised. `""` means nobody has yet. */
   const storedCurrency = (request.currency ?? "").trim().toUpperCase();
   const [pickedCurrency, setPickedCurrency] = useState<string | null>(null);
-  /* Reconciled against what the brand offers rather than used raw, so a brand
-     whose currency an admin has since switched off can never leave the desk
-     posting a code the server no longer accepts.
-
-     Null while the brand is unidentified — see `brandOption`. An identified
-     brand with nothing configured resolves to `THB`, which the save then posts
-     explicitly, and `resolveBookingFx` short-circuits on it without opening a
-     pool: an unconfigured brand costs not one extra round trip. */
-  const currency = brandOption
-    ? effectiveBookingCurrency(pickedCurrency ?? storedCurrency, brandOption)
-    : null;
-  const currencyUnit = currency !== null && currency !== THB ? currency : null;
+  /* Reconciled against the destination rather than used raw, so a stale page —
+     or a request whose country has since been corrected — can never leave the
+     desk posting a code the server will not accept. Every refusal lands on THB,
+     which `resolveBookingFx` short-circuits without opening a pool. */
+  const currency = effectiveBookingCurrency(pickedCurrency ?? storedCurrency, countryCode);
+  const currencyUnit = currency !== THB ? currency : null;
   /* The rate the SERVER recorded, and only while it still belongs to the
      currency now on screen. A bare number goes wrong the moment the toggle
      moves: switch MYR → THB and a bare rate would caption `1 THB = 8.25 บาท`,
@@ -466,7 +439,7 @@ export function AdminBookingPanel({
               rows={rowsByType.get(rule.type) ?? []}
               currency={currency}
               currencyOptions={currencyOptions}
-              brandCode={brandCode}
+              countryCode={countryCode}
               exchangeRate={exchangeRate}
               exchangeRateAsOf={exchangeRateAsOf}
               onCurrencyChange={setPickedCurrency}
@@ -669,7 +642,7 @@ function BookingTypeGroup({
   rows,
   currency,
   currencyOptions,
-  brandCode,
+  countryCode,
   exchangeRate,
   exchangeRateAsOf,
   onCurrencyChange,
@@ -689,8 +662,8 @@ function BookingTypeGroup({
   currency: string | null;
   /** Empty for a brand with no currency configured, which renders nothing new. */
   currencyOptions: string[];
-  /** Named in the currency caption, so the desk can see where the value came from. */
-  brandCode: string | null;
+  /** The trip.s destination, which decides the currency toggle. Null before `CountryCode` existed. */
+  countryCode: string | null;
   /** The rate the server recorded, or null. Display only. */
   exchangeRate: number | null;
   /**
@@ -798,7 +771,7 @@ function BookingTypeGroup({
             total={total}
             currency={currency}
             currencyOptions={currencyOptions}
-            brandCode={brandCode}
+            countryCode={countryCode}
             exchangeRate={exchangeRate}
             exchangeRateAsOf={exchangeRateAsOf}
             onCurrencyChange={onCurrencyChange}
@@ -821,7 +794,7 @@ function BookingTypeGroup({
             total={total}
             currency={currency}
             currencyOptions={currencyOptions}
-            brandCode={brandCode}
+            countryCode={countryCode}
             exchangeRate={exchangeRate}
             exchangeRateAsOf={exchangeRateAsOf}
             onCurrencyChange={onCurrencyChange}
@@ -866,7 +839,7 @@ function BookingRowCard({
   total,
   currency,
   currencyOptions,
-  brandCode,
+  countryCode,
   exchangeRate,
   exchangeRateAsOf,
   onCurrencyChange,
@@ -890,13 +863,17 @@ function BookingRowCard({
    * the toggle changes the panel's state rather than this card's.
    *
    * **Null means "not known here"**, not baht: the save then posts no currency
-   * and the server derives one from the brand. See `brandOption` in the panel.
+   * and the server re-derives one from the stored destination. The panel no
+   * longer produces that state — the country is in props — but the null stays
+   * expressible, because the alternative to "not known" is assuming baht, which
+   * is the record that must never be written by accident.
    */
   currency: string | null;
-  /** Empty for a brand with no currency configured: the toggle is not rendered. */
+  /** Empty for a domestic or country-less trip: the toggle is not rendered. */
   currencyOptions: string[];
   /** Named in the currency caption — where the value came from, not a control. */
-  brandCode: string | null;
+  /** The trip.s destination, which decides the currency toggle. Null before `CountryCode` existed. */
+  countryCode: string | null;
   exchangeRate: number | null;
   /** Which day's rate that is, `YYYY-MM-DD` (migration 130). See the panel. */
   exchangeRateAsOf: string | null;
@@ -1042,12 +1019,12 @@ function BookingRowCard({
     readingRef.current = true;
     setReadNote("reading");
     try {
-      // `brandCode` is what lets the route ask which currency the document is
+      // `countryCode` is what lets the route ask which currency the document is
       // in at all; `currency` is what decides whether the answer belongs in
-      // these fields. It is null while the brand is still unidentified — the
-      // same window in which the save posts no currency either — and the
-      // reader then skips the comparison rather than assuming baht.
-      const read = await readBookingFields(file, { brandCode, claimCurrency: currency });
+      // these fields. Both come from the same country, through the same
+      // `bookingCurrencyOptions`, so the set the model may answer from and the
+      // set these fields accept cannot disagree.
+      const read = await readBookingFields(file, { countryCode, claimCurrency: currency });
       if (!aliveRef.current) return;
       if (read.failure) {
         // The reason is carried through so the note names the right remedy: a
@@ -1432,9 +1409,9 @@ function BookingRowCard({
               `AccRequest` and every booking row of the request shares it, which
               is what the note under the toggle says out loud. It is not chosen
               by the requester at any point — AP-17's fill-in form has no money
-              field — so what the desk gets is the brand's currency, already
-              selected, and baht as the deliberate opt-out for an invoice that
-              really is in baht.
+              field — so what the desk gets is baht, already selected, and the
+              destination's own currency as the deliberate opt-in for an invoice
+              that really is foreign.
 
               `disabled={locked}` shares the fields' rule rather than inventing
               one — and it earns its keep during a read: `locked` is true while
@@ -1446,7 +1423,7 @@ function BookingRowCard({
           {currencyOptions.length > 0 && (
             <div className="col-span-2 sm:col-span-4">
               <FieldCaption>
-                สกุลเงิน{brandCode ? ` (จากแบรนด์ ${brandCode})` : ""}
+                สกุลเงิน{countryName(countryCode) ? ` (ปลายทาง ${countryName(countryCode)})` : ""}
               </FieldCaption>
               <div className="flex flex-wrap items-center gap-2">
                 {currencyOptions.map((code) => {

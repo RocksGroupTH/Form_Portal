@@ -121,8 +121,9 @@ test("no Status = 'Completed' amount freeze is invented in the admin panel or it
 
 /**
  * Correction 3, at both ends. `currency` is admitted; anything rate-shaped is
- * not. The service re-derives the currency from the brand regardless, so the
- * posted value can only ever opt out to baht.
+ * not. The service re-derives the currency from the request's stored
+ * destination regardless, so the posted value can only ever opt IN to that
+ * destination's currency — everything else lands back on baht.
  */
 test("the booking save accepts a currency and no rate, at the route and at the service", () => {
   const routeSrc = code(BOOKING_ROUTE);

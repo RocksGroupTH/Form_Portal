@@ -204,11 +204,11 @@ export interface TravelBookingRequest {
    * `AccRequest.CountryCode` — where the trip goes (migration 129's column,
    * written by AP-17 since 2026-08-31).
    *
-   * **It does not decide the booking currency.** That is derived from the brand
-   * and set by the desk from the invoice — see `booking-currency.ts`, which
-   * deliberately falls back to the brand's currency rather than to baht. Where
-   * somebody travelled and what an invoice is denominated in are two questions,
-   * and this answers only the first. What it does feed is the per-diem rate.
+   * **It decides the booking currency** — since 2026-09-02, and it did not
+   * before. `bookingCurrencyOptions` reads it to offer baht plus this
+   * destination's own currency, and `resolveBookingFx` re-reads it from the
+   * stored row on every save, so it is what bounds the currency a booking can be
+   * recorded in. It also feeds the per-diem rate.
    */
   countryCode: string | null;
   /**
@@ -217,7 +217,7 @@ export interface TravelBookingRequest {
    * baht**, and a baht request leaves it null: nobody recorded a currency, and
    * writing `"THB"` would claim somebody had.
    *
-   * Derived from the brand and written by the booking desk's save
+   * Bounded by `countryCode` and written by the booking desk's save
    * (`admin-service.ts`), never posted by the requester — `TravelBookingTab`
    * has no money field at all.
    *
