@@ -2,7 +2,8 @@
 
 import type { ReactNode } from "react";
 import { fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
-import { countryNameBoth } from "@/lib/acc/country-currency";
+import { Globe } from "lucide-react";
+import { countryNameBoth, isKnownCountry } from "@/lib/acc/country-currency";
 import { bookingBrandLabel, bookingCountryCode } from "@/features/travel-booking/lib/booking-context";
 import type { AccBrandOption } from "@/features/accounting/types";
 import { DIRECTION_LABEL_TH } from "@/features/travel-booking/constants";
@@ -16,14 +17,9 @@ import type { BookingType, TravelBookingRequest } from "@/features/travel-bookin
  * what every `typeInfo` row uses — but it is typed as a `ReactNode` so the two
  * rows that need a real image can carry one.
  *
- * **The widening has one consequence, in `mergeSharedLegItems` below**, which
- * hoists items identical on both legs into a shared block by comparing icons
- * with `===`. Two equal emoji strings match; two JSX elements never do, because
- * each render builds fresh objects. Nothing is broken today — only `tripInfo`
- * returns element icons and its output never reaches that function — but a leg
- * item given an element icon later would silently stop being hoisted, showing
- * the same row twice instead of once. That is why the comparison there says so
- * out loud rather than looking like it handles every case.
+ * **The widening has one consequence, and it is a compile error rather than a
+ * comment**: see `LegItem` below, which `mergeSharedLegItems` needs and which
+ * deliberately keeps the narrow `string | null`.
  */
 export type InfoItem = { label: string; value: string; icon?: ReactNode };
 /** A titled block of facts — ticket bookings use one block per direction (ขาไป / ขากลับ). */
@@ -108,7 +104,16 @@ export function tripInfo(req: TravelBookingRequest, brand?: AccBrandOption | nul
           // render the two bare letters as text — which is what this shipped with
           // for a few hours, and reads as a stray code beside a name that already
           // spells the country out.
-          icon: (
+          //
+          // A globe ONLY where there is no flag to show. Every country
+          // `COUNTRIES` offers has one — `flag-asset-coverage.test.ts` fails
+          // otherwise — so this is for a code that is not on the list, which
+          // `bookingCountryCode` deliberately passes through uncorrected rather
+          // than silently calling Thailand. Decided on `isKnownCountry` rather
+          // than on the image's `onError`, so the fallback is settled at render
+          // instead of after a failed request and nothing flickers. Same rule and
+          // same wording as AP-1's `CountryCodeBadge`.
+          icon: isKnownCountry(country) ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={`/flags/${country.toLowerCase()}.svg`}
@@ -118,6 +123,8 @@ export function tripInfo(req: TravelBookingRequest, brand?: AccBrandOption | nul
               style={{ border: "1px solid var(--border-card)" }}
               onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
             />
+          ) : (
+            <Globe size={13} className="shrink-0" style={{ color: "var(--nav-active-text)" }} />
           ),
           value: countryNameBoth(country) ?? country,
         },
@@ -136,14 +143,31 @@ export function tripInfo(req: TravelBookingRequest, brand?: AccBrandOption | nul
 }
 
 /**
+ * A leg's items, with a **narrower icon than `InfoItem`'s on purpose**.
+ *
+ * `mergeSharedLegItems` hoists by comparing icons with `===`, which is value
+ * equality for a string and never true for two JSX elements, since each render
+ * builds fresh objects. Typed `ReactNode` here, an element icon would compile
+ * and then stop hoisting silently — and the damage is worse than one row
+ * printing twice: ยานพาหนะ is the only leg row that ever hoists, so `shared`
+ * would be empty and the early return below would drop the shared block
+ * altogether. Narrowing makes that a type error where somebody would write it.
+ *
+ * The other fix not to make is dropping `icon` from the comparison: that hoists
+ * two rows showing different marks and keeps whichever leg came first.
+ */
+type LegItem = { label: string; value: string; icon?: string | null };
+type LegGroup = { title?: string; items: LegItem[] };
+
+/**
  * Hoist facts that are identical on both legs (usually the vehicle — the form picks one for
  * the whole trip) into a shared block, so each direction only lists what differs.
  */
-function mergeSharedLegItems(legs: InfoGroup[]): InfoGroup[] {
+function mergeSharedLegItems(legs: LegGroup[]): InfoGroup[] {
   if (legs.length !== 2) return legs;
   const [a, b] = legs;
   const sharedLabels: string[] = [];
-  const shared: InfoItem[] = [];
+  const shared: LegItem[] = [];
   for (const item of a.items) {
     const twin = b.items.find((x) => x.label === item.label);
     if (twin && twin.value === item.value && (twin.icon ?? null) === (item.icon ?? null)) {
@@ -184,7 +208,7 @@ export function typeInfo(req: TravelBookingRequest, type: BookingType, icons: Op
       vehicle: string | null,
       date: string | null,
       time: string | null,
-    ): InfoGroup => {
+    ): LegGroup => {
       const points = req.departureLocations
         .filter((l) => l.direction === dir)
         .map((l) => l.name)
@@ -198,7 +222,7 @@ export function typeInfo(req: TravelBookingRequest, type: BookingType, icons: Op
         ],
       };
     };
-    const out: InfoGroup[] = [];
+    const out: LegGroup[] = [];
     if (req.goNeedsTicketBooking) {
       out.push(leg("go", req.goVehicleId, req.goVehicleCustomText || req.goVehicleName, req.departDate, req.departTime));
     }
