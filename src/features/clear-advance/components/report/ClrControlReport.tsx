@@ -12,6 +12,14 @@
  * `ColumnToggleMenu`, remembered per browser — same pattern AP-2's report page
  * uses. The Excel export (`report/export/route.ts`) is a separate route with
  * its own hardcoded 18-column header/body and is untouched by this file.
+ *
+ * Stacked filters (brand, status — §"Stacked filters"): each takes several
+ * picks, OR'd within the column; filter state is CSV, same shape AP-2's
+ * report page uses. Filtering happens server-side here (unlike AP-2, which
+ * filters an already-fetched full table client-side), so the CSV rides the
+ * query string and `report/route.ts` queries every (brand, status)
+ * combination and merges — see `stackedAxisCombos` / `mergeControlRows` in
+ * `clr-control-report-view.ts`.
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
@@ -24,11 +32,11 @@ import { STATUS_LABEL_TH } from "@/features/accounting/constants";
 import { clearAdvanceDetailHref } from "@/features/clear-advance/lib/navigation";
 import { ColumnToggleMenu, type ColumnToggleOption } from "@/features/travel-booking/components/ColumnToggleMenu";
 import type { ClrControlRow } from "@/lib/clr/clear-advance-report-service";
-import { DEFAULT_VISIBLE_KEYS, controlAdjustment } from "@/lib/clr/clr-control-report-view";
+import { DEFAULT_VISIBLE_KEYS, controlAdjustment, singleStackedValue } from "@/lib/clr/clr-control-report-view";
 import {
   FilterBar,
   ForbiddenState,
-  SelectFilter,
+  StackedSelectFilter,
   TextFilter,
   fmtMoney,
   fmtDateOnly,
@@ -46,7 +54,9 @@ const STATUS_OPTIONS: SelectOption[] = STATUS_VALUES.map((s) => ({
 }));
 
 interface ControlFilters {
+  /** CSV of picks — OR within this column (design doc §"Stacked filters"). */
   brand: string;
+  /** CSV of picks — OR within this column. */
   status: string;
   requestNo: string;
   advanceNo: string;
@@ -307,9 +317,13 @@ export function ClrControlReport() {
   }, [fetchRows]);
 
   const handleExport = useCallback(() => {
+    // The export route is untouched (design doc §"Out of scope") and only
+    // understands one exact value per filter — two or more picks on a
+    // stacked axis are dropped rather than forwarded, so the file comes back
+    // as a (visibly broader) superset instead of a silently empty one.
     const qs = buildQuery({
-      brand: filters.brand,
-      status: filters.status,
+      brand: singleStackedValue(filters.brand),
+      status: singleStackedValue(filters.status),
       requestNo: filters.requestNo,
       advanceNo: filters.advanceNo,
       from: filters.from,
@@ -325,8 +339,8 @@ export function ClrControlReport() {
 
   const filterBar = (
     <FilterBar>
-      <SelectFilter label="แบรนด์" value={filters.brand} onChange={(v) => patch({ brand: v })} options={brandOptions} />
-      <SelectFilter label="สถานะ" value={filters.status} onChange={(v) => patch({ status: v })} options={STATUS_OPTIONS} />
+      <StackedSelectFilter label="แบรนด์" valueCsv={filters.brand} onChange={(v) => patch({ brand: v })} options={brandOptions} />
+      <StackedSelectFilter label="สถานะ" valueCsv={filters.status} onChange={(v) => patch({ status: v })} options={STATUS_OPTIONS} />
       <TextFilter label="เลขที่เคลียร์ (ADC)" value={filters.requestNo} onChange={(v) => patch({ requestNo: v })} placeholder="เช่น ADC26-0001" />
       <TextFilter label="เลขที่ Advance (AP-2)" value={filters.advanceNo} onChange={(v) => patch({ advanceNo: v })} placeholder="เช่น ADV26-0001" />
       <div className="min-w-0">

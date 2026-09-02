@@ -128,6 +128,86 @@ export function SelectFilter({
   );
 }
 
+/**
+ * A `SelectFilter` that takes several picks instead of one — each becomes a
+ * removable chip under the select. Values OR together (any picked value
+ * matches); state is a CSV string, the same shape AP-2's report page uses
+ * for its stacked filters, so the two reports behave identically rather than
+ * merely look alike (design doc §"Stacked filters").
+ */
+export function StackedSelectFilter({
+  label,
+  valueCsv,
+  onChange,
+  options,
+  anyLabel = "ทั้งหมด",
+}: {
+  label: string;
+  valueCsv: string;
+  onChange: (nextCsv: string) => void;
+  options: SelectOption[];
+  anyLabel?: string;
+}) {
+  const selected = valueCsv.split(",").filter(Boolean);
+
+  const addValue = (v: string) => {
+    if (!v || selected.includes(v)) return;
+    onChange([...selected, v].sort().join(","));
+  };
+  const removeValue = (v: string) => {
+    onChange(selected.filter((x) => x !== v).join(","));
+  };
+
+  return (
+    <div className="min-w-0">
+      <FilterLabel>{label}</FilterLabel>
+      <select
+        value=""
+        onChange={(e) => {
+          if (e.target.value) addValue(e.target.value);
+          e.target.value = "";
+        }}
+        className={filterInputCls}
+        style={{ ...filterInputStyle, cursor: "pointer" }}
+      >
+        <option value="">{anyLabel}</option>
+        {options
+          .filter((o) => !selected.includes(o.value))
+          .map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+      </select>
+      {selected.length > 0 && (
+        <div className="flex flex-wrap gap-1 mt-1">
+          {selected.map((v) => {
+            const optLabel = options.find((o) => o.value === v)?.label ?? v;
+            return (
+              <span
+                key={v}
+                className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded"
+                style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}
+              >
+                {optLabel}
+                <button
+                  type="button"
+                  aria-label={`ลบตัวกรอง ${optLabel}`}
+                  onClick={() => removeValue(v)}
+                  className="border-none bg-transparent cursor-pointer p-0 leading-none"
+                  style={{ color: "inherit" }}
+                >
+                  ×
+                </button>
+              </span>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Card shell wrapping the collapsible-free filter bar used on both reports. */
 export function FilterBar({ children }: { children: React.ReactNode }) {
   return (
