@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
+import useSWR from "swr";
 import {
   AlertTriangle,
   BedDouble,
@@ -48,6 +49,7 @@ import {
   referenceRateNote,
 } from "@/features/travel-booking/lib/booking-currency";
 import { THB, toBaht } from "@/lib/acc/currency";
+import { rateAsOfYmd } from "@/lib/acc/currency-display";
 import { bookingFieldsLocked, type SavedBookingEntry } from "@/features/travel-booking/lib/booking-lock";
 import { bookingRowDirty } from "@/features/travel-booking/lib/booking-dirty";
 import { onFileAttached, onFileRemoved } from "@/features/travel-booking/lib/booking-file-sync";
@@ -299,6 +301,59 @@ export function AdminBookingPanel({
      caption a figure that is no longer on screen. */
   const exchangeRateAsOf = exchangeRate === null ? null : request.rateAsOf;
 
+  /* ── The preview rate ──
+   *
+   * `exchangeRate` above is the rate the SERVER recorded, and it exists only
+   * once this request has been saved in the currency now on screen. Until then
+   * the desk types 100 / 7 / 107 GBP and sees no baht figure anywhere — the
+   * state this fetch exists for. The conversion is the whole reason accounting
+   * needs the currency recorded, and asking somebody to save first in order to
+   * see it is asking them to commit blind.
+   *
+   * **The same route AP-1's form already uses**, `/api/request/accounting/fx-rate`
+   * (`useTravelExpenseForm.ts:436-441`) — one endpoint, not a second with its own
+   * behaviour. Its `/api/request/accounting` prefix classifies AP-1 in
+   * `ROUTE_RULES`, which is harmless because the route reads no database at all;
+   * its own header says so. AP-2 duplicated it instead, and that is the drift not
+   * to repeat.
+   *
+   * **Display only, and the client still never posts a rate.** `resolveBookingFx`
+   * fetches its own on every save, which `booking-currency-guard.test.ts` pins —
+   * so this is a reading and the stored figure is the server's. The two can
+   * differ if the provider moves between them, which is why everything derived
+   * from either is prefixed `≈` and captioned `(อัตราอ้างอิง)`.
+   *
+   * A baht request passes `null` as the key and makes no request at all, so an
+   * ordinary Thai booking is untouched. One fetch per panel, not per row: the
+   * currency is the request's, so every card on the request shares this.
+   */
+  const { data: fxData } = useSWR<{ rate: number; asOf?: string | null }>(
+    currencyUnit ? `/api/request/accounting/fx-rate?currency=${currencyUnit}` : null,
+    async (url: string) => {
+      const res = await fetch(url);
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error ?? "Request failed");
+      return json.data;
+    },
+    { revalidateOnFocus: false },
+  );
+  const previewRate =
+    fxData && Number.isFinite(fxData.rate) && fxData.rate > 0 ? fxData.rate : null;
+  /* **The stored rate wins where there is one.** It is what these figures were
+     actually recorded at; the preview only fills the gap before the first save.
+     Preferring the preview would have the card change its baht figure after a
+     save for a reason no reader could see. Null from both means the line does not
+     render at all — the same refusal `toBaht` makes, and never a figure at 1:1. */
+  const shownRate = exchangeRate ?? previewRate;
+  /* Which day's rate that is. The ECB publishes on working days only, so a
+     Saturday preview shows Friday's, and the caption is where that is visible. */
+  const shownRateAsOf =
+    exchangeRate !== null
+      ? exchangeRateAsOf
+      : previewRate === null
+        ? null
+        : rateAsOfYmd(fxData?.asOf ?? null);
+
   const [completing, setCompleting] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<{ detailId: number; label: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -489,6 +544,8 @@ export function AdminBookingPanel({
               countryCode={countryCode}
               exchangeRate={exchangeRate}
               exchangeRateAsOf={exchangeRateAsOf}
+              shownRate={shownRate}
+              shownRateAsOf={shownRateAsOf}
               onCurrencyChange={setPickedCurrency}
               onChanged={onChanged}
               onRowDirty={reportRowDirty}
@@ -693,6 +750,8 @@ function BookingTypeGroup({
   countryCode,
   exchangeRate,
   exchangeRateAsOf,
+  shownRate,
+  shownRateAsOf,
   onCurrencyChange,
   onChanged,
   onRowDirty,
@@ -729,6 +788,14 @@ function BookingTypeGroup({
    * the toggle has just ruled out would caption a figure no longer on screen.
    */
   exchangeRateAsOf: string | null;
+  /**
+   * The rate to CONVERT WITH — the stored one where there is one, otherwise the
+   * preview fetched for the currency on screen. Null when neither can be had, and
+   * then no baht figure renders anywhere rather than one at 1:1.
+   */
+  shownRate: number | null;
+  /** Which day `shownRate` is from, `YYYY-MM-DD`, or null. */
+  shownRateAsOf: string | null;
   onCurrencyChange: (code: string) => void;
   onChanged: () => void;
   /** Report one row's unsaved-edits answer to the panel, which owns Complete. */
@@ -830,6 +897,8 @@ function BookingTypeGroup({
             countryCode={countryCode}
             exchangeRate={exchangeRate}
             exchangeRateAsOf={exchangeRateAsOf}
+            shownRate={shownRate}
+            shownRateAsOf={shownRateAsOf}
             onCurrencyChange={onCurrencyChange}
             onChanged={onChanged}
             onDirtyChange={reportDirty}
@@ -854,6 +923,8 @@ function BookingTypeGroup({
             countryCode={countryCode}
             exchangeRate={exchangeRate}
             exchangeRateAsOf={exchangeRateAsOf}
+            shownRate={shownRate}
+            shownRateAsOf={shownRateAsOf}
             onCurrencyChange={onCurrencyChange}
             onChanged={onChanged}
             onDirtyChange={reportDirty}
@@ -900,6 +971,8 @@ function BookingRowCard({
   countryCode,
   exchangeRate,
   exchangeRateAsOf,
+  shownRate,
+  shownRateAsOf,
   onCurrencyChange,
   onChanged,
   onDirtyChange,
@@ -937,6 +1010,14 @@ function BookingRowCard({
   exchangeRate: number | null;
   /** Which day's rate that is, `YYYY-MM-DD` (migration 130). See the panel. */
   exchangeRateAsOf: string | null;
+  /**
+   * The rate to CONVERT WITH — the stored one where there is one, otherwise the
+   * preview fetched for the currency on screen. Null when neither can be had, and
+   * then no baht figure renders anywhere rather than one at 1:1.
+   */
+  shownRate: number | null;
+  /** Which day `shownRate` is from, `YYYY-MM-DD`, or null. */
+  shownRateAsOf: string | null;
   onCurrencyChange: (code: string) => void;
   onChanged: () => void;
   /** Tell the panel whether this row is carrying unsaved edits. */
@@ -1017,8 +1098,18 @@ function BookingRowCard({
      `toBaht` and not a bare multiplication, so an unusable rate produces no line
      rather than a wrong one — the same refusal the save applies server-side. */
   const totalInBaht =
-    currencyUnit !== null && exchangeRate !== null && nTotal !== null
-      ? toBaht(nTotal, exchangeRate)
+    currencyUnit !== null && shownRate !== null && nTotal !== null
+      ? toBaht(nTotal, shownRate)
+      : null;
+  /* The same conversion for the figure the ARITHMETIC produces, which is what
+     the desk is looking at while it types — `computedTotal` is price + VAT −
+     discount, recomputed on every keystroke, where `nTotal` is the ราคารวม field
+     as filled in. They are the same number on a well-formed invoice and differ
+     exactly when `mismatch` is true, which is when seeing both in baht is worth
+     most. */
+  const computedInBaht =
+    currencyUnit !== null && shownRate !== null && computedTotal != null
+      ? toBaht(computedTotal, shownRate)
       : null;
 
   /**
@@ -1536,9 +1627,14 @@ function BookingRowCard({
               looks for a caption about the field above. */}
           {currencyOptions.length > 0 && (
             <div className="col-span-2 sm:col-span-4 -mt-1">
-              {exchangeRate !== null && currencyUnit && (
+              {/* `shownRate`, not the stored one: the rate stated here has to be
+                  the rate the baht figures below were divided by, or the desk
+                  can check the arithmetic and find it wrong. Before the first
+                  save that is the preview; after it, the server's. */}
+              {shownRate !== null && currencyUnit && (
                 <p className="m-0 text-[11.5px] tabular-nums" style={{ color: "var(--text-muted)" }}>
-                  {referenceRateNote(currencyUnit, exchangeRate, exchangeRateAsOf)}
+                  {referenceRateNote(currencyUnit, shownRate, shownRateAsOf)}
+                  {exchangeRate === null && " — ยังไม่ได้บันทึก อัตราจะถูกบันทึกอีกครั้งตอนกดบันทึก"}
                 </p>
               )}
               <p className="m-0 mt-0.5 text-[11.5px]" style={{ color: "var(--text-muted)" }}>
@@ -1612,16 +1708,24 @@ function BookingRowCard({
         >
           {mismatch && <AlertTriangle size={12} className="shrink-0" />}
           ราคารวมที่คำนวณได้ (ราคา + VAT − ส่วนลด): {computedTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {currencyWord}
+          {computedInBaht !== null &&
+            ` ≈ ${computedInBaht.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท`}
           {mismatch && " — ไม่ตรงกับราคารวมที่กรอกไว้ ตรวจสอบกับเอกสารอีกครั้ง"}
         </p>
       )}
 
       {/* The baht reading of what was typed. **Beside the figure, never instead
-          of it** — the invoice states ringgit and that is what is stored; this
-          is the conversion accounting needs, at the rate the server recorded.
+          of it** — the invoice states pounds and that is what is stored; this is
+          the conversion accounting needs.
 
-          It appears only on a foreign request that already has a rate, so a
-          baht request and an unconfigured brand render nothing here at all.
+          Converted with `shownRate`, so it appears while the desk is still
+          typing rather than only after a save has recorded one. It used to take
+          the stored rate alone, which meant a card in a currency this request
+          had never been saved in showed no baht figure at all — the desk typed
+          100 / 7 / 107 GBP and had to commit to see what it came to.
+
+          A baht request and a request whose rate cannot be had render nothing
+          here at all, which is the honest answer in both cases.
 
           The rate itself is stated once, beside the toggle above, rather than
           repeated on every row — but the `(อัตราอ้างอิง)` qualifier stays here,

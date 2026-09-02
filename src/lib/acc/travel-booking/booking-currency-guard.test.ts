@@ -273,3 +273,37 @@ test("resolveBookingFx refuses a stale currency rather than recording it as baht
     "the short-circuit must precede the throw",
   );
 });
+
+/**
+ * **The panel now holds a rate, and it must never post one.**
+ *
+ * Until 2026-09-02 the browser had no rate at all on this screen, so the rule
+ * "the rate is the server's" was enforced by there being nothing to send. The
+ * baht preview changed that: `shownRate` is in scope in `AdminBookingPanel`,
+ * fetched from `/api/request/accounting/fx-rate` for display, and it now sits a
+ * few lines from the save's `JSON.stringify`.
+ *
+ * AP-2 is what happens without this — its browser fetches a rate and posts it,
+ * and `advance-request-service.ts` stores it unverified, so a requester can
+ * choose the rate their own claim converts at. The route and the service already
+ * refuse a rate (the test above); this refuses it a step earlier, at the only
+ * place that now has one to offer.
+ */
+test("the admin panel never sends a rate, though it now has one to show", () => {
+  const src = code(PANEL);
+  const bodies = src.match(/JSON\.stringify\(\{[\s\S]{0,600}?\}\)/g) ?? [];
+  assert.ok(bodies.length > 0, "no request bodies found in the panel — has the save moved?");
+  for (const body of bodies) {
+    assert.equal(
+      /shownRate|previewRate|exchangeRate|\brate\b/.test(body),
+      false,
+      "the panel must not post a rate; the server fetches its own on every save: " + body,
+    );
+  }
+  // A guard on the guard: the preview must actually exist, or the arm above is
+  // forbidding something nothing could do.
+  assert.ok(
+    /shownRate/.test(src),
+    "AdminBookingPanel no longer derives a shown rate — if the preview is gone, drop this arm",
+  );
+});
