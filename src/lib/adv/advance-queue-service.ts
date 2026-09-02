@@ -184,6 +184,9 @@ export async function listAdvanceErpQueue(): Promise<AdvanceQueueRow[]> {
 
 const ERP_STATUS_TH: Record<string, string> = { Sent: "ส่งแล้ว", Pending: "กำลังส่ง", Failed: "ล้มเหลว" };
 
+/** Thai formatting on the Gregorian calendar — plain "th-TH" prints 2026 as 2569. */
+const TH_CE = "th-TH-u-ca-gregory";
+
 /** Superseded (Resent) PV numbers per request, so the export can show them. */
 export async function listResentDocNos(requestIds: number[]): Promise<Map<number, string[]>> {
   const map = new Map<number, string[]>();
@@ -214,7 +217,7 @@ export async function buildAdvanceErpWorkbook(rows: AdvanceQueueRow[]): Promise<
   const aoa: (string | number | null)[][] = [];
   aoa.push(["Rocks Group"]);
   aoa.push(["รายการเบิกเงินทดรองจ่าย ส่งเข้า ERP (AP-2)"]);
-  aoa.push([`สร้างเมื่อ: ${new Date().toLocaleString("th-TH")}`]);
+  aoa.push([`สร้างเมื่อ: ${new Date().toLocaleString(TH_CE)}`]);
   aoa.push([]);
 
   const resent = await listResentDocNos(rows.map((r) => r.id));
@@ -234,7 +237,7 @@ export async function buildAdvanceErpWorkbook(rows: AdvanceQueueRow[]): Promise<
       r.requestNo,
       r.erpDocumentNo,
       (resent.get(r.id) ?? []).join(", ") || "—",
-      r.erpInterfaceSentAt ? new Date(r.erpInterfaceSentAt).toLocaleString("th-TH") : null,
+      r.erpInterfaceSentAt ? new Date(r.erpInterfaceSentAt).toLocaleString(TH_CE) : null,
       r.erpInterfaceStatus ? (ERP_STATUS_TH[r.erpInterfaceStatus] ?? r.erpInterfaceStatus) : "พร้อมส่ง",
     ]);
   }

@@ -41,7 +41,8 @@ function fmtDateTime(iso: string | null): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "—";
-  return d.toLocaleString("th-TH", { year: "2-digit", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  // Gregorian, like the rest of AP-2 — plain "th-TH" would print 2026 as 69.
+  return d.toLocaleString("th-TH-u-ca-gregory", { year: "2-digit", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
 /** Approved advances not yet sent to BC — the ones the preview lists. */

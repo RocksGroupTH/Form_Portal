@@ -39,8 +39,12 @@ interface Row {
   overallStatus: string;
 }
 
-const dt = (s: string | null) => (s ? new Date(s).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" }) : "");
-const d = (s: string | null) => (s ? new Date(s).toLocaleDateString("th-TH", { dateStyle: "short" }) : "");
+// `th-TH` alone renders the Buddhist calendar — 2026 comes out as 69 — which is
+// what the AP-2 date pickers were moved off. `-u-ca-gregory` keeps Thai
+// formatting but counts the years the way the ERP and the stored ISO dates do.
+const TH_CE = "th-TH-u-ca-gregory";
+const dt = (s: string | null) => (s ? new Date(s).toLocaleString(TH_CE, { dateStyle: "short", timeStyle: "short" }) : "");
+const d = (s: string | null) => (s ? new Date(s).toLocaleDateString(TH_CE, { dateStyle: "short" }) : "");
 const n = (v: number | null) => (v == null ? "" : v.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 }));
 
 // filter → คอลัมน์ไฮไลต์เหลืองใน sheet AP-2-Control ("dates" = เลือกได้หลายวัน)
@@ -317,7 +321,7 @@ export default function AdvanceReportPage() {
                               {(filters[c.key] ?? "").split(",").filter(Boolean).map((dv) => (
                                 <span key={dv} className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded"
                                   style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}>
-                                  {new Date(dv).toLocaleDateString("th-TH", { day: "2-digit", month: "2-digit" })}
+                                  {new Date(dv).toLocaleDateString(TH_CE, { day: "2-digit", month: "2-digit" })}
                                   <button type="button" aria-label={`ลบตัวกรองวันที่ ${dv}`} onClick={() => removeValue(c.key, dv)}
                                     className="border-none bg-transparent cursor-pointer p-0 leading-none" style={{ color: "inherit" }}>×</button>
                                 </span>
