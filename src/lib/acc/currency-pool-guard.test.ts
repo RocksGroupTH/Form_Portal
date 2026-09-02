@@ -61,17 +61,20 @@ function codeOf(source: string): string {
  * by the same mechanism and needs no separate rule — it is written only from
  * `brand-registry.ts`, which the `BrandSetting` arm already covers.
  */
-const PRODUCTION_ONLY_TABLES = ["BrandSetting", "BrandCurrency", "TravelProvince"];
+const PRODUCTION_ONLY_TABLES = ["BrandSetting", "BrandCurrency"];
 
 /*
- * `TravelProvince` joined on 2026-08-31 and could not have before. It is absent
- * from `Rocks_Portal_Form_UAT` exactly like the other two — migration 104 refuses
- * that database outright and 132 refuses it again — but
- * `travel-booking/request-service.ts` held a `resolveProvinceName` naming it in
- * real SQL while importing `getAccPool` at the top of the same file. Moving that
- * function into `province-service.ts`, where every statement opens
- * `getProductionFormPool()`, is what let this arm be added — and adding it is
- * what stops it drifting back.
+ * `TravelProvince` was here from 2026-08-31 to 2026-09-02 and has been removed
+ * — not because the rule stopped applying, but because there is nothing left in
+ * `src/` to apply it to. AP-17 dropped its จังหวัด field and the editor, its
+ * routes and `province-service.ts` were deleted with it, so no statement in this
+ * application names the table at all. The guard asserts it inspected something
+ * (`touched > 0`), and an arm inspecting nothing is a green test that checks
+ * nothing.
+ *
+ * THE TABLE STILL EXISTS and is still production-only: ACC Portal reads it
+ * directly out of `Rocks_Portal_Form`. If anything here ever names it again, put
+ * this arm back — the reason it belonged is unchanged.
  */
 
 for (const table of PRODUCTION_ONLY_TABLES) {

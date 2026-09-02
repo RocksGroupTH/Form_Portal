@@ -12,7 +12,6 @@ import {
 } from "@/lib/acc/travel-booking/perdiem-country";
 import type {
   Accommodation,
-  ProvinceOption,
   RentVehicle,
   SaveTravelBookingGroupInput,
   SaveTravelBookingInput,

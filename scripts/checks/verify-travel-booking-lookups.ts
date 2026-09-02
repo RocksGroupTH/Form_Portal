@@ -39,21 +39,16 @@ function loadDotEnvLocal() {
 async function main() {
   loadDotEnvLocal();
 
-  const { listProvinces } = await import("../../src/lib/acc/travel-booking/province-service");
   const {
     listReasons, listAccommodations, listVehicles, listRentVehicles,
   } = await import("../../src/lib/acc/travel-booking/settings-service");
   const { getAllowanceLog } = await import("../../src/lib/acc/travel-booking/allowance-log");
   const { getHrPool } = await import("../../src/lib/hr/pool");
 
-  // --- province-service ---------------------------------------------------
-  const provinces = await listProvinces();
-  console.log(`listProvinces() -> ${provinces.length} rows`);
-  console.log("  sample:", provinces.slice(0, 3));
-  if (provinces.length !== 77) {
-    throw new Error(`Expected 77 provinces, got ${provinces.length}`);
-  }
-  console.log("OK: listProvinces() === 77");
+  // No province check any more: AP-17 dropped its จังหวัด field on 2026-09-01
+  // and the editor and its service were deleted on 2026-09-02. TravelProvince
+  // itself still exists and still has 77 Thai rows — ACC Portal reads them —
+  // but nothing in THIS app reads the table, so there is nothing here to check.
 
   // --- settings-service ----------------------------------------------------
   const reasons = await listReasons();

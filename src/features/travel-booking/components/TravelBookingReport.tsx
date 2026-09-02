@@ -15,7 +15,6 @@ import { TravelBookingDetail } from "@/features/travel-booking/components/Travel
 import { fmtBaht } from "@/features/travel-booking/components/shared";
 import { STATUS_LABEL_TH, TRAVEL_BOOKING_STATUSES } from "@/features/travel-booking/constants";
 import type {
-  ProvinceOption,
   TravelBookingRequest,
   TravelBookingStatus,
   TravelReasonOption,

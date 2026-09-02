@@ -82,7 +82,15 @@ export interface RentVehicle extends TravelSettingsOption {
   needsRentBooking: boolean;
 }
 
-/** Rocks_Portal_Form.dbo.TravelProvince — ข้อ8 จังหวัด. */
+/**
+ * `Rocks_Portal_Form.dbo.TravelProvince` — AP-17's old ข้อ8 จังหวัด.
+ *
+ * **Unread by this application since 2026-09-02.** ข้อ8 was removed, and the
+ * editor, its routes and `province-service.ts` went with it. The type is kept
+ * only because the table is: ACC Portal reads those rows directly out of
+ * `Rocks_Portal_Form`, so a future reader meeting the table has the shape
+ * written down. Nothing here constructs one.
+ */
 export interface ProvinceOption {
   id: number;
   nameTh: string;

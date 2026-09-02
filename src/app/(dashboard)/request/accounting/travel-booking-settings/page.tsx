@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
-import { Settings, Compass, Hotel, Car, Plane, ShieldCheck, Building2, Globe, Wallet } from "lucide-react";
+import { Settings, Compass, Hotel, Car, Plane, ShieldCheck, Building2, Wallet } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { backTo } from "@/lib/request-hub-nav";
 import {
@@ -15,7 +15,6 @@ import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { useBookingAccess } from "@/features/travel-booking/hooks/useBookingAccess";
 import { TravelOptionSettings, type TravelOptionKind } from "@/features/travel-booking/components/settings/TravelOptionSettings";
 import { BookingApproverSettings } from "@/features/travel-booking/components/settings/BookingApproverSettings";
-import { TravelPlaceSettings } from "@/features/travel-booking/components/settings/TravelPlaceSettings";
 import { PerDiemCountrySettings } from "@/features/travel-booking/components/settings/PerDiemCountrySettings";
 import { BrandSettings } from "@/features/accounting/components/settings/BrandSettings";
 
@@ -33,7 +32,7 @@ import { BrandSettings } from "@/features/accounting/components/settings/BrandSe
  * `brands` is neither a `TravelOptionKind` (it has no `[kind]` route) nor
  * `access`; it is AP-1's brand panel pointed at AP-17's rows.
  */
-type TabKey = TravelOptionKind | "brands" | "access" | "provinces" | "per-diem";
+type TabKey = TravelOptionKind | "brands" | "access" | "per-diem";
 
 /**
  * Icons are the only thing this page still owns about a tab. The **labels come
@@ -48,7 +47,6 @@ const TAB_ICONS: Record<TabKey, React.ReactNode> = {
   vehicles: <Plane size={15} />,
   "rent-vehicles": <Car size={15} />,
   access: <ShieldCheck size={15} />,
-  provinces: <Globe size={15} />,
   "per-diem": <Wallet size={15} />,
 };
 
@@ -64,7 +62,6 @@ const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] =
     // `isGrantableBookingTabKey`, so being absent from that list is what hides
     // them — no extra code.
     .concat([
-      { key: "provinces", label: "จังหวัด/เมือง", icon: TAB_ICONS.provinces },
       { key: "per-diem", label: "เบี้ยเลี้ยงต่างประเทศ", icon: TAB_ICONS["per-diem"] },
       { key: "access", label: "สิทธิ์เข้าถึง", icon: TAB_ICONS.access },
     ]);
@@ -187,7 +184,6 @@ export default function TravelBookingSettingsPage() {
   const panel =
     effectiveTab === "access" ||
     effectiveTab === "brands" ||
-    effectiveTab === "provinces" ||
     effectiveTab === "per-diem"
       ? null
       : TAB_PANELS[effectiveTab];
@@ -244,18 +240,14 @@ export default function TravelBookingSettingsPage() {
               otherFormLabel="AP-1"
             />
           ) : effectiveTab === "per-diem" ? (
-            // Its own branch, ABOVE the panel === null arm below — see the note
-            // on the provinces branch. A tab left in the null list renders the
-            // approver roster under this heading and nothing complains.
+            // Its own branch, and it must stay ABOVE the `panel === null` arm
+            // below. That one treats a null panel as "show the approver roster",
+            // so a tab added to `panel`'s null list and left there renders
+            // BookingApproverSettings under this heading — silently, because the
+            // typecheck covers TAB_PANELS[effectiveTab] and not which arm of this
+            // ternary wins.
             <PerDiemCountrySettings />
-          ) : effectiveTab === "provinces" ? (
-            // Its own branch, and it must stay ABOVE the arm below. That one
-            // treats `panel === null` as "show the approver roster", so a tab
-            // added to `panel`'s null list and left there renders
-            // BookingApproverSettings under a จังหวัด/เมือง heading — silently,
-            // because the typecheck covers TAB_PANELS[effectiveTab] and not
-            // which arm of this ternary wins.
-            <TravelPlaceSettings />
+
           ) : effectiveTab === "access" || panel === null ? (
             <BookingApproverSettings />
           ) : (
