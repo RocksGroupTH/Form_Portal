@@ -39,7 +39,19 @@ import {
 
 const ENDPOINT = "/api/request/travel-booking/settings/per-diem";
 const BRANDS_ENDPOINT = "/api/request/travel-booking/options/brands";
-const fetcher = (url: string) => fetch(url).then((r) => r.json());
+/**
+ * Throws, so SWR reports an error instead of the panel rendering
+ * "ยังไม่มีแบรนด์ไหนผูกสกุลเงินต่างประเทศไว้" — a statement about how the brands are
+ * configured — because an endpoint happened to be down. A plain
+ * `.then(r => r.json())` resolves `{ ok: false }` as data, which reads as an
+ * empty list everywhere downstream.
+ */
+async function fetcher<T>(url: string): Promise<T> {
+  const res = await fetch(url);
+  const json = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+  if (!res.ok || !json || json.ok === false) throw new Error(json?.error ?? "โหลดข้อมูลไม่สำเร็จ");
+  return json as T;
+}
 
 const fmtBaht = (n: number) =>
   n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -96,13 +108,13 @@ const inputStyle = {
 } as const;
 
 export function PerDiemCountrySettings() {
-  const { data, isLoading, mutate } = useSWR<{ ok: boolean; data?: PerDiemRateLike[] }>(
+  const { data, error, isLoading, mutate } = useSWR<{ ok: boolean; data?: PerDiemRateLike[] }>(
     ENDPOINT,
     fetcher,
   );
   /* Fetched unconditionally now, not only while a dialog is open: the country
      list IS the page. */
-  const { data: brandData } = useSWR<{ ok: boolean; data?: AccBrandOption[] }>(
+  const { data: brandData, error: brandError } = useSWR<{ ok: boolean; data?: AccBrandOption[] }>(
     BRANDS_ENDPOINT,
     fetcher,
   );
@@ -116,7 +128,8 @@ export function PerDiemCountrySettings() {
   /* Distinguishes "still fetching" from "fetched, and there are none" — an empty
      list means something specific here and must not be claimed while either
      request is still in flight. */
-  const loading = isLoading || brandData === undefined;
+  const loadFailed = !!error || !!brandError;
+  const loading = !loadFailed && (isLoading || brandData === undefined);
 
   /** Per-country edits, keyed on the country code. Absent = untouched. */
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
@@ -124,18 +137,39 @@ export function PerDiemCountrySettings() {
   const [busyId, setBusyId] = useState<number | null>(null);
   const [openHistory, setOpenHistory] = useState<Record<string, true>>({});
 
-  /* The row's live values: what has been typed, else what is stored. Derived on
-     read rather than seeded into `drafts` from the fetch, so a refetch cannot
-     quietly discard something half-typed. */
+  const draftFrom = (r: PerDiemRateLike): Draft => ({
+    amount: String(r.amount),
+    effectiveDate: r.effectiveDate,
+    note: r.note ?? "",
+  });
+
+  /**
+   * The row's live values: what has been typed, else **blank**.
+   *
+   * Blank even where a rate exists, and that is the whole safety of this panel.
+   * The save key is `(country, date)`, so pre-filling the stored date made the
+   * one-click act — type a new amount, press บันทึก — an in-place rewrite of a
+   * rate trips were already priced at: `computeReportPerDiemDisplay` re-derives
+   * every past trip's printed rate from the active list, and
+   * `recomputeGroupPerDiem` rewrites `PerDiemTotal` and `AccRequest.TotalAmount`
+   * for any trip still inside `perdiem-window`'s allow-list. The design spec
+   * says the opposite is intended — "an admin who wants to change a rate must
+   * add a row rather than edit one" (D4) — and this shipped contradicting it.
+   *
+   * Editing is still reachable and still one click: `แก้เรทนี้` seeds the draft
+   * from that rate through `draftFrom`, which is the only way the date can
+   * collide. Deliberate, rather than the default.
+   *
+   * Derived on read rather than seeded from the fetch, so a refetch cannot
+   * quietly discard something half-typed.
+   */
   const valueOf = (row: PerDiemCountryRow): Draft => {
     const d = drafts[row.countryCode];
-    if (d) return d;
-    return {
-      amount: row.latest ? String(row.latest.amount) : "",
-      effectiveDate: row.latest?.effectiveDate ?? "",
-      note: row.latest?.note ?? "",
-    };
+    return d ?? { amount: "", effectiveDate: "", note: "" };
   };
+
+  const editRate = (code: string, r: PerDiemRateLike) =>
+    setDrafts((prev) => ({ ...prev, [code]: draftFrom(r) }));
 
   const setField = (row: PerDiemCountryRow, patch: Partial<Draft>) => {
     setDrafts((prev) => ({ ...prev, [row.countryCode]: { ...valueOf(row), ...patch } }));
@@ -225,7 +259,13 @@ export function PerDiemCountrySettings() {
         </p>
       </div>
 
-      {loading ? (
+      {loadFailed ? (
+        /* Distinct from the empty state below, which is a claim about how the
+           brands are configured and must not be made from a failed request. */
+        <p className="text-[13px] text-center py-8 m-0" style={{ color: "var(--text-danger)" }}>
+          โหลดข้อมูลไม่สำเร็จ — กรุณาลองใหม่อีกครั้ง
+        </p>
+      ) : loading ? (
         <div
           className="flex items-center gap-2 text-[13px] py-8 justify-center"
           style={{ color: "var(--text-muted)" }}
@@ -243,7 +283,14 @@ export function PerDiemCountrySettings() {
           {rows.map((row) => {
             const names = countryNames(row.countryCode);
             const v = valueOf(row);
+            /* Narrowed once: TypeScript does not keep `row.latest` narrowed
+               inside the callbacks below. */
+            const current = row.latest;
             const busy = savingCode === row.countryCode;
+            /* Which branch of the MERGE this save will take, said on the button
+               before it is pressed: a date that already has a rate is an
+               in-place rewrite, anything else adds one. */
+            const collides = row.history.some((h) => h.effectiveDate === v.effectiveDate);
             const older = row.history.filter((h) => h.id !== row.latest?.id);
             const historyOpen = !!openHistory[row.countryCode];
             return (
@@ -274,15 +321,57 @@ export function PerDiemCountrySettings() {
                       ไม่มีแบรนด์ใดเดินทางไปแล้ว
                     </span>
                   )}
-                  {row.latest && (
-                    <span
-                      className="text-[11px] font-bold tabular-nums ml-auto shrink-0"
-                      style={{ color: "var(--color-action)" }}
-                    >
-                      ใช้อยู่ {fmtBaht(row.latest.amount)}
-                      <span className="text-[10px] font-semibold ml-1" style={{ color: "var(--text-muted)" }}>
-                        บาท/วัน
+                  {/* The rate in force, with the two controls the flat grid had
+                      on every row and this panel briefly dropped for it.
+
+                      The toggle matters more than it looks: there is **no
+                      DELETE** for this table anywhere in `src/` —
+                      `setPerDiemCountryRateActive` is the whole lifecycle — so
+                      deactivating the last active rate is the only way back to
+                      pricing a country by the employee's HR allowance. Without
+                      it here, a country with exactly one rate had no way back
+                      at all, because the history fold only ever listed the
+                      OLDER rates. */}
+                  {current ? (
+                    <span className="flex items-center gap-1.5 ml-auto shrink-0">
+                      <span className="text-[11px] font-bold tabular-nums" style={{ color: "var(--color-action)" }}>
+                        ใช้อยู่ {fmtBaht(current.amount)}
+                        <span className="text-[10px] font-semibold ml-1" style={{ color: "var(--text-muted)" }}>
+                          บาท/วัน · มีผล {current.effectiveDate}
+                        </span>
                       </span>
+                      <button
+                        type="button"
+                        onClick={() => editRate(row.countryCode, current)}
+                        className="text-[11px] font-semibold rounded-lg px-2 py-1 cursor-pointer"
+                        style={{
+                          background: "var(--bg-card)",
+                          color: "var(--text-secondary)",
+                          border: "1px solid var(--border-card)",
+                        }}
+                      >
+                        แก้เรทนี้
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => toggle(current)}
+                        disabled={busyId === current.id}
+                        className="text-[11px] font-semibold rounded-lg px-2.5 py-1 cursor-pointer"
+                        style={{
+                          background: "var(--status-ok-bg)",
+                          color: "var(--status-ok-text)",
+                          border: "1px solid var(--border-card)",
+                        }}
+                      >
+                        {busyId === current.id ? "..." : "ใช้งาน"}
+                      </button>
+                    </span>
+                  ) : (
+                    <span
+                      className="text-[11px] font-semibold ml-auto shrink-0"
+                      style={{ color: "var(--text-faint)" }}
+                    >
+                      ยังไม่กำหนด · ใช้เบี้ยเลี้ยงตามข้อมูล HR
                     </span>
                   )}
                 </div>
@@ -340,7 +429,7 @@ export function PerDiemCountrySettings() {
                     style={{ background: "var(--color-action)", color: "#fff" }}
                   >
                     {busy ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                    บันทึก
+                    {collides ? "แก้เรทวันนี้" : "เพิ่มเรทใหม่"}
                   </button>
                 </div>
 
@@ -382,11 +471,26 @@ export function PerDiemCountrySettings() {
                           <span className="truncate min-w-0" style={{ color: "var(--text-muted)" }}>
                             {h.note}
                           </span>
+                          {/* An older rate is editable too, and only through
+                              this button: `valueOf` starts blank, so the top
+                              editor cannot collide with a date nobody typed. */}
+                          <button
+                            type="button"
+                            onClick={() => editRate(row.countryCode, h)}
+                            className="text-[11px] font-semibold rounded-lg px-2 py-1 cursor-pointer shrink-0 ml-auto"
+                            style={{
+                              background: "var(--bg-card-alt)",
+                              color: "var(--text-secondary)",
+                              border: "1px solid var(--border-card)",
+                            }}
+                          >
+                            แก้
+                          </button>
                           <button
                             type="button"
                             onClick={() => toggle(h)}
                             disabled={busyId === h.id}
-                            className="text-[11px] font-semibold rounded-lg px-2.5 py-1 cursor-pointer shrink-0 ml-auto"
+                            className="text-[11px] font-semibold rounded-lg px-2.5 py-1 cursor-pointer shrink-0"
                             style={{
                               background: h.isActive ? "var(--status-ok-bg)" : "var(--bg-card-alt)",
                               color: h.isActive ? "var(--status-ok-text)" : "var(--text-faint)",
