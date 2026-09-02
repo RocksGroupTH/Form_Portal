@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
 import { computePerDiem, type AllowanceLogEntry } from "@/lib/acc/travel-booking/perdiem";
+import { NO_RENT_VEHICLE_NAME } from "@/features/travel-booking/constants";
 import { workLocationIssue } from "@/lib/acc/travel-booking/work-location-pin";
 import {
   isPerDiemCountry,
@@ -245,8 +246,7 @@ function buildSaveInput(tab: TabFormState, sortOrder: number): SaveTravelBooking
 /* ── Validation — mirrors the server's validateTravelBookingTab (spec §6), but
    accumulates every failing rule (not just the first) for inline field hints. ── */
 
-/** Sentinel option name for AccTravelRentVehicle's default "no rental" choice (spec §2.4) — mirrors request-service.ts's NO_RENT_VEHICLE_NAME. */
-const NO_RENT_VEHICLE_NAME = "ไม่เช่า";
+
 
 export interface TabSettingsMaps {
   reasonById: Map<number, TravelReasonOption>;

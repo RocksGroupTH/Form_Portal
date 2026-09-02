@@ -91,3 +91,41 @@ export const AP17_HEADER_MESSAGE_LINES: string[] = [
   "หากระยะเวลาเดินทางไม่ถึง 7 วัน และสัมภาระที่ซื้อเพิ่มไม่เกี่ยวข้องกับการทำงาน ผู้ขอเบิกรับผิดชอบค่ากระเป๋าเพิ่มเอง (กรณีซื้อกระเป๋าเพิ่ม กรุณากรอกในแบบฟอร์มครั้งแรก)",
   "กรณีเช่ารถและต้องการประกันภัยส่วนเพิ่ม พนักงานรับผิดชอบค่าประกันเอง",
 ];
+
+/**
+ * The `AccTravelRentVehicle` row whose whole meaning is "no rental" (spec §2.4),
+ * seeded by migration 048 and excluded from 054's backfill so it alone carries
+ * `NeedsRentBooking = 0`.
+ *
+ * **It is identified by its NAME, and nothing in the schema enforces that.**
+ * There is no id pin, no CHECK and no flag distinguishing it from an ordinary
+ * option — three call sites each held their own copy of this string until
+ * 2026-09-02, so renaming the row in settings (a trailing space is enough) would
+ * have silently turned every one of them off at once: the form would start
+ * demanding rental dates for it, and the submit validator would agree.
+ *
+ * One copy is not a fix for that, only a smaller target. The fix is
+ * `rentBookingContradictsNoRent`, which refuses the state that actually breaks
+ * things, and which the settings service calls on every write.
+ */
+export const NO_RENT_VEHICLE_NAME = "ไม่เช่า";
+
+/**
+ * Whether this rent-vehicle row claims to need a booking while calling itself
+ * "no rental" — a contradiction the settings editor could write freely.
+ *
+ * Since 2026-09-02 a selected rent option decides `NeedsRentBooking` outright
+ * (`derive-flags.ts`), so ticking `ให้ Admin เช่ายานพาหนะ` on this one row
+ * reproduces the exact bug that change fixed: every requester answering "ไม่เช่า"
+ * gets an Admin rental group for a rental nobody wants, and the request cannot
+ * be closed until somebody invents a booking for it.
+ *
+ * Compared on the trimmed name, because the editor does not trim and a stored
+ * `"ไม่เช่า "` is the same row to a reader.
+ */
+export function rentBookingContradictsNoRent(
+  name: string | null | undefined,
+  needsRentBooking: boolean,
+): boolean {
+  return needsRentBooking && (name ?? "").trim() === NO_RENT_VEHICLE_NAME;
+}

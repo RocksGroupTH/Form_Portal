@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { Briefcase, Calendar, Car, FileCheck, Hotel, MapPin, StickyNote } from "lucide-react";
 import type { AccBrandOption } from "@/features/accounting/types";
+import { NO_RENT_VEHICLE_NAME } from "@/features/travel-booking/constants";
 import { GooglePinView } from "./GooglePinView";
 import { WorkLocationList } from "./WorkLocationList";
 import { DateRangeField } from "./DateRangeField";
@@ -41,7 +42,6 @@ import type {
 import { earliestTravelDate } from "@/features/travel-booking/lib/earliest-travel-date";
 
 /** Sentinel option name for AccTravelRentVehicle's default "no rental" choice — mirrors the server. */
-const NO_RENT_VEHICLE_NAME = "ไม่เช่า";
 
 interface TravelBookingTabProps {
   tab: TabFormState;
@@ -150,6 +150,28 @@ export function TravelBookingTab({
       // Switching vehicle still clears both directions' places; it just no
       // longer refills either with a guess (2026-08-31).
       departureLocations: [],
+      // **A rent answer belongs to the question that was asked.** The rent
+      // block renders only while a leg vehicle carries `needsVehicleRent`
+      // (`showRentBlock` above), so switching to one that does not takes the
+      // control off the screen — and left alone, whatever was picked stays in
+      // state, gets posted by `saveDraft`, and `deriveBookingFlags` reads it as
+      // a live answer. The result is an Admin rental group for a rental the
+      // requester cannot see, cannot unselect, and did not ask for: the same
+      // symptom reported on 2026-09-02, reached by a different route.
+      //
+      // Cleared here rather than server-side because this is where it goes
+      // stale. `deriveBookingFlags` deliberately still honours a rent option it
+      // is given — an answer that IS present decides — and teaching it to
+      // second-guess one would trade this bug for a rental somebody wanted
+      // being silently dropped.
+      ...(v?.needsVehicleRent
+        ? {}
+        : {
+            rentVehicleId: null,
+            rentVehicleCustomText: null,
+            rentStartDate: null,
+            rentEndDate: null,
+          }),
     });
   };
 

@@ -30,7 +30,7 @@ import {
   invalidOptionMessage,
   type DerivedBookingFlags,
 } from "@/lib/acc/travel-booking/derive-flags";
-import { AP17_FORM_CODE, FILE_REFTYPES, RUNNING_PREFIX } from "@/features/travel-booking/constants";
+import { AP17_FORM_CODE, FILE_REFTYPES, NO_RENT_VEHICLE_NAME, RUNNING_PREFIX } from "@/features/travel-booking/constants";
 import { resolveBookingCountry } from "@/lib/acc/travel-booking/booking-country";
 import { listBrandRegistry } from "@/lib/brand-registry";
 import { workLocationIssue } from "@/lib/acc/travel-booking/work-location-pin";
@@ -990,7 +990,6 @@ export async function deleteTravelBookingDraft(groupKey: string, userId: number)
 /* ─────────────────────────── validation + submit (Task 5) ─────────────────────────── */
 
 /** Sentinel option name for AccTravelRentVehicle's default "no rental" choice (spec §2.4). */
-const NO_RENT_VEHICLE_NAME = "ไม่เช่า";
 
 /** The 4 settings tables, keyed by Id — loaded once and reused across every tab in a submit. */
 export interface TravelBookingSettingsMaps {

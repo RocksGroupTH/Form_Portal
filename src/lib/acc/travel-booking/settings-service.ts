@@ -1,5 +1,9 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { writeBothPools } from "@/lib/acc/dual-write";
+import {
+  NO_RENT_VEHICLE_NAME,
+  rentBookingContradictsNoRent,
+} from "@/features/travel-booking/constants";
 import type {
   Accommodation,
   RentVehicle,
@@ -380,10 +384,27 @@ export async function listRentVehicles(
   }));
 }
 
+/**
+ * The one combination this table must never hold: the `ไม่เช่า` row claiming to
+ * need a booking.
+ *
+ * A selected rent option decides `NeedsRentBooking` outright since 2026-09-02
+ * (`derive-flags.ts`), so ticking `ให้ Admin เช่ายานพาหนะ` on the row that means
+ * "no rental" reproduces exactly the bug that change fixed — every requester
+ * answering ไม่เช่า would get an Admin rental group for a rental nobody wants,
+ * on a request that then cannot be closed. Nothing in the schema prevents it:
+ * the sentinel is identified by its name and by nothing else.
+ */
+export const NO_RENT_NEEDS_BOOKING_ERROR =
+  `“${NO_RENT_VEHICLE_NAME}” คือตัวเลือกที่แปลว่าไม่ต้องเช่า จึงติ๊ก “ให้ Admin เช่ายานพาหนะ” ไม่ได้`;
+
 export async function upsertRentVehicle(
   row: RentVehicleUpsertInput,
   userId: number,
 ): Promise<void> {
+  if (rentBookingContradictsNoRent(row.name, !!row.needsRentBooking)) {
+    throw new Error(NO_RENT_NEEDS_BOOKING_ERROR);
+  }
   await writeBothPools(async (tx) => {
     const req = tx
       .request()
