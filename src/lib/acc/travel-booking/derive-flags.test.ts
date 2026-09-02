@@ -191,3 +191,60 @@ test("an unknown field name still produces a usable message", () => {
     /ไม่มีอยู่หรือถูกปิดใช้งาน/,
   );
 });
+
+/** The "ไม่เช่า" row: a real, active option whose whole meaning is "no rental". */
+const noRent: RentVehicleOption = { id: 4, isActive: true, needsRentBooking: false };
+
+/**
+ * **An explicit "ไม่เช่า" beats a leg vehicle that merely implies a rental.**
+ *
+ * Reported from production-shaped data on 2026-09-02: TRL26-09007 flew both
+ * ways (`เครื่องบิน`, `NeedsVehicleRent = 1`) and picked `ไม่เช่า`
+ * (`NeedsRentBooking = 0`), and the Admin panel still opened a rental group
+ * saying "กำลังรอ Admin กรอกข้อมูลการจอง" for a rental nobody wanted.
+ *
+ * The two flags mean different things and the OR conflated them.
+ * `NeedsVehicleRent` on a leg vehicle is what makes the form **ask** the rent
+ * question — `TravelBookingTab.tsx:123`, `showRentBlock` — and `rentVehicleId`
+ * is the **answer**. Reading the question as though it were a "yes" left the
+ * requester unable to say no.
+ */
+test("an explicit no-rent option beats a leg vehicle that implies one", () => {
+  const flags = deriveBookingFlags({
+    accommodation: null,
+    goVehicle: hiredVehicle,
+    returnVehicle: hiredVehicle,
+    rentVehicle: noRent,
+  });
+  assert.equal(flags.needsRentBooking, false);
+  // The leg flags themselves are untouched — they still record what was chosen.
+  assert.equal(flags.goNeedsVehicleRent, true);
+  assert.equal(flags.returnNeedsVehicleRent, true);
+});
+
+/**
+ * The safety net stays for the case it was built for: the question was asked and
+ * **not answered**. The client validator requires an answer whenever a leg
+ * implies a rental (`useTravelBookingForm.ts:332-334`), so this is the path that
+ * bypasses it — a direct POST, or a row written before that rule existed.
+ */
+test("a leg that implies a rental still forces one when nothing was answered", () => {
+  const flags = deriveBookingFlags({
+    accommodation: null,
+    goVehicle: hiredVehicle,
+    returnVehicle: ownCar,
+    rentVehicle: null,
+  });
+  assert.equal(flags.needsRentBooking, true);
+});
+
+/** And an explicit rental is still a rental, whatever the legs say. */
+test("an explicit rent option implies a booking even with own-car legs", () => {
+  const flags = deriveBookingFlags({
+    accommodation: null,
+    goVehicle: ownCar,
+    returnVehicle: ownCar,
+    rentVehicle: rentVan,
+  });
+  assert.equal(flags.needsRentBooking, true);
+});

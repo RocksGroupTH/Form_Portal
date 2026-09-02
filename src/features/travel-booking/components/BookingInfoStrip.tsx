@@ -232,7 +232,7 @@ export function typeInfo(req: TravelBookingRequest, type: BookingType, icons: Op
     return mergeSharedLegItems(out);
   }
 
-  // rent — ข้อ15/16: the rental window is captured separately, falling back to the trip dates.
+  // rent — ข้อ15/16.
   return [
     {
       items: [
@@ -243,9 +243,19 @@ export function typeInfo(req: TravelBookingRequest, type: BookingType, icons: Op
         },
         {
           label: "ช่วงเวลาเช่า",
+          // **No fallback to the trip's dates.** This read
+          // `req.rentStartDate ?? req.departDate`, so a request with no rental
+          // window printed the trip's own dates under a rental caption — which
+          // is what the desk saw on TRL26-09007 on 2026-09-02: `ไม่เช่า`, and
+          // beneath it a confident "04/09/2026 – 06/09/2026 (3 วัน)" for a
+          // rental that does not exist. A window is either recorded or it is
+          // not, and `—` says which. The validator requires both dates for a
+          // real rental, so the dash is reachable only where there is genuinely
+          // nothing to show.
           value: (() => {
-            const from = req.rentStartDate ?? req.departDate;
-            const to = req.rentEndDate ?? req.returnDate;
+            const from = req.rentStartDate;
+            const to = req.rentEndDate;
+            if (!from && !to) return "—";
             const days = daysBetween(from, to);
             return fmtRange(from, to) + (days ? ` (${days} วัน)` : "");
           })(),

@@ -109,9 +109,26 @@ export function deriveBookingFlags(options: {
     returnNeedsTicketBooking: back.ticketBooking,
     returnNeedsDepartTime: back.departTime,
     returnNeedsVehicleRent: back.vehicleRent,
-    // Either leg asking for a rented vehicle, or a rent option chosen outright.
+    // **The answer wins over the question.** A leg vehicle's `needsVehicleRent`
+    // is what makes the form ASK about a rental (`TravelBookingTab.tsx`,
+    // `showRentBlock`); `rentVehicle` is the requester's ANSWER. So a selected
+    // option decides outright — including the `ไม่เช่า` row, whose whole meaning
+    // is "no", and which carries `needsRentBooking = false` to say so.
+    //
+    // ORing the two conflated them, and the requester could not decline: flying
+    // both ways (`เครื่องบิน`, `NeedsVehicleRent = 1`) and answering `ไม่เช่า`
+    // still opened a rental group on the Admin panel with nothing to book.
+    // Reported 2026-09-02 against TRL26-09007.
+    //
+    // The leg arms remain for the case they were built for — the question was
+    // asked and **not answered**. The client validator requires an answer
+    // whenever a leg implies a rental, so that is the path around it: a direct
+    // POST, or a row written before the rule existed. Erring towards an Admin
+    // step is the safe direction when nobody has said either way.
     needsRentBooking:
-      (options.rentVehicle?.needsRentBooking ?? false) || go.vehicleRent || back.vehicleRent,
+      options.rentVehicle !== null
+        ? options.rentVehicle.needsRentBooking
+        : go.vehicleRent || back.vehicleRent,
   };
 }
 
