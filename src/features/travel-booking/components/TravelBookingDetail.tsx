@@ -570,7 +570,23 @@ export function TravelBookingDetail({
       text
     );
 
-  const hasRentBlock = request.goNeedsVehicleRent || request.returnNeedsVehicleRent || request.needsRentBooking;
+  /**
+   * Show the rental section only where there is a rental.
+   *
+   * This ORed in `goNeedsVehicleRent` and `returnNeedsVehicleRent`, which are
+   * not answers: they are what makes the FORM ask about a rental
+   * (`TravelBookingTab`'s `showRentBlock`). Every flight carries them, so a
+   * request that flew and answered `ไม่เช่า` still displayed an
+   * `เช่ายานพาหนะ` panel whose only content was the word `ไม่เช่า` — the same
+   * question-read-as-an-answer that opened an Admin rental group for it
+   * (`derive-flags.ts`, fixed 2026-09-02).
+   *
+   * `needsRentBooking` alone is the answer, and it is now the single predicate
+   * for both places this page can show a rental: this section and the booking
+   * card, which `REQUIRED_BOOKING_RULES` gates on the same field. Two spellings
+   * of one question is how they came to disagree.
+   */
+  const hasRentBlock = request.needsRentBooking;
 
   /* ── Booking cards — Admin fills them in; everyone else only ever sees them read-only ── */
   const bookingRules = useMemo(() => REQUIRED_BOOKING_RULES.filter((r) => r.needed(request)), [request]);
@@ -1204,10 +1220,16 @@ export function TravelBookingDetail({
               {request.goVehicleCustomText ? ` — ${request.goVehicleCustomText}` : ""}
             </span>
           </div>
-          {(request.goNeedsTicketBooking || request.goNeedsVehicleRent || request.goNeedsDepartureLocations) && (
+          {/* `ต้องเช่ารถ` follows the ANSWER, not the vehicle's own flag.
+              `goNeedsVehicleRent` is what makes the form ask about a rental, and
+              every flight carries it — so this chip told a requester who had
+              answered `ไม่เช่า` that their trip requires renting a car. The other
+              two chips do describe the vehicle and are unchanged: a flight does
+              need a ticket booked whatever else is answered. */}
+          {(request.goNeedsTicketBooking || request.needsRentBooking || request.goNeedsDepartureLocations) && (
             <div className="flex flex-wrap gap-1.5">
               {request.goNeedsTicketBooking && <FlagChip label="ต้องจองตั๋ว" />}
-              {request.goNeedsVehicleRent && <FlagChip label="ต้องเช่ารถ" />}
+              {request.needsRentBooking && <FlagChip label="ต้องเช่ารถ" />}
               {request.goNeedsDepartureLocations && <FlagChip label="กำหนดจุดขึ้น" />}
             </div>
           )}
