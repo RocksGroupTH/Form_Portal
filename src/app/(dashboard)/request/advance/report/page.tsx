@@ -42,9 +42,12 @@ interface Row {
 // `th-TH` alone renders the Buddhist calendar — 2026 comes out as 69 — which is
 // what the AP-2 date pickers were moved off. `-u-ca-gregory` keeps Thai
 // formatting but counts the years the way the ERP and the stored ISO dates do.
+// The year is spelled out: `dateStyle: "short"` abbreviates it to 26, which
+// reads as ambiguous next to a day and a month that are also two digits.
 const TH_CE = "th-TH-u-ca-gregory";
-const dt = (s: string | null) => (s ? new Date(s).toLocaleString(TH_CE, { dateStyle: "short", timeStyle: "short" }) : "");
-const d = (s: string | null) => (s ? new Date(s).toLocaleDateString(TH_CE, { dateStyle: "short" }) : "");
+const YMD = { day: "2-digit", month: "2-digit", year: "numeric" } as const;
+const dt = (s: string | null) => (s ? new Date(s).toLocaleString(TH_CE, { ...YMD, hour: "2-digit", minute: "2-digit" }) : "");
+const d = (s: string | null) => (s ? new Date(s).toLocaleDateString(TH_CE, YMD) : "");
 const n = (v: number | null) => (v == null ? "" : v.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 }));
 
 // filter → คอลัมน์ไฮไลต์เหลืองใน sheet AP-2-Control ("dates" = เลือกได้หลายวัน)
