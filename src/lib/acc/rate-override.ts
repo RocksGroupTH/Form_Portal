@@ -1,4 +1,6 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
+import { AP17_FORM_CODE } from "@/features/travel-booking/constants";
+import { recomputeBookingBaht } from "@/lib/acc/travel-booking/booking-baht";
 import { AccConflictError } from "@/lib/acc/request-errors";
 import type { Actor } from "@/lib/acc/approval-engine";
 import {
@@ -124,6 +126,18 @@ export async function applyRateOverride(
       await tx.rollback();
       throw new AccConflictError(RATE_OVERRIDE_WRONG_STEP_TEXT);
     }
+
+    // AP-17 stores a baht figure per booking row (migration 136), derived from
+    // the rate this statement has just changed. Rewriting it here, inside the
+    // same transaction, is what stops the correction leaving every booking row
+    // of the request quoting the rate it replaced — on the sign-off screen the
+    // correction was made from.
+    //
+    // Pinned to AP-17 because only AP-17 has the column's parent tables. It is
+    // a no-op for an AP-1 request even unpinned — the join finds no rows — but
+    // a form test is cheaper than a join, and this file is shared by two forms
+    // precisely so that what differs between them is said out loud.
+    if (formCode === AP17_FORM_CODE) await recomputeBookingBaht(tx, requestId, rate);
 
     const from = previousRate === null ? "—" : previousRate.toFixed(6);
     const totalPart =

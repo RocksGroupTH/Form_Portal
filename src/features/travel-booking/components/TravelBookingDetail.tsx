@@ -43,7 +43,6 @@ import { useTravelBookingOptionIcons } from "@/features/travel-booking/hooks/use
 import { InfoStrip, typeInfo } from "@/features/travel-booking/components/BookingInfoStrip";
 import { canActManagerStep } from "@/lib/acc/manager-auth";
 import {
-  amountInBaht,
   currencyWord,
   fmtMoneyTh,
   referenceRateNote,
@@ -899,12 +898,21 @@ export function TravelBookingDetail({
                               </div>
                             )}
                           </div>
-                          {/* The baht equivalent, foreign requests only. It is
-                              display arithmetic and nothing else: AP-17 never
-                              writes a booking cost to AccRequest.TotalAmount,
-                              which stays the per-diem figure — see
-                              admin-service.ts. Absent when no rate is stored,
-                              rather than showing the ringgit figure twice. */}
+                          {/* The baht equivalent, foreign requests only, READ
+                              rather than recomputed: `totalAmountBaht` is
+                              migration 136's stored column, written by
+                              `recomputeBookingBaht` in the same transaction as
+                              the rate it was derived from. This multiplied
+                              `d.totalAmount` by the header rate here until
+                              2026-09-02 — one of three places that did.
+
+                              Nothing about AccRequest.TotalAmount changes: AP-17
+                              never writes a booking cost to it and it stays the
+                              per-diem figure — see admin-service.ts.
+
+                              Null means no rate was stored when the row was
+                              saved, so it says so rather than showing the
+                              foreign figure a second time labelled as baht. */}
                           {bookingIsForeign && showPrice && d.totalAmount != null && (
                             <p
                               className="text-[11.5px] m-0"
@@ -915,20 +923,13 @@ export function TravelBookingDetail({
                                   : undefined
                               }
                             >
-                              {(() => {
-                                const baht = amountInBaht(
-                                  d.totalAmount,
-                                  request.currency,
-                                  request.exchangeRate,
-                                );
-                                return baht == null
-                                  ? "ยังไม่มีอัตราแลกเปลี่ยนที่บันทึกไว้ — แปลงเป็นเงินบาทไม่ได้"
-                                  : `≈ ${fmtMoneyTh(baht)} บาท (${referenceRateNote(
-                                      request.currency,
-                                      request.exchangeRate ?? 0,
-                                      request.rateAsOf,
-                                    )})`;
-                              })()}
+                              {d.totalAmountBaht == null
+                                ? "ยังไม่มีอัตราแลกเปลี่ยนที่บันทึกไว้ — แปลงเป็นเงินบาทไม่ได้"
+                                : `≈ ${fmtMoneyTh(d.totalAmountBaht)} บาท (${referenceRateNote(
+                                    request.currency,
+                                    request.exchangeRate ?? 0,
+                                    request.rateAsOf,
+                                  )})`}
                             </p>
                           )}
                           {d.files.length > 0 && (

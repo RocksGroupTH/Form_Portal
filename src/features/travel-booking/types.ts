@@ -158,6 +158,20 @@ export interface BookingDetail {
   vatAmount: number | null;
   discountAmount: number | null;
   totalAmount: number | null;
+  /**
+   * `totalAmount` expressed in baht (migration 136), or null where there is no
+   * total yet.
+   *
+   * **Stored, not computed here, and always populated — baht rows included**,
+   * where it simply equals `totalAmount`. That is what lets a reader show or sum
+   * it with no test of the request's currency, which in turn is what makes
+   * double conversion unexpressible rather than a rule every call site has to
+   * remember. It was three separate multiplications until 2026-09-02.
+   *
+   * Kept in step by `recomputeBookingBaht`, the only writer, called from both
+   * writers of `AccRequest.ExchangeRate`.
+   */
+  totalAmountBaht: number | null;
   files: TravelBookingFileMeta[];
 }
 

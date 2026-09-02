@@ -9,6 +9,7 @@ import {
   type BookingBrandAccess,
 } from "@/lib/acc/travel-booking/booking-brand-access-shared";
 import { bookingBrandScopeSql } from "@/lib/acc/travel-booking/booking-approver-brands";
+import { recomputeBookingBaht } from "@/lib/acc/travel-booking/booking-baht";
 import { AP17_FORM_CODE, BOOKING_TYPE_REFTYPE } from "@/features/travel-booking/constants";
 import { sanitizeBookingAmount } from "@/features/travel-booking/lib/booking-amounts";
 import { sanitizeBookingNo } from "@/features/travel-booking/lib/booking-no";
@@ -595,6 +596,15 @@ export async function saveBookingDetail(
       .query(`UPDATE [dbo].[AccRequest] SET Currency=@currency, ExchangeRate=@fxRate,
                   RateAsOf=@rateAsOf, RateSource=@rateSource
               WHERE Id=@rid`);
+
+    // Migration 136's stored baht figure, rewritten for EVERY row of the
+    // request in the same transaction as the rate above. Not just the row just
+    // saved: one rate is recorded per request and re-fetched on each save, so
+    // the siblings would otherwise go on quoting a rate the header no longer
+    // holds. `recomputeBookingBaht` is the only statement that writes the
+    // column, shared with `applyRateOverride`, so the two rate writers cannot
+    // disagree about what a booking cost.
+    await recomputeBookingBaht(tx, requestId, fx.currency === null ? null : fx.rate);
 
     await tx.commit();
     return mapSavedRow(saved);

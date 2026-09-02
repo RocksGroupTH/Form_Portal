@@ -1,6 +1,6 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { isBaht } from "@/lib/acc/currency";
-import { amountInBaht, currencyWord, rateAsOfYmd } from "@/lib/acc/currency-display";
+import { currencyWord, rateAsOfYmd } from "@/lib/acc/currency-display";
 import { getAllowanceLog } from "@/lib/acc/travel-booking/allowance-log";
 import { perDiemLogFor } from "@/lib/acc/travel-booking/perdiem-country";
 import {
@@ -179,6 +179,13 @@ const BASE_CTE = `
       (SELECT SUM(bd.TotalAmount)
          FROM [dbo].[AccTravelBookingDetail] bd
         WHERE bd.TravelBookingId = t.Id) AS BookingTotal,
+      -- The same sum in baht, from migration 136's STORED per-row column — not
+      -- BookingTotal above multiplied by the rate. Summing baht rows is the
+      -- whole reason that column is populated for baht requests too: this
+      -- expression needs no currency test, so it cannot convert twice.
+      (SELECT SUM(bd.TotalAmountBaht)
+         FROM [dbo].[AccTravelBookingDetail] bd
+        WHERE bd.TravelBookingId = t.Id) AS BookingTotalBaht,
       -- Matched the same way isContinuation was decided at save time: same
       -- group, an earlier SortOrder, a ReturnDate touching this DepartDate.
       -- Nearest earlier sibling wins.
@@ -341,15 +348,16 @@ export async function queryTravelBookingReport(
           : Number(x.ExchangeRate),
       rateAsOf: rateAsOfYmd((x.RateAsOf as string | Date | null) ?? null),
       bookingTotal,
-      // Converted once here rather than at each of the two surfaces, so the
-      // export and the screen cannot disagree about what a trip cost in baht.
-      bookingTotalBaht: amountInBaht(
-        bookingTotal,
-        x.Currency as string | null,
-        x.ExchangeRate === null || x.ExchangeRate === undefined
+      // Read, not converted. It was `amountInBaht(bookingTotal, …)` until
+      // 2026-09-02 — correct, but one of three independent multiplications of
+      // the same figure by the same rate. The sum now comes from the stored
+      // per-row column, which `recomputeBookingBaht` keeps in step with both
+      // writers of that rate, so the export, the screen and the detail page read
+      // one number rather than each computing their own.
+      bookingTotalBaht:
+        x.BookingTotalBaht === null || x.BookingTotalBaht === undefined
           ? null
-          : Number(x.ExchangeRate),
-      ),
+          : Number(x.BookingTotalBaht),
       paymentDate: x.PaymentDate ? ymd(x.PaymentDate as Date) : null,
       rateChangeNote,
     };

@@ -939,10 +939,20 @@ function BookingRowCard({
      on a request whose brand has no currency configured. */
   const currencyUnit = currency === THB ? null : currency;
   const currencyWord = bookingCurrencyWord(currency);
-  /* The four figures stay in the request's own currency — nothing here is
-     stored converted. This is the reading beside them, and it exists only once
-     the SERVER has recorded a rate: the client never calls the FX provider, so
-     before the first save there is nothing honest to show.
+  /* The four figures stay in the request's own currency. This is the reading
+     beside them, and it exists only once the SERVER has recorded a rate: the
+     client never calls the FX provider, so before the first save there is
+     nothing honest to show.
+
+     **This one is still computed, and deliberately so.** The detail page and the
+     report both read migration 136's stored `TotalAmountBaht` instead; this
+     cannot, because `nTotal` is what the desk is TYPING. A stored column holds
+     the last saved figure, so reading it here would caption a number the person
+     is in the middle of changing. Live preview and settled record are different
+     questions, and the stored column answers only the second.
+
+     Nothing double-converts as a result: this multiplies the live foreign input,
+     never the stored baht column, and the two are never mixed.
 
      `toBaht` and not a bare multiplication, so an unusable rate produces no line
      rather than a wrong one — the same refusal the save applies server-side. */

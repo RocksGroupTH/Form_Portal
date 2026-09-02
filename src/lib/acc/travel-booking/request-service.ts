@@ -229,7 +229,8 @@ async function loadIdCardFiles(pool: AccPool, requestId: number): Promise<Travel
 
 async function loadBookingDetails(pool: AccPool, travelBookingId: number, requestId: number): Promise<BookingDetail[]> {
   const detRes = await pool.request().input("tbid", sql.Int, travelBookingId)
-    .query(`SELECT Id, BookingType, BookingNo, PriceExVat, VatAmount, DiscountAmount, TotalAmount
+    .query(`SELECT Id, BookingType, BookingNo, PriceExVat, VatAmount, DiscountAmount, TotalAmount,
+                   TotalAmountBaht
             FROM [dbo].[AccTravelBookingDetail] WHERE TravelBookingId=@tbid ORDER BY Id`);
   const details = detRes.recordset as Record<string, unknown>[];
   if (details.length === 0) return [];
@@ -256,6 +257,7 @@ async function loadBookingDetails(pool: AccPool, travelBookingId: number, reques
     vatAmount: num(d.VatAmount),
     discountAmount: num(d.DiscountAmount),
     totalAmount: num(d.TotalAmount),
+    totalAmountBaht: num(d.TotalAmountBaht),
     files: filesByDetail.get(d.Id as number) ?? [],
   }));
 }
