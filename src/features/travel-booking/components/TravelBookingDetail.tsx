@@ -1031,14 +1031,30 @@ export function TravelBookingDetail({
       {/* ── Trip (same grouping/order as the form) ── */}
       <Section title="รายละเอียดการเดินทาง" icon={<Briefcase size={15} />}>
         <div className="flex flex-col gap-3">
-          <DetailRow
-            label="เหตุผล"
-            value={withIcon(
-              request.reasonId != null ? icons.reason[request.reasonId] : null,
-              `${request.reasonName ?? "—"}${request.reasonCustomText ? ` — ${request.reasonCustomText}` : ""}`,
-            )}
-          />
-          <DetailRow label="รายละเอียดงาน" value={<span className="whitespace-pre-wrap">{request.workDetail}</span>} />
+          {/* แบรนด์ที่เบิก — the form's FIRST field, and this page did not show it
+              at all until 2026-09-02. It decides which company pays and which
+              countries the trip may go to, so a reader reconciling a request
+              had to open the form to find out. Rendered the way AP-1's detail
+              renders it, logo then code, so the two forms read alike.
+
+              Ordered to match the form: brand, then country, then the place. */}
+          {request.brandCode && (
+            <DetailRow
+              label="แบรนด์ที่เบิก"
+              value={
+                <span className="inline-flex items-center gap-2 min-w-0">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={`/brandlogo/${request.brandCode.toLowerCase()}-200.png`}
+                    alt=""
+                    className="h-5 w-auto object-contain shrink-0"
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                  />
+                  <span className="break-words">{request.brandCode}</span>
+                </span>
+              }
+            />
+          )}
           {/* Above the place, because that is the order the form asks in and
               the country is what bounded the search that produced the place.
 
@@ -1068,6 +1084,14 @@ export function TravelBookingDetail({
               </span>
             }
           />
+          <DetailRow
+            label="เหตุผล"
+            value={withIcon(
+              request.reasonId != null ? icons.reason[request.reasonId] : null,
+              `${request.reasonName ?? "—"}${request.reasonCustomText ? ` — ${request.reasonCustomText}` : ""}`,
+            )}
+          />
+          <DetailRow label="รายละเอียดงาน" value={<span className="whitespace-pre-wrap">{request.workDetail}</span>} />
           <DetailRow
             label="สถานที่ปฏิบัติงาน"
             value={
