@@ -1039,6 +1039,35 @@ export function TravelBookingDetail({
             )}
           />
           <DetailRow label="รายละเอียดงาน" value={<span className="whitespace-pre-wrap">{request.workDetail}</span>} />
+          {/* Above the place, because that is the order the form asks in and
+              the country is what bounded the search that produced the place.
+
+              **Always shown, including for Thailand.** It was hidden for a
+              domestic trip until 2026-09-02, on the argument that a row saying
+              "ไทย" on every request adds nothing. That argument died with the
+              จังหวัด/เมือง row: the country is now the only administrative
+              statement on this page, and a reader who sees no row cannot tell
+              "Thailand" from "nobody answered". Null still reads as Thailand —
+              that is what resolveBookingCountry stores. */}
+          <DetailRow
+            label="ประเทศ"
+            value={
+              <span className="inline-flex items-center gap-1.5">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`/flags/${(request.countryCode ?? BOOKING_DEFAULT_COUNTRY).toLowerCase()}.svg`}
+                  alt=""
+                  aria-hidden
+                  className="shrink-0 h-[11px] w-[16px] rounded-[2px] object-cover"
+                  style={{ border: "1px solid var(--border-card)" }}
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                />
+                {countryNameBoth(request.countryCode ?? BOOKING_DEFAULT_COUNTRY) ??
+                  request.countryCode ??
+                  BOOKING_DEFAULT_COUNTRY}
+              </span>
+            }
+          />
           <DetailRow
             label="สถานที่ปฏิบัติงาน"
             value={
@@ -1067,17 +1096,6 @@ export function TravelBookingDetail({
               no province and this row disappears rather than reading "—". */}
           {request.provinceName && (
             <DetailRow label="จังหวัด/เมือง (เดิม)" value={request.provinceName} />
-          )}
-          {/* Only when it is not Thailand. A domestic trip saying "ไทย" is a row
-              that adds nothing to every request anybody ever files; a foreign
-              one saying nothing is the omission that matters. Null reads as
-              Thailand — that is what resolveBookingCountry stores for rows
-              written before this shipped. */}
-          {request.countryCode && request.countryCode !== BOOKING_DEFAULT_COUNTRY && (
-            <DetailRow
-              label="ประเทศ"
-              value={countryNameBoth(request.countryCode) ?? request.countryCode}
-            />
           )}
         </div>
       </Section>
