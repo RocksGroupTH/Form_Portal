@@ -550,10 +550,10 @@ export function AdminBookingPanel({
             group.
 
             `brandOption` is the same object the currency toggle already fetched,
-            so naming the brand here costs no extra request. Null until it lands,
-            and permanently null on a failed fetch, which is why `tripInfo` falls
-            back to the bare code rather than waiting for a name. */}
-        <InfoStrip groups={tripInfo(request, brandOption?.brandName)} />
+            so the brand's name AND its logo cost no extra request. Null until it
+            lands, and permanently null on a failed fetch, which is why `tripInfo`
+            falls back to the bare code with no mark rather than waiting. */}
+        <InfoStrip groups={tripInfo(request, brandOption)} />
 
         {/* Where the trip actually goes. The strip above lists it as text —
             InfoStrip's InfoItem is { label, value: string } and cannot hold a

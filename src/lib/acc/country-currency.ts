@@ -144,8 +144,18 @@ export function isRateSourceCurrency(code: string | null | undefined): boolean {
  * Anything that is not exactly two letters returns null rather than a pair of
  * stray symbols, which is what a naive version renders for `THA` or `12`.
  *
- * Rendering is the caller's business: some Windows builds ship no flag glyphs
- * and show the two letters instead, which is legible and needs no fallback.
+ * **Nothing in `src/` renders this, and that is settled rather than accidental.**
+ * Windows ships no flag glyphs at all, so Chrome and Edge there print the two
+ * bare letters as text — which reads as a broken image beside a country's own
+ * name, not as a deliberate choice. `public/flags/README.md` records the same
+ * finding, and every surface that shows a flag uses the SVGs under
+ * `public/flags/` instead: AP-1's country picker, AP-17's, the per-diem settings
+ * grid, both detail pages and the Admin booking strip. It was tried on that last
+ * one on 2026-09-02 and reverted within hours.
+ *
+ * Kept, with its tests, because it is a pure two-line derivation with no asset
+ * behind it — useful anywhere a glyph is genuinely wanted (a plain-text export, a
+ * mail subject) where an `<img>` cannot go. It is not the answer for a screen.
  */
 export function countryFlag(code: string | null | undefined): string | null {
   const c = norm(code);

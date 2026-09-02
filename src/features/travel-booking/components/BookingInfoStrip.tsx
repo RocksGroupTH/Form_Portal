@@ -1,15 +1,31 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
-import { countryFlag, countryNameBoth } from "@/lib/acc/country-currency";
+import { countryNameBoth } from "@/lib/acc/country-currency";
 import { bookingBrandLabel, bookingCountryCode } from "@/features/travel-booking/lib/booking-context";
+import type { AccBrandOption } from "@/features/accounting/types";
 import { DIRECTION_LABEL_TH } from "@/features/travel-booking/constants";
 import type { OptionIconMaps } from "@/features/travel-booking/hooks/useOptionIcons";
 import type { BookingType, TravelBookingRequest } from "@/features/travel-booking/types";
 
 /* ── What Admin needs in front of them to actually place a booking ── */
 
-export type InfoItem = { label: string; value: string; icon?: string | null };
+/**
+ * `icon` is usually an emoji string — that is what `OptionIconMaps` holds and
+ * what every `typeInfo` row uses — but it is typed as a `ReactNode` so the two
+ * rows that need a real image can carry one.
+ *
+ * **The widening has one consequence, in `mergeSharedLegItems` below**, which
+ * hoists items identical on both legs into a shared block by comparing icons
+ * with `===`. Two equal emoji strings match; two JSX elements never do, because
+ * each render builds fresh objects. Nothing is broken today — only `tripInfo`
+ * returns element icons and its output never reaches that function — but a leg
+ * item given an element icon later would silently stop being hoisted, showing
+ * the same row twice instead of once. That is why the comparison there says so
+ * out loud rather than looking like it handles every case.
+ */
+export type InfoItem = { label: string; value: string; icon?: ReactNode };
 /** A titled block of facts — ticket bookings use one block per direction (ขาไป / ขากลับ). */
 export type InfoGroup = { title?: string; items: InfoItem[] };
 
@@ -49,25 +65,60 @@ function daysBetween(from: string | null, to: string | null): number | null {
  * decide the currency toggle and one to tell the AI read which currencies a
  * document may be in.
  *
- * `brandName` is optional because the panel learns it asynchronously: the codes
- * are on the request, the names are in the brand registry, and the fetch that
- * carries them can fail permanently (see `brandOption` in `AdminBookingPanel`).
- * Absent, the row reads the bare code — which is what the detail page shows
- * anyway — so this never renders blank and never waits.
+ * `brand` is optional because the panel learns it asynchronously: the codes are
+ * on the request, the name and the logo are in the brand registry, and the fetch
+ * that carries them can fail permanently (see `brandOption` in
+ * `AdminBookingPanel`). Absent, the row reads the bare code with no mark — which
+ * is what the detail page shows anyway — so this never renders blank and never
+ * waits.
+ *
+ * **The whole option, not just its name**, because `brandLogo` comes with it:
+ * that URL resolves an *uploaded* mark where a hardcoded
+ * `/brandlogo/{code}-200.png` cannot, and it costs nothing extra since the
+ * currency toggle has already fetched the object.
  */
-export function tripInfo(req: TravelBookingRequest, brandName?: string | null): InfoGroup[] {
+export function tripInfo(req: TravelBookingRequest, brand?: AccBrandOption | null): InfoGroup[] {
   const days = daysBetween(req.departDate, req.returnDate);
   const country = bookingCountryCode(req.countryCode);
   return [
     {
       items: [
-        { label: "แบรนด์", value: bookingBrandLabel(req.brandCode, brandName) },
+        {
+          // `แบรนด์ที่เบิก`, the wording every other surface uses — the detail
+          // page, AP-1's detail, the fill-in form and the report. The label
+          // column is already sized for `สถานที่ปฏิบัติงาน`, so the longer
+          // caption costs no width.
+          label: "แบรนด์ที่เบิก",
+          icon: brand?.brandLogo ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={brand.brandLogo}
+              alt=""
+              className="h-5 w-auto object-contain shrink-0"
+              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+            />
+          ) : null,
+          value: bookingBrandLabel(req.brandCode, brand?.brandName),
+        },
         {
           label: "ประเทศ",
-          // The emoji flag, not the SVG the detail page uses: `InfoItem.icon` is
-          // a string, and `countryFlag` is arithmetic on the two letters rather
-          // than an asset, so it needs no change to this component's shape.
-          icon: countryFlag(country),
+          // The SVG under `public/flags/`, not `countryFlag`'s regional-indicator
+          // emoji. `public/flags/README.md` records the emoji as tried and
+          // rejected: Windows ships no flag glyphs, so Chrome and Edge there
+          // render the two bare letters as text — which is what this shipped with
+          // for a few hours, and reads as a stray code beside a name that already
+          // spells the country out.
+          icon: (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={`/flags/${country.toLowerCase()}.svg`}
+              alt=""
+              aria-hidden
+              className="shrink-0 h-[11px] w-[16px] rounded-[2px] object-cover"
+              style={{ border: "1px solid var(--border-card)" }}
+              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+            />
+          ),
           value: countryNameBoth(country) ?? country,
         },
         {
@@ -212,7 +263,12 @@ export function InfoStrip({ groups }: { groups: InfoGroup[] }) {
                   {it.label}
                 </span>
                 <span className="text-[12.5px] min-w-0" style={{ color: "var(--text-primary)" }}>
-                  {it.icon ? <span className="mr-1.5">{it.icon}</span> : null}
+                  {/* `inline-flex items-center` so an image sits on the text's
+                      centre line; a bare margin was enough while every icon was
+                      an emoji glyph and is not once one is an `<img>`. */}
+                  {it.icon ? (
+                    <span className="mr-1.5 inline-flex items-center align-[-0.15em]">{it.icon}</span>
+                  ) : null}
                   {it.value}
                 </span>
               </div>

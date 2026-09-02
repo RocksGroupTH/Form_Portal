@@ -29,6 +29,16 @@ function norm(v: string | null | undefined): string {
  * No brand at all is a dash rather than a bare name or an empty parenthesis: a
  * booking has to be billed to somebody, and a row that quietly shows a company
  * name with no code behind it would read as though it were.
+ *
+ * **A name that is just the code is printed once, not twice.** `ROCKS (ROCKS)`
+ * is reachable two ways and neither is exotic: `brand-registry.ts:228` falls
+ * back to `name: b.Name ?? b.Code` for a brand the Codex master has no name for,
+ * and `brand-options.ts:49` falls back again to
+ * `brandName: b?.brandName ?? row.BrandCode` for one the registry does not carry
+ * at all. The duplicate therefore appears exactly for the brands nobody has
+ * finished configuring — the ones somebody is most likely to be checking.
+ * Compared case-insensitively, since the code is uppercased here and the name is
+ * not; `countryNameBoth` collapses its two halves for the same reason.
  */
 export function bookingBrandLabel(
   code: string | null | undefined,
@@ -37,7 +47,8 @@ export function bookingBrandLabel(
   const brand = norm(code).toUpperCase();
   if (brand === "") return "—";
   const label = norm(name);
-  return label === "" ? brand : `${label} (${brand})`;
+  if (label === "" || label.toUpperCase() === brand) return brand;
+  return `${label} (${brand})`;
 }
 
 /**

@@ -45,7 +45,7 @@ import {
   selectedVehicleCount,
 } from "@/features/accounting/lib/travel-sections";
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
-import { countryNames, countryFlag } from "@/lib/acc/country-currency";
+import { countryNames } from "@/lib/acc/country-currency";
 import { referenceRateNote } from "@/lib/acc/currency-display";
 import { lineNeedsCurrency, typedLineFigure } from "@/features/accounting/lib/claim-currency";
 import type { AccRequest, TravelDraftSummary, TravelExpenseDetail, TravelExpenseItem, AccVehicle } from "@/features/accounting/types";

@@ -76,3 +76,25 @@ test("an unrecognised code is shown as stored, not corrected", () => {
   assert.equal(bookingCountryCode("XX"), "XX");
   assert.equal(bookingCountryCode("zz"), "ZZ");
 });
+
+/**
+ * **A name equal to its own code is not printed twice.**
+ *
+ * `ROCKS (ROCKS)` is reachable two ways and neither is exotic:
+ * `brand-registry.ts:228` falls back to `name: b.Name ?? b.Code` for a brand the
+ * Codex master has no name for, and `brand-options.ts:49` falls back again to
+ * `brandName: b?.brandName ?? row.BrandCode` for one the registry does not carry
+ * at all. So the duplicate appears exactly for the brands nobody has finished
+ * configuring — the ones a reader is most likely to be checking.
+ *
+ * Compared case-insensitively, because the code is uppercased on the way in and
+ * the name is not. `countryNameBoth` drops its English half for the same reason.
+ */
+test("a name that is just the code is not printed twice", () => {
+  assert.equal(bookingBrandLabel("ROCKS", "ROCKS"), "ROCKS");
+  assert.equal(bookingBrandLabel("PCTH", "pcth"), "PCTH");
+  assert.equal(bookingBrandLabel("PCTH", " Pcth "), "PCTH");
+  assert.equal(bookingBrandLabel(" ksi ", "KSI"), "KSI");
+  // A name that merely contains the code is still a name.
+  assert.equal(bookingBrandLabel("PCTH", "Potato Corner TH"), "Potato Corner TH (PCTH)");
+});
