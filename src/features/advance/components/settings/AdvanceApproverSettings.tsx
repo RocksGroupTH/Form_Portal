@@ -66,7 +66,7 @@ function CandidateModal({
         <div className="px-5 py-4 flex items-center justify-between shrink-0" style={{ borderBottom: "1px solid var(--border-card)" }}>
           <div>
             <h2 className="text-[15px] font-bold" style={{ color: "var(--text-heading)" }}>เพิ่มผู้อนุมัติ</h2>
-            <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>เฉพาะพนักงานแผนกบัญชี / IT</p>
+            <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>เฉพาะพนักงานบัญชี · ผู้บริหาร · IT (สำนักงานใหญ่)</p>
           </div>
           <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center cursor-pointer border-none"
             style={{ background: "var(--bg-badge)", color: "var(--text-muted)" }}><span className="text-[14px]">✕</span></button>
@@ -207,7 +207,7 @@ export function AdvanceApproverSettings() {
       <div>
         <h3 className="text-[14px] font-bold" style={{ color: "var(--text-heading)" }}>ผู้อนุมัติบัญชี AP-2</h3>
         <p className="text-[12px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-          ผู้อนุมัติแต่ละระดับ (Head Accounting / ผู้บริหาร / Accounting Officer) · จะใช้ระดับไหนบ้างขึ้นกับ <b>ขั้นตามเงิน</b> · เพิ่มได้จากแผนกบัญชี/IT
+          ผู้อนุมัติแต่ละระดับ (Head Accounting / ผู้บริหาร / Accounting Officer) · จะใช้ระดับไหนบ้างขึ้นกับ <b>ขั้นตามเงิน</b> · เพิ่มได้จากบัญชี · ผู้บริหาร · IT (สำนักงานใหญ่)
         </p>
       </div>
 

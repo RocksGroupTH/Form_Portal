@@ -1,9 +1,25 @@
+import { sql } from "@/lib/db/mssql";
 import { getHrPool } from "@/lib/hr/pool";
 
 /**
- * Eligible AP-2 approvers: active employees whose `DepartmentCode` is ACC or IT.
- * The picker on the settings page draws only from here, so an AP-2 approver can
- * never be someone outside those teams.
+ * The company whose staff may approve AP-2. HR brand 4 is HQ/RPC, the entity
+ * that runs the form; the group's other companies keep their own accountants.
+ * Without this the picker offered KSI's and Meraki's finance staff as approvers
+ * of Rocks Group documents — a different legal entity signing off the money.
+ *
+ * A constant rather than a parameter because the approver list is one set for
+ * the whole form: the settings screen has no brand selector. If AP-2 ever gets
+ * per-brand approvers, this becomes an argument.
+ */
+const AP2_APPROVER_HR_BRAND_ID = 4;
+
+/**
+ * Eligible AP-2 approvers: active HQ employees whose `DepartmentCode` is ACC
+ * (accounting), IT, or BOD (the executive step — "ผู้บริหาร" on the settings
+ * screen, which no accounting-only filter could ever populate: the CFO is
+ * coded BOD, so that whole approval level had nobody to pick).
+ *
+ * Finance (`FN`) is deliberately excluded — decision: user, 2026-09-02.
  *
  * Selected on `Employee.DepartmentCode`, NOT on the joined `Department.Name` —
  * the two disagree in this HR database, and the name is the wrong one. Of the 28
@@ -26,20 +42,23 @@ export interface ApproverCandidate {
 
 export async function listApproverCandidates(): Promise<ApproverCandidate[]> {
   const pool = await getHrPool();
-  const r = await pool.request().query(`
+  const r = await pool.request().input("brand", sql.Int, AP2_APPROVER_HR_BRAND_ID).query(`
     SELECT
       e.StaffId,
       LTRIM(RTRIM(e.Email)) AS Email,
       COALESCE(NULLIF(LTRIM(RTRIM(CONCAT(e.FirstName,' ',e.LastName))), ''), e.FullName) AS FullName,
       -- Labelled from the same field the filter uses. Showing d.Name here would
       -- put "Operations" next to an accountant and read as a different bug.
-      CASE e.DepartmentCode WHEN 'ACC' THEN N'บัญชี' WHEN 'IT' THEN N'IT' ELSE e.DepartmentCode END AS DepartmentName,
+      CASE e.DepartmentCode
+        WHEN 'ACC' THEN N'บัญชี' WHEN 'IT' THEN N'IT' WHEN 'BOD' THEN N'ผู้บริหาร'
+        ELSE e.DepartmentCode END AS DepartmentName,
       e.Position,
       COALESCE(e.PhotoOverrideUrl, e.PhotoUrl) AS PhotoUrl
     FROM dbo.Employee e
     WHERE e.Status = 'Active'
       AND e.Email IS NOT NULL AND LTRIM(RTRIM(e.Email)) <> ''
-      AND e.DepartmentCode IN ('ACC', 'IT')
+      AND e.BrandId = @brand
+      AND e.DepartmentCode IN ('ACC', 'IT', 'BOD')
     ORDER BY e.DepartmentCode, FullName`);
   return (r.recordset as Record<string, unknown>[]).map((x) => ({
     staffId: x.StaffId as number,
