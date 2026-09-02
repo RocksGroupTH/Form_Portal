@@ -543,8 +543,17 @@ export function AdminBookingPanel({
       </div>
 
       <div className="px-5 py-4 flex flex-col gap-4">
-        {/* Trip facts needed to place any booking — saves scrolling down to the request detail. */}
-        <InfoStrip groups={tripInfo(request)} />
+        {/* Trip facts needed to place any booking — saves scrolling down to the
+            request detail. Rendered ONCE, at the top: brand and country belong to
+            the request, not to a booking type, and the other `InfoStrip` on this
+            panel is per type — putting them there would repeat them on every
+            group.
+
+            `brandOption` is the same object the currency toggle already fetched,
+            so naming the brand here costs no extra request. Null until it lands,
+            and permanently null on a failed fetch, which is why `tripInfo` falls
+            back to the bare code rather than waiting for a name. */}
+        <InfoStrip groups={tripInfo(request, brandOption?.brandName)} />
 
         {/* Where the trip actually goes. The strip above lists it as text —
             InfoStrip's InfoItem is { label, value: string } and cannot hold a

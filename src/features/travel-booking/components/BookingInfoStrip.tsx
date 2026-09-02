@@ -1,6 +1,8 @@
 "use client";
 
 import { fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
+import { countryFlag, countryNameBoth } from "@/lib/acc/country-currency";
+import { bookingBrandLabel, bookingCountryCode } from "@/features/travel-booking/lib/booking-context";
 import { DIRECTION_LABEL_TH } from "@/features/travel-booking/constants";
 import type { OptionIconMaps } from "@/features/travel-booking/hooks/useOptionIcons";
 import type { BookingType, TravelBookingRequest } from "@/features/travel-booking/types";
@@ -37,12 +39,37 @@ function daysBetween(from: string | null, to: string | null): number | null {
   return nights != null ? nights + 1 : 1;
 }
 
-/** Trip facts every booking needs, regardless of type. */
-export function tripInfo(req: TravelBookingRequest): InfoGroup[] {
+/**
+ * Trip facts every booking needs, regardless of type.
+ *
+ * **แบรนด์ and ประเทศ lead**, in the order the request form asks them and the
+ * order the detail page lists them. They are what the desk states to a supplier
+ * before anything else: which company the booking is billed to, and where it is
+ * going. The panel had neither, though it held both codes all along — one to
+ * decide the currency toggle and one to tell the AI read which currencies a
+ * document may be in.
+ *
+ * `brandName` is optional because the panel learns it asynchronously: the codes
+ * are on the request, the names are in the brand registry, and the fetch that
+ * carries them can fail permanently (see `brandOption` in `AdminBookingPanel`).
+ * Absent, the row reads the bare code — which is what the detail page shows
+ * anyway — so this never renders blank and never waits.
+ */
+export function tripInfo(req: TravelBookingRequest, brandName?: string | null): InfoGroup[] {
   const days = daysBetween(req.departDate, req.returnDate);
+  const country = bookingCountryCode(req.countryCode);
   return [
     {
       items: [
+        { label: "แบรนด์", value: bookingBrandLabel(req.brandCode, brandName) },
+        {
+          label: "ประเทศ",
+          // The emoji flag, not the SVG the detail page uses: `InfoItem.icon` is
+          // a string, and `countryFlag` is arithmetic on the two letters rather
+          // than an asset, so it needs no change to this component's shape.
+          icon: countryFlag(country),
+          value: countryNameBoth(country) ?? country,
+        },
         {
           label: "วันเดินทาง",
           value: fmtRange(req.departDate, req.returnDate) + (days ? ` (${days} วัน)` : ""),
