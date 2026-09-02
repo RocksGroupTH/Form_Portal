@@ -121,9 +121,10 @@ test("no Status = 'Completed' amount freeze is invented in the admin panel or it
 
 /**
  * Correction 3, at both ends. `currency` is admitted; anything rate-shaped is
- * not. The service re-derives the currency from the request's stored
- * destination regardless, so the posted value can only ever opt IN to that
- * destination's currency — everything else lands back on baht.
+ * not. The service re-derives the currency from the request's own stored
+ * `BrandCode` and `CountryCode` regardless, so the posted value can only ever
+ * opt IN to a currency one of those two already implies — everything else lands
+ * back on baht.
  */
 test("the booking save accepts a currency and no rate, at the route and at the service", () => {
   const routeSrc = code(BOOKING_ROUTE);
@@ -159,4 +160,71 @@ test("assertConvertible refuses rather than falling back", () => {
   assert.ok(/toBaht\(/.test(body), "it must actually attempt the conversion");
   assert.ok(/=== null\) throw/.test(body), "a null conversion must throw");
   assert.equal(/\?\?/.test(body), false, "it must never substitute a value for the refusal");
+});
+
+/**
+ * **The three places that decide what a booking may be recorded in must ask the
+ * same question of the same two inputs**, and this arm exists because they did
+ * not for one commit on 2026-09-02.
+ *
+ * The panel offers a set, the AI-read route asks the model to answer from a set,
+ * and `resolveBookingFx` accepts a set. When the panel moved from the brand to
+ * the destination and the route was left on the brand, a PCTH trip to London
+ * offered the desk GBP while the route asked the baht-only question — so a GBP
+ * invoice came back reported as baht and its figures were recorded as baht. No
+ * type caught it: both sides compiled, and both were individually correct.
+ *
+ * What makes that unrepeatable is that all three build from `brandCode` AND
+ * `countryCode` through `bookingCurrencyOptions`. Narrowing any one of them to a
+ * single input is what this refuses.
+ */
+const READ_CLIENT = "features/travel-booking/lib/read-booking-fields.ts";
+const FIELDS_ROUTE = "app/api/request/travel-booking/booking-fields/route.ts";
+
+test("the panel, the AI read and the save all derive the currency from brand AND country", () => {
+  for (const [file, what] of [
+    [PANEL, "the panel's toggle"],
+    [FIELDS_ROUTE, "the AI read's candidate list"],
+    [ADMIN_SERVICE, "the save's accepted set"],
+  ] as [string, string][]) {
+    const src = code(file);
+    assert.ok(
+      /bookingCurrencyOptions\s*\(|effectiveBookingCurrency\s*\(/.test(src),
+      `${what} must come from booking-currency.ts, not a hand-built list (${file})`,
+    );
+    assert.ok(/brandCode/.test(src), `${what} must consider the brand (${file})`);
+    assert.ok(/countryCode/.test(src), `${what} must consider the destination (${file})`);
+  }
+});
+
+/**
+ * Both codes have to actually travel from the desk to the route, or the read
+ * narrows and the model is asked the wrong question.
+ *
+ * The client half matches the **`params.set` call**, not a mention of the name.
+ * A first draft of this searched for the bare string and passed with the send
+ * deleted — `read-booking-fields.ts` names `brandCode` in its options interface
+ * and again reading that option, so a mention proves nothing. Verified by
+ * removing each `params.set` line and watching this fail.
+ */
+test("the AI read sends both codes, and the route reads both", () => {
+  const client = code(READ_CLIENT);
+  assert.ok(
+    /params\.set\(\s*["']brandCode["']/.test(client),
+    "the read client must send ?brandCode=",
+  );
+  assert.ok(
+    /params\.set\(\s*["']countryCode["']/.test(client),
+    "the read client must send ?countryCode=",
+  );
+
+  const route = code(FIELDS_ROUTE);
+  assert.ok(
+    /searchParams\.get\(\s*["']brandCode["']\s*\)/.test(route),
+    "the route must read ?brandCode=",
+  );
+  assert.ok(
+    /searchParams\.get\(\s*["']countryCode["']\s*\)/.test(route),
+    "the route must read ?countryCode=",
+  );
 });

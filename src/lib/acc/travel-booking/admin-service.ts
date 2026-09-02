@@ -298,34 +298,60 @@ interface BookingFx {
 const BAHT_FX: BookingFx = { currency: null, rate: null, asOf: null, source: null };
 
 /**
- * The request's currency, derived from **where the trip goes**, with today's
- * rate fetched for it.
- *
- * **No database read and no network call to decide the currency.** Until
- * 2026-09-02 this loaded the whole brand registry through `listBrandRegistry()`
- * — a second pool, on `getProductionFormPool()`, because `BrandCurrency` has no
- * row in `Rocks_Portal_Form_UAT` — on every single booking save. The country is
- * already on the `AccRequest` row this function's caller reads anyway, and
- * `currencyForCountry` is a lookup over a frozen 25-entry list, so the registry
- * read is simply gone.
+ * The request's currency — the union of its **brand's** configured currencies
+ * and its **destination's** — with today's rate fetched for it.
  *
  * **`posted` is the desk's opt-in, not merely an opt-out.** Absent means baht,
  * so a client that posts nothing records exactly what an unconfigured request
- * always recorded. Only this destination's own currency moves it off baht, and
- * nothing can widen that: a code from another country resolves back to THB.
- * That is the reverse of the rule this held until 2026-09-02 — see
- * `effectiveBookingCurrency` for why the reversal was right.
+ * always recorded. Only a currency on one of the two arms moves it off baht,
+ * and nothing can widen that: anything else resolves back to THB.
  *
- * Called **outside** the transaction, deliberately: it still reaches the
- * network for the rate, and holding the `AccRequest` row lock across an
- * 8-second FX timeout is how a booking save turns into a deadlock against
+ * **Re-derived here from the row, never trusted from the client.** The panel
+ * builds the same list from the same two codes, but a posted currency is a
+ * claim about what a request may hold and this is the only place that decides
+ * it. Both call one function, `effectiveBookingCurrency`, so the offer and the
+ * acceptance cannot be two rules that drift apart.
+ *
+ * ── The registry read, and when it is skipped ──
+ *
+ * `listBrandRegistry()` opens `getProductionFormPool()` — `BrandCurrency` has
+ * no row in `Rocks_Portal_Form_UAT`, so a `getAccPool()` read of it throws
+ * `Invalid object name` for every UAT tester and for nobody else. This file
+ * must therefore never name that table itself; `currency-pool-guard.test.ts`
+ * enforces exactly that, per file, and this one imports `getAccPool` on line 1.
+ *
+ * An explicit `THB` skips the read entirely: `effectiveBookingCurrency` answers
+ * baht for it whatever either arm says, so the registry could not change the
+ * outcome. Since baht is now the **default** rather than the opt-out, that
+ * short-circuit covers the ordinary case rather than the unusual one — the desk
+ * posts `THB` unless it deliberately picks otherwise, so almost no booking save
+ * opens the second pool at all. The test is on the string rather than
+ * `isBaht`, which would also swallow an ABSENT currency; absent means "derive
+ * it", and deriving is what the rest of this function does.
+ *
+ * Called **outside** the transaction, deliberately: it reaches two databases
+ * and the network, and holding the `AccRequest` row lock across an 8-second FX
+ * timeout is how a booking save turns into a deadlock against
  * `completeRequest`.
  */
 async function resolveBookingFx(
-  countryCode: string | null,
+  scope: BookingScope,
   posted: string | null | undefined,
 ): Promise<BookingFx> {
-  const currency = effectiveBookingCurrency(posted, countryCode);
+  if ((posted ?? "").trim().toUpperCase() === THB) return BAHT_FX;
+
+  let brand: { currencies: BrandCurrencyEntry[] } | null = null;
+  if (scope.brandCode) {
+    const brands = await listBrandRegistry();
+    for (const b of brands) {
+      if (b.code === scope.brandCode) {
+        brand = { currencies: b.currencies };
+        break;
+      }
+    }
+  }
+
+  const currency = effectiveBookingCurrency(posted, brand, scope.countryCode);
   if (!needsRate(currency)) return BAHT_FX;
 
   const fx = await resolveRate(currency);
@@ -362,21 +388,33 @@ function assertConvertible(fx: BookingFx, amounts: (number | null)[]): void {
   }
 }
 
+/** The two codes that between them decide what a booking may be recorded in. */
+interface BookingScope {
+  brandCode: string | null;
+  countryCode: string | null;
+}
+
 /**
- * Where this request is going, read before the transaction opens so the FX
- * lookup can happen outside it.
+ * Whose books this request is on and where it goes, read before the transaction
+ * opens so the FX lookup can happen outside it.
  *
- * Deliberately not taken from the client: the currency is derived from the
- * destination, so a posted country code would let a caller pick the currency
- * after all — the same reason this read the brand from here before 2026-09-02.
+ * **One query, because both codes are columns of the same row.** Reading them
+ * separately would be two round trips for one fact, and worse, could see the two
+ * halves of a request that changed in between.
+ *
+ * Deliberately not taken from the client: the currency is derived from these
+ * two, so posting either would let a caller pick the currency after all.
  */
-async function loadCountryCode(pool: AccPool, requestId: number): Promise<string | null> {
+async function loadBookingScope(pool: AccPool, requestId: number): Promise<BookingScope> {
   const res = await pool.request()
     .input("rid", sql.Int, requestId)
     .input("form", sql.NVarChar, AP17_FORM_CODE)
-    .query(`SELECT CountryCode FROM [dbo].[AccRequest] WHERE Id=@rid AND FormCode=@form`);
-  const row = res.recordset[0] as { CountryCode: string | null } | undefined;
-  return (row?.CountryCode ?? null) || null;
+    .query(`SELECT BrandCode, CountryCode FROM [dbo].[AccRequest] WHERE Id=@rid AND FormCode=@form`);
+  const row = res.recordset[0] as { BrandCode: string | null; CountryCode: string | null } | undefined;
+  return {
+    brandCode: ((row?.BrandCode ?? "").trim().toUpperCase()) || null,
+    countryCode: ((row?.CountryCode ?? "").trim().toUpperCase()) || null,
+  };
 }
 
 /* ─────────────────────────── booking fill-in ─────────────────────────── */
@@ -513,7 +551,7 @@ export async function saveBookingDetail(
   // Both before the transaction: this reads the production form pool and, for a
   // foreign request, the FX provider. A brand with no currency configured makes
   // no FX call at all and writes NULL into both columns, exactly as before.
-  const fx = await resolveBookingFx(await loadCountryCode(pool, requestId), input.currency ?? null);
+  const fx = await resolveBookingFx(await loadBookingScope(pool, requestId), input.currency ?? null);
   const amounts = [
     sanitizeBookingAmount(input.priceExVat),
     sanitizeBookingAmount(input.vatAmount),

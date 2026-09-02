@@ -18,24 +18,40 @@
  * "what did the requester pick" but "what is this invoice denominated in", and
  * the two are answered differently.
  *
- * ── The currency follows the DESTINATION, and defaults to baht ──
+ * ── The currency follows the BRAND *and* the DESTINATION, defaulting to baht ──
  *
- * Until 2026-09-02 it followed the request's **brand** and defaulted to that
- * brand's own currency. Both were wrong, and for one reason: a brand is a set
- * of books, not a place. KSI carries GBP, so a KSI desk booking a Bangkok hotel
- * was offered GBP first and had to correct it on every domestic trip; and a
- * PCTH trip to London was offered no foreign currency at all, because PCTH
- * carries only THB. The destination answers both cases correctly with no
- * configuration at all.
+ * Each source alone has been the whole answer at some point, and each was wrong:
+ *
+ * - **The brand alone**, until 2026-09-02, and it defaulted to the brand's own
+ *   currency. KSI carries GBP, so a KSI desk booking a Bangkok hotel was offered
+ *   GBP already selected and had to correct it on every domestic trip.
+ * - **The destination alone**, for one commit on 2026-09-02. That fixed the
+ *   default and broke the offer: a KSI trip to Bangkok was given no foreign
+ *   option at all, and a KSI trip is commonly booked and billed through a UK
+ *   account in pounds whatever the destination — leaving the desk unable to
+ *   record the invoice actually in front of it.
+ *
+ * So the toggle is the **union** of the two. It is safe rather than merely
+ * broad, and this is the reason: `AccRequest.CountryCode` is written through
+ * `resolveBookingCountry` → `effectiveClaimCountry`, which admits only a country
+ * in `claimCountryOptions(brand)` — a list itself derived from the brand's own
+ * enabled currencies. For every country a request can actually hold, the
+ * destination's currency is therefore **already one of the brand's**, so the
+ * union cannot record a booking in money the company does not deal in. A test
+ * asserts exactly that, so it fails rather than drifts if the bound is loosened.
+ *
+ * The destination arm still earns its place: it answers for a brand with no
+ * currencies configured at all, and it is what the desk reads as the obvious
+ * candidate for an invoice raised where the trip went.
  *
  * **Baht is the default, and it leads the toggle.** Almost every invoice this
  * desk handles is in baht — including on foreign trips booked through a Thai
- * agent — so baht is right by default and the foreign option is the exception.
+ * agent — so baht is right by default and a foreign option is the exception.
  * It is also the only answer that needs no rate, which is why every refusal
  * below lands there.
  */
 
-import { THB } from "@/lib/acc/currency";
+import { enabledForeignCurrencies, THB, type BrandCurrencyEntry } from "@/lib/acc/currency";
 import { currencyForCountry } from "@/lib/acc/country-currency";
 import { currencyWord, referenceRateNote } from "@/lib/acc/currency-display";
 
@@ -43,54 +59,76 @@ function norm(code: string | null | undefined): string {
   return (code ?? "").trim().toUpperCase();
 }
 
+/** The shape both halves read a brand as — `RegistryBrand` and `AccBrandOption` both satisfy it. */
+export interface BookingCurrencyBrand {
+  currencies: readonly BrandCurrencyEntry[] | null | undefined;
+}
+
 /**
- * The currencies this request's booking figures may be recorded in, in the
- * order the desk's toggle offers them: **baht first**, the destination's
- * currency second.
- *
- * An empty array means **render nothing**, and that is the domestic case — a
- * Thai trip has one possible currency, and a one-option toggle would be a
- * control that cannot be operated. It is also what an **unset** country gives,
- * which is not an edge case: `AccRequest.CountryCode` only arrived on
- * 2026-08-31, and five of the six AP-17 requests that exist have never had one.
- * Those keep the panel exactly as it looked before any of this shipped.
+ * The currencies this request's booking figures may be recorded in, in the order
+ * the desk's toggle offers them: **baht first**, then the destination's own
+ * currency, then the brand's remaining ones.
  *
  * Baht leads because baht is the default, not merely an option — see
- * `effectiveBookingCurrency`. The order here and the fallback there are the
- * same decision written twice, so the tests assert them against each other.
+ * `effectiveBookingCurrency`. The destination's comes next among the foreign
+ * ones because it is the likeliest answer for an invoice raised where the trip
+ * went; the brand's others follow in the order an admin configured them.
+ * Nothing is listed twice, which is the common case rather than an edge one —
+ * a KSI trip to Britain has both arms saying GBP.
  *
- * **No brand is consulted, and that is the point.** The old version read the
- * brand's `BrandCurrency` rows, which meant a KSI desk was offered GBP on a
- * Bangkok hotel and a PCTH desk was offered nothing at all on a London one. A
- * destination needs no configuration to answer both correctly.
+ * An empty array means **render no toggle at all**, and it must keep meaning
+ * that: a baht-only brand on a Thai trip leaves the booking card exactly as it
+ * looked before any of this shipped, booking-number field full width. A brand
+ * with nothing configured travelling nowhere in particular is the same answer,
+ * and that is not an edge case either — `CountryCode` only arrived on
+ * 2026-08-31, and most AP-17 requests that exist have never had one.
+ *
+ * Only the brand's **enabled** rows count, through `enabledForeignCurrencies`,
+ * which also drops a `THB` row so baht cannot be listed a second time. Note that
+ * baht is offered even to a brand that has switched Thailand off (migration
+ * 131): that row answers "may a claim be *filed from* Thailand", where this
+ * toggle answers "is the invoice on this desk denominated in baht" — a fact
+ * about a document rather than a permission, and one that must stay recordable.
  */
-export function bookingCurrencyOptions(country: string | null | undefined): string[] {
-  const currency = currencyForCountry(country);
-  if (currency === null || currency === THB) return [];
-  return [THB, currency];
+export function bookingCurrencyOptions(
+  brand: BookingCurrencyBrand | null | undefined,
+  country: string | null | undefined,
+): string[] {
+  const out: string[] = [];
+  const destination = currencyForCountry(country);
+  if (destination !== null && destination !== THB) out.push(destination);
+  const fromBrand = enabledForeignCurrencies(brand?.currencies);
+  for (let i = 0; i < fromBrand.length; i++) {
+    if (out.indexOf(fromBrand[i]) === -1) out.push(fromBrand[i]);
+  }
+  // Baht is prepended rather than appended, and only where there is something
+  // to choose between: a lone THB pill is a control that cannot be operated.
+  if (out.length === 0) return [];
+  return [THB].concat(out);
 }
 
 /**
  * The currency a request's booking figures are actually recorded in.
  *
  * **Absent means baht** — the opposite of what this answered until 2026-09-02,
- * and the opposite of AP-17's original design, which derived it from the brand.
- * The booking desk types figures off an invoice weeks after the request was
- * filed, and almost every one of those invoices is in baht, foreign trips
- * included: they are commonly booked through a Thai agent who bills in baht.
+ * when it derived the answer from the brand. The booking desk types figures off
+ * an invoice weeks after the request was filed, and almost every one of those
+ * invoices is in baht, foreign trips included: they are commonly booked through
+ * a Thai agent who bills in baht.
  *
- * Anything that is not this destination's currency — a code from another
- * country, a typo, a stale page, a forged body — resolves to baht rather than
- * being accepted or throwing. Two properties follow, and both matter: a request
- * can never be recorded in a currency its destination does not use, and every
- * refusal lands on the one answer that needs no exchange rate, so an FX outage
- * can never turn a bad input into a save that cannot succeed.
+ * Anything on neither arm — a code from another country, a currency the brand
+ * does not carry, a typo, a stale page, a forged body — resolves to baht rather
+ * than being accepted or throwing. Two properties follow, and both matter: a
+ * request can never be recorded in money neither its books nor its destination
+ * use, and every refusal lands on the one answer that needs no exchange rate, so
+ * an FX outage can never turn a bad input into a save that cannot succeed.
  */
 export function effectiveBookingCurrency(
   selected: string | null | undefined,
+  brand: BookingCurrencyBrand | null | undefined,
   country: string | null | undefined,
 ): string {
-  const options = bookingCurrencyOptions(country);
+  const options = bookingCurrencyOptions(brand, country);
   const want = norm(selected);
   if (want === THB || options.indexOf(want) === -1) return THB;
   return want;
@@ -118,7 +156,10 @@ export function bookingCurrencyWord(currency: string | null | undefined): string
  *
  * Kept to one short line because the toggle sits on every booking row of the
  * request — the control is per row, the value is per request, and saying so is
- * the whole job of this sentence.
+ * the whole job of this sentence. It deliberately does NOT explain where the
+ * options came from: the desk's question is which currency this invoice is in,
+ * and naming the brand and the country would answer a question nobody on this
+ * screen is asking.
  */
 export const BOOKING_CURRENCY_NOTE =
   "สกุลเงินนี้ใช้กับทุกรายการจองในคำขอนี้ และบันทึกเมื่อกด “บันทึกข้อมูลการจอง”";

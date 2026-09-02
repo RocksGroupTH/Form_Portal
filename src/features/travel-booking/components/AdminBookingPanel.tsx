@@ -66,7 +66,7 @@ import type {
   TravelBookingFileMeta,
   TravelBookingRequest,
 } from "@/features/travel-booking/types";
-import { countryName } from "@/lib/acc/country-currency";
+import type { AccBrandOption } from "@/features/accounting/types";
 
 const TYPE_ICON: Record<BookingType, ReactNode> = {
   room: <BedDouble size={15} />,
@@ -209,35 +209,67 @@ export function AdminBookingPanel({
 
   /* ── The request's currency ──
    *
-   * **Follows where the trip goes, and defaults to baht.** AP-17's fill-in form
-   * carries no money field at all: the amounts are typed here, weeks later, by
-   * the booking desk reading an invoice. So the toggle offers baht and the
-   * destination's currency, starting on baht — almost every invoice that reaches
-   * this desk is in baht, foreign trips included, because they are commonly
-   * booked through a Thai agent. `booking-currency.ts` owns the rule.
+   * **The brand's currencies AND the destination's, starting on baht.** AP-17's
+   * fill-in form carries no money field at all: the amounts are typed here, weeks
+   * later, by a booking desk reading an invoice. So the toggle offers everything
+   * that invoice could plausibly be in — the company's own books and the place
+   * the trip went — and starts on baht, which almost all of them are, foreign
+   * trips included, because they are commonly booked through a Thai agent.
+   * `booking-currency.ts` owns the rule and says why each arm alone was wrong.
    *
-   * A domestic trip — and a request filed before `CountryCode` existed — yields
-   * an empty option list, and then nothing here renders and nothing below
-   * changes: `currency` is `THB`, every `unit` is null, and the panel is the one
-   * that shipped before any of this.
+   * A baht-only brand on a Thai trip yields an empty option list, and then
+   * nothing here renders and nothing below changes: `currency` is `THB`, every
+   * `unit` is null, and the panel is the one that shipped before any of this.
    *
-   * **It is synchronous, and there is no third state.** Until 2026-09-02 the
-   * options came from the brand's `BrandCurrency` rows, which had to be fetched;
-   * that fetch carried an `undefined` "brand not identified yet" state whose
-   * whole job was to stop the panel posting `THB` over a ringgit invoice while
-   * it was in flight. The country arrives in props, so the window that hazard
-   * lived in no longer exists.
+   * ── The brand is fetched; the destination is not ──
+   *
+   * `request.countryCode` is in props, but the brand's `BrandCurrency` rows are
+   * not: they live in `Rocks_Portal_Form` only and reaching them costs two pools
+   * and three queries (`listBrandRegistry`). Computing the list server-side in
+   * `getTravelBookingRequest` would put that cost on **every** AP-17 detail view,
+   * including the requester's own, where this panel never renders — so the fetch
+   * stays here, on the one screen that needs it.
+   *
+   * **`null` while it is in flight, and that is now harmless.** Before 2026-09-02
+   * an unidentified brand had to be a distinct third state, because the default
+   * was the brand's own currency and posting `THB` in that window would have
+   * silently recorded a foreign invoice as baht. The default is baht now, so the
+   * window's behaviour IS the intended answer; all that happens is the toggle
+   * briefly offers the destination arm alone and then grows. Strictly additive,
+   * never wrong — and `resolveBookingFx` re-derives the whole union from the row
+   * regardless, so what the panel posts is a request, not a decision.
    */
   const countryCode = request.countryCode;
-  const currencyOptions = useMemo(() => bookingCurrencyOptions(countryCode), [countryCode]);
+  const brandCode = request.brandCode;
+  const [brandOption, setBrandOption] = useState<AccBrandOption | null>(null);
+  useEffect(() => {
+    if (!brandCode) return;
+    // A local `cancelled` inside the effect, fresh per run — not a ref set on
+    // mount, which StrictMode's mount → cleanup → mount would leave false for
+    // the component's life (see `aliveRef` below for where that bit).
+    let cancelled = false;
+    fetch("/api/request/travel-booking/options/brands")
+      .then((r) => r.json())
+      .then((j: { ok?: boolean; data?: AccBrandOption[] }) => {
+        if (cancelled || !j?.ok || !Array.isArray(j.data)) return;
+        setBrandOption(j.data.filter((b) => b.brandCode === brandCode)[0] ?? null);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [brandCode]);
+
+  const currencyOptions = useMemo(
+    () => bookingCurrencyOptions(brandOption, countryCode),
+    [brandOption, countryCode],
+  );
   /** What the header already records, normalised. `""` means nobody has yet. */
   const storedCurrency = (request.currency ?? "").trim().toUpperCase();
   const [pickedCurrency, setPickedCurrency] = useState<string | null>(null);
-  /* Reconciled against the destination rather than used raw, so a stale page —
-     or a request whose country has since been corrected — can never leave the
+  /* Reconciled against both arms rather than used raw, so a stale page — or a
+     request whose country or brand grant has since changed — can never leave the
      desk posting a code the server will not accept. Every refusal lands on THB,
      which `resolveBookingFx` short-circuits without opening a pool. */
-  const currency = effectiveBookingCurrency(pickedCurrency ?? storedCurrency, countryCode);
+  const currency = effectiveBookingCurrency(pickedCurrency ?? storedCurrency, brandOption, countryCode);
   const currencyUnit = currency !== THB ? currency : null;
   /* The rate the SERVER recorded, and only while it still belongs to the
      currency now on screen. A bare number goes wrong the moment the toggle
@@ -439,6 +471,7 @@ export function AdminBookingPanel({
               rows={rowsByType.get(rule.type) ?? []}
               currency={currency}
               currencyOptions={currencyOptions}
+              brandCode={brandCode}
               countryCode={countryCode}
               exchangeRate={exchangeRate}
               exchangeRateAsOf={exchangeRateAsOf}
@@ -642,6 +675,7 @@ function BookingTypeGroup({
   rows,
   currency,
   currencyOptions,
+  brandCode,
   countryCode,
   exchangeRate,
   exchangeRateAsOf,
@@ -662,6 +696,8 @@ function BookingTypeGroup({
   currency: string | null;
   /** Empty for a brand with no currency configured, which renders nothing new. */
   currencyOptions: string[];
+  /** The company the request is filed under — half of what decides the currency toggle. */
+  brandCode: string | null;
   /** The trip.s destination, which decides the currency toggle. Null before `CountryCode` existed. */
   countryCode: string | null;
   /** The rate the server recorded, or null. Display only. */
@@ -771,6 +807,7 @@ function BookingTypeGroup({
             total={total}
             currency={currency}
             currencyOptions={currencyOptions}
+            brandCode={brandCode}
             countryCode={countryCode}
             exchangeRate={exchangeRate}
             exchangeRateAsOf={exchangeRateAsOf}
@@ -794,6 +831,7 @@ function BookingTypeGroup({
             total={total}
             currency={currency}
             currencyOptions={currencyOptions}
+            brandCode={brandCode}
             countryCode={countryCode}
             exchangeRate={exchangeRate}
             exchangeRateAsOf={exchangeRateAsOf}
@@ -839,6 +877,7 @@ function BookingRowCard({
   total,
   currency,
   currencyOptions,
+  brandCode,
   countryCode,
   exchangeRate,
   exchangeRateAsOf,
@@ -872,6 +911,8 @@ function BookingRowCard({
   /** Empty for a domestic or country-less trip: the toggle is not rendered. */
   currencyOptions: string[];
   /** Named in the currency caption — where the value came from, not a control. */
+  /** The company the request is filed under — half of what decides the currency toggle. */
+  brandCode: string | null;
   /** The trip.s destination, which decides the currency toggle. Null before `CountryCode` existed. */
   countryCode: string | null;
   exchangeRate: number | null;
@@ -1029,12 +1070,12 @@ function BookingRowCard({
     readingRef.current = true;
     setReadNote("reading");
     try {
-      // `countryCode` is what lets the route ask which currency the document is
-      // in at all; `currency` is what decides whether the answer belongs in
-      // these fields. Both come from the same country, through the same
+      // The two codes are what let the route ask which currency the document is
+      // in at all; `currency` is what decides whether the answer belongs in these
+      // fields. Both sides build their set from the same pair through the same
       // `bookingCurrencyOptions`, so the set the model may answer from and the
       // set these fields accept cannot disagree.
-      const read = await readBookingFields(file, { countryCode, claimCurrency: currency });
+      const read = await readBookingFields(file, { brandCode, countryCode, claimCurrency: currency });
       if (!aliveRef.current) return;
       if (read.failure) {
         // The reason is carried through so the note names the right remedy: a
@@ -1396,7 +1437,13 @@ function BookingRowCard({
           clears. One sweep, not five — AP-1 overlays a single field because it has one. */}
       <div className="relative">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className="col-span-2 sm:col-span-4">
+          {/* Three quarters wide when the currency toggle sits beside it, the
+              whole row when there is no toggle. Conditional rather than always
+              3/4: a baht-only brand on a Thai trip must keep the full-width
+              field it has always had, not a field with an empty quarter next to
+              it. On mobile both are `col-span-2` of two columns, so they stack
+              and the toggle lands under the number rather than beside it. */}
+          <div className={currencyOptions.length > 0 ? "col-span-2 sm:col-span-3" : "col-span-2 sm:col-span-4"}>
             <FieldCaption>เลขที่การจอง / Booking No.</FieldCaption>
             <input
               type="text"
@@ -1409,19 +1456,22 @@ function BookingRowCard({
               placeholder="เช่น AGD-123456"
             />
           </div>
-          {/* สกุลเงิน — rendered ONLY for a brand whose currency an admin has
-              configured AND switched on (`currencyOptions` is empty otherwise).
-              A brand with nothing set leaves this panel exactly as it looked
-              before the feature shipped, which is why there is no disabled
-              one-option control here and no placeholder.
+          {/* สกุลเงิน, beside the booking number — the two facts the desk reads
+              off the top of an invoice, in the order it reads them.
+
+              Rendered ONLY where there is something to choose between:
+              `currencyOptions` is empty for a baht-only brand on a Thai trip, and
+              that card then looks exactly as it did before the feature shipped —
+              full-width number field, no disabled one-option control, no
+              placeholder.
 
               The value is the REQUEST's, not this row's: it lives on
               `AccRequest` and every booking row of the request shares it, which
-              is what the note under the toggle says out loud. It is not chosen
-              by the requester at any point — AP-17's fill-in form has no money
-              field — so what the desk gets is baht, already selected, and the
-              destination's own currency as the deliberate opt-in for an invoice
-              that really is foreign.
+              is what the note below the row says out loud. It is not chosen by
+              the requester at any point — AP-17's fill-in form has no money field
+              — so what the desk gets is baht, already selected, and the brand's
+              or the destination's currency as the deliberate opt-in for an
+              invoice that really is foreign.
 
               `disabled={locked}` shares the fields' rule rather than inventing
               one — and it earns its keep during a read: `locked` is true while
@@ -1431,11 +1481,11 @@ function BookingRowCard({
               ManagerApproved/ADMIN, so all of this is already unreachable once
               accounting has signed off. */}
           {currencyOptions.length > 0 && (
-            <div className="col-span-2 sm:col-span-4">
-              <FieldCaption>
-                สกุลเงิน{countryName(countryCode) ? ` (ปลายทาง ${countryName(countryCode)})` : ""}
-              </FieldCaption>
-              <div className="flex flex-wrap items-center gap-2">
+            <div className="col-span-2 sm:col-span-1">
+              <FieldCaption>สกุลเงิน</FieldCaption>
+              {/* `min-h` matches the input beside it so the pills sit on the same
+                  baseline as the number field rather than riding above it. */}
+              <div className="flex flex-wrap items-center gap-1.5 min-h-[38px]">
                 {currencyOptions.map((code) => {
                   const active = currency === code;
                   return (
@@ -1457,13 +1507,22 @@ function BookingRowCard({
                     </button>
                   );
                 })}
-                {exchangeRate !== null && currencyUnit && (
-                  <span className="text-[11.5px] tabular-nums" style={{ color: "var(--text-muted)" }}>
-                    {referenceRateNote(currencyUnit, exchangeRate, exchangeRateAsOf)}
-                  </span>
-                )}
               </div>
-              <p className="m-0 mt-1.5 text-[11.5px]" style={{ color: "var(--text-muted)" }}>
+            </div>
+          )}
+
+          {/* The rate and the note moved out of the toggle when it moved beside
+              the number: a quarter-width column cannot hold a sentence. They span
+              the row instead, directly under both, which is also where a reader
+              looks for a caption about the field above. */}
+          {currencyOptions.length > 0 && (
+            <div className="col-span-2 sm:col-span-4 -mt-1">
+              {exchangeRate !== null && currencyUnit && (
+                <p className="m-0 text-[11.5px] tabular-nums" style={{ color: "var(--text-muted)" }}>
+                  {referenceRateNote(currencyUnit, exchangeRate, exchangeRateAsOf)}
+                </p>
+              )}
+              <p className="m-0 mt-0.5 text-[11.5px]" style={{ color: "var(--text-muted)" }}>
                 {BOOKING_CURRENCY_NOTE}
               </p>
             </div>

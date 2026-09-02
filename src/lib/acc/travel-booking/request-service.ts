@@ -99,10 +99,16 @@ function mapTravelBookingRow(
     // rather than as a country nobody chose.
     countryCode: ((r.CountryCode as string | null) ?? "").trim().toUpperCase() || null,
     // The currency the booking figures are recorded in, and the rate the desk's
-    // last save recorded for it. Written by `admin-service.saveBookingDetail`
-    // and read here only to be displayed — AP-17 stores no converted figure, so
-    // nothing downstream multiplies these into a column. `AccRequest.TotalAmount`
-    // is the per-diem total and stays baht whatever these say.
+    // last save recorded for it. Written by `admin-service.saveBookingDetail`.
+    //
+    // AP-17 DOES store a converted figure since migration 136 —
+    // `AccTravelBookingDetail.TotalAmountBaht`, kept in step by
+    // `recomputeBookingBaht` — so a reader wanting baht reads that column rather
+    // than multiplying by the rate here. These two are for display and for
+    // captioning that column, not for deriving it.
+    //
+    // `AccRequest.TotalAmount` is untouched by any of it: for AP-17 it is the
+    // per-diem total and stays baht whatever these say.
     currency: ((r.Currency as string | null) ?? "").trim() || null,
     exchangeRate: num(r.ExchangeRate),
     // Migration 130 — which day's rate that is, and who published it. NULL on a

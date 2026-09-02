@@ -8,6 +8,7 @@ import { admitModelCurrency, isBaht, THB } from "@/lib/acc/currency";
 import { admitReadAmount } from "@/lib/acc/vision-amount";
 import { resolveRate } from "@/lib/acc/fx";
 import { bookingCurrencyOptions } from "@/features/travel-booking/lib/booking-currency";
+import { getBrandClaimCurrencies } from "@/lib/brand-registry";
 import { pdfPagesToPng } from "@/lib/pdf-to-image";
 import { MAX_PDF_PAGES, sheetToText } from "@/lib/acc/sheet-text";
 import {
@@ -48,36 +49,38 @@ import {
  * Nothing is stored. The file is uploaded to SharePoint separately, by the
  * attachment route, exactly as before.
  *
- * ── The currency, and why the country code is a query parameter ──
+ * ── The currency, and why the brand and country codes are query parameters ──
  *
  * All four money fields used to be asserted to be Thai baht in both the prompt
  * and the schema, so a foreign invoice yielded bare numbers that AP-17 recorded
- * and totalled as baht. The currency is now asked for — but only where the trip
- * actually goes somewhere that could produce one.
+ * and totalled as baht. The currency is now asked for — but only from the set
+ * this request could actually record.
  *
- * **The candidates come from the destination, and they must be the same
- * candidates the panel can record.** `?countryCode=` runs through the very
- * function the toggle uses, `bookingCurrencyOptions`, so the set the model is
- * allowed to answer from and the set `effectiveBookingCurrency` will accept on
- * save are one list by construction rather than two that agree today. They were
- * two until 2026-09-02, when the panel moved to the destination and this was
- * left on the brand: a PCTH trip to London then offered the desk GBP while this
- * route — PCTH carrying only baht — asked the baht-only question, so a GBP
- * invoice came back reported as baht and its figures were recorded as baht.
+ * **The candidates must be the same candidates the panel offers.** `?brandCode=`
+ * and `?countryCode=` run through the very function the toggle uses,
+ * `bookingCurrencyOptions`, so the set the model may answer from and the set
+ * `effectiveBookingCurrency` accepts on save are one list by construction rather
+ * than two that happen to agree. Keeping them apart has already cost once: for
+ * one commit on 2026-09-02 the panel offered the destination's currency while
+ * this route still asked the brand's question, so a PCTH trip to London offered
+ * the desk GBP while the route — PCTH carrying only baht — asked the baht-only
+ * question, and a GBP invoice came back reported as baht.
  *
  * A currency posted by the caller would let somebody shape their own request
- * into having one accepted; a country code cannot, because the answer is
- * re-derived from the stored `AccRequest.CountryCode` when the row is saved
- * (`resolveBookingFx`). The worst a forged one does is offer the model a
- * currency the save then refuses back to baht.
+ * into having one accepted. These two codes cannot, because the answer is
+ * re-derived from the stored `AccRequest.BrandCode` and `.CountryCode` when the
+ * row is saved (`resolveBookingFx`). The worst a forged pair does is offer the
+ * model a currency the save then refuses back to baht.
  *
- * **This route reads no database at all.** It did until 2026-09-02, through
+ * **The brand arm costs a database read; the destination arm does not.**
  * `getBrandClaimCurrencies` → `listBrandRegistry` → `getProductionFormPool()`,
- * on every attachment. `currencyForCountry` is a lookup over a frozen 25-entry
- * list, so that read is simply gone.
+ * because `BrandCurrency` has no object in `Rocks_Portal_Form_UAT`. It runs
+ * after the guard, so an unauthenticated or rate-limited caller cannot make this
+ * route do one.
  *
- * `ROUTE_RULES` needs no entry: the `/api/request/travel-booking` prefix
- * already classifies as `AP-17` (`src/lib/form-environment/classify-path.ts`).
+ * `ROUTE_RULES` needs no entry even so: the `/api/request/travel-booking` prefix
+ * already classifies as `AP-17` (`src/lib/form-environment/classify-path.ts`),
+ * and nothing read here is per-environment — `BrandCurrency` has one copy.
  */
 
 /** The four money fields, whose descriptions are the only per-currency difference. */
@@ -211,10 +214,10 @@ export async function POST(req: NextRequest) {
   const session = await requireAuth();
   if (session instanceof Response) return session;
 
-  // A query parameter rather than a form field, so it can be read before the
-  // body is. It no longer needs to be — resolving it costs no database read —
-  // but the guard still has to run before the body is read for the rate limit
-  // to mean anything, so the shape stays.
+  // Read before the guard, used after it: query parameters cost nothing, but the
+  // brand lookup is a database read and an unauthenticated or rate-limited caller
+  // must not be able to make this route do one.
+  const brandCode = (req.nextUrl.searchParams.get("brandCode") ?? "").trim() || null;
   const countryCode = (req.nextUrl.searchParams.get("countryCode") ?? "").trim() || null;
 
   const guard = await guardVisionRequest(req, {
@@ -227,13 +230,20 @@ export async function POST(req: NextRequest) {
   if (!guard.ok) return guard.response;
 
   try {
-    // Empty for a domestic trip, for a request filed before `CountryCode`
-    // existed, and for a caller that sent no country at all. That is the baht
-    // path below, byte for byte what this route did before any of this.
-    // `bookingCurrencyOptions` puts THB first and the destination's currency
-    // second; the foreign half alone is what the prompt and `admitModelCurrency`
-    // want, since both append baht themselves.
-    const foreign = bookingCurrencyOptions(countryCode).filter((c) => c !== THB);
+    // Empty for a baht-only brand on a domestic trip, and for a caller that sent
+    // neither code. That is the baht path below, byte for byte what this route
+    // did before any of this.
+    //
+    // `getBrandClaimCurrencies` answers the shape `bookingCurrencyOptions` reads a
+    // brand as, and null for a brand nobody has configured — which is every brand
+    // until an admin turns one on. THB leads the result and the foreign half alone
+    // is what the prompt and `admitModelCurrency` want, since both append baht
+    // themselves.
+    const brandCurrencies = await getBrandClaimCurrencies(brandCode);
+    const brand = { currencies: brandCurrencies.map((c, i) => ({
+      id: i, countryCode: null, currencyCode: c, isEnabled: true,
+    })) };
+    const foreign = bookingCurrencyOptions(brand, countryCode).filter((c) => c !== THB);
     const prompt = foreign.length > 0 ? multiPrompt(foreign) : BAHT_PROMPT;
 
     // Built per kind and then asked the same question, so a new input kind

@@ -78,15 +78,19 @@ export interface BookingFieldsRead {
 
 export interface BookingFieldsReadOptions {
   /**
-   * Where the trip goes. Sent as `?countryCode=`, and the route derives the
-   * currencies it will admit from it **server-side** — a currency posted from
-   * here would let a hand-shaped request have one accepted that the destination
-   * does not use.
+   * Whose books the request is on, and where the trip goes. Sent as
+   * `?brandCode=` and `?countryCode=`, and the route derives the currencies it
+   * will admit from the pair **server-side** — a currency posted from here would
+   * let a hand-shaped request have one accepted that neither its brand nor its
+   * destination uses.
    *
-   * Without it the route admits baht alone, and every foreign invoice silently
-   * stays baht: the whole defect. It was `brandCode` until 2026-09-02, which had
-   * the same shape and asked the wrong question — see the route's header.
+   * Both are needed because the toggle offers the union of both, and the model
+   * must be asked about exactly the set the desk can then record. Sending one
+   * alone narrows the question and a foreign invoice comes back reported as
+   * baht — which is what happened for one commit on 2026-09-02, when this sent
+   * only the country.
    */
+  brandCode?: string | null;
   countryCode?: string | null;
   /**
    * The currency this request records its booking figures in. Null or absent
@@ -158,10 +162,13 @@ export async function readBookingFields(
   // A query parameter rather than a form field, so the route can read it before
   // it reads the body — which is what lets the rate limit run before the brand
   // lookup does any database work.
+  const params = new URLSearchParams();
+  const brandCode = (options?.brandCode ?? "").trim();
   const countryCode = (options?.countryCode ?? "").trim();
-  const url =
-    "/api/request/travel-booking/booking-fields" +
-    (countryCode ? `?countryCode=${encodeURIComponent(countryCode)}` : "");
+  if (brandCode) params.set("brandCode", brandCode);
+  if (countryCode) params.set("countryCode", countryCode);
+  const qs = params.toString();
+  const url = "/api/request/travel-booking/booking-fields" + (qs ? `?${qs}` : "");
 
   try {
     const res = await fetch(url, { method: "POST", body: form });
