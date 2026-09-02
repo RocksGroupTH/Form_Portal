@@ -30,25 +30,37 @@ interface RateRow {
   isActive: boolean;
 }
 
-type Draft = { brandCode: string; countryCode: string; effectiveDate: string; amount: string; note: string };
+type Draft = { countryCode: string; effectiveDate: string; amount: string; note: string };
 
 /**
- * The countries a brand travels to, minus home.
+ * Every country ANY AP-17 brand can travel to, minus home.
  *
- * The same `claimCountryOptions` the AP-17 form uses, so the rates that can be
- * set here are exactly the countries a trip can be filed against — offering
- * all 25 let somebody configure a rate for a country no brand can reach.
+ * The rate is stored per country and not per brand — `AccTravelPerDiemCountry`
+ * is unique on `(CountryCode, EffectiveDate)` — so the picker asks for a country
+ * and nothing else. It is still not all 25: the union of the brands' own
+ * `claimCountryOptions` is what a trip can actually be filed against, and
+ * offering more would let somebody configure a rate that could never price
+ * anything.
  *
  * Thailand is always excluded: the employee's HR allowance answers there, and a
  * TH row would be a second answer to a question that already has one.
  * `upsertPerDiemCountryRate` refuses it server-side regardless.
  */
-function brandCountries(brand: AccBrandOption | null): string[] {
-  return claimCountryOptions(brand).filter((c) => c !== PER_DIEM_HOME_COUNTRY);
+function reachableCountries(brands: readonly AccBrandOption[]): string[] {
+  const seen: Record<string, true> = {};
+  const out: string[] = [];
+  for (const b of brands) {
+    for (const c of claimCountryOptions(b)) {
+      if (c === PER_DIEM_HOME_COUNTRY || seen[c]) continue;
+      seen[c] = true;
+      out.push(c);
+    }
+  }
+  out.sort();
+  return out;
 }
 
 const emptyDraft = (): Draft => ({
-  brandCode: "",
   countryCode: "",
   effectiveDate: "",
   amount: "",
@@ -89,19 +101,15 @@ export function PerDiemCountrySettings() {
     fetcher,
   );
   const brands = useMemo(() => brandData?.data ?? [], [brandData]);
-  const selectedBrand = useMemo(
-    () => brands.find((b) => b.brandCode === draft?.brandCode) ?? null,
-    [brands, draft?.brandCode],
-  );
-  const countries = useMemo(() => brandCountries(selectedBrand), [selectedBrand]);
+  const countries = useMemo(() => reachableCountries(brands), [brands]);
+  // Distinguishes "still fetching" from "fetched, and there are none" — an
+  // empty list means something specific here and must not be claimed while the
+  // request is still in flight.
+  const brandsLoaded = brandData !== undefined;
 
   const save = async () => {
     if (!draft) return;
     const amount = Number(draft.amount);
-    if (!draft.brandCode) {
-      toast.error("กรุณาเลือกแบรนด์");
-      return;
-    }
     if (!draft.countryCode) {
       toast.error("กรุณาเลือกประเทศ");
       return;
@@ -286,41 +294,13 @@ export function PerDiemCountrySettings() {
               </button>
             </div>
 
-            {/* Brand first: it decides which countries can be picked at all.
-                Offering all 25 let somebody set a rate for a country no brand can
-                travel to — a row that would never price anything. */}
-            <label className="flex flex-col gap-1.5">
-              <span className="text-[12px] font-semibold" style={{ color: "var(--text-secondary)" }}>
-                แบรนด์ <span style={{ color: "var(--text-danger)" }}>*</span>
-              </span>
-              <select
-                value={draft.brandCode}
-                // Changing the brand clears the country: the one that was picked
-                // belongs to the previous brand's list and may not be on this one.
-                onChange={(e) => setDraft({ ...draft, brandCode: e.target.value, countryCode: "" })}
-                className="text-[13px] rounded-xl px-3 py-2.5 outline-none cursor-pointer"
-                style={{
-                  background: "var(--bg-card-alt)",
-                  border: "1px solid var(--border-card)",
-                  color: "var(--text-primary)",
-                }}
-              >
-                <option value="">— เลือกแบรนด์ —</option>
-                {brands.map((b) => (
-                  <option key={b.brandCode} value={b.brandCode}>
-                    {b.brandName}
-                  </option>
-                ))}
-              </select>
-            </label>
-
             <label className="flex flex-col gap-1.5">
               <span className="text-[12px] font-semibold" style={{ color: "var(--text-secondary)" }}>
                 ประเทศ <span style={{ color: "var(--text-danger)" }}>*</span>
               </span>
               <select
                 value={draft.countryCode}
-                disabled={!draft.brandCode || countries.length === 0}
+                disabled={!brandsLoaded || countries.length === 0}
                 onChange={(e) => setDraft({ ...draft, countryCode: e.target.value })}
                 className="text-[13px] rounded-xl px-3 py-2.5 outline-none cursor-pointer"
                 style={{
@@ -329,9 +309,7 @@ export function PerDiemCountrySettings() {
                   color: "var(--text-primary)",
                 }}
               >
-                <option value="">
-                  {!draft.brandCode ? "— เลือกแบรนด์ก่อน —" : "— เลือกประเทศ —"}
-                </option>
+                <option value="">— เลือกประเทศ —</option>
                 {countries.map((code) => {
                   const n = countryNames(code);
                   return (
@@ -343,9 +321,9 @@ export function PerDiemCountrySettings() {
               </select>
               {/* An empty list is the configuration speaking, not a fault, and it
                   names the remedy — otherwise it reads as a broken dropdown. */}
-              {draft.brandCode && countries.length === 0 && (
+              {brandsLoaded && countries.length === 0 && (
                 <span className="text-[11px]" style={{ color: "var(--text-warning)" }}>
-                  แบรนด์นี้ยังไม่ได้ผูกสกุลเงินต่างประเทศไว้ จึงเดินทางได้เฉพาะในไทย —
+                  ยังไม่มีแบรนด์ไหนผูกสกุลเงินต่างประเทศไว้ จึงเดินทางได้เฉพาะในไทย —
                   เพิ่มได้ที่แท็บ “แบรนด์ที่เบิก”
                 </span>
               )}
