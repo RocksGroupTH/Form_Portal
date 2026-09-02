@@ -256,3 +256,61 @@ test("the resolved default ignores a stale flag on a disabled row", () => {
     "THB",
   );
 });
+
+/**
+ * **Rounding each figure separately can miss the rounded total by a satang, and
+ * that is accepted rather than fixed.**
+ *
+ * `toBaht` rounds to 2dp, so three separately-rounded addends need not sum to
+ * the conversion of their total. AP-17's booking card shows all four —
+ * ราคา / VAT / ส่วนลด / ราคารวม — each converted from its own figure, so a reader
+ * adding the column can land a satang away from the total's own line.
+ *
+ * The case below is not contrived: it uses the rate the desk was looking at on
+ * 2026-09-02, 45.0110, and three entirely ordinary figures.
+ *
+ * **The fix that suggests itself — deriving the total's baht by summing the
+ * parts — would be worse, and must not be made.** `recomputeBookingBaht` stores
+ * `ROUND(TotalAmount * @rate, 2)`, the total converted directly, and
+ * `report-service` sums that stored column. A screen showing a summed figure
+ * would disagree with the database and with the report, which is a real
+ * discrepancy rather than a displayed satang. Every figure carries `≈`.
+ */
+test("separately rounded parts need not sum to the rounded total", () => {
+  const rate = 45.011;
+  const price = 46.06;
+  const vat = 3.22;
+  const discount = 0;
+  const total = 49.28; // price + vat - discount, as the field holds it
+
+  const parts =
+    Math.round(
+      ((toBaht(price, rate) ?? 0) + (toBaht(vat, rate) ?? 0) - (toBaht(discount, rate) ?? 0)) * 100,
+    ) / 100;
+
+  assert.equal(toBaht(price, rate), 2073.21);
+  assert.equal(toBaht(vat, rate), 144.94);
+  assert.equal(parts, 2218.15);
+  assert.equal(toBaht(total, rate), 2218.14);
+  assert.notEqual(parts, toBaht(total, rate));
+});
+
+/** And the gap is bounded: three addends each within half a satang of their true value. */
+test("the parts-versus-total gap stays within two satang", () => {
+  const rate = 45.011;
+  let worst = 0;
+  for (let p = 1; p <= 4000; p++) {
+    const price = p / 4;
+    const vat = Math.round(price * 7) / 100;
+    const discount = Math.round(price / 3 * 100) / 100;
+    const total = Math.round((price + vat - discount) * 100) / 100;
+    const parts =
+      Math.round(
+        ((toBaht(price, rate) ?? 0) + (toBaht(vat, rate) ?? 0) - (toBaht(discount, rate) ?? 0)) * 100,
+      ) / 100;
+    const gap = Math.abs(parts - (toBaht(total, rate) ?? 0));
+    if (gap > worst) worst = gap;
+  }
+  assert.ok(worst <= 0.02, `expected at most two satang, saw ${worst.toFixed(4)}`);
+  assert.ok(worst > 0, "the sweep found no gap at all — has toBaht stopped rounding?");
+});

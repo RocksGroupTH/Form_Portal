@@ -115,12 +115,38 @@ function AmountField({
   onChange,
   disabled,
   unit,
+  baht,
+  bahtNote,
 }: {
   label: string;
   value: string;
   onChange: (next: string) => void;
   disabled: boolean;
   unit?: string | null;
+  /**
+   * This field in baht, or null to render nothing under it.
+   *
+   * Null covers three different situations and deliberately looks the same in
+   * all three: a baht request, where the line would restate the figure above it;
+   * an empty field, where there is nothing to convert; and no usable rate, where
+   * the honest answer is silence rather than a figure at 1:1.
+   *
+   * **Zero is not null.** A ส่วนลด of 0 renders `≈ 0.00 บาท`, because a gap in a
+   * column of four reads as "this one could not be converted" and invites exactly
+   * the question the line exists to answer.
+   */
+  baht?: number | null;
+  /**
+   * A qualifier after the baht figure — `(อัตราอ้างอิง)` on the total alone.
+   *
+   * It is on one of the four rather than all four because a bare `≈` on a money
+   * screen reads as what a bank will settle at, and none of these are: every rate
+   * here is an ECB mid-market reference rate and no screen may call it a Bank of
+   * Thailand rate. Repeating it under all four would be four copies of one
+   * caption on a row already carrying the rate in full above it; putting it on
+   * the total puts it on the figure that is actually recorded.
+   */
+  bahtNote?: string;
 }) {
   return (
     <div>
@@ -150,6 +176,17 @@ function AmountField({
           </span>
         )}
       </div>
+      {/* Right-aligned to sit under the figure it converts rather than under the
+          caption, and `tabular-nums` so four of them line up down the row. */}
+      {baht != null && (
+        <p
+          className="m-0 mt-1 text-[10.5px] tabular-nums text-right"
+          style={{ color: "var(--text-muted)" }}
+        >
+          ≈ {baht.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท
+          {bahtNote ? ` ${bahtNote}` : ""}
+        </p>
+      )}
     </div>
   );
 }
@@ -1111,6 +1148,28 @@ function BookingRowCard({
     currencyUnit !== null && shownRate !== null && computedTotal != null
       ? toBaht(computedTotal, shownRate)
       : null;
+  /* Each field in baht, under the field itself.
+
+     **Each is converted from its own figure, and the column can therefore be a
+     satang off when read as a sum.** `toBaht` rounds to 2dp, so three separately
+     rounded addends can miss the rounded total: at the rate in front of the desk
+     today, 45.0110, `46.06 + 3.22 − 0` gives 2,073.21 + 144.94 = 2,218.15 while
+     the total 49.28 converts to 2,218.14. Reachable with entirely ordinary
+     figures, and bounded at one or two satang.
+
+     **Deriving the total's baht by summing the parts instead would be worse, and
+     is the fix not to make.** `recomputeBookingBaht` stores
+     `ROUND(TotalAmount * @rate, 2)` — the total converted directly — and
+     `report-service` sums that stored column. A card that showed a summed figure
+     would disagree with the database and with the report, which is a real
+     discrepancy rather than a displayed satang. So the total's baht stays the
+     conversion of the total, every figure carries `≈`, and the parts are readings
+     of their own fields rather than terms of an equation. */
+  const inBaht = (n: number | null) =>
+    currencyUnit !== null && shownRate !== null && n !== null ? toBaht(n, shownRate) : null;
+  const priceInBaht = inBaht(nPrice);
+  const vatInBaht = inBaht(nVat);
+  const discountInBaht = inBaht(nDiscount);
 
   /**
    * The fields open only once there is a file behind them and the read of it has
@@ -1643,10 +1702,15 @@ function BookingRowCard({
             </div>
           )}
 
-          <AmountField label="ราคา (ก่อน VAT)" value={priceExVat} onChange={setPriceExVat} disabled={locked} unit={currencyUnit} />
-          <AmountField label="ภาษี (VAT)" value={vat} onChange={setVat} disabled={locked} unit={currencyUnit} />
-          <AmountField label="ส่วนลด" value={discount} onChange={setDiscount} disabled={locked} unit={currencyUnit} />
-          <AmountField label="ราคารวม" value={totalAmount} onChange={setTotalAmount} disabled={locked} unit={currencyUnit} />
+          <AmountField label="ราคา (ก่อน VAT)" value={priceExVat} onChange={setPriceExVat} disabled={locked} unit={currencyUnit} baht={priceInBaht} />
+          <AmountField label="ภาษี (VAT)" value={vat} onChange={setVat} disabled={locked} unit={currencyUnit} baht={vatInBaht} />
+          <AmountField label="ส่วนลด" value={discount} onChange={setDiscount} disabled={locked} unit={currencyUnit} baht={discountInBaht} />
+          {/* `totalInBaht` is reused rather than recomputed here: it is the same
+              conversion of the same figure, and two spellings of one number is
+              how they start to differ. It is also, deliberately, `toBaht(nTotal)`
+              and never the three figures beside it added up — see the note on
+              `inBaht` above for why summing would be the worse answer. */}
+          <AmountField label="ราคารวม" value={totalAmount} onChange={setTotalAmount} disabled={locked} unit={currencyUnit} baht={totalInBaht} bahtNote="(อัตราอ้างอิง)" />
         </div>
 
         {/* AP-1's treatment: a 40% band sweeping across a tinted panel, laid over
@@ -1714,29 +1778,12 @@ function BookingRowCard({
         </p>
       )}
 
-      {/* The baht reading of what was typed. **Beside the figure, never instead
-          of it** — the invoice states pounds and that is what is stored; this is
-          the conversion accounting needs.
-
-          Converted with `shownRate`, so it appears while the desk is still
-          typing rather than only after a save has recorded one. It used to take
-          the stored rate alone, which meant a card in a currency this request
-          had never been saved in showed no baht figure at all — the desk typed
-          100 / 7 / 107 GBP and had to commit to see what it came to.
-
-          A baht request and a request whose rate cannot be had render nothing
-          here at all, which is the honest answer in both cases.
-
-          The rate itself is stated once, beside the toggle above, rather than
-          repeated on every row — but the `(อัตราอ้างอิง)` qualifier stays here,
-          because a bare `≈` figure on a money screen reads as what a bank will
-          settle at, and it is not: every rate is an ECB mid-market reference
-          rate and none of them may be called a Bank of Thailand rate. */}
-      {totalInBaht !== null && (
-        <p className="m-0 text-[11.5px] tabular-nums" style={{ color: "var(--text-muted)" }}>
-          ราคารวมคิดเป็นเงินบาท ≈ {totalInBaht.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท (อัตราอ้างอิง)
-        </p>
-      )}
+      {/* The standalone "ราคารวมคิดเป็นเงินบาท" line that stood here is gone.
+          Every one of the four fields now carries its own baht figure directly
+          under the number it converts, `totalInBaht` among them, so this line was
+          the third appearance of one figure on one card — after the field itself
+          and the computed-total line above. Its `(อัตราอ้างอิง)` qualifier moved
+          onto the ราคารวม field with it and is not lost. */}
 
       <div className="pt-2" style={{ borderTop: "1px solid var(--border-light)" }}>
         <label
