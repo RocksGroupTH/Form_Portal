@@ -48,7 +48,10 @@ export function tripInfo(req: TravelBookingRequest): InfoGroup[] {
           value: fmtRange(req.departDate, req.returnDate) + (days ? ` (${days} วัน)` : ""),
         },
         { label: "สถานที่ปฏิบัติงาน", value: dash(req.workLocations.map((w) => w.name).join(", ")) },
-        { label: "จังหวัด/เมือง", value: dash(req.provinceName) },
+        // No จังหวัด/เมือง row. ข้อ8 was removed on 2026-09-01, so every request
+        // filed since reads "—" here, and the ones before it say a province the
+        // work location above already names better. The desk books against the
+        // place and the pin below it, not against an administrative area.
       ],
     },
   ];
@@ -146,8 +149,12 @@ export function typeInfo(req: TravelBookingRequest, type: BookingType, icons: Op
           })(),
         },
         {
+          // The place only. The province was appended here too until
+          // 2026-09-01; on a request filed since it is null and contributed
+          // nothing, and on an older one it repeated in coarser words what the
+          // work location already said.
           label: "ใช้ที่",
-          value: dash([req.workLocations.map((w) => w.name).join(", "), req.provinceName].filter(Boolean).join(" · ")),
+          value: dash(req.workLocations.map((w) => w.name).join(", ")),
         },
       ],
     },
