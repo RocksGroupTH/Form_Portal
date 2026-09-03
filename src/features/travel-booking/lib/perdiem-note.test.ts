@@ -2,6 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   configuredRateNote,
+  historyToggleLabel,
+  perDiemRateSummary,
+  upcomingRateNote,
   hasUnratedDay,
   perDiemAttributionFootnote,
   perDiemAttributionNote,
@@ -91,52 +94,84 @@ test("the footnote follows the attribution, and only a country rate drops HR", (
  * The rate is stated **before any date is typed** — the state the request was
  * about. `computePerDiem` needs dates; naming the rate does not.
  */
-test("a configured rate is summarised from its log alone, with the date it starts", () => {
-  assert.equal(
-    configuredRateNote([{ effectiveDate: "2026-01-01", amount: 2500 }]),
-    "฿2,500.00 ต่อวัน (มีผล 01/01/2026)",
-  );
-  assert.equal(configuredRateNote([]), null);
+/* ── The rate in force, and everything else behind a click ── */
+
+const RATES = [
+  { effectiveDate: "2026-01-01", amount: 800 },
+  { effectiveDate: "2026-09-01", amount: 1000 },
+  { effectiveDate: "2026-09-04", amount: 1500 },
+];
+
+/**
+ * **Current is decided against today, not by taking the newest row.** On
+ * 2026-09-03 the ฿1,500 row dated 04/09 has not started; calling it current
+ * would tell a requester they will be paid a figure nobody will pay them yet.
+ */
+test("current is the newest rate whose date has arrived", () => {
+  const s = perDiemRateSummary(RATES, "2026-09-03");
+  assert.equal(s?.current.amount, 1000);
+  assert.equal(s?.current.effectiveDate, "2026-09-01");
+});
+
+test("a rate starting exactly today is already current", () => {
+  assert.equal(perDiemRateSummary(RATES, "2026-09-04")?.current.amount, 1500);
 });
 
 /**
- * Several dated rates: each figure carries the day it starts, because which one
- * applies is decided by the travel dates and the reader cannot work that out
- * from two amounts alone.
+ * **A future rate is neither current nor ย้อนหลัง, and is never folded away.**
+ * It may take effect during the very trip being booked, so it is surfaced beside
+ * the current one; the fold is for the past alone.
  */
-test("several rates each carry their own start date", () => {
-  assert.equal(
-    configuredRateNote([
-      { effectiveDate: "2026-01-01", amount: 2500 },
-      { effectiveDate: "2026-06-01", amount: 3000 },
-    ]),
-    "฿2,500.00 (มีผล 01/01/2026) → ฿3,000.00 (มีผล 01/06/2026) ต่อวัน",
+test("an upcoming rate is surfaced, not hidden in the history", () => {
+  const s = perDiemRateSummary(RATES, "2026-09-03");
+  assert.equal(s?.upcoming?.amount, 1500);
+  assert.equal(s?.upcoming?.effectiveDate, "2026-09-04");
+  assert.deepEqual(s?.past.map((p) => p.amount), [800]);
+});
+
+test("past rates are newest first, and exclude the current one", () => {
+  const s = perDiemRateSummary(
+    [
+      { effectiveDate: "2026-01-01", amount: 800 },
+      { effectiveDate: "2026-05-01", amount: 900 },
+      { effectiveDate: "2026-09-01", amount: 1000 },
+    ],
+    "2026-09-03",
   );
+  assert.equal(s?.current.amount, 1000);
+  assert.deepEqual(s?.past.map((p) => p.amount), [900, 800]);
+  assert.equal(s?.upcoming, null);
 });
 
 /**
- * More than two is summarised by its ends rather than listed: the card is one
- * line under a total, and the breakdown above already itemises what a given
- * trip is actually charged.
+ * Every rate still in the future: nothing is in force yet, and `rateForDay` pays
+ * **0** for those days (`perdiem.ts:24-32`). Answering null rather than
+ * pretending the earliest is current is what lets the card say so.
  */
-test("more than two rates are summarised by the first and the last", () => {
-  assert.equal(
-    configuredRateNote([
-      { effectiveDate: "2026-01-01", amount: 2000 },
-      { effectiveDate: "2026-04-01", amount: 2500 },
-      { effectiveDate: "2026-09-01", amount: 3000 },
-    ]),
-    "฿2,000.00 (มีผล 01/01/2026) → ฿3,000.00 (มีผล 01/09/2026) ต่อวัน",
-  );
+test("nothing in force yet is null, not the earliest future rate", () => {
+  assert.equal(perDiemRateSummary([{ effectiveDate: "2026-12-01", amount: 1500 }], "2026-09-03"), null);
 });
 
-/** Two dated rows at the same amount still differ by date, so both are shown. */
-test("the same amount twice is still two dated rates", () => {
-  assert.equal(
-    configuredRateNote([
-      { effectiveDate: "2026-01-01", amount: 2500 },
-      { effectiveDate: "2026-06-01", amount: 2500 },
-    ]),
-    "฿2,500.00 (มีผล 01/01/2026) → ฿2,500.00 (มีผล 01/06/2026) ต่อวัน",
-  );
+test("an empty log is null", () => {
+  assert.equal(perDiemRateSummary([], "2026-09-03"), null);
+});
+
+/** One line, the current rate alone — the span it replaced showed two. */
+test("the line names the current rate and the day it started", () => {
+  const s = perDiemRateSummary(RATES, "2026-09-03");
+  assert.equal(configuredRateNote(s), "฿1,000.00 ต่อวัน (มีผล 01/09/2026)");
+  assert.equal(configuredRateNote(null), null);
+});
+
+/** The upcoming change gets its own sentence, because it may land mid-trip. */
+test("an upcoming change is stated in full", () => {
+  const s = perDiemRateSummary(RATES, "2026-09-03");
+  assert.equal(upcomingRateNote(s), "จะเปลี่ยนเป็น ฿1,500.00 ต่อวัน ตั้งแต่ 04/09/2026");
+  assert.equal(upcomingRateNote(perDiemRateSummary([RATES[1]], "2026-09-03")), null);
+});
+
+/** The fold's label counts the PAST alone — upcoming is not history. */
+test("the history label counts only past rates", () => {
+  assert.equal(historyToggleLabel(perDiemRateSummary(RATES, "2026-09-03")), "ดูเรทย้อนหลัง (1)");
+  assert.equal(historyToggleLabel(perDiemRateSummary([RATES[1], RATES[2]], "2026-09-03")), null);
 });

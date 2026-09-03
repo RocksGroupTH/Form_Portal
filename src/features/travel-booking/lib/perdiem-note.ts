@@ -107,39 +107,122 @@ export function perDiemAttributionFootnote(a: PerDiemAttribution): string {
   return perDiemFootnote("employee");
 }
 
+export interface DatedRate {
+  effectiveDate: string;
+  amount: number;
+}
+
 /**
- * The configured rate **and the day it starts**, summarised from its log alone —
- * stated before any date is typed, which is the state this was asked for.
- *
- * `computePerDiem` needs dates to produce a breakdown; naming the rate does not,
- * and a requester who has just picked a country wants to know what it pays.
- *
- * **The date is not decoration.** A rate only applies from its own effective
- * date, and `rateForDay` pays **0** for any day before the earliest one
- * (`perdiem.ts:24-32`) — so a requester who sees `฿2,500 ต่อวัน` with no date
- * cannot tell whether their trip is covered by it. With several dated rates,
- * each figure carries its own day, because which one applies is decided by the
- * travel dates and two bare amounts do not say that.
- *
- * More than two is summarised by its ends rather than listed: this is one line
- * under a total, and the breakdown above already itemises what a given trip is
- * actually charged.
- *
- * The log arrives sorted ascending by date — `perDiemCountryLog` sorts it — and
- * is `perDiemLogFor`'s own pick, never a second scan of every country's rates.
+ * The country's rates split into what is in force, what is coming, and what is
+ * gone — the shape the card needs to show one figure and fold the rest.
  */
-export function configuredRateNote(
-  log: readonly { effectiveDate: string; amount: number }[],
-): string | null {
-  if (log.length === 0) return null;
-  const money = (n: number) =>
-    "฿" + n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const on = (ymd: string) => `(มีผล ${fmtYmdDisplay(ymd)})`;
-  const first = log[0];
-  if (log.length === 1) return `${money(first.amount)} ต่อวัน ${on(first.effectiveDate)}`;
-  const last = log[log.length - 1];
-  return (
-    `${money(first.amount)} ${on(first.effectiveDate)}` +
-    ` → ${money(last.amount)} ${on(last.effectiveDate)} ต่อวัน`
-  );
+export interface PerDiemRateSummary {
+  current: DatedRate;
+  /** The next rate, if one is dated ahead of `today`. Never folded away. */
+  upcoming: DatedRate | null;
+  /** Superseded rates, newest first. This is what the fold holds. */
+  past: DatedRate[];
+}
+
+/**
+ * Split a country's log around `today`.
+ *
+ * **`today` is a parameter, not a call to the clock**, so the rule is
+ * unit-testable and so a caller cannot accidentally evaluate it in a different
+ * zone — every date in these databases is a Thai wall clock (see CLAUDE.md).
+ *
+ * **Current is the newest rate whose date has ARRIVED**, which is what
+ * `rateForDay` would pay today (`perdiem.ts:24-32`) and is not the same as the
+ * newest row. The settings tab's `ใช้อยู่` takes the newest active row
+ * regardless of date (`perdiem-rows.ts`), so on a day when a future rate exists
+ * the two screens name different figures. That is deliberate here and the
+ * settings one is the weaker label: a rate that starts next week is not what
+ * anybody is being paid now.
+ *
+ * **Null means nothing is in force yet** — every rate is dated ahead — and that
+ * is not the same as an empty log even though both return null: `rateForDay`
+ * pays **0** for those days, so the card must not present the earliest future
+ * rate as though it applied.
+ *
+ * Only ACTIVE rates ever reach here: `listPerDiemCountryRates` filters
+ * `IsActive = 1` server-side, so a deactivated rate is never in the log and
+ * needs no filtering — there is deliberately no `isActive` in `DatedRate`, so a
+ * future reader cannot think one is expected.
+ */
+export function perDiemRateSummary(
+  log: readonly DatedRate[],
+  today: string,
+): PerDiemRateSummary | null {
+  const sorted = log.slice();
+  sorted.sort((a, b) => (a.effectiveDate < b.effectiveDate ? -1 : a.effectiveDate > b.effectiveDate ? 1 : 0));
+
+  let current: DatedRate | null = null;
+  let currentIndex = -1;
+  for (let i = 0; i < sorted.length; i++) {
+    if (sorted[i].effectiveDate <= today) {
+      current = sorted[i];
+      currentIndex = i;
+    }
+  }
+  if (!current) return null;
+
+  const past: DatedRate[] = [];
+  for (let i = currentIndex - 1; i >= 0; i--) past.push(sorted[i]);
+  const upcoming = currentIndex + 1 < sorted.length ? sorted[currentIndex + 1] : null;
+  return { current, upcoming, past };
+}
+
+function money(n: number): string {
+  return "฿" + n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/**
+ * The one figure the card states — the rate in force and the day it started.
+ *
+ * It showed the log's first and last as a span until 2026-09-03, which read as
+ * two rates with no indication which was live. The date is not decoration: a
+ * rate applies only from its own effective date and `rateForDay` pays 0 before
+ * the earliest, so a bare figure cannot tell a requester whether their trip is
+ * covered.
+ */
+export function configuredRateNote(summary: PerDiemRateSummary | null): string | null {
+  if (!summary) return null;
+  return `${money(summary.current.amount)} ต่อวัน (มีผล ${fmtYmdDisplay(summary.current.effectiveDate)})`;
+}
+
+/**
+ * The next change, stated in full rather than folded away.
+ *
+ * A rate dated ahead is neither current nor `ย้อนหลัง`, and it may take effect
+ * during the very trip being booked — putting it behind a history toggle would
+ * hide the one future fact on the card that can change what the requester is
+ * paid.
+ */
+export function upcomingRateNote(summary: PerDiemRateSummary | null): string | null {
+  if (!summary?.upcoming) return null;
+  return `จะเปลี่ยนเป็น ${money(summary.upcoming.amount)} ต่อวัน ตั้งแต่ ${fmtYmdDisplay(summary.upcoming.effectiveDate)}`;
+}
+
+/** The fold's label, counting the PAST alone — an upcoming rate is not history. */
+export function historyToggleLabel(summary: PerDiemRateSummary | null): string | null {
+  if (!summary || summary.past.length === 0) return null;
+  return `ดูเรทย้อนหลัง (${summary.past.length})`;
+}
+
+/** One past rate, as the fold lists it. */
+export function pastRateLine(rate: DatedRate): string {
+  return `${money(rate.amount)} ต่อวัน · มีผล ${fmtYmdDisplay(rate.effectiveDate)}`;
+}
+
+/**
+ * Today as `YYYY-MM-DD`, from local getters.
+ *
+ * `now` is a parameter for the reason `earliestTravelDate` takes one: the caller
+ * owns the clock, so the rule stays testable. Local getters and not
+ * `toISOString()`, which answers in UTC and at UTC+7 names yesterday for most of
+ * the evening — the same trap CLAUDE.md records for every date in this app.
+ */
+export function todayKey(now: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
 }

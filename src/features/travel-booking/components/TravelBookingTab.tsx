@@ -1,11 +1,16 @@
 "use client";
 
-import { useMemo } from "react";
-import { Briefcase, Calendar, Car, FileCheck, Hotel, Landmark, MapPin, StickyNote } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Briefcase, Calendar, Car, FileCheck, History, Hotel, Landmark, MapPin, StickyNote } from "lucide-react";
 import type { AccBrandOption } from "@/features/accounting/types";
 import { NO_RENT_VEHICLE_NAME } from "@/features/travel-booking/constants";
 import {
   configuredRateNote,
+  historyToggleLabel,
+  pastRateLine,
+  perDiemRateSummary,
+  todayKey,
+  upcomingRateNote,
   hasUnratedDay,
   perDiemAttributionFootnote,
   perDiemAttributionNote,
@@ -129,6 +134,15 @@ export function TravelBookingTab({
    * rendered either.
    */
   const tripCountry = tab.brandCode ? effectiveClaimCountry(tab.countryCode, selectedBrand) : null;
+
+  /* The country's rates split around today: what is in force, what is coming,
+     what it replaced. Recomputed per render rather than memoised on a date —
+     `new Date()` would defeat a memo's dependency array anyway, and the split is
+     a loop over at most a handful of rows. */
+  const rateSummary = perDiemRateSummary(perDiemEstimate.countryLog, todayKey(new Date()));
+  /* Closed on every mount, and the tab remounts when the active trip changes, so
+     opening the history on one trip does not open it on the next. */
+  const [historyOpen, setHistoryOpen] = useState(false);
 
 
   const selectedReason = reasons.find((r) => r.id === tab.reasonId);
@@ -653,11 +667,51 @@ export function TravelBookingTab({
         </p>
         {/* What the country actually pays, stated before any date is typed —
             the state this was asked for. The breakdown above needs dates; this
-            does not. */}
-        {configuredRateNote(perDiemEstimate.countryLog) && (
-          <p className="text-[12px] font-semibold m-0" style={{ color: "var(--nav-active-text)" }}>
-            เรทที่กำหนดไว้: {configuredRateNote(perDiemEstimate.countryLog)}
-          </p>
+            does not.
+
+            **The rate in force alone.** It showed the log's first and last as a
+            span, which read as two figures with no sign of which was live. An
+            upcoming change keeps its own line rather than joining the fold: it
+            is not `ย้อนหลัง`, and it may take effect during the very trip being
+            booked. Only the superseded rates fold away.
+
+            Nothing filters for active: `listPerDiemCountryRates` gives the
+            client `IsActive = 1` rows only, so a deactivated rate never arrives
+            here. */}
+        {rateSummary && (
+          <>
+            <p className="text-[12px] font-semibold m-0" style={{ color: "var(--nav-active-text)" }}>
+              เรทที่กำหนดไว้: {configuredRateNote(rateSummary)}
+            </p>
+            {upcomingRateNote(rateSummary) && (
+              <p className="text-[11.5px] m-0" style={{ color: "var(--text-warning)" }}>
+                {upcomingRateNote(rateSummary)}
+              </p>
+            )}
+            {historyToggleLabel(rateSummary) && (
+              <div className="flex flex-col gap-1">
+                <button
+                  type="button"
+                  onClick={() => setHistoryOpen((v) => !v)}
+                  className="flex items-center gap-1.5 text-[11.5px] font-semibold cursor-pointer self-start"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  <History size={12} />
+                  {historyOpen ? "ซ่อนเรทย้อนหลัง" : historyToggleLabel(rateSummary)}
+                </button>
+                {historyOpen &&
+                  rateSummary.past.map((r) => (
+                    <p
+                      key={r.effectiveDate}
+                      className="text-[11.5px] tabular-nums m-0 pl-4"
+                      style={{ color: "var(--text-muted)" }}
+                    >
+                      {pastRateLine(r)}
+                    </p>
+                  ))}
+              </div>
+            )}
+          </>
         )}
         {hasUnratedDay(perDiemEstimate.groups) && (
           <p className="text-[11.5px] m-0" style={{ color: "var(--text-warning)" }}>
