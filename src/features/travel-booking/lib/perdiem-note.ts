@@ -117,9 +117,10 @@ export interface DatedRate {
  * gone — the shape the card needs to show one figure and fold the rest.
  */
 export interface PerDiemRateSummary {
-  current: DatedRate;
-  /** The next rate, if one is dated ahead of `today`. Never folded away. */
-  upcoming: DatedRate | null;
+  /** The rate in force today, or null when every configured rate is still ahead. */
+  current: DatedRate | null;
+  /** Every rate dated after `today`, earliest first. Never folded away. */
+  upcoming: DatedRate[];
   /** Superseded rates, newest first. This is what the fold holds. */
   past: DatedRate[];
 }
@@ -139,10 +140,17 @@ export interface PerDiemRateSummary {
  * settings one is the weaker label: a rate that starts next week is not what
  * anybody is being paid now.
  *
- * **Null means nothing is in force yet** — every rate is dated ahead — and that
- * is not the same as an empty log even though both return null: `rateForDay`
- * pays **0** for those days, so the card must not present the earliest future
- * rate as though it applied.
+ * **Null means the log is EMPTY, and nothing else.** A log whose rates are all
+ * still ahead answers a summary with `current: null` and every rate in
+ * `upcoming`: `rateForDay` pays **0** for those days so the earliest must not be
+ * called current — but staying silent about a configured rate is worse, and is
+ * what returning null for the whole summary did. The card rendered no figure at
+ * all while the line above it still said a rate was configured for that country.
+ *
+ * **`upcoming` is a LIST.** A single field left the second and later scheduled
+ * changes in neither array, so they appeared nowhere — not on the card, not in
+ * the fold, not in its count — while `computePerDiem` charged them regardless,
+ * putting the breakdown and the rate block in contradiction on one card.
  *
  * Only ACTIVE rates ever reach here: `listPerDiemCountryRates` filters
  * `IsActive = 1` server-side, so a deactivated rate is never in the log and
@@ -153,23 +161,23 @@ export function perDiemRateSummary(
   log: readonly DatedRate[],
   today: string,
 ): PerDiemRateSummary | null {
+  if (log.length === 0) return null;
   const sorted = log.slice();
   sorted.sort((a, b) => (a.effectiveDate < b.effectiveDate ? -1 : a.effectiveDate > b.effectiveDate ? 1 : 0));
 
-  let current: DatedRate | null = null;
   let currentIndex = -1;
   for (let i = 0; i < sorted.length; i++) {
-    if (sorted[i].effectiveDate <= today) {
-      current = sorted[i];
-      currentIndex = i;
-    }
+    if (sorted[i].effectiveDate <= today) currentIndex = i;
   }
-  if (!current) return null;
 
   const past: DatedRate[] = [];
   for (let i = currentIndex - 1; i >= 0; i--) past.push(sorted[i]);
-  const upcoming = currentIndex + 1 < sorted.length ? sorted[currentIndex + 1] : null;
-  return { current, upcoming, past };
+  return {
+    current: currentIndex >= 0 ? sorted[currentIndex] : null,
+    // `-1` slices from 0, which is right: nothing in force means every rate is ahead.
+    upcoming: sorted.slice(currentIndex + 1),
+    past,
+  };
 }
 
 function money(n: number): string {
@@ -186,7 +194,7 @@ function money(n: number): string {
  * covered.
  */
 export function configuredRateNote(summary: PerDiemRateSummary | null): string | null {
-  if (!summary) return null;
+  if (!summary || !summary.current) return null;
   return `${money(summary.current.amount)} ต่อวัน (มีผล ${fmtYmdDisplay(summary.current.effectiveDate)})`;
 }
 
@@ -198,9 +206,18 @@ export function configuredRateNote(summary: PerDiemRateSummary | null): string |
  * hide the one future fact on the card that can change what the requester is
  * paid.
  */
-export function upcomingRateNote(summary: PerDiemRateSummary | null): string | null {
-  if (!summary?.upcoming) return null;
-  return `จะเปลี่ยนเป็น ${money(summary.upcoming.amount)} ต่อวัน ตั้งแต่ ${fmtYmdDisplay(summary.upcoming.effectiveDate)}`;
+export function upcomingRateNotes(summary: PerDiemRateSummary | null): string[] {
+  if (!summary) return [];
+  const out: string[] = [];
+  for (let i = 0; i < summary.upcoming.length; i++) {
+    const r = summary.upcoming[i];
+    // With nothing in force, the first one STARTS the rate rather than changing
+    // it — there is nothing to change from, and "เปลี่ยนเป็น" would imply a
+    // figure is being paid today.
+    const verb = summary.current === null && i === 0 ? "จะเริ่มใช้" : "จะเปลี่ยนเป็น";
+    out.push(`${verb} ${money(r.amount)} ต่อวัน ตั้งแต่ ${fmtYmdDisplay(r.effectiveDate)}`);
+  }
+  return out;
 }
 
 /** The fold's label, counting the PAST alone — an upcoming rate is not history. */

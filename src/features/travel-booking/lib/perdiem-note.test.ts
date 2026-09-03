@@ -4,7 +4,7 @@ import {
   configuredRateNote,
   historyToggleLabel,
   perDiemRateSummary,
-  upcomingRateNote,
+  upcomingRateNotes,
   hasUnratedDay,
   perDiemAttributionFootnote,
   perDiemAttributionNote,
@@ -109,12 +109,12 @@ const RATES = [
  */
 test("current is the newest rate whose date has arrived", () => {
   const s = perDiemRateSummary(RATES, "2026-09-03");
-  assert.equal(s?.current.amount, 1000);
-  assert.equal(s?.current.effectiveDate, "2026-09-01");
+  assert.equal(s?.current?.amount, 1000);
+  assert.equal(s?.current?.effectiveDate, "2026-09-01");
 });
 
 test("a rate starting exactly today is already current", () => {
-  assert.equal(perDiemRateSummary(RATES, "2026-09-04")?.current.amount, 1500);
+  assert.equal(perDiemRateSummary(RATES, "2026-09-04")?.current?.amount, 1500);
 });
 
 /**
@@ -124,9 +124,29 @@ test("a rate starting exactly today is already current", () => {
  */
 test("an upcoming rate is surfaced, not hidden in the history", () => {
   const s = perDiemRateSummary(RATES, "2026-09-03");
-  assert.equal(s?.upcoming?.amount, 1500);
-  assert.equal(s?.upcoming?.effectiveDate, "2026-09-04");
+  assert.deepEqual(s?.upcoming.map((u) => u.amount), [1500]);
   assert.deepEqual(s?.past.map((p) => p.amount), [800]);
+});
+
+/**
+ * **Every future rate, not just the next one.** `upcoming` was a single field,
+ * and `past` is built downward from the current index — so a third rate landed
+ * in neither and appeared nowhere at all: not on the card, not in the fold, not
+ * in its count. `computePerDiem` charges it regardless, so the breakdown and the
+ * rate block contradicted each other on the same card.
+ */
+test("every future rate is listed, earliest first", () => {
+  const s = perDiemRateSummary(
+    [
+      { effectiveDate: "2026-09-01", amount: 1000 },
+      { effectiveDate: "2026-09-04", amount: 1500 },
+      { effectiveDate: "2026-09-20", amount: 1800 },
+    ],
+    "2026-09-03",
+  );
+  assert.equal(s?.current?.amount, 1000);
+  assert.deepEqual(s?.upcoming.map((u) => u.amount), [1500, 1800]);
+  assert.deepEqual(s?.past, []);
 });
 
 test("past rates are newest first, and exclude the current one", () => {
@@ -138,20 +158,27 @@ test("past rates are newest first, and exclude the current one", () => {
     ],
     "2026-09-03",
   );
-  assert.equal(s?.current.amount, 1000);
+  assert.equal(s?.current?.amount, 1000);
   assert.deepEqual(s?.past.map((p) => p.amount), [900, 800]);
-  assert.equal(s?.upcoming, null);
+  assert.deepEqual(s?.upcoming, []);
 });
 
 /**
- * Every rate still in the future: nothing is in force yet, and `rateForDay` pays
- * **0** for those days (`perdiem.ts:24-32`). Answering null rather than
- * pretending the earliest is current is what lets the card say so.
+ * **Nothing in force yet is not nothing to say.** `rateForDay` pays 0 for those
+ * days, so the earliest future rate must not be called current — but returning
+ * null for the whole summary made the card render no figure at all, while the
+ * line above it still said a rate was configured for that country. It now
+ * answers a summary with no current and every rate upcoming.
  */
-test("nothing in force yet is null, not the earliest future rate", () => {
-  assert.equal(perDiemRateSummary([{ effectiveDate: "2026-12-01", amount: 1500 }], "2026-09-03"), null);
+test("an all-future log has no current rate but still reports them", () => {
+  const s = perDiemRateSummary([{ effectiveDate: "2026-12-01", amount: 1500 }], "2026-09-03");
+  assert.equal(s?.current, null);
+  assert.deepEqual(s?.upcoming.map((u) => u.amount), [1500]);
+  assert.deepEqual(s?.past, []);
+  assert.equal(configuredRateNote(s), null);
 });
 
+/** Only an empty log is null — there is genuinely nothing to say then. */
 test("an empty log is null", () => {
   assert.equal(perDiemRateSummary([], "2026-09-03"), null);
 });
@@ -163,11 +190,31 @@ test("the line names the current rate and the day it started", () => {
   assert.equal(configuredRateNote(null), null);
 });
 
-/** The upcoming change gets its own sentence, because it may land mid-trip. */
-test("an upcoming change is stated in full", () => {
-  const s = perDiemRateSummary(RATES, "2026-09-03");
-  assert.equal(upcomingRateNote(s), "จะเปลี่ยนเป็น ฿1,500.00 ต่อวัน ตั้งแต่ 04/09/2026");
-  assert.equal(upcomingRateNote(perDiemRateSummary([RATES[1]], "2026-09-03")), null);
+/** Each upcoming change gets its own sentence, because one may land mid-trip. */
+test("every upcoming change is stated in full", () => {
+  assert.deepEqual(upcomingRateNotes(perDiemRateSummary(RATES, "2026-09-03")), [
+    "จะเปลี่ยนเป็น ฿1,500.00 ต่อวัน ตั้งแต่ 04/09/2026",
+  ]);
+  assert.deepEqual(upcomingRateNotes(perDiemRateSummary([RATES[1]], "2026-09-03")), []);
+});
+
+/**
+ * With nothing in force, the first future rate STARTS the rate rather than
+ * changing it — there is nothing to change from, and saying so would imply a
+ * figure is being paid today.
+ */
+test("with no current rate the first upcoming one starts rather than changes", () => {
+  const s = perDiemRateSummary(
+    [
+      { effectiveDate: "2026-12-01", amount: 1500 },
+      { effectiveDate: "2027-01-01", amount: 1600 },
+    ],
+    "2026-09-03",
+  );
+  assert.deepEqual(upcomingRateNotes(s), [
+    "จะเริ่มใช้ ฿1,500.00 ต่อวัน ตั้งแต่ 01/12/2026",
+    "จะเปลี่ยนเป็น ฿1,600.00 ต่อวัน ตั้งแต่ 01/01/2027",
+  ]);
 });
 
 /** The fold's label counts the PAST alone — upcoming is not history. */

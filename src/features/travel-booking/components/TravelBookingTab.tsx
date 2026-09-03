@@ -10,7 +10,7 @@ import {
   pastRateLine,
   perDiemRateSummary,
   todayKey,
-  upcomingRateNote,
+  upcomingRateNotes,
   hasUnratedDay,
   perDiemAttributionFootnote,
   perDiemAttributionNote,
@@ -680,14 +680,27 @@ export function TravelBookingTab({
             here. */}
         {rateSummary && (
           <>
-            <p className="text-[12px] font-semibold m-0" style={{ color: "var(--nav-active-text)" }}>
-              เรทที่กำหนดไว้: {configuredRateNote(rateSummary)}
-            </p>
-            {upcomingRateNote(rateSummary) && (
-              <p className="text-[11.5px] m-0" style={{ color: "var(--text-warning)" }}>
-                {upcomingRateNote(rateSummary)}
+            {/* No current rate is a real state, not a reason to render nothing:
+                every configured rate can still be ahead, and `rateForDay` pays 0
+                for those days. Saying so beats the silence this shipped with,
+                where the line above still claimed a rate was configured. */}
+            {configuredRateNote(rateSummary) ? (
+              <p className="text-[12px] font-semibold m-0" style={{ color: "var(--nav-active-text)" }}>
+                เรทที่กำหนดไว้: {configuredRateNote(rateSummary)}
+              </p>
+            ) : (
+              <p className="text-[12px] font-semibold m-0" style={{ color: "var(--text-warning)" }}>
+                เรทที่กำหนดไว้ยังไม่เริ่มมีผล — วันที่อยู่ก่อนวันเริ่มใช้จะคิดเป็น ฿0
               </p>
             )}
+            {/* Every future change, not only the next: one may land inside the
+                trip being booked, and `computePerDiem` charges them whether or
+                not this card mentions them. */}
+            {upcomingRateNotes(rateSummary).map((n) => (
+              <p key={n} className="text-[11.5px] m-0" style={{ color: "var(--text-warning)" }}>
+                {n}
+              </p>
+            ))}
             {historyToggleLabel(rateSummary) && (
               <div className="flex flex-col gap-1">
                 <button
