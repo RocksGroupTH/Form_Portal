@@ -5,10 +5,12 @@ import { Briefcase, Calendar, Car, FileCheck, Hotel, Landmark, MapPin, StickyNot
 import type { AccBrandOption } from "@/features/accounting/types";
 import { NO_RENT_VEHICLE_NAME } from "@/features/travel-booking/constants";
 import {
+  configuredRateNote,
   hasUnratedDay,
-  perDiemFootnote,
-  perDiemSourceNote,
+  perDiemAttributionFootnote,
+  perDiemAttributionNote,
   PER_DIEM_UNRATED_NOTE,
+  type PerDiemAttribution,
 } from "@/features/travel-booking/lib/perdiem-note";
 import { countryNameBoth } from "@/lib/acc/country-currency";
 import { GooglePinView } from "./GooglePinView";
@@ -66,10 +68,10 @@ interface TravelBookingTabProps {
     days: number;
     total: number;
     groups: { rate: number; days: number }[];
-    /** Which log priced it — `perdiem-country.ts` decides, nothing here re-derives it. */
-    source: "country" | "employee";
-    /** The country whose rate applied, or null when the employee's own did. */
-    countryCode: string | null;
+    /** Which rate priced it, in the four states the card has to tell apart. */
+    attribution: PerDiemAttribution;
+    /** The configured country's own rates, so they can be named before any date is typed. */
+    countryLog: readonly { effectiveDate: string; amount: number }[];
   };
   allowanceRate: number | null;
   reasons: TravelReasonOption[];
@@ -641,19 +643,29 @@ export function TravelBookingTab({
             from, while the footnote claimed HR for every trip, which is false
             for every one a configured country rate prices. */}
         <p className="text-[11.5px] m-0 flex items-center gap-1.5" style={{ color: "var(--text-muted)" }}>
-          {perDiemEstimate.source === "country" && <Landmark size={12} className="shrink-0" />}
-          {perDiemSourceNote(
-            perDiemEstimate.source,
-            countryNameBoth(perDiemEstimate.countryCode),
+          {perDiemEstimate.attribution.kind === "country" && <Landmark size={12} className="shrink-0" />}
+          {perDiemAttributionNote(
+            perDiemEstimate.attribution,
+            perDiemEstimate.attribution.kind === "home"
+              ? null
+              : countryNameBoth(perDiemEstimate.attribution.countryCode),
           )}
         </p>
+        {/* What the country actually pays, stated before any date is typed —
+            the state this was asked for. The breakdown above needs dates; this
+            does not. */}
+        {configuredRateNote(perDiemEstimate.countryLog) && (
+          <p className="text-[12px] font-semibold m-0" style={{ color: "var(--nav-active-text)" }}>
+            เรทที่กำหนดไว้: {configuredRateNote(perDiemEstimate.countryLog)}
+          </p>
+        )}
         {hasUnratedDay(perDiemEstimate.groups) && (
           <p className="text-[11.5px] m-0" style={{ color: "var(--text-warning)" }}>
             {PER_DIEM_UNRATED_NOTE}
           </p>
         )}
         <p className="text-[11px] m-0" style={{ color: "var(--text-faint)" }}>
-          {perDiemFootnote(perDiemEstimate.source)}
+          {perDiemAttributionFootnote(perDiemEstimate.attribution)}
         </p>
       </SectionCard>
     </div>

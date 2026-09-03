@@ -421,7 +421,11 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
           isContinuation={continuationFlags[activeTabIndex] ?? false}
           perDiemEstimate={
             perDiemEstimates[activeTabIndex] ?? {
-              days: 0, total: 0, groups: [], source: "employee" as const, countryCode: null,
+              days: 0,
+              total: 0,
+              groups: [],
+              attribution: { kind: "home" as const },
+              countryLog: [],
             }
           }
           allowanceRate={employee?.allowance ?? null}

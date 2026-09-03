@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
 import { computePerDiem, type AllowanceLogEntry } from "@/lib/acc/travel-booking/perdiem";
+import { effectiveClaimCountry } from "@/features/accounting/lib/claim-currency";
+import type { PerDiemAttribution } from "@/features/travel-booking/lib/perdiem-note";
 import { NO_RENT_VEHICLE_NAME } from "@/features/travel-booking/constants";
 import { workLocationIssue } from "@/lib/acc/travel-booking/work-location-pin";
 import {
@@ -604,27 +606,61 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
     [tabs],
   );
 
-  /* `source` and the country travel with the figure rather than being derived
-     again at the card: `perdiem-country.ts` returns them precisely so the form's
-     note, the report's rate column and the recompute's audit row cannot each
-     work out a different answer from the same country code. */
+  /* The attribution and the country's own log travel with the figure rather
+     than being derived again at the card: `perdiem-country.ts` returns `source`
+     precisely so the form's note, the report's rate column and the recompute's
+     audit row cannot each work out a different answer from one country code. */
   const perDiemEstimates = useMemo(
     () =>
       tabs.map((t, i) => {
+        /* The RESOLVED country, the way the chips resolve it. `TravelBookingTab`
+           marks a chip active on `effectiveClaimCountry(tab.countryCode, brand)`
+           and the submit stores `resolveBookingCountry`, which is the same rule —
+           so pricing the raw field made a brand whose default is foreign show that
+           chip selected while this said Thailand. Resolution needs the brand row,
+           which arrives after the first paint, and `defaultClaimCountry(null)` is
+           TH, so `brandsKnown` gates the claim exactly as `ratesKnown` gates the
+           money. */
+        const brand = t.brandCode ? brands.find((b) => b.brandCode === t.brandCode) ?? null : null;
+        const country = t.brandCode ? effectiveClaimCountry(t.countryCode, brand) : t.countryCode;
+        const resolved = perDiemLogFor(country, estimateLog, countryRates);
+        const settled = ratesKnown && (!t.brandCode || brands.length > 0);
+
+        /* Four states, because two cannot say what the card must. `source` is
+           `"employee"` both when that is settled and when nothing is known yet,
+           and `countryCode` is null on that branch — so the destination has to be
+           carried separately. See `PerDiemAttribution`. */
+        const attribution: PerDiemAttribution =
+          resolved.source === "country"
+            ? { kind: "country", countryCode: resolved.countryCode as string }
+            : !isPerDiemCountry(country)
+              ? { kind: "home" }
+              : settled
+                ? { kind: "unconfigured", countryCode: (country ?? "").toUpperCase() }
+                : { kind: "pending", countryCode: (country ?? "").toUpperCase() };
+
+        /* The country's own rates, so the card can state what it pays BEFORE any
+           date is typed — the state this was asked for. `computePerDiem` needs
+           dates; naming the rate does not. Taken from `perDiemLogFor`'s pick and
+           never from a second scan of `countryRates`, which holds every country's. */
+        const countryLog = attribution.kind === "country" ? resolved.log : [];
+
         if (!t.departDate || !t.returnDate || t.returnDate < t.departDate) {
-          return { days: 0, total: 0, groups: [], source: "employee" as const, countryCode: null };
+          /* Below the resolution, not above it. Returning a hardcoded
+             `employee` here is what made a card with a country picked and no
+             dates yet — the ordinary way the form is filled in — say the rate
+             came from HR while the chosen country's rate sat unread. */
+          return { days: 0, total: 0, groups: [], attribution, countryLog };
         }
-        const resolved = perDiemLogFor(t.countryCode, estimateLog, countryRates);
         // Days are always honest — they come from the dates alone. The money is
         // withheld for a foreign trip until the rates have arrived, because
         // pricing it from the domestic stand-in would show a figure that is
         // wrong and then silently changes.
-        const foreignPending = !ratesKnown && resolved.source === "employee" && isPerDiemCountry(t.countryCode);
         const computed = computePerDiem(t.departDate, t.returnDate, continuationFlags[i], resolved.log);
-        const shaped = foreignPending ? { ...computed, total: 0, groups: [] } : computed;
-        return { ...shaped, source: resolved.source, countryCode: resolved.countryCode };
+        const shaped = attribution.kind === "pending" ? { ...computed, total: 0, groups: [] } : computed;
+        return { ...shaped, attribution, countryLog };
       }),
-    [tabs, continuationFlags, estimateLog, countryRates, ratesKnown],
+    [tabs, brands, continuationFlags, estimateLog, countryRates, ratesKnown],
   );
 
   const totalPerDiemEstimate = useMemo(

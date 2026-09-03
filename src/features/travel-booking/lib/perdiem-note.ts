@@ -18,23 +18,6 @@
 export type PerDiemSource = "country" | "employee";
 
 /**
- * One line naming the rate in use, shown beside the estimate.
- *
- * The employee case says so rather than saying nothing: silence is what let the
- * HR footnote read as though it covered every trip.
- */
-export function perDiemSourceNote(
-  source: PerDiemSource,
-  countryLabel: string | null | undefined,
-): string {
-  if (source === "employee") return "ใช้เบี้ยเลี้ยงตามข้อมูล HR ของผู้ขอเบิก";
-  const label = (countryLabel ?? "").trim();
-  return label
-    ? `ใช้เบี้ยเลี้ยงที่บริษัทกำหนดไว้สำหรับ ${label}`
-    : "ใช้เบี้ยเลี้ยงที่บริษัทกำหนดไว้สำหรับประเทศปลายทาง";
-}
-
-/**
  * The footnote about where the FINAL figure comes from.
  *
  * It must not name HR for a trip a country rate prices. The server re-derives
@@ -42,7 +25,7 @@ export function perDiemSourceNote(
  * landed on is the one the stored figure will use — naming the other would
  * promise a number from a table nobody is going to read.
  */
-export function perDiemFootnote(source: PerDiemSource): string {
+function perDiemFootnote(source: PerDiemSource): string {
   return source === "country"
     ? "* ยอดจริงคำนวณจากเรทเบี้ยเลี้ยงของประเทศปลายทาง ตามวันที่เดินทาง เมื่อกด “ส่งคำขอ”"
     : "* ยอดจริงคำนวณจากอัตราเบี้ยเลี้ยงย้อนหลังตามวันที่ในระบบ HR เมื่อกด “ส่งคำขอ”";
@@ -68,3 +51,80 @@ export function hasUnratedDay(groups: readonly { rate: number; days: number }[])
 /** Shown beside a zero-rate day, naming the cause rather than the symptom. */
 export const PER_DIEM_UNRATED_NOTE =
   "บางวันยังไม่มีเรทที่มีผลครอบคลุม จึงคิดเป็น ฿0 — ตรวจวันที่เริ่มมีผลของเรทที่ตั้งไว้";
+
+/**
+ * Which rate priced the trip, as the CARD has to say it — four states, not
+ * `perDiemLogFor`'s two.
+ *
+ * Its `source` answers "which log did I read", which is the right question for
+ * the submit and the wrong one for a sentence. `"employee"` comes back both when
+ * the answer is settled — Thailand, or a country nobody has configured — and
+ * while the rates are still arriving, and a card that cannot tell those apart
+ * asserts HR in the same breath as `foreignPending` withholds the money for not
+ * knowing. `countryCode` is null on that branch by design, so the destination
+ * has to travel separately from the priced country.
+ */
+export type PerDiemAttribution =
+  | { kind: "country"; countryCode: string }
+  | { kind: "home" }
+  | { kind: "unconfigured"; countryCode: string }
+  | { kind: "pending"; countryCode: string };
+
+/** One line naming the rate in use, or saying why there is not one yet. */
+export function perDiemAttributionNote(
+  a: PerDiemAttribution,
+  countryLabel: string | null | undefined,
+): string {
+  const label = (countryLabel ?? "").trim();
+  if (a.kind === "country") {
+    return label
+      ? `ใช้เบี้ยเลี้ยงที่บริษัทกำหนดไว้สำหรับ ${label}`
+      : "ใช้เบี้ยเลี้ยงที่บริษัทกำหนดไว้สำหรับประเทศปลายทาง";
+  }
+  if (a.kind === "unconfigured") {
+    const who = label || a.countryCode;
+    return `ยังไม่ได้กำหนดเบี้ยเลี้ยงสำหรับ ${who} — ใช้เบี้ยเลี้ยงตามข้อมูล HR ของผู้ขอเบิก`;
+  }
+  if (a.kind === "pending") return "กำลังตรวจสอบเรทเบี้ยเลี้ยงของประเทศปลายทาง...";
+  return "ใช้เบี้ยเลี้ยงตามข้อมูล HR ของผู้ขอเบิก";
+}
+
+/**
+ * The footnote about where the FINAL figure comes from.
+ *
+ * Only a configured country rate drops HR. An **unconfigured** foreign country
+ * really is priced from the employee's allowance, so its footnote still names
+ * HR — the note above is what says a rate is missing, and the two must not both
+ * try to carry that.
+ */
+export function perDiemAttributionFootnote(a: PerDiemAttribution): string {
+  if (a.kind === "country") return perDiemFootnote("country");
+  if (a.kind === "pending") {
+    return "* ยอดจริงคำนวณเมื่อกด “ส่งคำขอ” หลังระบบตรวจเรทของประเทศปลายทางแล้ว";
+  }
+  return perDiemFootnote("employee");
+}
+
+/**
+ * The configured rate, summarised from its log alone — **stated before any date
+ * is typed**, which is the state this was asked for.
+ *
+ * `computePerDiem` needs dates to produce a breakdown; naming the rate does not,
+ * and a requester who has just picked a country wants to know what it pays. A
+ * country with several dated rates is shown as its span rather than one figure,
+ * because which applies depends on when the trip is.
+ *
+ * The log is `perDiemLogFor`'s own pick, never a second scan of every country's
+ * rates: `perDiemCountryLog` is the only filter-by-country in `src/`.
+ */
+export function configuredRateNote(
+  log: readonly { effectiveDate: string; amount: number }[],
+): string | null {
+  if (log.length === 0) return null;
+  const money = (n: number) =>
+    "฿" + n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const amounts: number[] = [];
+  for (const e of log) if (amounts.indexOf(e.amount) === -1) amounts.push(e.amount);
+  if (amounts.length === 1) return `${money(amounts[0])} ต่อวัน`;
+  return `${money(amounts[0])} → ${money(amounts[amounts.length - 1])} ต่อวัน (เปลี่ยนตามวันเดินทาง)`;
+}
