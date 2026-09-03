@@ -11,7 +11,7 @@ import {
   PER_DIEM_UNRATED_NOTE,
   type PerDiemAttribution,
 } from "@/features/travel-booking/lib/perdiem-note";
-import { tripRateLead } from "@/features/travel-booking/lib/trip-rate-lead";
+import { ratedSegments, tripRateLead, unratedNote } from "@/features/travel-booking/lib/trip-rate-lead";
 import { tripRateSegments } from "@/features/travel-booking/lib/trip-rate-segments";
 import { TripRateHistoryModal } from "@/features/travel-booking/components/TripRateHistoryModal";
 import { countryNameBoth } from "@/lib/acc/country-currency";
@@ -676,41 +676,61 @@ export function TravelBookingTab({
             Nothing filters for active: `listPerDiemCountryRates` gives the
             client `IsActive = 1` rows only, so a deactivated rate never arrives
             here. */}
-        {tripSegments.length > 0 && (
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[12px] font-semibold" style={{ color: "var(--nav-active-text)" }}>
-              เรทที่ใช้กับทริปนี้: {tripRateLead(tripSegments)}
-            </span>
-            {/* Only with more than one. A single rate is already stated beside
-                this, and a dialog that repeated it would be a click for nothing —
-                which is the rule as asked for. */}
-            {tripSegments.length > 1 && (
-              <button
-                type="button"
-                onClick={() => setHistoryOpen(true)}
-                className="inline-flex items-center gap-1 text-[11.5px] font-semibold cursor-pointer rounded-lg px-2 py-0.5"
-                style={{
-                  color: "var(--nav-active-text)",
-                  background: "var(--nav-active-bg)",
-                  border: "1px solid var(--border-card)",
-                }}
-              >
-                <History size={12} /> ดูเรททั้ง {tripSegments.length} ช่วง
-              </button>
+        {/* **Only when a country rate is what prices this trip.** Gating on
+            `tripSegments.length` instead put a false line on every OTHER trip:
+            `countryLog` is `[]` for `home`, `pending` and `unconfigured`, and a
+            trip against an empty log is one null-dated ฿0 segment rather than no
+            segments — so a domestic trip rendered `฿0.00 ต่อวัน` directly under a
+            breakdown reading `3 วัน × ฿300.00`, two contradicting figures on one
+            card. */}
+        {perDiemEstimate.attribution.kind === "country" && tripSegments.length > 0 && (
+          <>
+            <div className="flex items-center gap-2 flex-wrap">
+              {tripRateLead(tripSegments) && (
+                <span className="text-[12px] font-semibold" style={{ color: "var(--nav-active-text)" }}>
+                  เรทที่ใช้กับทริปนี้: {tripRateLead(tripSegments)}
+                </span>
+              )}
+              {/* Counted on the RATED segments: a leading ฿0 stretch is the
+                  absence of a rate, not one of them, so a trip that begins
+                  before its only rate must not offer a dialog listing "two". */}
+              {ratedSegments(tripSegments).length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => setHistoryOpen(true)}
+                  className="inline-flex items-center gap-1 text-[11.5px] font-semibold cursor-pointer rounded-lg px-2 py-0.5"
+                  style={{
+                    color: "var(--nav-active-text)",
+                    background: "var(--nav-active-bg)",
+                    border: "1px solid var(--border-card)",
+                  }}
+                >
+                  <History size={12} /> ดูเรททั้ง {ratedSegments(tripSegments).length} ช่วง
+                </button>
+              )}
+            </div>
+            {/* Days no rate reaches, named with the day the rate does start —
+                read from the country's own list, since for a trip wholly before
+                it no segment carries that date. */}
+            {unratedNote(tripSegments, perDiemEstimate.countryLog) && (
+              <p className="text-[11.5px] m-0" style={{ color: "var(--text-warning)" }}>
+                {unratedNote(tripSegments, perDiemEstimate.countryLog)}
+              </p>
             )}
-          </div>
+            <TripRateHistoryModal
+              open={historyOpen}
+              onClose={() => setHistoryOpen(false)}
+              segments={tripSegments}
+              // Narrowed to `country` by the guard above, so the code is always
+              // there and a `home` arm here would be unreachable.
+              countryLabel={countryNameBoth(perDiemEstimate.attribution.countryCode)}
+            />
+          </>
         )}
-        <TripRateHistoryModal
-          open={historyOpen}
-          onClose={() => setHistoryOpen(false)}
-          segments={tripSegments}
-          countryLabel={
-            perDiemEstimate.attribution.kind === "home"
-              ? null
-              : countryNameBoth(perDiemEstimate.attribution.countryCode)
-          }
-        />
-        {hasUnratedDay(perDiemEstimate.groups) && (
+        {/* The HR-log gap. Narrowed to the non-country case: a country trip's ฿0
+            days are already explained by `unratedNote` above, with the date this
+            one cannot name. */}
+        {perDiemEstimate.attribution.kind !== "country" && hasUnratedDay(perDiemEstimate.groups) && (
           <p className="text-[11.5px] m-0" style={{ color: "var(--text-warning)" }}>
             {PER_DIEM_UNRATED_NOTE}
           </p>
