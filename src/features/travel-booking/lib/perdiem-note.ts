@@ -15,6 +15,8 @@
  * Imports nothing, so the wording is unit-testable.
  */
 
+import { fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
+
 export type PerDiemSource = "country" | "employee";
 
 /**
@@ -106,16 +108,25 @@ export function perDiemAttributionFootnote(a: PerDiemAttribution): string {
 }
 
 /**
- * The configured rate, summarised from its log alone — **stated before any date
- * is typed**, which is the state this was asked for.
+ * The configured rate **and the day it starts**, summarised from its log alone —
+ * stated before any date is typed, which is the state this was asked for.
  *
  * `computePerDiem` needs dates to produce a breakdown; naming the rate does not,
- * and a requester who has just picked a country wants to know what it pays. A
- * country with several dated rates is shown as its span rather than one figure,
- * because which applies depends on when the trip is.
+ * and a requester who has just picked a country wants to know what it pays.
  *
- * The log is `perDiemLogFor`'s own pick, never a second scan of every country's
- * rates: `perDiemCountryLog` is the only filter-by-country in `src/`.
+ * **The date is not decoration.** A rate only applies from its own effective
+ * date, and `rateForDay` pays **0** for any day before the earliest one
+ * (`perdiem.ts:24-32`) — so a requester who sees `฿2,500 ต่อวัน` with no date
+ * cannot tell whether their trip is covered by it. With several dated rates,
+ * each figure carries its own day, because which one applies is decided by the
+ * travel dates and two bare amounts do not say that.
+ *
+ * More than two is summarised by its ends rather than listed: this is one line
+ * under a total, and the breakdown above already itemises what a given trip is
+ * actually charged.
+ *
+ * The log arrives sorted ascending by date — `perDiemCountryLog` sorts it — and
+ * is `perDiemLogFor`'s own pick, never a second scan of every country's rates.
  */
 export function configuredRateNote(
   log: readonly { effectiveDate: string; amount: number }[],
@@ -123,8 +134,12 @@ export function configuredRateNote(
   if (log.length === 0) return null;
   const money = (n: number) =>
     "฿" + n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const amounts: number[] = [];
-  for (const e of log) if (amounts.indexOf(e.amount) === -1) amounts.push(e.amount);
-  if (amounts.length === 1) return `${money(amounts[0])} ต่อวัน`;
-  return `${money(amounts[0])} → ${money(amounts[amounts.length - 1])} ต่อวัน (เปลี่ยนตามวันเดินทาง)`;
+  const on = (ymd: string) => `(มีผล ${fmtYmdDisplay(ymd)})`;
+  const first = log[0];
+  if (log.length === 1) return `${money(first.amount)} ต่อวัน ${on(first.effectiveDate)}`;
+  const last = log[log.length - 1];
+  return (
+    `${money(first.amount)} ${on(first.effectiveDate)}` +
+    ` → ${money(last.amount)} ${on(last.effectiveDate)} ต่อวัน`
+  );
 }

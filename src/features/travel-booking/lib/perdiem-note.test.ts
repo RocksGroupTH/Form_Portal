@@ -91,14 +91,52 @@ test("the footnote follows the attribution, and only a country rate drops HR", (
  * The rate is stated **before any date is typed** — the state the request was
  * about. `computePerDiem` needs dates; naming the rate does not.
  */
-test("a configured rate is summarised from its log alone", () => {
-  assert.equal(configuredRateNote([{ effectiveDate: "2026-01-01", amount: 2500 }]), "฿2,500.00 ต่อวัน");
+test("a configured rate is summarised from its log alone, with the date it starts", () => {
+  assert.equal(
+    configuredRateNote([{ effectiveDate: "2026-01-01", amount: 2500 }]),
+    "฿2,500.00 ต่อวัน (มีผล 01/01/2026)",
+  );
+  assert.equal(configuredRateNote([]), null);
+});
+
+/**
+ * Several dated rates: each figure carries the day it starts, because which one
+ * applies is decided by the travel dates and the reader cannot work that out
+ * from two amounts alone.
+ */
+test("several rates each carry their own start date", () => {
   assert.equal(
     configuredRateNote([
       { effectiveDate: "2026-01-01", amount: 2500 },
       { effectiveDate: "2026-06-01", amount: 3000 },
     ]),
-    "฿2,500.00 → ฿3,000.00 ต่อวัน (เปลี่ยนตามวันเดินทาง)",
+    "฿2,500.00 (มีผล 01/01/2026) → ฿3,000.00 (มีผล 01/06/2026) ต่อวัน",
   );
-  assert.equal(configuredRateNote([]), null);
+});
+
+/**
+ * More than two is summarised by its ends rather than listed: the card is one
+ * line under a total, and the breakdown above already itemises what a given
+ * trip is actually charged.
+ */
+test("more than two rates are summarised by the first and the last", () => {
+  assert.equal(
+    configuredRateNote([
+      { effectiveDate: "2026-01-01", amount: 2000 },
+      { effectiveDate: "2026-04-01", amount: 2500 },
+      { effectiveDate: "2026-09-01", amount: 3000 },
+    ]),
+    "฿2,000.00 (มีผล 01/01/2026) → ฿3,000.00 (มีผล 01/09/2026) ต่อวัน",
+  );
+});
+
+/** Two dated rows at the same amount still differ by date, so both are shown. */
+test("the same amount twice is still two dated rates", () => {
+  assert.equal(
+    configuredRateNote([
+      { effectiveDate: "2026-01-01", amount: 2500 },
+      { effectiveDate: "2026-06-01", amount: 2500 },
+    ]),
+    "฿2,500.00 (มีผล 01/01/2026) → ฿2,500.00 (มีผล 01/06/2026) ต่อวัน",
+  );
 });

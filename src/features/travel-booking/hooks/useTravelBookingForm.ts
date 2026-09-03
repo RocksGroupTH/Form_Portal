@@ -577,7 +577,7 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
   // Real effective-dated allowance history for the requester (rates change over time), so the
   // estimate uses the rate for each travel day — not just the current rate. Falls back to the
   // flat current rate only while the log is still loading.
-  const { data: allowanceLogData } = useSWR<{
+  const { data: allowanceLogData, mutate: refreshRates } = useSWR<{
     entries: AllowanceLogEntry[];
     countryRates?: PerDiemCountryRate[];
   }>(
@@ -662,6 +662,58 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
       }),
     [tabs, brands, continuationFlags, estimateLog, countryRates, ratesKnown],
   );
+
+  /**
+   * Re-check the country rates whenever the set of destinations changes.
+   *
+   * They arrive once with the allowance history and were never fetched again:
+   * `revalidateOnFocus` is off and the SWR key is the requester's staff id, so an
+   * admin editing a rate while somebody had the form open left that requester
+   * looking at the old figure — and the submit prices from the server's own fresh
+   * read, so the stored number could differ from the one on screen with nothing
+   * said. Picking a country is the moment the rate starts mattering, so it is the
+   * moment to look again.
+   *
+   * **Keyed on the destinations, not on the estimates.** `perDiemEstimates`
+   * recomputes on every keystroke in a tab; the string below only changes when a
+   * country does, so a date edit fires nothing.
+   *
+   * **It cannot loop.** The refetch replaces the rates, which recomputes the
+   * estimates, which rebuilds this string — but the destinations are unchanged,
+   * so the string is identical and the effect does not run again. A `pending`
+   * attribution settling into `country` or `unconfigured` keeps the same code
+   * for the same reason.
+   *
+   * Rapid chip clicks are absorbed by SWR's own deduping (2s by default, and no
+   * `SWRConfig` overrides it here), so comparing three countries costs one fetch.
+   */
+  const destinationKey = useMemo(() => {
+    const codes: string[] = [];
+    for (const e of perDiemEstimates) {
+      if (e.attribution.kind !== "home" && codes.indexOf(e.attribution.countryCode) === -1) {
+        codes.push(e.attribution.countryCode);
+      }
+    }
+    codes.sort();
+    return codes.join(",");
+  }, [perDiemEstimates]);
+
+  const lastDestinationKey = useRef<string | null>(null);
+  useEffect(() => {
+    // The first pass records what was already on screen without refetching: SWR
+    // is fetching that key anyway, and a resumed draft would otherwise fire a
+    // second request for data already in flight.
+    if (lastDestinationKey.current === null) {
+      lastDestinationKey.current = destinationKey;
+      return;
+    }
+    if (lastDestinationKey.current === destinationKey) return;
+    lastDestinationKey.current = destinationKey;
+    // Nothing foreign left to price — the HR allowance answers, and it is in the
+    // same payload, which has not gone stale for a domestic trip.
+    if (destinationKey === "") return;
+    void refreshRates();
+  }, [destinationKey, refreshRates]);
 
   const totalPerDiemEstimate = useMemo(
     () => perDiemEstimates.reduce((sum, p) => sum + p.total, 0),
