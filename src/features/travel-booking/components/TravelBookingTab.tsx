@@ -1,9 +1,16 @@
 "use client";
 
 import { useMemo } from "react";
-import { Briefcase, Calendar, Car, FileCheck, Hotel, MapPin, StickyNote } from "lucide-react";
+import { Briefcase, Calendar, Car, FileCheck, Hotel, Landmark, MapPin, StickyNote } from "lucide-react";
 import type { AccBrandOption } from "@/features/accounting/types";
 import { NO_RENT_VEHICLE_NAME } from "@/features/travel-booking/constants";
+import {
+  hasUnratedDay,
+  perDiemFootnote,
+  perDiemSourceNote,
+  PER_DIEM_UNRATED_NOTE,
+} from "@/features/travel-booking/lib/perdiem-note";
+import { countryNameBoth } from "@/lib/acc/country-currency";
 import { GooglePinView } from "./GooglePinView";
 import { WorkLocationList } from "./WorkLocationList";
 import { DateRangeField } from "./DateRangeField";
@@ -55,7 +62,15 @@ interface TravelBookingTabProps {
    */
   brands: AccBrandOption[];
   isContinuation: boolean;
-  perDiemEstimate: { days: number; total: number; groups: { rate: number; days: number }[] };
+  perDiemEstimate: {
+    days: number;
+    total: number;
+    groups: { rate: number; days: number }[];
+    /** Which log priced it — `perdiem-country.ts` decides, nothing here re-derives it. */
+    source: "country" | "employee";
+    /** The country whose rate applied, or null when the employee's own did. */
+    countryCode: string | null;
+  };
   allowanceRate: number | null;
   reasons: TravelReasonOption[];
   accommodations: Accommodation[];
@@ -621,8 +636,24 @@ export function TravelBookingTab({
             )}
           </span>
         </div>
+        {/* Which rate produced the figure above. The breakdown already showed
+            the NUMBER — `N วัน × ฿2,500` — and said nothing about where it came
+            from, while the footnote claimed HR for every trip, which is false
+            for every one a configured country rate prices. */}
+        <p className="text-[11.5px] m-0 flex items-center gap-1.5" style={{ color: "var(--text-muted)" }}>
+          {perDiemEstimate.source === "country" && <Landmark size={12} className="shrink-0" />}
+          {perDiemSourceNote(
+            perDiemEstimate.source,
+            countryNameBoth(perDiemEstimate.countryCode),
+          )}
+        </p>
+        {hasUnratedDay(perDiemEstimate.groups) && (
+          <p className="text-[11.5px] m-0" style={{ color: "var(--text-warning)" }}>
+            {PER_DIEM_UNRATED_NOTE}
+          </p>
+        )}
         <p className="text-[11px] m-0" style={{ color: "var(--text-faint)" }}>
-          * ยอดจริงคำนวณจากอัตราเบี้ยเลี้ยงย้อนหลังตามวันที่ในระบบ HR เมื่อกด &quot;ส่งคำขอ&quot;
+          {perDiemFootnote(perDiemEstimate.source)}
         </p>
       </SectionCard>
     </div>

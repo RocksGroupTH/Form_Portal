@@ -604,10 +604,16 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
     [tabs],
   );
 
+  /* `source` and the country travel with the figure rather than being derived
+     again at the card: `perdiem-country.ts` returns them precisely so the form's
+     note, the report's rate column and the recompute's audit row cannot each
+     work out a different answer from the same country code. */
   const perDiemEstimates = useMemo(
     () =>
       tabs.map((t, i) => {
-        if (!t.departDate || !t.returnDate || t.returnDate < t.departDate) return { days: 0, total: 0, groups: [] };
+        if (!t.departDate || !t.returnDate || t.returnDate < t.departDate) {
+          return { days: 0, total: 0, groups: [], source: "employee" as const, countryCode: null };
+        }
         const resolved = perDiemLogFor(t.countryCode, estimateLog, countryRates);
         // Days are always honest — they come from the dates alone. The money is
         // withheld for a foreign trip until the rates have arrived, because
@@ -615,7 +621,8 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
         // wrong and then silently changes.
         const foreignPending = !ratesKnown && resolved.source === "employee" && isPerDiemCountry(t.countryCode);
         const computed = computePerDiem(t.departDate, t.returnDate, continuationFlags[i], resolved.log);
-        return foreignPending ? { ...computed, total: 0, groups: [] } : computed;
+        const shaped = foreignPending ? { ...computed, total: 0, groups: [] } : computed;
+        return { ...shaped, source: resolved.source, countryCode: resolved.countryCode };
       }),
     [tabs, continuationFlags, estimateLog, countryRates, ratesKnown],
   );

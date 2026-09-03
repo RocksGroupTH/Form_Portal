@@ -419,7 +419,11 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
         <TravelBookingTab
           tab={activeTab}
           isContinuation={continuationFlags[activeTabIndex] ?? false}
-          perDiemEstimate={perDiemEstimates[activeTabIndex] ?? { days: 0, total: 0, groups: [] }}
+          perDiemEstimate={
+            perDiemEstimates[activeTabIndex] ?? {
+              days: 0, total: 0, groups: [], source: "employee" as const, countryCode: null,
+            }
+          }
           allowanceRate={employee?.allowance ?? null}
           reasons={reasons}
           accommodations={accommodations}
