@@ -154,12 +154,13 @@ export interface ReportRow {
   /**
    * When the manager approved, as an ISO instant.
    *
-   * The accounting queue shows it beside the payment round, and labels whether
-   * it landed before noon — the cut-off the company's payment process runs on.
-   * **Nothing in either app enforces that**: `getDefaultPaymentDate` is
-   * identical here and in ACC Portal and takes the next round regardless. The
-   * label explains the round to the accountant choosing it; the choice is the
-   * accountant's.
+   * The accounting queue shows it beside the payment round. The cut-off is noon
+   * on the Monday of the round's own week, and since 2026-09-03 this app does
+   * compute it — `payment-cycle.ts` for the per-row suggestion,
+   * `getDefaultPaymentDate` for a claim approved with nobody watching. **ACC
+   * Portal still takes the next round regardless**, so the two apps now differ
+   * here. The choice remains the accountant's: this is a suggestion beside an
+   * editable date, not a rule that refuses.
    */
   managerApprovedAt?: string | null;
   /**

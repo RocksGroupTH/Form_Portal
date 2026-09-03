@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { toast } from "sonner";
+import { weekMondayNoon } from "@/lib/acc/payment-calendar-core";
 import {
   Inbox,
   AlertCircle,
@@ -247,21 +248,23 @@ function QueueCheckbox({
 /* ── ApprovalsQueue ── */
 
 /**
- * Was the manager's approval before noon, Bangkok?
+ * Did this claim make the round it is suggested for?
  *
- * Read back through the Bangkok timezone rather than through the browser's: a
- * laptop set to another zone would otherwise flip the label right on the
- * boundary, which is the one place it matters.
+ * The deadline is noon on the **Monday of that round's own week**, which
+ * `paymentDateForApproval` already computed to produce `suggestedPaymentDate` —
+ * so this asks the same question of the same two values rather than deciding
+ * again. It read `hour < 12` of the approval's own day until 2026-09-03, which
+ * named a different rule from the suggestion sitting beside it: an approval on
+ * Thursday afternoon was labelled หลังเที่ยง while comfortably inside its
+ * round's Monday.
+ *
+ * Null when there is no suggestion to be in time for.
  */
-function managerApprovedBeforeNoon(iso: string): boolean {
-  const hour = Number(
-    new Intl.DateTimeFormat("en-GB", {
-      timeZone: "Asia/Bangkok",
-      hour: "2-digit",
-      hour12: false,
-    }).format(new Date(iso)),
-  );
-  return hour < 12;
+function madeItsRound(approvedIso: string, suggested: string | null | undefined): boolean | null {
+  if (!suggested) return null;
+  const parts = suggested.split("-");
+  const round = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+  return new Date(approvedIso).getTime() <= weekMondayNoon(round).getTime();
 }
 
 /** `dd/MM HH:mm` — the year is noise in a queue of this month's work. */
@@ -926,12 +929,13 @@ export function ApprovalsQueue({
                         <td className="px-3 py-2.5 whitespace-nowrap" rowSpan={requestGroupSize} style={{ ...sharedCellStyle, color: "var(--text-muted)" }}>
                           {fmtDateOnly(row.submittedAt)}
                         </td>
-                        {/* ผจก. อนุมัติ — with the noon label beneath it. The
-                            cut-off is the company's payment process, not a rule
-                            either app enforces: getDefaultPaymentDate takes the
-                            next round regardless, here and in ACC Portal. This
-                            tells the accountant which round the claim is *meant*
-                            for; วันจ่าย beside it is where they act on that. */}
+                        {/* ผจก. อนุมัติ — with the cut-off label beneath it.
+                            The deadline is noon on the Monday of the round's own
+                            week, which `paymentDateForApproval` computes; this
+                            label only says whether the claim made it. It used to
+                            read ก่อนเที่ยง/หลังเที่ยง off the approval's own
+                            hour, which named a different rule from the one the
+                            suggestion beside it was using. */}
                         <td className="px-3 py-2.5 whitespace-nowrap text-center" rowSpan={requestGroupSize} style={sharedCellStyle}>
                           {row.managerApprovedAt ? (
                             <>
@@ -941,12 +945,15 @@ export function ApprovalsQueue({
                               <p
                                 className="m-0 text-[10px]"
                                 style={{
-                                  color: managerApprovedBeforeNoon(row.managerApprovedAt)
-                                    ? "var(--color-success)"
-                                    : "var(--color-warning)",
+                                  color:
+                                    madeItsRound(row.managerApprovedAt, row.suggestedPaymentDate) === false
+                                      ? "var(--color-warning)"
+                                      : "var(--color-success)",
                                 }}
                               >
-                                {managerApprovedBeforeNoon(row.managerApprovedAt) ? "ก่อนเที่ยง" : "หลังเที่ยง"}
+                                {madeItsRound(row.managerApprovedAt, row.suggestedPaymentDate) === false
+                                  ? "เลยตัดรอบ"
+                                  : "ทันรอบ"}
                               </p>
                             </>
                           ) : (
@@ -1139,13 +1146,17 @@ export function ApprovalsQueue({
             say it. */}
         {editingRow?.managerApprovedAt && (
           <p className="text-[11px] mb-2 px-1 leading-relaxed" style={{ color: "var(--text-muted)" }}>
-            ผจก. อนุมัติ {fmtDateTimeShort(editingRow.managerApprovedAt)} —{" "}
-            <strong>
-              {managerApprovedBeforeNoon(editingRow.managerApprovedAt) ? "ก่อนเที่ยง" : "หลังเที่ยง"}
-            </strong>
-            {editingRow.suggestedPaymentDate ? ` จึงเข้ารอบ ${fmtPaymentLabel(editingRow.suggestedPaymentDate)}` : ""}
+            ผจก. อนุมัติ {fmtDateTimeShort(editingRow.managerApprovedAt)}
+            {editingRow.suggestedPaymentDate ? (
+              <>
+                {" — "}
+                <strong>เข้ารอบ {fmtPaymentLabel(editingRow.suggestedPaymentDate)}</strong>
+              </>
+            ) : (
+              ""
+            )}
             <br />
-            ก่อนเที่ยงเข้ารอบจ่ายถัดไป · ตั้งแต่เที่ยงข้ามไปอีกหนึ่งรอบ
+            แต่ละรอบปิดรับเที่ยงวันจันทร์ของสัปดาห์นั้น · เลยจากนั้นไปรอบถัดไป
           </p>
         )}
         <PaymentDatePicker
