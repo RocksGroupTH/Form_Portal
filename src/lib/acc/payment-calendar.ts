@@ -104,19 +104,62 @@ export async function getDefaultPaymentDate(
   approvedAt: Date = new Date(),
   months = 4,
 ): Promise<string | null> {
-  const start = new Date(approvedAt.getFullYear(), approvedAt.getMonth(), 1);
-  const end = new Date(approvedAt.getFullYear(), approvedAt.getMonth() + months + 1, 0);
-  const holidays = await getHolidaySet(start, end);
+  const only = await paymentRoundsForApprovals([approvedAt], months);
+  return only[0];
+}
 
-  const rounds: Date[] = [];
+/** Every round from `from`'s month through `months` later, UNSHIFTED, ascending. */
+function unshiftedRounds(from: Date, months: number): Date[] {
+  const out: Date[] = [];
   for (let m = 0; m <= months; m++) {
-    const anchor = new Date(approvedAt.getFullYear(), approvedAt.getMonth() + m, 1);
+    const anchor = new Date(from.getFullYear(), from.getMonth() + m, 1);
     for (const r of paymentRoundsInMonth(anchor.getFullYear(), anchor.getMonth(), ROUNDS)) {
-      rounds.push(r);
+      out.push(r);
     }
   }
-  rounds.sort((a, b) => a.getTime() - b.getTime());
+  out.sort((a, b) => a.getTime() - b.getTime());
+  return out;
+}
 
-  const chosen = defaultPaymentRound(approvedAt, rounds);
-  return chosen ? ymd(shiftPaymentDay(chosen, holidays)) : null;
+/**
+ * The round each claim belongs to, from when its **manager** approved it,
+ * returned as the payable (holiday-shifted) date.
+ *
+ * **Anchored on each approval, never on "now", and that is the point.** The
+ * round is a property of the claim, fixed the moment the manager signs. The
+ * suggestion used to be computed against `getPaymentDates()`, which drops every
+ * round earlier than today — so a claim approved 03/09 read 11/09 up to and
+ * including the 11th and then silently read 25/09 from the 12th, with nothing on
+ * screen saying anything had changed. An accountant working a queue on Monday
+ * and again on Friday saw two different answers for the same untouched claim.
+ *
+ * Batched because the holidays are one query for the whole page rather than one
+ * per row: the window spans the earliest approval forward, so every claim in the
+ * list finds its own round in the same list of candidates.
+ *
+ * Rounds are matched UNSHIFTED and the shift applied to the chosen one, so a
+ * holiday moves the payout and never the deadline — see
+ * `payment-calendar-core.ts`.
+ */
+export async function paymentRoundsForApprovals(
+  approvedAts: readonly (Date | null | undefined)[],
+  months = 4,
+): Promise<(string | null)[]> {
+  let earliest: Date | null = null;
+  for (const a of approvedAts) {
+    if (!a || Number.isNaN(a.getTime())) continue;
+    if (earliest === null || a.getTime() < earliest.getTime()) earliest = a;
+  }
+  if (earliest === null) return approvedAts.map(() => null);
+
+  const start = new Date(earliest.getFullYear(), earliest.getMonth(), 1);
+  const end = new Date(earliest.getFullYear(), earliest.getMonth() + months + 1, 0);
+  const holidays = await getHolidaySet(start, end);
+  const rounds = unshiftedRounds(earliest, months);
+
+  return approvedAts.map((a) => {
+    if (!a || Number.isNaN(a.getTime())) return null;
+    const chosen = defaultPaymentRound(a, rounds);
+    return chosen ? ymd(shiftPaymentDay(chosen, holidays)) : null;
+  });
 }

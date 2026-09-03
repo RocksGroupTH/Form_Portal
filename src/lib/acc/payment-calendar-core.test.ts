@@ -83,3 +83,35 @@ test("the same rule serves AP-4's rounds", () => {
   assert.equal(ymd(defaultPaymentRound(new Date(2026, 7, 31, 12, 0), rounds) as Date), "2026-09-04");
   assert.equal(ymd(defaultPaymentRound(new Date(2026, 7, 31, 12, 1), rounds) as Date), "2026-09-18");
 });
+
+/* ── The cases that lived in payment-cycle.test.ts ──
+ *
+ * `payment-cycle.ts` was a second implementation of this same rule, reading the
+ * Monday off already-SHIFTED dates while this module's contract is that rounds
+ * are matched unshifted. Two copies of one rule on one screen is how the label
+ * and the suggestion beside it came to name different rules; it is deleted and
+ * its cases live here, against the one implementation.
+ */
+
+test("a claim approved on a payment Friday is for a later round", () => {
+  const rounds = paymentRoundsInMonth(2026, 8, [2, 4]);
+  // Fri 11/09's own Monday (the 7th) is long past by the 11th.
+  assert.equal(ymd(defaultPaymentRound(new Date(2026, 8, 11, 9, 0), rounds) as Date), "2026-09-25");
+});
+
+test("an approval before the first round given still takes that round", () => {
+  const rounds = paymentRoundsInMonth(2026, 8, [2, 4]);
+  assert.equal(ymd(defaultPaymentRound(new Date(2026, 7, 20, 8, 0), rounds) as Date), "2026-09-11");
+});
+
+/**
+ * The rounds must be handed over ascending: the first match wins, so an
+ * unsorted list would return whichever round happened to come first in the
+ * array rather than the earliest one still open.
+ */
+test("the first match wins, so order is the caller's responsibility", () => {
+  const later = nthFridayOfMonth(2026, 8, 4);
+  const earlier = nthFridayOfMonth(2026, 8, 2);
+  assert.equal(ymd(defaultPaymentRound(new Date(2026, 8, 3), [later, earlier]) as Date), "2026-09-25");
+  assert.equal(ymd(defaultPaymentRound(new Date(2026, 8, 3), [earlier, later]) as Date), "2026-09-11");
+});

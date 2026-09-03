@@ -1,8 +1,7 @@
 import { isBaht } from "@/lib/acc/currency";
 import { exportCurrencyCells } from "@/lib/acc/export-currency-cells";
 import { amountInBaht, rateAsOfYmd } from "@/lib/acc/currency-display";
-import { getPaymentDates } from "@/lib/acc/payment-calendar";
-import { paymentDateForApproval } from "@/lib/acc/payment-cycle";
+import { paymentRoundsForApprovals } from "@/lib/acc/payment-calendar";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { queryBothPools } from "@/lib/acc/query-both";
 import {
@@ -156,7 +155,7 @@ export interface ReportRow {
    *
    * The accounting queue shows it beside the payment round. The cut-off is noon
    * on the Monday of the round's own week, and since 2026-09-03 this app does
-   * compute it — `payment-cycle.ts` for the per-row suggestion,
+   * compute it — `paymentRoundsForApprovals` for the per-row suggestion and
    * `getDefaultPaymentDate` for a claim approved with nobody watching. **ACC
    * Portal still takes the next round regardless**, so the two apps now differ
    * here. The choice remains the accountant's: this is a suggestion beside an
@@ -165,7 +164,7 @@ export interface ReportRow {
   managerApprovedAt?: string | null;
   /**
    * The round this claim is *meant* for, from the manager's clock — see
-   * `payment-cycle.ts`. A suggestion shown beside the editable date; nothing
+   * `payment-calendar.ts`. A suggestion shown beside the editable date; nothing
    * writes it.
    */
   suggestedPaymentDate?: string | null;
@@ -887,10 +886,19 @@ export async function queryReport(f: ReportFilters): Promise<ReportRow[]> {
     // `Date`, not from the ISO string on the mapped row, so it stays here
     // beside the recordset rather than moving into `mapRow`.
     if (res.recordset.some((x: Record<string, unknown>) => x.ManagerApprovedAt)) {
-      const calendar = await getPaymentDates();
+      /* Anchored per claim rather than against today's calendar, so a row's
+         suggested round does not move under an accountant who left the queue
+         open over a weekend. It therefore need NOT be one of the picker's own
+         dates: a claim approved 03/09 still names 11/09 on the 14th, which is
+         the truth about the claim — and why `approveAccount` takes a month's
+         backward window rather than only future rounds. */
+      const suggested = await paymentRoundsForApprovals(
+        (res.recordset as Record<string, unknown>[]).map(
+          (x) => x.ManagerApprovedAt as Date | null,
+        ),
+      );
       mapped.forEach((row, i) => {
-        const actioned = (res.recordset[i] as Record<string, unknown>).ManagerApprovedAt as Date | null;
-        row.suggestedPaymentDate = paymentDateForApproval(actioned, calendar);
+        row.suggestedPaymentDate = suggested[i];
       });
     }
     return mapped;
