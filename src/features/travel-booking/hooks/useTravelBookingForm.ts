@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { computePerDiem, type AllowanceLogEntry } from "@/lib/acc/travel-booking/perdiem";
 import { effectiveClaimCountry } from "@/features/accounting/lib/claim-currency";
 import type { PerDiemAttribution } from "@/features/travel-booking/lib/perdiem-note";
+import { destinationKeyFor } from "@/features/travel-booking/lib/destination-key";
 import { NO_RENT_VEHICLE_NAME } from "@/features/travel-booking/constants";
 import { workLocationIssue } from "@/lib/acc/travel-booking/work-location-pin";
 import {
@@ -484,6 +485,9 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
    * The *chosen* brand lives on each tab (`TabFormState.brandCode`), not here.
    */
   const [brands, setBrands] = useState<AccBrandOption[]>([]);
+  /* Settled, not `brands.length > 0`: a legitimately empty list still has to
+     settle, or the destination baseline below never records. */
+  const [brandsLoaded, setBrandsLoaded] = useState(false);
   useEffect(() => {
     let cancelled = false;
     fetch("/api/request/travel-booking/options/brands")
@@ -491,7 +495,8 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
       .then((j: { ok?: boolean; data?: AccBrandOption[] }) => {
         if (!cancelled && j?.ok && Array.isArray(j.data)) setBrands(j.data);
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setBrandsLoaded(true); });
     return () => { cancelled = true; };
   }, []);
 
@@ -671,50 +676,44 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
    * admin editing a rate while somebody had the form open left that requester
    * looking at the old figure — and the submit prices from the server's own fresh
    * read, so the stored number could differ from the one on screen with nothing
-   * said. Picking a country is the moment the rate starts mattering, so it is the
-   * moment to look again.
+   * said. Picking a country is the moment the rate starts mattering.
    *
-   * **Keyed on the destinations, not on the estimates.** `perDiemEstimates`
-   * recomputes on every keystroke in a tab; the string below only changes when a
-   * country does, so a date edit fires nothing.
+   * **Keyed on `tabs` and `brands`, never on `perDiemEstimates`.** Those are
+   * downstream of the rates this refetch replaces; `destination-key.ts` carries
+   * the reason, which is that acyclicity should be structural rather than a
+   * property re-proved after each change to the attribution shape.
    *
-   * **It cannot loop.** The refetch replaces the rates, which recomputes the
-   * estimates, which rebuilds this string — but the destinations are unchanged,
-   * so the string is identical and the effect does not run again. A `pending`
-   * attribution settling into `country` or `unconfigured` keeps the same code
-   * for the same reason.
+   * **The baseline waits for `brands`.** They are a bare fetch into state, and
+   * `effectiveClaimCountry(code, null)` answers TH — so before they land, every
+   * resumed foreign draft reads as domestic, recorded `""`, and then fired a real
+   * request milliseconds after the mount fetch for data already in flight.
    *
-   * Rapid chip clicks are absorbed by SWR's own deduping (2s by default, and no
-   * `SWRConfig` overrides it here), so comparing three countries costs one fetch.
+   * **The delay is not decoration: `mutate()` is NOT deduped.** It deletes
+   * `FETCH[key]` under the comment "so new requests will not be deduped"
+   * (`swr/dist/config-context-*.mjs:280-283`), and the MUTATE_EVENT revalidator
+   * runs with no opts, so `shouldStartNewRequest` is unconditionally true
+   * (`use-swr-*.mjs:305`). `dedupingInterval` covers mount, focus and reconnect
+   * only. Comparing three countries by clicking three chips cost three round
+   * trips; the trailing timer makes it one. This corrected a claim to the
+   * contrary in the commit that added the effect.
    */
-  const destinationKey = useMemo(() => {
-    const codes: string[] = [];
-    for (const e of perDiemEstimates) {
-      if (e.attribution.kind !== "home" && codes.indexOf(e.attribution.countryCode) === -1) {
-        codes.push(e.attribution.countryCode);
-      }
-    }
-    codes.sort();
-    return codes.join(",");
-  }, [perDiemEstimates]);
+  const destinationKey = useMemo(() => destinationKeyFor(tabs, brands), [tabs, brands]);
 
   const lastDestinationKey = useRef<string | null>(null);
   useEffect(() => {
-    // The first pass records what was already on screen without refetching: SWR
-    // is fetching that key anyway, and a resumed draft would otherwise fire a
-    // second request for data already in flight.
+    if (!brandsLoaded) return;
     if (lastDestinationKey.current === null) {
       lastDestinationKey.current = destinationKey;
       return;
     }
     if (lastDestinationKey.current === destinationKey) return;
     lastDestinationKey.current = destinationKey;
-    // Nothing foreign left to price — the HR allowance answers, and it is in the
-    // same payload, which has not gone stale for a domestic trip.
+    // Nothing foreign left to price. The HR allowance shares this payload and is
+    // equally old, but it is not what just changed.
     if (destinationKey === "") return;
-    void refreshRates();
-  }, [destinationKey, refreshRates]);
-
+    const t = setTimeout(() => { void refreshRates(); }, 400);
+    return () => clearTimeout(t);
+  }, [brandsLoaded, destinationKey, refreshRates]);
   const totalPerDiemEstimate = useMemo(
     () => perDiemEstimates.reduce((sum, p) => sum + p.total, 0),
     [perDiemEstimates],
