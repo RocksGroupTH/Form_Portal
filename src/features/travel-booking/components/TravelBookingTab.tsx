@@ -5,18 +5,15 @@ import { Briefcase, Calendar, Car, FileCheck, History, Hotel, Landmark, MapPin, 
 import type { AccBrandOption } from "@/features/accounting/types";
 import { NO_RENT_VEHICLE_NAME } from "@/features/travel-booking/constants";
 import {
-  configuredRateNote,
-  historyToggleLabel,
-  pastRateLine,
-  perDiemRateSummary,
-  todayKey,
-  upcomingRateNotes,
   hasUnratedDay,
   perDiemAttributionFootnote,
   perDiemAttributionNote,
   PER_DIEM_UNRATED_NOTE,
   type PerDiemAttribution,
 } from "@/features/travel-booking/lib/perdiem-note";
+import { tripRateLead } from "@/features/travel-booking/lib/trip-rate-lead";
+import { tripRateSegments } from "@/features/travel-booking/lib/trip-rate-segments";
+import { TripRateHistoryModal } from "@/features/travel-booking/components/TripRateHistoryModal";
 import { countryNameBoth } from "@/lib/acc/country-currency";
 import { GooglePinView } from "./GooglePinView";
 import { WorkLocationList } from "./WorkLocationList";
@@ -135,11 +132,13 @@ export function TravelBookingTab({
    */
   const tripCountry = tab.brandCode ? effectiveClaimCountry(tab.countryCode, selectedBrand) : null;
 
-  /* The country's rates split around today: what is in force, what is coming,
-     what it replaced. Recomputed per render rather than memoised on a date —
-     `new Date()` would defeat a memo's dependency array anyway, and the split is
-     a loop over at most a handful of rows. */
-  const rateSummary = perDiemRateSummary(perDiemEstimate.countryLog, todayKey(new Date()));
+  /* The dated rates this trip's own days fall under — empty until both dates
+     are chosen, which is what gates the whole rate block. `isContinuation` is
+     passed so the segments count the same days `computePerDiem` charges. */
+  const tripSegments = useMemo(
+    () => tripRateSegments(tab.departDate, tab.returnDate, isContinuation, perDiemEstimate.countryLog),
+    [tab.departDate, tab.returnDate, isContinuation, perDiemEstimate.countryLog],
+  );
   /* Closed on every mount, and the tab remounts when the active trip changes, so
      opening the history on one trip does not open it on the next. */
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -665,67 +664,52 @@ export function TravelBookingTab({
               : countryNameBoth(perDiemEstimate.attribution.countryCode),
           )}
         </p>
-        {/* What the country actually pays, stated before any date is typed —
-            the state this was asked for. The breakdown above needs dates; this
-            does not.
+        {/* The dated rates THIS TRIP falls under — and only once there is a trip
+            to describe. Until both dates are typed `tripRateSegments` answers
+            [], and the card says nothing about rates rather than describing a
+            range nobody has chosen.
 
-            **The rate in force alone.** It showed the log's first and last as a
-            span, which read as two figures with no sign of which was live. An
-            upcoming change keeps its own line rather than joining the fold: it
-            is not `ย้อนหลัง`, and it may take effect during the very trip being
-            booked. Only the superseded rates fold away.
+            **Segments, not `computePerDiem`'s `groups`.** Those group by the
+            rate's AMOUNT, so two dated rates at the same figure collapse into
+            one and none of them carries a date — see `trip-rate-segments.ts`.
 
             Nothing filters for active: `listPerDiemCountryRates` gives the
             client `IsActive = 1` rows only, so a deactivated rate never arrives
             here. */}
-        {rateSummary && (
-          <>
-            {/* No current rate is a real state, not a reason to render nothing:
-                every configured rate can still be ahead, and `rateForDay` pays 0
-                for those days. Saying so beats the silence this shipped with,
-                where the line above still claimed a rate was configured. */}
-            {configuredRateNote(rateSummary) ? (
-              <p className="text-[12px] font-semibold m-0" style={{ color: "var(--nav-active-text)" }}>
-                เรทที่กำหนดไว้: {configuredRateNote(rateSummary)}
-              </p>
-            ) : (
-              <p className="text-[12px] font-semibold m-0" style={{ color: "var(--text-warning)" }}>
-                เรทที่กำหนดไว้ยังไม่เริ่มมีผล — วันที่อยู่ก่อนวันเริ่มใช้จะคิดเป็น ฿0
-              </p>
+        {tripSegments.length > 0 && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[12px] font-semibold" style={{ color: "var(--nav-active-text)" }}>
+              เรทที่ใช้กับทริปนี้: {tripRateLead(tripSegments)}
+            </span>
+            {/* Only with more than one. A single rate is already stated beside
+                this, and a dialog that repeated it would be a click for nothing —
+                which is the rule as asked for. */}
+            {tripSegments.length > 1 && (
+              <button
+                type="button"
+                onClick={() => setHistoryOpen(true)}
+                className="inline-flex items-center gap-1 text-[11.5px] font-semibold cursor-pointer rounded-lg px-2 py-0.5"
+                style={{
+                  color: "var(--nav-active-text)",
+                  background: "var(--nav-active-bg)",
+                  border: "1px solid var(--border-card)",
+                }}
+              >
+                <History size={12} /> ดูเรททั้ง {tripSegments.length} ช่วง
+              </button>
             )}
-            {/* Every future change, not only the next: one may land inside the
-                trip being booked, and `computePerDiem` charges them whether or
-                not this card mentions them. */}
-            {upcomingRateNotes(rateSummary).map((n) => (
-              <p key={n} className="text-[11.5px] m-0" style={{ color: "var(--text-warning)" }}>
-                {n}
-              </p>
-            ))}
-            {historyToggleLabel(rateSummary) && (
-              <div className="flex flex-col gap-1">
-                <button
-                  type="button"
-                  onClick={() => setHistoryOpen((v) => !v)}
-                  className="flex items-center gap-1.5 text-[11.5px] font-semibold cursor-pointer self-start"
-                  style={{ color: "var(--text-muted)" }}
-                >
-                  <History size={12} />
-                  {historyOpen ? "ซ่อนเรทย้อนหลัง" : historyToggleLabel(rateSummary)}
-                </button>
-                {historyOpen &&
-                  rateSummary.past.map((r) => (
-                    <p
-                      key={r.effectiveDate}
-                      className="text-[11.5px] tabular-nums m-0 pl-4"
-                      style={{ color: "var(--text-muted)" }}
-                    >
-                      {pastRateLine(r)}
-                    </p>
-                  ))}
-              </div>
-            )}
-          </>
+          </div>
         )}
+        <TripRateHistoryModal
+          open={historyOpen}
+          onClose={() => setHistoryOpen(false)}
+          segments={tripSegments}
+          countryLabel={
+            perDiemEstimate.attribution.kind === "home"
+              ? null
+              : countryNameBoth(perDiemEstimate.attribution.countryCode)
+          }
+        />
         {hasUnratedDay(perDiemEstimate.groups) && (
           <p className="text-[11.5px] m-0" style={{ color: "var(--text-warning)" }}>
             {PER_DIEM_UNRATED_NOTE}
