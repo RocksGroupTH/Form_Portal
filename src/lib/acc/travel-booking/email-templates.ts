@@ -1,6 +1,6 @@
 import { env } from "@/env";
 import { esc } from "@/lib/acc/email-templates";
-import { formatPayoutMonth } from "@/lib/acc/travel-booking/payment-month";
+import { payoutDateLabel } from "@/lib/acc/travel-booking/payout-rule";
 import type { TravelBookingRequest } from "@/features/travel-booking/types";
 
 /**
@@ -94,10 +94,12 @@ export function buildTravelBookingEmail(
 
     case "Approved": {
       const subject = `อนุมัติแล้ว ${no}`;
-      const payoutMonth = req.paymentDate ? formatPayoutMonth(new Date(req.paymentDate)) : "-";
+      // The DAY, not the month: a foreign trip pays on the 10th, so "ตุลาคม"
+      // alone stopped naming when the money arrives.
+      const payoutMonth = req.paymentDate ? payoutDateLabel(req.paymentDate) ?? "-" : "-";
       const rows = [
         row("เลขที่", no),
-        row("กำหนดจ่ายเงินเดือน", payoutMonth),
+        row("กำหนดจ่าย", payoutMonth),
         row("เบี้ยเลี้ยงรวม (บาท)", req.perDiemTotal.toFixed(2)),
       ].join("");
       return { subject, html: shell(subject, rows, url) };

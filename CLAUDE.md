@@ -474,7 +474,75 @@ Accommodation/ticket booking requests for provincial work travel — supports mu
 
 - **Pages:** `/request/travel-booking` (fill/resume draft, multi-row), `/request/travel-booking/[id]` (detail), plus office/admin views under `/request/accounting/travel-booking*` (Admin booking queue, the accounting sign-off queue at `/request/accounting/travel-booking/approvals`, report, settings)
 - **Feature code:** `src/features/travel-booking/`; service/lib code under `src/lib/acc/travel-booking/`
-- **Workflow, since 2026-08-27: ผู้จัดการ → Admin จอง → บัญชี (`ACCOUNT`), ending at `Completed`.** The Admin desk used to close the request itself; `completeRequest` now only hands off — `Status` stays `ManagerApproved` and `CurrentStepCode` moves to `ACCOUNT` — and `approveByAccount` (`travel-booking/approval.ts`) is the terminal transition. Accounting works the new queue at `/request/accounting/travel-booking/approvals`, picks a **payout month** (the date is always that month's last day, re-derived server-side by `POST .../requests/[id]/payment-date` rather than trusted from the client; months run from the current one forward, because a payout already in the past is not a schedule), and signs. From there the amount is read-only — on the page *and* in the route, because a control removed from a page is not a rule. **The step needed no migration**: `CK_AccApproval_Step` has permitted `ACCOUNT` since 091, `CurrentStepCode` is `NVARCHAR(20) NULL` with no CHECK, and `AccActivityLog.Action` has none either.
+- **Workflow, since 2026-08-27: ผู้จัดการ → Admin จอง → บัญชี (`ACCOUNT`), ending at `Completed`.** The Admin desk used to close the request itself; `completeRequest` now only hands off — `Status` stays `ManagerApproved` and `CurrentStepCode` moves to `ACCOUNT` — and `approveByAccount` (`travel-booking/approval.ts`) is the terminal transition. Accounting works the new queue at `/request/accounting/travel-booking/approvals`, picks a **payout date** (re-derived server-side by `POST .../requests/[id]/payment-date` rather than trusted from the client; it was a *month* until 2026-09-04, which stopped naming one day once a foreign trip could pay on the 10th — see the payout rule below), and signs. From there the amount is read-only — on the page *and* in the route, because a control removed from a page is not a rule. **The step needed no migration**: `CK_AccApproval_Step` has permitted `ACCOUNT` since 091, `CurrentStepCode` is `NVARCHAR(20) NULL` with no CHECK, and `AccActivityLog.Action` has none either.
+  - **The payout date is computed by `payout-rule.ts`, and it takes TWO dates
+    and the country** (2026-09-04). The determining date **D is the later of the
+    manager's approval and the trip's return date**; domestic pays at a month
+    end, foreign twice a month:
+
+    | | D.day | pays |
+    |---|---|---|
+    | ในประเทศ | 1–20 | last day of D's month |
+    | | 21–end | last day of the **next** month |
+    | ต่างประเทศ | 1–5 | the **10th** of D's own month |
+    | | 6–20 | last day of D's month |
+    | | 21–end | the **10th** of the next month |
+
+    - **Neither date alone reproduces the rule**, which is why it takes both:
+      approval-alone — the old `computePayoutDate`, now deleted — pays a trip
+      returning on the 21st at the end of the approval month, and return-alone
+      pays a trip approved on the 21st at the end of the return month. Both are
+      wrong by a month, in opposite directions. Taking the later date and then
+      applying the rule equals applying it to each and taking the later result,
+      since both arms are monotone in D, so there is no third reading.
+    - **The foreign 21–5 band wraps across the month boundary and both halves
+      resolve to the same day**: 21 Sep and 3 Oct each pay 10 Oct. That is what
+      makes the calendar tile — 6–20 Sep → 30 Sep, 21 Sep–5 Oct → 10 Oct, 6–20
+      Oct → 31 Oct, every day covered once. **Domestic has no 1–5 band**, and
+      adding one to match would move real payments by a month. A test asserts
+      both asymmetries side by side, because each looks like the other's bug.
+    - **Absence of `CountryCode` means Thailand, not unknown.** Migration 129
+      added it with no backfill, so every AP-17 request filed before 2026-08-31
+      carries NULL — measured 2026-09-04, five of seven in UAT including both
+      rows then in the accounting queue, which are Bangkok trips. Same rule
+      `isBaht` applies to a missing currency.
+    - **No weekend or holiday shifting, deliberately** (confirmed 2026-09-04).
+      AP-1 and AP-4 both step backwards off a holiday through `shiftPaymentDay`;
+      AP-17 never has, month ends already land on weekends, and adding one would
+      pull a `Rocks_Codex.Holiday` read into a module whose value is having no
+      imports.
+    - **`approveByManager` mints it from ONE instant**, used for the rule and
+      for `AccApproval.ActionedAt` alike. That write was `SYSDATETIME()` — SQL
+      Server's clock — while the rule read Node's, two clocks that agree almost
+      always and disagree exactly where it costs a month: a transaction crossing
+      midnight into the 21st.
+    - **A row with no return date does not block the approval.** The rule
+      refuses (null), and the mint degrades to the approval date alone — the old
+      behaviour — and writes a `payment_date_fallback` activity row saying so,
+      rather than stranding a request nobody can approve. Unreachable in
+      practice: `validateTravelBookingTab` refuses a submit without one.
+  - **Accounting picks a DATE, not a month**, and the month vocabulary is gone
+    with `payment-month.ts` and `payout-months.ts`, both deleted. A month named
+    exactly one payout day while every payout was a month end; a foreign trip's
+    10th made that false. `POST .../payment-date` now takes `{ date }`,
+    **re-derives the kind from the database** — a posted kind would let a caller
+    choose which rule applies to their own payment — and still validates by
+    membership of the options that kind generates. The row's current date is
+    always among them (`alwaysInclude`), or a row scheduled behind today could
+    not be re-saved and its picker would render blank.
+  - **The bulk payout-date control loops the per-request route** rather than
+    calling a new bulk endpoint. Every guard on that route is per request —
+    brand scope, the UAT tester barrier, and the status/step predicate on its own
+    UPDATE — so a bulk endpoint would have to re-implement all three and could
+    only get them wrong. It refuses a **mixed** selection outright, with the
+    control shown and disabled rather than hidden, because the reason has to be
+    readable; each row carries a ในประเทศ/ต่างประเทศ chip so that distinction is
+    visible before selecting rather than only after the button greys out.
+  - **`scripts/checks/recompute-ap17-payout.ts`** re-derives the date for every
+    request at `(ManagerApproved, ACCOUNT)`, one transaction and one
+    `payment_date_recomputed` activity row each, dry-run by default. Run
+    2026-09-04 against both databases: production held no rows, and UAT's two
+    were already correct under the new rule.
   - **A trip that needs nothing booked no longer skips accounting** — `approveByManager` sends it to `ACCOUNT` instead of closing it to `Completed`. That case is per diem and nothing else, which is precisely what the accounting step and its editable payout month exist for.
   - **`Status='ManagerApproved'` stopped naming one stage**, and every predicate that tested it alone now tests `CurrentStepCode` beside it: the Admin panel and its two banners, the Admin queue's side-panel close, `requireEditableBooking`, and the booking-attachment `POST`/`DELETE` — those last were `Status`-only, so an account-area viewer could still upload or delete booking evidence on a request already handed over. `TravelBookingRequest.currentStepCode` carries the step into the read shape so the client can tell the two apart, and `travelBookingStatusLabel(status, step)` answers “รอ Admin จองให้” / “รอบัญชีตรวจสอบ” where a caller has one; the bare `ManagerApproved` label is now the stage-neutral “ผู้จัดการอนุมัติแล้ว”, which is what reaches the Excel export.
   - **Accounting has three ways out, not just approve.** `returnByAccount` steps back to `ADMIN` — a step, not a new status, so the request stays alive and re-enters the Admin queue, and `PaymentDate` is kept because nothing later would mint it again — and `rejectByAccount` ends it as `Rejected`, clearing `PaymentDate` and giving the group's per diem back. Both require a comment. The Completed email is sent by `approveByAccount`, at the point it is true; the hand-off logs `sent_to_account` and mails nobody.

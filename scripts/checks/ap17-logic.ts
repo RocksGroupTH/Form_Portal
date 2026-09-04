@@ -5,7 +5,7 @@
  */
 import assert from "node:assert";
 import { computePerDiem, rateForDay } from "@/lib/acc/travel-booking/perdiem";
-import { computePayoutDate } from "@/lib/acc/travel-booking/payment-month";
+import { payoutDateFor } from "@/lib/acc/travel-booking/payout-rule";
 
 const log = [
   { effectiveDate: "2026-01-01", amount: 500 },
@@ -30,8 +30,11 @@ assert.strictEqual(r2.total, 2000);
 assert.strictEqual(rateForDay("2026-01-02", log), 500);
 assert.strictEqual(rateForDay("2026-01-03", log), 1000);
 
-// payout: <=20 same month end, >20 next month end
-assert.strictEqual(computePayoutDate(new Date(2026, 6, 20)).getDate(), 31); // 31 Jul
-assert.strictEqual(computePayoutDate(new Date(2026, 6, 21)).getMonth(), 7); // Aug
+// payout: the determining date is the LATER of approval and travel return.
+// Domestic splits at the 20th; foreign pays twice a month. The exhaustive
+// coverage is payout-rule.test.ts — these two lines are the smoke test.
+assert.strictEqual(payoutDateFor("domestic", "2026-07-20", "2026-07-20"), "2026-07-31");
+assert.strictEqual(payoutDateFor("domestic", "2026-07-21", "2026-07-20"), "2026-08-31");
+assert.strictEqual(payoutDateFor("foreign", "2026-07-21", "2026-07-20"), "2026-08-10");
 
 console.log("ap17-logic OK");

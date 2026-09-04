@@ -5,20 +5,27 @@ import { canAccessBookingArea } from "@/lib/acc/booking-access";
 import { requireBookingBrandScope } from "@/lib/acc/travel-booking/require-booking-brand-scope";
 import { buildAccActor } from "@/lib/acc/actor-context";
 import { getAccPool, sql } from "@/lib/acc/pool";
-import { payoutMonthOptions, payoutDateForMonth } from "@/lib/acc/travel-booking/payout-months";
+import { payoutOptions, payoutTripKind} from "@/lib/acc/travel-booking/payout-rule";
 import { AP17_FORM_CODE } from "@/features/travel-booking/constants";
 
 /**
  * POST /api/request/travel-booking/requests/[id]/payment-date
- * Body: `{ ym: "YYYY-MM" }`
+ * Body: `{ date: "YYYY-MM-DD" }`
  *
- * A **month** is posted, not a date: AP-17 pays at a month's end and the server
- * derives the day (`payoutDateForMonth`), so a client cannot write the 3rd of
- * anything.
+ * **A date, not a month.** It used to post `{ ym }` and the server derived that
+ * month's last day — a model that cannot express a foreign trip's payout, which
+ * falls on the **10th**. A month has two possible payout days now, so the month
+ * alone no longer names one.
  *
- * `ym` is checked by **membership** of `payoutMonthOptions(new Date())`, not a
- * regex — that is also what enforces "current month forward" (AP-1's
- * correction case does not apply here: the figure is not signed yet).
+ * The date is still checked by **membership** of the options this request's own
+ * kind generates, never by a regex: the client cannot invent the 3rd of
+ * anything, and a domestic request cannot be given a foreign round. The kind is
+ * resolved server-side from `AccRequest.CountryCode` — a posted kind would let
+ * the caller choose which rule applies to their own payment.
+ *
+ * The row's CURRENT date is always offered even when it has gone past
+ * (`alwaysInclude`), or a row whose stored date is behind today could not be
+ * re-saved and its picker would render blank.
  *
  * Refused unless the request is at `ManagerApproved`/`ACCOUNT`, as the UPDATE's
  * own predicate rather than a read-then-write. Once accounting has signed,
@@ -64,22 +71,40 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (scoped) return scoped;
 
   try {
-    const body = (await req.json().catch(() => ({}))) as { ym?: unknown };
-    const ym = typeof body.ym === "string" ? body.ym.trim() : "";
+    const body = (await req.json().catch(() => ({}))) as { date?: unknown };
+    const wanted = typeof body.date === "string" ? body.date.trim() : "";
 
-    const validOptions = payoutMonthOptions(new Date());
-    const option = validOptions.find((o) => o.ym === ym);
+    const pool = await getAccPool();
+
+    // The kind and the row's current date come from the database, never the
+    // body: otherwise a caller could nominate "foreign" for a Thai trip and pay
+    // themselves on the 10th.
+    const cur = await pool
+      .request()
+      .input("id", sql.Int, id)
+      .input("form", sql.NVarChar, AP17_FORM_CODE)
+      .query(`SELECT CountryCode, PaymentDate FROM [dbo].[AccRequest]
+              WHERE Id=@id AND FormCode=@form`);
+    const row = cur.recordset[0] as
+      | { CountryCode: string | null; PaymentDate: Date | null }
+      | undefined;
+    if (!row) {
+      return NextResponse.json({ ok: false, error: "ไม่พบคำขอ" }, { status: 404 });
+    }
+    const kind = payoutTripKind(row.CountryCode);
+    const currentYmd = row.PaymentDate ? ymdOf(row.PaymentDate) : null;
+
+    const validOptions = payoutOptions(kind, ymdOf(new Date()), 12, currentYmd);
+    const option = validOptions.find((o) => o.date === wanted);
     if (!option) {
       return NextResponse.json(
-        { ok: false, error: "เดือนที่เลือกไม่อยู่ในช่วงที่กำหนด (เดือนปัจจุบันเป็นต้นไป)" },
+        { ok: false, error: "วันที่จ่ายที่เลือกไม่อยู่ในรอบจ่ายของคำขอนี้" },
         { status: 400 },
       );
     }
 
-    const paymentDate = payoutDateForMonth(ym) ?? option.date;
+    const paymentDate = option.date;
     const actor = await buildAccActor(Number(session.user.id), session.user.email ?? null);
-
-    const pool = await getAccPool();
     const tx = pool.transaction();
     await tx.begin();
     try {
@@ -97,7 +122,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       if ((upd.rowsAffected[0] ?? 0) === 0) {
         await tx.rollback();
         return NextResponse.json(
-          { ok: false, error: "ไม่พบคำขอ หรือคำขอไม่ได้อยู่ในขั้นตอนที่บัญชีแก้ไขเดือนจ่ายได้" },
+          { ok: false, error: "ไม่พบคำขอ หรือคำขอไม่ได้อยู่ในขั้นตอนที่บัญชีแก้ไขวันที่จ่ายได้" },
           { status: 400 },
         );
       }
@@ -106,7 +131,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         .request()
         .input("rid", sql.Int, id)
         .input("by", sql.Int, actor.userId)
-        .input("note", sql.NVarChar, `แก้ไขเดือนจ่ายเป็น ${option.label} (${paymentDate})`)
+        .input("note", sql.NVarChar, `แก้ไขวันที่จ่ายเป็น ${option.label}`)
         .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note)
                 VALUES (@rid, @by, 'payment_date_edited', @note)`);
 
@@ -116,7 +141,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       throw e;
     }
 
-    return NextResponse.json({ ok: true, data: { id, ym, paymentDate } });
+    return NextResponse.json({ ok: true, data: { id, paymentDate, label: option.label } });
   } catch (e) {
     // Reached only for a genuine failure now — the expected "wrong state"
     // refusal above returns its own 400 without throwing.
@@ -124,6 +149,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       "[api/request/travel-booking/requests/[id]/payment-date] POST",
       e instanceof Error ? e.message : e,
     );
-    return NextResponse.json({ ok: false, error: "แก้ไขเดือนจ่ายไม่สำเร็จ" }, { status: 500 });
+    return NextResponse.json({ ok: false, error: "แก้ไขวันที่จ่ายไม่สำเร็จ" }, { status: 500 });
   }
+}
+
+/** A `date` column, rendered in local time. Never `toISOString()`, which is UTC. */
+function ymdOf(d: Date): string {
+  const p = (n: number) => (n < 10 ? `0${n}` : String(n));
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }

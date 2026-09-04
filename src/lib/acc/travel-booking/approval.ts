@@ -4,7 +4,7 @@ import type { Actor } from "@/lib/acc/approval-engine";
 import { listApprovers } from "@/lib/acc/settings-service";
 import { queueEmail, processQueue } from "@/lib/acc/email-queue";
 import { buildTravelBookingEmail, type TravelBookingTrigger } from "@/lib/acc/travel-booking/email-templates";
-import { computePayoutDate } from "@/lib/acc/travel-booking/payment-month";
+import { payoutDateFor, payoutTripKind } from "@/lib/acc/travel-booking/payout-rule";
 import { getTravelBookingRequest } from "@/lib/acc/travel-booking/request-service";
 import { recomputeGroupPerDiem } from "@/lib/acc/travel-booking/perdiem-recompute";
 import { loadPerDiemDependency } from "@/lib/acc/travel-booking/perdiem-dependency-load";
@@ -64,7 +64,9 @@ async function requireTravelBookingRequest(id: number): Promise<TravelBookingReq
 /**
  * Manager approves — Submitted → ManagerApproved, handing off to Admin for booking fill-in
  * (spec: ผู้จัดการ → Admin จอง → บัญชี → เสร็จสิ้น).
- * Sets `PaymentDate` = end-of-month payout (>20th rolls to next month, see payment-month.ts).
+ * Sets `PaymentDate` from `payout-rule.ts`: the determining date is the LATER of this
+ * approval and the trip's return date, and the bands differ for a domestic and a
+ * foreign trip. The old rule read the approval date alone and had no foreign arm.
  *
  * When the request needs nothing booked (ข้อ10.1 / ข้อ12.2 / ข้อ15.1 all false) there is no
  * Admin work to queue, so it skips that step and lands on `'ACCOUNT'` — **not** on
@@ -133,12 +135,35 @@ async function recomputeAfterDeath(
 export async function approveByManager(requestId: number, actor: Actor): Promise<TravelBookingRequest> {
   const staffId = requireActorStaffId(actor);
   const pool = await getAccPool();
-  const payDate = toYmd(computePayoutDate(new Date()));
+
+  // ONE instant, used for the payout rule AND for `AccApproval.ActionedAt`
+  // below. They used to come from two clocks — this one and SQL Server's
+  // `SYSDATETIME()` — which agree almost always and disagree exactly where it
+  // costs a month: a transaction that crosses midnight into the 21st.
+  const now = new Date();
+  const approvalYmd = toYmd(now);
 
   const flagRes = await pool.request().input("rid", sql.Int, requestId)
-    .query(`SELECT NeedsRoomBooking, GoNeedsTicketBooking, ReturnNeedsTicketBooking, NeedsRentBooking
-            FROM [dbo].[AccTravelBooking] WHERE RequestId=@rid`);
+    .query(`SELECT t.NeedsRoomBooking, t.GoNeedsTicketBooking, t.ReturnNeedsTicketBooking, t.NeedsRentBooking,
+                   t.ReturnDate, r.CountryCode
+            FROM [dbo].[AccTravelBooking] t
+            INNER JOIN [dbo].[AccRequest] r ON r.Id = t.RequestId
+            WHERE t.RequestId=@rid`);
   const flags = flagRes.recordset[0] as Record<string, boolean> | undefined;
+  const detail = flagRes.recordset[0] as
+    | { ReturnDate: Date | null; CountryCode: string | null }
+    | undefined;
+
+  const kind = payoutTripKind(detail?.CountryCode ?? null);
+  const returnYmd = detail?.ReturnDate ? toYmd(detail.ReturnDate) : null;
+  // A row with no return date cannot have a determining date, and the rule
+  // refuses rather than guessing. Refusing the APPROVAL over it would strand the
+  // request with no in-app remedy, so the mint degrades to the approval date
+  // alone — which is exactly what this did before today — and says so in the
+  // timeline, where accounting will see it and can correct the month. Unreachable
+  // in practice: `validateTravelBookingTab` refuses a submit without a return date.
+  const ruleDate = payoutDateFor(kind, approvalYmd, returnYmd);
+  const payDate = ruleDate ?? (payoutDateFor(kind, approvalYmd, approvalYmd) as string);
   const needsBooking =
     !!flags &&
     (!!flags.NeedsRoomBooking ||
@@ -167,11 +192,20 @@ export async function approveByManager(requestId: number, actor: Actor): Promise
       .input("rid", sql.Int, requestId)
       .input("staff", sql.Int, staffId)
       .input("email", sql.NVarChar, actor.email ?? null)
-      .query(`UPDATE [dbo].[AccApproval] SET Status='Approved', ActionedByStaffId=@staff, ActionedAt=SYSDATETIME(),
+      .input("now", sql.DateTime2, now)
+      .query(`UPDATE [dbo].[AccApproval] SET Status='Approved', ActionedByStaffId=@staff, ActionedAt=@now,
               AssignedEmail=CASE WHEN @email IS NOT NULL AND LTRIM(RTRIM(@email)) <> '' THEN @email ELSE AssignedEmail END
               WHERE RequestId=@rid AND StepCode='MANAGER' AND Status='Pending'`);
     await tx.request().input("rid", sql.Int, requestId).input("by", sql.Int, actor.userId)
       .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action) VALUES (@rid, @by, 'manager_approved')`);
+    if (!ruleDate) {
+      await tx.request()
+        .input("rid", sql.Int, requestId)
+        .input("by", sql.Int, actor.userId)
+        .input("note", sql.NVarChar, `ไม่พบวันเดินทางกลับ จึงคำนวณกำหนดจ่ายจากวันที่อนุมัติอย่างเดียว (${payDate}) — บัญชีควรตรวจสอบ`)
+        .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note)
+                VALUES (@rid, @by, 'payment_date_fallback', @note)`);
+    }
     if (!needsBooking) {
       // Same action name `completeRequest` writes when Admin hands a request on,
       // because it is the same hand-off — the booking desk simply had nothing to

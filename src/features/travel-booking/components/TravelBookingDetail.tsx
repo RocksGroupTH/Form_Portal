@@ -48,7 +48,7 @@ import {
   referenceRateNote,
   showsForeignCurrency,
 } from "@/lib/acc/currency-display";
-import { payoutMonthLabel } from "@/lib/acc/travel-booking/payout-months";
+import { payoutDateLabel } from "@/lib/acc/travel-booking/payout-rule";
 import { UatDataBanner } from "@/components/UatDataBanner";
 import { AdminBookingPanel } from "./AdminBookingPanel";
 import { TravelBookingStatusBadge } from "./TravelBookingStatusBadge";
@@ -978,7 +978,10 @@ export function TravelBookingDetail({
           {request.paymentDate && (
             <DetailRow
               label="กำหนดจ่าย"
-              value={`${payoutMonthLabel(request.paymentDate.slice(0, 7)) ?? request.paymentDate} (ภายในวันที่ ${fmtYmdDisplay(request.paymentDate)})`}
+              // One date, named once. It used to read "ตุลาคม 2569 (ภายในวันที่
+              // 31/10/2026)" — a month plus the same day again, which only made
+              // sense while every payout was a month end.
+              value={payoutDateLabel(request.paymentDate) ?? fmtYmdDisplay(request.paymentDate)}
               valueStyle={{ color: "var(--text-info-green)" }}
             />
           )}

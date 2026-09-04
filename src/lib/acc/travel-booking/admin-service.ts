@@ -203,8 +203,14 @@ export async function listAccountQueue(access: BookingBrandAccess): Promise<Acco
   const res = await req0
     .query(`
       SELECT r.Id, r.RequestNo, r.BrandCode, r.RequesterFullName, r.RequesterPosition, r.RequesterDepartmentName,
-             r.PaymentDate, r.UpdatedAt,
+             r.PaymentDate, r.UpdatedAt, r.CountryCode,
              t.ProvinceName, t.DepartDate, t.ReturnDate, t.PerDiemDays, t.PerDiemTotal,
+             -- The manager's own action time. With the return date it is what
+             -- payout-rule.ts derives the payout from. Read here rather than
+             -- recomputed from UpdatedAt, which moves on every later edit.
+             (SELECT TOP 1 ap.ActionedAt FROM [dbo].[AccApproval] ap
+              WHERE ap.RequestId = r.Id AND ap.StepCode = 'MANAGER' AND ap.Status = 'Approved'
+              ORDER BY ap.ActionedAt DESC) AS ManagerApprovedAt,
              (SELECT STRING_AGG(wl.Name, N' · ') WITHIN GROUP (ORDER BY wl.SortOrder, wl.Id)
               FROM [dbo].[AccTravelWorkLocation] wl
               WHERE wl.TravelBookingId = t.Id) AS WorkLocationNames
@@ -262,6 +268,11 @@ export async function listAccountQueue(access: BookingBrandAccess): Promise<Acco
     perDiemDays: (x.PerDiemDays as number) ?? 0,
     perDiemTotal: Number(x.PerDiemTotal) || 0,
     paymentDate: x.PaymentDate ? toYmd(x.PaymentDate as Date) : null,
+    countryCode: ((x.CountryCode as string | null) ?? "").trim().toUpperCase() || null,
+    // `toYmd`, not `toISOString()`: this is a calendar day the payout rule keys
+    // on, and the sibling `updatedAt` below is a timestamp. Serialising a day
+    // through ISO shifts it for anyone whose clock is not UTC.
+    managerApprovedAt: x.ManagerApprovedAt ? toYmd(x.ManagerApprovedAt as Date) : null,
     updatedAt: x.UpdatedAt ? (x.UpdatedAt as Date).toISOString() : "",
     perDiemHistory: historyByRequest.get(x.Id as number) ?? [],
     perDiemDependency: dependencies.get(x.Id as number) ?? null,

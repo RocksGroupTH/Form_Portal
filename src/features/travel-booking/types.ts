@@ -537,6 +537,19 @@ export interface TravelBookingAccountQueueItem {
   perDiemDays: number;
   perDiemTotal: number;
   paymentDate: string | null;
+  /**
+   * `AccRequest.CountryCode`, normalised. **Null means Thailand**, not unknown —
+   * migration 129 added the column with no backfill, so every request filed
+   * before 2026-08-31 carries NULL. `payoutTripKind` is the one place that
+   * reads it; do not test it inline.
+   */
+  countryCode: string | null;
+  /**
+   * `YYYY-MM-DD` of the MANAGER's approval — one half of the payout rule's
+   * determining date, the other being `returnDate`. A calendar day rather than
+   * a timestamp, deliberately: the rule compares it as a string.
+   */
+  managerApprovedAt: string | null;
   updatedAt: string;
   perDiemHistory: string[];
   /**
