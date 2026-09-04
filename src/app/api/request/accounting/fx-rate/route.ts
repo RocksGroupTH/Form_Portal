@@ -15,8 +15,9 @@ import { resolveRate } from "@/lib/acc/fx";
  * figure simply reads `—`; the save is unaffected either way, and refuses on its
  * own if its own fetch fails.
  *
- * **Whichever feed `bot-fx` resolves.** With `BOT_API_CLIENT_ID` set that is the
- * Bank of Thailand selling rate; without it, a keyless ECB mid-market figure.
+ * **Whichever feed `bot-fx` resolves.** With a `BOT_CURRENCY_RATE` key registered
+ * that is the Bank of Thailand selling rate; without one, a keyless ECB
+ * mid-market figure.
  * Screens caption it as `อัตราอ้างอิง` and name no provider, because rows stored
  * either side of the key being added are converted on different bases and only
  * `rateSource` on the row tells them apart.

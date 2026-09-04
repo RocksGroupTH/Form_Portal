@@ -25,13 +25,13 @@ import type { AccRequest, TravelExpenseDetail } from "@/features/accounting/type
  * panels can appear on the same drawer, and on a modern AP-1 claim only this one
  * does.
  *
- * **The caption names no provider, on purpose.** `BOT_API_CLIENT_ID` was
- * provisioned on 2026-09-04, so rates recorded from then on are the Bank of
- * Thailand selling rate, while everything before is `bot-fx`'s keyless ECB
- * mid-market fallback. Naming either would be wrong for the rows stored under
- * the other, and this is the screen accounting signs off against. `rateSource`
- * on the row is what actually distinguishes them, and it already marks a
- * hand-corrected rate as this panel's own.
+ * **The caption names no provider, on purpose.** A Bank of Thailand key was
+ * registered as `BOT_CURRENCY_RATE` on 2026-09-04, so rates recorded from then
+ * on are the Bank of Thailand selling rate, while everything before is
+ * `bot-fx`'s keyless ECB mid-market fallback. Naming either would be wrong for
+ * the rows stored under the other, and this is the screen accounting signs off
+ * against. `rateSource` on the row is what actually distinguishes them, and it
+ * already marks a hand-corrected rate as this panel's own.
  *
  * Renders **nothing at all** unless the claim is at the ACCOUNT step and has at
  * least one line that is not in baht, so an ordinary Thai claim is untouched —

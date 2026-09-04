@@ -55,13 +55,15 @@ export interface TravelExpenseItem {
    */
   rateAsOf?: string | null;
   /**
-   * Who said so — `"ECB"` today, `"BOT"` if `BOT_API_CLIENT_ID` is ever
-   * provisioned, `RATE_SOURCE_OVERRIDE` when accounting corrected it by hand.
+   * Who said so — `"BOT"` since a `BOT_CURRENCY_RATE` key was registered on
+   * 2026-09-04, `"ECB"` on everything written before it and whenever that key is
+   * absent, `RATE_SOURCE_OVERRIDE` when accounting corrected it by hand.
    *
    * A hand-corrected rate must never be mistaken for a published one: it is one
-   * person's figure and is not reproducible from the date beside it. And if a
-   * BOT key is ever bought, rows either side of that day are converted on
-   * different bases, which this column is the only thing that could distinguish.
+   * person's figure and is not reproducible from the date beside it. And rows
+   * either side of 2026-09-04 are converted on different bases — a mid-market
+   * reference figure against the bank's selling rate — which this column is the
+   * only thing that could distinguish.
    */
   rateSource?: string | null;
   sortOrder: number;

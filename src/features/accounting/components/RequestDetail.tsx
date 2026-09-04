@@ -935,11 +935,16 @@ function DayCostParts({ day }: { day: TravelExpenseDetail }) {
  * beside a figure converted weeks ago, and nothing on screen would say the two
  * were different questions. So every number here comes off the claim.
  *
- * **Never captioned as a Bank of Thailand rate.** `BOT_API_CLIENT_ID` is
- * deliberately unprovisioned, so every rate is an ECB mid-market reference
- * figure, which is not what a bank settles at. `referenceRateNote` is the one
- * place that sentence is written — including the `ณ <date>` clause — and it is
- * reused rather than retyped.
+ * **Never captioned with the name of a feed.** A `BOT_CURRENCY_RATE` key was
+ * registered on 2026-09-04, so a line converted from that day on holds the Bank
+ * of Thailand selling rate while everything converted before it holds `bot-fx`'s
+ * keyless ECB mid-market figure. This drawer opens on claims from both sides of
+ * that day, so naming either feed would state something false about half of
+ * them; `rateSource` on the line is what actually tells them apart. And neither
+ * figure is what the company's bank settled at, which is why accounting can
+ * correct it. `referenceRateNote` is the one place the neutral sentence is
+ * written — including the `ณ <date>` clause — and it is reused rather than
+ * retyped.
  *
  * **A date nobody recorded prints nothing.** Every line written before 130 reads
  * null, and `referenceRateNote` simply omits the clause; a rate with no date is

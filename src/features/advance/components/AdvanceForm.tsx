@@ -768,10 +768,10 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
                     onClick={() => fetchFxRate(currencyCode)}>ดึงอัตรา</Button>
                 </div>
                 {/* The caption stays neutral because `fxAsOf` already names the
-                    real source in brackets — ธปท. once BOT_API_CLIENT_ID is set,
-                    ECB when the keyless fallback ran. Hard-coding either one here
-                    would contradict the text two characters to its right the day
-                    the key is added or expires. */}
+                    real source in brackets — ธปท. once a BOT_CURRENCY_RATE key
+                    is registered, ECB when the keyless fallback ran. Hard-coding
+                    either one here would contradict the text two characters to
+                    its right the day the key is added or expires. */}
                 {fxAsOf && (
                   <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
                     อัตราอ้างอิง ณ {fxAsOf}
