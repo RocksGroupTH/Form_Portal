@@ -5,10 +5,12 @@ import { fetchFxRate } from "@/lib/adv/bot-fx";
 /**
  * GET /api/request/advance/fx-rate?currency=USD[&date=YYYY-MM-DD]
  *
- * A **mid-market reference rate**, not a Bank of Thailand buying-transfer rate:
- * `BOT_API_CLIENT_ID` is deliberately unprovisioned, so `fetchFxRate` always
- * takes its keyless ECB fallback. The response carries `source`, and no caller
- * may caption the figure as a BOT rate — see `src/lib/acc/currency-display.ts`.
+ * The Bank of Thailand **selling** rate when a `BOT_CURRENCY_RATE` key is
+ * registered — the side of the spread the company pays to buy a foreign
+ * currency — and a keyless ECB mid-market figure when there is none. The
+ * response carries `source` either way, and callers caption the figure from that
+ * field rather than assuming a provider, so neither caption goes stale when the
+ * key is added or expires.
  */
 export async function GET(req: NextRequest) {
   const session = await requireAuth();

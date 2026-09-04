@@ -12,17 +12,16 @@ import { RATE_SOURCE_OVERRIDE, isOverriddenRate } from "./currency";
  * recorded that it converted at 8.1856 and nothing about when that was the rate
  * or who said so — and neither is recoverable afterwards:
  *
- *   * The source is the ECB through `bot-fx`'s keyless fallback, and it
- *     publishes on **working days only**. A line saved on a Saturday carries
- *     Friday's rate; over a long weekend, a three-day-old one. That behaviour is
- *     correct and deliberate — there is no rate for a day the market did not
- *     trade — but without `RateAsOf` nothing afterwards can tell which day a
- *     figure used.
- *   * `BOT_API_CLIENT_ID` is deliberately unprovisioned (spec §9.1), so every
- *     rate today is a mid-market reference rate rather than the Bank of Thailand
- *     buying-transfer rate a Thai audit expects. If a key is ever bought, rows
- *     either side of that day convert on different bases and `RateSource` is the
- *     only column that could distinguish them.
+ *   * Whichever feed answered, it publishes on **working days only**. A line
+ *     saved on a Saturday carries Friday's rate; over a long weekend, a
+ *     three-day-old one. That behaviour is correct and deliberate — there is no
+ *     rate for a day the market did not trade — but without `RateAsOf` nothing
+ *     afterwards can tell which day a figure used.
+ *   * A `BOT_CURRENCY_RATE` key was registered on 2026-09-04, so a rate recorded
+ *     from that day on is the Bank of Thailand selling rate and every one before
+ *     it is `bot-fx`'s ECB mid-market fallback. Rows either side convert on
+ *     different bases, and `RateSource` is the only column that could
+ *     distinguish them.
  *   * An accounting override is one person's figure, reproducible from no feed
  *     at all, so it must name itself rather than reading as published.
  *

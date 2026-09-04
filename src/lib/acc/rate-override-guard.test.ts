@@ -138,19 +138,26 @@ test("the audit row is written by the same transaction as the rewrite", () => {
 /* ── The screens ── */
 
 /**
- * No screen captions the stored rate as a Bank of Thailand rate.
- * `BOT_API_CLIENT_ID` will not be provisioned (spec §9.1), so every rate this
- * application records is an ECB mid-market reference rate — saying otherwise
- * would state something false on the screen accounting signs off against.
+ * No screen names the provider of the stored rate.
+ *
+ * A Bank of Thailand key was registered as `BOT_CURRENCY_RATE` on 2026-09-04, so
+ * rates recorded from then on are the Bank of Thailand selling rate while
+ * everything before is the ECB mid-market fallback. Naming either would state
+ * something false about the rows stored under the other, on the screen
+ * accounting signs off against. What the panel must still say is that the figure
+ * may not be what the bank charged — that is the reason the override exists.
  */
-test("the override panel says อัตราอ้างอิง and never names the Bank of Thailand", () => {
+test("the override panel says อัตราอ้างอิง and never names a rate provider", () => {
   // The rendered copy only. This file's own doc comment, and the panel's, name
-  // the Bank of Thailand in order to say the rate is not one of its rates.
+  // the Bank of Thailand in order to explain why the caption does not.
   const src = code(PANEL);
   assert.ok(src.indexOf("อัตราอ้างอิง") !== -1, "the panel must caption the figure as a reference rate");
   assert.equal(/ธนาคารแห่งประเทศไทย|Bank of Thailand/.test(src), false, "the panel names the BOT");
   // The point of the override, said out loud where the correction is made.
-  assert.ok(src.indexOf("ไม่ใช่อัตราที่ธนาคารใช้จ่ายจริง") !== -1, "the panel must say the rate is not a settled one");
+  assert.ok(
+    src.indexOf("อาจต่างจากอัตราที่ธนาคารใช้จ่ายจริง") !== -1,
+    "the panel must say the rate may not be what the bank charged",
+  );
 });
 
 /** A baht claim, or one off the step, shows nothing new at all. */
@@ -365,8 +372,8 @@ test("the per-line panel renders nothing without a foreign line at the ACCOUNT s
   assert.ok(src.indexOf("อัตราอ้างอิง") !== -1, "the panel must caption the figure as a reference rate");
   assert.equal(/ธนาคารแห่งประเทศไทย|Bank of Thailand/.test(src), false, "the panel names the BOT");
   assert.ok(
-    src.indexOf("ไม่ใช่อัตราที่ธนาคารใช้จ่ายจริง") !== -1,
-    "the panel must say the rate is not a settled one",
+    src.indexOf("อาจต่างจากอัตราที่ธนาคารใช้จ่ายจริง") !== -1,
+    "the panel must say the rate may not be what the bank charged",
   );
 });
 

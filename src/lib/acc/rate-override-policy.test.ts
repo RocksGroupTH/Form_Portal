@@ -124,9 +124,10 @@ test("every refusal has its own sentence, and none of them blames the claim wron
 });
 
 /**
- * No screen and no server message may caption the stored figure as a Bank of
- * Thailand rate: `BOT_API_CLIENT_ID` will not be provisioned, so every rate
- * here is an ECB mid-market reference rate.
+ * No screen and no server message may caption the stored figure with the name of
+ * a feed. A rate recorded since a `BOT_CURRENCY_RATE` key was registered on
+ * 2026-09-04 is the Bank of Thailand selling rate, but everything recorded
+ * before it is an ECB mid-market figure, and this copy is shown against both.
  */
 test("no refusal copy names the Bank of Thailand", () => {
   for (const text of Object.keys(RATE_OVERRIDE_REFUSAL_TEXT).map(
