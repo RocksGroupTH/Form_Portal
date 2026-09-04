@@ -10,19 +10,19 @@ import {
   buildMonthCells,
   formatThaiYmd,
   parseYmd,
-  toBuddhistYear,
+  displayYear,
   toYmd,
   todayYmd,
 } from "@/features/accounting/lib/thai-calendar";
 
 /**
- * One day, in a Thai calendar with Buddhist years — the single-select
+ * One day, in a Thai calendar with Gregorian years — the single-select
  * counterpart to `FilterMultiDatePicker`, which AP-1's form uses for its
  * multi-day travel dates.
  *
  * It exists because a native `input type="date"` renders in the browser's own
  * locale: a Thai user reading an AP-4 expense row saw "dd/mm/yyyy" and
- * "August 2026" beside AP-1's "สิงหาคม 2569". The month arithmetic and the
+ * "August 2026" beside AP-1's "สิงหาคม 2026". The month arithmetic and the
  * labels are shared with the multi picker through
  * `@/features/accounting/lib/thai-calendar` rather than copied, so the two
  * calendars cannot come to disagree about, say, a leap year.
@@ -181,7 +181,7 @@ export function SingleDatePicker({
           <ChevronLeft size={16} />
         </button>
         <span className="text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>
-          {TH_MONTHS[viewMonth0]} {toBuddhistYear(viewYear)}
+          {TH_MONTHS[viewMonth0]} {displayYear(viewYear)}
         </span>
         <button
           type="button"

@@ -9,8 +9,8 @@
  *
  * Dates are carried as `YYYY-MM-DD` strings throughout — the same shape the
  * API and the database use — and never as `Date` objects, which would drag the
- * server's timezone into a field that means a calendar day. Buddhist years are
- * a *display* concern: `toBuddhistYear` is called when rendering and nowhere
+ * server's timezone into a field that means a calendar day. The displayed era
+ * is a *display* concern: `displayYear` is called when rendering and nowhere
  * near what gets stored.
  */
 
@@ -67,16 +67,31 @@ export function buildMonthCells(year: number, month0: number): (number | null)[]
   return cells;
 }
 
-/** Display only. What is stored and compared stays Gregorian. */
-export function toBuddhistYear(year: number): number {
-  return year + 543;
+/**
+ * The year as every calendar in this app shows it: **Gregorian (ค.ศ.)**.
+ *
+ * Changed from Buddhist on 2026-09-04 at the user's request. It stays a
+ * function returning its argument rather than becoming nothing at all, because
+ * that keeps the era a single decision in a single place — every picker header
+ * and every formatted date goes through here, so switching back is one line and
+ * one test, not a hunt through seven components for `+ 543`.
+ *
+ * What is stored and compared was always Gregorian; only the rendering moved.
+ */
+export function displayYear(year: number): number {
+  return year;
 }
 
-/** `"2026-08-25"` → `"25 สิงหาคม 2569"`; `""` for anything unparseable. */
+/**
+ * `"2026-08-25"` → `"25 สิงหาคม 2026"`; `""` for anything unparseable.
+ *
+ * Still "Thai" in the name because the MONTH is Thai; only the year's era
+ * changed. Thai months with a Gregorian year is the pairing the user asked for.
+ */
 export function formatThaiYmd(ymd: string): string {
   const p = parseYmd(ymd);
   if (!p) return "";
-  return `${p.day} ${TH_MONTHS[p.month0]} ${toBuddhistYear(p.year)}`;
+  return `${p.day} ${TH_MONTHS[p.month0]} ${displayYear(p.year)}`;
 }
 
 /** Step the visible month, carrying across the year boundary in both directions. */

@@ -248,7 +248,8 @@ export function IdCardUpload({
                   ใช้บัตรประชาชนที่เคยแนบล่าสุด
                 </div>
                 <div className="text-[11px] truncate" style={{ color: "var(--text-muted)" }}>
-                  {previousCard.fileName} · {new Date(previousCard.uploadedAt).toLocaleDateString("th-TH", { day: "2-digit", month: "short", year: "numeric" })}
+                  {previousCard.fileName} · {/* `th-TH` alone is the Buddhist calendar — this printed "04 ก.ย. 2569". */}
+                  {new Date(previousCard.uploadedAt).toLocaleDateString("th-TH-u-ca-gregory", { day: "2-digit", month: "short", year: "numeric" })}
                 </div>
               </div>
               <button

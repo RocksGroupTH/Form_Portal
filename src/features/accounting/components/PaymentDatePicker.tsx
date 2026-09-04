@@ -158,7 +158,7 @@ export function PaymentDatePicker({
           <ChevronLeft size={16} />
         </button>
         <span className="text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>
-          {TH_MONTHS[viewMonth0]} {viewYear + 543}
+          {TH_MONTHS[viewMonth0]} {viewYear}
         </span>
         <button
           type="button"

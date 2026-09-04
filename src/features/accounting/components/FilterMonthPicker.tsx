@@ -212,7 +212,7 @@ export function FilterMonthPicker({
             <ChevronLeft size={16} />
           </button>
           <span className="text-[13px] font-bold tabular-nums" style={{ color: "var(--text-heading)" }}>
-            {viewYear + 543}
+            {viewYear}
           </span>
           <button
             type="button"

@@ -182,7 +182,7 @@ function isBlocked(item: TravelBookingAccountQueueItem): boolean {
  * `canAccessBookingArea`, so a grant here without roster membership sees the
  * queue and gets a 403 on the action, exactly as the menu-grant design intends.
  *
- * Buddhist-year month labels throughout (`payoutMonthOptions`'s own
+ * Gregorian-year date labels throughout (`payout-rule`'s own
  * formatting), never `payment-month.ts`'s Gregorian `formatPayoutMonth` — the
  * two forms describe the same convention (month-end payout) with different
  * calendars, and showing both on one page would read as two different months

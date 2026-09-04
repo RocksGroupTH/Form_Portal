@@ -7,7 +7,7 @@ import {
   toYmd,
   parseYmd,
   buildMonthCells,
-  toBuddhistYear,
+  displayYear,
   formatThaiYmd,
   addMonths,
 } from "./thai-calendar";
@@ -56,8 +56,8 @@ test("a month starting on Sunday has no leading pad", () => {
 });
 
 test("the year shown is Buddhist, the year stored is Gregorian", () => {
-  assert.equal(toBuddhistYear(2026), 2569);
-  assert.equal(formatThaiYmd("2026-08-25"), "25 สิงหาคม 2569");
+  assert.equal(displayYear(2026), 2026);
+  assert.equal(formatThaiYmd("2026-08-25"), "25 สิงหาคม 2026");
 });
 
 test("an unparseable date formats to the empty string, not to NaN", () => {

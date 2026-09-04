@@ -44,7 +44,10 @@ export async function GET(req: NextRequest) {
       await resolveBookingBrandAccess(session.user.email, session.user.role),
     );
 
-    const generatedAt = new Date().toLocaleString("th-TH");
+    // `th-TH` ALONE renders the Buddhist calendar — 2026 comes out 2569 — so
+    // the Gregorian calendar is named explicitly. Same fix, and same reason, as
+    // `TH_CE` in the AP-2 report page.
+    const generatedAt = new Date().toLocaleString("th-TH-u-ca-gregory");
     const filterSummary = sp.get("summary") ?? undefined;
 
     const buf = buildTravelBookingReportWorkbook(rows, {

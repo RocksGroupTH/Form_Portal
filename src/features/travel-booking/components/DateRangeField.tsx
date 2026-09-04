@@ -7,7 +7,7 @@ import { errLabelStyle, labelClass, requiredStar } from "./shared";
 
 /**
  * Depart/return range picker (ข้อ6, ข้อ16). Matches AP-1's FilterMultiDatePicker look —
- * Thai weekdays, Buddhist-year month header, rose palette, portaled panel below — but
+ * Thai weekdays, Gregorian-year month header, rose palette, portaled panel below — but
  * selects a start→end range (connected band) instead of independent days. ISO 'yyyy-mm-dd'
  * in/out, built with local getters (no toISOString). Stays open until closed manually.
  */
@@ -208,7 +208,7 @@ export function DateRangeField({
           <ChevronLeft size={16} />
         </button>
         <span className="text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>
-          {TH_MONTHS[viewMonth0]} {viewYear + 543}
+          {TH_MONTHS[viewMonth0]} {viewYear}
         </span>
         <button type="button" onClick={() => shiftMonth(1)} className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer border-none" style={{ background: "var(--bg-card-alt)", color: "var(--text-muted)" }} aria-label="เดือนถัดไป">
           <ChevronRight size={16} />

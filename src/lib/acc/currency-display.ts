@@ -120,7 +120,7 @@ export function rateAsOfYmd(v: string | Date | null | undefined): string | null 
 /**
  * English months, and common-era years, for the rate date alone.
  *
- * **Every other date this app shows a Thai reader is Thai and Buddhist-era.**
+ * **Every other date this app shows a Thai reader has Thai months.**
  * This one is deliberately not, and it is the only such date: it is the day an
  * international rate source published a rate, and the person who checks it will
  * be on the ECB's own page, where it reads "28 Aug 2026". Printing "28 ส.ค.
@@ -138,7 +138,7 @@ const RATE_MONTHS_EN = [
  * `"2026-08-28"` → `"28 Aug 2026"`. `""` for a date nobody recorded.
  *
  * Named `...AsOf` and not `...Th`: it is the one date in this app that is
- * neither Thai nor Buddhist-era. See `RATE_MONTHS_EN` for why.
+ * not Thai at all. See `RATE_MONTHS_EN` for why.
  */
 export function fmtRateAsOf(v: string | Date | null | undefined): string {
   const ymd = rateAsOfYmd(v);

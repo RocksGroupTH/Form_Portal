@@ -27,7 +27,7 @@ export type InfoGroup = { title?: string; items: InfoItem[] };
 
 const dash = (v: string | null | undefined) => (v && v.trim() ? v.trim() : "—");
 
-/** "03/08/2569" or "03/08/2569 – 05/08/2569" (collapses when both ends are the same day). */
+/** "03/08/2026" or "03/08/2026 – 05/08/2026" (collapses when both ends are the same day). */
 function fmtRange(from: string | null, to: string | null): string {
   const parts = [from, to].filter((d): d is string => !!d).map(fmtYmdDisplay);
   if (parts.length === 0) return "—";

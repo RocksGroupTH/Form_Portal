@@ -230,9 +230,9 @@ test("the round is read off the day", () => {
   assert.equal(payoutRoundOf("2026-09-30"), "month-end");
 });
 
-test("labels are Buddhist-year Thai", () => {
-  assert.equal(payoutDateLabel("2026-10-10"), "10 ตุลาคม 2569");
-  assert.equal(payoutDateLabel("2026-12-31"), "31 ธันวาคม 2569");
+test("labels are Thai months with a Gregorian year", () => {
+  assert.equal(payoutDateLabel("2026-10-10"), "10 ตุลาคม 2026");
+  assert.equal(payoutDateLabel("2026-12-31"), "31 ธันวาคม 2026");
   assert.equal(payoutDateLabel(null), null);
   assert.equal(payoutDateLabel("2026-13-01"), null);
 });

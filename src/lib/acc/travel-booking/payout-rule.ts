@@ -170,7 +170,7 @@ export function payoutRoundOf(ymd: string): PayoutRound {
   return Number(ymd.slice(8, 10)) === 10 ? "tenth" : "month-end";
 }
 
-/** `"31 ตุลาคม 2569"` — Buddhist year, matching the rest of AP-17's Thai copy. */
+/** `"31 ตุลาคม 2026"` — Thai month, Gregorian year, like every other date here. */
 export function payoutDateLabel(ymd: string | null | undefined): string | null {
   const d = valid(ymd);
   if (!d) return null;
@@ -178,7 +178,7 @@ export function payoutDateLabel(ymd: string | null | undefined): string | null {
   const month1 = Number(d.slice(5, 7));
   const day = Number(d.slice(8, 10));
   if (month1 < 1 || month1 > 12) return null;
-  return `${day} ${THAI_MONTHS[month1 - 1]} ${year + 543}`;
+  return `${day} ${THAI_MONTHS[month1 - 1]} ${year}`;
 }
 
 export interface PayoutOption {
