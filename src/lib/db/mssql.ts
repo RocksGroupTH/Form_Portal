@@ -7,7 +7,7 @@ import { applySqlPort } from "@/lib/db/sql-port";
 const isIP = (s: string) => /^\d{1,3}(\.\d{1,3}){3}$/.test(s) || s.includes(":");
 
 const sharedOptions: sql.config["options"] = {
-  encrypt: env.MSSQL_ENCRYPT ?? false,
+  encrypt: env.MSSQL_ENCRYPT ?? true,
   trustServerCertificate: env.MSSQL_TRUST_CERT !== false,
   /**
    * **The one place the app's clock is reconciled with the database's.**

@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+# Pre-commit: refuse to commit secrets (2026-09-04 security review, RG-17).
+# Enabled per clone with:  git config core.hooksPath .githooks
+# Scanner: scripts/scan-secrets.mjs (shared across the CodexFamily repos).
+if command -v node >/dev/null 2>&1; then
+  node "$(git rev-parse --show-toplevel)/scripts/scan-secrets.mjs" --staged || exit 1
+else
+  echo "pre-commit: node not found — secret scan skipped" >&2
+fi
+exit 0
