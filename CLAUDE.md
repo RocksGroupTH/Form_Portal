@@ -771,6 +771,56 @@ that column and none of them changed. What is stored beside it is the
     `selling`, falling back to `mid_rate` then `buying_transfer`. The header
     is `Authorization`, which the BOT OpenAPI spec's securityScheme names; the
     old code sent `X-IBM-Client-Id`.
+  - **Every rate is cached in `dbo.FxRateCache` (migration 137), so one rate is
+    fetched once a day rather than once a page load.** Read-through inside
+    `fetchFxRate`, so every caller gets it — AP-1, AP-17 and AP-2's picker alike.
+    **Production form database only, no UAT twin**, through
+    `getProductionFormPool()`: a rate is a fact about a day, and the two
+    environments must not disagree about what a claim is worth. Same hazard as
+    `BrandCurrency` and `ApiKey` if it is ever read through `getAccPool()`.
+    - **The key is the day ASKED FOR, not the day the provider answered with**,
+      and this is not a detail — it is the whole design. Both sources publish on
+      working days only, so the two dates differ constantly. Measured on the
+      first real call, 2026-09-04: asking for USD *today* returned a rate
+      stamped **2026-09-03**. Keyed on that stamp, every lookup all day would
+      search for 09-04, never find it, and call the API again — the cache would
+      never hit on any day the market had not yet published. `RateAsOf` is
+      stored beside `QueryDate` and is not redundant: it is the provenance
+      migration 130 exists to preserve, and what a claim's own `RateAsOf` is
+      written from.
+    - **One function resolves the day, and the key is built from its answer —
+      never from the caller's raw string.** `resolveFxDate` returns
+      `today | explicit | invalid`, and `fxCacheKey` takes an already-resolved
+      date. That shape exists because the first version had the key and the
+      provider each interpret the caller's string **separately**, and they
+      disagreed: the key demanded `YYYY-MM-DD` and silently fell back to today,
+      while the fetch did `new Date(raw)` and accepted far more. So
+      `?date=2026-8-31` — one missing zero — asked the bank about **31 August**
+      and stored the answer under **today's** key, where `resolveRate` (which
+      passes no date at all) read it for the rest of the day and converted every
+      foreign claim at it. Reachable by any authenticated user through
+      `/api/request/advance/fx-rate`, which takes `date` straight off the query
+      string. Found by review, never shipped.
+    - **A date that cannot be parsed is refused, not substituted**, and so is a
+      future one — `CK_FxRateCache_AsOf` would happily store today's `asOf`
+      under next year's `QueryDate`. Answering a question about one day with
+      another day's rate is the silent-wrong-value failure `toBaht` and
+      `resolveRate` exist to refuse; `fx-cache-policy.test.ts` pins every
+      spelling that used to slip through.
+    - **`Source` is in the unique key.** Registering a real BOT credential must
+      not go on serving today's cached ECB figure — the operator would configure
+      it, see no change, and have nothing to look at. Keyed on source, the
+      switch misses and re-fetches; deactivating does the reverse.
+    - **It changes how often a provider is called and nothing else.** A miss
+      whose fetch throws still throws, so `resolveRate` still answers null and
+      the submit is still refused. Serving an older day's rate to paper over an
+      outage would be a silent substitution on a figure somebody is about to be
+      paid on — the exact class of failure `toBaht` refuses to make.
+    - **Both halves swallow their own failures**, so a deployment that has not
+      applied 137 is chattier, not broken. The write is a `MERGE` on the unique
+      key so two simultaneous misses converge rather than racing. There is no
+      pruning job and none is needed: the table grows by (currencies
+      `BrandCurrency` allows) × (days).
   - **Deactivating the key is not an outage.** Resolution falls back to the
     keyless ECB mid-market figure from Frankfurter, which is what `อัตราอ้างอิง`
     on screen means and why accounting can override any rate. `KNOWN_CODE_USAGE`
@@ -1291,6 +1341,7 @@ repo — it exists only on the server, and a rebuilt server loses it.
 - **126 renames rather than adds, and the name it replaces was the trap.** 125 called the column `BaseAmount`, following the spec's wording; twelve inches away `AccAdvance.BaseAmount` (migration 077) means the **opposite** — the baht figure, not the foreign one. It is now `AccRequest.ForeignAmount`.
 - **135's coordinates cannot be backfilled.** `Lat`/`Lng` on `AccTravelWorkLocation` are filled by the browser's Google Places pick; the key is HTTP-referrer restricted, so a server-side geocode answers 403. Every location filed before 2026-09-01 has none and renders no map, which is the honest outcome rather than a wrong pin.
 - **136's backfill is exact or it refuses.** It copies `TotalAmount` into `TotalAmountBaht` only after checking that no AP-17 request carries a foreign currency, so it can never stamp an unconverted foreign figure into a baht column.
+- **137 is production form database only, and a deployment without it is degraded rather than broken.** `137_fx_rate_cache.sql` creates `dbo.FxRateCache`; it refuses a `_UAT` database outright and refuses anything not named `Rocks_Portal_Form%`. Applied to the live `Rocks_Portal_Form` on 2026-09-04 and verified absent from the UAT twin. Both halves of `fx-rate-cache.ts` swallow their own failures, so the table being missing costs API calls, not availability — which is why it is safe to deploy the code before or after the migration.
 - **AP-17's accounting step needs no migration, but it does need a person.** After this deploy the Admin desk stops closing requests and hands them to `ACCOUNT`, so nothing reaches `Completed` until somebody on `AccBookingApprover` works `/request/accounting/travel-booking/approvals`. Membership is what permits the action; an `accountApproval` tick in `AccBookingApproverTab` only decides who is shown the menu, and the hub shows it to roster members regardless.
 - Liveness probe: `curl http://127.0.0.1:3081/api/health` → `{"ok":true,"data":{"service":"form-portal",…}}`.
 - **`/api/health/db` no longer publishes the topology.** `auth.config.ts` exempts every `/api/health*` path from authentication, and that endpoint was returning the MSSQL host, port, service-account username, database name and the raw driver error text to anyone who asked. It now answers `database: "reachable" | "unreachable"` plus a 200/503, and includes the detail only for a System Admin. The diagnostic line goes to the server log unconditionally, which is where an operator should read it.

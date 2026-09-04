@@ -12,6 +12,10 @@
  * that field rather than assuming either one.
  */
 
+// One definition of "today", shared with the cache key, so a lookup and the
+// row it is stored under can never disagree about which day it is.
+import { fxYmd as ymd, fxCacheKey, resolveFxDate } from "./fx-cache-policy";
+
 // Host and path from the BOT OpenAPI spec (Average Exchange Rate v2.0.2). The
 // previous value pointed at `apigw1.bot.or.th`, a host that does not resolve at
 // all — which nothing caught, because without a key this path was never taken.
@@ -39,10 +43,6 @@ export interface FxRate {
   rate: number;   // THB per 1 unit
   asOf: string;   // YYYY-MM-DD
   source: FxSource;
-}
-
-function ymd(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 /** Currencies supported by the FX source (ECB list via Frankfurter). Cached per process. */
@@ -110,7 +110,9 @@ async function fetchEcbRate(cur: string, date?: string): Promise<FxRate> {
 }
 
 /**
- * BOT rate when a key is registered, otherwise the keyless ECB fallback.
+ * BOT rate when a key is registered, otherwise the keyless ECB fallback —
+ * **read through `dbo.FxRateCache` (migration 137) so one rate is fetched once
+ * a day rather than once a page load.**
  *
  * The key comes from the portal's API-key registry under `BOT_CURRENCY_RATE`,
  * the same rail as every other credential — so accounting rotates it from the
@@ -121,12 +123,68 @@ async function fetchEcbRate(cur: string, date?: string): Promise<FxRate> {
  * A registry lookup that throws is treated as "no key": the ECB figure is worth
  * more to the person filling the form than an error, and `source` tells them
  * which one they got.
+ *
+ * ── What the cache does and does not change ──
+ *
+ * It changes how often a provider is called. It changes **nothing** about what
+ * a caller gets when the provider cannot be reached: a miss whose fetch throws
+ * still throws, so `resolveRate` still answers null and the submit is still
+ * refused. Serving an older day's rate to paper over an outage would be a
+ * silent substitution on a figure somebody is about to be paid on — the exact
+ * class of failure `toBaht` refuses to make.
+ *
+ * The key is the day **asked for**, not the day the provider answered with, and
+ * it includes the source. `fx-cache-policy.ts` holds both rules and says why.
  */
 export async function fetchFxRate(currency: string, date?: string): Promise<FxRate> {
   const cur = currency.trim().toUpperCase();
   if (!cur || cur === "THB") throw new Error("THB ไม่ต้องแปลงอัตรา");
+  // Resolved ONCE, before anything else looks at it. The provider and the cache
+  // key are then given the same value by construction — they used to interpret
+  // the caller's string separately, and `2026-8-31` keyed on today while asking
+  // the bank for August. See `resolveFxDate`.
+  const when = resolveFxDate(date, new Date());
+  if (when.kind === "invalid") {
+    throw new Error("วันที่ไม่ถูกต้อง — ต้องเป็น YYYY-MM-DD และไม่เกินวันนี้");
+  }
+
   const key = await resolveBotKey();
-  return key ? fetchBotRate(cur, key, date) : fetchEcbRate(cur, date);
+  const source: FxSource = key ? "BOT" : "ECB";
+  const cacheKey = fxCacheKey(cur, when.date, source);
+
+  const cache = await loadFxCache();
+  if (cache) {
+    const hit = await cache.readCachedFxRate(cacheKey);
+    if (hit) return { currency: cur, rate: hit.rate, asOf: hit.asOf, source };
+  }
+
+  // `undefined` for the today case, deliberately: it keeps "ask for your
+  // latest", which is what both providers answer best and what this did before.
+  // An explicit day is passed through exactly as the key holds it.
+  const ask = when.kind === "explicit" ? when.date : undefined;
+  const fresh = key ? await fetchBotRate(cur, key, ask) : await fetchEcbRate(cur, ask);
+  // Best effort, and deliberately not awaited for its result's sake — but it IS
+  // awaited, because a floating promise in a serverless-style request can be
+  // torn down before it runs. `writeCachedFxRate` swallows its own failures.
+  if (cache) await cache.writeCachedFxRate(cacheKey, fresh.rate, fresh.asOf);
+  return fresh;
+}
+
+/**
+ * The cache module, loaded dynamically — the same shape `resolveBotKey` uses
+ * for `resolveApiKey`, and for a reason that is stated rather than assumed:
+ * both reach a database pool, and keeping every such import out of this
+ * module's top level means `bot-fx.ts` itself stays importable anywhere.
+ *
+ * A module that will not load is treated as no cache at all, exactly as a
+ * registry lookup that throws is treated as no key.
+ */
+async function loadFxCache(): Promise<typeof import("./fx-rate-cache") | null> {
+  try {
+    return await import("./fx-rate-cache");
+  } catch {
+    return null;
+  }
 }
 
 async function resolveBotKey(): Promise<string | null> {
