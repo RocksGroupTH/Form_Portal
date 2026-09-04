@@ -1,7 +1,8 @@
 /**
  * Exchange-rate lookup for AP-2 foreign-currency advances.
  *
- * Uses the official Bank of Thailand API when BOT_API_CLIENT_ID is configured —
+ * Uses the official Bank of Thailand API when a `BOT_CURRENCY_RATE` key is
+ * registered on the settings page —
  * the bank's **selling** rate, because an advance in a foreign currency means the
  * company buys that currency. Without a key it falls back to a keyless ECB source
  * (frankfurter) — a mid-market rate, close but not the official BOT rate, so
@@ -17,6 +18,9 @@
 const BOT_URL =
   "https://gateway.api.bot.or.th/Stat-ExchangeRate/v2/DAILY_AVG_EXG_RATE/";
 const FRANKFURTER_URL = "https://api.frankfurter.dev/v1";
+
+/** The registry code accounting manages this under, on the settings page. */
+const BOT_KEY_CODE = "BOT_CURRENCY_RATE";
 
 /**
  * How long any FX call may take before it is abandoned.
@@ -63,8 +67,7 @@ interface BotDetail {
   mid_rate?: string;
 }
 
-async function fetchBotRate(cur: string, date?: string): Promise<FxRate> {
-  const key = process.env.BOT_API_CLIENT_ID!;
+async function fetchBotRate(cur: string, key: string, date?: string): Promise<FxRate> {
   const end = date ? new Date(date) : new Date();
   const start = new Date(end);
   start.setDate(start.getDate() - 10);
@@ -106,9 +109,32 @@ async function fetchEcbRate(cur: string, date?: string): Promise<FxRate> {
   return { currency: cur, rate, asOf: json.date ?? (date ?? ymd(new Date())), source: "ECB" };
 }
 
-/** BOT rate when a key is set, otherwise the keyless ECB fallback. */
+/**
+ * BOT rate when a key is registered, otherwise the keyless ECB fallback.
+ *
+ * The key comes from the portal's API-key registry under `BOT_CURRENCY_RATE`,
+ * the same rail as every other credential — so accounting rotates it from the
+ * settings page rather than by editing a file and restarting the server.
+ * `resolveApiKey` still falls back to `.env` for codes it knows there, so a
+ * deployment that has not been migrated keeps working.
+ *
+ * A registry lookup that throws is treated as "no key": the ECB figure is worth
+ * more to the person filling the form than an error, and `source` tells them
+ * which one they got.
+ */
 export async function fetchFxRate(currency: string, date?: string): Promise<FxRate> {
   const cur = currency.trim().toUpperCase();
   if (!cur || cur === "THB") throw new Error("THB ไม่ต้องแปลงอัตรา");
-  return process.env.BOT_API_CLIENT_ID ? fetchBotRate(cur, date) : fetchEcbRate(cur, date);
+  const key = await resolveBotKey();
+  return key ? fetchBotRate(cur, key, date) : fetchEcbRate(cur, date);
+}
+
+async function resolveBotKey(): Promise<string | null> {
+  try {
+    const { resolveApiKey } = await import("@/lib/api-keys/service");
+    const { value } = await resolveApiKey(BOT_KEY_CODE);
+    return value?.trim() || null;
+  } catch {
+    return null;
+  }
 }
