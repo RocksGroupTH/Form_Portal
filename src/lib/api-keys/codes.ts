@@ -53,9 +53,31 @@ export const API_KEY_NAME_MAX = 200;
  * It **coerces rather than rejects**, deliberately: a hyphen or a space becomes
  * `_`, so `ANTHROPIC-API-KEY` and `ANTHROPIC API KEY` both land on the code the
  * person meant. `apiKeyCodeError` refuses only what coercion cannot rescue.
+ *
+ * This half does **not** trim, which is what makes it safe to call on every
+ * keystroke of a controlled input — see `normalizeApiKeyCode` below.
+ */
+export function normalizeApiKeyCodeChars(raw: string): string {
+  return raw.toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+}
+
+/**
+ * The same rule, plus a trim. **For a whole value — never for a keystroke.**
+ *
+ * The split is not tidiness. The dialog's CODE box is a controlled input, so
+ * React writes the state back into the DOM after every change: a value that
+ * trims is applied to a string whose last character is, at that instant, the
+ * space just typed. Trimming it means the keystroke is discarded rather than
+ * coerced, and hand-typing `ANTHROPIC API KEY` lands on `ANTHROPICAPIKEY`
+ * where pasting the identical string lands on `ANTHROPIC_API_KEY`.
+ *
+ * That regression shipped in this file's first version, because the dialog was
+ * moved onto this function and the old inline rule it replaced did not trim.
+ * `codes.test.ts` replays a controlled input character by character, which is
+ * the assertion whose absence let it through.
  */
 export function normalizeApiKeyCode(raw: string): string {
-  return raw.trim().toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+  return normalizeApiKeyCodeChars(raw.trim());
 }
 
 /**

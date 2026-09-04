@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   normalizeApiKeyCode,
+  normalizeApiKeyCodeChars,
   apiKeyCodeError,
   apiKeyNameError,
   API_KEY_CODE_MAX,
@@ -50,18 +51,46 @@ test("an empty or whitespace-only code is refused", () => {
 });
 
 /**
- * The case this validator was added for. The dialog normalises on every
- * keystroke, so three spaces reach the server already turned into `___` — past
- * `trim()`, past the emptiness check, and past `CK_ApiKey_CodeShape`. It would
- * have been created as a real code, and CODE is immutable after creation.
+ * Replay of the dialog's controlled CODE input, character by character.
+ *
+ * This is the assertion whose absence let a real regression ship: the dialog
+ * was moved onto `normalizeApiKeyCode`, which trims, and the inline rule it
+ * replaced did not. React writes a controlled input's value back from state
+ * after every change, so the character just typed is the string's LAST one —
+ * and trimming discards a typed space instead of coercing it. Hand-typing
+ * `ANTHROPIC API KEY` produced `ANTHROPICAPIKEY` while pasting the identical
+ * string produced `ANTHROPIC_API_KEY`.
+ *
+ * Asserting on the whole string cannot see it. Only the per-keystroke replay
+ * can, which is why it is written out rather than tested through one call.
+ */
+function typedIntoDialog(text: string): string {
+  let state = "";
+  for (const ch of text) state = normalizeApiKeyCodeChars(state + ch);
+  return state;
+}
+
+test("typing a code gives the same answer as pasting it", () => {
+  for (const raw of ["ANTHROPIC API KEY", "ANTHROPIC-API-KEY", "google maps key"]) {
+    assert.equal(typedIntoDialog(raw), normalizeApiKeyCode(raw), `typed vs pasted: ${raw}`);
+  }
+  assert.equal(typedIntoDialog("ANTHROPIC API KEY"), "ANTHROPIC_API_KEY");
+});
+
+/**
+ * The case the alphanumeric rule was added for. Three typed spaces reach the
+ * server as `___` — past the emptiness check and past `CK_ApiKey_CodeShape`,
+ * whose only length test is `LEN(Code) > 0`. It would have been created as a
+ * real code, and CODE is immutable after creation.
  */
 test("a code of nothing but underscores is refused", () => {
   assert.equal(
     apiKeyCodeError("___"),
     "CODE ต้องมีตัวอักษรหรือตัวเลขอย่างน้อย 1 ตัว",
   );
-  // The shape the browser actually posts for three typed spaces.
-  assert.equal(normalizeApiKeyCode("   ".toUpperCase().replace(/[^A-Z0-9_]/g, "_")), "___");
+  // What the dialog really produces for three typed spaces — through the
+  // dialog's own function, not a third copy of its regex.
+  assert.equal(typedIntoDialog("   "), "___");
   assert.notEqual(apiKeyCodeError("_-_"), null);
 });
 

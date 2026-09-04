@@ -26,7 +26,7 @@ import {
   TESTABLE_CODES,
   KNOWN_CODE_USAGE,
   IMPORT_NAMES,
-  normalizeApiKeyCode,
+  normalizeApiKeyCodeChars,
   API_KEY_CODE_MAX,
   API_KEY_NAME_MAX,
 } from "@/lib/api-keys/codes";
@@ -253,7 +253,10 @@ function KeyDialog({
             // is `Code = UPPER(Code)`, which is true of every string under this
             // database's case-insensitive collation (measured 2026-09-04). The
             // constraint is there for a case-sensitive one, not for this one.
-            onChange={(e) => set({ code: normalizeApiKeyCode(e.target.value) })}
+            // The CHARS half, not the trimming one: this runs per keystroke, and
+            // the character just typed is the string's last one, so a trim would
+            // delete a typed space instead of coercing it to "_".
+            onChange={(e) => set({ code: normalizeApiKeyCodeChars(e.target.value) })}
             maxLength={API_KEY_CODE_MAX}
             disabled={!!editing}
             placeholder="ANTHROPIC_API_KEY"
@@ -365,22 +368,36 @@ function LogPanel({ apiKeyId }: { apiKeyId: number }) {
   // this key, when the truth was that we could not find out — the opposite
   // answer, on the one screen whose entire job is to say who changed what.
   //
-  // Both arms are needed. `fetcher` is `fetch().then(r => r.json())`, which does
-  // not throw on a non-2xx, so a 500 arrives as `data = { ok: false }` with
-  // `error` unset; only a network failure sets `error`.
-  if (error || !data?.ok) {
+  // Two failure shapes, and `error` alone catches only one. `fetcher` is
+  // `fetch().then(r => r.json())`, which does not throw on a non-2xx, so a 500
+  // arrives as `data = { ok: false }` with `error` unset; only a network
+  // failure sets `error`.
+  //
+  // But refusing on `error` ALONE would trade this bug for its mirror. SWR is
+  // unconfigured here, so `revalidateOnFocus` is on, and its catch sets `error`
+  // while leaving the last good `data` in place — so a blip on refocus would
+  // replace rows we are still holding with "could not read", which is just as
+  // untrue. Whatever we have, we show; the note says the refresh failed.
+  const rows = data?.ok ? data.data?.log ?? null : null;
+  const stale = (error || (data && !data.ok)) && rows !== null;
+  if (rows === null) {
     return (
       <p className="text-[12.5px] m-0 py-2" style={{ color: "var(--text-danger)" }}>
         อ่านประวัติไม่สำเร็จ — ลองใหม่อีกครั้ง
       </p>
     );
   }
-  const log = data.data?.log ?? [];
+  const log = rows;
   if (log.length === 0) {
     return <p className="text-[12.5px] m-0 py-2" style={{ color: "var(--text-muted)" }}>ยังไม่มีประวัติ</p>;
   }
   return (
     <div className="flex flex-col gap-1.5 py-1">
+      {stale && (
+        <p className="text-[11.5px] m-0" style={{ color: "var(--text-danger)" }}>
+          อัปเดตล่าสุดไม่สำเร็จ — นี่คือข้อมูลล่าสุดที่อ่านได้
+        </p>
+      )}
       {log.map((l) => (
         <div key={l.id} className="flex items-baseline gap-2 text-[12.5px]">
           <span className="font-semibold shrink-0" style={{ color: "var(--text-primary)" }}>
