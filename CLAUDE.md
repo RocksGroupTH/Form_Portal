@@ -749,11 +749,33 @@ that column and none of them changed. What is stored beside it is the
   fetches the rate and posts it and nothing verifies it
   (`advance-request-service.ts`), so a requester could choose their own. That is
   the one part of AP-2's approach deliberately not reused.
-- **Every rate is an ECB mid-market *reference* rate, and no screen may caption
-  it as a Bank of Thailand rate.** `BOT_API_CLIENT_ID` will not be provisioned,
-  so `src/lib/adv/bot-fx.ts` — AP-2's module, shared — always takes its keyless Frankfurter fallback. It is not what a
-  bank settles at, which is why accounting can override it and why the copy
-  reads `อัตราอ้างอิง`.
+- **A rate comes from one of two sources and every screen names the one it
+  actually got.** `src/lib/adv/bot-fx.ts` — AP-2's module, shared — returns
+  `source: "BOT" | "ECB"`, and no screen may caption a figure as a Bank of
+  Thailand rate without reading that field. **This paragraph said the opposite
+  until 2026-09-04** and had been true when written: the BOT call was dead code
+  behind an env var nobody would set, pointed at `apigw1.bot.or.th`, *a host
+  that does not resolve at all* — which nothing caught, precisely because
+  without a key the path was never taken.
+  - **The BOT key is a registry row, not an env var.** `BOT_API_CLIENT_ID` is
+    gone from `src/`; the code is **`BOT_CURRENCY_RATE`**, entered at Settings →
+    API Keys like every other credential, and `bot-fx` reads it through
+    `resolveApiKey`, behind a dynamic `import()` — the file does not say why, and
+    it is **not** the bundle-safety reason it looks like: all three importers of
+    `bot-fx` are server-side (checked 2026-09-04). What the code does state is
+    that a lookup which throws is treated as "no key" deliberately, so a registry
+    outage yields the ECB figure rather than an error. The key is registered and
+    active in production (measured 2026-09-04).
+  - **It is the bank's *selling* rate**, since claiming in a foreign currency
+    means the company buys that currency and selling is what it pays for it —
+    `selling`, falling back to `mid_rate` then `buying_transfer`. The header
+    is `Authorization`, which the BOT OpenAPI spec's securityScheme names; the
+    old code sent `X-IBM-Client-Id`.
+  - **Deactivating the key is not an outage.** Resolution falls back to the
+    keyless ECB mid-market figure from Frankfurter, which is what `อัตราอ้างอิง`
+    on screen means and why accounting can override any rate. `KNOWN_CODE_USAGE`
+    in `api-keys/codes.ts` says so on the settings row, so nobody switches it off
+    expecting the forms to stop.
 - **An FX outage cannot stop ordinary work.** `needsRate` is `!isBaht`, so the
   refuse-on-failure rule applies only to a foreign claim; the Thai claims that
   are almost all of them never call the provider.
