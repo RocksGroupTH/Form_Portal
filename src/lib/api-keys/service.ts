@@ -22,6 +22,7 @@ import { getProductionFormPool, sql } from "@/lib/db/mssql";
 import { encryptSecret, decryptSecret, isEncryptionConfigured } from "@/lib/db/connection-crypto";
 import { teamMemberTableRef } from "@/lib/team-member/service";
 import { getAppSetting } from "@/lib/app-settings";
+import { apiKeyCodeError, apiKeyNameError, normalizeApiKeyCode } from "./codes";
 import { env } from "@/env";
 
 export type ApiKeyAction =
@@ -69,9 +70,10 @@ export interface ApiKeyResolution {
 
 /* ─────────────────────────── helpers ─────────────────────────── */
 
-export function normalizeApiKeyCode(raw: string): string {
-  return raw.trim().toUpperCase().replace(/[^A-Z0-9_]/g, "_");
-}
+// `normalizeApiKeyCode` now lives in `./codes`, which imports nothing, so the
+// settings dialog can call the same function instead of retyping its regex.
+// Re-exported because this module is the registry's public face.
+export { normalizeApiKeyCode };
 
 /** `••••` plus the last four, matching what the Google Maps route already shows. */
 export function maskSecret(value: string): string {
@@ -238,17 +240,19 @@ export interface CreateApiKeyInput {
   code: string;
   name: string;
   secret: string;
-  /** `YYYY-MM-DD`, or null for "Non expiry". */
+  /** `YYYY-MM-DD`, or null for "Non expiry". A create has nothing to keep. */
   expiresAt: string | null;
 }
 
 export async function createApiKey(input: CreateApiKeyInput, userId: number): Promise<number> {
   assertEncryptionReady();
+  const codeErr = apiKeyCodeError(input.code);
+  if (codeErr) throw new Error(codeErr);
+  const nameErr = apiKeyNameError(input.name);
+  if (nameErr) throw new Error(nameErr);
   const code = normalizeApiKeyCode(input.code);
   const name = input.name.trim();
   const secret = input.secret.trim();
-  if (!code) throw new Error("กรุณากรอก CODE");
-  if (!name) throw new Error("กรุณากรอกชื่อ");
   if (!secret) throw new Error("กรุณากรอก KEY");
 
   const pool = await getProductionFormPool();
@@ -288,8 +292,15 @@ export async function createApiKey(input: CreateApiKeyInput, userId: number): Pr
 
 export interface UpdateApiKeyInput {
   name: string;
-  /** `YYYY-MM-DD`, or null for "Non expiry". */
-  expiresAt: string | null;
+  /**
+   * `YYYY-MM-DD`, null for "Non expiry", or **absent to keep what is stored**.
+   *
+   * The three-way split exists because this is a PATCH. `SecretEnc` has always
+   * had a "leave it alone" value — a blank key — and the expiry had none, so a
+   * caller sending only `name` silently cleared the date. The dialog always
+   * sends the field, so nothing on screen relied on the old behaviour.
+   */
+  expiresAt?: string | null;
   /**
    * Blank or absent keeps the stored value. The browser is never sent the
    * current key, so "leave it alone" has to be expressible without echoing it
@@ -299,8 +310,9 @@ export interface UpdateApiKeyInput {
 }
 
 export async function updateApiKey(id: number, input: UpdateApiKeyInput, userId: number): Promise<void> {
+  const nameErr = apiKeyNameError(input.name);
+  if (nameErr) throw new Error(nameErr);
   const name = input.name.trim();
-  if (!name) throw new Error("กรุณากรอกชื่อ");
   const newSecret = input.secret?.trim() || null;
   if (newSecret) assertEncryptionReady();
 
@@ -317,12 +329,15 @@ export async function updateApiKey(id: number, input: UpdateApiKeyInput, userId:
     const code = row.Code as string;
     const oldName = row.Name as string;
     const oldExp = toYmd(row.ExpiresAt as Date | null);
+    // Absent means keep. Resolved here, against the row just read, so the
+    // UPDATE stays one statement and the log compares the value it writes.
+    const nextExp = input.expiresAt === undefined ? oldExp : input.expiresAt;
 
     await tx
       .request()
       .input("id", sql.Int, id)
       .input("name", sql.NVarChar, name)
-      .input("exp", sql.Date, input.expiresAt)
+      .input("exp", sql.Date, nextExp)
       .input("enc", sql.NVarChar, newSecret ? encryptSecret(newSecret) : null)
       .input("user", sql.Int, userId || null)
       .query(`UPDATE [dbo].[ApiKey]
@@ -336,12 +351,12 @@ export async function updateApiKey(id: number, input: UpdateApiKeyInput, userId:
     if (oldName !== name) {
       await writeLog(tx, { apiKeyId: id, code, action: "renamed", detail: `${oldName} → ${name}`, userId });
     }
-    if (oldExp !== input.expiresAt) {
+    if (oldExp !== nextExp) {
       await writeLog(tx, {
         apiKeyId: id,
         code,
         action: "expiry_changed",
-        detail: `${oldExp ?? "ไม่มีวันหมดอายุ"} → ${input.expiresAt ?? "ไม่มีวันหมดอายุ"}`,
+        detail: `${oldExp ?? "ไม่มีวันหมดอายุ"} → ${nextExp ?? "ไม่มีวันหมดอายุ"}`,
         userId,
       });
     }

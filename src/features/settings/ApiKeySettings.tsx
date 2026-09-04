@@ -22,7 +22,14 @@ import {
 } from "lucide-react";
 import { Button, Dialog } from "@/components/ui";
 import { describeExpiry, expiryLabel, type ExpiryTone } from "@/lib/api-keys/expiry";
-import { TESTABLE_CODES, KNOWN_CODE_USAGE, IMPORT_NAMES } from "@/lib/api-keys/codes";
+import {
+  TESTABLE_CODES,
+  KNOWN_CODE_USAGE,
+  IMPORT_NAMES,
+  normalizeApiKeyCode,
+  API_KEY_CODE_MAX,
+  API_KEY_NAME_MAX,
+} from "@/lib/api-keys/codes";
 import { KEY_GUIDES, applyGuideOrigin } from "@/lib/api-keys/guides";
 import { parseGuideText, type GuideToken } from "@/lib/api-keys/guide-text";
 
@@ -238,9 +245,16 @@ function KeyDialog({
           <label className={labelClass} style={{ color: "var(--text-secondary)" }}>CODE</label>
           <input
             value={draft.code}
-            // Uppercased as it is typed, so what you see is what is stored — the
-            // table has a CHECK that would otherwise refuse the row on save.
-            onChange={(e) => set({ code: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_") })}
+            // Uppercased as it is typed, so what you see is what is stored, and
+            // through the SAME function the service uses — this was a second copy
+            // of that regex, and `codes.ts` exists to stop exactly that.
+            //
+            // It is the only thing that really uppercases: `CK_ApiKey_CodeUpper`
+            // is `Code = UPPER(Code)`, which is true of every string under this
+            // database's case-insensitive collation (measured 2026-09-04). The
+            // constraint is there for a case-sensitive one, not for this one.
+            onChange={(e) => set({ code: normalizeApiKeyCode(e.target.value) })}
+            maxLength={API_KEY_CODE_MAX}
             disabled={!!editing}
             placeholder="ANTHROPIC_API_KEY"
             list="api-key-codes"
@@ -264,6 +278,7 @@ function KeyDialog({
           <input
             value={draft.name}
             onChange={(e) => set({ name: e.target.value })}
+            maxLength={API_KEY_NAME_MAX}
             placeholder="Anthropic — อ่านใบเสร็จและตรวจบัตร"
             className={inputClass}
             style={inputStyle}
@@ -345,7 +360,22 @@ function LogPanel({ apiKeyId }: { apiKeyId: number }) {
   if (!data && !error) {
     return <p className="text-[12.5px] m-0 py-2" style={{ color: "var(--text-muted)" }}>กำลังโหลดประวัติ...</p>;
   }
-  const log = data?.data?.log ?? [];
+  // **A failed read is not an empty history.** Falling through to the
+  // "ยังไม่มีประวัติ" line below told the admin that nobody had ever changed
+  // this key, when the truth was that we could not find out — the opposite
+  // answer, on the one screen whose entire job is to say who changed what.
+  //
+  // Both arms are needed. `fetcher` is `fetch().then(r => r.json())`, which does
+  // not throw on a non-2xx, so a 500 arrives as `data = { ok: false }` with
+  // `error` unset; only a network failure sets `error`.
+  if (error || !data?.ok) {
+    return (
+      <p className="text-[12.5px] m-0 py-2" style={{ color: "var(--text-danger)" }}>
+        อ่านประวัติไม่สำเร็จ — ลองใหม่อีกครั้ง
+      </p>
+    );
+  }
+  const log = data.data?.log ?? [];
   if (log.length === 0) {
     return <p className="text-[12.5px] m-0 py-2" style={{ color: "var(--text-muted)" }}>ยังไม่มีประวัติ</p>;
   }

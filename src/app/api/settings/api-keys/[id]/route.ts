@@ -55,7 +55,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       id,
       {
         name: body.name ?? "",
-        expiresAt: body.expiresAt?.trim() || null,
+        // `in` rather than a truthiness test: absent keeps the stored date,
+        // an explicit null clears it, and "" from a cleared date input means
+        // the same as null. Without this, a PATCH carrying only `name` wiped
+        // the expiry with nothing on screen to show it had happened.
+        expiresAt: "expiresAt" in body ? body.expiresAt?.trim() || null : undefined,
         secret: body.value ?? null,
       },
       Number(session.user.id),
