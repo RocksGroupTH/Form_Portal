@@ -19,6 +19,9 @@ export const KNOWN_CODE_USAGE: Record<string, string> = {
   ANTHROPIC_API_KEY: "AP-1 อ่านยอดใบเสร็จ · AP-17 ตรวจบัตรประชาชน · AP-3 อ่านใบเสร็จเคลียร์",
   GOOGLE_MAPS_API_KEY: "AP-1 แผนที่และระยะทาง",
   ORS_API_KEY: "AP-1 ค้นหาสถานที่ · AP-17 จุดขึ้นรถ",
+  // Deactivating this does not break the form: FX falls back to a keyless ECB
+  // mid-market figure, and every screen names the source it actually got.
+  BOT_CURRENCY_RATE: "อัตราแลกเปลี่ยน ธปท. — AP-1 · AP-2 (ถ้าปิด จะใช้อัตราอ้างอิง ECB แทน)",
 };
 
 /**
@@ -30,4 +33,5 @@ export const IMPORT_NAMES: Record<string, string> = {
   ANTHROPIC_API_KEY: "Anthropic",
   GOOGLE_MAPS_API_KEY: "Google Maps",
   ORS_API_KEY: "OpenRouteService",
+  BOT_CURRENCY_RATE: "Bank of Thailand",
 };
