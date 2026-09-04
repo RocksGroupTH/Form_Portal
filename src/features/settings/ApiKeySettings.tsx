@@ -27,6 +27,8 @@ import {
   KNOWN_CODE_USAGE,
   IMPORT_NAMES,
   normalizeApiKeyCodeChars,
+  findApiKeyCodeClash,
+  apiKeyClashMessage,
   API_KEY_CODE_MAX,
   API_KEY_NAME_MAX,
 } from "@/lib/api-keys/codes";
@@ -165,11 +167,29 @@ interface DraftState {
 
 function KeyDialog({
   editing,
+  existing,
   onClose,
   onSaved,
 }: {
   /** null = adding. */
   editing: ApiKeyListItem | null;
+  /**
+   * Every code already registered, active or not.
+   *
+   * `UQ_ApiKey_Code` refuses a duplicate — verified against the live database,
+   * both `ANTHROPIC_API_KEY` and `anthropic_api_key`, since the collation is
+   * case-insensitive — so adding one was never actually possible. What was
+   * possible was reaching the button: nothing said the code was taken, and the
+   * datalist below cheerfully SUGGESTED codes that already existed. The dialog
+   * offered a value it would then reject.
+   *
+   * Inactive rows count. The index is unfiltered on purpose (migration 116:
+   * reusing a retired code would make its log ambiguous about which key an
+   * entry belongs to), so a deactivated code still blocks — and the remedy is
+   * to reactivate it, not to add it again, which is why the notice says which
+   * case this is.
+   */
+  existing: ApiKeyListItem[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -186,7 +206,20 @@ function KeyDialog({
 
   const set = (patch: Partial<DraftState>) => setDraft((d) => ({ ...d, ...patch }));
 
+  /* Only when ADDING: an edit keeps its own code, and the field is disabled.
+     The comparison normalises both sides, so a stored `TH `-style padded or
+     lower-cased row still matches what is being typed. */
+  const clash = editing ? null : findApiKeyCodeClash(draft.code, existing);
+
   const submit = async () => {
+    // The database is still the rule — this only saves a round trip and gives a
+    // better sentence than the driver's. Checking here CANNOT replace
+    // `UQ_ApiKey_Code`: two admins on two tabs would both pass it.
+    const clashMsg = apiKeyClashMessage(clash);
+    if (clashMsg) {
+      toast.error(clashMsg);
+      return;
+    }
     if (!draft.nonExpiry && !draft.expiresAt) {
       toast.error("เลือกวันหมดอายุ หรือติ๊ก Non expiry");
       return;
@@ -264,11 +297,25 @@ function KeyDialog({
             className={`${inputClass} font-mono tracking-wide disabled:opacity-60`}
             style={inputStyle}
           />
-          {/* The three the app reads. Free text is still allowed — this is a
-              registry, and an unknown code is stored and served the same. */}
+          {/* The codes the app reads that are NOT registered yet. Free text is
+              still allowed — this is a registry, and an unknown code is stored
+              and served the same — but suggesting a code that already exists
+              offered a value the save would refuse. */}
           <datalist id="api-key-codes">
-            {Object.keys(KEY_GUIDES).map((c) => <option key={c} value={c} />)}
+            {Object.keys(KEY_GUIDES)
+              .filter((c) => !existing.some((k) => k.code === c))
+              .map((c) => <option key={c} value={c} />)}
           </datalist>
+          {clash && (
+            <p
+              className="text-[11.5px] mt-1 m-0 font-medium"
+              style={{ color: "var(--text-danger)" }}
+            >
+              {clash.isActive
+                ? `มี CODE นี้อยู่แล้ว — แก้ไข key เดิมแทนการเพิ่มใหม่`
+                : `มี CODE นี้อยู่แล้ว แต่ถูกปิดใช้งานอยู่ — ให้กดเปิดใช้งานแทนการเพิ่มใหม่`}
+            </p>
+          )}
           {editing && (
             <p className="text-[11.5px] mt-1 m-0" style={{ color: "var(--text-muted)" }}>
               CODE เปลี่ยนไม่ได้ — เป็นชื่อที่โค้ดใช้เรียก
@@ -344,7 +391,7 @@ function KeyDialog({
 
       <div className="flex justify-end gap-2">
         <Button variant="secondary" onClick={onClose} disabled={saving}>ยกเลิก</Button>
-        <Button onClick={submit} disabled={saving}>
+        <Button onClick={submit} disabled={saving || !!clash}>
           {saving && <Loader2 size={14} className="animate-spin" />}
           {editing ? "บันทึก" : "เพิ่ม key"}
         </Button>
@@ -665,7 +712,12 @@ export function ApiKeySettings() {
       )}
 
       {dialog && (
-        <KeyDialog editing={dialog.editing} onClose={() => setDialog(null)} onSaved={() => void mutate()} />
+        <KeyDialog
+          editing={dialog.editing}
+          existing={keys}
+          onClose={() => setDialog(null)}
+          onSaved={() => void mutate()}
+        />
       )}
     </div>
   );

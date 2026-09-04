@@ -7,6 +7,8 @@ import {
   apiKeyNameError,
   API_KEY_CODE_MAX,
   API_KEY_NAME_MAX,
+  findApiKeyCodeClash,
+  apiKeyClashMessage,
 } from "./codes";
 
 /**
@@ -132,4 +134,65 @@ test("a name is required and bounded", () => {
 test("the bounds are the column widths", () => {
   assert.equal(API_KEY_CODE_MAX, 64);
   assert.equal(API_KEY_NAME_MAX, 200);
+});
+
+/**
+ * The collision warning — the reason somebody could type a CODE that already
+ * existed, watch the suggestions offer it, and only be told after pressing Add.
+ *
+ * `UQ_ApiKey_Code` was refusing it the whole time — verified against the live
+ * database for both `ANTHROPIC_API_KEY` and `anthropic_api_key`, the collation
+ * being case-insensitive — so nothing was ever created twice. This is the
+ * warning, not the rule, and it must never be mistaken for the rule: two admins
+ * on two tabs both pass it and one still loses.
+ */
+const REGISTERED = [
+  { code: "ANTHROPIC_API_KEY", isActive: true },
+  { code: "ORS_API_KEY", isActive: false },
+];
+
+test("a code already registered collides", () => {
+  const c = findApiKeyCodeClash("ANTHROPIC_API_KEY", REGISTERED);
+  assert.equal(c?.code, "ANTHROPIC_API_KEY");
+});
+
+/** The dialog uppercases as you type, but a paste or a direct call need not. */
+test("the comparison normalises both sides", () => {
+  assert.equal(findApiKeyCodeClash("anthropic_api_key", REGISTERED)?.code, "ANTHROPIC_API_KEY");
+  assert.equal(findApiKeyCodeClash("  anthropic-api-key  ", REGISTERED)?.code, "ANTHROPIC_API_KEY");
+  assert.equal(
+    findApiKeyCodeClash("ANTHROPIC_API_KEY", [{ code: " anthropic_api_key ", isActive: true }])?.code,
+    " anthropic_api_key ",
+  );
+});
+
+test("an unused code does not collide", () => {
+  assert.equal(findApiKeyCodeClash("GOOGLE_MAPS_API_KEY", REGISTERED), null);
+  assert.equal(findApiKeyCodeClash("", REGISTERED), null);
+  assert.equal(findApiKeyCodeClash("ANYTHING", []), null);
+});
+
+/**
+ * **A deactivated code still collides**, because `UQ_ApiKey_Code` is unfiltered
+ * on purpose (migration 116: reusing a retired code would make its log
+ * ambiguous). The remedy is to reactivate, not to add — so the message has to
+ * say which case it is, or somebody hunts for a row they cannot see.
+ */
+test("a deactivated code collides, and says so differently", () => {
+  const c = findApiKeyCodeClash("ORS_API_KEY", REGISTERED);
+  assert.equal(c?.code, "ORS_API_KEY");
+  assert.equal(c?.isActive, false);
+  const msg = apiKeyClashMessage(c) as string;
+  assert.ok(msg.indexOf("ปิดใช้งาน") !== -1, msg);
+  assert.ok(msg.indexOf("เปิดใช้งาน") !== -1, msg);
+});
+
+test("an active collision does not mention reactivating", () => {
+  const msg = apiKeyClashMessage(findApiKeyCodeClash("ANTHROPIC_API_KEY", REGISTERED)) as string;
+  assert.ok(msg.indexOf("อยู่แล้ว") !== -1, msg);
+  assert.equal(msg.indexOf("ปิดใช้งาน"), -1, msg);
+});
+
+test("no collision is no message", () => {
+  assert.equal(apiKeyClashMessage(null), null);
 });

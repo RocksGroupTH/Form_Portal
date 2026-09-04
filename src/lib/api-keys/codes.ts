@@ -113,3 +113,49 @@ export function apiKeyNameError(raw: string): string | null {
   if (name.length > API_KEY_NAME_MAX) return `ชื่อยาวเกิน ${API_KEY_NAME_MAX} ตัวอักษร`;
   return null;
 }
+
+/** The minimum a caller must know about a registered key to spot a collision. */
+export interface RegisteredCode {
+  code: string;
+  isActive: boolean;
+}
+
+/**
+ * The already-registered key a proposed CODE would collide with, or null.
+ *
+ * **The database is the rule; this is the warning.** `UQ_ApiKey_Code` refuses
+ * the duplicate either way — verified against the live database, for both
+ * `ANTHROPIC_API_KEY` and `anthropic_api_key`, since the collation is
+ * case-insensitive. A check here cannot replace it and must never be treated as
+ * having done so: two admins on two tabs both pass it and one still loses.
+ *
+ * What it is for is the dialog, which until now let somebody type a code that
+ * was already taken, offered it in the suggestions, and only said so after the
+ * save came back.
+ *
+ * **Inactive rows collide too**, and that is the case worth naming separately.
+ * The index is unfiltered on purpose (migration 116: reusing a retired code
+ * would make its log ambiguous about which key an entry belongs to), so a
+ * deactivated code still blocks — and the remedy is to reactivate it, not to
+ * add it again. A message that only said "already exists" would send somebody
+ * looking for a row they cannot see near the top of the list.
+ */
+export function findApiKeyCodeClash<T extends RegisteredCode>(
+  raw: string,
+  existing: readonly T[],
+): T | null {
+  const code = normalizeApiKeyCode(raw);
+  if (!code) return null;
+  for (let i = 0; i < existing.length; i++) {
+    if (normalizeApiKeyCode(existing[i].code) === code) return existing[i];
+  }
+  return null;
+}
+
+/** Why this CODE cannot be added, given what is already registered, in Thai. */
+export function apiKeyClashMessage(clash: RegisteredCode | null): string | null {
+  if (!clash) return null;
+  return clash.isActive
+    ? `มี CODE "${clash.code}" อยู่แล้ว`
+    : `มี CODE "${clash.code}" อยู่แล้ว แต่ถูกปิดใช้งาน — ให้กดเปิดใช้งานแทนการเพิ่มใหม่`;
+}
