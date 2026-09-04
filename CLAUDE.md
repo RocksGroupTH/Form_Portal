@@ -35,7 +35,7 @@ Two things about this build that look like faults and are not:
 | **Rocks_Portal_Form** | `getFormPool()` | Form definitions, submissions, approvals, files, logs, and all `Acc*` Accounting tables. Form Portal's own database — `Rocks_Portal_Form_UAT` is the UAT twin, and which one `getFormPool()` returns depends on the form **and on who is asking** (see "Parallel Production and UAT") |
 | **Rocks_Portal_Form** (`TeamMember`) | `getProductionFormPool()` via `@/lib/team-member/service` | User identity and roles (migration 066). **Production only** — never the UAT twin, and never `getFormPool()`; see "Auth" |
 | **Rocks_Portal_Form** (`DepartmentErpMap`) | `getProductionFormPool()` via `@/lib/acc/department-map-service` | HR department → ERP dimension mapping (migrations 099/100). **One physical copy, production only** — never the UAT twin, and never `getFormPool()`, which resolves `Rocks_Portal_Form_UAT` for a tester in UAT mode where the object does not exist. `Fast_Core` keeps a permanent synonym so the Rocks Fast and ACC Portal siblings still reach the same rows. See "DepartmentErpMap moved out of Fast_Core" below |
-| **Rocks_Portal_Form** (`TravelProvince`) | `getProductionFormPool()` via `src/lib/acc/travel-booking/province-service.ts` and `src/lib/acc/travel-booking/request-service.ts` | AP-17 province lookups (migration 104). **One physical copy, production only** — never the UAT twin (migration 104 refuses outright if pointed at it), and never `getFormPool()`, which resolves `Rocks_Portal_Form_UAT` for a tester in UAT mode where the object does not exist. `Fast_Data` keeps a permanent synonym so the Rocks Fast and ACC Portal siblings still reach the same rows. See "TravelProvince moved out of Fast_Data" below |
+| **Rocks_Portal_Form** (`TravelProvince`) | **no reader left in `src/`** — ACC Portal reads it directly | AP-17 province lookups (migration 104), until AP-17 dropped จังหวัด/เมือง on 2026-09-01 and `province-service.ts` was deleted with it. The table and its 77 rows stay, because the sibling still reads them. **One physical copy, production only** — never the UAT twin (migration 104 refuses outright if pointed at it), and never `getFormPool()`, which resolves `Rocks_Portal_Form_UAT` for a tester in UAT mode where the object does not exist. `Fast_Data` keeps a permanent synonym so the Rocks Fast and ACC Portal siblings still reach the same rows. See "TravelProvince moved out of Fast_Data" below |
 | **Fast_Data** | `getDataPool()` — no caller left in `src/` | Nothing here that this app's own code still reads. `TravelProvince` was the last table it read directly; migrations 104/105 moved it to `Rocks_Portal_Form` (see the row above), completing the same move already made for `DepartmentErpMap` (`Fast_Core` → `Rocks_Portal_Form`, 099/100 — **out of** `Fast_Core`, whose synonym is the one 100 left behind) and the five Business Central sync tables (`Fast_Data` → `Rocks_ERP_Data`, 101/102, see below) — `department-map-service.ts` and both `src/lib/erp/*-sync.ts` files already had no `getDataPool()` call left either. The *database* is not empty: measured 2026-08-21 it holds 20 tables — every one of them Rocks Fast's Intelligence tables (`Intel_*`, `IntelMkt*`), which this app never touches — plus six synonyms the Rocks Fast and ACC Portal siblings still read two-part: the five `Erp*` synonyms 102 left behind, and the `TravelProvince` synonym 105 left behind. `getDataPool()` stays exported only because two scripts under `scripts/checks/` (`verify-travel-province-move.ts`, `verify-erp-data-move.ts`) read through those synonyms to confirm they still resolve to the new homes. **Not** a BI/reporting database in this app. |
 | **Rocks_ERP_Data** | `getErpDataPool()` | Mirror of Business Central: `ErpAccounts`, `ErpVendors`, `ErpDimensionValue`, `ErpGeneralJournalBatch`, `ErpBankAccountCard`, `ErpSyncLog` (migrations 101/102/117). Read/written by `src/lib/erp/account-sync.ts`, `vendor-sync.ts` and `dimension-sync.ts`, plus `loadErpDeptDisplayNamesByTargetBrand()` in `src/lib/acc/department-map-service.ts`. **One physical copy, no UAT twin** — `Fast_Data` keeps permanent synonyms for the original five tables so the Rocks Fast and ACC Portal siblings still reach those rows two-part; `ErpVendors` lives only in `Rocks_ERP_Data`. See "The ERP sync tables moved out of Fast_Data" below |
 | **Rocks_Portal_HR** | `getHrPool()` → `getAppPool("Rocks_Portal_HR")` | Employee master, manager chain, per-diem allowance history — cross-referenced by StaffId/email |
@@ -152,7 +152,11 @@ application of the same pattern, after 099/100 (`DepartmentErpMap` out of
 `Fast_Core`) and 101/102 (the five Business Central sync tables out of
 `Fast_Data`), and **with it, no code in `src/` reads `Fast_Data` at all**:
 `province-service.ts` and `request-service.ts` were its last two
-`getDataPool()` callers, and both now open `getProductionFormPool()` instead.
+`getDataPool()` callers, and both moved to `getProductionFormPool()` instead.
+(`province-service.ts` has since been **deleted** outright, with AP-17's
+จังหวัด/เมือง field — see "AP-17 dropped จังหวัด/เมือง" below. `TravelProvince`
+itself is untouched and still read by ACC Portal, which is why the synonym and
+this whole note stay.)
 The `src/` qualifier is load-bearing, not a hedge — `getDataPool()` is still
 exported and still called, by `scripts/checks/verify-travel-province-move.ts`
 and `scripts/checks/verify-erp-data-move.ts`, which read through the synonyms
@@ -228,7 +232,7 @@ Since migration 066 that is a hard constraint, not a preference: `auth()` no lon
 - **Attachments** land under `{SHAREPOINT_ACC_FOLDER}/_UAT/{formCode}/...` — the `_UAT` segment sits between the base folder and the form code (`buildAccFolderPath`, `src/lib/acc/sharepoint-path.ts`).
 - **Every new route under `/api/request` needs a rule** in `ROUTE_RULES` (`classify-path.ts`, longest matching prefix → `AP-1 | AP-4 | AP-15 | AP-17 | "BOTH" | null`). Without one it silently falls through to Production. The coverage panel on the settings page lists any route no rule covers — `matchRule` is what tells "no rule at all" apart from "a rule that deliberately says Production".
   - **AP-4's settings routes classify `AP-4`, not `null`** — the opposite of `/api/request/accounting/settings`, deliberately. `/api/request/reimburse/settings/rules` with no query string is the **form's own** checklist source, and the ticks it produces become `AccReimburseRuleAck` rows with an FK into whichever database the form resolved to. Production treatment would have a UAT tester's form read production's rule ids while writing acknowledgements into UAT. The reason first recorded for this — that AP-4's rule and approver tables are not dual-written — is **false**; they are, and they are two of the six tables that have since taken the shared list from 19 to 25. The conclusion survives the premise, which is why the real reason is written down here and in `classify-path.ts`: the next person to notice the inconsistency will otherwise remove it.
-- **Shared configuration is dual-written**, not duplicated by hand: `src/lib/acc/dual-write.ts` runs each master-table mutation against both databases in a transaction, and `npm run check:alignment` asserts the **25** shared tables still match (`scripts/checks/verify-master-alignment.ts` holds the list; AP-17 added `AccBookingApprover` and `AccBookingApproverTab`, and AP-4 added `AccReimburseRule`, `AccReimburseApprover`, `AccReimburseAccess` and `AccReimburseAccessTab`, to the 19 that were there before). Those tables are deliberately absent from 061/064: they are not transactional, and their ids must be **identical** in both databases rather than disjoint — which neither 061's reseed nor 064's `CHECK` would allow, for the two different reasons in the third bullet below.
+- **Shared configuration is dual-written**, not duplicated by hand: `src/lib/acc/dual-write.ts` runs each master-table mutation against both databases in a transaction, and `npm run check:alignment` asserts the **27** shared tables still match (`scripts/checks/verify-master-alignment.ts` holds the list — read `MASTER_TABLES.length` rather than trusting a number written here; AP-17 added `AccBookingApprover` and `AccBookingApproverTab`, AP-4 added `AccReimburseRule`, `AccReimburseApprover`, `AccReimburseAccess` and `AccReimburseAccessTab`, and AP-17's per-diem-by-country and brand-scoped access added `AccTravelPerDiemCountry` (133) and `AccBookingApproverBrand` (134), to the 19 that were there before. `BrandCurrency` is **not** among them — it is production-only, for the reason `currency-pool-guard.test.ts` pins). Those tables are deliberately absent from 061/064: they are not transactional, and their ids must be **identical** in both databases rather than disjoint — which neither 061's reseed nor 064's `CHECK` would allow, for the two different reasons in the third bullet below.
   - **One path copies production's id into UAT explicitly, and it must not be deleted.** `upsertVehicle` (`src/lib/acc/travel-booking/settings-service.ts:280-346`) is the exception, and the only `SET IDENTITY_INSERT` in `src/`. `writeBothPools` runs its callback against production first, so the production pass takes the plain `INSERT … OUTPUT INSERTED.Id` and the UAT pass — `isUatPass`, true exactly when the caller supplied no id but the production pass has since set one — replays *that* id under `IDENTITY_INSERT`. Its own comment says why: `AccTravelVehiclePlace` has an FK to `AccTravelVehicleOption.Id` (migration 052), and the place rows are rewritten on both passes keyed on that id, so the two databases have to agree on the parent explicitly rather than each trusting its own counter. **A reader who believes this branch is dead code and removes it breaks a cross-database foreign key silently.** Note how narrow it is: even here only the *parent* id is copied — the `AccTravelVehiclePlace` rows themselves are inserted plainly and take their ids from each database's own counter.
   - **Everything else relies on the two identity counters staying in lockstep.** Every other dual-write runs the *same* statement against each database and reads no id back; `createRule` (`AccReimburseRule`, `src/lib/acc/reimburse/settings-service.ts`) is the plain case — both databases allocate from their own counter and the ids match only because those counters are in step. The `OUTPUT INSERTED.Id` in `brand-erp-interface-map-service.ts` is not a second copying path: it is the function's own return value, taken from the production pass and never replayed into UAT. The lockstep itself rests on the two databases having been seeded from the same source with identity preserved, and on every insert since arriving through here.
   - **So a 900000 floor breaks these tables two different ways, and only one of them is loud.** On `AccTravelVehicleOption`, 064's `CHECK (Id >= 900000)` rejects the replayed production id outright — an explicit low id fails the constraint — so saving a new vehicle would fail every time, visibly. On every lockstep table the failure is quiet and worse: 061's reseed would have UAT allocate 900001 where production allocated 42, the write would **succeed**, and the two copies would diverge on ids with no error at all. Both are why these tables are absent from 061/064; only the first is the "would reject every write" that this note used to claim for all of them.
@@ -364,7 +368,7 @@ Top bar and mobile tabs: **Home** · **My Requests** · **My Work** · **Setting
 
 Only the middle two live in `NAV` (`src/lib/constants.ts`). Home and Settings are composed onto either side of it in `Navbar.tsx`'s `visibleNav` — Home as a literal, Settings behind `canAdmin` — so **adding an entry to `NAV` puts it between them**, not at the end.
 
-- **`Home`** (`/`) — a form catalogue: greeting and stat strip, search, "Continue where you left off" (resumable drafts and Returned requests), then the **Accounting** forms — AP-1 travel expense, AP-17 travel booking and AP-4 staff reimbursement, filtered to the ones available to this viewer. It is a link surface only: it creates no API of its own beyond reading `/api/form-environment` for availability. `src/features/home/HomeCatalogue.tsx`.
+- **`Home`** (`/`) — a form catalogue: greeting and stat strip, search, "Continue where you left off" (resumable drafts and Returned requests), then the **Accounting** forms — AP-1 travel expense, AP-2 advance, AP-3 clear advance, AP-17 travel booking and AP-4 staff reimbursement, filtered to the ones available to this viewer. It is a link surface only: it creates no API of its own beyond reading `/api/form-environment` for availability. `src/features/home/HomeCatalogue.tsx`.
   - **Home's card list is its own, not a filter over `REQUEST_CARDS`.** `ACCOUNTING_FORMS` in `HomeCatalogue.tsx` and `REQUEST_CARDS` in `src/lib/constants.ts` are two hand-kept lists, and a form added to one alone appears on only one surface. Environment filtering needs nothing extra either way: `/api/form-environment` resolves every code any `REQUEST_CARDS` badge names. **Their order is not one of the hand-kept things, though**: both surfaces sort through `sortByFormCode` (`src/lib/form-code-order.ts`), which reads the number out of the badge and compares it as a number, so every list renders AP-1 · AP-4 · AP-17. A plain string sort gives AP-1 · AP-17 · AP-4 — "17" before "4", one character at a time — which is what both surfaces showed until 2026-08-22. A card with no parseable badge sorts to the end of its group, so a new form still needs one; `form-code-order.test.ts` asserts every `REQUEST_CARDS` entry has one and that each group comes out in **non-decreasing** numeric order — not strictly ascending, because one form may legitimately carry more than one card in a group and `compareFormCodes` calls equal codes a tie, held in source order by the stable sort. What must never happen is a later card sorting ahead of an earlier one's number, which `<=` still catches.
   - **"Continue where you left off" is still AP-1 and AP-17 only.** `useHomeData` fetches those two drafts endpoints and `ResumableGroup.formCode` is typed to the pair; `/api/request/reimburse/requests/drafts` exists and is not read, so an AP-4 draft is resumable from the form page but is not offered here.
 - **`My Requests`** (`/my-request`) — the Accounting requests you submitted and their status. Form-agnostic: `listMyRequestRows` filters on ownership, not `FormCode`, so AP-4 rows appear alongside AP-1's and AP-17's, merged across both databases by `src/lib/acc/query-both.ts`.
@@ -405,11 +409,11 @@ still true of the deleted code in git history:
 
 ### 2. Request → Accounting (`/request/accounting`)
 
-Three live Accounting forms share a generic request/approval backbone, plus a Business Central ERP integration layer. **Only AP-1 reaches Business Central** — see AP-4 below.
+**Five** live Accounting forms share a generic request/approval backbone, plus a Business Central ERP integration layer: AP-1, AP-2, AP-3, AP-4 and AP-17. **AP-4 is the one that never reaches Business Central** — see AP-4 below; AP-2 and AP-3 have senders of their own (`adv/advance-erp-send.ts`, `clr/clear-advance-erp-send.ts`), not AP-1's. This sentence read “three forms … only AP-1 reaches Business Central” until 2026-09-04, which had been false since the AP-2/AP-3 branch merged.
 
 **Storage:** Acc* tables live in **`Rocks_Portal_Form`**, accessed via `getAccPool()` (= `getFormPool()`, `src/lib/acc/pool.ts`). Numbered migrations in `migrations/` (013 onward) built these up incrementally against the old `Fast_Form`; `059_portal_form_baseline.sql` is the generated full-schema baseline used to stand up a new database. Apply with `npm run apply-sql -- --db Rocks_Portal_Form --file <path>` (see `scripts/apply-sql.ts`). **Every migration names its own target database in its header — read that before running it.**
 
-**Standing up a production form database takes 059, 066, 088–092 *and* 099** (plus 093 on Fast_Core, and 094 if 089 has already run elsewhere). Since AP-4 shipped, a database built from 059 + 066 alone has no `AccReimburse*` tables at all: every AP-4 route 500s, and — worse, because it is not confined to AP-4 — `/my-work` and Home's pending count break for **every** user of **every** form, since `listMyWorkRows` names `[dbo].[AccReimburseApprover]` inside a query `queryBothPools` runs against both form databases (see the deployment checklist). 059 was generated from `Fast_Form`, which never held `TeamMember`, so a database built from 059 alone has no identity table. Since the fail-closed change this now **locks everybody out** rather than degrading them: provisioning fails, `signIn` returns false, and every login lands on `/unauthorized`. That is louder than the old behaviour — which let anyone with an active `Rocks_Portal_HR.Employee` row in as `Staff` with a blank id, leaving `/settings/users` unreachable and the roster unrepairable from the UI — but it is still a stand-up mistake with no in-app remedy, so apply 066. Grep for `[Auth] blocked login (could not provision a TeamMember row)` and `[TeamMember] provision failed for …`.
+**Standing up a production form database now takes 059, 066 and then essentially every numbered migration after it — do not treat any list in this file as the recipe.** It once read “059, 066, 088–092 and 099”, which was true while AP-4 was the newest thing here; AP-2, AP-3, the multi-currency work and AP-17's per-diem-by-country have since added migrations up to 136, several of them creating tables that a query names unconditionally. **Read `ls migrations/` and each file's own header**, which states its target database — and note that eleven numbers (088, 089, 090, 091, 094, 103, 117, 118, 119, 120, 124) each exist twice, from parallel branches, so a number alone does not name a file. The paragraphs below are why 066 and 099 in particular cannot simply be re-run later; they are not a complete order of application. Since AP-4 shipped, a database built from 059 + 066 alone has no `AccReimburse*` tables at all: every AP-4 route 500s, and — worse, because it is not confined to AP-4 — `/my-work` and Home's pending count break for **every** user of **every** form, since `listMyWorkRows` names `[dbo].[AccReimburseApprover]` inside a query `queryBothPools` runs against both form databases (see the deployment checklist). 059 was generated from `Fast_Form`, which never held `TeamMember`, so a database built from 059 alone has no identity table. Since the fail-closed change this now **locks everybody out** rather than degrading them: provisioning fails, `signIn` returns false, and every login lands on `/unauthorized`. That is louder than the old behaviour — which let anyone with an active `Rocks_Portal_HR.Employee` row in as `Staff` with a blank id, leaving `/settings/users` unreachable and the roster unrepairable from the UI — but it is still a stand-up mistake with no in-app remedy, so apply 066. Grep for `[Auth] blocked login (could not provision a TeamMember row)` and `[TeamMember] provision failed for …`.
 
 `066_portal_form_team_member.sql` creates the table and copies the roster out of Fast_Core, so it goes *after* 059. It refuses to run unless the database is named `Rocks_Portal_Form…` **and** has `dbo.AccRequest`: the name test is what keeps a mistyped `--db` out of `Fast_Form`, which has `AccRequest` too and belongs to the live sibling. **066 is a copy, not a seed** — its `INSERT` reads `[Fast_Core].[dbo].[TeamMember]`, so that table must exist and still hold the roster when 066 runs. If it did not, batch 1 would commit the empty table and batch 2 roll back under `XACT_ABORT`, leaving no indexes, no FK and identity at 1; and once anyone logs in and is provisioned, the empty-table guard on the copy blocks the re-run permanently while new ids start at 1 — straight into the range 066 exists to keep clear. **Post-apply check:** `SELECT COUNT(*) FROM dbo.TeamMember` = 17 and `SELECT IDENT_CURRENT('dbo.TeamMember')` = 100000. It is the one migration that must **not** also be applied to `Rocks_Portal_Form_UAT` — identity lives in production only, and both pools reach it three-part. A new migration that changes an `Acc*` table does have to be applied to `Rocks_Portal_Form_UAT` as well, but the parallel-UAT batch is not that shape: **060, 062, 063 and 065 are Fast_Core only** (`FormEnvironment`, `UatTester`), and **061 and 064 are `Rocks_Portal_Form_UAT` only** — they refuse to run against a database whose name does not end in `_UAT`.
 
@@ -426,7 +430,10 @@ Office travel-expense reimbursement form (fuel/toll/parking against a route or m
 - **Pages:** `/request/travel-expense` (fill/resume draft), `/request/travel-expense/[id]` (detail + timeline + self-cancel ≤24h after submit)
 - **Detail tables:** `AccTravelExpense` + `AccTravelExpenseItem`
 - **Settings tables:** `AccApprover` (configured account approvers), `AccVehicle` (vehicle rate table), `AccFormBrand` (brand access per form)
-- **Workflow:** Manager (resolved from `Rocks_Portal_HR.Employee.ManagerStaffId`) → Account (from `AccApprover`). Email notification at every transition via Graph queue (`src/lib/acc/email-queue.ts`), drained after each action. Account approval sets `PaymentDate` = next 2nd or 4th Friday, shifted **backward** past weekends and holidays from `Rocks_Codex.Holiday` (`shiftPaymentDay`, `src/lib/acc/payment-calendar.ts`, whose loop is `cur.setDate(cur.getDate() - 1)`). This sentence said "forward" until 2026-08-20 and the AP-4 one below was copied from it.
+- **Workflow:** Manager (resolved from `Rocks_Portal_HR.Employee.ManagerStaffId`) → Account (from `AccApprover`). Email notification at every transition via Graph queue (`src/lib/acc/email-queue.ts`), drained after each action. Account approval sets `PaymentDate`, shifted **backward** past weekends and holidays from `Rocks_Codex.Holiday` (`shiftPaymentDay`, `src/lib/acc/payment-calendar.ts`, whose loop is `cur.setDate(cur.getDate() - 1)`). This sentence said "forward" until 2026-08-20 and the AP-4 one below was copied from it.
+  - **Which round is decided by noon on the Monday of that round's own week**, measured against when the **manager** approved — not against noon on the day they happened to click, and not against "now". `payment-calendar-core.ts` owns it (`weekMondayNoon`, `defaultPaymentRound`), shared with AP-4, which had the rule first; the two forms differ only in which Fridays they pay on. Until 2026-09-03 AP-1 had no cutoff at all, `AP1_HEADER_MESSAGE_LINES` promised one to requesters, and a comment beside that copy said outright that nothing enforced it.
+  - **The round is a property of the claim, fixed when the manager signs.** `paymentRoundsForApprovals` anchors on each approval, so a suggestion does not move under an accountant who left the queue open over a weekend — it used to be computed against `getPaymentDates()`, which drops rounds earlier than today, so a claim approved 03/09 read 11/09 until the 11th and then silently read 25/09. That is also why `approveAccount` validates with a **one-month backward window**: without it the queue would suggest a round the approve path refuses.
+  - Still a suggestion beside an editable date, not a rule that refuses — the accountant picks, and a claim that legitimately needs a later round can have one. **ACC Portal has none of this** and still takes the next round outright, so the two apps differ here.
 - **Conditional fields:** `AccVehicle.IsManualEntry = true` → fare + toll inputs; `false` → OpenRouteService distance × rate + toll + parking, via `DistanceMapField` → `LeafletRoutePicker` (plain Leaflet, `dynamic ssr:false`) + ORS geocoding/directions proxied through global `/api/ors/{geocode,directions}` (`src/lib/ors.ts`). Manual-km fallback when ORS is unavailable.
 - **OpenRouteService's key comes from the API-key registry** (see below), `resolveOrsKey()` being a thin wrapper over `resolveApiKey("ORS_API_KEY")`. `/settings/openrouteservice` and `/api/settings/ors` (+`/test`) still exist for the connection test; the key itself is edited at Settings → API Keys.
 
@@ -482,7 +489,8 @@ Accommodation/ticket booking requests for provincial work travel — supports mu
   - **เสร็จสิ้น is blocked while any row holds unsaved edits**, with the reason in Thai beside the button — signing a booking off against figures that exist only on somebody's screen is the thing that must not happen, and it used to be invisible. Each row also offers a local revert to its last save: no fetch, no DELETE, stored files stay stored, so it needs no confirm dialog, unlike the two controls beside it that delete rows and bytes.
   - **Five pure modules now carry AP-17's booking rules, each extracted because the inline version broke**: `booking-amounts` (14 tests), `booking-lock` (8), `booking-file-sync` (4), `booking-dirty` (10) and `earliest-travel-date` (6).
 - **AP-17 attachments open in the shared `AttachmentViewer`, never a new tab.** A non-image was an `<a target="_blank">` pointed at the download route, which serves through `attachmentResponseHeaders` — `Content-Disposition: attachment` with `nosniff` — so the new tab downloaded the PDF and closed, and “view” did not view. The viewer AP-1 and AP-4 already use fetches the bytes and renders them from a Blob inside our own origin, precisely so no response header needs relaxing; all three AP-17 sites (`AdminBookingPanel`, `TravelBookingDetail`, `IdCardUpload`) now open it, with the kind from `attachmentKind(fileName, contentType)` in place of five hand-rolled `startsWith("image/")` checks — that helper's filename fallback is load-bearing, since SharePoint returns `application/octet-stream` often enough to mislabel an ordinary `.pdf`. `IdCardUpload` is display only: every access check, the consent flow and every upload guard are unchanged, and `id-card-access.ts` still decides whose bytes are reachable.
-- Uses `Rocks_Portal_HR.EmployeeAllowanceLog` for effective-dated per-diem history and `Rocks_Portal_Form.TravelProvince` for province lookups (`province-service.ts`, migration 104 — `Fast_Data` keeps a permanent synonym for the Rocks Fast and ACC Portal siblings, see "TravelProvince moved out of Fast_Data" above)
+- Uses `Rocks_Portal_HR.EmployeeAllowanceLog` for effective-dated per-diem history. **It no longer reads `TravelProvince`**: จังหวัด/เมือง was dropped on 2026-09-01 and `province-service.ts`, its two routes and the settings editor went with it. The table stays for ACC Portal — see "TravelProvince moved out of Fast_Data" above.
+- **AP-17 dropped จังหวัด/เมือง** (2026-09-01). The work location is picked from Google Places in the browser, which already names the city, so a second administrative field was a second place for the same fact to be wrong. Migration 135 added `Lat`/`Lng` to `AccTravelWorkLocation` so the detail page can pin it; **nothing can backfill them** — the Google key is HTTP-referrer restricted, so a server-side geocode answers 403, and every location filed before that date has none and renders no map rather than a wrong one.
 - **The "is this a national ID card?" check is Claude, and the heuristic it replaced never worked.** `POST /api/request/travel-booking/id-card-check` sends the image to `claude-sonnet-5` for a typed `{ isIdCard, reason }`. Until 2026-08-24 the check ran tesseract in the browser and passed an image on **either** a 13-digit run **or** a Thai ID keyword — and a Thai **tax id is also exactly 13 digits**, printed on every ใบกำกับภาษี, so a receipt verified as a national ID card and got the green "ตรวจสอบแล้วเป็นบัตรประชาชน" badge. Its digit pattern allowed a space or a dot between digits too, so one line of prices (`199.00 249.00 30.00`) matched as well — measured, not inferred. **No regex over OCR text can separate a tax id from a national ID number**; do not try to bring one back.
   - **The image is a national ID scan** — the most sensitive thing this app handles, and why `id-card-access.ts` restricts it to the data subject alone. Sending it to a third party was decided deliberately. It already reaches Microsoft (SharePoint) on save; this adds a second processor, not the first. Nothing is stored by the route.
   - **It fails closed, and that is a decision with a stated cost.** Nothing is attached without a verdict of `true`: no key, rate limited, upstream down, offline and "this is not a card" all refuse the file identically. **So while the check cannot run, AP-17 cannot be filed at all** — the card is required to submit. Fail-open was built first and rejected, the trade named and accepted: a card image nobody verified is exactly what the old heuristic produced, and stopping that was the point. A `null` answer from the model is likewise never a pass. `looksLikeThaiIdCard` (`features/travel-booking/lib/idcard-check.ts`) still marks the no-verdict case `unavailable`, but only so the copy can name the right remedy — *wait* (429), *tell IT* (503), *retry*, or *attach a different photo* are not interchangeable advice once a failure blocks the requester. The green badge is unconditional again, and truthful, because nothing becomes a pending file without passing.
@@ -650,8 +658,8 @@ off. One of them has since been seeded; measured 2026-08-21:**
 An employee itemises money they spent out of pocket, attaches the AP-4.1 Excel summary and the receipts, ticks every line of a compliance checklist, and three approvals later the company pays them back.
 
 - **Pages:** `/request/reimburse` (fill/resume draft), `/request/reimburse/[id]` (detail + timeline), `/request/reimburse/settings` — four tabs in the order `REIMBURSE_SETTINGS_TAB_ORDER` declares, configuration before rosters: **แบรนด์ที่เบิกได้**, **ระเบียบการจ่าย**, **ผู้อนุมัติบัญชี** (the approval pool), and **สิทธิ์เข้าถึง** last. The page still *opens* on ผู้อนุมัติบัญชี rather than the first tab, because an empty approver pool stops every claim dead and is the one thing that has to be set before AP-4 works at all
-- **Tables (seven, migrations 088–090 and 106):** `AccReimburse` + `AccReimburseItem` (the claim and its lines), `AccReimburseRuleAck` (which checklist line this requester ticked, by rule id) — all three transactional — plus `AccReimburseRule`, `AccReimburseApprover`, `AccReimburseAccess` and `AccReimburseAccessTab`, which are **shared configuration and dual-written**. 091 widened `AccApproval`'s step CHECK for the third step; 092 registers the form; 093 is its `FormEnvironment` row; 106 adds the last two.
-- **สิทธิ์เข้าถึง is a second roster, not a rename of ผู้อนุมัติบัญชี, and the distinction is the whole point.** `AccReimburseApprover` is the pool that takes the ACCOUNT and ACCOUNT_FINAL steps — a row on it approves real money. `AccReimburseAccess` + `AccReimburseAccessTab` (migration 106) decide who may *open* which of AP-4's settings tabs. AP-17 hangs its tab grants straight off `AccBookingApprover` because that roster only ever granted sight of a queue and a report; doing the same here would have made "may edit the payment rules" and "may approve a payment" the same tick, with no way to hand out the first alone.
+- **Tables (seven, migrations 088–090 and 120):** `AccReimburse` + `AccReimburseItem` (the claim and its lines), `AccReimburseRuleAck` (which checklist line this requester ticked, by rule id) — all three transactional — plus `AccReimburseRule`, `AccReimburseApprover`, `AccReimburseAccess` and `AccReimburseAccessTab`, which are **shared configuration and dual-written**. 091 widened `AccApproval`'s step CHECK for the third step; 092 registers the form; 093 is its `FormEnvironment` row; **120** adds the last two — that file is `120_acc_reimburse_access.sql`, **renumbered from 106 on 2026-08-25** because master already held `106_acc_erp_journal_batch_template_key.sql`. Applying “106” today changes a journal-batch unique key and creates no access table at all.
+- **สิทธิ์เข้าถึง is a second roster, not a rename of ผู้อนุมัติบัญชี, and the distinction is the whole point.** `AccReimburseApprover` is the pool that takes the ACCOUNT and ACCOUNT_FINAL steps — a row on it approves real money. `AccReimburseAccess` + `AccReimburseAccessTab` (migration **120**, renumbered from 106) decide who may *open* which of AP-4's settings tabs. AP-17 hangs its tab grants straight off `AccBookingApprover` because that roster only ever granted sight of a queue and a report; doing the same here would have made "may edit the payment rules" and "may approve a payment" the same tick, with no way to hand out the first alone.
   - **Two of the four tabs can never be granted.** `GRANTABLE_REIMBURSE_TABS` (`src/lib/acc/reimburse/settings-tabs.ts`, pure and unit-tested) is filtered from the page's own tab order down to `rules` and `brands`. `access` is excluded for the reason AP-1 and AP-17 both give — whoever opens it can grant themselves the rest — and `approvers` for the sharper one above. Neither exclusion is a database constraint: `AccReimburseAccessTab` has no CHECK on `TabKey` and is writable from more than one place, so a row naming any string can appear, and `decideReimburseTabAccess` refusing it is what makes that inert.
   - **It is a real privilege expansion.** `/api/request/reimburse/settings/rules` and `.../brands` moved from `requireRole` to `requireReimburseSettingsTab`, whose admin arm is exactly the pair `requireRole` allowed, so nobody lost anything. `settings/approvers` and `settings/access` stay on `requireRole` for every method — they are the two that hand out power. `settings-route-gates.test.ts` reads the route sources and asserts each handler's gate, that the gate is the handler's first `await`, and that its refusal is returned; it searches for `await <gate>(` rather than a bare mention, because a route's comments name the gate it used to carry.
   - **Membership alone grants nothing.** `canSettings` is `admin || settingsTabs.length > 0`, so somebody added and left with no ticks has exactly the access they had before. That also makes an empty roster a neutral state, which is why AP-4's panel carries no alarm banner where AP-17's does — an empty `AccBookingApprover` hides that form's queue and report from everyone, an empty `AccReimburseAccess` hides nothing.
@@ -667,6 +675,237 @@ An employee itemises money they spent out of pocket, attaches the AP-4.1 Excel s
 - **AP-4 never reaches Business Central, deliberately.** It is absent from AP-1's report and from the ERP prep queue because both pin `AP1_FORM_CODE` (`report-service.ts`, `erp-prep-service.ts`) — reimbursements are paid, not posted as travel journals. Adding AP-4 to either is a decision, not a bug fix.
 - **AP-4 parks at `(ManagerApproved, ACCOUNT)` — the same status/step tuple AP-1 uses.** This is why **every claim in `approval-engine.ts` is pinned to `FormCode='AP-1'`** and every claim in `reimburse/approval-service.ts` is pinned to `AP-4`. Without the pins, AP-1's engine will happily claim an AP-4 request sitting on that tuple and drive it through AP-1's workflow. Removing a pin re-opens a Critical; two reviews have now spent effort rediscovering this.
 - **`BrandCode` is validated against `AccFormBrand` at submit** (the submit route, before the service claims anything). The picker offers only granted brands, but a draft can hold any code — including the BrandGate cookie value every request written before the allowlist existed carries — and a client-enforced invariant is not one. A resumed request keeps a code the allowlist has since dropped rather than being silently re-pointed at another company, and is told to pick a new one before submitting. The check calls `isBrandAllowedForForm`, which reads `AccFormBrand` alone, **not** `getAllowedBrands` — that one enriches each row from the brand master in `Rocks_Codex` over `getCorePool()`, which would make an AP-4 submit fail on a Fast_Core outage over display data it never reads.
+
+#### AP-2 — Advance (`/request/advance`) and AP-3 — Clear Advance (`/request/clear-advance`)
+
+Money paid out **before** it is spent, and the settlement afterwards. Built on a
+separate branch by a colleague and merged to master; this entry records what a
+reader needs in order not to break them, and is deliberately shorter than the
+sections above — the authority is the code and the migration headers, not this
+summary.
+
+- **Feature code:** `src/features/advance/` and `src/features/clear-advance/`;
+  services under `src/lib/adv/` and `src/lib/clr/`. Migrations **073–091** are
+  AP-2's, **109–115** and **121** are AP-3's, with 116–120 interleaved from other
+  work. Numbers 088–091, 094 and 117–120 each exist **twice** — once here and
+  once on the AP-4 branch — which is why `ls migrations/` is the only reliable
+  way to pick the next one.
+- **`src/lib/adv/pool.ts` is `getFormPool`, not a UAT pin.** AP-2 ran as a
+  UAT-only pilot pinned to `getUatFormPool` while its tables lived only in the
+  UAT database. Both conditions to un-pin have been met — the tables are mirrored
+  into production (073–090), and `"/api/request/advance/settings" → null` in
+  `ROUTE_RULES` stops a config-row id (a tier or approver id) being read as an
+  `AccRequest` id. **That settings rule is load-bearing**: without it the
+  per-form resolver treats a tier id as a request id and picks a database from it.
+- **AP-2's approval chain is an amount matrix, not a fixed sequence.**
+  `AccAdvanceApprovalTier.Steps` is an ordered CSV of `HEAD_ACC` · `DIRECTOR` ·
+  `ACC_OFFICER`, chosen by the amount claimed. `HEAD_DEPT` is **retired** —
+  approval starts at Head Accounting — but the type stays valid so legacy rows
+  still parse; do not delete it. Only `ACC_OFFICER` picks a payment date.
+- **Both reach Business Central**, through their own senders
+  (`adv/advance-erp-send.ts`, `clr/clear-advance-erp-send.ts`) and their own
+  payload builders, not AP-1's. So the line that used to read "only AP-1 reaches
+  Business Central" is now about AP-4 alone.
+- **AP-2 is the one place a rate is trusted from the browser.** Its client
+  fetches the exchange rate and posts it, and nothing verifies it
+  (`advance-request-service.ts`). AP-1 and AP-17 deliberately do **not** reuse
+  that — see "Multi-currency" above, where `resolveRate` runs server-side only.
+- **`AccAdvance.BaseAmount` is the *baht* figure.** `AccRequest.ForeignAmount`
+  twelve inches away is the foreign one, and it is called `ForeignAmount`
+  precisely because migration 125's original name for it — `BaseAmount` — meant
+  the opposite of this one. Migration 126 renamed it.
+- **AP-3 OCRs transfer slips server-side**, `clr/slip-verify.ts` over
+  `src/lib/ocr.ts`, a tesseract worker. **This is why `tesseract.js` is still a
+  dependency**: AP-1 and AP-17 stopped OCRing in the browser and the package
+  looks unused from their side. Check `src/lib/ocr.ts` before concluding it is.
+
+#### Multi-currency — AP-1 and AP-17 (migrations 124–131, 136)
+
+A claim may be filed in something other than baht. Design:
+`docs/superpowers/specs/2026-08-28-ap1-ap17-multi-currency-design.md`.
+
+**The invariant that kept the blast radius small: `AccRequest.TotalAmount` is
+Thai baht, always.** Every summary, report, ERP path and approval queue reads
+that column and none of them changed. What is stored beside it is the
+*provenance* of the conversion — `ForeignAmount`, `ExchangeRate`, `RateAsOf`,
+`RateSource` — not a second unit for the same figure.
+
+- **`null` and `"THB"` are both baht** (`src/lib/acc/currency.ts`, imports
+  nothing). Absence *has* to mean baht: every row written before this feature
+  has no currency and every one of them was in baht, so a design where absence
+  meant "unknown" would make every historical claim unreadable.
+- **`toBaht` returns null rather than the unconverted figure.** Handing back
+  `amount` when the rate is missing writes a foreign number into a baht column —
+  the exact failure the feature exists to prevent, and one that leaves no trace
+  on screen. Callers refuse the write; the submit path refuses the submit.
+  `amountInBaht` (`currency-display.ts`) answers null the same way, for display.
+- **The client never posts a rate.** `resolveRate` (`src/lib/acc/fx.ts`) runs
+  server-side and returns `{ rate, asOf, source }` or **null, which is a
+  refusal** — not a zero and not a one. AP-2 does the opposite: its browser
+  fetches the rate and posts it and nothing verifies it
+  (`advance-request-service.ts`), so a requester could choose their own. That is
+  the one part of AP-2's approach deliberately not reused.
+- **Every rate is an ECB mid-market *reference* rate, and no screen may caption
+  it as a Bank of Thailand rate.** `BOT_API_CLIENT_ID` will not be provisioned,
+  so `src/lib/adv/bot-fx.ts` — AP-2's module, shared — always takes its keyless Frankfurter fallback. It is not what a
+  bank settles at, which is why accounting can override it and why the copy
+  reads `อัตราอ้างอิง`.
+- **An FX outage cannot stop ordinary work.** `needsRate` is `!isBaht`, so the
+  refuse-on-failure rule applies only to a foreign claim; the Thai claims that
+  are almost all of them never call the provider.
+
+**Where the currency sits differs per form, and the difference is not an
+oversight:**
+
+| | AP-1 | AP-17 |
+|---|---|---|
+| Currency on | the **expense line** (`AccTravelExpenseItem`, 129) | the **request** (`AccRequest.Currency`, 125) |
+| Also stored | `AccRequest.CountryCode` (129) | `AccTravelBookingDetail.TotalAmountBaht` (136) |
+
+AP-1 asks which **country** the trip was to and each line carries its own
+currency, because one Grab section holds a 20 MYR ride and a 20 THB ride and
+both belong on the same claim (129 moved it off the request for exactly that).
+**Thailand offers no choice at all**: `lineCurrencyOptions`
+(`features/accounting/lib/claim-currency.ts`) answers `[]`, every line resolves
+to baht, and the form renders precisely the markup it rendered before any of
+this existed. That promise is one predicate rather than a condition retyped per
+control, because it is the one most likely to be broken by a later edit.
+
+**Three AP-17 rules, each written down twice before it stuck, because each looks
+like an oversight to a reader who has just finished AP-1** — pinned in
+`booking-currency-guard.test.ts`:
+
+1. **`AccRequest.TotalAmount` is not touched.** For AP-17 it is the *per-diem
+   total alone*; the booking cost lives on `AccTravelBookingDetail` and has never
+   reached the header. Summing it in would double the figure on My Requests, My
+   Work and the request header for **every** AP-17 request including baht ones —
+   and `recomputeGroupPerDiem` would silently rewrite it back from the per diem
+   anyway.
+2. **No new lock and no `Status = 'Completed'` freeze.** `AdminBookingPanel`
+   renders only at `ManagerApproved`/`ADMIN`, so the currency control is already
+   unreachable once accounting has signed off. `bookingFieldsLocked` is a per-row
+   *emptiness* rule, deliberately not status-based; a currency arm would strand
+   figures somebody had already entered.
+3. **The rate is the server's.** The desk's toggle posts a currency, never a rate.
+
+**`AccTravelBookingDetail.TotalAmountBaht` is stored, not derived** (136), and
+`recomputeBookingBaht` (`travel-booking/booking-baht.ts`) is its **single
+writer** — called by both `ExchangeRate` writers inside their own transactions,
+rewriting every row of the request rather than the one that changed. A reader
+that both converts and reads the stored column would be two answers to one
+question; `booking-baht-guard.test.ts` has an arm for each of those three rules.
+
+**`BrandSetting` (122) and `BrandCurrency` (127/128/131) are production-only —
+`getProductionFormPool()`, never `getAccPool()`.** There is no UAT twin and
+migrations 124 and 127 refuse to run against one, so a read through the
+env-resolved pool throws `Invalid object name` **for a UAT tester and for nobody
+else**, on the amount-entry path of both forms: production works perfectly while
+the people testing the feature cannot use it. Same hazard `DepartmentErpMap`
+carries, and `currency-pool-guard.test.ts` is what holds it.
+
+- **A brand may claim in several currencies, not one.** 124 gave `BrandSetting`
+  a single `CountryCode`/`CurrencyCode`/`CurrencyEnabled` triple; 127 replaced it
+  with one `BrandCurrency` row per brand per currency (KSI needs THB *and* GBP),
+  and 128 dropped the old columns — **only after the code was deployed**, since
+  dropping a column out from under running code is its own outage. 131 adds
+  `IsDefault`, the country AP-1's form opens on: until then Thailand was every
+  claim's default *by construction*, `claimCountryOptions` putting `TH` first
+  unconditionally and no brand able to switch baht off, because THB was never a
+  row.
+- **A configured currency cannot be removed** (the user's rule, 2026-08-29) —
+  only switched off, which retires the row and keeps the brand's one slot under
+  `UQ_BrandCurrency_Brand_Currency`. That unique index is also the *only*
+  duplicate check: `brand-currency-input.ts` deliberately has none, because a
+  check there would be a second, weaker answer that two admins on two tabs
+  defeat. The parse **refuses rather than coerces** — `CHAR(2)`/`CHAR(3)` pad a
+  short value silently and raise on a long one, so `"Malaysia"` must be a 400
+  here and never a truncated row there.
+- **The country list is filtered to what the rate source will quote**, not
+  completed. `country-currency.ts` once carried Cambodia, Laos, Vietnam, Myanmar,
+  Taiwan, Brunei, Qatar, Bahrain, Russia and the UAE — ten the ECB does not
+  quote, several of them next door. Offering one produced a claim that could be
+  started and never converted. **A country that cannot be converted must not be
+  on the menu**; refresh the list from `GET https://api.frankfurter.dev/v1/currencies`.
+- **A stored rate is never stored alone** (130, `rate-provenance-guard.test.ts`).
+  `resolveRate` always answered three fields and every caller kept the number.
+  The source publishes on **working days only**, so a line saved on a Saturday
+  carries Friday's rate and one saved over a long weekend a three-day-old rate —
+  correct and deliberate, since there is no rate for a day the market did not
+  trade, but without `RateAsOf` nothing afterwards can tell which day a figure
+  used.
+
+**Four writers of `AccRequest.TotalAmount`, guarded in two places.**
+`request-total-baht.test.ts` covers the three in `request-service.ts`; the
+accounting **rate override** is the fourth and lives in `rate-override.ts`, so
+that test's count stays right and says nothing about it —
+`rate-override-guard.test.ts` is its guard. If either goes red the fix is to
+route the new write through `toBaht`, never to relax a count. The rule itself is
+pure and tested for real in `rate-override-policy.test.ts`.
+
+**Display is its own module, and it is not cosmetic.** The baht invariant left
+every summary untouched; it did not leave untouched any screen printing a
+*per-day* or *per-line* figure. `AccTravelExpense.TotalAmount` and
+`AccTravelBookingDetail.*` are in the claim's own currency and every surface
+captioned them `บาท` unconditionally — a ringgit figure captioned as baht beside
+a header that does not sum to it. On the ERP prep queue that was the last thing
+an approver read before pressing Send, and its total was a sum of ringgit and
+baht printed as one unitless figure for as long as the currency existed.
+`currency-surface-guard.test.ts` reads the sources, because which helper a
+component calls is not reachable from a behavioural test.
+
+#### AP-17 per-diem by country (migrations 132–133) and brand-scoped access (134)
+
+- **A per-diem rate per country, effective-dated** — `AccTravelPerDiemCountry`
+  (133, **both** form databases, dual-written, in `MASTER_TABLES`). Design:
+  `docs/superpowers/specs/2026-08-31-ap17-country-and-perdiem-design.md`.
+  A country with at least one active rate prices every day of a trip there; a
+  country with none falls back to `Rocks_Portal_HR.EmployeeAllowanceLog`, the
+  per-employee allowance AP-17 has always used. **Thailand is never a per-diem
+  country** — it is where the HR log applies by definition, and a `TH` row would
+  be a second answer to a question that already has one.
+  - **`perDiemCountryLog` answers `null`, never `[]`.** `rateForDay` returns
+    **0** for a day it cannot match, so an empty log does not mean "no rate
+    configured", it means "this day is worth nothing" — and the two must never be
+    confused on a path that writes `AccRequest.TotalAmount`.
+  - **Four things compute a per-diem figure independently** — the live estimate
+    on the form, the write at submit, `recomputeGroupPerDiem` after a
+    cancellation, and the rate the report prints. Before this they could not
+    disagree, because there was one input. All four resolve through
+    `perDiemLogFor`, and `perdiem-source-guard.test.ts` reads the source to keep
+    it that way: the failure is a *missing* call, which no behavioural test of the
+    four would notice a fifth consumer arriving without.
+  - **Its two writes disagree about how safe they are.** `upsertPerDiemCountryRate` MERGEs on `(CountryCode, EffectiveDate)`, which is id-independent and therefore immune to the identity-lockstep drift described under “Shared configuration is dual-written”. The soft delete, `setPerDiemCountryRateActive`, is `WHERE Id = @id` in **both** databases — so drifted counters retire one country's rate in production and a different country's in UAT, with no error. Same class of hazard as `AccReimburseRuleAck`'s, and the same remedy: run `check:alignment` after any dual-write failure.
+  - **The settings tab has no Add button.** It lists the configured countries and
+    saves one at a time. Editing is blank-by-default rather than seeded, because
+    the design says an admin who wants to change a rate adds a row rather than
+    editing one — history is the point of an effective-dated table.
+  - **The form shows which rates a *trip* falls under, not today's.**
+    `tripRateSegments` (pure, 10 tests) walks the trip's days exactly as
+    `computePerDiem` does and groups them by the rate's **effective date, not its
+    amount** — `computePerDiem`'s own `groups` is a `Map` keyed on the value, so
+    two dated rates at the same figure collapse into one and no entry carries a
+    date at all. `TripRateHistoryModal` opens only when a trip spans **more than
+    one** rate; a single rate is already stated on the card.
+- **132 gives `TravelProvince` a `CountryCode`**, so it can hold somewhere other
+  than Thailand. `Rocks_Portal_Form` **only** — 104's single-copy rule is
+  unchanged and `Rocks_Portal_Form_UAT` still holds no such object.
+- **`AccBookingApproverBrand` (134, both databases) scopes an AP-17 approver to
+  brands.** Design: `docs/superpowers/specs/2026-08-31-ap17-brand-access-design.md`.
+  **Scoping is only a control if it holds on the paths that act**, not merely on
+  the ones that list: filtering a queue hides rows, while a scoped approver
+  holding an id from a link, a bookmark or a page loaded before the scope was
+  narrowed still reaches the action. `booking-brand-scope-guard.test.ts` reads the
+  five routes, because the failure is a missing call and the routes are where
+  somebody adds the sixth.
+- **`124_acc_booking_approver_areas.sql` and `124_brand_setting_currency.sql`
+  share the number 124, and stay that way.** Both are on master and both have
+  been applied; 120's header sets the rule that renumbering is safe only while a
+  migration has not been applied anywhere. The number is a name for humans —
+  `apply-sql` takes an explicit `--file` and keeps no record — so a shared one is
+  untidy rather than broken, and renaming now would make the repo disagree with
+  what was run. **Eleven numbers are duplicated** (088, 089, 090, 091, 094, 103,
+  117, 118, 119, 120, 124), so `ls migrations/` is the way to pick the next one;
+  counting files gives the wrong answer, and so does trusting this file.
 
 #### Business Central / ERP integration
 
@@ -809,6 +1048,8 @@ src/
 │   ├── accounting/                   # AP-1 form, approvals, report, settings UI
 │   ├── travel-booking/               # AP-17 form, admin queue, report, settings UI
 │   ├── reimburse/                    # AP-4 form, detail, settings UI + constants.ts (pure, tested)
+│   ├── advance/                      # AP-2 advance form, queue, report, settings UI
+│   ├── clear-advance/                # AP-3 clear-advance form, admin queue, report
 │   ├── home/                         # Home catalogue
 │   ├── settings/                     # Settings panels
 │   └── new-item-inventory/           # WIP — see the note below the tree
@@ -828,6 +1069,9 @@ src/
 │   │   └── reimburse/                 # AP-4 — two-person.ts, payment-calendar.ts, approval-policy.ts
 │   ├── form-environment/             # Which database answers — resolver + classify-path
 │   ├── uat-tester/                   # UatTester membership + assertFormWritable guards
+│   ├── adv/                          # AP-2 — services, ERP send, bot-fx.ts (the FX source)
+│   ├── clr/                          # AP-3 — services, ERP send, slip-verify.ts (server OCR)
+│   ├── ocr.ts                        # tesseract worker — AP-3's only, but the package's one caller
 │   ├── new-item-inventory/           # WIP — lookup + sequence, no UI yet
 │   ├── erp/                          # Business Central sync
 │   ├── hr/                           # Rocks_Portal_HR cross-DB lookups
@@ -1011,9 +1255,16 @@ repo — it exists only on the server, and a rebuilt server loses it.
 - **065 is one-way.** After it has run, a `git revert` of the parallel-UAT branch restores a `setFormFlag` that writes to a column that no longer exists, so the first write to any form fails. Reverting past commit `54ff2d7` means re-adding `FormEnvironment.Environment` as **NULLable** first — the original was `NOT NULL` with no default, which cannot be added back to a table that already has rows without backfilling one.
 - **`066_portal_form_team_member.sql` must be applied to whichever database `MSSQL_FORM_DATABASE` names.** It is already applied to the live `Rocks_Portal_Form`; a fresh stand-up needs 059 then 066, or nobody can sign in at all (see the Accounting storage note). Never apply it to `Rocks_Portal_Form_UAT`.
 - **AP-4 ships in one order and it is not optional: apply 088–092 to *both* `Rocks_Portal_Form` and `Rocks_Portal_Form_UAT`, and 093 to `Fast_Core`, *before* the code deploy.** 090 is the one that gates everything: `listMyWorkRows` (`src/lib/acc/report-service.ts`) names `[dbo].[AccReimburseApprover]` inside a query `queryBothPools` runs against **both** form databases, and SQL Server binds object names at compile time — so the table missing from either side is `Invalid object name`, not an empty result, and `queryBothPools` fails rather than returning half a list. **Deploying this code before 090 is on both databases breaks `/my-work` and Home's pending count for every user of every form**, not just for AP-4. 094 corrects 089's seeded checklist rule and goes to both form databases too; it is safe to run late, since a database that has never had 089 seeds the corrected text directly. Then run `npm run check:alignment` — note it now also fails until 089, 090 and 092 have been applied symmetrically, which is the check working rather than a fault.
-- **106 goes to both form databases too, before the code.** It creates `AccReimburseAccess` and `AccReimburseAccessTab`, and both are read through `getAccPool()` on a path a non-admin hits on every settings request — a table missing from either side is `Invalid object name`, not an empty result. `loadReimburseTabsByAccessIds` degrades **only** the missing-object error to "no grants" and rethrows everything else, so the window before 106 lands costs a granted non-admin their tabs rather than handing anyone somebody else's; an admin is unaffected either way, because the access endpoint skips the read for them entirely. Then run `npm run check:alignment`, which goes from 23 tables to 25 and fails until 106 is on both.
+- **120 goes to both form databases too, before the code — and already has.** (**Renumbered from 106**; the 106 on master is an unrelated journal-batch key change.) It creates `AccReimburseAccess` and `AccReimburseAccessTab`, and both are read through `getAccPool()` on a path a non-admin hits on every settings request — a table missing from either side is `Invalid object name`, not an empty result. `loadReimburseTabsByAccessIds` degrades **only** the missing-object error to "no grants" and rethrows everything else, so the window before 120 lands costs a granted non-admin their tabs rather than handing anyone somebody else's; an admin is unaffected either way, because the access endpoint skips the read for them entirely. Then run `npm run check:alignment`, which went from 23 tables to 25 when it landed and failed until 120 was on both.
 - **AP-4 has to be commissioned once, from Settings, before anybody can use it.** Two things ship deliberately unset. `AccReimburseApprover` is **empty**, so until a System Admin adds at least two people (the final approval must be a different person from the check) every claim stops dead at the `ACCOUNT` step. And migration 092 seeds `AccFormBrand` with `('AP-4','ROCKS')`, where **`ROCKS` is not one of the four brands in `src/lib/brand.ts`** (PCTH, KSI, PCMY, UNO) — so out of the box the only claimable brand is one the brand registry does not know, and it renders with no logo and its own code for a name. Neither is a bug to be patched in code: an admin grants the company brands AP-4 should accept at **Settings → ขอเบิกเงินคืนพนักงาน (ออฟฟิต) → แบรนด์ที่เบิกได้**, and the page warns about any granted code the brand master does not know. That card is deliberately **not** `devHostOnly`, unlike its AP-1 neighbour, because it is reachable on the live host that this commissioning actually happens on. AP-17's hub card dropped the flag on 2026-08-27 for the same kind of reason — see "Shared with Rocks Fast".
 - **123 goes to both form databases too, before the code — and already has (2026-08-27).** `123_travel_booking_detail_amounts.sql` adds `VatAmount`, `DiscountAmount` and `TotalAmount` to `AccTravelBookingDetail`. That table is **transactional**, so it is not in `MASTER_TABLES`, not dual-written, and `check:alignment` says nothing about it — but both sides still need the columns, because SQL Server binds object names at compile time: a query naming `VatAmount` fails outright against whichever database is missing it, and AP-17 resolves either one depending on who is asking. Nullable, no default, no backfill — an existing row reads NULL, which is honest, where writing 0 would claim a booking had no VAT rather than that its VAT is unknown.
+- **124–136 all shipped between 2026-08-28 and 2026-09-03 and are already applied.** They split three ways and **the target is per migration, not per batch** — read each header, because getting one wrong is silent rather than loud:
+  - **Production form database only, no UAT twin:** `124_brand_setting_currency`, `127_brand_currency`, `128_brand_setting_drop_single_currency`, `131_brand_currency_default` (all `BrandCurrency`/`BrandSetting`, read through `getProductionFormPool()`), and `132_travel_province_country`. 124 and 127 **refuse to run** against a `_UAT` database, and 132 keeps 104's single-copy rule.
+  - **Both form databases, before the code:** `124_acc_booking_approver_areas`, `125_request_currency`, `126_request_foreign_amount_rename`, `129_expense_item_currency`, `130_rate_provenance`, `133_acc_travel_perdiem_country`, `134_acc_booking_approver_brand`, `135_travel_work_location_coords`, `136_booking_detail_total_baht`. Only 133 and 134 move `check:alignment` (25 → 27); the rest alter **transactional** tables, so the count must **not** move — a changed count means the wrong table was altered — and a one-sided apply is therefore invisible to the checker. It is still fatal: SQL Server binds object names at compile time, so a query naming `Currency` or `TotalAmountBaht` fails outright against whichever side is missing it, and both forms resolve either database depending on who is asking.
+  - **128 is the one with an ordering rule of its own: apply it only *after* the multi-currency code is deployed** (commit `15a20c5`). 127 deliberately left 124's single-currency columns in place, because dropping a column out from under running code is its own outage.
+- **126 renames rather than adds, and the name it replaces was the trap.** 125 called the column `BaseAmount`, following the spec's wording; twelve inches away `AccAdvance.BaseAmount` (migration 077) means the **opposite** — the baht figure, not the foreign one. It is now `AccRequest.ForeignAmount`.
+- **135's coordinates cannot be backfilled.** `Lat`/`Lng` on `AccTravelWorkLocation` are filled by the browser's Google Places pick; the key is HTTP-referrer restricted, so a server-side geocode answers 403. Every location filed before 2026-09-01 has none and renders no map, which is the honest outcome rather than a wrong pin.
+- **136's backfill is exact or it refuses.** It copies `TotalAmount` into `TotalAmountBaht` only after checking that no AP-17 request carries a foreign currency, so it can never stamp an unconverted foreign figure into a baht column.
 - **AP-17's accounting step needs no migration, but it does need a person.** After this deploy the Admin desk stops closing requests and hands them to `ACCOUNT`, so nothing reaches `Completed` until somebody on `AccBookingApprover` works `/request/accounting/travel-booking/approvals`. Membership is what permits the action; an `accountApproval` tick in `AccBookingApproverTab` only decides who is shown the menu, and the hub shows it to roster members regardless.
 - Liveness probe: `curl http://127.0.0.1:3081/api/health` → `{"ok":true,"data":{"service":"form-portal",…}}`.
 - **`/api/health/db` no longer publishes the topology.** `auth.config.ts` exempts every `/api/health*` path from authentication, and that endpoint was returning the MSSQL host, port, service-account username, database name and the raw driver error text to anyone who asked. It now answers `database: "reachable" | "unreachable"` plus a 200/503, and includes the detail only for a System Admin. The diagnostic line goes to the server log unconditionally, which is where an operator should read it.
@@ -1066,7 +1317,11 @@ mismatching tables to two**:
   reading cannot be told apart from one nobody has checked.
 
 **Closed 2026-08-21 by migration 103. `npm run check:alignment` now passes** —
-21 tables, 84 rows, identical.
+21 tables, 84 rows, identical *as measured that day*. Re-measured 2026-09-04 it
+still passes, at **27 tables and 132 rows**: the list has grown six times since
+(AP-4's access pair, AP-17's `AccTravelPerDiemCountry` and
+`AccBookingApproverBrand`), which is why the count here is a dated reading and
+not a target to match.
 
 The last mismatch was **not** the single row the verifier printed. It reports
 the first differing row and then `break`s out of the loop, so a one-line output
