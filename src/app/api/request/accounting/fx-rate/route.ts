@@ -15,10 +15,11 @@ import { resolveRate } from "@/lib/acc/fx";
  * figure simply reads `—`; the save is unaffected either way, and refuses on its
  * own if its own fetch fails.
  *
- * **A mid-market reference rate, not a Bank of Thailand rate.**
- * `BOT_API_CLIENT_ID` is deliberately unprovisioned, so `resolveRate` always
- * takes `bot-fx`'s keyless ECB fallback. No screen may caption the figure as a
- * BOT rate — `อัตราอ้างอิง`; see `src/lib/acc/currency-display.ts`.
+ * **Whichever feed `bot-fx` resolves.** With `BOT_API_CLIENT_ID` set that is the
+ * Bank of Thailand selling rate; without it, a keyless ECB mid-market figure.
+ * Screens caption it as `อัตราอ้างอิง` and name no provider, because rows stored
+ * either side of the key being added are converted on different bases and only
+ * `rateSource` on the row tells them apart.
  *
  * `ROUTE_RULES` needs no entry: `/api/request/accounting` already classifies
  * `AP-1`, and this route reads no database at all.

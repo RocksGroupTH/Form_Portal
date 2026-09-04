@@ -767,11 +767,11 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
                     disabled={readOnly || !currencyCode.trim()}
                     onClick={() => fetchFxRate(currencyCode)}>ดึงอัตรา</Button>
                 </div>
-                {/* `อัตราอ้างอิง`, not `อัตรา ธปท.`. BOT_API_CLIENT_ID is
-                    deliberately unprovisioned, so `bot-fx` always takes its
-                    keyless ECB fallback — and `fxAsOf` already carries the real
-                    source in brackets, which made the old caption contradict the
-                    text two characters to its right. */}
+                {/* The caption stays neutral because `fxAsOf` already names the
+                    real source in brackets — ธปท. once BOT_API_CLIENT_ID is set,
+                    ECB when the keyless fallback ran. Hard-coding either one here
+                    would contradict the text two characters to its right the day
+                    the key is added or expires. */}
                 {fxAsOf && (
                   <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
                     อัตราอ้างอิง ณ {fxAsOf}
