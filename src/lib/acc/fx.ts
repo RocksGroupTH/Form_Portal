@@ -9,10 +9,13 @@ import { isBaht, THB } from "@/lib/acc/currency";
  * requester could choose their own. This is the one part of AP-2's approach
  * deliberately not reused.
  *
- * **Every rate here is an ECB mid-market reference rate.** `BOT_API_CLIENT_ID`
- * will not be provisioned, so `bot-fx` always takes its keyless fallback. That
- * is not the rate a bank settles at, which is why accounting can override it and
- * why no screen may caption it as a Bank of Thailand rate — `อัตราอ้างอิง`.
+ * **The rate is whichever feed `bot-fx` resolves.** Since a `BOT_CURRENCY_RATE`
+ * key was registered on 2026-09-04 that is the Bank of Thailand selling rate;
+ * every claim converted before that day holds the keyless ECB mid-market
+ * fallback instead. Neither is the rate the company's own bank finally settled
+ * at, which is why accounting can override it — and why no screen may caption a
+ * stored figure with a feed's name, since the screens show rows from both sides
+ * of that day. `อัตราอ้างอิง`.
  */
 
 /**

@@ -140,12 +140,12 @@ test("the audit row is written by the same transaction as the rewrite", () => {
 /**
  * No screen names the provider of the stored rate.
  *
- * `BOT_API_CLIENT_ID` was provisioned on 2026-09-04, so rates recorded from then
- * on are the Bank of Thailand selling rate while everything before is the ECB
- * mid-market fallback. Naming either would state something false about the rows
- * stored under the other, on the screen accounting signs off against. What the
- * panel must still say is that the figure may not be what the bank charged —
- * that is the reason the override exists.
+ * A Bank of Thailand key was registered as `BOT_CURRENCY_RATE` on 2026-09-04, so
+ * rates recorded from then on are the Bank of Thailand selling rate while
+ * everything before is the ECB mid-market fallback. Naming either would state
+ * something false about the rows stored under the other, on the screen
+ * accounting signs off against. What the panel must still say is that the figure
+ * may not be what the bank charged — that is the reason the override exists.
  */
 test("the override panel says อัตราอ้างอิง and never names a rate provider", () => {
   // The rendered copy only. This file's own doc comment, and the panel's, name

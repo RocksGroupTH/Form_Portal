@@ -41,7 +41,7 @@ test("a rate prints at four to six places — what DECIMAL(18,6) can hold", () =
   assert.equal(fmtRateTh(null), "—");
 });
 
-/** Never captioned as a Bank of Thailand rate — BOT_API_CLIENT_ID is unprovisioned. */
+/** Never captioned with a feed's name — rows either side of 2026-09-04 use different ones. */
 test("the rate caption says reference, and names no bank", () => {
   const note = referenceRateNote("MYR", 8.25);
   assert.ok(note.indexOf("อัตราอ้างอิง") === 0, note);
