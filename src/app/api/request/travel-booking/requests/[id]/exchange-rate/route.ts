@@ -13,10 +13,11 @@ import { AP17_FORM_CODE } from "@/features/travel-booking/constants";
  * Body: `{ rate: number | string }`
  *
  * Accounting corrects the rate on a foreign AP-17 request, while it is sitting
- * at the ACCOUNT step. Every rate this application records is an ECB
- * mid-market reference rate — no Bank of Thailand key will be provisioned — and
- * this is the only place the difference from what a bank settles at can be
- * corrected.
+ * at the ACCOUNT step. A recorded rate is whatever `bot-fx` resolved when the
+ * request was filed — the Bank of Thailand selling rate since a key was
+ * registered on 2026-09-04, and an ECB mid-market figure before that — and
+ * neither is necessarily what the bank charged on the day. This is the only
+ * place that difference can be corrected.
  *
  * **`AccRequest.TotalAmount` is not rewritten here, and that needs no branch.**
  * For AP-17 that column is the per-diem total alone, always baht, and the
