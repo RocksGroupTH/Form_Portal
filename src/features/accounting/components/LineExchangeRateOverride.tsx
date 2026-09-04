@@ -25,11 +25,13 @@ import type { AccRequest, TravelExpenseDetail } from "@/features/accounting/type
  * panels can appear on the same drawer, and on a modern AP-1 claim only this one
  * does.
  *
- * **Nothing here is captioned as a Bank of Thailand rate.** `BOT_API_CLIENT_ID`
- * is deliberately unprovisioned (spec §9.1), so every rate this application
- * records comes from `bot-fx`'s keyless ECB fallback — a mid-market reference
- * figure, which is not what a bank settles at. `อัตราอ้างอิง`, with the sentence
- * saying so, because this is the screen accounting signs off against.
+ * **The caption names no provider, on purpose.** `BOT_API_CLIENT_ID` was
+ * provisioned on 2026-09-04, so rates recorded from then on are the Bank of
+ * Thailand selling rate, while everything before is `bot-fx`'s keyless ECB
+ * mid-market fallback. Naming either would be wrong for the rows stored under
+ * the other, and this is the screen accounting signs off against. `rateSource`
+ * on the row is what actually distinguishes them, and it already marks a
+ * hand-corrected rate as this panel's own.
  *
  * Renders **nothing at all** unless the claim is at the ACCOUNT step and has at
  * least one line that is not in baht, so an ordinary Thai claim is untouched —
@@ -143,7 +145,7 @@ export function LineExchangeRateOverride({
       </div>
 
       <p className="text-[11.5px] m-0 leading-relaxed" style={{ color: "var(--text-secondary)" }}>
-        อัตราที่บันทึกไว้เป็น<strong>อัตราอ้างอิงกลางตลาด</strong> ไม่ใช่อัตราที่ธนาคารใช้จ่ายจริง
+        อัตราที่บันทึกไว้ดึงจาก<strong>แหล่งอ้างอิงอัตโนมัติ</strong> อาจต่างจากอัตราที่ธนาคารใช้จ่ายจริง
         ฝ่ายบัญชีแก้ให้ตรงกับอัตราที่จ่ายจริงได้ที่นี่ ก่อนอนุมัติ —
         แก้ทีละรายการ และยอดรวมของคำขอจะคำนวณใหม่จากทุกรายการ
       </p>

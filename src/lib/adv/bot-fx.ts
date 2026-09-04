@@ -1,14 +1,21 @@
 /**
  * Exchange-rate lookup for AP-2 foreign-currency advances.
  *
- * Uses the official Bank of Thailand API when BOT_API_CLIENT_ID is configured
- * (buying-transfer rate, matches the Excel form). Without a key it falls back to
- * a keyless ECB source (frankfurter.app) — a mid-market rate, close but not the
- * official BOT rate, so accounting may adjust at payment time.
+ * Uses the official Bank of Thailand API when BOT_API_CLIENT_ID is configured —
+ * the bank's **selling** rate, because an advance in a foreign currency means the
+ * company buys that currency. Without a key it falls back to a keyless ECB source
+ * (frankfurter) — a mid-market rate, close but not the official BOT rate, so
+ * accounting may adjust at payment time.
+ *
+ * The response carries `source` ("BOT" or "ECB"); screens caption the figure from
+ * that field rather than assuming either one.
  */
 
+// Host and path from the BOT OpenAPI spec (Average Exchange Rate v2.0.2). The
+// previous value pointed at `apigw1.bot.or.th`, a host that does not resolve at
+// all — which nothing caught, because without a key this path was never taken.
 const BOT_URL =
-  "https://apigw1.bot.or.th/bot/public/Stat-ExchangeRate/v2/DAILY_AVG_EXG_RATE/";
+  "https://gateway.api.bot.or.th/Stat-ExchangeRate/v2/DAILY_AVG_EXG_RATE/";
 const FRANKFURTER_URL = "https://api.frankfurter.dev/v1";
 
 /**
@@ -50,6 +57,7 @@ export async function fetchSupportedCurrencies(): Promise<{ code: string; name: 
 
 interface BotDetail {
   period?: string;
+  selling?: string;
   buying_transfer?: string;
   buying_sight?: string;
   mid_rate?: string;
@@ -62,7 +70,9 @@ async function fetchBotRate(cur: string, date?: string): Promise<FxRate> {
   start.setDate(start.getDate() - 10);
   const url = `${BOT_URL}?start_period=${ymd(start)}&end_period=${ymd(end)}&currency=${encodeURIComponent(cur)}`;
   const res = await fetch(url, {
-    headers: { "X-IBM-Client-Id": key, Accept: "application/json" },
+    // The spec's securityScheme is an apiKey in the `Authorization` header, not
+    // the `X-IBM-Client-Id` this used to send.
+    headers: { Authorization: key, Accept: "application/json" },
     signal: AbortSignal.timeout(FX_TIMEOUT_MS),
   });
   if (!res.ok) {
@@ -73,7 +83,11 @@ async function fetchBotRate(cur: string, date?: string): Promise<FxRate> {
   const detail = json.result?.data?.data_detail ?? [];
   if (detail.length === 0) throw new Error(`ไม่พบอัตราแลกเปลี่ยน ${cur} จาก ธปท.`);
   const latest = detail.reduce((a, b) => ((a.period ?? "") >= (b.period ?? "") ? a : b));
-  const rate = Number(latest.buying_transfer ?? latest.mid_rate ?? latest.buying_sight);
+  // The bank's SELLING rate: an advance in a foreign currency means the company
+  // buys that currency, and selling is what it pays. The buying rates are what a
+  // bank pays to take currency off you — the wrong side of the spread here, and
+  // about 0.32 THB per USD adrift from it (decision: accounting, 2026-09-04).
+  const rate = Number(latest.selling ?? latest.mid_rate ?? latest.buying_transfer);
   if (!rate || Number.isNaN(rate)) throw new Error("อัตราแลกเปลี่ยนจาก ธปท. ไม่ถูกต้อง");
   return { currency: cur, rate, asOf: latest.period ?? ymd(end), source: "BOT" };
 }
