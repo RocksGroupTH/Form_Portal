@@ -43,9 +43,9 @@ export interface TravelExpenseItem {
   /**
    * **Which day's rate `exchangeRate` is** — `YYYY-MM-DD` (migration 130).
    *
-   * Not the day the claim was saved. The ECB publishes on working days only, so
-   * a line entered on a Saturday carries Friday's rate and one entered after a
-   * long weekend can carry a three-day-old one. That is correct — there is no
+   * Not the day the claim was saved. Both feeds publish on working days only,
+   * so a line entered on a Saturday carries Friday's rate and one entered after
+   * a long weekend can carry a three-day-old one. That is correct — there is no
    * rate for a day the market did not trade — but the two dates are different
    * facts and only this one says what the figure was actually converted at.
    *

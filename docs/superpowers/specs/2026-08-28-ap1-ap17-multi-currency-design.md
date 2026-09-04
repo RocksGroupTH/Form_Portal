@@ -20,7 +20,7 @@ that its approach be reused rather than a second one invented.
 
 | Piece | Where | Reuse |
 |---|---|---|
-| FX lookup | `src/lib/adv/bot-fx.ts` | **As is.** Bank of Thailand when `BOT_API_CLIENT_ID` is set, else keyless ECB via frankfurter. |
+| FX lookup | `src/lib/adv/bot-fx.ts` | **As is.** Bank of Thailand (selling) when a `BOT_CURRENCY_RATE` key is registered, else keyless ECB via frankfurter. |
 | Currency picker | `src/features/advance/components/CurrencyCombobox.tsx` | **As is** — already a standalone component. |
 | Storage shape | `AccAdvance.Currency` / `ExchangeRate` / `BaseAmount` | **Shape copied**, not the table. |
 | Brand registry | `src/lib/brand-registry.ts` | Extended; already reads `getProductionFormPool()`. |
@@ -192,10 +192,9 @@ a baht claim never fetches anything, so an FX outage cannot stop ordinary work.
 
 **Accounting may override the rate** at the ACCOUNT step, as AP-2 allows, with
 the override recorded in `AccActivityLog`. This is **required in the first
-release, not deferred**: §9.1 settles that no Bank of Thailand key will be
-provisioned, so every rate here is an ECB mid-market reference rate rather than
-the rate a bank settles at. The override is the only place that difference can
-be corrected.
+release, not deferred**: whichever feed §9.1 resolves, a published rate is not
+the rate a particular bank charged on the day. The override is the only place
+that difference can be corrected.
 
 ---
 
@@ -257,24 +256,44 @@ AP-17 store and total as baht. This is a live defect, not a future one.
 All three were put to the user and answered. Two overrule the recommendation
 that was made here; both are recorded with what they cost.
 
-### 9.1 No Bank of Thailand key — every rate is ECB mid-market
+### 9.1 The rate feed — ~~no Bank of Thailand key~~ **superseded 2026-09-04**
+
+> **This section was written on the assumption that no BOT key would ever be
+> bought. One was, on 2026-09-04, and it is live.** Everything below is kept
+> because a dozen files cite "spec §9.1" as their reason, and a reader chasing
+> that citation needs to find the correction rather than the original claim.
+
+**What is true now.** The key lives in the portal's API-key registry under
+`BOT_CURRENCY_RATE`, managed from the settings page — not in the environment.
+`bot-fx.ts` takes the Bank of Thailand **selling** rate when it is present, and
+frankfurter's keyless ECB mid-market figure when it is not. AP-1, AP-2 and AP-17
+all share `fetchFxRate`, so all three moved together.
+
+Rows recorded either side of that date are priced on different bases, and the
+`rateSource` column on the row is the only thing that distinguishes them.
+
+**What the original section got right, and still holds:**
+
+- **No screen may name the provider of a rate.** The reason has changed — it was
+  "it is never BOT", it is now "it is BOT for some rows and ECB for others, and
+  one caption would be false for half of them" — but the rule is the same, and
+  the guard tests that enforce it were kept.
+- **The accounting override in §5 stays load-bearing.** A published rate, even
+  the selling one, is still not what a particular bank charged on the day. The
+  override remains the only place that difference can be corrected.
+
+**What it got wrong:** the assumption itself. The BOT branch it argued for
+keeping had, in fact, never once executed — and hid a dead hostname and a wrong
+auth header until the day the key arrived. Code that cannot run in the default
+configuration is untested code, whatever the spec says about it.
+
+<details><summary>Original text, superseded</summary>
 
 `BOT_API_CLIENT_ID` will **not** be provisioned. `bot-fx.ts` therefore always
 takes its keyless fallback, and every rate this feature records is
 **frankfurter's ECB mid-market reference rate**.
 
-Three things follow, and all three are requirements, not notes:
-
-- **No screen may caption a rate as a Bank of Thailand rate.** The copy says it
-  is a reference rate (`อัตราอ้างอิง`) and that accounting may adjust it.
-- **The accounting override in §5 becomes load-bearing rather than a
-  convenience.** A mid-market rate is not the rate a bank settles at, so the
-  figure the company actually pays will differ. The override is the only place
-  that difference can be corrected, and it must be present from the first
-  release rather than deferred.
-- **The BOT branch in `bot-fx.ts` stays.** It is existing, working code and
-  deleting it would have to be undone the day a key is bought. It is simply
-  never taken.
+</details>
 
 ### 9.2 The six disabled brands stay disabled
 
