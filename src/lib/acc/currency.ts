@@ -291,12 +291,12 @@ export function brandCurrencyState(
  * human corrected the rate rather than a provider publishing it (migration 130).
  *
  * **A hand-corrected rate must never be mistaken for a published one.** Every
- * other value in that column names a feed — `ECB` today, `BOT` if
- * `BOT_API_CLIENT_ID` is ever provisioned — and both are reproducible from the
- * date beside them. This one is not: it is one person's figure, entered at the
- * ACCOUNT step because the mid-market reference rate is not what the bank
- * settled at, and the only thing that can tell it apart afterwards is this
- * string. `NVARCHAR(20)`, so it must stay short.
+ * other value in that column names a feed — `BOT` since a `BOT_CURRENCY_RATE`
+ * key was registered on 2026-09-04, `ECB` on everything written before it — and
+ * both are reproducible from the date beside them. This one is not: it is one
+ * person's figure, entered at the ACCOUNT step because a published daily quote
+ * is not what the company's bank settled at, and the only thing that can tell it
+ * apart afterwards is this string. `NVARCHAR(20)`, so it must stay short.
  */
 export const RATE_SOURCE_OVERRIDE = "OVERRIDE";
 

@@ -20,8 +20,10 @@
  * The currencies the reference-rate source will actually quote.
  *
  * Measured 2026-08-29 from `GET https://api.frankfurter.dev/v1/currencies` — the
- * ECB's own list, which is what `bot-fx.ts` falls back to while
- * `BOT_API_CLIENT_ID` is unprovisioned. Refresh it by running that call again.
+ * ECB's own list, which `bot-fx.ts` still asks for the menu whatever it quotes a
+ * rate from: `fetchSupportedCurrencies` goes to Frankfurter even now that a
+ * `BOT_CURRENCY_RATE` key makes the rate itself a Bank of Thailand one. Refresh
+ * it by running that call again.
  *
  * **This is why the country list is filtered rather than complete.** The list
  * below once carried Cambodia, Laos, Vietnam, Myanmar, Taiwan, Brunei, Qatar,
@@ -31,9 +33,10 @@
  * told "ไม่พบ KHR ในแหล่งอัตราอ้างอิง" only after choosing. A country that cannot
  * be converted must not be on the menu.
  *
- * A currency here is **quotable, not necessarily right**: these are ECB
- * mid-market reference rates, not what a bank settles at, which is why
- * accounting can correct the rate at the ACCOUNT step.
+ * A currency here is **quotable, not necessarily right**: what comes back is a
+ * published daily figure — the Bank of Thailand selling rate since 2026-09-04,
+ * an ECB mid-market one before that — and not the rate the company's own bank
+ * settled at, which is why accounting can correct it at the ACCOUNT step.
  */
 const RATE_SOURCE_CURRENCIES = [
   "AUD", "BRL", "CAD", "CHF", "CNY", "CZK", "DKK", "EUR", "GBP", "HKD",

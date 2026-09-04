@@ -119,9 +119,11 @@ test("no workbook addresses a styled column by a bare number", () => {
 /* ── The caption ── */
 
 /**
- * `BOT_API_CLIENT_ID` is deliberately unprovisioned (spec §9.1), so every rate
- * this application records is an ECB mid-market reference rate. One definition
- * of the caption means one sentence to be right about.
+ * The caption has to hold for rows recorded under two different feeds — the ECB
+ * mid-market fallback before a `BOT_CURRENCY_RATE` key was registered on
+ * 2026-09-04, the Bank of Thailand selling rate since. One definition of the
+ * caption means one sentence to be right about, instead of a wording per surface
+ * that only some of the rows it is shown against actually fit.
  */
 test("the reference-rate caption is defined exactly once", () => {
   const defs: string[] = [];

@@ -217,8 +217,10 @@ test("the word after a figure is บาท for baht and the code otherwise", () 
 });
 
 /**
- * No screen may caption a rate as a Bank of Thailand rate — every rate here is
- * an ECB mid-market reference rate (spec §9.1).
+ * No screen may name the provider of a rate. A key was registered on
+ * 2026-09-04, so rows recorded since are the Bank of Thailand selling rate
+ * while everything before is the ECB mid-market fallback — one caption would be
+ * false for half the rows on the screen.
  */
 test("the rate caption says อัตราอ้างอิง and never names the Bank of Thailand", () => {
   const note = referenceRateNote("MYR", 8.25);

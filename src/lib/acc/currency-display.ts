@@ -152,17 +152,20 @@ export function fmtRateAsOf(v: string | Date | null | undefined): string {
 /**
  * The reference-rate caption. **Never "อัตราแลกเปลี่ยนธนาคารแห่งประเทศไทย".**
  *
- * `BOT_API_CLIENT_ID` is deliberately unprovisioned (spec §9.1), so every rate
- * this app records comes from `bot-fx`'s keyless ECB fallback — a mid-market
- * reference rate, which is not what a bank settles at. Captioning it as a Bank
- * of Thailand rate would state something false on a screen accounting signs off
- * against, and it would be stated on every screen at once, which is why the
- * sentence lives here rather than being retyped per surface.
+ * A `BOT_CURRENCY_RATE` key was registered on 2026-09-04, so a rate recorded
+ * from that day on is the Bank of Thailand selling rate while everything
+ * recorded before it came from `bot-fx`'s keyless ECB mid-market fallback. This
+ * one sentence captions rows of both kinds, so naming either feed would state
+ * something false about the other on a screen accounting signs off against —
+ * and it would state it on every screen at once, which is why the sentence lives
+ * here rather than being retyped per surface. `rateSource` on the row is what
+ * distinguishes the two, and neither figure is what the company's own bank
+ * finally charged, which is why the override exists at all.
  *
  * **`asOf` says which day's rate that was, and it matters more than it looks.**
- * The ECB publishes on working days only, so a claim saved on a Saturday
- * carries Friday's rate, and one saved after a long weekend can carry a
- * three-day-old one. That behaviour is correct and deliberate — there is no
+ * Neither feed publishes on a day the market did not trade, so a claim saved on
+ * a Saturday carries Friday's rate, and one saved after a long weekend can carry
+ * a three-day-old one. That behaviour is correct and deliberate — there is no
  * rate for a day the market did not trade — but without the date on screen
  * nobody can tell afterwards which day a figure was converted at. Migration 130
  * is what stores it; this is where it is read out.

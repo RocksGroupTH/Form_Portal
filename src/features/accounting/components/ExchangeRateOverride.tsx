@@ -11,14 +11,19 @@ import { sanitizeOverrideRate } from "@/lib/acc/rate-override-policy";
  * Accounting's correction to a claim's exchange rate, at the ACCOUNT step.
  *
  * **One component for AP-1 and AP-17**, because the correction is the same act
- * in both: the stored rate is an ECB mid-market reference rate — no Bank of
- * Thailand key will be provisioned (spec §9.1) — and this is the only place the
- * difference from what a bank actually settles at can be put right. Two copies
- * would drift on the one thing that must not, which is the copy explaining what
- * the number *is*.
+ * in both, and this is the only place the difference from what a bank actually
+ * settles at can be put right. Two copies would drift on the one thing that must
+ * not, which is the copy explaining what the number *is*.
  *
- * **Nothing here is captioned as a Bank of Thailand rate.** `อัตราอ้างอิง`,
- * with the sentence saying it is a reference figure the approver may correct.
+ * A BOT key **was** provisioned on 2026-09-04, so the feed is now the Bank of
+ * Thailand selling rate rather than the ECB mid-market figure this was written
+ * against. Claims either side of that day are converted on different bases; the
+ * `rateSource` column on each row is what distinguishes them.
+ *
+ * The caption therefore names **no** provider. It says the figure came from an
+ * automatic source and may differ from what the bank charged — true of both
+ * feeds, and of a hand-corrected rate. Naming one would be wrong for every row
+ * stored under the other.
  *
  * Renders **nothing at all** unless the request is both at the ACCOUNT step and
  * in a foreign currency, so a baht claim is untouched — the rule the whole
@@ -133,7 +138,7 @@ export function ExchangeRateOverride({
       </div>
 
       <p className="text-[11.5px] m-0 leading-relaxed" style={{ color: "var(--text-secondary)" }}>
-        อัตราที่บันทึกไว้เป็น<strong>อัตราอ้างอิงกลางตลาด</strong> ไม่ใช่อัตราที่ธนาคารใช้จ่ายจริง
+        อัตราที่บันทึกไว้ดึงจาก<strong>แหล่งอ้างอิงอัตโนมัติ</strong> อาจต่างจากอัตราที่ธนาคารใช้จ่ายจริง
         ฝ่ายบัญชีแก้ให้ตรงกับอัตราที่จ่ายจริงได้ที่นี่ ก่อนอนุมัติ
       </p>
 

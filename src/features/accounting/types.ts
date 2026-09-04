@@ -43,9 +43,9 @@ export interface TravelExpenseItem {
   /**
    * **Which day's rate `exchangeRate` is** — `YYYY-MM-DD` (migration 130).
    *
-   * Not the day the claim was saved. The ECB publishes on working days only, so
-   * a line entered on a Saturday carries Friday's rate and one entered after a
-   * long weekend can carry a three-day-old one. That is correct — there is no
+   * Not the day the claim was saved. Both feeds publish on working days only,
+   * so a line entered on a Saturday carries Friday's rate and one entered after
+   * a long weekend can carry a three-day-old one. That is correct — there is no
    * rate for a day the market did not trade — but the two dates are different
    * facts and only this one says what the figure was actually converted at.
    *
@@ -55,13 +55,15 @@ export interface TravelExpenseItem {
    */
   rateAsOf?: string | null;
   /**
-   * Who said so — `"ECB"` today, `"BOT"` if `BOT_API_CLIENT_ID` is ever
-   * provisioned, `RATE_SOURCE_OVERRIDE` when accounting corrected it by hand.
+   * Who said so — `"BOT"` since a `BOT_CURRENCY_RATE` key was registered on
+   * 2026-09-04, `"ECB"` on everything written before it and whenever that key is
+   * absent, `RATE_SOURCE_OVERRIDE` when accounting corrected it by hand.
    *
    * A hand-corrected rate must never be mistaken for a published one: it is one
-   * person's figure and is not reproducible from the date beside it. And if a
-   * BOT key is ever bought, rows either side of that day are converted on
-   * different bases, which this column is the only thing that could distinguish.
+   * person's figure and is not reproducible from the date beside it. And rows
+   * either side of 2026-09-04 are converted on different bases — a mid-market
+   * reference figure against the bank's selling rate — which this column is the
+   * only thing that could distinguish.
    */
   rateSource?: string | null;
   sortOrder: number;

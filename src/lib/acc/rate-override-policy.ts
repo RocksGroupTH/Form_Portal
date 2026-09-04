@@ -1,13 +1,13 @@
 /**
  * Accounting's correction to a recorded exchange rate — the pure half.
  *
- * **Why this exists at all.** `BOT_API_CLIENT_ID` will not be provisioned
- * (spec §9.1), so `bot-fx.ts` always takes its keyless fallback and **every
- * rate this application records is an ECB mid-market reference rate**. That is
- * not the rate a bank settles at, so the figure the company actually pays
- * differs from the one the requester's form computed. This override is the only
- * place that difference can be corrected, which is why it ships in the first
- * release rather than being deferred.
+ * **Why this exists at all.** Every rate this application records is a published
+ * daily quote — `bot-fx.ts`'s keyless ECB mid-market fallback before a
+ * `BOT_CURRENCY_RATE` key was registered on 2026-09-04, the Bank of Thailand
+ * selling rate since. Neither is the rate the company's own bank settled at, so
+ * the figure actually paid differs from the one the requester's form computed.
+ * This override is the only place that difference can be corrected, which is why
+ * it ships in the first release rather than being deferred.
  *
  * Imports only `currency.ts`, which is itself import-free, so the rule is
  * unit-tested without a database — `@/env` validates the whole environment at

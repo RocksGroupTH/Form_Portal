@@ -17,12 +17,14 @@ import {
  *
  * ── Why this exists beside `rate-override.ts` ──
  *
- * `BOT_API_CLIENT_ID` will not be provisioned (spec §9.1), so `bot-fx` always
- * takes its keyless fallback and **every rate this application records is an
- * ECB mid-market reference rate** — not what a bank settles at. Correcting that
- * difference is the only way the figure the company actually pays reaches the
- * books, which is why the override shipped in the first release rather than
- * being deferred.
+ * **Every rate this application records is a published daily quote, never the
+ * one the company was actually charged.** Until a `BOT_CURRENCY_RATE` key was
+ * registered on 2026-09-04 it was `bot-fx`'s keyless ECB mid-market fallback;
+ * since then it is the Bank of Thailand selling rate, which is the right side of
+ * the spread but still an official daily figure rather than the company's own
+ * dealt rate. Correcting that difference is the only way the figure actually
+ * paid reaches the books, which is why the override shipped in the first release
+ * rather than being deferred.
  *
  * Migration 129 then moved AP-1's currency from the request to the **line**, and
  * nothing on AP-1's write path records a header currency any more — all three of

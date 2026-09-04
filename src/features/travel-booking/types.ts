@@ -246,17 +246,20 @@ export interface TravelBookingRequest {
    * THB per 1 unit of `currency`, as fetched when the desk last saved a booking
    * row. Null for a baht request.
    *
-   * An **ECB mid-market reference rate** — `อัตราอ้างอิง`, never captioned as a
-   * Bank of Thailand rate (spec §9.1). Display only: nothing multiplies it into
-   * a stored column, because AP-17 stores no converted figure.
+   * Whatever `bot-fx` resolved at the time — the Bank of Thailand selling rate
+   * since a key was registered on 2026-09-04, an ECB mid-market figure before
+   * that. Captioned `อัตราอ้างอิง` and **never named as either**, because rows
+   * either side of that date were priced on different bases and one caption
+   * would be false for half of them. Display only: nothing multiplies it into a
+   * stored column, because AP-17 stores no converted figure.
    */
   exchangeRate: number | null;
   /**
    * **Which day's rate `exchangeRate` is** — `YYYY-MM-DD` (migration 130) — and
    * where it came from.
    *
-   * Not the day the desk saved the booking. The source publishes on working
-   * days only, so a row saved on a Saturday carries Friday's rate and one saved
+   * Not the day the desk saved the booking. Both feeds publish on working days
+   * only, so a row saved on a Saturday carries Friday's rate and one saved
    * after a long weekend can carry a three-day-old one. That is correct; the
    * two dates are simply different facts, and only this one says what the
    * figures were priced at.
