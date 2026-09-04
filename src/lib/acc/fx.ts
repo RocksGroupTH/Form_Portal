@@ -41,6 +41,13 @@ export interface ResolvedRate {
  * would store a foreign figure as though it were baht, which is the failure
  * `toBaht` exists to make impossible — so callers must refuse the write, and the
  * submit path must refuse the submit.
+ *
+ * AP-1 shares `fetchFxRate` with AP-2 on purpose, so it moved to the Bank of
+ * Thailand selling rate with it on 2026-09-04 (decision: user). The three forms
+ * settle the same money — an advance, its clearing and a travel claim — and
+ * converting them on different bases would only show up later as a reconciling
+ * difference nobody could explain. Claims stored before that date used the ECB
+ * mid-market fallback; `rateSource` on the row is what tells the two apart.
  */
 export async function resolveRate(currency: string | null): Promise<ResolvedRate | null> {
   if (!needsRate(currency)) return { rate: 1, asOf: "", source: THB };
