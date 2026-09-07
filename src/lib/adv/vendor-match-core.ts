@@ -14,7 +14,25 @@ export type VendorMatchStatus = "pending" | "suggested" | "confirmed" | "none";
 export type VendorMatchConfidence = "high" | "medium" | "low";
 
 export interface VendorMatchResult {
-  status: Exclude<VendorMatchStatus, "confirmed">;   // matcher never auto-confirms
+  /**
+   * The matcher produces only 'confirmed' (a hit) or 'none' (anything else).
+   *
+   * It used to stop at 'suggested' and wait for the officer, because back then
+   * it was an LLM reading a payee name and a plausible-looking guess needed a
+   * human before it reached a subledger. It no longer guesses: it looks up the
+   * requester's staff code against the ERP-synced vendor list and either finds
+   * exactly one card or refuses. Asking someone to click "ยืนยัน" on a database
+   * lookup is not a control, it is data entry (decision: user, 2026-09-07), so
+   * a hit is confirmed outright and only a miss is handed over.
+   *
+   * `VendorConfirmedBy` stays NULL on those, which is how an auto-confirmed row
+   * stays distinguishable from one an officer picked by hand.
+   *
+   * 'suggested' remains in the type because rows written before this change
+   * still hold it, and the service reports what it reads. Those came from the
+   * old name matcher, so they still want a human — correctly.
+   */
+  status: Exclude<VendorMatchStatus, "pending">;
   vendorNo: string | null;
   vendorName: string | null;
   confidence: VendorMatchConfidence | null;
@@ -50,7 +68,7 @@ export type FindVendorByCode = (staffId: number) => Promise<EmployeeCodeLookup>;
  * accounting fills the field in. That was the choice — a blank the officer
  * fills beats a plausible wrong vendor in the subledger.
  *
- * Never returns `confirmed` — the officer still confirms.
+ * A hit is `confirmed`, not `suggested`: see VendorMatchResult.status.
  */
 export async function runRequesterCodeMatch(
   staffId: number | null | undefined,
@@ -76,7 +94,7 @@ export async function runRequesterCodeMatch(
     };
   }
   return {
-    status: "suggested",
+    status: "confirmed",
     vendorNo: hit.vendor.vendorNo,
     vendorName: hit.vendor.displayName,
     confidence: "high",

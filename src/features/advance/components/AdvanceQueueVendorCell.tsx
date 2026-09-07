@@ -63,8 +63,10 @@ export function AdvanceQueueVendorCell({
 }: AdvanceQueueVendorCellProps) {
   const [busy, setBusy] = useState(false);
   const [vendors, setVendors] = useState<VendorOption[] | null>(null);
+  // Set when the officer asks to replace an already-confirmed vendor.
+  const [changing, setChanging] = useState(false);
   // Only a row that needs the officer to choose pulls the list in.
-  const needsPicker = status !== "confirmed" && !vendorNo;
+  const needsPicker = changing || (status !== "confirmed" && !vendorNo);
 
   useEffect(() => {
     if (!needsPicker || !brandCode) return;
@@ -84,6 +86,7 @@ export function AdvanceQueueVendorCell({
       const j = (await res.json()) as { ok: boolean; error?: string };
       if (!j.ok) { toast.error(j.error ?? "ยืนยัน Vendor ไม่สำเร็จ"); return; }
       toast.success("ยืนยัน Vendor แล้ว");
+      setChanging(false);
       onConfirmed();
     } catch {
       toast.error("ยืนยัน Vendor ไม่สำเร็จ");
@@ -96,19 +99,31 @@ export function AdvanceQueueVendorCell({
   // long and made this the widest column in a table that already scrolls; the
   // code is short, fixed-width and the thing that reaches BC. The name stays a
   // hover away, and the picker below still searches on it.
-  if (status === "confirmed") {
+  // A matched vendor confirms itself, so this is the normal state rather than
+  // the end of a click — which is exactly why it must stay changeable here.
+  // Without it, auto-confirming would have quietly removed the officer's only
+  // in-queue way to correct a vendor.
+  if (status === "confirmed" && !changing) {
     return (
-      <span className="inline-flex items-center gap-1.5 text-[12px] whitespace-nowrap font-mono"
-        style={{ color: "var(--text-secondary)" }} title={vendorName ?? undefined}>
-        <Check size={13} className="shrink-0" style={{ color: "#4fa37a" }} />
-        {vendorNo}
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+        <span className="inline-flex items-center gap-1.5 text-[12px] font-mono"
+          style={{ color: "var(--text-secondary)" }} title={vendorName ?? undefined}>
+          <Check size={13} className="shrink-0" style={{ color: "#4fa37a" }} />
+          {vendorNo}
+        </span>
+        <button type="button" onClick={() => setChanging(true)}
+          className="text-[11px] px-1.5 py-0.5 rounded-lg border-none bg-transparent cursor-pointer"
+          style={{ color: "var(--text-faint)" }} title="เปลี่ยน Vendor">
+          เปลี่ยน
+        </button>
       </span>
     );
   }
 
-  // Matched but not yet confirmed: one click, since the match is a staff-code
-  // lookup rather than a guess.
-  if (vendorNo) {
+  // A row still holding 'suggested' — written before matches confirmed
+  // themselves, by the old name matcher. That guess does want a human, so it
+  // keeps its one-click ยืนยัน.
+  if (vendorNo && !changing) {
     return (
       <span className="inline-flex items-center gap-2 whitespace-nowrap">
         <span className="text-[12px] font-mono" style={{ color: "var(--text-muted)" }}
@@ -129,9 +144,10 @@ export function AdvanceQueueVendorCell({
   }
 
   return (
-    <span className="inline-block" style={{ minWidth: 180 }} title={reason ?? undefined}>
+    <span className="inline-flex items-center gap-1 whitespace-nowrap">
+      <span className="inline-block" style={{ minWidth: 180 }} title={reason ?? undefined}>
       <SearchableSelect
-        value=""
+        value={changing ? vendorNo ?? "" : ""}
         onChange={confirm}
         // Name as the label even though the column shows codes: SearchableSelect
         // filters on `label` and `value` only, never `subLabel`, so putting the
@@ -145,6 +161,14 @@ export function AdvanceQueueVendorCell({
         emptyLabel="— เลือก Vendor —"
         searchPlaceholder="ค้นหาชื่อ หรือ รหัส vendor..."
       />
+      </span>
+      {changing && (
+        <button type="button" onClick={() => setChanging(false)}
+          className="text-[11px] px-1.5 py-0.5 rounded-lg border-none bg-transparent cursor-pointer"
+          style={{ color: "var(--text-faint)" }} title="ยกเลิกการเปลี่ยน">
+          ยกเลิก
+        </button>
+      )}
     </span>
   );
 }
