@@ -119,7 +119,8 @@ async function main() {
     process.exit(1);
   }
   console.log(
-    `PASS — TesterPerDiem is a table in ${uatDb}, and Fast_Core holds no object of that name.`,
+    `PASS — TesterPerDiem is a table in ${uatDb}, nothing there still answers to ` +
+      "UatTesterPerDiem, and Fast_Core holds no object of that name either.",
   );
   process.exit(0);
 }
