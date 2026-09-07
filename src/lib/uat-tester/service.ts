@@ -309,7 +309,8 @@ export interface UatTesterAddresses {
  * somebody read the queue by hand.
  *
  * Batched on purpose — the caller runs this once per drain cycle, not once per
- * message, so a queue of 20 costs one Fast_Core read and one HR read.
+ * message, so a queue of 20 costs one `Rocks_Portal_Form_UAT` read and one HR
+ * read.
  *
  * A tester with no active HR row simply has `hrEmail: null`; their login address
  * still exempts them.

@@ -136,7 +136,8 @@ test("every file that prices a trip also resolves the rate", () => {
  *
  * Deliberately not `PRICERS`: that list's fourth member is
  * features/travel-booking/hooks/useTravelBookingForm.ts, a "use client" file
- * that gets its log from the route and must never reach Fast_Core itself.
+ * that gets its log from the route and must never open a server pool itself —
+ * Fast_Core or the UAT form database alike; see the client-bundle test below.
  *
  * The call arm carries the same `\w*` fix as the naming arm above, for the same
  * reason: `getPerDiemEmployeeLogWithSource(` needs the suffix consumed before
