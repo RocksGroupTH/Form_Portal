@@ -15,6 +15,7 @@
     "check:erp-data-home": "tsx scripts/checks/verify-erp-data-move.ts",
     "check:erp-vendors": "tsx scripts/checks/verify-erp-vendors.ts",
     "check:travel-province-home": "tsx scripts/checks/verify-travel-province-move.ts",
+    "check:uat-tester-home": "tsx scripts/checks/verify-uat-tester-move.ts",
     "sync:erp-vendors": "tsx scripts/sync-erp-vendors.ts"
   },
   "dependencies": {
