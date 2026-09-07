@@ -627,8 +627,14 @@ async function withUatOverrides(employee: EmployeeContext): Promise<EmployeeCont
  * points pass it — the two that file a request, plus the id-card consent POST,
  * which persists a per-StaffId setting into the resolved form database. The rule
  * is a write rule — nothing may be *written* in UAT for somebody outside the
- * tester list — and this resolver is also the one behind four read-only GETs
- * (allowance-log, date-ranges, id-card/previous and its download).
+ * tester list — and this resolver is also the one behind two read-only GETs,
+ * allowance-log and date-ranges. (`id-card/previous` and its download route
+ * used to be a third and fourth; they were hardened to self-only, reading
+ * `findActiveEmployeeByEmail` directly, by the id-card access-control fix in
+ * `@/lib/acc/travel-booking/id-card-access.ts` — this resolver's on-behalf
+ * lookup was exactly the "anyone in the same department can name anyone else"
+ * hole that fix closed for those two routes. Naming them here after that would
+ * be describing a caller that no longer exists.)
  * Throwing there turned an expected selection into a 500 that every
  * caller swallows: the per-diem estimate silently fell back to the flat rate,
  * date-conflict locking silently switched off, and the allowance modal rendered
