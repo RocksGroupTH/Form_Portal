@@ -160,7 +160,10 @@ export function AdvanceApproveQueue() {
 
           {/* table */}
           <div className="overflow-x-auto">
-            <table className="w-full text-[12px]" style={{ borderCollapse: "collapse" }}>
+            {/* Sizes to content so the wrapper scrolls instead of the table
+                squeezing a name column into three lines — same reason as
+                AdvanceErpQueue. */}
+            <table className="w-max min-w-full text-[12px]" style={{ borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ color: "var(--text-muted)", borderBottom: "1px solid var(--border-card)" }}>
                   <th className="p-2 text-left w-8">
@@ -185,8 +188,8 @@ export function AdvanceApproveQueue() {
                     </td>
                     <td className="p-2 font-bold">{r.requestNo ?? `#${r.id}`}</td>
                     <td className="p-2">{r.interfaceTarget || "-"}</td>
-                    <td className="p-2">{r.requesterFullName ?? "-"}</td>
-                    <td className="p-2">{r.payeeName ?? "-"}</td>
+                    <td className="p-2 whitespace-nowrap">{r.requesterFullName ?? "-"}</td>
+                    <td className="p-2 whitespace-nowrap">{r.payeeName ?? "-"}</td>
                     <CurrencyCells row={r} cellClass="p-2" />
                     <td className="p-2">
                       <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full"

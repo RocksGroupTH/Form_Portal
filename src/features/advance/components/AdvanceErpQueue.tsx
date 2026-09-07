@@ -373,7 +373,12 @@ export function AdvanceErpQueue() {
             {/* Scrolls sideways rather than squeezing: the currency split added
                 three columns and the page must not scroll as a whole. */}
             <div className="rounded-xl overflow-x-auto" style={{ border: "1px solid var(--border-card)" }}>
-              <table className="w-full text-[12px] border-collapse">
+              {/* `w-max min-w-full`, not `w-full`: a full-width table fits itself to
+                  the wrapper by squeezing whatever column may wrap, so the currency
+                  split turned the payee into three lines and left the last column
+                  clipped just out of scroll reach. Sizing to content instead makes
+                  the wrapper actually scroll. */}
+              <table className="w-max min-w-full text-[12px] border-collapse">
                 <thead>
                   <tr style={{ background: "var(--bg-card-alt)" }}>
                     <th className="px-3 py-2.5 w-8"
@@ -399,7 +404,7 @@ export function AdvanceErpQueue() {
                           style={{ color: "var(--nav-active-text)" }}>{row.requestNo ?? `#${row.id}`}</button>
                       </td>
                       <td className="px-2.5 py-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{row.interfaceTarget}</td>
-                      <td className="px-2.5 py-2" style={{ color: "var(--text-primary)" }}>{row.payeeName ?? "—"}</td>
+                      <td className="px-2.5 py-2 whitespace-nowrap" style={{ color: "var(--text-primary)" }}>{row.payeeName ?? "—"}</td>
                       <CurrencyCells row={row} />
                       <td className="px-2.5 py-2 whitespace-nowrap">
                         {/* Read-only: the Vendor is chosen/confirmed at the ACC_OFFICER
@@ -464,7 +469,12 @@ export function AdvanceErpQueue() {
             <p className="text-[13px] py-8 text-center" style={{ color: "var(--text-muted)" }}>ไม่มีรายการตามเงื่อนไข</p>
           ) : (
             <div className="rounded-xl overflow-x-auto" style={{ border: "1px solid var(--border-card)" }}>
-              <table className="w-full text-[12px] border-collapse">
+              {/* `w-max min-w-full`, not `w-full`: a full-width table fits itself to
+                  the wrapper by squeezing whatever column may wrap, so the currency
+                  split turned the payee into three lines and left the last column
+                  clipped just out of scroll reach. Sizing to content instead makes
+                  the wrapper actually scroll. */}
+              <table className="w-max min-w-full text-[12px] border-collapse">
                 <thead>
                   <tr style={{ background: "var(--bg-card-alt)" }}>
                     {["เลขที่", "Company", "ผู้รับเงิน", "วันจ่าย", ...CURRENCY_HEADERS, "External Doc.", "Doc No. (ERP)", "วันที่ส่ง", "สถานะ", "การจัดการ"].map((h) => (
@@ -481,7 +491,7 @@ export function AdvanceErpQueue() {
                           style={{ color: "var(--nav-active-text)" }}>{r.requestNo ?? `#${r.id}`}</button>
                       </td>
                       <td className="px-2.5 py-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{r.interfaceTarget}</td>
-                      <td className="px-2.5 py-2" style={{ color: "var(--text-primary)" }}>{r.payeeName ?? "—"}</td>
+                      <td className="px-2.5 py-2 whitespace-nowrap" style={{ color: "var(--text-primary)" }}>{r.payeeName ?? "—"}</td>
                       <td className="px-2.5 py-2 whitespace-nowrap" style={{ color: "var(--text-muted)" }}>{r.paymentDate ?? "—"}</td>
                       <CurrencyCells row={r} />
                       <td className="px-2.5 py-2 whitespace-nowrap font-mono" style={{ color: "var(--text-muted)" }}>{r.requestNo ?? "—"}</td>
