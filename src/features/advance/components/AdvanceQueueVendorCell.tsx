@@ -13,10 +13,13 @@ import { SearchableSelect } from "@/features/accounting/components/settings/Sear
  * place to confirm was the detail page, one request at a time. Here the officer
  * confirms down the column and then approves the lot in one go.
  *
- * Deliberately not AdvanceVendorPicker: that one loads the whole vendor list
- * and POSTs a fresh match on mount, which per row would mean one list fetch and
- * one match run for every line in the queue. This reads the match the queue
- * already fetched and only asks the server when the officer acts.
+ * Now the only Vendor control in AP-2 — the queue, the preview drawer and the
+ * full request page all use it. The one it replaced loaded the whole vendor
+ * list and POSTed a fresh match every time it mounted, which per row would have
+ * meant a list fetch and a match run for every line in the queue, and on the
+ * full page put a "AI กำลังจับคู่" popup over the screen for a lookup that had
+ * already happened. This reads the row the caller already fetched and only asks
+ * the server when the officer acts.
  */
 
 export interface VendorOption {

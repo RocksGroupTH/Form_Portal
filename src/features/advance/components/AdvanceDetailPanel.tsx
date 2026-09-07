@@ -13,7 +13,7 @@ import {
   type AttachmentSource,
 } from "@/components/ui/AttachmentViewer";
 import { PaymentDatePicker } from "@/components/ui/PaymentDatePicker";
-import { AdvanceVendorPicker } from "./AdvanceVendorPicker";
+import { AdvanceQueueVendorCell } from "./AdvanceQueueVendorCell";
 
 function money(n: number | null | undefined): string {
   return (n ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -48,7 +48,8 @@ export function AdvanceDetailPanel({ requestId, onClose, onChanged }:
   const [data, setData] = useState<AdvanceRequest | null>(null);
   const [loading, setLoading] = useState(false);
   const [attempts, setAttempts] = useState<{ attemptNo: number; erpDocumentNo: string | null; status: string }[]>([]);
-  const [selectedVendor, setSelectedVendor] = useState<string>("");
+  /** Bumped to refetch the request in place — e.g. after the Vendor changes. */
+  const [reloadKey, setReloadKey] = useState(0);
   const [paymentDates, setPaymentDates] = useState<string[]>([]);
   const [paymentDate, setPaymentDate] = useState<string>("");
   const [approving, setApproving] = useState(false);
@@ -77,19 +78,23 @@ export function AdvanceDetailPanel({ requestId, onClose, onChanged }:
   }, [requestId]);
 
   useEffect(() => {
-    setSelectedVendor("");
     setRejectReason("");
     if (requestId == null) { setData(null); return; }
     let cancelled = false;
     setLoading(true);
-    setData(null);
+    // Not cleared on a refetch: blanking it would flash the whole drawer empty
+    // every time the vendor changes. Only a different request starts from nothing.
+    if (reloadKey === 0) setData(null);
     fetch(`/api/request/advance/requests/${requestId}`)
       .then((r) => r.json())
       .then((j: { ok: boolean; data?: AdvanceRequest }) => { if (!cancelled) setData(j.ok && j.data ? j.data : null); })
       .catch(() => { if (!cancelled) setData(null); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [requestId]);
+  }, [requestId, reloadKey]);
+
+  // A different request always starts from a clean slate.
+  useEffect(() => { setReloadKey(0); }, [requestId]);
 
   // Close on Escape.
   useEffect(() => {
@@ -115,6 +120,7 @@ export function AdvanceDetailPanel({ requestId, onClose, onChanged }:
   if (requestId == null) return null;
 
   const adv = data?.advance;
+  const vendorConfirmed = adv?.vendorMatchStatus === "confirmed" && !!adv?.matchedVendorNo;
   const files = adv?.files ?? [];
   const fx = adv && adv.currency !== "THB" && adv.amount != null
     ? `${adv.amount.toLocaleString()} ${adv.currency} × ${adv.exchangeRate ?? "-"} = ${money(adv.baseAmount)} ฿`
@@ -124,17 +130,16 @@ export function AdvanceDetailPanel({ requestId, onClose, onChanged }:
     if (requestId == null) return;
     if (atAccOfficer) {
       if (!paymentDate) return toast.error("กรุณาเลือกวันจ่าย");
-      if (!selectedVendor) return toast.error("กรุณาเลือก Vendor");
+      // Read from the row, not from a local selection: the Vendor cell writes
+      // its pick straight to AccAdvance, so the stored status is the truth. The
+      // panel used to re-POST vendor-confirm here from its own state, which
+      // meant approving could quietly re-write a vendor nobody had touched.
+      if (!vendorConfirmed) {
+        return toast.error("ต้องยืนยัน Vendor ก่อนอนุมัติ — เลือกในช่อง Vendor ด้านบน");
+      }
     }
     setApproving(true);
     try {
-      if (atAccOfficer) {
-        const c = await fetch("/api/request/advance/vendor-confirm", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: requestId, vendorNo: selectedVendor }),
-        }).then((r) => r.json()) as { ok: boolean; error?: string };
-        if (!c.ok) { toast.error(c.error ?? "ยืนยัน Vendor ไม่สำเร็จ"); return; }
-      }
       const res = await fetch(`/api/request/advance/requests/${requestId}/approve`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(atAccOfficer ? { paymentDate } : {}),
@@ -293,19 +298,26 @@ export function AdvanceDetailPanel({ requestId, onClose, onChanged }:
                   <p className="text-[10px] font-bold uppercase tracking-wide mb-1.5" style={{ color: "var(--text-faint)" }}>
                     Vendor (สำหรับลง ERP)
                   </p>
-                  <AdvanceVendorPicker
+                  {/* Reads the match the panel already fetched with the request
+                      (decision: user, 2026-09-07). The old picker POSTed a fresh
+                      vendor-match on every open and captioned it "AI กำลังจับคู่"
+                      — both left over from the LLM matcher. Matching happens once
+                      at submit now and lands in AccAdvance, so opening a drawer
+                      has nothing to compute: it shows the stored row, and only
+                      "เปลี่ยน" pulls the vendor list in.
+
+                      Picking writes to the database immediately, so onConfirmed
+                      also tells the list that opened this drawer — otherwise the
+                      queue behind keeps showing the vendor it read before. */}
+                  <AdvanceQueueVendorCell
                     key={requestId}
                     requestId={requestId}
-                    company={data.brandCode ?? ""}
-                    compact
-                    // Picking here writes to the database immediately, so the
-                    // list that opened this drawer has to be told — otherwise
-                    // the queue behind keeps showing the vendor it read before
-                    // and the two disagree until a manual refresh. Approve and
-                    // reject already reported back; this was the one mutation
-                    // in the drawer that did not.
-                    onConfirmed={(no) => { setSelectedVendor(no); onChanged?.(); }}
-                    onSuggested={setSelectedVendor}
+                    brandCode={data.brandCode}
+                    vendorNo={adv?.matchedVendorNo ?? null}
+                    vendorName={adv?.matchedVendorName ?? null}
+                    status={adv?.vendorMatchStatus ?? null}
+                    reason={adv?.vendorMatchReason ?? null}
+                    onConfirmed={() => { setReloadKey((k) => k + 1); onChanged?.(); }}
                   />
                 </div>
               )}
