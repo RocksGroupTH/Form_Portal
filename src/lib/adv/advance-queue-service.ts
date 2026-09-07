@@ -36,6 +36,13 @@ export interface AdvanceQueueRow {
   updatedAt: string;
   matchedVendorNo: string | null;
   matchedVendorName: string | null;
+  /** null/'pending' | 'suggested' | 'confirmed' | 'none' — the ACC_OFFICER step
+   *  only approves a 'confirmed' row, so the queue needs it to show what is
+   *  still waiting on the officer. */
+  vendorMatchStatus: string | null;
+  /** Why the matcher landed where it did — the actionable half when nothing
+   *  matched ("ยังไม่มี vendor ใบใดระบุรหัสพนักงาน …"). */
+  vendorMatchReason: string | null;
 }
 
 type Pool = Awaited<ReturnType<typeof getAccPool>>;
@@ -110,6 +117,8 @@ function mapRow(row: Record<string, unknown>, map: Record<string, string>): Adva
     updatedAt: row.UpdatedAt ? (row.UpdatedAt as Date).toISOString() : "",
     matchedVendorNo: (row.MatchedVendorNo as string) ?? null,
     matchedVendorName: (row.MatchedVendorName as string) ?? null,
+    vendorMatchStatus: (row.VendorMatchStatus as string) ?? null,
+    vendorMatchReason: (row.VendorMatchReason as string) ?? null,
   };
 }
 
@@ -119,7 +128,7 @@ const SELECT_COLS = `
   r.ErpInterfaceSentAt, r.ErpInterfaceEnvironment, r.ErpDocumentNo,
   r.PaymentDate, r.UpdatedAt,
   a.PayeeName, a.Purpose, a.Currency, a.Amount, a.ExchangeRate, a.BaseAmount,
-  a.MatchedVendorNo, a.MatchedVendorName
+  a.MatchedVendorNo, a.MatchedVendorName, a.VendorMatchStatus, a.VendorMatchReason
 `;
 
 /**

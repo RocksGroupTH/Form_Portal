@@ -9,6 +9,7 @@ import { AdvanceCompanyBar, ADVANCE_COMPANY_ALL } from "./AdvanceCompanyBar";
 import { AdvanceDetailPanel } from "./AdvanceDetailPanel";
 import { CurrencyCells, CURRENCY_HEADERS } from "./CurrencyColumns";
 import { buildBulkMessage, type BulkItemResult } from "@/features/advance/lib/bulk-result-message";
+import { AdvanceQueueVendorCell } from "./AdvanceQueueVendorCell";
 
 interface QueueRow {
   id: number;
@@ -23,6 +24,10 @@ interface QueueRow {
   baseAmount: number | null;
   stepLabel: string;
   needsPayment: boolean;
+  matchedVendorNo: string | null;
+  matchedVendorName: string | null;
+  vendorMatchStatus: string | null;
+  vendorMatchReason?: string | null;
 }
 
 export function AdvanceApproveQueue() {
@@ -71,6 +76,13 @@ export function AdvanceApproveQueue() {
   // Selection is scoped to the visible (filtered) rows.
   const selectedRows = useMemo(() => filtered.filter((r) => selected.has(r.id)), [filtered, selected]);
   const needsPaymentSelected = selectedRows.some((r) => r.needsPayment);
+  const anyNeedsVendor = useMemo(() => filtered.some((r) => r.needsPayment), [filtered]);
+  // Selected rows the ACC_OFFICER gate will refuse — told up front, since the
+  // fix is right there in the Vendor column.
+  const unconfirmed = useMemo(
+    () => selectedRows.filter((r) => r.needsPayment && r.vendorMatchStatus !== "confirmed"),
+    [selectedRows],
+  );
   const allChecked = filtered.length > 0 && filtered.every((r) => selected.has(r.id));
 
   function toggle(id: number) {
@@ -158,6 +170,16 @@ export function AdvanceApproveQueue() {
                 </label>
               </>
             )}
+            {unconfirmed.length > 0 && (
+              <span className="text-[11px] font-semibold px-2 py-1 rounded-lg"
+                style={{
+                  background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)",
+                  border: "1px solid var(--border-info-yellow)",
+                }}
+                title={unconfirmed.map((r) => r.requestNo ?? `#${r.id}`).join(", ")}>
+                ⚠️ {unconfirmed.length} รายการยังไม่ยืนยัน Vendor — ยืนยันในคอลัมน์ Vendor ก่อน
+              </span>
+            )}
             <div className="ml-auto">
               <Button variant="primary" icon={<ClipboardCheck size={15} />}
                 onClick={bulkApprove} loading={busy} disabled={selectedRows.length === 0}>
@@ -184,6 +206,9 @@ export function AdvanceApproveQueue() {
                   {CURRENCY_HEADERS.map((h, i) => (
                     <th key={h} className={i === 0 ? "p-2 text-left" : "p-2 text-right"}>{h}</th>
                   ))}
+                  {/* Only the payment step posts to a Vendor, so the column
+                      appears only when the queue is showing such rows. */}
+                  {anyNeedsVendor && <th className="p-2 text-left">Vendor</th>}
                   <th className="p-2 text-left">ขั้น</th>
                   <th className="p-2 text-center w-10"></th>
                 </tr>
@@ -199,6 +224,23 @@ export function AdvanceApproveQueue() {
                     <td className="p-2 whitespace-nowrap">{r.requesterFullName ?? "-"}</td>
                     <td className="p-2 whitespace-nowrap">{r.payeeName ?? "-"}</td>
                     <CurrencyCells row={r} cellClass="p-2" />
+                    {anyNeedsVendor && (
+                      <td className="p-2">
+                        {r.needsPayment ? (
+                          <AdvanceQueueVendorCell
+                            requestId={r.id}
+                            brandCode={r.brandCode}
+                            vendorNo={r.matchedVendorNo}
+                            vendorName={r.matchedVendorName}
+                            status={r.vendorMatchStatus}
+                            reason={r.vendorMatchReason}
+                            onConfirmed={load}
+                          />
+                        ) : (
+                          <span style={{ color: "var(--text-faint)" }}>—</span>
+                        )}
+                      </td>
+                    )}
                     <td className="p-2">
                       <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
                         style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}>
