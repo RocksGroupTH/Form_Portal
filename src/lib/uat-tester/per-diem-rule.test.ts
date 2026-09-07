@@ -80,31 +80,34 @@ test("a numeric string amount is accepted", () => {
 // Every one of these is a finite 0 under Number(), which would look configured
 // and pay nothing. They are listed individually because a single case would not
 // prove the guard is on the value rather than on its type.
-for (const amount of [0, -1, "", " ", null, undefined, [], false, "abc", NaN, Infinity]) {
-  test(`amount ${JSON.stringify(amount)} is refused`, () => {
+const AMOUNT_REFUSALS: unknown[] = [0, -1, "", " ", null, undefined, [], false, "abc", NaN, Infinity];
+AMOUNT_REFUSALS.forEach((amount, i) => {
+  test(`amount case ${i} (${String(amount)}) is refused`, () => {
     assert.throws(
       () => parseUatPerDiemInput({ staffId: 100, effectiveDate: "2026-09-07", amount }),
       (e: unknown) =>
         e instanceof UatPerDiemInputError && e.message === "จำนวนเงินต่อวันต้องมากกว่า 0",
     );
   });
-}
+});
 
-for (const effectiveDate of ["", "   ", "2026-9-7", "07/09/2026", "2026-13-01", "2026-02-30", null, 20260907]) {
-  test(`effective date ${JSON.stringify(effectiveDate)} is refused`, () => {
+const EFFECTIVE_DATE_REFUSALS: unknown[] = ["", "   ", "2026-9-7", "07/09/2026", "2026-13-01", "2026-02-30", null, 20260907];
+EFFECTIVE_DATE_REFUSALS.forEach((effectiveDate, i) => {
+  test(`effective date case ${i} (${String(effectiveDate)}) is refused`, () => {
     assert.throws(
       () => parseUatPerDiemInput({ staffId: 100, effectiveDate, amount: 800 }),
       (e: unknown) =>
         e instanceof UatPerDiemInputError && e.message === "กรุณาเลือกวันที่เริ่มมีผล",
     );
   });
-}
+});
 
-for (const staffId of [0, -1, 1.5, "", "abc", null, undefined]) {
-  test(`staffId ${JSON.stringify(staffId)} is refused`, () => {
+const STAFF_ID_REFUSALS: unknown[] = [0, -1, 1.5, "", "abc", null, undefined];
+STAFF_ID_REFUSALS.forEach((staffId, i) => {
+  test(`staffId case ${i} (${String(staffId)}) is refused`, () => {
     assert.throws(
       () => parseUatPerDiemInput({ staffId, effectiveDate: "2026-09-07", amount: 800 }),
       (e: unknown) => e instanceof UatPerDiemInputError && e.message === "ไม่พบผู้ทดสอบรายนี้",
     );
   });
-}
+});
