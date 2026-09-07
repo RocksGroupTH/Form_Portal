@@ -25,12 +25,12 @@ export interface CurrencyRow {
 /** Header labels, in the same order as the cells CurrencyCells renders. */
 export const CURRENCY_HEADERS = ["สกุลเงิน", "จำนวน (สกุลเงิน)", "อัตราแลกเปลี่ยน", "จำนวน (บาท)"] as const;
 
-function money(n: number): string {
+export function money(n: number): string {
   return Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 /** Four places, because that is what BOT quotes and what the request stored. */
-function rate(n: number): string {
+export function rate(n: number): string {
   return n.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 4 });
 }
 

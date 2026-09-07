@@ -3,13 +3,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
-import { Eye, ClipboardCheck } from "lucide-react";
+import { Eye, ClipboardCheck, Search } from "lucide-react";
 import { PaymentDatePicker } from "@/components/ui/PaymentDatePicker";
 import { AdvanceCompanyBar, ADVANCE_COMPANY_ALL } from "./AdvanceCompanyBar";
 import { AdvanceDetailPanel } from "./AdvanceDetailPanel";
-import { CurrencyCells, CURRENCY_HEADERS } from "./CurrencyColumns";
+import { money, rate } from "./CurrencyColumns";
+import { AP2_DEFAULT_CURRENCY, isForeignCurrency } from "@/features/advance/constants";
 import { buildBulkMessage, type BulkItemResult } from "@/features/advance/lib/bulk-result-message";
 import { AdvanceQueueVendorCell } from "./AdvanceQueueVendorCell";
+import { QueueColumnFilter } from "./QueueColumnFilter";
+import { ColumnToggleMenu } from "@/features/travel-booking/components/ColumnToggleMenu";
+import {
+  APPROVE_QUEUE_COLUMNS, COLS_STORAGE_KEY, ORDER_STORAGE_KEY,
+  DEFAULT_VISIBLE, loadStoredOrder, loadStoredVisibility, mergeOrder,
+} from "@/features/advance/lib/approve-queue-columns";
 
 interface QueueRow {
   id: number;
@@ -42,6 +49,39 @@ export function AdvanceApproveQueue() {
   const [paymentDate, setPaymentDate] = useState<string>("");
   const [checked, setChecked] = useState(false);
 
+  // Column layout and filters — the reader's own, remembered per browser.
+  const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState<Record<string, string>>({});
+  const [visible, setVisible] = useState<Record<string, boolean>>(DEFAULT_VISIBLE);
+  const [order, setOrder] = useState<string[]>(() => APPROVE_QUEUE_COLUMNS.map((c) => c.key));
+
+  // Read the stored layout after mount: localStorage is not available during
+  // SSR, and seeding state from it directly would hydrate a different table
+  // than the server rendered.
+  useEffect(() => {
+    setVisible(loadStoredVisibility());
+    setOrder(loadStoredOrder());
+  }, []);
+
+  const handleVisibleChange = useCallback((next: Record<string, boolean>) => {
+    setVisible(next);
+    try { window.localStorage.setItem(COLS_STORAGE_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+  }, []);
+
+  const handleReorder = useCallback((keys: string[]) => {
+    const next = mergeOrder(keys);
+    setOrder(next);
+    try { window.localStorage.setItem(ORDER_STORAGE_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+  }, []);
+
+  const setFilter = useCallback((key: string, value: string) => {
+    setFilters((prev) => {
+      const next = { ...prev };
+      if (value) next[key] = value; else delete next[key];
+      return next;
+    });
+  }, []);
+
   const load = useCallback(() => {
     setLoading(true);
     fetch("/api/request/advance/approvals/queue")
@@ -68,15 +108,123 @@ export function AdvanceApproveQueue() {
     return c;
   }, [rows]);
 
-  const filtered = useMemo(
+  /** Plain text per column — the one place a column's value is defined for
+   *  filtering and for the free-text search, so the two can never disagree. */
+  const cellText = useCallback((r: QueueRow, key: string): string => {
+    switch (key) {
+      case "requestNo": return r.requestNo ?? `#${r.id}`;
+      case "company": return r.interfaceTarget || "";
+      case "requester": return r.requesterFullName ?? "";
+      case "payee": return r.payeeName ?? "";
+      case "currency": return r.currency ?? AP2_DEFAULT_CURRENCY;
+      case "amount": return r.amount == null ? "" : String(r.amount);
+      case "exchangeRate": return r.exchangeRate == null ? "" : String(r.exchangeRate);
+      case "baseAmount": return String(r.baseAmount ?? 0);
+      case "vendor": return `${r.matchedVendorNo ?? ""} ${r.matchedVendorName ?? ""}`.trim();
+      case "step": return r.stepLabel ?? "";
+      default: return "";
+    }
+  }, []);
+
+  const companyFiltered = useMemo(
     () => (company === ADVANCE_COMPANY_ALL ? rows : rows.filter((r) => r.interfaceTarget === company)),
     [rows, company],
   );
+
+  /** Options for the select filters, taken from what is actually in the queue. */
+  const selectOptions = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    for (const c of APPROVE_QUEUE_COLUMNS) {
+      if (c.filter !== "select") continue;
+      map[c.key] = Array.from(new Set(companyFiltered.map((r) => cellText(r, c.key)).filter(Boolean))).sort();
+    }
+    return map;
+  }, [companyFiltered, cellText]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return companyFiltered.filter((r) => {
+      if (q && !APPROVE_QUEUE_COLUMNS.some((c) => cellText(r, c.key).toLowerCase().includes(q))) return false;
+      for (const c of APPROVE_QUEUE_COLUMNS) {
+        const f = filters[c.key];
+        if (!f) continue;
+        const v = cellText(r, c.key).toLowerCase();
+        if (c.filter === "select") {
+          // CSV of picks: any one matching keeps the row, so a queue can show
+          // two companies or two steps at once.
+          const sel = f.split(",").filter(Boolean).map((s) => s.toLowerCase());
+          if (sel.length && !sel.includes(v)) return false;
+        } else if (!v.includes(f.toLowerCase())) return false;
+      }
+      return true;
+    });
+  }, [companyFiltered, filters, search, cellText]);
 
   // Selection is scoped to the visible (filtered) rows.
   const selectedRows = useMemo(() => filtered.filter((r) => selected.has(r.id)), [filtered, selected]);
   const needsPaymentSelected = selectedRows.some((r) => r.needsPayment);
   const anyNeedsVendor = useMemo(() => filtered.some((r) => r.needsPayment), [filtered]);
+
+  /** The columns to draw, in the reader's order, minus the hidden ones — and
+   *  minus Vendor unless the queue is actually showing payment-step rows. */
+  const shownColumns = useMemo(() => {
+    const byKey = new Map(APPROVE_QUEUE_COLUMNS.map((c) => [c.key, c]));
+    return order
+      .map((k) => byKey.get(k))
+      .filter((c): c is NonNullable<typeof c> => !!c)
+      .filter((c) => (visible[c.key] ?? true) && (c.key !== "vendor" || anyNeedsVendor));
+  }, [order, visible, anyNeedsVendor]);
+
+  const anyFilterOn = Object.keys(filters).length > 0 || search.trim().length > 0;
+
+  /** Cell content by key. Most columns are the text from `cellText`; the few
+   *  that carry a control or a chip render it here. */
+  function renderCell(r: QueueRow, key: string): React.ReactNode {
+    switch (key) {
+      case "requestNo":
+        return <span className="font-bold">{r.requestNo ?? `#${r.id}`}</span>;
+      case "currency":
+        return (
+          <span className="font-mono text-[11px]"
+            style={{ color: isForeignCurrency(r.currency) ? "var(--nav-active-text)" : "var(--text-muted)" }}>
+            {r.currency ?? AP2_DEFAULT_CURRENCY}
+          </span>
+        );
+      case "amount":
+        return isForeignCurrency(r.currency) && r.amount != null
+          ? money(r.amount)
+          : <span style={{ color: "var(--text-faint)" }}>—</span>;
+      case "exchangeRate":
+        return isForeignCurrency(r.currency) && r.exchangeRate != null
+          ? rate(r.exchangeRate)
+          : <span style={{ color: "var(--text-faint)" }}>—</span>;
+      case "baseAmount":
+        return <span className="font-semibold">{money(r.baseAmount ?? 0)}</span>;
+      case "vendor":
+        return r.needsPayment ? (
+          <AdvanceQueueVendorCell
+            requestId={r.id}
+            brandCode={r.brandCode}
+            vendorNo={r.matchedVendorNo}
+            vendorName={r.matchedVendorName}
+            status={r.vendorMatchStatus}
+            reason={r.vendorMatchReason}
+            onConfirmed={load}
+          />
+        ) : (
+          <span style={{ color: "var(--text-faint)" }}>—</span>
+        );
+      case "step":
+        return (
+          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap"
+            style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}>
+            {r.stepLabel}
+          </span>
+        );
+      default:
+        return cellText(r, key) || "-";
+    }
+  }
   // Selected rows the ACC_OFFICER gate will refuse — told up front, since the
   // fix is right there in the Vendor column.
   const unconfirmed = useMemo(
@@ -146,9 +294,44 @@ export function AdvanceApproveQueue() {
     <div className="flex flex-col gap-3">
       <AdvanceCompanyBar value={company} onChange={setCompany} counts={counts} />
 
+      {rows.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: "var(--text-faint)" }} />
+            <input value={search} onChange={(e) => setSearch(e.target.value)}
+              placeholder="ค้นหาทุกคอลัมน์"
+              className="text-[12px] rounded-lg pl-7 pr-3 py-2 outline-none w-[220px]"
+              style={{ background: "var(--bg-card)", border: "1px solid var(--border-input)", color: "var(--text-primary)" }} />
+          </div>
+          {anyFilterOn && (
+            <button type="button" onClick={() => { setFilters({}); setSearch(""); }}
+              className="text-[11px] font-semibold px-2.5 py-1.5 rounded-lg cursor-pointer border-none"
+              style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}>
+              ล้างตัวกรอง
+            </button>
+          )}
+          <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+            {filtered.length} / {companyFiltered.length} รายการ
+          </span>
+          <div className="ml-auto">
+            <ColumnToggleMenu
+              columns={APPROVE_QUEUE_COLUMNS.map((c) => ({ key: c.key, label: c.label }))}
+              visible={visible}
+              onChange={handleVisibleChange}
+              onReorder={handleReorder}
+            />
+          </div>
+        </div>
+      )}
+
       {filtered.length === 0 ? (
         <p className="text-[13px] py-8 text-center" style={{ color: "var(--text-muted)" }}>
-          ไม่มีรายการรอคุณอนุมัติ{company !== ADVANCE_COMPANY_ALL ? " ในบริษัทนี้" : ""}
+          {/* An empty queue and an over-filtered one are different problems, and
+              telling a reader there is nothing to approve while their own filter
+              is hiding it would send them looking in the wrong place. */}
+          {anyFilterOn
+            ? "ไม่มีรายการตามตัวกรอง — ลองล้างตัวกรอง"
+            : `ไม่มีรายการรอคุณอนุมัติ${company !== ADVANCE_COMPANY_ALL ? " ในบริษัทนี้" : ""}`}
         </p>
       ) : (
         <>
@@ -202,18 +385,30 @@ export function AdvanceApproveQueue() {
                   <th className="p-2 text-left w-8">
                     <input type="checkbox" checked={allChecked} onChange={toggleAll} />
                   </th>
-                  <th className="p-2 text-left">เลขที่</th>
-                  <th className="p-2 text-left">Company</th>
-                  <th className="p-2 text-left">ผู้ขอ</th>
-                  <th className="p-2 text-left">ผู้รับเงิน</th>
-                  {CURRENCY_HEADERS.map((h, i) => (
-                    <th key={h} className={i === 0 ? "p-2 text-left" : "p-2 text-right"}>{h}</th>
+                  {shownColumns.map((c) => (
+                    <th key={c.key} className={`p-2 whitespace-nowrap ${c.numeric ? "text-right" : "text-left"}`}>
+                      {c.label}
+                    </th>
                   ))}
-                  {/* Only the payment step posts to a Vendor, so the column
-                      appears only when the queue is showing such rows. */}
-                  {anyNeedsVendor && <th className="p-2 text-left">Vendor</th>}
-                  <th className="p-2 text-left">ขั้น</th>
                   <th className="p-2 text-center w-10"></th>
+                </tr>
+                {/* Filter row — one cell per shown column, so it follows the
+                    reader's order and disappears with a hidden column. */}
+                <tr style={{ borderBottom: "1px solid var(--border-card)" }}>
+                  <td className="p-1" />
+                  {shownColumns.map((c) => (
+                    <td key={c.key} className="p-1 align-top">
+                      {c.filter ? (
+                        <QueueColumnFilter
+                          kind={c.filter}
+                          value={filters[c.key] ?? ""}
+                          options={selectOptions[c.key]}
+                          onChange={(v) => setFilter(c.key, v)}
+                        />
+                      ) : null}
+                    </td>
+                  ))}
+                  <td className="p-1" />
                 </tr>
               </thead>
               <tbody>
@@ -222,34 +417,12 @@ export function AdvanceApproveQueue() {
                     <td className="p-2">
                       <input type="checkbox" checked={selected.has(r.id)} onChange={() => toggle(r.id)} />
                     </td>
-                    <td className="p-2 font-bold">{r.requestNo ?? `#${r.id}`}</td>
-                    <td className="p-2">{r.interfaceTarget || "-"}</td>
-                    <td className="p-2 whitespace-nowrap">{r.requesterFullName ?? "-"}</td>
-                    <td className="p-2 whitespace-nowrap">{r.payeeName ?? "-"}</td>
-                    <CurrencyCells row={r} cellClass="p-2" />
-                    {anyNeedsVendor && (
-                      <td className="p-2">
-                        {r.needsPayment ? (
-                          <AdvanceQueueVendorCell
-                            requestId={r.id}
-                            brandCode={r.brandCode}
-                            vendorNo={r.matchedVendorNo}
-                            vendorName={r.matchedVendorName}
-                            status={r.vendorMatchStatus}
-                            reason={r.vendorMatchReason}
-                            onConfirmed={load}
-                          />
-                        ) : (
-                          <span style={{ color: "var(--text-faint)" }}>—</span>
-                        )}
+                    {shownColumns.map((c) => (
+                      <td key={c.key}
+                        className={`p-2 ${c.numeric ? "text-right tabular-nums whitespace-nowrap" : ""} ${c.key === "requester" || c.key === "payee" ? "whitespace-nowrap" : ""}`}>
+                        {renderCell(r, c.key)}
                       </td>
-                    )}
-                    <td className="p-2">
-                      <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
-                        style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}>
-                        {r.stepLabel}
-                      </span>
-                    </td>
+                    ))}
                     <td className="p-2 text-center">
                       <button type="button" onClick={() => setPanelId(r.id)}
                         className="cursor-pointer" title="ดูเอกสาร" style={{ color: "var(--text-muted)" }}>
