@@ -181,9 +181,39 @@ const DEFAULT_VISIBLE: Record<string, boolean> = OFFERED_COLS.reduce(
   {} as Record<string, boolean>,
 );
 
-const PICKER_COLUMNS: ColumnToggleOption<string>[] = OFFERED_COLS.map((c) => ({ key: c.key, label: c.screenLabel ?? c.h }));
-
 const COLS_STORAGE_KEY = "ap2-report-cols";
+/** Separate from the visibility key so an existing reader keeps their shown /
+ *  hidden choice and simply starts from the canonical order. */
+const ORDER_STORAGE_KEY = "ap2-report-col-order";
+
+/**
+ * The reader's column order, reconciled against the columns that exist today.
+ *
+ * Stored keys that no longer exist are dropped, and — the part that matters —
+ * any column the stored list has never seen is appended rather than lost. A
+ * column added in a later release would otherwise be invisible to every reader
+ * who had ever dragged one, with nothing on screen to explain why.
+ */
+function mergeOrder(stored: string[]): string[] {
+  const known = new Set(OFFERED_COLS.map((c) => c.key));
+  const kept = stored.filter((k) => known.has(k));
+  const seen = new Set(kept);
+  return [...kept, ...OFFERED_COLS.map((c) => c.key).filter((k) => !seen.has(k))];
+}
+
+function loadStoredOrder(): string[] {
+  const canonical = OFFERED_COLS.map((c) => c.key);
+  if (typeof window === "undefined") return canonical;
+  try {
+    const raw = window.localStorage.getItem(ORDER_STORAGE_KEY);
+    if (!raw) return canonical;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed) || parsed.some((k) => typeof k !== "string")) return canonical;
+    return mergeOrder(parsed as string[]);
+  } catch {
+    return canonical;
+  }
+}
 
 function loadStoredVisibility(): Record<string, boolean> {
   if (typeof window === "undefined") return DEFAULT_VISIBLE;
@@ -208,6 +238,7 @@ export default function AdvanceReportPage() {
    *  rather than two independent booleans. Orthogonal to `overdueOnly`. */
   const [focus, setFocus] = useState<"none" | "awaitingApproval" | "awaitingErp">("none");
   const [visible, setVisible] = useState<Record<string, boolean>>(DEFAULT_VISIBLE);
+  const [order, setOrder] = useState<string[]>(() => OFFERED_COLS.map((c) => c.key));
   /* Detail drawer — click a row to inspect the request without losing the
      report's filters (design doc §"Reading a row"). */
   const [detailId, setDetailId] = useState<number | null>(null);
@@ -222,8 +253,11 @@ export default function AdvanceReportPage() {
   }, []);
   useEffect(() => load(), [load]);
 
+  // Read after mount, not in the initial state: localStorage does not exist on
+  // the server, and seeding from it would make the first render disagree.
   useEffect(() => {
     setVisible(loadStoredVisibility());
+    setOrder(loadStoredOrder());
   }, []);
 
   const handleVisibleChange = useCallback((next: Record<string, boolean>) => {
@@ -235,7 +269,30 @@ export default function AdvanceReportPage() {
     }
   }, []);
 
-  const visibleColumns = useMemo(() => OFFERED_COLS.filter((c) => visible[c.key] ?? true), [visible]);
+  const handleReorder = useCallback((next: string[]) => {
+    setOrder(next);
+    try {
+      window.localStorage.setItem(ORDER_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // best-effort — ignore storage failures (private mode / quota)
+    }
+  }, []);
+
+  /** Every offered column in the reader's order — what the picker lists. */
+  const orderedCols = useMemo(() => {
+    const byKey = new Map(OFFERED_COLS.map((c) => [c.key, c]));
+    return order.map((k) => byKey.get(k)).filter((c): c is Col => !!c);
+  }, [order]);
+
+  const pickerColumns = useMemo<ColumnToggleOption<string>[]>(
+    () => orderedCols.map((c) => ({ key: c.key, label: c.screenLabel ?? c.h })),
+    [orderedCols],
+  );
+
+  const visibleColumns = useMemo(
+    () => orderedCols.filter((c) => visible[c.key] ?? true),
+    [orderedCols, visible],
+  );
 
   // distinct options for select filters — built off the display value
   // (filterValue) where a column has one, so advanceStatus offers the four
@@ -296,6 +353,9 @@ export default function AdvanceReportPage() {
   // AP-2-Control order, regardless of which are shown on screen right now.
   function exportExcel() {
     if (filtered.length === 0) return;
+    // `COLS`, not the reader's dragged order: the workbook is AP-2-Control, a
+    // shape other people's sheets read by position. One person rearranging
+    // their screen must not change the file everyone else receives.
     const header = COLS.map((c) => c.h);
     const body = filtered.map((r) =>
       COLS.map((c) => {
@@ -405,7 +465,7 @@ export default function AdvanceReportPage() {
           ))}
         </div>
 
-        <ColumnToggleMenu columns={PICKER_COLUMNS} visible={visible} onChange={handleVisibleChange} label="คอลัมน์" />
+        <ColumnToggleMenu columns={pickerColumns} visible={visible} onChange={handleVisibleChange} onReorder={handleReorder} label="คอลัมน์" />
 
         {activeFilters > 0 && (
           <button onClick={() => { setSearch(""); setFilters({}); setOverdueOnly(false); setFocus("none"); }}
