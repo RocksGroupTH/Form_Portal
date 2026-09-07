@@ -105,16 +105,21 @@ export function AdvanceQueueVendorCell({
   // row is confirmed, and nothing while it is still waiting. That is the only
   // difference left between a row that can be approved and one that cannot.
   return (
-    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+    // `flex w-full` rather than `inline-flex`: in a table cell the column still
+    // sizes to the 280px minimum below, but in the preview drawer — where the
+    // cell sits in a full-width block — the dropdown stretches to fill instead
+    // of leaving ~90px of the panel unused.
+    <span className="flex w-full items-center gap-1.5 whitespace-nowrap">
       <span className="w-[13px] shrink-0 inline-flex justify-center">
         {busy ? <Loader2 size={12} className="animate-spin" style={{ color: "var(--text-faint)" }} />
           : confirmed ? <Check size={13} style={{ color: "#4fa37a" }} />
           : null}
       </span>
-      {/* Wide enough for a whole "ADV0080 · นายภาสพงษ์ พิษณุพจน์" — a truncated
-          vendor is the one thing in this column worth reading in full, and the
-          table scrolls rather than squeezing its neighbours. */}
-      <span className="inline-block" style={{ minWidth: 280 }}
+      {/* At least wide enough for a whole "ADV0080 · นายภาสพงษ์ พิษณุพจน์" — a
+          truncated vendor is the one thing in this column worth reading in full,
+          and the table scrolls rather than squeezing its neighbours. Grows past
+          that wherever the container is wider. */}
+      <span className="flex-1 min-w-0" style={{ minWidth: 280 }}
         title={confirmed ? vendorName ?? undefined : reason ?? undefined}>
         <SearchableSelect
           value={vendorNo ?? ""}
