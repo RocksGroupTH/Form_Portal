@@ -428,7 +428,6 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
               countryLog: [],
             }
           }
-          allowanceRate={displayRate}
           reasons={reasons}
           accommodations={accommodations}
           vehicles={vehicles}
