@@ -6,7 +6,7 @@
 
 > **Superseded the same day** by
 > [`2026-09-07-uat-tester-move-design.md`](2026-09-07-uat-tester-move-design.md):
-> `UatTesterPerDiem` no longer lives in `Fast_Core` — migrations 139/141 move it
+> `UatTesterPerDiem` no longer lives in `Fast_Core` — migrations 139/140 move it
 > into `Rocks_Portal_Form_UAT`, with no synonym left behind. This document is
 > design history and is kept as written, not rewritten.
 
