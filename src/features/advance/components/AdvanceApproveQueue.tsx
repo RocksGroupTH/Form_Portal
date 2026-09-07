@@ -7,6 +7,7 @@ import { Eye, ClipboardCheck } from "lucide-react";
 import { PaymentDatePicker } from "@/components/ui/PaymentDatePicker";
 import { AdvanceCompanyBar, ADVANCE_COMPANY_ALL } from "./AdvanceCompanyBar";
 import { AdvanceDetailPanel } from "./AdvanceDetailPanel";
+import { CurrencyCells, CURRENCY_HEADERS } from "./CurrencyColumns";
 
 interface QueueRow {
   id: number;
@@ -17,17 +18,10 @@ interface QueueRow {
   payeeName: string | null;
   currency: string | null;
   amount: number | null;
+  exchangeRate: number | null;
   baseAmount: number | null;
   stepLabel: string;
   needsPayment: boolean;
-}
-
-function amountText(r: QueueRow): string {
-  const thb = (r.baseAmount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  if (r.currency && r.currency !== "THB" && r.amount != null) {
-    return `${r.amount.toLocaleString()} ${r.currency} · ${thb} ฿`;
-  }
-  return `${thb} ฿`;
 }
 
 export function AdvanceApproveQueue() {
@@ -176,7 +170,9 @@ export function AdvanceApproveQueue() {
                   <th className="p-2 text-left">Company</th>
                   <th className="p-2 text-left">ผู้ขอ</th>
                   <th className="p-2 text-left">ผู้รับเงิน</th>
-                  <th className="p-2 text-right">ยอด</th>
+                  {CURRENCY_HEADERS.map((h, i) => (
+                    <th key={h} className={i === 0 ? "p-2 text-left" : "p-2 text-right"}>{h}</th>
+                  ))}
                   <th className="p-2 text-left">ขั้น</th>
                   <th className="p-2 text-center w-10"></th>
                 </tr>
@@ -191,7 +187,7 @@ export function AdvanceApproveQueue() {
                     <td className="p-2">{r.interfaceTarget || "-"}</td>
                     <td className="p-2">{r.requesterFullName ?? "-"}</td>
                     <td className="p-2">{r.payeeName ?? "-"}</td>
-                    <td className="p-2 text-right font-semibold">{amountText(r)}</td>
+                    <CurrencyCells row={r} cellClass="p-2" />
                     <td className="p-2">
                       <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
                         style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}>

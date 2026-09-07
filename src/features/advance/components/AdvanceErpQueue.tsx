@@ -11,6 +11,7 @@ import { AdvanceDetailPanel } from "./AdvanceDetailPanel";
 import { AdvanceJournalPreview, type PreviewItem } from "./AdvanceJournalPreview";
 import { FilterMonthPicker } from "@/features/accounting/components/FilterMonthPicker";
 import { sentMonthKey } from "@/features/accounting/components/ApprovalQueueFilters";
+import { CurrencyCells, CURRENCY_HEADERS } from "./CurrencyColumns";
 
 interface ErpRow {
   id: number;
@@ -19,6 +20,7 @@ interface ErpRow {
   payeeName: string | null;
   currency: string | null;
   amount: number | null;
+  exchangeRate: number | null;
   baseAmount: number | null;
   paymentDate: string | null;
   erpInterfaceStatus: string | null;
@@ -36,6 +38,7 @@ type StatusFilter = "ALL" | "Sent" | "Pending" | "Failed";
 function fmt(n: number): string {
   return Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+
 
 function fmtDateTime(iso: string | null): string {
   if (!iso) return "—";
@@ -367,7 +370,9 @@ export function AdvanceErpQueue() {
             </div>
 
             {/* per-row payment-date pickers (re-target the payment cycle before sending) */}
-            <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border-card)" }}>
+            {/* Scrolls sideways rather than squeezing: the currency split added
+                three columns and the page must not scroll as a whole. */}
+            <div className="rounded-xl overflow-x-auto" style={{ border: "1px solid var(--border-card)" }}>
               <table className="w-full text-[12px] border-collapse">
                 <thead>
                   <tr style={{ background: "var(--bg-card-alt)" }}>
@@ -376,7 +381,7 @@ export function AdvanceErpQueue() {
                       <input type="checkbox" checked={allSelected} onChange={toggleAll}
                         disabled={selectableIds.length === 0} className="cursor-pointer" />
                     </th>
-                    {["เลขที่", "Company", "ผู้รับเงิน", "จำนวน", "Vendor", "วันจ่าย"].map((h) => (
+                    {["เลขที่", "Company", "ผู้รับเงิน", ...CURRENCY_HEADERS, "Vendor", "วันจ่าย"].map((h) => (
                       <th key={h} className="px-2.5 py-2 text-left font-bold whitespace-nowrap"
                         style={{ color: "var(--text-faint)", borderBottom: "1px solid var(--border-card)" }}>{h}</th>
                     ))}
@@ -395,11 +400,11 @@ export function AdvanceErpQueue() {
                       </td>
                       <td className="px-2.5 py-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{row.interfaceTarget}</td>
                       <td className="px-2.5 py-2" style={{ color: "var(--text-primary)" }}>{row.payeeName ?? "—"}</td>
-                      <td className="px-2.5 py-2 whitespace-nowrap text-right tabular-nums font-semibold" style={{ color: "var(--text-secondary)" }}>{fmt(row.baseAmount ?? 0)}</td>
+                      <CurrencyCells row={row} />
                       <td className="px-2.5 py-2 whitespace-nowrap">
                         {/* Read-only: the Vendor is chosen/confirmed at the ACC_OFFICER
                             approval step (preview drawer), not here. */}
-                        <span className="text-[12px] inline-block min-w-[260px]" style={{ color: "var(--text-secondary)" }}>
+                        <span className="text-[12px] inline-block min-w-[200px]" style={{ color: "var(--text-secondary)" }}>
                           {row.matchedVendorName
                             ? `${row.matchedVendorName}${row.matchedVendorNo ? ` (${row.matchedVendorNo})` : ""}`
                             : row.matchedVendorNo ?? "—"}
@@ -462,7 +467,7 @@ export function AdvanceErpQueue() {
               <table className="w-full text-[12px] border-collapse">
                 <thead>
                   <tr style={{ background: "var(--bg-card-alt)" }}>
-                    {["เลขที่", "Company", "ผู้รับเงิน", "วันจ่าย", "จำนวน", "External Doc.", "Doc No. (ERP)", "วันที่ส่ง", "สถานะ", "การจัดการ"].map((h) => (
+                    {["เลขที่", "Company", "ผู้รับเงิน", "วันจ่าย", ...CURRENCY_HEADERS, "External Doc.", "Doc No. (ERP)", "วันที่ส่ง", "สถานะ", "การจัดการ"].map((h) => (
                       <th key={h} className="px-2.5 py-2 text-left font-bold whitespace-nowrap"
                         style={{ color: "var(--text-faint)", borderBottom: "1px solid var(--border-card)" }}>{h}</th>
                     ))}
@@ -478,7 +483,7 @@ export function AdvanceErpQueue() {
                       <td className="px-2.5 py-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{r.interfaceTarget}</td>
                       <td className="px-2.5 py-2" style={{ color: "var(--text-primary)" }}>{r.payeeName ?? "—"}</td>
                       <td className="px-2.5 py-2 whitespace-nowrap" style={{ color: "var(--text-muted)" }}>{r.paymentDate ?? "—"}</td>
-                      <td className="px-2.5 py-2 whitespace-nowrap text-right tabular-nums font-semibold" style={{ color: "var(--text-secondary)" }}>{fmt(r.baseAmount ?? 0)}</td>
+                      <CurrencyCells row={r} />
                       <td className="px-2.5 py-2 whitespace-nowrap font-mono" style={{ color: "var(--text-muted)" }}>{r.requestNo ?? "—"}</td>
                       <td className="px-2.5 py-2 whitespace-nowrap font-mono font-semibold" style={{ color: r.erpDocumentNo ? "var(--text-secondary)" : "var(--text-faint)" }}>{r.erpDocumentNo ?? "—"}</td>
                       <td className="px-2.5 py-2 whitespace-nowrap" style={{ color: "var(--text-muted)" }}>{fmtDateTime(r.erpInterfaceSentAt)}</td>

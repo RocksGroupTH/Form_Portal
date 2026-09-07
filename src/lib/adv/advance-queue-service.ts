@@ -1,6 +1,6 @@
 import * as XLSX from "xlsx-js-style";
 import { getAccPool, sql } from "@/lib/adv/pool";
-import { AP2_FORM_CODE } from "@/features/advance/constants";
+import { AP2_FORM_CODE, isForeignCurrency as isForeign } from "@/features/advance/constants";
 import { STEP_LABEL, needsPayment, type StepType } from "@/lib/adv/approval-steps";
 import { isAdvanceApprover } from "@/lib/adv/advance-approver-service";
 import { listBrandErpInterfaceMaps } from "@/lib/acc/brand-erp-interface-map-service";
@@ -15,8 +15,12 @@ export interface AdvanceQueueRow {
   requesterFullName: string | null;
   payeeName: string | null;
   purpose: string | null;
+  /** The three parts of the conversion, kept separate so a reader can check the
+   *  arithmetic: `amount` (in `currency`) × `exchangeRate` = `baseAmount` (THB).
+   *  A THB request carries no rate — amount and baseAmount are the same number. */
   currency: string | null;
   amount: number | null;
+  exchangeRate: number | null;
   baseAmount: number | null;
   status: string;
   currentStepCode: string | null;
@@ -91,6 +95,7 @@ function mapRow(row: Record<string, unknown>, map: Record<string, string>): Adva
     purpose: (row.Purpose as string) ?? null,
     currency: (row.Currency as string) ?? null,
     amount: n(row.Amount),
+    exchangeRate: n(row.ExchangeRate),
     baseAmount: n(row.BaseAmount ?? row.TotalAmount),
     status: row.Status as string,
     currentStepCode: (row.CurrentStepCode as string) ?? null,
@@ -113,7 +118,7 @@ const SELECT_COLS = `
   r.Status, r.CurrentStepCode, r.ErpInterfaceStatus, r.ErpInterfaceError,
   r.ErpInterfaceSentAt, r.ErpInterfaceEnvironment, r.ErpDocumentNo,
   r.PaymentDate, r.UpdatedAt,
-  a.PayeeName, a.Purpose, a.Currency, a.Amount, a.BaseAmount,
+  a.PayeeName, a.Purpose, a.Currency, a.Amount, a.ExchangeRate, a.BaseAmount,
   a.MatchedVendorNo, a.MatchedVendorName
 `;
 
@@ -213,6 +218,8 @@ export async function listResentDocNos(requestIds: number[]): Promise<Map<number
 export async function buildAdvanceErpWorkbook(rows: AdvanceQueueRow[]): Promise<Buffer> {
   const headerStyle = { font: { bold: true }, alignment: { horizontal: "center" as const } };
   const moneyStyle = { alignment: { horizontal: "right" as const }, numFmt: "#,##0.00" };
+  // A rate rounded to 2 places is not the rate that was used — BOT quotes four.
+  const rateStyle = { alignment: { horizontal: "right" as const }, numFmt: "#,##0.0000" };
 
   const aoa: (string | number | null)[][] = [];
   aoa.push(["Rocks Group"]);
@@ -223,16 +230,23 @@ export async function buildAdvanceErpWorkbook(rows: AdvanceQueueRow[]): Promise<
   const resent = await listResentDocNos(rows.map((r) => r.id));
 
   const headerRowIndex = aoa.length;
-  const columns = ["เลขที่", "Company", "ผู้รับเงิน", "รายละเอียดค่าใช้จ่าย", "วันจ่าย", "จำนวน", "External Doc.", "Doc No. (ERP)", "PV เดิม (Resent)", "วันที่ส่ง", "สถานะ"];
+  // The conversion gets its own three columns beside the baht, so the workbook
+  // shows how a foreign-currency advance reached its THB figure instead of only
+  // the result. THB rows leave the rate blank rather than printing a fake 1.
+  const columns = ["เลขที่", "Company", "ผู้รับเงิน", "รายละเอียดค่าใช้จ่าย", "วันจ่าย", "สกุลเงิน", "จำนวน (สกุลเงิน)", "อัตราแลกเปลี่ยน", "จำนวน (บาท)", "External Doc.", "Doc No. (ERP)", "PV เดิม (Resent)", "วันที่ส่ง", "สถานะ"];
   aoa.push(columns);
 
   for (const r of rows) {
+    const foreign = isForeign(r.currency);
     aoa.push([
       r.requestNo,
       r.interfaceTarget,
       r.payeeName,
       r.purpose,
       r.paymentDate,
+      r.currency ?? "THB",
+      foreign ? r.amount ?? null : null,
+      foreign ? r.exchangeRate ?? null : null,
       r.baseAmount ?? r.amount ?? 0,
       r.requestNo,
       r.erpDocumentNo,
@@ -249,8 +263,13 @@ export async function buildAdvanceErpWorkbook(rows: AdvanceQueueRow[]): Promise<
     if (ws[addr]) ws[addr].s = headerStyle;
   }
   for (let rr = headerRowIndex + 1; rr <= range.e.r; rr++) {
-    const amtAddr = XLSX.utils.encode_cell({ r: rr, c: 5 });
-    if (ws[amtAddr]) ws[amtAddr].s = moneyStyle;
+    // 6 = จำนวน (สกุลเงิน), 8 = จำนวน (บาท); 7 = อัตรา, which needs four places.
+    for (const c of [6, 8]) {
+      const addr = XLSX.utils.encode_cell({ r: rr, c });
+      if (ws[addr]) ws[addr].s = moneyStyle;
+    }
+    const rateAddr = XLSX.utils.encode_cell({ r: rr, c: 7 });
+    if (ws[rateAddr]) ws[rateAddr].s = rateStyle;
   }
   // Wider "รายละเอียดค่าใช้จ่าย" (col 3) column.
   ws["!cols"] = columns.map((_, i) => ({ wch: i === 3 ? 36 : 16 }));
