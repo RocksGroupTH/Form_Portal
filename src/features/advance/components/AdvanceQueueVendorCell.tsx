@@ -111,9 +111,10 @@ export function AdvanceQueueVendorCell({
           : confirmed ? <Check size={13} style={{ color: "#4fa37a" }} />
           : null}
       </span>
-      {/* Narrow on purpose — the label truncates and the full name is in the
-          title. An editable control is already the widest thing in the row. */}
-      <span className="inline-block" style={{ minWidth: 150, maxWidth: 210 }}
+      {/* Wide enough for a whole "ADV0080 · นายภาสพงษ์ พิษณุพจน์" — a truncated
+          vendor is the one thing in this column worth reading in full, and the
+          table scrolls rather than squeezing its neighbours. */}
+      <span className="inline-block" style={{ minWidth: 280 }}
         title={confirmed ? vendorName ?? undefined : reason ?? undefined}>
         <SearchableSelect
           value={vendorNo ?? ""}
