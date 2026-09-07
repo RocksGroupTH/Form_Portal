@@ -4,7 +4,11 @@
  *
  * vendor-match-service.ts (server-only) wraps this with the real DB lookup.
  */
-import type { VendorCandidate } from "@/lib/adv/vendor-match-normalize";
+/** A vendor the matcher can land on. */
+export interface VendorCandidate {
+  vendorNo: string;
+  displayName: string | null;
+}
 
 export type VendorMatchStatus = "pending" | "suggested" | "confirmed" | "none";
 export type VendorMatchConfidence = "high" | "medium" | "low";
