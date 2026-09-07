@@ -77,6 +77,7 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
   const [payeeName, setPayeeName] = useState(initial?.advance?.payeeName ?? "");
   const [payeeBankAccount, setPayeeBankAccount] = useState(initial?.advance?.payeeBankAccount ?? "");
   const [payeeBankCode, setPayeeBankCode] = useState(initial?.advance?.payeeBankCode ?? "");
+  const [payeeBankBranch, setPayeeBankBranch] = useState(initial?.advance?.payeeBankBranch ?? "");
   const [needByDate, setNeedByDate] = useState(initial?.advance?.needByDate ?? "");
   const [expectedClearDate, setExpectedClearDate] = useState(initial?.advance?.expectedClearDate ?? "");
   const [purpose, setPurpose] = useState(initial?.advance?.purpose ?? "");
@@ -116,6 +117,7 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
   const payeeNameRef = useRef<HTMLInputElement>(null);
   const payeeBankAccountRef = useRef<HTMLInputElement>(null);
   const payeeBankCodeRef = useRef<HTMLSelectElement>(null);
+  const payeeBankBranchRef = useRef<HTMLInputElement>(null);
   const amountRef = useRef<HTMLInputElement>(null);
   const exchangeRateRef = useRef<HTMLInputElement>(null);
   const overReasonRef = useRef<HTMLTextAreaElement>(null);
@@ -317,6 +319,7 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
         payeeName: effectivePayeeName || null,
         payeeBankAccount: payeeType === "vendor" ? payeeBankAccount || null : null,
         payeeBankCode: payeeType === "vendor" ? payeeBankCode || null : null,
+        payeeBankBranch: payeeType === "vendor" ? payeeBankBranch || null : null,
         needByDate: needByDate || null,
         expectedClearDate: expectedClearDate || null,
         purpose: purpose || null,
@@ -376,6 +379,10 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
       if (!payeeName.trim()) errs.payeeName = "กรุณากรอกชื่อคู่ค้า";
       if (!payeeBankAccount.trim()) errs.payeeBankAccount = "กรุณากรอกเลขที่บัญชีคู่ค้า";
       if (!payeeBankCode.trim()) errs.payeeBankCode = "กรุณาเลือกธนาคารของคู่ค้า";
+      // Optional — but a 1-to-3 digit code is a slip, not a shorter branch.
+      if (payeeBankBranch.trim() && payeeBankBranch.trim().length !== 4) {
+        errs.payeeBankBranch = "รหัสสาขาต้องเป็นตัวเลข 4 หลัก";
+      }
     }
     if (!needByDate) errs.needByDate = "กรุณาระบุวันที่ต้องการเริ่มใช้เงิน";
     if (!expectedClearDate) errs.expectedClearDate = "กรุณาระบุวันที่คาดว่าจะเคลียร์";
@@ -407,6 +414,7 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
     { key: "payeeName", ref: payeeNameRef },
     { key: "payeeBankAccount", ref: payeeBankAccountRef },
     { key: "payeeBankCode", ref: payeeBankCodeRef },
+    { key: "payeeBankBranch", ref: payeeBankBranchRef },
     { key: "amount", ref: amountRef },
     { key: "exchangeRate", ref: exchangeRateRef },
     { key: "overReason", ref: overReasonRef },
@@ -696,6 +704,15 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
                 <option value="">— เลือกธนาคาร —</option>
                 {banks.map((bk) => <option key={bk.bankCode} value={bk.bankCode}>{bk.bankName}</option>)}
               </select>
+            </Field>
+            <Field label="รหัสสาขา (4 หลัก)" error={errors.payeeBankBranch} errorId="err-payeeBankBranch">
+              {/* The BANK's branch, not the ERP BRANCH dimension the journal
+                  posts against. Digits only and capped at four, so a wrong
+                  keystroke cannot be saved rather than being rejected later. */}
+              <input ref={payeeBankBranchRef} className={fieldClass} style={fieldStyle} value={payeeBankBranch} disabled={readOnly}
+                inputMode="numeric" maxLength={4} placeholder="เช่น 0123"
+                aria-invalid={!!errors.payeeBankBranch} aria-describedby={errors.payeeBankBranch ? "err-payeeBankBranch" : undefined}
+                onChange={(e) => { setPayeeBankBranch(e.target.value.replace(/\D+/g, "").slice(0, 4)); clearError("payeeBankBranch"); }} />
             </Field>
           </div>
         )}
