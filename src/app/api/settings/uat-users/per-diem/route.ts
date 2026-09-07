@@ -3,7 +3,6 @@ import { requireRole } from "@/lib/api-auth";
 import {
   UatPerDiemInputError,
   listAllUatPerDiemRates,
-  setUatPerDiemRateActive,
   upsertUatPerDiemRate,
 } from "@/lib/uat-tester/per-diem";
 import { listUatTesters } from "@/lib/uat-tester/service";
@@ -19,6 +18,18 @@ import { listUatTesters } from "@/lib/uat-tester/service";
  * (`parseUatPerDiemInput`), not only in the component: this page has never had a
  * typed numeric input before, and its only existing numeric check is on ids the
  * server itself issued.
+ *
+ * **GET and POST only, deliberately.** There was a PATCH that switched one rate
+ * off, and the table's `IsActive` column went with it (migration 143): every
+ * stored rate now counts and the effective date alone selects, matching HR's
+ * `EmployeeAllowanceLog`. A rate is corrected by POSTing the same effective
+ * date, which overwrites it. A stale tab's PATCH gets Next's own 405, which is
+ * the right answer and needs no code here.
+ *
+ * The AP-17 country-rate route one folder over
+ * (`/api/request/travel-booking/settings/per-diem`) still HAS a PATCH doing
+ * exactly what this one did, and must keep it — its table's flag is read by
+ * pricing. Two routes, same last path segment, opposite rules.
  */
 
 const ADMIN = ["System Admin"] as const;
@@ -70,24 +81,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: e.message }, { status: 400 });
     }
     console.error("[api/settings/uat-users/per-diem] POST", e);
-    return NextResponse.json({ ok: false, error: "Internal server error" }, { status: 500 });
-  }
-}
-
-/** The soft delete. A rate a UAT trip was already priced at is history. */
-export async function PATCH(req: NextRequest) {
-  const session = await requireRole([...ADMIN]);
-  if (session instanceof Response) return session;
-  try {
-    const body = (await req.json()) as { id?: number; isActive?: boolean };
-    const id = Number(body.id);
-    if (!Number.isInteger(id) || id <= 0 || typeof body.isActive !== "boolean") {
-      return NextResponse.json({ ok: false, error: "ข้อมูลไม่ครบ" }, { status: 400 });
-    }
-    await setUatPerDiemRateActive(id, body.isActive, Number(session.user.id) || null);
-    return NextResponse.json({ ok: true });
-  } catch (e) {
-    console.error("[api/settings/uat-users/per-diem] PATCH", e);
     return NextResponse.json({ ok: false, error: "Internal server error" }, { status: 500 });
   }
 }

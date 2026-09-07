@@ -39,6 +39,21 @@ export type { UatPerDiemRateRow };
  * `@/lib/form-environment` would be exactly the loop `getFormPool` dynamically
  * imports the resolver to avoid.
  *
+ * **No `IsActive`, on purpose — this table follows HR.** Every stored rate
+ * counts and the effective date alone selects, exactly as `getAllowanceLog`
+ * treats `Rocks_Portal_HR.dbo.EmployeeAllowanceLog`, which has no such column
+ * and whose query has no filter. The flag was dropped by migration 143 after a
+ * tester's rates were switched off and the override did not go blank, it went
+ * away — pricing them at their real HR salary with nothing on screen to say so.
+ *
+ * **The near-identical twin keeps its flag, and that is not an inconsistency.**
+ * `AccTravelPerDiemCountry` (`src/lib/acc/travel-booking/perdiem-source.ts`)
+ * has the same shape, the same settings panel and a `setPerDiemCountryRateActive`
+ * of the same name — and its pricing genuinely does filter `IsActive = 1`. Edit
+ * this table's code by exact path, never by grepping `isActive`, `toggle` or
+ * "The soft delete": each of those returns hits in both, and only these are safe
+ * to change.
+ *
  * **A missing table throws.** It is not degraded to "no override": the read is
  * reached only in UAT, so an unapplied migration errors UAT AP-17 loudly rather
  * than silently pricing a tester at their real HR allowance and writing that to
@@ -51,7 +66,6 @@ interface Rec {
   EffectiveDate: Date;
   Amount: number;
   Note: string | null;
-  IsActive: boolean;
 }
 
 function toRow(r: Rec): UatPerDiemRateRow {
@@ -61,15 +75,14 @@ function toRow(r: Rec): UatPerDiemRateRow {
     effectiveDate: toDateKey(r.EffectiveDate),
     amount: Number(r.Amount),
     note: r.Note,
-    isActive: !!r.IsActive,
   };
 }
 
-/** Every row including inactive ones — the settings grid shows both. */
+/** Every stored row — the settings grid lists a tester's whole rate history. */
 export async function listAllUatPerDiemRates(): Promise<UatPerDiemRateRow[]> {
   const pool = await getUatFormPool();
   const r = await pool.request().query<Rec>(`
-    SELECT Id, StaffId, EffectiveDate, Amount, Note, IsActive
+    SELECT Id, StaffId, EffectiveDate, Amount, Note
     FROM [dbo].[UatTesterPerDiem]
     ORDER BY StaffId, EffectiveDate DESC
   `);
@@ -80,9 +93,10 @@ export async function listAllUatPerDiemRates(): Promise<UatPerDiemRateRow[]> {
  * One query for a whole set of testers, in `uatManagerStaffIdsFor`'s shape.
  *
  * The report resolves a rate per row and must never do a lookup per row. A
- * StaffId with no active rows is **absent from the map** rather than present
+ * StaffId with no rows **at all** is absent from the map rather than present
  * with `[]`, so a caller reading `map.get(id) ?? null` gets the "no override"
- * answer without restating the rule.
+ * answer without restating the rule. "No rows at all" is the only way to be
+ * absent now — there is no flag to be switched off, and no delete.
  */
 export async function uatPerDiemLogsByStaffIds(
   staffIds: readonly number[],
@@ -101,9 +115,9 @@ export async function uatPerDiemLogsByStaffIds(
     placeholders.push(`@s${i}`);
   });
   const r = await req.query<Rec>(`
-    SELECT Id, StaffId, EffectiveDate, Amount, Note, IsActive
+    SELECT Id, StaffId, EffectiveDate, Amount, Note
     FROM [dbo].[UatTesterPerDiem]
-    WHERE IsActive = 1 AND StaffId IN (${placeholders.join(", ")})
+    WHERE StaffId IN (${placeholders.join(", ")})
     ORDER BY StaffId, EffectiveDate
   `);
 
@@ -139,8 +153,10 @@ export async function uatPerDiemLogFor(
  * `(StaffId, EffectiveDate)` could both see zero rows updated and race onto
  * `UQ_UatTesterPerDiem_Staff_Date`.
  *
- * An amend sets `IsActive = 1`, so re-saving a switched-off date brings it back
- * — the same behaviour `upsertPerDiemCountryRate` has.
+ * Re-saving an existing effective date **overwrites** that date's amount and
+ * note. That is the only way to correct a rate: there is no flag and no delete,
+ * so a row saved against the wrong DATE stays, exactly as it would in HR. The
+ * remedy there is the same one — another dated row.
  */
 export async function upsertUatPerDiemRate(
   raw: { staffId: unknown; effectiveDate: unknown; amount: unknown; note?: unknown },
@@ -160,29 +176,10 @@ export async function upsertUatPerDiemRate(
       USING (SELECT @staffId AS StaffId, @eff AS EffectiveDate) AS s
         ON t.StaffId = s.StaffId AND t.EffectiveDate = s.EffectiveDate
       WHEN MATCHED THEN UPDATE SET
-        Amount = @amount, Note = @note, IsActive = 1,
+        Amount = @amount, Note = @note,
         UpdatedBy = @by, UpdatedAt = SYSDATETIME()
       WHEN NOT MATCHED THEN INSERT (StaffId, EffectiveDate, Amount, Note, CreatedBy, UpdatedBy)
         VALUES (@staffId, @eff, @amount, @note, @by, @by);
-    `);
-}
-
-/** The soft delete. A rate a UAT trip was already priced at is history. */
-export async function setUatPerDiemRateActive(
-  id: number,
-  isActive: boolean,
-  userId: number | null,
-): Promise<void> {
-  const pool = await getUatFormPool();
-  await pool
-    .request()
-    .input("id", sql.Int, id)
-    .input("active", sql.Bit, isActive ? 1 : 0)
-    .input("by", sql.Int, userId)
-    .query(`
-      UPDATE [dbo].[UatTesterPerDiem]
-      SET IsActive = @active, UpdatedBy = @by, UpdatedAt = SYSDATETIME()
-      WHERE Id = @id
     `);
 }
 

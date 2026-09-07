@@ -9,6 +9,7 @@ import { toast } from "sonner";
 // `onSelect` widened to hand back the whole row.
 import { ADSearchModal } from "@/components/settings/ADSearchModal";
 import { SidePanel, SidePanelClose } from "@/components/ui/SidePanel";
+import { latestUatPerDiemRate, type UatPerDiemRateRow } from "@/lib/uat-tester/per-diem-rule";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -29,13 +30,50 @@ interface UatUsersData {
   accountApproverIsTester: boolean;
 }
 
-interface UatPerDiemRate {
-  id: number;
-  staffId: number;
-  effectiveDate: string;
-  amount: number;
-  note: string | null;
-  isActive: boolean;
+/* The row type is IMPORTED, not re-declared, so removing a field from the table
+   is a compile error here too — the local copy this replaces still carried
+   `isActive` after the column was gone. It comes from `per-diem-rule.ts` and
+   never from `per-diem.ts`: the rule module's only import is a type and is
+   erased, while the pool module reaches `@/lib/db/mssql` -> `@/env` and would
+   poison this client bundle with no type error — the `src/lib/api-keys/codes.ts`
+   failure this codebase has already paid for once. */
+
+/** 'YYYY-MM-DD' from local getters — the server runs on a Thai wall clock. */
+function todayKey(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+    now.getDate(),
+  ).padStart(2, "0")}`;
+}
+
+/**
+ * The เบี้ยเลี้ยง UAT cell: the latest CONFIGURED rate, with its start date when
+ * that date has not arrived. An AP-17 trip cannot depart before tomorrow, so a
+ * rate dated tomorrow is the one that will price the next trip that can exist —
+ * showing today's instead left an admin who had just saved one looking at the
+ * old figure, or at "—".
+ */
+function PerDiemAmount({
+  latest,
+  today,
+}: {
+  latest: { amount: number; effectiveDate: string } | null;
+  today: string;
+}) {
+  if (!latest) {
+    return <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>—</span>;
+  }
+  return (
+    <span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>
+      ฿{latest.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}/วัน
+      {latest.effectiveDate > today ? (
+        <span style={{ color: "var(--text-faint)" }}>
+          {" "}
+          (มีผล {latest.effectiveDate.slice(8, 10)}/{latest.effectiveDate.slice(5, 7)})
+        </span>
+      ) : null}
+    </span>
+  );
 }
 
 /* ── Confirm Modal ── */
@@ -70,17 +108,14 @@ function PerDiemPanel({
   tester, rates, ratesFailed, onClose, onSaved,
 }: {
   tester: { staffId: number; name: string; email: string };
-  rates: UatPerDiemRate[];
+  rates: UatPerDiemRateRow[];
   /** True when the rates list failed to load — `rates` is then `[]`, which
    * must not be shown as "no rate set" (see `UatUserSettings`'s own comment). */
   ratesFailed: boolean;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const now = new Date();
-  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
-    now.getDate(),
-  ).padStart(2, "0")}`;
+  const today = todayKey();
 
   const [effectiveDate, setEffectiveDate] = useState(today);
   const [amount, setAmount] = useState("");
@@ -91,6 +126,9 @@ function PerDiemPanel({
     .filter((r) => r.staffId === tester.staffId)
     .slice()
     .sort((a, b) => (a.effectiveDate < b.effectiveDate ? 1 : -1));
+
+  /** Date DESC, so the first one that has started is today's. */
+  const inForceDate = mine.find((r) => r.effectiveDate <= today)?.effectiveDate ?? null;
 
   const save = async () => {
     setBusy(true);
@@ -115,24 +153,6 @@ function PerDiemPanel({
     }
   };
 
-  const toggle = async (id: number, isActive: boolean) => {
-    setBusy(true);
-    try {
-      const res = await fetch("/api/settings/uat-users/per-diem", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, isActive }),
-      });
-      const json = await res.json();
-      if (!json.ok) { toast.error(json.error ?? "ทำรายการไม่สำเร็จ"); return; }
-      onSaved();
-    } catch {
-      toast.error("ทำรายการไม่สำเร็จ");
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <SidePanel open onClose={onClose} width="480px">
       <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: "1px solid var(--border-card)" }}>
@@ -146,6 +166,9 @@ function PerDiemPanel({
       <div className="px-5 py-4 overflow-y-auto flex-1">
         <p className="text-[11px] mb-3" style={{ color: "var(--text-muted)" }}>
           ใช้เฉพาะใน UAT · ถ้าไม่ตั้ง จะใช้เบี้ยเลี้ยงจริงจากระบบ HR · ทริปต่างประเทศที่มีเรตรายประเทศ จะใช้เรตรายประเทศ
+        </p>
+        <p className="text-[11px] mb-3" style={{ color: "var(--text-muted)" }}>
+          ทุกเรตที่บันทึกไว้ถูกใช้หมด — วันที่เริ่มมีผลเป็นตัวเลือกว่าวันไหนใช้เรตไหน เหมือนระบบ HR · แก้เรตเดิมได้ด้วยการบันทึกทับวันเดียวกัน · ตั้งเรตแล้วเอาออกไม่ได้
         </p>
 
         <div className="grid grid-cols-2 gap-2 mb-2">
@@ -180,16 +203,28 @@ function PerDiemPanel({
             <p className="text-[11px]" style={{ color: "var(--text-faint)" }}>ยังไม่ได้ตั้งเรต — จะใช้ข้อมูลจากระบบ HR</p>
           ) : (
             mine.map((r) => (
-              <div key={r.id} className="flex items-center justify-between py-1.5" style={{ borderBottom: "1px solid var(--border-card)" }}>
-                <span className="text-[12px]" style={{ color: r.isActive ? "var(--text-primary)" : "var(--text-faint)" }}>
+              <div key={r.id} className="flex items-center justify-between gap-2 py-1.5" style={{ borderBottom: "1px solid var(--border-card)" }}>
+                <span className="text-[12px]" style={{ color: "var(--text-primary)" }}>
                   {r.effectiveDate} · ฿{r.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}/วัน
                   {r.note ? ` · ${r.note}` : ""}
                 </span>
-                <button onClick={() => void toggle(r.id, !r.isActive)} disabled={busy}
-                  className="text-[10px] font-medium px-2 py-0.5 rounded-lg border-none enabled:cursor-pointer disabled:opacity-60"
-                  style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}>
-                  {r.isActive ? "ปิดใช้" : "เปิดใช้"}
-                </button>
+                {/* `mine` is sorted by date DESC, so the first row that has
+                    started is the one in force — the same answer
+                    `rateForDay(today, …)` gives, without a second copy of it.
+                    Worth stating on screen now that nothing is switched off:
+                    with five dated rates and no flag, "which one am I paid
+                    today" is otherwise a date comparison done by eye. */}
+                {r.effectiveDate === inForceDate ? (
+                  <span className="text-[10px] font-medium px-2 py-0.5 rounded-lg shrink-0"
+                    style={{ background: "var(--status-ok-bg)", color: "var(--status-ok-text)" }}>
+                    ใช้อยู่
+                  </span>
+                ) : r.effectiveDate > today ? (
+                  <span className="text-[10px] px-2 py-0.5 rounded-lg shrink-0"
+                    style={{ background: "var(--bg-badge)", color: "var(--text-faint)" }}>
+                    ยังไม่ถึงวันมีผล
+                  </span>
+                ) : null}
               </div>
             ))
           )}
@@ -205,7 +240,7 @@ export function UatUserSettings() {
     fetcher,
   );
 
-  const { data: rateData, error: rateError, mutate: mutateRates } = useSWR<{ ok: boolean; data: UatPerDiemRate[] }>(
+  const { data: rateData, error: rateError, mutate: mutateRates } = useSWR<{ ok: boolean; data: UatPerDiemRateRow[] }>(
     "/api/settings/uat-users/per-diem",
     fetcher,
   );
@@ -220,19 +255,13 @@ export function UatUserSettings() {
   const ratesFailed = !!rateError || (rateData != null && !rateData.ok);
   const [perDiemFor, setPerDiemFor] = useState<UatTesterListItem | null>(null);
 
-  /** The rate in force today, by the same rule the trip pricing uses. */
-  const rateToday = (staffId: number): number | null => {
-    const now = new Date();
-    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
-      now.getDate(),
-    ).padStart(2, "0")}`;
-    let best: UatPerDiemRate | null = null;
-    for (const r of rates) {
-      if (r.staffId !== staffId || !r.isActive || r.effectiveDate > today) continue;
-      if (!best || r.effectiveDate > best.effectiveDate) best = r;
-    }
-    return best ? best.amount : null;
-  };
+  // The grid answers "what is configured", not "what is in force today" -- see
+  // `latestUatPerDiemRate` and `PerDiemAmount` for why, and note that the two
+  // surfaces on the OTHER rule are deliberately left alone:
+  // `withUatOverrides` (`src/lib/hr/employee-lookup.ts`), whose figure is
+  // stamped into `AllowanceSnapshot`, and the AP-17 form's wallet chip
+  // (`useTravelBookingForm.ts`). Three surfaces, two rules, on purpose.
+  const today = todayKey();
 
   const [showAddTesterModal, setShowAddTesterModal] = useState(false);
   const [managerPickerFor, setManagerPickerFor] = useState<{ email: string; name: string } | null>(null);
@@ -440,14 +469,7 @@ export function UatUserSettings() {
                             <AlertTriangle size={11} /> อ่านไม่สำเร็จ
                           </span>
                         ) : (
-                          <span
-                            className="text-[11px]"
-                            style={{ color: rateToday(t.staffId) != null ? "var(--text-secondary)" : "var(--text-faint)" }}
-                          >
-                            {rateToday(t.staffId) != null
-                              ? `฿${rateToday(t.staffId)!.toLocaleString("en-US", { minimumFractionDigits: 2 })}/วัน`
-                              : "—"}
-                          </span>
+                          <PerDiemAmount latest={latestUatPerDiemRate(rates, t.staffId)} today={today} />
                         )}
                         <button
                           onClick={() => setPerDiemFor(t)}
