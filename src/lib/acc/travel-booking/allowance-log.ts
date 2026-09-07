@@ -128,8 +128,11 @@ export async function getPerDiemEmployeeLogWithSource(
 }
 
 /**
- * The per-diem employee log for one person — **the single point at which a UAT
- * tester's own rate replaces their real HR allowance.**
+ * The per-diem employee log for one person — the single-subject entry point
+ * every non-batch caller uses. The decision that substitutes a UAT tester's
+ * own rate for their real HR allowance is made once, in
+ * `getPerDiemEmployeeLogMap`; this delegates to it through
+ * `getPerDiemEmployeeLogWithSource` rather than re-deciding.
  *
  * Every consumer that prices an AP-17 trip calls this or its batched twin, and
  * `perdiem-source-guard.test.ts` asserts that lexically, because the failure is

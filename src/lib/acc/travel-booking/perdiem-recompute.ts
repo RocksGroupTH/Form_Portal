@@ -83,11 +83,12 @@ export async function recomputeGroupPerDiem(
    * country other than TH**.
    *
    * That condition is not an optimisation. `perdiem-recompute.test.ts`'s
-   * preamble records that it runs with no database because no fixture row
-   * carries an `EmployeeId`, so `getAllowanceLog` — the only real network call
-   * this module can make — is never reached. Loading rates unconditionally would
-   * break that and force the test to grow a second stub for a list that, on
-   * every domestic group, cannot change the answer.
+   * preamble records that it runs with no database: no fixture row carries an
+   * `EmployeeId`, so `getAllowanceLog`'s HR read is never reached, and no
+   * fixture `RequestId` reaches 900000, so `getPerDiemEmployeeLog`'s Fast_Core
+   * read (`uatByRecordId`) is never issued either. Loading rates
+   * unconditionally would break that and force the test to grow a second stub
+   * for a list that, on every domestic group, cannot change the answer.
    */
   let countryRates: PerDiemCountryRate[] | null = null;
   const loadRates = async (): Promise<PerDiemCountryRate[]> => {

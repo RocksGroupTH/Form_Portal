@@ -215,7 +215,7 @@ Production and UAT run **side by side in one deployment**. There is no app-wide 
 
 Who is asking comes from the proxy's `x-pathname` and `x-user-email` headers, **never `auth()`** — `getFormPool()` imports `src/lib/form-environment`, so a session lookup would close the loop `getFormPool → auth → jwt → getFormPool`. Code with no request scope (scripts, background work) resolves to Production.
 
-Since migration 066 that is a hard constraint, not a preference: `auth()` no longer reads Fast_Core, it reads `TeamMember` in the form database. Everything on the path that decides *which* form database answers must therefore come from a pool this resolver does not pick — `getFormSwitchMap()` and `getActiveUatTester()` from `getCorePool()`, identity from `getProductionFormPool()`. **`FormEnvironment` and `UatTester` must stay in Fast_Core**, and `@/lib/team-member/service` must never reach for `getFormPool()`.
+Since migration 066 that is a hard constraint, not a preference: `auth()` no longer reads Fast_Core, it reads `TeamMember` in the form database. Everything on the path that decides *which* form database answers must therefore come from a pool this resolver does not pick — `getFormSwitchMap()` and `getActiveUatTester()` from `getCorePool()`, identity from `getProductionFormPool()`. **`FormEnvironment`, `UatTester` and `UatTesterPerDiem` must stay in Fast_Core** — what a tester is paid must not vary with the form pool — and `@/lib/team-member/service` must never reach for `getFormPool()`.
 
 - **Availability and writability are different questions.** `pickEnvironment().available` asks "may this person reach the form", and an id makes it unconditionally true so records stay readable and approvable. `environmentWritable` asks "is that database still taking new work". Use `resolveCurrentFormAccess()` + `resolveCurrentFormWritable()` on a form's own route, and `resolveFormAccess(formCode, requestId?)` + `resolveFormWritable(...)` to ask about a form from somewhere else (Home, the manager card). **`assertFormWritable()` (`src/lib/uat-tester/guards.ts`) has exactly six call sites** — a `saveDraft` and a submit for each of AP-1, AP-17 and AP-4, in the three `request-service.ts` files. AP-4's `delete-service.ts` deliberately has none, and says why: the guard asks whether the database is still taking *new work*, and withdrawing a draft from a closed form is not that.
 - **The manager differs by environment.** UAT routes to the requester's `UatTester.ManagerStaffId`, re-verified at submit time (still an active tester, still active in HR — self is allowed); Production reads `Rocks_Portal_HR.Employee.ManagerStaffId`. **UAT refuses rather than falling back to HR** — a real manager must never find test data in their queue. Three resolvers, keyed on the *resolved environment* and never on the cookie: `resolveManagerInfo()` (the preview card, shared), and a separate `withUatManager` for each form's submit — `resolveRequesterForActor` in `src/lib/acc/employee-context.ts` (AP-1) and `resolveEmployeeForActor` in `src/lib/hr/employee-lookup.ts` (AP-17). `resolveManagerEmail()` is deliberately *not* overridden.
@@ -562,6 +562,44 @@ Accommodation/ticket booking requests for provincial work travel — supports mu
   - **Five pure modules now carry AP-17's booking rules, each extracted because the inline version broke**: `booking-amounts` (14 tests), `booking-lock` (8), `booking-file-sync` (4), `booking-dirty` (10) and `earliest-travel-date` (6).
 - **AP-17 attachments open in the shared `AttachmentViewer`, never a new tab.** A non-image was an `<a target="_blank">` pointed at the download route, which serves through `attachmentResponseHeaders` — `Content-Disposition: attachment` with `nosniff` — so the new tab downloaded the PDF and closed, and “view” did not view. The viewer AP-1 and AP-4 already use fetches the bytes and renders them from a Blob inside our own origin, precisely so no response header needs relaxing; all three AP-17 sites (`AdminBookingPanel`, `TravelBookingDetail`, `IdCardUpload`) now open it, with the kind from `attachmentKind(fileName, contentType)` in place of five hand-rolled `startsWith("image/")` checks — that helper's filename fallback is load-bearing, since SharePoint returns `application/octet-stream` often enough to mislabel an ordinary `.pdf`. `IdCardUpload` is display only: every access check, the consent flow and every upload guard are unchanged, and `id-card-access.ts` still decides whose bytes are reachable.
 - Uses `Rocks_Portal_HR.EmployeeAllowanceLog` for effective-dated per-diem history. **It no longer reads `TravelProvince`**: จังหวัด/เมือง was dropped on 2026-09-01 and `province-service.ts`, its two routes and the settings editor went with it. The table stays for ACC Portal — see "TravelProvince moved out of Fast_Data" above.
+- **In UAT, a tester's per diem can come from their own configured rate instead
+  of real HR.** `Rocks_Portal_HR` has no UAT twin, so a tester rehearsing AP-17
+  was priced at their real compensation and four screens displayed it.
+  `Fast_Core.dbo.UatTesterPerDiem` (migration **138**, `getCorePool()`, **one
+  copy — not dual-written, not in `MASTER_TABLES`**) holds an effective-dated
+  rate per StaffId, set at Settings → UAT Users. Design:
+  `docs/superpowers/specs/2026-09-07-ap17-uat-per-diem-design.md`.
+  - **One seam: `getPerDiemEmployeeLog` / `getPerDiemEmployeeLogMap`** in
+    `allowance-log.ts`. `getAllowanceLog` now has **no caller outside its own
+    file**, and `perdiem-source-guard.test.ts` asserts that lexically. The dead
+    `resolvePerDiemLog` was deleted to make that true.
+  - **The country rate still wins**, for free: only the *employee* arm is
+    substituted, so `perDiemLogFor` is untouched and its `source` union still has
+    two members. **No rate set falls back to real HR** — `null`, never `[]`.
+  - **Whether it applies is `isUatId(id)` where a record id exists**
+    (`perdiem-recompute.ts`, `report-service.ts`) **and the resolved environment
+    where one does not** (the submit, the allowance-log route,
+    `withUatOverrides`). Both spellings live in `perdiem-uat-gate.ts`. The
+    recompute cannot use the resolver — not because it does I/O, it does not,
+    but because it answers **Production** with no request scope, which would
+    re-price a UAT trip at real HR inside the cancelling transaction.
+  - **`perdiem-recompute.ts`'s SELECT now names `r.StaffId` as well as
+    `r.CountryCode`**, and for the same reason: deleting it fails no typecheck
+    and silently re-prices every UAT trip in the group. Both have guard arms.
+  - **The `฿X/วัน` chip no longer comes from `employee.allowance`.**
+    `/api/me/employee` is unclassified in `ROUTE_RULES`, so it resolves
+    Production for everyone and could never carry a UAT override, and it returns
+    the **actor's** row rather than the requester's. The chip is derived from
+    `estimateLog`, which the form already fetches from the AP-17-classified
+    allowance-log route keyed on `requesterStaffId` — which also fixes the
+    long-standing bug where filing on behalf showed the actor's rate.
+    (`TravelBookingTab`'s `allowanceRate` prop carries the same value but is
+    currently unrendered — the chip on `TravelBookingForm.tsx` is the surface
+    that actually changed.)
+  - **`AllowanceSnapshot` is now re-stamped at submit**, not only at draft save.
+    **This changes production too**: a draft saved before an HR rate change and
+    submitted after it used to keep the stale figure. Submit is when the priced
+    total is fixed, so the snapshot is fixed with it.
 - **AP-17 dropped จังหวัด/เมือง** (2026-09-01). The work location is picked from Google Places in the browser, which already names the city, so a second administrative field was a second place for the same fact to be wrong. Migration 135 added `Lat`/`Lng` to `AccTravelWorkLocation` so the detail page can pin it; **nothing can backfill them** — the Google key is HTTP-referrer restricted, so a server-side geocode answers 403, and every location filed before that date has none and renders no map rather than a wrong one.
 - **The "is this a national ID card?" check is Claude, and the heuristic it replaced never worked.** `POST /api/request/travel-booking/id-card-check` sends the image to `claude-sonnet-5` for a typed `{ isIdCard, reason }`. Until 2026-08-24 the check ran tesseract in the browser and passed an image on **either** a 13-digit run **or** a Thai ID keyword — and a Thai **tax id is also exactly 13 digits**, printed on every ใบกำกับภาษี, so a receipt verified as a national ID card and got the green "ตรวจสอบแล้วเป็นบัตรประชาชน" badge. Its digit pattern allowed a space or a dot between digits too, so one line of prices (`199.00 249.00 30.00`) matched as well — measured, not inferred. **No regex over OCR text can separate a tax id from a national ID number**; do not try to bring one back.
   - **The image is a national ID scan** — the most sensitive thing this app handles, and why `id-card-access.ts` restricts it to the data subject alone. Sending it to a third party was decided deliberately. It already reaches Microsoft (SharePoint) on save; this adds a second processor, not the first. Nothing is stored by the route.

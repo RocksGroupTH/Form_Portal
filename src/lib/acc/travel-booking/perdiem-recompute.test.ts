@@ -13,11 +13,13 @@ import assert from "node:assert/strict";
  * `MSSQL_HOST`) fall through to its real Zod default instead of `undefined`
  * (`SKIP_ENV_VALIDATION` was tried first and does not work: it skips defaults
  * too, so `env.MSSQL_HOST` comes back `undefined` and `mssql.ts`'s own
- * `isIP(env.MSSQL_HOST)` throws before any test body runs). No fixture row
- * below carries an `EmployeeId`, so `getAllowanceLog` (the one real network
- * call this module can make) is never reached — nothing here opens a
- * connection. A dynamic import, not a static one, because static imports are
- * hoisted ahead of this assignment regardless of where they sit in the file.
+ * `isIP(env.MSSQL_HOST)` throws before any test body runs). Nothing here opens
+ * a connection: no fixture row below carries an `EmployeeId`, so
+ * `getAllowanceLog`'s HR read is never reached, and no fixture `RequestId`
+ * reaches 900000, so `getPerDiemEmployeeLog`'s Fast_Core read
+ * (`uatByRecordId`) is never issued either. A dynamic import, not a static
+ * one, because static imports are hoisted ahead of this assignment
+ * regardless of where they sit in the file.
  */
 process.env.AUTH_SECRET ??= "test-secret";
 process.env.MSSQL_DATABASE ??= "test-db";

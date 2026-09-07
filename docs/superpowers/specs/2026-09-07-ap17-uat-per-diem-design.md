@@ -520,3 +520,9 @@ evidence.
 4. It proposed guard-test edits that cannot pass (§8), and cited
    `059_portal_form_baseline.sql:42` — which is `AccApprover` — for
    `AccRequest.StaffId`, at `:231`.
+5. **§3.2's table listed `allowanceRate` as a display surface.** It is passed
+   into `TravelBookingTab` as a prop — declared at `:78`, destructured at
+   `:98` — but the component never renders it anywhere else in the file. The
+   `฿X/วัน` chip on `TravelBookingForm.tsx` is the surface that actually
+   changed; `allowanceRate` carries the same `displayRate` value but reaches
+   no screen.
