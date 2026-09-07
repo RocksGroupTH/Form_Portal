@@ -1,3 +1,12 @@
+-- SUPERSEDED BY MIGRATIONS 139 AND 140 (2026-09-07). Do not re-run.
+--
+-- This file created UatTester in Fast_Core and its header below explains why it
+-- lived there, including "it survives a rebuild of the UAT database". That
+-- argument was weighed and rejected on a measured fact: Rocks_Portal_Form_UAT is
+-- rebuilt essentially never. The table now lives in Rocks_Portal_Form_UAT and
+-- Fast_Core keeps a permanent synonym for ACC Portal. See
+-- docs/superpowers/specs/2026-09-07-uat-tester-move-design.md.
+
 -- Who may test, and who approves their test requests.
 --
 -- Lives in Fast_Core, beside FormEnvironment: readable whichever pool a

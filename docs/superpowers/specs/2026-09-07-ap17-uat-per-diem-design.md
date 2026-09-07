@@ -4,6 +4,12 @@
 **Status:** design agreed, not built
 **Migration:** 138 (`Fast_Core`)
 
+> **Superseded the same day** by
+> [`2026-09-07-uat-tester-move-design.md`](2026-09-07-uat-tester-move-design.md):
+> `UatTesterPerDiem` no longer lives in `Fast_Core` — migrations 139/141 move it
+> into `Rocks_Portal_Form_UAT`, with no synonym left behind. This document is
+> design history and is kept as written, not rewritten.
+
 AP-17 prices a trip by walking its days and charging, per day, whichever
 effective-dated rate was in force. For a foreign trip that log comes from
 `AccTravelPerDiemCountry`; for a Thai one it comes from

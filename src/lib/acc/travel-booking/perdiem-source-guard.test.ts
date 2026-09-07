@@ -157,7 +157,12 @@ test("every server-side pricer calls the per-diem log wrapper", () => {
  * The client half of the same rule. Importing a getCorePool() reader into the
  * form hook pulls @/lib/db/mssql -> @/env into the browser bundle and breaks the
  * build — which no type error predicts, and whose "obvious fix" is to make the
- * override reach the browser some other way.
+ * override reach the browser some other way. getUatFormPool() carries the
+ * identical hazard, not a lesser one: since migrations 139/140 moved UatTester
+ * (and UatTesterPerDiem) out of Fast_Core, it is the literal pool `per-diem.ts`
+ * and `uat-tester/service.ts` now read through, but it is still exported from
+ * the same @/lib/db/mssql that pulls @/env in — naming it here would break the
+ * build exactly as naming getCorePool() would.
  */
 test("the form hook reaches no server-side per-diem reader", () => {
   const src = code("features/travel-booking/hooks/useTravelBookingForm.ts");

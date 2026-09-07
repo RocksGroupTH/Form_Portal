@@ -1,5 +1,11 @@
 # AP-17 UAT Per-Diem Implementation Plan
 
+> **Superseded the same day** by
+> [`docs/superpowers/specs/2026-09-07-uat-tester-move-design.md`](../specs/2026-09-07-uat-tester-move-design.md):
+> `UatTesterPerDiem` no longer lives in `Fast_Core` — migrations 139/141 move it
+> into `Rocks_Portal_Form_UAT`, with no synonym left behind. This plan is
+> implementation history and is kept as written, not rewritten.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let a System Admin set an effective-dated per-diem rate per UAT tester on Settings → UAT Users, and have AP-17 use it instead of the tester's real HR allowance — in UAT only.

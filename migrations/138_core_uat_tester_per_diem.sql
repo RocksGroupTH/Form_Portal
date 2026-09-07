@@ -1,3 +1,15 @@
+-- SUPERSEDED BY MIGRATIONS 139 AND 141 (2026-09-07). Do not re-run.
+--
+-- This file created UatTesterPerDiem in Fast_Core, beside UatTester and
+-- FormEnvironment, and its header below explains why: what a tester is paid
+-- must not depend on which form database answered. UatTester's own durability
+-- argument for living in Fast_Core was weighed and rejected on a measured fact
+-- — see the superseded header on migration 063 — and that same move now takes
+-- this table too. It lives in Rocks_Portal_Form_UAT. Unlike UatTester it gets
+-- NO synonym in Fast_Core: measured 2026-09-07, no application other than this
+-- one names UatTesterPerDiem anywhere. See
+-- docs/superpowers/specs/2026-09-07-uat-tester-move-design.md.
+
 -- A per-diem rate per UAT tester, effective-dated.
 --
 -- TARGET: Fast_Core — one copy, and only this database.

@@ -11,7 +11,8 @@ export { UatPerDiemInputError };
 export type { UatPerDiemRateRow };
 
 /**
- * `Fast_Core.dbo.UatTesterPerDiem` (migration 138) — the pool half.
+ * `UatTesterPerDiem` lives in `Rocks_Portal_Form_UAT` (migrations 139/141), not
+ * in `Fast_Core` where migration 138 first created it — this is the pool half.
  *
  * **`getUatFormPool()`, and nothing else.** This table lives in
  * `Rocks_Portal_Form_UAT` (migrations 139/141) and has no synonym anywhere:
