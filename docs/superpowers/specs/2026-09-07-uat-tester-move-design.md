@@ -2,7 +2,13 @@
 
 **Date:** 2026-09-07
 **Status:** design agreed; the first version was built and then partly reverted — see §12
-**Migrations:** 139 (`Rocks_Portal_Form_UAT`), 140 (`Fast_Core`)
+**Migrations:** 139 (`Rocks_Portal_Form_UAT`), 140 (`Fast_Core`), 141
+(`Fast_Core`, the realign 140's guard needed), and — 2026-09-08, after this
+document was written — 142 and 143 (`Rocks_Portal_Form_UAT`), which renamed the
+table to `TesterPerDiem` and dropped its `IsActive` column. **Everything below
+is as written on 2026-09-07 and still says `UatTesterPerDiem` throughout.** The
+architecture it argues for is unchanged; only the object's name and one column
+are.
 
 `Fast_Core` is shared with two sibling applications, Rocks Fast and ACC Portal.
 `UatTesterPerDiem` — a per-tester effective-dated per-diem rate, created days ago

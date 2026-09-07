@@ -1,5 +1,9 @@
 -- SUPERSEDED BY MIGRATIONS 139 AND 140 (2026-09-07). Do not re-run.
 --
+-- The table it creates below is also no longer called UatTesterPerDiem:
+-- migration 142 renamed it to TesterPerDiem, and 143 dropped its IsActive
+-- column. Everything below is what ran in September 2026, kept as written.
+--
 -- This file created UatTesterPerDiem in Fast_Core, beside UatTester and
 -- FormEnvironment, and its header below explains why: what a tester is paid
 -- must not depend on which form database answered. UatTesterPerDiem alone has

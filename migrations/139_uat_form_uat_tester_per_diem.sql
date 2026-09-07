@@ -1,3 +1,14 @@
+-- SUPERSEDED IN PART BY MIGRATIONS 142 AND 143 (2026-09-08). Applied; kept as
+-- written. The table this creates is now called TesterPerDiem (142) and no
+-- longer has an IsActive column (143).
+--
+-- *** DO NOT RE-RUN THIS AFTER 142. *** Batch 1's guard is
+-- OBJECT_ID('dbo.UatTesterPerDiem') IS NOT NULL, which 142's synonym satisfies
+-- until 143 removes it -- and NOTHING satisfies afterwards. Re-run then, and
+-- this file will happily CREATE a second, empty UatTesterPerDiem beside the
+-- real TesterPerDiem, with no error. A rebuilt Rocks_Portal_Form_UAT wants
+-- 139 -> 142 -> 143 once, in that order, and 139 never again.
+--
 -- UatTesterPerDiem moves into the UAT form database. UatTester stays in
 -- Fast_Core -- see the design doc, section 2 and section 12, for why the two
 -- tables were split after the first version of this work moved both.

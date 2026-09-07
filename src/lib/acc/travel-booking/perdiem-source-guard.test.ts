@@ -160,7 +160,7 @@ test("every server-side pricer calls the per-diem log wrapper", () => {
  * build — which no type error predicts, and whose "obvious fix" is to make the
  * override reach the browser some other way. getUatFormPool() carries the
  * identical hazard, not a lesser one: since migration 139 moved
- * `UatTesterPerDiem` out of Fast_Core into `Rocks_Portal_Form_UAT` (`UatTester`
+ * `TesterPerDiem` out of Fast_Core into `Rocks_Portal_Form_UAT` (`UatTester`
  * itself stayed in Fast_Core, unmoved), getUatFormPool() is the literal pool
  * `per-diem.ts` now reads through, but it is still exported from the same
  * @/lib/db/mssql that pulls @/env in — naming it here would break the build

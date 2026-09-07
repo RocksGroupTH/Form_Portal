@@ -20,7 +20,8 @@ import { listUatTesters } from "@/lib/uat-tester/service";
  * server itself issued.
  *
  * **GET and POST only, deliberately.** There was a PATCH that switched one rate
- * off, and the table's `IsActive` column went with it (migration 143): every
+ * off, and the table's `IsActive` column went with it (migration 143, after 142
+ * renamed `UatTesterPerDiem` → `TesterPerDiem`): every
  * stored rate now counts and the effective date alone selects, matching HR's
  * `EmployeeAllowanceLog`. A rate is corrected by POSTing the same effective
  * date, which overwrites it. A stale tab's PATCH gets Next's own 405, which is
@@ -76,7 +77,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   } catch (e) {
     // The parser's refusals are Thai and name the problem; a constraint
-    // violation surfacing raw would say "CK_UatTesterPerDiem_Amount".
+    // violation surfacing raw would say "CK_TesterPerDiem_Amount".
     if (e instanceof UatPerDiemInputError) {
       return NextResponse.json({ ok: false, error: e.message }, { status: 400 });
     }

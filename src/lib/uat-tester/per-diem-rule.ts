@@ -1,7 +1,7 @@
 import type { AllowanceLogEntry } from "@/lib/acc/travel-booking/perdiem";
 
 /**
- * A UAT tester's own per-diem rate log — the pure half of `UatTesterPerDiem`
+ * A UAT tester's own per-diem rate log — the pure half of `TesterPerDiem`
  * (`Rocks_Portal_Form_UAT`, migrations 139/140 — this file never opens a pool
  * to read it).
  *
@@ -13,7 +13,7 @@ import type { AllowanceLogEntry } from "@/lib/acc/travel-booking/perdiem";
  * into the test run.
  */
 
-/** Longest a Note may be — `UatTesterPerDiem.Note` is `nvarchar(300)`. */
+/** Longest a Note may be — `TesterPerDiem.Note` is `nvarchar(300)`. */
 export const UAT_PER_DIEM_NOTE_MAX = 300;
 
 export interface UatPerDiemRateRow {
@@ -38,7 +38,8 @@ export interface UatPerDiemRateRow {
  * **Every stored row counts. The effective date is the only selector**, which is
  * exactly what `getAllowanceLog` does with `EmployeeAllowanceLog` — a table with
  * no such flag and a query with no filter. This function used to skip rows whose
- * `IsActive` was 0, and the column is gone (migration 143): switching a tester's
+ * `IsActive` was 0, and the column is gone (migration 143, after 142 renamed
+ * the table off its old `UatTesterPerDiem` name): switching a tester's
  * rates off did not blank a column somewhere, it removed the override entirely
  * and priced them at their real HR salary, silently, on the path that writes
  * `AccRequest.TotalAmount`.
@@ -108,7 +109,7 @@ export class UatPerDiemInputError extends Error {}
  *
  * `Number(null)`, `Number("")`, `Number(" ")`, `Number([])` and `Number(false)`
  * are all a finite **0**, which the `CHECK` would then reject with
- * `CK_UatTesterPerDiem_Amount` — a message no admin can act on. More
+ * `CK_TesterPerDiem_Amount` — a message no admin can act on. More
  * importantly, this is the layer that exists whether or not the constraint does.
  *
  * The date is checked for shape *and* for being a real calendar day: the regex

@@ -11,8 +11,16 @@ export { UatPerDiemInputError };
 export type { UatPerDiemRateRow };
 
 /**
- * `UatTesterPerDiem` lives in `Rocks_Portal_Form_UAT` (migrations 139/140), not
- * in `Fast_Core` where migration 138 first created it — this is the pool half.
+ * `TesterPerDiem` lives in `Rocks_Portal_Form_UAT` (migrations 139/140), not
+ * in `Fast_Core` where migration 138 first created it as `UatTesterPerDiem` —
+ * this is the pool half. **Migration 142 dropped the `Uat` prefix**: the
+ * database is UAT by definition and every other table in it is unprefixed
+ * (`AccRequest`, not `UatAccRequest`), so the prefix was a leftover from the
+ * shared `Fast_Core` home where it did work. **The TypeScript symbols keep
+ * theirs on purpose** — `uatPerDiemLogFor`, `UatPerDiemRateRow`, this whole
+ * directory — because they are called from code that runs in both environments
+ * and sit beside `getAllowanceLog` (the HR source), where `uat` is what says
+ * which log is the override. The table and the symbols differ deliberately.
  * `UatTester` itself did NOT move and stays in `Fast_Core`; only this table did
  * — see the design doc's §2 and §12 for why.
  *
@@ -30,7 +38,7 @@ export type { UatPerDiemRateRow };
  * takes a second connection from the pool the transaction is already holding
  * one from -- where before the move it came from `Fast_Core`'s separate
  * budget. It cannot deadlock (the transaction never touches
- * `UatTesterPerDiem`) and pool max is 30 against a handful of testers, so
+ * `TesterPerDiem`) and pool max is 30 against a handful of testers, so
  * this is a note, not a risk.
  *
  * This module imports only the pool and its own pure half, so it introduces no
@@ -42,7 +50,8 @@ export type { UatPerDiemRateRow };
  * **No `IsActive`, on purpose — this table follows HR.** Every stored rate
  * counts and the effective date alone selects, exactly as `getAllowanceLog`
  * treats `Rocks_Portal_HR.dbo.EmployeeAllowanceLog`, which has no such column
- * and whose query has no filter. The flag was dropped by migration 143 after a
+ * and whose query has no filter. The flag was dropped by migration 143 — the
+ * file after the one that renamed this table — after a
  * tester's rates were switched off and the override did not go blank, it went
  * away — pricing them at their real HR salary with nothing on screen to say so.
  *
@@ -52,7 +61,9 @@ export type { UatPerDiemRateRow };
  * of the same name — and its pricing genuinely does filter `IsActive = 1`. Edit
  * this table's code by exact path, never by grepping `isActive`, `toggle` or
  * "The soft delete": each of those returns hits in both, and only these are safe
- * to change.
+ * to change. The rename does not help here — `TesterPerDiem` and
+ * `AccTravelPerDiemCountry` both still answer a `PerDiem` grep, exactly as
+ * `UatTesterPerDiem` did.
  *
  * **A missing table throws.** It is not degraded to "no override": the read is
  * reached only in UAT, so an unapplied migration errors UAT AP-17 loudly rather
@@ -83,7 +94,7 @@ export async function listAllUatPerDiemRates(): Promise<UatPerDiemRateRow[]> {
   const pool = await getUatFormPool();
   const r = await pool.request().query<Rec>(`
     SELECT Id, StaffId, EffectiveDate, Amount, Note
-    FROM [dbo].[UatTesterPerDiem]
+    FROM [dbo].[TesterPerDiem]
     ORDER BY StaffId, EffectiveDate DESC
   `);
   return r.recordset.map(toRow);
@@ -116,7 +127,7 @@ export async function uatPerDiemLogsByStaffIds(
   });
   const r = await req.query<Rec>(`
     SELECT Id, StaffId, EffectiveDate, Amount, Note
-    FROM [dbo].[UatTesterPerDiem]
+    FROM [dbo].[TesterPerDiem]
     WHERE StaffId IN (${placeholders.join(", ")})
     ORDER BY StaffId, EffectiveDate
   `);
@@ -151,7 +162,7 @@ export async function uatPerDiemLogFor(
  * `setFormFlag` already use: an `UPDATE` then `IF @@ROWCOUNT = 0 INSERT` pair is
  * two autocommit transactions, so two concurrent upserts for the same
  * `(StaffId, EffectiveDate)` could both see zero rows updated and race onto
- * `UQ_UatTesterPerDiem_Staff_Date`.
+ * `UQ_TesterPerDiem_Staff_Date`.
  *
  * Re-saving an existing effective date **overwrites** that date's amount and
  * note. That is the only way to correct a rate: there is no flag and no delete,
@@ -172,7 +183,7 @@ export async function upsertUatPerDiemRate(
     .input("note", sql.NVarChar(300), input.note)
     .input("by", sql.Int, userId)
     .query(`
-      MERGE [dbo].[UatTesterPerDiem] WITH (HOLDLOCK) AS t
+      MERGE [dbo].[TesterPerDiem] WITH (HOLDLOCK) AS t
       USING (SELECT @staffId AS StaffId, @eff AS EffectiveDate) AS s
         ON t.StaffId = s.StaffId AND t.EffectiveDate = s.EffectiveDate
       WHEN MATCHED THEN UPDATE SET

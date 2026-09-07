@@ -1,5 +1,11 @@
 -- Fast_Core.dbo.UatTesterPerDiem is dropped. NO synonym is left behind.
 --
+-- Applied 2026-09-07; kept as written. Two things below are dated rather than
+-- wrong: the table has since been renamed to TesterPerDiem by migration 142 --
+-- in the UAT database, not here, so nothing in this file changes -- and the
+-- "all ten columns are in the projection" note stops being a live count once
+-- 143 drops IsActive, leaving nine.
+--
 -- Apply with (Fast_Core ONLY, AFTER migration 139 AND AFTER the code that reads
 -- the new home is deployed -- see the ordering note below):
 --   npm run apply-sql -- --db Fast_Core --file migrations/140_core_uat_tester_per_diem_drop.sql

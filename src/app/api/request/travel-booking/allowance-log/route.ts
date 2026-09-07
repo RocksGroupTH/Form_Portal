@@ -55,10 +55,12 @@ export async function GET(req: NextRequest) {
       data: { entries: resolved.log, countryRates, allowanceSource: resolved.source },
     });
   } catch (e) {
-    // The detail stays server-side. Before migration 138 lands this is reached
-    // by any authenticated UAT viewer as `Invalid object name
-    // 'UatTesterPerDiem'` — a driver error naming a table, echoed to the client
-    // exactly like the settings route already refuses to do.
+    // The detail stays server-side. With migrations 139 and 142 unapplied this
+    // is reached by any authenticated UAT viewer as `Invalid object name
+    // 'TesterPerDiem'` — a driver error naming a table, echoed to the client
+    // exactly like the settings route already refuses to do. (It named
+    // migration 138 until 2026-09-08, which stopped being the one that creates
+    // this table when 139 moved it out of `Fast_Core`.)
     console.error("[api/request/travel-booking/allowance-log] GET", e);
     return NextResponse.json({ ok: false, error: "Internal server error" }, { status: 500 });
   }

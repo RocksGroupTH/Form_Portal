@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 /**
- * `UatTesterPerDiem` moved out of Fast_Core into `Rocks_Portal_Form_UAT`
+ * `TesterPerDiem` moved out of Fast_Core into `Rocks_Portal_Form_UAT`
  * (migrations 139/140), and the pool it is read through is now load-bearing in
  * a way it was not before. `UatTester` itself did NOT move and stays in
  * `Fast_Core` — `src/lib/uat-tester/service.ts` legitimately calls
@@ -50,7 +50,7 @@ test("the guarded list still names every module that reads the moved table", () 
   assert.equal(
     MOVED_TABLE_MODULES.length,
     1,
-    "MOVED_TABLE_MODULES changed size. Adding a reader of UatTesterPerDiem? List " +
+    "MOVED_TABLE_MODULES changed size. Adding a reader of TesterPerDiem? List " +
       "it here. Removing one? Confirm nothing else in src/ names that table before " +
       "lowering this number.",
   );
@@ -61,7 +61,7 @@ test("the moved table is read through getUatFormPool", () => {
     const src = code(file);
     assert.ok(
       /\bgetUatFormPool\s*\(/.test(src),
-      `${file} no longer calls getUatFormPool — UatTesterPerDiem lives in ` +
+      `${file} no longer calls getUatFormPool — TesterPerDiem lives in ` +
         "Rocks_Portal_Form_UAT and that literal pool is the only correct way to reach it",
     );
   }
@@ -75,7 +75,7 @@ test("no forbidden pool getter appears in the moved-table modules", () => {
         !new RegExp(`\\b${bad}\\b`).test(src),
         `${file} names ${bad}. getFormPool and getAccPool close the resolver loop ` +
           "getFormPool -> resolveFormEnvironment -> viewerIsTesting -> getActiveUatTester -> getFormPool; " +
-          "getProductionFormPool and getCorePool resolve databases where these tables do not exist",
+          "getProductionFormPool and getCorePool resolve databases where that table does not exist",
       );
     }
   }
