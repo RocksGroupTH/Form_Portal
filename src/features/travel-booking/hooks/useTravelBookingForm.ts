@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
-import { computePerDiem, type AllowanceLogEntry } from "@/lib/acc/travel-booking/perdiem";
+import { computePerDiem, rateForDay, type AllowanceLogEntry } from "@/lib/acc/travel-booking/perdiem";
 import { effectiveClaimCountry } from "@/features/accounting/lib/claim-currency";
 import type { PerDiemAttribution } from "@/features/travel-booking/lib/perdiem-note";
 import { destinationKeyFor } from "@/features/travel-booking/lib/destination-key";
@@ -602,6 +602,31 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
    */
   const ratesKnown = allowanceLogData != null;
 
+  /**
+   * The rate to SHOW, as opposed to the log used to price.
+   *
+   * It used to be `employee.allowance`, which comes from `/api/me/employee` —
+   * a route that is unclassified in ROUTE_RULES (so it resolves Production for
+   * everyone, and a UAT override could never reach it) and that returns the
+   * ACTOR's row, not the requester's. Both are wrong here.
+   *
+   * `estimateLog` is already the right answer: it comes from
+   * /api/request/travel-booking/allowance-log, which is classified AP-17, keyed
+   * on requesterStaffId, and already substitutes the tester's UAT rate.
+   *
+   * The `> 0` arm is not defensive noise: `rateForDay` answers 0 for a day no
+   * entry covers, and a chip reading ฿0/วัน is a worse answer than the figure it
+   * replaced.
+   */
+  const displayRate = useMemo(() => {
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+      now.getDate(),
+    ).padStart(2, "0")}`;
+    const fromLog = rateForDay(today, estimateLog);
+    return estimateLog.length > 0 && fromLog > 0 ? fromLog : (employee?.allowance ?? null);
+  }, [estimateLog, employee?.allowance]);
+
   const continuationFlags = useMemo(
     () =>
       tabs.map((t, i) => {
@@ -959,6 +984,7 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
     employeeLoading,
     manager,
     managerReason,
+    displayRate,
 
     // on-behalf-of requester picker
     colleagues,
