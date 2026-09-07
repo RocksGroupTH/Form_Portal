@@ -2,6 +2,23 @@ import { sql } from "@/lib/db/mssql";
 import { getHrPool } from "@/lib/hr/pool";
 import type { AllowanceLogEntry } from "@/lib/acc/travel-booking/perdiem";
 import { uatPerDiemLogsByStaffIds } from "@/lib/uat-tester/per-diem";
+import {
+  chooseSubjectLog,
+  perDiemLogSubjectKey,
+  type PerDiemEmployeeLogResult,
+  type PerDiemLogSource,
+  type PerDiemLogSubject,
+} from "@/lib/acc/travel-booking/allowance-log-rule";
+
+// Re-exported so no consumer's import path changes: these lived here before
+// the override-wins decision moved into the pure, import-free
+// `allowance-log-rule.ts` (see that file for why it had to move).
+export {
+  perDiemLogSubjectKey,
+  type PerDiemEmployeeLogResult,
+  type PerDiemLogSource,
+  type PerDiemLogSubject,
+};
 
 /**
  * Effective-dated per-diem allowance history for one employee
@@ -33,43 +50,17 @@ function toDateKey(d: Date): string {
 }
 
 /**
- * Who a per-diem log is being loaded for, and whether this is a UAT record.
+ * The same decision for many people at once — one batched `Fast_Core` query
+ * covering every UAT subject at once (not one query per subject) and one HR
+ * query per distinct employee, never a lookup per row. The report calls this;
+ * routing it through the single-subject version would be N+1.
  *
- * `uat` is a PARAMETER, never resolved inside this module. `allowance-log.ts` is
- * reached from inside a `getAccPool()` transaction, so a static import of
- * `@/lib/form-environment` here would be the very loop `getFormPool` dynamically
- * imports the resolver to break — and the recompute could not use that resolver
- * anyway (see `perdiem-uat-gate.ts`).
- */
-export interface PerDiemLogSubject {
-  employeeId: string | null;
-  staffId: number | null;
-  uat: boolean;
-}
-
-export function perDiemLogSubjectKey(s: PerDiemLogSubject): string {
-  return `${s.uat ? "u" : "p"}:${s.staffId ?? ""}:${s.employeeId ?? ""}`;
-}
-
-/** Which log answered a subject — `"uat"` for a tester's own configured rate, `"hr"` otherwise. */
-export type PerDiemLogSource = "hr" | "uat";
-
-/** A subject's resolved log, plus which log it came from. */
-export interface PerDiemEmployeeLogResult {
-  log: AllowanceLogEntry[];
-  source: PerDiemLogSource;
-}
-
-/**
- * The same decision for many people at once — one Fast_Core query for every UAT
- * subject and one HR query per distinct employee, never a lookup per row. The
- * report calls this; routing it through the single-subject version would be N+1.
- *
- * **The single decision point.** A subject answered by the UAT override gets
- * `source: "uat"`; every other subject — including one with no employee id at
- * all, whose log is `[]` — gets `source: "hr"`. `getPerDiemEmployeeLogWithSource`
- * delegates to this rather than re-deciding, so the override-wins rule is made
- * exactly once.
+ * **The single decision point** is `chooseSubjectLog` (`allowance-log-rule.ts`,
+ * pure and unit-tested with no database): a subject answered by the UAT
+ * override gets `source: "uat"`; every other subject — including one with no
+ * employee id at all, whose log is `[]` — gets `source: "hr"`.
+ * `getPerDiemEmployeeLogWithSource` delegates to this function rather than
+ * re-deciding, so the override-wins rule is made exactly once.
  */
 export async function getPerDiemEmployeeLogMap(
   subjects: readonly PerDiemLogSubject[],
@@ -100,13 +91,7 @@ export async function getPerDiemEmployeeLogMap(
   for (const s of subjects) {
     const key = perDiemLogSubjectKey(s);
     if (out.has(key)) continue;
-    const override =
-      s.uat && typeof s.staffId === "number" ? overrides.get(s.staffId) : undefined;
-    if (override !== undefined) {
-      out.set(key, { log: override, source: "uat" });
-    } else {
-      out.set(key, { log: s.employeeId ? (hrLogs.get(s.employeeId) ?? []) : [], source: "hr" });
-    }
+    out.set(key, chooseSubjectLog(s, overrides, hrLogs));
   }
   return out;
 }
