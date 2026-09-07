@@ -17,6 +17,8 @@ export interface AdvanceDetail {
   payeeName: string | null;         // ชื่อคู่ค้า/พนักงาน (vendor: กรอกเอง; employee: auto)
   payeeBankAccount: string | null;  // เลขที่บัญชี (vendor path)
   payeeBankCode: string | null;     // ธนาคาร → AccBankMaster.BankCode
+  // รหัสสาขาธนาคาร 4 หลัก (คนละเรื่องกับ BRANCH dimension ที่ journal ใช้)
+  payeeBankBranch: string | null;
   // Vendor match (AP-2 Dr = Vendor). Written by the matcher / officer.
   matchedVendorNo: string | null;
   matchedVendorName: string | null;

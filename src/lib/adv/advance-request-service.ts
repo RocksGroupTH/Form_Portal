@@ -69,6 +69,7 @@ function mapAdvanceRow(r: Record<string, unknown>): AdvanceDetail {
     payeeName: (r.PayeeName as string) ?? null,
     payeeBankAccount: (r.PayeeBankAccount as string) ?? null,
     payeeBankCode: (r.PayeeBankCode as string) ?? null,
+    payeeBankBranch: (r.PayeeBankBranch as string) ?? null,
     matchedVendorNo: (r.MatchedVendorNo as string) ?? null,
     matchedVendorName: (r.MatchedVendorName as string) ?? null,
     vendorMatchStatus: (r.VendorMatchStatus as AdvanceDetail["vendorMatchStatus"]) ?? null,
@@ -289,6 +290,11 @@ export function validateAdvanceForSubmit(
     if (!acct) errs.push("กรุณากรอกเลขที่บัญชีคู่ค้า");
     else if (!/^\d+$/.test(acct)) errs.push("เลขที่บัญชีคู่ค้าต้องเป็นตัวเลขเท่านั้น");
     if (!a.payeeBankCode?.trim()) errs.push("กรุณาเลือกธนาคารของคู่ค้า");
+    // Optional, but exactly four digits when given. Requests have been filed
+    // without a branch since the form shipped, so demanding one would reject
+    // work that is otherwise complete; a half-typed code helps nobody though.
+    const branch = a.payeeBankBranch?.trim() ?? "";
+    if (branch && !/^\d{4}$/.test(branch)) errs.push("รหัสสาขาธนาคารต้องเป็นตัวเลข 4 หลัก");
   }
 
   // Currency / FX — foreign currency needs a rate.
@@ -321,6 +327,7 @@ async function persistAdvance(
       .input("payeeName", sql.NVarChar, a.payeeName ?? null)
       .input("bankAcct", sql.NVarChar, a.payeeBankAccount ?? null)
       .input("bankCode", sql.NVarChar, a.payeeBankCode ?? null)
+      .input("bankBranch", sql.NVarChar, a.payeeBankBranch?.trim() || null)
       .input("needBy", sql.Date, a.needByDate || null)
       .input("clear", sql.Date, a.expectedClearDate || null)
       .input("purpose", sql.NVarChar, a.purpose ?? null)
@@ -342,6 +349,7 @@ async function persistAdvance(
     await reqBind().input("payeeChanged", sql.Bit, payeeChanged ? 1 : 0).query(`
       UPDATE [dbo].[AccAdvance] SET
         PayeeType=@payeeType, PayeeName=@payeeName, PayeeBankAccount=@bankAcct, PayeeBankCode=@bankCode,
+        PayeeBankBranch=@bankBranch,
         NeedByDate=@needBy, ExpectedClearDate=@clear, Purpose=@purpose,
         Currency=@currency, Amount=@amount, ExchangeRate=@rate, BaseAmount=@base,
         WhtNote=@wht, OverThresholdReason=@overReason,
@@ -362,9 +370,9 @@ async function persistAdvance(
   } else {
     await reqBind().query(`
       INSERT INTO [dbo].[AccAdvance]
-        (RequestId, PayeeType, PayeeName, PayeeBankAccount, PayeeBankCode,
+        (RequestId, PayeeType, PayeeName, PayeeBankAccount, PayeeBankCode, PayeeBankBranch,
          NeedByDate, ExpectedClearDate, Purpose, Currency, Amount, ExchangeRate, BaseAmount, WhtNote, OverThresholdReason)
-      VALUES (@rid, @payeeType, @payeeName, @bankAcct, @bankCode,
+      VALUES (@rid, @payeeType, @payeeName, @bankAcct, @bankCode, @bankBranch,
          @needBy, @clear, @purpose, @currency, @amount, @rate, @base, @wht, @overReason)`);
   }
 
@@ -506,7 +514,7 @@ export async function submitRequest(
   }
 
   const advance = current.advance ?? {
-    payeeType: null, payeeName: null, payeeBankAccount: null, payeeBankCode: null,
+    payeeType: null, payeeName: null, payeeBankAccount: null, payeeBankCode: null, payeeBankBranch: null,
     matchedVendorNo: null, matchedVendorName: null, vendorMatchStatus: null,
     vendorMatchConfidence: null, vendorMatchReason: null,
     needByDate: null, expectedClearDate: null, purpose: null,

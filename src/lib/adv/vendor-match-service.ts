@@ -1,26 +1,19 @@
 import "server-only";
-import { resolveApiKey } from "@/lib/api-keys/service";
 import { getAccPool, sql } from "@/lib/adv/pool";
 import { getRequest } from "@/lib/adv/advance-request-service";
 import {
-  prefilterVendors, listVendors, findSelectableVendor, isVendorSelectable, findVendorByEmployeeCode,
+  listVendors, findSelectableVendor, isVendorSelectable, findVendorByEmployeeCode,
 } from "@/lib/adv/advance-erp-master-service";
 import { resolveAdvanceInterfaceCompany } from "@/lib/adv/advance-erp-context";
-import type { VendorCandidate } from "@/lib/adv/vendor-match-normalize";
 import {
-  runVendorMatch,
-  runEmployeeCodeMatch,
+  runRequesterCodeMatch,
   type VendorMatchResult,
   type VendorMatchStatus,
   type VendorMatchConfidence,
-  type LlmPick,
-  type FetchCandidates,
-  type AskLlm,
 } from "@/lib/adv/vendor-match-core";
 
-// Re-export the pure orchestrator and its types so callers can import from one place.
-export { runVendorMatch };
-export type { VendorMatchResult, VendorMatchStatus, VendorMatchConfidence, LlmPick, FetchCandidates, AskLlm };
+// Re-export the types so callers can import from one place.
+export type { VendorMatchResult, VendorMatchStatus, VendorMatchConfidence };
 
 /** Thrown for user-facing vendor-confirm validation failures (safe to show the client). */
 export class VendorConfirmError extends Error {
@@ -28,50 +21,6 @@ export class VendorConfirmError extends Error {
     super(message);
     this.name = "VendorConfirmError";
   }
-}
-
-const MODEL = process.env.ANTHROPIC_VENDOR_MATCH_MODEL || "claude-haiku-4-5-20251001"; // Model id — update on Haiku model refresh; mirrors src/lib/clr/ai-receipt.ts
-
-/** Real candidate fetch: coarse SQL prefilter, fall back to a capped full list. */
-function makeFetchCandidates(company: string): FetchCandidates {
-  return async (payeeName: string) => {
-    const pre = await prefilterVendors(company, payeeName, 10);
-    if (pre.length > 0) return pre;
-    return (await listVendors(company)).slice(0, 10);
-  };
-}
-
-/** Real Haiku call. Compact prompt/output; returns null on unusable output. */
-async function askHaiku(payeeName: string, candidates: VendorCandidate[]): Promise<LlmPick | null> {
-  const { value: apiKey } = await resolveApiKey("ANTHROPIC_API_KEY");
-  if (!apiKey) throw new Error("no ANTHROPIC_API_KEY"); // → runVendorMatch treats as pending
-  const { default: Anthropic } = await import("@anthropic-ai/sdk");
-  const client = new Anthropic({ apiKey });
-  const list = candidates.map((c) => `${c.vendorNo}\t${c.displayName ?? ""}`).join("\n");
-  const system = [
-    "You match a Thai/English payee name to ONE vendor from a list.",
-    "Return ONE JSON object only, no prose: {\"vendorNo\":\"..\",\"confidence\":\"high|medium|low\",\"reason\":\"<=12 words\"}.",
-    "If none is a plausible match, return {\"vendorNo\":null,\"confidence\":\"low\",\"reason\":\"no match\"}.",
-  ].join("\n");
-  const user = `Payee: ${payeeName}\nVendors (VendorNo<TAB>DisplayName):\n${list}`;
-  const res = await client.messages.create({
-    model: MODEL, max_tokens: 200, system,
-    messages: [{ role: "user", content: [{ type: "text", text: user }] }],
-  });
-  const textPart = res.content.find((c) => c.type === "text");
-  const rawText = textPart && "text" in textPart ? textPart.text : "";
-  const m = rawText.match(/\{[\s\S]*\}/);
-  if (!m) return null;
-  let j: { vendorNo?: string | null; confidence?: string; reason?: string };
-  try {
-    j = JSON.parse(m[0]) as { vendorNo?: string | null; confidence?: string; reason?: string };
-  } catch {
-    return null; // malformed model output → caller maps to "none"
-  }
-  if (!j.vendorNo) return null;
-  const confidence: VendorMatchConfidence =
-    j.confidence === "high" || j.confidence === "medium" || j.confidence === "low" ? j.confidence : "low";
-  return { vendorNo: String(j.vendorNo).trim(), confidence, reason: String(j.reason ?? "") };
 }
 
 async function writeMatch(requestId: number, r: VendorMatchResult): Promise<void> {
@@ -129,25 +78,12 @@ export async function matchAdvanceVendor(requestId: number): Promise<VendorMatch
     return { status: st, vendorNo: a.matchedVendorNo, vendorName: a.matchedVendorName,
       confidence: a.vendorMatchConfidence, reason: a.vendorMatchReason };
   }
-  // An employee payee IS the requester, and accounting records their staff code
-  // on the vendor's Home Page — an exact key beats guessing at a name, and 175
-  // of the 181 ADV vendors carry Thai names. Falls through to the name matcher
-  // when no code is on file, which is every vendor until accounting fills the
-  // field in, so nothing regresses on the day this ships.
-  const byCode = await runEmployeeCodeMatch(
-    a.payeeType,
+  // Always the requester's vendor, whoever the money is transferred to — the
+  // advance is owed by the person who took it, and AP-3 credits this same
+  // vendor back when they clear it. `a.payeeName` no longer takes part.
+  const result = await runRequesterCodeMatch(
     req.staffId,
     (id) => findVendorByEmployeeCode(company, id),
-  );
-  if (byCode) {
-    await writeMatch(requestId, byCode);
-    return byCode;
-  }
-
-  const result = await runVendorMatch(
-    a.payeeName ?? "",
-    makeFetchCandidates(company),
-    askHaiku,
   );
   await writeMatch(requestId, result);
   return result;

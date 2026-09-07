@@ -219,6 +219,7 @@ export function AdvanceDetailPanel({ requestId, onClose, onChanged }:
                 <Field label="ประเภท" value={adv?.payeeType === "vendor" ? "คู่ค้า" : adv?.payeeType === "employee" ? "พนักงาน" : null} />
                 <Field label="เลขบัญชี" value={adv?.payeeBankAccount} />
                 <Field label="ธนาคาร" value={adv?.payeeBankCode} />
+                <Field label="รหัสสาขา" value={adv?.payeeBankBranch} />
                 <Field label="วันที่ใช้เงิน" value={adv?.needByDate} />
                 <Field label="วันคาดเคลียร์" value={adv?.expectedClearDate} />
                 <Field label="วันจ่าย" value={data.paymentDate} />

@@ -1,73 +1,59 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { runVendorMatch, runEmployeeCodeMatch } from "./vendor-match-core";
+import { runRequesterCodeMatch } from "./vendor-match-core";
 
-const cands = [
-  { vendorNo: "V1", displayName: "ACME Bangkok" },
-  { vendorNo: "V2", displayName: "ACME Chiang Mai" },
-];
-const failLlm = async () => { throw new Error("LLM must not be called"); };
+/**
+ * One rule, and it is deliberately blunt: the vendor comes from the requester's
+ * staff code on a vendor's Home Page, or it does not come at all. The payee's
+ * name is not an input any more, and neither is an LLM.
+ */
 
-test("zero candidates → none, no LLM", async () => {
-  const r = await runVendorMatch("ACME", async () => [], failLlm);
-  assert.deepEqual(r, { status: "none", vendorNo: null, vendorName: null, confidence: null, reason: null });
-});
+const found = { kind: "found" as const, vendor: { vendorNo: "ADV0080", displayName: "นายภาสพงษ์ พิษณุพจน์" } };
 
-test("single exact candidate → suggested high, no LLM", async () => {
-  const r = await runVendorMatch("ACME Co., Ltd.", async () => [{ vendorNo: "V1", displayName: "ACME Co., Ltd." }], failLlm);
+test("one vendor carries the code → suggested, never confirmed", async () => {
+  const r = await runRequesterCodeMatch(10177, async () => found);
   assert.equal(r.status, "suggested");
-  assert.equal(r.vendorNo, "V1");
+  assert.equal(r.vendorNo, "ADV0080");
   assert.equal(r.confidence, "high");
+  assert.match(r.reason ?? "", /10177/);
 });
 
-test("ambiguous → LLM picks", async () => {
-  const r = await runVendorMatch("ACME BKK", async () => cands,
-    async () => ({ vendorNo: "V1", confidence: "medium", reason: "bangkok" }));
-  assert.equal(r.status, "suggested");
-  assert.equal(r.vendorNo, "V1");
-  assert.equal(r.confidence, "medium");
+test("the payee type is not consulted — a คู่ค้า advance still matches the requester", async () => {
+  // The signature no longer takes a payee type at all, which is the point: an
+  // advance paid out to a vendor is still owed by the person who requested it.
+  const r = await runRequesterCodeMatch(10177, async () => found);
+  assert.equal(r.vendorNo, "ADV0080");
 });
 
-test("ambiguous but LLM returns unknown vendorNo → none", async () => {
-  const r = await runVendorMatch("ACME BKK", async () => cands,
-    async () => ({ vendorNo: "V9", confidence: "high", reason: "x" }));
+test("no vendor carries the code → none, and the reason says what to fix", async () => {
+  const r = await runRequesterCodeMatch(10177, async () => ({ kind: "none" }));
   assert.equal(r.status, "none");
+  assert.equal(r.vendorNo, null);
+  assert.match(r.reason ?? "", /Home Page/);
 });
 
-test("LLM throws → pending (officer picks manually)", async () => {
-  const r = await runVendorMatch("ACME BKK", async () => cands, failLlm);
-  assert.equal(r.status, "pending");
+test("two vendors on one code refuses rather than picking one", async () => {
+  const r = await runRequesterCodeMatch(10177, async () => ({ kind: "ambiguous" }));
+  assert.equal(r.status, "none");
+  assert.equal(r.vendorNo, null);
+  assert.match(r.reason ?? "", /มากกว่าหนึ่ง/);
 });
 
-test("employee code: a คู่ค้า payee never uses the code path", async () => {
-  const r = await runEmployeeCodeMatch("vendor", 10177, async () => { throw new Error("must not be called"); });
-  assert.equal(r, null);
+test("no staff id → none, without touching the lookup", async () => {
+  const r = await runRequesterCodeMatch(null, async () => {
+    throw new Error("must not look anything up without a staff id");
+  });
+  assert.equal(r.status, "none");
+  assert.equal(r.vendorNo, null);
 });
 
-test("employee code: no staff id falls through", async () => {
-  const r = await runEmployeeCodeMatch("employee", null, async () => { throw new Error("must not be called"); });
-  assert.equal(r, null);
-});
-
-test("employee code: a hit is suggested, never confirmed", async () => {
-  const r = await runEmployeeCodeMatch("employee", 10177, async () =>
-    ({ kind: "found", vendor: { vendorNo: "ADV0004", displayName: "นาย ทดสอบ" } }));
-  assert.equal(r?.status, "suggested");
-  assert.equal(r?.vendorNo, "ADV0004");
-  assert.equal(r?.confidence, "high");
-  assert.match(r?.reason ?? "", /10177/);
-});
-
-test("employee code: a miss falls through to the name matcher", async () => {
-  const r = await runEmployeeCodeMatch("employee", 10177, async () => ({ kind: "none" }));
-  assert.equal(r, null);
-});
-
-test("employee code: two vendors on one code refuses instead of guessing", async () => {
-  const r = await runEmployeeCodeMatch("employee", 10177, async () => ({ kind: "ambiguous" }));
-  // Not null — null would hand the payee name to the LLM and hide the data error.
-  assert.notEqual(r, null);
-  assert.equal(r?.status, "none");
-  assert.equal(r?.vendorNo, null);
-  assert.match(r?.reason ?? "", /10177/);
+test("every unmatched case carries a reason the officer can act on", async () => {
+  // A blank cell with no explanation is the thing this rule trades away
+  // matching rate for; it must not also be silent.
+  for (const lookup of [{ kind: "none" as const }, { kind: "ambiguous" as const }]) {
+    const r = await runRequesterCodeMatch(10177, async () => lookup);
+    assert.ok((r.reason ?? "").length > 0, `${lookup.kind} must explain itself`);
+  }
+  const noId = await runRequesterCodeMatch(null, async () => ({ kind: "none" }));
+  assert.ok((noId.reason ?? "").length > 0);
 });
