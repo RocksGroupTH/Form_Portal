@@ -55,8 +55,11 @@ export async function GET(req: NextRequest) {
       data: { entries: resolved.log, countryRates, allowanceSource: resolved.source },
     });
   } catch (e) {
-    const message = e instanceof Error ? e.message : "Internal server error";
-    console.error("[api/request/travel-booking/allowance-log] GET", message);
-    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+    // The detail stays server-side. Before migration 138 lands this is reached
+    // by any authenticated UAT viewer as `Invalid object name
+    // 'UatTesterPerDiem'` — a driver error naming a table, echoed to the client
+    // exactly like the settings route already refuses to do.
+    console.error("[api/request/travel-booking/allowance-log] GET", e);
+    return NextResponse.json({ ok: false, error: "Internal server error" }, { status: 500 });
   }
 }
