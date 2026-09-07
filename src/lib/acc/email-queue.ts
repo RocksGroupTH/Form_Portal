@@ -128,30 +128,23 @@ export async function processQueueOn(
     BodyHtml: string;
   }[];
 
-  // Fetched once per drain cycle, not once per message — every row in this
-  // batch is judged against the same tester snapshot. Two reads, batched:
-  // Fast_Core for the tester list and Rocks_Portal_HR for the address the queue
-  // actually carries, because `UatTester.Email` is the login address and every
-  // recipient here is HR's `COALESCE(Email, EmailCompBr)` (see
-  // `listActiveUatTesterAddresses`).
+  // Its own read, deliberately: neither this nor the HR lookup is the database
+  // being drained.
   //
-  // Its own try/catch, deliberately: neither read is the database being
-  // drained. Letting one reject would abort the whole drain, and in
-  // `processQueueBoth` it would reject the `Promise.all` *after* the Production
-  // half had already sent its mail and marked the rows Sent — turning a
-  // Fast_Core or HR hiccup into a 500 on a sweep that half succeeded. Falling
-  // back to an empty list fails closed: nobody is exempt, so every UAT message
-  // is redirected, which is the safe direction.
+  // It is NOT wrapped in a catch. Falling back to an empty list would fail
+  // closed in one sense — nobody is exempt, so no real person is mailed — but
+  // it does so invisibly: the tester who should have received the message does
+  // not, their request sits at MANAGER, and the only trace is a log line.
+  // Letting the error propagate leaves the rows QUEUED, which protects the same
+  // person and is visible. That is also what `applyUatRedirect` already does
+  // when neither UAT_MAIL_REDIRECT nor GRAPH_MAIL_FROM is set, so the two
+  // halves of this function now agree.
+  //
+  // Since migration 139 this read is on Rocks_Portal_Form_UAT rather than
+  // Fast_Core, which is what made the silent path newly reachable.
   let exemptTesters: UatMailExemptRecord[] = [];
   if (environment === "UAT" && rows.length > 0) {
-    try {
-      exemptTesters = await listActiveUatTesterAddresses();
-    } catch (err) {
-      console.error(
-        "[acc/email-queue] UatTester lookup failed — redirecting every UAT message in this batch",
-        err,
-      );
-    }
+    exemptTesters = await listActiveUatTesterAddresses();
   }
 
   let sent = 0,
