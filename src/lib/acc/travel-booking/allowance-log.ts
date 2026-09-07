@@ -50,10 +50,11 @@ function toDateKey(d: Date): string {
 }
 
 /**
- * The same decision for many people at once — one batched `Fast_Core` query
- * covering every UAT subject at once (not one query per subject) and one HR
- * query per distinct employee, never a lookup per row. The report calls this;
- * routing it through the single-subject version would be N+1.
+ * The same decision for many people at once — one batched
+ * `Rocks_Portal_Form_UAT` query covering every UAT subject at once (not one
+ * query per subject) and one HR query per distinct employee, never a lookup
+ * per row. The report calls this; routing it through the single-subject
+ * version would be N+1.
  *
  * **The single decision point** is `chooseSubjectLog` (`allowance-log-rule.ts`,
  * pure and unit-tested with no database): a subject answered by the UAT

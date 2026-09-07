@@ -16,9 +16,10 @@ import type { AllowanceLogEntry } from "@/lib/acc/travel-booking/perdiem";
  * only proves the wrapper is *called*, never that it decides correctly.
  *
  * `getPerDiemEmployeeLogMap` (`allowance-log.ts`) is the only caller: it
- * fetches `overrides` (`Fast_Core.dbo.UatTesterPerDiem`, keyed on StaffId) and
- * `hrLogs` (`Rocks_Portal_HR.dbo.EmployeeAllowanceLog`, keyed on EmployeeId)
- * and hands them here, once per subject, to decide which log answers.
+ * fetches `overrides` (`Rocks_Portal_Form_UAT.dbo.UatTesterPerDiem`, keyed on
+ * StaffId) and `hrLogs` (`Rocks_Portal_HR.dbo.EmployeeAllowanceLog`, keyed on
+ * EmployeeId) and hands them here, once per subject, to decide which log
+ * answers.
  */
 
 /**
