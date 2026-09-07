@@ -416,10 +416,11 @@ export function AdvanceErpQueue() {
                       <td className="px-2.5 py-2 whitespace-nowrap">
                         {/* Read-only: the Vendor is chosen/confirmed at the ACC_OFFICER
                             approval step (preview drawer), not here. */}
-                        <span className="text-[12px] inline-block min-w-[200px]" style={{ color: "var(--text-secondary)" }}>
-                          {row.matchedVendorName
-                            ? `${row.matchedVendorName}${row.matchedVendorNo ? ` (${row.matchedVendorNo})` : ""}`
-                            : row.matchedVendorNo ?? "—"}
+                        {/* The code, with the name on hover — same as the approval
+                            queue, and the code is what the journal line carries. */}
+                        <span className="text-[12px] font-mono" style={{ color: "var(--text-secondary)" }}
+                          title={row.matchedVendorName ?? undefined}>
+                          {row.matchedVendorNo ?? "—"}
                         </span>
                       </td>
                       <td className="px-2.5 py-2 whitespace-nowrap">

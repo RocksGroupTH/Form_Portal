@@ -92,23 +92,28 @@ export function AdvanceQueueVendorCell({
     }
   }
 
+  // The code, not the name (decision: user, 2026-09-07). Thai vendor names run
+  // long and made this the widest column in a table that already scrolls; the
+  // code is short, fixed-width and the thing that reaches BC. The name stays a
+  // hover away, and the picker below still searches on it.
   if (status === "confirmed") {
     return (
-      <span className="inline-flex items-center gap-1.5 text-[12px] whitespace-nowrap"
-        style={{ color: "var(--text-secondary)" }}>
-        <Check size={13} style={{ color: "#4fa37a" }} />
-        {vendorName ?? vendorNo}
+      <span className="inline-flex items-center gap-1.5 text-[12px] whitespace-nowrap font-mono"
+        style={{ color: "var(--text-secondary)" }} title={vendorName ?? undefined}>
+        <Check size={13} className="shrink-0" style={{ color: "#4fa37a" }} />
+        {vendorNo}
       </span>
     );
   }
 
-  // Matched but not yet confirmed: one click, since the officer can read the
-  // name right here and the match is a staff-code lookup, not a guess.
+  // Matched but not yet confirmed: one click, since the match is a staff-code
+  // lookup rather than a guess.
   if (vendorNo) {
     return (
       <span className="inline-flex items-center gap-2 whitespace-nowrap">
-        <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
-          {vendorName ?? vendorNo}
+        <span className="text-[12px] font-mono" style={{ color: "var(--text-muted)" }}
+          title={vendorName ?? undefined}>
+          {vendorNo}
         </span>
         <button type="button" onClick={() => confirm(vendorNo)} disabled={busy}
           className="text-[11px] font-semibold px-2 py-0.5 rounded-lg border-none"
@@ -124,10 +129,15 @@ export function AdvanceQueueVendorCell({
   }
 
   return (
-    <span className="inline-block" style={{ minWidth: 220 }} title={reason ?? undefined}>
+    <span className="inline-block" style={{ minWidth: 180 }} title={reason ?? undefined}>
       <SearchableSelect
         value=""
         onChange={confirm}
+        // Name as the label even though the column shows codes: SearchableSelect
+        // filters on `label` and `value` only, never `subLabel`, so putting the
+        // name underneath would make it unsearchable — and a name is what an
+        // officer types when the match came up empty. The code is `value`, so
+        // both still find a row.
         options={(vendors ?? []).map((v) => ({
           value: v.vendorNo, label: v.displayName ?? v.vendorNo, subLabel: v.vendorNo,
         }))}
