@@ -64,10 +64,12 @@ async function main() {
     SELECT OBJECT_ID('dbo.UatTester', 'U') AS [tester],
            OBJECT_ID('dbo.UatTesterPerDiem', 'U') AS [rate];`);
   if (there.recordset[0].tester === null) {
-    problems.push(`UatTester: not a table in ${uatDb} (the database this app opens with getUatFormPool())`);
+    problems.push(
+      `UatTester: not a table in ${uatDb} (the database this app opens with getUatFormPool()) — run migration 139.`,
+    );
   }
   if (there.recordset[0].rate === null) {
-    problems.push(`UatTesterPerDiem: not a table in ${uatDb}`);
+    problems.push(`UatTesterPerDiem: not a table in ${uatDb} — run migration 139.`);
   }
 
   // 2. Fast_Core's object is a synonym pointing at that SAME database
@@ -112,6 +114,7 @@ async function main() {
   console.log(
     `PASS — UatTester and UatTesterPerDiem are tables in ${uatDb}, Fast_Core.dbo.UatTester is a synonym pointing there, and Fast_Core holds no UatTesterPerDiem.`,
   );
+  process.exit(0);
 }
 
 main().catch((err) => {
