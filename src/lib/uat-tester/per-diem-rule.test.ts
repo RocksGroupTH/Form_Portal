@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  UAT_PER_DIEM_NOTE_MAX,
   UatPerDiemInputError,
   parseUatPerDiemInput,
   uatPerDiemLogFrom,
@@ -100,6 +101,22 @@ EFFECTIVE_DATE_REFUSALS.forEach((effectiveDate, i) => {
         e instanceof UatPerDiemInputError && e.message === "กรุณาเลือกวันที่เริ่มมีผล",
     );
   });
+});
+
+test(`a note of exactly ${UAT_PER_DIEM_NOTE_MAX} characters is accepted`, () => {
+  const note = "a".repeat(UAT_PER_DIEM_NOTE_MAX);
+  const parsed = parseUatPerDiemInput({ staffId: 100, effectiveDate: "2026-09-07", amount: 800, note });
+  assert.equal(parsed.note, note);
+});
+
+test(`a note of ${UAT_PER_DIEM_NOTE_MAX + 1} characters is refused`, () => {
+  const note = "a".repeat(UAT_PER_DIEM_NOTE_MAX + 1);
+  assert.throws(
+    () => parseUatPerDiemInput({ staffId: 100, effectiveDate: "2026-09-07", amount: 800, note }),
+    (e: unknown) =>
+      e instanceof UatPerDiemInputError &&
+      e.message === `หมายเหตุยาวเกิน ${UAT_PER_DIEM_NOTE_MAX} ตัวอักษร`,
+  );
 });
 
 const STAFF_ID_REFUSALS: unknown[] = [0, -1, 1.5, "", "abc", null, undefined];

@@ -12,6 +12,9 @@ import type { AllowanceLogEntry } from "@/lib/acc/travel-booking/perdiem";
  * into the test run.
  */
 
+/** Longest a Note may be — `UatTesterPerDiem.Note` is `nvarchar(300)`. */
+export const UAT_PER_DIEM_NOTE_MAX = 300;
+
 export interface UatPerDiemRateRow {
   id: number;
   staffId: number;
@@ -66,6 +69,11 @@ export class UatPerDiemInputError extends Error {}
  * The date is checked for shape *and* for being a real calendar day: the regex
  * alone admits `2026-02-30`, which `sql.Date` turns into a driver error rather
  * than the Thai refusal beside the field.
+ *
+ * The note is bounded the same way — `ApiKey.Name` (`nvarchar(200)`) taught
+ * this codebase that an over-long value otherwise reaches the admin as SQL
+ * Server's own untranslated truncation error, since the duplicate-code path is
+ * the only one here that used to translate a driver error.
  */
 export function parseUatPerDiemInput(raw: {
   staffId: unknown;
@@ -90,6 +98,9 @@ export function parseUatPerDiemInput(raw: {
   }
 
   const note = typeof raw.note === "string" && raw.note.trim() ? raw.note.trim() : null;
+  if (note !== null && note.length > UAT_PER_DIEM_NOTE_MAX) {
+    throw new UatPerDiemInputError(`หมายเหตุยาวเกิน ${UAT_PER_DIEM_NOTE_MAX} ตัวอักษร`);
+  }
   return { staffId, effectiveDate, amount, note };
 }
 
