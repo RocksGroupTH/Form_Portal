@@ -1,4 +1,4 @@
-import { getCorePool, sql } from "@/lib/db/mssql";
+import { getUatFormPool, sql } from "@/lib/db/mssql";
 import type { AllowanceLogEntry } from "@/lib/acc/travel-booking/perdiem";
 import {
   parseUatPerDiemInput,
@@ -13,10 +13,12 @@ export type { UatPerDiemRateRow };
 /**
  * `Fast_Core.dbo.UatTesterPerDiem` (migration 138) — the pool half.
  *
- * **`getCorePool()`, and nothing else.** What a UAT tester is paid must not
- * depend on which form database answered, which is the same reason `UatTester`
- * and `FormEnvironment` live in Fast_Core. There is exactly one copy: this table
- * is not dual-written and is not in `MASTER_TABLES`.
+ * **`getUatFormPool()`, and nothing else.** This table lives in
+ * `Rocks_Portal_Form_UAT` (migrations 139/141) and has no synonym anywhere:
+ * nothing outside this application names it. `getUatFormPool` is a literal
+ * (`getNamedPool(env.MSSQL_FORM_UAT_DATABASE)`) and consults no resolver, which
+ * is what keeps it off the `getFormPool → … → getActiveUatTester → getFormPool`
+ * loop. `getAccPool` IS `getFormPool`; reaching for it closes that loop.
  *
  * This module imports only the pool and its own pure half, so it introduces no
  * cycle when `allowance-log.ts` pulls it in — and `allowance-log.ts` is reached
@@ -52,7 +54,7 @@ function toRow(r: Rec): UatPerDiemRateRow {
 
 /** Every row including inactive ones — the settings grid shows both. */
 export async function listAllUatPerDiemRates(): Promise<UatPerDiemRateRow[]> {
-  const pool = await getCorePool();
+  const pool = await getUatFormPool();
   const r = await pool.request().query<Rec>(`
     SELECT Id, StaffId, EffectiveDate, Amount, Note, IsActive
     FROM [dbo].[UatTesterPerDiem]
@@ -78,7 +80,7 @@ export async function uatPerDiemLogsByStaffIds(
   );
   if (ids.length === 0) return out;
 
-  const pool = await getCorePool();
+  const pool = await getUatFormPool();
   const req = pool.request();
   const placeholders: string[] = [];
   ids.forEach((id, i) => {
@@ -132,7 +134,7 @@ export async function upsertUatPerDiemRate(
   userId: number | null,
 ): Promise<void> {
   const input = parseUatPerDiemInput(raw);
-  const pool = await getCorePool();
+  const pool = await getUatFormPool();
   await pool
     .request()
     .input("staffId", sql.Int, input.staffId)
@@ -158,7 +160,7 @@ export async function setUatPerDiemRateActive(
   isActive: boolean,
   userId: number | null,
 ): Promise<void> {
-  const pool = await getCorePool();
+  const pool = await getUatFormPool();
   await pool
     .request()
     .input("id", sql.Int, id)
