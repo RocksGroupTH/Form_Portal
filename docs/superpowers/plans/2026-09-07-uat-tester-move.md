@@ -1,5 +1,15 @@
 # UatTester Move Implementation Plan
 
+> **⚠️ SUPERSEDED THE SAME DAY — DO NOT FOLLOW ITS SQL.** The design this plan
+> argues from was reversed before anything was applied: `UatTester` **stays in
+> `Fast_Core`** and only `UatTesterPerDiem` moves. See
+> [`docs/superpowers/specs/2026-09-07-uat-tester-move-design.md`](../specs/2026-09-07-uat-tester-move-design.md),
+> §12, for what was wrong and how it was caught. **This file still contains
+> complete SQL bodies for a `Fast_Core` synonym migration and a migration 141
+> that must never be applied** — neither exists in `migrations/`, which is the
+> only place migrations are run from. Kept as written, as implementation
+> history, rather than rewritten.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Move `UatTester` and `UatTesterPerDiem` out of the shared `Fast_Core` database into `Rocks_Portal_Form_UAT`, leaving a permanent `Fast_Core` synonym for `UatTester` alone.

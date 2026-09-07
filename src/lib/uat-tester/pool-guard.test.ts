@@ -40,6 +40,22 @@ const MOVED_TABLE_MODULES = [
 
 const FORBIDDEN = ["getFormPool", "getAccPool", "getProductionFormPool", "getCorePool"];
 
+/**
+ * The coverage of this whole file is a function of one array literal, and
+ * shortening it changes nothing else: not the test count, not a type, not a red
+ * run. That is exactly how a guard stops guarding without anybody noticing, so
+ * the length is pinned and a change to it has to be deliberate.
+ */
+test("the guarded list still names every module that reads the moved table", () => {
+  assert.equal(
+    MOVED_TABLE_MODULES.length,
+    1,
+    "MOVED_TABLE_MODULES changed size. Adding a reader of UatTesterPerDiem? List " +
+      "it here. Removing one? Confirm nothing else in src/ names that table before " +
+      "lowering this number.",
+  );
+});
+
 test("the moved table is read through getUatFormPool", () => {
   for (const file of MOVED_TABLE_MODULES) {
     const src = code(file);

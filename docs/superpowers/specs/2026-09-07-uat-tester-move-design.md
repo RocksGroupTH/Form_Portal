@@ -212,8 +212,14 @@ Two steps, and the order matters in one direction only.
   transparent through: running 140 before the deploy would give the running build
   `Invalid object name` on AP-17's pricing path in UAT.
 
-Neither gap opens a divergence window: nothing writes the new copy until the code
-is deployed, and nothing reads the old one after it is.
+Neither gap opens a divergence window, and the reason is stronger than it looks:
+**the per-diem feature itself is not on `master`.** `per-diem.ts`, the settings
+route and migration 138 all arrive in the same merge, so between 139 and the
+deploy there is no writer of `Fast_Core.UatTesterPerDiem` anywhere in the running
+build — nothing can diverge because nothing can write. Do not read this as a
+general property of the two-step: it would **not** hold for a two-stage release
+where the feature was already live, and 138 having been applied to `Fast_Core`
+already makes that misreading easy.
 
 **`npm run check:alignment` after each step; it must stay at 27.**
 
@@ -247,7 +253,7 @@ Four lines in one file, plus its header:
 
 | File | Change |
 |---|---|
-| `src/lib/uat-tester/per-diem.ts` | `getCorePool` → `getUatFormPool` at four sites (`:55, :81, :135, :161`) |
+| `src/lib/uat-tester/per-diem.ts` | `getCorePool` → `getUatFormPool` at its four pool acquisitions — one per exported function that opens one. Line numbers are deliberately not cited: this row named `:55, :81, :135, :161` and was stale twice over by the time the work landed, because the file's own header grew. |
 
 Its header states the new home, and why `getUatFormPool()` and **never**
 `getFormPool()`/`getAccPool()`.

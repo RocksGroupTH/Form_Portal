@@ -23,6 +23,16 @@ export type { UatPerDiemRateRow };
  * is what keeps it off the `getFormPool → … → getActiveUatTester → getFormPool`
  * loop. `getAccPool` IS `getFormPool`; reaching for it closes that loop.
  *
+ * One consequence of the move worth naming, harmless but real: `getNamedPool`
+ * caches by database name, so **in UAT `getFormPool()` and `getUatFormPool()`
+ * hand back the same pool object**. `recomputeGroupPerDiem` calls
+ * `getPerDiemEmployeeLog` inside its own open transaction, so that read now
+ * takes a second connection from the pool the transaction is already holding
+ * one from -- where before the move it came from `Fast_Core`'s separate
+ * budget. It cannot deadlock (the transaction never touches
+ * `UatTesterPerDiem`) and pool max is 30 against a handful of testers, so
+ * this is a note, not a risk.
+ *
  * This module imports only the pool and its own pure half, so it introduces no
  * cycle when `allowance-log.ts` pulls it in — and `allowance-log.ts` is reached
  * from inside a `getAccPool()` transaction, where a static import of

@@ -16,7 +16,7 @@ import assert from "node:assert/strict";
  * `isIP(env.MSSQL_HOST)` throws before any test body runs). Nothing here opens
  * a connection: no fixture row below carries an `EmployeeId`, so
  * `getAllowanceLog`'s HR read is never reached, and no fixture `RequestId`
- * reaches 900000, so `getPerDiemEmployeeLog`'s Fast_Core read
+ * reaches 900000, so `getPerDiemEmployeeLog`'s UAT per-diem read
  * (`uatByRecordId`) is never issued either. A dynamic import, not a static
  * one, because static imports are hoisted ahead of this assignment
  * regardless of where they sit in the file.

@@ -85,8 +85,8 @@ export async function recomputeGroupPerDiem(
    * That condition is not an optimisation. `perdiem-recompute.test.ts`'s
    * preamble records that it runs with no database: no fixture row carries an
    * `EmployeeId`, so `getAllowanceLog`'s HR read is never reached, and no
-   * fixture `RequestId` reaches 900000, so `getPerDiemEmployeeLog`'s Fast_Core
-   * read (`uatByRecordId`) is never issued either. Loading rates
+   * fixture `RequestId` reaches 900000, so `getPerDiemEmployeeLog`'s UAT
+   * per-diem read (`uatByRecordId`) is never issued either. Loading rates
    * unconditionally would break that and force the test to grow a second stub
    * for a list that, on every domestic group, cannot change the answer.
    */
@@ -131,7 +131,7 @@ export async function recomputeGroupPerDiem(
       // exact and needs no headers.
       //
       // It is also what keeps this module's unit test database-free: no fixture
-      // RequestId reaches 900000, so the Fast_Core read is never issued, exactly
+      // RequestId reaches 900000, so the UAT per-diem read is never issued, exactly
       // as `loadRates`'s `country !== "TH"` gate keeps the rate list unread.
       const log = await getPerDiemEmployeeLog(
         employeeId,

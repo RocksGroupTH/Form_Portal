@@ -45,8 +45,10 @@ async function main() {
   // pool getUatFormPool() itself opened), not from env.MSSQL_FORM_UAT_DATABASE
   // -- this is what proves the check looks at the database the app actually
   // resolves through, rather than merely at whatever the environment claims.
-  // Guarded exactly like verify-travel-province-move.ts:119-122 before it is
-  // interpolated into SQL below.
+  // Validated before use, the way verify-travel-province-move.ts:119-122 does.
+  // Nothing below interpolates it into SQL today -- the only interpolation was
+  // the synonym round-trip this check no longer has -- and the guard stands so
+  // that a future check which does interpolate cannot forget it.
   const uatDb = String(
     (await uat.request().query("SELECT DB_NAME() AS [db];")).recordset[0].db,
   );

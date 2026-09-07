@@ -74,7 +74,7 @@ BEGIN
   BEGIN
     ROLLBACK TRANSACTION;
     RAISERROR (
-      'Migration 140 refuses to drop: %s. Re-run 139 -- its batch 2 is a MERGE and reconciles both new and changed rows -- then retry this.',
+      'Migration 140 refuses to drop: %s. Re-run 139 -- its batch 2 is a MERGE and reconciles rows added or changed at the source -- then retry this. A row deleted at the source, or added directly here, is NOT reconciled by that MERGE (it has no WHEN NOT MATCHED BY SOURCE arm) and must be settled by hand.',
       16, 1, @problem
     );
   END
