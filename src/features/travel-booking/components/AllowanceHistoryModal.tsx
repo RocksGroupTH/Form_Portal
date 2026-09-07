@@ -10,6 +10,11 @@ interface Entry {
   amount: number;
 }
 
+interface AllowanceLogResponse {
+  entries: Entry[];
+  allowanceSource?: "hr" | "uat";
+}
+
 function fmtDate(iso: string): string {
   const [y, m, d] = iso.split("-");
   return `${d}/${m}/${y}`;
@@ -22,15 +27,25 @@ function fmtDate(iso: string): string {
  */
 export function AllowanceHistoryModal({ open, onClose, requesterStaffId }: { open: boolean; onClose: () => void; requesterStaffId?: number | null }) {
   const [entries, setEntries] = useState<Entry[] | null>(null);
+  const [allowanceSource, setAllowanceSource] = useState<"hr" | "uat" | undefined>(undefined);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setLoading(true);
     setEntries(null);
+    setAllowanceSource(undefined);
     fetch(`/api/request/travel-booking/allowance-log?requesterStaffId=${requesterStaffId ?? ""}`)
       .then((r) => r.json())
-      .then((j) => setEntries(j.ok ? ((j.data?.entries as Entry[]) ?? []) : []))
+      .then((j) => {
+        if (j.ok) {
+          const data = j.data as AllowanceLogResponse | undefined;
+          setEntries((data?.entries as Entry[]) ?? []);
+          setAllowanceSource(data?.allowanceSource);
+        } else {
+          setEntries([]);
+        }
+      })
       .catch(() => setEntries([]))
       .finally(() => setLoading(false));
   }, [open, requesterStaffId]);
@@ -99,7 +114,10 @@ export function AllowanceHistoryModal({ open, onClose, requesterStaffId }: { ope
         </div>
 
         <p className="text-[11px] flex items-center gap-1.5" style={{ color: "var(--text-faint)" }}>
-          <History size={12} className="shrink-0" /> ข้อมูลจากระบบ HR — แก้ไขได้ที่ระบบต้นทางเท่านั้น
+          <History size={12} className="shrink-0" />{" "}
+          {allowanceSource === "uat"
+            ? "เรตทดสอบสำหรับ UAT — ตั้งค่าที่ ตั้งค่า → UAT Users"
+            : "ข้อมูลจากระบบ HR — แก้ไขได้ที่ระบบต้นทางเท่านั้น"}
         </p>
       </div>
     </Dialog>
