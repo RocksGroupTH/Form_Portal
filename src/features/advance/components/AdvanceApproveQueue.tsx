@@ -8,6 +8,7 @@ import { PaymentDatePicker } from "@/components/ui/PaymentDatePicker";
 import { AdvanceCompanyBar, ADVANCE_COMPANY_ALL } from "./AdvanceCompanyBar";
 import { AdvanceDetailPanel } from "./AdvanceDetailPanel";
 import { CurrencyCells, CURRENCY_HEADERS } from "./CurrencyColumns";
+import { buildBulkMessage, type BulkItemResult } from "@/features/advance/lib/bulk-result-message";
 
 interface QueueRow {
   id: number;
@@ -105,9 +106,16 @@ export function AdvanceApproveQueue() {
           isChecked: needsPaymentSelected ? checked : undefined,
         }),
       });
-      const j = (await res.json()) as { ok: boolean; okCount?: number; failCount?: number; error?: string };
+      const j = (await res.json()) as
+        { ok: boolean; okCount?: number; error?: string; results?: BulkItemResult[] };
       if (j.error && !j.okCount) throw new Error(j.error);
-      toast.success(`อนุมัติสำเร็จ ${j.okCount ?? 0} รายการ${j.failCount ? ` · ไม่สำเร็จ ${j.failCount}` : ""}`);
+      // The endpoint refuses individual requests with a reason the officer can
+      // act on — most often an unconfirmed Vendor — so show it instead of a
+      // bare count.
+      const byId = new Map(rows.map((r) => [r.id, r.requestNo ?? `#${r.id}`]));
+      const m = buildBulkMessage("อนุมัติ", j.results ?? [], j.okCount, (id) => byId.get(id) ?? `#${id}`);
+      if (m.kind === "success") toast.success(m.title);
+      else toast.error(m.title, { description: m.description, duration: 8000 });
       setSelected(new Set());
       setChecked(false);
       load();

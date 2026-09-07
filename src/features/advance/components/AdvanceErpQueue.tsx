@@ -12,6 +12,7 @@ import { AdvanceJournalPreview, type PreviewItem } from "./AdvanceJournalPreview
 import { FilterMonthPicker } from "@/features/accounting/components/FilterMonthPicker";
 import { sentMonthKey } from "@/features/accounting/components/ApprovalQueueFilters";
 import { CurrencyCells, CURRENCY_HEADERS } from "./CurrencyColumns";
+import { buildBulkMessage, type BulkItemResult } from "@/features/advance/lib/bulk-result-message";
 
 interface ErpRow {
   id: number;
@@ -260,7 +261,8 @@ export function AdvanceErpQueue() {
       const res = await fetch("/api/request/advance/erp-queue/send", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: frozenIds }),
       });
-      const j = (await res.json()) as { ok: boolean; drift?: boolean; okCount?: number; failCount?: number; error?: string };
+      const j = (await res.json()) as
+        { ok: boolean; drift?: boolean; okCount?: number; error?: string; results?: BulkItemResult[] };
       if (res.status === 409 || j.drift) {
         toast.error(j.error ?? "คิวเปลี่ยนไปแล้ว — โหลดหน้าใหม่");
         setConfirmOpen(false);
@@ -268,7 +270,12 @@ export function AdvanceErpQueue() {
         return;
       }
       if (j.error && !j.okCount) throw new Error(j.error);
-      toast.success(`ส่งสำเร็จ ${j.okCount ?? 0} รายการ${j.failCount ? ` · ไม่สำเร็จ ${j.failCount}` : ""}`);
+      // BC's own refusal (a missing extension, a rejected line) arrives per
+      // request; without it a failed send read as "ส่งสำเร็จ 0 รายการ".
+      const byId = new Map(rows.map((r) => [r.id, r.requestNo ?? `#${r.id}`]));
+      const m = buildBulkMessage("ส่ง", j.results ?? [], j.okCount, (id) => byId.get(id) ?? `#${id}`);
+      if (m.kind === "success") toast.success(m.title);
+      else toast.error(m.title, { description: m.description, duration: 10000 });
       setConfirmOpen(false);
       setSelected(new Set());
       load();
