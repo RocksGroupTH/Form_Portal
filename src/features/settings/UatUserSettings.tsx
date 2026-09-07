@@ -67,10 +67,13 @@ function ConfirmModal({ title, message, danger, onConfirm, onCancel }: {
    an existing row — and it is what keeps a new rate covering every trip, since
    a trip cannot depart before tomorrow. */
 function PerDiemPanel({
-  tester, rates, onClose, onSaved,
+  tester, rates, ratesFailed, onClose, onSaved,
 }: {
   tester: { staffId: number; name: string; email: string };
   rates: UatPerDiemRate[];
+  /** True when the rates list failed to load — `rates` is then `[]`, which
+   * must not be shown as "no rate set" (see `UatUserSettings`'s own comment). */
+  ratesFailed: boolean;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -103,6 +106,10 @@ function PerDiemPanel({
       setAmount("");
       setNote("");
       onSaved();
+    } catch {
+      // A network failure otherwise rejects inside `void save()` with nobody
+      // awaiting it — busy clears, nothing tells the admin it didn't save.
+      toast.error("บันทึกไม่สำเร็จ");
     } finally {
       setBusy(false);
     }
@@ -119,6 +126,8 @@ function PerDiemPanel({
       const json = await res.json();
       if (!json.ok) { toast.error(json.error ?? "ทำรายการไม่สำเร็จ"); return; }
       onSaved();
+    } catch {
+      toast.error("ทำรายการไม่สำเร็จ");
     } finally {
       setBusy(false);
     }
@@ -165,7 +174,9 @@ function PerDiemPanel({
 
         <div className="mt-5">
           <p className="text-[11px] font-bold mb-2" style={{ color: "var(--text-heading)" }}>เรตที่ตั้งไว้</p>
-          {mine.length === 0 ? (
+          {ratesFailed ? (
+            <p className="text-[11px]" style={{ color: "var(--text-danger)" }}>อ่านเรตที่ตั้งไว้ไม่สำเร็จ — ลองใหม่อีกครั้ง</p>
+          ) : mine.length === 0 ? (
             <p className="text-[11px]" style={{ color: "var(--text-faint)" }}>ยังไม่ได้ตั้งเรต — จะใช้ข้อมูลจากระบบ HR</p>
           ) : (
             mine.map((r) => (
@@ -194,11 +205,19 @@ export function UatUserSettings() {
     fetcher,
   );
 
-  const { data: rateData, mutate: mutateRates } = useSWR<{ ok: boolean; data: UatPerDiemRate[] }>(
+  const { data: rateData, error: rateError, mutate: mutateRates } = useSWR<{ ok: boolean; data: UatPerDiemRate[] }>(
     "/api/settings/uat-users/per-diem",
     fetcher,
   );
   const rates = rateData?.ok ? rateData.data : [];
+  // **A failed read is not "no rate set".** `fetcher` is `fetch().then(r =>
+  // r.json())`, which does not throw on a non-2xx, so a 500 arrives as
+  // `rateData = { ok: false }` with `rateError` unset; only a network failure
+  // sets `rateError`. Both arms are needed, or an outage on this column reads
+  // as every tester having no UAT rate — on the one screen whose job is to
+  // confirm the rate that was just set (CLAUDE.md's `LogPanel` note records
+  // the same lesson for the API-key change log).
+  const ratesFailed = !!rateError || (rateData != null && !rateData.ok);
   const [perDiemFor, setPerDiemFor] = useState<UatTesterListItem | null>(null);
 
   /** The rate in force today, by the same rule the trip pricing uses. */
@@ -412,14 +431,24 @@ export function UatUserSettings() {
                     </td>
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-2">
-                        <span
-                          className="text-[11px]"
-                          style={{ color: rateToday(t.staffId) != null ? "var(--text-secondary)" : "var(--text-faint)" }}
-                        >
-                          {rateToday(t.staffId) != null
-                            ? `฿${rateToday(t.staffId)!.toLocaleString("en-US", { minimumFractionDigits: 2 })}/วัน`
-                            : "—"}
-                        </span>
+                        {ratesFailed ? (
+                          <span
+                            className="inline-flex items-center gap-1 text-[11px]"
+                            style={{ color: "var(--text-danger)" }}
+                            title="อ่านเรต UAT ไม่สำเร็จ — นี่ไม่ใช่การยืนยันว่ายังไม่ได้ตั้งเรต"
+                          >
+                            <AlertTriangle size={11} /> อ่านไม่สำเร็จ
+                          </span>
+                        ) : (
+                          <span
+                            className="text-[11px]"
+                            style={{ color: rateToday(t.staffId) != null ? "var(--text-secondary)" : "var(--text-faint)" }}
+                          >
+                            {rateToday(t.staffId) != null
+                              ? `฿${rateToday(t.staffId)!.toLocaleString("en-US", { minimumFractionDigits: 2 })}/วัน`
+                              : "—"}
+                          </span>
+                        )}
                         <button
                           onClick={() => setPerDiemFor(t)}
                           className="flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-lg cursor-pointer border-none"
@@ -529,6 +558,7 @@ export function UatUserSettings() {
         <PerDiemPanel
           tester={perDiemFor}
           rates={rates}
+          ratesFailed={ratesFailed}
           onClose={() => setPerDiemFor(null)}
           onSaved={() => { void mutateRates(); }}
         />
