@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { resolveLoginEmail } from "@/lib/auth-email";
 import { resolveEmployeeForActor } from "@/lib/hr/employee-lookup";
-import { getAllowanceLog } from "@/lib/acc/travel-booking/allowance-log";
+import { getPerDiemEmployeeLogWithSource } from "@/lib/acc/travel-booking/allowance-log";
+import { uatByEnvironment } from "@/lib/acc/travel-booking/perdiem-uat-gate";
+import { resolveFormEnvironment } from "@/lib/form-environment";
 import { listPerDiemCountryRates } from "@/lib/acc/travel-booking/perdiem-source";
 
 /**
@@ -16,7 +18,9 @@ import { listPerDiemCountryRates } from "@/lib/acc/travel-booking/perdiem-source
  * country the requester just picked.
  *
  * `entries` keeps its shape and its meaning — AllowanceHistoryModal renders it
- * unchanged.
+ * unchanged. `allowanceSource` is new: `"uat"` when a tester's own configured
+ * rate answered instead of the HR log, so the modal's footer can name the log
+ * that is actually priced rather than always crediting HR.
  */
 export async function GET(req: NextRequest) {
   const session = await requireAuth();
@@ -28,15 +32,29 @@ export async function GET(req: NextRequest) {
 
     const loginEmail = resolveLoginEmail(session.user, null, { email: session.user.email });
     if (!loginEmail) {
-      return NextResponse.json({ ok: true, data: { entries: [], countryRates: [] } });
+      return NextResponse.json({
+        ok: true,
+        data: { entries: [], countryRates: [], allowanceSource: "hr" },
+      });
     }
 
     const emp = await resolveEmployeeForActor(loginEmail, requesterStaffId);
-    const [entries, countryRates] = await Promise.all([
-      getAllowanceLog(emp.id),
+
+    // No record id exists while a draft is being filled, so this is the one
+    // place the resolved environment is the right signal. See perdiem-uat-gate.
+    const uat = uatByEnvironment(await resolveFormEnvironment());
+
+    const [resolved, countryRates] = await Promise.all([
+      getPerDiemEmployeeLogWithSource(emp.id, emp.staffId ?? null, uat),
       listPerDiemCountryRates(),
     ]);
-    return NextResponse.json({ ok: true, data: { entries, countryRates } });
+
+    // The modal's footer names the source, and an HR footer over UAT rates is a
+    // false statement about where to change them.
+    return NextResponse.json({
+      ok: true,
+      data: { entries: resolved.log, countryRates, allowanceSource: resolved.source },
+    });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Internal server error";
     console.error("[api/request/travel-booking/allowance-log] GET", message);

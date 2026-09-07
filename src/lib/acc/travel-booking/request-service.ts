@@ -17,7 +17,9 @@ import { queueEmail } from "@/lib/acc/email-queue";
 import { buildTravelBookingEmail } from "@/lib/acc/travel-booking/email-templates";
 import { computePerDiem } from "@/lib/acc/travel-booking/perdiem";
 import { isTravelDateTooSoon } from "@/features/travel-booking/lib/earliest-travel-date";
-import { getAllowanceLog } from "@/lib/acc/travel-booking/allowance-log";
+import { getPerDiemEmployeeLog } from "@/lib/acc/travel-booking/allowance-log";
+import { uatByEnvironment } from "@/lib/acc/travel-booking/perdiem-uat-gate";
+import { resolveFormEnvironment } from "@/lib/form-environment";
 import {
   listAccommodations,
   listRentVehicles,
@@ -1235,8 +1237,15 @@ export async function submitTravelBookingGroup(
   // the country rates are one list; the country itself is per TAB, because a
   // group can hold a Kuala Lumpur trip and a Bangkok one, so the resolution
   // happens inside the loop and the loading does not.
-  const log = await getAllowanceLog(emp.id);
-  const countryRates = await listPerDiemCountryRates();
+  // The submit runs on AP-17's own route, so the resolver answers correctly
+  // here; the recompute is the one that cannot use it. (Named `perDiemUat`
+  // rather than reusing the `uat` above — that one is `isUatRequest()`'s
+  // answer to the same question, already in scope for the manager checks.)
+  const perDiemUat = uatByEnvironment(await resolveFormEnvironment());
+  const [log, countryRates] = await Promise.all([
+    getPerDiemEmployeeLog(emp.id, emp.staffId ?? null, perDiemUat),
+    listPerDiemCountryRates(),
+  ]);
   const continuationFlags: boolean[] = [];
   const perDiems: { days: number; total: number }[] = [];
   for (let i = 0; i < tabs.length; i++) {
