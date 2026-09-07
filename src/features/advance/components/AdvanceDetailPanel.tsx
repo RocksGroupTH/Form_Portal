@@ -298,7 +298,13 @@ export function AdvanceDetailPanel({ requestId, onClose, onChanged }:
                     requestId={requestId}
                     company={data.brandCode ?? ""}
                     compact
-                    onConfirmed={setSelectedVendor}
+                    // Picking here writes to the database immediately, so the
+                    // list that opened this drawer has to be told — otherwise
+                    // the queue behind keeps showing the vendor it read before
+                    // and the two disagree until a manual refresh. Approve and
+                    // reject already reported back; this was the one mutation
+                    // in the drawer that did not.
+                    onConfirmed={(no) => { setSelectedVendor(no); onChanged?.(); }}
                     onSuggested={setSelectedVendor}
                   />
                 </div>
