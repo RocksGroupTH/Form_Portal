@@ -2,12 +2,13 @@
 
 import { useState } from "react";
 import useSWR from "swr";
-import { AlertTriangle, FlaskConical, Loader2, Plus, UserCheck, UserX } from "lucide-react";
+import { AlertTriangle, FlaskConical, Loader2, Plus, UserCheck, UserX, Wallet } from "lucide-react";
 import { toast } from "sonner";
 // This page's own copy of the picker is what `@/components/settings/ADSearchModal`
 // was lifted from, so the shared one is that copy with an `aria-label` added and
 // `onSelect` widened to hand back the whole row.
 import { ADSearchModal } from "@/components/settings/ADSearchModal";
+import { SidePanel, SidePanelClose } from "@/components/ui/SidePanel";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -26,6 +27,15 @@ interface UatTesterListItem {
 interface UatUsersData {
   testers: UatTesterListItem[];
   accountApproverIsTester: boolean;
+}
+
+interface UatPerDiemRate {
+  id: number;
+  staffId: number;
+  effectiveDate: string;
+  amount: number;
+  note: string | null;
+  isActive: boolean;
 }
 
 /* ── Confirm Modal ── */
@@ -48,11 +58,162 @@ function ConfirmModal({ title, message, danger, onConfirm, onCancel }: {
   );
 }
 
+/* ── Per-diem editor ──
+   The AMOUNT opens BLANK and the DATE defaults to today. That split is the
+   lesson PerDiemCountrySettings paid for: pre-filling the stored values makes
+   one click an in-place rewrite of a rate trips were already priced at, when
+   the intent is almost always to add a new dated row. Defaulting the date has
+   no such risk — the save key is (StaffId, EffectiveDate), and today is rarely
+   an existing row — and it is what keeps a new rate covering every trip, since
+   a trip cannot depart before tomorrow. */
+function PerDiemPanel({
+  tester, rates, onClose, onSaved,
+}: {
+  tester: { staffId: number; name: string; email: string };
+  rates: UatPerDiemRate[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+    now.getDate(),
+  ).padStart(2, "0")}`;
+
+  const [effectiveDate, setEffectiveDate] = useState(today);
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const mine = rates
+    .filter((r) => r.staffId === tester.staffId)
+    .slice()
+    .sort((a, b) => (a.effectiveDate < b.effectiveDate ? 1 : -1));
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/settings/uat-users/per-diem", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ staffId: tester.staffId, effectiveDate, amount, note }),
+      });
+      const json = await res.json();
+      if (!json.ok) { toast.error(json.error ?? "บันทึกไม่สำเร็จ"); return; }
+      toast.success("บันทึกเรตแล้ว");
+      setAmount("");
+      setNote("");
+      onSaved();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggle = async (id: number, isActive: boolean) => {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/settings/uat-users/per-diem", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, isActive }),
+      });
+      const json = await res.json();
+      if (!json.ok) { toast.error(json.error ?? "ทำรายการไม่สำเร็จ"); return; }
+      onSaved();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <SidePanel open onClose={onClose} width="480px">
+      <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: "1px solid var(--border-card)" }}>
+        <div>
+          <h3 className="text-[14px] font-bold" style={{ color: "var(--text-heading)" }}>เบี้ยเลี้ยง UAT</h3>
+          <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{tester.name} · {tester.email}</p>
+        </div>
+        <SidePanelClose onClick={onClose} />
+      </div>
+
+      <div className="px-5 py-4 overflow-y-auto flex-1">
+        <p className="text-[11px] mb-3" style={{ color: "var(--text-muted)" }}>
+          ใช้เฉพาะใน UAT · ถ้าไม่ตั้ง จะใช้เบี้ยเลี้ยงจริงจากระบบ HR · ทริปต่างประเทศที่มีเรตรายประเทศ จะใช้เรตรายประเทศ
+        </p>
+
+        <div className="grid grid-cols-2 gap-2 mb-2">
+          <label className="text-[11px]" style={{ color: "var(--text-secondary)" }}>
+            วันที่เริ่มมีผล
+            <input type="date" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)}
+              className="w-full mt-1 px-2 py-1.5 rounded-lg text-[12px]"
+              style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-main)" }} />
+          </label>
+          <label className="text-[11px]" style={{ color: "var(--text-secondary)" }}>
+            จำนวนเงินต่อวัน (บาท)
+            <input type="number" min={0} step="0.01" value={amount} placeholder="เช่น 800"
+              onChange={(e) => setAmount(e.target.value)}
+              className="w-full mt-1 px-2 py-1.5 rounded-lg text-[12px]"
+              style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-main)" }} />
+          </label>
+        </div>
+        <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="หมายเหตุ (ไม่บังคับ)" maxLength={300}
+          className="w-full px-2 py-1.5 rounded-lg text-[12px] mb-3"
+          style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-main)" }} />
+        <button onClick={() => void save()} disabled={busy}
+          className="w-full px-3 py-2 rounded-lg text-[12px] font-bold border-none text-white enabled:cursor-pointer disabled:opacity-60"
+          style={{ background: "var(--color-action)" }}>
+          {busy ? "กำลังบันทึก…" : "บันทึกเรต"}
+        </button>
+
+        <div className="mt-5">
+          <p className="text-[11px] font-bold mb-2" style={{ color: "var(--text-heading)" }}>เรตที่ตั้งไว้</p>
+          {mine.length === 0 ? (
+            <p className="text-[11px]" style={{ color: "var(--text-faint)" }}>ยังไม่ได้ตั้งเรต — จะใช้ข้อมูลจากระบบ HR</p>
+          ) : (
+            mine.map((r) => (
+              <div key={r.id} className="flex items-center justify-between py-1.5" style={{ borderBottom: "1px solid var(--border-card)" }}>
+                <span className="text-[12px]" style={{ color: r.isActive ? "var(--text-primary)" : "var(--text-faint)" }}>
+                  {r.effectiveDate} · ฿{r.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}/วัน
+                  {r.note ? ` · ${r.note}` : ""}
+                </span>
+                <button onClick={() => void toggle(r.id, !r.isActive)} disabled={busy}
+                  className="text-[10px] font-medium px-2 py-0.5 rounded-lg border-none enabled:cursor-pointer disabled:opacity-60"
+                  style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}>
+                  {r.isActive ? "ปิดใช้" : "เปิดใช้"}
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </SidePanel>
+  );
+}
+
 export function UatUserSettings() {
   const { data, mutate, isLoading } = useSWR<{ ok: boolean; data: UatUsersData; error?: string }>(
     "/api/settings/uat-users",
     fetcher,
   );
+
+  const { data: rateData, mutate: mutateRates } = useSWR<{ ok: boolean; data: UatPerDiemRate[] }>(
+    "/api/settings/uat-users/per-diem",
+    fetcher,
+  );
+  const rates = rateData?.ok ? rateData.data : [];
+  const [perDiemFor, setPerDiemFor] = useState<UatTesterListItem | null>(null);
+
+  /** The rate in force today, by the same rule the trip pricing uses. */
+  const rateToday = (staffId: number): number | null => {
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+      now.getDate(),
+    ).padStart(2, "0")}`;
+    let best: UatPerDiemRate | null = null;
+    for (const r of rates) {
+      if (r.staffId !== staffId || !r.isActive || r.effectiveDate > today) continue;
+      if (!best || r.effectiveDate > best.effectiveDate) best = r;
+    }
+    return best ? best.amount : null;
+  };
 
   const [showAddTesterModal, setShowAddTesterModal] = useState(false);
   const [managerPickerFor, setManagerPickerFor] = useState<{ email: string; name: string } | null>(null);
@@ -195,6 +356,7 @@ export function UatUserSettings() {
                   <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>ชื่อ</th>
                   <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>อีเมล</th>
                   <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>ผู้จัดการสำหรับ UAT</th>
+                  <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>เบี้ยเลี้ยง UAT</th>
                   {/* Status and its control are one column: the badge *is* the
                       switch, so there is nothing left for a separate action
                       column to hold. */}
@@ -246,6 +408,25 @@ export function UatUserSettings() {
                             <Plus size={10} /> ตั้งผู้จัดการ
                           </button>
                         )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="text-[11px]"
+                          style={{ color: rateToday(t.staffId) != null ? "var(--text-secondary)" : "var(--text-faint)" }}
+                        >
+                          {rateToday(t.staffId) != null
+                            ? `฿${rateToday(t.staffId)!.toLocaleString("en-US", { minimumFractionDigits: 2 })}/วัน`
+                            : "—"}
+                        </span>
+                        <button
+                          onClick={() => setPerDiemFor(t)}
+                          className="flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-lg cursor-pointer border-none"
+                          style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}
+                        >
+                          <Wallet size={10} /> ตั้งเรต
+                        </button>
                       </div>
                     </td>
                     <td className="px-4 py-2.5">
@@ -341,6 +522,15 @@ export function UatUserSettings() {
           danger={confirmAction.danger}
           onConfirm={confirmAction.onConfirm}
           onCancel={() => setConfirmAction(null)}
+        />
+      )}
+
+      {perDiemFor && (
+        <PerDiemPanel
+          tester={perDiemFor}
+          rates={rates}
+          onClose={() => setPerDiemFor(null)}
+          onSaved={() => { void mutateRates(); }}
         />
       )}
     </div>
