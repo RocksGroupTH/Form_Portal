@@ -205,11 +205,22 @@ on the **requester**, and already the source of `estimateLog`. So:
 // pure, client-safe: rateForDay is already imported for the estimate
 const today = /* local getters, never toISOString */;
 const fromLog = rateForDay(today, estimateLog);
-const displayRate = estimateLog.length > 0 && fromLog > 0 ? fromLog : (employee?.allowance ?? null);
+const displayRate =
+  estimateLog.length > 0 && fromLog > 0
+    ? fromLog
+    : requesterEnvironment === "UAT"
+      ? null
+      : (employee?.allowance ?? null);
 ```
 
-`displayRate` feeds the chip and `allowanceRate`. `flatRateLog` stays exactly as
-it is — the stand-in *while the fetch is in flight*, which is all it ever was.
+`displayRate` feeds the chip alone — `allowanceRate` was never a second
+consumer worth keeping and was deleted along with it (§12.5). **`flatRateLog`
+does not stay as it is.** In UAT it is withheld to `[]` rather than built from
+`employee.allowance`: that stand-in is shown while the allowance-log fetch is
+in flight, or has failed and never will, and un-withheld it is the ACTOR's real
+HR compensation reaching a UAT tester's screen for the whole session —
+Production keeps the stand-in unchanged. §12.7 records that this passage said
+otherwise until 2026-09-07.
 
 The `fromLog > 0` arm is not defensive noise: `rateForDay` answers 0 for a day no
 entry covers, and a chip reading `฿0/วัน` is a worse answer than the HR figure it
@@ -552,3 +563,16 @@ evidence.
    matters here only because in UAT that actor figure is the tester's own real
    HR compensation, which is what the withholding in §3.2's corrected version
    closes.
+7. **Items 5 and 6's corrections landed in §3.2's last paragraph and not in
+   its first.** Right after the `displayRate` code block, the text still read
+   "`displayRate` feeds the chip and `allowanceRate`. `flatRateLog` stays
+   exactly as it is — the stand-in *while the fetch is in flight*, which is
+   all it ever was." — naming the prop item 5 records as deleted, and
+   describing `flatRateLog` as unconditional one paragraph above the
+   paragraph that correctly says it withholds in UAT. Both were wrong by the
+   time the branch shipped: `allowanceRate` never existed to feed, and
+   `flatRateLog` (`useTravelBookingForm.ts:592-599`) and `displayRate`
+   (`:650-658`) both resolve to `null`/`[]` on `requesterEnvironment ===
+   "UAT"` rather than falling back to `employee?.allowance`. §3.2's code
+   block and the paragraph beneath it are the correction; found in the final
+   review, 2026-09-07.
