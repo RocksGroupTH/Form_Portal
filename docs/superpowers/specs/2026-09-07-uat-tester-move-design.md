@@ -1,22 +1,21 @@
-# UatTester and UatTesterPerDiem move out of Fast_Core
+# UatTesterPerDiem moves out of Fast_Core — and UatTester does not
 
 **Date:** 2026-09-07
-**Status:** design agreed, not built
-**Migrations:** 139 (`Rocks_Portal_Form_UAT`), 140 and 141 (`Fast_Core`)
+**Status:** design agreed; the first version was built and then partly reverted — see §12
+**Migrations:** 139 (`Rocks_Portal_Form_UAT`), 140 (`Fast_Core`)
 
-`Fast_Core` is shared with two sibling applications. Two of its tables are
-Form Portal's alone and describe only UAT: `UatTester`, the roster of who may
-test and who approves their test requests, and `UatTesterPerDiem`, a per-tester
-effective-dated per-diem rate added days ago by migration 138. This spec moves
-both into `Rocks_Portal_Form_UAT`, this app's own UAT form database, and leaves
-a permanent synonym in `Fast_Core` for `UatTester` alone.
+`Fast_Core` is shared with two sibling applications, Rocks Fast and ACC Portal.
+`UatTesterPerDiem` — a per-tester effective-dated per-diem rate, created days ago
+by migration 138 — is Form Portal's alone, describes only UAT, and is named by no
+other application. It moves into `Rocks_Portal_Form_UAT`, this app's own UAT form
+database. **No synonym is left behind**: nothing outside this repository names it.
 
-**`FormEnvironment` deliberately does not move.** See §2.
+**`UatTester` stays where it is, and so does `FormEnvironment`.** See §2. An
+earlier version of this design moved `UatTester` too; §12 records why that was
+wrong and how it was caught.
 
-This is the fourth application of a pattern this repo has used three times —
-099/100 (`DepartmentErpMap` out of `Fast_Core`), 101/102 (five ERP tables out of
-`Fast_Data`), 104/105 (`TravelProvince` out of `Fast_Data`) — and the first
-whose synonym points **into** a UAT database rather than a production one.
+The filename says "uat-tester-move" because that is what this document was when
+it was created. It is left alone so the branch's history reads straight.
 
 ---
 
@@ -24,337 +23,306 @@ whose synonym points **into** a UAT database rather than a production one.
 
 | Question | Decision |
 |---|---|
-| Which tables move | `UatTester` and `UatTesterPerDiem`. Both. |
-| Does `FormEnvironment` move | **No.** It decides production availability; §2. |
-| Which pool reads them afterwards | **`getUatFormPool()`** — a literal. Never `getFormPool()`, never `getAccPool()`. |
-| Does `Fast_Core` keep a synonym | **For `UatTester` only.** ACC Portal reads it; nothing anywhere reads the per-diem table but this app. |
-| What happens when `Rocks_Portal_Form_UAT` is unreachable | **Fail loudly.** No degrading to "not a tester". |
-| The mail drain's silent redirect | **Changed to fail loudly too.** §7. |
-
-### Why the durability argument lost
-
-Migration 063's header states the reason `UatTester` was put in `Fast_Core`:
-"readable whichever pool a request resolves to, **and it survives a rebuild of
-the UAT database**." The second half was the strongest argument against this
-move, and it was weighed and rejected on one measured fact: the requester
-confirmed on 2026-09-07 that `Rocks_Portal_Form_UAT` is **rebuilt essentially
-never**. A hazard whose trigger does not occur is not a reason.
-
-Recorded here rather than dropped, because 063's header still says it and the
-next reader will find the two in conflict.
+| Which table moves | **`UatTesterPerDiem` only.** |
+| Does `UatTester` move | **No** — reversed on 2026-09-07. §2, §12. |
+| Does `FormEnvironment` move | **No.** Same reason, and it was never in doubt. |
+| Which pool reads the moved table | **`getUatFormPool()`** — a literal. Never `getFormPool()`, never `getAccPool()`. |
+| Does `Fast_Core` keep a synonym | **No.** Nothing outside this app names the table. §5. |
+| What happens when `Rocks_Portal_Form_UAT` is unreachable | **Fail loudly.** No degrading to "no override". §8. |
 
 ---
 
-## 2. Why `FormEnvironment` cannot follow
+## 2. What may leave `Fast_Core`, and the test that decides it
 
-`getFormSwitchMap()` is awaited unconditionally on **every** classified-form
-request, by every user, inside `resolveCurrentFormAccess`
-(`form-environment/index.ts:139`), and neither it nor its caller has a
-`try`/`catch`. It holds `ProductionEnabled` as well as `UatEnabled`.
+One question decides it: **is this table read on a path that runs for a user who
+is not testing?** If yes, moving it makes ordinary availability depend on the UAT
+database, which exists to be disposable. If no, it may go.
 
-Moving it into `Rocks_Portal_Form_UAT` would make **production availability
-depend on the UAT database being up**. `Fast_Core` must be reachable anyway —
-auth, brand configuration and the connection registries all live there — so
-keeping the switches beside it adds no dependency that is not already required.
+**`FormEnvironment` fails the test.** `getFormSwitchMap()` is awaited
+unconditionally on every classified-form request, by every user, inside
+`resolveCurrentFormAccess` (`src/lib/form-environment/index.ts`), with no
+`try`/`catch` anywhere on that path. It holds `ProductionEnabled` as well as
+`UatEnabled`.
 
-`UatTester` is different, and that difference is what makes its move safe:
-`viewerIsTesting` (`index.ts:109-113`) returns `false` without touching the
-database unless the `form-portal-uat-mode` cookie is present and on. A
-production user who is not testing never reads it.
+**`UatTester` also fails the test, and this is what the first draft missed.** The
+resolver's own read *is* cookie-gated — `viewerIsTesting` returns `false` without
+touching a database unless the UAT-mode cookie is on. But the resolver is not the
+only reader:
+
+- `src/app/api/form-environment/route.ts` calls `getActiveUatTester(email)` in a
+  `Promise.all` with **no cookie gate**, and there cannot be one:
+  `viewer.isTester` is precisely what decides whether the PRO/UAT switch is
+  *offered* to a tester who does not yet hold the cookie.
+- That endpoint is fetched on **every dashboard page by every signed-in user** —
+  `UatModeSwitch` is mounted unconditionally in `Navbar.tsx` (twice) and reaches
+  it through `useFormEnvironments`.
+- ACC Portal does the same thing, harder: its `(app)/layout.tsx` awaits
+  `buildFormEnvironmentPayload(...)` with **no `try`/`catch`**, in the layout that
+  wraps every page of that group, and its payload builder calls
+  `getActiveUatTester` unconditionally too.
+
+So moving `UatTester` would put a UAT database on the page-render path of two
+production applications, for all users. `Fast_Core` must be reachable anyway —
+auth, brand configuration and the connection registries live there — so leaving
+the roster beside them adds no dependency that is not already required.
+
+**`UatTesterPerDiem` passes the test.** Every one of its readers is already
+inside UAT before it reads:
+
+| Reader | Gate |
+|---|---|
+| `withUatOverrides` (`src/lib/hr/employee-lookup.ts`) | `resolveFormEnvironment() === "UAT"`, early return otherwise |
+| `getPerDiemEmployeeLogMap` (`src/lib/acc/travel-booking/allowance-log.ts`) | builds `uatStaffIds` only from subjects with `uat: true`; `uatPerDiemLogsByStaffIds([])` returns before opening a pool |
+| `/api/settings/uat-users/per-diem` | System Admin settings page |
+
+No production request path reaches it. That asymmetry is the whole justification
+for moving one table and not the other.
 
 ---
 
 ## 3. The pool rule, and the cycle one line away
 
-After the move both modules read **`getUatFormPool()`**
-(`src/lib/db/mssql.ts:118-120`), which is `getNamedPool(env.MSSQL_FORM_UAT_DATABASE)`
-— a literal env name that consults no resolver and imports nothing from
-`@/lib/form-environment`.
+`src/lib/uat-tester/per-diem.ts` reads **`getUatFormPool()`**
+(`src/lib/db/mssql.ts:118-120`), which is
+`getNamedPool(env.MSSQL_FORM_UAT_DATABASE)` — a literal env name that consults no
+resolver.
 
-**There is no cycle.** The resolver's constraint
-(`form-environment/index.ts:76-86`) is that nothing on the path deciding *which*
-form database answers may be reached through `getFormPool()`. `getUatFormPool()`
-satisfies that exactly as `getCorePool()` did, and `uat-tester/service.ts`
-already imports `@/lib/db/mssql` statically, so no new module edge appears.
+`per-diem.ts` is reached from inside a `getAccPool()` transaction — AP-17's
+per-diem recompute — so the wrong pool here does not merely read the wrong
+database, it recurses:
 
-**Two wrong answers are each one line away, and they fail differently:**
+- **`getFormPool()` closes the loop** `getFormPool → resolveFormEnvironment →
+  resolveCurrentFormAccess → …`. `src/lib/acc/pool.ts:4` is
+  `export const getAccPool = getFormPool`, so reaching for "the accounting pool"
+  out of habit closes it. No type error predicts this.
+- **`getProductionFormPool()` resolves `Rocks_Portal_Form`**, where the table does
+  not exist — `Invalid object name` on every UAT read.
+- **`getCorePool()` resolves `Fast_Core`**, where it no longer exists after
+  migration 140.
 
-- **`getFormPool()` closes the loop**: `getFormPool → resolveFormEnvironment →
-  resolveCurrentFormAccess → viewerIsTesting → getActiveUatTester → getFormPool`.
-  `src/lib/acc/pool.ts:4` is `export const getAccPool = getFormPool`, so an
-  author reaching for "the accounting pool" out of habit closes it. No type
-  error predicts this.
-- **`getProductionFormPool()` resolves `Rocks_Portal_Form`**, where the tables
-  do not exist — `Invalid object name` on every resolve.
+A source-reading guard test pins this; §10.
 
-A source-reading guard test pins this; §8.
+**`src/lib/uat-tester/service.ts` keeps `getCorePool()`.** `UatTester` is not
+moving and that file is not touched by this work.
 
 ---
 
 ## 4. Storage
 
-Both tables are created in `Rocks_Portal_Form_UAT` with the **identical** shape
-they have today — every column, index and constraint from
-`migrations/063_core_uat_tester.sql:8-21` and
+`UatTesterPerDiem` is created in `Rocks_Portal_Form_UAT` with the **identical**
+shape it has today — every column and constraint from
 `migrations/138_core_uat_tester_per_diem.sql:47-69`, including
-`UQ_UatTester_StaffId`, the non-unique `IX_UatTester_Email`,
 `UQ_UatTesterPerDiem_Staff_Date` and `CK_UatTesterPerDiem_Amount`.
 
-**One physical copy each. Not dual-written, not in `MASTER_TABLES`.**
-`writeBothPools` runs its callback against *both* form databases, and these
-tables exist in only one, so a production pass would fail on `Invalid object
-name`. `npm run check:alignment` must stay at **27** — its loop reads both
-pools, so a table present in only one is invisible to it either way.
+**One physical copy. Not dual-written, not in `MASTER_TABLES`.** `writeBothPools`
+runs its callback against *both* form databases and this table exists in only one,
+so a production pass would fail on `Invalid object name`.
+`npm run check:alignment` must stay at **27** — its loop reads both pools, so a
+table present in only one is invisible to it either way.
 
 **Ids are preserved and the identity is reseeded to the source's
-`IDENT_CURRENT`, not to `MAX(Id)`.** Measured 2026-09-07 against the live
-`Fast_Core`:
+`IDENT_CURRENT`.** Measured 2026-09-07 against the live `Fast_Core`: 1 row,
+`MAX(Id)` = 1, `IDENT_CURRENT` = 1, so the floor is **1**.
 
-| Table | Rows | `MAX(Id)` | `IDENT_CURRENT` → reseed floor |
-|---|--:|--:|--:|
-| `UatTester` | 15 | 20 | **20** |
-| `UatTesterPerDiem` | 1 | 1 | **1** |
+The floor is belt-and-braces rather than load-bearing: `SET IDENTITY_INSERT`
+already advances the identity to the highest id inserted, and the guard is
+`IDENT_CURRENT(...) < floor`, so `DBCC CHECKIDENT` can only ever raise it, never
+lower it below `MAX(Id)`.
 
-`UatTester`'s ids are sparse — 15 rows spread over 1..20 — so a floor taken from
-the row count would re-issue ids that have already been used.
+**Migrations 061 and 064 do not reach this table.** Both enumerate 23
+transactional table names explicitly and it is not among them, so a low id in
+`Rocks_Portal_Form_UAT` violates no `CHECK (Id >= 900000)` and gets no 900000
+reseed.
 
-**Migrations 061 and 064 do not reach these tables.** Both enumerate 23
-transactional table names explicitly (`061:39-47`, `064:61-69`), and neither name
-is among them, so ids 1..20 in `Rocks_Portal_Form_UAT` violate no
-`CHECK (Id >= 900000)` and get no 900000 reseed. There is no database-wide
-trigger anywhere in the repo.
-
-**The low ids are safe only because a `UatTester.Id` never appears in a path the
-resolver parses.** `ROUTE_RULES` covers `/api/request/*` prefixes only;
-`/api/settings/uat-users` is not among them. Anyone adding a `/api/request` rule
-that reaches these tables re-opens `isUatId`'s assumption.
+**No FK to `UatTester`.** Migration 138 deliberately created none (`138:43-45`),
+which is exactly why the two tables can end up in different databases with
+nothing to reconcile.
 
 ---
 
-## 5. The synonym — `UatTester` only
+## 5. No synonym, and why none is needed
 
-`Fast_Core.dbo.UatTester` becomes
-`CREATE SYNONYM ... FOR [Rocks_Portal_Form_UAT].[dbo].[UatTester]`, and it is
-**permanent**, for one named consumer.
+Migrations 100, 102 and 105 each left a synonym behind because a named sibling
+still read the table two-part. **This move has no such consumer.**
 
-**What ACC Portal actually needs, measured:** two read-only statements in one
-file (`ACC_Portal/ACC_Portal/src/lib/uat-tester/service.ts:41-55` and `:86-98`),
-both `SELECT TOP (1) Id, StaffId, Email, ManagerStaffId, ManagerEmail FROM
-[dbo].[UatTester]` — **two-part names, no JOIN, no write anywhere in the
-repository**, on `getFastCorePool()`, a fixed pool on `env.RF_CORE_DATABASE`
-(zod default `"Fast_Core"`). A synonym satisfies every one of those
-requirements. It never names `FormEnvironment` in the same query — the two meet
-only in JavaScript, as separate round trips.
+Measured 2026-09-07 across all three checkouts: `UatTesterPerDiem` appears in
+`Form_Portal` only. ACC Portal and Rocks Fast contain zero references — not in
+`src/`, not in `scripts/`, not in `sql/`. Nothing in `Fast_Core` depends on it
+either: `sys.sql_expression_dependencies` names only `CK_UatTesterPerDiem_Amount`,
+the table's own CHECK constraint.
 
-**Rocks Fast names `UatTester` nowhere at all** — repo-wide grep returns nothing.
+A synonym with no consumer is a claim that somebody depends on it, and the next
+person to consider removing it would have to disprove that first.
 
-**`UatTesterPerDiem` gets no synonym.** No application other than this one names
-it. A synonym with no consumer is a claim that somebody depends on it, and the
-next reader would have to disprove that before touching it.
-
-**Nothing in `Fast_Core` depends on either table.** Measured 2026-09-07 against
-`sys.sql_expression_dependencies`: the only referencing object is
-`CK_UatTesterPerDiem_Amount`, the table's own CHECK constraint. No view,
-function or procedure blocks the drop.
+**This also removes a hazard the earlier design carried.** A `Fast_Core` synonym
+pointing into a UAT database would have been the first of its kind in this repo,
+and would have inherited the env-drift shape CLAUDE.md records for
+`MSSQL_FORM_DATABASE` and `MSSQL_ERP_DATA_DATABASE` — the migration hard-codes a
+database name while the app resolves an env var. With no synonym there is nothing
+to drift.
 
 ---
 
-## 6. Migrations, and the guard that must be inverted
+## 6. Migrations
 
 | # | Target | Contents |
 |---|---|---|
-| 139 | `Rocks_Portal_Form_UAT` | create both tables, copy both, reseed both identities |
-| 140 | `Fast_Core` | content-check and drop `UatTester`, create its synonym |
-| 141 | `Fast_Core` | content-check and drop `UatTesterPerDiem`. **No synonym.** |
+| 139 | `Rocks_Portal_Form_UAT` | create `UatTesterPerDiem`, copy it, reseed its identity |
+| 140 | `Fast_Core` | content-check and drop `UatTesterPerDiem`. No synonym. |
 
-139 follows 099/104's three-batch shape: guards then `CREATE TABLE`; guards
-again then an id-keyed `MERGE` under `SET IDENTITY_INSERT` reading `Fast_Core`
+139 follows 099/104's three-batch shape: guards then `CREATE TABLE`; guards again
+then an id-keyed `MERGE` under `SET IDENTITY_INSERT` reading `Fast_Core`
 three-part, with a `COUNT(*)` comparison inside the transaction that `ROLLBACK`s
 and `RAISERROR`s on a mismatch; then, **outside any transaction** because
 `DBCC CHECKIDENT` is not transactional, the reseed guarded by
-`IDENT_CURRENT(...) < floor`.
+`IDENT_CURRENT(...) < 1`.
 
-140 and 141 follow 100/105's early-exit ladder — wrong database → raise; already
-a synonym → skip; not a table → refuse to guess; **destination missing → "run
-139 first, refusing to drop the only copy"** — then `SET XACT_ABORT ON`,
+140 follows 100/105's early-exit ladder — wrong database → raise; already gone →
+skip; not a table → refuse to guess; **destination missing → "run 139 first,
+refusing to drop the only copy"** — then `SET XACT_ABORT ON`,
 `SET LOCK_TIMEOUT 5000`, a source count under `TABLOCKX` held to the end of the
 transaction, and an `EXCEPT` content check before the drop.
 
-**The content check is a whole-row comparison, like 105's and unlike 102's.**
-Neither table has an `nvarchar(MAX)` column, so every column is in the
-projection and nothing is reduced to a `DATALENGTH`.
+**The content check is a whole-row comparison, like 105's and unlike 102's.** The
+table has no `nvarchar(MAX)` column, so all ten columns are in the projection and
+nothing is reduced to a `DATALENGTH`.
 
-**139's database guard must be INVERTED relative to 099 and 104.** Both of those
-refuse `DB_NAME() LIKE '%[_]UAT'` **first and deliberately** (`099:57-59`). 139
-needs the opposite: it must *require* the name to end in `_UAT`, the way `061:20-27`
-and `064:37-44` do, **and** require `OBJECT_ID('dbo.AccRequest','U')` to be
-present, so a differently-named `_UAT` database cannot be hit by a mistyped
-`--db`. Copying 099's ladder verbatim produces a migration that refuses the only
-database it is meant to run against.
+**139's database guard is INVERTED relative to 099 and 104.** Both of those refuse
+`DB_NAME() LIKE '%[_]UAT'` **first and deliberately** (`099:57-59`). 139 needs the
+opposite: it must *require* the name to end in `_UAT`, the way `061:20-27` and
+`064:37-44` do, **and** require `OBJECT_ID('dbo.AccRequest','U')` to be present,
+so a differently-named `_UAT` database cannot be hit by a mistyped `--db`.
+Copying 099's ladder verbatim produces a migration that refuses the only database
+it is meant to run against.
 
-**138 cannot be repurposed as the bootstrap.** Its own guard is
+**138 cannot be repurposed as the bootstrap.** Its guard is
 `IF DB_NAME() NOT LIKE 'Fast_Core%' THROW` (`138:47-48`), so it refuses every
 database except the one the table is leaving.
 
 ---
 
-## 7. Deployment order — three steps, and why not two
+## 7. Deployment order — 139 → deploy the code → 140
 
-**139 → 140 → deploy the code → 141.**
+Two steps, and the order matters in one direction only.
 
-The order is split per table because the two have different consumers, and the
-obvious two-step orders each break something:
+- **139 first.** It creates a second copy and changes nothing about how the
+  running build reads the table: `per-diem.ts` still names `getCorePool()` until
+  the deploy, and `Fast_Core` still holds the original.
+- **140 last.** The table gets **no synonym**, so there is nothing to be
+  transparent through: running 140 before the deploy would give the running build
+  `Invalid object name` on AP-17's pricing path in UAT.
 
-- **139 → 140 → 141 → code** breaks the per-diem read. Between 141 and the
-  deploy, `per-diem.ts` still names `getCorePool()` and `Fast_Core` no longer
-  holds the table or a synonym for it — `Invalid object name` on AP-17's pricing
-  path in UAT.
-- **139 → code → 140** leaves a divergence window: Form Portal writes the new
-  roster while ACC Portal still reads `Fast_Core`'s now-frozen copy. Nothing
-  errors; the two applications simply disagree about who may test.
-
-The three-step order has neither window, because **a synonym is transparent to
-the code that predates it**. After 140, the old build's `getCorePool()` reads
-*and writes* — including `upsertUatTester`'s `MERGE` — resolve through the
-synonym into the new home, so ACC Portal and Form Portal keep agreeing
-throughout. 141 then removes a copy nothing reads any more.
+Neither gap opens a divergence window: nothing writes the new copy until the code
+is deployed, and nothing reads the old one after it is.
 
 **`npm run check:alignment` after each step; it must stay at 27.**
 
 ---
 
-## 8. Availability, and the two failure modes
+## 8. Availability
 
-**Fail loudly. Nothing degrades to "not a tester".** A caught error there would
-silently drop a tester back to Production mid-session and route their UAT work
-into the production database — worse than an error page.
+**Fail loudly. Nothing degrades to "no override".** A caught error would price a
+UAT tester at their real HR allowance with no error — the exact failure the AP-17
+per-diem feature exists to prevent, on a path that writes
+`AccRequest.TotalAmount`.
 
-The blast radius after the move: a viewer **holding the UAT cookie** fails every
-classified-form request while `Rocks_Portal_Form_UAT` is down. A production user
-without the cookie is untouched, because of the cookie gate at
-`form-environment/index.ts:110`.
+The blast radius is narrow by construction, and that is §2's asymmetry paying
+off: every reader is already inside UAT before it reads, so a
+`Rocks_Portal_Form_UAT` outage costs a UAT tester their AP-17 pricing path and
+costs a production user nothing, because no production path reaches this table.
 
-**The mail drain currently chooses the other direction, deliberately, and this
-changes it.** `src/lib/acc/email-queue.ts:146-155` wraps
-`listActiveUatTesterAddresses()` in its own `try`/`catch` and, on any error,
-logs and leaves `exemptTesters = []`. Its comment states the reasoning —
-everything "is redirected, which is the safe direction" — and that reasoning is
-sound as far as it goes: with no way to tell who is a tester, redirecting
-everything is what guarantees no real person is mailed.
-
-**Both options satisfy that guarantee. Only one is visible.** Redirecting
-silently means the tester who should have received the mail does not, their
-request sits at MANAGER, and the only trace is a server log line nobody reads.
-Letting the error propagate leaves the rows **queued** — nothing is mailed to
-the wrong place either, the drain reports a failure, and the messages are still
-there to send once the database is back.
-
-That is also exactly what `applyUatRedirect` already does when neither
-`UAT_MAIL_REDIRECT` nor `GRAPH_MAIL_FROM` is set: it throws and the row stays
-queued rather than reaching a real recipient. This change makes the two halves
-of the same function agree.
-
-The failure becomes newly reachable from a UAT-database outage, which is why it
-is in scope here rather than left alone.
+**The mail drain is not touched by this work.** An earlier version of this design
+changed `src/lib/acc/email-queue.ts` to rethrow instead of swallowing a
+tester-lookup failure, on the reasoning that the move made that path newly
+reachable. `listActiveUatTesterAddresses` reads `UatTester`, which is staying in
+`Fast_Core`, so that reasoning no longer holds and the change is reverted. The
+original swallow stands, and so does the `console.error` beside it — which was
+always there, and was the thing the change nearly cost.
 
 ---
 
 ## 9. Code changes
 
-Ten lines, in two files, plus their headers:
+Four lines in one file, plus its header:
 
 | File | Change |
 |---|---|
-| `src/lib/uat-tester/service.ts` | `getCorePool` → `getUatFormPool` at six sites (`:53, :96, :235, :259, :370, :394`) |
 | `src/lib/uat-tester/per-diem.ts` | `getCorePool` → `getUatFormPool` at four sites (`:55, :81, :135, :161`) |
-| `src/lib/acc/email-queue.ts` | remove the swallowing `catch`; §7 |
 
-Both headers are rewritten to state the new home, why `getUatFormPool()` and
-**never** `getFormPool()`/`getAccPool()`, and that a missing table throws.
+Its header states the new home, and why `getUatFormPool()` and **never**
+`getFormPool()`/`getAccPool()`.
 
-**No SQL changes.** Every statement names its table two-part, there is no
-three-part reference and no cross-database JOIN anywhere in `src/`. The one
-JOIN involving `UatTester` is a self-join (`service.ts:245-246`), which stays
-intra-database wherever the object resolves.
+**No SQL changes.** Every statement names the table two-part; there is no
+three-part reference and no cross-database JOIN.
+
+**`src/lib/uat-tester/service.ts` and `src/lib/acc/email-queue.ts` are not
+touched.**
 
 ---
 
 ## 10. Testing
 
-- **A source-reading guard test**, in the shape of the existing lexical guards:
-  `uat-tester/service.ts` and `per-diem.ts` must name `getUatFormPool` and must
-  **not** name `getFormPool`, `getAccPool` or `getCorePool`. This is the §3
-  hazard, and it is a *missing-call* failure no behavioural test would catch.
-- **`npm run check:uat-tester-home`**, in the shape of
-  `scripts/checks/verify-travel-province-move.ts:189-225`: open
-  `getUatFormPool()` — the pool the app itself uses, not a literal database name
-  — assert `Fast_Core.dbo.UatTester`'s `base_object_name` names that same
-  database, and compare a count through the synonym with a direct count **in one
-  round-trip**. This is what catches the env-drift hazard below.
-- **`perdiem-source-guard.test.ts:165` needs updating**: its client-bundle arm
-  greps for `getPerDiemEmployeeLog|getCorePool|uatPerDiemLog`, and the
-  `getCorePool` arm goes stale. Add `getUatFormPool` rather than replacing —
-  neither belongs in a client bundle.
-
-**The env-drift hazard, stated plainly:** the synonym hard-codes
-`[Rocks_Portal_Form_UAT]` while the app resolves `env.MSSQL_FORM_UAT_DATABASE`
-(`mssql.ts:119`), which `src/env.ts:12` merely `.default(...)`s and never
-asserts. Repointing that var makes Form Portal and ACC Portal read **different
-tester rosters with no error anywhere** — the same shape CLAUDE.md already
-records for `MSSQL_FORM_DATABASE`/migration 100 and
-`MSSQL_ERP_DATA_DATABASE`/migration 102.
+- **A source-reading guard test** asserting `per-diem.ts` names `getUatFormPool`
+  and **not** `getFormPool`, `getAccPool`, `getProductionFormPool` or
+  `getCorePool`. The failure mode is a swapped identifier that typechecks, whose
+  symptom is either recursion or `Invalid object name` at runtime — neither
+  reachable by a unit test of a function that opens a pool. It also pins that
+  `getAccPool` really is `getFormPool`, since that is the premise the
+  `getAccPool` prohibition rests on.
+- **`npm run check:uat-tester-home`**: `UatTesterPerDiem` is a table in the
+  database `getUatFormPool()` actually opens — the name taken from
+  `SELECT DB_NAME()` on that connection and validated against
+  `/^[A-Za-z0-9_]+$/` before any interpolation, following
+  `verify-travel-province-move.ts:116-122` — and `Fast_Core` holds **no object of
+  that name**, since a leftover table there would be a second copy that silently
+  stops being written.
+- `perdiem-source-guard.test.ts`'s client-bundle arm keeps `getUatFormPool`
+  alongside `getCorePool`: neither belongs in a browser bundle.
 
 ---
 
 ## 11. Documentation to correct
 
-Every one of these currently asserts the opposite of what will be true:
-
-- `src/lib/form-environment/index.ts:76-86` — the resolver invariant, verbatim
-  "So `FormEnvironment` and `UatTester` stay in Fast_Core". It must now say
-  `FormEnvironment` stays, and that `UatTester` moved but is still read through a
-  pool the resolver never picks.
-- `migrations/063_core_uat_tester.sql:3-4` — gains a "superseded by 139/140"
-  header. It is applied and must not be re-run or rewritten.
-- `migrations/138_core_uat_tester_per_diem.sql:14-22` — same, superseded by
-  139/141.
-- `CLAUDE.md` — the Parallel-UAT section, the 3-database table, and the AP-17
-  per-diem bullet added days ago.
-- `src/lib/uat-tester/per-diem.ts:14-31`, `src/lib/acc/email-queue.ts:133,142`,
-  `src/lib/acc/travel-booking/allowance-log.ts:53`,
-  `allowance-log-rule.ts:19`,
-  `src/features/travel-booking/components/AllowanceHistoryModal.tsx:28`.
+- `migrations/138_core_uat_tester_per_diem.sql` — a "superseded by 139/140"
+  header above its intact existing text. It is applied and must not be re-run.
+- `CLAUDE.md` — the 3-database table, the Parallel-UAT section, and a deployment
+  bullet for 139/140. **`UatTester` and `FormEnvironment` are described as staying
+  in `Fast_Core`, because that is what they do.**
+- `src/lib/uat-tester/per-diem.ts`, `per-diem-rule.ts`,
+  `src/lib/acc/travel-booking/allowance-log.ts`, `allowance-log-rule.ts`,
+  `src/features/travel-booking/components/AllowanceHistoryModal.tsx` — each names
+  the table's home in a comment.
 - `docs/superpowers/specs/2026-09-07-ap17-uat-per-diem-design.md` and its plan —
-  dated documents; they gain a note, not a rewrite.
+  one line each; they are dated history and are not rewritten.
 
 ---
 
-## 12. To verify during implementation, not assumed
+## 12. What this design got wrong, and how it was caught
 
-1. **`MERGE ... WITH (HOLDLOCK)` through a synonym.** §7's order depends on the
-   old build's writes resolving through `Fast_Core.dbo.UatTester` after 140.
-   SQL Server permits a synonym as a MERGE target; the table hint on a synonym
-   reference is the part to prove. Test it before 140 is applied, and if it does
-   not hold, the order becomes 139 → code → 140 → 141 and the divergence window
-   in §7 is accepted instead.
-2. **ACC Portal's SQL login needs SELECT on `Rocks_Portal_Form_UAT`.** Synonyms
-   do not carry permissions. Both apps use `MSSQL_USER`/`MSSQL_PASSWORD` and
-   Form Portal already opens that database, so this is expected to hold — but it
-   is a grant, and it must be confirmed rather than inferred.
-3. **Whether production ACC Portal sets `RF_CORE_DATABASE`** to something other
-   than `Fast_Core`. Only the local `.env.local` was readable, and it is
-   gitignored, so production must be checked separately.
-4. **Whether any consumer outside these three checkouts** — a stored procedure,
-   a report, an SSIS job — names `Fast_Core.dbo.UatTester`. The synonym keeps
-   two-part references working; a three-part reference to `Fast_Core` also keeps
-   working. Only a schemabound object would break, and §5 shows there is none.
+Recorded because the error is instructive and the filename still carries it.
 
----
+**The first version moved `UatTester` as well**, on the argument that it was
+"different" from `FormEnvironment` because `viewerIsTesting` is cookie-gated. That
+version was built in full — three migrations, the application repointed, a guard
+test, a check script and a documentation pass — reviewed task by task, and
+reached a whole-branch review before the flaw surfaced.
 
-## 13. Out of scope
+**The flaw:** the cookie gate is a property of the *resolver*, and the resolver is
+not the only reader. `/api/form-environment` reads the roster for every signed-in
+user on every dashboard page, and ACC Portal's app-shell layout does the same with
+no `try`/`catch`. Moving `UatTester` would therefore have put a UAT database on
+two production applications' page-render path — the exact property that had
+already disqualified `FormEnvironment`, which this design named and then failed to
+apply to the second table.
 
-- **`FormEnvironment`.** §2.
-- **Backfilling or a second copy.** There is one copy by design; a UAT database
-  rebuild loses it, which is the accepted trade recorded in §1.
-- **ACC Portal's own code.** It changes nothing: two-part reads through a
-  synonym are exactly what it does today.
+**How it was caught:** not by the author. A reviewer traced the readers instead of
+accepting §2's claim, and the requester then asked the question that settled it —
+whether `UatTester` should have stayed in `Fast_Core` after all.
+
+**What it cost:** nothing irreversible. No migration had been applied when the
+reversal was taken, so the correction was code and documentation only.
+
+**What to take from it:** "is this read cookie-gated?" was the wrong question. The
+right one is **"is this table read on any path that runs for a user who is not
+testing?"** — a question about every reader, not about the resolver. §2 is written
+that way now.
