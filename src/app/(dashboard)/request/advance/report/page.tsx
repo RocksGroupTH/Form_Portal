@@ -127,6 +127,10 @@ const COLS: Col[] = [
   { key: "payeeName", h: "ชื่อคู่ค้า/พนักงาน", screenLabel: "ผู้รับเงิน", maxW: 140, get: (r) => r.payeeName ?? "" },
   { key: "bankAccount", h: "เลขที่บัญชี", get: (r) => r.bankAccount ?? "" },
   { key: "bankName", h: "ธนาคาร", get: (r) => r.bankName ?? "" },
+  // 29th column, where AP-2-Control had 28. It sits with the account and the
+  // bank because the three answer one question — where the transfer goes — and
+  // a report that gives two thirds of that answer sends the reader elsewhere.
+  { key: "bankBranch", h: "รหัสสาขา", get: (r) => r.bankBranch ?? "" },
   { key: "needByDate", h: "วันที่เริ่มใช้เงิน", get: (r) => d(r.needByDate) },
   { key: "expectedClearDate", h: "วันที่คาดเคลียร์", screenLabel: "วันคาดเคลียร์", get: (r) => d(r.expectedClearDate), filter: "dates", rawDate: (r) => r.expectedClearDate },
   { key: "purpose", h: "รายละเอียด", get: (r) => r.purpose ?? "" },
