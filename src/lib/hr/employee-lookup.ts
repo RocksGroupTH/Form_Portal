@@ -1,8 +1,10 @@
 import { sql } from "@/lib/db/mssql";
 import { resolveFormAccess, resolveFormEnvironment } from "@/lib/form-environment";
+import { rateForDay } from "@/lib/acc/travel-booking/perdiem";
 import { EMPLOYEE_STATUS_ACTIVE } from "@/lib/hr/constants";
 import { getHrPool } from "@/lib/hr/pool";
 import { assertRequesterAllowedInUat } from "@/lib/uat-tester/guards";
+import { uatPerDiemLogFor } from "@/lib/uat-tester/per-diem";
 import { uatManagerFor, uatManagerStaffIdsFor } from "@/lib/uat-tester/service";
 import type {
   EmployeeContext,
@@ -579,14 +581,38 @@ export async function findActiveEmployeeByStaffId(
  * routes gate on `staffId === AccRequest.ManagerStaffId` alone, so whatever
  * lands here has to be a real active HR StaffId — `uatManagerFor` guarantees
  * that or returns null.
+ *
+ * It also replaces `allowance`, the employee's CURRENT per-diem rate, with the
+ * tester's own UAT rate when one is configured. That figure is a display value
+ * everywhere except one place that matters: `upsertTravelBooking` stamps it into
+ * `AccTravelBooking.AllowanceSnapshot`, which the detail page prints beside the
+ * priced total. Leaving it as the real HR figure puts a tester's real
+ * compensation on screen next to a UAT-priced total.
+ *
+ * One environment resolve for both overrides, because they answer the same
+ * question and two resolves could not disagree without being a bug.
  */
-async function withUatManager(employee: EmployeeContext): Promise<EmployeeContext> {
+async function withUatOverrides(employee: EmployeeContext): Promise<EmployeeContext> {
   if ((await resolveFormEnvironment()) !== "UAT") return employee;
-  const manager = await uatManagerFor(
-    employee.email ?? employee.emailCompBr ?? null,
-    employee.staffId ?? null,
-  );
-  return { ...employee, managerStaffId: manager ? manager.staffId : null };
+
+  const [manager, uatLog] = await Promise.all([
+    uatManagerFor(employee.email ?? employee.emailCompBr ?? null, employee.staffId ?? null),
+    uatPerDiemLogFor(employee.staffId ?? null),
+  ]);
+
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+    now.getDate(),
+  ).padStart(2, "0")}`;
+
+  return {
+    ...employee,
+    managerStaffId: manager ? manager.staffId : null,
+    // rateForDay answers 0 for a day no entry covers; a 0 here would claim the
+    // tester's allowance is zero rather than that no rate is in force yet.
+    allowance:
+      uatLog && rateForDay(today, uatLog) > 0 ? rateForDay(today, uatLog) : employee.allowance,
+  };
 }
 
 /**
@@ -595,7 +621,7 @@ async function withUatManager(employee: EmployeeContext): Promise<EmployeeContex
  * (server-side authorization -- never trust the client). Returns the full context so callers
  * that need phone/allowance/brand (e.g. AP-17 snapshots) work unchanged.
  *
- * In UAT the manager is the requester's UAT manager (see `withUatManager`).
+ * In UAT the manager is the requester's UAT manager (see `withUatOverrides`).
  *
  * `forWrite` opts into the UAT on-behalf refusal, and the AP-17 write choke
  * points pass it — the two that file a request, plus the id-card consent POST,
@@ -618,7 +644,7 @@ export async function resolveEmployeeForActor(
 ): Promise<EmployeeContext> {
   const actor = (await findActiveEmployeeByEmail(loginEmail)).employee;
   if (!actor) throw new Error("ไม่พบข้อมูลพนักงานของคุณในระบบ HR");
-  if (!requesterStaffId || requesterStaffId === actor.staffId) return withUatManager(actor);
+  if (!requesterStaffId || requesterStaffId === actor.staffId) return withUatOverrides(actor);
   const colleague = await findActiveEmployeeByStaffId(requesterStaffId);
   if (!colleague) throw new Error("ไม่พบข้อมูลพนักงานที่เลือก");
   // Any active employee may be filed for, not only the actor's own department.
@@ -633,5 +659,5 @@ export async function resolveEmployeeForActor(
       colleague.staffId ?? null,
     );
   }
-  return withUatManager(colleague);
+  return withUatOverrides(colleague);
 }

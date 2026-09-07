@@ -1308,13 +1308,20 @@ export async function submitTravelBookingGroup(
           .query(`UPDATE [dbo].[AccRequest] SET RequestNo=@no WHERE Id=@id`);
       }
 
+      // AllowanceSnapshot is otherwise written only by upsertTravelBooking, at
+      // save. A draft saved before a rate changed — a UAT rate being set, or an
+      // HR rate changing in production — would print the old figure beside a
+      // total priced from the new one. Submit is the moment the figure is fixed,
+      // so the snapshot is fixed with it.
       await tx.request()
         .input("id", sql.Int, requestId)
         .input("cont", sql.Bit, continuationFlags[i] ? 1 : 0)
         .input("days", sql.Int, perDiems[i].days)
         .input("total", sql.Decimal(18, 2), perDiems[i].total)
+        .input("allowance", sql.Decimal(18, 2), emp.allowance ?? null)
         .query(`UPDATE [dbo].[AccTravelBooking] SET
-                IsContinuation=@cont, PerDiemDays=@days, PerDiemTotal=@total, UpdatedAt=SYSDATETIME()
+                IsContinuation=@cont, PerDiemDays=@days, PerDiemTotal=@total,
+                AllowanceSnapshot=@allowance, UpdatedAt=SYSDATETIME()
                 WHERE RequestId=@id`);
 
       // Reset any prior approval (e.g. resubmit after Return) before creating the MANAGER step.
