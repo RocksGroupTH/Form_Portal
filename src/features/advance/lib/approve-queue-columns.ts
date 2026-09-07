@@ -8,6 +8,8 @@
  * so they are never hidden, never reordered and never filtered on.
  */
 
+import { makeColumnPrefs } from "./queue-column-prefs";
+
 export type QueueFilterKind = "text" | "select";
 
 export interface ApproveQueueColumn {
@@ -37,56 +39,9 @@ export const APPROVE_QUEUE_COLUMNS: ApproveQueueColumn[] = [
   { key: "step", label: "ขั้น", filter: "select" },
 ];
 
-/** Shown on a first visit — the whole set; the reader trims from here. */
-export const DEFAULT_VISIBLE: Record<string, boolean> = APPROVE_QUEUE_COLUMNS.reduce(
-  (acc, c) => ({ ...acc, [c.key]: true }),
-  {} as Record<string, boolean>,
+/** Storage keys of its own — the interface list has its own layout. */
+export const APPROVE_QUEUE_PREFS = makeColumnPrefs(
+  APPROVE_QUEUE_COLUMNS,
+  "ap2-approve-cols",
+  "ap2-approve-col-order",
 );
-
-export const COLS_STORAGE_KEY = "ap2-approve-cols";
-/** Separate from the visibility key, so a reader who had hidden columns keeps
- *  that choice and simply starts from the canonical order. */
-export const ORDER_STORAGE_KEY = "ap2-approve-col-order";
-
-const CANONICAL = APPROVE_QUEUE_COLUMNS.map((c) => c.key);
-
-/**
- * The reader's order, reconciled against the columns that exist today: stored
- * keys that no longer exist are dropped, and any column the stored list has
- * never seen is appended rather than lost — otherwise a column added in a later
- * release would be invisible to everyone who had ever dragged one, with nothing
- * on screen to explain why.
- */
-export function mergeOrder(stored: string[]): string[] {
-  const known = new Set(CANONICAL);
-  const kept = stored.filter((k) => known.has(k));
-  const seen = new Set(kept);
-  return [...kept, ...CANONICAL.filter((k) => !seen.has(k))];
-}
-
-export function loadStoredOrder(): string[] {
-  if (typeof window === "undefined") return CANONICAL;
-  try {
-    const raw = window.localStorage.getItem(ORDER_STORAGE_KEY);
-    if (!raw) return CANONICAL;
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed) || parsed.some((k) => typeof k !== "string")) return CANONICAL;
-    return mergeOrder(parsed as string[]);
-  } catch {
-    return CANONICAL;
-  }
-}
-
-export function loadStoredVisibility(): Record<string, boolean> {
-  if (typeof window === "undefined") return DEFAULT_VISIBLE;
-  try {
-    const raw = window.localStorage.getItem(COLS_STORAGE_KEY);
-    if (!raw) return DEFAULT_VISIBLE;
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object") return DEFAULT_VISIBLE;
-    // Start from the defaults so a column added later is shown, not missing.
-    return { ...DEFAULT_VISIBLE, ...(parsed as Record<string, boolean>) };
-  } catch {
-    return DEFAULT_VISIBLE;
-  }
-}

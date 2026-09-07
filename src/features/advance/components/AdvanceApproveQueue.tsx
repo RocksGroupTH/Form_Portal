@@ -13,10 +13,7 @@ import { buildBulkMessage, type BulkItemResult } from "@/features/advance/lib/bu
 import { AdvanceQueueVendorCell } from "./AdvanceQueueVendorCell";
 import { QueueColumnFilter } from "./QueueColumnFilter";
 import { ColumnToggleMenu } from "@/features/travel-booking/components/ColumnToggleMenu";
-import {
-  APPROVE_QUEUE_COLUMNS, COLS_STORAGE_KEY, ORDER_STORAGE_KEY,
-  DEFAULT_VISIBLE, loadStoredOrder, loadStoredVisibility, mergeOrder,
-} from "@/features/advance/lib/approve-queue-columns";
+import { APPROVE_QUEUE_COLUMNS, APPROVE_QUEUE_PREFS } from "@/features/advance/lib/approve-queue-columns";
 
 interface QueueRow {
   id: number;
@@ -52,26 +49,26 @@ export function AdvanceApproveQueue() {
   // Column layout and filters — the reader's own, remembered per browser.
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState<Record<string, string>>({});
-  const [visible, setVisible] = useState<Record<string, boolean>>(DEFAULT_VISIBLE);
+  const [visible, setVisible] = useState<Record<string, boolean>>(APPROVE_QUEUE_PREFS.defaultVisible);
   const [order, setOrder] = useState<string[]>(() => APPROVE_QUEUE_COLUMNS.map((c) => c.key));
 
   // Read the stored layout after mount: localStorage is not available during
   // SSR, and seeding state from it directly would hydrate a different table
   // than the server rendered.
   useEffect(() => {
-    setVisible(loadStoredVisibility());
-    setOrder(loadStoredOrder());
+    setVisible(APPROVE_QUEUE_PREFS.loadVisibility());
+    setOrder(APPROVE_QUEUE_PREFS.loadOrder());
   }, []);
 
   const handleVisibleChange = useCallback((next: Record<string, boolean>) => {
     setVisible(next);
-    try { window.localStorage.setItem(COLS_STORAGE_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+    APPROVE_QUEUE_PREFS.saveVisibility(next);
   }, []);
 
   const handleReorder = useCallback((keys: string[]) => {
-    const next = mergeOrder(keys);
+    const next = APPROVE_QUEUE_PREFS.mergeOrder(keys);
     setOrder(next);
-    try { window.localStorage.setItem(ORDER_STORAGE_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+    APPROVE_QUEUE_PREFS.saveOrder(next);
   }, []);
 
   const setFilter = useCallback((key: string, value: string) => {

@@ -13,6 +13,10 @@ import { FilterMonthPicker } from "@/features/accounting/components/FilterMonthP
 import { sentMonthKey } from "@/features/accounting/components/ApprovalQueueFilters";
 import { CurrencyCells, CURRENCY_HEADERS } from "./CurrencyColumns";
 import { buildBulkMessage, type BulkItemResult } from "@/features/advance/lib/bulk-result-message";
+import { ColumnToggleMenu } from "@/features/travel-booking/components/ColumnToggleMenu";
+import { SENT_QUEUE_COLUMNS, SENT_QUEUE_PREFS } from "@/features/advance/lib/sent-queue-columns";
+import { money, rate } from "./CurrencyColumns";
+import { AP2_DEFAULT_CURRENCY, isForeignCurrency } from "@/features/advance/constants";
 
 interface ErpRow {
   id: number;
@@ -94,6 +98,35 @@ export function AdvanceErpQueue() {
   const [pullbackBusy, setPullbackBusy] = useState(false);
   // Checkbox selection state.
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  // Column layout of the "ส่งแล้ว" table — the reader's own, per browser.
+  const [sentVisible, setSentVisible] = useState<Record<string, boolean>>(SENT_QUEUE_PREFS.defaultVisible);
+  const [sentOrder, setSentOrder] = useState<string[]>(() => SENT_QUEUE_COLUMNS.map((c) => c.key));
+
+  // After mount: localStorage is not available during SSR, and seeding from it
+  // directly would hydrate a different table than the server rendered.
+  useEffect(() => {
+    setSentVisible(SENT_QUEUE_PREFS.loadVisibility());
+    setSentOrder(SENT_QUEUE_PREFS.loadOrder());
+  }, []);
+
+  const handleSentVisibleChange = useCallback((next: Record<string, boolean>) => {
+    setSentVisible(next);
+    SENT_QUEUE_PREFS.saveVisibility(next);
+  }, []);
+
+  const handleSentReorder = useCallback((keys: string[]) => {
+    const next = SENT_QUEUE_PREFS.mergeOrder(keys);
+    setSentOrder(next);
+    SENT_QUEUE_PREFS.saveOrder(next);
+  }, []);
+
+  const sentColumns = useMemo(() => {
+    const byKey = new Map(SENT_QUEUE_COLUMNS.map((c) => [c.key, c]));
+    return sentOrder
+      .map((k) => byKey.get(k))
+      .filter((c): c is NonNullable<typeof c> => !!c)
+      .filter((c) => sentVisible[c.key] ?? true);
+  }, [sentOrder, sentVisible]);
 
   useEffect(() => {
     fetch("/api/request/advance/payment-dates")
@@ -309,6 +342,52 @@ export function AdvanceErpQueue() {
     }
   }
 
+  /** One cell of the "ส่งแล้ว" table, by column key — so the row is drawn from
+   *  the reader's order instead of a fixed sequence of <td>s. */
+  function sentCell(r: ErpRow, key: string): React.ReactNode {
+    const faint = { color: "var(--text-faint)" };
+    switch (key) {
+      case "requestNo":
+        return (
+          <button type="button" onClick={() => setPanelId(r.id)}
+            className="cursor-pointer font-bold text-left bg-transparent border-none p-0"
+            style={{ color: "var(--nav-active-text)" }}>{r.requestNo ?? `#${r.id}`}</button>
+        );
+      case "company": return <span style={{ color: "var(--text-secondary)" }}>{r.interfaceTarget}</span>;
+      case "payee": return <span style={{ color: "var(--text-primary)" }}>{r.payeeName ?? "—"}</span>;
+      case "paymentDate": return <span style={{ color: "var(--text-muted)" }}>{r.paymentDate ?? "—"}</span>;
+      case "currency":
+        return (
+          <span className="font-mono text-[11px]"
+            style={{ color: isForeignCurrency(r.currency) ? "var(--nav-active-text)" : "var(--text-muted)" }}>
+            {r.currency ?? AP2_DEFAULT_CURRENCY}
+          </span>
+        );
+      case "amount":
+        return isForeignCurrency(r.currency) && r.amount != null
+          ? <span style={{ color: "var(--text-secondary)" }}>{money(r.amount)}</span>
+          : <span style={faint}>—</span>;
+      case "exchangeRate":
+        return isForeignCurrency(r.currency) && r.exchangeRate != null
+          ? <span style={{ color: "var(--text-muted)" }}>{rate(r.exchangeRate)}</span>
+          : <span style={faint}>—</span>;
+      case "baseAmount":
+        return <span className="font-semibold" style={{ color: "var(--text-secondary)" }}>{money(r.baseAmount ?? 0)}</span>;
+      case "externalDoc":
+        return <span className="font-mono" style={{ color: "var(--text-muted)" }}>{r.requestNo ?? "—"}</span>;
+      case "erpDocumentNo":
+        return (
+          <span className="font-mono font-semibold"
+            style={{ color: r.erpDocumentNo ? "var(--text-secondary)" : "var(--text-faint)" }}>
+            {r.erpDocumentNo ?? "—"}
+          </span>
+        );
+      case "sentAt": return <span style={{ color: "var(--text-muted)" }}>{fmtDateTime(r.erpInterfaceSentAt)}</span>;
+      case "status": return <SentBadge status={r.erpInterfaceStatus} error={r.erpInterfaceError} />;
+      default: return null;
+    }
+  }
+
   if (loading) {
     return <p className="text-[13px] py-8 text-center" style={{ color: "var(--text-muted)" }}>กำลังโหลด...</p>;
   }
@@ -470,6 +549,12 @@ export function AdvanceErpQueue() {
             )}
             <div className="ml-auto flex items-center gap-2">
               <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{sentFiltered.length} รายการ</span>
+              <ColumnToggleMenu
+                columns={SENT_QUEUE_COLUMNS.map((c) => ({ key: c.key, label: c.label }))}
+                visible={sentVisible}
+                onChange={handleSentVisibleChange}
+                onReorder={handleSentReorder}
+              />
               <Button variant="secondary" icon={<Download size={14} />} onClick={exportExcel}
                 loading={exporting} disabled={sentFiltered.length === 0}>Export Excel</Button>
             </div>
@@ -489,27 +574,25 @@ export function AdvanceErpQueue() {
               <table className="w-max min-w-full text-[12px] border-collapse">
                 <thead>
                   <tr style={{ background: "var(--bg-card-alt)" }}>
-                    {["เลขที่", "Company", "ผู้รับเงิน", "วันจ่าย", ...CURRENCY_HEADERS, "External Doc.", "Doc No. (ERP)", "วันที่ส่ง", "สถานะ", "การจัดการ"].map((h) => (
-                      <th key={h} className="px-2.5 py-2 text-left font-bold whitespace-nowrap"
-                        style={{ color: "var(--text-faint)", borderBottom: "1px solid var(--border-card)" }}>{h}</th>
+                    {sentColumns.map((c) => (
+                      <th key={c.key}
+                        className={`px-2.5 py-2 font-bold whitespace-nowrap ${c.numeric ? "text-right" : "text-left"}`}
+                        style={{ color: "var(--text-faint)", borderBottom: "1px solid var(--border-card)" }}>{c.label}</th>
                     ))}
+                    {/* Fixed last: a control, never hidden or moved. */}
+                    <th className="px-2.5 py-2 text-left font-bold whitespace-nowrap"
+                      style={{ color: "var(--text-faint)", borderBottom: "1px solid var(--border-card)" }}>การจัดการ</th>
                   </tr>
                 </thead>
                 <tbody>
                   {sentFiltered.map((r) => (
                     <tr key={r.id} style={{ borderBottom: "1px solid var(--border-light)" }}>
-                      <td className="px-2.5 py-2 whitespace-nowrap">
-                        <button type="button" onClick={() => setPanelId(r.id)} className="cursor-pointer font-bold text-left bg-transparent border-none p-0"
-                          style={{ color: "var(--nav-active-text)" }}>{r.requestNo ?? `#${r.id}`}</button>
-                      </td>
-                      <td className="px-2.5 py-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{r.interfaceTarget}</td>
-                      <td className="px-2.5 py-2 whitespace-nowrap" style={{ color: "var(--text-primary)" }}>{r.payeeName ?? "—"}</td>
-                      <td className="px-2.5 py-2 whitespace-nowrap" style={{ color: "var(--text-muted)" }}>{r.paymentDate ?? "—"}</td>
-                      <CurrencyCells row={r} />
-                      <td className="px-2.5 py-2 whitespace-nowrap font-mono" style={{ color: "var(--text-muted)" }}>{r.requestNo ?? "—"}</td>
-                      <td className="px-2.5 py-2 whitespace-nowrap font-mono font-semibold" style={{ color: r.erpDocumentNo ? "var(--text-secondary)" : "var(--text-faint)" }}>{r.erpDocumentNo ?? "—"}</td>
-                      <td className="px-2.5 py-2 whitespace-nowrap" style={{ color: "var(--text-muted)" }}>{fmtDateTime(r.erpInterfaceSentAt)}</td>
-                      <td className="px-2.5 py-2 whitespace-nowrap"><SentBadge status={r.erpInterfaceStatus} error={r.erpInterfaceError} /></td>
+                      {sentColumns.map((c) => (
+                        <td key={c.key}
+                          className={`px-2.5 py-2 whitespace-nowrap ${c.numeric ? "text-right tabular-nums" : ""}`}>
+                          {sentCell(r, c.key)}
+                        </td>
+                      ))}
                       <td className="px-2.5 py-2 whitespace-nowrap">
                         {r.erpInterfaceStatus === "Sent" && (
                           <button type="button" onClick={() => setPullbackId(r.id)}
