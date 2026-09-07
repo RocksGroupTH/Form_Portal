@@ -47,10 +47,17 @@ export interface UatPerDiemRateRow {
  * **So `null` is now reachable only from an empty input — and it is a one-way
  * door.** With no flag and no delete, a tester who has ever had a rate stored
  * can never be returned to HR pricing; the way to change what they are paid is
- * another dated row. The `mine.length === 0` guard below therefore looks
- * redundant and is not: it is the whole never-return-`[]` invariant, and
- * `uatPerDiemLogFrom([])` is a live call — `uatPerDiemLogsByStaffIds` builds a
- * per-StaffId array and hands it straight here.
+ * another dated row.
+ *
+ * **Nothing in `src/` passes `[]` today, and the `mine.length === 0` guard
+ * still stays.** `uatPerDiemLogsByStaffIds` builds a per-StaffId array only
+ * once it has a row to push into it, so the empty case is currently
+ * unreachable — this note said the opposite until 2026-09-08 and was simply
+ * wrong. The guard is not there because a caller does it, it is there so that
+ * the next caller that does gets `null` rather than `[]`: `rateForDay` answers
+ * **0** for a day no entry covers, so `[]` prices every day of a trip at zero,
+ * which is a different claim from "this tester has no override" and reaches
+ * `AccRequest.TotalAmount` either way.
  *
  * The result is a fresh, sorted array: the report hands one row set to many
  * trips, and sorting the caller's array in place would reorder somebody else's.
@@ -98,6 +105,50 @@ export function latestUatPerDiemRate(
     if (!best || r.effectiveDate > best.effectiveDate) best = r;
   }
   return best ? { amount: best.amount, effectiveDate: best.effectiveDate } : null;
+}
+
+/**
+ * Has the latest configured rate started, or is it still ahead? `null` when
+ * there is no rate at all.
+ *
+ * A boundary, and therefore its own function: a rate effective **today** has
+ * started and must NOT be labelled as upcoming, which a `>=` here or a stray
+ * `Date` comparison would get wrong on exactly one day out of every rate's
+ * life. Both dates are 'YYYY-MM-DD' and compare lexicographically.
+ */
+export function perDiemRateState(
+  latest: { effectiveDate: string } | null,
+  today: string,
+): "started" | "upcoming" | null {
+  if (!latest) return null;
+  return latest.effectiveDate > today ? "upcoming" : "started";
+}
+
+/**
+ * The effective date of the rate a tester is actually paid at on `today` — the
+ * one the panel marks "ใช้อยู่". `null` when every configured rate is still
+ * ahead, which is a real state and not an error.
+ *
+ * Derived from the rows rather than from a sorted view of them. The panel had
+ * this as `mine.find(r => r.effectiveDate <= today)`, correct only because
+ * `mine` happens to be sorted date-DESC four lines earlier — a coupling no type
+ * expresses and a later reorder would silently break.
+ *
+ * This is `rateForDay`'s selection, answered as a date instead of an amount.
+ * It is deliberately NOT `latestUatPerDiemRate`: the two disagree whenever a
+ * rate has not started, which is the whole point of both.
+ */
+export function inForcePerDiemDate(
+  rows: readonly UatPerDiemRateRow[],
+  staffId: number,
+  today: string,
+): string | null {
+  let best: string | null = null;
+  for (const r of rows) {
+    if (r.staffId !== staffId || r.effectiveDate > today) continue;
+    if (best === null || r.effectiveDate > best) best = r.effectiveDate;
+  }
+  return best;
 }
 
 /** Refusals are Thai and name the problem, so a constraint name never reaches an admin. */

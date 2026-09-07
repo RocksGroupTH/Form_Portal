@@ -58,12 +58,17 @@ export type { UatPerDiemRateRow };
  * **The near-identical twin keeps its flag, and that is not an inconsistency.**
  * `AccTravelPerDiemCountry` (`src/lib/acc/travel-booking/perdiem-source.ts`)
  * has the same shape, the same settings panel and a `setPerDiemCountryRateActive`
- * of the same name — and its pricing genuinely does filter `IsActive = 1`. Edit
- * this table's code by exact path, never by grepping `isActive`, `toggle` or
- * "The soft delete": each of those returns hits in both, and only these are safe
- * to change. The rename does not help here — `TesterPerDiem` and
- * `AccTravelPerDiemCountry` both still answer a `PerDiem` grep, exactly as
- * `UatTesterPerDiem` did.
+ * of the same name — and its pricing genuinely does filter `IsActive = 1`.
+ *
+ * Since 143 this table's code has no `isActive`, no `toggle` and no soft
+ * delete at all, so those greps now return the TWIN's hits and nothing else:
+ * measured 2026-09-08, `grep "The soft delete"` finds two in code (the country
+ * route and `perdiem-source.ts`) plus this sentence, and `grep "including
+ * inactive ones"` finds one. That is the hazard, not its opposite — a sweep for
+ * any of them now looks like it is finding this table's leftovers and is
+ * finding the twin's working code. Edit either table by exact path. The rename
+ * does not help: `TesterPerDiem` and `AccTravelPerDiemCountry` both still
+ * answer a `PerDiem` grep, exactly as `UatTesterPerDiem` did.
  *
  * **A missing table throws.** It is not degraded to "no override": the read is
  * reached only in UAT, so an unapplied migration errors UAT AP-17 loudly rather

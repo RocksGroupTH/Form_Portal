@@ -1,3 +1,10 @@
+-- SUPERSEDED IN PART BY MIGRATIONS 142 AND 143 (2026-09-08). Applied
+-- 2026-09-07; kept as written, and NOT re-runnable. 142 renamed the UAT-side
+-- table to TesterPerDiem and 143 dropped its IsActive column, so every
+-- [Rocks_Portal_Form_UAT].[dbo].[UatTesterPerDiem] reference below and every
+-- IsActive in its projections names something that no longer exists. This file
+-- is a forensic record of one afternoon's divergence, not a tool.
+--
 -- Realign Fast_Core.dbo.UatTesterPerDiem to the live UAT copy, so migration
 -- 140's content guard can do its job.
 --

@@ -39,6 +39,25 @@
 -- really does filter on it. Do not follow this migration there.
 --
 -- ---------------------------------------------------------------------------
+-- THIS IS ONE-WAY FOR THE CODE.
+--
+-- Reverting the deploy after this has run breaks AP-17's UAT pricing twice
+-- over, because the previous build names BOTH things it removed: the old table
+-- name (through the synonym batch 1 drops) and the IsActive column (in three
+-- SELECTs and a MERGE). Neither resolves afterwards, and the failure lands
+-- inside recomputeGroupPerDiem's transaction, so it rolls back cancellations
+-- rather than failing one read.
+--
+-- To revert past commit 14c42e5, put both back first: re-run 142 to restore the
+-- synonym, then
+--   ALTER TABLE [dbo].[TesterPerDiem]
+--     ADD [IsActive] BIT NOT NULL CONSTRAINT [DF_TesterPerDiem_IsActive] DEFAULT (1);
+-- which is safe because every existing row must come back as active -- the
+-- whole point of the drop was that a switched-off row silently removed the
+-- override. Same class of note as migration 065's, and for the same reason:
+-- a one-way migration that nobody wrote down is discovered during a rollback.
+--
+-- ---------------------------------------------------------------------------
 -- THE DEFAULT CONSTRAINT COMES OFF FIRST.
 --
 -- SQL Server refuses to drop a column that carries one. 142 renamed it to

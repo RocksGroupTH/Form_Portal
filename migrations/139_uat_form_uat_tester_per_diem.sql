@@ -6,8 +6,14 @@
 -- OBJECT_ID('dbo.UatTesterPerDiem') IS NOT NULL, which 142's synonym satisfies
 -- until 143 removes it -- and NOTHING satisfies afterwards. Re-run then, and
 -- this file will happily CREATE a second, empty UatTesterPerDiem beside the
--- real TesterPerDiem, with no error. A rebuilt Rocks_Portal_Form_UAT wants
--- 139 -> 142 -> 143 once, in that order, and 139 never again.
+-- real TesterPerDiem, with no error.
+--
+-- A rebuilt Rocks_Portal_Form_UAT wants 139 -> 142 -> 143 once, in that order,
+-- and 139 never again -- but note that 139 no longer COMPLETES on a fresh
+-- database: batch 2 below copies from [Fast_Core].[dbo].[UatTesterPerDiem],
+-- which migration 140 dropped, so it raises and apply-sql exits 1 with the
+-- table created and empty. That failure is expected. Run 142 and 143 after it
+-- and restore the rates from a backup. See 142's header.
 --
 -- UatTesterPerDiem moves into the UAT form database. UatTester stays in
 -- Fast_Core -- see the design doc, section 2 and section 12, for why the two

@@ -58,10 +58,15 @@
 -- RENAMING A TABLE DOES NOT RENAME ITS CONSTRAINTS.
 --
 -- Each is renamed explicitly below. 'OBJECT' is the right third argument, not
--- 'INDEX', because PK_ and UQ_ here were declared as CONSTRAINTS (139:63 and
--- 139:73) -- migration 098:101-106 records the same distinction for
+-- 'INDEX', because PK_UatTesterPerDiem and UQ_UatTesterPerDiem_Staff_Date were
+-- declared in 139's CREATE TABLE as CONSTRAINTS rather than as standalone
+-- indexes -- migration 098 records the same distinction for
 -- UQ_DepartmentErpMap_Dept and notes there that the backing index follows the
--- constraint. The repo's only other sp_rename uses are 126:53 and 046:26.
+-- constraint. The repo's only other sp_rename uses are in 126 and 046.
+--
+-- No line numbers into 139: this header cited 139:63 and 139:73 when it was
+-- written and the same commit added eleven lines to 139's own header, so both
+-- were wrong before either file was committed.
 --
 -- Measured against the live Rocks_Portal_Form_UAT on 2026-09-08, before this
 -- ran: the table plus exactly six constraints --
@@ -80,9 +85,22 @@
 -- migration 139's own guard is `OBJECT_ID('dbo.UatTesterPerDiem') IS NOT NULL`,
 -- which the synonym satisfies until 143 and nothing satisfies afterwards. Run
 -- 139 again on a database that has had 142 and 143 and it will happily CREATE a
--- second, empty UatTesterPerDiem beside the real TesterPerDiem. A rebuilt
--- Rocks_Portal_Form_UAT wants 139 -> 142 -> 143 once, in that order, and 139
--- never again.
+-- second, empty UatTesterPerDiem beside the real TesterPerDiem.
+--
+-- ---------------------------------------------------------------------------
+-- STANDING UP A REPLACEMENT DATABASE: 139 STOPS PART-WAY, AND THAT IS EXPECTED.
+--
+-- The order is 139 -> 142 -> 143, once, and 139 never again. But 139 does not
+-- COMPLETE on a fresh database any more, and no amount of care here changes
+-- that: its batch 1 creates the table, and its batch 2 copies the rows from
+-- [Fast_Core].[dbo].[UatTesterPerDiem] -- which migration 140 dropped on
+-- 2026-09-07. So batch 2 raises, apply-sql exits 1, and batch 3 never runs.
+--
+-- What you are left with is a correct but EMPTY table. Run 139 and expect that
+-- failure, then run 142 and 143, then restore the rates from a backup. This is
+-- the same shape as the recovery migration 104 documents for TravelProvince,
+-- and for the same reason: the source a copy migration reads from is gone once
+-- its companion has run.
 
 SET NOCOUNT ON;
 

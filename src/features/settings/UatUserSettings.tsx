@@ -9,7 +9,12 @@ import { toast } from "sonner";
 // `onSelect` widened to hand back the whole row.
 import { ADSearchModal } from "@/components/settings/ADSearchModal";
 import { SidePanel, SidePanelClose } from "@/components/ui/SidePanel";
-import { latestUatPerDiemRate, type UatPerDiemRateRow } from "@/lib/uat-tester/per-diem-rule";
+import {
+  inForcePerDiemDate,
+  latestUatPerDiemRate,
+  perDiemRateState,
+  type UatPerDiemRateRow,
+} from "@/lib/uat-tester/per-diem-rule";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -38,7 +43,17 @@ interface UatUsersData {
    poison this client bundle with no type error — the `src/lib/api-keys/codes.ts`
    failure this codebase has already paid for once. */
 
-/** 'YYYY-MM-DD' from local getters — the server runs on a Thai wall clock. */
+/**
+ * 'YYYY-MM-DD' from local getters, never `toISOString`.
+ *
+ * This one runs in the BROWSER, so "local" is the admin's machine, not the
+ * server — and what it is compared against is a `DATE` column the server writes
+ * and reads on a Thai wall clock. They agree for anyone sitting in Thailand,
+ * which is everyone who opens this page. An admin in another zone can see a
+ * rate labelled "มีผล" for a few hours either side of midnight when the server
+ * would already call it started; nothing is priced from this value, so the cost
+ * is a label, not a payment.
+ */
 function todayKey(): string {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
@@ -60,16 +75,21 @@ function PerDiemAmount({
   latest: { amount: number; effectiveDate: string } | null;
   today: string;
 }) {
-  if (!latest) {
+  const state = perDiemRateState(latest, today);
+  if (!latest || state === null) {
     return <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>—</span>;
   }
   return (
     <span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>
       ฿{latest.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}/วัน
-      {latest.effectiveDate > today ? (
+      {state === "upcoming" ? (
+        // The YEAR is shown, not just DD/MM. A rate mistyped a year ahead is
+        // indistinguishable from one starting tomorrow otherwise — and with no
+        // toggle and no delete it cannot be withdrawn, only superseded.
         <span style={{ color: "var(--text-faint)" }}>
           {" "}
-          (มีผล {latest.effectiveDate.slice(8, 10)}/{latest.effectiveDate.slice(5, 7)})
+          (มีผล {latest.effectiveDate.slice(8, 10)}/{latest.effectiveDate.slice(5, 7)}/
+          {latest.effectiveDate.slice(0, 4)})
         </span>
       ) : null}
     </span>
@@ -127,8 +147,10 @@ function PerDiemPanel({
     .slice()
     .sort((a, b) => (a.effectiveDate < b.effectiveDate ? 1 : -1));
 
-  /** Date DESC, so the first one that has started is today's. */
-  const inForceDate = mine.find((r) => r.effectiveDate <= today)?.effectiveDate ?? null;
+  // Derived from the rows, not from `mine`'s ordering. Written as
+  // `mine.find(r => r.effectiveDate <= today)` this was correct only because
+  // `mine` is sorted date-DESC four lines up — a coupling no type expresses.
+  const inForceDate = inForcePerDiemDate(rates, tester.staffId, today);
 
   const save = async () => {
     setBusy(true);

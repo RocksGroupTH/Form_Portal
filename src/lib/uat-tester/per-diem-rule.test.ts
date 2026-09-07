@@ -2,11 +2,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { rateForDay } from "@/lib/acc/travel-booking/perdiem";
 import {
   UAT_PER_DIEM_NOTE_MAX,
   UatPerDiemInputError,
+  inForcePerDiemDate,
   latestUatPerDiemRate,
   parseUatPerDiemInput,
+  perDiemRateState,
   uatPerDiemLogFrom,
   type UatPerDiemRateRow,
 } from "./per-diem-rule";
@@ -88,14 +91,40 @@ test("the LATEST configured rate wins, including one that has not started", () =
   // so a rate dated tomorrow is the one that will price the next trip that can
   // exist. The old rule excluded it and left an admin who had just saved a rate
   // looking at the previous figure.
+  //
+  // The newer date is 2099 rather than "tomorrow". Written as 2026-09-07 and
+  // 2026-09-08 this test PASSED UNDER THE OLD RULE TOO, because it was written
+  // on 2026-09-08 and that "future" rate had already started — a test named for
+  // the regression it cannot catch. A date no clock will reach keeps it honest.
   const rows = [
     row({ id: 1, effectiveDate: "2026-09-07", amount: 300 }),
-    row({ id: 2, effectiveDate: "2026-09-08", amount: 400 }),
+    row({ id: 2, effectiveDate: "2099-01-01", amount: 400 }),
   ];
   assert.deepEqual(latestUatPerDiemRate(rows, 100), {
     amount: 400,
-    effectiveDate: "2026-09-08",
+    effectiveDate: "2099-01-01",
   });
+});
+
+test("latestUatPerDiemRate and rateForDay are meant to DISAGREE", () => {
+  // The whole point of the grid's rule, and the thing a later reader is most
+  // likely to "fix". Only prose defended it until now: rateForDay is what
+  // prices a trip and must ignore a rate that has not started, while the grid
+  // must show that rate or an admin who just saved one sees no change.
+  // rateForDay is import-free (perdiem.ts has no imports), so this costs no
+  // database.
+  const rows = [
+    row({ id: 1, effectiveDate: "2026-01-01", amount: 300 }),
+    row({ id: 2, effectiveDate: "2099-01-01", amount: 400 }),
+  ];
+  const log = uatPerDiemLogFrom(rows);
+  assert.ok(log);
+  assert.equal(rateForDay("2026-09-08", log), 300, "pricing must ignore a rate that has not started");
+  assert.deepEqual(
+    latestUatPerDiemRate(rows, 100),
+    { amount: 400, effectiveDate: "2099-01-01" },
+    "the grid must show the latest configured rate, started or not",
+  );
 });
 
 test("another tester's rows are not borrowed", () => {
@@ -115,6 +144,46 @@ test("input order does not decide the answer", () => {
     row({ id: 2, effectiveDate: "2026-06-01", amount: 800 }),
   ];
   assert.deepEqual(latestUatPerDiemRate(asc, 100), latestUatPerDiemRate(asc.slice().reverse(), 100));
+});
+
+/* ── perDiemRateState / inForcePerDiemDate — what the settings screen draws ── */
+
+test("a rate effective TODAY has started — the one day the boundary matters", () => {
+  // A `>=` here, or a Date comparison that drifts, labels today's own rate as
+  // upcoming for exactly one day of its life. That is the whole reason this is
+  // a function rather than an inline `>`.
+  assert.equal(perDiemRateState({ effectiveDate: "2026-09-08" }, "2026-09-08"), "started");
+  assert.equal(perDiemRateState({ effectiveDate: "2026-09-07" }, "2026-09-08"), "started");
+  assert.equal(perDiemRateState({ effectiveDate: "2026-09-09" }, "2026-09-08"), "upcoming");
+  assert.equal(perDiemRateState(null, "2026-09-08"), null);
+});
+
+test("inForcePerDiemDate is rateForDay's selection, answered as a date", () => {
+  const rows = [
+    row({ id: 1, effectiveDate: "2026-01-01" }),
+    row({ id: 2, effectiveDate: "2026-09-08" }),
+    row({ id: 3, effectiveDate: "2099-01-01" }),
+  ];
+  assert.equal(inForcePerDiemDate(rows, 100, "2026-09-08"), "2026-09-08");
+  assert.equal(inForcePerDiemDate(rows, 100, "2026-06-01"), "2026-01-01");
+});
+
+test("every rate still ahead means nothing is in force — a real state, not an error", () => {
+  // The tester is then priced at 0/day for those days rather than at their HR
+  // rate, because uatPerDiemLogFrom answers a non-null log and rateForDay
+  // answers 0 for an uncovered day. With no toggle and no delete the row cannot
+  // be withdrawn, only superseded by an earlier-dated one.
+  assert.equal(inForcePerDiemDate([row({ effectiveDate: "2099-01-01" })], 100, "2026-09-08"), null);
+});
+
+test("inForcePerDiemDate does not depend on input order, or on another tester", () => {
+  const rows = [
+    row({ id: 1, staffId: 100, effectiveDate: "2026-01-01" }),
+    row({ id: 2, staffId: 100, effectiveDate: "2026-06-01" }),
+    row({ id: 3, staffId: 200, effectiveDate: "2026-09-01" }),
+  ];
+  assert.equal(inForcePerDiemDate(rows, 100, "2026-09-08"), "2026-06-01");
+  assert.equal(inForcePerDiemDate(rows.slice().reverse(), 100, "2026-09-08"), "2026-06-01");
 });
 
 /* ── the client bundle ──
@@ -140,6 +209,20 @@ test("per-diem-rule.ts imports nothing at runtime", () => {
         "-- and no type error would say so.",
     );
   }
+  // `import` at the start of a line is not the only way in. A re-export and a
+  // dynamic import each pull a module in at runtime and neither begins with the
+  // word the loop above matches, so that check would stay green while the
+  // bundle filled up. `export type { … } from` is erased and is excluded.
+  for (const line of src.split("\n").map((l) => l.trim())) {
+    assert.ok(
+      !(line.startsWith("export {") || line.startsWith("export *")) || !line.includes(" from "),
+      `per-diem-rule.ts re-exports at runtime: ${line}. That bundles the source module.`,
+    );
+  }
+  assert.ok(
+    !/\bimport\s*\(/.test(src),
+    "per-diem-rule.ts uses a dynamic import, which bundles the target for the client too",
+  );
 });
 
 test("the settings page never imports the pool half", () => {
@@ -157,6 +240,38 @@ test("the settings page never imports the pool half", () => {
     "UatUserSettings.tsx should take the row type and the latest-rate rule from the " +
       "pure module rather than re-declaring them -- the local copy it used to keep " +
       "still carried isActive after the column was gone.",
+  );
+  // Importing is not the property. Re-inlining a local "rate in force today"
+  // helper beside the import leaves both assertions above green and restores
+  // the exact bug this work removed, so pin the CALLS as well.
+  for (const fn of ["latestUatPerDiemRate", "perDiemRateState", "inForcePerDiemDate"]) {
+    assert.ok(
+      new RegExp(`\\b${fn}\\s*\\(`).test(src),
+      `UatUserSettings.tsx no longer CALLS ${fn}. Importing the module is not the ` +
+        "property being guarded: the grid must print the LATEST CONFIGURED rate, not " +
+        "the one in force today, and an inlined local rule would keep every import " +
+        "assertion here green while putting the original bug back.",
+    );
+  }
+});
+
+test("the twin table still filters IsActive — this change must not have spread", () => {
+  // The counterpart to every assertion above. AccTravelPerDiemCountry has the
+  // same row shape, the same settings panel and a toggle of the same shape, and
+  // ITS pricing genuinely does gate on the flag. A sweep for `isActive` or
+  // "The soft delete" hits it, and since 143 those greps return the twin's
+  // working code and nothing else — so the next person tidying up after this
+  // change is aimed straight at it. Source-reading, because the failure is a
+  // deletion and no behavioural test of this module would notice.
+  const twin = fs.readFileSync(
+    path.resolve(process.cwd(), "src/lib/acc/travel-booking/perdiem-source.ts"),
+    "utf8",
+  );
+  assert.ok(
+    twin.includes("IsActive = 1"),
+    "perdiem-source.ts no longer filters IsActive = 1. That is AccTravelPerDiemCountry, " +
+      "NOT the UAT per-diem table: its flag is read by pricing and must stay. Migration " +
+      "143 dropped the column from TesterPerDiem only.",
   );
 });
 

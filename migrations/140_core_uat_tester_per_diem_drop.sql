@@ -1,10 +1,14 @@
 -- Fast_Core.dbo.UatTesterPerDiem is dropped. NO synonym is left behind.
 --
--- Applied 2026-09-07; kept as written. Two things below are dated rather than
--- wrong: the table has since been renamed to TesterPerDiem by migration 142 --
--- in the UAT database, not here, so nothing in this file changes -- and the
--- "all ten columns are in the projection" note stops being a live count once
--- 143 drops IsActive, leaving nine.
+-- Applied 2026-09-07; kept as written. *** DO NOT RE-RUN IT. *** On 2026-09-08
+-- migrations 142 and 143 renamed the UAT-side table to TesterPerDiem and
+-- dropped its IsActive column, and this file's content guard reads BOTH: it
+-- names [Rocks_Portal_Form_UAT].[dbo].[UatTesterPerDiem] in four places and
+-- projects IsActive in two, so it can no longer see its own destination. Re-run
+-- today and it refuses at the destination-missing arm -- correctly, but for the
+-- wrong reason, and its RAISERROR then advises re-running 139, which 139's own
+-- banner now forbids. The "all ten columns are in the projection" note below is
+-- likewise a dated count: nine after 143.
 --
 -- Apply with (Fast_Core ONLY, AFTER migration 139 AND AFTER the code that reads
 -- the new home is deployed -- see the ordering note below):

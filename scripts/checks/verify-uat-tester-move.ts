@@ -9,6 +9,8 @@
  *     gets no synonym -- nothing outside this application names it -- and a
  *     leftover table there would be a second copy that silently stops being
  *     written
+ *   - TesterPerDiem has no IsActive column. Nothing reads one any more, so a
+ *     survivor is a stale flag waiting to be mistaken for a live one
  *   - the UAT database does not still hold the OLD name either. Migration 142
  *     renamed UatTesterPerDiem -> TesterPerDiem and left a synonym for the
  *     build that was still running; 143 drops it. A leftover TABLE means a
@@ -108,8 +110,26 @@ async function main() {
       `UatTesterPerDiem: ${uatDb} still holds a TABLE of that name beside TesterPerDiem. The rename is half applied, or migration 139 was re-run after 142 — 139's guard is satisfied by the synonym, so re-running it creates a second, empty table. Establish which one holds the rates before dropping anything.`,
     );
   } else if (oldHere.recordset[0].syn !== null) {
+    // Not a fault, but not the finished state either, and this check asserts the
+    // finished state. It said "expected" while returning exit 1, which is two
+    // answers to one question.
     problems.push(
-      `UatTesterPerDiem: ${uatDb} still has the synonym migration 142 leaves behind for the previous build. Expected until the code deploy — run migration 143 once it is live.`,
+      `UatTesterPerDiem: ${uatDb} still has the synonym migration 142 leaves behind for the previous build, so the sequence is not finished. Harmless — both names resolve — but run migration 143 once the new build is live.`,
+    );
+  }
+
+  // 4. The column this work exists to remove is actually gone.
+  //
+  // Everything above is about WHERE the table is and what it is called. None of
+  // it notices an IsActive that survived, and a surviving IsActive is not inert:
+  // nothing reads it any more, so it would sit there collecting stale values
+  // that a future reader could mistake for a live flag and re-introduce the
+  // filter that priced a switched-off tester at their real HR salary.
+  const shape = await uat.request().query<{ isActive: number | null }>(`
+    SELECT COL_LENGTH('dbo.TesterPerDiem', 'IsActive') AS [isActive];`);
+  if (shape.recordset[0].isActive !== null) {
+    problems.push(
+      `TesterPerDiem: ${uatDb} still has an IsActive column. Every stored rate is meant to count, with the effective date the only selector, as in HR — run migration 143.`,
     );
   }
 
@@ -119,8 +139,9 @@ async function main() {
     process.exit(1);
   }
   console.log(
-    `PASS — TesterPerDiem is a table in ${uatDb}, nothing there still answers to ` +
-      "UatTesterPerDiem, and Fast_Core holds no object of that name either.",
+    `PASS — TesterPerDiem is a table in ${uatDb} with no IsActive column, nothing ` +
+      "there still answers to UatTesterPerDiem, and Fast_Core holds no object of " +
+      "that name either.",
   );
   process.exit(0);
 }
