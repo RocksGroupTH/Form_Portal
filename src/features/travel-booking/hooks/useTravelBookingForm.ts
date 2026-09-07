@@ -575,9 +575,28 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
      computePerDiem exactly for day-count/continuation, but using the requester's
      CURRENT allowance rate as a flat estimate (the authoritative amount uses the
      effective-dated EmployeeAllowanceLog and is computed at submit). ── */
+  /**
+   * The stand-in used only while `/api/request/travel-booking/allowance-log`
+   * has not yet answered — including a fetch that FAILS and never answers at
+   * all, since `jsonFetcher` throws on `{ ok: false }` and SWR then leaves
+   * `data` `undefined` for the rest of the session, exactly as if the fetch
+   * were still loading.
+   *
+   * In UAT this must never be `employee.allowance` — that is the ACTOR's real
+   * HR compensation (see `displayRate` below), and a stand-in that falls back
+   * to it is the one remaining way a UAT tester's own real salary reaches
+   * their screen: withheld here, `estimateLog` stays `[]` and every domestic
+   * estimate prices at nothing rather than at that figure. Production keeps
+   * the stand-in unchanged.
+   */
   const flatRateLog: AllowanceLogEntry[] = useMemo(
-    () => (employee?.allowance != null ? [{ effectiveDate: "0001-01-01", amount: employee.allowance }] : []),
-    [employee?.allowance],
+    () =>
+      requesterEnvironment === "UAT"
+        ? []
+        : employee?.allowance != null
+          ? [{ effectiveDate: "0001-01-01", amount: employee.allowance }]
+          : [],
+    [employee?.allowance, requesterEnvironment],
   );
   // Real effective-dated allowance history for the requester (rates change over time), so the
   // estimate uses the rate for each travel day — not just the current rate. Falls back to the
@@ -617,6 +636,16 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
    * The `> 0` arm is not defensive noise: `rateForDay` answers 0 for a day no
    * entry covers, and a chip reading ฿0/วัน is a worse answer than the figure it
    * replaced.
+   *
+   * **In UAT, the fallback is `null`, never `employee.allowance`.** That value
+   * is the ACTOR's real HR allowance — the exact figure this feature exists to
+   * keep off a UAT tester's screen — and `estimateLog` reads `[]` on this same
+   * branch whenever the log fetch has not landed (loading, or failed and never
+   * will), so without this the chip would show it for the whole session. The
+   * chip renders `-` instead, the same shape `ratesKnown` above already uses to
+   * withhold a foreign trip's money rather than show a confident wrong figure —
+   * this withholds by identity (UAT) instead of by fetch status, since a
+   * permanently failed fetch must be covered too, not just a slow one.
    */
   const displayRate = useMemo(() => {
     const now = new Date();
@@ -624,8 +653,9 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
       now.getDate(),
     ).padStart(2, "0")}`;
     const fromLog = rateForDay(today, estimateLog);
-    return estimateLog.length > 0 && fromLog > 0 ? fromLog : (employee?.allowance ?? null);
-  }, [estimateLog, employee?.allowance]);
+    if (estimateLog.length > 0 && fromLog > 0) return fromLog;
+    return requesterEnvironment === "UAT" ? null : (employee?.allowance ?? null);
+  }, [estimateLog, employee?.allowance, requesterEnvironment]);
 
   const continuationFlags = useMemo(
     () =>
