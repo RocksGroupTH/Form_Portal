@@ -32,6 +32,7 @@ function row(overrides: Partial<Row>): Row {
     payeeName: "ผู้รับเงิน ทดสอบ",
     bankAccount: null,
     bankName: null,
+    bankBranch: null,
     needByDate: null,
     expectedClearDate: "2026-08-15",
     purpose: null,

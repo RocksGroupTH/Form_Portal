@@ -16,6 +16,7 @@ export interface AdvanceReportRow {
   payeeName: string | null;
   bankAccount: string | null;
   bankName: string | null;
+  bankBranch: string | null;
   needByDate: string | null;
   expectedClearDate: string | null;
   purpose: string | null;
@@ -82,7 +83,7 @@ export async function listAdvanceReport(): Promise<AdvanceReportRow[]> {
     SELECT r.Id, r.RequestNo, r.SubmittedAt, r.StaffId, r.RequesterFullName, r.RequesterPosition,
            r.RequesterDepartmentName, r.Status, r.CurrentStepCode, r.PaymentDate,
            r.ErpInterfaceStatus,
-           a.PayeeType, a.PayeeName, a.PayeeBankAccount, a.PayeeBankCode, bm.BankName,
+           a.PayeeType, a.PayeeName, a.PayeeBankAccount, a.PayeeBankCode, a.PayeeBankBranch, bm.BankName,
            hr.BankAccountNo AS HrBankAccount,
            a.NeedByDate, a.ExpectedClearDate, a.Purpose, a.Currency, a.Amount, a.ExchangeRate, a.BaseAmount
     FROM [dbo].[AccRequest] r
@@ -161,6 +162,9 @@ export async function listAdvanceReport(): Promise<AdvanceReportRow[]> {
       bankName: r.PayeeType === "vendor"
         ? ((r.BankName as string) ?? (r.PayeeBankCode as string) ?? null)
         : null,
+      // Vendor only, like the bank name: an employee is paid into the account
+      // HR holds, and HR records no branch for it.
+      bankBranch: r.PayeeType === "vendor" ? ((r.PayeeBankBranch as string) ?? null) : null,
       needByDate: ymd(r.NeedByDate),
       expectedClearDate: ymd(r.ExpectedClearDate),
       purpose: (r.Purpose as string) ?? null,

@@ -154,31 +154,6 @@ export async function findVendorByEmployeeCode(
   };
 }
 
-/** Prefilter candidates for the matcher: active ADV vendors whose name shares a token
- *  with the payee. Caps the set so the LLM prompt stays small. */
-export async function prefilterVendors(company: string, payeeName: string, limit = 10): Promise<AdvErpVendorOption[]> {
-  const c = company.trim().toUpperCase();
-  const term = (payeeName ?? "").trim();
-  if (!c || !term) return [];
-  const pool = await getAppPool(ERP_DATA_DB);
-  const r = await pool.request()
-    .input("c", sql.NVarChar, c)
-    .input("t", sql.NVarChar, `%${term}%`)
-    .input("lim", sql.Int, limit)
-    .input("pg", sql.NVarChar, ADVANCE_VENDOR_POSTING_GROUP)
-    .query(`
-      SELECT TOP (@lim) VendorNo, DisplayName FROM [dbo].[ErpVendors]
-      WHERE BrandCode = @c
-        AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
-        AND VendorPostingGroup = @pg
-        AND (DisplayName LIKE @t OR @t LIKE '%' + DisplayName + '%')
-      ORDER BY LEN(DisplayName)`);
-  return (r.recordset as Record<string, unknown>[]).map((x) => ({
-    vendorNo: x.VendorNo as string,
-    displayName: (x.DisplayName as string) ?? null,
-  }));
-}
-
 /**
  * Does this code exist as a usable BRANCH dimension value for the company?
  *
