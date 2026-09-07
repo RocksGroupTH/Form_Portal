@@ -66,17 +66,16 @@ export function AdvanceQueueVendorCell({
 }: AdvanceQueueVendorCellProps) {
   const [busy, setBusy] = useState(false);
   const [vendors, setVendors] = useState<VendorOption[] | null>(null);
-  // Set when the officer asks to replace an already-confirmed vendor.
-  const [changing, setChanging] = useState(false);
-  // Only a row that needs the officer to choose pulls the list in.
-  const needsPicker = changing || (status !== "confirmed" && !vendorNo);
+  const confirmed = status === "confirmed" && !!vendorNo;
 
+  // Every row shows a live dropdown, so every row wants the list — but they all
+  // share one request per brand, so a 20-row queue still fetches it once.
   useEffect(() => {
-    if (!needsPicker || !brandCode) return;
+    if (!brandCode) return;
     let cancelled = false;
     loadVendors(brandCode).then((v) => { if (!cancelled) setVendors(v); });
     return () => { cancelled = true; };
-  }, [needsPicker, brandCode]);
+  }, [brandCode]);
 
   async function confirm(no: string) {
     if (!no || !brandCode) return;
@@ -87,9 +86,8 @@ export function AdvanceQueueVendorCell({
         body: JSON.stringify({ id: requestId, vendorNo: no }),
       });
       const j = (await res.json()) as { ok: boolean; error?: string };
-      if (!j.ok) { toast.error(j.error ?? "ยืนยัน Vendor ไม่สำเร็จ"); return; }
-      toast.success("ยืนยัน Vendor แล้ว");
-      setChanging(false);
+      if (!j.ok) { toast.error(j.error ?? "บันทึก Vendor ไม่สำเร็จ"); return; }
+      toast.success(`บันทึก Vendor ${no} แล้ว`);
       onConfirmed();
     } catch {
       toast.error("ยืนยัน Vendor ไม่สำเร็จ");
@@ -98,80 +96,45 @@ export function AdvanceQueueVendorCell({
     }
   }
 
-  // The code, not the name (decision: user, 2026-09-07). Thai vendor names run
-  // long and made this the widest column in a table that already scrolls; the
-  // code is short, fixed-width and the thing that reaches BC. The name stays a
-  // hover away, and the picker below still searches on it.
-  // A matched vendor confirms itself, so this is the normal state rather than
-  // the end of a click — which is exactly why it must stay changeable here.
-  // Without it, auto-confirming would have quietly removed the officer's only
-  // in-queue way to correct a vendor.
-  if (status === "confirmed" && !changing) {
-    return (
-      <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-        <span className="inline-flex items-center gap-1.5 text-[12px] font-mono"
-          style={{ color: "var(--text-secondary)" }} title={vendorName ?? undefined}>
-          <Check size={13} className="shrink-0" style={{ color: "#4fa37a" }} />
-          {vendorNo}
-        </span>
-        <button type="button" onClick={() => setChanging(true)}
-          className="text-[11px] px-1.5 py-0.5 rounded-lg border-none bg-transparent cursor-pointer"
-          style={{ color: "var(--text-faint)" }} title="เปลี่ยน Vendor">
-          เปลี่ยน
-        </button>
-      </span>
-    );
-  }
-
-  // A row still holding 'suggested' — written before matches confirmed
-  // themselves, by the old name matcher. That guess does want a human, so it
-  // keeps its one-click ยืนยัน.
-  if (vendorNo && !changing) {
-    return (
-      <span className="inline-flex items-center gap-2 whitespace-nowrap">
-        <span className="text-[12px] font-mono" style={{ color: "var(--text-muted)" }}
-          title={vendorName ?? undefined}>
-          {vendorNo}
-        </span>
-        <button type="button" onClick={() => confirm(vendorNo)} disabled={busy}
-          className="text-[11px] font-semibold px-2 py-0.5 rounded-lg border-none"
-          style={{
-            background: "var(--nav-active-bg)", color: "var(--nav-active-text)",
-            cursor: busy ? "wait" : "pointer",
-          }}
-          title={`ยืนยัน ${vendorName ?? vendorNo} (${vendorNo})`}>
-          {busy ? <Loader2 size={11} className="animate-spin" /> : "ยืนยัน"}
-        </button>
-      </span>
-    );
-  }
-
+  // One live dropdown in every state, saving on pick (decision: user,
+  // 2026-09-07) — no "เปลี่ยน" to reveal it and no confirm step after it. There
+  // is nothing to stage: picking a vendor is a single field write, and the
+  // officer sees the result in the same cell they changed.
+  //
+  // The marker to its left carries what the dropdown cannot: a tick once the
+  // row is confirmed, and nothing while it is still waiting. That is the only
+  // difference left between a row that can be approved and one that cannot.
   return (
-    <span className="inline-flex items-center gap-1 whitespace-nowrap">
-      <span className="inline-block" style={{ minWidth: 180 }} title={reason ?? undefined}>
-      <SearchableSelect
-        value={changing ? vendorNo ?? "" : ""}
-        onChange={confirm}
-        // Name as the label even though the column shows codes: SearchableSelect
-        // filters on `label` and `value` only, never `subLabel`, so putting the
-        // name underneath would make it unsearchable — and a name is what an
-        // officer types when the match came up empty. The code is `value`, so
-        // both still find a row.
-        options={(vendors ?? []).map((v) => ({
-          value: v.vendorNo, label: v.displayName ?? v.vendorNo, subLabel: v.vendorNo,
-        }))}
-        placeholder={vendors === null ? "กำลังโหลด..." : "— เลือก Vendor —"}
-        emptyLabel="— เลือก Vendor —"
-        searchPlaceholder="ค้นหาชื่อ หรือ รหัส vendor..."
-      />
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+      <span className="w-[13px] shrink-0 inline-flex justify-center">
+        {busy ? <Loader2 size={12} className="animate-spin" style={{ color: "var(--text-faint)" }} />
+          : confirmed ? <Check size={13} style={{ color: "#4fa37a" }} />
+          : null}
       </span>
-      {changing && (
-        <button type="button" onClick={() => setChanging(false)}
-          className="text-[11px] px-1.5 py-0.5 rounded-lg border-none bg-transparent cursor-pointer"
-          style={{ color: "var(--text-faint)" }} title="ยกเลิกการเปลี่ยน">
-          ยกเลิก
-        </button>
-      )}
+      {/* Narrow on purpose — the label truncates and the full name is in the
+          title. An editable control is already the widest thing in the row. */}
+      <span className="inline-block" style={{ minWidth: 150, maxWidth: 210 }}
+        title={confirmed ? vendorName ?? undefined : reason ?? undefined}>
+        <SearchableSelect
+          value={vendorNo ?? ""}
+          onChange={confirm}
+          disabled={busy}
+          // Code and name in one label rather than label + subLabel, for two
+          // reasons: a subLabel makes the closed control render two lines, which
+          // would grow every row in the queue; and SearchableSelect filters on
+          // `label` and `value` only — never `subLabel` — so a name pushed down
+          // there stops being searchable, and a name is what an officer types.
+          // One string keeps the row one line, leads with the code, and matches
+          // either half.
+          options={(vendors ?? []).map((v) => ({
+            value: v.vendorNo,
+            label: v.displayName ? `${v.vendorNo} · ${v.displayName}` : v.vendorNo,
+          }))}
+          placeholder={vendors === null ? "กำลังโหลด..." : "— เลือก Vendor —"}
+          emptyLabel="— เลือก Vendor —"
+          searchPlaceholder="ค้นหาชื่อ หรือ รหัส vendor..."
+        />
+      </span>
     </span>
   );
 }
