@@ -379,7 +379,9 @@ export function AdvanceErpQueue() {
             {/* per-row payment-date pickers (re-target the payment cycle before sending) */}
             {/* Scrolls sideways rather than squeezing: the currency split added
                 three columns and the page must not scroll as a whole. */}
-            <div className="rounded-xl overflow-x-auto" style={{ border: "1px solid var(--border-card)" }}>
+            {/* show-x-scroll: `.acc-theme *` hides every scrollbar, so a table
+                that scrolls sideways had no affordance saying so. */}
+            <div className="rounded-xl overflow-x-auto show-x-scroll" style={{ border: "1px solid var(--border-card)" }}>
               {/* `w-max min-w-full`, not `w-full`: a full-width table fits itself to
                   the wrapper by squeezing whatever column may wrap, so the currency
                   split turned the payee into three lines and left the last column
@@ -476,7 +478,9 @@ export function AdvanceErpQueue() {
           {sentFiltered.length === 0 ? (
             <p className="text-[13px] py-8 text-center" style={{ color: "var(--text-muted)" }}>ไม่มีรายการตามเงื่อนไข</p>
           ) : (
-            <div className="rounded-xl overflow-x-auto" style={{ border: "1px solid var(--border-card)" }}>
+            // show-x-scroll: `.acc-theme *` hides every scrollbar, so a table that
+            // scrolls sideways had no affordance saying so.
+            <div className="rounded-xl overflow-x-auto show-x-scroll" style={{ border: "1px solid var(--border-card)" }}>
               {/* `w-max min-w-full`, not `w-full`: a full-width table fits itself to
                   the wrapper by squeezing whatever column may wrap, so the currency
                   split turned the payee into three lines and left the last column

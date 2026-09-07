@@ -189,7 +189,10 @@ export function AdvanceApproveQueue() {
           </div>
 
           {/* table */}
-          <div className="overflow-x-auto">
+          {/* show-x-scroll: `.acc-theme *` hides every scrollbar, so a table that
+              scrolls sideways had no affordance saying so — the columns past the
+              edge just looked cut off. This class opts the bar back in. */}
+          <div className="overflow-x-auto show-x-scroll">
             {/* Sizes to content so the wrapper scrolls instead of the table
                 squeezing a name column into three lines — same reason as
                 AdvanceErpQueue. */}
