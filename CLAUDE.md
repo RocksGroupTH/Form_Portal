@@ -579,8 +579,10 @@ Accommodation/ticket booking requests for provincial work travel — supports mu
   - **Whether it applies is `isUatId(id)` where a record id exists**
     (`perdiem-recompute.ts`, `report-service.ts`) **and the resolved environment
     where one does not** (the submit, the allowance-log route,
-    `withUatOverrides`). Both spellings live in `perdiem-uat-gate.ts`. The
-    recompute cannot use the resolver — not because it does I/O, it does not,
+    `withUatOverrides`). Both spellings are documented together in
+    `perdiem-uat-gate.ts`, which exports `uatByRecordId` itself and names
+    `isUatRequest()` (`@/lib/uat-tester/guards.ts`) in prose for callers to call
+    directly. The recompute cannot use the resolver — not because it does I/O, it does not,
     but because it answers **Production** with no request scope, which would
     re-price a UAT trip at real HR inside the cancelling transaction.
   - **`perdiem-recompute.ts`'s SELECT now names `r.StaffId` as well as
