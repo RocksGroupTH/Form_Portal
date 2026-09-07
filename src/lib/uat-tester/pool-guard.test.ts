@@ -4,9 +4,11 @@ import fs from "node:fs";
 import path from "node:path";
 
 /**
- * `UatTester` and `UatTesterPerDiem` moved out of Fast_Core into
- * `Rocks_Portal_Form_UAT` (migrations 139/140/141), and the pool they are read
- * through is now load-bearing in a way it was not before.
+ * `UatTesterPerDiem` moved out of Fast_Core into `Rocks_Portal_Form_UAT`
+ * (migrations 139/140), and the pool it is read through is now load-bearing in
+ * a way it was not before. `UatTester` itself did NOT move and stays in
+ * `Fast_Core` — `src/lib/uat-tester/service.ts` legitimately calls
+ * `getCorePool()` and must not appear in the list this file guards.
  *
  * `getUatFormPool` is `getNamedPool(env.MSSQL_FORM_UAT_DATABASE)` — a literal
  * that consults no resolver. `getFormPool` asks the resolver which database
@@ -33,19 +35,18 @@ function code(file: string): string {
 }
 
 const MOVED_TABLE_MODULES = [
-  "lib/uat-tester/service.ts",
   "lib/uat-tester/per-diem.ts",
 ];
 
 const FORBIDDEN = ["getFormPool", "getAccPool", "getProductionFormPool", "getCorePool"];
 
-test("the moved tables are read through getUatFormPool", () => {
+test("the moved table is read through getUatFormPool", () => {
   for (const file of MOVED_TABLE_MODULES) {
     const src = code(file);
     assert.ok(
       /\bgetUatFormPool\s*\(/.test(src),
-      `${file} no longer calls getUatFormPool — UatTester and UatTesterPerDiem live in ` +
-        "Rocks_Portal_Form_UAT and that literal pool is the only correct way to reach them",
+      `${file} no longer calls getUatFormPool — UatTesterPerDiem lives in ` +
+        "Rocks_Portal_Form_UAT and that literal pool is the only correct way to reach it",
     );
   }
 });

@@ -11,11 +11,13 @@ export { UatPerDiemInputError };
 export type { UatPerDiemRateRow };
 
 /**
- * `UatTesterPerDiem` lives in `Rocks_Portal_Form_UAT` (migrations 139/141), not
+ * `UatTesterPerDiem` lives in `Rocks_Portal_Form_UAT` (migrations 139/140), not
  * in `Fast_Core` where migration 138 first created it — this is the pool half.
+ * `UatTester` itself did NOT move and stays in `Fast_Core`; only this table did
+ * — see the design doc's §2 and §12 for why.
  *
  * **`getUatFormPool()`, and nothing else.** This table lives in
- * `Rocks_Portal_Form_UAT` (migrations 139/141) and has no synonym anywhere:
+ * `Rocks_Portal_Form_UAT` (migrations 139/140) and has no synonym anywhere:
  * nothing outside this application names it. `getUatFormPool` is a literal
  * (`getNamedPool(env.MSSQL_FORM_UAT_DATABASE)`) and consults no resolver, which
  * is what keeps it off the `getFormPool → … → getActiveUatTester → getFormPool`

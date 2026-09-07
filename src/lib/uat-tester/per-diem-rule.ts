@@ -2,7 +2,7 @@ import type { AllowanceLogEntry } from "@/lib/acc/travel-booking/perdiem";
 
 /**
  * A UAT tester's own per-diem rate log — the pure half of `UatTesterPerDiem`
- * (`Rocks_Portal_Form_UAT`, migrations 139/141 — this file never opens a pool
+ * (`Rocks_Portal_Form_UAT`, migrations 139/140 — this file never opens a pool
  * to read it).
  *
  * This file imports nothing at runtime (the one import is a type and is
