@@ -3,8 +3,7 @@ import { requireAuth } from "@/lib/api-auth";
 import { resolveLoginEmail } from "@/lib/auth-email";
 import { resolveEmployeeForActor } from "@/lib/hr/employee-lookup";
 import { getPerDiemEmployeeLogWithSource } from "@/lib/acc/travel-booking/allowance-log";
-import { uatByEnvironment } from "@/lib/acc/travel-booking/perdiem-uat-gate";
-import { resolveFormEnvironment } from "@/lib/form-environment";
+import { isUatRequest } from "@/lib/uat-tester/guards";
 import { listPerDiemCountryRates } from "@/lib/acc/travel-booking/perdiem-source";
 
 /**
@@ -42,7 +41,7 @@ export async function GET(req: NextRequest) {
 
     // No record id exists while a draft is being filled, so this is the one
     // place the resolved environment is the right signal. See perdiem-uat-gate.
-    const uat = uatByEnvironment(await resolveFormEnvironment());
+    const uat = await isUatRequest();
 
     const [resolved, countryRates] = await Promise.all([
       getPerDiemEmployeeLogWithSource(emp.id, emp.staffId ?? null, uat),

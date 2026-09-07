@@ -18,8 +18,6 @@ import { buildTravelBookingEmail } from "@/lib/acc/travel-booking/email-template
 import { computePerDiem } from "@/lib/acc/travel-booking/perdiem";
 import { isTravelDateTooSoon } from "@/features/travel-booking/lib/earliest-travel-date";
 import { getPerDiemEmployeeLog } from "@/lib/acc/travel-booking/allowance-log";
-import { uatByEnvironment } from "@/lib/acc/travel-booking/perdiem-uat-gate";
-import { resolveFormEnvironment } from "@/lib/form-environment";
 import {
   listAccommodations,
   listRentVehicles,
@@ -1238,12 +1236,11 @@ export async function submitTravelBookingGroup(
   // group can hold a Kuala Lumpur trip and a Bangkok one, so the resolution
   // happens inside the loop and the loading does not.
   // The submit runs on AP-17's own route, so the resolver answers correctly
-  // here; the recompute is the one that cannot use it. (Named `perDiemUat`
-  // rather than reusing the `uat` above — that one is `isUatRequest()`'s
-  // answer to the same question, already in scope for the manager checks.)
-  const perDiemUat = uatByEnvironment(await resolveFormEnvironment());
+  // here; the recompute is the one that cannot use it. `uat` was already
+  // resolved above (isUatRequest(), for the manager checks) — the same
+  // question, so it is reused rather than asked a second time.
   const [log, countryRates] = await Promise.all([
-    getPerDiemEmployeeLog(emp.id, emp.staffId ?? null, perDiemUat),
+    getPerDiemEmployeeLog(emp.id, emp.staffId ?? null, uat),
     listPerDiemCountryRates(),
   ]);
   const continuationFlags: boolean[] = [];
