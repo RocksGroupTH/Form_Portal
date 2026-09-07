@@ -162,9 +162,9 @@ test("every server-side pricer calls the per-diem log wrapper", () => {
 test("the form hook reaches no server-side per-diem reader", () => {
   const src = code("features/travel-booking/hooks/useTravelBookingForm.ts");
   assert.ok(
-    !/getPerDiemEmployeeLog|getCorePool|uatPerDiemLog/.test(src),
+    !/getPerDiemEmployeeLog|getCorePool|getUatFormPool|uatPerDiemLog/.test(src),
     "useTravelBookingForm.ts is a client component: it must take the resolved log from " +
-      "/api/request/travel-booking/allowance-log, never read Fast_Core itself",
+      "/api/request/travel-booking/allowance-log, never open a database pool itself",
   );
 });
 
