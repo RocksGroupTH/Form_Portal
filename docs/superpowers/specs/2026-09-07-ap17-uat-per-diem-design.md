@@ -215,9 +215,19 @@ The `fromLog > 0` arm is not defensive noise: `rateForDay` answers 0 for a day n
 entry covers, and a chip reading `฿0/วัน` is a worse answer than the HR figure it
 replaces.
 
-**This also fixes the on-behalf chip**, which shows the actor's rate today while
-the priced log has always been the requester's. Confirmed as wanted; it is a
-pre-existing bug and is called out here so it is not mistaken for UAT fallout.
+**There is no on-behalf chip to fix.** `TravelBookingForm.tsx` renders the
+`฿X/วัน` chip and the allowance-history button only in the
+`requesterStaffId == null` branch — filing for yourself; the on-behalf branch
+has never shown a rate at all, so this change touches nothing there. The
+genuine residual is `flatRateLog` (`useTravelBookingForm.ts:578-581`), the
+stand-in shown while `estimateLog` has not yet arrived — including a fetch
+that fails and never will — which prices from the **actor's**
+`employee.allowance` regardless of who the trip is filed for. That is a
+pre-existing property, unrelated to on-behalf, and in UAT it is the one
+remaining way a tester's real HR compensation reaches the screen: `flatRateLog`
+and `displayRate` must withhold rather than fall back to it whenever the
+resolved environment is UAT. §12.6 records the earlier, wrong version of this
+paragraph.
 
 ### 3.3 The rate stamped into the row
 
@@ -525,4 +535,20 @@ evidence.
    `:98` — but the component never renders it anywhere else in the file. The
    `฿X/วัน` chip on `TravelBookingForm.tsx` is the surface that actually
    changed; `allowanceRate` carries the same `displayRate` value but reaches
-   no screen.
+   no screen. (Since deleted — the prop, its destructuring and the pass at
+   `TravelBookingForm.tsx:431` are gone; nothing was ever wired to it.)
+6. **§3.2 claimed this spec "also fixes the on-behalf chip", which shows the
+   actor's rate today while the priced log has always been the requester's.**
+   There is no on-behalf chip. `TravelBookingForm.tsx` renders the `฿X/วัน`
+   chip and the allowance-history button only in the
+   `requesterStaffId == null` branch — filing for yourself — and the
+   on-behalf branch (`requesterStaffId` truthy) has never rendered a rate of
+   any kind, actor's or requester's, for this change to have fixed. The
+   mistake reads as item 1's shape: a plausible-sounding claim about a screen
+   the drafting pass never actually opened. What §3.2 should have said, and
+   now does, is narrower — `flatRateLog` prices its in-flight stand-in from
+   the **actor's** `employee.allowance` regardless of who the trip is filed
+   for, which is a real property but has nothing to do with on-behalf; it
+   matters here only because in UAT that actor figure is the tester's own real
+   HR compensation, which is what the withholding in §3.2's corrected version
+   closes.

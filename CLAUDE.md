@@ -593,11 +593,22 @@ Accommodation/ticket booking requests for provincial work travel — supports mu
     Production for everyone and could never carry a UAT override, and it returns
     the **actor's** row rather than the requester's. The chip is derived from
     `estimateLog`, which the form already fetches from the AP-17-classified
-    allowance-log route keyed on `requesterStaffId` — which also fixes the
-    long-standing bug where filing on behalf showed the actor's rate.
-    (`TravelBookingTab`'s `allowanceRate` prop carries the same value but is
-    currently unrendered — the chip on `TravelBookingForm.tsx` is the surface
-    that actually changed.)
+    allowance-log route keyed on `requesterStaffId`.
+  - **There was no on-behalf chip to fix — a claim this bullet made until
+    code review caught it.** `TravelBookingForm.tsx` renders the wallet chip
+    and the allowance-history button only in the `requesterStaffId == null`
+    branch — filing for yourself; the on-behalf branch has never rendered a
+    rate at all. The genuine residual was `flatRateLog`, the stand-in shown
+    while `estimateLog` has not yet arrived (including a fetch that fails and
+    never will), priced from the **actor's** `employee.allowance` regardless of
+    who the trip is filed for. In UAT that stand-in is the actor's real HR
+    compensation, so `flatRateLog` and `displayRate`
+    (`useTravelBookingForm.ts`) now withhold rather than fall back to it
+    whenever `requesterEnvironment === "UAT"`: the chip reads `-`, the same
+    shape `ratesKnown` already uses to withhold a foreign trip's money until
+    its rate has actually arrived. Production is unchanged. The dead
+    `allowanceRate` prop `TravelBookingTab` carried for the same value with no
+    renderer was deleted along with it.
   - **`AllowanceSnapshot` is now re-stamped at submit**, not only at draft save.
     **This changes production too**: a draft saved before an HR rate change and
     submitted after it used to keep the stale figure. Submit is when the priced
@@ -1450,6 +1461,7 @@ repo — it exists only on the server, and a rebuilt server loses it.
 - **135's coordinates cannot be backfilled.** `Lat`/`Lng` on `AccTravelWorkLocation` are filled by the browser's Google Places pick; the key is HTTP-referrer restricted, so a server-side geocode answers 403. Every location filed before 2026-09-01 has none and renders no map, which is the honest outcome rather than a wrong pin.
 - **136's backfill is exact or it refuses.** It copies `TotalAmount` into `TotalAmountBaht` only after checking that no AP-17 request carries a foreign currency, so it can never stamp an unconverted foreign figure into a baht column.
 - **137 is production form database only, and a deployment without it is degraded rather than broken.** `137_fx_rate_cache.sql` creates `dbo.FxRateCache`; it refuses a `_UAT` database outright and refuses anything not named `Rocks_Portal_Form%`. Applied to the live `Rocks_Portal_Form` on 2026-09-04 and verified absent from the UAT twin. Both halves of `fx-rate-cache.ts` swallow their own failures, so the table being missing costs API calls, not availability — which is why it is safe to deploy the code before or after the migration.
+- **138 is `Fast_Core` only, and it must be applied before this code deploys — an unapplied 138 does not degrade, it breaks every AP-17 entry point for a UAT tester.** `138_core_uat_tester_per_diem.sql` creates `dbo.UatTesterPerDiem`, beside `UatTester` and `FormEnvironment` for the same reason those two live there: what a tester is paid must not depend on which form database answered. It refuses any database other than `Fast_Core`. The read is reached through `withUatOverrides` (`src/lib/hr/employee-lookup.ts`), which sits inside `resolveEmployeeForActor` — and that function backs **five** paths, not one: the allowance-log route, the date-ranges route, the id-card consent POST, and AP-17's draft-save and submit in `request-service.ts`. `withUatOverrides` reads the table only when the resolved environment is UAT (`(await resolveFormEnvironment()) !== "UAT"` returns early otherwise), so the blast radius of a missing table is exactly "a UAT tester touches any of those five" — loud (`Invalid object name 'UatTesterPerDiem'`), not silent, and by design: see the migration's own header and the design spec's §9 for why degrading to "no override" was rejected — it would price a tester at their real HR allowance with no error, on a path that writes `AccRequest.TotalAmount`. (`id-card/previous` and its download route are *not* among the five: they were hardened to self-only, reading HR directly, by an earlier and unrelated security fix — see the corrected comment on `resolveEmployeeForActor` itself, which used to name them and no longer does.) The settings page's own GET/POST/PATCH degrade far more gently, since nothing there prices a trip — see `per-diem.ts`'s comment.
 - **AP-17's accounting step needs no migration, but it does need a person.** After this deploy the Admin desk stops closing requests and hands them to `ACCOUNT`, so nothing reaches `Completed` until somebody on `AccBookingApprover` works `/request/accounting/travel-booking/approvals`. Membership is what permits the action; an `accountApproval` tick in `AccBookingApproverTab` only decides who is shown the menu, and the hub shows it to roster members regardless.
 - Liveness probe: `curl http://127.0.0.1:3081/api/health` → `{"ok":true,"data":{"service":"form-portal",…}}`.
 - **`/api/health/db` no longer publishes the topology.** `auth.config.ts` exempts every `/api/health*` path from authentication, and that endpoint was returning the MSSQL host, port, service-account username, database name and the raw driver error text to anyone who asked. It now answers `database: "reachable" | "unreachable"` plus a 200/503, and includes the detail only for a System Admin. The diagnostic line goes to the server log unconditionally, which is where an operator should read it.
