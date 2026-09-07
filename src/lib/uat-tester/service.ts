@@ -1,28 +1,8 @@
 import { cache } from "react";
-import { getUatFormPool, sql } from "@/lib/db/mssql";
+import { getCorePool, sql } from "@/lib/db/mssql";
 import { EMPLOYEE_STATUS_ACTIVE } from "@/lib/hr/constants";
 import { getHrPool } from "@/lib/hr/pool";
 
-/**
- * `UatTester` lives in `Rocks_Portal_Form_UAT` (migrations 139/140), not in
- * `Fast_Core` where migration 063 first created it. `Fast_Core` keeps a
- * permanent synonym because ACC Portal reads the table there.
- *
- * **`getUatFormPool()`, and never `getFormPool()` or `getAccPool()`.**
- * `getUatFormPool` is `getNamedPool(env.MSSQL_FORM_UAT_DATABASE)` — a literal
- * that consults no resolver. `getFormPool` asks the resolver which database
- * answers, and this table is one of the things the resolver reads to decide
- * that: `getFormPool → resolveFormEnvironment → resolveCurrentFormAccess →
- * viewerIsTesting → getActiveUatTester → getFormPool`. `src/lib/acc/pool.ts`
- * exports `getAccPool = getFormPool`, so reaching for "the accounting pool"
- * closes that loop, and no type error predicts it. `getProductionFormPool()`
- * is the other wrong answer and fails differently — it resolves
- * `Rocks_Portal_Form`, where the table does not exist.
- *
- * A missing table throws. It is not degraded to "not a tester": that would
- * silently drop a tester back to Production mid-session and route their UAT
- * work into the production database.
- */
 export interface UatTesterRow {
   id: number;
   staffId: number;
@@ -70,7 +50,7 @@ function toRow(r: UatTesterRecord): UatTesterRow {
  * a different row (and a different UAT manager) on different requests.
  */
 const load = cache(async (key: string): Promise<UatTesterRow | null> => {
-  const pool = await getUatFormPool();
+  const pool = await getCorePool();
   const r = await pool
     .request()
     .input("email", sql.NVarChar, key)
@@ -113,7 +93,7 @@ export function getActiveUatTester(email: string | null): Promise<UatTesterRow |
  * then the manager's row, and a submit resolves the requester more than once.
  */
 const loadByStaffId = cache(async (staffId: number): Promise<UatTesterRow | null> => {
-  const pool = await getUatFormPool();
+  const pool = await getCorePool();
   const r = await pool
     .request()
     .input("staffId", sql.Int, staffId)
@@ -252,7 +232,7 @@ export async function uatManagerStaffIdsFor(
   const out = new Map<number, number>();
   if (wanted.length === 0) return out;
 
-  const pool = await getUatFormPool();
+  const pool = await getCorePool();
   const req = pool.request();
   const placeholders: string[] = [];
   wanted.forEach((id, i) => {
@@ -276,7 +256,7 @@ export async function uatManagerStaffIdsFor(
 
 /** Every tester, active or not — the Settings → UAT Users table shows both. */
 export async function listUatTesters(): Promise<UatTesterRow[]> {
-  const pool = await getUatFormPool();
+  const pool = await getCorePool();
   const r = await pool.request().query<UatTesterRecord>(`
     SELECT Id, StaffId, Email, ManagerStaffId, ManagerEmail, IsActive, UpdatedBy, UpdatedAt
     FROM [dbo].[UatTester]
@@ -309,8 +289,7 @@ export interface UatTesterAddresses {
  * somebody read the queue by hand.
  *
  * Batched on purpose — the caller runs this once per drain cycle, not once per
- * message, so a queue of 20 costs one `Rocks_Portal_Form_UAT` read and one HR
- * read.
+ * message, so a queue of 20 costs one Fast_Core read and one HR read.
  *
  * A tester with no active HR row simply has `hrEmail: null`; their login address
  * still exempts them.
@@ -388,7 +367,7 @@ export async function upsertUatTester(input: UpsertUatTesterInput): Promise<void
   const email = (input.email ?? "").trim();
   if (!email) throw new Error("email is required");
 
-  const pool = await getUatFormPool();
+  const pool = await getCorePool();
   await pool
     .request()
     .input("staffId", sql.Int, staffId)
@@ -412,7 +391,7 @@ export async function setUatTesterActive(
   isActive: boolean,
   userId: number,
 ): Promise<void> {
-  const pool = await getUatFormPool();
+  const pool = await getCorePool();
   await pool
     .request()
     .input("id", sql.Int, id)

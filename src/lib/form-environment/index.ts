@@ -77,25 +77,13 @@ const currentUatMode = cache(async (): Promise<string | null> => {
  * through `getFormPool()`:
  *
  *   - `getFormSwitchMap()`   (`./service.ts`)              → `getCorePool()`
- *   - `getActiveUatTester()` (`@/lib/uat-tester/service`)  → `getUatFormPool()`
+ *   - `getActiveUatTester()` (`@/lib/uat-tester/service`)  → `getCorePool()`
  *   - identity               (`@/lib/team-member/service`) → `getProductionFormPool()`
  *
- * The invariant itself is unchanged. Migrations 139/140 (2026-09-07) moved
- * `UatTester` out of Fast_Core into `Rocks_Portal_Form_UAT`, which only changed
- * which literal pool the second row uses — `getUatFormPool()` is
- * `getNamedPool(env.MSSQL_FORM_UAT_DATABASE)`, a literal that consults no
- * resolver, so it satisfies "not reached through `getFormPool()`" exactly as
- * `getCorePool()` did before it.
- *
- * `FormEnvironment` did **not** move, and could not have: `getFormSwitchMap()`
- * is awaited unconditionally on every classified-form request, by every user,
- * with no `try`/`catch`, and it holds `ProductionEnabled` — moving it would make
- * production availability depend on the UAT database being up. `UatTester`
- * carried no such risk, which is what made its move safe: `viewerIsTesting()`
- * below returns `false` without touching a database at all unless the UAT-mode
- * cookie is on. Moving `getFormSwitchMap()` into the form database, or letting
- * the team-member service reach for `getFormPool()`, still makes this resolver
- * depend on its own answer.
+ * So `FormEnvironment` and `UatTester` stay in Fast_Core, and identity stays
+ * pinned to the production form pool. Moving either of the first two into the
+ * form database, or letting the team-member service reach for `getFormPool()`,
+ * makes this resolver depend on its own answer.
  */
 const currentViewerEmail = cache(async (): Promise<string | null> => {
   try {

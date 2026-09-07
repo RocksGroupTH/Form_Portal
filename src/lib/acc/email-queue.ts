@@ -128,53 +128,29 @@ export async function processQueueOn(
     BodyHtml: string;
   }[];
 
-  // Its own read, deliberately: neither this nor the HR lookup is the database
-  // being drained.
+  // Fetched once per drain cycle, not once per message — every row in this
+  // batch is judged against the same tester snapshot. Two reads, batched:
+  // Fast_Core for the tester list and Rocks_Portal_HR for the address the queue
+  // actually carries, because `UatTester.Email` is the login address and every
+  // recipient here is HR's `COALESCE(Email, EmailCompBr)` (see
+  // `listActiveUatTesterAddresses`).
   //
-  // It is rethrown, not swallowed. Falling back to an empty list would fail
-  // closed in one sense — nobody is exempt, so no real person is mailed — but
-  // it does so invisibly: the tester who should have received the message does
-  // not, their request sits at MANAGER, and the only trace is a log line.
-  // Rethrowing leaves the rows QUEUED instead, which protects the same person
-  // — and the log immediately below is what makes that findable: 30 of the 31
-  // callers of the drain are `void processQueue().catch(() => {})`, an empty
-  // catch at the call site, so without a log here the failure would vanish
-  // entirely and a Queued row carries no ErrorMessage to say why it is still
-  // there. That is also what `applyUatRedirect` already does when neither
-  // UAT_MAIL_REDIRECT nor GRAPH_MAIL_FROM is set, so the two halves of this
-  // function now agree.
-  //
-  // Since migration 139 this read is on Rocks_Portal_Form_UAT rather than
-  // Fast_Core, which is what made this path newly reachable.
-  //
-  // `processQueueBoth` runs the Production and UAT drains under one
-  // `Promise.all`. If this rejects, `Promise.all` rejects immediately without
-  // cancelling or waiting for the Production branch, which keeps running and
-  // can fully send and mark its own rows Sent — so the sweep endpoint can
-  // answer 500 for a run in which Production actually succeeded. Accepted, not
-  // fixed: a reader investigating "the sweep 500'd" should not assume
-  // Production failed too.
+  // Its own try/catch, deliberately: neither read is the database being
+  // drained. Letting one reject would abort the whole drain, and in
+  // `processQueueBoth` it would reject the `Promise.all` *after* the Production
+  // half had already sent its mail and marked the rows Sent — turning a
+  // Fast_Core or HR hiccup into a 500 on a sweep that half succeeded. Falling
+  // back to an empty list fails closed: nobody is exempt, so every UAT message
+  // is redirected, which is the safe direction.
   let exemptTesters: UatMailExemptRecord[] = [];
   if (environment === "UAT" && rows.length > 0) {
     try {
       exemptTesters = await listActiveUatTesterAddresses();
     } catch (err) {
-      // Log, THEN rethrow — both halves matter.
-      //
-      // Rethrowing is the point: it leaves this batch's rows Queued instead of
-      // redirecting every tester's own mail away from them. Falling back to an
-      // empty list would also protect them from a wrong recipient, but only by
-      // silently sending their mail somewhere else.
-      //
-      // The log is what makes "leaves it queued" findable. Thirty of the
-      // thirty-one callers are `void processQueue().catch(() => {})` — an empty
-      // catch — so without this line the error would vanish entirely, and a
-      // Queued row carries no ErrorMessage to say why it is still there.
       console.error(
-        "[acc/email-queue] UatTester lookup failed — leaving this batch queued",
+        "[acc/email-queue] UatTester lookup failed — redirecting every UAT message in this batch",
         err,
       );
-      throw err;
     }
   }
 
