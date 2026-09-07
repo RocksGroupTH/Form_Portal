@@ -292,11 +292,19 @@ export async function queryTravelBookingReport(
   // `x.Id` is AccRequest.Id. There is NO RequestId column on these rows: writing
   // `x.RequestId` compiles (raw is Record<string, unknown>), arrives undefined,
   // and would silently drop the override from every row of every UAT report.
-  const subjects: PerDiemLogSubject[] = raw.map((x) => ({
+  //
+  // Built through ONE helper, `subjectFor`, called again below when the same
+  // rows are re-walked to read the map back. Two separate literals here agreed
+  // by coincidence; a one-sided edit to either would mismatch the key the other
+  // builds, and `logBySubject.get(...)?.log ?? []` would silently answer an
+  // empty log — a report printing 0 in เรทเบี้ยเลี้ยง beside a non-zero stored
+  // total, with no error anywhere.
+  const subjectFor = (x: Record<string, unknown>): PerDiemLogSubject => ({
     employeeId: (x.EmployeeId as string | null) ?? null,
     staffId: (x.StaffId as number | null) ?? null,
     uat: uatByRecordId(x.Id as number),
-  }));
+  });
+  const subjects: PerDiemLogSubject[] = raw.map(subjectFor);
 
   // One list for the whole report, beside the batched subject load. This column
   // re-derives the rate from scratch rather than reading what was stored, so it
@@ -311,14 +319,7 @@ export async function queryTravelBookingReport(
   return raw.map((x) => {
     const departDate = x.DepartDate ? ymd(x.DepartDate as Date) : null;
     const returnDate = x.ReturnDate ? ymd(x.ReturnDate as Date) : null;
-    const log =
-      logBySubject.get(
-        perDiemLogSubjectKey({
-          employeeId: (x.EmployeeId as string | null) ?? null,
-          staffId: (x.StaffId as number | null) ?? null,
-          uat: uatByRecordId(x.Id as number),
-        }),
-      )?.log ?? [];
+    const log = logBySubject.get(perDiemLogSubjectKey(subjectFor(x)))?.log ?? [];
     const { perDiemRate, rateChangeNote } = computeReportPerDiemDisplay(
       departDate,
       returnDate,
