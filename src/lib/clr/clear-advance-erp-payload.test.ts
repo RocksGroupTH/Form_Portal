@@ -51,11 +51,13 @@ test("VAT + WHT -> both lines emitted, WHT at 0", () => {
   const p = buildClearAdvanceJournalPayload(base({
     advanceAmount: 1000,
     items: [{ glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 30, branchCode: "HQ01" }],
+    whtPayees: [{ pndType: "PND3" }],
   }));
   assert.equal(p.lines.find((l) => l.accountNo === "115030")!.amount, 70);
-  // WHT line present, zeroed.
-  assert.equal(p.lines.find((l) => l.accountNo === "213050")!.amount, 0);
-  assert.equal(p.lines.find((l) => l.accountType === "Vendor")!.amount, 0);
+  // WHT line present, zeroed — a Vendor line since spec §5.3, where it used to
+  // be a G/L line at the configured WHT-payable account.
+  assert.equal(p.lines.find((l) => l.accountNo === "WHT-PND.3")!.amount, 0);
+  assert.equal(p.lines.find((l) => l.accountNo === "ADV0001")!.amount, 0);
   // The bank difference is real cash and still nets VAT and WHT.
   assert.equal(p.lines.find((l) => l.accountType === "Bank Account")!.amount, -40);
 });
@@ -77,12 +79,16 @@ test("the clear-advance line points at the Vendor with no balAccountType", () =>
   assert.equal(adv.employeeCode, "10177");
 });
 
-test("exactly one Vendor line, and no G/L line carries the advance amount", () => {
+test("exactly one advance Vendor line, and no G/L line carries the advance amount", () => {
   const p = buildClearAdvanceJournalPayload(base({
     advanceAmount: 1000,
     items: [{ glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 30, branchCode: "HQ01" }],
+    whtPayees: [{ pndType: "PND3" }],
   }));
-  assert.equal(p.lines.filter((l) => l.accountType === "Vendor").length, 1);
+  // The advance vendor appears once. Counted by account rather than by type:
+  // since spec §5.3 the WHT line is a Vendor too, so counting Vendor lines no
+  // longer answers the question this test is asking.
+  assert.equal(p.lines.filter((l) => l.accountNo === "ADV0001").length, 1);
   // Unbalanced by the zeroed WHT and vendor lines: 1000 + 70 + 0 + 0 - 40.
   assert.equal(sum(p), 1030);
   assert.ok(!p.lines.some((l) => l.accountType === "G/L Account" && l.amount === -1000));
@@ -207,6 +213,7 @@ test("only expense lines are ever marked", () => {
     postingDate: "2026-08-20",
     advanceAmount: 5000,
     items: [{ glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 30, branchCode: "HQ01", expenseDate: "2026-07-15" }],
+    whtPayees: [{ pndType: "PND3" }],
   }));
   for (const l of p.lines) {
     const isExpense = l.accountNo === "610322005";
@@ -231,6 +238,7 @@ test("every line carries it, not just the expense line", () => {
     staffId: 10177,
     advanceAmount: 5000,
     items: [{ glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 30, branchCode: "HQ01" }],
+    whtPayees: [{ pndType: "PND3" }],
   }));
   assert.ok(p.lines.length >= 4, "expected expense, VAT, WHT, vendor and bank lines");
   assert.deepEqual(new Set(p.lines.map((l) => l.employeeCode)), new Set(["10177"]));
@@ -313,8 +321,97 @@ test("the lines with no branch of their own follow the default branch", () => {
     defaultBranchCode: "PC1057",
     branchBu: bu({ HQ01: "COCO", PC1057: "DODO-M" }),
     items: [{ glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 30, branchCode: "HQ01" }],
+    whtPayees: [{ pndType: "PND3" }],
   }));
   assert.equal(p.lines.find((l) => l.accountNo === "115030")!.buCode, "DODO-M");
-  assert.equal(p.lines.find((l) => l.accountType === "Vendor")!.buCode, "DODO-M");
+  // By account, not by type: the WHT line is a Vendor line too now, and comes
+  // first, so finding "the Vendor line" would silently test the wrong one.
+  assert.equal(p.lines.find((l) => l.accountNo === "ADV0001")!.buCode, "DODO-M");
   assert.equal(p.lines.find((l) => l.accountType === "Bank Account")!.buCode, "DODO-M");
+});
+
+/* ── The WHT line is a Vendor (spec §5.3, sheet rows 10-11) ────────────────
+ *
+ * What went before was a G/L line at the configured WHT-payable account: the
+ * wrong kind of line pointing at the wrong kind of account. Accounting clears
+ * these against the vendor, so the vendor is what has to be on the line.
+ */
+
+const withWht = (over: Partial<ClrJournalInput> = {}) => base({
+  items: [{ glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 0, whtAmount: 30, branchCode: "HQ01" }],
+  ...over,
+});
+
+test("WHT goes out as a Vendor line at the type's vendor", () => {
+  const p = buildClearAdvanceJournalPayload(withWht({ whtPayees: [{ pndType: "PND53" }] }));
+  const wht = p.lines.find((l) => l.accountNo === "WHT-PND.53")!;
+  assert.equal(wht.accountType, "Vendor");
+  // Spec §3.2: sent as 0 — accounting posts the real amount by hand.
+  assert.equal(wht.amount, 0);
+  // The old G/L account is gone from the payload entirely, not merely zeroed.
+  assert.equal(p.lines.some((l) => l.accountNo === "213050"), false);
+});
+
+test("an individual payee clears against WHT-PND.3", () => {
+  const p = buildClearAdvanceJournalPayload(withWht({ whtPayees: [{ pndType: "PND3" }] }));
+  assert.ok(p.lines.some((l) => l.accountType === "Vendor" && l.accountNo === "WHT-PND.3"));
+});
+
+/* A vendor line carries no balAccountType — the two-explicit-lines shape BC
+ * accepted for AP-2, and what the advance vendor line already uses. */
+test("the WHT vendor line has no balancing account", () => {
+  const p = buildClearAdvanceJournalPayload(withWht({ whtPayees: [{ pndType: "PND3" }] }));
+  assert.equal(p.lines.find((l) => l.accountNo === "WHT-PND.3")!.balAccountType, undefined);
+});
+
+/* Every amount is 0, so a line's only content is which vendor account has to be
+ * cleared. Two payees of one type would make two identical empty lines. */
+test("two payees of one type make one line", () => {
+  const p = buildClearAdvanceJournalPayload(withWht({
+    whtPayees: [{ pndType: "PND3" }, { pndType: "PND3" }],
+  }));
+  assert.equal(p.lines.filter((l) => l.accountNo === "WHT-PND.3").length, 1);
+});
+
+test("two types make one line each", () => {
+  const p = buildClearAdvanceJournalPayload(withWht({
+    whtPayees: [{ pndType: "PND3" }, { pndType: "PND53" }],
+  }));
+  assert.equal(
+    p.lines.filter((l) => l.accountType === "Vendor" && l.accountNo.startsWith("WHT-")).length,
+    2,
+  );
+});
+
+/* Refusing is the feature. Picking a vendor for accounting would put a guess
+ * into their ledger under their name, and a 0-amount line is easy to miss. */
+test("WHT with no decided type refuses the send", () => {
+  assert.throws(
+    () => buildClearAdvanceJournalPayload(withWht({ whtPayees: [{ pndType: null }] })),
+    /ภ\.ง\.ด/,
+  );
+});
+
+/* Same refusal, different cause: the amounts say withholding happened but no
+ * payee row says who or of what kind. There is nothing to put on the line. */
+test("WHT with no payee rows at all refuses the send", () => {
+  assert.throws(() => buildClearAdvanceJournalPayload(withWht({})), /ภ\.ง\.ด/);
+});
+
+test("no WHT at all sends no WHT line and no error", () => {
+  const p = buildClearAdvanceJournalPayload(base({}));
+  assert.equal(p.lines.some((l) => l.accountNo.startsWith("WHT-")), false);
+});
+
+/* The WHT vendor line has no branch of its own, so it follows the request's
+ * default branch — and its BU with it, like every other footer line. */
+test("the WHT vendor line follows the default branch and its BU", () => {
+  const p = buildClearAdvanceJournalPayload(withWht({
+    defaultBranchCode: "PCCT01",
+    branchBu: new Map([["PCCT01", { buCode: "CTPS", isBlocked: false }]]),
+    whtPayees: [{ pndType: "PND53" }],
+  }));
+  const wht = p.lines.find((l) => l.accountNo === "WHT-PND.53")!;
+  assert.equal(wht.branchCode, "PCCT01");
+  assert.equal(wht.buCode, "CTPS");
 });

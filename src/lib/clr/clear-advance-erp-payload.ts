@@ -1,5 +1,6 @@
 import type { PpapJournalPayload, PpapJournalLinePayload } from "@/lib/acc/erp-ppap-payload";
 import type { BranchLookupEntry } from "@/lib/erp/location-lookup-core";
+import { PND_VENDOR_NO, type PndType } from "@/lib/clr/wht-pnd-core";
 
 export interface ClrJournalConfig {
   /** The vendor AP-2 debited — this clearing credits the same one. */
@@ -47,6 +48,12 @@ export interface ClrJournalInput {
    * as before this existed.
    */
   branchBu?: ReadonlyMap<string, BranchLookupEntry>;
+  /**
+   * The WHT payees on this clearing, each with the ภ.ง.ด. type somebody decided
+   * (spec §5.3a). Only the type is read here: the amounts go to BC as 0 and the
+   * payee's identity lives on the certificate, not the journal.
+   */
+  whtPayees?: readonly { pndType?: PndType | null }[];
 }
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -168,9 +175,43 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
     lines.push(glLine(c.vatInputGlAccountNo, vatTotal, null));
   }
   if (whtTotal > 0) {
-    if (!c.whtPayableGlAccountNo) throw new Error("มี WHT แต่ยังไม่ได้ตั้งค่าบัญชี WHT payable ของแบรนด์นี้");
-    // Spec §3.2: sent as 0 — accounting posts the real WHT by hand in BC.
-    lines.push(glLine(c.whtPayableGlAccountNo, 0, null));
+    // Spec §5.3: a Vendor line at WHT-PND.3 / WHT-PND.53, not a G/L line at the
+    // configured WHT-payable account. Accounting clears these against the
+    // vendor, so the vendor has to be what the line points at.
+    const payees = input.whtPayees ?? [];
+    if (payees.length === 0) {
+      throw new Error(
+        "มีภาษีหัก ณ ที่จ่ายแต่ไม่มีรายการผู้รับเงิน — เพิ่มผู้รับเงินและระบุประเภท ภ.ง.ด. ก่อนส่ง",
+      );
+    }
+    if (payees.some((w) => !w.pndType)) {
+      // Refusing beats guessing. A vendor picked here lands in accounting's
+      // ledger under their name, on a line carrying 0 that is easy to miss.
+      throw new Error(
+        "ยังไม่ได้ระบุประเภท ภ.ง.ด. ของผู้รับเงินบางราย — ระบุที่ขั้นบัญชีก่อนส่ง",
+      );
+    }
+    // One line per distinct type, not per payee: every amount is 0, so a line's
+    // only content is which vendor account has to be cleared, and two payees of
+    // one type would repeat that with nothing added.
+    const types: PndType[] = [];
+    for (const w of payees) {
+      const t = w.pndType as PndType;
+      if (!types.includes(t)) types.push(t);
+    }
+    for (const t of types) {
+      // Built inline rather than via glLine: a Vendor line carries no
+      // balAccountType — the two-explicit-lines shape BC accepted for AP-2.
+      lines.push({
+        groupNo: "G1", postingDate, documentType,
+        accountType: "Vendor", accountNo: PND_VENDOR_NO[t],
+        description: describe(),
+        // Spec §3.2: sent as 0 — accounting posts the real WHT by hand in BC.
+        paymentMethodCode: "BANK", amount: 0,
+        employeeCode, branchCode: defaultBranch, departmentCode,
+        ...(resolveBu(null) ? { buCode: resolveBu(null) } : null),
+      });
+    }
   }
 
   // The vendor AP-2 debited. Built inline rather than via glLine because the

@@ -393,13 +393,13 @@ The bypass flag is out of `.env.local` again.
 
 ---
 
-## Task 5: The send emits vendor lines
+## Task 5: The send emits vendor lines — *done 2026-09-08*
 
 **Files:**
 - Modify: `src/lib/clr/clear-advance-erp-payload.ts:135-141`, `src/lib/clr/clear-advance-erp-send.ts`
 - Test: `src/lib/clr/clear-advance-erp-payload.test.ts`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 /* ── The WHT line is a Vendor (spec §5.3, sheet rows 10-11) ────────────────
@@ -462,9 +462,9 @@ test("no WHT at all sends no WHT line and no error", () => {
 });
 ```
 
-- [ ] **Step 2: Run and watch them fail**
+- [x] **Step 2: Run and watch them fail**
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `ClrJournalInput` gains `whtPayees?: { pndType?: "PND3" | "PND53" | null }[]`.
 Replace the `whtTotal > 0` G/L branch with: collect the distinct types across
@@ -477,12 +477,42 @@ shape BC accepted for AP-2.
 in place**: Step 4's VAT work is not done, the field is still shown in settings,
 and removing it is a separate change with its own blast radius.
 
-- [ ] **Step 4: The sender passes the payees**
+- [x] **Step 4: The sender passes the payees**
 
 In `clear-advance-erp-send.ts`, both call sites already load the request; pass
 `whtPayees: req.clear.whtItems ?? []`.
 
-- [ ] **Step 5: Run tests and typecheck, then commit**
+- [x] **Step 5: Run tests and typecheck, then commit**
+
+### Five existing tests changed shape, and why each was rewritten rather than patched
+
+Making them green was not the point; keeping what each was asking was. Three
+needed only `whtPayees` added, since they were about something else entirely and
+would now hit the refusal. Two were asking a question the new shape had quietly
+changed underneath them:
+
+`exactly one Vendor line` existed to check the advance vendor appears once. The
+WHT line is a Vendor line now, so counting Vendor lines stopped answering that —
+it counts by `accountNo === "ADV0001"` instead, and the test is renamed to say so.
+
+`the lines with no branch of their own follow the default branch` reached for the
+Vendor line with `.find(l => l.accountType === "Vendor")`. The WHT vendor line is
+emitted first, so that find silently switched to a different line while still
+passing. It addresses `ADV0001` by account now.
+
+Both are the same hazard in test code that the cast bug was in source: an
+assertion that still passes while testing something other than what it names.
+
+**One test beyond the plan:** WHT amounts with no payee rows at all also refuses.
+The plan covered a payee with no type; this is the case where the amounts say
+withholding happened and nothing says who — there is nothing to put on the line
+either way, and the message says which of the two is wrong.
+
+An extra assertion too: the WHT vendor line carries no `balAccountType`, the
+two-explicit-lines shape BC accepted for AP-2. It is invisible in a passing
+payload and would only surface as a BC rejection.
+
+1345 tests pass.
 
 ---
 

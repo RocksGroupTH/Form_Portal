@@ -250,6 +250,7 @@ export async function previewClrErpJournal(ids: number[]): Promise<ClrPreviewIte
         requesterName: req.requesterFullName,
         staffId: req.staffId,
         branchBu,
+        whtPayees: req.clear.whtItems ?? [],
       });
 
       out.push({
@@ -393,6 +394,7 @@ export async function sendClrErpBatch(ids: number[], userId: number): Promise<Cl
         requesterName: req.requesterFullName,
         staffId: req.staffId,
         branchBu,
+        whtPayees: req.clear.whtItems ?? [],
       });
 
       // Mark Pending (only when NULL/Failed — guard is in the SQL WHERE)
