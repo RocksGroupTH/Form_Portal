@@ -14,7 +14,7 @@ import { statusLabelDisplay } from "@/features/accounting/constants";
 import { STEP_LABEL, type StepType } from "@/lib/adv/approval-steps";
 import { Wallet } from "lucide-react";
 import { PaymentDatePicker } from "@/components/ui/PaymentDatePicker";
-import { AdvanceVendorPicker } from "@/features/advance/components/AdvanceVendorPicker";
+import { AdvanceQueueVendorCell } from "@/features/advance/components/AdvanceQueueVendorCell";
 import type { AdvanceRequest } from "@/features/advance/types";
 
 export default function AdvanceDetailPage() {
@@ -42,9 +42,6 @@ function AdvanceDetailContent() {
   const [paymentDate, setPaymentDate] = useState<string>("");
   const [rejectReason, setRejectReason] = useState("");
 
-  // Vendor selection at the ACC_OFFICER step.
-  const [selectedVendor, setSelectedVendor] = useState<string>("");
-  const [matchingVendor, setMatchingVendor] = useState(false);
 
   const fetchRequest = useCallback(() => {
     if (requestId == null || Number.isNaN(requestId)) {
@@ -103,19 +100,12 @@ function AdvanceDetailContent() {
   async function handleApprove() {
     if (request?.currentStepCode === "ACC_OFFICER") {
       if (!paymentDate) return toast.error("กรุณาเลือกวันจ่าย");
-      if (!selectedVendor) return toast.error("กรุณาเลือก Vendor");
-      // Approving IS the confirmation: a merely-suggested vendor is only
-      // 'suggested' in the DB, but the gate requires 'confirmed' — confirm the
-      // selected vendor now (idempotent) so the approval passes.
-      try {
-        const res = await fetch("/api/request/advance/vendor-confirm", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: requestId, vendorNo: selectedVendor }),
-        });
-        const j = (await res.json()) as { ok: boolean; error?: string };
-        if (!j.ok) return toast.error(j.error ?? "ยืนยัน Vendor ไม่สำเร็จ");
-      } catch {
-        return toast.error("ยืนยัน Vendor ไม่สำเร็จ");
+      // The stored status is the truth: the Vendor cell writes its pick to
+      // AccAdvance, and a match confirms itself at submit. Approving no longer
+      // re-POSTs a confirm from page state — with a picker that seeded itself
+      // from the match, that re-wrote a vendor nobody on this screen had chosen.
+      if (request.advance?.vendorMatchStatus !== "confirmed" || !request.advance?.matchedVendorNo) {
+        return toast.error("ต้องยืนยัน Vendor ก่อนอนุมัติ — เลือกในช่อง Vendor");
       }
       act("approve", { paymentDate });
     } else {
@@ -162,12 +152,6 @@ function AdvanceDetailContent() {
 
   return (
     <PageContainer className="acc-theme py-6 px-3 sm:px-0 flex flex-col gap-4">
-      {matchingVendor && (
-        <TravelExpenseLoadingPopup
-          label="AI กำลังจับคู่ Vendor..."
-          subtitle="กำลังค้นหา Vendor ที่ตรงกับผู้รับเงิน"
-        />
-      )}
       <PageHeaderBar
         icon={Wallet}
         title={request.requestNo ?? "ฉบับร่าง"}
@@ -229,13 +213,21 @@ function AdvanceDetailContent() {
                 วันจ่าย:
                 <PaymentDatePicker value={paymentDate} onChange={setPaymentDate} allowedDates={paymentDates} />
               </div>
-              <AdvanceVendorPicker
-                requestId={requestId!}
-                company={request.brandCode ?? ""}
-                onConfirmed={setSelectedVendor}
-                onSuggested={setSelectedVendor}
-                onMatchingChange={setMatchingVendor}
-              />
+              <div className="flex items-center gap-2 text-[12px]" style={{ color: "var(--text-secondary)" }}>
+                Vendor:
+                {/* Same DB-backed cell as the queue and the drawer. Matching runs
+                    once at submit, so this screen reads the stored row instead of
+                    re-running it behind a full-screen "AI กำลังจับคู่" popup. */}
+                <AdvanceQueueVendorCell
+                  requestId={requestId!}
+                  brandCode={request.brandCode}
+                  vendorNo={request.advance?.matchedVendorNo ?? null}
+                  vendorName={request.advance?.matchedVendorName ?? null}
+                  status={request.advance?.vendorMatchStatus ?? null}
+                  reason={request.advance?.vendorMatchReason ?? null}
+                  onConfirmed={fetchRequest}
+                />
+              </div>
             </div>
           )}
           {/* ACC_OFFICER is the final ERP-posting step — only "ดำเนินการ", no

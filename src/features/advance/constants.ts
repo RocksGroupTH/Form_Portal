@@ -13,6 +13,15 @@ export const AP2_SEQUENCE_PREFIX = "ADV";
 /** Phase 1 locks the currency to THB (multi-currency is Phase 2). */
 export const AP2_DEFAULT_CURRENCY = "THB";
 
+/**
+ * Was this request entered in a foreign currency — i.e. is there a conversion
+ * worth showing? A missing currency means an old row from before the field
+ * existed, which was baht.
+ */
+export function isForeignCurrency(currency: string | null | undefined): boolean {
+  return !!currency && currency.toUpperCase() !== AP2_DEFAULT_CURRENCY;
+}
+
 /** Phase 1 business rule: an advance over this amount should go through PR/PO. */
 export const AP2_PRPO_THRESHOLD = 3000;
 

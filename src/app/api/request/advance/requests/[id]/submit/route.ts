@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { submitRequest } from "@/lib/adv/advance-request-service";
+import { matchAdvanceVendor } from "@/lib/adv/vendor-match-service";
 import { resolveRequesterForActor } from "@/lib/acc/employee-context";
 import { processQueue } from "@/lib/acc/email-queue";
 import { resolveLoginEmail } from "@/lib/auth-email";
@@ -42,6 +43,21 @@ export async function POST(
     const requester = await resolveRequesterForActor(loginEmail, savedStaffId);
 
     const req = await submitRequest(id, requester, Number(session.user.id));
+
+    // Match the Vendor now that the request has a requester and a chain.
+    //
+    // Matching used to run only when someone opened the request — the detail
+    // page's picker POSTs it on mount — so a request whose officer works from
+    // the approval queue arrived with no suggestion at all and had to be picked
+    // by hand, even though the rule is a plain staff-code lookup that would
+    // have found it. Doing it here means the suggestion is waiting whichever
+    // screen the officer uses.
+    //
+    // Deliberately after the commit (it reads back the submitted row) and
+    // deliberately swallowed: a failed match must never fail a submit — the
+    // officer can still pick the Vendor, and matchAdvanceVendor is idempotent
+    // so anything that opens the request later re-runs it.
+    void matchAdvanceVendor(id).catch(() => {});
     void processQueue().catch(() => {});
     return NextResponse.json({ ok: true, data: req });
   } catch (e) {

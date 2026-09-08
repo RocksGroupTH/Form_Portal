@@ -11,6 +11,12 @@ import { AdvanceDetailPanel } from "./AdvanceDetailPanel";
 import { AdvanceJournalPreview, type PreviewItem } from "./AdvanceJournalPreview";
 import { FilterMonthPicker } from "@/features/accounting/components/FilterMonthPicker";
 import { sentMonthKey } from "@/features/accounting/components/ApprovalQueueFilters";
+import { CurrencyCells, CURRENCY_HEADERS } from "./CurrencyColumns";
+import { buildBulkMessage, type BulkItemResult } from "@/features/advance/lib/bulk-result-message";
+import { ColumnToggleMenu } from "@/features/travel-booking/components/ColumnToggleMenu";
+import { SENT_QUEUE_COLUMNS, SENT_QUEUE_PREFS } from "@/features/advance/lib/sent-queue-columns";
+import { money, rate } from "./CurrencyColumns";
+import { AP2_DEFAULT_CURRENCY, isForeignCurrency } from "@/features/advance/constants";
 
 interface ErpRow {
   id: number;
@@ -19,6 +25,7 @@ interface ErpRow {
   payeeName: string | null;
   currency: string | null;
   amount: number | null;
+  exchangeRate: number | null;
   baseAmount: number | null;
   paymentDate: string | null;
   erpInterfaceStatus: string | null;
@@ -36,6 +43,7 @@ type StatusFilter = "ALL" | "Sent" | "Pending" | "Failed";
 function fmt(n: number): string {
   return Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+
 
 function fmtDateTime(iso: string | null): string {
   if (!iso) return "—";
@@ -90,6 +98,35 @@ export function AdvanceErpQueue() {
   const [pullbackBusy, setPullbackBusy] = useState(false);
   // Checkbox selection state.
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  // Column layout of the "ส่งแล้ว" table — the reader's own, per browser.
+  const [sentVisible, setSentVisible] = useState<Record<string, boolean>>(SENT_QUEUE_PREFS.defaultVisible);
+  const [sentOrder, setSentOrder] = useState<string[]>(() => SENT_QUEUE_COLUMNS.map((c) => c.key));
+
+  // After mount: localStorage is not available during SSR, and seeding from it
+  // directly would hydrate a different table than the server rendered.
+  useEffect(() => {
+    setSentVisible(SENT_QUEUE_PREFS.loadVisibility());
+    setSentOrder(SENT_QUEUE_PREFS.loadOrder());
+  }, []);
+
+  const handleSentVisibleChange = useCallback((next: Record<string, boolean>) => {
+    setSentVisible(next);
+    SENT_QUEUE_PREFS.saveVisibility(next);
+  }, []);
+
+  const handleSentReorder = useCallback((keys: string[]) => {
+    const next = SENT_QUEUE_PREFS.mergeOrder(keys);
+    setSentOrder(next);
+    SENT_QUEUE_PREFS.saveOrder(next);
+  }, []);
+
+  const sentColumns = useMemo(() => {
+    const byKey = new Map(SENT_QUEUE_COLUMNS.map((c) => [c.key, c]));
+    return sentOrder
+      .map((k) => byKey.get(k))
+      .filter((c): c is NonNullable<typeof c> => !!c)
+      .filter((c) => sentVisible[c.key] ?? true);
+  }, [sentOrder, sentVisible]);
 
   useEffect(() => {
     fetch("/api/request/advance/payment-dates")
@@ -257,7 +294,8 @@ export function AdvanceErpQueue() {
       const res = await fetch("/api/request/advance/erp-queue/send", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: frozenIds }),
       });
-      const j = (await res.json()) as { ok: boolean; drift?: boolean; okCount?: number; failCount?: number; error?: string };
+      const j = (await res.json()) as
+        { ok: boolean; drift?: boolean; okCount?: number; error?: string; results?: BulkItemResult[] };
       if (res.status === 409 || j.drift) {
         toast.error(j.error ?? "คิวเปลี่ยนไปแล้ว — โหลดหน้าใหม่");
         setConfirmOpen(false);
@@ -265,7 +303,12 @@ export function AdvanceErpQueue() {
         return;
       }
       if (j.error && !j.okCount) throw new Error(j.error);
-      toast.success(`ส่งสำเร็จ ${j.okCount ?? 0} รายการ${j.failCount ? ` · ไม่สำเร็จ ${j.failCount}` : ""}`);
+      // BC's own refusal (a missing extension, a rejected line) arrives per
+      // request; without it a failed send read as "ส่งสำเร็จ 0 รายการ".
+      const byId = new Map(rows.map((r) => [r.id, r.requestNo ?? `#${r.id}`]));
+      const m = buildBulkMessage("ส่ง", j.results ?? [], j.okCount, (id) => byId.get(id) ?? `#${id}`);
+      if (m.kind === "success") toast.success(m.title);
+      else toast.error(m.title, { description: m.description, duration: 10000 });
       setConfirmOpen(false);
       setSelected(new Set());
       load();
@@ -296,6 +339,52 @@ export function AdvanceErpQueue() {
       toast.error(e instanceof Error ? e.message : "export ไม่สำเร็จ");
     } finally {
       setExporting(false);
+    }
+  }
+
+  /** One cell of the "ส่งแล้ว" table, by column key — so the row is drawn from
+   *  the reader's order instead of a fixed sequence of <td>s. */
+  function sentCell(r: ErpRow, key: string): React.ReactNode {
+    const faint = { color: "var(--text-faint)" };
+    switch (key) {
+      case "requestNo":
+        return (
+          <button type="button" onClick={() => setPanelId(r.id)}
+            className="cursor-pointer font-bold text-left bg-transparent border-none p-0"
+            style={{ color: "var(--nav-active-text)" }}>{r.requestNo ?? `#${r.id}`}</button>
+        );
+      case "company": return <span style={{ color: "var(--text-secondary)" }}>{r.interfaceTarget}</span>;
+      case "payee": return <span style={{ color: "var(--text-primary)" }}>{r.payeeName ?? "—"}</span>;
+      case "paymentDate": return <span style={{ color: "var(--text-muted)" }}>{r.paymentDate ?? "—"}</span>;
+      case "currency":
+        return (
+          <span className="font-mono text-[11px]"
+            style={{ color: isForeignCurrency(r.currency) ? "var(--nav-active-text)" : "var(--text-muted)" }}>
+            {r.currency ?? AP2_DEFAULT_CURRENCY}
+          </span>
+        );
+      case "amount":
+        return isForeignCurrency(r.currency) && r.amount != null
+          ? <span style={{ color: "var(--text-secondary)" }}>{money(r.amount)}</span>
+          : <span style={faint}>—</span>;
+      case "exchangeRate":
+        return isForeignCurrency(r.currency) && r.exchangeRate != null
+          ? <span style={{ color: "var(--text-muted)" }}>{rate(r.exchangeRate)}</span>
+          : <span style={faint}>—</span>;
+      case "baseAmount":
+        return <span className="font-semibold" style={{ color: "var(--text-secondary)" }}>{money(r.baseAmount ?? 0)}</span>;
+      case "externalDoc":
+        return <span className="font-mono" style={{ color: "var(--text-muted)" }}>{r.requestNo ?? "—"}</span>;
+      case "erpDocumentNo":
+        return (
+          <span className="font-mono font-semibold"
+            style={{ color: r.erpDocumentNo ? "var(--text-secondary)" : "var(--text-faint)" }}>
+            {r.erpDocumentNo ?? "—"}
+          </span>
+        );
+      case "sentAt": return <span style={{ color: "var(--text-muted)" }}>{fmtDateTime(r.erpInterfaceSentAt)}</span>;
+      case "status": return <SentBadge status={r.erpInterfaceStatus} error={r.erpInterfaceError} />;
+      default: return null;
     }
   }
 
@@ -367,8 +456,17 @@ export function AdvanceErpQueue() {
             </div>
 
             {/* per-row payment-date pickers (re-target the payment cycle before sending) */}
-            <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border-card)" }}>
-              <table className="w-full text-[12px] border-collapse">
+            {/* Scrolls sideways rather than squeezing: the currency split added
+                three columns and the page must not scroll as a whole. */}
+            {/* show-x-scroll: `.acc-theme *` hides every scrollbar, so a table
+                that scrolls sideways had no affordance saying so. */}
+            <div className="rounded-xl overflow-x-auto show-x-scroll" style={{ border: "1px solid var(--border-card)" }}>
+              {/* `w-max min-w-full`, not `w-full`: a full-width table fits itself to
+                  the wrapper by squeezing whatever column may wrap, so the currency
+                  split turned the payee into three lines and left the last column
+                  clipped just out of scroll reach. Sizing to content instead makes
+                  the wrapper actually scroll. */}
+              <table className="w-max min-w-full text-[12px] border-collapse">
                 <thead>
                   <tr style={{ background: "var(--bg-card-alt)" }}>
                     <th className="px-3 py-2.5 w-8"
@@ -376,7 +474,7 @@ export function AdvanceErpQueue() {
                       <input type="checkbox" checked={allSelected} onChange={toggleAll}
                         disabled={selectableIds.length === 0} className="cursor-pointer" />
                     </th>
-                    {["เลขที่", "Company", "ผู้รับเงิน", "จำนวน", "Vendor", "วันจ่าย"].map((h) => (
+                    {["เลขที่", "Company", "ผู้รับเงิน", ...CURRENCY_HEADERS, "Vendor", "วันจ่าย"].map((h) => (
                       <th key={h} className="px-2.5 py-2 text-left font-bold whitespace-nowrap"
                         style={{ color: "var(--text-faint)", borderBottom: "1px solid var(--border-card)" }}>{h}</th>
                     ))}
@@ -394,15 +492,16 @@ export function AdvanceErpQueue() {
                           style={{ color: "var(--nav-active-text)" }}>{row.requestNo ?? `#${row.id}`}</button>
                       </td>
                       <td className="px-2.5 py-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{row.interfaceTarget}</td>
-                      <td className="px-2.5 py-2" style={{ color: "var(--text-primary)" }}>{row.payeeName ?? "—"}</td>
-                      <td className="px-2.5 py-2 whitespace-nowrap text-right tabular-nums font-semibold" style={{ color: "var(--text-secondary)" }}>{fmt(row.baseAmount ?? 0)}</td>
+                      <td className="px-2.5 py-2 whitespace-nowrap" style={{ color: "var(--text-primary)" }}>{row.payeeName ?? "—"}</td>
+                      <CurrencyCells row={row} />
                       <td className="px-2.5 py-2 whitespace-nowrap">
                         {/* Read-only: the Vendor is chosen/confirmed at the ACC_OFFICER
                             approval step (preview drawer), not here. */}
-                        <span className="text-[12px] inline-block min-w-[260px]" style={{ color: "var(--text-secondary)" }}>
-                          {row.matchedVendorName
-                            ? `${row.matchedVendorName}${row.matchedVendorNo ? ` (${row.matchedVendorNo})` : ""}`
-                            : row.matchedVendorNo ?? "—"}
+                        {/* The code, with the name on hover — same as the approval
+                            queue, and the code is what the journal line carries. */}
+                        <span className="text-[12px] font-mono" style={{ color: "var(--text-secondary)" }}
+                          title={row.matchedVendorName ?? undefined}>
+                          {row.matchedVendorNo ?? "—"}
                         </span>
                       </td>
                       <td className="px-2.5 py-2 whitespace-nowrap">
@@ -450,6 +549,12 @@ export function AdvanceErpQueue() {
             )}
             <div className="ml-auto flex items-center gap-2">
               <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{sentFiltered.length} รายการ</span>
+              <ColumnToggleMenu
+                columns={SENT_QUEUE_COLUMNS.map((c) => ({ key: c.key, label: c.label }))}
+                visible={sentVisible}
+                onChange={handleSentVisibleChange}
+                onReorder={handleSentReorder}
+              />
               <Button variant="secondary" icon={<Download size={14} />} onClick={exportExcel}
                 loading={exporting} disabled={sentFiltered.length === 0}>Export Excel</Button>
             </div>
@@ -458,31 +563,36 @@ export function AdvanceErpQueue() {
           {sentFiltered.length === 0 ? (
             <p className="text-[13px] py-8 text-center" style={{ color: "var(--text-muted)" }}>ไม่มีรายการตามเงื่อนไข</p>
           ) : (
-            <div className="rounded-xl overflow-x-auto" style={{ border: "1px solid var(--border-card)" }}>
-              <table className="w-full text-[12px] border-collapse">
+            // show-x-scroll: `.acc-theme *` hides every scrollbar, so a table that
+            // scrolls sideways had no affordance saying so.
+            <div className="rounded-xl overflow-x-auto show-x-scroll" style={{ border: "1px solid var(--border-card)" }}>
+              {/* `w-max min-w-full`, not `w-full`: a full-width table fits itself to
+                  the wrapper by squeezing whatever column may wrap, so the currency
+                  split turned the payee into three lines and left the last column
+                  clipped just out of scroll reach. Sizing to content instead makes
+                  the wrapper actually scroll. */}
+              <table className="w-max min-w-full text-[12px] border-collapse">
                 <thead>
                   <tr style={{ background: "var(--bg-card-alt)" }}>
-                    {["เลขที่", "Company", "ผู้รับเงิน", "วันจ่าย", "จำนวน", "External Doc.", "Doc No. (ERP)", "วันที่ส่ง", "สถานะ", "การจัดการ"].map((h) => (
-                      <th key={h} className="px-2.5 py-2 text-left font-bold whitespace-nowrap"
-                        style={{ color: "var(--text-faint)", borderBottom: "1px solid var(--border-card)" }}>{h}</th>
+                    {sentColumns.map((c) => (
+                      <th key={c.key}
+                        className={`px-2.5 py-2 font-bold whitespace-nowrap ${c.numeric ? "text-right" : "text-left"}`}
+                        style={{ color: "var(--text-faint)", borderBottom: "1px solid var(--border-card)" }}>{c.label}</th>
                     ))}
+                    {/* Fixed last: a control, never hidden or moved. */}
+                    <th className="px-2.5 py-2 text-left font-bold whitespace-nowrap"
+                      style={{ color: "var(--text-faint)", borderBottom: "1px solid var(--border-card)" }}>การจัดการ</th>
                   </tr>
                 </thead>
                 <tbody>
                   {sentFiltered.map((r) => (
                     <tr key={r.id} style={{ borderBottom: "1px solid var(--border-light)" }}>
-                      <td className="px-2.5 py-2 whitespace-nowrap">
-                        <button type="button" onClick={() => setPanelId(r.id)} className="cursor-pointer font-bold text-left bg-transparent border-none p-0"
-                          style={{ color: "var(--nav-active-text)" }}>{r.requestNo ?? `#${r.id}`}</button>
-                      </td>
-                      <td className="px-2.5 py-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{r.interfaceTarget}</td>
-                      <td className="px-2.5 py-2" style={{ color: "var(--text-primary)" }}>{r.payeeName ?? "—"}</td>
-                      <td className="px-2.5 py-2 whitespace-nowrap" style={{ color: "var(--text-muted)" }}>{r.paymentDate ?? "—"}</td>
-                      <td className="px-2.5 py-2 whitespace-nowrap text-right tabular-nums font-semibold" style={{ color: "var(--text-secondary)" }}>{fmt(r.baseAmount ?? 0)}</td>
-                      <td className="px-2.5 py-2 whitespace-nowrap font-mono" style={{ color: "var(--text-muted)" }}>{r.requestNo ?? "—"}</td>
-                      <td className="px-2.5 py-2 whitespace-nowrap font-mono font-semibold" style={{ color: r.erpDocumentNo ? "var(--text-secondary)" : "var(--text-faint)" }}>{r.erpDocumentNo ?? "—"}</td>
-                      <td className="px-2.5 py-2 whitespace-nowrap" style={{ color: "var(--text-muted)" }}>{fmtDateTime(r.erpInterfaceSentAt)}</td>
-                      <td className="px-2.5 py-2 whitespace-nowrap"><SentBadge status={r.erpInterfaceStatus} error={r.erpInterfaceError} /></td>
+                      {sentColumns.map((c) => (
+                        <td key={c.key}
+                          className={`px-2.5 py-2 whitespace-nowrap ${c.numeric ? "text-right tabular-nums" : ""}`}>
+                          {sentCell(r, c.key)}
+                        </td>
+                      ))}
                       <td className="px-2.5 py-2 whitespace-nowrap">
                         {r.erpInterfaceStatus === "Sent" && (
                           <button type="button" onClick={() => setPullbackId(r.id)}
