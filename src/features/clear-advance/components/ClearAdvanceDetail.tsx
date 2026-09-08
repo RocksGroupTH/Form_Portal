@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import type { ClearAdvanceDetail as ClearDetail } from "@/features/clear-advance/types";
 import { Dialog } from "@/components/ui/Dialog";
+import { PND_LABEL } from "@/lib/clr/wht-pnd-core";
 import { Avatar } from "@/components/ui/Avatar";
 import {
   AttachmentViewer,
@@ -139,6 +140,10 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
   // ACCOUNT-step inline edit state.
   const [editOpen, setEditOpen] = useState(false);
   const [editItems, setEditItems] = useState<ClearDetail["items"]>(() => clear?.items ?? []);
+  // The WHT payees as accounting may change them. Only the ภ.ง.ด. type is
+  // editable here: the payee's identity came off the receipt the requester held,
+  // and this step decides how the withholding is filed, not who was paid.
+  const [editWht, setEditWht] = useState<ClearDetail["whtItems"]>(() => clear?.whtItems ?? []);
   const [editBusy, setEditBusy] = useState(false);
 
   useEffect(() => {
@@ -231,6 +236,7 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
         clear: {
           ...clear,
           items: editItems,
+          whtItems: editWht,
         },
       };
       const res = await fetch(
@@ -363,6 +369,7 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                 type="button"
                 onClick={() => {
                   setEditItems(clear?.items ?? []);
+                  setEditWht(clear?.whtItems ?? []);
                   setEditOpen((v) => !v);
                 }}
                 className="inline-flex items-center gap-2 text-[12px] font-medium px-3 py-1.5 rounded-lg cursor-pointer"
@@ -467,6 +474,44 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                       </tbody>
                     </table>
                   </div>
+
+                  {/* ภ.ง.ด. per payee — the last stop before the send, and the
+                      value that picks the vendor accounting has to clear. The
+                      requester's answer came from the tax id, which is evidence
+                      and not proof: a 0-prefixed id can belong to a foreign
+                      individual. */}
+                  {editWht.length > 0 && (
+                    <div className="flex flex-col gap-2">
+                      <p className="text-[11px] font-bold m-0" style={{ color: "var(--text-muted)" }}>
+                        ประเภท ภ.ง.ด. ต่อผู้รับเงิน
+                      </p>
+                      {editWht.map((w, i) => (
+                        <div key={w.id ?? i} className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[12px] min-w-0 grow" style={{ color: "var(--text-primary)" }}>
+                            {w.payeeName ?? "—"}
+                            <span className="text-[11px] ml-2" style={{ color: "var(--text-muted)" }}>
+                              {w.taxId ?? "ไม่มีเลขผู้เสียภาษี"}
+                            </span>
+                          </span>
+                          <select
+                            className="text-[12px] px-2 py-1 rounded-lg"
+                            style={{ background: "var(--bg-card)", color: "var(--text-primary)", border: "1px solid var(--border-card)" }}
+                            value={w.pndType ?? ""}
+                            onChange={(e) => {
+                              const v = e.target.value as "PND3" | "PND53" | "";
+                              setEditWht((prev) => prev.map((x, j) => (
+                                j === i ? { ...x, pndType: v || null } : x
+                              )));
+                            }}>
+                            <option value="">— ยังไม่ระบุ —</option>
+                            <option value="PND3">{PND_LABEL.PND3}</option>
+                            <option value="PND53">{PND_LABEL.PND53}</option>
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   <div className="flex gap-2 justify-end">
                     <button
                       type="button"
@@ -641,7 +686,7 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
               <thead>
                 <tr className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                   <ThD>#</ThD><ThD>วันที่</ThD><ThD>เลขผู้เสียภาษี</ThD><ThD>ชื่อผู้รับ</ThD>
-                  <ThD>ที่อยู่</ThD><ThD right>ค่าใช้จ่าย</ThD><ThD right>WHT</ThD><ThD right>สุทธิ</ThD>
+                  <ThD>ที่อยู่</ThD><ThD>ภ.ง.ด.</ThD><ThD right>ค่าใช้จ่าย</ThD><ThD right>WHT</ThD><ThD right>สุทธิ</ThD>
                 </tr>
               </thead>
               <tbody>
@@ -652,6 +697,15 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                     <TdD>{w.taxId ?? "—"}</TdD>
                     <TdD>{w.payeeName ?? "—"}</TdD>
                     <TdD>{w.payeeAddress ?? "—"}</TdD>
+                    {/* Blank is not "individual" — it means nobody has decided,
+                        and the send refuses on it. Shown as its own state. */}
+                    <TdD>
+                      {w.pndType ? (
+                        PND_LABEL[w.pndType]
+                      ) : (
+                        <span style={{ color: "var(--text-warning)" }}>ยังไม่ระบุ</span>
+                      )}
+                    </TdD>
                     <TdD right>{money(w.amount)}</TdD>
                     <TdD right>{money(w.whtAmount)}</TdD>
                     <TdD right>{money(w.netAmount)}</TdD>

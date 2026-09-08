@@ -35,7 +35,6 @@ it, and the send using it.
 | `src/lib/clr/clear-advance-request-service.ts` | Read + write WHT rows | map, insert, suggest on save |
 | `src/features/clear-advance/components/ClearAdvanceForm.tsx:1440-1530` | WHT payee table the requester fills | a ภ.ง.ด. column |
 | `src/features/clear-advance/components/ClearAdvanceDetail.tsx:637` | WHT block, read-only today | ACCOUNT-step editor |
-| `src/app/api/request/clear-advance/[id]/wht-type/route.ts` | Save one row's type | **new** |
 | `src/lib/clr/clear-advance-erp-payload.ts` | Journal builder | vendor lines replace the G/L line |
 | `src/lib/clr/clear-advance-erp-send.ts` | Loads the request | pass the WHT rows through |
 
@@ -337,20 +336,35 @@ it, and the desktop empty-row `colSpan` moved 8/9 → 9/10 with the new column.
 
 - [x] **Step 5: Commit**
 
-### Task 4b: the control at the ACCOUNT step
+### Task 4b: the control at the ACCOUNT step — *done 2026-09-08*
 
 **Files:**
 - Create: `src/app/api/request/clear-advance/[id]/wht-type/route.ts`
 - Modify: `src/features/clear-advance/components/ClearAdvanceDetail.tsx:637-660`
 
-- [ ] **Step 1: The route**
+- [x] **Step 1: The route — not built, and better not built**
 
-`POST` with `{ whtId, pndType }`, `pndType` one of `PND3`, `PND53` or `null`.
-Guarded the way the existing line editor is — **the ACCOUNT step only**, the same
-rule its own note states ("แก้ไขได้เฉพาะในขั้นบัญชี (ACCOUNT) เท่านั้น"). Read
-that guard and copy it rather than inventing a second one.
+Reading the existing guard, as this step said to, showed the endpoint was not
+needed. The inline editor already `PUT`s `/account-edit` with
+`clear: { ...clear, items: editItems }` — and `clear` carries `whtItems`, which
+`saveAccountEdit` → `persistClearOnly` → `persistClear` already writes. The type
+travels on a road that is already paved.
 
-- [ ] **Step 2: The control**
+Three things fall out of reusing it rather than adding a second door:
+
+The ACCOUNT guard is enforced once, in two layers that already exist — the route
+checks `isClrApprover(..., "ACCOUNT")` and `saveAccountEdit` re-checks
+`Status = Submitted AND CurrentStepCode = 'ACCOUNT'`. A new endpoint would have
+had to restate both, and a restatement is a place for them to drift apart.
+
+**The stale-id hazard Task 3 flagged disappears.** A `whtId` captured before a
+save is meaningless after one, because the rows are deleted and re-inserted.
+Sending the whole set together never addresses a row by an id that has moved.
+
+And accounting gets one save button for one visit, rather than a control that
+writes on its own while the editor beside it waits for a click.
+
+- [x] **Step 2: The control**
 
 The WHT block at `:637` renders payee rows read-only. Add a ภ.ง.ด. column: plain
 text outside the ACCOUNT step, a small select inside it, with the three states
@@ -360,12 +374,22 @@ Where the value came from must be visible, because the two are not equally
 trustworthy: mark a value the rule suggested and nobody has confirmed as
 *แนะนำจากเลขผู้เสียภาษี*. A tax id beginning `0` can still belong to a person.
 
-- [ ] **Step 3: Verify on screen**
+- [x] **Step 3: Verify on screen** — done end to end.
 
-Approve a clearing to the ACCOUNT step, change a type the requester already set,
-reload, and confirm accounting's value is the one that survived.
+`ADC26-09013` was built and driven for it: a clearing whose expense exactly
+matches its 200 advance so no refund leg was needed, carrying one WHT payee with
+tax id `0105500000009` which the requester had deliberately marked `ภ.ง.ด. 3`
+against the suggestion. Submitted, passed MANAGER on the dev bypass, and at the
+ACCOUNT step the control read `PND3`, was changed to `PND53`, and saved —
+`AccClearAdvanceWht` row 8 reads `PND53`.
 
-- [ ] **Step 4: Commit**
+The read-only column renders too, showing `ภ.ง.ด. 3` before the change and
+`ยังไม่ระบุ` in a warning colour where no type is set, since blank is a state the
+send refuses on and not a quiet default.
+
+The bypass flag is out of `.env.local` again.
+
+- [x] **Step 4: Commit**
 
 ---
 
