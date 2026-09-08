@@ -98,8 +98,24 @@ export function AttachmentViewer({ open, source, kind, onClose }: AttachmentView
     setLoading(false);
   }, [open]);
 
+  /**
+   * An image that already has a URL is shown from that URL.
+   *
+   * Everything else here downloads the file, buffers it, wraps it in a Blob and
+   * hands the browser an object URL — which a PDF viewer and the spreadsheet
+   * parser need, and an `<img>` does not. Doing it for images meant nothing at
+   * all appeared until the whole file had arrived: a spinner for a second and a
+   * half on a 273KB slip over localhost, and far longer for a photograph taken
+   * on a phone over 4G. It read as "the preview is broken", and the thumbnail
+   * sitting right behind it — same endpoint, plain <img> — had already loaded.
+   *
+   * Straight to the browser it renders progressively, comes from cache when the
+   * thumbnail already fetched it, and holds no second copy in memory.
+   */
+  const directImageUrl = kind === "image" && source?.url && !source.file ? source.url : null;
+
   useEffect(() => {
-    if (!open || !source) return;
+    if (!open || !source || directImageUrl) return;
 
     // A local `let`, fresh on every run of the effect, rather than a ref set on
     // mount. React strict mode runs effects twice in development, and a ref
@@ -161,7 +177,7 @@ export function AttachmentViewer({ open, source, kind, onClose }: AttachmentView
       // phone.
       if (created) URL.revokeObjectURL(created);
     };
-  }, [open, source, kind]);
+  }, [open, source, kind, directImageUrl]);
 
   useEffect(() => {
     if (!open) return;
@@ -177,8 +193,9 @@ export function AttachmentViewer({ open, source, kind, onClose }: AttachmentView
   // Images keep the viewer the other two forms use, so zoom and pan are the
   // same gesture everywhere in the app.
   if (kind === "image") {
-    return blobUrl ? (
-      <ImageLightbox open src={blobUrl} alt={source.name} onClose={onClose} />
+    const src = directImageUrl ?? blobUrl;
+    return src ? (
+      <ImageLightbox open src={src} alt={source.name} onClose={onClose} />
     ) : (
       <Shell name={source.name} onClose={onClose}>
         <Centre>{error ?? <Loader2 size={22} className="animate-spin" />}</Centre>
