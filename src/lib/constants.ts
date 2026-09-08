@@ -169,6 +169,33 @@ export const REQUEST_CARDS: NavItem[] = [
     manage: true,
   },
   {
+    id: "reimburse-approvals",
+    label: "คิวอนุมัติ (บัญชี) — เบิกเงินคืนพนักงาน",
+    icon: "Receipt",
+    desc: "ฟอร์ม AP-4 · รายการที่ผู้จัดการอนุมัติแล้ว รอบัญชีเลือกวันที่จ่ายและส่งต่อ",
+    href: "/request/reimburse/approvals",
+    group: "Settings",
+    groupTh: "ตั้งค่า",
+    badge: "AP-4",
+    // Deliberately not `devHostOnly` — the same argument the settings card
+    // above gives, verbatim: the people who work this queue are not on
+    // localhost. This card was missing entirely through Task 5's first round
+    // — the route and the page existed with no link to either anywhere in
+    // `src/`, so the only way in was typing the URL.
+    //
+    // Unlike every other card in this list, whether this one shows is not a
+    // static flag — `RequestHubPage` gates it on the viewer's own
+    // `approvalQueue` grant (`useReimburseAccess()`), because a card that is
+    // wrong for nine people out of ten (the roster was measured empty; only
+    // an admin or a specifically granted person can act here at all) is
+    // worth hiding from the rest even though showing it would leak nothing —
+    // the route answers 403 regardless. `RequestHubPage`'s filter is the
+    // enforcement; `manage: true` here only keeps it exempt from the
+    // per-form `available` filter, the same reason every other management
+    // card carries it.
+    manage: true,
+  },
+  {
     id: "reimburse-form",
     label: "ขอเบิกเงินคืนพนักงาน",
     icon: "Receipt",

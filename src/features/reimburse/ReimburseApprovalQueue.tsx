@@ -215,6 +215,15 @@ export function ReimburseApprovalQueue() {
     let okCount = 0;
     let failCount = 0;
     let conflict = false;
+    // The first non-409 error message, kept verbatim and shown beside the
+    // count. The likeliest one here is NOT an edge case: this queue shows its
+    // full contents to anyone holding the `approvalQueue` menu grant, whether
+    // or not they are on `AccReimburseApprover` — see the file header — and
+    // that roster was last measured empty. The very first person to try this
+    // screen is expected to hit exactly this 403, and "ไม่สำเร็จ N รายการ"
+    // with no reason would send them looking for a bug instead of reading the
+    // sentence the server already wrote naming the remedy.
+    let firstError: string | null = null;
     for (const id of ids) {
       try {
         const res = await fetch(`/api/request/reimburse/requests/${id}/approve`, {
@@ -226,9 +235,13 @@ export function ReimburseApprovalQueue() {
         if (json?.ok) {
           okCount += 1;
         } else if (res.status === 409) {
+          // Never counted as a plain failure and never carries a message here
+          // — a 409 means the row already moved, and the only honest remedy is
+          // the refetch below, not a reason to read.
           conflict = true;
         } else {
           failCount += 1;
+          if (firstError === null && typeof json?.error === "string") firstError = json.error;
         }
       } catch {
         failCount += 1;
@@ -237,7 +250,9 @@ export function ReimburseApprovalQueue() {
     setBatchRunning(false);
     setSelectedIds(new Set());
     if (okCount > 0) toast.success(`บันทึกวันที่จ่ายและส่งต่อแล้ว ${okCount} รายการ`);
-    if (failCount > 0) toast.error(`ไม่สำเร็จ ${failCount} รายการ`);
+    if (failCount > 0) {
+      toast.error(firstError ? `ไม่สำเร็จ ${failCount} รายการ — ${firstError}` : `ไม่สำเร็จ ${failCount} รายการ`);
+    }
     if (conflict) {
       toast.error("มีบางรายการถูกดำเนินการไปแล้วโดยผู้อื่น — โหลดรายการใหม่แล้ว");
     }

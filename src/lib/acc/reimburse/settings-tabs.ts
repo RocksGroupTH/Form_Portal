@@ -185,7 +185,11 @@ export function filterStorableReimburseKeys(keys: string[]): string[] {
  *
  * This answers SIGHT only. Whether the viewer may act on what they see comes
  * from `AccReimburseApprover`, checked inside the approval service where the
- * money moves — a person with the tick and no approver row gets an empty queue.
+ * money moves — a person with the tick and no approver row sees the FULL
+ * queue and can act on none of it. That is correct, not a bug to filter
+ * around here: `AccReimburseAccess` exists precisely so "may see the queue"
+ * and "may approve money" are two separate tickets, and filtering the queue
+ * on the roster here would collapse them back into one.
  */
 export function decideReimburseMenuAccess(
   isAdmin: boolean,

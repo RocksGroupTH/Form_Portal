@@ -6,6 +6,16 @@ interface ReimburseAccessData {
   admin: boolean;
   settingsTabs: string[];
   canSettings: boolean;
+  /**
+   * Sight of `/request/reimburse/approvals` — the `approvalQueue` menu grant
+   * from `AccReimburseAccessTab`, or true for an admin. The route already
+   * answered this field (`/api/request/reimburse/access`); nothing here read
+   * it until the Request hub needed it to decide whether to show the queue's
+   * own card. `clearance` is on the same response and is left off this type
+   * until something needs it, for the same reason `menus` was — the field
+   * existing on the wire is not a reason to widen every consumer of it early.
+   */
+  approvalQueue: boolean;
 }
 
 const fetcher = async (url: string) => {
@@ -49,5 +59,15 @@ export function useReimburseAccess() {
      * and then walking away leaves them exactly where they were.
      */
     canSettings: access?.canSettings ?? false,
+    /**
+     * Sight of the AP-4 accounting queue (`/request/reimburse/approvals`) —
+     * admin OR the `approvalQueue` menu grant. Defaults `false` while loading
+     * or on a failed read, unlike the availability flags elsewhere in this
+     * app that default to visible: this one gates a live link into an
+     * authorization surface, not whether a form is open, so the safer default
+     * while the answer is unknown is to show nothing rather than a card that
+     * might disappear once the real answer arrives.
+     */
+    approvalQueue: access?.approvalQueue ?? false,
   };
 }
