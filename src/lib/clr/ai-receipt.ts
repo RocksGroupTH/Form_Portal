@@ -1,6 +1,24 @@
 import "server-only";
 import { resolveApiKey } from "@/lib/api-keys/service";
-import type { ReceiptExtractResult } from "./slip-verify";
+import {
+  BRANCH_SUGGEST_SYSTEM,
+  GL_SUGGEST_SYSTEM,
+  RECEIPT_SYSTEM,
+  RECEIPT_USER_TEXT,
+  THAI_DATE_RULES,
+  buildBranchSuggestUserText,
+  buildGlSuggestUserText,
+  parseReceiptDocs,
+  pickSuggestedBranch,
+  pickSuggestedGl,
+  thaiPrintedDate,
+  toDate,
+  toNum,
+  type BranchCandidate,
+  type BranchSuggestion,
+  type GlCandidate,
+  type ReceiptRead,
+} from "./ai-receipt-core";
 
 /**
  * Optional AI (Claude vision) receipt extraction. Runs when a key is available
@@ -10,95 +28,110 @@ import type { ReceiptExtractResult } from "./slip-verify";
 
 const MODEL = process.env.ANTHROPIC_RECEIPT_MODEL || "claude-haiku-4-5-20251001";
 
-const SYSTEM = [
-  "You read Thai/English receipts & tax invoices and return ONE JSON object only.",
-  "No prose, no markdown fences. Use null when a value is not present — never guess.",
-  "Rules:",
-  '- date: the document date as "YYYY-MM-DD". Convert Buddhist year (พ.ศ.) to CE (−543).',
-  "- description: the main item/service description (keep original language).",
-  "- docNo: document / tax-invoice number.",
-  "- amountBeforeVat, vat, wht: numbers in THB (no commas). wht = ภาษีหัก ณ ที่จ่าย amount.",
-  "- taxId: payee 13-digit tax id, digits only.",
-  "- payeeName, payeeAddress: the seller/payee name and address (original language).",
-].join("\n");
-
-const USER_TEXT =
-  'Extract this receipt. Return only JSON with keys: date, description, docNo, ' +
-  'amountBeforeVat, vat, wht, taxId, payeeName, payeeAddress.';
-
-type AiJson = {
-  date?: string | null;
-  description?: string | null;
-  docNo?: string | null;
-  amountBeforeVat?: number | string | null;
-  vat?: number | string | null;
-  wht?: number | string | null;
-  taxId?: string | null;
-  payeeName?: string | null;
-  payeeAddress?: string | null;
-};
-
-function toNum(v: unknown): number | null {
-  if (v == null || v === "") return null;
-  const n = Number(String(v).replace(/,/g, ""));
-  return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
-}
-function toStr(v: unknown): string | null {
-  const s = typeof v === "string" ? v.trim() : "";
-  return s ? s.slice(0, 300) : null;
-}
-
 /**
- * Extract a receipt image (PNG/JPEG/WebP buffer) with Claude vision. Returns the
- * same shape as the Tesseract path (+ payeeAddress). Returns null when the key is
- * missing or the call/parse fails, so the caller can fall back cleanly.
+ * Read every document in an upload with Claude vision. `images` is one image, or
+ * the consecutive pages of one PDF — they go in a single call so a tax invoice
+ * printed across four pages is recognised as ONE document, not four. Returns one
+ * entry per invoice number plus the count of pages that were neither a receipt
+ * nor a slip; an empty read means the key is missing or the call/parse failed, so
+ * the caller can fall back cleanly.
  */
-export async function extractReceiptWithAI(
-  buffer: Buffer,
+export async function extractReceiptsWithAI(
+  images: Buffer[],
   mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif" = "image/png",
-): Promise<ReceiptExtractResult | null> {
+): Promise<ReceiptRead> {
+  const nothing: ReceiptRead = { docs: [], skippedPages: 0, branchHint: null };
+  if (images.length === 0) return nothing;
   try {
     const { value: apiKey } = await resolveApiKey("ANTHROPIC_API_KEY");
-    if (!apiKey) return null;
+    if (!apiKey) return nothing;
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
     const client = new Anthropic({ apiKey });
     const res = await client.messages.create({
       model: MODEL,
-      max_tokens: 1024,
-      system: SYSTEM,
+      max_tokens: 4096,
+      system: RECEIPT_SYSTEM,
       messages: [
         {
           role: "user",
           content: [
-            { type: "image", source: { type: "base64", media_type: mediaType, data: buffer.toString("base64") } },
-            { type: "text", text: USER_TEXT },
+            ...images.map((img) => ({
+              type: "image" as const,
+              source: { type: "base64" as const, media_type: mediaType, data: img.toString("base64") },
+            })),
+            { type: "text" as const, text: RECEIPT_USER_TEXT },
           ],
         },
       ],
     });
     const textPart = res.content.find((c) => c.type === "text");
-    const raw = textPart && "text" in textPart ? textPart.text : "";
-    const match = raw.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    const j = JSON.parse(match[0]) as AiJson;
-
-    const beforeVat = toNum(j.amountBeforeVat);
-    const vat = toNum(j.vat);
-    return {
-      date: toStr(j.date),
-      description: toStr(j.description),
-      docNo: toStr(j.docNo),
-      wht: toNum(j.wht),
-      taxId: j.taxId ? String(j.taxId).replace(/\D/g, "").slice(0, 13) || null : null,
-      payeeName: toStr(j.payeeName),
-      payeeAddress: toStr(j.payeeAddress),
-      total: beforeVat != null ? Math.round((beforeVat + (vat ?? 0)) * 100) / 100 : null,
-      vat,
-      beforeVat,
-      amounts: [beforeVat, vat].filter((n): n is number => n != null),
-    };
+    return parseReceiptDocs(textPart && "text" in textPart ? textPart.text : "");
   } catch {
-    return null;
+    return nothing;
+  }
+}
+
+/**
+ * Suggest ONE expense account for a receipt description (§10). `candidates` must
+ * already be the branch-filtered set the line is allowed to charge — the model
+ * only ever chooses from it, and anything it answers that is not in the list is
+ * dropped here. Returns "" when there is nothing to suggest; advisory only.
+ */
+export async function suggestGlAccountWithAI(
+  description: string,
+  candidates: GlCandidate[],
+): Promise<string> {
+  const text = description.trim();
+  if (!text || candidates.length === 0) return "";
+  try {
+    const { value: apiKey } = await resolveApiKey("ANTHROPIC_API_KEY");
+    if (!apiKey) return "";
+    const { default: Anthropic } = await import("@anthropic-ai/sdk");
+    const client = new Anthropic({ apiKey });
+    const res = await client.messages.create({
+      model: MODEL,
+      max_tokens: 32,
+      system: GL_SUGGEST_SYSTEM,
+      messages: [{ role: "user", content: buildGlSuggestUserText(text, candidates) }],
+    });
+    const textPart = res.content.find((c) => c.type === "text");
+    const raw = textPart && "text" in textPart ? textPart.text : "";
+    return pickSuggestedGl(raw, candidates.map((c) => c.glAccountNo));
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Suggest ONE branch for an upload from the note saying what the spend was for.
+ * `candidates` is the brand's whole BRANCH list, built on the server; anything
+ * the model answers that is not in it is dropped, so the reviewer is never
+ * offered a branch they could not have picked by hand. Advisory and editable —
+ * `close` says the model had near-ties, which the modal marks for the eye.
+ */
+export async function suggestBranchWithAI(
+  hint: string,
+  candidates: BranchCandidate[],
+): Promise<BranchSuggestion> {
+  const none: BranchSuggestion = { code: "", close: false };
+  const text = hint.trim();
+  if (!text || candidates.length === 0) return none;
+  try {
+    const { value: apiKey } = await resolveApiKey("ANTHROPIC_API_KEY");
+    if (!apiKey) return none;
+    const { default: Anthropic } = await import("@anthropic-ai/sdk");
+    const client = new Anthropic({ apiKey });
+    const res = await client.messages.create({
+      model: MODEL,
+      max_tokens: 64,
+      system: BRANCH_SUGGEST_SYSTEM,
+      messages: [{ role: "user", content: buildBranchSuggestUserText(text, candidates) }],
+    });
+    const textPart = res.content.find((c) => c.type === "text");
+    const raw = textPart && "text" in textPart ? textPart.text : "";
+    return pickSuggestedBranch(raw, candidates.map((c) => c.code));
+  } catch {
+    return none;
   }
 }
 
@@ -107,13 +140,17 @@ const SLIP_SYSTEM = [
   "No prose, no markdown fences. Use null when a value is not present — never guess.",
   "Rules:",
   '- amount: the transferred amount as a number in THB (no commas, no currency symbol).',
-  '- date: the transaction date as "YYYY-MM-DD". Convert Buddhist year (พ.ศ.) to CE (−543).',
+  "- date: the transaction date.",
+  "- dateText: that same date copied character for character, exactly as printed on the slip",
+  '  — "08 ก.ย. 2026". Do not reformat it or convert the year; it is read by rule on our side.',
+  "Reading a date:",
+  THAI_DATE_RULES,
 ].join("\n");
 
 const SLIP_USER_TEXT =
-  'Extract this transfer slip. Return only JSON with keys: amount, date.';
+  'Extract this transfer slip. Return only JSON with keys: amount, date, dateText.';
 
-type SlipAiJson = { amount?: number | string | null; date?: string | null };
+type SlipAiJson = { amount?: number | string | null; date?: string | null; dateText?: string | null };
 
 export interface SlipAiResult {
   amount: number | null;
@@ -153,7 +190,9 @@ export async function extractSlipWithAI(
     if (!match) return null;
     const j = JSON.parse(match[0]) as SlipAiJson;
     const amount = toNum(j.amount);
-    const date = toStr(j.date);
+    // Same rule as the bundle path: the month comes off the printed text when
+    // we can read it, and only falls back to the model's own conversion.
+    const date = toDate(thaiPrintedDate(j.dateText) ?? j.date);
     if (amount == null && !date) return null;
     return { amount, date };
   } catch {

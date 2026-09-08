@@ -25,6 +25,8 @@ export interface ClrPreviewItem {
   interfaceTarget: string | null;
   environment: ErpBcEnvironment | null;
   journalBatchName: string | null;
+  /** Refund or Payment — the whole clearing's type, blank on a failed preview. */
+  documentType?: string;
   ok: boolean;
   error?: string;
   lines: ClrPreviewLine[];
@@ -183,6 +185,7 @@ function toJournalItems(
       vatAmount: it.vatAmount ?? 0,
       whtAmount: it.whtAmount ?? 0,
       branchCode: it.branchCode ?? null,
+      description: it.description ?? null,
     }));
 }
 
@@ -207,7 +210,7 @@ export async function previewClrErpJournal(ids: number[]): Promise<ClrPreviewIte
       if (!req.clear.items || req.clear.items.length === 0) throw new Error("ไม่มีรายการค่าใช้จ่าย");
 
       const postingDate = req.clear.refundTransferDate ?? req.clear.paymentDate ?? todayYmd();
-      const { config, target, departmentCode } = await loadClearAdvanceErpContext(req.brandCode, req.requesterDepartmentCode);
+      const { config, target, departmentCode } = await loadClearAdvanceErpContext(req.brandCode, req.requesterDepartmentCode, req.clear.advanceRequestId);
       const journalItems = toJournalItems(req.clear.items);
       const itemBranch = journalItems.find((it) => it.branchCode)?.branchCode ?? null;
       const payload = buildClearAdvanceJournalPayload({
@@ -218,6 +221,8 @@ export async function previewClrErpJournal(ids: number[]): Promise<ClrPreviewIte
         config,
         departmentCode,
         defaultBranchCode: itemBranch,
+        advanceRequestNo: req.clear.advanceRequestNo,
+        requesterName: req.requesterFullName,
       });
 
       out.push({
@@ -226,6 +231,10 @@ export async function previewClrErpJournal(ids: number[]): Promise<ClrPreviewIte
         interfaceTarget: target.interfaceTarget,
         environment: target.environment,
         journalBatchName: config.journalBatchName,
+        // Every line carries the same document type, so it belongs to the
+        // clearing, not to a row. Accounting needs to see Refund vs Payment
+        // before sending — BC treats the two differently once posted.
+        documentType: payload.lines[0]?.documentType ?? "",
         ok: true,
         lines: payload.lines.map((l) => ({
           accountType: l.accountType,
@@ -326,7 +335,7 @@ export async function sendClrErpBatch(ids: number[], userId: number): Promise<Cl
     let bcEnvironment: ErpBcEnvironment | null = null;
     try {
       const postingDate = req.clear.refundTransferDate ?? req.clear.paymentDate ?? todayYmd();
-      const { config, target, departmentCode } = await loadClearAdvanceErpContext(req.brandCode, req.requesterDepartmentCode);
+      const { config, target, departmentCode } = await loadClearAdvanceErpContext(req.brandCode, req.requesterDepartmentCode, req.clear.advanceRequestId);
       bcEnvironment = target.environment;
 
       const journalItems = toJournalItems(req.clear.items);
@@ -339,6 +348,8 @@ export async function sendClrErpBatch(ids: number[], userId: number): Promise<Cl
         config,
         departmentCode,
         defaultBranchCode: itemBranch,
+        advanceRequestNo: req.clear.advanceRequestNo,
+        requesterName: req.requesterFullName,
       });
 
       // Mark Pending (only when NULL/Failed — guard is in the SQL WHERE)

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { buildClearAdvanceJournalPayload, type ClrJournalInput } from "./clear-advance-erp-payload";
 
 const cfg = {
-  advanceGlAccountNo: "115010", bankAccountNo: "BBL-CA6332",
+  advanceVendorNo: "ADV0001", bankAccountNo: "BBL-CA6332",
   vatInputGlAccountNo: "115030", whtPayableGlAccountNo: "213050",
   journalBatchName: "PPAP",
 };
@@ -15,16 +15,18 @@ const base = (over: Partial<ClrJournalInput>): ClrJournalInput => ({
 });
 const sum = (p: { lines: { amount: number }[] }) => Math.round(p.lines.reduce((s, l) => s + l.amount, 0) * 100) / 100;
 
-test("refund=0, no VAT/WHT -> 2 balanced lines", () => {
+test("refund=0, no VAT/WHT -> expense + zeroed vendor line", () => {
   const p = buildClearAdvanceJournalPayload(base({}));
   assert.equal(p.journalBatchName, "PPAP");
   assert.equal(p.lines.length, 2);
-  assert.equal(sum(p), 0);
   const exp = p.lines.find((l) => l.accountNo === "610322005")!;
   assert.equal(exp.amount, 2000);
-  const adv = p.lines.find((l) => l.accountNo === "115010")!;
-  assert.equal(adv.amount, -2000);
-  assert.equal(exp.documentType, "Payment");
+  const adv = p.lines.find((l) => l.accountType === "Vendor")!;
+  assert.equal(adv.accountNo, "ADV0001");
+  // Spec §3.2: the vendor line is present but always 0 — accounting clears it by hand.
+  assert.equal(adv.amount, 0);
+  // Unbalanced by exactly the zeroed advance.
+  assert.equal(sum(p), 2000);
   assert.equal(exp.employeeCode, "ADC26-09005");
 });
 
@@ -32,7 +34,6 @@ test("refund>0 -> Dr Bank for the returned amount", () => {
   const p = buildClearAdvanceJournalPayload(base({
     items: [{ glAccountNo: "610322005", amountBeforeVat: 1500, vatAmount: 0, whtAmount: 0, branchCode: null }],
   }));
-  assert.equal(sum(p), 0);
   const bank = p.lines.find((l) => l.accountType === "Bank Account")!;
   assert.equal(bank.amount, 500);
 });
@@ -41,21 +42,21 @@ test("pay-extra -> Cr Bank for the excess", () => {
   const p = buildClearAdvanceJournalPayload(base({
     items: [{ glAccountNo: "610322005", amountBeforeVat: 2500, vatAmount: 0, whtAmount: 0, branchCode: null }],
   }));
-  assert.equal(sum(p), 0);
   const bank = p.lines.find((l) => l.accountType === "Bank Account")!;
   assert.equal(bank.amount, -500);
 });
 
-test("VAT + WHT -> aggregate lines, still balanced", () => {
+test("VAT + WHT -> both lines emitted, WHT at 0", () => {
   const p = buildClearAdvanceJournalPayload(base({
     advanceAmount: 1000,
     items: [{ glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 30, branchCode: "HQ01" }],
   }));
-  assert.equal(sum(p), 0);
   assert.equal(p.lines.find((l) => l.accountNo === "115030")!.amount, 70);
-  assert.equal(p.lines.find((l) => l.accountNo === "213050")!.amount, -30);
-  const bank = p.lines.find((l) => l.accountType === "Bank Account")!;
-  assert.equal(bank.amount, -40);
+  // WHT line present, zeroed.
+  assert.equal(p.lines.find((l) => l.accountNo === "213050")!.amount, 0);
+  assert.equal(p.lines.find((l) => l.accountType === "Vendor")!.amount, 0);
+  // The bank difference is real cash and still nets VAT and WHT.
+  assert.equal(p.lines.find((l) => l.accountType === "Bank Account")!.amount, -40);
 });
 
 test("VAT present but no VAT account configured -> throws", () => {
@@ -63,4 +64,67 @@ test("VAT present but no VAT account configured -> throws", () => {
     config: { ...cfg, vatInputGlAccountNo: null },
     items: [{ glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 0, branchCode: null }],
   })), /VAT/);
+});
+
+test("the clear-advance line points at the Vendor with no balAccountType", () => {
+  const p = buildClearAdvanceJournalPayload(base({}));
+  const adv = p.lines.find((l) => l.accountType === "Vendor")!;
+  assert.equal(adv.accountNo, "ADV0001");
+  assert.equal(adv.amount, 0);
+  // AP-2's proven BC shape: two explicit lines, no bal account on the vendor line.
+  assert.equal(adv.balAccountType, undefined);
+  assert.equal(adv.employeeCode, "ADC26-09005");
+});
+
+test("exactly one Vendor line, and no G/L line carries the advance amount", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    advanceAmount: 1000,
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 30, branchCode: "HQ01" }],
+  }));
+  assert.equal(p.lines.filter((l) => l.accountType === "Vendor").length, 1);
+  // Unbalanced by the zeroed WHT and vendor lines: 1000 + 70 + 0 + 0 - 40.
+  assert.equal(sum(p), 1030);
+  assert.ok(!p.lines.some((l) => l.accountType === "G/L Account" && l.amount === -1000));
+});
+
+test("description carries the ADV no, the employee and the detail", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    advanceRequestNo: "ADV26-00026",
+    requesterName: "ภาสพงษ์ พิษณุพจน์",
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 2000, vatAmount: 0, whtAmount: 0, branchCode: "HQ01", description: "ค่าแท็กซี่" }],
+  }));
+  const exp = p.lines.find((l) => l.accountNo === "610322005")!;
+  assert.equal(exp.description, "ADV26-00026 เบิก เคลียร์เงินทดลอง ภาสพงษ์ พิษณุพจน์ ค่าแท็กซี่");
+  assert.ok(exp.description.length <= 100);
+});
+
+test("description falls back to the AP-3 no when there is no ADV no", () => {
+  const p = buildClearAdvanceJournalPayload(base({}));
+  const exp = p.lines.find((l) => l.accountNo === "610322005")!;
+  assert.ok(exp.description.startsWith("ADC26-09005 เบิก เคลียร์เงินทดลอง"));
+});
+
+test("money returned to the company -> Refund on every line", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 1500, vatAmount: 0, whtAmount: 0, branchCode: null }],
+  }));
+  assert.ok(p.lines.every((l) => l.documentType === "Refund"));
+});
+
+test("company pays extra -> Payment on every line", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 2500, vatAmount: 0, whtAmount: 0, branchCode: null }],
+  }));
+  assert.ok(p.lines.every((l) => l.documentType === "Payment"));
+});
+
+test("spent exactly the advance -> Payment", () => {
+  const p = buildClearAdvanceJournalPayload(base({}));
+  assert.ok(p.lines.every((l) => l.documentType === "Payment"));
+});
+
+test("no vendor on the cleared advance -> throws", () => {
+  assert.throws(() => buildClearAdvanceJournalPayload(base({
+    config: { ...cfg, advanceVendorNo: "" },
+  })), /Vendor/);
 });

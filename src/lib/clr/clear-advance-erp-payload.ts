@@ -1,7 +1,8 @@
 import type { PpapJournalPayload, PpapJournalLinePayload } from "@/lib/acc/erp-ppap-payload";
 
 export interface ClrJournalConfig {
-  advanceGlAccountNo: string;
+  /** The vendor AP-2 debited — this clearing credits the same one. */
+  advanceVendorNo: string;
   bankAccountNo: string;
   vatInputGlAccountNo: string | null;
   whtPayableGlAccountNo: string | null;
@@ -13,6 +14,7 @@ export interface ClrJournalItem {
   vatAmount: number;
   whtAmount: number;
   branchCode: string | null;
+  description?: string | null;
 }
 export interface ClrJournalInput {
   requestNo: string;
@@ -23,27 +25,53 @@ export interface ClrJournalInput {
   departmentCode: string;
   /** Fallback branch for lines that have no per-item branch (VAT, WHT, advance reversal, bank diff). */
   defaultBranchCode?: string | null;
+  /** The AP-2 number being cleared — the number accounting reconciles against. */
+  advanceRequestNo?: string | null;
+  /** Full name of the person clearing, for the line description. */
+  requesterName?: string | null;
 }
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
 /**
  * Build the PPAP CreateFromJson payload for ONE AP-3 clearing.
- * Dr expenses (per item) + Dr VAT input - Cr WHT payable - Cr advance +/- Bank diff.
- * Line amount sign: >0 = debit, <0 = credit; the lines always sum to 0.
+ * Dr expenses (per item) + Dr VAT input + WHT payable (0) + advance Vendor (0) +/- Bank diff.
+ * Line amount sign: >0 = debit, <0 = credit.
+ *
+ * The lines do NOT sum to 0. Spec §3.2 requires the WHT and clear-advance vendor lines
+ * to carry 0 so accounting matches and clears them by hand in BC; CU 50263 only inserts
+ * (never posts), and BC enforces balance at posting time, so an unbalanced batch is fine.
  */
 export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJournalPayload {
   const { config: c, items, requestNo, postingDate, departmentCode } = input;
-  if (!c.advanceGlAccountNo) throw new Error("ยังไม่ได้ตั้งค่า G/L เงินทดรองจ่าย (จาก AP-2) สำหรับแบรนด์นี้");
+  const advanceVendorNo = c.advanceVendorNo?.trim() ?? "";
+  if (!advanceVendorNo) throw new Error("ยังไม่ได้เลือก Vendor ในใบเบิก AP-2 ที่เคลียร์ใบนี้ — เปิดใบ AP-2 แล้วเลือก Vendor ก่อนส่ง");
   if (!c.bankAccountNo) throw new Error("ยังไม่ได้ตั้งค่า Bank Account (จาก AP-2) สำหรับแบรนด์นี้");
   if (!c.journalBatchName) throw new Error("ยังไม่ได้ตั้งค่า Journal Batch ของ AP-3 สำหรับแบรนด์นี้");
   if (items.length === 0) throw new Error("ไม่มีรายการค่าใช้จ่ายสำหรับสร้าง journal");
 
   const employeeCode = requestNo.slice(0, 35);
   const defaultBranch = input.defaultBranchCode ?? "";
-  const glLine = (accountNo: string, amount: number, branchCode: string | null): PpapJournalLinePayload => ({
-    groupNo: "G1", postingDate, documentType: "Payment", accountType: "G/L Account",
-    accountNo, description: `เคลียร์เงินทดรองจ่าย ${requestNo}`.slice(0, 100),
+  // Spec §3.2 format: [ADV no] เบิก เคลียร์เงินทดลอง [employee] [document detail].
+  // Gen. Journal Line Description is 100 chars, so the trailing detail is what gets
+  // cut — the identifying half has to survive.
+  const advNo = (input.advanceRequestNo ?? "").trim() || requestNo;
+  const who = (input.requesterName ?? "").trim();
+  const describe = (detail?: string | null) =>
+    [advNo, "เบิก", "เคลียร์เงินทดลอง", who, (detail ?? "").trim()]
+      .filter((s) => s !== "")
+      .join(" ")
+      .slice(0, 100);
+
+  const actualNet = r2(items.reduce((s, it) => s + it.amountBeforeVat + (it.vatAmount || 0) - (it.whtAmount || 0), 0));
+  const bankAmount = r2(input.advanceAmount - actualNet);
+  // Spec §3.2: Refund when the employee returns money, Payment when the company pays more.
+  // It describes the whole clearing, so every line carries the same value.
+  const documentType = bankAmount > 0 ? "Refund" : "Payment";
+
+  const glLine = (accountNo: string, amount: number, branchCode: string | null, detail?: string | null): PpapJournalLinePayload => ({
+    groupNo: "G1", postingDate, documentType, accountType: "G/L Account",
+    accountNo, description: describe(detail),
     paymentMethodCode: "BANK", amount: r2(amount), balAccountType: "G/L Account",
     employeeCode, branchCode: branchCode ?? defaultBranch, departmentCode,
   });
@@ -52,7 +80,7 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
   let vatTotal = 0, whtTotal = 0;
 
   for (const it of items) {
-    if (r2(it.amountBeforeVat) !== 0) lines.push(glLine(it.glAccountNo, it.amountBeforeVat, it.branchCode));
+    if (r2(it.amountBeforeVat) !== 0) lines.push(glLine(it.glAccountNo, it.amountBeforeVat, it.branchCode, it.description));
     vatTotal += it.vatAmount || 0;
     whtTotal += it.whtAmount || 0;
   }
@@ -64,17 +92,27 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
   }
   if (whtTotal > 0) {
     if (!c.whtPayableGlAccountNo) throw new Error("มี WHT แต่ยังไม่ได้ตั้งค่าบัญชี WHT payable ของแบรนด์นี้");
-    lines.push(glLine(c.whtPayableGlAccountNo, -whtTotal, null));
+    // Spec §3.2: sent as 0 — accounting posts the real WHT by hand in BC.
+    lines.push(glLine(c.whtPayableGlAccountNo, 0, null));
   }
 
-  lines.push(glLine(c.advanceGlAccountNo, -r2(input.advanceAmount), null));
+  // The vendor AP-2 debited. Built inline rather than via glLine because the
+  // vendor line must carry accountType "Vendor" and NO balAccountType — the
+  // two-explicit-lines shape BC accepted for AP-2 (doc PVA2608-0012).
+  // Spec §3.2: the clear-advance vendor line is always 0 too. The line still has to
+  // be here, pointing at the vendor AP-2 debited, so accounting can match it.
+  lines.push({
+    groupNo: "G1", postingDate, documentType,
+    accountType: "Vendor", accountNo: advanceVendorNo,
+    description: describe(),
+    paymentMethodCode: "BANK", amount: 0,
+    employeeCode, branchCode: defaultBranch, departmentCode,
+  });
 
-  const actualNet = r2(items.reduce((s, it) => s + it.amountBeforeVat + (it.vatAmount || 0) - (it.whtAmount || 0), 0));
-  const bankAmount = r2(input.advanceAmount - actualNet);
   if (bankAmount !== 0) {
     lines.push({
-      groupNo: "G1", postingDate, documentType: "Payment", accountType: "Bank Account",
-      accountNo: c.bankAccountNo, description: `เคลียร์เงินทดรองจ่าย ${requestNo}`.slice(0, 100),
+      groupNo: "G1", postingDate, documentType, accountType: "Bank Account",
+      accountNo: c.bankAccountNo, description: describe(),
       paymentMethodCode: "BANK", amount: bankAmount,
       employeeCode, branchCode: defaultBranch, departmentCode,
     });
