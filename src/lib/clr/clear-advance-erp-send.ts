@@ -6,6 +6,7 @@ import { getRequest } from "@/lib/clr/clear-advance-request-service";
 import { loadClearAdvanceErpContext } from "@/lib/clr/clear-advance-erp-context";
 import { buildClearAdvanceJournalPayload } from "@/lib/clr/clear-advance-erp-payload";
 import { loadBranchLookup } from "@/lib/erp/location-lookup";
+import { AP3_FORM_CODE } from "@/features/clear-advance/constants";
 import type { ClrJournalItem } from "@/lib/clr/clear-advance-erp-payload";
 
 /* ─────────────────────────── preview types ─────────────────────────── */
@@ -517,4 +518,51 @@ export async function sendClrErpBatch(ids: number[], userId: number): Promise<Cl
   }
 
   return results;
+}
+
+/**
+ * Put a failed clearing back in the "รอส่ง" queue.
+ *
+ * Clears our record of the attempt — status, error, response, environment — so
+ * the row is selectable again. It does **not** touch Business Central, and that
+ * is the thing to know before pressing it: when the codeunit refuses one line of
+ * four it keeps the three it accepted, so BC is already holding a partial
+ * document and a re-send adds a second set. Whoever pulls back has to delete the
+ * partial one in the batch first.
+ *
+ * Failed only, on purpose. A Sent clearing has a complete document that
+ * accounting may already be posting against; AP-2 allows that pull-back because
+ * it marks the old attempt Resent and keeps the mapping, and AP-3 has nowhere to
+ * record it.
+ */
+export async function pullBackFailedSend(requestId: number, userId: number): Promise<void> {
+  const pool = await getAccPool();
+  const cur = await pool.request()
+    .input("id", sql.Int, requestId)
+    .input("form", sql.NVarChar, AP3_FORM_CODE)
+    .query(`SELECT ErpInterfaceStatus FROM [dbo].[AccRequest] WHERE Id=@id AND FormCode=@form`);
+  if (cur.recordset.length === 0) throw new Error("ไม่พบรายการ");
+  if ((cur.recordset[0].ErpInterfaceStatus as string | null) !== "Failed") {
+    throw new Error("ดึงกลับได้เฉพาะรายการที่ล้มเหลว (Failed)");
+  }
+
+  const tx = pool.transaction();
+  await tx.begin();
+  try {
+    await tx.request().input("id", sql.Int, requestId).query(`
+      UPDATE [dbo].[AccRequest]
+      SET ErpInterfaceStatus=NULL, ErpInterfaceError=NULL, ErpInterfaceResponse=NULL,
+          ErpInterfaceSentAt=NULL, ErpInterfaceSentBy=NULL, ErpInterfaceEnvironment=NULL,
+          ErpDocumentNo=NULL, UpdatedAt=SYSDATETIME()
+      WHERE Id=@id AND ErpInterfaceStatus='Failed'`);
+    await tx.request()
+      .input("rid", sql.Int, requestId)
+      .input("by", sql.Int, userId)
+      .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note)
+              VALUES (@rid, @by, 'erp_interface_pullback', N'ดึงกลับเข้าคิวเพื่อยิงใหม่ (จากสถานะล้มเหลว)')`);
+    await tx.commit();
+  } catch (e) {
+    await tx.rollback().catch(() => {});
+    throw e;
+  }
 }

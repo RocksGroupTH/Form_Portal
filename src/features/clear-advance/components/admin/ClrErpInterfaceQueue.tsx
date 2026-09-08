@@ -18,12 +18,22 @@ import { fmtMoney } from "@/features/clear-advance/components/admin/shared";
 const fetcher = (url: string) =>
   fetch(url).then((r) => r.json()) as Promise<{ ok: boolean; data?: ClrErpQueueRow[]; error?: string }>;
 
-type TabKey = "pending" | "sent";
+type TabKey = "pending" | "sent" | "failed";
 type StatusFilter = "ALL" | "Sent" | "Pending" | "Failed";
 
 function isSent(row: ClrErpQueueRow): boolean { return row.erpStatus === "Sent"; }
 function isPending(row: ClrErpQueueRow): boolean { return row.erpStatus === "Pending"; }
-function isSelectable(row: ClrErpQueueRow): boolean { return !isSent(row) && !isPending(row); }
+/**
+ * Whether a row may be ticked and sent.
+ *
+ * A failed row is not one. It used to be — "not Sent, not Pending" — so a
+ * retry was a tick away, and a partial failure had already left lines in BC that
+ * the retry would insert a second time. It now has to be pulled back
+ * deliberately, which is where that gets said.
+ */
+function isSelectable(row: ClrErpQueueRow): boolean {
+  return !isSent(row) && !isPending(row) && row.erpStatus !== "Failed";
+}
 
 function fmtDateTime(iso: string | null): string {
   if (!iso) return "—";
@@ -316,6 +326,9 @@ export function ClrErpInterfaceQueue() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   /** The row whose BC answer is on screen, if any. */
   const [bcRow, setBcRow] = useState<ClrErpQueueRow | null>(null);
+  /** The row waiting for the pull-back confirmation. */
+  const [pullbackRow, setPullbackRow] = useState<ClrErpQueueRow | null>(null);
+  const [pullbackBusy, setPullbackBusy] = useState(false);
   const [frozenIds, setFrozenIds] = useState<number[]>([]);
   const [confirmItems, setConfirmItems] = useState<ClrPreviewItem[]>([]);
 
@@ -351,7 +364,22 @@ export function ClrErpInterfaceQueue() {
 
   // split rows (after brand filter)
   const sendableRows = useMemo(() => filteredByBrand.filter(isSelectable), [filteredByBrand]);
-  const sentRows = useMemo(() => filteredByBrand.filter((r) => !isSelectable(r)), [filteredByBrand]);
+  /* A failure is not a send. It used to sit in "ส่งแล้ว" behind a red pill,
+     counted in that tab's total, which read as work finished. */
+  const sentRows = useMemo(
+    () => filteredByBrand.filter((r) => isSent(r) || isPending(r)),
+    [filteredByBrand],
+  );
+  const failedRows = useMemo(
+    () => filteredByBrand.filter((r) => r.erpStatus === "Failed"),
+    [filteredByBrand],
+  );
+  const failedFiltered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return q
+      ? failedRows.filter((r) => `${r.requestNo ?? ""} ${r.requesterFullName ?? ""}`.toLowerCase().includes(q))
+      : failedRows;
+  }, [failedRows, search]);
 
   // sent-tab month options
   const sentMonthOptions = useMemo(() => {
@@ -468,6 +496,31 @@ export function ClrErpInterfaceQueue() {
     }
   }, [frozenIds, mutate]);
 
+  const doPullback = useCallback(async () => {
+    if (!pullbackRow) return;
+    setPullbackBusy(true);
+    try {
+      const res = await fetch("/api/request/clear-advance/erp/pullback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: pullbackRow.id }),
+      });
+      const json = (await res.json()) as { ok: boolean; error?: string };
+      if (!json.ok) {
+        toast.error(json.error ?? "ดึงกลับไม่สำเร็จ");
+        return;
+      }
+      toast.success(`ดึงกลับแล้ว — ย้ายไปแท็บ “รอส่ง”`);
+      setPullbackRow(null);
+      setTab("pending");
+      await mutate();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "ดึงกลับไม่สำเร็จ");
+    } finally {
+      setPullbackBusy(false);
+    }
+  }, [pullbackRow, mutate]);
+
   /** What the send will post, grouped by the BC company each clearing targets —
    *  the same summary AP-2's confirmation shows. */
   const sendSummary = useMemo(() => {
@@ -561,7 +614,11 @@ export function ClrErpInterfaceQueue() {
 
       {/* sub-tabs */}
       <div className="flex items-center gap-1 mb-4" style={{ borderBottom: "1px solid var(--border-card)" }}>
-        {([["pending", `รอส่ง (${sendableRows.length})`], ["sent", `ส่งแล้ว (${sentRows.length})`]] as const).map(([t, label]) => {
+        {([
+          ["pending", `รอส่ง (${sendableRows.length})`],
+          ["sent", `ส่งแล้ว (${sentRows.length})`],
+          ["failed", `ล้มเหลว (${failedRows.length})`],
+        ] as const).map(([t, label]) => {
           const active = tab === t;
           return (
             <button key={t} type="button" onClick={() => setTab(t)}
@@ -789,10 +846,94 @@ export function ClrErpInterfaceQueue() {
                   <tfoot className="sticky bottom-0 z-10">
                     <tr style={{ borderTop: "2px solid var(--border-card)", background: "color-mix(in srgb, var(--bg-card) 80%, var(--bg-page))", boxShadow: "0 -1px 0 var(--border-card), 0 -8px 16px -10px rgba(0,0,0,0.25)" }}>
                       <td colSpan={10} className="px-3 py-2.5 font-bold" style={{ color: "var(--text-heading)" }}>
-                        ทั้งหมด {sentFiltered.length} รายการ · ส่งแล้ว {sentFiltered.filter(isSent).length} · ล้มเหลว {sentFiltered.filter((r) => r.erpStatus === "Failed").length}
+                        ทั้งหมด {sentFiltered.length} รายการ · ส่งแล้ว {sentFiltered.filter(isSent).length}
                       </td>
                     </tr>
                   </tfoot>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── ล้มเหลว tab ── */}
+      {tab === "failed" && (
+        <>
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <div className="relative">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: "var(--text-faint)" }} />
+              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ค้นหา เลขที่ / ผู้ยื่น"
+                className="text-[12px] rounded-lg pl-7 pr-3 py-2 outline-none w-[220px]"
+                style={{ background: "var(--bg-card)", border: "1px solid var(--border-input)", color: "var(--text-primary)" }} />
+            </div>
+            <span className="text-[11px] ml-auto" style={{ color: "var(--text-muted)" }}>
+              {failedFiltered.length} รายการ
+            </span>
+          </div>
+
+          {failedFiltered.length === 0 ? (
+            <div className="flex flex-col items-center gap-3 py-12 text-center rounded-xl"
+              style={{ border: "1px solid var(--border-card)", background: "var(--bg-card)" }}>
+              <FileX size={32} style={{ color: "var(--text-muted)" }} />
+              <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>ไม่มีรายการที่ล้มเหลว 🎉</p>
+            </div>
+          ) : (
+            <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border-card)" }}>
+              <div className="overflow-x-auto no-scrollbar max-h-[min(72vh,760px)] overflow-y-auto" style={{ background: "var(--bg-card)" }}>
+                <table className="w-full text-[12px] border-collapse min-w-[1100px]">
+                  <thead className="sticky top-0 z-10"
+                    style={{ background: "var(--bg-card-alt)", boxShadow: "0 1px 0 var(--border-light)" }}>
+                    <tr style={{ borderBottom: "1px solid var(--border-light)" }}>
+                      {["เลขที่", "แบรนด์", "ผู้ยื่น", "Advance", "ใช้จริง", "Error จาก BC", "สถานะ", ""].map((h) => (
+                        <th key={h} className="px-3 py-2.5 font-semibold whitespace-nowrap text-left"
+                          style={{ color: "var(--text-secondary)" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {failedFiltered.map((row, idx) => {
+                      const rowBg = idx % 2 === 0 ? "transparent" : "color-mix(in srgb, var(--bg-card) 50%, var(--bg-page))";
+                      return (
+                        <tr key={row.id} style={{ background: rowBg, borderBottom: "1px solid var(--border-light)" }}>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            <span className="font-semibold" style={{ color: "var(--nav-active-text)" }}>{row.requestNo ?? `#${row.id}`}</span>
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{row.brandCode ?? "—"}</td>
+                          <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-primary)" }}>{row.requesterFullName ?? "—"}</td>
+                          <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{row.advanceRequestNo ?? "—"}</td>
+                          <td className="px-3 py-2 whitespace-nowrap text-right tabular-nums" style={{ color: "var(--text-primary)" }}>
+                            {row.actualTotal != null ? row.actualTotal.toLocaleString("th-TH", { minimumFractionDigits: 2 }) : "—"}
+                          </td>
+                          {/* The reason, on the row. Two lines of it — the whole
+                              answer is a click away and does not belong in a cell. */}
+                          <td className="px-3 py-2 align-top" style={{ maxWidth: "26rem" }}>
+                            <button
+                              type="button"
+                              onClick={() => setBcRow(row)}
+                              className="text-left text-[11px] cursor-pointer bg-transparent border-none p-0 underline"
+                              style={{
+                                color: "var(--status-bad-text)", display: "-webkit-box",
+                                WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+                              }}
+                              title="ดูคำตอบจาก BC ทั้งหมด"
+                            >
+                              {row.erpError ?? "—"}
+                            </button>
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap"><ErpStatusBadge row={row} onShow={setBcRow} /></td>
+                          <td className="px-3 py-2 whitespace-nowrap text-right">
+                            <button type="button" onClick={() => setPullbackRow(row)}
+                              className="text-[12px] font-semibold px-2.5 py-1 rounded-lg cursor-pointer border-none"
+                              style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}
+                              title="ล้างสถานะและย้ายกลับไปแท็บ รอส่ง">
+                              ดึงกลับเพื่อยิงใหม่
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
                 </table>
               </div>
             </div>
@@ -809,6 +950,42 @@ export function ClrErpInterfaceQueue() {
           own confirm(), which could say nothing about where the journal was
           bound for. Sending into Production reads differently from Sandbox and
           the dialog has to make that visible while it can still be stopped. */}
+      {/* Pulling back changes our record and nothing in BC — which is the whole
+          risk, so the dialog says it rather than the tooltip. */}
+      {pullbackRow && (
+        <Dialog
+          open={!!pullbackRow}
+          onOpenChange={(o) => { if (!o && !pullbackBusy) setPullbackRow(null); }}
+          title="ดึงกลับเพื่อยิงใหม่?"
+          contentClassName="max-w-[520px]"
+        >
+          <div className="flex flex-col gap-3 p-1">
+            <p className="text-[13px] m-0" style={{ color: "var(--text-secondary)" }}>
+              <b style={{ color: "var(--text-heading)" }}>{pullbackRow.requestNo ?? `#${pullbackRow.id}`}</b>{" "}
+              จะถูกล้างสถานะ ERP และย้ายกลับไปแท็บ “รอส่ง” เพื่อส่งใหม่
+            </p>
+            <p className="text-[12px] m-0 px-3 py-2 rounded-lg"
+              style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
+              ⚠️ การดึงกลับ <b>ไม่แตะ Business Central</b> — ถ้าครั้งก่อน BC รับบางบรรทัดไว้แล้ว
+              (เช่น “Inserted: 3, Failed: 1”) เอกสารที่ค้างอยู่ใน Journal Batch จะยังอยู่
+              และการยิงใหม่จะเพิ่มอีกชุด <b>ต้องลบเอกสารเดิมใน BC ก่อน</b>
+            </p>
+            <div className="flex justify-end gap-2">
+              <button type="button" disabled={pullbackBusy} onClick={() => setPullbackRow(null)}
+                className="text-[13px] font-medium px-4 py-2 rounded-lg cursor-pointer"
+                style={{ color: "var(--text-secondary)", background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}>
+                ยกเลิก
+              </button>
+              <button type="button" disabled={pullbackBusy} onClick={doPullback}
+                className="text-[13px] font-medium px-4 py-2 rounded-lg cursor-pointer"
+                style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)", border: "none", opacity: pullbackBusy ? 0.7 : 1 }}>
+                {pullbackBusy ? "กำลังดึงกลับ..." : "ยืนยันดึงกลับ"}
+              </button>
+            </div>
+          </div>
+        </Dialog>
+      )}
+
       {/* What BC said, in BC's words. The derived summary is above it because it
           is the sentence someone can act on; the raw answer is below because it
           is the one nobody can argue with. */}
