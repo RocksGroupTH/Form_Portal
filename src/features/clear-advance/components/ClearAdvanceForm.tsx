@@ -892,7 +892,12 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
     setOcrRows(null);
     setOcrFileIds([]);
     if (ids.length === 0) return;
+    // Both boxes, because either can start a read: the reader decides what a page
+    // is, not the box it was dropped in. Clearing only the receipt list left a
+    // cancelled slip on screen after it had been deleted from the server — and a
+    // refund proof that is required to submit, sitting there already gone.
     setFiles((prev) => prev.filter((f) => !ids.includes(f.id)));
+    setRefundProofFiles((prev) => prev.filter((f) => !ids.includes(f.id)));
     await Promise.all(
       ids.map((fileId) =>
         fetch(`/api/request/clear-advance/requests/${requestId}/files?fileId=${fileId}`, {
