@@ -110,8 +110,30 @@ apply at `ClearAdvanceForm.tsx:840-851` already has `r.taxId`, `r.payeeName` and
 `r.payeeAddress` in hand and currently drops them for the line — pass them
 through. The save payload maps each with `|| null`.
 
-**No new input on screen.** The values are shown in the OCR confirm modal, and a
-line the OCR could not read simply has none. Editing them is out of scope here.
+- [ ] **Step 3b: Accounting can fill them in**
+
+The values come off the tax invoice, and accounting holds it — so they can type
+what the OCR could not read (user, 2026-09-08). The same shape as the ภ.ง.ด.
+type: the OCR suggests, the ACCOUNT step decides.
+
+The inline editor at `ClearAdvanceDetail.tsx:381-400` already `PUT`s
+`/account-edit` with `items: editItems`, so this is columns on a table that is
+already saved and already ACCOUNT-guarded — no new route, as in Step 3 Task 4b.
+
+Its columns today are #, วันที่, รายละเอียด, ก่อน VAT, VAT, WHT. Add three:
+
+| Column | Field | Why it is needed |
+| --- | --- | --- |
+| เลขที่ใบกำกับ | `docNo` | Becomes `Tax Invoice No.` — **not editable anywhere today** |
+| เลขผู้เสียภาษี | `taxId` | Becomes `Revolic VAT Registration No.` |
+| ชื่อผู้ขาย | `payeeName` | Becomes `Tax Invoice Name` |
+
+`docNo` is the one to notice: it already reaches BC as part of the description
+and will become a tax field, and until now nobody could correct a misread one
+after the request was submitted.
+
+Widen the table's `minWidth` past 760 and keep it inside its `overflow-x-auto`
+so the page still does not scroll sideways.
 
 - [ ] **Step 4: Read and write them in the service**
 
@@ -120,7 +142,8 @@ and inputs. Unlike the ภ.ง.ด. type there is no precedence puzzle: these ar
 transcription, not a decision, so the incoming value simply wins.
 
 - [ ] **Step 5: Verify against a real save** — scan a receipt with a tax id,
-save, and read the row back:
+save, then edit one at the ACCOUNT step and confirm accounting's value is what
+survives. Read the row back:
 
 ```sql
 SELECT DocNo, TaxId, PayeeName FROM Rocks_Portal_Form_UAT.dbo.AccClearAdvanceItem
