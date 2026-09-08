@@ -220,34 +220,36 @@ certificate rows hold the seller's tax id and name.
 today. `Document Date` is the exception: `:186` currently forces it equal to
 Posting Date, and that has to become "use the given date, else Posting Date".
 
-**The fields already exist and the dependency is already declared** (user,
-2026-09-08). They come from **"VAT & WHT Localization for Thailand"** by
-NaviWorld (Thailand) — the NWTH prefix — which `SalesTran_Interface`'s
-`app.json` has depended on since before this work started, at 25.0.2506.4.
-Its `NWTHGenJournalLine.TableExt.al` extends Gen. Journal Line with, among 29
-fields:
+**The fields come from "NWTH Customization" by Revolic** (user, 2026-09-08) —
+an app that is **not** currently a dependency of `SalesTran_Interface` and is
+not present on this machine at all. Checked: `app.json` declares eight
+dependencies and none of them is it; `.alpackages` holds five Revolic packages
+(BRInterface, Create Dropship SO from PO, Import Purchase Order, Requisition
+Worksheet PO Split by Location, Report) and none of them extends
+Gen. Journal Line.
 
-| Sheet column | NWTH field |
-| --- | --- |
-| Tax Vendor No. | `NWTH Vendor No.` (40009712) |
-| Tax Invoice Name | `NWTH Vendor Name` (40009713) |
-| Tax Invoice No. | `NWTH Vendor Invoice No.` (40009714) |
-| Tax VAT Registration No. | `NWTH VAT Registration No.` (40009715) |
-| Tax Branch Code | `NWTH Branch Code` (40009717) or `NWTH Company Branch Code` (40009731) — see §8 q2 |
-| Tax Invoice Base | standard `VAT Base Amount` |
-| VAT Amount | standard `VAT Amount` |
+An earlier draft of this section claimed the dependency was already declared.
+That was wrong. It was reading NaviWorld (Thailand)'s "VAT & WHT Localization
+for Thailand" — which *is* a declared dependency, and whose Gen. Journal Line
+extension does carry `NWTH Vendor No.`, `NWTH Vendor Name`,
+`NWTH Vendor Invoice No.` and `NWTH VAT Registration No.` — and assuming the
+shared `NWTH` prefix meant it was the same app. It is a different publisher and
+a different app; the prefix is the localization's, not one vendor's.
 
-Verified present in both the declared 25.0.2506.4 and the newer 26.0.2603.1 in
-`.alpackages`, so **no dependency is added and no version bump is required**.
+**To be added before Step 4 can be built:**
 
-That also settles the earlier "standard BC fields only" decision, which had
-ruled out sending a tax id or a seller name for want of a field to hold them.
-There is a field, from an app the project already depends on; no
-`tableextension` of our own is needed either.
+1. The app package, so its symbols are available — dropped into
+   `.alpackages`, or downloaded from the environment.
+2. A `dependencies` entry in
+   `R:\PPFunction\AL\ALProject12_SalesTran\app.json`, which needs the app's
+   **id (GUID), exact name, publisher and version**. Those come from the package
+   itself or from Extension Management in the BC client — they cannot be
+   guessed, and a wrong id fails the build rather than failing quietly.
 
-The same extension carries a full WHT apparatus — `NWTH WHT Bus./Prod. Posting
-Group`, `NWTH WHT Base`, `NWTH WHT Amount`, `NWTH WHT %`, `NWTH WHT Certificate
-No.` — which is worth knowing for Step 3 even though the amounts stay zero.
+Once it is in, the field names it exposes decide the payload keys, so §5.4's
+mapping table above is provisional: it lists the sheet's columns against the
+*NaviWorld* fields that happen to match by name, and those may not be the ones
+Revolic's customization actually uses.
 
 ## 6. Verification
 
