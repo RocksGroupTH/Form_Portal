@@ -67,9 +67,11 @@ export async function matchAdvanceVendor(requestId: number): Promise<VendorMatch
   const st = a.vendorMatchStatus;
   if (st === "confirmed") {
     // Spec §7: if the confirmed vendor is no longer selectable (blocked/removed
-    // in BC), force re-selection; otherwise return the confirmed pick.
+    // in BC), force re-selection; otherwise return the confirmed pick. This
+    // re-check matters more now that a match confirms itself — a vendor blocked
+    // in BC after the fact is caught here rather than at the send.
     if (a.matchedVendorNo && (await isVendorSelectable(company, a.matchedVendorNo))) {
-      return { status: "suggested", vendorNo: a.matchedVendorNo, vendorName: a.matchedVendorName,
+      return { status: "confirmed", vendorNo: a.matchedVendorNo, vendorName: a.matchedVendorName,
         confidence: a.vendorMatchConfidence, reason: a.vendorMatchReason };
     }
     await resetMatchToPending(requestId);
