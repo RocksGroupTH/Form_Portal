@@ -5,7 +5,7 @@ import useSWR from "swr";
 import { Check, Loader2, Plus, ShieldCheck, UserCheck, UserX } from "lucide-react";
 import { toast } from "sonner";
 import { ADSearchModal, type ADResult } from "@/components/settings/ADSearchModal";
-import { GRANTABLE_REIMBURSE_TABS } from "@/lib/acc/reimburse/settings-tabs";
+import { GRANTABLE_REIMBURSE_TABS, REIMBURSE_MENUS } from "@/lib/acc/reimburse/settings-tabs";
 
 const ENDPOINT = "/api/request/reimburse/settings/access";
 
@@ -79,24 +79,35 @@ function ConfirmModal({
   );
 }
 
-/* ── Per-tab grants ──
+/* ── Per-tab and per-menu grants ──
  *
  * One checkbox per entry in `GRANTABLE_REIMBURSE_TABS`, which is derived from
  * the settings page's own tab order — so the columns and the tabs cannot drift.
  * Two of the four tabs can never appear among them: `access`, because whoever
  * opens it could grant themselves the rest, and `approvers`, because that tab
  * edits the pool that approves real payments.
+ *
+ * `REIMBURSE_MENUS` renders as a second, visually distinct group of the same
+ * shape — a different vocabulary of keys, stored in the same `TabKey` column,
+ * granting sight of a working screen rather than a settings tab. Both post
+ * into the same `settingsTabs` field on save; the server's `filterStorable-
+ * ReimburseKeys` is what keeps them apart on the way in, same as
+ * `settings-tabs.ts` keeps them apart on the way out.
  */
 function TabGrantCheckbox({
   checked,
   saving,
   onChange,
   ariaLabel,
+  accent = "var(--text-info-green)",
 }: {
   checked: boolean;
   saving: boolean;
   onChange: () => void;
   ariaLabel: string;
+  /** Which colour a ticked box turns. Distinguishes the two grant groups from
+   * each other at a glance — see the group split below. */
+  accent?: string;
 }) {
   return (
     <button
@@ -111,9 +122,9 @@ function TabGrantCheckbox({
       }}
       className="w-[18px] h-[18px] rounded-[5px] flex items-center justify-center mx-auto border-none p-0 transition-all"
       style={{
-        background: checked ? "var(--text-info-green)" : "var(--bg-card)",
+        background: checked ? accent : "var(--bg-card)",
         boxShadow: checked
-          ? "0 0 0 2px color-mix(in srgb, var(--text-info-green) 28%, transparent)"
+          ? `0 0 0 2px color-mix(in srgb, ${accent} 28%, transparent)`
           : "inset 0 0 0 1.5px var(--border-card)",
         opacity: saving ? 0.6 : 1,
         cursor: saving ? "not-allowed" : "pointer",
@@ -127,6 +138,12 @@ function TabGrantCheckbox({
     </button>
   );
 }
+
+/* The menu group's accent — `--color-action`, the app's one other semantic
+ * accent besides the green tab checkboxes already use. Two colours is the
+ * whole mechanism: nothing else about the checkbox differs, and a screen
+ * reader still gets the truth from `ariaLabel`, which names the group. */
+const MENU_ACCENT = "var(--color-action)";
 
 function TabGrantCells({
   row,
@@ -161,9 +178,16 @@ function TabGrantCells({
           email: row.email,
           displayName: row.displayName,
           isActive: row.isActive,
-          // Posted in GRANTABLE_REIMBURSE_TABS order, so what is stored never
-          // depends on the order the boxes happened to be ticked.
-          settingsTabs: GRANTABLE_REIMBURSE_TABS.filter((t) => next.has(t.key)).map((t) => t.key),
+          // Posted in a fixed order — settings tabs, then menus, each in their
+          // own constant's order — so what is stored never depends on the
+          // order the boxes happened to be ticked. The field still carries
+          // both vocabularies: `filterStorableReimburseKeys` on the server is
+          // the WIDE filter that keeps a menu key from being dropped before it
+          // is even written — see that route's own comment.
+          settingsTabs: [
+            ...GRANTABLE_REIMBURSE_TABS.filter((t) => next.has(t.key)).map((t) => t.key),
+            ...REIMBURSE_MENUS.filter((m) => next.has(m.key)).map((m) => m.key),
+          ],
         }),
       });
       const json = await res.json();
@@ -189,7 +213,32 @@ function TabGrantCells({
             checked={checked.has(tab.key)}
             saving={saving}
             onChange={() => void toggle(tab.key)}
-            ariaLabel={`${row.displayName || row.email} — ${tab.label}`}
+            ariaLabel={`${row.displayName || row.email} — ตั้งค่า: ${tab.label}`}
+          />
+        </td>
+      ))}
+      {/* The menu group — a different vocabulary in the same TabKey column
+          (see settings-tabs.ts), so it gets its own accent colour and its own
+          left border rather than blending into the settings-tab checkboxes
+          beside it. Ticks render on inactive rows for the same reason the tab
+          group's do: hiding them would leave an admin unable to see what a
+          deactivated person still holds. */}
+      {REIMBURSE_MENUS.map((menu, idx) => (
+        <td
+          key={menu.key}
+          className="px-3 py-2.5 text-center"
+          style={
+            idx === 0
+              ? { borderLeft: "1px solid var(--border-light)", background: "var(--bg-card-alt)" }
+              : { background: "var(--bg-card-alt)" }
+          }
+        >
+          <TabGrantCheckbox
+            checked={checked.has(menu.key)}
+            saving={saving}
+            onChange={() => void toggle(menu.key)}
+            ariaLabel={`${row.displayName || row.email} — หน้าใช้งาน: ${menu.label}`}
+            accent={MENU_ACCENT}
           />
         </td>
       ))}
@@ -346,32 +395,56 @@ export function ReimburseAccessSettings() {
               ติ๊กแท็บที่ให้แก้ได้ — ถ้าไม่ติ๊กเลย จะยังเข้าหน้าตั้งค่าไม่ได้
             </p>
             <div className="overflow-x-auto">
-              <table className="w-full text-[11px] min-w-[720px]">
+              <table className="w-full text-[11px] min-w-[880px]">
                 <thead>
+                  {/* Group heading row. The three identity columns and สถานะ
+                      span both rows unchanged; the two grant groups each get a
+                      labelled span above their own checkbox columns so an
+                      admin reads "may open the settings tab" and "may open the
+                      working screen" as two different questions, not one wide
+                      block of checkboxes. */}
                   <tr
                     style={{
                       borderBottom: "1px solid var(--border-light)",
                       background: "var(--bg-card-alt)",
                     }}
                   >
-                    <th
-                      className="text-left px-4 py-2 font-semibold"
-                      style={{ color: "var(--text-muted)" }}
-                    >
+                    <th rowSpan={2} className="text-left px-4 py-2 font-semibold align-bottom" style={{ color: "var(--text-muted)" }}>
                       ชื่อ
                     </th>
-                    <th
-                      className="text-left px-4 py-2 font-semibold"
-                      style={{ color: "var(--text-muted)" }}
-                    >
+                    <th rowSpan={2} className="text-left px-4 py-2 font-semibold align-bottom" style={{ color: "var(--text-muted)" }}>
                       อีเมล
                     </th>
-                    <th
-                      className="text-left px-4 py-2 font-semibold"
-                      style={{ color: "var(--text-muted)" }}
-                    >
+                    <th rowSpan={2} className="text-left px-4 py-2 font-semibold align-bottom" style={{ color: "var(--text-muted)" }}>
                       รหัสพนักงาน
                     </th>
+                    <th
+                      colSpan={GRANTABLE_REIMBURSE_TABS.length}
+                      className="text-center px-3 py-1.5 font-semibold whitespace-nowrap"
+                      style={{ color: "var(--text-info-green)" }}
+                    >
+                      แท็บตั้งค่า
+                    </th>
+                    <th
+                      colSpan={REIMBURSE_MENUS.length}
+                      className="text-center px-3 py-1.5 font-semibold whitespace-nowrap"
+                      style={{ color: "var(--color-action)", borderLeft: "1px solid var(--border-light)", background: "var(--bg-card-alt)" }}
+                    >
+                      หน้าใช้งาน
+                    </th>
+                    {/* Status and its control share one column: the badge
+                        reports, the button acts. A badge that is also a button
+                        reads as neither. */}
+                    <th rowSpan={2} className="text-center px-4 py-2 font-semibold align-bottom" style={{ color: "var(--text-muted)" }}>
+                      สถานะ
+                    </th>
+                  </tr>
+                  <tr
+                    style={{
+                      borderBottom: "1px solid var(--border-light)",
+                      background: "var(--bg-card-alt)",
+                    }}
+                  >
                     {/* The grantable settings tabs, in the settings page's own
                         order — both lists come from GRANTABLE_REIMBURSE_TABS,
                         which is filtered from the page's tab order, so a new
@@ -385,15 +458,24 @@ export function ReimburseAccessSettings() {
                         {tab.label}
                       </th>
                     ))}
-                    {/* Status and its control share one column: the badge
-                        reports, the button acts. A badge that is also a button
-                        reads as neither. */}
-                    <th
-                      className="text-center px-4 py-2 font-semibold"
-                      style={{ color: "var(--text-muted)" }}
-                    >
-                      สถานะ
-                    </th>
+                    {/* The menu group — a second, unrelated vocabulary of keys
+                        stored in the same TabKey column (see settings-tabs.ts
+                        for why the two are kept apart in code). Given its own
+                        left border and tinted background so the column split
+                        reads even without the heading above it. */}
+                    {REIMBURSE_MENUS.map((menu, idx) => (
+                      <th
+                        key={menu.key}
+                        className="text-center px-3 py-2 font-semibold whitespace-nowrap"
+                        style={
+                          idx === 0
+                            ? { color: "var(--text-muted)", borderLeft: "1px solid var(--border-light)", background: "var(--bg-card-alt)" }
+                            : { color: "var(--text-muted)", background: "var(--bg-card-alt)" }
+                        }
+                      >
+                        {menu.label}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
