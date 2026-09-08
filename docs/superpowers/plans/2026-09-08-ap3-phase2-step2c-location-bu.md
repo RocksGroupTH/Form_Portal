@@ -122,63 +122,45 @@ which is the failure mode the guard exists for.
 
 ---
 
-## Task 2: The sync
+## Task 2: The sync — *done 2026-09-08*
 
 **Files:**
-- Create: `src/lib/erp/location-sync.ts`
+- Created: `src/lib/erp/location-sync-core.ts` (pure shaping) + `location-sync-core.test.ts`
+- Created: `src/lib/erp/location-sync.ts` (BC call and writes)
 
-- [ ] **Step 1: Write it**
+- [x] **Step 1: Write it**
 
-Model it on `src/lib/erp/vendor-sync.ts`: resolve the brand's BC connection and
-company, call the RPC, MERGE each row, deactivate rows the sync did not touch,
-write `ErpSyncLog`.
+Split in two, which the plan did not anticipate: importing `location-sync.ts`
+from a test drags in `@/lib/db/mssql` and `src/env.ts` validates at module load,
+so the test run died on missing `AUTH_SECRET`/`MSSQL_*`. That is the reason this
+repo already keeps `ai-receipt-core.ts` and `vendor-match-core.ts` separate, and
+the same split applies here: `location-sync-core.ts` holds `normalizeLocationRow`
+and nothing else, and is what the tests import.
 
-```ts
-/** Sync Business Central Locations into Rocks_ERP_Data.ErpLocation via RPCCodexStore_CodexGetLocations. */
+Two guards worth naming. A row with no Location code is dropped — there is no
+key to merge it on. And **an empty answer from BC is treated as a failure**, not
+as "no Locations": the deactivate pass runs straight after the upserts, so
+accepting an empty list would silently switch off the entire brand.
 
-/** Shape returned by RPCCodexStore_CodexGetLocations. */
-interface BcLocationRow {
-  code?: string | null;
-  name?: string | null;
-  branch?: string | null;
-  bu?: string | null;
-  department?: string | null;
-}
-```
+- [x] **Step 2: Run it for real against PCTH** — *done, and for every brand*
 
-The upsert mirrors the dimension sync's MERGE — key on `(BrandCode, Code)`,
-set `IsActive = 1` and `SyncedAt = SYSDATETIME()` on both branches — then:
+| Brand | Locations | COCO | other BU |
+| --- | --- | --- | --- |
+| PCTH | 240 | 130 | **110** |
+| PCMY | 43 | 37 | 6 |
+| UNO | 40 | 38 | 2 |
+| KSI | 18 | 15 | 3 |
 
-```sql
-UPDATE [dbo].[ErpLocation]
-SET IsActive = 0
-WHERE BrandCode = @brand AND SyncedAt < @cutoff
-```
+PCTH's spread matches the probe exactly — COCO 130, DODO-M 36, DOCO 29, DODO 13,
+CTPS 11, DODO-A 9, LICNS 8, EXPR 4. Across all four brands **121 of 341
+Locations carry a BU the constant could never produce**.
 
-so a Location that disappears from BC stops being offered without its history
-being deleted.
+Also checked, rather than assumed: a second run leaves 240 rows and 240 active,
+so the MERGE is not inserting duplicates; `Code = BranchCode` on all 240, which
+is what makes the line's branch a valid lookup key; and `ErpSyncLog` has a
+`LOCATIONS` row per run.
 
-Export `syncBrandErpLocations(brandCode, triggeredBy)` and
-`syncAllBrandErpLocations(triggeredBy)`, matching the vendor sync's pair.
-
-- [ ] **Step 2: Run it for real against PCTH**
-
-There is no unit test that can prove a sync; the proof is rows in the table.
-
-```bash
-npx tsx scripts/_probe-locations.ts PCTH   # already deleted by then — write a
-                                           # one-off or call the route in Task 4
-```
-
-Prefer proving it through the route in Task 4 rather than adding a script that
-then needs deleting.
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add src/lib/erp/location-sync.ts
-git commit -m "feat(erp): sync BC Locations and the BU each one is bound to"
-```
+- [x] **Step 3: Commit**
 
 ---
 
