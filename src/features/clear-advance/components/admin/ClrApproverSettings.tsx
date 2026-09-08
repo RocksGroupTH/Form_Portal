@@ -32,6 +32,8 @@ interface ClrApprover {
   staffId: number | null;
   displayName: string | null;
   isActive: boolean;
+  /** From the API, derived from the staff id — same source AP-2's list uses. */
+  photoUrl: string | null;
 }
 
 const APPROVERS_URL = "/api/request/clear-advance/settings/approvers";
@@ -270,9 +272,13 @@ export function ClrApproverSettings() {
                     opacity: a.isActive ? 1 : 0.55,
                   }}
                 >
+                  {/* The picker above this list already showed faces; the saved
+                      list drew initials, so the same person looked like two
+                      different records. */}
                   <Avatar
                     name={a.displayName || a.email}
                     size={36}
+                    photo={a.photoUrl ?? undefined}
                     color="var(--nav-active-text)"
                   />
                   <div className="flex-1 min-w-0">
