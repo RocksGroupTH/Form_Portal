@@ -213,12 +213,12 @@ git commit -m "feat(ap-3): a column for the ภ.ง.ด. decision"
 
 ---
 
-## Task 3: Suggest on save, read it back
+## Task 3: Suggest on save, read it back — *done 2026-09-08*
 
 **Files:**
 - Modify: `src/lib/clr/clear-advance-request-service.ts:139-154` (`mapWhtRow`), `:540-559` (the insert)
 
-- [ ] **Step 1: Read the column**
+- [x] **Step 1: Read the column**
 
 In `mapWhtRow`, after `payeeAddress`:
 
@@ -226,7 +226,7 @@ In `mapWhtRow`, after `payeeAddress`:
     pndType: (x.PndType as "PND3" | "PND53" | null) ?? null,
 ```
 
-- [ ] **Step 2: Write it, suggesting only where nothing was decided**
+- [x] **Step 2: Write it, suggesting only where nothing was decided**
 
 Import `suggestPndType` from `@/lib/clr/wht-pnd-core`, then in the WHT insert
 loop add the input and the column:
@@ -241,11 +241,11 @@ loop add the input and the column:
 
 and in the SQL, `PndType` in the column list with `@pnd` in `VALUES`.
 
-- [ ] **Step 3: Run tests and typecheck**
+- [x] **Step 3: Run tests and typecheck**
 
 Run: `npm test 2>&1 | grep -E "^# (pass|fail)"` then `npx tsc --noEmit`.
 
-- [ ] **Step 4: Verify against a real save**
+- [x] **Step 4: Verify against a real save**
 
 Open an AP-3 draft with a WHT payee, save, then:
 
@@ -256,7 +256,28 @@ ORDER BY Id DESC
 
 Expected: a `0`-prefixed id reads `PND53`.
 
-- [ ] **Step 5: Commit**
+**Done, and it found the hazard live rather than hypothetical.** A draft saved
+with tax id `0105500000009` stored `PND53`, and the two existing rows stayed
+NULL. Then the row's type was set to `PND3` by hand — standing in for a person's
+choice — and the draft saved again: it came back `PND53`. The decision was gone,
+with nothing on screen to show it.
+
+The cause is that `w.pndType ?? suggest(...)` only defends against a client that
+*sends* a value. The form does not carry the field yet (Task 4a), so the server
+saw `undefined` and the fallback fired. **The server-side guard was necessary and
+not sufficient.**
+
+So the precedence is now three-deep, most deliberate first: what this save says,
+then what the row already carried, then what the tax id suggests. The prior types
+are read into a map keyed by row id before the delete, and re-applied only when
+the client never mentioned the field — an explicit null still clears it, because
+choosing "ยังไม่ระบุ" is also a decision. Re-tested the same way: `PND3` survived.
+
+**A detail Task 4b has to handle.** These rows are deleted and re-inserted on
+every save, so their ids change — the test row went 3 → 4 → 5. The ACCOUNT-step
+route addresses a row by `whtId`, and an id read before a save is stale after it.
+
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/lib/clr/clear-advance-request-service.ts

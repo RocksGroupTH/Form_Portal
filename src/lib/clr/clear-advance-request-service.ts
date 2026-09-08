@@ -5,6 +5,7 @@ import { hrEmployeeTable } from "@/lib/hr/constants";
 import { allocateRequestNo } from "@/lib/acc/sequence";
 import { listClrErpBranchOptions } from "@/lib/clr/clear-advance-admin-service";
 import { allowedDimensionTypes } from "@/lib/clr/clear-advance-gl-filter";
+import { suggestPndType } from "@/lib/clr/wht-pnd-core";
 import {
   isFilledLine,
   validateLineGlBranch,
@@ -146,6 +147,7 @@ function mapWhtRow(x: Record<string, unknown>): ClearAdvanceWhtItem {
     taxId: (x.TaxId as string) ?? null,
     payeeName: (x.PayeeName as string) ?? null,
     payeeAddress: (x.PayeeAddress as string) ?? null,
+    pndType: (x.PndType as "PND3" | "PND53" | null) ?? null,
     amount: num(x.Amount),
     whtAmount: num(x.WhtAmount),
     netAmount: num(x.NetAmount),
@@ -535,6 +537,23 @@ async function persistClear(
   const whts = (c.whtItems ?? []).filter(
     (w) => n0(w.whtAmount) > 0 || w.taxId?.trim() || w.payeeName?.trim(),
   );
+  // Remember the ภ.ง.ด. type already decided for each row, keyed by the id the
+  // client is about to send back.
+  //
+  // The rows are deleted and re-inserted on every save, so a client that does
+  // not know about the field — an older form, a partial payload, anything but
+  // the two editors — silently reverts somebody's decision, and the row id even
+  // changes underneath it. Demonstrated on 2026-09-08: a type set to PND3 came
+  // back PND53 after an unrelated save. The client's own value still wins; this
+  // only covers the field being absent altogether.
+  const priorPnd = new Map<number, string>();
+  const priorRes = await tx.request().input("cid", sql.Int, clearId)
+    .query(`SELECT Id, PndType FROM [dbo].[AccClearAdvanceWht]
+            WHERE ClearAdvanceId = @cid AND PndType IS NOT NULL`);
+  for (const r of priorRes.recordset as { Id: number; PndType: string }[]) {
+    priorPnd.set(r.Id, r.PndType);
+  }
+
   await tx.request().input("cid", sql.Int, clearId)
     .query(`DELETE FROM [dbo].[AccClearAdvanceWht] WHERE ClearAdvanceId = @cid`);
   for (let i = 0; i < whts.length; i++) {
@@ -548,14 +567,25 @@ async function persistClear(
       .input("taxId", sql.NVarChar, w.taxId ?? null)
       .input("name", sql.NVarChar, w.payeeName ?? null)
       .input("addr", sql.NVarChar, w.payeeAddress ?? null)
+      // Precedence, most deliberate first: what this save says, then what the
+      // row already carried, then what the tax id suggests. `undefined` means
+      // the client never mentioned the field; an explicit null means someone
+      // cleared it, and stays cleared.
+      .input(
+        "pnd",
+        sql.NVarChar,
+        w.pndType !== undefined
+          ? w.pndType
+          : (w.id != null ? priorPnd.get(w.id) ?? null : null) ?? suggestPndType(w.taxId),
+      )
       .input("amt", sql.Decimal(18, 2), n0(w.amount))
       .input("whtAmt", sql.Decimal(18, 2), n0(w.whtAmount))
       .input("net", sql.Decimal(18, 2), round2(n0(w.amount) - n0(w.whtAmount)))
       .input("sort", sql.Int, i)
       .query(`INSERT INTO [dbo].[AccClearAdvanceWht]
                 (ClearAdvanceId, [LineNo], ExpenseDate, DocNo, Description, TaxId, PayeeName, PayeeAddress,
-                 Amount, WhtAmount, NetAmount, SortOrder)
-              VALUES (@cid, @lineNo, @date, @docNo, @desc, @taxId, @name, @addr, @amt, @whtAmt, @net, @sort)`);
+                 PndType, Amount, WhtAmount, NetAmount, SortOrder)
+              VALUES (@cid, @lineNo, @date, @docNo, @desc, @taxId, @name, @addr, @pnd, @amt, @whtAmt, @net, @sort)`);
   }
 
   await tx.request()
