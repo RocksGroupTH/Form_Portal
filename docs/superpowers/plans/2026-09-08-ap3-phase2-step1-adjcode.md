@@ -445,14 +445,16 @@ Expected: `ErpInterfaceStatus = 'Sent'`, a document number, and an empty
 `ErpInterfaceError`. A failure here most likely means `M-ADJ` is not a valid
 Z-ADJ value for that company — check with accounting before changing the code.
 
-- [x] **Step 5: Send a control case** — *judged unnecessary, 2026-09-08*
+- [x] **Step 5: Send a control case** — *done 2026-09-08*
 
-Not sent. The purpose was to show the rule discriminates rather than always
-firing, and that is already covered without putting a second document into BC:
-the unit tests assert a same-month receipt produces no marker, and the preview
-of ADC26-09007 shows the marker on the expense line and on no other line of the
-same journal. What only a real send could answer — whether BC accepts `M-ADJ`
-as a Z-ADJ value — was answered in Step 4.
+ADC26-09009, receipt 2026-09-08 posting 2026-09-08 — the same month, so no
+marker — went to BC as **PVA2609-0010**. Paired with ADC26-09007 (receipt
+2026-08-25, posting 2026-09-11, marked, **PVA2609-0009**), that is the proof the
+rule discriminates rather than always firing, both halves sent under the new
+code.
+
+Created while verifying the send-confirmation popup, which needed a clearing
+that was actually ready to send.
 
 - [x] **Step 6: Record the result**
 
