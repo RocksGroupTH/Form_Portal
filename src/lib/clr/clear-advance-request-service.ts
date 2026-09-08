@@ -133,6 +133,9 @@ function mapItemRow(x: Record<string, unknown>): ClearAdvanceItem {
     whtAmount: num(x.WhtAmount),
     netAmount: num(x.NetAmount),
     sortOrder: (x.SortOrder as number) ?? 0,
+    taxId: (x.TaxId as string) ?? null,
+    payeeName: (x.PayeeName as string) ?? null,
+    payeeAddress: (x.PayeeAddress as string) ?? null,
     sourceFileId: (x.SourceFileId as number) ?? null,
   };
 }
@@ -526,11 +529,19 @@ async function persistClear(
       .input("net", sql.Decimal(18, 2), net)
       .input("sort", sql.Int, i)
       .input("srcFile", sql.Int, it.sourceFileId ?? null)
+      // The seller off the tax invoice. Transcription, not a decision, so the
+      // incoming value simply wins — unlike the ภ.ง.ด. type, which a save must
+      // never overwrite.
+      .input("itemTaxId", sql.NVarChar, it.taxId ?? null)
+      .input("itemPayee", sql.NVarChar, it.payeeName ?? null)
+      .input("itemAddr", sql.NVarChar, it.payeeAddress ?? null)
       .query(`INSERT INTO [dbo].[AccClearAdvanceItem]
                 (ClearAdvanceId, [LineNo], ExpenseDate, DocNo, GlAccountNo, GlAccountName, Description,
-                 BranchCode, AmountBeforeVat, VatAmount, TotalInclVat, WhtAmount, NetAmount, SortOrder, SourceFileId)
+                 BranchCode, AmountBeforeVat, VatAmount, TotalInclVat, WhtAmount, NetAmount, SortOrder, SourceFileId,
+                 TaxId, PayeeName, PayeeAddress)
               VALUES (@cid, @lineNo, @date, @docNo, @glNo, @glName, @desc, @branch,
-                      @before, @vat, @total, @whtAmt, @net, @sort, @srcFile)`);
+                      @before, @vat, @total, @whtAmt, @net, @sort, @srcFile,
+                      @itemTaxId, @itemPayee, @itemAddr)`);
   }
 
   // Replace WHT certificate lines.

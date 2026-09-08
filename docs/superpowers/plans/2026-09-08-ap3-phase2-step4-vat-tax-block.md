@@ -61,13 +61,13 @@ bank line carrying a VAT posting group would change how BC treats it.
 
 ---
 
-## Task 1: Keep the seller
+## Task 1: Keep the seller — *done 2026-09-08*
 
 **Files:**
 - Create: `migrations/140_item_seller.sql`
 - Modify: `src/features/clear-advance/types.ts`, `ClearAdvanceForm.tsx`, `clear-advance-request-service.ts`
 
-- [ ] **Step 1: The migration**
+- [x] **Step 1: The migration**
 
 ```sql
 -- The seller on one expense line — who issued the tax invoice.
@@ -98,19 +98,19 @@ END
 
 Widths match `AccClearAdvanceWht` so the same OCR value fits in both.
 
-- [ ] **Step 2: Apply to UAT and Production**, then confirm all three columns
+- [x] **Step 2: Apply to UAT and Production**, then confirm all three columns
 exist in both and every existing row reads NULL. The `mssql-rocks` MCP refuses
 DDL — run the file through the app's own pool over both database names, as
 migration 139 was.
 
-- [ ] **Step 3: Carry them through the form**
+- [x] **Step 3: Carry them through the form**
 
 `LineRow` gains `taxId`, `payeeName`, `payeeAddress` (all `string`). The OCR
 apply at `ClearAdvanceForm.tsx:840-851` already has `r.taxId`, `r.payeeName` and
 `r.payeeAddress` in hand and currently drops them for the line — pass them
 through. The save payload maps each with `|| null`.
 
-- [ ] **Step 3b: Accounting can fill them in**
+- [x] **Step 3b: Accounting can fill them in**
 
 The values come off the tax invoice, and accounting holds it — so they can type
 what the OCR could not read (user, 2026-09-08). The same shape as the ภ.ง.ด.
@@ -135,13 +135,13 @@ after the request was submitted.
 Widen the table's `minWidth` past 760 and keep it inside its `overflow-x-auto`
 so the page still does not scroll sideways.
 
-- [ ] **Step 4: Read and write them in the service**
+- [x] **Step 4: Read and write them in the service**
 
 `mapItemRow` gains the three; the `AccClearAdvanceItem` INSERT gains the columns
 and inputs. Unlike the ภ.ง.ด. type there is no precedence puzzle: these are
 transcription, not a decision, so the incoming value simply wins.
 
-- [ ] **Step 5: Verify against a real save** — scan a receipt with a tax id,
+- [x] **Step 5: Verify against a real save** — scan a receipt with a tax id,
 save, then edit one at the ACCOUNT step and confirm accounting's value is what
 survives. Read the row back:
 
@@ -150,7 +150,18 @@ SELECT DocNo, TaxId, PayeeName FROM Rocks_Portal_Form_UAT.dbo.AccClearAdvanceIte
 ORDER BY Id DESC
 ```
 
-- [ ] **Step 6: Commit**
+**Done 2026-09-08.** Migration applied to both databases — three columns each,
+UAT's 20 existing rows all empty, production none. `ADC26-09015` was built and
+driven to the ACCOUNT step for the editor: typing `TAXINV-ACC-001`,
+`0107537000521` and `บริษัท ปตท. น้ำมันและการค้าปลีก จำกัด (มหาชน)` and saving
+stored all three on item 1050.
+
+The OCR path is wired the same way but is not what this proved — the test
+receipt is a blank image, so nothing was read from it. What the run does show is
+that a line with no OCR seller is exactly the case accounting now covers, which
+is the point of the ACCOUNT-step columns.
+
+- [x] **Step 6: Commit**
 
 ---
 

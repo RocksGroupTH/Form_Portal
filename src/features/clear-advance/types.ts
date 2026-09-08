@@ -19,6 +19,14 @@ export interface ClearAdvanceItem {
   whtAmount: number | null;       // ภาษีหัก ณ ที่จ่าย (ถ้ามี)
   netAmount: number | null;       // จำนวนจ่ายสุทธิ (auto = total − WHT)
   sortOrder?: number;
+  /**
+   * The seller who issued this tax invoice, read by the OCR and correctable by
+   * accounting at the ACCOUNT step. Null where the OCR could not read one and
+   * nobody has typed it: the tax fields are then simply not sent for this line.
+   */
+  taxId?: string | null;
+  payeeName?: string | null;
+  payeeAddress?: string | null;
   /** AccRequestFile.Id this line was OCR-filled from — cleared with its receipt. */
   sourceFileId?: number | null;
 }

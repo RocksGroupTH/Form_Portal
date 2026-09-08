@@ -101,6 +101,11 @@ interface LineRow {
   amountBeforeVat: string;
   vatAmount: string;
   whtAmount: string;
+  /** The seller off the tax invoice, as the OCR read it. Accounting can correct
+   *  it at the ACCOUNT step; it becomes the VAT line's tax fields in BC. */
+  taxId: string;
+  payeeName: string;
+  payeeAddress: string;
 }
 
 /** One editable WHT-certificate row in state. */
@@ -122,6 +127,7 @@ function emptyLine(): LineRow {
   return {
     expenseDate: "", docNo: "", glAccountNo: "", glAccountName: "",
     description: "", branchCode: "", amountBeforeVat: "", vatAmount: "", whtAmount: "",
+    taxId: "", payeeName: "", payeeAddress: "",
   };
 }
 
@@ -170,6 +176,9 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
     return it.map((x) => ({
       id: x.id,
       sourceFileId: x.sourceFileId ?? undefined,
+      taxId: x.taxId ?? "",
+      payeeName: x.payeeName ?? "",
+      payeeAddress: x.payeeAddress ?? "",
       expenseDate: x.expenseDate ?? "",
       docNo: x.docNo ?? "",
       glAccountNo: x.glAccountNo ?? "",
@@ -532,6 +541,9 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
               whtAmount: wht,
               netAmount: round2(total - wht),
               sortOrder: i,
+              taxId: l.taxId.trim() || null,
+              payeeName: l.payeeName.trim() || null,
+              payeeAddress: l.payeeAddress.trim() || null,
               sourceFileId: l.sourceFileId ?? null,
             };
           }),
@@ -932,6 +944,13 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           amountBeforeVat: r.amountBeforeVat,
           vatAmount: r.vatAmount,
           whtAmount: r.whtAmount,
+          // The seller the OCR read off this invoice. It used to reach the
+          // confirm modal and go no further for the line — kept only where a WHT
+          // row happened to exist — which is why a VAT receipt without
+          // withholding had no seller to send.
+          taxId: r.taxId,
+          payeeName: r.payeeName,
+          payeeAddress: r.payeeAddress,
         };
       }
       return next;
