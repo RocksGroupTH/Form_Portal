@@ -37,6 +37,14 @@ export const RETURN_COMMENT_REQUIRED = "กรุณาระบุสิ่ง�
 export const NOT_ACCOUNT_APPROVER_ERROR =
   "ไม่มีสิทธิ์ — คุณไม่ได้อยู่ในรายชื่อผู้อนุมัติฝ่ายบัญชีของแบบฟอร์ม AP-4";
 
+/**
+ * `mayReject` refused a non-MANAGER step. Names what IS available rather than
+ * a bare "ไม่มีสิทธิ์": an accounting approver reading only that would look for
+ * a permission fix, when the truth is this step never offers reject at all.
+ */
+export const REJECT_NOT_AVAILABLE_ERROR =
+  "ขั้นตอนนี้ไม่สามารถไม่อนุมัติได้ — มีเพียงผู้จัดการเท่านั้นที่ปฏิเสธคำขอได้ ขั้นบัญชีมีเพียงส่งกลับแก้ไขเท่านั้น";
+
 /** The request moved between the page load and the click. Reload, do not retry. */
 export const NOT_AT_STEP_ERROR =
   "คำขอนี้ไม่ได้อยู่ในขั้นตอนที่ดำเนินการได้แล้ว — กรุณาโหลดหน้านี้ใหม่";
@@ -153,6 +161,17 @@ export function isReimburseStepCode(value: unknown): value is ReimburseStepCode 
 /** True for the two steps `AccReimburseApprover` answers for (spec §3.2 rows 2 and 3). */
 export function isAccountStep(step: ReimburseStepCode): boolean {
   return step === "ACCOUNT" || step === "ACCOUNT_FINAL";
+}
+
+/**
+ * Rejecting ends a claim; both accounting steps keep only ส่งกลับแก้ไข.
+ *
+ * The decision is in the spec's §1 table. A control removed from a page is not
+ * a rule, so this is checked in the service — `rejectReimburse` refuses a
+ * non-MANAGER step before it claims anything.
+ */
+export function mayReject(stepCode: string | null): boolean {
+  return stepCode === "MANAGER";
 }
 
 /* ─────────────────────────── who may act ─────────────────────────── */

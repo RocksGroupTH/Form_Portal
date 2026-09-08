@@ -43,6 +43,7 @@ import { listReimburseApprovers } from "./settings-service";
 import {
   NOT_ACCOUNT_APPROVER_ERROR,
   NOT_AT_STEP_ERROR,
+  REJECT_NOT_AVAILABLE_ERROR,
   SELF_CANCEL_WINDOW_HOURS,
   STATE_AFTER_APPROVE,
   STATUS_AT_STEP,
@@ -50,6 +51,7 @@ import {
   finalStepRefusal,
   findActiveApprover,
   isAccountStep,
+  mayReject,
   paymentDateProblem,
   rejectCommentOrError,
   returnCommentOrError,
@@ -571,17 +573,26 @@ async function assertMayTakeFinalStep(
 /* ─────────────────────────── rejection, at any step ─────────────────────────── */
 
 /**
- * Reject at whichever step is pending: `Rejected`, `CurrentStepCode` cleared,
- * the reason stored on the approval row and shown on the timeline (spec §3.2.1).
+ * Reject the manager step: `Rejected`, `CurrentStepCode` cleared, the reason
+ * stored on the approval row and shown on the timeline (spec §3.2.1).
+ *
+ * Rejecting is terminal, and the spec's §1 table makes that only the manager's
+ * call — both accounting steps keep ส่งกลับแก้ไข instead, which leaves the claim
+ * alive with its running number rather than ending it. `mayReject` is checked
+ * first, before the comment is even read, so a step this action is not open to
+ * never claims or writes anything. The queue no longer renders a Reject control
+ * at either accounting step; this is what makes that a rule rather than a UI
+ * choice somebody could route around.
+ *
+ * `assertMayTakeFinalStep` below is a *different* question — whether a
+ * candidate is a different person from the ACCOUNT actor — and stays wired for
+ * `step === "ACCOUNT_FINAL"` even though `mayReject` now refuses that step
+ * before this function reaches it: the two checks answer different things and
+ * neither one substitutes for the other.
  *
  * The reason is required and refused **here**. The dialog disables its button on
  * an empty box; that is a courtesy, not a control, and a request rejected with
  * no reason leaves the requester with nothing to fix.
- *
- * Step 3 applies the two-person rule to a rejection as well as an approval —
- * spec §3.2 gives the same "any active approver except the actor of step 2" to
- * both actions on that row. Rejecting somebody else's check is an action on the
- * books in exactly the way approving it is.
  */
 export async function rejectReimburse(
   requestId: number,
@@ -589,6 +600,8 @@ export async function rejectReimburse(
   step: ReimburseStepCode,
   rawComment: unknown,
 ): Promise<void> {
+  if (!mayReject(step)) throw new AccForbiddenError(REJECT_NOT_AVAILABLE_ERROR);
+
   const { comment, error } = rejectCommentOrError(rawComment);
   if (error) throw new Error(error);
 

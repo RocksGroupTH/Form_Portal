@@ -21,6 +21,7 @@ import {
   isAccountStep,
   isReimburseStepCode,
   isYmd,
+  mayReject,
   paymentDateProblem,
   rejectCommentOrError,
   CANCEL_WINDOW_EXPIRED_ERROR,
@@ -175,6 +176,15 @@ test("a rejection without a reason is refused, whitespace included", () => {
 
 test("a reason is trimmed and kept", () => {
   assert.deepEqual(rejectCommentOrError("  ใบเสร็จไม่ครบ  "), { comment: "ใบเสร็จไม่ครบ", error: null });
+});
+
+/* ─────────────────────────── who may reject (task 7) ─────────────────────────── */
+
+test("only the manager may reject", () => {
+  assert.equal(mayReject("MANAGER"), true);
+  assert.equal(mayReject("ACCOUNT"), false);
+  assert.equal(mayReject("ACCOUNT_FINAL"), false);
+  assert.equal(mayReject(null), false);
 });
 
 test("a YYYY-MM-DD that is not a real day is not a date", () => {

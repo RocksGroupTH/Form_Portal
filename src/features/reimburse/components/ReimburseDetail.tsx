@@ -744,19 +744,25 @@ export function ReimburseDetail({
                   <RotateCcw size={14} />
                   ส่งกลับแก้ไข
                 </button>
-                <button
-                  type="button"
-                  onClick={() => { setAction("reject"); setComment(""); }}
-                  className="inline-flex items-center gap-2 text-[13px] font-medium px-4 py-2 rounded-lg transition-colors cursor-pointer"
-                  style={{
-                    color: "var(--color-danger)",
-                    border: "1px solid rgba(220,38,38,0.25)",
-                    background: "rgba(220,38,38,0.06)",
-                  }}
-                >
-                  <ThumbsDown size={14} />
-                  ไม่อนุมัติ
-                </button>
+                {/* Reject is the manager's alone (spec §1) — `rejectReimburse`
+                    refuses it server-side at either accounting step, so the
+                    button is withheld there rather than offering a click that
+                    can only come back as an error. */}
+                {step === "MANAGER" && (
+                  <button
+                    type="button"
+                    onClick={() => { setAction("reject"); setComment(""); }}
+                    className="inline-flex items-center gap-2 text-[13px] font-medium px-4 py-2 rounded-lg transition-colors cursor-pointer"
+                    style={{
+                      color: "var(--color-danger)",
+                      border: "1px solid rgba(220,38,38,0.25)",
+                      background: "rgba(220,38,38,0.06)",
+                    }}
+                  >
+                    <ThumbsDown size={14} />
+                    ไม่อนุมัติ
+                  </button>
+                )}
               </div>
             </div>
           )}
