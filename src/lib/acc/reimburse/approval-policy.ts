@@ -11,6 +11,7 @@
  * a total function over plain values; `approval-service.ts` is the half that
  * needs a transaction. Same split as `./item-money.ts`; see its header.
  */
+import { ymd } from "@/lib/acc/payment-calendar-core";
 import { paymentRoundsInMonth } from "./payment-calendar";
 import { canActFinalStep, FINAL_SAME_PERSON_ERROR } from "./two-person";
 import type { ReimburseStatus, ReimburseStepCode } from "@/features/reimburse/constants";
@@ -49,10 +50,6 @@ export const STEP_TOKEN_REQUIRED =
   "คำขอไม่ถูกต้อง — ไม่ได้ระบุขั้นตอนที่ต้องการดำเนินการ";
 
 export const PAYMENT_DATE_REQUIRED = "กรุณาเลือกวันที่จ่าย";
-
-/** A date the picker would never have offered — see `getReimbursePaymentDates`. */
-export const PAYMENT_DATE_NOT_A_ROUND =
-  "วันที่จ่ายไม่อยู่ในรอบที่กำหนด (ศุกร์ที่ 1 และ 3 ของเดือน)";
 
 /**
  * The `ACCOUNT` row carries no `ActionedByStaffId`, so who took step 2 cannot be
@@ -316,16 +313,38 @@ export function isYmd(value: unknown): value is string {
   return d.getFullYear() === year && d.getMonth() === month0 && d.getDate() === day;
 }
 
+export const PAYMENT_DATE_OUT_OF_RANGE =
+  "วันที่จ่ายต้องอยู่ระหว่าง 1 เดือนย้อนหลังถึง 12 เดือนข้างหน้า";
+
 /**
- * Which of `validDates` a posted payment date is, or the message refusing it.
+ * What is wrong with a posted payment date, or `null` if nothing is.
  *
- * The picker is not the authority — this is (spec §3.4, "The picker accepts
- * nothing else"). `validDates` must be the output of `getReimbursePaymentDates`,
- * which is already holiday-shifted, so an exact string match is the whole test.
+ * **This is a sanity bound, not the payment rule.** It replaced a membership
+ * test against `getReimbursePaymentDates` on 2026-09-08: accounting picks the
+ * date, and a claim that legitimately needs one off the 1st/3rd-Friday round —
+ * an urgent payment, a corrected round — can have it without an admin editing
+ * the database. The round is still computed and still shown, as the suggested
+ * value beside the control.
+ *
+ * What it refuses is only what nobody means: a year typed wrong. Ten years out
+ * is indistinguishable from a deliberate choice to anything downstream, and
+ * this is the path that writes `AccRequest.PaymentDate`.
+ *
+ * `today` is a parameter rather than `new Date()` so the edges are testable —
+ * the edges are the only place a window can be wrong. The caller passes the
+ * server's day; the browser's is not consulted anywhere on this path.
+ *
+ * `ymd` (from `@/lib/acc/payment-calendar-core`, imported above rather than
+ * redeclared here) formats with local getters, never `toISOString` — the
+ * driver runs with `useUTC: false` on a Thai wall clock, and a UTC format
+ * would move this window's edge by a day for half of every Thai day.
  */
-export function paymentDateError(raw: unknown, validDates: readonly string[]): string | null {
-  if (!isYmd(raw)) return PAYMENT_DATE_REQUIRED;
-  return validDates.indexOf(raw) >= 0 ? null : PAYMENT_DATE_NOT_A_ROUND;
+export function paymentDateProblem(raw: unknown, today: string): string | null {
+  if (!isYmd(raw) || !isYmd(today)) return PAYMENT_DATE_REQUIRED;
+  const [ty, tm, td] = today.split("-").map(Number);
+  const min = ymd(new Date(ty, tm - 1 - 1, td));
+  const max = ymd(new Date(ty + 1, tm - 1, td));
+  return raw >= min && raw <= max ? null : PAYMENT_DATE_OUT_OF_RANGE;
 }
 
 /* ─────────────────────────── the default round ─────────────────────────── */

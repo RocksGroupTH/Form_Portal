@@ -43,7 +43,6 @@ import { listReimburseApprovers } from "./settings-service";
 import {
   NOT_ACCOUNT_APPROVER_ERROR,
   NOT_AT_STEP_ERROR,
-  PAYMENT_DATE_NOT_A_ROUND,
   SELF_CANCEL_WINDOW_HOURS,
   STATE_AFTER_APPROVE,
   STATUS_AT_STEP,
@@ -51,7 +50,7 @@ import {
   finalStepRefusal,
   findActiveApprover,
   isAccountStep,
-  paymentDateError,
+  paymentDateProblem,
   rejectCommentOrError,
   returnCommentOrError,
   selfCancelDeadline,
@@ -110,8 +109,8 @@ function requireActorStaffId(actor: ReimburseActor): number {
 /**
  * The dates the accounting check may choose from, and the one it opens on.
  *
- * `dates` are holiday-shifted and ascending — what the picker offers and what
- * `paymentDateError` validates against. `defaultDate` is the round
+ * `dates` are holiday-shifted and ascending — what the picker offers as the
+ * suggested round. `defaultDate` is the round
  * `defaultPaymentRound` picks for `from` (spec §3.4: the first round whose own
  * week's Monday noon has not passed), mapped through the same shift so the
  * default is always one of `dates` rather than a date beside one.
@@ -137,6 +136,18 @@ export async function getReimbursePaymentOptions(
 
   // Only offer it if it survived the same filter `dates` went through.
   return { dates, defaultDate: dates.indexOf(shifted) >= 0 ? shifted : null };
+}
+
+/**
+ * The server's own day, for `paymentDateProblem`'s bound — never the browser's.
+ *
+ * Built from `ymd`, already imported above from `@/lib/acc/payment-calendar`
+ * (itself a re-export of the pure `payment-calendar-core.ts`), rather than a
+ * second formatter: that function already formats with local getters, never
+ * `toISOString`, which is what the bound needs on a Thai wall clock.
+ */
+function todayYmd(): string {
+  return ymd(new Date());
 }
 
 /* ─────────────────────────── mail ─────────────────────────── */
@@ -447,12 +458,16 @@ export async function approveReimburseManager(
  *
  * The status deliberately does not move — see `STATUS_AT_STEP`.
  *
- * `paymentDate` is validated against `getReimbursePaymentDates` before anything
- * is written: the picker offers only valid rounds, but the picker is a
- * suggestion the client can ignore and this is the authority. `IsChecked` is set
- * on the row rather than being demanded as a separate flag the way AP-1 does —
- * for AP-4 the check *is* this action, so a second boolean saying it happened
- * could only ever disagree with the row it sits on.
+ * `paymentDate` is validated against `paymentDateProblem` before anything is
+ * written: accounting picks the date now (2026-09-08), so this is a sanity
+ * bound against a typo'd year, not a membership test against a generated
+ * round — see that function's own docblock. Since the bound does not depend
+ * on which rounds are still on offer, there is nothing here that can go stale
+ * between page load and click, so every refusal is a plain 400 — no
+ * `AccConflictError` branch, unlike the round-membership check this replaced.
+ * `IsChecked` is set on the row rather than being demanded as a separate flag
+ * the way AP-1 does — for AP-4 the check *is* this action, so a second boolean
+ * saying it happened could only ever disagree with the row it sits on.
  */
 export async function approveReimburseAccountCheck(
   requestId: number,
@@ -461,18 +476,8 @@ export async function approveReimburseAccountCheck(
 ): Promise<void> {
   const staffId = await requireApproverStaffId(actor);
 
-  const validDates = await getReimbursePaymentDates();
-  const dateError = paymentDateError(paymentDate, validDates);
-  if (dateError) {
-    // The round list is a moving target: `getReimbursePaymentDates` drops a
-    // round once its own cut-off has passed, so a dialog left open across
-    // midnight offers a date that is no longer offered. That is staleness — the
-    // same date can never become valid again — and 400 is the client's
-    // retryable phase, which would invite a retry that cannot succeed. A missing
-    // or malformed date is a genuine bad request and keeps its 400.
-    if (dateError === PAYMENT_DATE_NOT_A_ROUND) throw new AccConflictError(dateError);
-    throw new Error(dateError);
-  }
+  const problem = paymentDateProblem(paymentDate, todayYmd());
+  if (problem) throw new Error(problem);
   const chosen = paymentDate as string;
 
   const after = STATE_AFTER_APPROVE.ACCOUNT;
