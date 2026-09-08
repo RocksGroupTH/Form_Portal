@@ -35,11 +35,13 @@ import path from "node:path";
  * it reaches the client — real code executing against real values, not a
  * pattern guessing at intent from source text.
  *
- * **So what is this file still for?** Catching the two things a regex CAN
+ * **So what is this file still for?** Catching the things a regex CAN
  * reliably see: that the SQL predicate still names `FormCode = @form` at all
- * (its total absence, or `@form` silently unbound), and that the row-level
- * call still exists and still GATES on its answer rather than computing one
- * and discarding it. Losing either of those is still worth failing fast on,
+ * (its total absence, or `@form` silently unbound), that the row-level call
+ * still exists and still GATES on its answer rather than computing one and
+ * discarding it, and — since round 4 — that the value handed to that call is
+ * actually read off the row rather than off the constant it is supposed to
+ * be checked against. Losing any of those is still worth failing fast on,
  * even though `belongsInAccountQueue` would also catch the resulting AP-1
  * leak on the next request — this file catches it at commit time instead of
  * at review time. What it does NOT try to do any more is pin the shape of the
@@ -47,6 +49,27 @@ import path from "node:path";
  * 2 added and what round 3's re-parenthesisation defeated, and keeping it
  * would only teach the next reader that this file is still the safety net —
  * it is not, `belongsInAccountQueue` is.
+ *
+ * **Round 4's addition is not a relapse into the same mistake.** The three
+ * earlier casualties all asked a regex to judge SQL SEMANTICS — is a
+ * predicate conjunctive, how is it parenthesised, what does an `OR` do to
+ * the set of rows a query selects. Text matching cannot answer any of that,
+ * which is exactly why those checks kept losing to a new rearrangement. "Is
+ * there an assignment reading a property off the row object?" is a
+ * different kind of question — a SHAPE question about a few lines of plain
+ * TypeScript, not a SEMANTICS question about what a SQL predicate evaluates
+ * to — and text matching answers shape questions honestly. The specific
+ * hazard this closes: `belongsInAccountQueue` re-deriving the predicate from
+ * `formCode` only defends anything while `formCode` genuinely comes from the
+ * row (`x.FormCode`). Rebind it to `AP4_FORM_CODE` — `const formCode =
+ * AP4_FORM_CODE;` in place of `const formCode = (x.FormCode as string |
+ * null) ?? "";` — and every check passes, because the function is now being
+ * handed the very constant it exists to check the row against: circular, and
+ * silently equivalent to the original `(status, stepCode)`-only predicate
+ * with three extra rounds of ceremony around it. `queue-policy.test.ts`
+ * cannot catch this rebinding — it tests the pure function in isolation and
+ * has no way to know what `queue-service.ts` actually passes it — so this is
+ * the one place in the whole guard that has to.
  */
 
 const FILE = "lib/acc/reimburse/queue-service.ts";
@@ -86,6 +109,30 @@ test("the row loop still selects FormCode and passes it to belongsInAccountQueue
     "queue-service.ts no longer selects r.FormCode — belongsInAccountQueue cannot re-derive the " +
       "predicate from data the row check never received, and silently falls back to whatever the " +
       "SQL WHERE clause alone decided",
+  );
+});
+
+/**
+ * The blind spot round 3 left. Selecting `r.FormCode` (the test above) and
+ * calling `belongsInAccountQueue` with a guarding `if` (the test below) are
+ * both satisfied even if the value handed to that call never came from the
+ * row at all. This is the assertion that pins the missing link between them:
+ * the local `formCode` used in the call has to be an extraction off `x` (the
+ * recordset row, per `for (const x of res.recordset ...)` in the source),
+ * not a re-assertion of the constant the row is supposed to be checked
+ * against.
+ */
+test("formCode is read off the row (x.FormCode), not reassigned from AP4_FORM_CODE or a literal", () => {
+  const src = code();
+  assert.ok(
+    /const\s+formCode\s*=\s*\(?\s*x\.FormCode\b/.test(src),
+    "queue-service.ts's `const formCode = ...` no longer reads x.FormCode off the row. If it now " +
+      "reads `AP4_FORM_CODE` or a string literal instead, belongsInAccountQueue is being handed " +
+      "the very constant it exists to check the row against — the runtime check becomes circular " +
+      "and passes for every row the SQL happened to select, silently collapsing back to the " +
+      "original (status, stepCode)-only predicate with three rounds of ceremony wrapped around it. " +
+      "queue-policy.test.ts cannot catch this: it tests belongsInAccountQueue in isolation and has " +
+      "no way to know what value this file actually passes it",
   );
 });
 
