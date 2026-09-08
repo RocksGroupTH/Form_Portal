@@ -6,6 +6,8 @@ import { getRequest } from "@/lib/clr/clear-advance-request-service";
 import { loadClearAdvanceErpContext } from "@/lib/clr/clear-advance-erp-context";
 import { buildClearAdvanceJournalPayload } from "@/lib/clr/clear-advance-erp-payload";
 import { loadBranchLookup } from "@/lib/erp/location-lookup";
+import { loadBuGlAccounts } from "@/lib/clr/clr-bu-gl-map-service";
+import { isRocksPcBrand } from "@/features/clear-advance/constants";
 import { AP3_FORM_CODE } from "@/features/clear-advance/constants";
 import type { PpapJournalLinePayload } from "@/lib/acc/erp-ppap-payload";
 import type { ClrJournalItem } from "@/lib/clr/clear-advance-erp-payload";
@@ -303,6 +305,15 @@ export async function previewClrErpJournal(ids: number[]): Promise<ClrPreviewIte
       // Once per clearing, not once per line: a handful of lines against a few
       // hundred Locations makes one read cheaper than one round trip each.
       const branchBu = await loadBranchLookup(target.interfaceTarget);
+      /* BU → G/L, and only for a home brand.
+         A non-home brand already has every expense forced to 110723001 at save
+         time (`FORCE_GL_NON_ROCKS_PC`), and letting the BU rule move it off that
+         account would undo the older rule silently. Which of the two should win
+         where they meet is accounting's question, not a default worth inventing —
+         so the older one keeps its ground until they answer. */
+      const buGlAccounts = isRocksPcBrand(req.brandCode)
+        ? await loadBuGlAccounts(target.interfaceTarget)
+        : {};
       const payload = buildClearAdvanceJournalPayload({
         requestNo: req.requestNo ?? String(id),
         postingDate,
@@ -315,6 +326,7 @@ export async function previewClrErpJournal(ids: number[]): Promise<ClrPreviewIte
         requesterName: req.requesterFullName,
         staffId: req.staffId,
         branchBu,
+        buGlAccounts,
         whtPayees: req.clear.whtItems ?? [],
       });
 
@@ -444,6 +456,15 @@ export async function sendClrErpBatch(ids: number[], userId: number): Promise<Cl
       // Once per clearing, not once per line: a handful of lines against a few
       // hundred Locations makes one read cheaper than one round trip each.
       const branchBu = await loadBranchLookup(target.interfaceTarget);
+      /* BU → G/L, and only for a home brand.
+         A non-home brand already has every expense forced to 110723001 at save
+         time (`FORCE_GL_NON_ROCKS_PC`), and letting the BU rule move it off that
+         account would undo the older rule silently. Which of the two should win
+         where they meet is accounting's question, not a default worth inventing —
+         so the older one keeps its ground until they answer. */
+      const buGlAccounts = isRocksPcBrand(req.brandCode)
+        ? await loadBuGlAccounts(target.interfaceTarget)
+        : {};
       const payload = buildClearAdvanceJournalPayload({
         requestNo: req.requestNo ?? String(id),
         postingDate,
@@ -456,6 +477,7 @@ export async function sendClrErpBatch(ids: number[], userId: number): Promise<Cl
         requesterName: req.requesterFullName,
         staffId: req.staffId,
         branchBu,
+        buGlAccounts,
         whtPayees: req.clear.whtItems ?? [],
       });
 

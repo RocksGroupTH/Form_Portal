@@ -35,6 +35,19 @@ export interface ClrJournalInput {
   advanceAmount: number;
   items: ClrJournalItem[];
   config: ClrJournalConfig;
+  /**
+   * BU → G/L account, for expense lines only (`AccClrBuGlMap`).
+   *
+   * A store the company owns books the expense to the account it was coded to; a
+   * franchised or managed one books it to a receivable, because the money is
+   * charged back. The BU dimension is what says which, and it is already on
+   * every line.
+   *
+   * Empty map = today's behaviour, which is also what an unmapped BU gets: COCO
+   * has no row because "บัญชีตาม คชจ" is the absence of a rule, and neither do
+   * the four BUs nobody has ruled on yet.
+   */
+  buGlAccounts?: Record<string, string>;
   departmentCode: string;
   /** Fallback branch for lines that have no per-item branch (VAT, WHT, advance reversal, bank diff). */
   defaultBranchCode?: string | null;
@@ -193,6 +206,13 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
     ...(resolveBu(branchCode) ? { buCode: resolveBu(branchCode) } : null),
   });
 
+  /** The account this expense posts to: its BU's, or the one it was coded to. */
+  const expenseGl = (it: ClrJournalItem): string => {
+    const bu = resolveBu(it.branchCode);
+    const mapped = bu ? (input.buGlAccounts ?? {})[bu] : undefined;
+    return (mapped ?? "").trim() || it.glAccountNo;
+  };
+
   const lines: PpapJournalLinePayload[] = [];
   let whtTotal = 0;
 
@@ -200,7 +220,10 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
     const adj = isPriorPeriod(it.expenseDate, postingDate) ? PRIOR_PERIOD_ADJ_CODE : undefined;
 
     if (r2(it.amountBeforeVat) !== 0) {
-      lines.push(glLine(it.glAccountNo, it.amountBeforeVat, it.branchCode, it.description, adj));
+      // The expense line, and only it. The VAT, bank, vendor and WHT lines each
+      // point at an account of their own; redirecting those by BU would move
+      // input tax and cash into a receivable.
+      lines.push(glLine(expenseGl(it), it.amountBeforeVat, it.branchCode, it.description, adj));
     }
 
     // One VAT line per invoice, immediately after its own expense line.

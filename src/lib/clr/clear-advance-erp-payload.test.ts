@@ -684,3 +684,42 @@ test("no other line carries the vendor key", () => {
     assert.equal(l.taxVendorNo, undefined, `${l.accountType} ${l.accountNo}`);
   }
 });
+
+/* ── BU decides the expense account (user, 2026-09-09) ── */
+
+const buBase = (buGlAccounts: Record<string, string>, branch: string | null) =>
+  base({
+    branchBu: new Map([["PC1073", { buCode: "DOCO", isBlocked: false }],
+                       ["PC0001", { buCode: "COCO", isBlocked: false }]]),
+    buGlAccounts,
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 0, branchCode: branch }],
+  });
+
+test("a mapped BU redirects the expense line", () => {
+  const p = buildClearAdvanceJournalPayload(buBase({ DOCO: "110721001" }, "PC1073"));
+  assert.equal(p.lines[0].accountNo, "110721001");
+});
+
+/* COCO has no row on purpose: "บัญชีตาม คชจ" is the absence of a rule. */
+test("an unmapped BU keeps the account the expense was coded to", () => {
+  const p = buildClearAdvanceJournalPayload(buBase({ DOCO: "110721001" }, "PC0001"));
+  assert.equal(p.lines[0].accountNo, "610322005");
+});
+
+test("no map at all changes nothing", () => {
+  const p = buildClearAdvanceJournalPayload(buBase({}, "PC1073"));
+  assert.equal(p.lines[0].accountNo, "610322005");
+});
+
+/* Redirecting these would move input tax and cash into a receivable. */
+test("only the expense line moves — VAT, vendor and bank keep their accounts", () => {
+  const p = buildClearAdvanceJournalPayload(buBase({ DOCO: "110721001" }, "PC1073"));
+  assert.equal(p.lines.find((l) => l.vatProdPostingGroup)!.accountNo, "115030");
+  assert.equal(p.lines.find((l) => l.accountType === "Bank Account")!.accountNo, "BBL-CA6332");
+  assert.equal(p.lines.find((l) => l.accountType === "Vendor")!.accountNo, "ADV0001");
+});
+
+test("a blank mapping is not a mapping", () => {
+  const p = buildClearAdvanceJournalPayload(buBase({ DOCO: "   " }, "PC1073"));
+  assert.equal(p.lines[0].accountNo, "610322005");
+});
