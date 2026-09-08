@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { ClearAdvanceItem } from "@/features/clear-advance/types";
 import { sameRegisteredName } from "@/lib/clr/rd-vat-core";
+import { vendorSearchQuery } from "@/lib/clr/tax-vendor-core";
 
 /**
  * One receipt's seller: who the Revenue Department says they are, and which BC
@@ -72,6 +73,8 @@ export function SellerVendorCard({ index, item, brandCode, onChange }: Props) {
   const [vendors, setVendors] = useState<TaxVendorCandidate[] | "loading" | null>(null);
   const [chosenName, setChosenName] = useState<string | null>(null);
   const [nameTerm, setNameTerm] = useState("");
+  /** Which key the last search used — shown above the results. */
+  const [vendorMode, setVendorMode] = useState<"taxId" | "name" | null>(null);
 
   const checkRd = useCallback(
     async (refresh = false) => {
@@ -123,6 +126,19 @@ export function SellerVendorCard({ index, item, brandCode, onChange }: Props) {
     [brandCode],
   );
 
+  /* What the box asked for, resolved once and reported the same way the results
+     are labelled — so a search that fell back to the receipt still says which
+     key it used. */
+  const runSearch = useCallback(() => {
+    const q = vendorSearchQuery(nameTerm, item.taxId, item.payeeName);
+    if (q.kind === "invalid") {
+      setVendorMode(null);
+      return toast.error(q.reason);
+    }
+    setVendorMode(q.kind);
+    void search(q.kind === "taxId" ? `taxId=${q.value}` : `name=${encodeURIComponent(q.value)}`);
+  }, [nameTerm, item.taxId, item.payeeName, search]);
+
   /* Ask the registry when the card opens, once per tax id. The answer is kept in
      our own table and never expires, so the ordinary case is a row read; making
      someone click for it bought nothing. */
@@ -146,6 +162,7 @@ export function SellerVendorCard({ index, item, brandCode, onChange }: Props) {
       const hit = found.find((c) => c.vendorNo === no);
       if (hit?.displayName) setChosenName(hit.displayName);
       setVendors(null); // the list was a lookup, not an offer to choose again
+      setVendorMode(null);
     })();
   }, [item.taxVendorNo, hasTin, tin, chosenName, search]);
 
@@ -272,55 +289,38 @@ export function SellerVendorCard({ index, item, brandCode, onChange }: Props) {
             </div>
           ) : (
             <div className="flex flex-col gap-1.5">
+              {/* One box. A tax id is thirteen digits and a name is not, so
+                  nothing has to be declared — two buttons only made the reader
+                  pick a mechanism before they could ask their question. */}
               <div className="flex items-center gap-1.5 flex-wrap">
-                <button
-                  type="button"
-                  disabled={!hasTin}
-                  onClick={() => void search(`taxId=${tin}`)}
-                  title={hasTin ? undefined : "ต้องมีเลขผู้เสียภาษี 13 หลักก่อน"}
-                  className="text-[11px] px-2 py-1 rounded-lg"
-                  style={{
-                    background: "var(--bg-badge)",
-                    color: "var(--text-secondary)",
-                    border: "none",
-                    opacity: hasTin ? 1 : 0.45,
-                    cursor: hasTin ? "pointer" : "not-allowed",
-                  }}
-                >
-                  ค้นจากเลขภาษี
-                </button>
-                <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>
-                  หรือ
-                </span>
                 <input
                   value={nameTerm}
                   onChange={(e) => setNameTerm(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key !== "Enter") return;
                     e.preventDefault();
-                    const q = (nameTerm || invoiceName).trim();
-                    if (q) void search(`name=${encodeURIComponent(q)}`);
+                    runSearch();
                   }}
-                  placeholder={invoiceName ? `ชื่อผู้ขาย — ว่างไว้ = ${invoiceName.slice(0, 18)}` : "ชื่อผู้ขาย"}
+                  placeholder={
+                    hasTin || invoiceName
+                      ? "เลขผู้เสียภาษี หรือชื่อผู้ขาย — ว่างไว้ = ใช้จากใบกำกับ"
+                      : "เลขผู้เสียภาษี 13 หลัก หรือชื่อผู้ขาย"
+                  }
                   className="text-[11px] px-2 py-1 rounded-lg flex-1 outline-none"
                   style={{
                     background: "var(--bg-input)",
                     color: "var(--text-primary)",
                     border: "1px solid var(--border-input)",
-                    minWidth: "12rem",
+                    minWidth: "14rem",
                   }}
                 />
                 <button
                   type="button"
-                  onClick={() => {
-                    const q = (nameTerm || invoiceName).trim();
-                    if (!q) return toast.error("พิมพ์ชื่อผู้ขายที่จะค้น");
-                    void search(`name=${encodeURIComponent(q)}`);
-                  }}
-                  className="text-[11px] px-2 py-1 rounded-lg cursor-pointer"
-                  style={{ background: "var(--bg-badge)", color: "var(--text-secondary)", border: "none" }}
+                  onClick={runSearch}
+                  className="text-[11px] px-3 py-1 rounded-lg cursor-pointer"
+                  style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)", border: "none" }}
                 >
-                  ค้นจากชื่อ
+                  ค้นหา Vendor
                 </button>
               </div>
 
@@ -337,7 +337,8 @@ export function SellerVendorCard({ index, item, brandCode, onChange }: Props) {
                     className="text-[10px] m-0 px-2 py-1 sticky top-0"
                     style={{ background: "var(--bg-badge)", color: "var(--text-muted)" }}
                   >
-                    {vendors.length} รายการ — เลือกหนึ่ง
+                    {vendors.length} รายการ
+                    {vendorMode === "taxId" ? " · ค้นจากเลขผู้เสียภาษี" : vendorMode === "name" ? " · ค้นจากชื่อ" : ""} — เลือกหนึ่ง
                   </p>
                   {vendors.map((c) => (
                     <button

@@ -166,6 +166,10 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
   const [cancelOpen, setCancelOpen] = useState(false);
 
   // ACCOUNT-step inline edit state.
+  /* Open at the account step, closed everywhere else. Correcting the lines and
+     naming each seller's vendor IS the account step's work, so making them click
+     for it hid the job behind a button and left the seller cards — and the
+     reason approval is blocked — invisible until they found it. */
   const [editOpen, setEditOpen] = useState(false);
   const [editItems, setEditItems] = useState<ClearDetail["items"]>(() => clear?.items ?? []);
   // The WHT payees as accounting may change them. Only the ภ.ง.ด. type is
@@ -213,6 +217,16 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
   const isManagerStep = inApproval && step === "MANAGER";
   const isAccountStep = inApproval && step === "ACCOUNT";
   const isHeadStep = inApproval && step === "HEAD";
+
+  /* Seed the editor from the request whenever the account step opens it, and
+     re-seed after a save so the cards read the stored rows rather than the ones
+     that were on screen before. */
+  useEffect(() => {
+    if (!isAccountStep) return;
+    setEditItems(clear?.items ?? []);
+    setEditWht(clear?.whtItems ?? []);
+    setEditOpen(true);
+  }, [isAccountStep, clear?.items, clear?.whtItems]);
 
   // Requester self-cancel: they own it, still pending the manager (before Account),
   // within 24h of submit. Sends an email to the manager + requester on cancel.
@@ -403,7 +417,7 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
               <p className="text-[12px] m-0 px-3 py-2 rounded-lg"
                 style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
                 รายการที่ {missingVendorLines.join(", ")} มี VAT แต่ยังไม่ได้เลือก Vendor ผู้ขาย —
-                กด “แก้ไขรายการค่าใช้จ่าย” เพื่อเลือก (ค้นด้วยเลขผู้เสียภาษีหรือชื่อผู้ขาย) แล้วจึงอนุมัติได้
+                เลือกในการ์ด “ผู้ขาย” ด้านล่าง (ค้นด้วยเลขผู้เสียภาษีหรือชื่อผู้ขาย) แล้วบันทึก จึงจะอนุมัติได้
               </p>
             )}
             <div className="flex flex-wrap gap-2">
