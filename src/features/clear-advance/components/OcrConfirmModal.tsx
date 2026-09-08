@@ -276,17 +276,19 @@ export function OcrConfirmModal({
                     <input className={cellClass} style={{ ...cellStyle, width: "100%" }}
                       inputMode="numeric" placeholder="เลข 13 หลัก"
                       value={r.taxId} onChange={(e) => update(r.key, { taxId: e.target.value })} />
-                    {r.taxId && (
-                      // A tax invoice prints two of these — the seller's and ours —
-                      // and the reader has been seen taking ours twice running on a
-                      // rotated scan, with the seller's name beside it read correctly.
-                      // It is asked for the seller's; it is not reliable at it, and a
-                      // wrong one is filed against the wrong company. So it is shown
-                      // as a suggestion, next to the name it is supposed to belong to.
-                      <span className="text-[10px]" style={{ color: "var(--text-warning)" }}>
-                        AI อ่านมา — ตรวจว่าเป็นเลขของผู้ขาย ไม่ใช่ของบริษัทเรา
-                      </span>
-                    )}
+                    {/* A tax invoice prints two of these, the seller's and ours,
+                        and the reader is not reliable at telling them apart on a
+                        scan — four prompt attempts on one rotated invoice returned
+                        our own number every time. Our own is discarded before it
+                        reaches here, so an empty field usually means it read the
+                        wrong one, and the message says so rather than leaving the
+                        blank to be read as "nothing was printed". */}
+                    <span className="text-[10px]"
+                      style={{ color: r.taxId ? "var(--text-warning)" : "var(--text-faint)" }}>
+                      {r.taxId
+                        ? "AI อ่านมา — ตรวจว่าเป็นเลขของผู้ขาย ไม่ใช่ของบริษัทเรา"
+                        : "AI อ่านเลขผู้ขายไม่ได้ (หรืออ่านได้เลขบริษัทเรา) — กรอกจากใบกำกับ"}
+                    </span>
                   </F>
                   <F label="สาขาผู้ขาย">
                     <input className={cellClass} style={{ ...cellStyle, width: "100%" }}

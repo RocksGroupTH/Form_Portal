@@ -1,5 +1,5 @@
 import type { ReceiptExtractResult } from "./slip-verify";
-import { isOwnTaxId } from "@/lib/clr/own-tax-ids";
+import { resolveSellerTaxId } from "@/lib/clr/seller-tax-id";
 
 /**
  * Pure prompt text + response parsing for AI receipt reading — no IO, no
@@ -142,6 +142,17 @@ export const RECEIPT_SYSTEM = [
   "  which is the company paying, not the one being paid. Never answer with that number.",
   "  If you cannot tell which of the two belongs to the seller, answer null: a wrong tax",
   "  id here is filed with the Revenue Department against the wrong company.",
+  "- buyerTaxId: the OTHER one — the 13-digit tax id in the customer block, the company",
+  "  being billed. Digits only.",
+  "  A Thai tax invoice normally carries TWO 13-digit tax ids: the seller's in the",
+  "  letterhead and the customer's in the block addressed to them. Look for both before",
+  "  answering either, including on a page that is rotated or lightly scanned — they are",
+  "  often set in small type. Fill both fields whenever both are on the page; we check",
+  "  them against each other, so an extra number costs nothing and a missing one loses",
+  "  the check.",
+  "  If you find only one and cannot tell whose it is, put it in buyerTaxId and leave",
+  "  taxId null. Naming it as the seller's when it is not is the one answer that does",
+  "  damage.",
   "- taxBranchText: the branch of that same seller, copied exactly as printed —",
   "  \"สำนักงานใหญ่\", \"สาขาที่ 00001\", \"Head Office\". It sits with the seller's name,",
   "  address and tax id, usually in the letterhead — very often in brackets straight",
@@ -167,22 +178,8 @@ export const RECEIPT_SYSTEM = [
 
 export const RECEIPT_USER_TEXT =
   "Extract every document in these pages. Return only a JSON array; each entry has the keys: " +
-  "kind, pages, date, description, docNo, amountBeforeVat, vat, wht, taxId, payeeName, payeeAddress, taxBranchText, branchHint " +
+  "kind, pages, date, description, docNo, amountBeforeVat, vat, wht, taxId, buyerTaxId, payeeName, payeeAddress, taxBranchText, branchHint " +
   '(an "other" entry has kind, pages and branchHint only).';
-
-/**
- * The seller's tax id, or null when the reader handed back one of ours.
- *
- * A tax invoice prints two and we are always the customer on an expense receipt,
- * so our own number can only have come from the wrong block. It is dropped
- * rather than passed on: an empty field asks to be filled, while a plausible
- * wrong one asks to be accepted, and this one ends up on a tax filing.
- */
-function sellerTaxId(raw: unknown): string | null {
-  const digits = raw ? String(raw).replace(/\D/g, "").slice(0, 13) : "";
-  if (!digits) return null;
-  return isOwnTaxId(digits) ? null : digits;
-}
 
 /** An account the line's branch is allowed to charge (§6 decides the set). */
 export interface GlCandidate {
@@ -295,6 +292,7 @@ type AiJson = {
   vat?: number | string | null;
   wht?: number | string | null;
   taxId?: string | null;
+  buyerTaxId?: string | null;
   payeeName?: string | null;
   taxBranchText?: string | null;
   payeeAddress?: string | null;
@@ -481,7 +479,7 @@ function toDoc(entry: AiJson, kind: ReceiptKind): ReceiptDoc {
     description: toStr(entry.description),
     docNo: toStr(entry.docNo),
     wht: toNum(entry.wht),
-    taxId: sellerTaxId(entry.taxId),
+    taxId: resolveSellerTaxId(entry.taxId, entry.buyerTaxId),
     payeeName: toStr(entry.payeeName),
     // Kept verbatim; taxBranchCode() turns it into the five-digit code, the
     // way thaiPrintedDate() handles the printed date.
