@@ -500,7 +500,7 @@ was taken back out, so the diff is 77 lines of AL and nothing else.
 
 ---
 
-## Task 5: Prove it in BC — *blocked on a configuration decision, 2026-09-08*
+## Task 5: Prove it in BC — *done 2026-09-08*
 
 - [x] **Step 1: Send a clearing with two VAT receipts**, different sellers,
 different branches, one of them prior-period.
@@ -508,11 +508,11 @@ different branches, one of them prior-period.
 - [x] **Step 2: Confirm at the wire** — preview plus a temporary file log,
 removed straight after.
 
-- [ ] **Step 3: Confirm in BC** — as Steps 2c and 3 taught, "Sent" proves only
+- [x] **Step 3: Confirm in BC** — as Steps 2c and 3 taught, "Sent" proves only
 that the payload was accepted. Open the batch, find the document, and read the
 VAT lines' Tax Invoice No., Tax Invoice Name and the three posting-group fields.
 
-- [ ] **Step 4: Record the document number.**
+- [x] **Step 4: Record the document number.**
 
 ### BC refused the VAT line, and the reason was already true yesterday
 
@@ -551,12 +551,28 @@ posting groups whose VAT Posting Setup resolves to `211111001`. The account name
 argue plainly for the first, but changing where tax posts is not a decision to
 take from a table read.
 
+### The setting was corrected, and the send went through — `PVA2609-0019`
+
+The user chose `110741001`, the account whose name says ภาษีซื้อ. Changed through
+the AP-3 settings screen rather than by SQL, so it went the way accounting would
+change it.
+
+`ADC26-09015` re-sent: **Sent, no error, `PVA2609-0019`.** BC's VAT Posting Setup
+now agrees with the account the portal names, which is what its refusal was
+asking for all along.
+
+**A near-miss worth recording.** The VAT-account pickers are per brand and the
+ROCKS card is the fifth of five. Reaching for the fourth "เลือกบัญชีภาษีซื้อ"
+button by position would have set the account on **UNO Coffee** — checked before
+clicking, and the button was found by its current value instead. A settings
+screen with one control per brand punishes clicking by index.
+
 ### Cleanup owed in the Sandbox
 
 Each attempt inserted what it could — the expense and vendor lines — and left the
 VAT line out. Three sends were made while tracking the reason down, so batch `Q`
 holds up to three partial `PVA2609-00xx` documents (the last is `PVA2609-0018`)
-that must be deleted rather than posted. The codeunit does not roll back a
+that must be deleted rather than posted — `PVA2609-0019` is the complete one. The codeunit does not roll back a
 partial document, which is worth remembering before the next retry.
 
 ---
