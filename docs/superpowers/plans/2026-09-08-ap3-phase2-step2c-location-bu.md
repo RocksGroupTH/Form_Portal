@@ -164,81 +164,38 @@ is what makes the line's branch a valid lookup key; and `ErpSyncLog` has a
 
 ---
 
-## Task 3: The read side
+## Task 3: The read side — *done 2026-09-08*
 
 **Files:**
-- Create: `src/lib/erp/location-lookup.ts`
-- Test: `src/lib/erp/location-lookup.test.ts`
+- Created: `src/lib/erp/location-lookup-core.ts` + `location-lookup-core.test.ts` (pure)
+- Created: `src/lib/erp/location-lookup.ts` (the database read)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1-4: tests, then the fold, then the loader**
 
-The lookup itself hits the database, so the tested part is the pure fold that
-turns rows into a branch→BU map. Keep that separable.
+Six tests on `buildBranchBuMap`: the plain mapping, case-insensitive matching on
+both sides, a Location with no BU left absent rather than mapped to blank, a row
+with no branch skipped, whitespace trimmed, and a repeated branch resolving to
+the first entry deterministically.
 
-```ts
-import assert from "node:assert/strict";
-import { test } from "node:test";
-import { buildBranchBuMap } from "./location-lookup";
+**A real bug the unit tests could not have caught.** `loadBranchBuMap` first read
+zero branches for every brand against a table holding 341 rows. The cause was
+`res.recordset as LocationBuRow[]` — a cast that type-checks and lies: the
+recordset carries the SELECT's own PascalCase keys (`BranchCode`), the type
+expects camelCase (`branchCode`), so every row read `undefined` and was skipped.
+The failure mode is the quiet one — an empty map sends no `buCode`, every line
+falls back to `COCO`, and the result looks exactly like the bug this whole step
+exists to fix. The columns are now mapped across explicitly.
 
-test("maps a branch to its BU", () => {
-  const m = buildBranchBuMap([{ branchCode: "PC1057", buCode: "DODO-M" }]);
-  assert.equal(m.get("PC1057"), "DODO-M");
-});
+Verified against the real table afterwards: PCTH 240 branches with the expected
+spread, KSI 18, UNO 40, PCMY 42, an unknown brand → empty map, an unknown branch
+→ undefined, and a lower-case brand code resolving the same as upper.
 
-test("branch codes match case-insensitively", () => {
-  const m = buildBranchBuMap([{ branchCode: "pc1057", buCode: "DOCO" }]);
-  assert.equal(m.get("PC1057"), "DOCO");
-});
-
-/* A Location with no BU tells us nothing, and an entry mapping to "" would read
- * as an answer. Leave it out so the caller falls through to the codeunit's
- * fallback instead. */
-test("a Location with no BU is not in the map", () => {
-  const m = buildBranchBuMap([{ branchCode: "PC9999", buCode: null }]);
-  assert.equal(m.has("PC9999"), false);
-});
-
-test("a row with no branch is skipped", () => {
-  const m = buildBranchBuMap([{ branchCode: null, buCode: "COCO" }]);
-  assert.equal(m.size, 0);
-});
-```
-
-- [ ] **Step 2: Run and watch them fail**
-
-Run: `npm test 2>&1 | Select-String -Pattern "^# (pass|fail)"`
-Expected: `# fail 4`.
-
-- [ ] **Step 3: Implement**
-
-```ts
-export interface LocationBuRow {
-  branchCode: string | null;
-  buCode: string | null;
-}
-
-/** Branch code (upper-cased) → the BU its Location is bound to. */
-export function buildBranchBuMap(rows: readonly LocationBuRow[]): Map<string, string> {
-  const map = new Map<string, string>();
-  for (const r of rows) {
-    const branch = r.branchCode?.trim().toUpperCase();
-    const bu = r.buCode?.trim();
-    if (!branch || !bu) continue;
-    map.set(branch, bu);
-  }
-  return map;
-}
-```
-
-plus `loadBranchBuMap(brandCode)` reading `IsActive = 1` rows from `ErpLocation`
-through `getErpDataPool()` and folding them with the function above.
-
-- [ ] **Step 4: Run and watch them pass, then commit**
-
-```bash
-git add src/lib/erp/location-lookup.ts src/lib/erp/location-lookup.test.ts
-git commit -m "feat(erp): branch → Business Unit, read from the synced Locations"
-```
+**PCMY maps 42 branches from 43 Locations, and that is correct.** `INTRANSIT`
+and `MW001` are both bound to branch `MW001` — the first case seen where a
+Location's `code` differs from its `branch`, which is why Task 1 stored the two
+separately instead of assuming them equal. Both carry `COCO`, so the collision
+changes no answer today; the first-wins rule keeps it from changing by row order
+if they ever diverge.
 
 ---
 
