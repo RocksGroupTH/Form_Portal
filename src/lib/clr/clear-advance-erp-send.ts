@@ -5,6 +5,7 @@ import { postBcPpapJournalCreateFromJson } from "@/lib/bc/bc-odata";
 import { getRequest } from "@/lib/clr/clear-advance-request-service";
 import { loadClearAdvanceErpContext } from "@/lib/clr/clear-advance-erp-context";
 import { buildClearAdvanceJournalPayload } from "@/lib/clr/clear-advance-erp-payload";
+import { loadBranchLookup } from "@/lib/erp/location-lookup";
 import type { ClrJournalItem } from "@/lib/clr/clear-advance-erp-payload";
 
 /* ─────────────────────────── preview types ─────────────────────────── */
@@ -17,6 +18,18 @@ export interface ClrPreviewLine {
   departmentCode: string;
   debit: number | null;
   credit: number | null;
+  /** Z-ADJ marker when this line is a prior-period adjustment; null otherwise. */
+  adjCode: string | null;
+  /** The BU resolved from this line's branch; null when no Location answers for it. */
+  buCode: string | null;
+  /**
+   * This line's BRANCH dimension value is blocked in BC.
+   *
+   * Shown, never enforced: BC may still accept the line, and refusing the send on
+   * an untested assumption would block work that actually posts. Accounting sees
+   * the warning and decides.
+   */
+  branchBlocked: boolean;
 }
 
 export interface ClrPreviewItem {
@@ -186,6 +199,7 @@ function toJournalItems(
       whtAmount: it.whtAmount ?? 0,
       branchCode: it.branchCode ?? null,
       description: it.description ?? null,
+      expenseDate: it.expenseDate ?? null,
     }));
 }
 
@@ -213,6 +227,17 @@ export async function previewClrErpJournal(ids: number[]): Promise<ClrPreviewIte
       const { config, target, departmentCode } = await loadClearAdvanceErpContext(req.brandCode, req.requesterDepartmentCode, req.clear.advanceRequestId);
       const journalItems = toJournalItems(req.clear.items);
       const itemBranch = journalItems.find((it) => it.branchCode)?.branchCode ?? null;
+      // Keyed by the interface target Company, NOT req.brandCode. The claim brand
+      // is what the requester picked (ROCKS); everything in Rocks_ERP_Data is
+      // keyed by the Company the journal actually posts into (PCTH, KSI, …),
+      // which is what AP-2's branch and G/L pickers read too. Passing the claim
+      // brand returns an empty map, sends no buCode on any line, and leaves every
+      // one of them on the codeunit's COCO — this change doing nothing at all,
+      // indistinguishable from the bug it fixes.
+      //
+      // Once per clearing, not once per line: a handful of lines against a few
+      // hundred Locations makes one read cheaper than one round trip each.
+      const branchBu = await loadBranchLookup(target.interfaceTarget);
       const payload = buildClearAdvanceJournalPayload({
         requestNo: req.requestNo ?? String(id),
         postingDate,
@@ -223,6 +248,8 @@ export async function previewClrErpJournal(ids: number[]): Promise<ClrPreviewIte
         defaultBranchCode: itemBranch,
         advanceRequestNo: req.clear.advanceRequestNo,
         requesterName: req.requesterFullName,
+        staffId: req.staffId,
+        branchBu,
       });
 
       out.push({
@@ -244,6 +271,9 @@ export async function previewClrErpJournal(ids: number[]): Promise<ClrPreviewIte
           departmentCode: l.departmentCode ?? "",
           debit: l.amount > 0 ? l.amount : null,
           credit: l.amount < 0 ? -l.amount : null,
+          adjCode: l.adjCode ?? null,
+          buCode: l.buCode ?? null,
+          branchBlocked: branchBu.get((l.branchCode ?? "").trim().toUpperCase())?.isBlocked ?? false,
         })),
       });
     } catch (e) {
@@ -340,6 +370,17 @@ export async function sendClrErpBatch(ids: number[], userId: number): Promise<Cl
 
       const journalItems = toJournalItems(req.clear.items);
       const itemBranch = journalItems.find((it) => it.branchCode)?.branchCode ?? null;
+      // Keyed by the interface target Company, NOT req.brandCode. The claim brand
+      // is what the requester picked (ROCKS); everything in Rocks_ERP_Data is
+      // keyed by the Company the journal actually posts into (PCTH, KSI, …),
+      // which is what AP-2's branch and G/L pickers read too. Passing the claim
+      // brand returns an empty map, sends no buCode on any line, and leaves every
+      // one of them on the codeunit's COCO — this change doing nothing at all,
+      // indistinguishable from the bug it fixes.
+      //
+      // Once per clearing, not once per line: a handful of lines against a few
+      // hundred Locations makes one read cheaper than one round trip each.
+      const branchBu = await loadBranchLookup(target.interfaceTarget);
       const payload = buildClearAdvanceJournalPayload({
         requestNo: req.requestNo ?? String(id),
         postingDate,
@@ -350,6 +391,8 @@ export async function sendClrErpBatch(ids: number[], userId: number): Promise<Cl
         defaultBranchCode: itemBranch,
         advanceRequestNo: req.clear.advanceRequestNo,
         requesterName: req.requesterFullName,
+        staffId: req.staffId,
+        branchBu,
       });
 
       // Mark Pending (only when NULL/Failed — guard is in the SQL WHERE)

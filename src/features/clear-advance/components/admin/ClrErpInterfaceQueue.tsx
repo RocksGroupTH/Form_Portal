@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { toast } from "sonner";
 import { Loader2, FileX, Eye, SendHorizonal, X, Search, Download, Building2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { Dialog } from "@/components/ui/Dialog";
 import { PaymentDatePicker } from "@/components/ui/PaymentDatePicker";
 import { FilterMonthPicker } from "@/features/accounting/components/FilterMonthPicker";
 import { sentMonthKey } from "@/features/accounting/components/ApprovalQueueFilters";
@@ -142,7 +143,37 @@ function ClrErpPreviewModal({ items, onClose }: { items: ClrPreviewItem[]; onClo
                             <td className="px-2.5 py-1.5 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{line.accountType}</td>
                             <td className="px-2.5 py-1.5 whitespace-nowrap font-mono" style={{ color: "var(--text-primary)" }}>{line.accountNo}</td>
                             <td className="px-2.5 py-1.5" style={{ color: "var(--text-primary)", maxWidth: 200 }}>{line.description}</td>
-                            <td className="px-2.5 py-1.5 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{line.branchCode || "—"}</td>
+                            <td className="px-2.5 py-1.5 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>
+                              {line.branchCode || "—"}
+                              {/* A prior-period line is the exception, so it reads as a
+                                  mark on the branch rather than a column that would be
+                                  empty on almost every row. */}
+                              {line.adjCode && (
+                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded ml-1.5"
+                                  style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)" }}
+                                  title="ใบเสร็จลงเดือนก่อนเดือนที่โพสต์ — ปรับปรุงบัญชี (Z-ADJ)">
+                                  {line.adjCode}
+                                </span>
+                              )}
+                              {/* The BU the line will post to. It reads as part of the
+                                  branch because that is what decides it — the Location
+                                  the branch is bound to. */}
+                              {line.buCode && (
+                                <span className="text-[10px] ml-1.5" style={{ color: "var(--text-muted)" }}>
+                                  · {line.buCode}
+                                </span>
+                              )}
+                              {/* Shown, never enforced: BC may still take the line, and
+                                  refusing on an untested assumption would block work
+                                  that actually posts. */}
+                              {line.branchBlocked && (
+                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded ml-1.5"
+                                  style={{ background: "var(--bg-badge)", color: "var(--text-warning)" }}
+                                  title="สาขานี้ถูก Block ใน BC — ส่งได้ แต่ BC อาจไม่รับบรรทัดนี้">
+                                  BLOCKED
+                                </span>
+                              )}
+                            </td>
                             <td className="px-2.5 py-1.5 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{line.departmentCode || "—"}</td>
                             <td className="px-2.5 py-1.5 text-right tabular-nums whitespace-nowrap" style={{ color: line.debit ? "var(--text-primary)" : "var(--text-faint)" }}>
                               {line.debit != null ? fmtMoney(line.debit) : "—"}
@@ -220,6 +251,13 @@ export function ClrErpInterfaceQueue() {
   const [previewItems, setPreviewItems] = useState<ClrPreviewItem[] | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [sending, setSending] = useState(false);
+  /* The send confirmation, same shape AP-2 uses: what is about to be created is
+     summarised per company before anyone commits to it, and the ids are frozen
+     when the dialog opens so changing the selection behind it cannot change what
+     gets sent. */
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [frozenIds, setFrozenIds] = useState<number[]>([]);
+  const [confirmItems, setConfirmItems] = useState<ClrPreviewItem[]>([]);
 
   // sent-tab filter state
   const [search, setSearch] = useState("");
@@ -298,31 +336,56 @@ export function ClrErpInterfaceQueue() {
 
   const selectedIds = Array.from(selected);
 
+  /** Preview for a given set of ids — shared by the Preview button and the send
+   *  confirmation, which needs the same data to say what it is about to post. */
+  const fetchPreviewForIds = useCallback(async (ids: number[]): Promise<ClrPreviewItem[]> => {
+    const res = await fetch(`/api/request/clear-advance/erp/preview?ids=${ids.join(",")}`);
+    const json = (await res.json()) as { ok: boolean; data?: ClrPreviewItem[]; error?: string };
+    if (!json.ok) throw new Error(json.error ?? "preview ล้มเหลว");
+    return json.data ?? [];
+  }, []);
+
   const handlePreview = useCallback(async () => {
     if (selectedIds.length === 0) return;
     setPreviewing(true);
     try {
-      const res = await fetch(`/api/request/clear-advance/erp/preview?ids=${selectedIds.join(",")}`);
-      const json = (await res.json()) as { ok: boolean; data?: ClrPreviewItem[]; error?: string };
-      if (!json.ok) throw new Error(json.error ?? "preview ล้มเหลว");
-      setPreviewItems(json.data ?? []);
+      setPreviewItems(await fetchPreviewForIds(selectedIds));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
     } finally {
       setPreviewing(false);
     }
-  }, [selectedIds]);
+  }, [selectedIds, fetchPreviewForIds]);
+
+  /** Open the confirmation. The preview runs first so the dialog can say which
+   *  company and environment each clearing is bound for, and so a clearing whose
+   *  config is incomplete is dropped before anything is sent rather than failing
+   *  one line at a time in BC. */
+  const openSendConfirm = useCallback(async () => {
+    if (selectedIds.length === 0) return toast.error("เลือกรายการก่อน");
+    setPreviewing(true);
+    try {
+      const data = await fetchPreviewForIds(selectedIds);
+      const ready = data.filter((p) => p.ok);
+      if (ready.length === 0) { toast.error("ไม่มีรายการที่พร้อมส่ง (ตั้งค่ายังไม่ครบ)"); return; }
+      setConfirmItems(data);
+      setFrozenIds(ready.map((p) => p.id));
+      setConfirmOpen(true);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
+    } finally {
+      setPreviewing(false);
+    }
+  }, [selectedIds, fetchPreviewForIds]);
 
   const handleSend = useCallback(async () => {
-    if (selectedIds.length === 0) return;
-    const confirmed = window.confirm(`ยืนยันส่งเข้า ERP จำนวน ${selectedIds.length} รายการ?`);
-    if (!confirmed) return;
+    if (frozenIds.length === 0) return;
     setSending(true);
     try {
       const res = await fetch("/api/request/clear-advance/erp/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids: selectedIds }),
+        body: JSON.stringify({ ids: frozenIds }),
       });
       const json = (await res.json()) as {
         ok: boolean;
@@ -334,6 +397,7 @@ export function ClrErpInterfaceQueue() {
         if (item.ok) toast.success(`ส่งสำเร็จ #${item.id}${item.documentNo ? ` · Doc: ${item.documentNo}` : ""}`);
         else toast.error(`#${item.id}: ${item.error ?? "ล้มเหลว"}`);
       }
+      setConfirmOpen(false);
       setSelected(new Set());
       setTab("sent");
       await mutate();
@@ -342,7 +406,32 @@ export function ClrErpInterfaceQueue() {
     } finally {
       setSending(false);
     }
-  }, [selectedIds, mutate]);
+  }, [frozenIds, mutate]);
+
+  /** What the send will post, grouped by the BC company each clearing targets —
+   *  the same summary AP-2's confirmation shows. */
+  const sendSummary = useMemo(() => {
+    const byCompany = new Map<string, { count: number; total: number; env: string | null; batch: string | null }>();
+    for (const p of confirmItems) {
+      if (!p.ok) continue;
+      const key = p.interfaceTarget ?? "—";
+      const cur = byCompany.get(key) ?? { count: 0, total: 0, env: p.environment, batch: p.journalBatchName };
+      cur.count += 1;
+      cur.total += p.lines.reduce((s, l) => s + (l.debit ?? 0), 0);
+      byCompany.set(key, cur);
+    }
+    return Array.from(byCompany.entries()).map(([company, v]) => ({ company, ...v }));
+  }, [confirmItems]);
+
+  const grandTotal = useMemo(() => sendSummary.reduce((s, x) => s + x.total, 0), [sendSummary]);
+
+  // Requests, not lines: what accounting decides about at this point is whether
+  // to send a document, and one blocked branch usually marks several of its lines.
+  const blockedCount = useMemo(
+    () => confirmItems.filter((p) => p.ok && p.lines.some((l) => l.branchBlocked)).length,
+    [confirmItems],
+  );
+  const notReady = confirmItems.length - frozenIds.length;
 
   async function exportExcel() {
     setExporting(true);
@@ -444,7 +533,7 @@ export function ClrErpInterfaceQueue() {
               </Button>
               <Button variant="primary" size="sm"
                 icon={sending ? <Loader2 size={14} className="animate-spin" /> : <SendHorizonal size={14} />}
-                onClick={handleSend} disabled={selectedIds.length === 0 || sending || previewing}>
+                onClick={openSendConfirm} disabled={selectedIds.length === 0 || sending || previewing}>
                 ส่งเข้า ERP ({selectedIds.length})
               </Button>
             </div>
@@ -590,7 +679,7 @@ export function ClrErpInterfaceQueue() {
                   <thead className="sticky top-0 z-10"
                     style={{ background: "var(--bg-card-alt)", boxShadow: "0 1px 0 var(--border-light)" }}>
                     <tr style={{ borderBottom: "1px solid var(--border-light)" }}>
-                      {["เลขที่", "แบรนด์", "ผู้ยื่น", "Advance", "ใช้จริง", "คืน/จ่ายเพิ่ม", "วันจ่าย", "Doc No (ERP)", "วันที่ส่ง", "สถานะ", "Env"].map((h) => (
+                      {["เลขที่", "แบรนด์", "ผู้ยื่น", "Advance", "ใช้จริง", "คืน/จ่ายเพิ่ม", "วันจ่าย", "Doc No (ERP)", "วันที่ส่ง", "สถานะ"].map((h) => (
                         <th key={h} className="px-3 py-2.5 font-semibold whitespace-nowrap text-left"
                           style={{ color: "var(--text-secondary)" }}>{h}</th>
                       ))}
@@ -633,16 +722,13 @@ export function ClrErpInterfaceQueue() {
                             {fmtDateTime(row.erpSentAt)}
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap"><ErpStatusBadge row={row} /></td>
-                          <td className="px-3 py-2 whitespace-nowrap">
-                            {row.erpEnvironment && <EnvBadge env={row.erpEnvironment} />}
-                          </td>
                         </tr>
                       );
                     })}
                   </tbody>
                   <tfoot className="sticky bottom-0 z-10">
                     <tr style={{ borderTop: "2px solid var(--border-card)", background: "color-mix(in srgb, var(--bg-card) 80%, var(--bg-page))", boxShadow: "0 -1px 0 var(--border-card), 0 -8px 16px -10px rgba(0,0,0,0.25)" }}>
-                      <td colSpan={11} className="px-3 py-2.5 font-bold" style={{ color: "var(--text-heading)" }}>
+                      <td colSpan={10} className="px-3 py-2.5 font-bold" style={{ color: "var(--text-heading)" }}>
                         ทั้งหมด {sentFiltered.length} รายการ · ส่งแล้ว {sentFiltered.filter(isSent).length} · ล้มเหลว {sentFiltered.filter((r) => r.erpStatus === "Failed").length}
                       </td>
                     </tr>
@@ -657,6 +743,86 @@ export function ClrErpInterfaceQueue() {
       {/* preview modal */}
       {previewItems && (
         <ClrErpPreviewModal items={previewItems} onClose={() => setPreviewItems(null)} />
+      )}
+
+      {/* Send confirmation — the same popup AP-2 uses, in place of the browser's
+          own confirm(), which could say nothing about where the journal was
+          bound for. Sending into Production reads differently from Sandbox and
+          the dialog has to make that visible while it can still be stopped. */}
+      {confirmOpen && (
+        <Dialog
+          open={confirmOpen}
+          onOpenChange={(o) => { if (!sending) setConfirmOpen(o); }}
+          title="ยืนยันส่งเข้า Business Central"
+          contentClassName="max-w-[440px]"
+        >
+          <div className="flex flex-col gap-3 p-1">
+            <p className="text-[13px]" style={{ color: "var(--text-secondary)" }}>
+              จะสร้าง Gen. Journal เข้า BC — {frozenIds.length} รายการ
+            </p>
+
+            <div className="flex flex-col gap-2 rounded-xl p-3"
+              style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}>
+              {sendSummary.map((s) => {
+                const prod = s.env === "Production";
+                return (
+                  <div key={s.company} className="flex flex-col gap-0.5">
+                    <div className="flex items-center gap-2 text-[12px]">
+                      <Building2 size={14} style={{ color: "var(--text-muted)" }} />
+                      <span className="font-bold" style={{ color: "var(--text-heading)" }}>{s.company}</span>
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full inline-flex items-center gap-1"
+                        style={prod
+                          ? { background: "#dc262618", color: "#dc2626", border: "1px solid #dc262640" }
+                          : { background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
+                        <span className="h-1.5 w-1.5 rounded-full" style={{ background: prod ? "#dc2626" : "var(--text-info-yellow)" }} />
+                        {prod ? "Production" : "Sandbox"}
+                      </span>
+                      <span style={{ color: "var(--text-muted)" }}>· {s.count} ใบ</span>
+                      <span className="ml-auto font-bold tabular-nums" style={{ color: "var(--text-heading)" }}>{fmtMoney(s.total)} ฿</span>
+                    </div>
+                    <p className="text-[10px] m-0 pl-6" style={{ color: "var(--text-muted)" }}>
+                      Journal Batch: <span className="font-mono font-semibold" style={{ color: "var(--text-secondary)" }}>{s.batch ?? "—"}</span>
+                    </p>
+                  </div>
+                );
+              })}
+              <div className="flex items-center justify-between text-[12px] pt-1.5 mt-0.5"
+                style={{ borderTop: "1px solid var(--border-light)" }}>
+                <span className="font-bold" style={{ color: "var(--text-heading)" }}>รวม</span>
+                <span className="font-bold tabular-nums" style={{ color: "var(--text-heading)" }}>{fmtMoney(grandTotal)} ฿</span>
+              </div>
+            </div>
+
+            {sendSummary.some((s) => s.env === "Production") ? (
+              <p className="text-[12px] font-semibold px-3 py-2 rounded-lg m-0"
+                style={{ background: "#dc262614", color: "#dc2626", border: "1px solid #dc262633" }}>
+                🔴 สร้างเข้า <b>Production (ระบบจริง)</b> — ตรวจสอบให้แน่ใจก่อนยืนยัน
+              </p>
+            ) : (
+              <p className="text-[12px] px-3 py-2 rounded-lg m-0"
+                style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
+                🟡 สร้างเข้า <b>Sandbox (UAT — ทดสอบ)</b> ไม่กระทบระบบจริง
+              </p>
+            )}
+
+            {blockedCount > 0 && (
+              <p className="text-[11px] m-0" style={{ color: "var(--text-warning)" }}>
+                ⚠️ {blockedCount} ใบมีสาขาที่ถูก Block ใน BC — ส่งได้ แต่ BC อาจไม่รับบรรทัดนั้น
+              </p>
+            )}
+
+            {notReady > 0 && (
+              <p className="text-[11px] m-0" style={{ color: "var(--text-info-yellow)" }}>
+                ⚠️ ข้าม {notReady} ใบที่ตั้งค่าไม่ครบ (ส่งเฉพาะที่พร้อม)
+              </p>
+            )}
+
+            <div className="flex items-center justify-end gap-2 mt-1">
+              <Button variant="secondary" onClick={() => setConfirmOpen(false)} disabled={sending}>ยกเลิก</Button>
+              <Button variant="primary" icon={<SendHorizonal size={15} />} onClick={handleSend} loading={sending}>ยืนยันส่ง</Button>
+            </div>
+          </div>
+        </Dialog>
       )}
     </>
   );

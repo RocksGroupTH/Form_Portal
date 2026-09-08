@@ -1,4 +1,5 @@
 import type { PpapJournalPayload, PpapJournalLinePayload } from "@/lib/acc/erp-ppap-payload";
+import type { BranchLookupEntry } from "@/lib/erp/location-lookup-core";
 
 export interface ClrJournalConfig {
   /** The vendor AP-2 debited — this clearing credits the same one. */
@@ -15,6 +16,8 @@ export interface ClrJournalItem {
   whtAmount: number;
   branchCode: string | null;
   description?: string | null;
+  /** The date printed on this line's receipt — decides the Z-ADJ marker (§4.1). */
+  expenseDate?: string | null;
 }
 export interface ClrJournalInput {
   requestNo: string;
@@ -29,9 +32,45 @@ export interface ClrJournalInput {
   advanceRequestNo?: string | null;
   /** Full name of the person clearing, for the line description. */
   requesterName?: string | null;
+  /**
+   * The requester's HR staff id. Goes to BC as External Document No. — the
+   * interface layout's row 25 says รหัสพนักงาน and the requirements say *only*
+   * that (`ap3-clear-advance-specification.md` §4). Null when the request has no
+   * staff id, which sends the field empty rather than substituting a value that
+   * means something else.
+   */
+  staffId?: number | null;
+  /**
+   * Branch → the BU its Location is bound to, loaded once per clearing by
+   * `loadBranchLookup`. Absent — the state before the Location sync has ever
+   * run — every line sends no `buCode` and the codeunit's COCO applies, exactly
+   * as before this existed.
+   */
+  branchBu?: ReadonlyMap<string, BranchLookupEntry>;
 }
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
+
+/** The Z-ADJ dimension value for a prior-period adjustment (spec §4.1). The
+ *  requirements call it "MS"; the value that exists in BC is `M-ADJ`. */
+export const PRIOR_PERIOD_ADJ_CODE = "M-ADJ";
+
+/**
+ * Is this receipt from an accounting month earlier than the one it is posting
+ * into?
+ *
+ * Compared as `YYYY-MM` text, which handles the year boundary without date
+ * arithmetic: "2025-12" < "2026-01" sorts correctly as a string. Either date
+ * missing answers false — the rule needs a date to be true, and an absent one
+ * makes it unknown rather than false, which comes to the same thing here: no
+ * marker, rather than a marker derived from a date nobody has.
+ */
+export function isPriorPeriod(expenseDate: string | null | undefined, postingDate: string): boolean {
+  const a = (expenseDate ?? "").slice(0, 7);
+  const b = (postingDate ?? "").slice(0, 7);
+  if (a.length !== 7 || b.length !== 7) return false;
+  return a < b;
+}
 
 /**
  * Build the PPAP CreateFromJson payload for ONE AP-3 clearing.
@@ -50,8 +89,28 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
   if (!c.journalBatchName) throw new Error("ยังไม่ได้ตั้งค่า Journal Batch ของ AP-3 สำหรับแบรนด์นี้");
   if (items.length === 0) throw new Error("ไม่มีรายการค่าใช้จ่ายสำหรับสร้าง journal");
 
-  const employeeCode = requestNo.slice(0, 35);
+  // → BC "External Document No." (APJournalCreate.al:214). This used to carry
+  // `requestNo`, which is why it read as done until someone looked at the value:
+  // ADC26-09008 reached BC as "ADC26-09008" where the layout asks for the
+  // requester's staff id.
+  const employeeCode = input.staffId != null ? String(input.staffId).slice(0, 35) : "";
   const defaultBranch = input.defaultBranchCode ?? "";
+
+  /**
+   * The BU for a line's branch, or undefined when there is no answer — either
+   * no Location for that branch, or a Location carrying no BU. Both send
+   * nothing: absence is what makes the codeunit apply its own COCO, where an
+   * explicit "COCO" would be indistinguishable from a real answer.
+   *
+   * Upper-cased on the way in. The branch arrives from a picker and the map from
+   * BC, and a case mismatch would resolve to nothing and land back on COCO —
+   * silently reinstating the bug this replaces.
+   */
+  const resolveBu = (branchCode: string | null): string | undefined => {
+    const key = (branchCode ?? defaultBranch).trim().toUpperCase();
+    if (!key) return undefined;
+    return input.branchBu?.get(key)?.buCode ?? undefined;
+  };
   // Spec §3.2 format: [ADV no] เบิก เคลียร์เงินทดลอง [employee] [document detail].
   // Gen. Journal Line Description is 100 chars, so the trailing detail is what gets
   // cut — the identifying half has to survive.
@@ -69,18 +128,36 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
   // It describes the whole clearing, so every line carries the same value.
   const documentType = bankAmount > 0 ? "Refund" : "Payment";
 
-  const glLine = (accountNo: string, amount: number, branchCode: string | null, detail?: string | null): PpapJournalLinePayload => ({
+  const glLine = (
+    accountNo: string,
+    amount: number,
+    branchCode: string | null,
+    detail?: string | null,
+    adjCode?: string,
+  ): PpapJournalLinePayload => ({
     groupNo: "G1", postingDate, documentType, accountType: "G/L Account",
     accountNo, description: describe(detail),
     paymentMethodCode: "BANK", amount: r2(amount), balAccountType: "G/L Account",
     employeeCode, branchCode: branchCode ?? defaultBranch, departmentCode,
+    // Spread rather than `adjCode: undefined`, so an unmarked line serialises
+    // byte-for-byte as it did before this feature existed. Same for buCode.
+    ...(adjCode ? { adjCode } : null),
+    ...(resolveBu(branchCode) ? { buCode: resolveBu(branchCode) } : null),
   });
 
   const lines: PpapJournalLinePayload[] = [];
   let vatTotal = 0, whtTotal = 0;
 
   for (const it of items) {
-    if (r2(it.amountBeforeVat) !== 0) lines.push(glLine(it.glAccountNo, it.amountBeforeVat, it.branchCode, it.description));
+    if (r2(it.amountBeforeVat) !== 0) {
+      lines.push(glLine(
+        it.glAccountNo,
+        it.amountBeforeVat,
+        it.branchCode,
+        it.description,
+        isPriorPeriod(it.expenseDate, postingDate) ? PRIOR_PERIOD_ADJ_CODE : undefined,
+      ));
+    }
     vatTotal += it.vatAmount || 0;
     whtTotal += it.whtAmount || 0;
   }
@@ -107,6 +184,7 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
     description: describe(),
     paymentMethodCode: "BANK", amount: 0,
     employeeCode, branchCode: defaultBranch, departmentCode,
+    ...(resolveBu(null) ? { buCode: resolveBu(null) } : null),
   });
 
   if (bankAmount !== 0) {
@@ -115,6 +193,7 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
       accountNo: c.bankAccountNo, description: describe(),
       paymentMethodCode: "BANK", amount: bankAmount,
       employeeCode, branchCode: defaultBranch, departmentCode,
+      ...(resolveBu(null) ? { buCode: resolveBu(null) } : null),
     });
   }
 

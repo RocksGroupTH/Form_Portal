@@ -4,19 +4,21 @@ import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Users, Link2, ReceiptText, ListTree } from "lucide-react";
+import { Users, Link2, ReceiptText, ListTree, MapPin } from "lucide-react";
 import { backTo } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { ClrApproverSettings } from "@/features/clear-advance/components/admin/ClrApproverSettings";
 import { ClrErpInterfaceSettings } from "@/features/clear-advance/components/admin/ClrErpInterfaceSettings";
 import { ClrGlAccountSettings } from "@/features/clear-advance/components/admin/ClrGlAccountSettings";
+import { ClrLocationSyncPanel } from "@/features/clear-advance/components/admin/ClrLocationSyncPanel";
 
-type TabKey = "erpInterface" | "glAccounts" | "approvers";
+type TabKey = "erpInterface" | "glAccounts" | "locations" | "approvers";
 
 const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: "erpInterface", label: "Interface ERP", icon: <Link2 size={15} /> },
   { key: "glAccounts", label: "หมวดบัญชี G/L", icon: <ListTree size={15} /> },
+  { key: "locations", label: "Location / BU", icon: <MapPin size={15} /> },
   { key: "approvers", label: "ผู้อนุมัติ", icon: <Users size={15} /> },
 ];
 
@@ -77,7 +79,7 @@ function ClearAdvanceSettingsContent() {
       <PageHeaderBar
         icon={ReceiptText}
         title="ตั้งค่าเคลียร์คืนเงินทดรองจ่าย (AP-3)"
-        subtitle="Interface ERP (Journal Batch) · หมวดบัญชี G/L · ผู้อนุมัติ"
+        subtitle="Interface ERP (Journal Batch) · หมวดบัญชี G/L · Location / BU · ผู้อนุมัติ"
         backHref={backTo("/request/clear-advance/admin", searchParams.get("from"))}
       />
 
@@ -109,6 +111,7 @@ function ClearAdvanceSettingsContent() {
         <div className="p-5">
           {activeTab === "erpInterface" && <ClrErpInterfaceSettings />}
           {activeTab === "glAccounts" && <ClrGlAccountSettings />}
+          {activeTab === "locations" && <ClrLocationSyncPanel />}
           {activeTab === "approvers" && <ClrApproverSettings />}
         </div>
       </div>

@@ -413,6 +413,31 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
 
   /* ── line mutations ── */
 
+  /**
+   * A blank expense line the user fills in themselves.
+   *
+   * Every line used to come from the AI reading an attachment, which made the
+   * read a hard dependency for data entry: a receipt it classified as something
+   * other than a receipt could not be entered at all, and the reviewer's only
+   * options were to photograph it again or give up. The row is otherwise
+   * ordinary — `sourceFileId` is null, which the service and the validators
+   * already allow, and the receipt still has to be attached for the request to
+   * be accepted.
+   */
+  function addLine() {
+    setLines((p) => [...p, emptyLine()]);
+  }
+
+  /** Only a hand-added line is removable here. A line the AI produced belongs to
+   *  its attachment and goes when that file goes (`doRemoveFile`), so that the
+   *  two can never disagree about what the receipts say. */
+  function removeLine(idx: number) {
+    setLines((p) => {
+      const kept = p.filter((_, i) => i !== idx);
+      return kept.length > 0 ? kept : [emptyLine()];
+    });
+  }
+
   function updateLine(idx: number, patch: Partial<LineRow>) {
     setLines((p) => p.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
   }
@@ -1173,10 +1198,13 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       <div className="rounded-2xl p-4 sm:p-5 flex flex-col gap-3" style={box} data-err="lines">
         <div className="flex items-center justify-between gap-2">
           <label className="text-[12px] font-bold" style={labelStyle}>รายการค่าใช้จ่ายจริง *</label>
+          {!readOnly && (
+            <Button variant="ghost" size="sm" type="button" icon={<Plus size={14} />} onClick={addLine}>เพิ่มแถว</Button>
+          )}
         </div>
         {!readOnly && (
           <p className="text-[11px] m-0 -mt-2 leading-relaxed" style={{ color: "var(--text-faint)" }}>
-            1 ใบกำกับ = 1 รายการ · ระบบจะอ่าน “วันที่ · เลขที่เอกสาร · รายละเอียด · ยอดก่อน VAT · VAT · หัก ณ ที่จ่าย” มาเติมให้ Auto (สามารถแก้ไขได้)
+            1 ใบกำกับ = 1 รายการ · ระบบจะอ่าน “วันที่ · เลขที่เอกสาร · รายละเอียด · ยอดก่อน VAT · VAT · หัก ณ ที่จ่าย” มาเติมให้ Auto (สามารถแก้ไขได้) · ถ้า AI อ่านใบไหนไม่ออก กด “เพิ่มแถว” แล้วกรอกเองได้
           </p>
         )}
         <FieldError msg={fieldErrors.lines} />
@@ -1199,6 +1227,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                 <Th w={90} right>WHT</Th>
                 <Th w={100} right>สุทธิ</Th>
                 <Th w={110} right>คงเหลือ</Th>
+                <Th w={40}>{""}</Th>
               </tr>
             </thead>
             <tbody>
@@ -1263,6 +1292,19 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                     </Td>
                     <Td right><ReadCell value={money(c.net)} strong /></Td>
                     <Td right><ReadCell value={money(c.balance)} tone={c.balance < 0 ? "danger" : undefined} /></Td>
+                    <Td>
+                      {/* Only a hand-added line offers this. One the AI produced
+                          is removed by deleting its receipt, so the table and
+                          the attachments cannot drift apart. */}
+                      {!readOnly && !l.sourceFileId && (
+                        <button type="button" onClick={() => removeLine(idx)}
+                          aria-label={`ลบรายการที่ ${idx + 1}`} title="ลบแถวนี้"
+                          className="border-none bg-transparent cursor-pointer p-1 rounded-md"
+                          style={{ color: "var(--text-muted)" }}>
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </Td>
                   </tr>
                 );
               })}
@@ -1276,6 +1318,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                 <Td right><FootVal value={money(sums.wht)} /></Td>
                 <Td right><FootVal value={money(sums.net)} accent /></Td>
                 <Td right />
+                <Td />
               </tr>
             </tfoot>
           </table>
@@ -1290,6 +1333,14 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                 style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}>
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-bold" style={{ color: "var(--text-muted)" }}>รายการที่ {idx + 1}</span>
+                  {!readOnly && !l.sourceFileId && (
+                    <button type="button" onClick={() => removeLine(idx)}
+                      aria-label={`ลบรายการที่ ${idx + 1}`} title="ลบแถวนี้"
+                      className="border-none bg-transparent cursor-pointer p-1 rounded-md"
+                      style={{ color: "var(--text-muted)" }}>
+                      <Trash2 size={14} />
+                    </button>
+                  )}
                 </div>
                 <MField label="วันที่">
                   <input type="date" className={fieldClass} style={fieldStyle}
