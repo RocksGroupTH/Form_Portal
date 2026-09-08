@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Send the withholding-tax line as a **Vendor** line at `WHT-PND.3` or `WHT-PND.53` — the account accounting actually clears — instead of the G/L account it carries today, with the ภ.ง.ด. type suggested from the payee's tax id and confirmed by accounting.
+**Goal:** Send the withholding-tax line as a **Vendor** line at `WHT-PND.3` or `WHT-PND.53` — the account accounting actually clears — instead of the G/L account it carries today, with the ภ.ง.ด. type suggested from the payee's tax id, chosen by the requester, and confirmable again by accounting.
 
-**Architecture:** Four thin layers, each testable on its own. A pure rule turns a tax id into a suggested type. A nullable column stores what was decided. The ACCOUNT step lets accounting change it. The journal builder turns stored types into vendor lines. Nothing guesses at send time: an unset type stops the send with a readable message.
+**Architecture:** Four thin layers, each testable on its own. A pure rule turns a tax id into a suggested type. A nullable column stores what was decided. The form and the ACCOUNT step both let a person change it. The journal builder turns stored types into vendor lines. Nothing guesses at send time: an unset type stops the send with a readable message.
 
 **Tech Stack:** TypeScript, `node:test` via `npm test`; MSSQL migration; React for the ACCOUNT-step editor.
 
@@ -19,8 +19,8 @@ payee, the OCR already extracts a 13-digit `taxId` (`ai-receipt-core.ts:439`),
 and the form already refuses a WHT amount without them. **No OCR work is
 needed** — the input exists.
 
-What is missing is only: somewhere to keep the decision, a way for accounting to
-make it, and the send using it.
+What is missing is only: somewhere to keep the decision, a way for people to make
+it, and the send using it.
 
 ---
 
@@ -41,13 +41,13 @@ make it, and the send using it.
 
 ---
 
-## Task 1: The rule
+## Task 1: The rule — *done 2026-09-08*
 
 **Files:**
 - Create: `src/lib/clr/wht-pnd-core.ts`
 - Test: `src/lib/clr/wht-pnd-core.test.ts`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 import assert from "node:assert/strict";
@@ -88,12 +88,12 @@ test("each type names the vendor accounting clears", () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests and watch them fail**
+- [x] **Step 2: Run the tests and watch them fail**
 
 Run: `npm test 2>&1 | grep -E "^# (pass|fail)"`
 Expected: `# fail 5` — the module does not exist.
 
-- [ ] **Step 3: Write the rule**
+- [x] **Step 3: Write the rule**
 
 ```ts
 /**
@@ -123,16 +123,24 @@ export function suggestPndType(taxId: string | null | undefined): PndType | null
 }
 ```
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 Run: `npm test 2>&1 | grep -E "^# (pass|fail)"` — expected `# fail 0`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/lib/clr/wht-pnd-core.ts src/lib/clr/wht-pnd-core.test.ts
 git commit -m "feat(ap-3): the payee's tax id suggests a ภ.ง.ด. type"
 ```
+
+**Built with one test the plan did not list.** A thirteen-*character* string is
+not a thirteen-*digit* id: `01055000000O1` has a letter in it, and stripping
+non-digits leaves twelve. Counting the raw length instead would have read that
+leading zero and called the payee a company. The module also carries `PND_LABEL`
+for the two editors, so the Thai wording is written once.
+
+1336 tests pass.
 
 ---
 
