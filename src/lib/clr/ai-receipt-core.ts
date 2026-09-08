@@ -1,4 +1,5 @@
 import type { ReceiptExtractResult } from "./slip-verify";
+import { resolveSellerTaxId } from "@/lib/clr/seller-tax-id";
 
 /**
  * Pure prompt text + response parsing for AI receipt reading — no IO, no
@@ -32,6 +33,12 @@ export interface ReceiptDoc extends ReceiptExtractResult {
    * the attachment. Absent on the non-AI (Tesseract) path.
    */
   dateText?: string | null;
+  /**
+   * The seller's branch exactly as printed — "สำนักงานใหญ่", "สาขาที่ 00001".
+   * `taxBranchCode()` turns it into the five-digit code BC keeps; the raw
+   * wording is carried so a reviewer can see what was read.
+   */
+  taxBranchText?: string | null;
   /**
    * How many model entries were folded into this row. Absent on a document that
    * arrived as one entry; set when a multi-page document was answered per page,
@@ -113,14 +120,48 @@ export const RECEIPT_SYSTEM = [
   "  reference or tracking code on it. Never answer with the wording that appears on the",
   "  most lines: on a shipping receipt of thirty lines at 19.00 and one line at 165.00,",
   "  the 165.00 line is the answer and the repeated 19.00 wording is the wrong one.",
-  "- docNo: that document's own document / tax-invoice number; for a slip, its reference no.",
+  "- docNo: the TAX INVOICE number — the one labelled เลขที่ใบกำกับ, เลขที่ใบกำกับภาษี",
+  "  or \"Tax Invoice No.\". It is what the Revenue Department files this document under,",
+  "  and it is usually short and prefixed, like \"IV26080177\".",
+  "  Many invoices also print a separate system reference — เลขที่เอกสาร, \"Document No.\",",
+  "  \"Ref\" — a long code such as \"260818NRSH6Y8Q\". That is NOT this field. When the",
+  "  page shows both, answer the tax invoice number every time.",
+  "  For a slip, its reference no.",
   "- amountBeforeVat, vat, wht: numbers in THB (no commas). If the document lists several",
   "  line items, amountBeforeVat and vat must reflect the TOTAL of that WHOLE document (the",
   "  grand total across all its lines) — NOT just the amount of the largest line item chosen",
   '  above for description. wht = ภาษีหัก ณ ที่จ่าย amount. For a "slip", amountBeforeVat is',
   "  the transferred amount and vat and wht are null.",
-  "- taxId: payee 13-digit tax id, digits only.",
-  "- payeeName, payeeAddress: the seller/payee name and address (original language).",
+  "- payeeName, payeeAddress: the SELLER — the business that issued this invoice",
+  "  and is being paid. Its name and address, in the original language. On a Thai tax",
+  "  invoice this is the letterhead at the top, not the block addressed to a customer.",
+  "- taxId: the 13-digit tax id OF THAT SAME COMPANY — the one you just answered in",
+  "  payeeName. Digits only.",
+  "  A tax invoice prints two of these and they are easy to swap. The other one belongs",
+  "  to the CUSTOMER being billed — the block headed \"ลูกค้า\", \"Customer\" or \"Bill To\",",
+  "  which is the company paying, not the one being paid. Never answer with that number.",
+  "  If you cannot tell which of the two belongs to the seller, answer null: a wrong tax",
+  "  id here is filed with the Revenue Department against the wrong company.",
+  "- buyerTaxId: the OTHER one — the 13-digit tax id in the customer block, the company",
+  "  being billed. Digits only.",
+  "  A Thai tax invoice normally carries TWO 13-digit tax ids: the seller's in the",
+  "  letterhead and the customer's in the block addressed to them. Look for both before",
+  "  answering either, including on a page that is rotated or lightly scanned — they are",
+  "  often set in small type. Fill both fields whenever both are on the page; we check",
+  "  them against each other, so an extra number costs nothing and a missing one loses",
+  "  the check.",
+  "  If you find only one and cannot tell whose it is, put it in buyerTaxId and leave",
+  "  taxId null. Naming it as the seller's when it is not is the one answer that does",
+  "  damage.",
+  "- taxBranchText: the branch of that same seller, copied exactly as printed —",
+  "  \"สำนักงานใหญ่\", \"สาขาที่ 00001\", \"Head Office\". It sits with the seller's name,",
+  "  address and tax id, usually in the letterhead — very often in brackets straight",
+  "  after the company name, like \"บริษัท ก จำกัด (สำนักงานใหญ่)\". This is the branch",
+  "  that ISSUED the invoice.",
+  "  The customer block carries one too, in the same shape, and that one is the buyer's.",
+  "  Take the one attached to the name you answered in payeeName. If you cannot tell",
+  "  answer null: a wrong branch here goes onto a tax filing, and an empty one simply",
+  "  leaves the vendor's own on file.",
   "- branchHint: EVERY entry may carry this, including an \"other\" one. Copy any wording on",
   "  the page that says which shop, store, site or outlet the spending was FOR — a purpose",
   '  line such as "ค่าอุปกรณ์ Dec\'25 สำหรับ Central Khonkaen2", a project or destination',
@@ -137,7 +178,7 @@ export const RECEIPT_SYSTEM = [
 
 export const RECEIPT_USER_TEXT =
   "Extract every document in these pages. Return only a JSON array; each entry has the keys: " +
-  "kind, pages, date, description, docNo, amountBeforeVat, vat, wht, taxId, payeeName, payeeAddress, branchHint " +
+  "kind, pages, date, description, docNo, amountBeforeVat, vat, wht, taxId, buyerTaxId, payeeName, payeeAddress, taxBranchText, branchHint " +
   '(an "other" entry has kind, pages and branchHint only).';
 
 /** An account the line's branch is allowed to charge (§6 decides the set). */
@@ -251,7 +292,9 @@ type AiJson = {
   vat?: number | string | null;
   wht?: number | string | null;
   taxId?: string | null;
+  buyerTaxId?: string | null;
   payeeName?: string | null;
+  taxBranchText?: string | null;
   payeeAddress?: string | null;
   branchHint?: string | null;
 };
@@ -436,8 +479,11 @@ function toDoc(entry: AiJson, kind: ReceiptKind): ReceiptDoc {
     description: toStr(entry.description),
     docNo: toStr(entry.docNo),
     wht: toNum(entry.wht),
-    taxId: entry.taxId ? String(entry.taxId).replace(/\D/g, "").slice(0, 13) || null : null,
+    taxId: resolveSellerTaxId(entry.taxId, entry.buyerTaxId),
     payeeName: toStr(entry.payeeName),
+    // Kept verbatim; taxBranchCode() turns it into the five-digit code, the
+    // way thaiPrintedDate() handles the printed date.
+    taxBranchText: toStr(entry.taxBranchText),
     payeeAddress: toStr(entry.payeeAddress),
     total: beforeVat != null ? Math.round((beforeVat + (vat ?? 0)) * 100) / 100 : null,
     vat,

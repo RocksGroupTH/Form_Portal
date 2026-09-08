@@ -10,6 +10,15 @@ export interface ClrApprover {
   staffId: number | null;
   displayName: string | null;
   isActive: boolean;
+  /**
+   * The approver's HR photo, or null when this row has no staff id.
+   *
+   * Derived, not stored: `AccClearAdvanceApprover` keeps the staff id, and
+   * `/api/hr/photo/{staffId}` is the cached endpoint AP-2's approver list already
+   * uses. Without it the settings screen drew initials for everyone while the
+   * picker right above it showed faces — the same people, twice, differently.
+   */
+  photoUrl: string | null;
 }
 
 /** The approver role that owns a given step. MANAGER is resolved from HR, not here. */
@@ -39,6 +48,7 @@ export async function listClrApprovers(
     staffId: (r.StaffId as number) ?? null,
     displayName: (r.DisplayName as string) ?? null,
     isActive: !!r.IsActive,
+    photoUrl: (r.StaffId as number) != null ? `/api/hr/photo/${r.StaffId as number}` : null,
   }));
 }
 
@@ -74,6 +84,7 @@ export async function listAllClrApprovers(): Promise<ClrApprover[]> {
     staffId: (r.StaffId as number) ?? null,
     displayName: (r.DisplayName as string) ?? null,
     isActive: !!r.IsActive,
+    photoUrl: (r.StaffId as number) != null ? `/api/hr/photo/${r.StaffId as number}` : null,
   }));
 }
 

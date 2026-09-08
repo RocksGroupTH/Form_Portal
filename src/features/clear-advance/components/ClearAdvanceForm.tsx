@@ -2,8 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
+import { PND_LABEL, suggestPndType } from "@/lib/clr/wht-pnd-core";
+import { taxBranchCode } from "@/lib/clr/tax-branch-core";
 import {
-  Check, Paperclip, Camera, X, Plus, Trash2, Banknote, User, Mail, FileText,
+  Check, Paperclip, Camera, X, Plus, Trash2, Banknote, User, Mail, FileText, Printer,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
@@ -100,6 +102,13 @@ interface LineRow {
   amountBeforeVat: string;
   vatAmount: string;
   whtAmount: string;
+  /** The seller off the tax invoice, as the OCR read it. Accounting can correct
+   *  it at the ACCOUNT step; it becomes the VAT line's tax fields in BC. */
+  taxId: string;
+  payeeName: string;
+  payeeAddress: string;
+  /** The seller's branch as its five-digit code — 00000 is the head office. */
+  taxBranchCode: string;
 }
 
 /** One editable WHT-certificate row in state. */
@@ -111,6 +120,8 @@ interface WhtRow {
   taxId: string;
   payeeName: string;
   payeeAddress: string;
+  /** "" = nobody has chosen yet, which is what the row shows and what it saves. */
+  pndType: "PND3" | "PND53" | "";
   amount: string;
   whtAmount: string;
 }
@@ -119,6 +130,7 @@ function emptyLine(): LineRow {
   return {
     expenseDate: "", docNo: "", glAccountNo: "", glAccountName: "",
     description: "", branchCode: "", amountBeforeVat: "", vatAmount: "", whtAmount: "",
+    taxId: "", payeeName: "", payeeAddress: "", taxBranchCode: "",
   };
 }
 
@@ -167,6 +179,10 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
     return it.map((x) => ({
       id: x.id,
       sourceFileId: x.sourceFileId ?? undefined,
+      taxId: x.taxId ?? "",
+      payeeName: x.payeeName ?? "",
+      payeeAddress: x.payeeAddress ?? "",
+      taxBranchCode: x.taxBranchCode ?? "",
       expenseDate: x.expenseDate ?? "",
       docNo: x.docNo ?? "",
       glAccountNo: x.glAccountNo ?? "",
@@ -187,6 +203,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       taxId: w.taxId ?? "",
       payeeName: w.payeeName ?? "",
       payeeAddress: w.payeeAddress ?? "",
+      pndType: w.pndType ?? "",
       amount: w.amount != null ? String(w.amount) : "",
       whtAmount: w.whtAmount != null ? String(w.whtAmount) : "",
     })),
@@ -199,6 +216,8 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   // next to each field and clear themselves as the field is fixed (errors are
   // derived from live state, not stored). rootRef locates the first bad field.
   const [submitAttempted, setSubmitAttempted] = useState(false);
+  /** The "print AP-3.1 before you send" reminder. */
+  const [printNotice, setPrintNotice] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
   // Unsaved-change tracking (P1.2). Dirty = the requester edited a field since the
@@ -445,12 +464,24 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   function addWht() {
     setWhtRows((p) => [...p, {
       expenseDate: "", docNo: "", description: "", taxId: "",
-      payeeName: "", payeeAddress: "", amount: "", whtAmount: "",
+      payeeName: "", payeeAddress: "", pndType: "", amount: "", whtAmount: "",
     }]);
   }
   function removeWht(idx: number) { setWhtRows((p) => p.filter((_, i) => i !== idx)); }
   function updateWht(idx: number, patch: Partial<WhtRow>) {
     setWhtRows((p) => p.map((w, i) => (i === idx ? { ...w, ...patch } : w)));
+  }
+
+  /**
+   * Typing a tax id fills the ภ.ง.ด. type — but only on a row where nobody has
+   * chosen one. Re-seeding on every keystroke would mean correcting a typo in
+   * the id silently discards a deliberate choice, and the row is a decision of
+   * record: it picks the vendor accounting has to clear.
+   */
+  function updateWhtTaxId(idx: number, taxId: string) {
+    setWhtRows((p) => p.map((w, i) => (
+      i === idx ? { ...w, taxId, pndType: w.pndType || (suggestPndType(taxId) ?? "") } : w
+    )));
   }
 
   /** Prefill the WHT certificate table from the expense lines that carry WHT. */
@@ -464,6 +495,9 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       taxId: "",
       payeeName: "",
       payeeAddress: "",
+      // No tax id on an expense line, so there is nothing to suggest from yet.
+      // It fills in as soon as one is typed.
+      pndType: "",
       amount: l.amountBeforeVat,
       whtAmount: l.whtAmount,
     })));
@@ -513,6 +547,10 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
               whtAmount: wht,
               netAmount: round2(total - wht),
               sortOrder: i,
+              taxId: l.taxId.trim() || null,
+              payeeName: l.payeeName.trim() || null,
+              payeeAddress: l.payeeAddress.trim() || null,
+              taxBranchCode: l.taxBranchCode.trim() || null,
               sourceFileId: l.sourceFileId ?? null,
             };
           }),
@@ -527,6 +565,9 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
             taxId: w.taxId.trim() || null,
             payeeName: w.payeeName.trim() || null,
             payeeAddress: w.payeeAddress.trim() || null,
+            // What the row shows is what it saves — the suggestion is seeded into
+            // the visible value, never inferred behind the user's back at save.
+            pndType: w.pndType || null,
             amount: num(w.amount) || null,
             whtAmount: num(w.whtAmount) || null,
             netAmount: round2(num(w.amount) - num(w.whtAmount)),
@@ -559,6 +600,24 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
    * message inline and focus the first bad field. Server validation stays the
    * source of truth — these messages match it (P1.1: no client/server conflict).
    */
+  /**
+   * Branches on saved lines that the picker would no longer offer.
+   *
+   * `options/branches` returns only the ones BC has not blocked, so a line
+   * holding a code outside that list is holding one that was blocked or deleted
+   * after it was chosen. Empty while the list is still loading — a slow fetch
+   * must not read as "every branch is blocked".
+   */
+  const staleBranches = useMemo(() => {
+    if (branches.length === 0) return [];
+    const known = new Set(branches.map((b) => b.code));
+    const out: string[] = [];
+    for (const l of lines) {
+      if (l.branchCode && !known.has(l.branchCode) && !out.includes(l.branchCode)) out.push(l.branchCode);
+    }
+    return out;
+  }, [branches, lines]);
+
   function collectErrors(): { key: string; message: string }[] {
     const errs: { key: string; message: string }[] = [];
     if (!brandCode) errs.push({ key: "brand", message: "กรุณาเลือกแบรนด์" });
@@ -571,6 +630,22 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
         if (!l.expenseDate) { errs.push({ key: "lines", message: "มีรายการค่าใช้จ่ายที่ยังไม่ได้ระบุวันที่" }); break; }
         if (!glForced && !l.glAccountNo) { errs.push({ key: "lines", message: "มีรายการค่าใช้จ่ายที่ยังไม่ได้เลือกหมวด (รายการ)" }); break; }
         if (!(num(l.amountBeforeVat) > 0)) { errs.push({ key: "lines", message: "มีรายการที่จำนวนเงินก่อน VAT ไม่ถูกต้อง" }); break; }
+        /* The OCR review card refuses to save a row without a branch, but a row
+           added by hand with "เพิ่มแถว" never passes through it. Same rule, one
+           step later, so there is no way around it. */
+        if (!l.branchCode) { errs.push({ key: "lines", message: "มีรายการที่ยังไม่ได้เลือกสาขาที่ใช้จ่าย" }); break; }
+        /* A branch that is no longer offered was blocked or removed in BC after
+           this draft was saved — the picker never offers a blocked one, so a
+           value that is not in the list cannot have been chosen today. Caught
+           here rather than at the send, where it surfaces as a badge only the
+           accountant sees, on a request the requester can no longer edit. */
+        if (staleBranches.includes(l.branchCode)) {
+          errs.push({
+            key: "lines",
+            message: `สาขา ${l.branchCode} ถูกปิดใช้งาน/Block ใน BC แล้ว — กรุณาเลือกสาขาใหม่`,
+          });
+          break;
+        }
       }
     }
     if (whtMismatch) errs.push({ key: "wht", message: "ยอดภาษีหัก ณ ที่จ่ายในตารางใบรับรอง ไม่ตรงกับยอดในรายการค่าใช้จ่าย" });
@@ -599,6 +674,80 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       onSaved(id);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /**
+   * Print AP-3.1 from the form.
+   *
+   * The sheet is what the employee signs and staples in front of the receipts,
+   * so it may only be printed from data that is complete and stored: the same
+   * `collectErrors` the submit runs, then a draft save, then the sheet — which
+   * reads the request back from the server and would otherwise print whatever
+   * was last persisted rather than what is on screen.
+   *
+   * The tab is opened before the save, inside the click, because a browser
+   * blocks `window.open` that arrives after an await.
+   */
+  /**
+   * The reminder before sending.
+   *
+   * AP-3.1 is the sheet the receipts are stapled behind — accounting gets paper,
+   * not a screen — and the moment it is easiest to forget is the moment the form
+   * leaves. Validation runs first so the notice only appears on a request that
+   * can actually be sent; reading a reminder and then being told the form is
+   * incomplete would be the wrong order.
+   *
+   * A notice, not a gate: it does not check that anything was printed. The
+   * button to do it is simply there while the thought is.
+   */
+  function requestSubmit() {
+    const errs = collectErrors();
+    if (errs.length) {
+      handleSubmit(); // same validation, same scroll-to-field, same message
+      return;
+    }
+    setPrintNotice(true);
+  }
+
+  async function handlePrint() {
+    const errs = collectErrors();
+    if (errs.length) {
+      setSubmitAttempted(true);
+      const firstKey = errs[0].key;
+      requestAnimationFrame(() => {
+        const box = rootRef.current?.querySelector<HTMLElement>(`[data-err="${firstKey}"]`);
+        if (!box) return;
+        box.scrollIntoView({ behavior: "smooth", block: "center" });
+        const focusable = box.querySelector<HTMLElement>("input, select, textarea, button");
+        (focusable ?? box).focus?.();
+      });
+      toast.error(
+        errs.length === 1
+          ? errs[0].message
+          : `กรอกข้อมูลให้ครบ ${errs.length} รายการก่อนจึงจะพิมพ์ได้`,
+      );
+      return;
+    }
+
+    const tab = window.open("", "_blank");
+    setSaving(true);
+    try {
+      const id = await persist();
+      onSaved(id);
+      const href = `/request/clear-advance/${id}/print`;
+      if (tab) {
+        tab.location.href = href;
+      } else {
+        // Pop-up blocked: the draft is saved either way, so say where it went
+        // rather than losing the click.
+        toast.success("บันทึกแบบร่างแล้ว — เปิดหน้าพิมพ์ไม่ได้ (เบราว์เซอร์บล็อก) กดปุ่มพิมพ์อีกครั้ง");
+      }
+    } catch (e) {
+      tab?.close();
+      toast.error(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ — ยังพิมพ์ไม่ได้");
     } finally {
       setSaving(false);
     }
@@ -723,6 +872,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
     dateText?: string | null;
     description: string | null; docNo: string | null;
     wht: number | null; taxId: string | null; payeeName: string | null; payeeAddress: string | null;
+    taxBranchText: string | null;
     total: number | null; vat: number | null; beforeVat: number | null;
   }
 
@@ -825,6 +975,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           taxId: r.taxId ?? "",
           payeeName: r.payeeName ?? "",
           payeeAddress: r.payeeAddress ?? "",
+          taxBranchText: r.taxBranchText ?? "",
           totalAmount: r.total != null ? String(r.total) : "",
         }));
       }
@@ -851,7 +1002,12 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
     setOcrRows(null);
     setOcrFileIds([]);
     if (ids.length === 0) return;
+    // Both boxes, because either can start a read: the reader decides what a page
+    // is, not the box it was dropped in. Clearing only the receipt list left a
+    // cancelled slip on screen after it had been deleted from the server — and a
+    // refund proof that is required to submit, sitting there already gone.
     setFiles((prev) => prev.filter((f) => !ids.includes(f.id)));
+    setRefundProofFiles((prev) => prev.filter((f) => !ids.includes(f.id)));
     await Promise.all(
       ids.map((fileId) =>
         fetch(`/api/request/clear-advance/requests/${requestId}/files?fileId=${fileId}`, {
@@ -910,6 +1066,15 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           amountBeforeVat: r.amountBeforeVat,
           vatAmount: r.vatAmount,
           whtAmount: r.whtAmount,
+          // The seller the OCR read off this invoice. It used to reach the
+          // confirm modal and go no further for the line — kept only where a WHT
+          // row happened to exist — which is why a VAT receipt without
+          // withholding had no seller to send.
+          taxId: r.taxId,
+          payeeName: r.payeeName,
+          payeeAddress: r.payeeAddress,
+          // The printed wording becomes the code by rule here, not in the model.
+          taxBranchCode: taxBranchCode(r.taxBranchText) ?? "",
         };
       }
       return next;
@@ -928,6 +1093,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           taxId: r.taxId,
           payeeName: r.payeeName,
           payeeAddress: r.payeeAddress,
+          pndType: (suggestPndType(r.taxId) ?? "") as WhtRow["pndType"],
           amount: r.amountBeforeVat || r.totalAmount,
           whtAmount: r.whtAmount,
         })),
@@ -1218,7 +1384,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                 <Th w={120}>วันที่</Th>
                 <Th w={210}>เลขที่เอกสาร</Th>
                 {/* Branch comes before the G/L account: it filters the account list. */}
-                <Th w={190}>สาขา</Th>
+                <Th w={190}>สาขา *</Th>
                 <Th w={220}>รายการ</Th>
                 <Th w={240}>รายละเอียด</Th>
                 <Th w={100} right>ก่อน VAT</Th>
@@ -1250,6 +1416,13 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                       <BranchPicker options={branches} value={l.branchCode}
                         disabled={readOnly || !brandCode} noBrand={!brandCode}
                         onPick={(code) => updateLine(idx, { branchCode: code })} />
+                      {/* Said on the row that holds it, not only in the toast at
+                          submit: the fix is a click away here. */}
+                      {staleBranches.includes(l.branchCode) && (
+                        <span className="block text-[10px] mt-0.5" style={{ color: "var(--color-danger)" }}>
+                          สาขานี้ถูก Block ใน BC — เลือกใหม่
+                        </span>
+                      )}
                     </Td>
                     <Td>
                       {glForced ? (
@@ -1352,10 +1525,15 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                     value={l.docNo} disabled={readOnly} placeholder="—"
                     onChange={(e) => updateLine(idx, { docNo: e.target.value })} />
                 </MField>
-                <MField label="สาขา">
+                <MField label="สาขา *">
                   <BranchPicker options={branches} value={l.branchCode}
                     disabled={readOnly || !brandCode} noBrand={!brandCode}
                     onPick={(code) => updateLine(idx, { branchCode: code })} />
+                  {staleBranches.includes(l.branchCode) && (
+                    <span className="block text-[11px] mt-1" style={{ color: "var(--color-danger)" }}>
+                      สาขานี้ถูก Block ใน BC — เลือกใหม่
+                    </span>
+                  )}
                 </MField>
                 <MField label="รายการ">
                   {glForced ? (
@@ -1450,6 +1628,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                   <Th w={130}>เลขผู้เสียภาษี *</Th>
                   <Th w={150}>ชื่อผู้รับ *</Th>
                   <Th w={170}>ที่อยู่</Th>
+                  <Th w={110}>ภ.ง.ด.</Th>
                   <Th w={100} right>ค่าใช้จ่าย</Th>
                   <Th w={90} right>WHT</Th>
                   {!readOnly && <Th w={34}> </Th>}
@@ -1458,7 +1637,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
               <tbody>
                 {whtRows.length === 0 ? (
                   <tr>
-                    <Td colSpan={readOnly ? 8 : 9}>
+                    <Td colSpan={readOnly ? 9 : 10}>
                       <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
                         ยังไม่มีรายการ — กด “ดึงจากรายการ” หรือ “เพิ่มแถว”
                       </span>
@@ -1480,7 +1659,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                     <Td>
                       <input className={cellClass} style={{ ...cellStyle, width: "100%" }}
                         value={w.taxId} disabled={readOnly} placeholder="เลข 13 หลัก"
-                        onChange={(e) => updateWht(idx, { taxId: e.target.value })} />
+                        onChange={(e) => updateWhtTaxId(idx, e.target.value)} />
                     </Td>
                     <Td>
                       <input className={cellClass} style={{ ...cellStyle, width: "100%" }}
@@ -1491,6 +1670,18 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                       <input className={cellClass} style={{ ...cellStyle, width: "100%" }}
                         value={w.payeeAddress} disabled={readOnly} placeholder="—"
                         onChange={(e) => updateWht(idx, { payeeAddress: e.target.value })} />
+                    </Td>
+                    <Td>
+                      {/* Picks the BC vendor accounting clears against. Suggested
+                          from the tax id, never fixed by it: a 0-prefixed id can
+                          belong to a foreign individual. */}
+                      <select className={cellClass} style={{ ...cellStyle, width: "100%" }}
+                        value={w.pndType} disabled={readOnly}
+                        onChange={(e) => updateWht(idx, { pndType: e.target.value as WhtRow["pndType"] })}>
+                        <option value="">— ยังไม่ระบุ —</option>
+                        <option value="PND3">{PND_LABEL.PND3}</option>
+                        <option value="PND53">{PND_LABEL.PND53}</option>
+                      </select>
                     </Td>
                     <Td right>
                       <input type="number" min="0" step="0.01" className={`${cellClass} text-right`} style={{ ...cellStyle, width: "100%" }}
@@ -1558,7 +1749,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                 <MField label="เลขผู้เสียภาษี *">
                   <input className={fieldClass} style={fieldStyle} inputMode="numeric"
                     value={w.taxId} disabled={readOnly} placeholder="เลข 13 หลัก"
-                    onChange={(e) => updateWht(idx, { taxId: e.target.value })} />
+                    onChange={(e) => updateWhtTaxId(idx, e.target.value)} />
                 </MField>
                 <MField label="ชื่อผู้รับ *">
                   <input className={fieldClass} style={fieldStyle}
@@ -1569,6 +1760,15 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                   <input className={fieldClass} style={fieldStyle}
                     value={w.payeeAddress} disabled={readOnly} placeholder="—"
                     onChange={(e) => updateWht(idx, { payeeAddress: e.target.value })} />
+                </MField>
+                <MField label="ภ.ง.ด.">
+                  <select className={fieldClass} style={fieldStyle}
+                    value={w.pndType} disabled={readOnly}
+                    onChange={(e) => updateWht(idx, { pndType: e.target.value as WhtRow["pndType"] })}>
+                    <option value="">— ยังไม่ระบุ —</option>
+                    <option value="PND3">{PND_LABEL.PND3}</option>
+                    <option value="PND53">{PND_LABEL.PND53}</option>
+                  </select>
                 </MField>
                 <div className="grid grid-cols-2 gap-2">
                   <MField label="ค่าใช้จ่าย">
@@ -1654,10 +1854,48 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
 
       {!readOnly && (
         <div className="flex items-center justify-end gap-2">
+          {/* secondary, not ghost: ghost's border is transparent, so the button
+              had no edge while the two beside it did. */}
+          <Button variant="secondary" icon={<Printer size={14} />} onClick={handlePrint}
+            loading={saving} disabled={submitting}>
+            พิมพ์ AP-3.1
+          </Button>
           <Button variant="secondary" onClick={handleSave} loading={saving} disabled={submitting}>บันทึกแบบร่าง</Button>
-          <Button variant="primary" onClick={handleSubmit} loading={submitting} disabled={saving}>ส่งคำขอ</Button>
+          <Button variant="primary" onClick={requestSubmit} loading={submitting} disabled={saving}>ส่งคำขอ</Button>
         </div>
       )}
+
+      <Dialog
+        open={printNotice}
+        onOpenChange={(o) => { if (!o && !submitting) setPrintNotice(false); }}
+        title="ก่อนส่งคำขอ — อย่าลืมพิมพ์ AP-3.1"
+        scrollable={false}
+      >
+        <div className="px-5 py-4 flex flex-col gap-4">
+          <p className="text-[13px] m-0" style={{ color: "var(--text-secondary)" }}>
+            พิมพ์แบบฟอร์ม <b style={{ color: "var(--text-heading)" }}>AP-3.1</b> ให้ผู้ขอเซ็น
+            แล้ว <b style={{ color: "var(--text-heading)" }}>แนบไปกับใบเสร็จตัวจริงส่งแผนกบัญชี</b> —
+            ระบบส่งได้เฉพาะข้อมูล ตัวเอกสารยังต้องเดินทางเป็นกระดาษ
+          </p>
+          <p className="text-[12px] m-0 px-3 py-2 rounded-lg"
+            style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
+            พิมพ์ตอนนี้ได้เลย หน้าพิมพ์จะเปิดในแท็บใหม่ · หรือพิมพ์ทีหลังจากหน้ารายละเอียดคำขอก็ได้
+          </p>
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="ghost" size="sm" disabled={submitting} onClick={() => setPrintNotice(false)}>
+              ยกเลิก
+            </Button>
+            <Button variant="secondary" size="sm" icon={<Printer size={14} />} disabled={submitting}
+              onClick={handlePrint}>
+              พิมพ์ AP-3.1
+            </Button>
+            <Button variant="primary" size="sm" loading={submitting}
+              onClick={() => { setPrintNotice(false); void handleSubmit(); }}>
+              ส่งคำขอ
+            </Button>
+          </div>
+        </div>
+      </Dialog>
 
       {/* Confirm popup for file delete */}
       <Dialog

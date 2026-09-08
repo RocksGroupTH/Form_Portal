@@ -1,5 +1,6 @@
 import type { PpapJournalPayload, PpapJournalLinePayload } from "@/lib/acc/erp-ppap-payload";
 import type { BranchLookupEntry } from "@/lib/erp/location-lookup-core";
+import { PND_VENDOR_NO, type PndType } from "@/lib/clr/wht-pnd-core";
 
 export interface ClrJournalConfig {
   /** The vendor AP-2 debited — this clearing credits the same one. */
@@ -16,6 +17,15 @@ export interface ClrJournalItem {
   whtAmount: number;
   branchCode: string | null;
   description?: string | null;
+  /** The tax invoice's own number — becomes `Tax Invoice No.` on its VAT line. */
+  docNo?: string | null;
+  /** The seller who issued it — becomes the VAT line's name and VAT registration. */
+  taxId?: string | null;
+  payeeName?: string | null;
+  /** The seller's branch, five digits — becomes `Branch Code` on the VAT line. */
+  taxBranchCode?: string | null;
+  /** The seller's BC vendor — becomes `Tax Vendor No.` on the VAT line. */
+  taxVendorNo?: string | null;
   /** The date printed on this line's receipt — decides the Z-ADJ marker (§4.1). */
   expenseDate?: string | null;
 }
@@ -25,6 +35,28 @@ export interface ClrJournalInput {
   advanceAmount: number;
   items: ClrJournalItem[];
   config: ClrJournalConfig;
+  /**
+   * BU → G/L account, for expense lines only (`AccClrBuGlMap`).
+   *
+   * A store the company owns books the expense to the account it was coded to; a
+   * franchised or managed one books it to a receivable, because the money is
+   * charged back. The BU dimension is what says which, and it is already on
+   * every line.
+   *
+   * Empty map = today's behaviour, which is also what an unmapped BU gets: COCO
+   * has no row because "บัญชีตาม คชจ" is the absence of a rule, and neither do
+   * the four BUs nobody has ruled on yet.
+   */
+  buGlAccounts?: Record<string, string>;
+  /**
+   * BRANCH → G/L account, also expense lines only (`AccClrBranchGlMap`).
+   *
+   * Checked before the BU map, being the more specific of the two. It exists
+   * because some branches have no BU to key on: RFM ("Rocks Malaysia") is a
+   * BRANCH dimension value with no Location behind it, so `buCode` resolves to
+   * nothing and a BU rule can never match it.
+   */
+  branchGlAccounts?: Record<string, string>;
   departmentCode: string;
   /** Fallback branch for lines that have no per-item branch (VAT, WHT, advance reversal, bank diff). */
   defaultBranchCode?: string | null;
@@ -47,9 +79,33 @@ export interface ClrJournalInput {
    * as before this existed.
    */
   branchBu?: ReadonlyMap<string, BranchLookupEntry>;
+  /**
+   * The WHT payees on this clearing, each with the ภ.ง.ด. type somebody decided
+   * (spec §5.3a). Only the type is read here: the amounts go to BC as 0 and the
+   * payee's identity lives on the certificate, not the journal.
+   */
+  whtPayees?: readonly { pndType?: PndType | null }[];
 }
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * Constant on every AP-3 VAT line (sheet row 8; VATHO confirmed by the user,
+ * 2026-09-08). Standard Gen. Journal Line fields — no dependency needed.
+ */
+const VAT_GEN_POSTING_TYPE = "Purchase";
+const VAT_BUS_POSTING_GROUP = "VATHO";
+const VAT_PROD_POSTING_GROUP = "FVAT";
+
+/** BC field widths, cut here rather than rejected there. */
+const TAX_INVOICE_NO_MAX = 35;
+const TAX_INVOICE_NAME_MAX = 250;
+
+/** Trimmed to `max`, or undefined when there is nothing to send. */
+function taxText(v: string | null | undefined, max: number): string | undefined {
+  const t = (v ?? "").trim();
+  return t ? t.slice(0, max) : undefined;
+}
 
 /** The Z-ADJ dimension value for a prior-period adjustment (spec §4.1). The
  *  requirements call it "MS"; the value that exists in BC is `M-ADJ`. */
@@ -81,6 +137,52 @@ export function isPriorPeriod(expenseDate: string | null | undefined, postingDat
  * to carry 0 so accounting matches and clears them by hand in BC; CU 50263 only inserts
  * (never posts), and BC enforces balance at posting time, so an unbalanced batch is fine.
  */
+/**
+ * Which BC document type a clearing is, from the direction of the money.
+ *
+ * The employee returning what they did not spend is a **Refund**; the company
+ * paying them the shortfall is a **Payment** (user, 2026-09-09). `bankAmount` is
+ * the advance less what was actually spent, so its sign is the whole rule: money
+ * coming back is positive, money going out is negative.
+ *
+ * A clearing that comes out exactly even is a Refund of nothing rather than a
+ * Payment of nothing — no money leaves the company, and the earlier version of
+ * this rule called that case a payment where nothing was paid.
+ */
+/**
+ * The date the journal posts on, which is the date the money actually moved.
+ *
+ * Same sign, same two cases as the document type (user, 2026-09-09). When the
+ * employee returns what they did not spend, the movement is their transfer back,
+ * so the journal takes `refundTransferDate` — the date on the slip they
+ * attached. When the company pays the shortfall, the movement is finance's own
+ * run, so it takes `paymentDate` — the Friday accounting sets at their step.
+ *
+ * Posting on the other one would date the entry to something that did not
+ * happen: a refund dated to a payment run nobody made, or a payment dated to a
+ * transfer the employee never sent.
+ *
+ * Both are required upstream — the refund slip and its date to submit, the
+ * payment date to approve — so the fallbacks are for records that predate those
+ * rules rather than a normal path.
+ */
+export function journalPostingDate(
+  bankAmount: number,
+  refundTransferDate: string | null | undefined,
+  paymentDate: string | null | undefined,
+  today: string,
+): string {
+  const refund = (refundTransferDate ?? "").trim();
+  const payment = (paymentDate ?? "").trim();
+  return bankAmount < 0
+    ? payment || refund || today
+    : refund || payment || today;
+}
+
+export function journalDocumentType(bankAmount: number): "Refund" | "Payment" {
+  return bankAmount < 0 ? "Payment" : "Refund";
+}
+
 export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJournalPayload {
   const { config: c, items, requestNo, postingDate, departmentCode } = input;
   const advanceVendorNo = c.advanceVendorNo?.trim() ?? "";
@@ -124,9 +226,7 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
 
   const actualNet = r2(items.reduce((s, it) => s + it.amountBeforeVat + (it.vatAmount || 0) - (it.whtAmount || 0), 0));
   const bankAmount = r2(input.advanceAmount - actualNet);
-  // Spec §3.2: Refund when the employee returns money, Payment when the company pays more.
-  // It describes the whole clearing, so every line carries the same value.
-  const documentType = bankAmount > 0 ? "Refund" : "Payment";
+  const documentType = journalDocumentType(bankAmount);
 
   const glLine = (
     accountNo: string,
@@ -145,32 +245,118 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
     ...(resolveBu(branchCode) ? { buCode: resolveBu(branchCode) } : null),
   });
 
+  /**
+   * The account this expense posts to: its branch's, else its BU's, else the one
+   * it was coded to. Branch first because it names one shop where the BU names a
+   * kind of shop, and because some branches have no BU at all.
+   */
+  const expenseGl = (it: ClrJournalItem): string => {
+    const branch = (it.branchCode ?? "").trim().toUpperCase();
+    const byBranch = branch ? (input.branchGlAccounts ?? {})[branch] : undefined;
+    if ((byBranch ?? "").trim()) return byBranch!.trim();
+    const bu = resolveBu(it.branchCode);
+    const byBu = bu ? (input.buGlAccounts ?? {})[bu] : undefined;
+    return (byBu ?? "").trim() || it.glAccountNo;
+  };
+
   const lines: PpapJournalLinePayload[] = [];
-  let vatTotal = 0, whtTotal = 0;
+  let whtTotal = 0;
 
   for (const it of items) {
+    const adj = isPriorPeriod(it.expenseDate, postingDate) ? PRIOR_PERIOD_ADJ_CODE : undefined;
+
     if (r2(it.amountBeforeVat) !== 0) {
-      lines.push(glLine(
-        it.glAccountNo,
-        it.amountBeforeVat,
-        it.branchCode,
-        it.description,
-        isPriorPeriod(it.expenseDate, postingDate) ? PRIOR_PERIOD_ADJ_CODE : undefined,
-      ));
+      // The expense line, and only it. The VAT, bank, vendor and WHT lines each
+      // point at an account of their own; redirecting those by BU would move
+      // input tax and cash into a receivable.
+      lines.push(glLine(expenseGl(it), it.amountBeforeVat, it.branchCode, it.description, adj));
     }
-    vatTotal += it.vatAmount || 0;
+
+    // One VAT line per invoice, immediately after its own expense line.
+    //
+    // It used to be a single line carrying the sum of every item's VAT. Tax
+    // Invoice No., Date, Base and Name (spec §5.4) each belong to one specific
+    // invoice, and a summed line has no honest value to put in them — so the
+    // split comes first and the keys go on afterwards.
+    //
+    // The line takes its item's own branch, and its BU and Z-ADJ marker with it:
+    // the VAT on a prior-period receipt is part of that same adjustment, and
+    // belongs to the same branch as the expense it was charged on.
+    const vat = r2(it.vatAmount || 0);
+    if (vat > 0) {
+      if (!c.vatInputGlAccountNo) throw new Error("มี VAT แต่ยังไม่ได้ตั้งค่าบัญชีภาษีซื้อ (VAT input) ของแบรนด์นี้");
+      const invoiceNo = taxText(it.docNo, TAX_INVOICE_NO_MAX);
+      const sellerName = taxText(it.payeeName, TAX_INVOICE_NAME_MAX);
+      const sellerTaxId = taxText(it.taxId, 20);
+      const invoiceDate = (it.expenseDate ?? "").trim() || undefined;
+      lines.push({
+        ...glLine(c.vatInputGlAccountNo, vat, it.branchCode, it.description, adj),
+        // The tax block belongs to the VAT line and to no other: a posting group
+        // on an expense, vendor or bank line changes how BC treats it.
+        genPostingType: VAT_GEN_POSTING_TYPE,
+        vatBusPostingGroup: VAT_BUS_POSTING_GROUP,
+        vatProdPostingGroup: VAT_PROD_POSTING_GROUP,
+        // Spread individually: a receipt whose seller nobody filled in sends no
+        // seller keys, so BC keeps whatever is in those fields rather than
+        // having them overwritten with blanks.
+        ...(invoiceNo ? { taxInvoiceNo: invoiceNo } : null),
+        ...(invoiceDate ? { taxInvoiceDate: invoiceDate } : null),
+        // The base is what VAT was charged on, not the VAT itself.
+        taxInvoiceBase: r2(it.amountBeforeVat),
+        ...(sellerName ? { taxInvoiceName: sellerName } : null),
+        ...(sellerTaxId ? { taxVatRegistrationNo: sellerTaxId } : null),
+        // Left out when unknown so BC keeps the vendor card's own branch,
+        // rather than being handed a blank for a tax filing.
+        ...(taxText(it.taxBranchCode, 5) ? { taxBranchCode: taxText(it.taxBranchCode, 5) } : null),
+        // Set first by the codeunit so its OnValidate can fill the name,
+        // branch and VAT registration from the card — the keys above are
+        // applied after and win, so a seller read off the receipt is not
+        // overwritten by the vendor record.
+        ...(taxText(it.taxVendorNo, 20) ? { taxVendorNo: taxText(it.taxVendorNo, 20) } : null),
+      });
+    }
+
     whtTotal += it.whtAmount || 0;
   }
-  vatTotal = r2(vatTotal); whtTotal = r2(whtTotal);
-
-  if (vatTotal > 0) {
-    if (!c.vatInputGlAccountNo) throw new Error("มี VAT แต่ยังไม่ได้ตั้งค่าบัญชีภาษีซื้อ (VAT input) ของแบรนด์นี้");
-    lines.push(glLine(c.vatInputGlAccountNo, vatTotal, null));
-  }
+  whtTotal = r2(whtTotal);
   if (whtTotal > 0) {
-    if (!c.whtPayableGlAccountNo) throw new Error("มี WHT แต่ยังไม่ได้ตั้งค่าบัญชี WHT payable ของแบรนด์นี้");
-    // Spec §3.2: sent as 0 — accounting posts the real WHT by hand in BC.
-    lines.push(glLine(c.whtPayableGlAccountNo, 0, null));
+    // Spec §5.3: a Vendor line at WHT-PND.3 / WHT-PND.53, not a G/L line at the
+    // configured WHT-payable account. Accounting clears these against the
+    // vendor, so the vendor has to be what the line points at.
+    const payees = input.whtPayees ?? [];
+    if (payees.length === 0) {
+      throw new Error(
+        "มีภาษีหัก ณ ที่จ่ายแต่ไม่มีรายการผู้รับเงิน — เพิ่มผู้รับเงินและระบุประเภท ภ.ง.ด. ก่อนส่ง",
+      );
+    }
+    if (payees.some((w) => !w.pndType)) {
+      // Refusing beats guessing. A vendor picked here lands in accounting's
+      // ledger under their name, on a line carrying 0 that is easy to miss.
+      throw new Error(
+        "ยังไม่ได้ระบุประเภท ภ.ง.ด. ของผู้รับเงินบางราย — ระบุที่ขั้นบัญชีก่อนส่ง",
+      );
+    }
+    // One line per distinct type, not per payee: every amount is 0, so a line's
+    // only content is which vendor account has to be cleared, and two payees of
+    // one type would repeat that with nothing added.
+    const types: PndType[] = [];
+    for (const w of payees) {
+      const t = w.pndType as PndType;
+      if (!types.includes(t)) types.push(t);
+    }
+    for (const t of types) {
+      // Built inline rather than via glLine: a Vendor line carries no
+      // balAccountType — the two-explicit-lines shape BC accepted for AP-2.
+      lines.push({
+        groupNo: "G1", postingDate, documentType,
+        accountType: "Vendor", accountNo: PND_VENDOR_NO[t],
+        description: describe(),
+        // Spec §3.2: sent as 0 — accounting posts the real WHT by hand in BC.
+        paymentMethodCode: "BANK", amount: 0,
+        employeeCode, branchCode: defaultBranch, departmentCode,
+        ...(resolveBu(null) ? { buCode: resolveBu(null) } : null),
+      });
+    }
   }
 
   // The vendor AP-2 debited. Built inline rather than via glLine because the

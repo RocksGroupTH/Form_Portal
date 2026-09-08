@@ -1,14 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   FileText, User, Mail, Wallet, CheckCircle, XCircle, Clock, RotateCcw,
   ThumbsUp, ThumbsDown, Ban, Paperclip, Image as ImageIcon, Banknote, ReceiptText,
-  Pencil, Printer,
+  Printer,
 } from "lucide-react";
 import type { ClearAdvanceDetail as ClearDetail } from "@/features/clear-advance/types";
 import { Dialog } from "@/components/ui/Dialog";
+import { PND_LABEL } from "@/lib/clr/wht-pnd-core";
 import { Avatar } from "@/components/ui/Avatar";
 import {
   AttachmentViewer,
@@ -20,6 +21,9 @@ import { RequestStatusBadge } from "@/features/accounting/components/RequestStat
 import { CLR_STEP_CODES, CLR_STEP_LABEL_TH, type ClrStepCode } from "@/features/clear-advance/constants";
 import type { AccFileMeta } from "@/features/accounting/types";
 import type { ClearAdvanceItem, ClearAdvanceRequest, ClrApproval } from "@/features/clear-advance/types";
+import { linesMissingTaxVendor } from "@/lib/clr/tax-vendor-core";
+import { pndBlockReason } from "@/lib/clr/wht-pnd-core";
+import { SellerVendorCard } from "@/features/clear-advance/components/SellerVendorCard";
 
 function money(n: number | null | undefined): string {
   return (n ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -102,6 +106,27 @@ interface Props {
   onChanged?: () => void;
 }
 
+interface VatRegistrant {
+  nid: string;
+  titleName: string | null;
+  name: string | null;
+  branchNumber: number | null;
+  branchCode: string | null;
+  vatRegisteredOn: string | null;
+  address: string | null;
+}
+interface TaxVendorCandidate {
+  vendorNo: string;
+  displayName: string | null;
+  taxRegistrationNumber: string | null;
+}
+
+type VatCheck =
+  | { state: "checking" }
+  | { state: "found"; registrant: VatRegistrant; checkedAt: string | null }
+  | { state: "unregistered"; checkedAt: string | null }
+  | { state: "unknown" };
+
 export function ClearAdvanceDetail({ request, onChanged }: Props) {
   const clear = request.clear;
   const items = clear?.items ?? [];
@@ -137,9 +162,71 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
   const [cancelOpen, setCancelOpen] = useState(false);
 
   // ACCOUNT-step inline edit state.
-  const [editOpen, setEditOpen] = useState(false);
-  const [editItems, setEditItems] = useState<ClearDetail["items"]>(() => clear?.items ?? []);
-  const [editBusy, setEditBusy] = useState(false);
+  /* The account step's editor saves itself.
+     Correcting the lines and naming each seller's vendor IS this step's work, so
+     there was nothing for an "edit" button to reveal and nothing for a "save"
+     button to decide: the step ends with an approval, and that is the moment
+     anything is committed to. What the buttons did add was a way to lose work —
+     a filled-in vendor sat unsaved until someone remembered the footer. */
+  const savedSnapshot = useRef<string | null>(null);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inFlight = useRef<Promise<void> | null>(null);
+  const [saveState, setSaveState] = useState<
+    | { kind: "idle" }
+    | { kind: "saving" }
+    | { kind: "saved"; at: number }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
+  const [editItems, setEditItemsState] = useState<ClearDetail["items"]>(() => clear?.items ?? []);
+  // The WHT payees as accounting may change them. Only the ภ.ง.ด. type is
+  // editable here: the payee's identity came off the receipt the requester held,
+  // and this step decides how the withholding is filed, not who was paid.
+  const [editWht, setEditWhtState] = useState<ClearDetail["whtItems"]>(() => clear?.whtItems ?? []);
+
+  /**
+   * Whether a person changed something in this editor.
+   *
+   * Autosave asks it before writing, because "the rows differ from the last
+   * snapshot" is not the same question. Seeding sets both the rows and the
+   * snapshot, and the two do not land in the same render — so an editor that had
+   * only ever been seeded could still look changed for one pass and write itself
+   * back. It did: a hot reload while this page was open wrote the rows without
+   * the Tax Vendor No. that was on screen, three times, and the item row's id
+   * moved each time (a save is a delete-and-reinsert). Anything that reseeds
+   * mid-edit — a refetch, a remount — would do the same.
+   *
+   * So the write is gated on the edit, not on the difference.
+   */
+  const dirty = useRef(false);
+  const setEditItems: typeof setEditItemsState = (v) => {
+    dirty.current = true;
+    setEditItemsState(v);
+  };
+  const setEditWht: typeof setEditWhtState = (v) => {
+    dirty.current = true;
+    setEditWhtState(v);
+  };
+  /**
+   * What the Revenue Department holds for each seller tax id on this clearing,
+   * keyed by the id. Checked on demand here rather than on open: accounting is
+   * usually correcting one line, and the register is a call out of the building.
+   *
+   * "unregistered" and "could not check" stay separate — the first is a fact
+   * about the invoice, the second is the RD not answering.
+   */
+  const [vatByTin, setVatByTin] = useState<Record<string, VatCheck>>({});
+  /**
+   * BC vendor cards carrying each seller tax id, keyed by the id.
+   *
+   * A list, never an answer: one tax id maps to many cards — Central Pattana has
+   * 24 under one number, one per mall, told apart only by a prefix in the name.
+   * Picking the first would be right once in twenty-four times and wrong exactly
+   * where the branch matters, so accounting chooses and blank stays valid.
+   */
+  const [vendorsByRow, setVendorsByRow] = useState<Record<number, TaxVendorCandidate[] | "loading">>({});
+  /* The name search is per row, not per tax id: it is a way of looking, and two
+     rows looking for the same seller may be typing different things. */
+  const [vendorNameTerm, setVendorNameTerm] = useState<Record<number, string>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -159,6 +246,34 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
   const isManagerStep = inApproval && step === "MANAGER";
   const isAccountStep = inApproval && step === "ACCOUNT";
   const isHeadStep = inApproval && step === "HEAD";
+
+  /* Input tax is claimed against a vendor, so a VAT line has to name one before
+     it leaves the account step — the head step cannot edit lines, so this is the
+     last chance to choose. The server refuses the same thing; this is so the
+     accountant sees which line, not an error after clicking.
+     Read from the rows on screen, not the ones last fetched: autosave writes
+     without re-fetching, so the request's own copy lags a vendor just chosen. */
+  const missingVendorLines = linesMissingTaxVendor(isAccountStep ? editItems : items);
+  /* Same rows, same reason: the ภ.ง.ด. type the journal builder refuses without.
+     The sentence comes from the same function the server uses, so the screen and
+     the refusal cannot drift apart. */
+  const pndProblem = isAccountStep
+    ? pndBlockReason(editItems, editWht)
+    : pndBlockReason(items, whtItems);
+  const accountBlocked = missingVendorLines.length > 0 || !!pndProblem;
+
+  /* Seed the editor from the request at the account step. The snapshot taken
+     here is what "unchanged" means — autosave compares against it, so seeding
+     never counts as an edit and never writes the rows back unprompted. */
+  useEffect(() => {
+    if (!isAccountStep) return;
+    const seedItems = clear?.items ?? [];
+    const seedWht = clear?.whtItems ?? [];
+    setEditItemsState(seedItems);
+    setEditWhtState(seedWht);
+    savedSnapshot.current = JSON.stringify({ items: seedItems, wht: seedWht });
+    dirty.current = false;
+  }, [isAccountStep, clear?.items, clear?.whtItems]);
 
   // Requester self-cancel: they own it, still pending the manager (before Account),
   // within 24h of submit. Sends an email to the manager + requester on cancel.
@@ -208,10 +323,22 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
     else act("reject", { comment: mgComment.trim() });
   }
 
-  function handleAccountApprove() {
+  async function handleAccountApprove() {
     // Payment date is required only when the company pays extra (company owes the requester).
     if (companyPaysExtra && !paymentDate) {
       return toast.error("กรณีบริษัทต้องจ่ายเพิ่ม กรุณาระบุวันจ่าย (ศุกร์)");
+    }
+    if (missingVendorLines.length > 0) {
+      return toast.error(
+        `กรุณาเลือก Vendor ผู้ขายให้ครบก่อนอนุมัติ — รายการที่ ${missingVendorLines.join(", ")}`,
+      );
+    }
+    if (pndProblem) return toast.error(pndProblem);
+    // An edit still sitting in the debounce would be approved over: the server
+    // checks the stored rows, which would not yet hold the vendor on screen.
+    await flushSave();
+    if (savedSnapshot.current !== JSON.stringify({ items: editItems, wht: editWht })) {
+      return toast.error("ยังบันทึกรายการไม่สำเร็จ — แก้ไขให้บันทึกผ่านก่อนจึงอนุมัติได้");
     }
     act("approve", {
       isChecked: accChecked,
@@ -220,38 +347,71 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
     });
   }
 
-  async function handleAccountEdit() {
+  /* The rows as they stand, for the saver to read without being re-created on
+     every keystroke. */
+  const latest = useRef({ items: editItems, wht: editWht });
+  latest.current = { items: editItems, wht: editWht };
+
+  const saveNow = useCallback(async () => {
     if (!clear) return;
-    setEditBusy(true);
-    try {
-      const body = {
-        id: request.id,
-        brandCode: request.brandCode ?? null,
-        staffId: request.staffId ?? null,
-        clear: {
-          ...clear,
-          items: editItems,
-        },
-      };
-      const res = await fetch(
-        `/api/request/clear-advance/requests/${request.id}/account-edit`,
-        {
+    // Serialise. The write is a delete-and-reinsert of the rows, so two of them
+    // in flight together finish in whatever order the server gets to them and
+    // the older one can land last.
+    if (inFlight.current) await inFlight.current;
+    if (!dirty.current) return;
+    const snap = JSON.stringify({ items: latest.current.items, wht: latest.current.wht });
+    if (snap === savedSnapshot.current) return;
+    setSaveState({ kind: "saving" });
+    const run = (async () => {
+      try {
+        const res = await fetch(`/api/request/clear-advance/requests/${request.id}/account-edit`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        },
-      );
-      const json = (await res.json()) as { ok: boolean; error?: string };
-      if (!json.ok) throw new Error(json.error ?? "บันทึกไม่สำเร็จ");
-      toast.success("บันทึกการแก้ไขสำเร็จ");
-      setEditOpen(false);
-      onChanged?.();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ");
-    } finally {
-      setEditBusy(false);
+          body: JSON.stringify({
+            id: request.id,
+            brandCode: request.brandCode ?? null,
+            staffId: request.staffId ?? null,
+            clear: { ...clear, items: latest.current.items, whtItems: latest.current.wht },
+          }),
+        });
+        const json = (await res.json()) as { ok: boolean; error?: string };
+        if (!json.ok) throw new Error(json.error ?? "บันทึกไม่สำเร็จ");
+        savedSnapshot.current = snap;
+        dirty.current = false;
+        setSaveState({ kind: "saved", at: Date.now() });
+      } catch (e) {
+        // Left dirty on purpose: the next edit retries, and the line says so
+        // rather than a toast that scrolls away.
+        setSaveState({ kind: "error", message: e instanceof Error ? e.message : "บันทึกไม่สำเร็จ" });
+      }
+    })();
+    inFlight.current = run;
+    await run;
+    inFlight.current = null;
+  }, [clear, request.id, request.brandCode, request.staffId]);
+
+  /* Wait out the typing, then write. A number being retyped passes through
+     states nobody meant to store, and the row rewrite is a delete-and-reinsert. */
+  useEffect(() => {
+    if (!isAccountStep || savedSnapshot.current === null || !dirty.current) return;
+    if (JSON.stringify({ items: editItems, wht: editWht }) === savedSnapshot.current) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => void saveNow(), 900);
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, [editItems, editWht, isAccountStep, saveNow]);
+
+  /* Nothing may be approved on top of an edit still sitting in a timer. */
+  const flushSave = useCallback(async () => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
     }
-  }
+    if (inFlight.current) await inFlight.current;
+    await saveNow();
+  }, [saveNow]);
+
 
   return (
     <div>
@@ -339,10 +499,26 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
               <input type="checkbox" checked={accChecked} onChange={(e) => setAccChecked(e.target.checked)} />
               ตรวจสอบแล้ว
             </label>
+            {missingVendorLines.length > 0 && (
+              <p className="text-[12px] m-0 px-3 py-2 rounded-lg"
+                style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
+                รายการที่ {missingVendorLines.join(", ")} มี VAT แต่ยังไม่ได้เลือก Vendor ผู้ขาย —
+                เลือกในการ์ด “ผู้ขาย” ด้านล่าง (ค้นด้วยเลขผู้เสียภาษีหรือชื่อผู้ขาย) แล้วบันทึก จึงจะอนุมัติได้
+              </p>
+            )}
+            {pndProblem && (
+              <p className="text-[12px] m-0 px-3 py-2 rounded-lg"
+                style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
+                {pndProblem}
+              </p>
+            )}
             <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={handleAccountApprove} disabled={busy}
-                className="inline-flex items-center gap-2 text-[13px] font-medium px-4 py-2 rounded-lg cursor-pointer"
-                style={{ background: "var(--bg-info-green)", color: "var(--text-info-green)", border: "1px solid var(--border-info-green)" }}>
+              <button type="button" onClick={handleAccountApprove} disabled={busy || accountBlocked}
+                title={accountBlocked ? (pndProblem ?? "ต้องเลือก Vendor ผู้ขายของรายการที่มี VAT ให้ครบก่อน") : undefined}
+                className="inline-flex items-center gap-2 text-[13px] font-medium px-4 py-2 rounded-lg"
+                style={{ background: "var(--bg-info-green)", color: "var(--text-info-green)", border: "1px solid var(--border-info-green)",
+                  opacity: accountBlocked ? 0.5 : 1,
+                  cursor: accountBlocked ? "not-allowed" : "pointer" }}>
                 <ThumbsUp size={14} /> อนุมัติ
               </button>
               <button type="button" onClick={() => { setAccAction("return"); setAccComment(""); }} disabled={busy}
@@ -357,31 +533,37 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
               </button>
             </div>
 
-            {/* Inline expense-line editor — account approver can correct lines before passing to Head */}
+            {/* The account step's work: correct the lines, name each seller's
+                vendor. Always open, and it saves itself. */}
             <div className="mt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setEditItems(clear?.items ?? []);
-                  setEditOpen((v) => !v);
-                }}
-                className="inline-flex items-center gap-2 text-[12px] font-medium px-3 py-1.5 rounded-lg cursor-pointer"
-                style={{ color: "var(--nav-active-text)", background: "var(--nav-active-bg)", border: "1px solid var(--nav-active-bg)" }}>
-                <Pencil size={13} /> {editOpen ? "ปิดแก้ไขรายการ" : "แก้ไขรายการค่าใช้จ่าย"}
-              </button>
-
-              {editOpen && (
-                <div className="mt-3 flex flex-col gap-3">
-                  <p className="text-[11px] m-0" style={{ color: "var(--text-muted)" }}>
-                    แก้ไขได้เฉพาะในขั้นบัญชี (ACCOUNT) เท่านั้น — บันทึกจะอัปเดตรายการทันที ก่อนส่งต่อ Head
-                  </p>
-                  <div className="overflow-x-auto -mx-1 px-1">
-                    <table className="w-full border-collapse" style={{ minWidth: 760 }}>
+              {(
+                <div className="mt-1 flex flex-col gap-3">
+                  <div className="flex items-baseline gap-2 flex-wrap">
+                    <p className="text-[11px] m-0" style={{ color: "var(--text-muted)" }}>
+                      แก้ไขได้เฉพาะในขั้นบัญชี (ACCOUNT) — บันทึกอัตโนมัติ
+                    </p>
+                    <SaveStatus state={saveState} onRetry={() => void saveNow()} />
+                  </div>
+                  {/* show-x-scroll: `.acc-theme *` hides every scrollbar, so a
+                      table wider than the page scrolled with nothing on screen
+                      to say it could — the ก่อน VAT / VAT / WHT columns sat off
+                      the right edge and looked missing. The AP-3 form's own grid
+                      already opts back in; this one had not. */}
+                  <div className="overflow-x-auto show-x-scroll pb-1 -mx-1 px-1">
+                    <table className="w-full border-collapse" style={{ minWidth: 1240 }}>
                       <thead>
                         <tr className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>#</th>
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>วันที่</th>
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>รายละเอียด</th>
+                          {/* From the tax invoice, and accounting holds it — so
+                              they can type what the OCR could not read. These
+                              three become the VAT line's Tax Invoice No., VAT
+                              registration and Tax Invoice Name. */}
+                          <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>เลขที่ใบกำกับ</th>
+                          <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>เลขผู้เสียภาษี</th>
+                          <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>ชื่อผู้ขาย</th>
+                          <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>สาขาผู้ขาย</th>
                           <th className="px-2 py-1.5 text-right" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>ก่อน VAT</th>
                           <th className="px-2 py-1.5 text-right" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>VAT</th>
                           <th className="px-2 py-1.5 text-right" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>WHT</th>
@@ -413,6 +595,59 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                                 onChange={(e) => {
                                   const next = [...editItems];
                                   next[i] = { ...next[i], description: e.target.value };
+                                  setEditItems(next);
+                                }}
+                              />
+                            </td>
+                            <td className="px-2 py-1.5" style={{ borderBottom: "1px solid var(--border-light)" }}>
+                              <input
+                                className="text-[12px] px-2 py-1 rounded outline-none w-32"
+                                style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-input)" }}
+                                value={it.docNo ?? ""}
+                                placeholder="เลขที่ใบกำกับ"
+                                onChange={(e) => {
+                                  const next = [...editItems];
+                                  next[i] = { ...next[i], docNo: e.target.value || null };
+                                  setEditItems(next);
+                                }}
+                              />
+                            </td>
+                            <td className="px-2 py-1.5" style={{ borderBottom: "1px solid var(--border-light)" }}>
+                              <input
+                                className="text-[12px] px-2 py-1 rounded outline-none w-36"
+                                style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-input)" }}
+                                value={it.taxId ?? ""}
+                                placeholder="เลข 13 หลัก"
+                                onChange={(e) => {
+                                  const next = [...editItems];
+                                  next[i] = { ...next[i], taxId: e.target.value || null };
+                                  setEditItems(next);
+                                }}
+                              />
+                            </td>
+                            <td className="px-2 py-1.5" style={{ borderBottom: "1px solid var(--border-light)" }}>
+                              <input
+                                className="text-[12px] px-2 py-1 rounded outline-none w-48"
+                                style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-input)" }}
+                                value={it.payeeName ?? ""}
+                                placeholder="ชื่อผู้ขาย"
+                                onChange={(e) => {
+                                  const next = [...editItems];
+                                  next[i] = { ...next[i], payeeName: e.target.value || null };
+                                  setEditItems(next);
+                                }}
+                              />
+                            </td>
+                            <td className="px-2 py-1.5" style={{ borderBottom: "1px solid var(--border-light)" }}>
+                              <input
+                                className="text-[12px] px-2 py-1 rounded outline-none w-24"
+                                style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-input)" }}
+                                value={it.taxBranchCode ?? ""}
+                                placeholder="00000"
+                                maxLength={5}
+                                onChange={(e) => {
+                                  const next = [...editItems];
+                                  next[i] = { ...next[i], taxBranchCode: e.target.value || null };
                                   setEditItems(next);
                                 }}
                               />
@@ -467,24 +702,64 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                       </tbody>
                     </table>
                   </div>
-                  <div className="flex gap-2 justify-end">
-                    <button
-                      type="button"
-                      onClick={() => setEditOpen(false)}
-                      disabled={editBusy}
-                      className="text-[13px] font-medium px-4 py-2 rounded-lg"
-                      style={{ color: "var(--text-secondary)", background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}>
-                      ยกเลิก
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleAccountEdit}
-                      disabled={editBusy}
-                      className="inline-flex items-center gap-2 text-[13px] font-medium px-4 py-2 rounded-lg"
-                      style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)", opacity: editBusy ? 0.7 : 1 }}>
-                      <Pencil size={13} /> {editBusy ? "กำลังบันทึก..." : "บันทึกการแก้ไข"}
-                    </button>
-                  </div>
+
+                  {/* Who the seller is, per receipt: what the Revenue
+                      Department's register says, and which BC vendor card they
+                      are. One card per line rather than a strip of controls
+                      under the table — the two questions are about the same
+                      seller and belong beside each other, and each card names
+                      the line it is about. */}
+                  {editItems.length > 0 && (
+                    <div className="flex flex-col gap-2">
+                      <p className="text-[11px] font-bold m-0" style={{ color: "var(--text-muted)" }}>
+                        ผู้ขาย — ตรวจกับกรมสรรพากร และเลือก Vendor
+                      </p>
+                      {editItems.map((it, i) => (
+                        <SellerVendorCard
+                          key={it.id ?? i}
+                          index={i}
+                          item={it}
+                          brandCode={request.brandCode ?? null}
+                          onChange={(patch) =>
+                            setEditItems((prev) => prev.map((x, j) => (j === i ? { ...x, ...patch } : x)))
+                          }
+                        />
+                      ))}
+                    </div>
+                  )}
+
+                  {editWht.length > 0 && (
+                    <div className="flex flex-col gap-2">
+                      <p className="text-[11px] font-bold m-0" style={{ color: "var(--text-muted)" }}>
+                        ประเภท ภ.ง.ด. ต่อผู้รับเงิน
+                      </p>
+                      {editWht.map((w, i) => (
+                        <div key={w.id ?? i} className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[12px] min-w-0 grow" style={{ color: "var(--text-primary)" }}>
+                            {w.payeeName ?? "—"}
+                            <span className="text-[11px] ml-2" style={{ color: "var(--text-muted)" }}>
+                              {w.taxId ?? "ไม่มีเลขผู้เสียภาษี"}
+                            </span>
+                          </span>
+                          <select
+                            className="text-[12px] px-2 py-1 rounded-lg"
+                            style={{ background: "var(--bg-card)", color: "var(--text-primary)", border: "1px solid var(--border-card)" }}
+                            value={w.pndType ?? ""}
+                            onChange={(e) => {
+                              const v = e.target.value as "PND3" | "PND53" | "";
+                              setEditWht((prev) => prev.map((x, j) => (
+                                j === i ? { ...x, pndType: v || null } : x
+                              )));
+                            }}>
+                            <option value="">— ยังไม่ระบุ —</option>
+                            <option value="PND3">{PND_LABEL.PND3}</option>
+                            <option value="PND53">{PND_LABEL.PND53}</option>
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                 </div>
               )}
             </div>
@@ -636,12 +911,12 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
       {/* WHT certificate table */}
       {whtItems.length > 0 && (
         <Section title="หนังสือรับรองการหักภาษี ณ ที่จ่าย" icon={<ReceiptText size={15} />}>
-          <div className="overflow-x-auto -mx-1 px-1">
+          <div className="overflow-x-auto show-x-scroll pb-1 -mx-1 px-1">
             <table className="w-full border-collapse" style={{ minWidth: 820 }}>
               <thead>
                 <tr className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                   <ThD>#</ThD><ThD>วันที่</ThD><ThD>เลขผู้เสียภาษี</ThD><ThD>ชื่อผู้รับ</ThD>
-                  <ThD>ที่อยู่</ThD><ThD right>ค่าใช้จ่าย</ThD><ThD right>WHT</ThD><ThD right>สุทธิ</ThD>
+                  <ThD>ที่อยู่</ThD><ThD>ภ.ง.ด.</ThD><ThD right>ค่าใช้จ่าย</ThD><ThD right>WHT</ThD><ThD right>สุทธิ</ThD>
                 </tr>
               </thead>
               <tbody>
@@ -652,6 +927,15 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                     <TdD>{w.taxId ?? "—"}</TdD>
                     <TdD>{w.payeeName ?? "—"}</TdD>
                     <TdD>{w.payeeAddress ?? "—"}</TdD>
+                    {/* Blank is not "individual" — it means nobody has decided,
+                        and the send refuses on it. Shown as its own state. */}
+                    <TdD>
+                      {w.pndType ? (
+                        PND_LABEL[w.pndType]
+                      ) : (
+                        <span style={{ color: "var(--text-warning)" }}>ยังไม่ระบุ</span>
+                      )}
+                    </TdD>
                     <TdD right>{money(w.amount)}</TdD>
                     <TdD right>{money(w.whtAmount)}</TdD>
                     <TdD right>{money(w.netAmount)}</TdD>
@@ -814,7 +1098,7 @@ function ExpenseTable({ items, advanceAmount }: { items: ClearAdvanceItem[]; adv
     return { it, before, vat, total, wht, net, balance, i };
   });
   return (
-    <div className="overflow-x-auto -mx-1 px-1">
+    <div className="overflow-x-auto show-x-scroll pb-1 -mx-1 px-1">
       <table className="w-full border-collapse" style={{ minWidth: 980 }}>
         <thead>
           <tr className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
@@ -929,5 +1213,55 @@ function RefundBanner({ refund }: { refund: number }) {
       style={{ background: tone.bg, border: `1px solid ${tone.border}` }}>
       <span className="text-[13px] font-bold" style={{ color: tone.text }}>{label}</span>
     </div>
+  );
+}
+
+/**
+ * What autosave is doing, in the one place the eye already is.
+ *
+ * A toast would be wrong here: it announces a save that is about to happen again
+ * on the next keystroke, and it is gone by the time anyone wonders whether the
+ * vendor they picked was kept. A failure stays on screen and stays retryable,
+ * because the rows are still only on this page until it succeeds.
+ */
+function SaveStatus({
+  state,
+  onRetry,
+}: {
+  state:
+    | { kind: "idle" }
+    | { kind: "saving" }
+    | { kind: "saved"; at: number }
+    | { kind: "error"; message: string };
+  onRetry: () => void;
+}) {
+  if (state.kind === "idle") return null;
+  if (state.kind === "saving") {
+    return (
+      <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>
+        กำลังบันทึก…
+      </span>
+    );
+  }
+  if (state.kind === "saved") {
+    const t = new Date(state.at).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" });
+    return (
+      <span className="text-[11px]" style={{ color: "var(--text-info-green)" }}>
+        ✓ บันทึกแล้ว {t}
+      </span>
+    );
+  }
+  return (
+    <span className="text-[11px] flex items-center gap-1" style={{ color: "var(--color-danger)" }}>
+      บันทึกไม่สำเร็จ — {state.message}
+      <button
+        type="button"
+        onClick={onRetry}
+        className="underline cursor-pointer border-none bg-transparent p-0 text-[11px]"
+        style={{ color: "var(--nav-active-text)" }}
+      >
+        ลองใหม่
+      </button>
+    </span>
   );
 }

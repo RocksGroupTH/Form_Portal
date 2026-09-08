@@ -31,6 +31,41 @@ export interface PpapJournalLinePayload {
    * triggers that fallback, where a blank string would be sent as an answer.
    */
   buCode?: string;
+
+  /* ── The tax block, VAT lines only (spec §5.4, sheet row 8) ──────────────
+   *
+   * Every key is optional and omitted when it has no value: codeunit 50263
+   * applies each only when non-blank, so a payload without them leaves the
+   * corresponding BC field untouched rather than blanking it.
+   *
+   * The first three are standard `Gen. Journal Line` fields. The rest come from
+   * `NWTH CustomizationRevolic` (tableextension 80105) — and two of those are
+   * named differently in AL from the interface sheet's wording: `taxBranchCode`
+   * is the field `Branch Code`, and `taxVatRegistrationNo` is
+   * `Revolic VAT Registration No.`
+   */
+  genPostingType?: string;
+  vatBusPostingGroup?: string;
+  vatProdPostingGroup?: string;
+  /** `Tax Invoice No.` — Code[35]. */
+  taxInvoiceNo?: string;
+  /** `Tax Invoice Date` — the receipt's own date, not the journal's. */
+  taxInvoiceDate?: string;
+  /** `Tax Invoice Base` — the amount VAT was charged on, not the VAT. */
+  taxInvoiceBase?: number;
+  /** `Tax Invoice Name` — Text[250]. */
+  taxInvoiceName?: string;
+  /** `Revolic VAT Registration No.` — the seller's tax id. */
+  taxVatRegistrationNo?: string;
+  /**
+   * `Tax Vendor No.` — not sent by AP-3, which matches no vendor for a seller.
+   * Declared because the codeunit accepts it and its OnValidate fills the name,
+   * branch and VAT registration from the vendor card: the day AP-3 learns to
+   * match sellers, this one key replaces three.
+   */
+  taxVendorNo?: string;
+  /** `Branch Code` on the journal line — the sheet calls it Tax Branch Code. */
+  taxBranchCode?: string;
 }
 
 export interface PpapJournalPayload {

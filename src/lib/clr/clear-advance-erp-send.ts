@@ -4,24 +4,28 @@ import type { ErpInterfaceStatus } from "@/features/accounting/constants";
 import { postBcPpapJournalCreateFromJson } from "@/lib/bc/bc-odata";
 import { getRequest } from "@/lib/clr/clear-advance-request-service";
 import { loadClearAdvanceErpContext } from "@/lib/clr/clear-advance-erp-context";
-import { buildClearAdvanceJournalPayload } from "@/lib/clr/clear-advance-erp-payload";
+import { buildClearAdvanceJournalPayload, journalPostingDate } from "@/lib/clr/clear-advance-erp-payload";
 import { loadBranchLookup } from "@/lib/erp/location-lookup";
+import { loadBranchGlAccounts, loadBuGlAccounts } from "@/lib/clr/clr-bu-gl-map-service";
+import { isRocksPcBrand } from "@/features/clear-advance/constants";
+import { AP3_FORM_CODE } from "@/features/clear-advance/constants";
+import type { PpapJournalLinePayload } from "@/lib/acc/erp-ppap-payload";
 import type { ClrJournalItem } from "@/lib/clr/clear-advance-erp-payload";
 
 /* ─────────────────────────── preview types ─────────────────────────── */
 
-export interface ClrPreviewLine {
-  accountType: string;
-  accountNo: string;
-  description: string;
-  branchCode: string;
-  departmentCode: string;
+/**
+ * One line as Business Central will receive it.
+ *
+ * The whole payload line, not a summary of it: the preview exists to be checked
+ * against BC, and a preview that shows seven of the twenty-three fields being
+ * sent cannot answer "is the tax block right" — the question the VAT work made
+ * worth asking. `debit`/`credit` and `branchBlocked` are the only additions, and
+ * both are derived rather than sent.
+ */
+export interface ClrPreviewLine extends PpapJournalLinePayload {
   debit: number | null;
   credit: number | null;
-  /** Z-ADJ marker when this line is a prior-period adjustment; null otherwise. */
-  adjCode: string | null;
-  /** The BU resolved from this line's branch; null when no Location answers for it. */
-  buCode: string | null;
   /**
    * This line's BRANCH dimension value is blocked in BC.
    *
@@ -62,10 +66,29 @@ function todayYmd(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+/**
+ * BC's answer as text, bounded.
+ *
+ * Kept whole rather than summarised: the summary is what we already had, and it
+ * was the summary that could not say which line BC refused. 8,000 characters is
+ * far more than the codeunit has ever returned and still small enough that a
+ * pathological answer cannot fill the column.
+ */
+function bcResponseText(resp: unknown): string | null {
+  if (resp == null) return null;
+  const raw = typeof resp === "string" ? resp : JSON.stringify(resp);
+  return raw ? raw.slice(0, 8000) : null;
+}
+
 async function markInterfaceStatus(
   requestId: number,
   status: ErpInterfaceStatus | null,
-  opts: { error?: string | null; userId?: number | null; environment?: ErpBcEnvironment | null; documentNo?: string | null } = {},
+  opts: {
+    error?: string | null; userId?: number | null;
+    environment?: ErpBcEnvironment | null; documentNo?: string | null;
+    /** BC's own answer, stored so anyone can read it without opening BC. */
+    response?: string | null;
+  } = {},
 ): Promise<void> {
   const pool = await getAccPool();
   const req = pool.request()
@@ -74,12 +97,14 @@ async function markInterfaceStatus(
     .input("error", sql.NVarChar, opts.error ?? null)
     .input("userId", sql.Int, opts.userId ?? null)
     .input("env", sql.NVarChar, opts.environment ?? null)
-    .input("doc", sql.NVarChar, opts.documentNo ?? null);
+    .input("doc", sql.NVarChar, opts.documentNo ?? null)
+    .input("resp", sql.NVarChar(sql.MAX), opts.response ?? null);
   if (status === "Sent") {
     await req.input("sentAt", sql.DateTime2, new Date()).query(`
       UPDATE [dbo].[AccRequest]
       SET ErpInterfaceStatus=@status, ErpInterfaceError=NULL, ErpInterfaceSentAt=@sentAt,
-          ErpInterfaceSentBy=@userId, ErpInterfaceEnvironment=@env, ErpDocumentNo=@doc, UpdatedAt=SYSDATETIME()
+          ErpInterfaceSentBy=@userId, ErpInterfaceEnvironment=@env, ErpDocumentNo=@doc,
+          ErpInterfaceResponse=@resp, UpdatedAt=SYSDATETIME()
       WHERE Id=@id`);
   } else if (status === "Failed") {
     await req.query(`
@@ -146,7 +171,13 @@ function assertBcJournalCreated(resp: unknown): string {
   // That count is authoritative — success is Failed: 0, regardless of the status word.
   const failedM = summary.match(/Failed:\s*(\d+)/i);
   if (failedM) {
-    if (Number(failedM[1]) > 0) throw new Error(`BC: ${summary}`);
+    if (Number(failedM[1]) > 0) {
+      // The count alone sends the reader to BC to find out which line and why.
+      // The CU already says both, per line, in results[] — it was being read
+      // only for the document no. and thrown away exactly when it mattered.
+      const detail = extractBcLineErrors(resp);
+      throw new Error(`BC: ${summary}${detail ? ` — ${detail}` : ""}`);
+    }
     return summary.slice(0, 900); // Failed: 0 → real success
   }
 
@@ -158,6 +189,36 @@ function assertBcJournalCreated(resp: unknown): string {
     throw new Error(`BC ตอบกลับ error: ${inner.slice(0, 800)}`);
   }
   return (summary || raw).slice(0, 900);
+}
+
+/**
+ * The lines BC refused, and what it said about each.
+ *
+ * `results[]` carries one entry per line in the order they were sent, so the
+ * index names the line the journal builder produced — 1 is the first expense
+ * line. Empty when the response carries no per-line detail.
+ */
+function extractBcLineErrors(resp: unknown): string | null {
+  const raw = typeof resp === "string" ? resp : JSON.stringify(resp ?? {});
+  let inner = raw;
+  try {
+    const o = JSON.parse(raw) as Record<string, unknown>;
+    if (o && typeof o === "object" && "value" in o) inner = String(o.value ?? "");
+  } catch { /* keep raw */ }
+  try {
+    const r = JSON.parse(inner) as {
+      results?: { status?: string; message?: string; error?: string }[];
+    };
+    const bad = (r.results ?? [])
+      .map((it, i) => ({ i: i + 1, it }))
+      .filter(({ it }) => it?.status && it.status !== "inserted");
+    if (bad.length === 0) return null;
+    return bad
+      .map(({ i, it }) => `บรรทัด ${i}: ${(it.message ?? it.error ?? it.status ?? "").toString().slice(0, 200)}`)
+      .join(" · ");
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -200,6 +261,12 @@ function toJournalItems(
       branchCode: it.branchCode ?? null,
       description: it.description ?? null,
       expenseDate: it.expenseDate ?? null,
+      // The invoice and who issued it — the VAT line's tax block (spec §5.4).
+      docNo: it.docNo ?? null,
+      taxId: it.taxId ?? null,
+      payeeName: it.payeeName ?? null,
+      taxBranchCode: it.taxBranchCode ?? null,
+      taxVendorNo: it.taxVendorNo ?? null,
     }));
 }
 
@@ -223,7 +290,16 @@ export async function previewClrErpJournal(ids: number[]): Promise<ClrPreviewIte
       if (!req.clear) throw new Error("ไม่พบข้อมูลการเคลียร์เงินทดรองจ่าย");
       if (!req.clear.items || req.clear.items.length === 0) throw new Error("ไม่มีรายการค่าใช้จ่าย");
 
-      const postingDate = req.clear.refundTransferDate ?? req.clear.paymentDate ?? todayYmd();
+      /* The date the money moved, which depends on which way it moved.
+         `refundToCompany` is positive when the employee returns the unspent part
+         and negative when the company pays the shortfall — the same sign the
+         document type reads. */
+      const postingDate = journalPostingDate(
+        req.clear.refundToCompany ?? 0,
+        req.clear.refundTransferDate,
+        req.clear.paymentDate,
+        todayYmd(),
+      );
       const { config, target, departmentCode } = await loadClearAdvanceErpContext(req.brandCode, req.requesterDepartmentCode, req.clear.advanceRequestId);
       const journalItems = toJournalItems(req.clear.items);
       const itemBranch = journalItems.find((it) => it.branchCode)?.branchCode ?? null;
@@ -238,6 +314,18 @@ export async function previewClrErpJournal(ids: number[]): Promise<ClrPreviewIte
       // Once per clearing, not once per line: a handful of lines against a few
       // hundred Locations makes one read cheaper than one round trip each.
       const branchBu = await loadBranchLookup(target.interfaceTarget);
+      /* BU → G/L, and only for a home brand.
+         A non-home brand already has every expense forced to 110723001 at save
+         time (`FORCE_GL_NON_ROCKS_PC`), and letting the BU rule move it off that
+         account would undo the older rule silently. Which of the two should win
+         where they meet is accounting's question, not a default worth inventing —
+         so the older one keeps its ground until they answer. */
+      const buGlAccounts = isRocksPcBrand(req.brandCode)
+        ? await loadBuGlAccounts(target.interfaceTarget)
+        : {};
+      const branchGlAccounts = isRocksPcBrand(req.brandCode)
+        ? await loadBranchGlAccounts(target.interfaceTarget)
+        : {};
       const payload = buildClearAdvanceJournalPayload({
         requestNo: req.requestNo ?? String(id),
         postingDate,
@@ -250,6 +338,9 @@ export async function previewClrErpJournal(ids: number[]): Promise<ClrPreviewIte
         requesterName: req.requesterFullName,
         staffId: req.staffId,
         branchBu,
+        buGlAccounts,
+        branchGlAccounts,
+        whtPayees: req.clear.whtItems ?? [],
       });
 
       out.push({
@@ -264,15 +355,9 @@ export async function previewClrErpJournal(ids: number[]): Promise<ClrPreviewIte
         documentType: payload.lines[0]?.documentType ?? "",
         ok: true,
         lines: payload.lines.map((l) => ({
-          accountType: l.accountType,
-          accountNo: l.accountNo,
-          description: l.description,
-          branchCode: l.branchCode ?? "",
-          departmentCode: l.departmentCode ?? "",
+          ...l,
           debit: l.amount > 0 ? l.amount : null,
           credit: l.amount < 0 ? -l.amount : null,
-          adjCode: l.adjCode ?? null,
-          buCode: l.buCode ?? null,
           branchBlocked: branchBu.get((l.branchCode ?? "").trim().toUpperCase())?.isBlocked ?? false,
         })),
       });
@@ -363,8 +448,20 @@ export async function sendClrErpBatch(ids: number[], userId: number): Promise<Cl
 
     /* ── Phase B: only ids that passed pre-flight reach here ── */
     let bcEnvironment: ErpBcEnvironment | null = null;
+    // Declared out here so the catch can store what BC said. Inside the try it
+    // is out of scope exactly when the answer is the thing worth keeping.
+    let bcRaw: string | null = null;
     try {
-      const postingDate = req.clear.refundTransferDate ?? req.clear.paymentDate ?? todayYmd();
+      /* The date the money moved, which depends on which way it moved.
+         `refundToCompany` is positive when the employee returns the unspent part
+         and negative when the company pays the shortfall — the same sign the
+         document type reads. */
+      const postingDate = journalPostingDate(
+        req.clear.refundToCompany ?? 0,
+        req.clear.refundTransferDate,
+        req.clear.paymentDate,
+        todayYmd(),
+      );
       const { config, target, departmentCode } = await loadClearAdvanceErpContext(req.brandCode, req.requesterDepartmentCode, req.clear.advanceRequestId);
       bcEnvironment = target.environment;
 
@@ -381,6 +478,18 @@ export async function sendClrErpBatch(ids: number[], userId: number): Promise<Cl
       // Once per clearing, not once per line: a handful of lines against a few
       // hundred Locations makes one read cheaper than one round trip each.
       const branchBu = await loadBranchLookup(target.interfaceTarget);
+      /* BU → G/L, and only for a home brand.
+         A non-home brand already has every expense forced to 110723001 at save
+         time (`FORCE_GL_NON_ROCKS_PC`), and letting the BU rule move it off that
+         account would undo the older rule silently. Which of the two should win
+         where they meet is accounting's question, not a default worth inventing —
+         so the older one keeps its ground until they answer. */
+      const buGlAccounts = isRocksPcBrand(req.brandCode)
+        ? await loadBuGlAccounts(target.interfaceTarget)
+        : {};
+      const branchGlAccounts = isRocksPcBrand(req.brandCode)
+        ? await loadBranchGlAccounts(target.interfaceTarget)
+        : {};
       const payload = buildClearAdvanceJournalPayload({
         requestNo: req.requestNo ?? String(id),
         postingDate,
@@ -393,6 +502,9 @@ export async function sendClrErpBatch(ids: number[], userId: number): Promise<Cl
         requesterName: req.requesterFullName,
         staffId: req.staffId,
         branchBu,
+        buGlAccounts,
+        branchGlAccounts,
+        whtPayees: req.clear.whtItems ?? [],
       });
 
       // Mark Pending (only when NULL/Failed — guard is in the SQL WHERE)
@@ -406,11 +518,14 @@ export async function sendClrErpBatch(ids: number[], userId: number): Promise<Cl
         payload as unknown as Record<string, unknown>,
       );
 
+      bcRaw = bcResponseText(bcResponse);
       const summary = assertBcJournalCreated(bcResponse);
       const docNo = extractBcDocumentNo(bcResponse);
       const envLabel = target.environment === "Sandbox" ? "UAT" : "PROD";
 
-      await markInterfaceStatus(id, "Sent", { userId, environment: target.environment, documentNo: docNo });
+      await markInterfaceStatus(id, "Sent", {
+        userId, environment: target.environment, documentNo: docNo, response: bcRaw,
+      });
       await logInterfaceActivity(
         id,
         userId,
@@ -430,10 +545,12 @@ export async function sendClrErpBatch(ids: number[], userId: number): Promise<Cl
           .input("status", sql.NVarChar, "Failed")
           .input("error", sql.NVarChar, message)
           .input("env", sql.NVarChar, bcEnvironment)
+          .input("resp", sql.NVarChar(sql.MAX), bcRaw)
           .query(`
             UPDATE [dbo].[AccRequest]
             SET ErpInterfaceStatus=@status, ErpInterfaceError=@error, ErpInterfaceSentAt=NULL,
-                ErpInterfaceSentBy=NULL, ErpInterfaceEnvironment=@env, UpdatedAt=SYSDATETIME()
+                ErpInterfaceSentBy=NULL, ErpInterfaceEnvironment=@env,
+                ErpInterfaceResponse=@resp, UpdatedAt=SYSDATETIME()
             WHERE Id=@id AND ErpInterfaceStatus <> 'Sent'`);
         await logInterfaceActivity(id, userId, "erp_interface_failed", message);
       } catch {
@@ -444,4 +561,51 @@ export async function sendClrErpBatch(ids: number[], userId: number): Promise<Cl
   }
 
   return results;
+}
+
+/**
+ * Put a failed clearing back in the "รอส่ง" queue.
+ *
+ * Clears our record of the attempt — status, error, response, environment — so
+ * the row is selectable again. It does **not** touch Business Central, and that
+ * is the thing to know before pressing it: when the codeunit refuses one line of
+ * four it keeps the three it accepted, so BC is already holding a partial
+ * document and a re-send adds a second set. Whoever pulls back has to delete the
+ * partial one in the batch first.
+ *
+ * Failed only, on purpose. A Sent clearing has a complete document that
+ * accounting may already be posting against; AP-2 allows that pull-back because
+ * it marks the old attempt Resent and keeps the mapping, and AP-3 has nowhere to
+ * record it.
+ */
+export async function pullBackFailedSend(requestId: number, userId: number): Promise<void> {
+  const pool = await getAccPool();
+  const cur = await pool.request()
+    .input("id", sql.Int, requestId)
+    .input("form", sql.NVarChar, AP3_FORM_CODE)
+    .query(`SELECT ErpInterfaceStatus FROM [dbo].[AccRequest] WHERE Id=@id AND FormCode=@form`);
+  if (cur.recordset.length === 0) throw new Error("ไม่พบรายการ");
+  if ((cur.recordset[0].ErpInterfaceStatus as string | null) !== "Failed") {
+    throw new Error("ดึงกลับได้เฉพาะรายการที่ล้มเหลว (Failed)");
+  }
+
+  const tx = pool.transaction();
+  await tx.begin();
+  try {
+    await tx.request().input("id", sql.Int, requestId).query(`
+      UPDATE [dbo].[AccRequest]
+      SET ErpInterfaceStatus=NULL, ErpInterfaceError=NULL, ErpInterfaceResponse=NULL,
+          ErpInterfaceSentAt=NULL, ErpInterfaceSentBy=NULL, ErpInterfaceEnvironment=NULL,
+          ErpDocumentNo=NULL, UpdatedAt=SYSDATETIME()
+      WHERE Id=@id AND ErpInterfaceStatus='Failed'`);
+    await tx.request()
+      .input("rid", sql.Int, requestId)
+      .input("by", sql.Int, userId)
+      .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note)
+              VALUES (@rid, @by, 'erp_interface_pullback', N'ดึงกลับเข้าคิวเพื่อยิงใหม่ (จากสถานะล้มเหลว)')`);
+    await tx.commit();
+  } catch (e) {
+    await tx.rollback().catch(() => {});
+    throw e;
+  }
 }

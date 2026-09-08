@@ -20,17 +20,51 @@ import type { ClearAdvanceItem, ClearAdvanceRequest } from "@/features/clear-adv
  * The dashboard shell wraps this page, so the print rules hide *everything* and
  * then un-hide the sheet, rather than trying to name each piece of chrome. The
  * sheet itself is black-on-white on screen too: what you see is the paper.
+ *
+ * **The sheet is A4 portrait on screen as well as on paper** — 210mm wide, laid
+ * out against the 186mm that survives the 12mm print margins. A preview in a
+ * width the printer will never use is not a preview: a table that fits at 900px
+ * and spills at 186mm looks right until it comes out of the printer, and that is
+ * the one moment nobody is watching.
+ */
+/**
+ * The sheet's box lives here and **not** in an inline `style`, on purpose: an
+ * inline declaration outranks any stylesheet rule, so a `padding: 0` in the
+ * print block below would lose to it and the paper would come out with the
+ * 12mm margin twice — plus a blank second page from a 297mm min-height inside a
+ * 273mm printable area. Same specificity, later rule, print wins.
  */
 const PRINT_CSS = `
+#ap31-sheet {
+  width: 210mm;
+  min-height: 297mm;
+  padding: 12mm;
+  margin-inline: auto;
+  background: #fff;
+  color: #000;
+  /* Screen only — what makes the preview read as a sheet of paper. */
+  box-shadow: 0 1px 3px rgba(0,0,0,.18);
+}
 @media print {
   body * { visibility: hidden !important; }
   #ap31-sheet, #ap31-sheet * { visibility: visible !important; }
   #ap31-sheet {
     position: absolute; left: 0; top: 0; width: 100%;
-    margin: 0; padding: 0; border: none; box-shadow: none;
+    /* @page already pays the 12mm; the sheet's own padding would double it, and
+       min-height would push a blank second page. */
+    min-height: 0; margin: 0; padding: 0; border: none; box-shadow: none;
   }
+  #ap31-sheet .ap31-sign { margin-top: 14mm; }
   .ap31-noprint { display: none !important; }
   html, body { background: #fff !important; }
+  /* A logo is the one thing on this sheet that is not black on white. */
+  #ap31-sheet img { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  /* A long claim runs onto page 2: repeat the column heads, and never split a
+     row down the middle of a page. */
+  #ap31-sheet thead { display: table-header-group; }
+  #ap31-sheet tfoot { display: table-row-group; }
+  #ap31-sheet tr { break-inside: avoid; }
+  #ap31-sheet .ap31-sign { break-inside: avoid; }
   @page { size: A4 portrait; margin: 12mm; }
 }
 `;
@@ -64,6 +98,28 @@ function PrintContent() {
   const [request, setRequest] = useState<ClearAdvanceRequest | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [brands, setBrands] = useState<{ id: string; logo: string | null }[]>([]);
+
+  /**
+   * The brand list, for the logo at the top of the sheet.
+   *
+   * `/api/brands` and not the `/brandlogo/{code}-200.png` convention alone,
+   * because a brand whose logo was uploaded through Brand configuration has no
+   * file on disk — the convention would silently print no mark for exactly the
+   * brands someone took the trouble to give artwork to. It does not depend on
+   * the request, so it loads alongside it rather than after it, and a failure
+   * is not an error: the sheet prints without a logo.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/brands")
+      .then((r) => r.json())
+      .then((json: { ok: boolean; data?: { id: string; logo: string | null }[] }) => {
+        if (!cancelled && json.ok && json.data) setBrands(json.data);
+      })
+      .catch(() => { /* no logo, still a valid sheet */ });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (requestId == null || Number.isNaN(requestId)) {
@@ -89,6 +145,14 @@ function PrintContent() {
 
   const clear = request.clear;
   const items: ClearAdvanceItem[] = clear?.items ?? [];
+
+  // The brand the money was drawn against, not whichever one the switcher is on:
+  // a printed sheet is evidence, and it has to name its own request's brand.
+  const brandCode = (request.brandCode ?? "").trim();
+  const brandLogo = brandCode
+    ? brands.find((b) => b.id.trim().toUpperCase() === brandCode.toUpperCase())?.logo
+        ?? `/brandlogo/${brandCode.toLowerCase()}-200.png`
+    : null;
   const advanceAmount = clear?.advanceAmount ?? 0;
   const refund = clear?.refundToCompany ?? 0;
 
@@ -118,14 +182,13 @@ function PrintContent() {
         </button>
       </div>
 
-      <div
-        id="ap31-sheet"
-        className="mx-auto p-8 text-[12px]"
-        style={{ maxWidth: 900, background: "#fff", color: "#000", fontFamily: "inherit" }}
-      >
-        <header className="mb-5">
-          <h1 className="text-[17px] font-bold m-0">แบบฟอร์มเคลียร์คืนเงินทดรองจ่าย (AP-3.1)</h1>
-          <p className="text-[12px] m-0 mt-1">เลขที่คำขอ {request.requestNo ?? "ฉบับร่าง"}</p>
+      <div id="ap31-sheet" className="text-[11px]" style={{ fontFamily: "inherit" }}>
+        <header className="mb-5 flex items-center gap-3">
+          <PrintLogo src={brandLogo} alt={request.companyName ?? brandCode} />
+          <div>
+            <h1 className="text-[17px] font-bold m-0">แบบฟอร์มเคลียร์คืนเงินทดรองจ่าย (AP-3.1)</h1>
+            <p className="text-[12px] m-0 mt-1">เลขที่คำขอ {request.requestNo ?? "ฉบับร่าง"}</p>
+          </div>
         </header>
 
         <table className="w-full mb-5" style={{ borderCollapse: "collapse" }}>
@@ -141,7 +204,26 @@ function PrintContent() {
           </tbody>
         </table>
 
-        <table className="w-full mb-4" style={{ borderCollapse: "collapse" }}>
+        <table className="w-full mb-4" style={{ borderCollapse: "collapse", tableLayout: "fixed" }}>
+          {/*
+            Fixed columns, because 186mm is not enough for ten columns to size
+            themselves: left to `auto`, one long รายการ pushes the five money
+            columns until the amounts wrap mid-number. The description is the
+            column that gives — it is the only one that can wrap and still be
+            read.
+          */}
+          <colgroup>
+            <col style={{ width: "4%" }} />
+            <col style={{ width: "11%" }} />
+            <col style={{ width: "11%" }} />
+            <col style={{ width: "22%" }} />
+            <col style={{ width: "8%" }} />
+            <col style={{ width: "8.8%" }} />
+            <col style={{ width: "8.8%" }} />
+            <col style={{ width: "8.8%" }} />
+            <col style={{ width: "8.8%" }} />
+            <col style={{ width: "8.8%" }} />
+          </colgroup>
           <thead>
             <tr className="text-[11px] font-bold">
               <Th>#</Th><Th>วันที่</Th><Th>เลขที่เอกสาร</Th><Th>รายการ</Th><Th>สาขา</Th>
@@ -155,7 +237,7 @@ function PrintContent() {
             {rows.map(({ it, before, vat, total, wht, net, i }) => (
               <tr key={it.id ?? i}>
                 <Td>{i + 1}</Td>
-                <Td>{fmtDateOnly(it.expenseDate)}</Td>
+                <Td nowrap>{fmtDateOnly(it.expenseDate)}</Td>
                 <Td>{it.docNo ?? "—"}</Td>
                 <Td>{[it.glAccountNo, it.glAccountName, it.description].filter(Boolean).join(" · ") || "—"}</Td>
                 <Td>{it.branchCode ?? "—"}</Td>
@@ -192,8 +274,8 @@ function PrintContent() {
         </table>
 
         {/* The point of the printed sheet: a wet signature to staple to the receipts. */}
-        <div className="flex justify-end">
-          <div className="text-center" style={{ width: 280 }}>
+        <div className="ap31-sign flex justify-end">
+          <div className="text-center" style={{ width: "70mm" }}>
             <div style={{ borderBottom: "1px solid #000", height: 56 }} />
             <p className="text-[12px] m-0 mt-1.5">( {request.requesterFullName ?? ""} )</p>
             <p className="text-[11px] m-0 mt-0.5">ผู้เคลียร์เงินทดรองจ่าย</p>
@@ -205,23 +287,70 @@ function PrintContent() {
   );
 }
 
-const cell = { border: "1px solid #000", padding: "4px 6px" } as const;
-
-function Th({ children, right }: { children: React.ReactNode; right?: boolean }) {
-  return <th style={{ ...cell, textAlign: right ? "right" : "left", whiteSpace: "nowrap" }}>{children}</th>;
+/**
+ * The brand mark on the sheet, or nothing at all.
+ *
+ * Not `BrandMark`: its fallback is a coloured chip drawn from the dashboard's
+ * theme variables, which is right in the navbar and wrong on a black-on-white
+ * form — a brand with no artwork should leave the header alone rather than
+ * print a coloured box. A missing file is normal (the `-200.png` convention is
+ * never checked for existence), so `onError` is the fallback path, the same way
+ * every other logo in the app handles it.
+ */
+function PrintLogo({ src, alt }: { src: string | null; alt: string }) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) return null;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src}
+      alt={alt}
+      className="object-contain shrink-0"
+      style={{ height: 44, width: "auto", maxWidth: 160 }}
+      draggable={false}
+      onError={() => setFailed(true)}
+    />
+  );
 }
 
-function Td({ children, right, colSpan }: { children: React.ReactNode; right?: boolean; colSpan?: number }) {
-  return <td colSpan={colSpan} style={{ ...cell, textAlign: right ? "right" : "left" }}>{children}</td>;
+const cell = { border: "1px solid #000", padding: "3px 5px", verticalAlign: "top" } as const;
+
+function Th({ children, right }: { children: React.ReactNode; right?: boolean }) {
+  return <th style={{ ...cell, textAlign: right ? "right" : "left" }}>{children}</th>;
+}
+
+/**
+ * `right` means "this is money": it also stops the number wrapping and lines the
+ * digits up in their column. Text wraps instead of widening the table, which is
+ * what keeps ten columns inside 186mm.
+ */
+function Td({ children, right, nowrap, colSpan }: {
+  children: React.ReactNode; right?: boolean; nowrap?: boolean; colSpan?: number;
+}) {
+  const keepWhole = right || nowrap;
+  return (
+    <td
+      colSpan={colSpan}
+      style={{
+        ...cell,
+        textAlign: right ? "right" : "left",
+        whiteSpace: keepWhole ? "nowrap" : "normal",
+        fontVariantNumeric: right ? "tabular-nums" : undefined,
+        overflowWrap: keepWhole ? "normal" : "anywhere",
+      }}
+    >
+      {children}
+    </td>
+  );
 }
 
 function HeaderRow({ label, value, label2, value2 }: { label: string; value: string; label2: string; value2: string }) {
   return (
     <tr>
-      <td className="text-[11px] font-semibold py-1 pr-2" style={{ width: "18%" }}>{label}</td>
-      <td className="text-[12px] py-1 pr-6" style={{ width: "32%" }}>{value}</td>
+      <td className="text-[11px] font-semibold py-1 pr-2" style={{ width: "23%" }}>{label}</td>
+      <td className="text-[11px] py-1 pr-6" style={{ width: "27%" }}>{value}</td>
       <td className="text-[11px] font-semibold py-1 pr-2" style={{ width: "18%" }}>{label2}</td>
-      <td className="text-[12px] py-1">{value2}</td>
+      <td className="text-[11px] py-1">{value2}</td>
     </tr>
   );
 }

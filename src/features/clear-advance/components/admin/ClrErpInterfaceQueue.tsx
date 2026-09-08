@@ -10,7 +10,7 @@ import { PaymentDatePicker } from "@/components/ui/PaymentDatePicker";
 import { FilterMonthPicker } from "@/features/accounting/components/FilterMonthPicker";
 import { sentMonthKey } from "@/features/accounting/components/ApprovalQueueFilters";
 import type { ClrErpQueueRow } from "@/lib/clr/clear-advance-erp-queue-service";
-import type { ClrPreviewItem } from "@/lib/clr/clear-advance-erp-send";
+import type { ClrPreviewItem, ClrPreviewLine } from "@/lib/clr/clear-advance-erp-send";
 import { fmtMoney } from "@/features/clear-advance/components/admin/shared";
 
 /* ─────────────────────── helpers ─────────────────────── */
@@ -18,12 +18,22 @@ import { fmtMoney } from "@/features/clear-advance/components/admin/shared";
 const fetcher = (url: string) =>
   fetch(url).then((r) => r.json()) as Promise<{ ok: boolean; data?: ClrErpQueueRow[]; error?: string }>;
 
-type TabKey = "pending" | "sent";
+type TabKey = "pending" | "sent" | "failed";
 type StatusFilter = "ALL" | "Sent" | "Pending" | "Failed";
 
 function isSent(row: ClrErpQueueRow): boolean { return row.erpStatus === "Sent"; }
 function isPending(row: ClrErpQueueRow): boolean { return row.erpStatus === "Pending"; }
-function isSelectable(row: ClrErpQueueRow): boolean { return !isSent(row) && !isPending(row); }
+/**
+ * Whether a row may be ticked and sent.
+ *
+ * A failed row is not one. It used to be — "not Sent, not Pending" — so a
+ * retry was a tick away, and a partial failure had already left lines in BC that
+ * the retry would insert a second time. It now has to be pulled back
+ * deliberately, which is where that gets said.
+ */
+function isSelectable(row: ClrErpQueueRow): boolean {
+  return !isSent(row) && !isPending(row) && row.erpStatus !== "Failed";
+}
 
 function fmtDateTime(iso: string | null): string {
   if (!iso) return "—";
@@ -50,13 +60,52 @@ function EnvBadge({ env }: { env: string | null }) {
   );
 }
 
-function ErpStatusBadge({ row }: { row: ClrErpQueueRow }) {
+/**
+ * The answer as something a person can read.
+ *
+ * The codeunit replies with JSON wrapped in an OData `value` string, so the
+ * useful part arrives escaped inside a string inside an object. Unwrapped and
+ * indented here; anything that does not parse is shown exactly as it came,
+ * because a response we cannot read is still evidence.
+ */
+function prettyJson(raw: string | null): string | null {
+  if (!raw?.trim()) return null;
+  try {
+    const outer = JSON.parse(raw) as unknown;
+    const inner =
+      outer && typeof outer === "object" && "value" in outer
+        ? (outer as { value?: unknown }).value
+        : outer;
+    if (typeof inner === "string") {
+      try {
+        return JSON.stringify(JSON.parse(inner), null, 2);
+      } catch {
+        return inner;
+      }
+    }
+    return JSON.stringify(inner, null, 2);
+  } catch {
+    return raw;
+  }
+}
+
+function ErpStatusBadge({ row, onShow }: { row: ClrErpQueueRow; onShow?: (r: ClrErpQueueRow) => void }) {
   const { erpStatus, erpError } = row;
+  const readable = !!(erpError || row.erpResponse);
   if (!erpStatus) return (
     <span className="text-[11px] px-2 py-0.5 rounded-full font-medium"
       style={{ background: "var(--bg-badge)", color: "var(--text-faint)" }}>ยังไม่ส่ง</span>
   );
-  if (erpStatus === "Sent") return (
+  if (erpStatus === "Sent") return readable ? (
+    <button
+      type="button"
+      onClick={() => onShow?.(row)}
+      className="text-[11px] px-2 py-0.5 rounded-full font-medium cursor-pointer"
+      style={{ background: "var(--bg-info-green)", color: "var(--text-info-green)", border: "none" }}
+    >
+      ส่งแล้ว
+    </button>
+  ) : (
     <span className="text-[11px] px-2 py-0.5 rounded-full font-medium"
       style={{ background: "var(--bg-info-green)", color: "var(--text-info-green)" }}>ส่งแล้ว</span>
   );
@@ -67,13 +116,118 @@ function ErpStatusBadge({ row }: { row: ClrErpQueueRow }) {
     </span>
   );
   if (erpStatus === "Failed") return (
-    <span className="text-[11px] px-2 py-0.5 rounded-full font-medium" title={erpError ?? undefined}
-      style={{ background: "var(--bg-info-red)", color: "var(--status-bad-text)" }}>ล้มเหลว</span>
+    // A red pill with the reason hidden in a tooltip meant the reason may as
+    // well not have been kept: BC's answer is several lines long, and a title
+    // attribute shows it to nobody who did not already know to hover.
+    <button
+      type="button"
+      onClick={() => onShow?.(row)}
+      title={erpError ?? undefined}
+      className="text-[11px] px-2 py-0.5 rounded-full font-medium cursor-pointer"
+      style={{ background: "var(--bg-info-red)", color: "var(--status-bad-text)", border: "none" }}
+    >
+      ล้มเหลว · ดูสาเหตุ
+    </button>
   );
   return <span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>{erpStatus}</span>;
 }
 
 /* ─────────────────────── preview modal ─────────────────────── */
+
+/**
+ * The preview's columns are Business Central's, named as BC names them.
+ *
+ * The point of a preview is to be compared with what BC will hold, and the old
+ * seven — Account Type, Account No., Description, Branch, Dept, Debit, Credit —
+ * could not answer the question the VAT work made worth asking, because the
+ * whole tax block was sent and never shown. These are the `Gen. Journal Line`
+ * fields the payload writes, in the order BC lists them; the last seven come
+ * from tableextension 80105 (`NWTH CustomizationRevolic`), whose captions differ
+ * from the interface sheet's wording and are given here as BC shows them.
+ */
+interface BcCol {
+  key: string;
+  label: string;
+  numeric?: boolean;
+  mono?: boolean;
+  dim?: boolean;
+  render: (l: ClrPreviewLine) => React.ReactNode;
+}
+
+const dash = (v: unknown) => (v === null || v === undefined || v === "" ? "—" : String(v));
+
+const BC_COLUMNS: BcCol[] = [
+  { key: "postingDate", label: "Posting Date", dim: true, render: (l) => dash(l.postingDate) },
+  { key: "documentType", label: "Document Type", render: (l) => dash(l.documentType) },
+  { key: "accountType", label: "Account Type", dim: true, render: (l) => dash(l.accountType) },
+  { key: "accountNo", label: "Account No.", mono: true, render: (l) => dash(l.accountNo) },
+  { key: "description", label: "Description", render: (l) => dash(l.description) },
+  { key: "debit", label: "Debit Amount", numeric: true, render: (l) => (l.debit != null ? fmtMoney(l.debit) : "—") },
+  { key: "credit", label: "Credit Amount", numeric: true, render: (l) => (l.credit != null ? fmtMoney(l.credit) : "—") },
+  { key: "balAccountType", label: "Bal. Account Type", dim: true, render: (l) => dash(l.balAccountType) },
+  { key: "paymentMethodCode", label: "Payment Method Code", dim: true, render: (l) => dash(l.paymentMethodCode) },
+  { key: "employeeCode", label: "External Document No.", mono: true, dim: true, render: (l) => dash(l.employeeCode) },
+  {
+    key: "branchCode",
+    label: "BRANCH",
+    render: (l) => (
+      <span className="inline-flex items-center gap-1.5">
+        {dash(l.branchCode)}
+        {/* Shown, never enforced: BC may still take the line. */}
+        {l.branchBlocked && (
+          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
+            style={{ background: "var(--bg-badge)", color: "var(--text-warning)" }}
+            title="สาขานี้ถูก Block ใน BC — ส่งได้ แต่ BC อาจไม่รับบรรทัดนี้">
+            BLOCKED
+          </span>
+        )}
+      </span>
+    ),
+  },
+  { key: "departmentCode", label: "DEPT", dim: true, render: (l) => dash(l.departmentCode) },
+  { key: "buCode", label: "BU", dim: true, render: (l) => dash(l.buCode) },
+  {
+    key: "adjCode",
+    label: "Z-ADJ",
+    render: (l) =>
+      l.adjCode ? (
+        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
+          style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)" }}
+          title="ใบเสร็จลงเดือนก่อนเดือนที่โพสต์ — ปรับปรุงบัญชี">
+          {l.adjCode}
+        </span>
+      ) : "—",
+  },
+  { key: "genPostingType", label: "Gen. Posting Type", dim: true, render: (l) => dash(l.genPostingType) },
+  { key: "vatBusPostingGroup", label: "VAT Bus. Posting Group", dim: true, render: (l) => dash(l.vatBusPostingGroup) },
+  { key: "vatProdPostingGroup", label: "VAT Prod. Posting Group", dim: true, render: (l) => dash(l.vatProdPostingGroup) },
+  { key: "taxInvoiceNo", label: "Tax Invoice No.", mono: true, render: (l) => dash(l.taxInvoiceNo) },
+  { key: "taxInvoiceDate", label: "Tax Invoice Date", dim: true, render: (l) => dash(l.taxInvoiceDate) },
+  { key: "taxInvoiceBase", label: "Tax Invoice Base", numeric: true, render: (l) => (l.taxInvoiceBase != null ? fmtMoney(l.taxInvoiceBase) : "—") },
+  { key: "taxInvoiceName", label: "Tax Invoice Name", render: (l) => dash(l.taxInvoiceName) },
+  { key: "taxVatRegistrationNo", label: "Revolic VAT Registration No.", mono: true, render: (l) => dash(l.taxVatRegistrationNo) },
+  { key: "taxVendorNo", label: "Tax Vendor No.", mono: true, render: (l) => dash(l.taxVendorNo) },
+  { key: "taxBranchCode", label: "Branch Code (tax)", mono: true, render: (l) => dash(l.taxBranchCode) },
+];
+
+/** Columns with a value on at least one line. The tax block is empty on every
+ *  line of a cash-bill clearing, and twelve blank columns would bury the rest. */
+function shownCols(lines: ClrPreviewLine[]): BcCol[] {
+  const cache = shownColsCache.get(lines);
+  if (cache) return cache;
+  const keep = BC_COLUMNS.filter((c) =>
+    lines.some((l) => {
+      const v = (l as unknown as Record<string, unknown>)[c.key];
+      return v !== null && v !== undefined && v !== "";
+    }),
+  );
+  shownColsCache.set(lines, keep);
+  return keep;
+}
+
+/** Keyed by the array the modal already holds, so the render does not recompute
+ *  the same answer once per row per column. */
+const shownColsCache = new WeakMap<ClrPreviewLine[], BcCol[]>();
 
 function ClrErpPreviewModal({ items, onClose }: { items: ClrPreviewItem[]; onClose: () => void }) {
   return (
@@ -106,17 +260,26 @@ function ClrErpPreviewModal({ items, onClose }: { items: ClrPreviewItem[]; onClo
                       style={{ background: "var(--bg-badge)", color: "var(--text-muted)" }}>{item.interfaceTarget}</span>
                   )}
                   {item.journalBatchName && <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Batch: {item.journalBatchName}</span>}
-                  {/* Refund and Payment post differently in BC, so say which one
-                      this is while it can still be stopped. */}
-                  {item.documentType && (
-                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
-                      style={{
-                        background: item.documentType === "Refund" ? "var(--status-ok-bg)" : "var(--bg-badge)",
-                        color: item.documentType === "Refund" ? "var(--status-ok-text)" : "var(--text-muted)",
-                      }}>
-                      {item.documentType === "Refund" ? "Refund · คืนบริษัท" : "Payment · จ่ายพนักงาน"}
-                    </span>
-                  )}
+                  {/* Which way the money actually moves, while it can still be
+                      stopped. Read off the bank line's sign rather than the
+                      Document Type: since 2026-09-08 that is always "Refund" by
+                      decision, so it no longer tells the two apart — and a badge
+                      reading "คืนบริษัท" over a clearing that pays the employee
+                      would be worse than no badge at all. */}
+                  {(() => {
+                    const bank = item.lines?.find((l) => l.accountType === "Bank Account");
+                    if (!bank) return null;
+                    const backToCompany = (bank.debit ?? 0) > 0;
+                    return (
+                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
+                        style={{
+                          background: backToCompany ? "var(--status-ok-bg)" : "var(--bg-badge)",
+                          color: backToCompany ? "var(--status-ok-text)" : "var(--text-muted)",
+                        }}>
+                        {backToCompany ? "คืนบริษัท" : "จ่ายพนักงานเพิ่ม"}
+                      </span>
+                    );
+                  })()}
                   {item.environment && <EnvBadge env={item.environment} />}
                 </div>
                 {!item.ok && (
@@ -127,74 +290,56 @@ function ClrErpPreviewModal({ items, onClose }: { items: ClrPreviewItem[]; onClo
                 )}
                 {item.ok && item.lines.length > 0 && (
                   <>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-[11px] min-w-[700px]" style={{ borderCollapse: "collapse" }}>
+                  <div className="overflow-x-auto show-x-scroll pb-1">
+                    <table className="text-[11px]" style={{ borderCollapse: "collapse", minWidth: "100%" }}>
                       <thead>
                         <tr style={{ background: "var(--bg-card-alt)" }}>
-                          {["Account Type", "Account No.", "Description", "Branch", "Dept", "Debit", "Credit"].map((h) => (
-                            <th key={h} className={`px-2.5 py-1.5 font-semibold whitespace-nowrap ${h === "Debit" || h === "Credit" ? "text-right" : "text-left"}`}
-                              style={{ color: "var(--text-secondary)", borderBottom: "1px solid var(--border-light)" }}>{h}</th>
+                          {shownCols(item.lines).map((c) => (
+                            <th key={c.key}
+                              className={`px-2.5 py-1.5 font-semibold whitespace-nowrap ${c.numeric ? "text-right" : "text-left"}`}
+                              style={{ color: "var(--text-secondary)", borderBottom: "1px solid var(--border-light)" }}>
+                              {c.label}
+                            </th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
                         {item.lines.map((line, idx) => (
                           <tr key={idx} style={{ borderBottom: "1px solid var(--border-light)" }}>
-                            <td className="px-2.5 py-1.5 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{line.accountType}</td>
-                            <td className="px-2.5 py-1.5 whitespace-nowrap font-mono" style={{ color: "var(--text-primary)" }}>{line.accountNo}</td>
-                            <td className="px-2.5 py-1.5" style={{ color: "var(--text-primary)", maxWidth: 200 }}>{line.description}</td>
-                            <td className="px-2.5 py-1.5 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>
-                              {line.branchCode || "—"}
-                              {/* A prior-period line is the exception, so it reads as a
-                                  mark on the branch rather than a column that would be
-                                  empty on almost every row. */}
-                              {line.adjCode && (
-                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded ml-1.5"
-                                  style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)" }}
-                                  title="ใบเสร็จลงเดือนก่อนเดือนที่โพสต์ — ปรับปรุงบัญชี (Z-ADJ)">
-                                  {line.adjCode}
-                                </span>
-                              )}
-                              {/* The BU the line will post to. It reads as part of the
-                                  branch because that is what decides it — the Location
-                                  the branch is bound to. */}
-                              {line.buCode && (
-                                <span className="text-[10px] ml-1.5" style={{ color: "var(--text-muted)" }}>
-                                  · {line.buCode}
-                                </span>
-                              )}
-                              {/* Shown, never enforced: BC may still take the line, and
-                                  refusing on an untested assumption would block work
-                                  that actually posts. */}
-                              {line.branchBlocked && (
-                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded ml-1.5"
-                                  style={{ background: "var(--bg-badge)", color: "var(--text-warning)" }}
-                                  title="สาขานี้ถูก Block ใน BC — ส่งได้ แต่ BC อาจไม่รับบรรทัดนี้">
-                                  BLOCKED
-                                </span>
-                              )}
-                            </td>
-                            <td className="px-2.5 py-1.5 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{line.departmentCode || "—"}</td>
-                            <td className="px-2.5 py-1.5 text-right tabular-nums whitespace-nowrap" style={{ color: line.debit ? "var(--text-primary)" : "var(--text-faint)" }}>
-                              {line.debit != null ? fmtMoney(line.debit) : "—"}
-                            </td>
-                            <td className="px-2.5 py-1.5 text-right tabular-nums whitespace-nowrap" style={{ color: line.credit ? "var(--text-primary)" : "var(--text-faint)" }}>
-                              {line.credit != null ? fmtMoney(line.credit) : "—"}
-                            </td>
+                            {shownCols(item.lines).map((c) => (
+                              <td key={c.key}
+                                className={`px-2.5 py-1.5 whitespace-nowrap ${c.numeric ? "text-right tabular-nums" : ""} ${c.mono ? "font-mono" : ""}`}
+                                style={{ color: c.dim ? "var(--text-secondary)" : "var(--text-primary)" }}>
+                                {c.render(line)}
+                              </td>
+                            ))}
                           </tr>
                         ))}
                       </tbody>
                       <tfoot>
                         <tr style={{ borderTop: "2px solid var(--border-card)", background: "var(--bg-card-alt)" }}>
-                          <td colSpan={5} className="px-2.5 py-1.5 text-[11px] font-bold" style={{ color: "var(--text-heading)" }}>
-                            รวม ({item.lines.length} บรรทัด)
-                          </td>
-                          <td className="px-2.5 py-1.5 text-right tabular-nums font-bold whitespace-nowrap" style={{ color: "var(--text-heading)" }}>{fmtMoney(totalDebit)}</td>
-                          <td className="px-2.5 py-1.5 text-right tabular-nums font-bold whitespace-nowrap" style={{ color: "var(--text-heading)" }}>{fmtMoney(totalCredit)}</td>
+                          {shownCols(item.lines).map((c, i) => (
+                            <td key={c.key}
+                              className={`px-2.5 py-1.5 text-[11px] font-bold whitespace-nowrap ${c.numeric ? "text-right tabular-nums" : ""}`}
+                              style={{ color: "var(--text-heading)" }}>
+                              {c.key === "debit" ? fmtMoney(totalDebit)
+                                : c.key === "credit" ? fmtMoney(totalCredit)
+                                : i === 0 ? `รวม (${item.lines.length} บรรทัด)` : ""}
+                            </td>
+                          ))}
                         </tr>
                       </tfoot>
                     </table>
                   </div>
+                  {(() => {
+                    const hidden = BC_COLUMNS.filter((c) => !shownCols(item.lines).includes(c));
+                    if (hidden.length === 0) return null;
+                    return (
+                      <p className="px-3 pt-2 text-[10px] leading-snug m-0" style={{ color: "var(--text-faint)" }}>
+                        ไม่แสดง {hidden.length} คอลัมน์ที่ไม่มีค่าในใบนี้: {hidden.map((c) => c.label).join(" · ")}
+                      </p>
+                    );
+                  })()}
                   {/* An AP-3 journal never balances by design, so a Dr≠Cr warning here would
                       train reviewers to ignore the preview. Explain it instead of flagging it. */}
                   <p className="px-3 py-2 text-[10px] leading-snug" style={{ color: "var(--text-faint)" }}>
@@ -256,6 +401,11 @@ export function ClrErpInterfaceQueue() {
      when the dialog opens so changing the selection behind it cannot change what
      gets sent. */
   const [confirmOpen, setConfirmOpen] = useState(false);
+  /** The row whose BC answer is on screen, if any. */
+  const [bcRow, setBcRow] = useState<ClrErpQueueRow | null>(null);
+  /** The row waiting for the pull-back confirmation. */
+  const [pullbackRow, setPullbackRow] = useState<ClrErpQueueRow | null>(null);
+  const [pullbackBusy, setPullbackBusy] = useState(false);
   const [frozenIds, setFrozenIds] = useState<number[]>([]);
   const [confirmItems, setConfirmItems] = useState<ClrPreviewItem[]>([]);
 
@@ -291,7 +441,22 @@ export function ClrErpInterfaceQueue() {
 
   // split rows (after brand filter)
   const sendableRows = useMemo(() => filteredByBrand.filter(isSelectable), [filteredByBrand]);
-  const sentRows = useMemo(() => filteredByBrand.filter((r) => !isSelectable(r)), [filteredByBrand]);
+  /* A failure is not a send. It used to sit in "ส่งแล้ว" behind a red pill,
+     counted in that tab's total, which read as work finished. */
+  const sentRows = useMemo(
+    () => filteredByBrand.filter((r) => isSent(r) || isPending(r)),
+    [filteredByBrand],
+  );
+  const failedRows = useMemo(
+    () => filteredByBrand.filter((r) => r.erpStatus === "Failed"),
+    [filteredByBrand],
+  );
+  const failedFiltered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return q
+      ? failedRows.filter((r) => `${r.requestNo ?? ""} ${r.requesterFullName ?? ""}`.toLowerCase().includes(q))
+      : failedRows;
+  }, [failedRows, search]);
 
   // sent-tab month options
   const sentMonthOptions = useMemo(() => {
@@ -408,6 +573,31 @@ export function ClrErpInterfaceQueue() {
     }
   }, [frozenIds, mutate]);
 
+  const doPullback = useCallback(async () => {
+    if (!pullbackRow) return;
+    setPullbackBusy(true);
+    try {
+      const res = await fetch("/api/request/clear-advance/erp/pullback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: pullbackRow.id }),
+      });
+      const json = (await res.json()) as { ok: boolean; error?: string };
+      if (!json.ok) {
+        toast.error(json.error ?? "ดึงกลับไม่สำเร็จ");
+        return;
+      }
+      toast.success(`ดึงกลับแล้ว — ย้ายไปแท็บ “รอส่ง”`);
+      setPullbackRow(null);
+      setTab("pending");
+      await mutate();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "ดึงกลับไม่สำเร็จ");
+    } finally {
+      setPullbackBusy(false);
+    }
+  }, [pullbackRow, mutate]);
+
   /** What the send will post, grouped by the BC company each clearing targets —
    *  the same summary AP-2's confirmation shows. */
   const sendSummary = useMemo(() => {
@@ -501,7 +691,11 @@ export function ClrErpInterfaceQueue() {
 
       {/* sub-tabs */}
       <div className="flex items-center gap-1 mb-4" style={{ borderBottom: "1px solid var(--border-card)" }}>
-        {([["pending", `รอส่ง (${sendableRows.length})`], ["sent", `ส่งแล้ว (${sentRows.length})`]] as const).map(([t, label]) => {
+        {([
+          ["pending", `รอส่ง (${sendableRows.length})`],
+          ["sent", `ส่งแล้ว (${sentRows.length})`],
+          ["failed", `ล้มเหลว (${failedRows.length})`],
+        ] as const).map(([t, label]) => {
           const active = tab === t;
           return (
             <button key={t} type="button" onClick={() => setTab(t)}
@@ -610,7 +804,7 @@ export function ClrErpInterfaceQueue() {
                               <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>{row.paymentDate ?? "—"}</span>
                             )}
                           </td>
-                          <td className="px-3 py-2 whitespace-nowrap"><ErpStatusBadge row={row} /></td>
+                          <td className="px-3 py-2 whitespace-nowrap"><ErpStatusBadge row={row} onShow={setBcRow} /></td>
                           <td className="px-3 py-2 whitespace-nowrap font-mono text-[11px]" style={{ color: "var(--text-secondary)" }}>
                             {row.erpDocumentNo ?? <span style={{ color: "var(--text-faint)" }}>—</span>}
                           </td>
@@ -721,7 +915,7 @@ export function ClrErpInterfaceQueue() {
                           <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-muted)" }}>
                             {fmtDateTime(row.erpSentAt)}
                           </td>
-                          <td className="px-3 py-2 whitespace-nowrap"><ErpStatusBadge row={row} /></td>
+                          <td className="px-3 py-2 whitespace-nowrap"><ErpStatusBadge row={row} onShow={setBcRow} /></td>
                         </tr>
                       );
                     })}
@@ -729,10 +923,94 @@ export function ClrErpInterfaceQueue() {
                   <tfoot className="sticky bottom-0 z-10">
                     <tr style={{ borderTop: "2px solid var(--border-card)", background: "color-mix(in srgb, var(--bg-card) 80%, var(--bg-page))", boxShadow: "0 -1px 0 var(--border-card), 0 -8px 16px -10px rgba(0,0,0,0.25)" }}>
                       <td colSpan={10} className="px-3 py-2.5 font-bold" style={{ color: "var(--text-heading)" }}>
-                        ทั้งหมด {sentFiltered.length} รายการ · ส่งแล้ว {sentFiltered.filter(isSent).length} · ล้มเหลว {sentFiltered.filter((r) => r.erpStatus === "Failed").length}
+                        ทั้งหมด {sentFiltered.length} รายการ · ส่งแล้ว {sentFiltered.filter(isSent).length}
                       </td>
                     </tr>
                   </tfoot>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── ล้มเหลว tab ── */}
+      {tab === "failed" && (
+        <>
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <div className="relative">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: "var(--text-faint)" }} />
+              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ค้นหา เลขที่ / ผู้ยื่น"
+                className="text-[12px] rounded-lg pl-7 pr-3 py-2 outline-none w-[220px]"
+                style={{ background: "var(--bg-card)", border: "1px solid var(--border-input)", color: "var(--text-primary)" }} />
+            </div>
+            <span className="text-[11px] ml-auto" style={{ color: "var(--text-muted)" }}>
+              {failedFiltered.length} รายการ
+            </span>
+          </div>
+
+          {failedFiltered.length === 0 ? (
+            <div className="flex flex-col items-center gap-3 py-12 text-center rounded-xl"
+              style={{ border: "1px solid var(--border-card)", background: "var(--bg-card)" }}>
+              <FileX size={32} style={{ color: "var(--text-muted)" }} />
+              <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>ไม่มีรายการที่ล้มเหลว 🎉</p>
+            </div>
+          ) : (
+            <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border-card)" }}>
+              <div className="overflow-x-auto no-scrollbar max-h-[min(72vh,760px)] overflow-y-auto" style={{ background: "var(--bg-card)" }}>
+                <table className="w-full text-[12px] border-collapse min-w-[1100px]">
+                  <thead className="sticky top-0 z-10"
+                    style={{ background: "var(--bg-card-alt)", boxShadow: "0 1px 0 var(--border-light)" }}>
+                    <tr style={{ borderBottom: "1px solid var(--border-light)" }}>
+                      {["เลขที่", "แบรนด์", "ผู้ยื่น", "Advance", "ใช้จริง", "Error จาก BC", "สถานะ", ""].map((h) => (
+                        <th key={h} className="px-3 py-2.5 font-semibold whitespace-nowrap text-left"
+                          style={{ color: "var(--text-secondary)" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {failedFiltered.map((row, idx) => {
+                      const rowBg = idx % 2 === 0 ? "transparent" : "color-mix(in srgb, var(--bg-card) 50%, var(--bg-page))";
+                      return (
+                        <tr key={row.id} style={{ background: rowBg, borderBottom: "1px solid var(--border-light)" }}>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            <span className="font-semibold" style={{ color: "var(--nav-active-text)" }}>{row.requestNo ?? `#${row.id}`}</span>
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{row.brandCode ?? "—"}</td>
+                          <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-primary)" }}>{row.requesterFullName ?? "—"}</td>
+                          <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{row.advanceRequestNo ?? "—"}</td>
+                          <td className="px-3 py-2 whitespace-nowrap text-right tabular-nums" style={{ color: "var(--text-primary)" }}>
+                            {row.actualTotal != null ? row.actualTotal.toLocaleString("th-TH", { minimumFractionDigits: 2 }) : "—"}
+                          </td>
+                          {/* The reason, on the row. Two lines of it — the whole
+                              answer is a click away and does not belong in a cell. */}
+                          <td className="px-3 py-2 align-top" style={{ maxWidth: "26rem" }}>
+                            <button
+                              type="button"
+                              onClick={() => setBcRow(row)}
+                              className="text-left text-[11px] cursor-pointer bg-transparent border-none p-0 underline"
+                              style={{
+                                color: "var(--status-bad-text)", display: "-webkit-box",
+                                WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+                              }}
+                              title="ดูคำตอบจาก BC ทั้งหมด"
+                            >
+                              {row.erpError ?? "—"}
+                            </button>
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap"><ErpStatusBadge row={row} onShow={setBcRow} /></td>
+                          <td className="px-3 py-2 whitespace-nowrap text-right">
+                            <button type="button" onClick={() => setPullbackRow(row)}
+                              className="text-[12px] font-semibold px-2.5 py-1 rounded-lg cursor-pointer border-none"
+                              style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}
+                              title="ล้างสถานะและย้ายกลับไปแท็บ รอส่ง">
+                              ดึงกลับเพื่อยิงใหม่
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
                 </table>
               </div>
             </div>
@@ -749,6 +1027,111 @@ export function ClrErpInterfaceQueue() {
           own confirm(), which could say nothing about where the journal was
           bound for. Sending into Production reads differently from Sandbox and
           the dialog has to make that visible while it can still be stopped. */}
+      {/* Pulling back changes our record and nothing in BC — which is the whole
+          risk, so the dialog says it rather than the tooltip. */}
+      {pullbackRow && (
+        <Dialog
+          open={!!pullbackRow}
+          onOpenChange={(o) => { if (!o && !pullbackBusy) setPullbackRow(null); }}
+          title="ดึงกลับเพื่อยิงใหม่?"
+          contentClassName="max-w-[520px]"
+        >
+          <div className="flex flex-col gap-3 p-1">
+            <p className="text-[13px] m-0" style={{ color: "var(--text-secondary)" }}>
+              <b style={{ color: "var(--text-heading)" }}>{pullbackRow.requestNo ?? `#${pullbackRow.id}`}</b>{" "}
+              จะถูกล้างสถานะ ERP และย้ายกลับไปแท็บ “รอส่ง” เพื่อส่งใหม่
+            </p>
+            <p className="text-[12px] m-0 px-3 py-2 rounded-lg"
+              style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
+              ⚠️ การดึงกลับ <b>ไม่แตะ Business Central</b> — ถ้าครั้งก่อน BC รับบางบรรทัดไว้แล้ว
+              (เช่น “Inserted: 3, Failed: 1”) เอกสารที่ค้างอยู่ใน Journal Batch จะยังอยู่
+              และการยิงใหม่จะเพิ่มอีกชุด <b>ต้องลบเอกสารเดิมใน BC ก่อน</b>
+            </p>
+            <div className="flex justify-end gap-2">
+              <button type="button" disabled={pullbackBusy} onClick={() => setPullbackRow(null)}
+                className="text-[13px] font-medium px-4 py-2 rounded-lg cursor-pointer"
+                style={{ color: "var(--text-secondary)", background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}>
+                ยกเลิก
+              </button>
+              <button type="button" disabled={pullbackBusy} onClick={doPullback}
+                className="text-[13px] font-medium px-4 py-2 rounded-lg cursor-pointer"
+                style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)", border: "none", opacity: pullbackBusy ? 0.7 : 1 }}>
+                {pullbackBusy ? "กำลังดึงกลับ..." : "ยืนยันดึงกลับ"}
+              </button>
+            </div>
+          </div>
+        </Dialog>
+      )}
+
+      {/* What BC said, in BC's words. The derived summary is above it because it
+          is the sentence someone can act on; the raw answer is below because it
+          is the one nobody can argue with. */}
+      {bcRow && (
+        <Dialog
+          open={!!bcRow}
+          onOpenChange={(o) => { if (!o) setBcRow(null); }}
+          title={`คำตอบจาก Business Central — ${bcRow.requestNo ?? bcRow.id}`}
+          contentClassName="max-w-[720px]"
+        >
+          <div className="flex flex-col gap-3 p-1">
+            <div className="flex items-center gap-2 flex-wrap text-[12px]" style={{ color: "var(--text-muted)" }}>
+              <span>{bcRow.erpEnvironment ?? "—"}</span>
+              <span>·</span>
+              <span>Doc No: <b style={{ color: "var(--text-secondary)" }}>{bcRow.erpDocumentNo ?? "—"}</b></span>
+              <span>·</span>
+              <span>{fmtDateTime(bcRow.erpSentAt)}</span>
+            </div>
+
+            {bcRow.erpError && (
+              <div className="rounded-lg px-3 py-2 text-[12px]"
+                style={{ background: "var(--bg-info-red)", color: "var(--status-bad-text)" }}>
+                {bcRow.erpError}
+              </div>
+            )}
+
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                Response ดิบ
+              </span>
+              <pre
+                className="text-[11px] m-0 p-3 rounded-lg overflow-auto"
+                style={{
+                  background: "var(--bg-input)", color: "var(--text-primary)",
+                  border: "1px solid var(--border-input)", maxHeight: "22rem", whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
+              >
+                {prettyJson(bcRow.erpResponse) ?? "— ไม่มีคำตอบที่บันทึกไว้ (ส่งก่อนที่ระบบจะเริ่มเก็บ) —"}
+              </pre>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              {bcRow.erpResponse && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(bcRow.erpResponse ?? "");
+                    toast.success("คัดลอกแล้ว");
+                  }}
+                  className="text-[13px] font-medium px-4 py-2 rounded-lg cursor-pointer"
+                  style={{ color: "var(--text-secondary)", background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}
+                >
+                  คัดลอก
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setBcRow(null)}
+                className="text-[13px] font-medium px-4 py-2 rounded-lg cursor-pointer"
+                style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)", border: "none" }}
+              >
+                ปิด
+              </button>
+            </div>
+          </div>
+        </Dialog>
+      )}
+
       {confirmOpen && (
         <Dialog
           open={confirmOpen}

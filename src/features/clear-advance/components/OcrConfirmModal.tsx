@@ -11,6 +11,23 @@ import { BranchPicker, GlPicker, cellClass, cellStyle, isPickerPanelOpen } from 
 /** One OCR candidate awaiting the user's confirmation. Mirrors the editable half
  *  of an expense line plus the WHT-certificate fields the receipt also carries,
  *  so a confirmed row can fill both tables. */
+interface VatRegistrant {
+  nid: string;
+  titleName: string | null;
+  name: string | null;
+  branchNumber: number | null;
+  branchCode: string | null;
+  vatRegisteredOn: string | null;
+  address: string | null;
+}
+
+/** "unknown" is the RD not answering — deliberately not the same as "unregistered". */
+type VatCheck =
+  | { state: "checking" }
+  | { state: "found"; registrant: VatRegistrant }
+  | { state: "unregistered" }
+  | { state: "unknown" };
+
 export interface OcrRow {
   /** Stable React key — the rows are reordered by nothing, but a row can be dropped. */
   key: string;
@@ -31,6 +48,12 @@ export interface OcrRow {
    */
   dateText?: string;
   docNo: string;
+  /**
+   * The seller's branch exactly as the invoice prints it. Carried through the
+   * modal so the rule that turns it into a code runs on our side, and so a
+   * reviewer can see what was read.
+   */
+  taxBranchText: string;
   branchCode: string;
   glAccountNo: string;
   glAccountName: string;
@@ -38,7 +61,11 @@ export interface OcrRow {
   amountBeforeVat: string;
   vatAmount: string;
   whtAmount: string;
-  /** Read from the receipt, not edited here — carried through to the WHT certificate. */
+  /**
+   * The seller off the tax invoice — checked and corrected here, because this is
+   * the one moment the reviewer has the receipt in front of them. They become
+   * the VAT line's Tax Invoice Name and VAT registration in BC.
+   */
   taxId: string;
   payeeName: string;
   payeeAddress: string;
@@ -96,12 +123,58 @@ export function OcrConfirmModal({
   onCancel: () => void;
 }) {
   const [rows, setRows] = useState<OcrRow[]>(incoming);
+  /** Receipt rows being saved that still have no branch, numbered as on screen. */
+  const missingBranch = rows
+    .map((r, i) => ({ r, n: i + 1 }))
+    .filter(({ r }) => r.include && r.kind === "receipt" && !r.branchCode)
+    .map(({ n }) => n);
   // Each row's account list is fetched for that row's branch, exactly like the
   // expense table does — the server decides what a branch may charge.
   const [glByBranch, setGlByBranch] = useState<Record<string, GlAccountOption[]>>({});
   const glRequested = useRef<Set<string>>(new Set());
 
+  /**
+   * What the Revenue Department says about each seller's tax id, keyed by the id.
+   * `null` is a real answer — that number is not on the VAT register.
+   *
+   * It is looked up as soon as an id is on screen, because it settles three
+   * things the reader is unreliable about at once: the registered name (spelled
+   * four different ways across four reads of one invoice), the branch, and
+   * whether the seller may issue a tax invoice at all — input tax from someone
+   * who is not registered cannot be claimed.
+   */
+  const [vat, setVat] = useState<Record<string, VatCheck>>({});
+  const vatRequested = useRef<Set<string>>(new Set());
+
   useEffect(() => { setRows(incoming); }, [incoming]);
+
+  const taxIdKeys = useMemo(
+    () => Array.from(new Set(rows.map((r) => r.taxId.replace(/\D/g, "")).filter((t) => t.length === 13)))
+      .sort().join("|"),
+    [rows],
+  );
+  useEffect(() => {
+    for (const tin of taxIdKeys.split("|").filter(Boolean)) {
+      if (vatRequested.current.has(tin)) continue;
+      vatRequested.current.add(tin);
+      setVat((p) => ({ ...p, [tin]: { state: "checking" } }));
+      fetch(`/api/request/clear-advance/vat-registrant?taxId=${tin}`)
+        .then((r) => r.json())
+        .then((j: { ok: boolean; data?: { registrant: VatRegistrant | null } }) => {
+          setVat((p) => ({
+            ...p,
+            // An unreachable RD is not an unregistered seller: the failed case
+            // says nothing rather than accusing the invoice.
+            [tin]: j.ok
+              ? (j.data?.registrant
+                  ? { state: "found", registrant: j.data.registrant }
+                  : { state: "unregistered" })
+              : { state: "unknown" },
+          }));
+        })
+        .catch(() => setVat((p) => ({ ...p, [tin]: { state: "unknown" } })));
+    }
+  }, [taxIdKeys]);
 
   const branchKeys = useMemo(
     () => Array.from(new Set(rows.map((r) => r.branchCode).filter(Boolean))).sort().join("|"),
@@ -226,7 +299,15 @@ export function OcrConfirmModal({
                     ))}
                   </select>
                   {r.fileName && (
-                    <span className="text-[11px] truncate max-w-[40%]" style={{ color: "var(--text-faint)" }}>
+                    // Scanner filenames are a timestamp and nothing else —
+                    // "20260819164241237.pdf". Cut to 40% of the row they all
+                    // read alike, and the reviewer cannot tell which upload a row
+                    // came from, which is the only thing this label is for. It
+                    // takes whatever the row has left now, truncating only when
+                    // there is genuinely no room, and the title carries the whole
+                    // name for that case.
+                    <span className="text-[11px] truncate flex-1 min-w-0" title={r.fileName}
+                      style={{ color: "var(--text-faint)" }}>
                       {r.fileName}
                     </span>
                   )}
@@ -249,14 +330,106 @@ export function OcrConfirmModal({
                 </F>
                 {/* Branch and account belong to an expense line; a slip only carries
                     a date and an amount. */}
-                {r.kind === "receipt" && (
+                {/* The tax-VAT block: who issued the invoice. Thirteen digits is
+                  longer than anything else on this form, so it gets a row of its
+                  own rather than a third of one. */}
+              {r.kind === "receipt" && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <F label="เลขผู้เสียภาษี (ผู้ขาย)">
+                    <input className={cellClass} style={{ ...cellStyle, width: "100%" }}
+                      inputMode="numeric" placeholder="เลข 13 หลัก"
+                      value={r.taxId} onChange={(e) => update(r.key, { taxId: e.target.value })} />
+                    {/* Only the empty state says anything. A number that is there
+                        needs no caption — the reviewer is looking at the invoice —
+                        and a standing warning on every read is one more line to
+                        stop seeing. Blank is the case worth explaining: our own tax
+                        id is discarded before it reaches here, so an empty field
+                        can mean the read went wrong rather than that the invoice
+                        printed nothing. */}
+                    {!r.taxId && (
+                      <span className="text-[10px]" style={{ color: "var(--text-faint)" }}>
+                        AI อ่านเลขผู้ขายไม่ได้ — กรอกจากใบกำกับ
+                      </span>
+                    )}
+                    {/* What the Revenue Department holds for that number. The
+                        registered name and branch are facts where the read was a
+                        guess, so they are offered rather than applied: the
+                        reviewer has the paper and decides. Not being registered
+                        is stated plainly — input tax from a seller who is not
+                        cannot be claimed. */}
+                    {(() => {
+                      const v = vat[r.taxId.replace(/\D/g, "")];
+                      if (!v) return null;
+                      if (v.state === "checking") {
+                        return <span className="text-[10px]" style={{ color: "var(--text-faint)" }}>กำลังตรวจกับกรมสรรพากร…</span>;
+                      }
+                      if (v.state === "unregistered") {
+                        return (
+                          <span className="text-[10px]" style={{ color: "var(--text-warning)" }}>
+                            ไม่พบในทะเบียน VAT ของกรมสรรพากร — ภาษีซื้อจากใบนี้อาจขอคืนไม่ได้
+                          </span>
+                        );
+                      }
+                      if (v.state === "unknown") {
+                        return <span className="text-[10px]" style={{ color: "var(--text-faint)" }}>ตรวจกับกรมสรรพากรไม่สำเร็จ</span>;
+                      }
+                      const reg = v.registrant;
+                      const full = [reg.titleName, reg.name].filter(Boolean).join(" ");
+                      const differs = full && full !== r.payeeName.trim();
+                      return (
+                        <span className="text-[10px] flex flex-wrap items-center gap-1"
+                          style={{ color: "var(--text-info-green)" }}>
+                          <span>สรรพากร: {full}{reg.branchCode ? ` · สาขา ${reg.branchCode}` : ""}</span>
+                          {differs && (
+                            <button type="button"
+                              className="text-[10px] underline cursor-pointer border-none bg-transparent p-0"
+                              style={{ color: "var(--nav-active-text)" }}
+                              onClick={() => update(r.key, {
+                                payeeName: full,
+                                taxBranchText: reg.branchCode === "00000" ? "สำนักงานใหญ่" : `สาขาที่ ${reg.branchCode}`,
+                              })}>
+                              ใช้ชื่อนี้
+                            </button>
+                          )}
+                        </span>
+                      );
+                    })()}
+                  </F>
+                  <F label="สาขาผู้ขาย">
+                    <input className={cellClass} style={{ ...cellStyle, width: "100%" }}
+                      placeholder="สำนักงานใหญ่ / สาขาที่ 00001"
+                      value={r.taxBranchText}
+                      onChange={(e) => update(r.key, { taxBranchText: e.target.value })} />
+                  </F>
+                </div>
+              )}
+
+              {r.kind === "receipt" && (
+                <F label="ชื่อผู้ขาย">
+                  <input className={cellClass} style={{ ...cellStyle, width: "100%" }} placeholder="—"
+                    value={r.payeeName} onChange={(e) => update(r.key, { payeeName: e.target.value })} />
+                </F>
+              )}
+
+              {r.kind === "receipt" && (
                   <>
-                    <F label="สาขา">
+                    {/* Ours, not the seller's — the two now sit near each other,
+                        and filling one into the other would post the expense to the
+                        wrong shop and file the tax against the wrong branch. */}
+                    <F label="สาขาที่ใช้จ่าย (ของเรา) *">
                       <BranchPicker options={branches} value={r.branchCode} noBrand={!brandChosen}
                         disabled={!brandChosen} inline
                         onPick={(code) => update(r.key, {
                           branchCode: code, branchSuggested: false, branchClose: false,
                         })} />
+                      {/* The branch decides the BU, the account list and the
+                          BRANCH dimension on the journal line — a row saved
+                          without one is a row someone has to come back to. */}
+                      {!r.branchCode && (
+                        <span className="text-[10px]" style={{ color: "var(--color-danger)" }}>
+                          กรุณาเลือกสาขา
+                        </span>
+                      )}
                       {r.branchSuggested && (
                         // "close" earns a colour: the pick is as likely to be the
                         // neighbouring branch, and branch decides the account list.
@@ -343,7 +516,17 @@ export function OcrConfirmModal({
         <div className="shrink-0 flex items-center justify-end gap-2 px-5 py-3.5"
           style={{ borderTop: "1px solid var(--border-light)" }}>
           <Button variant="secondary" size="sm" onClick={onCancel}>ยกเลิก</Button>
-          <Button variant="primary" size="sm" onClick={() => onConfirm(rows.filter((r) => r.include))}>ยืนยันบันทึก</Button>
+          {/* Refused rather than saved-and-warned: every receipt row needs a
+              branch, and the picker for it is on this screen. */}
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={missingBranch.length > 0}
+            title={missingBranch.length > 0 ? `เลือกสาขาให้ครบก่อน — รายการที่ ${missingBranch.join(", ")}` : undefined}
+            onClick={() => onConfirm(rows.filter((r) => r.include))}
+          >
+            ยืนยันบันทึก
+          </Button>
         </div>
       </div>
     </Dialog>
