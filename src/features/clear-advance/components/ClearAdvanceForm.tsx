@@ -754,6 +754,18 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
    * values do NOT reach the expense table: they open the confirmation modal
    * (§7), and only ยืนยันบันทึก writes them.
    */
+  /**
+   * Files uploaded for the read the confirm modal is showing.
+   *
+   * The upload is committed to the request before the model is called, so a
+   * cancelled read used to leave its file behind: six identical orphans piled
+   * up on one draft during testing, and a request that reached the ERP carried
+   * the same receipt twice. Cancelling rejects the read, and the upload was
+   * only ever its input, so it goes with it. Confirming keeps them — they are
+   * the evidence behind the expense lines.
+   */
+  const [ocrFileIds, setOcrFileIds] = useState<number[]>([]);
+
   async function verifyReceipts(docs: { file: File; fileId: number }[]) {
     setOcrScanning(true);
     try {
@@ -795,6 +807,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       // report the reviewer gets that something was thrown away.
       if (candidates.length === 0 && skipped === 0) return;
       setOcrSkipped(skipped);
+      setOcrFileIds(docs.map((d) => d.fileId));
       setOcrRows(candidates);
     } finally {
       setOcrScanning(false);
@@ -805,8 +818,27 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
    *  receipt fills the next empty expense line, appending one when none is free
    *  and never overwriting a line the user already filled; a slip fills the
    *  refund-transfer fields. The row's kind decides, not the upload box. */
+  /** Cancelled the read — drop its rows and the upload they were read from. The
+   *  deletes are best-effort and silent: failing to tidy up must not put an
+   *  error in front of someone who only pressed ยกเลิก. */
+  async function cancelOcrRows() {
+    const ids = ocrFileIds;
+    setOcrRows(null);
+    setOcrFileIds([]);
+    if (ids.length === 0) return;
+    setFiles((prev) => prev.filter((f) => !ids.includes(f.id)));
+    await Promise.all(
+      ids.map((fileId) =>
+        fetch(`/api/request/clear-advance/requests/${requestId}/files?fileId=${fileId}`, {
+          method: "DELETE",
+        }).catch(() => undefined),
+      ),
+    );
+  }
+
   function acceptOcrRows(accepted: OcrRow[]) {
     setOcrRows(null);
+    setOcrFileIds([]);
     if (accepted.length === 0) return;
 
     const rows = accepted.filter((r) => r.kind === "receipt");
@@ -1607,7 +1639,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
         glForced={glForced}
         forcedGlLabel={`${FORCE_GL_NON_ROCKS_PC} · เงินจ่ายแทนบริษัทอื่น`}
         onConfirm={acceptOcrRows}
-        onCancel={() => setOcrRows(null)}
+        onCancel={() => { void cancelOcrRows(); }}
       />
       )}
 
