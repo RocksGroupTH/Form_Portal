@@ -14,6 +14,8 @@ import { RequestDetail } from "@/features/accounting/components/RequestDetail";
 import { TravelBookingDetail } from "@/features/travel-booking/components/TravelBookingDetail";
 import type { TravelBookingRequest } from "@/features/travel-booking/types";
 import { ReimburseDetail } from "@/features/reimburse/components/ReimburseDetail";
+import { ClearAdvanceDetail } from "@/features/clear-advance/components/ClearAdvanceDetail";
+import type { ClearAdvanceRequest } from "@/features/clear-advance/types";
 import type { ReimburseDetail as ReimburseDetailData } from "@/features/reimburse/types";
 import { AdvanceDetailPanel } from "@/features/advance/components/AdvanceDetailPanel";
 import { useFormEnvironments } from "@/lib/hooks/useFormEnvironments";
@@ -144,6 +146,7 @@ function RequestRowList({
   const [drawerDetail, setDrawerDetail] = useState<AccRequest | null>(null);
   const [tbDetail, setTbDetail] = useState<TravelBookingRequest | null>(null);
   const [rbDetail, setRbDetail] = useState<ReimburseDetailData | null>(null);
+  const [caDetail, setCaDetail] = useState<ClearAdvanceRequest | null>(null);
   const [drawerFormCode, setDrawerFormCode] = useState<string | null>(null);
   const [loadingDrawer, setLoadingDrawer] = useState(false);
   const [q, setQ] = useState("");
@@ -195,23 +198,6 @@ function RequestRowList({
     void loadRows();
   }, [loadRows]);
 
-  /**
-   * Forms whose document lives on its own page rather than in this drawer.
-   *
-   * The drawer reads through AP-1's API for anything it has no case for, which
-   * for these two returns 404 — the request is not in AP-1's tables. AP-2 was
-   * already excluded from opening the panel, which turned its rows into dead
-   * clicks; AP-3 opened one that could never load.
-   *
-   * They are sent to their own pages instead of being given a case here. Those
-   * pages are the document — approvals, attachments, the ERP state — and a
-   * second rendering of them inside a drawer would be a copy to keep in step.
-   */
-  const OWN_PAGE: Record<string, string> = {
-    "AP-2": "/request/advance",
-    "AP-3": "/request/clear-advance",
-  };
-
   /* Detail drawer — open in a SidePanel (same view as the report/approval queue). */
   // Each form's detail lives in its own tables behind its own API, and its own
   // URL prefix is what routes the read to that form's database
@@ -225,7 +211,9 @@ function RequestRowList({
         ? `/api/request/travel-booking/requests/${id}`
         : formCode === "AP-4"
           ? `/api/request/reimburse/requests/${id}`
-          : `/api/request/accounting/requests/${id}`;
+          : formCode === "AP-3"
+            ? `/api/request/clear-advance/requests/${id}`
+            : `/api/request/accounting/requests/${id}`;
     fetch(url)
       .then((r) => readApiJson<{ ok: boolean; data?: AccRequest | TravelBookingRequest | ReimburseDetailData; error?: string }>(r))
       .then((json) => {
@@ -233,6 +221,7 @@ function RequestRowList({
         if (json.ok && json.data) {
           if (formCode === "AP-17") setTbDetail(json.data as TravelBookingRequest);
           else if (formCode === "AP-4") setRbDetail(json.data as ReimburseDetailData);
+          else if (formCode === "AP-3") setCaDetail(json.data as unknown as ClearAdvanceRequest);
           else setDrawerDetail(json.data as AccRequest);
         } else {
           toast.error(json.error ?? "โหลดรายละเอียดไม่สำเร็จ");
@@ -517,17 +506,7 @@ function RequestRowList({
             <button
               key={row.id}
               type="button"
-              onClick={() => {
-                const own = row.formCode ? OWN_PAGE[row.formCode] : undefined;
-                if (own) {
-                  // `from` is what the document's back button returns to, so the
-                  // reader lands where they left rather than on the form's own hub.
-                  window.location.href = `${own}/${row.id}?from=${encodeURIComponent(kind === "work" ? "/my-work" : "/my-request")}`;
-                  return;
-                }
-                setDrawerId(row.id);
-                setDrawerFormCode(row.formCode ?? null);
-              }}
+              onClick={() => { setDrawerId(row.id); setDrawerFormCode(row.formCode ?? null); }}
               className="w-full text-left rounded-xl p-3 flex items-center gap-3 cursor-pointer transition-colors"
               style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}
             >
@@ -603,9 +582,45 @@ function RequestRowList({
         />
       )}
 
+      {/* AP-3 (clear advance) — the same document its own page shows, in a drawer.
+          Its detail component takes the request as a prop rather than fetching,
+          so loadDrawer reads it from AP-3's own API: the generic path below is
+          AP-1's, and an AP-3 id is not in AP-1's tables, which answered 404. */}
+      <SidePanel
+        open={drawerFormCode === "AP-3" && drawerId != null}
+        onClose={() => { setDrawerId(null); setCaDetail(null); }}
+        width="min(980px, 100vw)"
+        zIndex={50}
+      >
+        <div className="flex items-center justify-between px-4 py-3 shrink-0"
+          style={{ borderBottom: "1px solid var(--border-light)" }}>
+          <div className="min-w-0">
+            <p className="text-[14px] font-bold truncate m-0" style={{ color: "var(--text-heading)" }}>
+              {caDetail?.requestNo ?? "เคลียร์คืนเงินทดรองจ่าย"}
+            </p>
+            <p className="text-[11px] m-0 mt-0.5" style={{ color: "var(--text-muted)" }}>
+              แบบฟอร์มเคลียร์คืนเงินทดรองจ่าย (AP-3)
+            </p>
+          </div>
+          <SidePanelClose onClick={() => { setDrawerId(null); setCaDetail(null); }} />
+        </div>
+        <div className="flex-1 overflow-y-auto no-scrollbar px-4 py-4 acc-theme">
+          {loadingDrawer || !caDetail ? (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 size={20} className="animate-spin" style={{ color: "var(--text-muted)" }} />
+            </div>
+          ) : (
+            <ClearAdvanceDetail
+              request={caDetail}
+              onChanged={() => { void loadRows(); if (drawerId != null) loadDrawer(drawerId, "AP-3"); }}
+            />
+          )}
+        </div>
+      </SidePanel>
+
       {/* Detail drawer — same day-selector view as the report / approval queue */}
-      {/* AP-2 and AP-3 never reach here — they open their own page above. */}
-      <SidePanel open={drawerId != null && !(drawerFormCode && OWN_PAGE[drawerFormCode])} onClose={() => setDrawerId(null)} width="min(720px, 100vw)" zIndex={50}>
+      {/* AP-2 and AP-3 have their own drawers above. */}
+      <SidePanel open={drawerId != null && drawerFormCode !== "AP-2" && drawerFormCode !== "AP-3"} onClose={() => setDrawerId(null)} width="min(720px, 100vw)" zIndex={50}>
         <div
           className="flex items-center justify-between px-4 py-3 shrink-0"
           style={{ borderBottom: "1px solid var(--border-light)" }}
