@@ -38,7 +38,7 @@ populated by anything we send.
 | --- | --- | --- | --- |
 | 1 | Posting Date | `postingDate` | ✅ Refund → transfer date, Payment → the payment date finance sets (sheet rows 25-26) |
 | 2 | Document Type | `documentType` | ✅ Refund / Payment by direction (rows 30-31) |
-| 3 | Document No. | — | BC numbers it from the batch's series. See §8 q4 |
+| 3 | Document No. | — | ✅ BC numbers it from the batch's own series (user, 2026-09-08) |
 | 4 | External Document No. | `employeeCode`, holding the **request no.** | ❌ row 25 says รหัสพนักงาน — §5.2 |
 | 5 | Account Type | `accountType` | ✅ |
 | 6 | Account No. | `accountNo` | ⚠️ correct except on the WHT line — §5.3 |
@@ -303,14 +303,14 @@ Two of the four are settled; what remains does not block starting.
    accounts in a legend (rows 25-29) but does not state the rule. Needed before
    the portal sends `buCode`; the AL half (§5.1) can be built and deployed first
    behind its `COCO` fallback, which is why Step 2 is not blocked.
-4. **Document No. series and Currency Code.** The example is `PVJ2608-0002`;
-   ours come back `PVA2609-xxxx`, which is the batch's own number series rather
-   than anything the portal sends. Is AP-3 meant to have its own series? And
-   Currency Code is a column we never populate — irrelevant while everything is
-   THB, but the column exists.
+4. **Currency Code** is a column we never populate — irrelevant while everything
+   is THB, but the column exists.
 
-**Settled 2026-09-08:** one WHT line per clearing, not both (§5.3); and the tax
-columns are NWTH fields from a dependency the project already declares (§5.4).
+**Settled 2026-09-08:** one WHT line per clearing, not both (§5.3); the tax
+columns are NWTH fields from a dependency the project already declares (§5.4);
+and the document number comes from the journal batch's own series, so `PVJ` in
+the example against our `PVA` is a batch setting and not an interface concern
+(user).
 
 ## 9. Phase 1 differences from the requirements
 
