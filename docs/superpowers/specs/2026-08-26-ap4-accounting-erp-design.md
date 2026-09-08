@@ -23,6 +23,23 @@ left as written on 2026-08-26, dated history rather than current state.
   offered only as the field's default. `PAYMENT_DATE_NOT_A_ROUND` and its 409
   never shipped — see CLAUDE.md's AP-4 section for why a fixed bound replaced
   a membership test.
+- **The queue shows a granted non-approver EVERY claim, not the empty queue
+  §3.3 promises.** §3.3 says "a person with the tick and no approver row sees
+  an empty queue and cannot act". What shipped is the second half only: the
+  route answers every row parked at `(ManagerApproved, ACCOUNT)` to anyone
+  holding the `approvalQueue` grant, and authority is re-decided per action by
+  the approval service against `AccReimburseApprover`, inside the transaction
+  that writes. **The shipped behaviour is the one kept**, ruled 2026-09-08 on
+  review: filtering the queue by the approver roster would conflate "may see"
+  with "may act", which is the exact coupling `AccReimburseAccess` was added to
+  prevent — a grant that only ever shows an empty page is not a grant, and the
+  filter would be a second, weaker copy of an authorization rule that already
+  lives where the money moves. The defect was that a spec decision had been
+  reversed silently; it is recorded here and in CLAUDE.md's AP-4 queue
+  paragraph rather than reverted. The consequence — an empty
+  `AccReimburseApprover` means select-all → approve → N failures — is answered
+  by a **notice**, not a filter: `/api/request/reimburse/access` reports
+  `isReimburseApprover` and the queue says so before the first click.
 - **A G/L-account picker shipped that this spec never scoped.**
   `PATCH /api/request/reimburse/requests/[id]/items` lets accounting correct
   the AI-proposed `AccReimburseItem.Category` per line, from the queue, while
