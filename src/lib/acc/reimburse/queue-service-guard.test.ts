@@ -4,66 +4,49 @@ import fs from "node:fs";
 import path from "node:path";
 
 /**
- * `queue-service.ts` pins two things that make AP-4's accounting queue AP-4's,
- * rather than a queue that also lists AP-1's travel claims: the
- * `FormCode = @form` predicate (bound to `AP4_FORM_CODE`) AND-conjoined with
- * the `(Status, CurrentStepCode)` tuple, and the `belongsInAccountQueue`
- * re-assertion applied to every row before it is returned. Deleting either
- * one changes nothing the typecheck or any of the other 1280 tests would
- * catch — AP-1 parks at the identical `(ManagerApproved, ACCOUNT)` tuple
- * (`STATUS_AT_STEP`, AP-1's `approval-engine.ts`), so the query keeps
- * compiling, keeps returning rows, and every returned row keeps matching
- * `ReimburseQueueRow`'s shape. It just starts returning the WRONG rows,
- * offered to a client that will loop `POST .../requests/[id]/approve` over
- * them — which, for an AP-1 id, calls `approveReimburseAccountCheck` and
- * writes AP-4-shaped columns onto an AP-1 request. CLAUDE.md names this exact
- * pin on AP-4's own claim functions: "Removing a pin re-opens a Critical; two
- * reviews have now spent effort rediscovering this."
+ * `queue-service.ts` now defends AP-4's accounting queue against AP-1's
+ * claims (parked at the identical `(ManagerApproved, ACCOUNT)` tuple,
+ * `STATUS_AT_STEP`, AP-1's `approval-engine.ts`) in TWO layers, and they are
+ * not equally strong. Read `belongsInAccountQueue`'s own docblock
+ * (`./queue-policy.ts`) for the full history; this file is only the outer
+ * one.
  *
- * Source-reading rather than behavioural, for the reason
- * `perdiem-source-guard.test.ts` gives for the same shape of test: the
- * failure here is a MISSING or LOOSENED call, and no test of
- * `listReimburseAccountQueue`'s return shape would notice a later edit
- * dropping or weakening it — a query missing `FormCode = @form`, or one that
- * only OR's it in, still returns rows that satisfy every assertion a
- * behavioural test would think to write, because AP-1's rows at this tuple
- * are shaped enough like AP-4's own that nothing downstream refuses them
- * either.
+ * **This file is the outer, WEAKER layer.** It is a regex over SQL text, and
+ * three review rounds proved — each time by producing a working mutation, not
+ * by argument — that a regex over SQL TEXT cannot verify SQL SEMANTICS:
+ * round 1's bare-identifier match was defeated by an AND→OR loosening and a
+ * `belongsInAccountQueue(...)` call stripped of its guarding `if`; round 2's
+ * tightened "require the AND" regex was then defeated by a
+ * re-parenthesisation —
+ * `WHERE (r.FormCode = @form AND r.Status = @status) OR r.CurrentStepCode = @step`
+ * — that leaves `FormCode = @form AND` sitting there as a contiguous,
+ * regex-satisfying substring while the query now means "AP-4 at the right
+ * status, OR *anything* at `CurrentStepCode = 'ACCOUNT'`". There is no reason
+ * to expect a fourth regex would be the last one either.
  *
- * **Deletion is not the only way to lose the pin, and round 1's tests missed
- * that.** They matched on the bare identifiers `FormCode = @form` and
- * `belongsInAccountQueue(`, which a logic-loosening edit can keep verbatim
- * while gutting what they do:
+ * **`belongsInAccountQueue` is the INNER, REAL layer**, and it is a
+ * `queue-policy.test.ts` unit test — not this file — that demonstrates it:
+ * since round 3 that function takes `formCode` back out of the query's own
+ * result set and re-derives the WHOLE predicate
+ * (`formCode === AP4_FORM_CODE && status === "ManagerApproved" && stepCode
+ * === "ACCOUNT"`) from data the database actually returned. None of the
+ * three mutations above can defeat it: whatever the WHERE clause selects, a
+ * row whose `FormCode` is not `'AP-4'` fails this check and is dropped before
+ * it reaches the client — real code executing against real values, not a
+ * pattern guessing at intent from source text.
  *
- *  - `WHERE r.FormCode = @form OR (r.Status = @status AND r.CurrentStepCode =
- *    @step)` still contains the substring `FormCode = @form` — the AND became
- *    an OR, so an AP-1 claim sitting at `(ManagerApproved, ACCOUNT)` is
- *    selected by the second arm regardless of its FormCode. And
- *    `belongsInAccountQueue` genuinely cannot catch this on its own: it takes
- *    only `(status, stepCode)`, no `FormCode` at all, so that AP-1 row passes
- *    the row check unchallenged. The two-independent-enforcements claim above
- *    is only true while the SQL predicate is conjunctive — this file is what
- *    keeps that true rather than merely asserted.
- *  - `belongsInAccountQueue(status, stepCode);` with the `if (!… ) continue;`
- *    stripped off still contains the substring `belongsInAccountQueue(` — the
- *    call fires and its answer is thrown away, so every row is pushed
- *    unconditionally.
- *
- * The two regexes below require the SHAPE — the conjunction, and the guarding
- * `if (!…)` — not just the identifier, so both of these survive as text but
- * not as a passing test. `\s+` (not `[ ]+`) is used everywhere a keyword
- * boundary is asserted, because `\s` already matches a newline with no `s`
- * flag needed — the predicate is one line today but must not need to stay
- * that way for this file to keep meaning what it says.
- *
- * Five mutations were drilled locally before these assertions were kept —
- * each applied alone, tested, and reverted — see the fix report for what was
- * observed at each step:
- *  1. deleting `AND r.FormCode = @form` from the WHERE clause,
- *  2. rebinding `@form` to a literal or another form's constant,
- *  3. deleting the `belongsInAccountQueue(...)` line entirely,
- *  4. turning the WHERE clause's leading AND into an OR,
- *  5. stripping the `if (!…) continue;` down to a bare, non-gating call.
+ * **So what is this file still for?** Catching the two things a regex CAN
+ * reliably see: that the SQL predicate still names `FormCode = @form` at all
+ * (its total absence, or `@form` silently unbound), and that the row-level
+ * call still exists and still GATES on its answer rather than computing one
+ * and discarding it. Losing either of those is still worth failing fast on,
+ * even though `belongsInAccountQueue` would also catch the resulting AP-1
+ * leak on the next request — this file catches it at commit time instead of
+ * at review time. What it does NOT try to do any more is pin the shape of the
+ * WHERE clause's conjunction: that shape-pinning (`\s+AND\b`) was what round
+ * 2 added and what round 3's re-parenthesisation defeated, and keeping it
+ * would only teach the next reader that this file is still the safety net —
+ * it is not, `belongsInAccountQueue` is.
  */
 
 const FILE = "lib/acc/reimburse/queue-service.ts";
@@ -76,17 +59,14 @@ function code(): string {
     .replace(/^\s*\/\/.*$/gm, "");
 }
 
-test("the WHERE clause AND-conjoins FormCode = @form with the rest of the predicate", () => {
+test("the query still names FormCode = @form somewhere in its WHERE clause", () => {
   const src = code();
   assert.ok(
-    /FormCode\s*=\s*@form\s+AND\b/.test(src),
-    "queue-service.ts's WHERE clause no longer AND-conjoins FormCode = @form with " +
-      "(Status, CurrentStepCode) — either the predicate is gone outright, or it has been loosened " +
-      "to an OR (`FormCode = @form OR (Status = @status AND CurrentStepCode = @step)`), which still " +
-      "contains the substring 'FormCode = @form' but selects AP-1's claims at the identical " +
-      "(ManagerApproved, ACCOUNT) tuple regardless of FormCode. belongsInAccountQueue cannot catch " +
-      "this on its own — it is handed no FormCode at all, only (status, stepCode) — so an OR here " +
-      "reaches AP-4's client with AP-1's rows and nothing downstream refuses them",
+    /FormCode\s*=\s*@form\b/.test(src),
+    "queue-service.ts no longer names FormCode = @form anywhere — this is only the outer, weaker " +
+      "check (see this file's own docblock); belongsInAccountQueue (queue-policy.ts) is what " +
+      "actually refuses an AP-1 row regardless of how this predicate is shaped, but a totally " +
+      "absent predicate here is still worth catching fast",
   );
 });
 
@@ -99,15 +79,24 @@ test("@form is bound to AP4_FORM_CODE — not a literal string, not another form
   );
 });
 
-test("every row is dropped, not merely inspected, when belongsInAccountQueue disagrees", () => {
+test("the row loop still selects FormCode and passes it to belongsInAccountQueue", () => {
+  const src = code();
+  assert.ok(
+    /r\.FormCode\b/.test(src),
+    "queue-service.ts no longer selects r.FormCode — belongsInAccountQueue cannot re-derive the " +
+      "predicate from data the row check never received, and silently falls back to whatever the " +
+      "SQL WHERE clause alone decided",
+  );
+});
+
+test("belongsInAccountQueue still GATES the row, rather than being called and ignored", () => {
   const src = code();
   assert.ok(
     /if\s*\(\s*!\s*belongsInAccountQueue\s*\(/.test(src),
     "queue-service.ts no longer guards on belongsInAccountQueue's answer — a bare call such as " +
-      "`belongsInAccountQueue(status, stepCode);` with no `if (!…) continue;` around it still " +
-      "contains the substring 'belongsInAccountQueue(', computes an answer, and then throws it " +
-      "away, pushing every row unconditionally. The SQL predicate and this call are meant to be " +
-      "two INDEPENDENT enforcements of one tuple; a call that does not gate anything is not a " +
-      "second enforcement, it is dead code that happens to read like one",
+      "`belongsInAccountQueue(formCode, status, stepCode);` with no `if (!…) continue;` around it " +
+      "still names the function, computes an answer, and then throws it away, pushing every row " +
+      "unconditionally. This is the one assertion in this file that a mutation cannot survive by " +
+      "rearranging the SQL text alone",
   );
 });
