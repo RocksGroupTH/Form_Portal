@@ -8,6 +8,7 @@ import {
   ChevronDown,
   Clock,
   Inbox,
+  Info,
   ListChecks,
   Loader2,
   Lock,
@@ -19,6 +20,7 @@ import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
 import { fmtBaht } from "@/features/travel-booking/components/shared";
 import { ExpenseAccountPicker } from "@/features/reimburse/components/ExpenseAccountPicker";
+import { useReimburseAccess } from "@/features/reimburse/hooks/useReimburseAccess";
 // Type-only, and deliberately from the pure module rather than `./queue-service`
 // — that file imports `getAccPool`, which reaches `@/lib/db/mssql` and `@/env`
 // at module scope. A type-only import is erased at build time regardless of
@@ -187,13 +189,23 @@ function QueueCheckbox({
  * One row's expense lines, expanded in place, each with the G/L account
  * picker on it — surfacing machinery that already existed and was unreachable
  * from any screen: the document reader already proposes an account per line
- * (`receipt-item/route.ts`), the picker component already renders one
+ * (`receipt-item/route.ts`), and the picker component already renders one
  * (`ExpenseAccountPicker.tsx`, historically unused — see its own header for
  * why a value that is not in the list must still show the raw text rather
- * than blank), and the server already validates a save against the Business
- * Central mirror (`setReimburseItemAccounts`, via
- * `/api/request/reimburse/requests/[id]/items`). This component is the first
- * place any of the three is reachable from a screen.
+ * than blank). This component is the first place either is reachable from a
+ * screen.
+ *
+ * **What the save route does NOT do is check the account against Business
+ * Central.** `setReimburseItemAccounts` writes the trimmed string; the only
+ * gate is `parseItemAccountEdits`' `CATEGORY_MAX_LEN` bound
+ * (`item-account-edits.ts`), which is the `NVARCHAR(50)` column width and
+ * nothing more. Neither this route nor `persistReimburseItems` compares
+ * `AccReimburseItem.Category` to `ErpAccounts`. That check belongs to the
+ * stage that posts (spec §5.2), where a bad account is a rejected journal
+ * rather than a typo in a column — and it has to land on BOTH write paths,
+ * not just this one. **This paragraph replaces a sentence that claimed the
+ * validation already existed**; it did not, and a reader in stage 3 would
+ * have concluded the work was done.
  *
  * Edits are local until "บันทึก" — nothing here autosaves a line while an
  * accountant is still choosing between two close matches, and only the lines
@@ -349,6 +361,12 @@ function ExpenseAccountsPanel({
 
 export function ReimburseApprovalQueue() {
   const { data, error, isLoading, mutate } = useSWR("/api/request/reimburse/approvals", fetcher);
+  // Roster membership, for the notice below — NOT a gate. Sight of this page
+  // is decided by the route's own `approvalQueue` check; this only says
+  // whether the actions will work. A separate endpoint rather than a field on
+  // the queue payload, so the answer comes from the same place the hub card
+  // and the settings page already read it from.
+  const { isReimburseApprover } = useReimburseAccess();
 
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [bulkDate, setBulkDate] = useState("");
@@ -391,7 +409,14 @@ export function ReimburseApprovalQueue() {
 
   const allSelected = rows.length > 0 && rows.every((r) => selectedIds.has(r.id));
   const selectedCount = selectedIds.size;
-  const effectiveDate = bulkDate || data?.suggested || "";
+  // `bulkDate` alone once the accountant has touched the field. The
+  // `|| data?.suggested` arm is only the bridge across the render before the
+  // effect above has copied the suggestion into state — keeping it live after
+  // that made CLEARING the field re-render the suggested date under the
+  // cursor, so the control could not be emptied. Empty is a legitimate
+  // intermediate state while retyping a date, and it is already covered: the
+  // approve button is disabled on a falsy `effectiveDate`.
+  const effectiveDate = dateTouched ? bulkDate : bulkDate || data?.suggested || "";
 
   function toggleAll() {
     setSelectedIds(allSelected ? new Set() : new Set(rows.map((r) => r.id)));
@@ -530,8 +555,46 @@ export function ReimburseApprovalQueue() {
         title="คิวอนุมัติ (บัญชี) — ขอเบิกเงินคืนพนักงาน"
         titleExtra={<FormEnvironmentChip formCode="AP-4" />}
         subtitle="รายการที่ผู้จัดการอนุมัติแล้ว รอบัญชีเลือกวันที่จ่ายและส่งต่อขั้นสุดท้าย"
-        backHref="/request/reimburse"
+        // The hub, not `/request/reimburse` — that is the REQUESTER's fill
+        // form, and the only entry point to this page is the card on
+        // `/request`. AP-17's equivalent queue backs to its hub for the same
+        // reason.
+        backHref="/request"
       />
+
+      {/*
+        A NOTICE, not a block. `isReimburseApprover === false` says this viewer
+        holds the `approvalQueue` grant (or is an admin) but has no active
+        `AccReimburseApprover` row, so every action here will refuse — and it
+        refuses unhelpfully: `authorizeAccRequest(…, "read")` answers the
+        generic "ไม่มีสิทธิ์เข้าถึงคำขอนี้" before the roster check's own
+        `NOT_ACCOUNT_APPROVER_ERROR` is ever reached, and breaks the expand
+        panel with no explanation. Without this line the guaranteed first
+        experience of an empty roster is select-all → approve → N failures.
+
+        Strict `=== false` on purpose: the flag is three-valued, and `null`
+        (loading, a failed fetch, or a roster the server itself could not read)
+        must render nothing rather than tell somebody they are off a list
+        nobody could see. Looking stays allowed — that is the design, not an
+        oversight to close here.
+      */}
+      {isReimburseApprover === false && !forbidden && (
+        <div
+          className="rounded-xl px-3.5 py-3 mb-3 flex items-start gap-2.5"
+          style={{
+            background: "var(--bg-info-yellow)",
+            border: "1px solid var(--border-info-yellow)",
+          }}
+        >
+          <Info size={15} className="shrink-0 mt-0.5" style={{ color: "var(--text-info-yellow)" }} />
+          <p className="text-[12.5px] leading-relaxed m-0" style={{ color: "var(--text-info-yellow)" }}>
+            คุณเปิดดูคิวนี้ได้ แต่ยังไม่ได้อยู่ในรายชื่อ{" "}
+            <strong>&quot;ผู้อนุมัติบัญชี&quot;</strong> ของ AP-4 — การอนุมัติ ส่งกลับ
+            และแก้รหัสบัญชีจะถูกปฏิเสธ ผู้ดูแลระบบเพิ่มรายชื่อได้ที่ ตั้งค่าขอเบิกเงินคืนพนักงาน →
+            ผู้อนุมัติบัญชี
+          </p>
+        </div>
+      )}
 
       <div
         className={`rounded-2xl overflow-hidden ${selectedCount > 0 ? "pb-24" : ""}`}

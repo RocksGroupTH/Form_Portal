@@ -17,7 +17,7 @@ import { filterStorableReimburseKeys } from "@/lib/acc/reimburse/settings-tabs";
  * (`settings/approvers`) decides who takes the ACCOUNT and ACCOUNT_FINAL steps
  * on real reimbursement payments; `AccReimburseAccess` decides who may edit the
  * payment-rule checklist and the brand allowlist. Keeping them apart is the
- * whole reason migration 106 adds a second table rather than reusing the first.
+ * whole reason migration 120 adds a second table rather than reusing the first.
  *
  * **Admin only, and deliberately not openable by a grant.** The other AP-4
  * settings tabs can now be handed to an individual

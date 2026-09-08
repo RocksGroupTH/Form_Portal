@@ -33,7 +33,6 @@ import { Avatar } from "@/components/ui/Avatar";
 import { UatDataBanner } from "@/components/UatDataBanner";
 import { getBrandById } from "@/lib/brand";
 import { statusLabelDisplay } from "@/features/accounting/constants";
-import { PaymentDatePicker } from "@/features/accounting/components/PaymentDatePicker";
 import { fmtBaht } from "@/features/travel-booking/components/shared";
 import { sumReimburseItems } from "@/lib/acc/reimburse/calc";
 import {
@@ -198,8 +197,16 @@ const ITEM_COLUMNS: readonly { label: string; right?: boolean }[] = [
   { label: "จ่ายสุทธิ", right: true },
 ];
 
-/** AP-4's rounds, not AP-1's — see `src/lib/acc/reimburse/payment-calendar.ts`. */
-const AP4_ROUNDS_HINT = "วันจ่าย: ศุกร์ที่ 1 และ 3 ของเดือน (เลื่อนกลับ 1 วันถ้าตรงวันหยุด)";
+/**
+ * AP-4's rounds, not AP-1's — see `src/lib/acc/reimburse/payment-calendar.ts`.
+ *
+ * **A suggested schedule, not a constraint**, and the wording says so since
+ * 2026-09-08. It read like a rule while this page used `PaymentDatePicker`,
+ * which disables every day outside the round list; that restriction is gone —
+ * see the picker's own comment below for why.
+ */
+const AP4_ROUNDS_HINT =
+  "รอบจ่ายปกติ: ศุกร์ที่ 1 และ 3 ของเดือน (เลื่อนกลับ 1 วันถ้าตรงวันหยุด) — เลือกวันอื่นได้";
 
 function approvalActorLabel(a: ReimburseApproval): string | null {
   if (a.status === "Pending") {
@@ -522,8 +529,11 @@ export function ReimburseDetail({
     };
   }, [request.id, request.currentStepCode, request.status, request.updatedAt, ctxNonce]);
 
-  // The picker opens on the round the server chose with `defaultPaymentRound`,
-  // and the approver may pick any other valid round instead (spec §3.4).
+  // The field opens on the round the server chose with `defaultPaymentRound`,
+  // and the approver may replace it with any date the server's own bound
+  // accepts — not merely another round. Spec §3.4 said "another valid round";
+  // `paymentDateProblem` superseded that on 2026-09-08 (see the spec's dated
+  // amendment block), and this page followed the queue on the same day.
   useEffect(() => {
     setPaymentDate(ctx?.defaultPaymentDate ?? "");
   }, [ctx?.defaultPaymentDate]);
@@ -1148,14 +1158,61 @@ export function ReimburseDetail({
             ยอดรวม{" "}
             <strong style={{ color: "var(--text-heading)" }}>฿{fmtMoney(request.totalAmount ?? itemsTotal)}</strong>
           </p>
+          {/*
+            A free date within the server's own bound, not a round picker —
+            the same control the accounting queue uses
+            (`ReimburseApprovalQueue.tsx`), deliberately not a third one.
+
+            `PaymentDatePicker` cannot express this: it *disables* every day
+            outside the `dates` it is handed, and that is correct for AP-1,
+            whose server rule genuinely IS round membership. AP-4's is not —
+            `paymentDateProblem` (`approval-policy.ts`) replaced the membership
+            test with a one-month-back/twelve-months-forward sanity bound on
+            2026-09-08, so this page's restriction was a client-only rule with
+            no server counterpart: the same accountant, on the same claim,
+            could pick a date from the queue that this dialog refused. The
+            rounds survive as the field's default and the note under it.
+
+            The `<input type="date">` browser control carries no `min`/`max`
+            here for the same reason the queue's does not: the bound is the
+            server's, re-derived against the SERVER's day inside the
+            transaction that writes, and a `min` computed from the browser's
+            clock would disagree with it near midnight.
+          */}
           {needsPaymentDate && (
-            <PaymentDatePicker
-              dates={ctx?.paymentDates ?? []}
-              value={paymentDate}
-              onChange={setPaymentDate}
-              loading={ctx == null}
-              hint={AP4_ROUNDS_HINT}
-            />
+            <div className="flex flex-col gap-1.5 max-w-[320px] mx-auto w-full">
+              <label
+                className="text-[11px] font-semibold uppercase tracking-wide"
+                style={{ color: "var(--text-muted)" }}
+                htmlFor="ap4-payment-date"
+              >
+                วันที่จ่าย
+              </label>
+              <input
+                id="ap4-payment-date"
+                type="date"
+                value={paymentDate}
+                disabled={ctx == null || busy}
+                onChange={(e) => setPaymentDate(e.target.value)}
+                className="text-[13px] rounded-lg px-2.5 py-2 outline-none disabled:opacity-50"
+                style={{
+                  background: "var(--bg-input)",
+                  color: "var(--text-primary)",
+                  border: "1px solid var(--border-input)",
+                }}
+              />
+              {ctx?.defaultPaymentDate && (
+                <span
+                  className="text-[11.5px] inline-flex items-center gap-1"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  <Clock size={12} /> รอบที่แนะนำ {fmtDateOnly(ctx.defaultPaymentDate)} — แก้ไขได้
+                </span>
+              )}
+              <span className="text-[10.5px]" style={{ color: "var(--text-faint)" }}>
+                {AP4_ROUNDS_HINT}
+              </span>
+            </div>
           )}
         </div>
         <div className="flex justify-end gap-2">

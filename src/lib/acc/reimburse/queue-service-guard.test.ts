@@ -117,17 +117,35 @@ test("the row loop still selects FormCode and passes it to belongsInAccountQueue
  * calling `belongsInAccountQueue` with a guarding `if` (the test below) are
  * both satisfied even if the value handed to that call never came from the
  * row at all. This is the assertion that pins the missing link between them:
- * the local `formCode` used in the call has to be an extraction off `x` (the
- * recordset row, per `for (const x of res.recordset ...)` in the source),
- * not a re-assertion of the constant the row is supposed to be checked
- * against.
+ * the local `formCode` used in the call has to be an extraction off the
+ * recordset row's own binding, not a re-assertion of the constant the row is
+ * supposed to be checked against.
+ *
+ * **The loop variable's NAME is captured, not hardcoded.** An earlier version
+ * spelled `x.FormCode` into the regex, so renaming the binding to `row` — an
+ * innocent readability edit that changes nothing this test is about — turned
+ * it red. A guard that cries wolf on a rename is a guard people delete, and
+ * this is the ONLY place the circular-rebinding bug is catchable
+ * (`queue-policy.test.ts` tests `belongsInAccountQueue` in isolation and
+ * cannot know what value this file passes it), so a false positive here is
+ * expensive.
  */
-test("formCode is read off the row (x.FormCode), not reassigned from AP4_FORM_CODE or a literal", () => {
+test("formCode is read off the recordset row, not reassigned from AP4_FORM_CODE or a literal", () => {
   const src = code();
+  const loop = /for\s*\(\s*const\s+(\w+)\s+of\s+res\.recordset\b/.exec(src);
   assert.ok(
-    /const\s+formCode\s*=\s*\(?\s*x\.FormCode\b/.test(src),
-    "queue-service.ts's `const formCode = ...` no longer reads x.FormCode off the row. If it now " +
-      "reads `AP4_FORM_CODE` or a string literal instead, belongsInAccountQueue is being handed " +
+    loop,
+    "queue-service.ts no longer loops `for (const <name> of res.recordset ...)` — the shape this " +
+      "assertion reads the row binding's name out of. If the loop was replaced (a `.map`, a " +
+      "destructured binding), this test must be rewritten to capture the new binding rather than " +
+      "deleted: it is the only guard on the circular-rebinding bug",
+  );
+  const rowBinding = loop![1];
+  assert.ok(
+    new RegExp(`const\\s+formCode\\s*=\\s*\\(?\\s*${rowBinding}\\.FormCode\\b`).test(src),
+    `queue-service.ts's \`const formCode = ...\` no longer reads ${rowBinding}.FormCode off the row ` +
+      `(\`${rowBinding}\` being the recordset binding this test read out of the loop itself). If it ` +
+      "now reads `AP4_FORM_CODE` or a string literal instead, belongsInAccountQueue is being handed " +
       "the very constant it exists to check the row against — the runtime check becomes circular " +
       "and passes for every row the SQL happened to select, silently collapsing back to the " +
       "original (status, stepCode)-only predicate with three rounds of ceremony wrapped around it. " +

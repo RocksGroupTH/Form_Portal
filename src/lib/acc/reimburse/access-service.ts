@@ -9,22 +9,35 @@ export interface ReimburseAccessRow {
   displayName: string;
   isActive: boolean;
   /**
-   * The grantable AP-4 settings tabs this person holds, from
-   * `AccReimburseAccessTab`. `[]` means none — the rows ARE the granted set,
-   * never "all". An admin's own tabs do not come from here; they see every one.
+   * Everything this person holds in `AccReimburseAccessTab` — **both
+   * vocabularies**, despite the field's name: the grantable settings tabs
+   * (`rules`, `brands`) *and* the menu keys (`approvalQueue`, `clearance`),
+   * because `loadReimburseTabsByAccessIds` narrows with the union filter
+   * `filterStorableReimburseKeys`. The name predates the menu keys and is kept
+   * because it is the wire field the settings grid POSTs back; the grid renders
+   * two checkbox groups off this one list, and each authorization surface
+   * re-narrows it with its own filter (`filterGrantableReimburseTabKeys` /
+   * `filterReimburseMenuKeys`).
+   *
+   * `[]` means none — the rows ARE the granted set, never "all". An admin's own
+   * grants do not come from here; they see every tab and every menu.
    */
   settingsTabs: string[];
 }
 
 /**
- * AP-4's access list (migration 106).
+ * AP-4's access list (migration 120).
  *
  * Deliberately **not** `AccReimburseApprover`. That table is the pool that takes
  * the ACCOUNT and ACCOUNT_FINAL steps, so a row on it approves real
  * reimbursement payments; hanging settings-tab grants there would make "may
- * edit the payment rules" and "may approve a payment" the same tick. This list
- * grants nothing but settings tabs, and membership alone grants none of those —
- * the ticks do.
+ * edit the payment rules" and "may approve a payment" the same tick.
+ *
+ * This list grants **sight only** — of a settings tab, or, since 2026-09-08, of
+ * a working screen (the `approvalQueue` / `clearance` menu keys share the same
+ * `TabKey` column; see `./settings-tabs`). It never grants authority to act:
+ * that is `AccReimburseApprover`, re-decided inside the approval service where
+ * the money moves. Membership alone grants nothing either — the ticks do.
  *
  * A shared master table, so every write goes through `writeBothPools` and the
  * pair is asserted by `npm run check:alignment`.

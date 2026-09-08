@@ -252,7 +252,7 @@ function TabGrantCells({
  * **Not the approval pool.** ผู้อนุมัติบัญชี (`AccReimburseApprover`) decides who
  * takes the two accounting steps on real reimbursement payments; this list
  * decides who may edit the payment-rule checklist and the brand allowlist.
- * Migration 106 adds a second table rather than reusing the first precisely so
+ * Migration 120 adds a second table rather than reusing the first precisely so
  * one can be handed out without the other.
  *
  * Unlike AP-17's identically-shaped panel, an empty list here is a **neutral**
@@ -349,9 +349,11 @@ export function ReimburseAccessSettings() {
           </span>
         </div>
         <p className="text-[11px] mb-3 leading-relaxed" style={{ color: "var(--text-muted)" }}>
-          ให้คนที่ไม่ใช่แอดมินเข้ามาแก้เมนูตั้งค่าของ AP-4 ได้เฉพาะแท็บที่ติ๊กให้ ·
-          IT Admin และ System Admin เห็นทุกแท็บอยู่แล้วโดยไม่ต้องอยู่ในรายชื่อนี้ ·
-          <strong> คนละรายชื่อกับ &quot;ผู้อนุมัติบัญชี&quot;</strong> — อยู่ในนี้ไม่ได้แปลว่าอนุมัติจ่ายเงินได้
+          ให้คนที่ไม่ใช่แอดมินเห็นเฉพาะสิ่งที่ติ๊กให้ — <strong>แท็บตั้งค่า</strong> ของ AP-4
+          และ <strong>หน้าใช้งาน</strong> เช่น คิวอนุมัติ (บัญชี) ·
+          IT Admin และ System Admin เห็นทุกแท็บและทุกหน้าอยู่แล้วโดยไม่ต้องอยู่ในรายชื่อนี้ ·
+          <strong> คนละรายชื่อกับ &quot;ผู้อนุมัติบัญชี&quot;</strong> — อยู่ในนี้ (หรือติ๊กคิวอนุมัติ)
+          ไม่ได้แปลว่าอนุมัติจ่ายเงินได้
         </p>
 
         <div className="mb-4">

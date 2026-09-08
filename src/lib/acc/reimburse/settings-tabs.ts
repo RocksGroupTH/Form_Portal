@@ -11,7 +11,7 @@
  * `AccReimburseApprover` is the pool that takes the ACCOUNT and ACCOUNT_FINAL
  * steps — being on it means approving real reimbursement payments — so hanging
  * settings grants there would make "may edit the payment rules" and "may
- * approve a payment" the same tick. `AccReimburseAccess` (migration 106) exists
+ * approve a payment" the same tick. `AccReimburseAccess` (migration 120) exists
  * so the two can be handed out separately.
  *
  * **Two of the four tabs are not grantable**, where AP-1 and AP-17 each exclude
@@ -130,7 +130,13 @@ export type ReimburseMenuKey = (typeof REIMBURSE_MENU_KEYS)[number];
  */
 const REIMBURSE_MENU_LABELS: Record<ReimburseMenuKey, string> = {
   approvalQueue: "คิวอนุมัติ (บัญชี)",
-  clearance: "เคลียร์เอกสารอนุมัติ",
+  // `clearance` is STORED and grants nothing: the screen it would open is a
+  // later stage (spec §6), so nothing anywhere reads the key. The suffix is on
+  // the LABEL rather than in the panel because the label is the single place
+  // this key's copy is defined — an admin ticking a box that renders
+  // identically to `approvalQueue` would otherwise believe they had handed
+  // somebody a page. Drop the suffix when the screen ships.
+  clearance: "เคลียร์เอกสารอนุมัติ (ยังไม่เปิดใช้งาน)",
 };
 
 export const REIMBURSE_MENUS: readonly { key: ReimburseMenuKey; label: string }[] =
@@ -157,9 +163,13 @@ export function filterReimburseMenuKeys(keys: string[]): string[] {
 }
 
 /**
- * Everything that may be STORED in `AccReimburseAccessTab` — tabs ∪ menus.
+ * Everything that may be STORED in `AccReimburseAccessTab` — **GRANTABLE tabs ∪
+ * menus**, not every settings tab. `access` and `approvers` are excluded here as
+ * well as from `decideReimburseTabAccess`, so a row naming either can never be
+ * written in the first place; the two exclusions above say why each is not
+ * grantable.
  *
- * Storage takes the union; authorization keeps the narrow filters. Before AP-17
+ * Storage takes that union; authorization keeps the narrow filters. Before AP-17
  * drew this distinction its menu ticks were dropped on read AND on write, so
  * ticking one saved nothing at all and the bug looked like a UI fault.
  */

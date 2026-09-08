@@ -38,7 +38,7 @@ import {
  * **สิทธิ์เข้าถึง is last, and it is not a rename of ผู้อนุมัติบัญชี.** The two
  * are separate rosters answering separate questions: ผู้อนุมัติบัญชี
  * (`AccReimburseApprover`) is who may take the two accounting approval steps on
- * real payments; สิทธิ์เข้าถึง (`AccReimburseAccess`, migration 106) is who may
+ * real payments; สิทธิ์เข้าถึง (`AccReimburseAccess`, migration 120) is who may
  * open which of these tabs. Keeping them apart is what lets an admin hand out
  * "may edit the checklist" without also handing out "may approve money".
  *

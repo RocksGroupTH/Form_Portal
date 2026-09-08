@@ -109,3 +109,63 @@ test("settings/access POST pre-filters settingsTabs with the WIDE filter before 
     "must not pre-narrow settingsTabs with the settings-tab-only filter before the call",
   );
 });
+
+/**
+ * `access-tabs.ts` applies its filter on BOTH sides of the round trip, and
+ * both must be the WIDE one — which is exactly the regression the plan quotes
+ * from AP-17, where the same filter was narrowed on read and on write and a
+ * ticked menu key therefore saved nothing at all.
+ *
+ * The READ half is the one with no other guard on it, and narrowing it is
+ * completely silent: every menu tick would still save (the write half is
+ * covered above, and by `setReimburseAccessTabs` applying the union itself),
+ * and then render unticked forever — the admin grid, `/access`'s
+ * `approvalQueue` flag and the approvals route's gate all read through this
+ * one function. Confirmed by measurement, not by reasoning: with
+ * `loadReimburseTabsByAccessIds`'s filter reverted to
+ * `filterGrantableReimburseTabKeys`, `npm test` reported 1300 pass, 0 fail.
+ *
+ * Both call sites are asserted by counting, so a THIRD narrowing added later
+ * is caught too — checking that the wide name merely appears would pass on a
+ * file where one of the two had been swapped.
+ */
+const ACCESS_TABS_PATH = "./access-tabs.ts";
+
+async function readAccessTabsSource(): Promise<string> {
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  return fs.readFile(path.resolve(__dirname, ACCESS_TABS_PATH), "utf8");
+}
+
+test("loadReimburseTabsByAccessIds narrows the STORED rows with the wide filter, not the grantable one", async () => {
+  const source = await readAccessTabsSource();
+  assert.match(
+    source,
+    /map\.set\(\s*id,\s*filterStorableReimburseKeys\(/,
+    "the read half of access-tabs.ts must return tabs ∪ menus. Narrowed to " +
+      "filterGrantableReimburseTabKeys, every menu tick saves and then reads back missing — the " +
+      "settings grid renders it unticked forever, /access reports approvalQueue false, and the " +
+      "approvals route refuses the person it was granted to. Nothing errors and no other test " +
+      "goes red; this is the AP-17 regression the plan quotes",
+  );
+});
+
+test("neither half of access-tabs.ts narrows with the grantable-tab filter", async () => {
+  const source = await readAccessTabsSource();
+  assert.doesNotMatch(
+    source,
+    /\bfilterGrantableReimburseTabKeys\s*\(/,
+    "access-tabs.ts must never CALL the settings-tab-only filter: it is the storage layer, and " +
+      "both directions carry the union. Narrowing is the job of each authorization surface, on " +
+      "the way out",
+  );
+  const wideCalls = source.match(/\bfilterStorableReimburseKeys\s*\(/g) ?? [];
+  assert.equal(
+    wideCalls.length,
+    2,
+    "access-tabs.ts should apply filterStorableReimburseKeys exactly twice — once on the read " +
+      "(loadReimburseTabsByAccessIds) and once on the write (setReimburseAccessTabs). Found " +
+      `${wideCalls.length}. If a third legitimate call site was added, raise this number ` +
+      "deliberately; if one vanished, that half is no longer filtered at all",
+  );
+});

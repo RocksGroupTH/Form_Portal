@@ -4,7 +4,7 @@ import { filterStorableReimburseKeys } from "@/lib/acc/reimburse/settings-tabs";
 
 /**
  * Per-person AP-4 settings-tab grants, stored in `AccReimburseAccessTab`
- * (migration 106) against `AccReimburseAccess.Id`.
+ * (migration 120) against `AccReimburseAccess.Id`.
  *
  * The AP-4 counterpart of `@/lib/acc/travel-booking/booking-approver-tabs`, and
  * deliberately the same shape — the rules for reading and replacing grants
@@ -50,7 +50,7 @@ export async function loadReimburseTabsByAccessIds(
     // A MISSING TABLE degrades to no grants — never to all. That decides
     // whether a non-admin sees the AP-4 settings page at all, so a permissive
     // default would open it to everyone on the roster for as long as the schema
-    // is behind. 106 has to reach both databases, and this is the window before
+    // is behind. 120 has to reach both databases, and this is the window before
     // it has.
     //
     // ANY OTHER FAILURE rethrows, and the narrowness is the point. This read

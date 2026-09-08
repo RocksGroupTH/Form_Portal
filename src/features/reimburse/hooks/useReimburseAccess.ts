@@ -16,6 +16,12 @@ interface ReimburseAccessData {
    * existing on the wire is not a reason to widen every consumer of it early.
    */
   approvalQueue: boolean;
+  /**
+   * Is this viewer on `AccReimburseApprover` — the pool that takes the two
+   * accounting steps? **A notice, never a gate.** `null` means the roster could
+   * not be read, which must not be shown as "you are not on it".
+   */
+  isReimburseApprover: boolean | null;
 }
 
 const fetcher = async (url: string) => {
@@ -37,13 +43,17 @@ const fetcher = async (url: string) => {
  * `approvalQueue` below, AP-4's counterpart to AP-17's own menu grants.
  * `clearance` is on the same `/api/request/reimburse/access` response and is
  * left off this type until something needs it — see that field's own comment.
- * There is still no `canAccount` here, either flag included: whether somebody
- * may actually take the ACCOUNT or ACCOUNT_FINAL step comes from
- * `AccReimburseApprover`, a different table, checked server-side where the
- * money moves. Being on either list confers no approval right, which is the
- * reason the two lists stay separate — a viewer can hold the `approvalQueue`
- * tick and no `AccReimburseApprover` row, see the full queue, and act on
- * none of it.
+ * There is still no `canAccount` here: whether somebody may actually take the
+ * ACCOUNT or ACCOUNT_FINAL step comes from `AccReimburseApprover`, a different
+ * table, checked server-side where the money moves. Being on either list
+ * confers no approval right, which is the reason the two lists stay separate —
+ * a viewer can hold the `approvalQueue` tick and no `AccReimburseApprover` row,
+ * see the full queue, and act on none of it.
+ *
+ * `isReimburseApprover` REPORTS that situation rather than changing it, so the
+ * queue can say it before the first click instead of after N failures. It is
+ * still not a gate, and the page must not treat it as one — see its own comment
+ * for why it is three-valued.
  */
 export function useReimburseAccess() {
   const { data, error, isLoading } = useSWR("/api/request/reimburse/access", fetcher);
@@ -75,5 +85,17 @@ export function useReimburseAccess() {
      * might disappear once the real answer arrives.
      */
     approvalQueue: access?.approvalQueue ?? false,
+    /**
+     * Roster membership, for the queue's "you may look but not approve"
+     * notice. **Not an authorization answer** — every action re-decides it
+     * server-side inside the transaction that writes.
+     *
+     * Defaults to `null`, not `false`, and stays `null` while loading, on a
+     * failed fetch, and when the server itself could not read the roster. The
+     * caller must render the notice on a strict `=== false` only: telling
+     * somebody they are off a roster that nobody could read would be a wrong
+     * statement, where saying nothing is merely a missing one.
+     */
+    isReimburseApprover: access?.isReimburseApprover ?? null,
   };
 }
