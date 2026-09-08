@@ -531,3 +531,95 @@ test("VAT with no configured input account still refuses", () => {
     items: [{ glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 0, branchCode: "HQ01" }],
   })), /ภาษีซื้อ/);
 });
+
+/* ── The tax block on the VAT line (spec §5.4, sheet row 8) ────────────────── */
+
+const vatItem = (over: Record<string, unknown> = {}) => ({
+  glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 0,
+  branchCode: "HQ01", ...over,
+});
+
+test("a VAT line carries the posting-group trio", () => {
+  const p = buildClearAdvanceJournalPayload(base({ items: [vatItem()] }));
+  const vat = p.lines.find((l) => l.accountNo === "115030")!;
+  assert.equal(vat.genPostingType, "Purchase");
+  assert.equal(vat.vatBusPostingGroup, "VATHO");
+  assert.equal(vat.vatProdPostingGroup, "FVAT");
+});
+
+/* Only the VAT line (user, 2026-09-08). A posting group on an expense, vendor or
+ * bank line would change how BC treats that line. */
+test("no other line carries the tax block", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    items: [vatItem({ docNo: "INV-A", taxId: "0105500000001", payeeName: "ผู้ขาย" })],
+  }));
+  for (const l of p.lines.filter((x) => x.accountNo !== "115030")) {
+    const where = `${l.accountType} ${l.accountNo}`;
+    assert.equal(l.genPostingType, undefined, where);
+    assert.equal(l.vatBusPostingGroup, undefined, where);
+    assert.equal(l.vatProdPostingGroup, undefined, where);
+    assert.equal(l.taxInvoiceNo, undefined, where);
+    assert.equal(l.taxInvoiceName, undefined, where);
+  }
+});
+
+test("a VAT line carries its invoice's number, date, base and seller", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    postingDate: "2026-09-08",
+    items: [vatItem({
+      docNo: "INV-A", expenseDate: "2026-09-02",
+      taxId: "0105500000001", payeeName: "บริษัท ทดสอบ จำกัด",
+    })],
+  }));
+  const vat = p.lines.find((l) => l.accountNo === "115030")!;
+  assert.equal(vat.taxInvoiceNo, "INV-A");
+  assert.equal(vat.taxInvoiceDate, "2026-09-02");
+  // The base is the amount VAT was charged on, not the amount of VAT.
+  assert.equal(vat.taxInvoiceBase, 1000);
+  assert.equal(vat.taxInvoiceName, "บริษัท ทดสอบ จำกัด");
+  assert.equal(vat.taxVatRegistrationNo, "0105500000001");
+});
+
+/* Absence stays absence, as everywhere else in this payload: a receipt whose
+ * seller nobody has filled in sends no seller keys, so BC leaves those fields
+ * alone instead of having them overwritten with nothing. */
+test("a receipt with no seller sends no seller keys", () => {
+  const p = buildClearAdvanceJournalPayload(base({ items: [vatItem({ docNo: "INV-A" })] }));
+  const vat = p.lines.find((l) => l.accountNo === "115030")!;
+  assert.equal("taxInvoiceName" in vat, false);
+  assert.equal("taxVatRegistrationNo" in vat, false);
+  // The invoice number does not depend on the seller and is still there.
+  assert.equal(vat.taxInvoiceNo, "INV-A");
+});
+
+/* The tax invoice's date is the receipt's own, and differs from the journal's
+ * exactly when the receipt is from another month — the case Step 1 marks. */
+test("no expense date leaves the tax invoice date out", () => {
+  const p = buildClearAdvanceJournalPayload(base({ items: [vatItem({ docNo: "INV-A" })] }));
+  assert.equal("taxInvoiceDate" in p.lines.find((l) => l.accountNo === "115030")!, false);
+});
+
+test("two invoices each carry their own number and seller", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    advanceAmount: 5000,
+    items: [
+      vatItem({ docNo: "INV-A", payeeName: "ผู้ขาย ก" }),
+      vatItem({ glAccountNo: "610319001", amountBeforeVat: 2000, vatAmount: 140, docNo: "INV-B", payeeName: "ผู้ขาย ข" }),
+    ],
+  }));
+  const vat = p.lines.filter((l) => l.accountNo === "115030");
+  assert.deepEqual(vat.map((l) => l.taxInvoiceNo), ["INV-A", "INV-B"]);
+  assert.deepEqual(vat.map((l) => l.taxInvoiceName), ["ผู้ขาย ก", "ผู้ขาย ข"]);
+  assert.deepEqual(vat.map((l) => l.taxInvoiceBase), [1000, 2000]);
+});
+
+/* Tax Invoice No. is Code[35] and Tax Invoice Name Text[250] in BC. A value
+ * longer than the field is truncated here rather than rejected there. */
+test("values too long for their BC fields are cut, not sent whole", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    items: [vatItem({ docNo: "X".repeat(50), payeeName: "ก".repeat(300) })],
+  }));
+  const vat = p.lines.find((l) => l.accountNo === "115030")!;
+  assert.equal(vat.taxInvoiceNo!.length, 35);
+  assert.equal(vat.taxInvoiceName!.length, 250);
+});

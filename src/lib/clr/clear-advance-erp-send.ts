@@ -200,6 +200,10 @@ function toJournalItems(
       branchCode: it.branchCode ?? null,
       description: it.description ?? null,
       expenseDate: it.expenseDate ?? null,
+      // The invoice and who issued it — the VAT line's tax block (spec §5.4).
+      docNo: it.docNo ?? null,
+      taxId: it.taxId ?? null,
+      payeeName: it.payeeName ?? null,
     }));
 }
 

@@ -19,6 +19,9 @@ export interface ClrJournalItem {
   description?: string | null;
   /** The tax invoice's own number — becomes `Tax Invoice No.` on its VAT line. */
   docNo?: string | null;
+  /** The seller who issued it — becomes the VAT line's name and VAT registration. */
+  taxId?: string | null;
+  payeeName?: string | null;
   /** The date printed on this line's receipt — decides the Z-ADJ marker (§4.1). */
   expenseDate?: string | null;
 }
@@ -59,6 +62,24 @@ export interface ClrJournalInput {
 }
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * Constant on every AP-3 VAT line (sheet row 8; VATHO confirmed by the user,
+ * 2026-09-08). Standard Gen. Journal Line fields — no dependency needed.
+ */
+const VAT_GEN_POSTING_TYPE = "Purchase";
+const VAT_BUS_POSTING_GROUP = "VATHO";
+const VAT_PROD_POSTING_GROUP = "FVAT";
+
+/** BC field widths, cut here rather than rejected there. */
+const TAX_INVOICE_NO_MAX = 35;
+const TAX_INVOICE_NAME_MAX = 250;
+
+/** Trimmed to `max`, or undefined when there is nothing to send. */
+function taxText(v: string | null | undefined, max: number): string | undefined {
+  const t = (v ?? "").trim();
+  return t ? t.slice(0, max) : undefined;
+}
 
 /** The Z-ADJ dimension value for a prior-period adjustment (spec §4.1). The
  *  requirements call it "MS"; the value that exists in BC is `M-ADJ`. */
@@ -192,7 +213,27 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
     const vat = r2(it.vatAmount || 0);
     if (vat > 0) {
       if (!c.vatInputGlAccountNo) throw new Error("มี VAT แต่ยังไม่ได้ตั้งค่าบัญชีภาษีซื้อ (VAT input) ของแบรนด์นี้");
-      lines.push(glLine(c.vatInputGlAccountNo, vat, it.branchCode, it.description, adj));
+      const invoiceNo = taxText(it.docNo, TAX_INVOICE_NO_MAX);
+      const sellerName = taxText(it.payeeName, TAX_INVOICE_NAME_MAX);
+      const sellerTaxId = taxText(it.taxId, 20);
+      const invoiceDate = (it.expenseDate ?? "").trim() || undefined;
+      lines.push({
+        ...glLine(c.vatInputGlAccountNo, vat, it.branchCode, it.description, adj),
+        // The tax block belongs to the VAT line and to no other: a posting group
+        // on an expense, vendor or bank line changes how BC treats it.
+        genPostingType: VAT_GEN_POSTING_TYPE,
+        vatBusPostingGroup: VAT_BUS_POSTING_GROUP,
+        vatProdPostingGroup: VAT_PROD_POSTING_GROUP,
+        // Spread individually: a receipt whose seller nobody filled in sends no
+        // seller keys, so BC keeps whatever is in those fields rather than
+        // having them overwritten with blanks.
+        ...(invoiceNo ? { taxInvoiceNo: invoiceNo } : null),
+        ...(invoiceDate ? { taxInvoiceDate: invoiceDate } : null),
+        // The base is what VAT was charged on, not the VAT itself.
+        taxInvoiceBase: r2(it.amountBeforeVat),
+        ...(sellerName ? { taxInvoiceName: sellerName } : null),
+        ...(sellerTaxId ? { taxVatRegistrationNo: sellerTaxId } : null),
+      });
     }
 
     whtTotal += it.whtAmount || 0;

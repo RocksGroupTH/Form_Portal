@@ -298,13 +298,13 @@ carrying that receipt's marker. 70 + 160 is the 230 that used to be one line.
 
 ---
 
-## Task 3: The ten columns
+## Task 3: The ten columns — *done 2026-09-08*
 
 **Files:**
 - Modify: `src/lib/acc/erp-ppap-payload.ts`, `src/lib/clr/clear-advance-erp-payload.ts`, `clear-advance-erp-send.ts`
 - Test: `src/lib/clr/clear-advance-erp-payload.test.ts`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 test("a VAT line carries the posting-group trio", () => {
@@ -371,9 +371,9 @@ test("no expense date leaves the tax invoice date out", () => {
 });
 ```
 
-- [ ] **Step 2: Run and watch them fail**
+- [x] **Step 2: Run and watch them fail**
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `PpapJournalLinePayload` gains, all optional:
 `genPostingType`, `vatBusPostingGroup`, `vatProdPostingGroup`, `taxInvoiceNo`,
@@ -398,10 +398,37 @@ type because the codeunit will accept it and because `Tax Vendor No.`'s
 `OnValidate` fills the name, branch and VAT registration from the vendor card;
 the day AP-3 learns to match sellers, sending it replaces three other keys.
 
-- [ ] **Step 4: The sender passes the new item fields** — `toJournalItems` in
+- [x] **Step 4: The sender passes the new item fields** — `toJournalItems` in
 `clear-advance-erp-send.ts` maps `docNo`, `taxId` and `payeeName` across.
 
-- [ ] **Step 5: Run tests and typecheck, then commit**
+- [x] **Step 5: Run tests and typecheck, then commit**
+
+### Verified at the wire without touching BC
+
+The send path was left alone; the temporary log went on the **preview** instead,
+so both cases could be read with no journal created. Removed straight after.
+
+`ADC26-09015`, the clearing accounting typed into — the first time
+`Tax Invoice Name` has ever carried a value:
+
+```
+211111001  Purchase / VATHO / FVAT | TAXINV-ACC-001 | 2026-09-06 | base 560
+           | "บริษัท ปตท. น้ำมันและการค้าปลีก จำกัด (มหาชน)" | 0107537000521
+```
+
+`ADC26-09014`, two invoices — each VAT line carrying its own number, date and
+base (INV-VAT-A/1000, INV-VAT-B/3000) and **no seller keys at all**, because its
+test receipt is a blank image the OCR read nothing from. That absence is the
+design, not a gap: BC keeps whatever is in those fields rather than having them
+blanked.
+
+No other line carries a single tax key, on either request.
+
+**Two additions beyond the plan.** `Tax Invoice No.` is Code[35] and
+`Tax Invoice Name` Text[250], so both are cut to length here — a value too long
+would otherwise be refused by BC one line at a time, with the reason staying
+there. And `taxInvoiceBase` is sent for every VAT line rather than only where a
+seller is known: it is the amount VAT was charged on, which is always known.
 
 ---
 
