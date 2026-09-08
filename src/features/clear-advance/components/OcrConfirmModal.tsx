@@ -11,6 +11,23 @@ import { BranchPicker, GlPicker, cellClass, cellStyle, isPickerPanelOpen } from 
 /** One OCR candidate awaiting the user's confirmation. Mirrors the editable half
  *  of an expense line plus the WHT-certificate fields the receipt also carries,
  *  so a confirmed row can fill both tables. */
+interface VatRegistrant {
+  nid: string;
+  titleName: string | null;
+  name: string | null;
+  branchNumber: number | null;
+  branchCode: string | null;
+  vatRegisteredOn: string | null;
+  address: string | null;
+}
+
+/** "unknown" is the RD not answering — deliberately not the same as "unregistered". */
+type VatCheck =
+  | { state: "checking" }
+  | { state: "found"; registrant: VatRegistrant }
+  | { state: "unregistered" }
+  | { state: "unknown" };
+
 export interface OcrRow {
   /** Stable React key — the rows are reordered by nothing, but a row can be dropped. */
   key: string;
@@ -111,7 +128,48 @@ export function OcrConfirmModal({
   const [glByBranch, setGlByBranch] = useState<Record<string, GlAccountOption[]>>({});
   const glRequested = useRef<Set<string>>(new Set());
 
+  /**
+   * What the Revenue Department says about each seller's tax id, keyed by the id.
+   * `null` is a real answer — that number is not on the VAT register.
+   *
+   * It is looked up as soon as an id is on screen, because it settles three
+   * things the reader is unreliable about at once: the registered name (spelled
+   * four different ways across four reads of one invoice), the branch, and
+   * whether the seller may issue a tax invoice at all — input tax from someone
+   * who is not registered cannot be claimed.
+   */
+  const [vat, setVat] = useState<Record<string, VatCheck>>({});
+  const vatRequested = useRef<Set<string>>(new Set());
+
   useEffect(() => { setRows(incoming); }, [incoming]);
+
+  const taxIdKeys = useMemo(
+    () => Array.from(new Set(rows.map((r) => r.taxId.replace(/\D/g, "")).filter((t) => t.length === 13)))
+      .sort().join("|"),
+    [rows],
+  );
+  useEffect(() => {
+    for (const tin of taxIdKeys.split("|").filter(Boolean)) {
+      if (vatRequested.current.has(tin)) continue;
+      vatRequested.current.add(tin);
+      setVat((p) => ({ ...p, [tin]: { state: "checking" } }));
+      fetch(`/api/request/clear-advance/vat-registrant?taxId=${tin}`)
+        .then((r) => r.json())
+        .then((j: { ok: boolean; data?: { registrant: VatRegistrant | null } }) => {
+          setVat((p) => ({
+            ...p,
+            // An unreachable RD is not an unregistered seller: the failed case
+            // says nothing rather than accusing the invoice.
+            [tin]: j.ok
+              ? (j.data?.registrant
+                  ? { state: "found", registrant: j.data.registrant }
+                  : { state: "unregistered" })
+              : { state: "unknown" },
+          }));
+        })
+        .catch(() => setVat((p) => ({ ...p, [tin]: { state: "unknown" } })));
+    }
+  }, [taxIdKeys]);
 
   const branchKeys = useMemo(
     () => Array.from(new Set(rows.map((r) => r.branchCode).filter(Boolean))).sort().join("|"),
@@ -288,6 +346,49 @@ export function OcrConfirmModal({
                         AI อ่านเลขผู้ขายไม่ได้ — กรอกจากใบกำกับ
                       </span>
                     )}
+                    {/* What the Revenue Department holds for that number. The
+                        registered name and branch are facts where the read was a
+                        guess, so they are offered rather than applied: the
+                        reviewer has the paper and decides. Not being registered
+                        is stated plainly — input tax from a seller who is not
+                        cannot be claimed. */}
+                    {(() => {
+                      const v = vat[r.taxId.replace(/\D/g, "")];
+                      if (!v) return null;
+                      if (v.state === "checking") {
+                        return <span className="text-[10px]" style={{ color: "var(--text-faint)" }}>กำลังตรวจกับกรมสรรพากร…</span>;
+                      }
+                      if (v.state === "unregistered") {
+                        return (
+                          <span className="text-[10px]" style={{ color: "var(--text-warning)" }}>
+                            ไม่พบในทะเบียน VAT ของกรมสรรพากร — ภาษีซื้อจากใบนี้อาจขอคืนไม่ได้
+                          </span>
+                        );
+                      }
+                      if (v.state === "unknown") {
+                        return <span className="text-[10px]" style={{ color: "var(--text-faint)" }}>ตรวจกับกรมสรรพากรไม่สำเร็จ</span>;
+                      }
+                      const reg = v.registrant;
+                      const full = [reg.titleName, reg.name].filter(Boolean).join(" ");
+                      const differs = full && full !== r.payeeName.trim();
+                      return (
+                        <span className="text-[10px] flex flex-wrap items-center gap-1"
+                          style={{ color: "var(--text-info-green)" }}>
+                          <span>สรรพากร: {full}{reg.branchCode ? ` · สาขา ${reg.branchCode}` : ""}</span>
+                          {differs && (
+                            <button type="button"
+                              className="text-[10px] underline cursor-pointer border-none bg-transparent p-0"
+                              style={{ color: "var(--nav-active-text)" }}
+                              onClick={() => update(r.key, {
+                                payeeName: full,
+                                taxBranchText: reg.branchCode === "00000" ? "สำนักงานใหญ่" : `สาขาที่ ${reg.branchCode}`,
+                              })}>
+                              ใช้ชื่อนี้
+                            </button>
+                          )}
+                        </span>
+                      );
+                    })()}
                   </F>
                   <F label="สาขาผู้ขาย">
                     <input className={cellClass} style={{ ...cellStyle, width: "100%" }}
