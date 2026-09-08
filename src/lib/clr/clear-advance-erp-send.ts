@@ -146,7 +146,13 @@ function assertBcJournalCreated(resp: unknown): string {
   // That count is authoritative — success is Failed: 0, regardless of the status word.
   const failedM = summary.match(/Failed:\s*(\d+)/i);
   if (failedM) {
-    if (Number(failedM[1]) > 0) throw new Error(`BC: ${summary}`);
+    if (Number(failedM[1]) > 0) {
+      // The count alone sends the reader to BC to find out which line and why.
+      // The CU already says both, per line, in results[] — it was being read
+      // only for the document no. and thrown away exactly when it mattered.
+      const detail = extractBcLineErrors(resp);
+      throw new Error(`BC: ${summary}${detail ? ` — ${detail}` : ""}`);
+    }
     return summary.slice(0, 900); // Failed: 0 → real success
   }
 
@@ -158,6 +164,36 @@ function assertBcJournalCreated(resp: unknown): string {
     throw new Error(`BC ตอบกลับ error: ${inner.slice(0, 800)}`);
   }
   return (summary || raw).slice(0, 900);
+}
+
+/**
+ * The lines BC refused, and what it said about each.
+ *
+ * `results[]` carries one entry per line in the order they were sent, so the
+ * index names the line the journal builder produced — 1 is the first expense
+ * line. Empty when the response carries no per-line detail.
+ */
+function extractBcLineErrors(resp: unknown): string | null {
+  const raw = typeof resp === "string" ? resp : JSON.stringify(resp ?? {});
+  let inner = raw;
+  try {
+    const o = JSON.parse(raw) as Record<string, unknown>;
+    if (o && typeof o === "object" && "value" in o) inner = String(o.value ?? "");
+  } catch { /* keep raw */ }
+  try {
+    const r = JSON.parse(inner) as {
+      results?: { status?: string; message?: string; error?: string }[];
+    };
+    const bad = (r.results ?? [])
+      .map((it, i) => ({ i: i + 1, it }))
+      .filter(({ it }) => it?.status && it.status !== "inserted");
+    if (bad.length === 0) return null;
+    return bad
+      .map(({ i, it }) => `บรรทัด ${i}: ${(it.message ?? it.error ?? it.status ?? "").toString().slice(0, 200)}`)
+      .join(" · ");
+  } catch {
+    return null;
+  }
 }
 
 /**
