@@ -314,14 +314,14 @@ things and both are right: this tab shows Locations, the lookup keys by branch.
 
 ---
 
-## Task 5: The journal sends buCode
+## Task 5: The journal sends buCode — *done 2026-09-08*
 
 **Files:**
 - Modify: `src/lib/clr/clear-advance-erp-payload.ts`
 - Modify: `src/lib/clr/clear-advance-erp-send.ts`
 - Test: `src/lib/clr/clear-advance-erp-payload.test.ts`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 test("a line's BU comes from its branch", () => {
@@ -355,9 +355,9 @@ test("each line is resolved from its own branch", () => {
 });
 ```
 
-- [ ] **Step 2: Run and watch them fail**
+- [x] **Step 2: Run and watch them fail**
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `ClrJournalInput` gains `branchBu?: ReadonlyMap<string, string>`. `glLine` and
 the vendor/bank line builders resolve
@@ -368,12 +368,44 @@ today's.
 
 `PpapJournalLinePayload` gains `buCode?: string`.
 
-- [ ] **Step 4: The sender loads the map**
+- [x] **Step 4: The sender loads the map**
 
-In `clear-advance-erp-send.ts`, call `loadBranchBuMap(req.brandCode)` once per
-request and pass it in. Once per clearing, not once per line.
+In `clear-advance-erp-send.ts`, call `loadBranchLookup(...)` once per request and
+pass it in. Once per clearing, not once per line.
 
-- [ ] **Step 5: Run tests and typecheck, then commit**
+**This plan named the wrong key, and following it would have shipped nothing.**
+`req.brandCode` is the claim brand the requester picked — `ROCKS` on the one
+request in the queue. Everything in `Rocks_ERP_Data` is keyed by the *Company*
+the journal posts into: `loadBranchLookup("ROCKS")` returns 0 branches, no line
+gets a `buCode`, and every one of them stays on the codeunit's COCO. The feature
+would have looked complete and changed nothing — the same failure as Task 3's
+cast bug, and again wearing the costume of the bug it was meant to fix.
+
+The key is `target.interfaceTarget`, already loaded a few lines above. AP-2's own
+branch and G/L pickers take the same argument, and it is named `company` there
+(`clear-advance-admin-service.ts:78`).
+
+**Verified at the wire, since no test can see this:** ROCKS resolves to PCTH;
+the claim brand yields 0 branches and PCTH 240; `PCCT01` puts `buCode: "CTPS"` on
+the line, `pcct01` resolves the same, `PC1021` carries COCO with the blocked flag
+set, and an unknown branch produces a line with no `buCode` key at all.
+
+- [x] **Step 5: Run tests and typecheck, then commit**
+
+### What the preview shows (the "warn, still allow" half)
+
+`ClrPreviewLine` gained `buCode` and `branchBlocked`. The queue shows the BU
+beside the branch — it reads as part of the branch because that is what decides
+it — a `BLOCKED` badge on the branch itself, and a count in the send-confirm
+dialog, worded as a warning rather than a prohibition.
+
+**How often that badge should appear, honestly:** rarely. The AP-3 branch picker
+already filters blocked values out (`IsBlocked = 0 OR IsBlocked IS NULL`), so a
+branch cannot normally be chosen while blocked. What the badge catches is a
+branch blocked *after* its request was raised, and the default branch inherited
+from AP-2's config, which no picker filters. That is a narrow case — but it is
+also the one nobody would ever think to look for, and BC's refusal of it says
+nothing this side can read.
 
 ---
 

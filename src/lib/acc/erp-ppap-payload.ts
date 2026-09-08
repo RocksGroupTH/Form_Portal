@@ -23,6 +23,14 @@ export interface PpapJournalLinePayload {
    * Z-ADJ value, which is what every line sent before this did.
    */
   adjCode?: string;
+  /**
+   * BU dimension value — the Business Unit the line's Location is bound to.
+   * Codeunit 50263 reads this key and falls back to `COCO` when it is missing
+   * (`APJournalCreate.al:293`), which is the constant every line carried before
+   * the portal could resolve it. Omitted rather than sent blank: absence is what
+   * triggers that fallback, where a blank string would be sent as an answer.
+   */
+  buCode?: string;
 }
 
 export interface PpapJournalPayload {

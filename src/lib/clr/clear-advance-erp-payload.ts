@@ -1,4 +1,5 @@
 import type { PpapJournalPayload, PpapJournalLinePayload } from "@/lib/acc/erp-ppap-payload";
+import type { BranchLookupEntry } from "@/lib/erp/location-lookup-core";
 
 export interface ClrJournalConfig {
   /** The vendor AP-2 debited — this clearing credits the same one. */
@@ -39,6 +40,13 @@ export interface ClrJournalInput {
    * means something else.
    */
   staffId?: number | null;
+  /**
+   * Branch → the BU its Location is bound to, loaded once per clearing by
+   * `loadBranchLookup`. Absent — the state before the Location sync has ever
+   * run — every line sends no `buCode` and the codeunit's COCO applies, exactly
+   * as before this existed.
+   */
+  branchBu?: ReadonlyMap<string, BranchLookupEntry>;
 }
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -87,6 +95,22 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
   // requester's staff id.
   const employeeCode = input.staffId != null ? String(input.staffId).slice(0, 35) : "";
   const defaultBranch = input.defaultBranchCode ?? "";
+
+  /**
+   * The BU for a line's branch, or undefined when there is no answer — either
+   * no Location for that branch, or a Location carrying no BU. Both send
+   * nothing: absence is what makes the codeunit apply its own COCO, where an
+   * explicit "COCO" would be indistinguishable from a real answer.
+   *
+   * Upper-cased on the way in. The branch arrives from a picker and the map from
+   * BC, and a case mismatch would resolve to nothing and land back on COCO —
+   * silently reinstating the bug this replaces.
+   */
+  const resolveBu = (branchCode: string | null): string | undefined => {
+    const key = (branchCode ?? defaultBranch).trim().toUpperCase();
+    if (!key) return undefined;
+    return input.branchBu?.get(key)?.buCode ?? undefined;
+  };
   // Spec §3.2 format: [ADV no] เบิก เคลียร์เงินทดลอง [employee] [document detail].
   // Gen. Journal Line Description is 100 chars, so the trailing detail is what gets
   // cut — the identifying half has to survive.
@@ -116,8 +140,9 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
     paymentMethodCode: "BANK", amount: r2(amount), balAccountType: "G/L Account",
     employeeCode, branchCode: branchCode ?? defaultBranch, departmentCode,
     // Spread rather than `adjCode: undefined`, so an unmarked line serialises
-    // byte-for-byte as it did before this feature existed.
+    // byte-for-byte as it did before this feature existed. Same for buCode.
     ...(adjCode ? { adjCode } : null),
+    ...(resolveBu(branchCode) ? { buCode: resolveBu(branchCode) } : null),
   });
 
   const lines: PpapJournalLinePayload[] = [];
@@ -159,6 +184,7 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
     description: describe(),
     paymentMethodCode: "BANK", amount: 0,
     employeeCode, branchCode: defaultBranch, departmentCode,
+    ...(resolveBu(null) ? { buCode: resolveBu(null) } : null),
   });
 
   if (bankAmount !== 0) {
@@ -167,6 +193,7 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
       accountNo: c.bankAccountNo, description: describe(),
       paymentMethodCode: "BANK", amount: bankAmount,
       employeeCode, branchCode: defaultBranch, departmentCode,
+      ...(resolveBu(null) ? { buCode: resolveBu(null) } : null),
     });
   }
 

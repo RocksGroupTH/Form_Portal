@@ -243,3 +243,78 @@ test("no staff id leaves External Document No. empty", () => {
   const p = buildClearAdvanceJournalPayload(base({ staffId: null }));
   for (const l of p.lines) assert.equal(l.employeeCode, "");
 });
+
+/* ── Business Unit (spec §5.1, sheet row 8) ────────────────────────────────
+ *
+ * Codeunit 50263 wrote a constant COCO into the BU dimension of every AP-2 and
+ * AP-3 line, because nothing here knew what a Location was bound to. Of PCTH's
+ * 240 Locations only 130 are COCO.
+ */
+
+const bu = (m: Record<string, string | null>): ReadonlyMap<string, { buCode: string | null; isBlocked: boolean }> =>
+  new Map(Object.entries(m).map(([k, v]) => [k, { buCode: v, isBlocked: false }]));
+
+test("a line's BU comes from the Location its branch is bound to", () => {
+  const p = buildClearAdvanceJournalPayload(base({ branchBu: bu({ HQ01: "DODO-M" }) }));
+  assert.equal(p.lines.find((l) => l.accountNo === "610322005")!.buCode, "DODO-M");
+});
+
+/* Sending nothing is what makes the codeunit fall back to COCO. An explicit
+ * "COCO" would be indistinguishable from a real answer, and a branch we have no
+ * Location for has no answer to give. */
+test("a branch with no Location sends no buCode at all", () => {
+  const p = buildClearAdvanceJournalPayload(base({ branchBu: bu({}) }));
+  assert.equal(p.lines.find((l) => l.accountNo === "610322005")!.buCode, undefined);
+});
+
+/* Same absence, different cause: the Location exists but carries no BU. */
+test("a Location with no BU also sends nothing", () => {
+  const p = buildClearAdvanceJournalPayload(base({ branchBu: bu({ HQ01: null }) }));
+  assert.equal(p.lines.find((l) => l.accountNo === "610322005")!.buCode, undefined);
+});
+
+/* Passing no map at all is the state before the sync has ever run, and every
+ * line must serialise exactly as it did before this feature existed. */
+test("no map leaves the payload as it was", () => {
+  const p = buildClearAdvanceJournalPayload(base({}));
+  for (const l of p.lines) assert.equal("buCode" in l, false);
+});
+
+test("each line resolves from its own branch", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    advanceAmount: 3000,
+    branchBu: bu({ HQ01: "COCO", PC1057: "DODO-M" }),
+    items: [
+      { glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 0, whtAmount: 0, branchCode: "HQ01" },
+      { glAccountNo: "610319001", amountBeforeVat: 2000, vatAmount: 0, whtAmount: 0, branchCode: "PC1057" },
+    ],
+  }));
+  assert.equal(p.lines.find((l) => l.accountNo === "610322005")!.buCode, "COCO");
+  assert.equal(p.lines.find((l) => l.accountNo === "610319001")!.buCode, "DODO-M");
+});
+
+/* The branch on an expense line comes from a picker and the map from BC; a case
+ * mismatch would quietly resolve to nothing and land back on COCO — the exact
+ * bug this replaces. */
+test("the branch matches whatever its case", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    branchBu: bu({ HQ01: "CTPS" }),
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 2000, vatAmount: 0, whtAmount: 0, branchCode: " hq01 " }],
+  }));
+  assert.equal(p.lines.find((l) => l.accountNo === "610322005")!.buCode, "CTPS");
+});
+
+/* VAT, WHT, vendor and bank lines have no branch of their own and fall back to
+ * the request's default branch — so their BU has to follow it too, or the
+ * clearing would post its expense to one BU and its bank leg to another. */
+test("the lines with no branch of their own follow the default branch", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    advanceAmount: 5000,
+    defaultBranchCode: "PC1057",
+    branchBu: bu({ HQ01: "COCO", PC1057: "DODO-M" }),
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 30, branchCode: "HQ01" }],
+  }));
+  assert.equal(p.lines.find((l) => l.accountNo === "115030")!.buCode, "DODO-M");
+  assert.equal(p.lines.find((l) => l.accountType === "Vendor")!.buCode, "DODO-M");
+  assert.equal(p.lines.find((l) => l.accountType === "Bank Account")!.buCode, "DODO-M");
+});

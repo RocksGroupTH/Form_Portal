@@ -155,6 +155,24 @@ function ClrErpPreviewModal({ items, onClose }: { items: ClrPreviewItem[]; onClo
                                   {line.adjCode}
                                 </span>
                               )}
+                              {/* The BU the line will post to. It reads as part of the
+                                  branch because that is what decides it — the Location
+                                  the branch is bound to. */}
+                              {line.buCode && (
+                                <span className="text-[10px] ml-1.5" style={{ color: "var(--text-muted)" }}>
+                                  · {line.buCode}
+                                </span>
+                              )}
+                              {/* Shown, never enforced: BC may still take the line, and
+                                  refusing on an untested assumption would block work
+                                  that actually posts. */}
+                              {line.branchBlocked && (
+                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded ml-1.5"
+                                  style={{ background: "var(--bg-badge)", color: "var(--text-warning)" }}
+                                  title="สาขานี้ถูก Block ใน BC — ส่งได้ แต่ BC อาจไม่รับบรรทัดนี้">
+                                  BLOCKED
+                                </span>
+                              )}
                             </td>
                             <td className="px-2.5 py-1.5 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{line.departmentCode || "—"}</td>
                             <td className="px-2.5 py-1.5 text-right tabular-nums whitespace-nowrap" style={{ color: line.debit ? "var(--text-primary)" : "var(--text-faint)" }}>
@@ -406,6 +424,13 @@ export function ClrErpInterfaceQueue() {
   }, [confirmItems]);
 
   const grandTotal = useMemo(() => sendSummary.reduce((s, x) => s + x.total, 0), [sendSummary]);
+
+  // Requests, not lines: what accounting decides about at this point is whether
+  // to send a document, and one blocked branch usually marks several of its lines.
+  const blockedCount = useMemo(
+    () => confirmItems.filter((p) => p.ok && p.lines.some((l) => l.branchBlocked)).length,
+    [confirmItems],
+  );
   const notReady = confirmItems.length - frozenIds.length;
 
   async function exportExcel() {
@@ -777,6 +802,12 @@ export function ClrErpInterfaceQueue() {
               <p className="text-[12px] px-3 py-2 rounded-lg m-0"
                 style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
                 🟡 สร้างเข้า <b>Sandbox (UAT — ทดสอบ)</b> ไม่กระทบระบบจริง
+              </p>
+            )}
+
+            {blockedCount > 0 && (
+              <p className="text-[11px] m-0" style={{ color: "var(--text-warning)" }}>
+                ⚠️ {blockedCount} ใบมีสาขาที่ถูก Block ใน BC — ส่งได้ แต่ BC อาจไม่รับบรรทัดนั้น
               </p>
             )}
 
