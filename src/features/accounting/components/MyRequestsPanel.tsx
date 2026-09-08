@@ -538,7 +538,13 @@ function RequestRowList({
                 <p className="text-[11px] truncate" style={{ color: "var(--text-secondary)" }}>
                   {row.formName ? `${row.formName} · ` : ""}
                   {showRequester ? `${row.requesterFullName ?? "—"} · ` : ""}
-                  เดินทาง {fmtDate(row.travelDate)} · ส่ง {fmtDate(row.submittedAt)}
+                  {/* Both lists span every form, but the query behind them is
+                      AP-1-shaped: it joins AccTravelExpense, so a travel date
+                      exists only on a travel claim. Printing "เดินทาง" on an
+                      AP-2 or AP-3 row labelled an empty dash as a journey that
+                      never happened. It appears only where there is one. */}
+                  {row.travelDate ? `เดินทาง ${fmtDate(row.travelDate)} · ` : ""}
+                  ส่ง {fmtDate(row.submittedAt)}
                 </p>
                 {nextApproval && (
                   <p className="text-[10px] truncate mt-0.5 m-0" style={{ color: "var(--text-muted)" }}>

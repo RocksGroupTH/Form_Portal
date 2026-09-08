@@ -6,6 +6,7 @@ import { requireActorStaffId } from "@/lib/acc/actor-context";
 import type { Actor } from "@/lib/acc/approval-engine";
 import { getRequest, setAccountAction } from "@/lib/clr/clear-advance-request-service";
 import { listClrApprovers, roleForStep } from "@/lib/clr/clear-advance-approver-service";
+import { linesMissingTaxVendor } from "@/lib/clr/tax-vendor-core";
 import {
   CLR_NEXT_STEP,
   CLR_STEP_LABEL_TH,
@@ -62,6 +63,18 @@ export async function approveCurrentStep(
     if (refund < 0 && !opts.paymentDate) {
       // Company must pay the employee the shortfall — a payment date is required.
       throw new Error("กรณีบริษัทต้องจ่ายเพิ่ม กรุณาระบุวันจ่าย (Payment Date)");
+    }
+    // Every VAT line must name the seller's vendor before it leaves this step
+    // (user, 2026-09-08). Input tax is claimed against a vendor; a VAT line with
+    // no Tax Vendor No. posts an unattributed claim, and this is the last step
+    // where anyone can still choose one — the head-accounting step cannot edit
+    // lines. Read from the request, not from the caller: the accountant's own
+    // save is what fills this, so the check is on stored state.
+    const missing = linesMissingTaxVendor(before.clear?.items);
+    if (missing.length > 0) {
+      throw new Error(
+        `กรุณาเลือก Vendor ผู้ขายให้ครบก่อนอนุมัติ — รายการที่ ${missing.join(", ")} มี VAT แต่ยังไม่ได้เลือก Vendor`,
+      );
     }
     await setAccountAction(requestId, opts.pvDocNo ?? null, opts.paymentDate ?? null);
   }
