@@ -4,6 +4,7 @@ import {
   DEFAULT_VISIBLE_KEYS,
   controlAdjustment,
   csvValues,
+  isRefundOutstanding,
   stackedAxisCombos,
   mergeControlRows,
   singleStackedValue,
@@ -221,4 +222,36 @@ test("singleStackedValue: no picks or 2+ picks yield undefined — the export ro
 
 test("singleStackedValue: exactly one pick passes through", () => {
   assert.equal(singleStackedValue("Approved"), "Approved");
+});
+
+/* ── isRefundOutstanding — the "ค้างโอนเงินคืน" filter ────────────────────
+ *
+ * AP-2's overdue filter reads the advance's expected clear date; an AP-3 row
+ * is the clearing itself and has no such date. What is genuinely outstanding
+ * here is company money the employee owes back and has not transferred yet.
+ */
+
+test("money owed back with no transfer date is outstanding", () => {
+  const r = fixtureRow({ id: 1, refundToCompany: 1200, refundTransferDate: null });
+  assert.equal(isRefundOutstanding(r), true);
+});
+
+test("money owed back that has been transferred is not outstanding", () => {
+  const r = fixtureRow({ id: 2, refundToCompany: 1200, refundTransferDate: "2026-09-05" });
+  assert.equal(isRefundOutstanding(r), false);
+});
+
+test("a clearing that owes the company nothing is never outstanding", () => {
+  assert.equal(isRefundOutstanding(fixtureRow({ id: 3, refundToCompany: 0 })), false);
+  assert.equal(isRefundOutstanding(fixtureRow({ id: 4, refundToCompany: null })), false);
+});
+
+test("money owed to the employee is not an outstanding refund", () => {
+  const r = fixtureRow({ id: 5, refundToCompany: 0, extraToEmployee: 800, refundTransferDate: null });
+  assert.equal(isRefundOutstanding(r), false);
+});
+
+test("an empty-string transfer date counts as not transferred", () => {
+  const r = fixtureRow({ id: 6, refundToCompany: 50, refundTransferDate: "" });
+  assert.equal(isRefundOutstanding(r), true);
 });

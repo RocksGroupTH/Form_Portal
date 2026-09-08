@@ -9,9 +9,11 @@
  *
  * Column width (docs/superpowers/specs/2026-09-02-ap3-control-report-redesign-design.md):
  * 18 columns no longer render at once. 10 default-visible + 8 behind
- * `ColumnToggleMenu`, remembered per browser — same pattern AP-2's report page
- * uses. The Excel export (`report/export/route.ts`) is a separate route with
- * its own hardcoded 18-column header/body and is untouched by this file.
+ * `ColumnToggleMenu`, and the reader drags them into their own order —
+ * remembered per browser by AP-2's `makeColumnPrefs`, the same helper its two
+ * queues use, under this report's own keys. The Excel export
+ * (`report/export/route.ts`) is a separate route with its own hardcoded
+ * 18-column header/body and is untouched by this file.
  *
  * Stacked filters (brand, status — §"Stacked filters"): each takes several
  * picks, OR'd within the column; filter state is CSV, same shape AP-2's
@@ -30,9 +32,10 @@ import { FilterDateRangePicker } from "@/features/accounting/components/FilterDa
 import { RequestStatusBadge } from "@/features/accounting/components/RequestStatusBadge";
 import { STATUS_LABEL_TH } from "@/features/accounting/constants";
 import { clearAdvanceDetailHref } from "@/features/clear-advance/lib/navigation";
+import { makeColumnPrefs } from "@/features/advance/lib/queue-column-prefs";
 import { ColumnToggleMenu, type ColumnToggleOption } from "@/features/travel-booking/components/ColumnToggleMenu";
 import type { ClrControlRow } from "@/lib/clr/clear-advance-report-service";
-import { DEFAULT_VISIBLE_KEYS, controlAdjustment, singleStackedValue } from "@/lib/clr/clr-control-report-view";
+import { DEFAULT_VISIBLE_KEYS, controlAdjustment, isRefundOutstanding, singleStackedValue } from "@/lib/clr/clr-control-report-view";
 import {
   FilterBar,
   ForbiddenState,
@@ -227,26 +230,9 @@ const SCREEN_COLS: ScreenCol[] = [
   { key: "overallStatus", label: "สถานะ", align: "left", render: (r) => <RequestStatusBadge status={r.overallStatus} /> },
 ];
 
-const DEFAULT_VISIBLE: Record<string, boolean> = SCREEN_COLS.reduce(
-  (acc, c) => ({ ...acc, [c.key]: DEFAULT_VISIBLE_KEYS.includes(c.key) }),
-  {} as Record<string, boolean>,
-);
-
-const PICKER_COLUMNS: ColumnToggleOption<string>[] = SCREEN_COLS.map((c) => ({ key: c.key, label: c.label }));
-
-const COLS_STORAGE_KEY = "ap3-control-report-cols";
-
-function loadStoredVisibility(): Record<string, boolean> {
-  if (typeof window === "undefined") return DEFAULT_VISIBLE;
-  try {
-    const raw = window.localStorage.getItem(COLS_STORAGE_KEY);
-    if (!raw) return DEFAULT_VISIBLE;
-    const parsed = JSON.parse(raw) as Record<string, boolean>;
-    return { ...DEFAULT_VISIBLE, ...parsed };
-  } catch {
-    return DEFAULT_VISIBLE;
-  }
-}
+/** `ap3-control-report-cols` is the key readers already have their shown /
+ *  hidden choice under, so it is kept; the order is a new key of its own. */
+const PREFS = makeColumnPrefs(SCREEN_COLS, "ap3-control-report-cols", "ap3-control-report-col-order", DEFAULT_VISIBLE_KEYS);
 
 export function ClrControlReport() {
   const router = useRouter();
@@ -257,22 +243,46 @@ export function ClrControlReport() {
   const [loading, setLoading] = useState(true);
   const [forbidden, setForbidden] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [visible, setVisible] = useState<Record<string, boolean>>(DEFAULT_VISIBLE);
+  const [visible, setVisible] = useState<Record<string, boolean>>(PREFS.defaultVisible);
+  const [order, setOrder] = useState<string[]>(() => SCREEN_COLS.map((c) => c.key));
+  /* "ค้างโอนเงินคืน" narrows the rows already fetched rather than the query:
+     `listControlRows` has no such parameter, and the two fields it reads are
+     already on every row. The export therefore comes back as a superset while
+     this is on — the same honest difference the stacked filters make. */
+  const [refundOnly, setRefundOnly] = useState(false);
 
+  // Read after mount, not in the initial state: localStorage does not exist on
+  // the server, and seeding from it would make the first render disagree.
   useEffect(() => {
-    setVisible(loadStoredVisibility());
+    setVisible(PREFS.loadVisibility());
+    setOrder(PREFS.loadOrder());
   }, []);
 
   const handleVisibleChange = useCallback((next: Record<string, boolean>) => {
     setVisible(next);
-    try {
-      window.localStorage.setItem(COLS_STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      // best-effort — ignore storage failures (private mode / quota)
-    }
+    PREFS.saveVisibility(next);
   }, []);
 
-  const visibleColumns = useMemo(() => SCREEN_COLS.filter((c) => visible[c.key] ?? true), [visible]);
+  const handleReorder = useCallback((next: string[]) => {
+    setOrder(next);
+    PREFS.saveOrder(next);
+  }, []);
+
+  /** Every column in the reader's order — what the picker lists. */
+  const orderedCols = useMemo(() => {
+    const byKey = new Map(SCREEN_COLS.map((c) => [c.key, c]));
+    return order.map((k) => byKey.get(k)).filter((c): c is ScreenCol => !!c);
+  }, [order]);
+
+  const pickerColumns = useMemo<ColumnToggleOption<string>[]>(
+    () => orderedCols.map((c) => ({ key: c.key, label: c.label })),
+    [orderedCols],
+  );
+
+  const visibleColumns = useMemo(() => orderedCols.filter((c) => visible[c.key] ?? true), [orderedCols, visible]);
+
+  const outstandingCount = useMemo(() => rows.filter(isRefundOutstanding).length, [rows]);
+  const visibleRows = useMemo(() => (refundOnly ? rows.filter(isRefundOutstanding) : rows), [rows, refundOnly]);
 
   const patch = useCallback((p: Partial<ControlFilters>) => {
     setFilters((prev) => ({ ...prev, ...p }));
@@ -352,12 +362,21 @@ export function ClrControlReport() {
         />
       </div>
       <div className="flex items-end gap-2">
-        <ColumnToggleMenu columns={PICKER_COLUMNS} visible={visible} onChange={handleVisibleChange} label="คอลัมน์" />
-        <Button variant="ghost" size="sm" onClick={() => setFilters(EMPTY_FILTERS)}>
+        <Button
+          variant={refundOnly ? "secondary" : "ghost"}
+          size="sm"
+          aria-pressed={refundOnly}
+          onClick={() => setRefundOnly((on) => !on)}
+          title="เคลียร์แล้วต้องคืนเงินบริษัท แต่ยังไม่มีวันที่โอนคืน"
+        >
+          ค้างโอนคืน ({outstandingCount})
+        </Button>
+        <ColumnToggleMenu columns={pickerColumns} visible={visible} onChange={handleVisibleChange} onReorder={handleReorder} label="คอลัมน์" />
+        <Button variant="ghost" size="sm" onClick={() => { setFilters(EMPTY_FILTERS); setRefundOnly(false); }}>
           ล้างตัวกรอง
         </Button>
         <Button variant="secondary" size="sm" icon={<Download size={14} />}
-          onClick={handleExport} disabled={loading || rows.length === 0}>
+          onClick={handleExport} disabled={loading || visibleRows.length === 0}>
           Export Excel
         </Button>
       </div>
@@ -384,10 +403,16 @@ export function ClrControlReport() {
         </div>
       ) : (
         <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border-card)" }}>
-          {rows.length === 0 ? (
+          {visibleRows.length === 0 ? (
             <div className="flex flex-col items-center gap-3 py-12 text-center" style={{ background: "var(--bg-card)" }}>
               <FileX size={32} style={{ color: "var(--text-muted)" }} />
-              <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>ไม่พบข้อมูลตามเงื่อนไขที่ระบุ</p>
+              {/* Telling a reader there is nothing here while their own toggle
+                  hides it sends them looking in the wrong place. */}
+              <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>
+                {rows.length > 0
+                  ? "ไม่มีรายการที่ค้างโอนคืนในผลลัพธ์นี้ — ปิดตัวกรอง “ค้างโอนคืน” เพื่อดูทั้งหมด"
+                  : "ไม่พบข้อมูลตามเงื่อนไขที่ระบุ"}
+              </p>
             </div>
           ) : (
             <div className="overflow-x-auto no-scrollbar max-h-[min(72vh,760px)] overflow-y-auto" style={{ background: "var(--bg-card)" }}>
@@ -409,7 +434,7 @@ export function ClrControlReport() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row, idx) => {
+                  {visibleRows.map((row, idx) => {
                     const rowBg = idx % 2 === 0 ? "transparent" : "color-mix(in srgb, var(--bg-card) 50%, var(--bg-page))";
                     return (
                       <tr
@@ -452,7 +477,7 @@ export function ClrControlReport() {
                     }}
                   >
                     <td colSpan={visibleColumns.length} className="px-3 py-2.5 font-bold" style={{ color: "var(--text-heading)" }}>
-                      รวมทั้งหมด ({rows.length} รายการ)
+                      รวมทั้งหมด ({visibleRows.length} รายการ)
                     </td>
                   </tr>
                 </tfoot>

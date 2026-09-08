@@ -135,3 +135,24 @@ export function singleStackedValue(csv: string | null | undefined): string | und
   const values = csvValues(csv);
   return values.length === 1 ? values[0] : undefined;
 }
+
+/**
+ * "ค้างโอนเงินคืน" — the clearing settled with money owed back to the company
+ * and the employee has not transferred it yet.
+ *
+ * AP-2's report has an overdue filter built on the advance's expected clear
+ * date (`isOverdueClearing` in `advance-report-view.ts`). An AP-3 row *is* the
+ * clearing, so that date has already done its job by the time a row exists
+ * here; what is still outstanding is company money sitting uncollected
+ * (decision: user, 2026-09-08). Both fields already come back from
+ * `clear-advance-report-service` — no query, route or column changes.
+ *
+ * `refundToCompany` is normalised to 0 (never negative) by that service, so a
+ * clearing that owes the *employee* extra reads as 0 here and is never
+ * outstanding — that money is the company's to pay, not to chase.
+ */
+export function isRefundOutstanding(
+  row: Pick<ClrControlRow, "refundToCompany" | "refundTransferDate">,
+): boolean {
+  return (row.refundToCompany ?? 0) > 0 && !row.refundTransferDate;
+}
