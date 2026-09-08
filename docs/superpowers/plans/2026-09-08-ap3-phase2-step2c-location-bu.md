@@ -409,9 +409,9 @@ nothing this side can read.
 
 ---
 
-## Task 6: Prove it in BC
+## Task 6: Prove it in BC — *done 2026-09-08*
 
-- [ ] **Step 1: Send a clearing whose branch is not a COCO Location**
+- [x] **Step 1: Send a clearing whose branch is not a COCO Location**
 
 Pick a branch from the `DODO-M` or `DOCO` set so the line carries something the
 constant never could. Drive it through submit, three approvals and the send.
@@ -419,7 +419,7 @@ constant never could. Drive it through submit, three approvals and the send.
 The manager step needs `ACC_MANAGER_DEV_BYPASS=1` and a restart of `:3081`
 unless you are the assigned manager — **take it back out afterwards.**
 
-- [ ] **Step 2: Confirm what was sent**
+- [x] **Step 2: Confirm what was sent**
 
 The preview does not show `buCode`, and BC cannot be read back from here, so
 confirm at the wire as Step 2b did: a temporary log of the payload at the send,
@@ -428,7 +428,46 @@ removed straight after.
 Expected: the expense line's `buCode` is the branch's real BU; a line whose
 branch has no Location carries no `buCode` at all.
 
-- [ ] **Step 3: Record the document number.**
+- [x] **Step 3: Record the document number.**
+
+### What was sent — `ADC26-09012` → **`PVA2609-0013`**, Sent, 0 failed
+
+Built deliberately with two branches on different BUs, which is stronger than the
+single non-COCO line this plan asked for: a document carrying two different BUs
+is something the old constant could not produce under any circumstances.
+
+| Line | Branch | buCode |
+| --- | --- | --- |
+| G/L 610116003 · 1,500 | PCCT01 (Catering Set 1) | **CTPS** |
+| G/L 610322005 · 1,000 | HQ01 | **COCO** |
+| Vendor ADV0080 · 0 | PCCT01 (default branch) | **CTPS** |
+
+Confirmed twice over: the preview rendered `PCCT01 · CTPS` and `HQ01 · COCO`, and
+a temporary file log of the payload at the send — removed straight after, along
+with the dev-bypass flag — showed `"buCode": "CTPS"` and `"buCode": "COCO"` on the
+wire, beside `"employeeCode": "10177"` from Step 2b.
+
+The clearing was built to land exactly on the advance (2,500 of 2,500) so no
+refund leg was required, which kept the test to the thing under test.
+
+### What this does **not** prove
+
+**That BC stored CTPS.** "Sent" means the codeunit accepted the payload and
+inserted the lines — and codeunit 50263 ignores JSON keys it does not know. A
+still-deployed old build would read no `buCode`, write COCO, and answer Sent
+exactly the same way. Nothing on the portal side can tell the two apart.
+
+The codeunit exposes only `CreateFromJson`; there is no read-back, so this is the
+boundary of what can be verified from here. The remaining check belongs in BC:
+open batch `Q`, find document `PVA2609-0013`, and read Shortcut Dimension 2 / the
+BU dimension on each line. Two different values across the three lines means the
+1.0.0.205 build is live and doing its job; three COCOs means the old build is
+still deployed.
+
+A decisive probe from this side is possible — send a deliberately invalid
+`buCode` and see whether it errors (new build) or silently inserts (old) — but it
+writes a stray line into the Sandbox batch if the old build is live, so it was
+not run unasked.
 
 ---
 
