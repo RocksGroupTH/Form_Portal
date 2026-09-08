@@ -235,9 +235,16 @@ funds — genuinely นิติบุคคล, missed only by a keyword test. 
 issued a `0`-prefixed tax id by the Revenue Department. A leading `0` is
 therefore evidence, not proof, and the rule must never be the last word.
 
-So: the tax id suggests a type when the WHT row is captured; **accounting can
-change it at the ACCOUNT step** (user, 2026-09-08), which is where the person who
-understands the distinction actually sits and is the last stop before the send.
+So: the tax id suggests a type when the WHT row is captured, **the requester can
+change it on the form, and accounting can change it again at the ACCOUNT step**
+(user, 2026-09-08).
+
+Two edit points rather than one, and the second is not redundant. The requester
+knows who they paid — they hold the receipt — while accounting knows what the
+distinction means for the filing, and sits at the last stop before the send. The
+form's WHT table already edits the payee's tax id, name and address, so the type
+belongs beside them; the ACCOUNT step's block is read-only today and gains the
+control.
 The type is stored on the WHT row and picks the vendor code at send time.
 
 **An id that is not 13 clean digits yields no suggestion at all** — null, not a

@@ -33,6 +33,7 @@ make it, and the send using it.
 | `migrations/139_wht_pnd_type.sql` | `PndType` on `AccClearAdvanceWht` | **new** |
 | `src/features/clear-advance/types.ts:27-40` | `ClearAdvanceWhtItem` | `pndType` field |
 | `src/lib/clr/clear-advance-request-service.ts` | Read + write WHT rows | map, insert, suggest on save |
+| `src/features/clear-advance/components/ClearAdvanceForm.tsx:1440-1530` | WHT payee table the requester fills | a ภ.ง.ด. column |
 | `src/features/clear-advance/components/ClearAdvanceDetail.tsx:637` | WHT block, read-only today | ACCOUNT-step editor |
 | `src/app/api/request/clear-advance/[id]/wht-type/route.ts` | Save one row's type | **new** |
 | `src/lib/clr/clear-advance-erp-payload.ts` | Journal builder | vendor lines replace the G/L line |
@@ -243,7 +244,45 @@ git commit -m "feat(ap-3): store the suggested ภ.ง.ด. type with the payee"
 
 ---
 
-## Task 4: Accounting decides
+## Task 4: The requester chooses, accounting can change it
+
+Two edit points. The requester holds the receipt and knows who they paid;
+accounting knows what the distinction means for the filing and sits last before
+the send.
+
+### Task 4a: the column on the form
+
+**Files:**
+- Modify: `src/features/clear-advance/components/ClearAdvanceForm.tsx:181-193` (`whtRows` state), `:1440-1530` (the WHT table), `:519` (the save payload)
+
+- [ ] **Step 1: Carry it in the row state**
+
+`WhtRow` gains `pndType: "PND3" | "PND53" | ""`, seeded from
+`w.pndType ?? ""` in the initialiser at `:181`.
+
+- [ ] **Step 2: A column in the table**
+
+A `<select>` beside ที่อยู่, disabled under `readOnly` like every other cell:
+`— ยังไม่ระบุ —`, `ภ.ง.ด. 3`, `ภ.ง.ด. 53`.
+
+Seed it from `suggestPndType(w.taxId)` when a row arrives from the OCR
+(`:920-925`) and when the tax id is edited on a row nobody has set a type on —
+never on a row that already carries one, or editing a typo in the id would
+silently undo a deliberate choice.
+
+- [ ] **Step 3: Send it with the save**
+
+At `:519`, include `pndType: w.pndType || null` in the mapped `whtItems`.
+
+**No new route:** the existing save already writes the WHT rows, and Task 3
+already stores the column.
+
+- [ ] **Step 4: Verify on screen** — set a type, save, reload, confirm it stuck;
+then check the row in `AccClearAdvanceWht`.
+
+- [ ] **Step 5: Commit**
+
+### Task 4b: the control at the ACCOUNT step
 
 **Files:**
 - Create: `src/app/api/request/clear-advance/[id]/wht-type/route.ts`
@@ -268,7 +307,8 @@ trustworthy: mark a value the rule suggested and nobody has confirmed as
 
 - [ ] **Step 3: Verify on screen**
 
-Approve a clearing to the ACCOUNT step, change a type, reload, confirm it stuck.
+Approve a clearing to the ACCOUNT step, change a type the requester already set,
+reload, and confirm accounting's value is the one that survived.
 
 - [ ] **Step 4: Commit**
 
@@ -389,7 +429,8 @@ document, and check the line's Account Type and Account No.
 ## Done
 
 - `npm test` at or above baseline; `npx tsc --noEmit` clean of source errors.
-- A tax id suggesting a type, and accounting able to change it.
+- A tax id suggesting a type, the requester able to change it, and accounting
+  able to change it again.
 - One BC document whose WHT line is a Vendor at `WHT-PND.3` or `WHT-PND.53`.
 - A clearing with an undecided type refused, with a message that says why.
 
