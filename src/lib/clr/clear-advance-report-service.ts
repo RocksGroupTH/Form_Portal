@@ -164,7 +164,13 @@ export async function listDetailRows(f: ClrReportFilters): Promise<ClrDetailRow[
            c.ExpenseOf, c.AdvanceRequestNo,
            i.[LineNo], i.ExpenseDate, i.DocNo, i.GlAccountNo, i.GlAccountName, i.Description, i.BranchCode,
            i.AmountBeforeVat, i.VatAmount, i.TotalInclVat, i.WhtAmount, i.NetAmount,
-           w.TaxId, w.PayeeName, w.PayeeAddress
+           -- The line's own seller first (migration 140), falling back to the
+           -- WHT row for lines saved before that column existed. Reading only
+           -- the WHT row left every VAT-without-withholding line blank on this
+           -- report while the value sat on the item.
+           COALESCE(i.TaxId, w.TaxId) AS TaxId,
+           COALESCE(i.PayeeName, w.PayeeName) AS PayeeName,
+           COALESCE(i.PayeeAddress, w.PayeeAddress) AS PayeeAddress
     FROM [dbo].[AccRequest] req
     JOIN [dbo].[AccClearAdvance] c ON c.RequestId = req.Id
     JOIN [dbo].[AccClearAdvanceItem] i ON i.ClearAdvanceId = c.Id
