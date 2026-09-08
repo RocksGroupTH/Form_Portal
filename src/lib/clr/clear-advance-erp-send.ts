@@ -4,7 +4,7 @@ import type { ErpInterfaceStatus } from "@/features/accounting/constants";
 import { postBcPpapJournalCreateFromJson } from "@/lib/bc/bc-odata";
 import { getRequest } from "@/lib/clr/clear-advance-request-service";
 import { loadClearAdvanceErpContext } from "@/lib/clr/clear-advance-erp-context";
-import { buildClearAdvanceJournalPayload } from "@/lib/clr/clear-advance-erp-payload";
+import { buildClearAdvanceJournalPayload, journalPostingDate } from "@/lib/clr/clear-advance-erp-payload";
 import { loadBranchLookup } from "@/lib/erp/location-lookup";
 import { loadBranchGlAccounts, loadBuGlAccounts } from "@/lib/clr/clr-bu-gl-map-service";
 import { isRocksPcBrand } from "@/features/clear-advance/constants";
@@ -290,7 +290,16 @@ export async function previewClrErpJournal(ids: number[]): Promise<ClrPreviewIte
       if (!req.clear) throw new Error("ไม่พบข้อมูลการเคลียร์เงินทดรองจ่าย");
       if (!req.clear.items || req.clear.items.length === 0) throw new Error("ไม่มีรายการค่าใช้จ่าย");
 
-      const postingDate = req.clear.refundTransferDate ?? req.clear.paymentDate ?? todayYmd();
+      /* The date the money moved, which depends on which way it moved.
+         `refundToCompany` is positive when the employee returns the unspent part
+         and negative when the company pays the shortfall — the same sign the
+         document type reads. */
+      const postingDate = journalPostingDate(
+        req.clear.refundToCompany ?? 0,
+        req.clear.refundTransferDate,
+        req.clear.paymentDate,
+        todayYmd(),
+      );
       const { config, target, departmentCode } = await loadClearAdvanceErpContext(req.brandCode, req.requesterDepartmentCode, req.clear.advanceRequestId);
       const journalItems = toJournalItems(req.clear.items);
       const itemBranch = journalItems.find((it) => it.branchCode)?.branchCode ?? null;
@@ -443,7 +452,16 @@ export async function sendClrErpBatch(ids: number[], userId: number): Promise<Cl
     // is out of scope exactly when the answer is the thing worth keeping.
     let bcRaw: string | null = null;
     try {
-      const postingDate = req.clear.refundTransferDate ?? req.clear.paymentDate ?? todayYmd();
+      /* The date the money moved, which depends on which way it moved.
+         `refundToCompany` is positive when the employee returns the unspent part
+         and negative when the company pays the shortfall — the same sign the
+         document type reads. */
+      const postingDate = journalPostingDate(
+        req.clear.refundToCompany ?? 0,
+        req.clear.refundTransferDate,
+        req.clear.paymentDate,
+        todayYmd(),
+      );
       const { config, target, departmentCode } = await loadClearAdvanceErpContext(req.brandCode, req.requesterDepartmentCode, req.clear.advanceRequestId);
       bcEnvironment = target.environment;
 

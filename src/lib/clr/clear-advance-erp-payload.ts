@@ -149,6 +149,36 @@ export function isPriorPeriod(expenseDate: string | null | undefined, postingDat
  * Payment of nothing — no money leaves the company, and the earlier version of
  * this rule called that case a payment where nothing was paid.
  */
+/**
+ * The date the journal posts on, which is the date the money actually moved.
+ *
+ * Same sign, same two cases as the document type (user, 2026-09-09). When the
+ * employee returns what they did not spend, the movement is their transfer back,
+ * so the journal takes `refundTransferDate` — the date on the slip they
+ * attached. When the company pays the shortfall, the movement is finance's own
+ * run, so it takes `paymentDate` — the Friday accounting sets at their step.
+ *
+ * Posting on the other one would date the entry to something that did not
+ * happen: a refund dated to a payment run nobody made, or a payment dated to a
+ * transfer the employee never sent.
+ *
+ * Both are required upstream — the refund slip and its date to submit, the
+ * payment date to approve — so the fallbacks are for records that predate those
+ * rules rather than a normal path.
+ */
+export function journalPostingDate(
+  bankAmount: number,
+  refundTransferDate: string | null | undefined,
+  paymentDate: string | null | undefined,
+  today: string,
+): string {
+  const refund = (refundTransferDate ?? "").trim();
+  const payment = (paymentDate ?? "").trim();
+  return bankAmount < 0
+    ? payment || refund || today
+    : refund || payment || today;
+}
+
 export function journalDocumentType(bankAmount: number): "Refund" | "Payment" {
   return bankAmount < 0 ? "Payment" : "Refund";
 }

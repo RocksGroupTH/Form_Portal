@@ -4,6 +4,7 @@ import {
   buildClearAdvanceJournalPayload,
   isPriorPeriod,
   journalDocumentType,
+  journalPostingDate,
   type ClrJournalInput,
 } from "./clear-advance-erp-payload";
 
@@ -763,4 +764,33 @@ test("a branch with no rule still falls through to its BU", () => {
     items: [{ glAccountNo: "610322005", amountBeforeVat: 500, vatAmount: 0, whtAmount: 0, branchCode: "PC2002" }],
   }));
   assert.equal(p.lines[0].accountNo, "110721001");
+});
+
+/* ── the posting date follows the money too (user, 2026-09-09) ── */
+
+test("money coming back posts on the day it was transferred back", () => {
+  assert.equal(journalPostingDate(50, "2026-09-08", "2026-09-11", "2026-09-30"), "2026-09-08");
+});
+
+test("money going out posts on finance's payment run", () => {
+  assert.equal(journalPostingDate(-200.02, null, "2026-09-11", "2026-09-30"), "2026-09-11");
+});
+
+/* Both dates present on a pay-extra clearing: the payment run is the movement,
+ * and a refund date on it would be describing a transfer nobody made. */
+test("the direction decides, not which date happens to be filled", () => {
+  assert.equal(journalPostingDate(-200, "2026-09-08", "2026-09-11", "2026-09-30"), "2026-09-11");
+  assert.equal(journalPostingDate(200, "2026-09-08", "2026-09-11", "2026-09-30"), "2026-09-08");
+});
+
+/* Both are required upstream, so these are for records older than those rules. */
+test("the other date is better than today", () => {
+  assert.equal(journalPostingDate(50, null, "2026-09-11", "2026-09-30"), "2026-09-11");
+  assert.equal(journalPostingDate(-50, "2026-09-08", null, "2026-09-30"), "2026-09-08");
+  assert.equal(journalPostingDate(50, "  ", "", "2026-09-30"), "2026-09-30");
+});
+
+/* Balanced to the baht: no money moved, so neither date exists to be right. */
+test("an exactly-even clearing posts today", () => {
+  assert.equal(journalPostingDate(0, null, null, "2026-09-30"), "2026-09-30");
 });
