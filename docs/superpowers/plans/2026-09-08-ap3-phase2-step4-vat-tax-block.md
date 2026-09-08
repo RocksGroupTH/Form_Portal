@@ -432,20 +432,20 @@ seller is known: it is the amount VAT was charged on, which is always known.
 
 ---
 
-## Task 4: The codeunit reads them
+## Task 4: The codeunit reads them — *written 2026-09-08, awaiting deploy*
 
 **Files:** `R:\PPFunction\AL\ALProject12_SalesTran\ACCForm\AP\APJournalCreate.al`
 
-- [ ] **Step 1: Back up** — `APJournalCreate.al.bak-vat`, beside the existing
+- [x] **Step 1: Back up** — `APJournalCreate.al.bak-vat`, beside the existing
 `.bak-bu`.
 
-- [ ] **Step 2: Document Date stops being forced**
+- [x] **Step 2: Document Date stops being forced**
 
 `:188` reads `GenJnlLine."Document Date" := GenJnlLine."Posting Date";`. It
 becomes: use `documentDate` from the payload when given, else Posting Date. A
 payload without the key behaves exactly as today.
 
-- [ ] **Step 3: Read the ten keys**
+- [x] **Step 3: Read the ten keys**
 
 Each through the existing graceful helpers (`GetJsonText`, `GetJsonDate`,
 `GetJsonDecimal`), each applied only when non-blank, so a payload without them is
@@ -464,7 +464,36 @@ explicit keys overwrite what its trigger filled. Otherwise the trigger wins over
 a seller the OCR read from the receipt.
 
 - [ ] **Step 4: Compile and publish** — in VS Code; the NWTH symbols are already
-in `.alpackages`. Bump `app.json` to `1.0.0.206`.
+in `.alpackages`. **`app.json` is bumped to `1.0.0.206`.**
+
+### What was written
+
+`ApplyTaxBlock(GenJnlLine, LineObject)`, called just before the `Insert`, plus
+`GetGenPostingType` to turn the payload's text into the enum. 77 lines, backed up
+at `APJournalCreate.al.bak-vat`.
+
+Every key is applied only when the payload carries it, so a line without them —
+every line AP-2 sends, and every non-VAT line AP-3 sends — is written exactly as
+before. The same discipline `buCode` follows.
+
+**`Tax Vendor No.` is set first and validated**, so its OnValidate can fill Tax
+Invoice Name, Branch Code and the VAT registration from the vendor card; the
+explicit keys are applied after, and win. Get that order wrong and a seller read
+off the receipt is quietly overwritten by one copied from a vendor record.
+
+**An unknown `genPostingType` is an error, not a silent Blank.** Falling back
+would post the VAT line as though no posting type had been asked for — the same
+shape of quiet wrong answer this whole step exists to remove.
+
+**`documentDate` is read but the portal does not send it.** The standard
+Document Date no longer being forced to Posting Date is what Step 2 of this task
+asked for, and the capability is there; whether a VAT line should carry the
+invoice's date in the *standard* field as well as in `Tax Invoice Date` is a
+question for accounting, not a thing to decide by writing it. Until they say so,
+Document Date behaves exactly as it does today.
+
+The file kept its CRLF endings and its lack of a BOM — an editor added one and it
+was taken back out, so the diff is 77 lines of AL and nothing else.
 
 - [ ] **Step 5: Confirm it is inert** — send one AP-3 clearing built by the
 *current* portal build (no new keys) and check nothing changed.
