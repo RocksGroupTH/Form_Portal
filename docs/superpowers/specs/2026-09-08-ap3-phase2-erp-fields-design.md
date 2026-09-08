@@ -187,6 +187,22 @@ payee: บุคคลธรรมดา → `WHT-PND.3`, นิติบุค�
 load-bearing rather than optional: without it there is no way to choose the
 vendor code, so §5.3a is a prerequisite of this step rather than separate work.
 
+**A deliberate divergence from the requirements (user, 2026-09-08).**
+`ap3-clear-advance-specification.md` §4.1 ends with *"ระบุรหัส Vendor ตั้งต้นเป็น
+เลข 3 เป็นหลักก่อนตามเงื่อนไขทางบัญชี"* — read literally, every clearing sends
+`WHT-PND.3` whatever the payee is, and the classification only helps whoever
+prepares the paperwork. Asked directly, the user chose the vendor to follow the
+type in both cases. Recorded here because it is a conscious departure from the
+requirement's own words, not an oversight: anyone reconciling the two documents
+later should not "fix" this back.
+
+**More than one payee.** The rows are per payee and the amounts are all 0, so the
+only thing a WHT line carries is *which vendor account accounting must clear*.
+Two payees of the same type would produce two identical zero lines on the same
+vendor, which says nothing extra, so the send emits **one line per distinct type
+present** — at most two. In the ordinary single-payee clearing this is
+indistinguishable from one line per payee.
+
 No AL change to the journal itself: a Vendor line is a shape the contract has
 always accepted, and AP-2 already sends one.
 
@@ -198,11 +214,36 @@ payee name are already captured per payee in `AccClearAdvanceWht`, and the form
 already refuses a WHT amount without them
 (`clear-advance-request-service.ts:411`), so the input exists.
 
-What is not settled is the lookup itself — which DBD source, and what happens
-when it cannot answer. The requirement calls the feature a *"ระบบช่วยเหลือ"*, an
-assistant, which argues for suggesting a type the reviewer can override rather
-than deciding silently. The type is then stored on the WHT row and picks the
-vendor code at send time. See §8 q1.
+**Settled 2026-09-08: the tax id decides, and no DBD call is made.**
+
+A Thai 13-digit tax id already carries the answer. Juristic persons are
+registered by the DBD with a number beginning `0`; an individual uses their
+national id, which begins `1`–`8`. Checked against the 2,178 vendors in
+`ErpVendors` holding a clean 13-digit number:
+
+| First digit | Name reads as juristic | Does not |
+| --- | --- | --- |
+| `0` | 1,692 | 83 |
+| `1`,`2`,`3`,`4`,`5`,`8` | **1** | 402 |
+
+A non-zero first digit means an individual, near enough always.
+
+**And the exception is exactly why this suggests rather than decides.** Of the 83
+that begin `0` without a juristic-looking name, most are government bodies and
+funds — genuinely นิติบุคคล, missed only by a keyword test. But some are people:
+`Ms. Celina Barreiro`, `Mr. NICARDO II MADARANG FALCIS` — foreign individuals
+issued a `0`-prefixed tax id by the Revenue Department. A leading `0` is
+therefore evidence, not proof, and the rule must never be the last word.
+
+So: the tax id suggests a type when the WHT row is captured; **accounting can
+change it at the ACCOUNT step** (user, 2026-09-08), which is where the person who
+understands the distinction actually sits and is the last stop before the send.
+The type is stored on the WHT row and picks the vendor code at send time.
+
+**An id that is not 13 clean digits yields no suggestion at all** — null, not a
+guess — and a clearing carrying WHT with no type set is **refused at the send**
+with a readable message rather than defaulting to a vendor nobody chose. The
+whole point of the field is that somebody decided.
 
 ### 5.4 Step 4 — the VAT line and the tax block
 
@@ -292,17 +333,20 @@ Step-specific:
 
 Two of the four are settled; what remains does not block starting.
 
-1. **The DBD lookup behind ภ.ง.ด. 3 / 53** (§5.3a). Which source answers
-   "is this tax id a นิติบุคคล", and what the system does when it cannot answer.
-   The requirement calls it an assistant, which points at suggesting a type the
-   reviewer confirms rather than deciding silently — but the source and the
-   fallback are accounting's call, not a coding one. **Blocks the second half of
-   Step 3; the vendor-code plumbing can be built against a stored type first.**
+1. ~~**The DBD lookup behind ภ.ง.ด. 3 / 53**~~ — **answered 2026-09-08.** No DBD
+   call: the tax id's leading digit suggests the type, accounting confirms it at
+   the ACCOUNT step, and an unreadable id suggests nothing. See §5.3a. Step 3 is
+   unblocked in full.
 2. **`NWTH Branch Code` or `NWTH Company Branch Code`** for the sheet's "Tax
    Branch Code" (40009717 vs 40009731). Both exist; the sheet does not say which,
    and the example leaves the column empty. A detail inside Step 4, not a
    blocker.
-3. **Where does Location→BU come from for the portal?** The rule is settled — a
+3. ~~**Where does Location→BU come from for the portal?**~~ — **answered and
+   built 2026-09-08.** Locations sync into `Rocks_ERP_Data.ErpLocation` with
+   their BU, and the journal reads it per line. Proven in BC as `PVA2609-0013`.
+   Original text kept below for the reasoning.
+
+   **Where does Location→BU come from for the portal?** The rule is settled — a
    line's BU is the BU its Location is bound to — but the binding is on the BC
    Location card and nothing syncs it into `Rocks_ERP_Data`. Either add a
    Location sync alongside the existing dimension-value sync, or have codeunit
