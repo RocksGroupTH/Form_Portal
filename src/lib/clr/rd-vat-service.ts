@@ -13,10 +13,9 @@ export interface VatLookup {
   registrant: RdVatRegistrant | null;
   /** True when the answer came from our own table rather than the RD. */
   cached: boolean;
+  /** When the RD was last asked about this number. */
+  checkedAt: string | null;
 }
-
-/** How long a stored answer stands before we ask again. */
-const CACHE_DAYS = 90;
 
 /**
  * What the Revenue Department says about a tax id, from our table when we have
@@ -26,16 +25,30 @@ const CACHE_DAYS = 90;
  * expensive question to keep re-asking — a small seller will never be there, and
  * without recording the "no" every upload would ask the RD about them again.
  *
+ * **A stored answer never expires** (user, 2026-09-08). A registration is not the
+ * kind of fact that goes stale on a timer, and re-asking the RD about the same
+ * number on a schedule spends their service to be told the same thing.
+ *
+ * It can still change — a company renames, opens a branch, deregisters — so
+ * `refresh` asks again and overwrites, and `checkedAt` travels with every answer
+ * so a reader can see how old it is and decide. The choice to re-check belongs to
+ * whoever doubts the name in front of them, not to a timer.
+ *
  * The RD being unreachable is not the same as an unregistered seller, so a
  * failed call returns null and stores nothing: the next attempt should ask
  * again, not inherit a silence.
  */
-export async function lookupVatRegistrant(taxId: string): Promise<VatLookup | null> {
+export async function lookupVatRegistrant(
+  taxId: string,
+  opts?: { refresh?: boolean },
+): Promise<VatLookup | null> {
   const tin = (taxId ?? "").replace(/\D/g, "");
   if (tin.length !== 13) return null;
 
-  const cached = await readCache(tin);
-  if (cached) return cached;
+  if (!opts?.refresh) {
+    const cached = await readCache(tin);
+    if (cached) return cached;
+  }
 
   let xml: string;
   try {
@@ -58,7 +71,7 @@ export async function lookupVatRegistrant(taxId: string): Promise<VatLookup | nu
 
   const registrant = parseRdVatResponse(xml);
   await writeCache(tin, registrant);
-  return { taxId: tin, registrant, cached: false };
+  return { taxId: tin, registrant, cached: false, checkedAt: new Date().toISOString() };
 }
 
 async function readCache(tin: string): Promise<VatLookup | null> {
@@ -66,22 +79,24 @@ async function readCache(tin: string): Promise<VatLookup | null> {
   const r = await pool
     .request()
     .input("tin", sql.NVarChar, tin)
-    .input("days", sql.Int, CACHE_DAYS)
     .query(`
       SELECT TaxId, NotRegistered, TitleName, [Name], BranchNumber, BranchCode,
-             VatRegisteredOn, [Address]
+             VatRegisteredOn, [Address], CheckedAt
       FROM [dbo].[AccVatRegistrant]
-      WHERE TaxId = @tin AND CheckedAt > DATEADD(day, -@days, SYSDATETIME())
+      WHERE TaxId = @tin
     `);
   const row = (r.recordset as Record<string, unknown>[])[0];
   if (!row) return null;
 
+  const checkedAt = row.CheckedAt instanceof Date ? row.CheckedAt.toISOString() : null;
+
   if (row.NotRegistered === true || row.NotRegistered === 1) {
-    return { taxId: tin, registrant: null, cached: true };
+    return { taxId: tin, registrant: null, cached: true, checkedAt };
   }
   return {
     taxId: tin,
     cached: true,
+    checkedAt,
     registrant: {
       nid: String(row.TaxId ?? tin),
       titleName: (row.TitleName as string) ?? null,

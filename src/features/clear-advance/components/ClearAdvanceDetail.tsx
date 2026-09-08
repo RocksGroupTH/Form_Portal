@@ -114,8 +114,8 @@ interface VatRegistrant {
 }
 type VatCheck =
   | { state: "checking" }
-  | { state: "found"; registrant: VatRegistrant }
-  | { state: "unregistered" }
+  | { state: "found"; registrant: VatRegistrant; checkedAt: string | null }
+  | { state: "unregistered"; checkedAt: string | null }
   | { state: "unknown" };
 
 export function ClearAdvanceDetail({ request, onChanged }: Props) {
@@ -579,17 +579,23 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                         const tin = (it.taxId ?? "").replace(/\D/g, "");
                         if (tin.length !== 13) return null;
                         const v = vatByTin[tin];
-                        const check = async () => {
+                        const check = async (refresh = false) => {
                           setVatByTin((p) => ({ ...p, [tin]: { state: "checking" } }));
                           try {
-                            const res = await fetch(`/api/request/clear-advance/vat-registrant?taxId=${tin}`);
-                            const j = (await res.json()) as { ok: boolean; data?: { registrant: VatRegistrant | null } };
+                            const res = await fetch(
+                              `/api/request/clear-advance/vat-registrant?taxId=${tin}${refresh ? "&refresh=1" : ""}`,
+                            );
+                            const j = (await res.json()) as {
+                              ok: boolean;
+                              data?: { registrant: VatRegistrant | null; checkedAt: string | null };
+                            };
+                            const checkedAt = j.data?.checkedAt ?? null;
                             setVatByTin((p) => ({
                               ...p,
                               [tin]: j.ok
                                 ? (j.data?.registrant
-                                    ? { state: "found", registrant: j.data.registrant }
-                                    : { state: "unregistered" })
+                                    ? { state: "found", registrant: j.data.registrant, checkedAt }
+                                    : { state: "unregistered", checkedAt })
                                 : { state: "unknown" },
                             }));
                           } catch {
@@ -605,7 +611,7 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                             <span style={{ color: "var(--text-muted)" }}>{i + 1}.</span>
                             <span className="font-mono" style={{ color: "var(--text-primary)" }}>{tin}</span>
                             {!v && (
-                              <button type="button" onClick={check}
+                              <button type="button" onClick={() => check()}
                                 className="text-[11px] px-2 py-0.5 rounded-lg cursor-pointer"
                                 style={{ background: "var(--bg-badge)", color: "var(--text-secondary)", border: "none" }}>
                                 ตรวจ
@@ -622,7 +628,7 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                             {v?.state === "unknown" && (
                               <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>
                                 ตรวจไม่สำเร็จ
-                                <button type="button" onClick={check}
+                                <button type="button" onClick={() => check()}
                                   className="ml-1 underline cursor-pointer border-none bg-transparent p-0 text-[11px]"
                                   style={{ color: "var(--nav-active-text)" }}>ลองใหม่</button>
                               </span>
@@ -641,6 +647,17 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                                     ใช้ค่านี้
                                   </button>
                                 )}
+                              </span>
+                            )}
+                            {/* Stored answers are kept rather than re-asked on a
+                                timer, so the date says how old this one is and the
+                                link is there for whoever doubts it. */}
+                            {(v?.state === "found" || v?.state === "unregistered") && (
+                              <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>
+                                {v.checkedAt ? `ตรวจเมื่อ ${fmtDateOnly(v.checkedAt.slice(0, 10))}` : ""}
+                                <button type="button" onClick={() => check(true)}
+                                  className="ml-1 underline cursor-pointer border-none bg-transparent p-0 text-[11px]"
+                                  style={{ color: "var(--nav-active-text)" }}>ตรวจใหม่</button>
                               </span>
                             )}
                           </div>
