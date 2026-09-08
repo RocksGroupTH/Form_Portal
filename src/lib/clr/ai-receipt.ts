@@ -19,6 +19,7 @@ import {
   type GlCandidate,
   type ReceiptRead,
 } from "./ai-receipt-core";
+import { needsStrongerRead } from "./receipt-escalation";
 
 /**
  * Optional AI (Claude vision) receipt extraction. Runs when a key is available
@@ -27,6 +28,15 @@ import {
  */
 
 const MODEL = process.env.ANTHROPIC_RECEIPT_MODEL || "claude-haiku-4-5-20251001";
+
+/**
+ * The model a suspect read is retried with. Most receipts never reach it: see
+ * `needsStrongerRead` for the one signal that sends them, and what a rotated
+ * tax invoice did to the small model to earn it.
+ *
+ * Set to the same value as MODEL to turn escalation off.
+ */
+const ESCALATE_MODEL = process.env.ANTHROPIC_RECEIPT_MODEL_ESCALATE || "claude-sonnet-5";
 
 /**
  * Read every document in an upload with Claude vision. `images` is one image, or
@@ -65,10 +75,51 @@ export async function extractReceiptsWithAI(
       ],
     });
     const textPart = res.content.find((c) => c.type === "text");
-    return parseReceiptDocs(textPart && "text" in textPart ? textPart.text : "");
+    const first = parseReceiptDocs(textPart && "text" in textPart ? textPart.text : "");
+
+    // A VAT invoice whose seller tax id came back empty was misread, not
+    // unlabelled — read it again with the stronger model. Once only, and only
+    // for the documents that earned it.
+    if (ESCALATE_MODEL !== MODEL && needsStrongerRead(first.docs)) {
+      try {
+        const retry = await readWithModel(client, images, mediaType, ESCALATE_MODEL);
+        // Keep the better answer, not merely the newer one: if the second pass
+        // reads nothing, the first is still what we had.
+        if (retry.docs.length > 0) return retry;
+      } catch { /* the first read stands */ }
+    }
+    return first;
   } catch {
     return nothing;
   }
+}
+
+/** One vision call for the pages of a single upload. */
+async function readWithModel(
+  client: import("@anthropic-ai/sdk").default,
+  images: Buffer[],
+  mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif",
+  model: string,
+): Promise<ReceiptRead> {
+  const res = await client.messages.create({
+    model,
+    max_tokens: 4096,
+    system: RECEIPT_SYSTEM,
+    messages: [
+      {
+        role: "user",
+        content: [
+          ...images.map((img) => ({
+            type: "image" as const,
+            source: { type: "base64" as const, media_type: mediaType, data: img.toString("base64") },
+          })),
+          { type: "text" as const, text: RECEIPT_USER_TEXT },
+        ],
+      },
+    ],
+  });
+  const textPart = res.content.find((c) => c.type === "text");
+  return parseReceiptDocs(textPart && "text" in textPart ? textPart.text : "");
 }
 
 /**
