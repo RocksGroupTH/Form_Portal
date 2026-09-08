@@ -62,10 +62,29 @@ function todayYmd(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+/**
+ * BC's answer as text, bounded.
+ *
+ * Kept whole rather than summarised: the summary is what we already had, and it
+ * was the summary that could not say which line BC refused. 8,000 characters is
+ * far more than the codeunit has ever returned and still small enough that a
+ * pathological answer cannot fill the column.
+ */
+function bcResponseText(resp: unknown): string | null {
+  if (resp == null) return null;
+  const raw = typeof resp === "string" ? resp : JSON.stringify(resp);
+  return raw ? raw.slice(0, 8000) : null;
+}
+
 async function markInterfaceStatus(
   requestId: number,
   status: ErpInterfaceStatus | null,
-  opts: { error?: string | null; userId?: number | null; environment?: ErpBcEnvironment | null; documentNo?: string | null } = {},
+  opts: {
+    error?: string | null; userId?: number | null;
+    environment?: ErpBcEnvironment | null; documentNo?: string | null;
+    /** BC's own answer, stored so anyone can read it without opening BC. */
+    response?: string | null;
+  } = {},
 ): Promise<void> {
   const pool = await getAccPool();
   const req = pool.request()
@@ -74,12 +93,14 @@ async function markInterfaceStatus(
     .input("error", sql.NVarChar, opts.error ?? null)
     .input("userId", sql.Int, opts.userId ?? null)
     .input("env", sql.NVarChar, opts.environment ?? null)
-    .input("doc", sql.NVarChar, opts.documentNo ?? null);
+    .input("doc", sql.NVarChar, opts.documentNo ?? null)
+    .input("resp", sql.NVarChar(sql.MAX), opts.response ?? null);
   if (status === "Sent") {
     await req.input("sentAt", sql.DateTime2, new Date()).query(`
       UPDATE [dbo].[AccRequest]
       SET ErpInterfaceStatus=@status, ErpInterfaceError=NULL, ErpInterfaceSentAt=@sentAt,
-          ErpInterfaceSentBy=@userId, ErpInterfaceEnvironment=@env, ErpDocumentNo=@doc, UpdatedAt=SYSDATETIME()
+          ErpInterfaceSentBy=@userId, ErpInterfaceEnvironment=@env, ErpDocumentNo=@doc,
+          ErpInterfaceResponse=@resp, UpdatedAt=SYSDATETIME()
       WHERE Id=@id`);
   } else if (status === "Failed") {
     await req.query(`
@@ -406,6 +427,9 @@ export async function sendClrErpBatch(ids: number[], userId: number): Promise<Cl
 
     /* ── Phase B: only ids that passed pre-flight reach here ── */
     let bcEnvironment: ErpBcEnvironment | null = null;
+    // Declared out here so the catch can store what BC said. Inside the try it
+    // is out of scope exactly when the answer is the thing worth keeping.
+    let bcRaw: string | null = null;
     try {
       const postingDate = req.clear.refundTransferDate ?? req.clear.paymentDate ?? todayYmd();
       const { config, target, departmentCode } = await loadClearAdvanceErpContext(req.brandCode, req.requesterDepartmentCode, req.clear.advanceRequestId);
@@ -450,11 +474,14 @@ export async function sendClrErpBatch(ids: number[], userId: number): Promise<Cl
         payload as unknown as Record<string, unknown>,
       );
 
+      bcRaw = bcResponseText(bcResponse);
       const summary = assertBcJournalCreated(bcResponse);
       const docNo = extractBcDocumentNo(bcResponse);
       const envLabel = target.environment === "Sandbox" ? "UAT" : "PROD";
 
-      await markInterfaceStatus(id, "Sent", { userId, environment: target.environment, documentNo: docNo });
+      await markInterfaceStatus(id, "Sent", {
+        userId, environment: target.environment, documentNo: docNo, response: bcRaw,
+      });
       await logInterfaceActivity(
         id,
         userId,
@@ -474,10 +501,12 @@ export async function sendClrErpBatch(ids: number[], userId: number): Promise<Cl
           .input("status", sql.NVarChar, "Failed")
           .input("error", sql.NVarChar, message)
           .input("env", sql.NVarChar, bcEnvironment)
+          .input("resp", sql.NVarChar(sql.MAX), bcRaw)
           .query(`
             UPDATE [dbo].[AccRequest]
             SET ErpInterfaceStatus=@status, ErpInterfaceError=@error, ErpInterfaceSentAt=NULL,
-                ErpInterfaceSentBy=NULL, ErpInterfaceEnvironment=@env, UpdatedAt=SYSDATETIME()
+                ErpInterfaceSentBy=NULL, ErpInterfaceEnvironment=@env,
+                ErpInterfaceResponse=@resp, UpdatedAt=SYSDATETIME()
             WHERE Id=@id AND ErpInterfaceStatus <> 'Sent'`);
         await logInterfaceActivity(id, userId, "erp_interface_failed", message);
       } catch {

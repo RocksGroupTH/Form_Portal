@@ -50,13 +50,52 @@ function EnvBadge({ env }: { env: string | null }) {
   );
 }
 
-function ErpStatusBadge({ row }: { row: ClrErpQueueRow }) {
+/**
+ * The answer as something a person can read.
+ *
+ * The codeunit replies with JSON wrapped in an OData `value` string, so the
+ * useful part arrives escaped inside a string inside an object. Unwrapped and
+ * indented here; anything that does not parse is shown exactly as it came,
+ * because a response we cannot read is still evidence.
+ */
+function prettyJson(raw: string | null): string | null {
+  if (!raw?.trim()) return null;
+  try {
+    const outer = JSON.parse(raw) as unknown;
+    const inner =
+      outer && typeof outer === "object" && "value" in outer
+        ? (outer as { value?: unknown }).value
+        : outer;
+    if (typeof inner === "string") {
+      try {
+        return JSON.stringify(JSON.parse(inner), null, 2);
+      } catch {
+        return inner;
+      }
+    }
+    return JSON.stringify(inner, null, 2);
+  } catch {
+    return raw;
+  }
+}
+
+function ErpStatusBadge({ row, onShow }: { row: ClrErpQueueRow; onShow?: (r: ClrErpQueueRow) => void }) {
   const { erpStatus, erpError } = row;
+  const readable = !!(erpError || row.erpResponse);
   if (!erpStatus) return (
     <span className="text-[11px] px-2 py-0.5 rounded-full font-medium"
       style={{ background: "var(--bg-badge)", color: "var(--text-faint)" }}>ยังไม่ส่ง</span>
   );
-  if (erpStatus === "Sent") return (
+  if (erpStatus === "Sent") return readable ? (
+    <button
+      type="button"
+      onClick={() => onShow?.(row)}
+      className="text-[11px] px-2 py-0.5 rounded-full font-medium cursor-pointer"
+      style={{ background: "var(--bg-info-green)", color: "var(--text-info-green)", border: "none" }}
+    >
+      ส่งแล้ว
+    </button>
+  ) : (
     <span className="text-[11px] px-2 py-0.5 rounded-full font-medium"
       style={{ background: "var(--bg-info-green)", color: "var(--text-info-green)" }}>ส่งแล้ว</span>
   );
@@ -67,8 +106,18 @@ function ErpStatusBadge({ row }: { row: ClrErpQueueRow }) {
     </span>
   );
   if (erpStatus === "Failed") return (
-    <span className="text-[11px] px-2 py-0.5 rounded-full font-medium" title={erpError ?? undefined}
-      style={{ background: "var(--bg-info-red)", color: "var(--status-bad-text)" }}>ล้มเหลว</span>
+    // A red pill with the reason hidden in a tooltip meant the reason may as
+    // well not have been kept: BC's answer is several lines long, and a title
+    // attribute shows it to nobody who did not already know to hover.
+    <button
+      type="button"
+      onClick={() => onShow?.(row)}
+      title={erpError ?? undefined}
+      className="text-[11px] px-2 py-0.5 rounded-full font-medium cursor-pointer"
+      style={{ background: "var(--bg-info-red)", color: "var(--status-bad-text)", border: "none" }}
+    >
+      ล้มเหลว · ดูสาเหตุ
+    </button>
   );
   return <span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>{erpStatus}</span>;
 }
@@ -265,6 +314,8 @@ export function ClrErpInterfaceQueue() {
      when the dialog opens so changing the selection behind it cannot change what
      gets sent. */
   const [confirmOpen, setConfirmOpen] = useState(false);
+  /** The row whose BC answer is on screen, if any. */
+  const [bcRow, setBcRow] = useState<ClrErpQueueRow | null>(null);
   const [frozenIds, setFrozenIds] = useState<number[]>([]);
   const [confirmItems, setConfirmItems] = useState<ClrPreviewItem[]>([]);
 
@@ -619,7 +670,7 @@ export function ClrErpInterfaceQueue() {
                               <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>{row.paymentDate ?? "—"}</span>
                             )}
                           </td>
-                          <td className="px-3 py-2 whitespace-nowrap"><ErpStatusBadge row={row} /></td>
+                          <td className="px-3 py-2 whitespace-nowrap"><ErpStatusBadge row={row} onShow={setBcRow} /></td>
                           <td className="px-3 py-2 whitespace-nowrap font-mono text-[11px]" style={{ color: "var(--text-secondary)" }}>
                             {row.erpDocumentNo ?? <span style={{ color: "var(--text-faint)" }}>—</span>}
                           </td>
@@ -730,7 +781,7 @@ export function ClrErpInterfaceQueue() {
                           <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-muted)" }}>
                             {fmtDateTime(row.erpSentAt)}
                           </td>
-                          <td className="px-3 py-2 whitespace-nowrap"><ErpStatusBadge row={row} /></td>
+                          <td className="px-3 py-2 whitespace-nowrap"><ErpStatusBadge row={row} onShow={setBcRow} /></td>
                         </tr>
                       );
                     })}
@@ -758,6 +809,75 @@ export function ClrErpInterfaceQueue() {
           own confirm(), which could say nothing about where the journal was
           bound for. Sending into Production reads differently from Sandbox and
           the dialog has to make that visible while it can still be stopped. */}
+      {/* What BC said, in BC's words. The derived summary is above it because it
+          is the sentence someone can act on; the raw answer is below because it
+          is the one nobody can argue with. */}
+      {bcRow && (
+        <Dialog
+          open={!!bcRow}
+          onOpenChange={(o) => { if (!o) setBcRow(null); }}
+          title={`คำตอบจาก Business Central — ${bcRow.requestNo ?? bcRow.id}`}
+          contentClassName="max-w-[720px]"
+        >
+          <div className="flex flex-col gap-3 p-1">
+            <div className="flex items-center gap-2 flex-wrap text-[12px]" style={{ color: "var(--text-muted)" }}>
+              <span>{bcRow.erpEnvironment ?? "—"}</span>
+              <span>·</span>
+              <span>Doc No: <b style={{ color: "var(--text-secondary)" }}>{bcRow.erpDocumentNo ?? "—"}</b></span>
+              <span>·</span>
+              <span>{fmtDateTime(bcRow.erpSentAt)}</span>
+            </div>
+
+            {bcRow.erpError && (
+              <div className="rounded-lg px-3 py-2 text-[12px]"
+                style={{ background: "var(--bg-info-red)", color: "var(--status-bad-text)" }}>
+                {bcRow.erpError}
+              </div>
+            )}
+
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                Response ดิบ
+              </span>
+              <pre
+                className="text-[11px] m-0 p-3 rounded-lg overflow-auto"
+                style={{
+                  background: "var(--bg-input)", color: "var(--text-primary)",
+                  border: "1px solid var(--border-input)", maxHeight: "22rem", whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
+              >
+                {prettyJson(bcRow.erpResponse) ?? "— ไม่มีคำตอบที่บันทึกไว้ (ส่งก่อนที่ระบบจะเริ่มเก็บ) —"}
+              </pre>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              {bcRow.erpResponse && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(bcRow.erpResponse ?? "");
+                    toast.success("คัดลอกแล้ว");
+                  }}
+                  className="text-[13px] font-medium px-4 py-2 rounded-lg cursor-pointer"
+                  style={{ color: "var(--text-secondary)", background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}
+                >
+                  คัดลอก
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setBcRow(null)}
+                className="text-[13px] font-medium px-4 py-2 rounded-lg cursor-pointer"
+                style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)", border: "none" }}
+              >
+                ปิด
+              </button>
+            </div>
+          </div>
+        </Dialog>
+      )}
+
       {confirmOpen && (
         <Dialog
           open={confirmOpen}

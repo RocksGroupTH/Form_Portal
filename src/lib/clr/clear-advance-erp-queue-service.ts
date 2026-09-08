@@ -10,6 +10,8 @@ export interface ClrErpQueueRow {
   erpEnvironment: string | null;
   erpSentAt: string | null;
   erpError: string | null;
+  /** BC's own answer to the last attempt, verbatim. Null before any send. */
+  erpResponse: string | null;
   advanceRequestNo: string | null;
   actualTotal: number | null;
   refundToCompany: number | null;
@@ -34,6 +36,7 @@ export async function listErpQueueRows(): Promise<ClrErpQueueRow[]> {
   const res = await r.query(`
     SELECT req.Id, req.RequestNo, req.BrandCode, req.ErpInterfaceStatus, req.ErpDocumentNo,
            req.ErpInterfaceEnvironment, req.ErpInterfaceSentAt, req.ErpInterfaceError,
+           req.ErpInterfaceResponse,
            req.RequesterFullName,
            c.AdvanceRequestNo, c.ActualTotal, c.RefundToCompany, c.PaymentDate
     FROM [dbo].[AccRequest] req
@@ -51,6 +54,7 @@ export async function listErpQueueRows(): Promise<ClrErpQueueRow[]> {
     erpEnvironment: (x.ErpInterfaceEnvironment as string) ?? null,
     erpSentAt: (x.ErpInterfaceSentAt instanceof Date ? x.ErpInterfaceSentAt.toISOString() : (x.ErpInterfaceSentAt as string)) ?? null,
     erpError: (x.ErpInterfaceError as string) ?? null,
+    erpResponse: (x.ErpInterfaceResponse as string) ?? null,
     advanceRequestNo: (x.AdvanceRequestNo as string) ?? null,
     actualTotal: num(x.ActualTotal),
     refundToCompany: num(x.RefundToCompany),
