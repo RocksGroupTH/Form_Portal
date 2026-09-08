@@ -654,7 +654,7 @@ export function ClrErpInterfaceQueue() {
                   <thead className="sticky top-0 z-10"
                     style={{ background: "var(--bg-card-alt)", boxShadow: "0 1px 0 var(--border-light)" }}>
                     <tr style={{ borderBottom: "1px solid var(--border-light)" }}>
-                      {["เลขที่", "แบรนด์", "ผู้ยื่น", "Advance", "ใช้จริง", "คืน/จ่ายเพิ่ม", "วันจ่าย", "Doc No (ERP)", "วันที่ส่ง", "สถานะ", "Env"].map((h) => (
+                      {["เลขที่", "แบรนด์", "ผู้ยื่น", "Advance", "ใช้จริง", "คืน/จ่ายเพิ่ม", "วันจ่าย", "Doc No (ERP)", "วันที่ส่ง", "สถานะ"].map((h) => (
                         <th key={h} className="px-3 py-2.5 font-semibold whitespace-nowrap text-left"
                           style={{ color: "var(--text-secondary)" }}>{h}</th>
                       ))}
@@ -697,16 +697,13 @@ export function ClrErpInterfaceQueue() {
                             {fmtDateTime(row.erpSentAt)}
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap"><ErpStatusBadge row={row} /></td>
-                          <td className="px-3 py-2 whitespace-nowrap">
-                            {row.erpEnvironment && <EnvBadge env={row.erpEnvironment} />}
-                          </td>
                         </tr>
                       );
                     })}
                   </tbody>
                   <tfoot className="sticky bottom-0 z-10">
                     <tr style={{ borderTop: "2px solid var(--border-card)", background: "color-mix(in srgb, var(--bg-card) 80%, var(--bg-page))", boxShadow: "0 -1px 0 var(--border-card), 0 -8px 16px -10px rgba(0,0,0,0.25)" }}>
-                      <td colSpan={11} className="px-3 py-2.5 font-bold" style={{ color: "var(--text-heading)" }}>
+                      <td colSpan={10} className="px-3 py-2.5 font-bold" style={{ color: "var(--text-heading)" }}>
                         ทั้งหมด {sentFiltered.length} รายการ · ส่งแล้ว {sentFiltered.filter(isSent).length} · ล้มเหลว {sentFiltered.filter((r) => r.erpStatus === "Failed").length}
                       </td>
                     </tr>
