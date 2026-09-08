@@ -1,0 +1,493 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import useSWR from "swr";
+import { toast } from "sonner";
+import { Check, Clock, Inbox, Loader2, Lock, RotateCcw, ThumbsUp } from "lucide-react";
+import { PageContainer } from "@/components/layout/PageContainer";
+import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
+import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
+import { fmtBaht } from "@/features/travel-booking/components/shared";
+// Type-only, and deliberately from the pure module rather than `./queue-service`
+// — that file imports `getAccPool`, which reaches `@/lib/db/mssql` and `@/env`
+// at module scope. A type-only import is erased at build time regardless of
+// where it is written, but pointing at the import-free home keeps that true by
+// construction rather than by relying on erasure to save a mistake later.
+import type { ReimburseQueueRow } from "@/lib/acc/reimburse/queue-policy";
+
+/**
+ * AP-4's accounting queue — every claim parked at `(ManagerApproved, ACCOUNT)`,
+ * where `approveReimburseAccountCheck` (`approval-service.ts`) fixes the
+ * payment date and hands the claim to the second accountant.
+ *
+ * **Sight of this page is `approvalQueue` (`decideReimburseMenuAccess`), not
+ * `AccReimburseApprover` membership.** The route answers every row to anyone
+ * holding the menu grant; whether a given click succeeds is re-decided by the
+ * approval service against the roster, inside the same transaction that
+ * writes. A viewer with the tick and no approver row therefore sees a full
+ * queue and gets "ไม่มีสิทธิ์" from every action — that is correct, not a bug
+ * to special-case, because `AccReimburseAccess` exists precisely so "may see
+ * the queue" and "may approve money" are not the same tick.
+ *
+ * **One payment-date control for the whole selection, not a picker per row and
+ * not a dropdown of rounds.** `paymentDateProblem` (`approval-policy.ts`,
+ * 2026-09-08) replaced a membership test against the 1st/3rd-Friday rounds
+ * with a one-month-back/twelve-months-forward sanity bound, specifically so
+ * accounting can pick a date the generated rounds do not include. A `<select>`
+ * of rounds would silently re-impose the constraint the server just gave up.
+ * The suggested round is still offered, as the field's default — a suggestion,
+ * not a limit.
+ *
+ * **Approve loops the existing per-request route, one call per selected id.**
+ * Every guard on `POST .../requests/[id]/approve` — the roster check, the
+ * two-person rule (irrelevant at this step, but shared code), the
+ * `(Status, CurrentStepCode)` claim — is per request. A bulk endpoint would
+ * have to re-implement all three and could only get them wrong; AP-17's bulk
+ * payout-date control loops the same way for the same reason.
+ *
+ * **No Reject button.** A later stage of this plan turns that into a server
+ * rule; this page simply never renders one, so removing it later costs no
+ * client-side migration.
+ *
+ * **A 409 refetches rather than offering a retry.** The queue this page reads
+ * and the claim a click targets can both move between page load and click —
+ * another accountant approving or returning the same row first — and retrying
+ * a stale claim cannot succeed. Every action path below ends in `mutate()`
+ * regardless of outcome, and a 409 specifically is named in its own toast
+ * rather than folded into the generic failure count, because "try again" is
+ * the wrong advice for it.
+ */
+
+interface QueueData {
+  rows: ReimburseQueueRow[];
+  paymentOptions: string[];
+  suggested: string | null;
+}
+
+class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
+async function fetcher(url: string): Promise<QueueData> {
+  const res = await fetch(url);
+  const json = await res.json().catch(() => null);
+  if (!json?.ok) {
+    throw new ApiError(
+      typeof json?.error === "string" ? json.error : "โหลดข้อมูลไม่สำเร็จ",
+      res.status,
+    );
+  }
+  return json.data as QueueData;
+}
+
+/** Local getters throughout — the server runs on Thai wall time, `toISOString` would shift the day. */
+function fmtDateTime(raw: string | null): string {
+  if (!raw) return "—";
+  const d = new Date(raw);
+  if (isNaN(d.getTime())) return raw;
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${dd}/${mm}/${d.getFullYear()} ${hh}:${mi}`;
+}
+
+/** `raw` is already `YYYY-MM-DD` local-calendar text; parsing through `Date` would reinterpret it as UTC midnight. */
+function fmtYmd(raw: string | null): string {
+  if (!raw) return "—";
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : raw;
+}
+
+/** Row-selection checkbox — same shape as AP-1's and AP-17's queue checkboxes. */
+function QueueCheckbox({
+  checked,
+  onChange,
+  ariaLabel,
+  disabled,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  ariaLabel: string;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      aria-label={ariaLabel}
+      disabled={disabled}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (disabled) return;
+        onChange();
+      }}
+      className={`w-[18px] h-[18px] rounded-[6px] flex items-center justify-center shrink-0 transition-all border-none p-0 ${
+        disabled ? "cursor-not-allowed opacity-45" : "cursor-pointer"
+      }`}
+      style={{
+        background: checked ? "var(--text-info-green)" : "var(--bg-card)",
+        boxShadow: checked
+          ? "0 0 0 2px color-mix(in srgb, var(--text-info-green) 28%, transparent)"
+          : "inset 0 0 0 1.5px var(--border-card)",
+      }}
+    >
+      {checked && <Check size={11} strokeWidth={3} style={{ color: "var(--bg-card)" }} />}
+    </button>
+  );
+}
+
+export function ReimburseApprovalQueue() {
+  const { data, error, isLoading, mutate } = useSWR("/api/request/reimburse/approvals", fetcher);
+
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkDate, setBulkDate] = useState("");
+  const [dateTouched, setDateTouched] = useState(false);
+  const [batchRunning, setBatchRunning] = useState(false);
+  const [returnRowId, setReturnRowId] = useState<number | null>(null);
+  const [returnComment, setReturnComment] = useState("");
+  const [returnBusy, setReturnBusy] = useState(false);
+
+  const rows = data?.rows ?? [];
+
+  // The default follows `suggested` until the accountant edits it by hand —
+  // never overwritten again after that, including across a refetch, or a
+  // half-typed choice would vanish under someone mid-edit.
+  useEffect(() => {
+    if (!dateTouched && data?.suggested) setBulkDate(data.suggested);
+  }, [data?.suggested, dateTouched]);
+
+  // Drop any selected id the queue no longer holds — the row left because it
+  // was approved or returned (by this page or another tab), and a stale id
+  // left in the set would silently re-target whatever the number now belongs
+  // to on the next click.
+  useEffect(() => {
+    if (!data) return;
+    const live = new Set(rows.map((r) => r.id));
+    setSelectedIds((prev) => {
+      let changed = false;
+      const next = new Set<number>();
+      prev.forEach((id) => {
+        if (live.has(id)) next.add(id);
+        else changed = true;
+      });
+      return changed ? next : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
+  const allSelected = rows.length > 0 && rows.every((r) => selectedIds.has(r.id));
+  const selectedCount = selectedIds.size;
+  const effectiveDate = bulkDate || data?.suggested || "";
+
+  function toggleAll() {
+    setSelectedIds(allSelected ? new Set() : new Set(rows.map((r) => r.id)));
+  }
+  function toggleOne(id: number) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  /**
+   * One request per call, exactly as `applyBulkDate` on AP-17's equivalent
+   * page does — see the file header for why a bulk endpoint is not built
+   * instead. A 409 is never retried: it means another accountant already
+   * moved that row, so it is counted separately and the queue is reloaded
+   * rather than the click repeated.
+   */
+  async function approveSelected() {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    if (!effectiveDate) {
+      toast.error("กรุณาเลือกวันที่จ่าย");
+      return;
+    }
+    setBatchRunning(true);
+    let okCount = 0;
+    let failCount = 0;
+    let conflict = false;
+    for (const id of ids) {
+      try {
+        const res = await fetch(`/api/request/reimburse/requests/${id}/approve`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ step: "ACCOUNT", paymentDate: effectiveDate }),
+        });
+        const json = await res.json().catch(() => null);
+        if (json?.ok) {
+          okCount += 1;
+        } else if (res.status === 409) {
+          conflict = true;
+        } else {
+          failCount += 1;
+        }
+      } catch {
+        failCount += 1;
+      }
+    }
+    setBatchRunning(false);
+    setSelectedIds(new Set());
+    if (okCount > 0) toast.success(`บันทึกวันที่จ่ายและส่งต่อแล้ว ${okCount} รายการ`);
+    if (failCount > 0) toast.error(`ไม่สำเร็จ ${failCount} รายการ`);
+    if (conflict) {
+      toast.error("มีบางรายการถูกดำเนินการไปแล้วโดยผู้อื่น — โหลดรายการใหม่แล้ว");
+    }
+    // Always — success removes rows server-side, a conflict means this page's
+    // copy is stale, and a plain failure is safest re-checked too. Never leave
+    // the view claiming what the database no longer agrees with.
+    void mutate();
+  }
+
+  function openReturn(id: number) {
+    setReturnRowId(id);
+    setReturnComment("");
+  }
+  function closeReturn() {
+    setReturnRowId(null);
+    setReturnComment("");
+  }
+
+  /** `returnCommentOrError` on the server refuses a blank comment too; this is the courtesy, not the control. */
+  async function submitReturn(id: number) {
+    const comment = returnComment.trim();
+    if (!comment) {
+      toast.error("กรุณาระบุสิ่งที่ต้องแก้ไข");
+      return;
+    }
+    setReturnBusy(true);
+    try {
+      const res = await fetch(`/api/request/reimburse/requests/${id}/return`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ step: "ACCOUNT", comment }),
+      });
+      const json = await res.json().catch(() => null);
+      if (json?.ok) {
+        toast.success("ส่งกลับให้ผู้ขอแก้ไขแล้ว");
+      } else if (res.status === 409) {
+        toast.error("รายการนี้มีการเปลี่ยนแปลงจากผู้อื่นแล้ว — โหลดรายการใหม่แล้ว");
+      } else {
+        toast.error(json?.error ?? "ส่งกลับไม่สำเร็จ");
+      }
+    } catch {
+      toast.error("เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง");
+    } finally {
+      setReturnBusy(false);
+      closeReturn();
+      // Same rule as the approve loop: success, conflict or plain failure all
+      // refetch. A row this action failed to move is exactly the row whose
+      // on-screen state is most likely stale.
+      void mutate();
+    }
+  }
+
+  const forbidden = error instanceof ApiError && error.status === 403;
+
+  return (
+    <PageContainer className="acc-theme py-6 px-3 sm:px-0">
+      <PageHeaderBar
+        icon={ThumbsUp}
+        title="คิวอนุมัติ (บัญชี) — ขอเบิกเงินคืนพนักงาน"
+        titleExtra={<FormEnvironmentChip formCode="AP-4" />}
+        subtitle="รายการที่ผู้จัดการอนุมัติแล้ว รอบัญชีเลือกวันที่จ่ายและส่งต่อขั้นสุดท้าย"
+        backHref="/request/reimburse"
+      />
+
+      <div
+        className={`rounded-2xl overflow-hidden ${selectedCount > 0 ? "pb-24" : ""}`}
+        style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)" }}
+      >
+        {isLoading ? (
+          <p className="text-[13px] py-10 text-center" style={{ color: "var(--text-muted)" }}>
+            กำลังโหลด...
+          </p>
+        ) : forbidden ? (
+          <div className="py-16 text-center px-4">
+            <Lock size={32} style={{ color: "var(--text-faint)", margin: "0 auto 12px" }} />
+            <h2 className="text-[16px] font-bold mb-1" style={{ color: "var(--text-heading)" }}>
+              ไม่มีสิทธิ์เข้าถึง
+            </h2>
+            <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>
+              หน้านี้สำหรับผู้ที่ได้รับสิทธิ์ &quot;คิวอนุมัติ (บัญชี)&quot; ของ AP-4 เท่านั้น —
+              ผู้ดูแลระบบเพิ่มสิทธิ์ได้ที่ ตั้งค่าขอเบิกเงินคืนพนักงาน → สิทธิ์เข้าถึง
+            </p>
+          </div>
+        ) : error ? (
+          <p className="text-[13px] py-10 text-center" style={{ color: "var(--color-danger)" }}>
+            {error instanceof Error ? error.message : "โหลดข้อมูลไม่สำเร็จ"}
+          </p>
+        ) : rows.length === 0 ? (
+          <div className="py-16 text-center px-4">
+            <Inbox size={32} style={{ color: "var(--text-faint)", margin: "0 auto 12px" }} />
+            <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>
+              ไม่มีรายการรอบัญชีอนุมัติ
+            </p>
+          </div>
+        ) : (
+          <>
+            <div
+              className="flex items-center gap-3 px-5 py-3"
+              style={{ borderBottom: "1px solid var(--border-light)", background: "var(--bg-card-alt)" }}
+            >
+              <QueueCheckbox checked={allSelected} onChange={toggleAll} ariaLabel="เลือกทั้งหมด" />
+              <span className="text-[12px] font-medium" style={{ color: "var(--text-muted)" }}>
+                เลือกทั้งหมด ({rows.length} รายการ)
+              </span>
+            </div>
+
+            <div className="flex flex-col">
+              {rows.map((item) => {
+                const isSelected = selectedIds.has(item.id);
+                const isReturning = returnRowId === item.id;
+                return (
+                  <div
+                    key={item.id}
+                    className="flex items-start gap-3 px-5 py-4"
+                    style={{ borderBottom: "1px solid var(--border-light)" }}
+                  >
+                    <div className="pt-1">
+                      <QueueCheckbox
+                        checked={isSelected}
+                        onChange={() => toggleOne(item.id)}
+                        ariaLabel={`เลือก ${item.requestNo}`}
+                      />
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                        <span className="text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>
+                          {item.requestNo || "-"}
+                        </span>
+                        {item.brandCode && (
+                          <span
+                            className="px-1.5 py-0.5 rounded text-[10.5px] font-bold"
+                            style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}
+                          >
+                            {item.brandCode}
+                          </span>
+                        )}
+                        <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>
+                          {item.requesterName || "-"}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-wrap text-[11.5px] mb-2" style={{ color: "var(--text-muted)" }}>
+                        <span>ส่งเมื่อ {fmtDateTime(item.submittedAt)}</span>
+                        <span>· {item.itemCount} รายการ</span>
+                        <span>· {fmtBaht(item.totalAmount)} บาท</span>
+                        {item.paymentDate && <span>· กำหนดจ่าย {fmtYmd(item.paymentDate)}</span>}
+                      </div>
+
+                      {isReturning ? (
+                        <div className="flex flex-col gap-2 mt-1">
+                          <textarea
+                            value={returnComment}
+                            onChange={(e) => setReturnComment(e.target.value)}
+                            rows={2}
+                            placeholder="ระบุสิ่งที่ต้องแก้ไข"
+                            autoFocus
+                            className="w-full text-[13px] px-3 py-2 rounded-lg resize-y"
+                            style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-card)" }}
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              disabled={returnBusy || returnComment.trim() === ""}
+                              onClick={() => void submitReturn(item.id)}
+                              className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg cursor-pointer disabled:cursor-not-allowed disabled:opacity-55"
+                              style={{ background: "var(--color-action)", color: "#fff", border: "none" }}
+                            >
+                              {returnBusy ? <Loader2 size={13} className="animate-spin" /> : null}
+                              ยืนยันส่งกลับ
+                            </button>
+                            <button
+                              type="button"
+                              disabled={returnBusy}
+                              onClick={closeReturn}
+                              className="text-[12.5px] font-medium px-3 py-1.5 rounded-lg cursor-pointer"
+                              style={{ background: "var(--bg-card-alt)", color: "var(--text-secondary)", border: "1px solid var(--border-card)" }}
+                            >
+                              ยกเลิก
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => openReturn(item.id)}
+                          className="inline-flex items-center gap-1.5 text-[12px] font-medium px-3 py-1.5 rounded-lg cursor-pointer"
+                          style={{
+                            background: "var(--bg-info-yellow)",
+                            color: "var(--text-info-yellow)",
+                            border: "1px solid var(--border-info-yellow)",
+                          }}
+                        >
+                          <RotateCcw size={13} /> ส่งกลับแก้ไข
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
+
+      {selectedCount > 0 && (
+        <div
+          className="fixed bottom-0 left-0 right-0 px-4 py-3 flex items-center gap-x-4 gap-y-2 flex-wrap"
+          style={{ background: "var(--bg-card)", borderTop: "1px solid var(--border-card)", boxShadow: "var(--shadow-card)", zIndex: 30 }}
+        >
+          <span className="text-[13px] font-medium shrink-0" style={{ color: "var(--text-heading)" }}>
+            เลือก {selectedCount} รายการ
+          </span>
+
+          <div className="flex items-center gap-2 flex-wrap min-w-0">
+            <label className="text-[12px] font-medium shrink-0" style={{ color: "var(--text-muted)" }}>
+              วันที่จ่าย
+            </label>
+            <input
+              type="date"
+              value={effectiveDate}
+              disabled={batchRunning}
+              onChange={(e) => {
+                setDateTouched(true);
+                setBulkDate(e.target.value);
+              }}
+              className="text-[12.5px] rounded-lg px-2.5 py-1.5 outline-none disabled:opacity-50"
+              style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-input)" }}
+            />
+            {data?.suggested && (
+              <span className="text-[11.5px] inline-flex items-center gap-1" style={{ color: "var(--text-muted)" }}>
+                <Clock size={12} /> รอบที่แนะนำ {fmtYmd(data.suggested)} — แก้ไขได้
+              </span>
+            )}
+          </div>
+
+          <div className="shrink-0" style={{ width: 1, height: 28, background: "var(--border-card)" }} />
+
+          <button
+            type="button"
+            onClick={() => void approveSelected()}
+            disabled={batchRunning || !effectiveDate}
+            className="inline-flex items-center gap-2 text-[13px] font-semibold px-4 py-2 rounded-lg cursor-pointer shrink-0 disabled:cursor-not-allowed disabled:opacity-55"
+            style={{ background: "var(--color-action)", color: "#fff", border: "none" }}
+          >
+            {batchRunning ? <Loader2 size={14} className="animate-spin" /> : <ThumbsUp size={14} />}
+            อนุมัติที่เลือก ({selectedCount})
+          </button>
+        </div>
+      )}
+    </PageContainer>
+  );
+}
