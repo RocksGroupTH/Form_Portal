@@ -503,6 +503,79 @@ export async function approveReimburseAccountCheck(
   });
 }
 
+/* ─────────────────────────── the accounting queue's own edit: which account ─────────────────────────── */
+
+/**
+ * Accounting corrects the proposed G/L account (`AccReimburseItem.Category`)
+ * on one or more lines, while the claim is still theirs to correct.
+ *
+ * Not a state transition — `Status`/`CurrentStepCode` do not move — but two
+ * properties are carried over from the transitions above on purpose:
+ *
+ * - **The authorization is the SAME check `approveReimburseAccountCheck` makes**,
+ *   `requireApproverStaffId`, not the broader "read" ACL a by-id GET route
+ *   uses. `authorizeAccRequest`'s read verdict also admits AP-1's shared
+ *   `AccApprover` roster (`canAccessAccountArea`) via `isOwnFormRosterApprover`'s
+ *   OR — an AP-1 approver who has never been added to AP-4's own
+ *   `AccReimburseApprover` can already *read* this claim and must not also be
+ *   able to repoint where its money posts.
+ * - **The "still theirs" predicate is re-checked inside the transaction that
+ *   writes**, not only by the route before it calls in. The queue page can sit
+ *   open long enough for another accountant to approve, return, or claim the
+ *   row between page load and this save; a miss throws `AccConflictError`
+ *   rather than silently rewriting a claim that has moved on.
+ *
+ * Each line is scoped to `RequestId` as well as `Id` in its own `UPDATE`, so a
+ * payload naming another request's item id touches nothing and the mismatch
+ * surfaces as the same conflict rather than a silent no-op — see the `!== 1`
+ * check below.
+ */
+export async function setReimburseItemAccounts(
+  requestId: number,
+  actor: ReimburseActor,
+  edits: readonly { id: number; category: string | null }[],
+): Promise<number> {
+  await requireApproverStaffId(actor);
+  if (edits.length === 0) return 0;
+
+  return inTransaction(async (tx) => {
+    const state = await tx
+      .request()
+      .input("id", sql.Int, requestId)
+      .input("form", sql.NVarChar, AP4_FORM_CODE)
+      .input("status", sql.NVarChar, STATUS_AT_STEP.ACCOUNT)
+      .input("step", sql.NVarChar, "ACCOUNT")
+      .query(
+        `SELECT Id FROM [dbo].[AccRequest]
+         WHERE Id=@id AND FormCode=@form AND Status=@status AND CurrentStepCode=@step`,
+      );
+    if (state.recordset.length === 0) throw new AccConflictError(NOT_AT_STEP_ERROR);
+
+    let count = 0;
+    for (const edit of edits) {
+      const res = await tx
+        .request()
+        .input("iid", sql.Int, edit.id)
+        .input("rid", sql.Int, requestId)
+        .input("category", sql.NVarChar(50), edit.category)
+        .query(
+          `UPDATE [dbo].[AccReimburseItem] SET Category=@category WHERE Id=@iid AND RequestId=@rid`,
+        );
+      if (res.rowsAffected[0] !== 1) throw new AccConflictError(NOT_AT_STEP_ERROR);
+      count += 1;
+    }
+
+    await logActivity(
+      tx,
+      requestId,
+      actor.userId,
+      "item_account_updated",
+      edits.map((e) => `#${e.id}→${e.category ?? "-"}`).join(", ").slice(0, 2000),
+    );
+    return count;
+  });
+}
+
 /* ─────────────────────────── step 3 — the final approval ─────────────────────────── */
 
 /**

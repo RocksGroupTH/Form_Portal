@@ -3,17 +3,34 @@
 import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
-import { Check, Clock, Inbox, Loader2, Lock, RotateCcw, ThumbsUp } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Clock,
+  Inbox,
+  ListChecks,
+  Loader2,
+  Lock,
+  RotateCcw,
+  ThumbsUp,
+} from "lucide-react";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
 import { fmtBaht } from "@/features/travel-booking/components/shared";
+import { ExpenseAccountPicker } from "@/features/reimburse/components/ExpenseAccountPicker";
 // Type-only, and deliberately from the pure module rather than `./queue-service`
 // — that file imports `getAccPool`, which reaches `@/lib/db/mssql` and `@/env`
 // at module scope. A type-only import is erased at build time regardless of
 // where it is written, but pointing at the import-free home keeps that true by
 // construction rather than by relying on erasure to save a mistake later.
 import type { ReimburseQueueRow } from "@/lib/acc/reimburse/queue-policy";
+// Both type-only for the same reason: `.../types` is import-free, but
+// `expense-account-service.ts` is not — it opens `getErpDataPool()` at module
+// scope. Only the shape is needed here; `ExpenseAccountPicker` above already
+// proves that pattern is safe (it does the same import).
+import type { ReimburseDetail as ReimburseDetailData, ReimburseItem } from "@/features/reimburse/types";
+import type { ExpenseAccount } from "@/lib/acc/reimburse/expense-account-service";
 
 /**
  * AP-4's accounting queue — every claim parked at `(ManagerApproved, ACCOUNT)`,
@@ -84,6 +101,26 @@ async function fetcher(url: string): Promise<QueueData> {
   return json.data as QueueData;
 }
 
+/** The full claim — reused from the by-id detail route, not a new endpoint. `ReimburseQueueRow` carries no line items on purpose (the queue list query only needs a count), so expanding a row asks for exactly what the detail page already asks for. */
+async function detailFetcher(url: string): Promise<ReimburseDetailData> {
+  const res = await fetch(url);
+  const json = await res.json().catch(() => null);
+  if (!json?.ok) {
+    throw new Error(typeof json?.error === "string" ? json.error : "โหลดรายการไม่สำเร็จ");
+  }
+  return json.data as ReimburseDetailData;
+}
+
+/** The existing options route (`expense-account-service.ts`'s `listExpenseAccounts`), unchanged — brand-keyed, so SWR's cache dedupes it across every row of the same brand. */
+async function accountsFetcher(url: string): Promise<ExpenseAccount[]> {
+  const res = await fetch(url);
+  const json = await res.json().catch(() => null);
+  if (!json?.ok) {
+    throw new Error(typeof json?.error === "string" ? json.error : "โหลดรายการบัญชีไม่สำเร็จ");
+  }
+  return json.data as ExpenseAccount[];
+}
+
 /** Local getters throughout — the server runs on Thai wall time, `toISOString` would shift the day. */
 function fmtDateTime(raw: string | null): string {
   if (!raw) return "—";
@@ -142,6 +179,169 @@ function QueueCheckbox({
   );
 }
 
+/**
+ * One row's expense lines, expanded in place, each with the G/L account
+ * picker on it — surfacing machinery that already existed and was unreachable
+ * from any screen: the document reader already proposes an account per line
+ * (`receipt-item/route.ts`), the picker component already renders one
+ * (`ExpenseAccountPicker.tsx`, historically unused — see its own header for
+ * why a value that is not in the list must still show the raw text rather
+ * than blank), and the server already validates a save against the Business
+ * Central mirror (`setReimburseItemAccounts`, via
+ * `/api/request/reimburse/requests/[id]/items`). This component is the first
+ * place any of the three is reachable from a screen.
+ *
+ * Edits are local until "บันทึก" — nothing here autosaves a line while an
+ * accountant is still choosing between two close matches, and only the lines
+ * actually changed are sent, so a save cannot accidentally re-stamp every
+ * other row's untouched value.
+ */
+function ExpenseAccountsPanel({
+  requestId,
+  brandCode,
+}: {
+  requestId: number;
+  brandCode: string;
+}) {
+  const { data, error, isLoading, mutate } = useSWR(
+    `/api/request/reimburse/requests/${requestId}`,
+    detailFetcher,
+  );
+  const { data: accounts, isLoading: accountsLoading } = useSWR(
+    brandCode
+      ? `/api/request/reimburse/options/expense-accounts?brand=${encodeURIComponent(brandCode)}`
+      : null,
+    accountsFetcher,
+  );
+
+  // Item id -> the value picked in this panel, overriding the loaded row.
+  // Seeded once per row expansion (not on every SWR revalidation — the list
+  // revalidates on window focus, and re-seeding on every one of those would
+  // silently discard whatever the accountant was mid-choosing) and reset by
+  // simply unmounting: collapsing the row throws this component away, so
+  // re-expanding always starts from what is actually saved.
+  const [edits, setEdits] = useState<Map<number, string | null>>(new Map());
+  const [saving, setSaving] = useState(false);
+
+  // Rows with no persisted id cannot be a save target — every row this route
+  // ever reads back from `getReimburseRequest` has one, but the type is
+  // optional (a not-yet-saved draft row can lack it), so this is a type guard
+  // rather than a filter expected to remove anything in practice.
+  const items = (data?.items ?? []).filter(
+    (it): it is ReimburseItem & { id: number } => it.id != null,
+  );
+
+  const dirty = Array.from(edits.entries()).filter(([id, value]) => {
+    const original = items.find((it) => it.id === id)?.category ?? null;
+    return value !== original;
+  });
+
+  async function save() {
+    if (dirty.length === 0 || saving) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/request/reimburse/requests/${requestId}/items`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: dirty.map(([id, category]) => ({ id, category })),
+        }),
+      });
+      const json = await res.json().catch(() => null);
+      if (json?.ok) {
+        toast.success("บันทึกบัญชีแล้ว");
+        setEdits(new Map());
+      } else {
+        // A 409 here means the claim moved out of accounting's hands between
+        // load and save (approved, returned, or edited by someone else) —
+        // refetch so the panel stops offering a save that can only fail again,
+        // exactly the reasoning `approveSelected` above already applies.
+        toast.error(json?.error ?? "บันทึกไม่สำเร็จ");
+      }
+    } catch {
+      toast.error("เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง");
+    } finally {
+      setSaving(false);
+      void mutate();
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <p className="text-[12px] py-3 text-center m-0" style={{ color: "var(--text-muted)" }}>
+        กำลังโหลดรายการ...
+      </p>
+    );
+  }
+  if (error || !data) {
+    return (
+      <p className="text-[12px] py-3 text-center m-0" style={{ color: "var(--color-danger)" }}>
+        {error instanceof Error ? error.message : "โหลดรายการไม่สำเร็จ"}
+      </p>
+    );
+  }
+
+  return (
+    <div
+      className="flex flex-col gap-2.5 mt-2 rounded-xl p-3"
+      style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-light)" }}
+    >
+      {items.length === 0 ? (
+        <p className="text-[12px] m-0" style={{ color: "var(--text-faint)" }}>
+          — ไม่มีรายการ —
+        </p>
+      ) : (
+        items.map((it) => (
+          <div key={it.id} className="flex items-center gap-2.5">
+            <div className="flex-1 min-w-0">
+              <p
+                className="text-[12.5px] m-0 truncate"
+                style={{ color: "var(--text-primary)" }}
+                title={it.description || undefined}
+              >
+                {it.description || "—"}
+              </p>
+              <p className="text-[11px] m-0 tabular-nums" style={{ color: "var(--text-muted)" }}>
+                ฿{fmtBaht(it.amount)}
+              </p>
+            </div>
+            <div className="w-[210px] shrink-0">
+              <ExpenseAccountPicker
+                value={edits.has(it.id) ? (edits.get(it.id) ?? null) : (it.category ?? null)}
+                onChange={(next) => {
+                  setEdits((prev) => {
+                    const m = new Map(prev);
+                    m.set(it.id, next);
+                    return m;
+                  });
+                }}
+                accounts={accounts ?? []}
+                loading={accountsLoading}
+                brandChosen={!!brandCode}
+                ariaLabel={`เลือกบัญชีสำหรับ ${it.description || "รายการ"}`}
+              />
+            </div>
+          </div>
+        ))
+      )}
+      {items.length > 0 && (
+        <div className="flex justify-end pt-0.5">
+          <button
+            type="button"
+            onClick={() => void save()}
+            disabled={saving || dirty.length === 0}
+            className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-3 py-1.5 rounded-lg cursor-pointer disabled:cursor-not-allowed disabled:opacity-55"
+            style={{ background: "var(--color-action)", color: "#fff", border: "none" }}
+          >
+            {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+            บันทึกบัญชี{dirty.length > 0 ? ` (${dirty.length})` : ""}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ReimburseApprovalQueue() {
   const { data, error, isLoading, mutate } = useSWR("/api/request/reimburse/approvals", fetcher);
 
@@ -152,6 +352,9 @@ export function ReimburseApprovalQueue() {
   const [returnRowId, setReturnRowId] = useState<number | null>(null);
   const [returnComment, setReturnComment] = useState("");
   const [returnBusy, setReturnBusy] = useState(false);
+  // Which rows show their expense lines. A `Set` rather than one id: nothing
+  // stops an accountant comparing two claims' line items side by side.
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
 
   const rows = data?.rows ?? [];
 
@@ -190,6 +393,14 @@ export function ReimburseApprovalQueue() {
   }
   function toggleOne(id: number) {
     setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function toggleExpanded(id: number) {
+    setExpandedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -401,6 +612,29 @@ export function ReimburseApprovalQueue() {
                         <span>· {fmtBaht(item.totalAmount)} บาท</span>
                         {item.paymentDate && <span>· กำหนดจ่าย {fmtYmd(item.paymentDate)}</span>}
                       </div>
+
+                      {/* Expand the claim's expense lines and their G/L accounts in place
+                          — see `ExpenseAccountsPanel`'s own header for why this reuses the
+                          by-id detail read rather than a new list endpoint. */}
+                      <button
+                        type="button"
+                        onClick={() => toggleExpanded(item.id)}
+                        className="inline-flex items-center gap-1 text-[11.5px] font-medium mb-2 cursor-pointer border-none bg-transparent p-0"
+                        style={{ color: "var(--nav-active-text)" }}
+                      >
+                        <ListChecks size={12} />
+                        {expandedIds.has(item.id) ? "ซ่อนรายการค่าใช้จ่าย" : "ดูรายการ / เลือกบัญชี"}
+                        <ChevronDown
+                          size={12}
+                          style={{
+                            transform: expandedIds.has(item.id) ? "rotate(180deg)" : undefined,
+                            transition: "transform 0.15s",
+                          }}
+                        />
+                      </button>
+                      {expandedIds.has(item.id) && (
+                        <ExpenseAccountsPanel requestId={item.id} brandCode={item.brandCode} />
+                      )}
 
                       {isReturning ? (
                         <div className="flex flex-col gap-2 mt-1">
