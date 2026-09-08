@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
+import { PND_LABEL, suggestPndType } from "@/lib/clr/wht-pnd-core";
 import {
   Check, Paperclip, Camera, X, Plus, Trash2, Banknote, User, Mail, FileText,
 } from "lucide-react";
@@ -111,6 +112,8 @@ interface WhtRow {
   taxId: string;
   payeeName: string;
   payeeAddress: string;
+  /** "" = nobody has chosen yet, which is what the row shows and what it saves. */
+  pndType: "PND3" | "PND53" | "";
   amount: string;
   whtAmount: string;
 }
@@ -187,6 +190,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       taxId: w.taxId ?? "",
       payeeName: w.payeeName ?? "",
       payeeAddress: w.payeeAddress ?? "",
+      pndType: w.pndType ?? "",
       amount: w.amount != null ? String(w.amount) : "",
       whtAmount: w.whtAmount != null ? String(w.whtAmount) : "",
     })),
@@ -445,12 +449,24 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   function addWht() {
     setWhtRows((p) => [...p, {
       expenseDate: "", docNo: "", description: "", taxId: "",
-      payeeName: "", payeeAddress: "", amount: "", whtAmount: "",
+      payeeName: "", payeeAddress: "", pndType: "", amount: "", whtAmount: "",
     }]);
   }
   function removeWht(idx: number) { setWhtRows((p) => p.filter((_, i) => i !== idx)); }
   function updateWht(idx: number, patch: Partial<WhtRow>) {
     setWhtRows((p) => p.map((w, i) => (i === idx ? { ...w, ...patch } : w)));
+  }
+
+  /**
+   * Typing a tax id fills the ภ.ง.ด. type — but only on a row where nobody has
+   * chosen one. Re-seeding on every keystroke would mean correcting a typo in
+   * the id silently discards a deliberate choice, and the row is a decision of
+   * record: it picks the vendor accounting has to clear.
+   */
+  function updateWhtTaxId(idx: number, taxId: string) {
+    setWhtRows((p) => p.map((w, i) => (
+      i === idx ? { ...w, taxId, pndType: w.pndType || (suggestPndType(taxId) ?? "") } : w
+    )));
   }
 
   /** Prefill the WHT certificate table from the expense lines that carry WHT. */
@@ -464,6 +480,9 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       taxId: "",
       payeeName: "",
       payeeAddress: "",
+      // No tax id on an expense line, so there is nothing to suggest from yet.
+      // It fills in as soon as one is typed.
+      pndType: "",
       amount: l.amountBeforeVat,
       whtAmount: l.whtAmount,
     })));
@@ -527,6 +546,9 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
             taxId: w.taxId.trim() || null,
             payeeName: w.payeeName.trim() || null,
             payeeAddress: w.payeeAddress.trim() || null,
+            // What the row shows is what it saves — the suggestion is seeded into
+            // the visible value, never inferred behind the user's back at save.
+            pndType: w.pndType || null,
             amount: num(w.amount) || null,
             whtAmount: num(w.whtAmount) || null,
             netAmount: round2(num(w.amount) - num(w.whtAmount)),
@@ -928,6 +950,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           taxId: r.taxId,
           payeeName: r.payeeName,
           payeeAddress: r.payeeAddress,
+          pndType: (suggestPndType(r.taxId) ?? "") as WhtRow["pndType"],
           amount: r.amountBeforeVat || r.totalAmount,
           whtAmount: r.whtAmount,
         })),
@@ -1450,6 +1473,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                   <Th w={130}>เลขผู้เสียภาษี *</Th>
                   <Th w={150}>ชื่อผู้รับ *</Th>
                   <Th w={170}>ที่อยู่</Th>
+                  <Th w={110}>ภ.ง.ด.</Th>
                   <Th w={100} right>ค่าใช้จ่าย</Th>
                   <Th w={90} right>WHT</Th>
                   {!readOnly && <Th w={34}> </Th>}
@@ -1458,7 +1482,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
               <tbody>
                 {whtRows.length === 0 ? (
                   <tr>
-                    <Td colSpan={readOnly ? 8 : 9}>
+                    <Td colSpan={readOnly ? 9 : 10}>
                       <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
                         ยังไม่มีรายการ — กด “ดึงจากรายการ” หรือ “เพิ่มแถว”
                       </span>
@@ -1480,7 +1504,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                     <Td>
                       <input className={cellClass} style={{ ...cellStyle, width: "100%" }}
                         value={w.taxId} disabled={readOnly} placeholder="เลข 13 หลัก"
-                        onChange={(e) => updateWht(idx, { taxId: e.target.value })} />
+                        onChange={(e) => updateWhtTaxId(idx, e.target.value)} />
                     </Td>
                     <Td>
                       <input className={cellClass} style={{ ...cellStyle, width: "100%" }}
@@ -1491,6 +1515,18 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                       <input className={cellClass} style={{ ...cellStyle, width: "100%" }}
                         value={w.payeeAddress} disabled={readOnly} placeholder="—"
                         onChange={(e) => updateWht(idx, { payeeAddress: e.target.value })} />
+                    </Td>
+                    <Td>
+                      {/* Picks the BC vendor accounting clears against. Suggested
+                          from the tax id, never fixed by it: a 0-prefixed id can
+                          belong to a foreign individual. */}
+                      <select className={cellClass} style={{ ...cellStyle, width: "100%" }}
+                        value={w.pndType} disabled={readOnly}
+                        onChange={(e) => updateWht(idx, { pndType: e.target.value as WhtRow["pndType"] })}>
+                        <option value="">— ยังไม่ระบุ —</option>
+                        <option value="PND3">{PND_LABEL.PND3}</option>
+                        <option value="PND53">{PND_LABEL.PND53}</option>
+                      </select>
                     </Td>
                     <Td right>
                       <input type="number" min="0" step="0.01" className={`${cellClass} text-right`} style={{ ...cellStyle, width: "100%" }}
@@ -1558,7 +1594,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                 <MField label="เลขผู้เสียภาษี *">
                   <input className={fieldClass} style={fieldStyle} inputMode="numeric"
                     value={w.taxId} disabled={readOnly} placeholder="เลข 13 หลัก"
-                    onChange={(e) => updateWht(idx, { taxId: e.target.value })} />
+                    onChange={(e) => updateWhtTaxId(idx, e.target.value)} />
                 </MField>
                 <MField label="ชื่อผู้รับ *">
                   <input className={fieldClass} style={fieldStyle}
@@ -1569,6 +1605,15 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                   <input className={fieldClass} style={fieldStyle}
                     value={w.payeeAddress} disabled={readOnly} placeholder="—"
                     onChange={(e) => updateWht(idx, { payeeAddress: e.target.value })} />
+                </MField>
+                <MField label="ภ.ง.ด.">
+                  <select className={fieldClass} style={fieldStyle}
+                    value={w.pndType} disabled={readOnly}
+                    onChange={(e) => updateWht(idx, { pndType: e.target.value as WhtRow["pndType"] })}>
+                    <option value="">— ยังไม่ระบุ —</option>
+                    <option value="PND3">{PND_LABEL.PND3}</option>
+                    <option value="PND53">{PND_LABEL.PND53}</option>
+                  </select>
                 </MField>
                 <div className="grid grid-cols-2 gap-2">
                   <MField label="ค่าใช้จ่าย">

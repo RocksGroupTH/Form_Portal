@@ -292,17 +292,17 @@ Two edit points. The requester holds the receipt and knows who they paid;
 accounting knows what the distinction means for the filing and sits last before
 the send.
 
-### Task 4a: the column on the form
+### Task 4a: the column on the form — *done 2026-09-08*
 
 **Files:**
 - Modify: `src/features/clear-advance/components/ClearAdvanceForm.tsx:181-193` (`whtRows` state), `:1440-1530` (the WHT table), `:519` (the save payload)
 
-- [ ] **Step 1: Carry it in the row state**
+- [x] **Step 1: Carry it in the row state**
 
 `WhtRow` gains `pndType: "PND3" | "PND53" | ""`, seeded from
 `w.pndType ?? ""` in the initialiser at `:181`.
 
-- [ ] **Step 2: A column in the table**
+- [x] **Step 2: A column in the table**
 
 A `<select>` beside ที่อยู่, disabled under `readOnly` like every other cell:
 `— ยังไม่ระบุ —`, `ภ.ง.ด. 3`, `ภ.ง.ด. 53`.
@@ -312,17 +312,30 @@ Seed it from `suggestPndType(w.taxId)` when a row arrives from the OCR
 never on a row that already carries one, or editing a typo in the id would
 silently undo a deliberate choice.
 
-- [ ] **Step 3: Send it with the save**
+- [x] **Step 3: Send it with the save**
 
 At `:519`, include `pndType: w.pndType || null` in the mapped `whtItems`.
 
 **No new route:** the existing save already writes the WHT rows, and Task 3
 already stores the column.
 
-- [ ] **Step 4: Verify on screen** — set a type, save, reload, confirm it stuck;
-then check the row in `AccClearAdvanceWht`.
+- [x] **Step 4: Verify on screen** — done, every branch of the rule:
 
-- [ ] **Step 5: Commit**
+| Case | Result |
+| --- | --- |
+| Saved value read back into the control | `PND3` |
+| Tax id edited on a row that already has a choice | stays `PND3` |
+| Individual's id on a blank row | seeds `PND3` |
+| Company's id on a blank row | seeds `PND53` |
+| Half-typed id (`01055`) on a blank row | stays blank |
+| `PND3` chosen against a `0`-prefixed id, saved | survives — the foreign-individual case, end to end |
+
+**A second view needed the same field.** The WHT table renders twice — a desktop
+table and mobile cards (`md:hidden`) — and adding the column to only one would
+leave phone users unable to see or set a decision that picks a vendor. Both carry
+it, and the desktop empty-row `colSpan` moved 8/9 → 9/10 with the new column.
+
+- [x] **Step 5: Commit**
 
 ### Task 4b: the control at the ACCOUNT step
 
