@@ -780,6 +780,20 @@ export async function listMyWorkRows(
                       AND ap.ApproverRole = aa.StepType
                   )
                 )
+                /* A step this viewer actually acted on. Without it an AP-2
+                   request vanishes from My Work the moment it is approved:
+                   AP-2 leaves AssignedStaffId and AssignedEmail null and is
+                   matched through the roster clause above, which only holds
+                   while the step is Pending. AP-3 keeps its rows because it
+                   stamps AssignedEmail, so the same list behaved differently
+                   for the two forms — one kept what you approved, the other
+                   dropped it.
+                   ActionedBy was already being recorded and simply never read. */
+                OR (@staffId IS NOT NULL AND aa.ActionedByStaffId = @staffId)
+                OR (
+                  @email <> ''
+                  AND LOWER(LTRIM(RTRIM(COALESCE(aa.ActionedByEmail, N'')))) = LOWER(LTRIM(RTRIM(@email)))
+                )
               )
           )
         )`,

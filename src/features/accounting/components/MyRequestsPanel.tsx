@@ -195,6 +195,23 @@ function RequestRowList({
     void loadRows();
   }, [loadRows]);
 
+  /**
+   * Forms whose document lives on its own page rather than in this drawer.
+   *
+   * The drawer reads through AP-1's API for anything it has no case for, which
+   * for these two returns 404 — the request is not in AP-1's tables. AP-2 was
+   * already excluded from opening the panel, which turned its rows into dead
+   * clicks; AP-3 opened one that could never load.
+   *
+   * They are sent to their own pages instead of being given a case here. Those
+   * pages are the document — approvals, attachments, the ERP state — and a
+   * second rendering of them inside a drawer would be a copy to keep in step.
+   */
+  const OWN_PAGE: Record<string, string> = {
+    "AP-2": "/request/advance",
+    "AP-3": "/request/clear-advance",
+  };
+
   /* Detail drawer — open in a SidePanel (same view as the report/approval queue). */
   // Each form's detail lives in its own tables behind its own API, and its own
   // URL prefix is what routes the read to that form's database
@@ -500,7 +517,17 @@ function RequestRowList({
             <button
               key={row.id}
               type="button"
-              onClick={() => { setDrawerId(row.id); setDrawerFormCode(row.formCode ?? null); }}
+              onClick={() => {
+                const own = row.formCode ? OWN_PAGE[row.formCode] : undefined;
+                if (own) {
+                  // `from` is what the document's back button returns to, so the
+                  // reader lands where they left rather than on the form's own hub.
+                  window.location.href = `${own}/${row.id}?from=${encodeURIComponent(kind === "work" ? "/my-work" : "/my-request")}`;
+                  return;
+                }
+                setDrawerId(row.id);
+                setDrawerFormCode(row.formCode ?? null);
+              }}
               className="w-full text-left rounded-xl p-3 flex items-center gap-3 cursor-pointer transition-colors"
               style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}
             >
@@ -577,7 +604,8 @@ function RequestRowList({
       )}
 
       {/* Detail drawer — same day-selector view as the report / approval queue */}
-      <SidePanel open={drawerId != null && drawerFormCode !== "AP-2"} onClose={() => setDrawerId(null)} width="min(720px, 100vw)" zIndex={50}>
+      {/* AP-2 and AP-3 never reach here — they open their own page above. */}
+      <SidePanel open={drawerId != null && !(drawerFormCode && OWN_PAGE[drawerFormCode])} onClose={() => setDrawerId(null)} width="min(720px, 100vw)" zIndex={50}>
         <div
           className="flex items-center justify-between px-4 py-3 shrink-0"
           style={{ borderBottom: "1px solid var(--border-light)" }}
