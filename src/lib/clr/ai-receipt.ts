@@ -11,6 +11,7 @@ import {
   parseReceiptDocs,
   pickSuggestedBranch,
   pickSuggestedGl,
+  thaiPrintedDate,
   toDate,
   toNum,
   type BranchCandidate,
@@ -140,14 +141,16 @@ const SLIP_SYSTEM = [
   "Rules:",
   '- amount: the transferred amount as a number in THB (no commas, no currency symbol).',
   "- date: the transaction date.",
+  "- dateText: that same date copied character for character, exactly as printed on the slip",
+  '  — "08 ก.ย. 2026". Do not reformat it or convert the year; it is read by rule on our side.',
   "Reading a date:",
   THAI_DATE_RULES,
 ].join("\n");
 
 const SLIP_USER_TEXT =
-  'Extract this transfer slip. Return only JSON with keys: amount, date.';
+  'Extract this transfer slip. Return only JSON with keys: amount, date, dateText.';
 
-type SlipAiJson = { amount?: number | string | null; date?: string | null };
+type SlipAiJson = { amount?: number | string | null; date?: string | null; dateText?: string | null };
 
 export interface SlipAiResult {
   amount: number | null;
@@ -187,7 +190,9 @@ export async function extractSlipWithAI(
     if (!match) return null;
     const j = JSON.parse(match[0]) as SlipAiJson;
     const amount = toNum(j.amount);
-    const date = toDate(j.date);
+    // Same rule as the bundle path: the month comes off the printed text when
+    // we can read it, and only falls back to the model's own conversion.
+    const date = toDate(thaiPrintedDate(j.dateText) ?? j.date);
     if (amount == null && !date) return null;
     return { amount, date };
   } catch {

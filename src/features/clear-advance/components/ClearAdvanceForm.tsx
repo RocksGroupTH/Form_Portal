@@ -692,7 +692,11 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
 
   interface ReceiptData {
     kind: "receipt" | "slip";
-    date: string | null; description: string | null; docNo: string | null;
+    date: string | null;
+    /** The date exactly as the model copied it — shown in the confirm modal so a
+     *  misread character is visible without opening the attachment. */
+    dateText?: string | null;
+    description: string | null; docNo: string | null;
     wht: number | null; taxId: string | null; payeeName: string | null; payeeAddress: string | null;
     total: number | null; vat: number | null; beforeVat: number | null;
   }
@@ -770,6 +774,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           sourceFileId: d.fileId,
           fileName: d.file.name,
           expenseDate: r.date ?? "",
+          dateText: r.dateText ?? undefined,
           docNo: r.docNo ?? "",
           branchCode: branch?.code ?? "",
           branchSuggested: !!branch,

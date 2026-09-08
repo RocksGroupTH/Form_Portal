@@ -41,17 +41,49 @@ function useAnchoredPopup(open: boolean, setOpen: (v: boolean) => void, inline: 
       if (btnRef.current?.contains(t) || popRef.current?.contains(t)) return;
       setOpen(false);
     };
+    /* Escape closes the panel. The picker had no key handler at all, so Escape
+       used to do nothing here and went straight through to whatever dialog the
+       picker sits in — one Escape on an open branch list shut the AP-3 OCR
+       confirm modal and threw the whole receipt read away, upload included.
+       Stopping the event here cannot help: Radix registers its own Escape
+       handler when the dialog mounts, which is before this panel opens, so it
+       runs first whatever phase we choose. The dialog side of the fix is
+       `PICKER_PANEL_ATTR` below, which lets a Dialog refuse that first Escape. */
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
     document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
     window.addEventListener("scroll", place, true); // capture: follows any scroll container
     window.addEventListener("resize", place);
     return () => {
       document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
       window.removeEventListener("scroll", place, true);
       window.removeEventListener("resize", place);
     };
   }, [open, setOpen, inline]);
 
   return { btnRef, popRef, pos };
+}
+
+/**
+ * Marks an open picker panel in the DOM, wherever it was portalled to.
+ *
+ * A dialog hosting these pickers reads it to decide what Escape means: while a
+ * panel is open, the first Escape belongs to the panel and the dialog must
+ * refuse it (`isPickerPanelOpen` + Radix's `onEscapeKeyDown`). The panel closes
+ * itself on the same keypress, so the second Escape reaches the dialog as usual.
+ *
+ * An attribute rather than lifted state because the panels portal to
+ * document.body and every picker owns its own open flag — there is no shared
+ * parent to ask.
+ */
+export const PICKER_PANEL_ATTR = "data-line-picker-panel";
+
+/** True while any line picker's panel is open. */
+export function isPickerPanelOpen(): boolean {
+  return !!document.querySelector(`[${PICKER_PANEL_ATTR}]`);
 }
 
 const PANEL_SURFACE = {
@@ -77,7 +109,8 @@ function PickerPanel({
 }) {
   if (inline) {
     return (
-      <div ref={panelRef} className="absolute left-0 right-0 top-full mt-1 z-30 rounded-xl overflow-hidden"
+      <div ref={panelRef} {...{ [PICKER_PANEL_ATTR]: "" }}
+        className="absolute left-0 right-0 top-full mt-1 z-30 rounded-xl overflow-hidden"
         style={PANEL_SURFACE}>
         {children}
       </div>
@@ -85,7 +118,7 @@ function PickerPanel({
   }
   if (!pos) return null;
   return createPortal(
-    <div ref={panelRef} className="fixed z-[80] rounded-xl overflow-hidden"
+    <div ref={panelRef} {...{ [PICKER_PANEL_ATTR]: "" }} className="fixed z-[80] rounded-xl overflow-hidden"
       style={{
         ...PANEL_SURFACE,
         top: pos.above ? undefined : pos.top,

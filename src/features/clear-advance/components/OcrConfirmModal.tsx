@@ -6,7 +6,7 @@ import { Dialog } from "@/components/ui/Dialog";
 import { PoweredByClaude } from "@/components/ui/PoweredByClaude";
 import type { BranchOption, GlAccountOption } from "@/features/clear-advance/types";
 import type { ReceiptKind } from "@/lib/clr/ai-receipt-core";
-import { BranchPicker, GlPicker, cellClass, cellStyle } from "./LinePickers";
+import { BranchPicker, GlPicker, cellClass, cellStyle, isPickerPanelOpen } from "./LinePickers";
 
 /** One OCR candidate awaiting the user's confirmation. Mirrors the editable half
  *  of an expense line plus the WHT-certificate fields the receipt also carries,
@@ -22,6 +22,14 @@ export interface OcrRow {
   sourceFileId?: number;
   fileName?: string;
   expenseDate: string;
+  /**
+   * The date as the model copied it off the page. Shown, never edited: it is
+   * evidence about the read, not a value we keep. A slip printed "08 ก.ย. 2026"
+   * came back copied as "08 ก.ค. 2026" — the characters themselves misread, so
+   * September became July with nothing on our side able to tell. Printing what
+   * the AI thinks it saw lets the reviewer catch that at a glance.
+   */
+  dateText?: string;
   docNo: string;
   branchCode: string;
   glAccountNo: string;
@@ -176,6 +184,11 @@ export function OcrConfirmModal({
     <Dialog
       open={open}
       onOpenChange={(o) => { if (!o) onCancel(); }}
+      // Closing here discards the whole read AND the upload, so Escape must not
+      // be able to do it by accident: while a branch or account panel is open
+      // that keypress is the panel's, and the panel closes itself on it. The
+      // next Escape, with nothing nested open, closes the modal as usual.
+      onEscapeKeyDown={(e) => { if (isPickerPanelOpen()) e.preventDefault(); }}
       title="ตรวจสอบข้อมูลจากใบเสร็จ"
       scrollable={false}
       contentClassName="max-w-3xl"
@@ -224,6 +237,11 @@ export function OcrConfirmModal({
                 <F label={r.kind === "slip" ? "วันที่โอน" : "วันที่"}>
                   <input type="date" className={cellClass} style={{ ...cellStyle, width: "100%" }}
                     value={r.expenseDate} onChange={(e) => update(r.key, { expenseDate: e.target.value })} />
+                  {r.dateText && (
+                    <p className="text-[11px] mt-1 mb-0" style={{ color: "var(--text-muted)" }}>
+                      อ่านจากเอกสาร: <span style={{ color: "var(--text-secondary)" }}>{r.dateText}</span>
+                    </p>
+                  )}
                 </F>
                 <F label={r.kind === "slip" ? "เลขที่รายการ" : "เลขที่เอกสาร"}>
                   <input className={cellClass} style={{ ...cellStyle, width: "100%" }} placeholder="—"

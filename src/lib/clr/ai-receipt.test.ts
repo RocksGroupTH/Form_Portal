@@ -8,6 +8,7 @@ import {
   parseReceiptDocs,
   pickSuggestedBranch,
   pickSuggestedGl,
+  thaiPrintedDate,
   toDate,
 } from "./ai-receipt-core";
 
@@ -338,4 +339,49 @@ test("the first hint in the upload wins", () => {
     {"kind":"receipt","docNo":"INV-1","branchHint":"สำหรับ Central Rama9"}
   ]`);
   assert.equal(read.branchHint, "สำหรับ Central Khonkaen2");
+});
+
+/* ── thaiPrintedDate — the month comes from code, not from the model ───────
+ *
+ * A UAT slip printed "08 ก.ย. 2026" came back as 2026-02-08: the model
+ * confused ก.ย. (September) with ก.พ. (February), even though THAI_DATE_RULES
+ * spells the whole table out. A slip's date is the Posting Date of a Refund
+ * journal, so a seven-month slip is a wrong accounting period.
+ */
+
+test("a Thai abbreviated month is mapped by the table, not by the model", () => {
+  assert.equal(thaiPrintedDate("08 ก.ย. 2026"), "2026-09-08");
+  assert.equal(thaiPrintedDate("8 ก.พ. 2026"), "2026-02-08");
+});
+
+test("every Thai month abbreviation maps to its own number", () => {
+  const months = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
+                  "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+  const got = months.map((m) => thaiPrintedDate(`1 ${m} 2026`));
+  assert.deepEqual(got, months.map((_, i) => `2026-${String(i + 1).padStart(2, "0")}-01`));
+});
+
+test("a full Thai month name is read as well as the abbreviation", () => {
+  assert.equal(thaiPrintedDate("15 กันยายน 2569"), "2026-09-15");
+  assert.equal(thaiPrintedDate("15 กุมภาพันธ์ 2569"), "2026-02-15");
+});
+
+test("a Buddhist year becomes Christian, two digits included", () => {
+  assert.equal(thaiPrintedDate("6 ม.ค. 69"), "2026-01-06");
+  assert.equal(thaiPrintedDate("23 ธ.ค. 2568"), "2025-12-23");
+});
+
+test("a numeric Thai date is day-month-year, never month-day", () => {
+  assert.equal(thaiPrintedDate("23/12/2568"), "2025-12-23");
+  assert.equal(thaiPrintedDate("06-01-2026"), "2026-01-06");
+});
+
+test("text with no readable date, or an impossible one, yields null", () => {
+  assert.equal(thaiPrintedDate("โอนเงินสำเร็จ"), null);
+  assert.equal(thaiPrintedDate(null), null);
+  assert.equal(thaiPrintedDate("30 ก.พ. 2026"), null);
+});
+
+test("an English month is left to the model rather than half-parsed", () => {
+  assert.equal(thaiPrintedDate("08 Sep 2026"), null);
 });

@@ -22,6 +22,17 @@ const KINDS: readonly RawKind[] = ["receipt", "slip", "other"];
 export interface ReceiptDoc extends ReceiptExtractResult {
   kind: ReceiptKind;
   /**
+   * The date as the model copied it off the page, before any conversion.
+   *
+   * Shown beside the date in the confirm modal, because the failure that
+   * survives every rule on our side is the model misreading the characters
+   * themselves: a UAT slip printed "08 ก.ย. 2026" was copied back as
+   * "08 ก.ค. 2026" — ย read as ค, September become July. No parser can catch
+   * that; a reviewer glancing at what the AI thinks it saw can, without opening
+   * the attachment. Absent on the non-AI (Tesseract) path.
+   */
+  dateText?: string | null;
+  /**
    * How many model entries were folded into this row. Absent on a document that
    * arrived as one entry; set when a multi-page document was answered per page,
    * so the confirm modal can tell the reviewer the row is a merge of several.
@@ -93,6 +104,9 @@ export const RECEIPT_SYSTEM = [
   "Rules for EACH entry:",
   "- pages: how many pages of this upload the document covers (1 unless it runs over several).",
   '- date: the document date. For a "slip" this is the transfer date.',
+  "- dateText: that same date copied from the page character for character, exactly as it is",
+  "  printed — \"08 ก.ย. 2026\", \"23/12/2568\". Do not reformat it, translate it or convert the",
+  "  year. This is read by rule on our side, so a faithful copy is worth more than a tidy one.",
   "- description: if the document lists one line item, use its description. If it lists",
   "  several, read the AMOUNT printed on each line, find the single highest one, and copy",
   "  THAT line as it is printed — its own wording in its own language, including any",
@@ -229,6 +243,8 @@ type AiJson = {
   kind?: string | null;
   pages?: number | string | null;
   date?: string | null;
+  /** The date as printed, unconverted — see `thaiPrintedDate`. */
+  dateText?: string | null;
   description?: string | null;
   docNo?: string | null;
   amountBeforeVat?: number | string | null;
@@ -295,6 +311,89 @@ export function toDate(v: unknown, now: Date = new Date()): string | null {
   return `${String(year).padStart(4, "0")}-${m[2]}-${m[3]}`;
 }
 
+/**
+ * Thai month names, abbreviated and full, in calendar order. The abbreviations
+ * are the whole reason this exists: a UAT slip printed "08 ก.ย. 2026" came back
+ * from the model as 2026-02-08 — ก.ย. (September) read as ก.พ. (February) —
+ * even though THAI_DATE_RULES spells the entire table out for it. The pairs
+ * differ by one character and several of them rhyme, so the mapping belongs in
+ * code where it is a lookup, not a recollection.
+ */
+const THAI_MONTHS: readonly (readonly string[])[] = [
+  ["ม.ค.", "มกราคม"],
+  ["ก.พ.", "กุมภาพันธ์"],
+  ["มี.ค.", "มีนาคม"],
+  ["เม.ย.", "เมษายน"],
+  ["พ.ค.", "พฤษภาคม"],
+  ["มิ.ย.", "มิถุนายน"],
+  ["ก.ค.", "กรกฎาคม"],
+  ["ส.ค.", "สิงหาคม"],
+  ["ก.ย.", "กันยายน"],
+  ["ต.ค.", "ตุลาคม"],
+  ["พ.ย.", "พฤศจิกายน"],
+  ["ธ.ค.", "ธันวาคม"],
+];
+
+/** A Buddhist year — two-digit tail or four digits — as its Christian year. */
+function christianYear(raw: number): number {
+  const year = raw < 100 ? 2500 + raw : raw;
+  return year >= 2400 ? year - 543 : year;
+}
+
+/** Build "YYYY-MM-DD", or null when those parts are not a real calendar date. */
+function ymd(year: number, month: number, day: number): string | null {
+  const d = new Date(Date.UTC(year, month - 1, day));
+  if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) {
+    return null;
+  }
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+/**
+ * The date as the document itself prints it, read by rule rather than by model.
+ *
+ * The model is asked for `dateText` — the date copied character for character —
+ * alongside its own `date`. When this can read that text, its answer wins:
+ * mapping a Thai month to a number is a table lookup, and a slip's date becomes
+ * the Posting Date of a Refund journal (§3.2), so a month read wrong is a
+ * journal in the wrong period.
+ *
+ * Thai only, deliberately. An English month is left to the model — there is no
+ * confusable pair to protect against there, and half a parser is worse than
+ * none.
+ *
+ * Returns null on anything it cannot read with certainty, which hands the
+ * decision back to the model's own answer rather than to a guess.
+ */
+export function thaiPrintedDate(v: unknown): string | null {
+  const text = toStr(v);
+  if (!text) return null;
+
+  // "8 ก.ย. 2026", "15 กันยายน 2569" — day, Thai month, year. The month class is
+  // the whole Thai block, not ก-ฮ: เม.ย. and เมษายน lead with a vowel (เ), which
+  // sits outside the consonant range and would drop April alone.
+  const named = text.match(/(\d{1,2})\s*([฀-๿.]+?)\s*(\d{2,4})/);
+  if (named) {
+    const word = named[2].replace(/\s+/g, "");
+    const index = THAI_MONTHS.findIndex(([abbr, full]) => word === abbr || word === full);
+    if (index >= 0) {
+      return ymd(christianYear(Number(named[3])), index + 1, Number(named[1]));
+    }
+  }
+
+  // "23/12/2568", "06-01-2026" — day first, always: Thai paperwork does not
+  // write month/day, so there is nothing ambiguous to resolve here.
+  const numeric = text.match(/(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
+  if (numeric) {
+    const month = Number(numeric[2]);
+    if (month >= 1 && month <= 12) {
+      return ymd(christianYear(Number(numeric[3])), month, Number(numeric[1]));
+    }
+  }
+
+  return null;
+}
+
 /** First JSON value in a model reply — array preferred, single object accepted. */
 function extractJson(raw: string): unknown {
   const text = raw.replace(/```[a-z]*\n?/gi, "");
@@ -329,7 +428,11 @@ function toDoc(entry: AiJson, kind: ReceiptKind): ReceiptDoc {
   const vat = toNum(entry.vat);
   return {
     kind,
-    date: toDate(entry.date),
+    // The printed text wins where we can read it: mapping a Thai month is a
+    // table lookup here and a recollection in the model. Both answers still go
+    // through toDate, which rejects an impossible or future date either way.
+    date: toDate(thaiPrintedDate(entry.dateText) ?? entry.date),
+    dateText: toStr(entry.dateText),
     description: toStr(entry.description),
     docNo: toStr(entry.docNo),
     wht: toNum(entry.wht),
