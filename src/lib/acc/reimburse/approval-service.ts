@@ -518,17 +518,46 @@ export async function approveReimburseAccountCheck(
  *   `AccApprover` roster (`canAccessAccountArea`) via `isOwnFormRosterApprover`'s
  *   OR — an AP-1 approver who has never been added to AP-4's own
  *   `AccReimburseApprover` can already *read* this claim and must not also be
- *   able to repoint where its money posts.
- * - **The "still theirs" predicate is re-checked inside the transaction that
- *   writes**, not only by the route before it calls in. The queue page can sit
- *   open long enough for another accountant to approve, return, or claim the
- *   row between page load and this save; a miss throws `AccConflictError`
- *   rather than silently rewriting a claim that has moved on.
+ *   able to repoint where its money posts. Run in the service, before the
+ *   transaction below — the roster is configuration, not a raced value, so it
+ *   needs no lock the way the state check does.
+ * - **The "still theirs" predicate is CLAIMED, not merely read, inside the
+ *   transaction that writes.** This database runs READ COMMITTED, where a
+ *   bare `SELECT`'s shared lock is released at the end of that statement —
+ *   `inTransaction` opens no stronger isolation level. A `SELECT` here would
+ *   leave a real window: it takes its lock, releases it, and only then do the
+ *   item `UPDATE`s below run, as a **sequential loop, one round trip per
+ *   line** — not instantaneous. A concurrent `approveReimburseAccountCheck`
+ *   could claim the row to `ACCOUNT_FINAL` and commit inside that window, and
+ *   the loop's `UPDATE`s — which carried no state predicate of their own —
+ *   would land anyway: the G/L account changing after the checking accountant
+ *   has already signed off. Only one of the two possible orderings was safe
+ *   under a plain `SELECT`; under READ COMMITTED neither is. Fixed the way
+ *   `claimStep` (twenty lines up) fixes the identical shape for a real
+ *   transition: a conditional `UPDATE … WHERE <expected state>`, which takes
+ *   an exclusive lock and — inside a transaction — holds it to commit. Every
+ *   other action that can touch this row claims it the same way, so once this
+ *   claim succeeds nothing else can be mutating `AccReimburseItem` underneath
+ *   it until this transaction ends.
  *
- * Each line is scoped to `RequestId` as well as `Id` in its own `UPDATE`, so a
- * payload naming another request's item id touches nothing and the mismatch
- * surfaces as the same conflict rather than a silent no-op — see the `!== 1`
- * check below.
+ * That same claim is what makes the read below honest: `current` is read
+ * only after the claim holds the row's lock, so it cannot be racing a
+ * concurrent write to the same items. It does two jobs — logging `old → new`
+ * per line (this repo's own precedent: `ApiKeyLog` carries a full `old → new`
+ * for `renamed` / `expiry_changed`, never only the new value) and catching a
+ * posted item id that does not belong to this request **before** any write,
+ * rather than partway through the loop below.
+ *
+ * The per-item `UPDATE` loop, rather than one set-based statement joined to
+ * `AccRequest`, is deliberate: the state predicate already lives on the claim
+ * above, so the loop does not need to repeat it, and keeping one `UPDATE` per
+ * line keeps each line's own `rowsAffected` check legible — the moment a
+ * single id turns out not to belong to this request, the response can say so
+ * plainly, which a combined rowcount from a set-based statement could not.
+ * The `current` read above already refuses a foreign id before the loop even
+ * starts, so the loop's own scoping (`Id=@iid AND RequestId=@rid`) is a
+ * second, redundant guard against the same mistake — cheap insurance, not
+ * load-bearing on its own.
  */
 export async function setReimburseItemAccounts(
   requestId: number,
@@ -539,17 +568,28 @@ export async function setReimburseItemAccounts(
   if (edits.length === 0) return 0;
 
   return inTransaction(async (tx) => {
-    const state = await tx
+    const claim = await tx
       .request()
       .input("id", sql.Int, requestId)
       .input("form", sql.NVarChar, AP4_FORM_CODE)
       .input("status", sql.NVarChar, STATUS_AT_STEP.ACCOUNT)
       .input("step", sql.NVarChar, "ACCOUNT")
       .query(
-        `SELECT Id FROM [dbo].[AccRequest]
+        `UPDATE [dbo].[AccRequest] SET UpdatedAt = SYSDATETIME()
          WHERE Id=@id AND FormCode=@form AND Status=@status AND CurrentStepCode=@step`,
       );
-    if (state.recordset.length === 0) throw new AccConflictError(NOT_AT_STEP_ERROR);
+    if (claim.rowsAffected[0] !== 1) throw new AccConflictError(NOT_AT_STEP_ERROR);
+
+    const current = await tx
+      .request()
+      .input("rid", sql.Int, requestId)
+      .query(`SELECT Id, Category FROM [dbo].[AccReimburseItem] WHERE RequestId=@rid`);
+    const before = new Map(
+      (current.recordset as { Id: number; Category: string | null }[]).map((r) => [r.Id, r.Category]),
+    );
+    for (const edit of edits) {
+      if (!before.has(edit.id)) throw new AccConflictError(NOT_AT_STEP_ERROR);
+    }
 
     let count = 0;
     for (const edit of edits) {
@@ -570,7 +610,10 @@ export async function setReimburseItemAccounts(
       requestId,
       actor.userId,
       "item_account_updated",
-      edits.map((e) => `#${e.id}→${e.category ?? "-"}`).join(", ").slice(0, 2000),
+      edits
+        .map((e) => `#${e.id}: ${before.get(e.id) ?? "-"}→${e.category ?? "-"}`)
+        .join(", ")
+        .slice(0, 2000),
     );
     return count;
   });

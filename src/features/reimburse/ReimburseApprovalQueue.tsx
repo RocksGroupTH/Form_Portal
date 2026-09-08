@@ -215,11 +215,12 @@ function ExpenseAccountsPanel({
   );
 
   // Item id -> the value picked in this panel, overriding the loaded row.
-  // Seeded once per row expansion (not on every SWR revalidation — the list
-  // revalidates on window focus, and re-seeding on every one of those would
-  // silently discard whatever the accountant was mid-choosing) and reset by
-  // simply unmounting: collapsing the row throws this component away, so
-  // re-expanding always starts from what is actually saved.
+  // Starts empty — a picker with no entry here falls through to `it.category`
+  // below, so there is nothing to seed. It is never reset by an SWR
+  // revalidation either (the list revalidates on window focus, and clobbering
+  // it on every one of those would silently discard whatever the accountant
+  // was mid-choosing); the only reset is unmounting, which collapsing the row
+  // does, so re-expanding always starts from what is actually saved.
   const [edits, setEdits] = useState<Map<number, string | null>>(new Map());
   const [saving, setSaving] = useState(false);
 

@@ -30,9 +30,13 @@ import { AP4_FORM_CODE } from "@/features/reimburse/constants";
  * apply here specifically. The layering matches every other by-id route in
  * this app: `authorizeAccRequest("read")` first (confirms the row exists,
  * pins it to AP-4, and applies the UAT-tester barrier with its 404), then
- * the step-specific authorization inside the service, inside the same
- * transaction that writes — so no caller can reach a weaker rule by taking a
- * different path.
+ * the roster check — `requireApproverStaffId`, via `setReimburseItemAccounts`
+ * — in the service, **before** the transaction: the roster is configuration,
+ * not a value that can be raced, so unlike the state predicate it needs no
+ * lock. The state predicate itself — whether this claim is still at the step
+ * that makes it accounting's to correct — IS claimed inside the transaction
+ * that writes, the same way `claimStep` claims a real transition; see that
+ * function's own docblock for why a bare read would not have been enough.
  */
 export async function PATCH(
   req: NextRequest,
