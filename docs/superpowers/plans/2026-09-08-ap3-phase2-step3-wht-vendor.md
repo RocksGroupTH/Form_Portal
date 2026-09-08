@@ -516,22 +516,50 @@ payload and would only surface as a BC rejection.
 
 ---
 
-## Task 6: Prove it in BC
+## Task 6: Prove it in BC — *done 2026-09-08*
 
-- [ ] **Step 1: Send a clearing with WHT**
+- [x] **Step 1: Send a clearing with WHT**
 
 Drive one through the ACCOUNT step, set the type deliberately, send it. The
 `ACC_MANAGER_DEV_BYPASS=1` note from Step 2c applies — **take it out afterwards.**
 
-- [ ] **Step 2: Confirm what was sent** — preview plus a temporary wire log,
+- [x] **Step 2: Confirm what was sent** — preview plus a temporary wire log,
 removed straight after. Expect a `Vendor` line at `WHT-PND.53` (or `.3`) with
 amount 0 and no `213050` line.
 
-- [ ] **Step 3: Confirm in BC** — as Step 2c proved the BU: the send answering
+- [x] **Step 3: Confirm in BC** — as Step 2c proved the BU: the send answering
 "Sent" is not proof the line landed as a Vendor. Open the batch, find the
 document, and check the line's Account Type and Account No.
 
-- [ ] **Step 4: Record the document number.**
+- [x] **Step 4: Record the document number** — `ADC26-09013` → **`PVA2609-0014`**, Sent.
+
+### What was sent
+
+The same clearing Task 4b built, carried the rest of the way: one payee whose
+`0`-prefixed tax id the requester marked `ภ.ง.ด. 3` against the suggestion, which
+accounting then changed to `ภ.ง.ด. 53` at the ACCOUNT step. So the value on the
+wire is the one the *second* person chose, which is the whole point of two edit
+points.
+
+| Line | Account | Amount | balAccountType | Branch · BU | Ext. Doc |
+| --- | --- | --- | --- | --- | --- |
+| G/L | 610322005 | 230 | G/L Account | HQ01 · COCO | 10177 |
+| **Vendor** | **WHT-PND.53** | **0** | **absent** | HQ01 · COCO | 10177 |
+| Vendor | ADV0080 | 0 | absent | HQ01 · COCO | 10177 |
+
+No `213050` line anywhere — the old G/L account is gone from the payload, not
+zeroed. The preview showed the same before the send, and the temporary file log
+is removed again.
+
+Everything from Step 2c is still riding along on the same lines: the BU resolved
+per branch, and the staff id in External Document No.
+
+### The BC-side check, as Step 2c taught
+
+"Sent" means the codeunit accepted the payload — it does not prove the line
+landed as a Vendor. **Open batch `Q`, document `PVA2609-0014`, and read line 2's
+Account Type and Account No.** A Vendor at `WHT-PND.53` is the proof; a G/L line
+would mean something between here and there rewrote it.
 
 ---
 
