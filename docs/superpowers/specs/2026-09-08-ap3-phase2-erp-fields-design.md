@@ -37,7 +37,7 @@ populated by anything we send.
 | # | Sheet column | Today | State |
 | --- | --- | --- | --- |
 | 1 | Posting Date | `postingDate` | ✅ Refund → transfer date, Payment → the payment date finance sets (sheet rows 25-26) |
-| 2 | Document Type | `documentType` | ✅ Refund / Payment by direction (rows 30-31) |
+| 2 | Document Type | `documentType` | ✅ **Always `Refund`** since 2026-09-08 (user) — see below |
 | 3 | Document No. | — | ✅ BC numbers it from the batch's own series (user, 2026-09-08) |
 | 4 | External Document No. | `employeeCode`, holding the **request no.** | ❌ row 25 says รหัสพนักงาน — §5.2 |
 | 5 | Account Type | `accountType` | ✅ |
@@ -341,6 +341,30 @@ sheet:**
    without WHT has no seller identity on our side at all, even though the OCR
    read one. Either the columns are added to the item row, or Step 4 sends the
    tax fields only where a WHT row happens to match.
+
+### 5.5 Document Type is always Refund (user, 2026-09-08)
+
+`ap3-clear-advance-specification.md` row 76 asks for `Refund` when the employee
+returns money and `Payment` when the company pays them more. Asked directly, the
+user chose `Refund` in every case, including the one the requirements call
+Payment. A conscious departure, recorded so nobody "corrects" it back.
+
+**Two things follow, and neither is hidden.**
+
+The bank line keeps its own sign, so a pay-extra clearing now goes out as a
+`Refund` document carrying a *credit* bank line. Row 77 pairs Refund with a debit
+bank line, and that pairing no longer holds — accounting may notice it first.
+
+The queue's badge stopped meaning anything, so it was rebuilt. It used to render
+the Document Type, which told accounting which way the money went before they
+sent. With the type constant it would have read "Refund · คืนบริษัท" over a
+clearing that pays the employee — worse than no badge. It now reads the bank
+line's sign directly: **คืนบริษัท** or **จ่ายพนักงานเพิ่ม**.
+
+The exactly-equal case is fixed along the way. It used to fall through to
+`Payment`, matching neither rule and reading as a payment where nothing was paid;
+both AP-3 documents sent today, `PVA2609-0013` and `PVA2609-0014`, carry that
+wrong value.
 
 ## 6. Verification
 

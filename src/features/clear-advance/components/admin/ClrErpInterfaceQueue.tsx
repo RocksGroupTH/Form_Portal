@@ -106,17 +106,26 @@ function ClrErpPreviewModal({ items, onClose }: { items: ClrPreviewItem[]; onClo
                       style={{ background: "var(--bg-badge)", color: "var(--text-muted)" }}>{item.interfaceTarget}</span>
                   )}
                   {item.journalBatchName && <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Batch: {item.journalBatchName}</span>}
-                  {/* Refund and Payment post differently in BC, so say which one
-                      this is while it can still be stopped. */}
-                  {item.documentType && (
-                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
-                      style={{
-                        background: item.documentType === "Refund" ? "var(--status-ok-bg)" : "var(--bg-badge)",
-                        color: item.documentType === "Refund" ? "var(--status-ok-text)" : "var(--text-muted)",
-                      }}>
-                      {item.documentType === "Refund" ? "Refund · คืนบริษัท" : "Payment · จ่ายพนักงาน"}
-                    </span>
-                  )}
+                  {/* Which way the money actually moves, while it can still be
+                      stopped. Read off the bank line's sign rather than the
+                      Document Type: since 2026-09-08 that is always "Refund" by
+                      decision, so it no longer tells the two apart — and a badge
+                      reading "คืนบริษัท" over a clearing that pays the employee
+                      would be worse than no badge at all. */}
+                  {(() => {
+                    const bank = item.lines?.find((l) => l.accountType === "Bank Account");
+                    if (!bank) return null;
+                    const backToCompany = (bank.debit ?? 0) > 0;
+                    return (
+                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
+                        style={{
+                          background: backToCompany ? "var(--status-ok-bg)" : "var(--bg-badge)",
+                          color: backToCompany ? "var(--status-ok-text)" : "var(--text-muted)",
+                        }}>
+                        {backToCompany ? "คืนบริษัท" : "จ่ายพนักงานเพิ่ม"}
+                      </span>
+                    );
+                  })()}
                   {item.environment && <EnvBadge env={item.environment} />}
                 </div>
                 {!item.ok && (

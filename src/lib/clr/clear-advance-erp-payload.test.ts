@@ -118,16 +118,23 @@ test("money returned to the company -> Refund on every line", () => {
   assert.ok(p.lines.every((l) => l.documentType === "Refund"));
 });
 
-test("company pays extra -> Payment on every line", () => {
+/* Refund whatever the direction (user, 2026-09-08) — including the case the
+ * requirements call Payment. The bank line's own sign still follows the money,
+ * so a pay-extra clearing is a Refund document with a credit bank line. That
+ * pairing is deliberate here and contradicts the requirements' row 77; the
+ * decision is recorded in the spec. */
+test("company pays extra -> still Refund", () => {
   const p = buildClearAdvanceJournalPayload(base({
     items: [{ glAccountNo: "610322005", amountBeforeVat: 2500, vatAmount: 0, whtAmount: 0, branchCode: null }],
   }));
-  assert.ok(p.lines.every((l) => l.documentType === "Payment"));
+  assert.ok(p.lines.every((l) => l.documentType === "Refund"));
+  // The money still moves the other way, and the line says so.
+  assert.equal(p.lines.find((l) => l.accountType === "Bank Account")!.amount, -500);
 });
 
-test("spent exactly the advance -> Payment", () => {
+test("spent exactly the advance -> Refund", () => {
   const p = buildClearAdvanceJournalPayload(base({}));
-  assert.ok(p.lines.every((l) => l.documentType === "Payment"));
+  assert.ok(p.lines.every((l) => l.documentType === "Refund"));
 });
 
 test("no vendor on the cleared advance -> throws", () => {

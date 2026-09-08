@@ -131,9 +131,24 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
 
   const actualNet = r2(items.reduce((s, it) => s + it.amountBeforeVat + (it.vatAmount || 0) - (it.whtAmount || 0), 0));
   const bankAmount = r2(input.advanceAmount - actualNet);
-  // Spec §3.2: Refund when the employee returns money, Payment when the company pays more.
-  // It describes the whole clearing, so every line carries the same value.
-  const documentType = bankAmount > 0 ? "Refund" : "Payment";
+  /**
+   * Always `Refund` (user, 2026-09-08). It describes the whole clearing, so every
+   * line carries the same value.
+   *
+   * This is a deliberate divergence from `ap3-clear-advance-specification.md`
+   * row 76, which asks for `Payment` when the company pays the employee more than
+   * they drew. Two consequences, recorded rather than hidden:
+   *
+   * The direction of the money is still on the bank line, which keeps its own
+   * sign — so a pay-extra clearing goes out as a `Refund` document carrying a
+   * credit bank line. Row 77 pairs Refund with a debit bank line, and that
+   * pairing no longer holds.
+   *
+   * The exactly-equal case used to fall through to `Payment`, which matched
+   * neither rule and read as a payment where nothing was paid. That one is
+   * simply fixed.
+   */
+  const documentType = "Refund";
 
   const glLine = (
     accountNo: string,
