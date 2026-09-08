@@ -8,7 +8,7 @@ import {
 } from "@/lib/acc/reimburse/access-service";
 import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
 import { setReimburseAccessTabs } from "@/lib/acc/reimburse/access-tabs";
-import { filterGrantableReimburseTabKeys } from "@/lib/acc/reimburse/settings-tabs";
+import { filterStorableReimburseKeys } from "@/lib/acc/reimburse/settings-tabs";
 
 /*
  * AP-4's สิทธิ์เข้าถึง tab — who may open which of AP-4's back-office settings.
@@ -72,8 +72,16 @@ export async function GET() {
  * granted set, so an empty array revokes everything. The distinction is the
  * point — the add call and any future partial save send no tabs, and treating
  * that as an empty set would silently revoke every grant the person held.
- * Unknown keys — `access` and `approvers` above all — are dropped by
- * `filterGrantableReimburseTabKeys` before the write: the client's list is a
+ * **The name predates the second, menu-key vocabulary** (`approvalQueue`,
+ * `clearance`) that AP-4's accounting queue added on top of the settings-tab
+ * one — it is kept as-is because the client already sends this field name,
+ * and this array now legitimately carries both kinds of key at once. The
+ * pre-filter here is deliberately the WIDE one, `filterStorableReimburseKeys`
+ * — narrowing it to `filterGrantableReimburseTabKeys` would strip a menu key
+ * before `setReimburseAccessTabs`'s own (also wide) filter ever saw it, so a
+ * ticked menu would save nothing. Unknown keys — `access` and `approvers`
+ * above all, and anything that is neither a grantable tab nor a real menu key
+ * — are still dropped before the write either way: the client's list is a
  * request, not a decision.
  * Requires IT Admin or System Admin.
  */
@@ -134,11 +142,14 @@ export async function POST(req: NextRequest) {
       // grants. The upsert above has just run, so the row exists.
       const accessId = await getReimburseAccessIdByStaffId(employee.staffId);
       if (accessId) {
+        // Wide filter, deliberately: `settingsTabs` on the wire now carries
+        // menu keys too (see the docblock above), and `setReimburseAccessTabs`
+        // applies this same wide filter again on its own. A narrow pre-filter
+        // here would strip a menu key before the wide one downstream ever saw
+        // it, which is exactly how AP-17's equivalent tick once saved nothing.
         await setReimburseAccessTabs(
           accessId,
-          filterGrantableReimburseTabKeys(
-            (body.settingsTabs as unknown[]).map((k) => String(k)),
-          ),
+          filterStorableReimburseKeys((body.settingsTabs as unknown[]).map((k) => String(k))),
         );
       }
     }
