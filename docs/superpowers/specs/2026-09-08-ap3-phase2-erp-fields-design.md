@@ -289,16 +289,58 @@ as confirmation — the prefix belongs to the Thai localization, not to one app.
 The second assumed the publisher was Revolic because the name ends that way; it
 is NaviWorld, and "Revolic" appears to be part of the app's own name.
 
-**Still needed before Step 4 can be built:** the symbols. The package is not in
-`.alpackages` and cannot be downloaded from here — `AL: Download Symbols`
-against the Sandbox will fetch it once the environment has the extension
-installed. Until then the project will not compile against the new dependency,
-which is why Step 4 stays last.
+**The symbols are on disk after all, and the field names are now read, not
+guessed** (2026-09-08). `NaviWorld (Thailand) Co. Ltd._NWTH CustomizationRevolic_24.0.202608.1.app`
+sits in `.alpackages` at exactly the declared version — which is why
+`SalesTran_Interface 1.0.0.205` compiled and published with the new dependency.
+Unpacking it (a 40-byte header then a zip) gives
+`src/Tab-Ext80105.GenJnlext.al`, `tableextension 80105 GenJnlext extends "Gen.
+Journal Line"`:
 
-**The §5.4 mapping table above is provisional.** It pairs the sheet's columns
-with the *NaviWorld* fields that matched by name. The field names this app
-actually exposes are unknown until its symbols are on disk, and they decide the
-payload keys.
+| # | Field name (what AL must set) | Caption (what the sheet calls it) | Type |
+| --- | --- | --- | --- |
+| 80100 | `Tax Vendor No.` | Tax Vendor No. | Code[20], `TableRelation = Vendor."No."` |
+| 80101 | `Tax Invoice No.` | Tax Invoice No. | Code[35] |
+| 80102 | `Tax Invoice Name` | Tax Invoice Name | Text[250] |
+| 80103 | `Tax Invoice Base` | Tax Invoice Base | Decimal |
+| 80104 | `Tax Invoice Date` | Tax Invoice Date | Date |
+| 80105 | `Branch Code` | **Tax Branch Code** | Code[20] |
+| 80106 | `Revolic VAT Registration No.` | **Tax VAT Registration No.** | Code[20] |
+
+Two of the sheet's column names are captions, not field names — `Branch Code`
+and `Revolic VAT Registration No.` — so a payload built from the sheet's wording
+would not compile.
+
+**`Tax Vendor No.` fills three of the others by itself.** Its `OnValidate` reads
+the Vendor and sets `Tax Invoice Name` from Name + Name 2, `Branch Code` from
+`Vendor."NWTH Branch Code"`, and `Revolic VAT Registration No.` from the
+vendor's own `VAT Registration No.`. So when the seller is a known BC vendor,
+sending that one key is enough; the identity fields must only be sent explicitly
+when it is not.
+
+**That also answers §8 q2** — the branch field is `NWTH Branch Code` on the
+Vendor, and BC fills it here rather than the portal choosing it.
+
+**Three of the ten columns need no dependency at all.** Gen. Posting Type, VAT
+Bus. Posting Group and VAT Prod. Posting Group are standard `Gen. Journal Line`
+fields.
+
+**Two structural problems Step 4 has to solve first, neither visible in the
+sheet:**
+
+1. **The VAT line is aggregated.** `clear-advance-erp-payload.ts` sums every
+   item's VAT into a single G/L line. But Tax Invoice No., Tax Invoice Date and
+   Tax Invoice Base are *per receipt* — one aggregated line cannot carry them for
+   two receipts. The VAT line has to become one line per invoice with VAT, which
+   changes the journal's shape rather than adding keys to it.
+
+2. **The seller's identity is not stored per expense line.** `AccClearAdvanceItem`
+   holds `DocNo`, `ExpenseDate`, `AmountBeforeVat` and `VatAmount` — enough for
+   Tax Invoice No./Date/Base — but no tax id or payee name. Those live only on
+   `AccClearAdvanceWht`, which exists only where withholding does. A VAT receipt
+   without WHT has no seller identity on our side at all, even though the OCR
+   read one. Either the columns are added to the item row, or Step 4 sends the
+   tax fields only where a WHT row happens to match.
 
 ## 6. Verification
 
@@ -344,10 +386,10 @@ Two of the four are settled; what remains does not block starting.
    call: the tax id's leading digit suggests the type, accounting confirms it at
    the ACCOUNT step, and an unreadable id suggests nothing. See §5.3a. Step 3 is
    unblocked in full.
-2. **`NWTH Branch Code` or `NWTH Company Branch Code`** for the sheet's "Tax
-   Branch Code" (40009717 vs 40009731). Both exist; the sheet does not say which,
-   and the example leaves the column empty. A detail inside Step 4, not a
-   blocker.
+2. ~~**`NWTH Branch Code` or `NWTH Company Branch Code`**~~ — **answered
+   2026-09-08 from the symbols.** Neither is sent by the portal: the field is
+   `Branch Code` (80105) on the journal line, and `Tax Vendor No.`'s OnValidate
+   fills it from `Vendor."NWTH Branch Code"`. See §5.4.
 3. ~~**Where does Location→BU come from for the portal?**~~ — **answered and
    built 2026-09-08.** Locations sync into `Rocks_ERP_Data.ErpLocation` with
    their BU, and the journal reads it per line. Proven in BC as `PVA2609-0013`.
