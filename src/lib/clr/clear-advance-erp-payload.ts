@@ -33,6 +33,27 @@ export interface ClrJournalInput {
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
+/** The Z-ADJ dimension value for a prior-period adjustment (spec §4.1). The
+ *  requirements call it "MS"; the value that exists in BC is `M-ADJ`. */
+export const PRIOR_PERIOD_ADJ_CODE = "M-ADJ";
+
+/**
+ * Is this receipt from an accounting month earlier than the one it is posting
+ * into?
+ *
+ * Compared as `YYYY-MM` text, which handles the year boundary without date
+ * arithmetic: "2025-12" < "2026-01" sorts correctly as a string. Either date
+ * missing answers false — the rule needs a date to be true, and an absent one
+ * makes it unknown rather than false, which comes to the same thing here: no
+ * marker, rather than a marker derived from a date nobody has.
+ */
+export function isPriorPeriod(expenseDate: string | null | undefined, postingDate: string): boolean {
+  const a = (expenseDate ?? "").slice(0, 7);
+  const b = (postingDate ?? "").slice(0, 7);
+  if (a.length !== 7 || b.length !== 7) return false;
+  return a < b;
+}
+
 /**
  * Build the PPAP CreateFromJson payload for ONE AP-3 clearing.
  * Dr expenses (per item) + Dr VAT input + WHT payable (0) + advance Vendor (0) +/- Bank diff.

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildClearAdvanceJournalPayload, type ClrJournalInput } from "./clear-advance-erp-payload";
+import { buildClearAdvanceJournalPayload, isPriorPeriod, type ClrJournalInput } from "./clear-advance-erp-payload";
 
 const cfg = {
   advanceVendorNo: "ADV0001", bankAccountNo: "BBL-CA6332",
@@ -127,4 +127,34 @@ test("no vendor on the cleared advance -> throws", () => {
   assert.throws(() => buildClearAdvanceJournalPayload(base({
     config: { ...cfg, advanceVendorNo: "" },
   })), /Vendor/);
+});
+
+/* ── isPriorPeriod — the Z-ADJ marker rule (spec §4.1) ────────────────────
+ *
+ * A receipt belonging to an earlier accounting month than the journal it lands
+ * in is an adjustment, and BC wants it tagged on Z-ADJ. Months, not days: two
+ * dates inside the same month are the same period however far apart they are.
+ */
+
+test("a receipt from an earlier month is a prior period", () => {
+  assert.equal(isPriorPeriod("2026-07-31", "2026-08-01"), true);
+});
+
+test("same month is not a prior period, whatever the day", () => {
+  assert.equal(isPriorPeriod("2026-08-01", "2026-08-31"), false);
+  assert.equal(isPriorPeriod("2026-08-31", "2026-08-01"), false);
+});
+
+test("a later month is not a prior period", () => {
+  assert.equal(isPriorPeriod("2026-09-01", "2026-08-31"), false);
+});
+
+test("December against January crosses the year correctly", () => {
+  assert.equal(isPriorPeriod("2025-12-31", "2026-01-01"), true);
+});
+
+test("no receipt date means the rule cannot be true", () => {
+  assert.equal(isPriorPeriod(null, "2026-08-01"), false);
+  assert.equal(isPriorPeriod("", "2026-08-01"), false);
+  assert.equal(isPriorPeriod("2026-07-01", ""), false);
 });
