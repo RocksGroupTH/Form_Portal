@@ -1,8 +1,10 @@
 # AP-3 Phase 2 — ERP interface fields (กอง A)
 
-**Date:** 2026-09-08
-**Status:** design approved, not yet planned
-**Scope source:** `docs/technical-specification-ap-systems.md` §3.2
+**Date:** 2026-09-08 (revised the same day against `docs/ap3-clear-advance-specification.md`)
+**Status:** design revised, not yet planned
+**Requirements:** `docs/ap3-clear-advance-specification.md` §4 — the AP-3-specific
+requirements summary, which **governs** where it disagrees with
+`docs/technical-specification-ap-systems.md` §3.2 (see §7).
 **Predecessor:** `2026-09-01-ap3-phase1-design.md` (merged to master as `b36057c`)
 
 ---
@@ -11,12 +13,11 @@
 
 Phase 1 was defined as everything shippable *without* changing Business Central.
 This is the first of the three groups it deliberately left behind — the journal
-fields §3.2 asks for that Phase 1 either could not send or sent as a placeholder.
+fields §4 asks for that Phase 1 either could not send or sent as a placeholder.
 
 The other two groups are **not** in this spec: ภ.ง.ด. 3/53 classification from
-Tax ID (กอง B) and the delete-document-no / overwrite-interface workflow
-(กอง C). Each gets its own spec. กอง B in particular has nothing to consume its
-output until this group ships, which is why it is second.
+Tax ID and the delete-document-no / overwrite-interface workflow. Each gets its
+own spec.
 
 ## 2. What the BC side already accepts
 
@@ -36,8 +37,9 @@ no AL work at all:
 
 Not present anywhere in the codeunit, and therefore genuine AL work:
 
-- VAT: no Gen. Posting Type, no VAT Bus. / Prod. Posting Group, no VAT amount field
+- VAT: no Gen. Posting Type, no VAT Bus. / Prod. Posting Group
 - No withholding-tax fields, no Applies-to fields
+- No field for a counterparty tax id or name (see §7 question 1)
 - "Document Date" is **forced equal to Posting Date** (`:186`), so a line cannot
   carry the date printed on its own receipt
 
@@ -47,7 +49,7 @@ Three facts shape the design:
   (`:285-328`) return empty on a missing key, and nothing validates the key set.
   Adding optional keys cannot break the existing callers.
 - **The codeunit stages, it never posts** (`GenJnlLine.Insert(true)`, `:221`).
-  BC enforces balance at posting time, which is what makes §3.2's deliberately
+  BC enforces balance at posting time, which is what makes §4's deliberately
   unbalanced journal legal.
 - **Per-line results are returned but never stored** (`:57-75`). A line that
   fails validation reports a reason that is lost the moment the response is
@@ -72,7 +74,7 @@ A2 splits on the dependency instead:
 
 ### 4.1 Step 1 — the Z-ADJ adjustment marker
 
-§3.2 calls for an adjustment indicator when a receipt belongs to an earlier
+§4 calls for an adjustment indicator when a receipt belongs to an earlier
 accounting period than the journal it lands in. BC already has the column: the
 Z-ADJ dimension, reachable through the `adjCode` key the portal has never sent.
 
@@ -92,10 +94,11 @@ carries no date at all — it holds account, amounts, branch and description. It
 gains `expenseDate`, passed through from `AccClearAdvanceItem.ExpenseDate`,
 which the caller already reads.
 
-**Value spelling.** The requirements document writes the indicator as "MS"
-(§3.2, Mjus Indicator). The dimension value that actually exists is `M-ADJ`
+**Value spelling.** Both requirements documents write the indicator as "MS"
+(§4, Mjus Indicator). The dimension value that actually exists is `M-ADJ`
 (confirmed with the user, 2026-09-08). The code follows the system, not the
-document; this paragraph is the record of the discrepancy.
+document; this paragraph is the record of the discrepancy. Z-ADJ also holds
+`A-Adj`, whose meaning for AP-3 is unresolved — see §7.
 
 **Risk.** Codeunit 50263 validates a dimension value before writing it. If
 `M-ADJ` is not a live Z-ADJ value for the company being posted to, the line
@@ -111,55 +114,40 @@ The only part of this spec that needs AL.
 standard Gen. Journal Line — no `tableextension`, no custom fields (decision:
 user, 2026-09-08):
 
-| New key | Gen. Journal Line field |
-| --- | --- |
-| `genPostingType` | "Gen. Posting Type" (purchase) |
-| `vatBusPostingGroup` | "VAT Bus. Posting Group" |
-| `vatProdPostingGroup` | "VAT Prod. Posting Group" |
-| `documentDate` | "Document Date" — currently hard-set to Posting Date at `:186`, which must become "use `documentDate` when given, else Posting Date" |
+| New key | Gen. Journal Line field | Value |
+| --- | --- | --- |
+| `genPostingType` | "Gen. Posting Type" | `Purchase` |
+| `vatBusPostingGroup` | "VAT Bus. Posting Group" | `VATHO` — fixed |
+| `vatProdPostingGroup` | "VAT Prod. Posting Group" | `FVAT` — fixed |
+| `documentDate` | "Document Date" | the receipt's own date; currently hard-set to Posting Date at `:186`, which must become "use `documentDate` when given, else Posting Date" |
 
 Each follows the existing pattern: read with the graceful helper, skip when
 blank, `Validate()` when present. Blank keys leave today's behaviour exactly as
 it is, so every existing caller is unaffected.
 
+**The posting groups are constants, not a choice** (user, 2026-09-08). The
+requirements read `VAT Code: wat H หรือ FBAT (ตามแต่กรณีที่ผู้ใช้เลือก)`, which
+looks like a decision the user makes per document, and the other document reads
+it as varying per branch. Both are the same pair transcribed loosely: `wat H` is
+`VATHO` and `FBAT` is `FVAT` — a business group and a product group that go
+together, not two alternatives. So there is no new form field, no per-branch
+rule, and nothing for a user to get wrong.
+
 **Portal.** The VAT line sends those four, with `documentDate` taken from the
 receipt rather than the journal, so the VAT entry sits in the period the
-document belongs to.
+document belongs to. The account is unchanged: `vatInputGlAccountNo`, configured
+per brand, which is the "ภาษีซื้อยังไม่ถึงกำหนด" account §4 asks for.
 
-**Not sent: Tax ID and Vendor Name.** §3.2 lists them, but the standard
-Gen. Journal Line has nowhere to put them and the decision was to stay on
-standard fields. Accounting reads both off the receipt attached to the request.
+**Tax id and counterparty name are unresolved** — §4 asks for both on the VAT
+line, and the standard Gen. Journal Line has nowhere to put either. See §7
+question 1; this design does not send them and does not add a field for them
+until that is settled.
 
-### 4.3 Step 2 — WHT at its real amount
+### 4.3 Step 2 — External Document No.
 
-Today one WHT line is written per clearing carrying `0`
-(`clear-advance-erp-payload.ts:96`), because Phase 1's §2.3 made the placeholder
-explicit while the back end was unfinished.
-
-`AccClearAdvanceWht` already stores WHT per payee — `TaxId`, `PayeeName`,
-`Amount`, `WhtAmount`, `NetAmount` — and the form already refuses to submit a
-WHT amount without a Tax ID and a payee name
-(`clear-advance-request-service.ts:411`).
-
-**One journal line per payee**, built from those rows rather than from the
-summed `whtAmount` on the expense items. This matches the certificate that has
-to be issued to each payee, and it is what lets กอง B put a ภ.ง.ด. type on a
-line later instead of on a lump sum. No AL change: these are ordinary G/L lines
-with an amount, which the contract has always accepted.
-
-**Open — the sign.** The payload's convention is `>0 = debit, <0 = credit`, and
-`actualNet` already subtracts WHT before the bank difference is computed
-(`:66-67`). On an advance of 1,200 with expense 1,000 + VAT 70 − WHT 30, a
-credit line (−30) leaves the journal short by exactly 1,200 — the amount the
-vendor line would have credited if it were not deliberately 0 — while a debit
-line (+30) leaves 1,260, a number that corresponds to nothing. Credit is
-therefore the reading this design expects, but a wrong sign is a wrong journal,
-so **this must be confirmed with accounting before implementation**.
-
-### 4.4 Step 2 — External Document No.
-
-§3.2 asks for the requester's employee code. What is actually sent is the
-request number: `const employeeCode = requestNo.slice(0, 35)`
+§4 asks for the requester's employee code, and says *only* that
+("ส่งข้อมูลเป็น 'รหัสพนักงาน (Employee ID)' เท่านั้น"). What is actually sent is
+the request number: `const employeeCode = requestNo.slice(0, 35)`
 (`clear-advance-erp-payload.ts:53`). The field is populated, so this reads as
 done until you look at the value — ADC26-09008 reached BC with an External
 Document No. of `ADC26-09008`, not `10177`.
@@ -178,10 +166,10 @@ Unit tests come first, as in Phase 1.
 December receipt against a January posting does; a receipt with no date does
 not; VAT, WHT, vendor and bank lines never do.
 
-**Step 2** — the four VAT keys appear only on the VAT line and only when
-configured; `documentDate` is the receipt's date, not the posting date; one WHT
-line per `AccClearAdvanceWht` row with the payee in its description; External
-Document No. is the staff id on AP-3 and unchanged on AP-2.
+**Step 2** — `genPostingType`, `vatBusPostingGroup` and `vatProdPostingGroup`
+appear only on the VAT line and only when a VAT amount exists; `documentDate` is
+the receipt's date, not the posting date; External Document No. is the staff id
+on AP-3 and unchanged on AP-2.
 
 **End to end, on UAT, against BC Sandbox** — neither step is finished on a green
 test run. Each ends with a real clearing driven through submit, all three
@@ -192,12 +180,18 @@ first carries the marker.
 
 ## 6. Out of scope
 
-- The vendor clearing line stays at `0` (decision: user, 2026-09-08). No
-  Applies-to, no automatic matching against the AP-2 payment — accounting clears
-  it by hand in BC, as §3.2 intends.
-- Tax ID and Vendor Name on the journal (§4.2).
-- กอง B (ภ.ง.ด. 3/53 from Tax ID via DBD) and กอง C (delete document no. and
-  re-send).
+- **WHT and the clear-advance vendor line both stay at 0 — permanently, not as a
+  stopgap.** §4 states it twice: the amounts go to the ERP as zero so accounting
+  clears the vendor and reverses AP-2 by hand in BC, and the resulting
+  unbalanced preview is "ตามธรรมชาติของข้อกำหนดนี้". §4.1 repeats it for the
+  WHT case specifically. An earlier draft of this spec proposed sending the real
+  WHT amount split per payee; that was read out of
+  `technical-specification-ap-systems.md` §2.3, which frames the zero as
+  temporary. It is removed. See §7 question 2.
+- Applies-to / automatic matching against the AP-2 payment.
+- Tax id and counterparty name on the journal (§4.2, §7 question 1).
+- ภ.ง.ด. 3/53 classification from Tax ID, and the delete-document-no / re-send
+  workflow. Separate specs.
 - `balAccountNo`: codeunit 50263 sets "Bal. Account Type" but never writes
   "Bal. Account No." (`:211`). A real gap, found while reading the contract,
   unrelated to anything here. Recorded, not fixed.
@@ -206,10 +200,44 @@ first carries the marker.
 
 ## 7. Open questions
 
-1. **The sign of the WHT line** (§4.3). Blocks Step 2's WHT item only.
-2. **`A-Adj`.** Z-ADJ holds at least `M-ADJ` and `A-Adj`. Whether any AP-3 case
+1. **Tax id and counterparty name on the VAT line.** §4 requires them; the
+   decision was to stay on standard Gen. Journal Line fields, which have nowhere
+   to hold them. One of the two has to give: either they are not sent, or a
+   custom field is added after all.
+2. **Is the zero on WHT permanent?** `ap3-clear-advance-specification.md` §4 says
+   always; `technical-specification-ap-systems.md` §2.3 says it is temporary,
+   pending the back end. This spec follows the AP-3 document. If the other one is
+   the live intent, the WHT item comes back and brings a sign question with it —
+   the payload convention is `>0 = debit, <0 = credit`, and `actualNet` already
+   subtracts WHT before the bank difference is computed (`:66-67`), so a credit
+   line is what makes the remaining imbalance equal the advance.
+3. **`A-Adj`.** Z-ADJ holds at least `M-ADJ` and `A-Adj`. Whether any AP-3 case
    should send `A-Adj` is unresolved (user, 2026-09-08: "ยังไม่แน่"). Step 1
-   sends only `M-ADJ`; if `A-Adj` has an AP-3 meaning, it is a follow-up.
-3. **When the AL extension carrying the Step 2 keys can be deployed to
+   sends only `M-ADJ`.
+4. **"ระบุรหัส Vendor ตั้งต้นเป็นเลข 3 เป็นหลักก่อนตามเงื่อนไขทางบัญชี"**
+   (§4.1). Not implemented anywhere and its meaning is unclear — a vendor-code
+   prefix, a posting group, something else. Needs accounting.
+5. **When the AL extension carrying the Step 2 keys can be deployed to
    Sandbox.** Step 2 cannot be verified before that, and Phase 1 lost a day to
    exactly this when Sandbox was under maintenance.
+
+## 8. Phase 1 items that differ from the requirements
+
+Found while checking this spec against `ap3-clear-advance-specification.md`.
+None is a Phase 2 change; they are recorded so the difference is deliberate and
+visible rather than discovered later.
+
+- **No "อ่านรายการจากไฟล์แนบ" button.** §2.2 describes four steps: upload, press
+  the button, AI reads, popup to check. What shipped reads every upload
+  immediately, with no button in between. It is fewer clicks, and it also means
+  every attachment costs an AI read whether the user wanted one or not.
+- **The G/L filter uses `DimensionType`, not the word "สาขา".** §3.2 states the
+  word test — HQ gets accounts without "สาขา", a PC branch gets accounts with
+  it. Phase 1 changed this deliberately (commit `a98c8da`, user decision
+  2026-09-01) because the word test hid all six `Both` accounts from every
+  branch. The requirements document still carries the old rule and should be
+  corrected.
+- **"1 receipt = 1 row" vs "1 invoice number = 1 row".** §2.2 says one document
+  per row; `technical-specification-ap-systems.md` §2.2 says one invoice number
+  per row. Phase 1 implemented the latter, so one file holding two invoices
+  yields two rows. The two only differ in that case.
