@@ -600,6 +600,24 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
    * message inline and focus the first bad field. Server validation stays the
    * source of truth — these messages match it (P1.1: no client/server conflict).
    */
+  /**
+   * Branches on saved lines that the picker would no longer offer.
+   *
+   * `options/branches` returns only the ones BC has not blocked, so a line
+   * holding a code outside that list is holding one that was blocked or deleted
+   * after it was chosen. Empty while the list is still loading — a slow fetch
+   * must not read as "every branch is blocked".
+   */
+  const staleBranches = useMemo(() => {
+    if (branches.length === 0) return [];
+    const known = new Set(branches.map((b) => b.code));
+    const out: string[] = [];
+    for (const l of lines) {
+      if (l.branchCode && !known.has(l.branchCode) && !out.includes(l.branchCode)) out.push(l.branchCode);
+    }
+    return out;
+  }, [branches, lines]);
+
   function collectErrors(): { key: string; message: string }[] {
     const errs: { key: string; message: string }[] = [];
     if (!brandCode) errs.push({ key: "brand", message: "กรุณาเลือกแบรนด์" });
@@ -612,6 +630,18 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
         if (!l.expenseDate) { errs.push({ key: "lines", message: "มีรายการค่าใช้จ่ายที่ยังไม่ได้ระบุวันที่" }); break; }
         if (!glForced && !l.glAccountNo) { errs.push({ key: "lines", message: "มีรายการค่าใช้จ่ายที่ยังไม่ได้เลือกหมวด (รายการ)" }); break; }
         if (!(num(l.amountBeforeVat) > 0)) { errs.push({ key: "lines", message: "มีรายการที่จำนวนเงินก่อน VAT ไม่ถูกต้อง" }); break; }
+        /* A branch that is no longer offered was blocked or removed in BC after
+           this draft was saved — the picker never offers a blocked one, so a
+           value that is not in the list cannot have been chosen today. Caught
+           here rather than at the send, where it surfaces as a badge only the
+           accountant sees, on a request the requester can no longer edit. */
+        if (staleBranches.includes(l.branchCode)) {
+          errs.push({
+            key: "lines",
+            message: `สาขา ${l.branchCode} ถูกปิดใช้งาน/Block ใน BC แล้ว — กรุณาเลือกสาขาใหม่`,
+          });
+          break;
+        }
       }
     }
     if (whtMismatch) errs.push({ key: "wht", message: "ยอดภาษีหัก ณ ที่จ่ายในตารางใบรับรอง ไม่ตรงกับยอดในรายการค่าใช้จ่าย" });
@@ -1382,6 +1412,13 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                       <BranchPicker options={branches} value={l.branchCode}
                         disabled={readOnly || !brandCode} noBrand={!brandCode}
                         onPick={(code) => updateLine(idx, { branchCode: code })} />
+                      {/* Said on the row that holds it, not only in the toast at
+                          submit: the fix is a click away here. */}
+                      {staleBranches.includes(l.branchCode) && (
+                        <span className="block text-[10px] mt-0.5" style={{ color: "var(--color-danger)" }}>
+                          สาขานี้ถูก Block ใน BC — เลือกใหม่
+                        </span>
+                      )}
                     </Td>
                     <Td>
                       {glForced ? (
@@ -1488,6 +1525,11 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                   <BranchPicker options={branches} value={l.branchCode}
                     disabled={readOnly || !brandCode} noBrand={!brandCode}
                     onPick={(code) => updateLine(idx, { branchCode: code })} />
+                  {staleBranches.includes(l.branchCode) && (
+                    <span className="block text-[11px] mt-1" style={{ color: "var(--color-danger)" }}>
+                      สาขานี้ถูก Block ใน BC — เลือกใหม่
+                    </span>
+                  )}
                 </MField>
                 <MField label="รายการ">
                   {glForced ? (
