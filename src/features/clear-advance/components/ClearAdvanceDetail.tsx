@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   FileText, User, Mail, Wallet, CheckCircle, XCircle, Clock, RotateCcw,
   ThumbsUp, ThumbsDown, Ban, Paperclip, Image as ImageIcon, Banknote, ReceiptText,
-  Pencil, Printer,
+  Printer,
 } from "lucide-react";
 import type { ClearAdvanceDetail as ClearDetail } from "@/features/clear-advance/types";
 import { Dialog } from "@/components/ui/Dialog";
@@ -134,11 +134,6 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
   const refundProofFiles = clear?.refundProofFiles ?? [];
   const refund = clear?.refundToCompany ?? 0;
   const companyPaysExtra = refund < 0;
-  /* Input tax is claimed against a vendor, so a VAT line has to name one before
-     it leaves the account step — the head step cannot edit lines, so this is the
-     last chance to choose. The server refuses the same thing; this is so the
-     accountant sees which line, not an error after clicking. */
-  const missingVendorLines = linesMissingTaxVendor(items);
 
   const [viewerStaffId, setViewerStaffId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -166,11 +161,21 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
   const [cancelOpen, setCancelOpen] = useState(false);
 
   // ACCOUNT-step inline edit state.
-  /* Open at the account step, closed everywhere else. Correcting the lines and
-     naming each seller's vendor IS the account step's work, so making them click
-     for it hid the job behind a button and left the seller cards — and the
-     reason approval is blocked — invisible until they found it. */
-  const [editOpen, setEditOpen] = useState(false);
+  /* The account step's editor saves itself.
+     Correcting the lines and naming each seller's vendor IS this step's work, so
+     there was nothing for an "edit" button to reveal and nothing for a "save"
+     button to decide: the step ends with an approval, and that is the moment
+     anything is committed to. What the buttons did add was a way to lose work —
+     a filled-in vendor sat unsaved until someone remembered the footer. */
+  const savedSnapshot = useRef<string | null>(null);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inFlight = useRef<Promise<void> | null>(null);
+  const [saveState, setSaveState] = useState<
+    | { kind: "idle" }
+    | { kind: "saving" }
+    | { kind: "saved"; at: number }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
   const [editItems, setEditItems] = useState<ClearDetail["items"]>(() => clear?.items ?? []);
   // The WHT payees as accounting may change them. Only the ภ.ง.ด. type is
   // editable here: the payee's identity came off the receipt the requester held,
@@ -197,7 +202,6 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
   /* The name search is per row, not per tax id: it is a way of looking, and two
      rows looking for the same seller may be typing different things. */
   const [vendorNameTerm, setVendorNameTerm] = useState<Record<number, string>>({});
-  const [editBusy, setEditBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -218,14 +222,24 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
   const isAccountStep = inApproval && step === "ACCOUNT";
   const isHeadStep = inApproval && step === "HEAD";
 
-  /* Seed the editor from the request whenever the account step opens it, and
-     re-seed after a save so the cards read the stored rows rather than the ones
-     that were on screen before. */
+  /* Input tax is claimed against a vendor, so a VAT line has to name one before
+     it leaves the account step — the head step cannot edit lines, so this is the
+     last chance to choose. The server refuses the same thing; this is so the
+     accountant sees which line, not an error after clicking.
+     Read from the rows on screen, not the ones last fetched: autosave writes
+     without re-fetching, so the request's own copy lags a vendor just chosen. */
+  const missingVendorLines = linesMissingTaxVendor(isAccountStep ? editItems : items);
+
+  /* Seed the editor from the request at the account step. The snapshot taken
+     here is what "unchanged" means — autosave compares against it, so seeding
+     never counts as an edit and never writes the rows back unprompted. */
   useEffect(() => {
     if (!isAccountStep) return;
-    setEditItems(clear?.items ?? []);
-    setEditWht(clear?.whtItems ?? []);
-    setEditOpen(true);
+    const seedItems = clear?.items ?? [];
+    const seedWht = clear?.whtItems ?? [];
+    setEditItems(seedItems);
+    setEditWht(seedWht);
+    savedSnapshot.current = JSON.stringify({ items: seedItems, wht: seedWht });
   }, [isAccountStep, clear?.items, clear?.whtItems]);
 
   // Requester self-cancel: they own it, still pending the manager (before Account),
@@ -276,7 +290,7 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
     else act("reject", { comment: mgComment.trim() });
   }
 
-  function handleAccountApprove() {
+  async function handleAccountApprove() {
     // Payment date is required only when the company pays extra (company owes the requester).
     if (companyPaysExtra && !paymentDate) {
       return toast.error("กรณีบริษัทต้องจ่ายเพิ่ม กรุณาระบุวันจ่าย (ศุกร์)");
@@ -286,6 +300,12 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
         `กรุณาเลือก Vendor ผู้ขายให้ครบก่อนอนุมัติ — รายการที่ ${missingVendorLines.join(", ")}`,
       );
     }
+    // An edit still sitting in the debounce would be approved over: the server
+    // checks the stored rows, which would not yet hold the vendor on screen.
+    await flushSave();
+    if (savedSnapshot.current !== JSON.stringify({ items: editItems, wht: editWht })) {
+      return toast.error("ยังบันทึกรายการไม่สำเร็จ — แก้ไขให้บันทึกผ่านก่อนจึงอนุมัติได้");
+    }
     act("approve", {
       isChecked: accChecked,
       pvDocNo: pvDocNo.trim() || null,
@@ -293,39 +313,69 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
     });
   }
 
-  async function handleAccountEdit() {
+  /* The rows as they stand, for the saver to read without being re-created on
+     every keystroke. */
+  const latest = useRef({ items: editItems, wht: editWht });
+  latest.current = { items: editItems, wht: editWht };
+
+  const saveNow = useCallback(async () => {
     if (!clear) return;
-    setEditBusy(true);
-    try {
-      const body = {
-        id: request.id,
-        brandCode: request.brandCode ?? null,
-        staffId: request.staffId ?? null,
-        clear: {
-          ...clear,
-          items: editItems,
-          whtItems: editWht,
-        },
-      };
-      const res = await fetch(
-        `/api/request/clear-advance/requests/${request.id}/account-edit`,
-        {
+    // Serialise. The write is a delete-and-reinsert of the rows, so two of them
+    // in flight together finish in whatever order the server gets to them and
+    // the older one can land last.
+    if (inFlight.current) await inFlight.current;
+    const snap = JSON.stringify({ items: latest.current.items, wht: latest.current.wht });
+    if (snap === savedSnapshot.current) return;
+    setSaveState({ kind: "saving" });
+    const run = (async () => {
+      try {
+        const res = await fetch(`/api/request/clear-advance/requests/${request.id}/account-edit`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        },
-      );
-      const json = (await res.json()) as { ok: boolean; error?: string };
-      if (!json.ok) throw new Error(json.error ?? "บันทึกไม่สำเร็จ");
-      toast.success("บันทึกการแก้ไขสำเร็จ");
-      setEditOpen(false);
-      onChanged?.();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ");
-    } finally {
-      setEditBusy(false);
+          body: JSON.stringify({
+            id: request.id,
+            brandCode: request.brandCode ?? null,
+            staffId: request.staffId ?? null,
+            clear: { ...clear, items: latest.current.items, whtItems: latest.current.wht },
+          }),
+        });
+        const json = (await res.json()) as { ok: boolean; error?: string };
+        if (!json.ok) throw new Error(json.error ?? "บันทึกไม่สำเร็จ");
+        savedSnapshot.current = snap;
+        setSaveState({ kind: "saved", at: Date.now() });
+      } catch (e) {
+        // Left dirty on purpose: the next edit retries, and the line says so
+        // rather than a toast that scrolls away.
+        setSaveState({ kind: "error", message: e instanceof Error ? e.message : "บันทึกไม่สำเร็จ" });
+      }
+    })();
+    inFlight.current = run;
+    await run;
+    inFlight.current = null;
+  }, [clear, request.id, request.brandCode, request.staffId]);
+
+  /* Wait out the typing, then write. A number being retyped passes through
+     states nobody meant to store, and the row rewrite is a delete-and-reinsert. */
+  useEffect(() => {
+    if (!isAccountStep || savedSnapshot.current === null) return;
+    if (JSON.stringify({ items: editItems, wht: editWht }) === savedSnapshot.current) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => void saveNow(), 900);
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, [editItems, editWht, isAccountStep, saveNow]);
+
+  /* Nothing may be approved on top of an edit still sitting in a timer. */
+  const flushSave = useCallback(async () => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
     }
-  }
+    if (inFlight.current) await inFlight.current;
+    await saveNow();
+  }, [saveNow]);
+
 
   return (
     <div>
@@ -441,25 +491,17 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
               </button>
             </div>
 
-            {/* Inline expense-line editor — account approver can correct lines before passing to Head */}
+            {/* The account step's work: correct the lines, name each seller's
+                vendor. Always open, and it saves itself. */}
             <div className="mt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setEditItems(clear?.items ?? []);
-                  setEditWht(clear?.whtItems ?? []);
-                  setEditOpen((v) => !v);
-                }}
-                className="inline-flex items-center gap-2 text-[12px] font-medium px-3 py-1.5 rounded-lg cursor-pointer"
-                style={{ color: "var(--nav-active-text)", background: "var(--nav-active-bg)", border: "1px solid var(--nav-active-bg)" }}>
-                <Pencil size={13} /> {editOpen ? "ปิดแก้ไขรายการ" : "แก้ไขรายการค่าใช้จ่าย"}
-              </button>
-
-              {editOpen && (
-                <div className="mt-3 flex flex-col gap-3">
-                  <p className="text-[11px] m-0" style={{ color: "var(--text-muted)" }}>
-                    แก้ไขได้เฉพาะในขั้นบัญชี (ACCOUNT) เท่านั้น — บันทึกจะอัปเดตรายการทันที ก่อนส่งต่อ Head
-                  </p>
+              {(
+                <div className="mt-1 flex flex-col gap-3">
+                  <div className="flex items-baseline gap-2 flex-wrap">
+                    <p className="text-[11px] m-0" style={{ color: "var(--text-muted)" }}>
+                      แก้ไขได้เฉพาะในขั้นบัญชี (ACCOUNT) — บันทึกอัตโนมัติ
+                    </p>
+                    <SaveStatus state={saveState} onRetry={() => void saveNow()} />
+                  </div>
                   <div className="overflow-x-auto -mx-1 px-1">
                     <table className="w-full border-collapse" style={{ minWidth: 1240 }}>
                       <thead>
@@ -671,24 +713,6 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                     </div>
                   )}
 
-                  <div className="flex gap-2 justify-end">
-                    <button
-                      type="button"
-                      onClick={() => setEditOpen(false)}
-                      disabled={editBusy}
-                      className="text-[13px] font-medium px-4 py-2 rounded-lg"
-                      style={{ color: "var(--text-secondary)", background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}>
-                      ยกเลิก
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleAccountEdit}
-                      disabled={editBusy}
-                      className="inline-flex items-center gap-2 text-[13px] font-medium px-4 py-2 rounded-lg"
-                      style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)", opacity: editBusy ? 0.7 : 1 }}>
-                      <Pencil size={13} /> {editBusy ? "กำลังบันทึก..." : "บันทึกการแก้ไข"}
-                    </button>
-                  </div>
                 </div>
               )}
             </div>
@@ -1142,5 +1166,55 @@ function RefundBanner({ refund }: { refund: number }) {
       style={{ background: tone.bg, border: `1px solid ${tone.border}` }}>
       <span className="text-[13px] font-bold" style={{ color: tone.text }}>{label}</span>
     </div>
+  );
+}
+
+/**
+ * What autosave is doing, in the one place the eye already is.
+ *
+ * A toast would be wrong here: it announces a save that is about to happen again
+ * on the next keystroke, and it is gone by the time anyone wonders whether the
+ * vendor they picked was kept. A failure stays on screen and stays retryable,
+ * because the rows are still only on this page until it succeeds.
+ */
+function SaveStatus({
+  state,
+  onRetry,
+}: {
+  state:
+    | { kind: "idle" }
+    | { kind: "saving" }
+    | { kind: "saved"; at: number }
+    | { kind: "error"; message: string };
+  onRetry: () => void;
+}) {
+  if (state.kind === "idle") return null;
+  if (state.kind === "saving") {
+    return (
+      <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>
+        กำลังบันทึก…
+      </span>
+    );
+  }
+  if (state.kind === "saved") {
+    const t = new Date(state.at).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" });
+    return (
+      <span className="text-[11px]" style={{ color: "var(--text-info-green)" }}>
+        ✓ บันทึกแล้ว {t}
+      </span>
+    );
+  }
+  return (
+    <span className="text-[11px] flex items-center gap-1" style={{ color: "var(--color-danger)" }}>
+      บันทึกไม่สำเร็จ — {state.message}
+      <button
+        type="button"
+        onClick={onRetry}
+        className="underline cursor-pointer border-none bg-transparent p-0 text-[11px]"
+        style={{ color: "var(--nav-active-text)" }}
+      >
+        ลองใหม่
+      </button>
+    </span>
   );
 }
