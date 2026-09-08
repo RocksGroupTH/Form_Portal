@@ -236,7 +236,15 @@ export function OcrConfirmModal({
                     ))}
                   </select>
                   {r.fileName && (
-                    <span className="text-[11px] truncate max-w-[40%]" style={{ color: "var(--text-faint)" }}>
+                    // Scanner filenames are a timestamp and nothing else —
+                    // "20260819164241237.pdf". Cut to 40% of the row they all
+                    // read alike, and the reviewer cannot tell which upload a row
+                    // came from, which is the only thing this label is for. It
+                    // takes whatever the row has left now, truncating only when
+                    // there is genuinely no room, and the title carries the whole
+                    // name for that case.
+                    <span className="text-[11px] truncate flex-1 min-w-0" title={r.fileName}
+                      style={{ color: "var(--text-faint)" }}>
                       {r.fileName}
                     </span>
                   )}
