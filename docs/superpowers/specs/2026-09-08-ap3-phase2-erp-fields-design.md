@@ -125,10 +125,18 @@ as `branchCode`, falling back to `'COCO'` when absent so nothing that does not
 send it changes behaviour. That fallback is what makes this safe to deploy
 before the portal sends anything.
 
-**Portal.** Sends `buCode` per line. **Where the value comes from is not
-settled** — the layout implies a mapping (rows 25-29 pair `DOCO`, `DODO`,
-`DODO-M`, `RFM`, `COCO` with G/L accounts) but the sheet is a legend there, not
-data. See §8 q3.
+**The rule: a line's BU is the BU its Location is bound to** (user,
+2026-09-08) — the same default-dimension binding the layout's bank-line note
+means by "ล็อคตามสาขา Location ERP". PCTH has ten BU values (`COCO`, `CTPS`,
+`DOCO`, `DODO`, `DODO-A`, `DODO-M`, `EXPR`, `LICNS`, plus `ADJ` and `PP`
+blocked), which is where the sheet's `DOCO` / `DODO` / `DODO-M` come from.
+
+**Portal — blocked on data, not on the rule.** The binding lives on the Location
+card in BC and nothing syncs it here: `Rocks_ERP_Data` holds `ErpAccounts`,
+`ErpBankAccountCard`, `ErpDimensionValue`, `ErpGeneralJournalBatch`,
+`ErpSyncLog` and `ErpVendors` — dimension *values*, but no Location table and no
+Location→BU map. Sending `buCode` needs that synced first, or the lookup moved
+into the codeunit where BC already knows it. See §8 q3.
 
 This touches AP-2 as well: the same codeunit serves both. AP-2's payload is not
 changed in this step, so AP-2 keeps today's behaviour through the fallback until
@@ -294,10 +302,13 @@ Two of the four are settled; what remains does not block starting.
    Branch Code" (40009717 vs 40009731). Both exist; the sheet does not say which,
    and the example leaves the column empty. A detail inside Step 4, not a
    blocker.
-3. **What decides a line's Business Unit?** The sheet pairs BU codes with G/L
-   accounts in a legend (rows 25-29) but does not state the rule. Needed before
-   the portal sends `buCode`; the AL half (§5.1) can be built and deployed first
-   behind its `COCO` fallback, which is why Step 2 is not blocked.
+3. **Where does Location→BU come from for the portal?** The rule is settled — a
+   line's BU is the BU its Location is bound to — but the binding is on the BC
+   Location card and nothing syncs it into `Rocks_ERP_Data`. Either add a
+   Location sync alongside the existing dimension-value sync, or have codeunit
+   50263 resolve it from the Location itself and keep `buCode` as an override.
+   The AL half is done either way, since it takes what it is given and falls
+   back to `COCO`.
 4. **Currency Code** is a column we never populate — irrelevant while everything
    is THB, but the column exists.
 

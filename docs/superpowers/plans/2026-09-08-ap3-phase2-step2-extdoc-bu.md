@@ -184,100 +184,55 @@ carries it the rest of the way.
 
 ---
 
-## Task 4: The Business Unit question
+## Task 4: The Business Unit question — *answered 2026-09-08*
 
-2a cannot be built past its AL half until this is answered. This task exists so
-the question is tracked rather than remembered.
+- [x] **Step 1: Ask what decides a line's Business Unit**
 
-**Files:** none — a question for accounting.
+**A line's BU is the BU its Location is bound to** (user) — the Location card's
+default dimension, which is what the layout's bank-line note
+"ล็อคตามสาขา Location ERP" refers to. PCTH has ten BU values in
+`ErpDimensionValue`: `COCO`, `CTPS`, `DOCO`, `DODO`, `DODO-A`, `DODO-M`, `EXPR`,
+`LICNS`, and `ADJ` / `PP` blocked.
 
-- [ ] **Step 1: Ask what decides a line's Business Unit**
+- [x] **Step 2: Write the answer into the spec** — §5.1 and §8 q3 updated.
 
-The layout shows BU varying per line — `COCO` on one expense line, `DOCO` on the
-next — and for the bank line notes "ล็อคตามสาขา Location ERP". Rows 25-29 pair
-`DOCO`, `DODO`, `DODO-M`, `RFM`, `COCO` with G/L accounts, but that block is a
-legend, not data, and it does not state the rule.
-
-Candidate readings, none of them to be assumed:
-- BU follows the **G/L account** on the line (what the legend hints at)
-- BU follows the **branch**, as the bank line's note implies for that line
-- BU is a property of the **brand / company** and is constant per clearing
-
-- [ ] **Step 2: Write the answer into the spec**
-
-Update §5.1 and close §8 q3 of
-`docs/superpowers/specs/2026-09-08-ap3-phase2-erp-fields-design.md`.
+**What it does not answer:** where the portal gets that binding.
+`Rocks_ERP_Data` syncs dimension *values* but has no Location table, so the
+portal cannot resolve Location→BU today. Either sync Locations alongside the
+dimension values, or let the codeunit resolve it and keep `buCode` as an
+override. Until one of those, the portal sends nothing and every line keeps
+falling back to `COCO` — the same value as today, so nothing regresses.
 
 ---
 
-## Task 5: The AL half of Business Unit
+## Task 5: The AL half of Business Unit — *done 2026-09-08*
 
-Safe to write and deploy before the rule is known, because it changes nothing
-until a caller sends the key.
+- [x] **Step 1: Read the key, keep the old value as the fallback**
 
-**Files:**
-- Modify: `R:\PPFunction\AL\ALProject12_SalesTran\ACCForm\AP\APJournalCreate.al:280-282`
+`APJournalCreate.al`: `BuCode` is read beside `branchCode` (`:137`),
+`GetBusinessUnitCode` takes it and returns `'COCO'` when it is blank (`:293`),
+and both call sites pass it — `Shortcut Dimension 2 Code` (`:227`) and the BU
+entry inside `BuildDimSetID` (`:236`), whose signature gained the parameter and
+whose one caller was updated with it (`:221`). Backup at
+`APJournalCreate.al.bak-bu`.
 
-- [ ] **Step 1: Read the key, keep the old value as the fallback**
+- [ ] **Step 2: Compile** — *not possible here*
 
-Replace:
-
-```al
-    local procedure GetBusinessUnitCode(): Code[20]
-    begin
-        exit('COCO');
-    end;
-```
-
-with a lookup that takes the line's value when it is given:
-
-```al
-    local procedure GetBusinessUnitCode(BuCode: Text): Code[20]
-    begin
-        // The layout (AP-UP.xlsx, "AP-3 (Interface ERP)") has Business Unit as a
-        // per-line column; this used to return a constant, so every line of every
-        // AP-2 and AP-3 journal carried COCO whether or not that was right.
-        // The constant stays as the fallback: a caller that sends nothing keeps
-        // exactly today's behaviour, which is what makes this safe to deploy
-        // before either portal sends the key.
-        if BuCode <> '' then
-            exit(CopyStr(BuCode, 1, 20));
-        exit('COCO');
-    end;
-```
-
-and at both call sites (`:225` and `:234`) pass the line's value:
-
-```al
-        GenJnlLine.Validate("Shortcut Dimension 2 Code", GetBusinessUnitCode(GetJsonText(LineObject, 'buCode')));
-```
-
-```al
-        AddDimensionToTemp(TempDimSetEntry, 'BU', GetBusinessUnitCode(GetJsonText(LineObject, 'buCode')));
-```
-
-Read `buCode` once into a local at the top of the line loop rather than calling
-`GetJsonText` twice, matching how `branchCode` is handled at `:135`.
-
-- [ ] **Step 2: Compile**
-
-Build the extension in VS Code (AL: Package) or with `alc`. A compile is the
-only check available here — there is no AL test project in this workspace.
+`alc.exe` ships with the AL extension but needs a .NET 10 runtime, and this
+machine has none (`no dotnet runtime`). The build would fail on the new
+`NWTH CustomizationRevolic` dependency anyway, whose symbols are not in
+`.alpackages`. **Compile in VS Code after `AL: Download Symbols`.**
 
 - [ ] **Step 3: Deploy to Sandbox and confirm nothing changed**
 
 Publish, then send one AP-3 clearing that does **not** carry `buCode`. Its lines
-must still land with `BU = COCO`. This is the whole point of the fallback: the
+must still land with `BU = COCO`. That is the whole point of the fallback: the
 change is provably inert until someone opts in.
 
 - [ ] **Step 4: Commit**
 
-The AL workspace is a separate repository from Form_Portal. Commit there:
-
-```bash
-git add ACCForm/AP/APJournalCreate.al
-git commit -m "feat(ap): the journal API accepts a per-line Business Unit"
-```
+The AL workspace is not a git repository, so there is nothing to commit there —
+the file and its `.bak-bu` backup are the record.
 
 ---
 
