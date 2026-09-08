@@ -17,6 +17,8 @@ export interface ClrPreviewLine {
   departmentCode: string;
   debit: number | null;
   credit: number | null;
+  /** Z-ADJ marker when this line is a prior-period adjustment; null otherwise. */
+  adjCode: string | null;
 }
 
 export interface ClrPreviewItem {
@@ -245,6 +247,7 @@ export async function previewClrErpJournal(ids: number[]): Promise<ClrPreviewIte
           departmentCode: l.departmentCode ?? "",
           debit: l.amount > 0 ? l.amount : null,
           credit: l.amount < 0 ? -l.amount : null,
+          adjCode: l.adjCode ?? null,
         })),
       });
     } catch (e) {

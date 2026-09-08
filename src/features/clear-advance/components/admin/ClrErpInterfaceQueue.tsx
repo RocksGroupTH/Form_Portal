@@ -142,7 +142,19 @@ function ClrErpPreviewModal({ items, onClose }: { items: ClrPreviewItem[]; onClo
                             <td className="px-2.5 py-1.5 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{line.accountType}</td>
                             <td className="px-2.5 py-1.5 whitespace-nowrap font-mono" style={{ color: "var(--text-primary)" }}>{line.accountNo}</td>
                             <td className="px-2.5 py-1.5" style={{ color: "var(--text-primary)", maxWidth: 200 }}>{line.description}</td>
-                            <td className="px-2.5 py-1.5 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{line.branchCode || "—"}</td>
+                            <td className="px-2.5 py-1.5 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>
+                              {line.branchCode || "—"}
+                              {/* A prior-period line is the exception, so it reads as a
+                                  mark on the branch rather than a column that would be
+                                  empty on almost every row. */}
+                              {line.adjCode && (
+                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded ml-1.5"
+                                  style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)" }}
+                                  title="ใบเสร็จลงเดือนก่อนเดือนที่โพสต์ — ปรับปรุงบัญชี (Z-ADJ)">
+                                  {line.adjCode}
+                                </span>
+                              )}
+                            </td>
                             <td className="px-2.5 py-1.5 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{line.departmentCode || "—"}</td>
                             <td className="px-2.5 py-1.5 text-right tabular-nums whitespace-nowrap" style={{ color: line.debit ? "var(--text-primary)" : "var(--text-faint)" }}>
                               {line.debit != null ? fmtMoney(line.debit) : "—"}
