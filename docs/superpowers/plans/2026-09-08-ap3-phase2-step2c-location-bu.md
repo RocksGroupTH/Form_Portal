@@ -51,7 +51,7 @@ That last number is the reason this is worth doing rather than a tidy-up.
 **Files:**
 - Create: `migrations/138_erp_location.sql`
 
-- [ ] **Step 1: Write the migration**
+- [x] **Step 1: Write the migration**
 
 Follow `117_erp_vendors.sql` exactly for the guard, the transaction and the
 `IF OBJECT_ID(...) IS NULL` shape.
@@ -101,29 +101,24 @@ BEGIN
 END
 ```
 
-- [ ] **Step 2: Apply it to Rocks_ERP_Data**
+- [x] **Step 2: Apply it to Rocks_ERP_Data**
 
 ```bash
-npm run apply-sql -- migrations/138_erp_location.sql
+npm run apply-sql -- --db Rocks_ERP_Data --file migrations/138_erp_location.sql
 ```
 
-Check the runner's target database first — this one must land on
-`Rocks_ERP_Data`, not on the form database. The guard makes a wrong target fail
-loudly rather than create the table in the wrong place.
+- [x] **Step 3: Confirm** — *done 2026-09-08*
 
-- [ ] **Step 3: Confirm**
+Ten columns as designed, and three indexes: `PK_ErpLocation`,
+`UQ_ErpLocation_Brand_Code` and `IX_ErpLocation_Brand_Branch`.
 
-```sql
-SELECT COUNT(*) FROM Rocks_ERP_Data.INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'ErpLocation'
-```
-Expected: 1.
+Two things were checked beyond "it ran". Applying it a second time succeeds and
+changes nothing, so a re-run during a later deploy is harmless. And pointing it
+at `Rocks_Portal_Form_UAT` is **refused** — "Migration 138 may only be applied to
+Rocks_ERP_Data" — with no table left behind in the form database afterwards,
+which is the failure mode the guard exists for.
 
-- [ ] **Step 4: Commit**
-
-```bash
-git add migrations/138_erp_location.sql
-git commit -m "feat(erp): ErpLocation — the BC Location master with its BU binding"
-```
+- [x] **Step 4: Commit**
 
 ---
 
