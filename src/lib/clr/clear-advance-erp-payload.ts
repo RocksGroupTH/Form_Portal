@@ -15,6 +15,8 @@ export interface ClrJournalItem {
   whtAmount: number;
   branchCode: string | null;
   description?: string | null;
+  /** The date printed on this line's receipt — decides the Z-ADJ marker (§4.1). */
+  expenseDate?: string | null;
 }
 export interface ClrJournalInput {
   requestNo: string;
@@ -90,18 +92,35 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
   // It describes the whole clearing, so every line carries the same value.
   const documentType = bankAmount > 0 ? "Refund" : "Payment";
 
-  const glLine = (accountNo: string, amount: number, branchCode: string | null, detail?: string | null): PpapJournalLinePayload => ({
+  const glLine = (
+    accountNo: string,
+    amount: number,
+    branchCode: string | null,
+    detail?: string | null,
+    adjCode?: string,
+  ): PpapJournalLinePayload => ({
     groupNo: "G1", postingDate, documentType, accountType: "G/L Account",
     accountNo, description: describe(detail),
     paymentMethodCode: "BANK", amount: r2(amount), balAccountType: "G/L Account",
     employeeCode, branchCode: branchCode ?? defaultBranch, departmentCode,
+    // Spread rather than `adjCode: undefined`, so an unmarked line serialises
+    // byte-for-byte as it did before this feature existed.
+    ...(adjCode ? { adjCode } : null),
   });
 
   const lines: PpapJournalLinePayload[] = [];
   let vatTotal = 0, whtTotal = 0;
 
   for (const it of items) {
-    if (r2(it.amountBeforeVat) !== 0) lines.push(glLine(it.glAccountNo, it.amountBeforeVat, it.branchCode, it.description));
+    if (r2(it.amountBeforeVat) !== 0) {
+      lines.push(glLine(
+        it.glAccountNo,
+        it.amountBeforeVat,
+        it.branchCode,
+        it.description,
+        isPriorPeriod(it.expenseDate, postingDate) ? PRIOR_PERIOD_ADJ_CODE : undefined,
+      ));
+    }
     vatTotal += it.vatAmount || 0;
     whtTotal += it.whtAmount || 0;
   }

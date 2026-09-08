@@ -17,6 +17,12 @@ export interface PpapJournalLinePayload {
   employeeCode: string;
   branchCode: string;
   departmentCode: string;
+  /**
+   * Z-ADJ dimension value. Codeunit 50263 reads this key and writes the
+   * dimension (`APJournalCreate.al:238`); omitted, the line simply carries no
+   * Z-ADJ value, which is what every line sent before this did.
+   */
+  adjCode?: string;
 }
 
 export interface PpapJournalPayload {

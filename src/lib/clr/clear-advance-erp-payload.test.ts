@@ -158,3 +158,57 @@ test("no receipt date means the rule cannot be true", () => {
   assert.equal(isPriorPeriod("", "2026-08-01"), false);
   assert.equal(isPriorPeriod("2026-07-01", ""), false);
 });
+
+test("an expense line from an earlier month carries the Z-ADJ marker", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    postingDate: "2026-08-20",
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 2000, vatAmount: 0, whtAmount: 0, branchCode: "HQ01", expenseDate: "2026-07-15" }],
+  }));
+  const exp = p.lines.find((l) => l.accountNo === "610322005")!;
+  assert.equal(exp.adjCode, "M-ADJ");
+});
+
+test("an expense line from the posting month carries no marker", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    postingDate: "2026-08-20",
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 2000, vatAmount: 0, whtAmount: 0, branchCode: "HQ01", expenseDate: "2026-08-02" }],
+  }));
+  const exp = p.lines.find((l) => l.accountNo === "610322005")!;
+  assert.equal(exp.adjCode, undefined);
+});
+
+test("an expense line with no receipt date carries no marker", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    postingDate: "2026-08-20",
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 2000, vatAmount: 0, whtAmount: 0, branchCode: "HQ01" }],
+  }));
+  const exp = p.lines.find((l) => l.accountNo === "610322005")!;
+  assert.equal(exp.adjCode, undefined);
+});
+
+test("each expense line is judged on its own date", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    postingDate: "2026-08-20",
+    advanceAmount: 3000,
+    items: [
+      { glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 0, whtAmount: 0, branchCode: "HQ01", expenseDate: "2026-07-15" },
+      { glAccountNo: "610319001", amountBeforeVat: 2000, vatAmount: 0, whtAmount: 0, branchCode: "HQ01", expenseDate: "2026-08-15" },
+    ],
+  }));
+  assert.equal(p.lines.find((l) => l.accountNo === "610322005")!.adjCode, "M-ADJ");
+  assert.equal(p.lines.find((l) => l.accountNo === "610319001")!.adjCode, undefined);
+});
+
+/* The VAT, WHT, vendor and bank lines have no document date of their own, so a
+ * marker on them would be derived from someone else's receipt (spec §4.1). */
+test("only expense lines are ever marked", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    postingDate: "2026-08-20",
+    advanceAmount: 5000,
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 30, branchCode: "HQ01", expenseDate: "2026-07-15" }],
+  }));
+  for (const l of p.lines) {
+    const isExpense = l.accountNo === "610322005";
+    assert.equal(l.adjCode, isExpense ? "M-ADJ" : undefined, `line ${l.accountType} ${l.accountNo}`);
+  }
+});
