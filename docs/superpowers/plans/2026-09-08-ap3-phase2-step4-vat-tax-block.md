@@ -500,12 +500,12 @@ was taken back out, so the diff is 77 lines of AL and nothing else.
 
 ---
 
-## Task 5: Prove it in BC
+## Task 5: Prove it in BC — *blocked on a configuration decision, 2026-09-08*
 
-- [ ] **Step 1: Send a clearing with two VAT receipts**, different sellers,
+- [x] **Step 1: Send a clearing with two VAT receipts**, different sellers,
 different branches, one of them prior-period.
 
-- [ ] **Step 2: Confirm at the wire** — preview plus a temporary file log,
+- [x] **Step 2: Confirm at the wire** — preview plus a temporary file log,
 removed straight after.
 
 - [ ] **Step 3: Confirm in BC** — as Steps 2c and 3 taught, "Sent" proves only
@@ -513,6 +513,51 @@ that the payload was accepted. Open the batch, find the document, and read the
 VAT lines' Tax Invoice No., Tax Invoice Name and the three posting-group fields.
 
 - [ ] **Step 4: Record the document number.**
+
+### BC refused the VAT line, and the reason was already true yesterday
+
+`ADC26-09015` went out with the full block. BC's reply:
+
+```
+Processed 3 lines. Inserted: 2, Failed: 1. Documents: 1
+  { status: "error", message: "Account No. must be equal to '110741001' in
+    Gen. Journal Line ... Current value is '211111001'." }
+```
+
+Validating `VAT Bus. Posting Group` and `VAT Prod. Posting Group` with
+Gen. Posting Type `Purchase` makes BC read its VAT Posting Setup and force the
+account. For VATHO / FVAT / Purchase that account is `110741001`. The portal
+sends `211111001`, from AP-3's own **VAT input** setting for ROCKS.
+
+The two accounts are not near-misses:
+
+| Account | Name | Category |
+| --- | --- | --- |
+| `110741001` | ลูกหนี้ภาษี - ภาษีมูลค่าเพิ่ม - **ภาษีซื้อ** | Assets |
+| `211111001` | เจ้าหนี้ภาษี - ภาษีมูลค่าเพิ่ม - **ภาษีขาย** | Liabilities |
+
+**The setting names the sales-VAT account where input VAT is meant.** That has
+been true the whole time — `PVA2609-0015` posted 230 of input VAT to the output
+VAT account this morning and BC took it without a word, because a line with no
+posting groups is simply booked wherever it is told.
+
+So the tax block did not break this. It made BC check, and the check failed on
+something that was already wrong and silent — the same class of finding as the
+constant `COCO` in the BU dimension.
+
+**This is accounting's call, not a coding one, and Step 4 stops here.** Two ways
+to reconcile: point AP-3's VAT input setting for ROCKS at `110741001`, or use
+posting groups whose VAT Posting Setup resolves to `211111001`. The account names
+argue plainly for the first, but changing where tax posts is not a decision to
+take from a table read.
+
+### Cleanup owed in the Sandbox
+
+Each attempt inserted what it could — the expense and vendor lines — and left the
+VAT line out. Three sends were made while tracking the reason down, so batch `Q`
+holds up to three partial `PVA2609-00xx` documents (the last is `PVA2609-0018`)
+that must be deleted rather than posted. The codeunit does not roll back a
+partial document, which is worth remembering before the next retry.
 
 ---
 
