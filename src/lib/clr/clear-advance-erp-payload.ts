@@ -115,6 +115,22 @@ export function isPriorPeriod(expenseDate: string | null | undefined, postingDat
  * to carry 0 so accounting matches and clears them by hand in BC; CU 50263 only inserts
  * (never posts), and BC enforces balance at posting time, so an unbalanced batch is fine.
  */
+/**
+ * Which BC document type a clearing is, from the direction of the money.
+ *
+ * The employee returning what they did not spend is a **Refund**; the company
+ * paying them the shortfall is a **Payment** (user, 2026-09-09). `bankAmount` is
+ * the advance less what was actually spent, so its sign is the whole rule: money
+ * coming back is positive, money going out is negative.
+ *
+ * A clearing that comes out exactly even is a Refund of nothing rather than a
+ * Payment of nothing — no money leaves the company, and the earlier version of
+ * this rule called that case a payment where nothing was paid.
+ */
+export function journalDocumentType(bankAmount: number): "Refund" | "Payment" {
+  return bankAmount < 0 ? "Payment" : "Refund";
+}
+
 export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJournalPayload {
   const { config: c, items, requestNo, postingDate, departmentCode } = input;
   const advanceVendorNo = c.advanceVendorNo?.trim() ?? "";
@@ -158,24 +174,7 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
 
   const actualNet = r2(items.reduce((s, it) => s + it.amountBeforeVat + (it.vatAmount || 0) - (it.whtAmount || 0), 0));
   const bankAmount = r2(input.advanceAmount - actualNet);
-  /**
-   * Always `Refund` (user, 2026-09-08). It describes the whole clearing, so every
-   * line carries the same value.
-   *
-   * This is a deliberate divergence from `ap3-clear-advance-specification.md`
-   * row 76, which asks for `Payment` when the company pays the employee more than
-   * they drew. Two consequences, recorded rather than hidden:
-   *
-   * The direction of the money is still on the bank line, which keeps its own
-   * sign — so a pay-extra clearing goes out as a `Refund` document carrying a
-   * credit bank line. Row 77 pairs Refund with a debit bank line, and that
-   * pairing no longer holds.
-   *
-   * The exactly-equal case used to fall through to `Payment`, which matched
-   * neither rule and read as a payment where nothing was paid. That one is
-   * simply fixed.
-   */
-  const documentType = "Refund";
+  const documentType = journalDocumentType(bankAmount);
 
   const glLine = (
     accountNo: string,

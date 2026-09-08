@@ -10,7 +10,7 @@ import { PaymentDatePicker } from "@/components/ui/PaymentDatePicker";
 import { FilterMonthPicker } from "@/features/accounting/components/FilterMonthPicker";
 import { sentMonthKey } from "@/features/accounting/components/ApprovalQueueFilters";
 import type { ClrErpQueueRow } from "@/lib/clr/clear-advance-erp-queue-service";
-import type { ClrPreviewItem } from "@/lib/clr/clear-advance-erp-send";
+import type { ClrPreviewItem, ClrPreviewLine } from "@/lib/clr/clear-advance-erp-send";
 import { fmtMoney } from "@/features/clear-advance/components/admin/shared";
 
 /* ─────────────────────── helpers ─────────────────────── */
@@ -134,6 +134,101 @@ function ErpStatusBadge({ row, onShow }: { row: ClrErpQueueRow; onShow?: (r: Clr
 
 /* ─────────────────────── preview modal ─────────────────────── */
 
+/**
+ * The preview's columns are Business Central's, named as BC names them.
+ *
+ * The point of a preview is to be compared with what BC will hold, and the old
+ * seven — Account Type, Account No., Description, Branch, Dept, Debit, Credit —
+ * could not answer the question the VAT work made worth asking, because the
+ * whole tax block was sent and never shown. These are the `Gen. Journal Line`
+ * fields the payload writes, in the order BC lists them; the last seven come
+ * from tableextension 80105 (`NWTH CustomizationRevolic`), whose captions differ
+ * from the interface sheet's wording and are given here as BC shows them.
+ */
+interface BcCol {
+  key: string;
+  label: string;
+  numeric?: boolean;
+  mono?: boolean;
+  dim?: boolean;
+  render: (l: ClrPreviewLine) => React.ReactNode;
+}
+
+const dash = (v: unknown) => (v === null || v === undefined || v === "" ? "—" : String(v));
+
+const BC_COLUMNS: BcCol[] = [
+  { key: "postingDate", label: "Posting Date", dim: true, render: (l) => dash(l.postingDate) },
+  { key: "documentType", label: "Document Type", render: (l) => dash(l.documentType) },
+  { key: "accountType", label: "Account Type", dim: true, render: (l) => dash(l.accountType) },
+  { key: "accountNo", label: "Account No.", mono: true, render: (l) => dash(l.accountNo) },
+  { key: "description", label: "Description", render: (l) => dash(l.description) },
+  { key: "debit", label: "Debit Amount", numeric: true, render: (l) => (l.debit != null ? fmtMoney(l.debit) : "—") },
+  { key: "credit", label: "Credit Amount", numeric: true, render: (l) => (l.credit != null ? fmtMoney(l.credit) : "—") },
+  { key: "balAccountType", label: "Bal. Account Type", dim: true, render: (l) => dash(l.balAccountType) },
+  { key: "paymentMethodCode", label: "Payment Method Code", dim: true, render: (l) => dash(l.paymentMethodCode) },
+  { key: "employeeCode", label: "External Document No.", mono: true, dim: true, render: (l) => dash(l.employeeCode) },
+  {
+    key: "branchCode",
+    label: "BRANCH",
+    render: (l) => (
+      <span className="inline-flex items-center gap-1.5">
+        {dash(l.branchCode)}
+        {/* Shown, never enforced: BC may still take the line. */}
+        {l.branchBlocked && (
+          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
+            style={{ background: "var(--bg-badge)", color: "var(--text-warning)" }}
+            title="สาขานี้ถูก Block ใน BC — ส่งได้ แต่ BC อาจไม่รับบรรทัดนี้">
+            BLOCKED
+          </span>
+        )}
+      </span>
+    ),
+  },
+  { key: "departmentCode", label: "DEPT", dim: true, render: (l) => dash(l.departmentCode) },
+  { key: "buCode", label: "BU", dim: true, render: (l) => dash(l.buCode) },
+  {
+    key: "adjCode",
+    label: "Z-ADJ",
+    render: (l) =>
+      l.adjCode ? (
+        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
+          style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)" }}
+          title="ใบเสร็จลงเดือนก่อนเดือนที่โพสต์ — ปรับปรุงบัญชี">
+          {l.adjCode}
+        </span>
+      ) : "—",
+  },
+  { key: "genPostingType", label: "Gen. Posting Type", dim: true, render: (l) => dash(l.genPostingType) },
+  { key: "vatBusPostingGroup", label: "VAT Bus. Posting Group", dim: true, render: (l) => dash(l.vatBusPostingGroup) },
+  { key: "vatProdPostingGroup", label: "VAT Prod. Posting Group", dim: true, render: (l) => dash(l.vatProdPostingGroup) },
+  { key: "taxInvoiceNo", label: "Tax Invoice No.", mono: true, render: (l) => dash(l.taxInvoiceNo) },
+  { key: "taxInvoiceDate", label: "Tax Invoice Date", dim: true, render: (l) => dash(l.taxInvoiceDate) },
+  { key: "taxInvoiceBase", label: "Tax Invoice Base", numeric: true, render: (l) => (l.taxInvoiceBase != null ? fmtMoney(l.taxInvoiceBase) : "—") },
+  { key: "taxInvoiceName", label: "Tax Invoice Name", render: (l) => dash(l.taxInvoiceName) },
+  { key: "taxVatRegistrationNo", label: "Revolic VAT Registration No.", mono: true, render: (l) => dash(l.taxVatRegistrationNo) },
+  { key: "taxVendorNo", label: "Tax Vendor No.", mono: true, render: (l) => dash(l.taxVendorNo) },
+  { key: "taxBranchCode", label: "Branch Code (tax)", mono: true, render: (l) => dash(l.taxBranchCode) },
+];
+
+/** Columns with a value on at least one line. The tax block is empty on every
+ *  line of a cash-bill clearing, and twelve blank columns would bury the rest. */
+function shownCols(lines: ClrPreviewLine[]): BcCol[] {
+  const cache = shownColsCache.get(lines);
+  if (cache) return cache;
+  const keep = BC_COLUMNS.filter((c) =>
+    lines.some((l) => {
+      const v = (l as unknown as Record<string, unknown>)[c.key];
+      return v !== null && v !== undefined && v !== "";
+    }),
+  );
+  shownColsCache.set(lines, keep);
+  return keep;
+}
+
+/** Keyed by the array the modal already holds, so the render does not recompute
+ *  the same answer once per row per column. */
+const shownColsCache = new WeakMap<ClrPreviewLine[], BcCol[]>();
+
 function ClrErpPreviewModal({ items, onClose }: { items: ClrPreviewItem[]; onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -195,74 +290,56 @@ function ClrErpPreviewModal({ items, onClose }: { items: ClrPreviewItem[]; onClo
                 )}
                 {item.ok && item.lines.length > 0 && (
                   <>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-[11px] min-w-[700px]" style={{ borderCollapse: "collapse" }}>
+                  <div className="overflow-x-auto show-x-scroll pb-1">
+                    <table className="text-[11px]" style={{ borderCollapse: "collapse", minWidth: "100%" }}>
                       <thead>
                         <tr style={{ background: "var(--bg-card-alt)" }}>
-                          {["Account Type", "Account No.", "Description", "Branch", "Dept", "Debit", "Credit"].map((h) => (
-                            <th key={h} className={`px-2.5 py-1.5 font-semibold whitespace-nowrap ${h === "Debit" || h === "Credit" ? "text-right" : "text-left"}`}
-                              style={{ color: "var(--text-secondary)", borderBottom: "1px solid var(--border-light)" }}>{h}</th>
+                          {shownCols(item.lines).map((c) => (
+                            <th key={c.key}
+                              className={`px-2.5 py-1.5 font-semibold whitespace-nowrap ${c.numeric ? "text-right" : "text-left"}`}
+                              style={{ color: "var(--text-secondary)", borderBottom: "1px solid var(--border-light)" }}>
+                              {c.label}
+                            </th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
                         {item.lines.map((line, idx) => (
                           <tr key={idx} style={{ borderBottom: "1px solid var(--border-light)" }}>
-                            <td className="px-2.5 py-1.5 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{line.accountType}</td>
-                            <td className="px-2.5 py-1.5 whitespace-nowrap font-mono" style={{ color: "var(--text-primary)" }}>{line.accountNo}</td>
-                            <td className="px-2.5 py-1.5" style={{ color: "var(--text-primary)", maxWidth: 200 }}>{line.description}</td>
-                            <td className="px-2.5 py-1.5 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>
-                              {line.branchCode || "—"}
-                              {/* A prior-period line is the exception, so it reads as a
-                                  mark on the branch rather than a column that would be
-                                  empty on almost every row. */}
-                              {line.adjCode && (
-                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded ml-1.5"
-                                  style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)" }}
-                                  title="ใบเสร็จลงเดือนก่อนเดือนที่โพสต์ — ปรับปรุงบัญชี (Z-ADJ)">
-                                  {line.adjCode}
-                                </span>
-                              )}
-                              {/* The BU the line will post to. It reads as part of the
-                                  branch because that is what decides it — the Location
-                                  the branch is bound to. */}
-                              {line.buCode && (
-                                <span className="text-[10px] ml-1.5" style={{ color: "var(--text-muted)" }}>
-                                  · {line.buCode}
-                                </span>
-                              )}
-                              {/* Shown, never enforced: BC may still take the line, and
-                                  refusing on an untested assumption would block work
-                                  that actually posts. */}
-                              {line.branchBlocked && (
-                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded ml-1.5"
-                                  style={{ background: "var(--bg-badge)", color: "var(--text-warning)" }}
-                                  title="สาขานี้ถูก Block ใน BC — ส่งได้ แต่ BC อาจไม่รับบรรทัดนี้">
-                                  BLOCKED
-                                </span>
-                              )}
-                            </td>
-                            <td className="px-2.5 py-1.5 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{line.departmentCode || "—"}</td>
-                            <td className="px-2.5 py-1.5 text-right tabular-nums whitespace-nowrap" style={{ color: line.debit ? "var(--text-primary)" : "var(--text-faint)" }}>
-                              {line.debit != null ? fmtMoney(line.debit) : "—"}
-                            </td>
-                            <td className="px-2.5 py-1.5 text-right tabular-nums whitespace-nowrap" style={{ color: line.credit ? "var(--text-primary)" : "var(--text-faint)" }}>
-                              {line.credit != null ? fmtMoney(line.credit) : "—"}
-                            </td>
+                            {shownCols(item.lines).map((c) => (
+                              <td key={c.key}
+                                className={`px-2.5 py-1.5 whitespace-nowrap ${c.numeric ? "text-right tabular-nums" : ""} ${c.mono ? "font-mono" : ""}`}
+                                style={{ color: c.dim ? "var(--text-secondary)" : "var(--text-primary)" }}>
+                                {c.render(line)}
+                              </td>
+                            ))}
                           </tr>
                         ))}
                       </tbody>
                       <tfoot>
                         <tr style={{ borderTop: "2px solid var(--border-card)", background: "var(--bg-card-alt)" }}>
-                          <td colSpan={5} className="px-2.5 py-1.5 text-[11px] font-bold" style={{ color: "var(--text-heading)" }}>
-                            รวม ({item.lines.length} บรรทัด)
-                          </td>
-                          <td className="px-2.5 py-1.5 text-right tabular-nums font-bold whitespace-nowrap" style={{ color: "var(--text-heading)" }}>{fmtMoney(totalDebit)}</td>
-                          <td className="px-2.5 py-1.5 text-right tabular-nums font-bold whitespace-nowrap" style={{ color: "var(--text-heading)" }}>{fmtMoney(totalCredit)}</td>
+                          {shownCols(item.lines).map((c, i) => (
+                            <td key={c.key}
+                              className={`px-2.5 py-1.5 text-[11px] font-bold whitespace-nowrap ${c.numeric ? "text-right tabular-nums" : ""}`}
+                              style={{ color: "var(--text-heading)" }}>
+                              {c.key === "debit" ? fmtMoney(totalDebit)
+                                : c.key === "credit" ? fmtMoney(totalCredit)
+                                : i === 0 ? `รวม (${item.lines.length} บรรทัด)` : ""}
+                            </td>
+                          ))}
                         </tr>
                       </tfoot>
                     </table>
                   </div>
+                  {(() => {
+                    const hidden = BC_COLUMNS.filter((c) => !shownCols(item.lines).includes(c));
+                    if (hidden.length === 0) return null;
+                    return (
+                      <p className="px-3 pt-2 text-[10px] leading-snug m-0" style={{ color: "var(--text-faint)" }}>
+                        ไม่แสดง {hidden.length} คอลัมน์ที่ไม่มีค่าในใบนี้: {hidden.map((c) => c.label).join(" · ")}
+                      </p>
+                    );
+                  })()}
                   {/* An AP-3 journal never balances by design, so a Dr≠Cr warning here would
                       train reviewers to ignore the preview. Explain it instead of flagging it. */}
                   <p className="px-3 py-2 text-[10px] leading-snug" style={{ color: "var(--text-faint)" }}>

@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildClearAdvanceJournalPayload, isPriorPeriod, type ClrJournalInput } from "./clear-advance-erp-payload";
+import {
+  buildClearAdvanceJournalPayload,
+  isPriorPeriod,
+  journalDocumentType,
+  type ClrJournalInput,
+} from "./clear-advance-erp-payload";
 
 const cfg = {
   advanceVendorNo: "ADV0001", bankAccountNo: "BBL-CA6332",
@@ -118,23 +123,28 @@ test("money returned to the company -> Refund on every line", () => {
   assert.ok(p.lines.every((l) => l.documentType === "Refund"));
 });
 
-/* Refund whatever the direction (user, 2026-09-08) — including the case the
- * requirements call Payment. The bank line's own sign still follows the money,
- * so a pay-extra clearing is a Refund document with a credit bank line. That
- * pairing is deliberate here and contradicts the requirements' row 77; the
- * decision is recorded in the spec. */
-test("company pays extra -> still Refund", () => {
+/* The direction of the money decides the type (user, 2026-09-09): the employee
+ * returning what they did not spend is a Refund, the company paying the
+ * shortfall is a Payment. The bank line's sign is the same fact stated twice. */
+test("company pays extra -> Payment, with the bank line going out", () => {
   const p = buildClearAdvanceJournalPayload(base({
     items: [{ glAccountNo: "610322005", amountBeforeVat: 2500, vatAmount: 0, whtAmount: 0, branchCode: null }],
   }));
-  assert.ok(p.lines.every((l) => l.documentType === "Refund"));
-  // The money still moves the other way, and the line says so.
+  assert.ok(p.lines.every((l) => l.documentType === "Payment"));
   assert.equal(p.lines.find((l) => l.accountType === "Bank Account")!.amount, -500);
 });
 
+/* Nothing was paid to anyone, so it is not a Payment. */
 test("spent exactly the advance -> Refund", () => {
   const p = buildClearAdvanceJournalPayload(base({}));
   assert.ok(p.lines.every((l) => l.documentType === "Refund"));
+});
+
+test("the type is the sign of the bank amount, and nothing else", () => {
+  assert.equal(journalDocumentType(1465.99), "Refund");
+  assert.equal(journalDocumentType(0), "Refund");
+  assert.equal(journalDocumentType(-0.01), "Payment");
+  assert.equal(journalDocumentType(-500), "Payment");
 });
 
 test("no vendor on the cleared advance -> throws", () => {

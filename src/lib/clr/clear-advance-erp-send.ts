@@ -7,22 +7,23 @@ import { loadClearAdvanceErpContext } from "@/lib/clr/clear-advance-erp-context"
 import { buildClearAdvanceJournalPayload } from "@/lib/clr/clear-advance-erp-payload";
 import { loadBranchLookup } from "@/lib/erp/location-lookup";
 import { AP3_FORM_CODE } from "@/features/clear-advance/constants";
+import type { PpapJournalLinePayload } from "@/lib/acc/erp-ppap-payload";
 import type { ClrJournalItem } from "@/lib/clr/clear-advance-erp-payload";
 
 /* ─────────────────────────── preview types ─────────────────────────── */
 
-export interface ClrPreviewLine {
-  accountType: string;
-  accountNo: string;
-  description: string;
-  branchCode: string;
-  departmentCode: string;
+/**
+ * One line as Business Central will receive it.
+ *
+ * The whole payload line, not a summary of it: the preview exists to be checked
+ * against BC, and a preview that shows seven of the twenty-three fields being
+ * sent cannot answer "is the tax block right" — the question the VAT work made
+ * worth asking. `debit`/`credit` and `branchBlocked` are the only additions, and
+ * both are derived rather than sent.
+ */
+export interface ClrPreviewLine extends PpapJournalLinePayload {
   debit: number | null;
   credit: number | null;
-  /** Z-ADJ marker when this line is a prior-period adjustment; null otherwise. */
-  adjCode: string | null;
-  /** The BU resolved from this line's branch; null when no Location answers for it. */
-  buCode: string | null;
   /**
    * This line's BRANCH dimension value is blocked in BC.
    *
@@ -329,15 +330,9 @@ export async function previewClrErpJournal(ids: number[]): Promise<ClrPreviewIte
         documentType: payload.lines[0]?.documentType ?? "",
         ok: true,
         lines: payload.lines.map((l) => ({
-          accountType: l.accountType,
-          accountNo: l.accountNo,
-          description: l.description,
-          branchCode: l.branchCode ?? "",
-          departmentCode: l.departmentCode ?? "",
+          ...l,
           debit: l.amount > 0 ? l.amount : null,
           credit: l.amount < 0 ? -l.amount : null,
-          adjCode: l.adjCode ?? null,
-          buCode: l.buCode ?? null,
           branchBlocked: branchBu.get((l.branchCode ?? "").trim().toUpperCase())?.isBlocked ?? false,
         })),
       });
