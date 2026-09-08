@@ -123,6 +123,11 @@ export function OcrConfirmModal({
   onCancel: () => void;
 }) {
   const [rows, setRows] = useState<OcrRow[]>(incoming);
+  /** Receipt rows being saved that still have no branch, numbered as on screen. */
+  const missingBranch = rows
+    .map((r, i) => ({ r, n: i + 1 }))
+    .filter(({ r }) => r.include && r.kind === "receipt" && !r.branchCode)
+    .map(({ n }) => n);
   // Each row's account list is fetched for that row's branch, exactly like the
   // expense table does — the server decides what a branch may charge.
   const [glByBranch, setGlByBranch] = useState<Record<string, GlAccountOption[]>>({});
@@ -411,12 +416,20 @@ export function OcrConfirmModal({
                     {/* Ours, not the seller's — the two now sit near each other,
                         and filling one into the other would post the expense to the
                         wrong shop and file the tax against the wrong branch. */}
-                    <F label="สาขาที่ใช้จ่าย (ของเรา)">
+                    <F label="สาขาที่ใช้จ่าย (ของเรา) *">
                       <BranchPicker options={branches} value={r.branchCode} noBrand={!brandChosen}
                         disabled={!brandChosen} inline
                         onPick={(code) => update(r.key, {
                           branchCode: code, branchSuggested: false, branchClose: false,
                         })} />
+                      {/* The branch decides the BU, the account list and the
+                          BRANCH dimension on the journal line — a row saved
+                          without one is a row someone has to come back to. */}
+                      {!r.branchCode && (
+                        <span className="text-[10px]" style={{ color: "var(--color-danger)" }}>
+                          กรุณาเลือกสาขา
+                        </span>
+                      )}
                       {r.branchSuggested && (
                         // "close" earns a colour: the pick is as likely to be the
                         // neighbouring branch, and branch decides the account list.
@@ -503,7 +516,17 @@ export function OcrConfirmModal({
         <div className="shrink-0 flex items-center justify-end gap-2 px-5 py-3.5"
           style={{ borderTop: "1px solid var(--border-light)" }}>
           <Button variant="secondary" size="sm" onClick={onCancel}>ยกเลิก</Button>
-          <Button variant="primary" size="sm" onClick={() => onConfirm(rows.filter((r) => r.include))}>ยืนยันบันทึก</Button>
+          {/* Refused rather than saved-and-warned: every receipt row needs a
+              branch, and the picker for it is on this screen. */}
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={missingBranch.length > 0}
+            title={missingBranch.length > 0 ? `เลือกสาขาให้ครบก่อน — รายการที่ ${missingBranch.join(", ")}` : undefined}
+            onClick={() => onConfirm(rows.filter((r) => r.include))}
+          >
+            ยืนยันบันทึก
+          </Button>
         </div>
       </div>
     </Dialog>

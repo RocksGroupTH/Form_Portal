@@ -630,6 +630,10 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
         if (!l.expenseDate) { errs.push({ key: "lines", message: "มีรายการค่าใช้จ่ายที่ยังไม่ได้ระบุวันที่" }); break; }
         if (!glForced && !l.glAccountNo) { errs.push({ key: "lines", message: "มีรายการค่าใช้จ่ายที่ยังไม่ได้เลือกหมวด (รายการ)" }); break; }
         if (!(num(l.amountBeforeVat) > 0)) { errs.push({ key: "lines", message: "มีรายการที่จำนวนเงินก่อน VAT ไม่ถูกต้อง" }); break; }
+        /* The OCR review card refuses to save a row without a branch, but a row
+           added by hand with "เพิ่มแถว" never passes through it. Same rule, one
+           step later, so there is no way around it. */
+        if (!l.branchCode) { errs.push({ key: "lines", message: "มีรายการที่ยังไม่ได้เลือกสาขาที่ใช้จ่าย" }); break; }
         /* A branch that is no longer offered was blocked or removed in BC after
            this draft was saved — the picker never offers a blocked one, so a
            value that is not in the list cannot have been chosen today. Caught
@@ -1380,7 +1384,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                 <Th w={120}>วันที่</Th>
                 <Th w={210}>เลขที่เอกสาร</Th>
                 {/* Branch comes before the G/L account: it filters the account list. */}
-                <Th w={190}>สาขา</Th>
+                <Th w={190}>สาขา *</Th>
                 <Th w={220}>รายการ</Th>
                 <Th w={240}>รายละเอียด</Th>
                 <Th w={100} right>ก่อน VAT</Th>
@@ -1521,7 +1525,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                     value={l.docNo} disabled={readOnly} placeholder="—"
                     onChange={(e) => updateLine(idx, { docNo: e.target.value })} />
                 </MField>
-                <MField label="สาขา">
+                <MField label="สาขา *">
                   <BranchPicker options={branches} value={l.branchCode}
                     disabled={readOnly || !brandCode} noBrand={!brandCode}
                     onPick={(code) => updateLine(idx, { branchCode: code })} />
