@@ -450,7 +450,16 @@ wire, beside `"employeeCode": "10177"` from Step 2b.
 The clearing was built to land exactly on the advance (2,500 of 2,500) so no
 refund leg was required, which kept the test to the thing under test.
 
-### What this does **not** prove
+### Confirmed in BC 2026-09-08 — the last gap is closed
+
+The user opened batch `Q`, document `PVA2609-0013`, and read the BU dimension on
+each line: **CTPS and COCO, mixed, matching the branches**. Build 1.0.0.205 is
+live and applying `buCode`; the constant is gone from the path that matters.
+
+That closes the one thing the portal could not tell on its own, recorded below as
+it stood before the check.
+
+### What the send alone did not prove
 
 **That BC stored CTPS.** "Sent" means the codeunit accepted the payload and
 inserted the lines — and codeunit 50263 ignores JSON keys it does not know. A
@@ -464,10 +473,10 @@ BU dimension on each line. Two different values across the three lines means the
 1.0.0.205 build is live and doing its job; three COCOs means the old build is
 still deployed.
 
-A decisive probe from this side is possible — send a deliberately invalid
+A decisive probe from this side was possible — send a deliberately invalid
 `buCode` and see whether it errors (new build) or silently inserts (old) — but it
 writes a stray line into the Sandbox batch if the old build is live, so it was
-not run unasked.
+not run unasked. The check in BC answered it without that cost.
 
 ---
 
