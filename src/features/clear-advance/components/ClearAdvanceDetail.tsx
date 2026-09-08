@@ -22,6 +22,7 @@ import { CLR_STEP_CODES, CLR_STEP_LABEL_TH, type ClrStepCode } from "@/features/
 import type { AccFileMeta } from "@/features/accounting/types";
 import type { ClearAdvanceItem, ClearAdvanceRequest, ClrApproval } from "@/features/clear-advance/types";
 import { linesMissingTaxVendor } from "@/lib/clr/tax-vendor-core";
+import { SellerVendorCard } from "@/features/clear-advance/components/SellerVendorCard";
 
 function money(n: number | null | undefined): string {
   return (n ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -599,211 +600,28 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                     </table>
                   </div>
 
-                  {/* ภ.ง.ด. per payee — the last stop before the send, and the
-                      value that picks the vendor accounting has to clear. The
-                      requester's answer came from the tax id, which is evidence
-                      and not proof: a 0-prefixed id can belong to a foreign
-                      individual. */}
-                  {/* The register, on demand. Accounting types these fields when
-                      the read failed, and a typed tax id is exactly the one worth
-                      checking — the registered name and branch are facts where
-                      what is in the box is somebody's transcription. Offered, not
-                      applied: they have the invoice. */}
-                  {editItems.some((it) => (it.taxId ?? "").replace(/\D/g, "").length === 13) && (
+                  {/* Who the seller is, per receipt: what the Revenue
+                      Department's register says, and which BC vendor card they
+                      are. One card per line rather than a strip of controls
+                      under the table — the two questions are about the same
+                      seller and belong beside each other, and each card names
+                      the line it is about. */}
+                  {editItems.length > 0 && (
                     <div className="flex flex-col gap-2">
                       <p className="text-[11px] font-bold m-0" style={{ color: "var(--text-muted)" }}>
-                        ตรวจผู้ขายกับกรมสรรพากร
+                        ผู้ขาย — ตรวจกับกรมสรรพากร และเลือก Vendor
                       </p>
-                      {editItems.map((it, i) => {
-                        const tin = (it.taxId ?? "").replace(/\D/g, "");
-                        if (tin.length !== 13) return null;
-                        const v = vatByTin[tin];
-                        const check = async (refresh = false) => {
-                          setVatByTin((p) => ({ ...p, [tin]: { state: "checking" } }));
-                          try {
-                            const res = await fetch(
-                              `/api/request/clear-advance/vat-registrant?taxId=${tin}${refresh ? "&refresh=1" : ""}`,
-                            );
-                            const j = (await res.json()) as {
-                              ok: boolean;
-                              data?: { registrant: VatRegistrant | null; checkedAt: string | null };
-                            };
-                            const checkedAt = j.data?.checkedAt ?? null;
-                            setVatByTin((p) => ({
-                              ...p,
-                              [tin]: j.ok
-                                ? (j.data?.registrant
-                                    ? { state: "found", registrant: j.data.registrant, checkedAt }
-                                    : { state: "unregistered", checkedAt })
-                                : { state: "unknown" },
-                            }));
-                          } catch {
-                            setVatByTin((p) => ({ ...p, [tin]: { state: "unknown" } }));
+                      {editItems.map((it, i) => (
+                        <SellerVendorCard
+                          key={it.id ?? i}
+                          index={i}
+                          item={it}
+                          brandCode={request.brandCode ?? null}
+                          onChange={(patch) =>
+                            setEditItems((prev) => prev.map((x, j) => (j === i ? { ...x, ...patch } : x)))
                           }
-                        };
-                        const reg = v?.state === "found" ? v.registrant : null;
-                        const full = reg ? [reg.titleName, reg.name].filter(Boolean).join(" ") : "";
-                        const differs = !!full && (full !== (it.payeeName ?? "").trim()
-                          || (reg?.branchCode ?? "") !== (it.taxBranchCode ?? ""));
-                        return (
-                          <div key={it.id ?? i} className="flex items-center gap-2 flex-wrap text-[12px]">
-                            <span style={{ color: "var(--text-muted)" }}>{i + 1}.</span>
-                            <span className="font-mono" style={{ color: "var(--text-primary)" }}>{tin}</span>
-                            {!v && (
-                              <button type="button" onClick={() => check()}
-                                className="text-[11px] px-2 py-0.5 rounded-lg cursor-pointer"
-                                style={{ background: "var(--bg-badge)", color: "var(--text-secondary)", border: "none" }}>
-                                ตรวจ
-                              </button>
-                            )}
-                            {v?.state === "checking" && (
-                              <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>กำลังตรวจ…</span>
-                            )}
-                            {v?.state === "unregistered" && (
-                              <span className="text-[11px]" style={{ color: "var(--text-warning)" }}>
-                                ไม่พบในทะเบียน VAT — ภาษีซื้อจากใบนี้อาจขอคืนไม่ได้
-                              </span>
-                            )}
-                            {v?.state === "unknown" && (
-                              <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>
-                                ตรวจไม่สำเร็จ
-                                <button type="button" onClick={() => check()}
-                                  className="ml-1 underline cursor-pointer border-none bg-transparent p-0 text-[11px]"
-                                  style={{ color: "var(--nav-active-text)" }}>ลองใหม่</button>
-                              </span>
-                            )}
-                            {reg && (
-                              <span className="text-[11px] flex items-center gap-1 flex-wrap"
-                                style={{ color: "var(--text-info-green)" }}>
-                                {full}{reg.branchCode ? ` · สาขา ${reg.branchCode}` : ""}
-                                {differs && (
-                                  <button type="button"
-                                    className="underline cursor-pointer border-none bg-transparent p-0 text-[11px]"
-                                    style={{ color: "var(--nav-active-text)" }}
-                                    onClick={() => setEditItems((prev) => prev.map((x, j) => (
-                                      j === i ? { ...x, payeeName: full, taxBranchCode: reg.branchCode } : x
-                                    )))}>
-                                    ใช้ค่านี้
-                                  </button>
-                                )}
-                              </span>
-                            )}
-                            {/* The BC vendor for this seller — Tax Vendor No.
-                                on the VAT line. Two ways to look: the tax id is
-                                the seller's identity and usually answers with one
-                                card, but 155 active trade vendors in PCTH carry
-                                no tax registration number and can only be found
-                                by name. Either way it stays a list and a person
-                                chooses, because one tax id can hold 24 cards that
-                                differ only by which mall issued the invoice. */}
-                            {(() => {
-                              const found = vendorsByRow[i];
-                              const term = vendorNameTerm[i] ?? "";
-                              const run = async (qs: string) => {
-                                setVendorsByRow((p) => ({ ...p, [i]: "loading" }));
-                                try {
-                                  const res = await fetch(
-                                    `/api/request/clear-advance/tax-vendors?brand=${encodeURIComponent(request.brandCode ?? "")}&${qs}`,
-                                  );
-                                  const j = (await res.json()) as { ok: boolean; data?: TaxVendorCandidate[]; error?: string };
-                                  if (!j.ok) toast.error(j.error ?? "ค้นหา Vendor ไม่สำเร็จ");
-                                  setVendorsByRow((p) => ({ ...p, [i]: j.ok ? (j.data ?? []) : [] }));
-                                } catch {
-                                  setVendorsByRow((p) => ({ ...p, [i]: [] }));
-                                }
-                              };
-                              if (it.taxVendorNo) {
-                                return (
-                                  <span className="text-[11px]" style={{ color: "var(--text-info-green)" }}>
-                                    Vendor: {it.taxVendorNo}
-                                    <button type="button"
-                                      className="ml-1 underline cursor-pointer border-none bg-transparent p-0 text-[11px]"
-                                      style={{ color: "var(--nav-active-text)" }}
-                                      onClick={() => setEditItems((prev) => prev.map((x, j) => (
-                                        j === i ? { ...x, taxVendorNo: null } : x
-                                      )))}>
-                                      ล้าง
-                                    </button>
-                                  </span>
-                                );
-                              }
-                              return (
-                                <span className="inline-flex flex-wrap items-center gap-1">
-                                  {tin.length === 13 && (
-                                    <button type="button" onClick={() => run(`taxId=${tin}`)}
-                                      className="text-[11px] px-2 py-0.5 rounded-lg cursor-pointer"
-                                      style={{ background: "var(--bg-badge)", color: "var(--text-secondary)", border: "none" }}>
-                                      หาจากเลขภาษี
-                                    </button>
-                                  )}
-                                  {/* Prefilled with the seller the receipt names, so the
-                                      common case is one click rather than retyping it. */}
-                                  <input
-                                    value={term}
-                                    onChange={(e) => setVendorNameTerm((p) => ({ ...p, [i]: e.target.value }))}
-                                    onKeyDown={(e) => {
-                                      if (e.key !== "Enter") return;
-                                      e.preventDefault();
-                                      const q = (vendorNameTerm[i] ?? it.payeeName ?? "").trim();
-                                      if (q) void run(`name=${encodeURIComponent(q)}`);
-                                    }}
-                                    placeholder={it.payeeName ? `ชื่อผู้ขาย (${it.payeeName.slice(0, 14)}…)` : "ค้นด้วยชื่อผู้ขาย"}
-                                    className="text-[11px] px-2 py-0.5 rounded-lg"
-                                    style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-input)", width: "11rem" }}
-                                  />
-                                  <button type="button"
-                                    onClick={() => {
-                                      const q = (term || it.payeeName || "").trim();
-                                      if (!q) return toast.error("พิมพ์ชื่อผู้ขายที่จะค้น");
-                                      void run(`name=${encodeURIComponent(q)}`);
-                                    }}
-                                    className="text-[11px] px-2 py-0.5 rounded-lg cursor-pointer"
-                                    style={{ background: "var(--bg-badge)", color: "var(--text-secondary)", border: "none" }}>
-                                    หาจากชื่อ
-                                  </button>
-                                  {found === "loading" && (
-                                    <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>กำลังหา…</span>
-                                  )}
-                                  {Array.isArray(found) && found.length === 0 && (
-                                    <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>
-                                      ไม่พบ Vendor — ลองค้นด้วยชื่อ หรือเปิดการ์ดผู้ขายใน BC ก่อน
-                                    </span>
-                                  )}
-                                  {Array.isArray(found) && found.length > 0 && (
-                                    <select
-                                      className="text-[11px] px-2 py-0.5 rounded-lg"
-                                      style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-input)", maxWidth: "26rem" }}
-                                      value=""
-                                      onChange={(e) => {
-                                        const no = e.target.value;
-                                        if (!no) return;
-                                        setEditItems((prev) => prev.map((x, j) => (j === i ? { ...x, taxVendorNo: no } : x)));
-                                      }}>
-                                      <option value="">— เลือก Vendor ({found.length} รายการ) —</option>
-                                      {found.map((c) => (
-                                        <option key={c.vendorNo} value={c.vendorNo}>
-                                          {c.vendorNo} · {c.displayName ?? ""}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  )}
-                                </span>
-                              );
-                            })()}
-                            {/* Stored answers are kept rather than re-asked on a
-                                timer, so the date says how old this one is and the
-                                link is there for whoever doubts it. */}
-                            {(v?.state === "found" || v?.state === "unregistered") && (
-                              <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>
-                                {v.checkedAt ? `ตรวจเมื่อ ${fmtDateOnly(v.checkedAt.slice(0, 10))}` : ""}
-                                <button type="button" onClick={() => check(true)}
-                                  className="ml-1 underline cursor-pointer border-none bg-transparent p-0 text-[11px]"
-                                  style={{ color: "var(--nav-active-text)" }}>ตรวจใหม่</button>
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })}
+                        />
+                      ))}
                     </div>
                   )}
 

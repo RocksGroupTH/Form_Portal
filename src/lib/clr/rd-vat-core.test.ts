@@ -4,6 +4,7 @@ import {
   buildRdVatRequest,
   parseRdVatResponse,
   registrantFullName,
+  sameRegisteredName,
 } from "./rd-vat-core";
 
 /* Trimmed from a real answer, 2026-09-08, for Genesis Supply Chain — the seller
@@ -77,4 +78,26 @@ test("the request carries only the digits of a tax id", () => {
   const body = buildRdVatRequest(" 0-1055-60171-92-1 ");
   assert.ok(body.includes("<TIN>0105560171921</TIN>"));
   assert.ok(body.includes("<username>anonymous</username>"));
+});
+
+/* The register writes the name closed up and the invoice spaces it. Calling that
+ * a mismatch would flag nearly every line. */
+test("spacing is not a difference in a registered name", () => {
+  assert.equal(
+    sameRegisteredName("บริษัท เซ็นทรัล พัฒนา จำกัด (มหาชน)", "บริษัท เซ็นทรัลพัฒนา จำกัด (มหาชน)"),
+    true,
+  );
+});
+
+test("a different company is still a difference", () => {
+  assert.equal(
+    sameRegisteredName("บริษัท เซ็นทรัลพัฒนา จำกัด (มหาชน)", "บริษัท เซ็นทรัลพัฒนา ดีเวลล็อปเม้นท์ จำกัด"),
+    false,
+  );
+});
+
+/* Nothing on the invoice is not a match with anything — it is a blank to fill. */
+test("an empty name matches nothing", () => {
+  assert.equal(sameRegisteredName("", "บริษัท ก จำกัด"), false);
+  assert.equal(sameRegisteredName(null, null), false);
 });

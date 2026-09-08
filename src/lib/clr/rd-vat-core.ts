@@ -113,3 +113,21 @@ export function registrantFullName(r: RdVatRegistrant): string | null {
   const joined = [r.titleName, r.name].filter(Boolean).join(" ").trim();
   return joined || null;
 }
+
+/**
+ * Whether two spellings name the same registrant.
+ *
+ * The invoice, the vendor card and the register disagree about spacing —
+ * "บริษัท เซ็นทรัล พัฒนา จำกัด (มหาชน)" and "บริษัท เซ็นทรัลพัฒนา จำกัด (มหาชน)"
+ * are one company. Treating that as a difference put a "the name does not match"
+ * panel on almost every line, which teaches the reader to ignore the one line
+ * where it is true. Spacing is not a difference; anything else is.
+ */
+export function sameRegisteredName(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean {
+  const norm = (s: string | null | undefined) => (s ?? "").replace(/\s+/g, "");
+  const x = norm(a);
+  return x !== "" && x === norm(b);
+}
