@@ -220,36 +220,29 @@ certificate rows hold the seller's tax id and name.
 today. `Document Date` is the exception: `:186` currently forces it equal to
 Posting Date, and that has to become "use the given date, else Posting Date".
 
-**The fields come from "NWTH Customization" by Revolic** (user, 2026-09-08) —
-an app that is **not** currently a dependency of `SalesTran_Interface` and is
-not present on this machine at all. Checked: `app.json` declares eight
-dependencies and none of them is it; `.alpackages` holds five Revolic packages
-(BRInterface, Create Dropship SO from PO, Import Purchase Order, Requisition
-Worksheet PO Split by Location, Report) and none of them extends
-Gen. Journal Line.
+**The fields come from "NWTH CustomizationRevolic"** — publisher NaviWorld
+(Thailand) Co. Ltd., id `88d34fc6-0e6e-4b5e-88e8-9c96f2bc15a7`, version
+`24.0.202608.1` (user, 2026-09-08). **Added to `app.json` on 2026-09-08**, so
+the project now declares nine dependencies.
 
-An earlier draft of this section claimed the dependency was already declared.
-That was wrong. It was reading NaviWorld (Thailand)'s "VAT & WHT Localization
-for Thailand" — which *is* a declared dependency, and whose Gen. Journal Line
-extension does carry `NWTH Vendor No.`, `NWTH Vendor Name`,
-`NWTH Vendor Invoice No.` and `NWTH VAT Registration No.` — and assuming the
-shared `NWTH` prefix meant it was the same app. It is a different publisher and
-a different app; the prefix is the localization's, not one vendor's.
+Two earlier readings of this were wrong and are recorded so the same mistake is
+not made twice. The first claimed the dependency was already declared: that was
+NaviWorld's separate "VAT & WHT Localization for Thailand", whose Gen. Journal
+Line extension carries similarly-named fields, and a shared `NWTH` prefix read
+as confirmation — the prefix belongs to the Thai localization, not to one app.
+The second assumed the publisher was Revolic because the name ends that way; it
+is NaviWorld, and "Revolic" appears to be part of the app's own name.
 
-**To be added before Step 4 can be built:**
+**Still needed before Step 4 can be built:** the symbols. The package is not in
+`.alpackages` and cannot be downloaded from here — `AL: Download Symbols`
+against the Sandbox will fetch it once the environment has the extension
+installed. Until then the project will not compile against the new dependency,
+which is why Step 4 stays last.
 
-1. The app package, so its symbols are available — dropped into
-   `.alpackages`, or downloaded from the environment.
-2. A `dependencies` entry in
-   `R:\PPFunction\AL\ALProject12_SalesTran\app.json`, which needs the app's
-   **id (GUID), exact name, publisher and version**. Those come from the package
-   itself or from Extension Management in the BC client — they cannot be
-   guessed, and a wrong id fails the build rather than failing quietly.
-
-Once it is in, the field names it exposes decide the payload keys, so §5.4's
-mapping table above is provisional: it lists the sheet's columns against the
-*NaviWorld* fields that happen to match by name, and those may not be the ones
-Revolic's customization actually uses.
+**The §5.4 mapping table above is provisional.** It pairs the sheet's columns
+with the *NaviWorld* fields that matched by name. The field names this app
+actually exposes are unknown until its symbols are on disk, and they decide the
+payload keys.
 
 ## 6. Verification
 

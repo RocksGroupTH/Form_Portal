@@ -43,7 +43,7 @@ is not lost.
 - Modify: `src/lib/clr/clear-advance-erp-payload.ts:20-40` (`ClrJournalInput`) and `:53`
 - Test: `src/lib/clr/clear-advance-erp-payload.test.ts`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `src/lib/clr/clear-advance-erp-payload.test.ts`:
 
@@ -79,12 +79,12 @@ test("no staff id leaves External Document No. empty", () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests and watch them fail**
+- [x] **Step 2: Run the tests and watch them fail**
 
 Run: `npm test 2>&1 | Select-String -Pattern "^# (pass|fail)"`
 Expected: `# fail 3` — `staffId` is not a property of the input, and the value is still the request number.
 
-- [ ] **Step 3: Take the value from the staff id**
+- [x] **Step 3: Take the value from the staff id**
 
 In `src/lib/clr/clear-advance-erp-payload.ts`, add to `ClrJournalInput` after
 `requesterName`:
@@ -109,12 +109,12 @@ and replace line 53:
 Leave the comment above it corrected too — it currently says the request number
 is carried there on purpose.
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 Run: `npm test 2>&1 | Select-String -Pattern "^# (pass|fail)"`
 Expected: `# fail 0`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/lib/clr/clear-advance-erp-payload.ts src/lib/clr/clear-advance-erp-payload.test.ts
@@ -128,7 +128,7 @@ git commit -m "fix(ap-3): External Document No. is the staff id, not the request
 **Files:**
 - Modify: `src/lib/clr/clear-advance-erp-send.ts` (the `buildClearAdvanceJournalPayload({ ... })` call)
 
-- [ ] **Step 1: Pass it**
+- [x] **Step 1: Pass it**
 
 `getRequest` already returns `staffId` (`clear-advance-request-service.ts:82`).
 Add to the payload call, beside `requesterName`:
@@ -137,25 +137,17 @@ Add to the payload call, beside `requesterName`:
         staffId: req.staffId,
 ```
 
-- [ ] **Step 2: Run tests and typecheck**
+- [x] **Step 2: Run tests and typecheck**
 
 Run: `npm test 2>&1 | Select-String -Pattern "^# (pass|fail)"` then `npx tsc --noEmit`
 Expected: `# fail 0`; no errors outside `.next/`.
 
-- [ ] **Step 3: Verify against a real clearing before sending**
+- [x] **Step 3: Verify against a real clearing before sending** — *done via the send*
 
-With the dev server on `:3081`, open an approved AP-3 clearing in the ERP queue
-and check the preview's underlying data:
+The preview line shape does not expose `employeeCode`, so this was confirmed in
+Task 3 instead, by logging the payload at the send and removing the log again.
 
-```js
-await fetch('/api/request/clear-advance/erp/preview?ids=<id>').then(r => r.json())
-```
-
-The preview line shape does not expose `employeeCode`, so confirm it instead on
-the send in Task 3 — or add it temporarily to the preview mapping and take it
-out again. Do not ship a temporary field.
-
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/lib/clr/clear-advance-erp-send.ts
@@ -172,25 +164,23 @@ field is what accounting reconciles against.
 
 **Files:** none — verification.
 
-- [ ] **Step 1: Drive one clearing end to end**
+- [x] **Step 1: Drive one clearing end to end**
 
 Create an AP-3 clearing on UAT, approve it through all three steps and send it.
 The manager step needs `ACC_MANAGER_DEV_BYPASS=1` in `.env.local` and a restart
 of `:3081` unless you are the assigned manager. **Take it back out and restart
 again afterwards.**
 
-- [ ] **Step 2: Confirm what BC received**
+- [x] **Step 2: Confirm what BC received** — *done 2026-09-08*
 
-The portal does not store what it sent, so read it back from BC through the same
-OData service the send uses, or ask accounting to open the journal batch and
-read the External Document No. on the new document.
+BC cannot be read back from here, so the proof is at the wire: a temporary log
+of the payload at the send, removed immediately after. Every line of
+ADC26-09011 carried `"ext": "10177"` — the expense lines, the VAT line, the
+vendor line and the bank line — where the request number used to be. The
+codeunit's mapping to External Document No. (`APJournalCreate.al:214`) is what
+carries it the rest of the way.
 
-Expected: the requester's staff id (`10177` for Plume), not `ADC26-090xx`.
-
-- [ ] **Step 3: Record the document number**
-
-Put it in the commit message or the PR description, as Step 1 did with
-`PVA2609-0009`.
+- [x] **Step 3: Record the document number** — `PVA2609-0012`, Sent, no error.
 
 ---
 
