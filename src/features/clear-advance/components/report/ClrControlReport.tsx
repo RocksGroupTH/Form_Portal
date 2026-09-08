@@ -35,7 +35,8 @@ import { clearAdvanceDetailHref } from "@/features/clear-advance/lib/navigation"
 import { makeColumnPrefs } from "@/features/advance/lib/queue-column-prefs";
 import { ColumnToggleMenu, type ColumnToggleOption } from "@/features/travel-booking/components/ColumnToggleMenu";
 import type { ClrControlRow } from "@/lib/clr/clear-advance-report-service";
-import { DEFAULT_VISIBLE_KEYS, controlAdjustment, isRefundOutstanding, singleStackedValue } from "@/lib/clr/clr-control-report-view";
+import { DEFAULT_VISIBLE_KEYS, controlAdjustment, singleStackedValue } from "@/lib/clr/clr-control-report-view";
+import { QueueColumnFilter } from "@/features/advance/components/QueueColumnFilter";
 import {
   FilterBar,
   ForbiddenState,
@@ -119,6 +120,69 @@ interface ScreenCol {
    *  `render` may return JSX, so it cannot serve as `title` itself. */
   title?: (row: ClrControlRow) => string;
   render: (row: ClrControlRow) => React.ReactNode;
+}
+
+/**
+ * The header filter each column offers. A column absent from this map has no
+ * filter — the two approval-stamp columns and the PV column pack a name and a
+ * date into one cell, and filtering on that concatenation matches nothing a
+ * reader would predict.
+ *
+ * "select" for the columns whose values repeat across rows, so the reader picks
+ * from what the report actually holds and can stack two of them; "text" where
+ * every row differs and typing part of it is the faster way in.
+ */
+const FILTER_KIND: Record<string, "text" | "select"> = {
+  submittedAt: "text",
+  requestNo: "text",
+  staffId: "text",
+  advanceRequestNo: "text",
+  requesterFullName: "text",
+  requesterPosition: "select",
+  requesterDepartmentName: "select",
+  advanceAmount: "text",
+  expenseOf: "select",
+  actualTotal: "text",
+  adjustment: "text",
+  refundTransferDate: "text",
+  pendingOn: "select",
+  overallStatus: "select",
+};
+
+/**
+ * A column's value as plain text — what the free-text-free filter row matches
+ * on and what fills a select's options.
+ *
+ * Defined once, beside the column model rather than inside the component, so
+ * the filter and the options can never disagree about what a column contains.
+ * It mirrors what `render` puts on screen; where the cell shows a badge or a
+ * two-line stack, this is the part a reader would type.
+ */
+function cellText(r: ClrControlRow, key: string): string {
+  switch (key) {
+    case "submittedAt": return fmtDateOnly(r.submittedAt);
+    case "requestNo": return r.requestNo ?? "";
+    case "staffId": return r.staffId != null ? String(r.staffId) : "";
+    case "advanceRequestNo": return r.advanceRequestNo ?? "";
+    case "requesterFullName": return r.requesterFullName ?? "";
+    case "requesterPosition": return r.requesterPosition ?? "";
+    case "requesterDepartmentName": return r.requesterDepartmentName ?? "";
+    case "advanceAmount": return fmtMoney(r.advanceAmount);
+    case "expenseOf": return r.expenseOf ?? "";
+    case "actualTotal": return fmtMoney(r.actualTotal);
+    case "adjustment": {
+      const adj = controlAdjustment(r);
+      return adj.direction === "none" ? "" : fmtMoney(adj.amount);
+    }
+    case "refundTransferDate": return fmtDateOnly(r.refundTransferDate);
+    case "pvDocNo": return r.pvDocNo ?? "";
+    case "pendingOn": return r.pendingOn ?? "";
+    // The badge shows the Thai label, so that is what the filter matches; an
+    // unmapped status falls back to the raw value rather than showing blank.
+    case "overallStatus":
+      return (STATUS_LABEL_TH as Record<string, string>)[r.overallStatus] ?? r.overallStatus ?? "";
+    default: return "";
+  }
 }
 
 // Kept in the same relative order as the pre-redesign 18-column table so a
@@ -245,11 +309,12 @@ export function ClrControlReport() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [visible, setVisible] = useState<Record<string, boolean>>(PREFS.defaultVisible);
   const [order, setOrder] = useState<string[]>(() => SCREEN_COLS.map((c) => c.key));
-  /* "ค้างโอนเงินคืน" narrows the rows already fetched rather than the query:
-     `listControlRows` has no such parameter, and the two fields it reads are
-     already on every row. The export therefore comes back as a superset while
-     this is on — the same honest difference the stacked filters make. */
-  const [refundOnly, setRefundOnly] = useState(false);
+  /* Per-column filters, keyed by column: plain text for a "text" column, a CSV
+     of picks for a "select" one. They narrow the rows already fetched rather
+     than the query — `listControlRows` takes no such parameters — so the Excel
+     export comes back as a superset while any of them is set, the same honest
+     difference the stacked brand/status filters already make. */
+  const [colFilters, setColFilters] = useState<Record<string, string>>({});
 
   // Read after mount, not in the initial state: localStorage does not exist on
   // the server, and seeding from it would make the first render disagree.
@@ -281,8 +346,37 @@ export function ClrControlReport() {
 
   const visibleColumns = useMemo(() => orderedCols.filter((c) => visible[c.key] ?? true), [orderedCols, visible]);
 
-  const outstandingCount = useMemo(() => rows.filter(isRefundOutstanding).length, [rows]);
-  const visibleRows = useMemo(() => (refundOnly ? rows.filter(isRefundOutstanding) : rows), [rows, refundOnly]);
+  /** Select options come from the rows on hand, so a reader is never offered a
+   *  value that would return nothing. */
+  const selectOptions = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    for (const [key, kind] of Object.entries(FILTER_KIND)) {
+      if (kind !== "select") continue;
+      map[key] = Array.from(new Set(rows.map((r) => cellText(r, key)).filter(Boolean))).sort();
+    }
+    return map;
+  }, [rows]);
+
+  const visibleRows = useMemo(() => {
+    const active = Object.entries(colFilters).filter(([, v]) => v.trim() !== "");
+    if (active.length === 0) return rows;
+    return rows.filter((r) =>
+      active.every(([key, f]) => {
+        const v = cellText(r, key).toLowerCase();
+        if (FILTER_KIND[key] === "select") {
+          // CSV of picks: any one matching keeps the row, so the report can show
+          // two departments or two statuses at once.
+          const picks = f.split(",").filter(Boolean).map((s) => s.toLowerCase());
+          return picks.length === 0 || picks.includes(v);
+        }
+        return v.includes(f.trim().toLowerCase());
+      }),
+    );
+  }, [rows, colFilters]);
+
+  const setColFilter = useCallback((key: string, next: string) => {
+    setColFilters((prev) => ({ ...prev, [key]: next }));
+  }, []);
 
   const patch = useCallback((p: Partial<ControlFilters>) => {
     setFilters((prev) => ({ ...prev, ...p }));
@@ -362,17 +456,8 @@ export function ClrControlReport() {
         />
       </div>
       <div className="flex items-end gap-2">
-        <Button
-          variant={refundOnly ? "secondary" : "ghost"}
-          size="sm"
-          aria-pressed={refundOnly}
-          onClick={() => setRefundOnly((on) => !on)}
-          title="เคลียร์แล้วต้องคืนเงินบริษัท แต่ยังไม่มีวันที่โอนคืน"
-        >
-          ค้างโอนคืน ({outstandingCount})
-        </Button>
         <ColumnToggleMenu columns={pickerColumns} visible={visible} onChange={handleVisibleChange} onReorder={handleReorder} label="คอลัมน์" />
-        <Button variant="ghost" size="sm" onClick={() => { setFilters(EMPTY_FILTERS); setRefundOnly(false); }}>
+        <Button variant="ghost" size="sm" onClick={() => { setFilters(EMPTY_FILTERS); setColFilters({}); }}>
           ล้างตัวกรอง
         </Button>
         <Button variant="secondary" size="sm" icon={<Download size={14} />}
@@ -410,7 +495,7 @@ export function ClrControlReport() {
                   hides it sends them looking in the wrong place. */}
               <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>
                 {rows.length > 0
-                  ? "ไม่มีรายการที่ค้างโอนคืนในผลลัพธ์นี้ — ปิดตัวกรอง “ค้างโอนคืน” เพื่อดูทั้งหมด"
+                  ? "ตัวกรองคอลัมน์กรองรายการออกหมด — กด “ล้างตัวกรอง” เพื่อดูทั้งหมด"
                   : "ไม่พบข้อมูลตามเงื่อนไขที่ระบุ"}
               </p>
             </div>
@@ -430,6 +515,22 @@ export function ClrControlReport() {
                       >
                         {col.label}
                       </th>
+                    ))}
+                  </tr>
+                  {/* Filter row — one cell per shown column, so it follows the
+                      reader's order and disappears with a hidden column. */}
+                  <tr style={{ borderBottom: "1px solid var(--border-light)" }}>
+                    {visibleColumns.map((col) => (
+                      <td key={col.key} className="px-3 py-1.5 align-top">
+                        {FILTER_KIND[col.key] ? (
+                          <QueueColumnFilter
+                            kind={FILTER_KIND[col.key]}
+                            value={colFilters[col.key] ?? ""}
+                            options={selectOptions[col.key]}
+                            onChange={(v) => setColFilter(col.key, v)}
+                          />
+                        ) : null}
+                      </td>
                     ))}
                   </tr>
                 </thead>
