@@ -176,11 +176,35 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
     | { kind: "saved"; at: number }
     | { kind: "error"; message: string }
   >({ kind: "idle" });
-  const [editItems, setEditItems] = useState<ClearDetail["items"]>(() => clear?.items ?? []);
+  const [editItems, setEditItemsState] = useState<ClearDetail["items"]>(() => clear?.items ?? []);
   // The WHT payees as accounting may change them. Only the ภ.ง.ด. type is
   // editable here: the payee's identity came off the receipt the requester held,
   // and this step decides how the withholding is filed, not who was paid.
-  const [editWht, setEditWht] = useState<ClearDetail["whtItems"]>(() => clear?.whtItems ?? []);
+  const [editWht, setEditWhtState] = useState<ClearDetail["whtItems"]>(() => clear?.whtItems ?? []);
+
+  /**
+   * Whether a person changed something in this editor.
+   *
+   * Autosave asks it before writing, because "the rows differ from the last
+   * snapshot" is not the same question. Seeding sets both the rows and the
+   * snapshot, and the two do not land in the same render — so an editor that had
+   * only ever been seeded could still look changed for one pass and write itself
+   * back. It did: a hot reload while this page was open wrote the rows without
+   * the Tax Vendor No. that was on screen, three times, and the item row's id
+   * moved each time (a save is a delete-and-reinsert). Anything that reseeds
+   * mid-edit — a refetch, a remount — would do the same.
+   *
+   * So the write is gated on the edit, not on the difference.
+   */
+  const dirty = useRef(false);
+  const setEditItems: typeof setEditItemsState = (v) => {
+    dirty.current = true;
+    setEditItemsState(v);
+  };
+  const setEditWht: typeof setEditWhtState = (v) => {
+    dirty.current = true;
+    setEditWhtState(v);
+  };
   /**
    * What the Revenue Department holds for each seller tax id on this clearing,
    * keyed by the id. Checked on demand here rather than on open: accounting is
@@ -237,9 +261,10 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
     if (!isAccountStep) return;
     const seedItems = clear?.items ?? [];
     const seedWht = clear?.whtItems ?? [];
-    setEditItems(seedItems);
-    setEditWht(seedWht);
+    setEditItemsState(seedItems);
+    setEditWhtState(seedWht);
     savedSnapshot.current = JSON.stringify({ items: seedItems, wht: seedWht });
+    dirty.current = false;
   }, [isAccountStep, clear?.items, clear?.whtItems]);
 
   // Requester self-cancel: they own it, still pending the manager (before Account),
@@ -324,6 +349,7 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
     // in flight together finish in whatever order the server gets to them and
     // the older one can land last.
     if (inFlight.current) await inFlight.current;
+    if (!dirty.current) return;
     const snap = JSON.stringify({ items: latest.current.items, wht: latest.current.wht });
     if (snap === savedSnapshot.current) return;
     setSaveState({ kind: "saving" });
@@ -342,6 +368,7 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
         const json = (await res.json()) as { ok: boolean; error?: string };
         if (!json.ok) throw new Error(json.error ?? "บันทึกไม่สำเร็จ");
         savedSnapshot.current = snap;
+        dirty.current = false;
         setSaveState({ kind: "saved", at: Date.now() });
       } catch (e) {
         // Left dirty on purpose: the next edit retries, and the line says so
@@ -357,7 +384,7 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
   /* Wait out the typing, then write. A number being retyped passes through
      states nobody meant to store, and the row rewrite is a delete-and-reinsert. */
   useEffect(() => {
-    if (!isAccountStep || savedSnapshot.current === null) return;
+    if (!isAccountStep || savedSnapshot.current === null || !dirty.current) return;
     if (JSON.stringify({ items: editItems, wht: editWht }) === savedSnapshot.current) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => void saveNow(), 900);

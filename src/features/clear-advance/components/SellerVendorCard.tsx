@@ -161,8 +161,9 @@ export function SellerVendorCard({ index, item, brandCode, onChange }: Props) {
       const found = await search(`taxId=${tin}`);
       const hit = found.find((c) => c.vendorNo === no);
       if (hit?.displayName) setChosenName(hit.displayName);
-      setVendors(null); // the list was a lookup, not an offer to choose again
-      setVendorMode(null);
+      // The list stays: it is what the dropdown offers, so changing the choice
+      // does not mean searching again.
+      setVendorMode("taxId");
     })();
   }, [item.taxVendorNo, hasTin, tin, chosenName, search]);
 
@@ -178,7 +179,19 @@ export function SellerVendorCard({ index, item, brandCode, onChange }: Props) {
     (!sameRegisteredName(rdFullName, invoiceName) ||
       (reg?.branchCode ?? "") !== invoiceBranch);
 
-  const needsVendor = vat > 0 && !(item.taxVendorNo ?? "").trim();
+  const chosenNo = (item.taxVendorNo ?? "").trim();
+
+  /* What the dropdown offers. A vendor already stored may not be in the last
+     search — a name search returns a different set — so it is carried in
+     explicitly; otherwise the box would read "ไม่เลือก" over a line that has
+     one, and the next change would silently clear it. */
+  const found = Array.isArray(vendors) ? vendors : [];
+  const options: TaxVendorCandidate[] =
+    chosenNo && !found.some((c) => c.vendorNo === chosenNo)
+      ? [{ vendorNo: chosenNo, displayName: chosenName, taxRegistrationNumber: null }, ...found]
+      : found;
+
+  const needsVendor = vat > 0 && !chosenNo;
 
   return (
     <div
@@ -219,9 +232,18 @@ export function SellerVendorCard({ index, item, brandCode, onChange }: Props) {
             </span>
           ) : rd.state === "unregistered" ? (
             <div className="flex flex-col gap-0.5">
-              <span className="text-[11px]" style={{ color: "var(--text-info-yellow)" }}>
-                ไม่พบในทะเบียน VAT — ภาษีซื้อจากใบนี้อาจขอคืนไม่ได้
-              </span>
+              {/* Not being VAT registered is only a problem if VAT was charged.
+                  A natural person selling on a plain receipt is not registered
+                  and never will be — nearly every individual seller lands here,
+                  and dressing that as a warning taught the reader to scroll past
+                  the line where VAT really was claimed from a non-registrant. */}
+              {vat > 0 ? (
+                <span className="text-[11px]" style={{ color: "var(--text-info-yellow)" }}>
+                  ⚠ ไม่อยู่ในทะเบียน VAT แต่บรรทัดนี้มี VAT {money(vat)} — ภาษีซื้ออาจขอคืนไม่ได้ ตรวจใบกำกับอีกครั้ง
+                </span>
+              ) : (
+                <Muted>ไม่อยู่ในทะเบียน VAT — ปกติสำหรับบุคคลธรรมดาหรือผู้ขายรายย่อย</Muted>
+              )}
               <CheckedAt at={rd.checkedAt} onRefresh={() => void checkRd(true)} />
             </div>
           ) : rd.state === "found" && reg ? (
@@ -269,108 +291,105 @@ export function SellerVendorCard({ index, item, brandCode, onChange }: Props) {
         </Field>
 
         {/* ── the BC vendor ── */}
-        <Field label="Vendor (BC)" hint={vat > 0 ? "ต้องระบุ — ใช้เป็น Tax Vendor No. บนบรรทัด VAT" : "ไม่บังคับ — บรรทัดนี้ไม่มี VAT"}>
-          {(item.taxVendorNo ?? "").trim() ? (
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[11px]" style={{ color: "var(--text-info-green)" }}>
-                ✓ {item.taxVendorNo}
-                {chosenName ? ` · ${chosenName}` : ""}
-              </span>
-              <LinkButton
-                onClick={() => {
-                  onChange({ taxVendorNo: null });
-                  setChosenName(null);
-                  namedFor.current = null;
-                  setVendors(null);
+        <Field
+          label="Vendor (BC)"
+          hint={vat > 0 ? "ต้องระบุ — ใช้เป็น Tax Vendor No. บนบรรทัด VAT" : "ไม่บังคับ — บรรทัดนี้ไม่มี VAT"}
+        >
+          <div className="flex flex-col gap-1.5">
+            {/* One box. A tax id is thirteen digits and a name is not, so
+                nothing has to be declared — two buttons only made the reader
+                pick a mechanism before they could ask their question. */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <input
+                value={nameTerm}
+                onChange={(e) => setNameTerm(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  runSearch();
                 }}
+                placeholder={
+                  hasTin || invoiceName
+                    ? "เลขผู้เสียภาษี หรือชื่อผู้ขาย — ว่างไว้ = ใช้จากใบกำกับ"
+                    : "เลขผู้เสียภาษี 13 หลัก หรือชื่อผู้ขาย"
+                }
+                className="text-[11px] px-2 py-1 rounded-lg flex-1 outline-none"
+                style={{
+                  background: "var(--bg-input)",
+                  color: "var(--text-primary)",
+                  border: "1px solid var(--border-input)",
+                  minWidth: "14rem",
+                }}
+              />
+              <button
+                type="button"
+                onClick={runSearch}
+                className="text-[11px] px-3 py-1 rounded-lg cursor-pointer"
+                style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)", border: "none" }}
               >
-                เปลี่ยน
-              </LinkButton>
+                ค้นหา Vendor
+              </button>
             </div>
-          ) : (
-            <div className="flex flex-col gap-1.5">
-              {/* One box. A tax id is thirteen digits and a name is not, so
-                  nothing has to be declared — two buttons only made the reader
-                  pick a mechanism before they could ask their question. */}
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <input
-                  value={nameTerm}
-                  onChange={(e) => setNameTerm(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key !== "Enter") return;
-                    e.preventDefault();
-                    runSearch();
-                  }}
-                  placeholder={
-                    hasTin || invoiceName
-                      ? "เลขผู้เสียภาษี หรือชื่อผู้ขาย — ว่างไว้ = ใช้จากใบกำกับ"
-                      : "เลขผู้เสียภาษี 13 หลัก หรือชื่อผู้ขาย"
-                  }
-                  className="text-[11px] px-2 py-1 rounded-lg flex-1 outline-none"
+
+            {vendors === "loading" && <Muted>กำลังค้น…</Muted>}
+            {Array.isArray(vendors) && vendors.length === 0 && (
+              <Muted>ไม่พบ Vendor — ลองค้นด้วยชื่อ หรือเปิดการ์ดผู้ขายใน BC ก่อน</Muted>
+            )}
+
+            {/* One dropdown that holds the answer, including "none".
+                The list used to disappear the moment something was picked, so
+                changing a choice meant searching again; and there was no way to
+                say "none of these" other than never touching it, which reads the
+                same as not having looked. */}
+            {options.length > 0 && (
+              <>
+                <select
+                  className="text-[11px] px-2 py-1 rounded-lg w-full outline-none"
                   style={{
                     background: "var(--bg-input)",
                     color: "var(--text-primary)",
                     border: "1px solid var(--border-input)",
-                    minWidth: "14rem",
                   }}
-                />
-                <button
-                  type="button"
-                  onClick={runSearch}
-                  className="text-[11px] px-3 py-1 rounded-lg cursor-pointer"
-                  style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)", border: "none" }}
+                  value={chosenNo}
+                  onChange={(e) => {
+                    const no = e.target.value;
+                    const hit = options.find((c) => c.vendorNo === no) ?? null;
+                    onChange({ taxVendorNo: no || null });
+                    setChosenName(hit?.displayName ?? null);
+                    namedFor.current = no || null;
+                  }}
                 >
-                  ค้นหา Vendor
-                </button>
-              </div>
-
-              {vendors === "loading" && <Muted>กำลังค้น…</Muted>}
-              {Array.isArray(vendors) && vendors.length === 0 && (
-                <Muted>ไม่พบ Vendor — ลองค้นด้วยชื่อ หรือเปิดการ์ดผู้ขายใน BC ก่อน</Muted>
-              )}
-              {Array.isArray(vendors) && vendors.length > 0 && (
-                <div
-                  className="rounded-lg overflow-y-auto"
-                  style={{ border: "1px solid var(--border-light)", maxHeight: "11rem" }}
-                >
-                  <p
-                    className="text-[10px] m-0 px-2 py-1 sticky top-0"
-                    style={{ background: "var(--bg-badge)", color: "var(--text-muted)" }}
-                  >
-                    {vendors.length} รายการ
-                    {vendorMode === "taxId" ? " · ค้นจากเลขผู้เสียภาษี" : vendorMode === "name" ? " · ค้นจากชื่อ" : ""} — เลือกหนึ่ง
-                  </p>
-                  {vendors.map((c) => (
-                    <button
-                      key={c.vendorNo}
-                      type="button"
-                      onClick={() => {
-                        onChange({ taxVendorNo: c.vendorNo });
-                        setChosenName(c.displayName);
-                        namedFor.current = c.vendorNo;
-                        setVendors(null);
-                      }}
-                      className="w-full text-left px-2 py-1 text-[11px] flex items-center gap-2 cursor-pointer hover:bg-[var(--bg-badge)]"
-                      style={{ background: "transparent", border: "none", color: "var(--text-primary)" }}
-                    >
-                      <span className="font-mono shrink-0" style={{ color: "var(--nav-active-text)" }}>
-                        {c.vendorNo}
-                      </span>
-                      <span className="truncate">{c.displayName ?? "—"}</span>
-                      {c.taxRegistrationNumber && (
-                        <span
-                          className="ml-auto shrink-0 font-mono text-[10px]"
-                          style={{ color: "var(--text-faint)" }}
-                        >
-                          {c.taxRegistrationNumber}
-                        </span>
-                      )}
-                    </button>
+                  <option value="">— ไม่เลือก Vendor (เว้นว่าง) —</option>
+                  {options.map((c) => (
+                    <option key={c.vendorNo} value={c.vendorNo}>
+                      {c.vendorNo} · {c.displayName ?? "—"}
+                      {c.taxRegistrationNumber ? ` · ${c.taxRegistrationNumber}` : ""}
+                    </option>
                   ))}
-                </div>
-              )}
-            </div>
-          )}
+                </select>
+                <span className="text-[10px]" style={{ color: "var(--text-faint)" }}>
+                  {options.length} รายการ
+                  {vendorMode === "taxId"
+                    ? " · ค้นจากเลขผู้เสียภาษี"
+                    : vendorMode === "name"
+                      ? " · ค้นจากชื่อ"
+                      : ""}
+                </span>
+              </>
+            )}
+
+            {chosenNo && (
+              <span className="text-[11px]" style={{ color: "var(--text-info-green)" }}>
+                ✓ {chosenNo}
+                {chosenName ? ` · ${chosenName}` : ""}
+              </span>
+            )}
+            {!chosenNo && vat > 0 && (
+              <span className="text-[11px]" style={{ color: "var(--text-info-yellow)" }}>
+                ยังไม่ได้เลือก Vendor — บรรทัดนี้มี VAT จึงอนุมัติไม่ได้จนกว่าจะเลือก
+              </span>
+            )}
+          </div>
         </Field>
       </div>
     </div>
