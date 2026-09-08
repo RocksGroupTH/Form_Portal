@@ -31,6 +31,8 @@ const PRINT_CSS = `
   }
   .ap31-noprint { display: none !important; }
   html, body { background: #fff !important; }
+  /* A logo is the one thing on this sheet that is not black on white. */
+  #ap31-sheet img { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   @page { size: A4 portrait; margin: 12mm; }
 }
 `;
@@ -64,6 +66,28 @@ function PrintContent() {
   const [request, setRequest] = useState<ClearAdvanceRequest | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [brands, setBrands] = useState<{ id: string; logo: string | null }[]>([]);
+
+  /**
+   * The brand list, for the logo at the top of the sheet.
+   *
+   * `/api/brands` and not the `/brandlogo/{code}-200.png` convention alone,
+   * because a brand whose logo was uploaded through Brand configuration has no
+   * file on disk — the convention would silently print no mark for exactly the
+   * brands someone took the trouble to give artwork to. It does not depend on
+   * the request, so it loads alongside it rather than after it, and a failure
+   * is not an error: the sheet prints without a logo.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/brands")
+      .then((r) => r.json())
+      .then((json: { ok: boolean; data?: { id: string; logo: string | null }[] }) => {
+        if (!cancelled && json.ok && json.data) setBrands(json.data);
+      })
+      .catch(() => { /* no logo, still a valid sheet */ });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (requestId == null || Number.isNaN(requestId)) {
@@ -89,6 +113,14 @@ function PrintContent() {
 
   const clear = request.clear;
   const items: ClearAdvanceItem[] = clear?.items ?? [];
+
+  // The brand the money was drawn against, not whichever one the switcher is on:
+  // a printed sheet is evidence, and it has to name its own request's brand.
+  const brandCode = (request.brandCode ?? "").trim();
+  const brandLogo = brandCode
+    ? brands.find((b) => b.id.trim().toUpperCase() === brandCode.toUpperCase())?.logo
+        ?? `/brandlogo/${brandCode.toLowerCase()}-200.png`
+    : null;
   const advanceAmount = clear?.advanceAmount ?? 0;
   const refund = clear?.refundToCompany ?? 0;
 
@@ -123,9 +155,12 @@ function PrintContent() {
         className="mx-auto p-8 text-[12px]"
         style={{ maxWidth: 900, background: "#fff", color: "#000", fontFamily: "inherit" }}
       >
-        <header className="mb-5">
-          <h1 className="text-[17px] font-bold m-0">แบบฟอร์มเคลียร์คืนเงินทดรองจ่าย (AP-3.1)</h1>
-          <p className="text-[12px] m-0 mt-1">เลขที่คำขอ {request.requestNo ?? "ฉบับร่าง"}</p>
+        <header className="mb-5 flex items-center gap-3">
+          <PrintLogo src={brandLogo} alt={request.companyName ?? brandCode} />
+          <div>
+            <h1 className="text-[17px] font-bold m-0">แบบฟอร์มเคลียร์คืนเงินทดรองจ่าย (AP-3.1)</h1>
+            <p className="text-[12px] m-0 mt-1">เลขที่คำขอ {request.requestNo ?? "ฉบับร่าง"}</p>
+          </div>
         </header>
 
         <table className="w-full mb-5" style={{ borderCollapse: "collapse" }}>
@@ -202,6 +237,32 @@ function PrintContent() {
         </div>
       </div>
     </>
+  );
+}
+
+/**
+ * The brand mark on the sheet, or nothing at all.
+ *
+ * Not `BrandMark`: its fallback is a coloured chip drawn from the dashboard's
+ * theme variables, which is right in the navbar and wrong on a black-on-white
+ * form — a brand with no artwork should leave the header alone rather than
+ * print a coloured box. A missing file is normal (the `-200.png` convention is
+ * never checked for existence), so `onError` is the fallback path, the same way
+ * every other logo in the app handles it.
+ */
+function PrintLogo({ src, alt }: { src: string | null; alt: string }) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) return null;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src}
+      alt={alt}
+      className="object-contain shrink-0"
+      style={{ height: 44, width: "auto", maxWidth: 160 }}
+      draggable={false}
+      onError={() => setFailed(true)}
+    />
   );
 }
 
