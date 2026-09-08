@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { Search } from "lucide-react";
 import type { ClearAdvanceItem } from "@/features/clear-advance/types";
 import { sameRegisteredName } from "@/lib/clr/rd-vat-core";
-import { buildVendorNameTerms, vendorSearchQuery } from "@/lib/clr/tax-vendor-core";
+import { vendorMatches } from "@/lib/clr/tax-vendor-core";
 
 /**
  * One receipt's seller: who the Revenue Department says they are, and which BC
@@ -63,6 +64,34 @@ const fmtDay = (iso: string | null) => {
   return y && m && d ? `${d}/${m}/${y}` : "";
 };
 
+/**
+ * One fetch per Company per page, shared by every card on it.
+ *
+ * A clearing with six receipts is six of these cards, and each needs the same
+ * list — to filter when opened, and to show the name of a vendor already chosen
+ * rather than a bare code. Without the cache that is six identical requests for
+ * 93KB, on mount, every time the account step opens.
+ */
+const vendorListCache = new Map<string, Promise<TaxVendorCandidate[]>>();
+
+function fetchVendors(brandCode: string | null): Promise<TaxVendorCandidate[]> {
+  const key = brandCode ?? "";
+  const hit = vendorListCache.get(key);
+  if (hit) return hit;
+  const p = (async () => {
+    const res = await fetch(`/api/request/clear-advance/tax-vendors?brand=${encodeURIComponent(key)}`);
+    const j = (await res.json()) as { ok: boolean; data?: TaxVendorCandidate[]; error?: string };
+    if (!j.ok) {
+      // Not cached: a failure now must not become this page's answer forever.
+      vendorListCache.delete(key);
+      throw new Error(j.error ?? "โหลดรายชื่อ Vendor ไม่สำเร็จ");
+    }
+    return j.data ?? [];
+  })();
+  vendorListCache.set(key, p);
+  return p;
+}
+
 export function SellerVendorCard({ index, item, brandCode, onChange }: Props) {
   const tin = (item.taxId ?? "").replace(/\D/g, "");
   const hasTin = tin.length === 13;
@@ -70,11 +99,10 @@ export function SellerVendorCard({ index, item, brandCode, onChange }: Props) {
   const total = Number(item.amountBeforeVat ?? 0) + vat;
 
   const [rd, setRd] = useState<RdState>({ state: "idle" });
+  /** Every vendor in this Company, fetched once and filtered as the reader types. */
   const [vendors, setVendors] = useState<TaxVendorCandidate[] | "loading" | null>(null);
-  const [chosenName, setChosenName] = useState<string | null>(null);
-  const [nameTerm, setNameTerm] = useState("");
-  /** Which key the last search used — shown above the results. */
-  const [vendorMode, setVendorMode] = useState<"taxId" | "name" | null>(null);
+  const [open, setOpen] = useState(false);
+  const [term, setTerm] = useState("");
 
   const checkRd = useCallback(
     async (refresh = false) => {
@@ -102,60 +130,23 @@ export function SellerVendorCard({ index, item, brandCode, onChange }: Props) {
     [hasTin, tin],
   );
 
-  const search = useCallback(
-    async (qs: string): Promise<TaxVendorCandidate[]> => {
-      setVendors("loading");
-      try {
-        const res = await fetch(
-          `/api/request/clear-advance/tax-vendors?brand=${encodeURIComponent(brandCode ?? "")}&${qs}`,
-        );
-        const j = (await res.json()) as { ok: boolean; data?: TaxVendorCandidate[]; error?: string };
-        if (!j.ok) {
-          toast.error(j.error ?? "ค้นหา Vendor ไม่สำเร็จ");
-          setVendors([]);
-          return [];
-        }
-        const data = j.data ?? [];
-        setVendors(data);
-        return data;
-      } catch {
-        setVendors([]);
-        return [];
-      }
-    },
-    [brandCode],
-  );
-
-  /* What the box asked for, resolved once and reported the same way the results
-     are labelled — so a search that fell back to the receipt still says which
-     key it used. */
-  const runSearch = useCallback(() => {
-    const q = vendorSearchQuery(nameTerm, item.taxId, item.payeeName);
-    if (q.kind === "invalid") {
-      setVendorMode(null);
-      return toast.error(q.reason);
+  const loadVendors = useCallback(async () => {
+    setVendors("loading");
+    try {
+      setVendors(await fetchVendors(brandCode));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "โหลดรายชื่อ Vendor ไม่สำเร็จ");
+      setVendors([]);
     }
-    setVendorMode(q.kind);
-    void (async () => {
-      const first = await search(
-        q.kind === "taxId" ? `taxId=${q.value}` : `name=${encodeURIComponent(q.value)}`,
-      );
-      if (first.length > 0) return;
+  }, [brandCode]);
 
-      /* The tax id found nobody, so try the name before reporting nothing.
-         The empty box searches by tax id first because it is the exact key — but
-         the cards it cannot reach are exactly the ones the name search exists
-         for: 101 ADV cards and 155 trade vendors in PCTH carry no tax
-         registration number at all. Reporting "not a vendor" after asking only
-         the one question they cannot answer is how นายภาสพงษ์ พิษณุพจน์ (ADV0080,
-         no tax id on the card) came back as missing while a name search found
-         them immediately. */
-      const fallback = (nameTerm || item.payeeName || "").trim();
-      if (q.kind !== "taxId" || buildVendorNameTerms(fallback).length === 0) return;
-      setVendorMode("name");
-      await search(`name=${encodeURIComponent(fallback)}`);
-    })();
-  }, [nameTerm, item.taxId, item.payeeName, search]);
+  /* A vendor already chosen is stored as a number alone — its name lives in BC.
+     The list is what carries the name, so a card that starts with one loads it
+     without waiting to be opened; the cache makes that free after the first. */
+  useEffect(() => {
+    if (vendors !== null || !(item.taxVendorNo ?? "").trim()) return;
+    void loadVendors();
+  }, [item.taxVendorNo, vendors, loadVendors]);
 
   /* Ask the registry when the card opens, once per tax id. The answer is kept in
      our own table and never expires, so the ordinary case is a row read; making
@@ -166,24 +157,6 @@ export function SellerVendorCard({ index, item, brandCode, onChange }: Props) {
     askedFor.current = tin;
     void checkRd();
   }, [hasTin, tin, checkRd]);
-
-  /* A vendor already chosen arrives as a number alone — the name lives in BC.
-     Resolve it once so the card names who was picked instead of showing a code
-     nobody can check. */
-  const namedFor = useRef<string | null>(null);
-  useEffect(() => {
-    const no = (item.taxVendorNo ?? "").trim();
-    if (!no || !hasTin || chosenName || namedFor.current === no) return;
-    namedFor.current = no;
-    void (async () => {
-      const found = await search(`taxId=${tin}`);
-      const hit = found.find((c) => c.vendorNo === no);
-      if (hit?.displayName) setChosenName(hit.displayName);
-      // The list stays: it is what the dropdown offers, so changing the choice
-      // does not mean searching again.
-      setVendorMode("taxId");
-    })();
-  }, [item.taxVendorNo, hasTin, tin, chosenName, search]);
 
   const reg = rd.state === "found" ? rd.registrant : null;
   const rdFullName = reg ? [reg.titleName, reg.name].filter(Boolean).join(" ") : "";
@@ -199,15 +172,22 @@ export function SellerVendorCard({ index, item, brandCode, onChange }: Props) {
 
   const chosenNo = (item.taxVendorNo ?? "").trim();
 
-  /* What the dropdown offers. A vendor already stored may not be in the last
-     search — a name search returns a different set — so it is carried in
-     explicitly; otherwise the box would read "ไม่เลือก" over a line that has
-     one, and the next change would silently clear it. */
-  const found = Array.isArray(vendors) ? vendors : [];
-  const options: TaxVendorCandidate[] =
-    chosenNo && !found.some((c) => c.vendorNo === chosenNo)
-      ? [{ vendorNo: chosenNo, displayName: chosenName, taxRegistrationNumber: null }, ...found]
-      : found;
+  const all = Array.isArray(vendors) ? vendors : [];
+  const chosen = all.find((c) => c.vendorNo === chosenNo) ?? null;
+
+  /* The cards whose tax id is the one on this receipt, first and marked. Every
+     other card is still one keystroke away — the tax id is a strong hint, not a
+     filter, because the seller may simply have no tax id on their card. */
+  const shortlist = useMemo(() => {
+    const matching = all.filter((c) => vendorMatches(c, term));
+    if (!hasTin) return matching.slice(0, 80);
+    const exact: TaxVendorCandidate[] = [];
+    const rest: TaxVendorCandidate[] = [];
+    for (const c of matching) {
+      ((c.taxRegistrationNumber ?? "").replace(/\D/g, "") === tin ? exact : rest).push(c);
+    }
+    return [...exact, ...rest].slice(0, 80);
+  }, [all, term, hasTin, tin]);
 
   const needsVendor = vat > 0 && !chosenNo;
 
@@ -313,100 +293,109 @@ export function SellerVendorCard({ index, item, brandCode, onChange }: Props) {
           label="Vendor (BC)"
           hint={vat > 0 ? "ต้องระบุ — ใช้เป็น Tax Vendor No. บนบรรทัด VAT" : "ไม่บังคับ — บรรทัดนี้ไม่มี VAT"}
         >
-          <div className="flex flex-col gap-1.5">
-            {/* One box. A tax id is thirteen digits and a name is not, so
-                nothing has to be declared — two buttons only made the reader
-                pick a mechanism before they could ask their question. */}
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <input
-                value={nameTerm}
-                onChange={(e) => setNameTerm(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key !== "Enter") return;
-                  e.preventDefault();
-                  runSearch();
-                }}
-                placeholder={
-                  hasTin || invoiceName
-                    ? "เลขผู้เสียภาษี หรือชื่อผู้ขาย — ว่างไว้ = ใช้จากใบกำกับ"
-                    : "เลขผู้เสียภาษี 13 หลัก หรือชื่อผู้ขาย"
-                }
-                className="text-[11px] px-2 py-1 rounded-lg flex-1 outline-none"
-                style={{
-                  background: "var(--bg-input)",
-                  color: "var(--text-primary)",
-                  border: "1px solid var(--border-input)",
-                  minWidth: "14rem",
-                }}
-              />
-              <button
-                type="button"
-                onClick={runSearch}
-                className="text-[11px] px-3 py-1 rounded-lg cursor-pointer"
-                style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)", border: "none" }}
-              >
-                ค้นหา Vendor
-              </button>
-            </div>
-
-            {vendors === "loading" && <Muted>กำลังค้น…</Muted>}
-            {Array.isArray(vendors) && vendors.length === 0 && (
-              // It has already tried the name by the time this shows, so telling
-              // the reader to try it would send them round the same loop.
-              <Muted>
-                ไม่พบ Vendor {hasTin ? "ทั้งจากเลขผู้เสียภาษีและชื่อผู้ขาย" : "จากชื่อที่ค้น"} —
-                พิมพ์ชื่ออื่นเพื่อค้นใหม่ หรือเปิดการ์ดผู้ขายใน BC ก่อน
-              </Muted>
-            )}
-
-            {/* One dropdown that holds the answer, including "none".
-                The list used to disappear the moment something was picked, so
-                changing a choice meant searching again; and there was no way to
-                say "none of these" other than never touching it, which reads the
-                same as not having looked. */}
-            {options.length > 0 && (
-              <>
-                <select
-                  className="text-[11px] px-2 py-1 rounded-lg w-full outline-none"
-                  style={{
-                    background: "var(--bg-input)",
-                    color: "var(--text-primary)",
-                    border: "1px solid var(--border-input)",
-                  }}
-                  value={chosenNo}
-                  onChange={(e) => {
-                    const no = e.target.value;
-                    const hit = options.find((c) => c.vendorNo === no) ?? null;
-                    onChange({ taxVendorNo: no || null });
-                    setChosenName(hit?.displayName ?? null);
-                    namedFor.current = no || null;
-                  }}
-                >
-                  <option value="">— ไม่เลือก Vendor (เว้นว่าง) —</option>
-                  {options.map((c) => (
-                    <option key={c.vendorNo} value={c.vendorNo}>
-                      {c.vendorNo} · {c.displayName ?? "—"}
-                      {c.taxRegistrationNumber ? ` · ${c.taxRegistrationNumber}` : ""}
-                    </option>
-                  ))}
-                </select>
-                <span className="text-[10px]" style={{ color: "var(--text-faint)" }}>
-                  {options.length} รายการ
-                  {vendorMode === "taxId"
-                    ? " · ค้นจากเลขผู้เสียภาษี"
-                    : vendorMode === "name"
-                      ? " · ค้นจากชื่อ"
-                      : ""}
-                </span>
-              </>
-            )}
-
-            {chosenNo && (
-              <span className="text-[11px]" style={{ color: "var(--text-info-green)" }}>
-                ✓ {chosenNo}
-                {chosenName ? ` · ${chosenName}` : ""}
+          {/* One control: a field that opens a list of the Company's vendors and
+              filters as you type — the same shape the branch and G/L pickers on
+              this form already use. It replaced a text box and a ค้นหา button,
+              which asked the reader to run a query and then read whether it had
+              found anything; 1,604 cards is small enough to send once and filter
+              here, so there is nothing to run. */}
+          <div className="relative flex flex-col gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                const next = !open;
+                setOpen(next);
+                if (!next) return;
+                if (vendors === null) void loadVendors();
+                // Seeded with the seller off the receipt, so the common case is
+                // open-and-pick rather than open-and-type. Not when one is
+                // already chosen: an open then is a change of mind, and the
+                // receipt's name is what it was changed away from.
+                if (!chosenNo && !term) setTerm(invoiceName);
+              }}
+              className="text-[12px] px-2 py-1.5 rounded-lg w-full text-left flex items-center gap-1.5 cursor-pointer"
+              style={{
+                background: "var(--bg-input)",
+                color: chosen || chosenNo ? "var(--text-primary)" : "var(--text-faint)",
+                border: "1px solid var(--border-input)",
+              }}
+            >
+              <span className="flex-1 min-w-0 truncate">
+                {chosenNo
+                  ? `${chosenNo}${chosen?.displayName ? ` · ${chosen.displayName}` : ""}`
+                  : "— เลือก Vendor (เว้นว่างได้) —"}
               </span>
+              <Search size={12} className="shrink-0" style={{ color: "var(--text-faint)" }} />
+            </button>
+
+            {open && (
+              <div
+                className="absolute z-30 top-full left-0 right-0 mt-1 rounded-lg overflow-hidden"
+                style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", boxShadow: "0 8px 24px -8px rgba(0,0,0,0.35)" }}
+              >
+                <div className="p-2" style={{ borderBottom: "1px solid var(--border-light)" }}>
+                  <input
+                    autoFocus
+                    value={term}
+                    onChange={(e) => setTerm(e.target.value)}
+                    placeholder="พิมพ์ชื่อ / เลขผู้เสียภาษี / รหัส Vendor"
+                    className="text-[11px] px-2 py-1 rounded-lg w-full outline-none"
+                    style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-input)" }}
+                  />
+                </div>
+                <div className="max-h-56 overflow-y-auto slim-scroll">
+                  {vendors === "loading" ? (
+                    <p className="px-3 py-2 text-[11px] m-0" style={{ color: "var(--text-muted)" }}>กำลังโหลด…</p>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => { onChange({ taxVendorNo: null }); setOpen(false); setTerm(""); }}
+                        className="w-full text-left px-3 py-1.5 text-[11px] cursor-pointer border-none bg-transparent"
+                        style={{ color: "var(--text-muted)" }}
+                      >
+                        — ไม่เลือก Vendor (เว้นว่าง) —
+                      </button>
+                      {shortlist.length === 0 ? (
+                        <p className="px-3 py-2 text-[11px] m-0" style={{ color: "var(--text-muted)" }}>
+                          ไม่พบ Vendor ที่ตรงกับที่พิมพ์
+                        </p>
+                      ) : (
+                        shortlist.map((c) => {
+                          const sameTin = hasTin && (c.taxRegistrationNumber ?? "").replace(/\D/g, "") === tin;
+                          return (
+                            <button
+                              key={c.vendorNo}
+                              type="button"
+                              onClick={() => { onChange({ taxVendorNo: c.vendorNo }); setOpen(false); setTerm(""); }}
+                              className="w-full text-left px-3 py-1.5 cursor-pointer border-none bg-transparent hover:bg-[var(--bg-badge)]"
+                              style={{ background: c.vendorNo === chosenNo ? "var(--nav-active-bg)" : "transparent" }}
+                            >
+                              <span className="flex items-center gap-1.5">
+                                <span className="text-[11px] font-mono shrink-0" style={{ color: "var(--nav-active-text)" }}>{c.vendorNo}</span>
+                                {sameTin && (
+                                  <span className="text-[9px] px-1 rounded shrink-0"
+                                    style={{ background: "var(--bg-info-green)", color: "var(--text-info-green)" }}>
+                                    ตรงเลขภาษี
+                                  </span>
+                                )}
+                                <span className="text-[11px] truncate" style={{ color: "var(--text-primary)" }}>{c.displayName ?? "—"}</span>
+                              </span>
+                              {c.taxRegistrationNumber && (
+                                <span className="block text-[10px] font-mono" style={{ color: "var(--text-faint)" }}>
+                                  {c.taxRegistrationNumber}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
             )}
+
             {!chosenNo && vat > 0 && (
               <span className="text-[11px]" style={{ color: "var(--text-info-yellow)" }}>
                 ยังไม่ได้เลือก Vendor — บรรทัดนี้มี VAT จึงอนุมัติไม่ได้จนกว่าจะเลือก

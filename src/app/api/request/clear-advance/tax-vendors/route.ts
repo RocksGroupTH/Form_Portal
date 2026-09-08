@@ -1,62 +1,38 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
-import { suggestTaxVendors, searchTaxVendorsByName } from "@/lib/clr/tax-vendor-service";
-import { buildVendorNameTerms } from "@/lib/clr/tax-vendor-core";
+import { listTaxVendors } from "@/lib/clr/tax-vendor-service";
 import { getBrandErpInterfaceMap } from "@/lib/acc/brand-erp-interface-map-service";
 import { AP2_FORM_CODE } from "@/features/advance/constants";
 
 /**
- * GET /api/request/clear-advance/tax-vendors?brand=ROCKS&taxId=0107537002443
- * GET /api/request/clear-advance/tax-vendors?brand=ROCKS&name=เจเนซิส
+ * GET /api/request/clear-advance/tax-vendors?brand=ROCKS
  *
- * The vendor cards in that Company that could be this seller — candidates for
- * the VAT line's Tax Vendor No., which accounting picks from.
+ * Every vendor card in that Company — the whole list the screen filters as the
+ * reader types. It used to take `taxId` or `name` and search server-side, which
+ * meant a button to press, a round trip per attempt, and an answer that depended
+ * on which key was asked first: a card with no tax registration number (101 ADV
+ * cards and 155 trade vendors in PCTH have none) came back as "not a vendor"
+ * from a tax-id search that could never have found it.
  *
- * Two ways in, because neither reaches everything: the tax id is the seller's
- * legal identity and answers with a single card 88% of the time, but 155 active
- * trade vendors in PCTH have no tax registration number on their card and can
- * only be found by name.
- *
- * An empty list is an ordinary answer, not a failure — the seller may simply not
- * be a vendor of ours yet.
+ * The largest company is 1,604 cards, about 93KB. Small enough to send once.
  */
 export async function GET(req: NextRequest) {
   const session = await requireAuth();
   if (session instanceof Response) return session;
 
   const brand = req.nextUrl.searchParams.get("brand") ?? "";
-  const taxId = req.nextUrl.searchParams.get("taxId") ?? "";
-  const name = req.nextUrl.searchParams.get("name") ?? "";
-  const byTaxId = taxId.replace(/\D/g, "").length === 13;
-  const byName = buildVendorNameTerms(name).length > 0;
-  if (!brand.trim() || (!byTaxId && !byName)) {
-    return NextResponse.json(
-      {
-        ok: false,
-        // A name of nothing but "บริษัท จำกัด" lands here: it is not a search,
-        // and saying so beats answering it with every company in the ledger.
-        error: name.trim()
-          ? "ชื่อที่ค้นไม่เจาะจงพอ — พิมพ์ชื่อเฉพาะของผู้ขาย"
-          : "ต้องระบุแบรนด์ และเลขผู้เสียภาษี 13 หลัก หรือชื่อผู้ขาย",
-      },
-      { status: 400 },
-    );
+  if (!brand.trim()) {
+    return NextResponse.json({ ok: false, error: "ต้องระบุแบรนด์" }, { status: 400 });
   }
 
   try {
     // The claim brand is what the screen knows; ErpVendors is keyed by the
     // Company the journal posts into. Resolved here rather than on the client,
     // because sending ROCKS where PCTH is meant returns an empty list that looks
-    // exactly like "this seller is not a vendor" — the same silent shape that
-    // made the BU lookup read zero branches earlier today.
+    // exactly like "this company has no vendors".
     const map = await getBrandErpInterfaceMap(brand, AP2_FORM_CODE);
     const company = map?.interfaceBrandCode?.trim() || brand.trim();
-    // The tax id wins when both arrive: it is the seller's identity, the name is
-    // a way of looking for it.
-    const data = byTaxId
-      ? await suggestTaxVendors(company, taxId)
-      : await searchTaxVendorsByName(company, name);
-    return NextResponse.json({ ok: true, data });
+    return NextResponse.json({ ok: true, data: await listTaxVendors(company) });
   } catch (e) {
     console.error("[api/request/clear-advance/tax-vendors] GET", e);
     return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : "error" }, { status: 500 });

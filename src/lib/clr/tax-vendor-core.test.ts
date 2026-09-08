@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildVendorNameTerms, likePattern, linesMissingTaxVendor, vendorSearchQuery } from "./tax-vendor-core";
+import { buildVendorNameTerms, linesMissingTaxVendor, vendorMatches } from "./tax-vendor-core";
 
 /* The real invoice this was built against, and the shape BC holds it in. */
 test("a pasted invoice name searches on its distinctive words", () => {
@@ -42,12 +42,6 @@ test("at most three words are ANDed", () => {
   assert.equal(buildVendorNameTerms("อัลฟ่า เบต้า แกมม่า เดลต้า เอปไซลอน").length, 3);
 });
 
-/* The mall prefixes really are written "[LPO]", so `[` has to be escaped or it
- * opens a character class. A lone `]` is already literal to T-SQL. */
-test("a name's own brackets and percent signs stay literal", () => {
-  assert.equal(likePattern("[LPO] 50%"), "%\\[LPO] 50\\%%");
-});
-
 /* ── the approval gate ── */
 
 const line = (vat: number, vendor: string | null) =>
@@ -80,44 +74,45 @@ test("no lines is not a failure", () => {
   assert.deepEqual(linesMissingTaxVendor(null), []);
 });
 
-/* ── one box, no mode to choose ── */
+/* ── matching a card against what was typed ── */
 
-test("thirteen digits is a tax id", () => {
-  assert.deepEqual(vendorSearchQuery("0107537002443", null, null), { kind: "taxId", value: "0107537002443" });
+const card = (no: string, name: string, tin: string | null = null) =>
+  ({ vendorNo: no, displayName: name, taxRegistrationNumber: tin });
+
+/* The bug this replaced: SQL's Thai collation would not match a name the OCR
+ * read one mark short. A substring in the browser does. */
+test("a name missing its final Thai mark still matches", () => {
+  assert.equal(vendorMatches(card("ADV0080", "นายภาสพงษ์ พิษณุพจน์"), "ภาสพงษ์ พิษณุพจน"), true);
 });
 
-/* Tax ids are written with dashes on invoices and pasted that way. */
-test("a punctuated tax id is still a tax id", () => {
-  assert.deepEqual(vendorSearchQuery(" 0-1075-37002-44-3 ", null, null), { kind: "taxId", value: "0107537002443" });
-});
-
-test("anything else is a name", () => {
-  assert.deepEqual(vendorSearchQuery("เซ็นทรัล พัฒนา", null, null), { kind: "name", value: "เซ็นทรัล พัฒนา" });
-});
-
-/* Half a tax id run as a name finds nothing, and an empty result reads as "not a
- * vendor" — the wrong answer to a typo. */
-test("digits that are not thirteen are refused, not name-searched", () => {
-  const r = vendorSearchQuery("0107537", null, null);
-  assert.equal(r.kind, "invalid");
-});
-
-test("an empty box uses the receipt's tax id first", () => {
-  assert.deepEqual(
-    vendorSearchQuery("", "0107537002443", "บริษัท เซ็นทรัลพัฒนา จำกัด"),
-    { kind: "taxId", value: "0107537002443" },
+test("a pasted invoice name matches past its boilerplate", () => {
+  assert.equal(
+    vendorMatches(card("VTD0030", "[CTW] บริษัท เซ็นทรัลพัฒนา จำกัด (มหาชน)"), "บริษัท เซ็นทรัล พัฒนา จำกัด"),
+    true,
   );
 });
 
-/* The 155 PCTH vendors with no tax registration number are reached this way. */
-test("with no tax id on the receipt it falls back to the name", () => {
-  assert.deepEqual(
-    vendorSearchQuery("", null, "บริษัท เจเนซิส ซัพพลาย เชน จำกัด"),
-    { kind: "name", value: "บริษัท เจเนซิส ซัพพลาย เชน จำกัด" },
-  );
+test("the mall prefix narrows to one card", () => {
+  assert.equal(vendorMatches(card("VTD0030", "[CTW] บริษัท เซ็นทรัลพัฒนา"), "เซ็นทรัล ctw"), true);
+  assert.equal(vendorMatches(card("VTD0026", "[LPO] บริษัท เซ็นทรัลพัฒนา"), "เซ็นทรัล ctw"), false);
 });
 
-test("nothing to go on is said, not searched", () => {
-  assert.equal(vendorSearchQuery("", null, null).kind, "invalid");
-  assert.equal(vendorSearchQuery("", "12345", "บริษัท จำกัด").kind, "invalid");
+test("a vendor number or a tax id finds its card", () => {
+  assert.equal(vendorMatches(card("VTD0030", "เซ็นทรัลพัฒนา", "0107537002443"), "VTD0030"), true);
+  assert.equal(vendorMatches(card("VTD0030", "เซ็นทรัลพัฒนา", "0107537002443"), "0107537002443"), true);
+  assert.equal(vendorMatches(card("VTD0030", "เซ็นทรัลพัฒนา", "0-1075-37002-44-3"), "0107537002443"), true);
+});
+
+test("English matches whatever case it was typed in", () => {
+  assert.equal(vendorMatches(card("ADV0094", "Justine Jay Lope"), "justine jay"), true);
+});
+
+/* Nothing typed is not a filter — the list opens whole. */
+test("an empty box matches everything", () => {
+  assert.equal(vendorMatches(card("ADV0080", "นายภาสพงษ์"), ""), true);
+  assert.equal(vendorMatches(card("ADV0080", "นายภาสพงษ์"), "  "), true);
+});
+
+test("a word that appears nowhere excludes the card", () => {
+  assert.equal(vendorMatches(card("VTD0030", "เซ็นทรัลพัฒนา"), "โลตัส"), false);
 });

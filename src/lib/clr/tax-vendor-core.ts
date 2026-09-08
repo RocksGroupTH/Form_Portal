@@ -58,11 +58,6 @@ export function buildVendorNameTerms(raw: string | null | undefined): string[] {
   return terms;
 }
 
-/** A term as a LIKE pattern. `%`, `_` and `[` are literal in a company name. */
-export function likePattern(term: string): string {
-  return `%${term.replace(/[\\%_[]/g, (c) => `\\${c}`)}%`;
-}
-
 /**
  * The 1-based positions of expense lines that carry VAT but no vendor.
  *
@@ -82,50 +77,25 @@ export function linesMissingTaxVendor(
   return out;
 }
 
-/** What one search box asked for. */
-export type VendorSearch =
-  | { kind: "taxId"; value: string }
-  | { kind: "name"; value: string }
-  | { kind: "invalid"; reason: string };
-
 /**
- * Read one box and decide what was asked.
+ * Whether a vendor card answers what was typed.
  *
- * Two buttons — "ค้นจากเลขภาษี" and "ค้นจากชื่อ" — made the reader choose a
- * mechanism before they could ask a question, and the two searches are not two
- * questions: both mean "which vendor card is this seller". A tax id is thirteen
- * digits and a name is not, so nothing has to be declared.
+ * Every distinctive word has to appear somewhere in the card — its name, its
+ * number or its tax id — so "เซ็นทรัล ctw" and "0107537002443" and "VTD0030" all
+ * work, and the boilerplate a pasted invoice name carries does not narrow
+ * anything away.
  *
- * An empty box falls back to what the receipt already says, tax id first: it is
- * the exact key, and it answers with a single card most of the time.
- *
- * Digits that are not thirteen are refused rather than run as a name. Half a tax
- * id searched as a name finds nothing, and an empty result would read as "this
- * seller is not a vendor" — the wrong answer to a typo.
+ * Substring, in the browser, on purpose. The same match in SQL went through
+ * Thai_CI_AS, where a consonant and the mark above it are one collation element
+ * and '%พิษณุพจน%' therefore did not match "พิษณุพจน์" — a seller the OCR read one
+ * mark short was reported as not a vendor at all.
  */
-export function vendorSearchQuery(
-  typed: string | null | undefined,
-  receiptTaxId: string | null | undefined,
-  receiptName: string | null | undefined,
-): VendorSearch {
-  const raw = (typed ?? "").trim();
-
-  if (raw) {
-    const digits = raw.replace(/\D/g, "");
-    // Separators are how tax ids are written, so a box holding only digits and
-    // punctuation was meant as one.
-    if (digits && !/[^\d\s.\-()]/.test(raw)) {
-      return digits.length === 13
-        ? { kind: "taxId", value: digits }
-        : { kind: "invalid", reason: "เลขผู้เสียภาษีต้องมี 13 หลัก" };
-    }
-    if (buildVendorNameTerms(raw).length > 0) return { kind: "name", value: raw };
-    return { kind: "invalid", reason: "ชื่อที่ค้นไม่เจาะจงพอ — พิมพ์ชื่อเฉพาะของผู้ขาย" };
-  }
-
-  const tin = (receiptTaxId ?? "").replace(/\D/g, "");
-  if (tin.length === 13) return { kind: "taxId", value: tin };
-  const name = (receiptName ?? "").trim();
-  if (buildVendorNameTerms(name).length > 0) return { kind: "name", value: name };
-  return { kind: "invalid", reason: "พิมพ์เลขผู้เสียภาษี 13 หลัก หรือชื่อผู้ขาย" };
+export function vendorMatches(
+  card: { vendorNo: string; displayName: string | null; taxRegistrationNumber: string | null },
+  typed: string,
+): boolean {
+  const terms = buildVendorNameTerms(typed);
+  if (terms.length === 0) return true;
+  const hay = `${card.vendorNo} ${card.displayName ?? ""} ${(card.taxRegistrationNumber ?? "").replace(/\D/g, "")}`.toLowerCase();
+  return terms.every((t) => hay.includes(t.toLowerCase()));
 }
