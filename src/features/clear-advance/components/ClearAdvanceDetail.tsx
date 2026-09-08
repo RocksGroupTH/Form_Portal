@@ -103,6 +103,21 @@ interface Props {
   onChanged?: () => void;
 }
 
+interface VatRegistrant {
+  nid: string;
+  titleName: string | null;
+  name: string | null;
+  branchNumber: number | null;
+  branchCode: string | null;
+  vatRegisteredOn: string | null;
+  address: string | null;
+}
+type VatCheck =
+  | { state: "checking" }
+  | { state: "found"; registrant: VatRegistrant }
+  | { state: "unregistered" }
+  | { state: "unknown" };
+
 export function ClearAdvanceDetail({ request, onChanged }: Props) {
   const clear = request.clear;
   const items = clear?.items ?? [];
@@ -144,6 +159,15 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
   // editable here: the payee's identity came off the receipt the requester held,
   // and this step decides how the withholding is filed, not who was paid.
   const [editWht, setEditWht] = useState<ClearDetail["whtItems"]>(() => clear?.whtItems ?? []);
+  /**
+   * What the Revenue Department holds for each seller tax id on this clearing,
+   * keyed by the id. Checked on demand here rather than on open: accounting is
+   * usually correcting one line, and the register is a call out of the building.
+   *
+   * "unregistered" and "could not check" stay separate — the first is a fact
+   * about the invoice, the second is the RD not answering.
+   */
+  const [vatByTin, setVatByTin] = useState<Record<string, VatCheck>>({});
   const [editBusy, setEditBusy] = useState(false);
 
   useEffect(() => {
@@ -541,6 +565,90 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                       requester's answer came from the tax id, which is evidence
                       and not proof: a 0-prefixed id can belong to a foreign
                       individual. */}
+                  {/* The register, on demand. Accounting types these fields when
+                      the read failed, and a typed tax id is exactly the one worth
+                      checking — the registered name and branch are facts where
+                      what is in the box is somebody's transcription. Offered, not
+                      applied: they have the invoice. */}
+                  {editItems.some((it) => (it.taxId ?? "").replace(/\D/g, "").length === 13) && (
+                    <div className="flex flex-col gap-2">
+                      <p className="text-[11px] font-bold m-0" style={{ color: "var(--text-muted)" }}>
+                        ตรวจผู้ขายกับกรมสรรพากร
+                      </p>
+                      {editItems.map((it, i) => {
+                        const tin = (it.taxId ?? "").replace(/\D/g, "");
+                        if (tin.length !== 13) return null;
+                        const v = vatByTin[tin];
+                        const check = async () => {
+                          setVatByTin((p) => ({ ...p, [tin]: { state: "checking" } }));
+                          try {
+                            const res = await fetch(`/api/request/clear-advance/vat-registrant?taxId=${tin}`);
+                            const j = (await res.json()) as { ok: boolean; data?: { registrant: VatRegistrant | null } };
+                            setVatByTin((p) => ({
+                              ...p,
+                              [tin]: j.ok
+                                ? (j.data?.registrant
+                                    ? { state: "found", registrant: j.data.registrant }
+                                    : { state: "unregistered" })
+                                : { state: "unknown" },
+                            }));
+                          } catch {
+                            setVatByTin((p) => ({ ...p, [tin]: { state: "unknown" } }));
+                          }
+                        };
+                        const reg = v?.state === "found" ? v.registrant : null;
+                        const full = reg ? [reg.titleName, reg.name].filter(Boolean).join(" ") : "";
+                        const differs = !!full && (full !== (it.payeeName ?? "").trim()
+                          || (reg?.branchCode ?? "") !== (it.taxBranchCode ?? ""));
+                        return (
+                          <div key={it.id ?? i} className="flex items-center gap-2 flex-wrap text-[12px]">
+                            <span style={{ color: "var(--text-muted)" }}>{i + 1}.</span>
+                            <span className="font-mono" style={{ color: "var(--text-primary)" }}>{tin}</span>
+                            {!v && (
+                              <button type="button" onClick={check}
+                                className="text-[11px] px-2 py-0.5 rounded-lg cursor-pointer"
+                                style={{ background: "var(--bg-badge)", color: "var(--text-secondary)", border: "none" }}>
+                                ตรวจ
+                              </button>
+                            )}
+                            {v?.state === "checking" && (
+                              <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>กำลังตรวจ…</span>
+                            )}
+                            {v?.state === "unregistered" && (
+                              <span className="text-[11px]" style={{ color: "var(--text-warning)" }}>
+                                ไม่พบในทะเบียน VAT — ภาษีซื้อจากใบนี้อาจขอคืนไม่ได้
+                              </span>
+                            )}
+                            {v?.state === "unknown" && (
+                              <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>
+                                ตรวจไม่สำเร็จ
+                                <button type="button" onClick={check}
+                                  className="ml-1 underline cursor-pointer border-none bg-transparent p-0 text-[11px]"
+                                  style={{ color: "var(--nav-active-text)" }}>ลองใหม่</button>
+                              </span>
+                            )}
+                            {reg && (
+                              <span className="text-[11px] flex items-center gap-1 flex-wrap"
+                                style={{ color: "var(--text-info-green)" }}>
+                                {full}{reg.branchCode ? ` · สาขา ${reg.branchCode}` : ""}
+                                {differs && (
+                                  <button type="button"
+                                    className="underline cursor-pointer border-none bg-transparent p-0 text-[11px]"
+                                    style={{ color: "var(--nav-active-text)" }}
+                                    onClick={() => setEditItems((prev) => prev.map((x, j) => (
+                                      j === i ? { ...x, payeeName: full, taxBranchCode: reg.branchCode } : x
+                                    )))}>
+                                    ใช้ค่านี้
+                                  </button>
+                                )}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
                   {editWht.length > 0 && (
                     <div className="flex flex-col gap-2">
                       <p className="text-[11px] font-bold m-0" style={{ color: "var(--text-muted)" }}>
