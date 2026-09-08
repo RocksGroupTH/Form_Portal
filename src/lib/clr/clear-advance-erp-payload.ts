@@ -31,6 +31,14 @@ export interface ClrJournalInput {
   advanceRequestNo?: string | null;
   /** Full name of the person clearing, for the line description. */
   requesterName?: string | null;
+  /**
+   * The requester's HR staff id. Goes to BC as External Document No. — the
+   * interface layout's row 25 says รหัสพนักงาน and the requirements say *only*
+   * that (`ap3-clear-advance-specification.md` §4). Null when the request has no
+   * staff id, which sends the field empty rather than substituting a value that
+   * means something else.
+   */
+  staffId?: number | null;
 }
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -73,7 +81,11 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
   if (!c.journalBatchName) throw new Error("ยังไม่ได้ตั้งค่า Journal Batch ของ AP-3 สำหรับแบรนด์นี้");
   if (items.length === 0) throw new Error("ไม่มีรายการค่าใช้จ่ายสำหรับสร้าง journal");
 
-  const employeeCode = requestNo.slice(0, 35);
+  // → BC "External Document No." (APJournalCreate.al:214). This used to carry
+  // `requestNo`, which is why it read as done until someone looked at the value:
+  // ADC26-09008 reached BC as "ADC26-09008" where the layout asks for the
+  // requester's staff id.
+  const employeeCode = input.staffId != null ? String(input.staffId).slice(0, 35) : "";
   const defaultBranch = input.defaultBranchCode ?? "";
   // Spec §3.2 format: [ADV no] เบิก เคลียร์เงินทดลอง [employee] [document detail].
   // Gen. Journal Line Description is 100 chars, so the trailing detail is what gets

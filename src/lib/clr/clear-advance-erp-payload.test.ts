@@ -8,7 +8,7 @@ const cfg = {
   journalBatchName: "PPAP",
 };
 const base = (over: Partial<ClrJournalInput>): ClrJournalInput => ({
-  requestNo: "ADC26-09005", postingDate: "2026-08-20", advanceAmount: 2000,
+  requestNo: "ADC26-09005", staffId: 10177, postingDate: "2026-08-20", advanceAmount: 2000,
   departmentCode: "DEPT01", config: cfg,
   items: [{ glAccountNo: "610322005", amountBeforeVat: 2000, vatAmount: 0, whtAmount: 0, branchCode: "HQ01" }],
   ...over,
@@ -27,7 +27,8 @@ test("refund=0, no VAT/WHT -> expense + zeroed vendor line", () => {
   assert.equal(adv.amount, 0);
   // Unbalanced by exactly the zeroed advance.
   assert.equal(sum(p), 2000);
-  assert.equal(exp.employeeCode, "ADC26-09005");
+  // → BC External Document No.: the staff id, not the request no. (§5.2).
+  assert.equal(exp.employeeCode, "10177");
 });
 
 test("refund>0 -> Dr Bank for the returned amount", () => {
@@ -73,7 +74,7 @@ test("the clear-advance line points at the Vendor with no balAccountType", () =>
   assert.equal(adv.amount, 0);
   // AP-2's proven BC shape: two explicit lines, no bal account on the vendor line.
   assert.equal(adv.balAccountType, undefined);
-  assert.equal(adv.employeeCode, "ADC26-09005");
+  assert.equal(adv.employeeCode, "10177");
 });
 
 test("exactly one Vendor line, and no G/L line carries the advance amount", () => {
@@ -211,4 +212,34 @@ test("only expense lines are ever marked", () => {
     const isExpense = l.accountNo === "610322005";
     assert.equal(l.adjCode, isExpense ? "M-ADJ" : undefined, `line ${l.accountType} ${l.accountNo}`);
   }
+});
+
+/* ── External Document No. (spec §5.2, sheet row 25: "รหัสพนักงาน") ──────
+ *
+ * The field was populated from the start, which is why this read as done until
+ * someone looked at the value: ADC26-09008 reached BC with an External Document
+ * No. of "ADC26-09008" rather than the requester's 10177.
+ */
+
+test("External Document No. is the requester's staff id", () => {
+  const p = buildClearAdvanceJournalPayload(base({ staffId: 10177 }));
+  for (const l of p.lines) assert.equal(l.employeeCode, "10177");
+});
+
+test("every line carries it, not just the expense line", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    staffId: 10177,
+    advanceAmount: 5000,
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 30, branchCode: "HQ01" }],
+  }));
+  assert.ok(p.lines.length >= 4, "expected expense, VAT, WHT, vendor and bank lines");
+  assert.deepEqual(new Set(p.lines.map((l) => l.employeeCode)), new Set(["10177"]));
+});
+
+/* Without a staff id there is nothing true to send. The request number is not a
+ * substitute — it is what made this wrong in the first place — so the field goes
+ * out empty rather than carrying a value that means something else. */
+test("no staff id leaves External Document No. empty", () => {
+  const p = buildClearAdvanceJournalPayload(base({ staffId: null }));
+  for (const l of p.lines) assert.equal(l.employeeCode, "");
 });
