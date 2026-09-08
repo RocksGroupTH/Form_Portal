@@ -1,7 +1,7 @@
 # AP-3 Phase 2 — the ERP interface layout
 
 **Date:** 2026-09-08 (rewritten the same day against the interface sheet)
-**Status:** Step 1 shipped; Steps 2-4 designed, two blocking questions open
+**Status:** Step 1 shipped; Steps 2-4 designed and unblocked
 **Authoritative layout:** `R:\ACC_APFormAPI\REF\AP-UP.xlsx`, sheet **AP-3 (Interface ERP)** — 26 columns with a worked example journal. Where this disagrees with either requirements document, the sheet is what BC actually expects.
 **Requirements:** `docs/ap3-clear-advance-specification.md` §4 (governs over `technical-specification-ap-systems.md` §3.2)
 **Predecessor:** `2026-09-01-ap3-phase1-design.md` (merged as `b36057c`)
@@ -20,9 +20,10 @@ one AP-3 journal. Three things it settles that prose had left wrong or vague.
   structurally the wrong kind of line.
 - **Business Unit** is a per-line value in the layout. In the codeunit it is a
   constant.
-- The **tax detail block** is seven columns wide and clearly expected, which cuts
+- The **tax detail block** is seven columns wide and clearly expected, which cut
   against the earlier decision to send nothing that standard Gen. Journal Line
-  cannot hold.
+  can hold — and it turns out the fields were there all along, in the NaviWorld
+  Thai localization the project already depends on.
 
 It also confirms two things, which is worth as much: the `M-ADJ` rule and value
 shipped in Step 1 are exactly what the sheet asks for, and the VAT posting
@@ -55,10 +56,10 @@ populated by anything we send.
 | 19 | Document Date | — | ❌ the receipt's date; the codeunit forces it to Posting Date — §5.4 |
 | 20 | Tax Invoice No. | — | ❌ the receipt's document no. — §5.4 |
 | 21 | Tax Invoice Base | — | ❌ the amount before VAT — §5.4 |
-| 22 | Tax Vendor No. | — | ❌ §5.4, §8 q2 |
-| 23 | Tax Invoice Name | — | ❌ the seller's name — §5.4, §8 q2 |
-| 24 | Tax VAT Registration No. | — | ❌ the seller's 13-digit tax id — §5.4, §8 q2 |
-| 25 | Tax Branch Code | — | ❌ §5.4, §8 q2 |
+| 22 | Tax Vendor No. | — | ❌ `NWTH Vendor No.` — §5.4 |
+| 23 | Tax Invoice Name | — | ❌ the seller's name → `NWTH Vendor Name` — §5.4 |
+| 24 | Tax VAT Registration No. | — | ❌ the seller's 13-digit tax id → `NWTH VAT Registration No.` — §5.4 |
+| 25 | Tax Branch Code | — | ❌ an NWTH branch field — §5.4, §8 q2 |
 | 26 | VAT Amount | — | ❌ §5.4 |
 
 ## 3. What codeunit 50263 accepts today
@@ -103,8 +104,8 @@ optional field, and it is already happening on every line of both forms.
 | --- | --- | --- | --- |
 | **1** | Adj Code `M-ADJ` | no | **shipped** (`PVA2609-0009` marked, `PVA2609-0010` not) |
 | **2** | Business Unit per line · External Document No. | AL (BU) + portal (ext. doc) | no |
-| **3** | WHT line as `Vendor WHT-PND.3` / `WHT-PND.53` | no | **q1** |
-| **4** | VAT line: posting groups, document date, tax detail block | AL | **q2** |
+| **3** | WHT line as `Vendor WHT-PND.3` / `WHT-PND.53`, chosen by ภ.ง.ด. type | no | needs §5.3a |
+| **4** | VAT line: posting groups, document date, tax detail block | AL | no |
 
 Steps 2 and 3 correct what is being sent wrongly today. Step 4 adds what has
 never been sent. Within Step 2, BU is the more urgent half — it is wrong on
@@ -169,13 +170,31 @@ What we send instead is a single **G/L Account** line at
 `config.whtPayableGlAccountNo` (`clear-advance-erp-payload.ts:96`) — the wrong
 kind of line, pointing at the wrong kind of account.
 
-**This is where the ภ.ง.ด. classification lands.** It was previously scoped as a
-separate group with nothing to consume it; the vendor code *is* the consumer —
-บุคคลธรรมดา → `WHT-PND.3`, นิติบุคคล → `WHT-PND.53`. Whether the classification
-is needed at all depends on q1.
+**One line, not both** (decision: user, 2026-09-08). The sheet's example shows
+both codes because it is illustrating the two possibilities, not a journal that
+carries both. Each clearing sends the single WHT line whose vendor matches the
+payee: บุคคลธรรมดา → `WHT-PND.3`, นิติบุคคล → `WHT-PND.53`.
 
-No AL change: a Vendor line with an amount is a shape the contract has always
-accepted, and AP-2 already sends one.
+**This is where the ภ.ง.ด. classification lands**, and that decision makes it
+load-bearing rather than optional: without it there is no way to choose the
+vendor code, so §5.3a is a prerequisite of this step rather than separate work.
+
+No AL change to the journal itself: a Vendor line is a shape the contract has
+always accepted, and AP-2 already sends one.
+
+### 5.3a Step 3, first half — deciding ภ.ง.ด. 3 or 53
+
+`ap3-clear-advance-specification.md` §4.1: read the payee's tax id, check it
+against the DBD, นิติบุคคล → ภ.ง.ด.53, otherwise ภ.ง.ด.3. The tax id and the
+payee name are already captured per payee in `AccClearAdvanceWht`, and the form
+already refuses a WHT amount without them
+(`clear-advance-request-service.ts:411`), so the input exists.
+
+What is not settled is the lookup itself — which DBD source, and what happens
+when it cannot answer. The requirement calls the feature a *"ระบบช่วยเหลือ"*, an
+assistant, which argues for suggesting a type the reviewer can override rather
+than deciding silently. The type is then stored on the WHT row and picks the
+vendor code at send time. See §8 q1.
 
 ### 5.4 Step 4 — the VAT line and the tax block
 
@@ -201,10 +220,34 @@ certificate rows hold the seller's tax id and name.
 today. `Document Date` is the exception: `:186` currently forces it equal to
 Posting Date, and that has to become "use the given date, else Posting Date".
 
-**Blocked on q2** — whether these are fields on Gen. Journal Line in this BC (the
-Thai localization has several of them) or need a `tableextension`. The earlier
-"standard BC fields only" decision was taken before this sheet was on the table
-and should be revisited against it.
+**The fields already exist and the dependency is already declared** (user,
+2026-09-08). They come from **"VAT & WHT Localization for Thailand"** by
+NaviWorld (Thailand) — the NWTH prefix — which `SalesTran_Interface`'s
+`app.json` has depended on since before this work started, at 25.0.2506.4.
+Its `NWTHGenJournalLine.TableExt.al` extends Gen. Journal Line with, among 29
+fields:
+
+| Sheet column | NWTH field |
+| --- | --- |
+| Tax Vendor No. | `NWTH Vendor No.` (40009712) |
+| Tax Invoice Name | `NWTH Vendor Name` (40009713) |
+| Tax Invoice No. | `NWTH Vendor Invoice No.` (40009714) |
+| Tax VAT Registration No. | `NWTH VAT Registration No.` (40009715) |
+| Tax Branch Code | `NWTH Branch Code` (40009717) or `NWTH Company Branch Code` (40009731) — see §8 q2 |
+| Tax Invoice Base | standard `VAT Base Amount` |
+| VAT Amount | standard `VAT Amount` |
+
+Verified present in both the declared 25.0.2506.4 and the newer 26.0.2603.1 in
+`.alpackages`, so **no dependency is added and no version bump is required**.
+
+That also settles the earlier "standard BC fields only" decision, which had
+ruled out sending a tax id or a seller name for want of a field to hold them.
+There is a field, from an app the project already depends on; no
+`tableextension` of our own is needed either.
+
+The same extension carries a full WHT apparatus — `NWTH WHT Bus./Prod. Posting
+Group`, `NWTH WHT Base`, `NWTH WHT Amount`, `NWTH WHT %`, `NWTH WHT Certificate
+No.` — which is worth knowing for Step 3 even though the amounts stay zero.
 
 ## 6. Verification
 
@@ -244,26 +287,30 @@ Step-specific:
 
 ## 8. Open questions
 
-1. **One WHT line or two?** The sheet's example journal contains **both**
-   `WHT-PND.3` and `WHT-PND.53`, each at 0. Two readings: (a) always send both
-   zero lines and let accounting use the right one — which fits the
-   zero-amount rule and needs no classification at all; or (b) send one line
-   whose vendor code comes from classifying the payee's tax id. Reading (a) is
-   what the sheet literally shows. **Blocks Step 3, and decides whether the
-   ภ.ง.ด. work exists at all.**
-2. **Where do the seven tax columns live in BC?** Fields on Gen. Journal Line in
-   the Thai localization, or a `tableextension`? The "standard BC fields only"
-   decision (user, 2026-09-08) was taken without this sheet and reads
-   differently now that the columns are known to be expected. **Blocks Step 4.**
+Two of the four are settled; what remains does not block starting.
+
+1. **The DBD lookup behind ภ.ง.ด. 3 / 53** (§5.3a). Which source answers
+   "is this tax id a นิติบุคคล", and what the system does when it cannot answer.
+   The requirement calls it an assistant, which points at suggesting a type the
+   reviewer confirms rather than deciding silently — but the source and the
+   fallback are accounting's call, not a coding one. **Blocks the second half of
+   Step 3; the vendor-code plumbing can be built against a stored type first.**
+2. **`NWTH Branch Code` or `NWTH Company Branch Code`** for the sheet's "Tax
+   Branch Code" (40009717 vs 40009731). Both exist; the sheet does not say which,
+   and the example leaves the column empty. A detail inside Step 4, not a
+   blocker.
 3. **What decides a line's Business Unit?** The sheet pairs BU codes with G/L
    accounts in a legend (rows 25-29) but does not state the rule. Needed before
-   the portal can send `buCode`; the AL half (§5.1) can be built and deployed
-   first behind its `COCO` fallback.
+   the portal sends `buCode`; the AL half (§5.1) can be built and deployed first
+   behind its `COCO` fallback, which is why Step 2 is not blocked.
 4. **Document No. series and Currency Code.** The example is `PVJ2608-0002`;
    ours come back `PVA2609-xxxx`, which is the batch's own number series rather
    than anything the portal sends. Is AP-3 meant to have its own series? And
    Currency Code is a column we never populate — irrelevant while everything is
    THB, but the column exists.
+
+**Settled 2026-09-08:** one WHT line per clearing, not both (§5.3); and the tax
+columns are NWTH fields from a dependency the project already declares (§5.4).
 
 ## 9. Phase 1 differences from the requirements
 
