@@ -16,12 +16,13 @@ left as written on 2026-08-26, dated history rather than current state.
 
 - **The payment date is not a round-membership choice, contrary to §3.2.**
   §3.2 describes the queue's control as offering "one payment date for the
-  whole selection, from `getReimbursePaymentDates`" — a list of 1st/3rd-Friday
-  rounds. What shipped instead is `paymentDateProblem` (`approval-policy.ts`):
-  a one-month-back/twelve-months-forward sanity bound, so accounting may pick
-  any real calendar date and the round is offered only as the field's
-  default. `PAYMENT_DATE_NOT_A_ROUND` and its 409 never shipped — see
-  CLAUDE.md's AP-4 section for why a fixed bound replaced a membership test.
+  whole selection, from `getReimbursePaymentOptions`" — a list of 1st/3rd-
+  Friday rounds. What shipped instead is `paymentDateProblem`
+  (`approval-policy.ts`): a one-month-back/twelve-months-forward sanity
+  bound, so accounting may pick any real calendar date and the round is
+  offered only as the field's default. `PAYMENT_DATE_NOT_A_ROUND` and its 409
+  never shipped — see CLAUDE.md's AP-4 section for why a fixed bound replaced
+  a membership test.
 - **A G/L-account picker shipped that this spec never scoped.**
   `PATCH /api/request/reimburse/requests/[id]/items` lets accounting correct
   the AI-proposed `AccReimburseItem.Category` per line, from the queue, while
@@ -29,13 +30,19 @@ left as written on 2026-08-26, dated history rather than current state.
   stage 3 will do to that column — this route edits it under its current name
   and type, and does not touch the rename.
 - **§7's migration number and the alignment-table count in §4/§7 are both
-  stale.** 122 is taken — the tree runs to 143 and eleven numbers are already
-  duplicated, so `ls migrations/` is what picks the next one, not this table.
-  `check:alignment`'s target is **27** tables, not 25: AP-17's per-diem-by-
-  country and brand-scoped-access migrations (133, 134) moved it after this
-  spec was written. Neither figure matters to what shipped — **stage 1 needed
-  no migration at all**, which §7 already says and is the fact most likely to
-  be missed by a reader who follows its migration table rather than its prose.
+  stale.** 122 is taken — the tree runs to 143. How many migration numbers
+  are currently duplicated is not worth pinning down here: it was eleven when
+  this amendment was first drafted and is twelve as of this correction — `137`
+  joined (`137_acc_advance_payee_bank_branch.sql` and `137_fx_rate_cache.sql`)
+  when the AP-2 work merged into this branch's base — and a count that moves
+  under a merge is exactly why the sentence's own advice, `ls migrations/`, is
+  the only thing here safe to rely on; do not restate a number and expect it
+  to still be right. `check:alignment`'s target is **27** tables, not 25:
+  AP-17's per-diem-by-country and brand-scoped-access migrations (133, 134)
+  moved it after this spec was written. Neither figure matters to what
+  shipped — **stage 1 needed no migration at all**, which §7 already says and
+  is the fact most likely to be missed by a reader who follows its migration
+  table rather than its prose.
 
 **Stage 2 (§4) is scoped here but not started** — per-AP-4 ERP settings gets
 its own plan. **Stages 3 and 4 (§5, §6) remain blocked on this spec's own open

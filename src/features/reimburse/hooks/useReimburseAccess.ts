@@ -32,12 +32,18 @@ const fetcher = async (url: string) => {
  * `useBookingAccess`, reading AP-4's own roster (`AccReimburseAccess`). Kept
  * separate so a change to one form's access never moves another's.
  *
- * Narrower than either sibling, because AP-4's roster is narrower: it answers
- * settings-tab visibility and nothing else. There is no `canAccount` here —
- * whether somebody may take the ACCOUNT or ACCOUNT_FINAL step comes from
+ * Answers two questions since 2026-09-08, not one: settings-tab visibility
+ * (`settingsTabs`/`canSettings`, as before) and working-screen visibility —
+ * `approvalQueue` below, AP-4's counterpart to AP-17's own menu grants.
+ * `clearance` is on the same `/api/request/reimburse/access` response and is
+ * left off this type until something needs it — see that field's own comment.
+ * There is still no `canAccount` here, either flag included: whether somebody
+ * may actually take the ACCOUNT or ACCOUNT_FINAL step comes from
  * `AccReimburseApprover`, a different table, checked server-side where the
- * money moves. Being on this list confers no approval right, which is the
- * reason the two lists are separate.
+ * money moves. Being on either list confers no approval right, which is the
+ * reason the two lists stay separate — a viewer can hold the `approvalQueue`
+ * tick and no `AccReimburseApprover` row, see the full queue, and act on
+ * none of it.
  */
 export function useReimburseAccess() {
   const { data, error, isLoading } = useSWR("/api/request/reimburse/access", fetcher);

@@ -62,9 +62,13 @@ import type { ExpenseAccount } from "@/lib/acc/reimburse/expense-account-service
  * have to re-implement all three and could only get them wrong; AP-17's bulk
  * payout-date control loops the same way for the same reason.
  *
- * **No Reject button.** A later stage of this plan turns that into a server
- * rule; this page simply never renders one, so removing it later costs no
- * client-side migration.
+ * **No Reject button.** Rejecting a claim at either accounting step is
+ * refused server-side — `mayReject` (`approval-policy.ts`) answers false for
+ * `ACCOUNT`/`ACCOUNT_FINAL`, and `rejectReimburse` throws before it claims or
+ * writes anything when it does. `ReimburseDetail.tsx` gates its own Reject
+ * button to `step === "MANAGER"` for the same reason, so this page simply
+ * never renders one rather than offering a click that can only come back as
+ * a 403.
  *
  * **A 409 refetches rather than offering a retry.** The queue this page reads
  * and the claim a click targets can both move between page load and click —
