@@ -276,6 +276,17 @@ export function OcrConfirmModal({
                     <input className={cellClass} style={{ ...cellStyle, width: "100%" }}
                       inputMode="numeric" placeholder="เลข 13 หลัก"
                       value={r.taxId} onChange={(e) => update(r.key, { taxId: e.target.value })} />
+                    {r.taxId && (
+                      // A tax invoice prints two of these — the seller's and ours —
+                      // and the reader has been seen taking ours twice running on a
+                      // rotated scan, with the seller's name beside it read correctly.
+                      // It is asked for the seller's; it is not reliable at it, and a
+                      // wrong one is filed against the wrong company. So it is shown
+                      // as a suggestion, next to the name it is supposed to belong to.
+                      <span className="text-[10px]" style={{ color: "var(--text-warning)" }}>
+                        AI อ่านมา — ตรวจว่าเป็นเลขของผู้ขาย ไม่ใช่ของบริษัทเรา
+                      </span>
+                    )}
                   </F>
                   <F label="สาขาผู้ขาย">
                     <input className={cellClass} style={{ ...cellStyle, width: "100%" }}
