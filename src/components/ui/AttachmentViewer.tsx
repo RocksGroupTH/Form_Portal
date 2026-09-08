@@ -77,6 +77,27 @@ export function AttachmentViewer({ open, source, kind, onClose }: AttachmentView
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * Forget the last file the moment the viewer closes.
+   *
+   * The loader revokes its blob URL in its cleanup, but nothing cleared the
+   * state still holding that URL — so reopening painted `<img src=blob:…>` at a
+   * URL the browser had already released. It showed as a blank viewer with
+   * `ERR_FILE_NOT_FOUND` in the console, intermittently, because it only
+   * happened when the same viewer was opened again before React had replaced
+   * the value.
+   *
+   * Clearing on close means a reopen always starts from the spinner, which is
+   * honest: at that moment there is nothing to show yet.
+   */
+  useEffect(() => {
+    if (open) return;
+    setBlobUrl(null);
+    setSheetHtml(null);
+    setError(null);
+    setLoading(false);
+  }, [open]);
+
   useEffect(() => {
     if (!open || !source) return;
 
