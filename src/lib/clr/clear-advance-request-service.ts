@@ -609,14 +609,22 @@ async function persistClear(
     .query(`UPDATE [dbo].[AccRequest] SET TotalAmount=@total, UpdatedAt=SYSDATETIME() WHERE Id=@rid`);
 }
 
-/** Snapshot the linked AP-2 advance's no. + amount (server-trusted, not client). */
+/**
+ * Snapshot the linked AP-2 advance's no. + amount (server-trusted, not client).
+ *
+ * The amount is the THB one. `AccAdvance.Amount` is the face value in the
+ * advance's own currency, so a USD 100 advance would otherwise be cleared as if
+ * the employee had been given 100 baht — the clearing, the refund and the ERP
+ * journal are all in baht. `BaseAmount` carries the converted figure; it is null
+ * on plain THB advances, where the face value already is the baht value.
+ */
 async function snapshotAdvance(
   pool: Awaited<ReturnType<typeof getAccPool>>,
   advanceRequestId: number | null,
 ): Promise<{ requestNo: string | null; amount: number | null }> {
   if (!advanceRequestId) return { requestNo: null, amount: null };
   const r = await pool.request().input("id", sql.Int, advanceRequestId)
-    .query(`SELECT r.RequestNo, a.Amount
+    .query(`SELECT r.RequestNo, COALESCE(a.BaseAmount, a.Amount) AS Amount
             FROM [dbo].[AccRequest] r
             LEFT JOIN [dbo].[AccAdvance] a ON a.RequestId = r.Id
             WHERE r.Id = @id AND r.FormCode = 'AP-2'`);
