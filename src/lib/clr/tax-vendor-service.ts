@@ -83,7 +83,19 @@ export async function searchTaxVendorsByName(
   const pool = await getAppPool(env.MSSQL_ERP_DATA_DATABASE);
   const req = pool.request().input("co", sql.NVarChar, co).input("top", sql.Int, NAME_SEARCH_LIMIT);
   terms.forEach((t, i) => req.input(`t${i}`, sql.NVarChar, likePattern(t)));
-  const where = terms.map((_, i) => `AND DisplayName LIKE @t${i} ESCAPE '\\'`).join("\n        ");
+  // Compared byte-wise, and upper-cased so English names stay case-insensitive.
+  //
+  // DisplayName is Thai_CI_AS, where LIKE matches collation elements rather than
+  // characters: a Thai consonant and the mark above it are one element, so
+  // '%พิษณุพจน%' does not match "พิษณุพจน์". The OCR drops that mark routinely —
+  // it read this seller as "ภาสพงษ์ พิษณุพจน" — and the search then reported the
+  // vendor as not existing while the card sat there under one extra mark.
+  const where = terms
+    .map(
+      (_, i) =>
+        `AND UPPER(DisplayName) COLLATE Latin1_General_BIN2 LIKE UPPER(@t${i}) COLLATE Latin1_General_BIN2 ESCAPE '\\'`,
+    )
+    .join("\n        ");
 
   const res = await req.query(`
       SELECT TOP (@top) VendorNo, DisplayName, TaxRegistrationNumber

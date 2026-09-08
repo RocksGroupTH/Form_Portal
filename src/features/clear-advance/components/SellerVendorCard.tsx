@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { ClearAdvanceItem } from "@/features/clear-advance/types";
 import { sameRegisteredName } from "@/lib/clr/rd-vat-core";
-import { vendorSearchQuery } from "@/lib/clr/tax-vendor-core";
+import { buildVendorNameTerms, vendorSearchQuery } from "@/lib/clr/tax-vendor-core";
 
 /**
  * One receipt's seller: who the Revenue Department says they are, and which BC
@@ -136,7 +136,25 @@ export function SellerVendorCard({ index, item, brandCode, onChange }: Props) {
       return toast.error(q.reason);
     }
     setVendorMode(q.kind);
-    void search(q.kind === "taxId" ? `taxId=${q.value}` : `name=${encodeURIComponent(q.value)}`);
+    void (async () => {
+      const first = await search(
+        q.kind === "taxId" ? `taxId=${q.value}` : `name=${encodeURIComponent(q.value)}`,
+      );
+      if (first.length > 0) return;
+
+      /* The tax id found nobody, so try the name before reporting nothing.
+         The empty box searches by tax id first because it is the exact key — but
+         the cards it cannot reach are exactly the ones the name search exists
+         for: 101 ADV cards and 155 trade vendors in PCTH carry no tax
+         registration number at all. Reporting "not a vendor" after asking only
+         the one question they cannot answer is how นายภาสพงษ์ พิษณุพจน์ (ADV0080,
+         no tax id on the card) came back as missing while a name search found
+         them immediately. */
+      const fallback = (nameTerm || item.payeeName || "").trim();
+      if (q.kind !== "taxId" || buildVendorNameTerms(fallback).length === 0) return;
+      setVendorMode("name");
+      await search(`name=${encodeURIComponent(fallback)}`);
+    })();
   }, [nameTerm, item.taxId, item.payeeName, search]);
 
   /* Ask the registry when the card opens, once per tax id. The answer is kept in
@@ -333,7 +351,12 @@ export function SellerVendorCard({ index, item, brandCode, onChange }: Props) {
 
             {vendors === "loading" && <Muted>กำลังค้น…</Muted>}
             {Array.isArray(vendors) && vendors.length === 0 && (
-              <Muted>ไม่พบ Vendor — ลองค้นด้วยชื่อ หรือเปิดการ์ดผู้ขายใน BC ก่อน</Muted>
+              // It has already tried the name by the time this shows, so telling
+              // the reader to try it would send them round the same loop.
+              <Muted>
+                ไม่พบ Vendor {hasTin ? "ทั้งจากเลขผู้เสียภาษีและชื่อผู้ขาย" : "จากชื่อที่ค้น"} —
+                พิมพ์ชื่ออื่นเพื่อค้นใหม่ หรือเปิดการ์ดผู้ขายใน BC ก่อน
+              </Muted>
             )}
 
             {/* One dropdown that holds the answer, including "none".
