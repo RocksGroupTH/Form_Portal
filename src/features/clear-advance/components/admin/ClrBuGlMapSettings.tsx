@@ -34,11 +34,21 @@ interface Bu {
   buCode: string;
   locations: number;
 }
+interface BranchRule {
+  id: number;
+  branchCode: string;
+  glAccountNo: string;
+  isActive: boolean;
+  note: string | null;
+}
 
 export function ClrBuGlMapSettings() {
   const [company, setCompany] = useState(ERP_INTERFACE_BRANDS[0]?.id ?? "PCTH");
   const [rules, setRules] = useState<Rule[]>([]);
   const [bus, setBus] = useState<Bu[]>([]);
+  const [branchRules, setBranchRules] = useState<BranchRule[]>([]);
+  const [newBranch, setNewBranch] = useState("");
+  const [newBranchGl, setNewBranchGl] = useState("");
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [forbidden, setForbidden] = useState(false);
@@ -56,7 +66,7 @@ export function ClrBuGlMapSettings() {
       }
       const j = (await res.json()) as {
         ok: boolean;
-        data?: { rules: Rule[]; bus: Bu[] };
+        data?: { rules: Rule[]; bus: Bu[]; branchRules: BranchRule[] };
         error?: string;
       };
       if (!j.ok) {
@@ -65,6 +75,7 @@ export function ClrBuGlMapSettings() {
       }
       setRules(j.data?.rules ?? []);
       setBus(j.data?.bus ?? []);
+      setBranchRules(j.data?.branchRules ?? []);
       setDraft({});
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "โหลดไม่สำเร็จ");
@@ -107,6 +118,30 @@ export function ClrBuGlMapSettings() {
       }
     },
     [company, draft, stored, load],
+  );
+
+  const saveBranch = useCallback(
+    async (branchCode: string, glAccountNo: string) => {
+      const code = branchCode.trim().toUpperCase();
+      if (!code) return toast.error("ระบุรหัสสาขา");
+      setSavingBu(`branch:${code}`);
+      try {
+        const res = await fetch("/api/request/clear-advance/settings/bu-gl-map", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ company, branchCode: code, glAccountNo: glAccountNo.trim() }),
+        });
+        const j = (await res.json()) as { ok: boolean; error?: string };
+        if (!j.ok) return void toast.error(j.error ?? "บันทึกไม่สำเร็จ");
+        toast.success(glAccountNo.trim() ? `สาขา ${code} → ${glAccountNo.trim()}` : `ลบกฎสาขา ${code}`);
+        setNewBranch("");
+        setNewBranchGl("");
+        await load();
+      } finally {
+        setSavingBu(null);
+      }
+    },
+    [company, load],
   );
 
   if (forbidden) return <ForbiddenState />;
@@ -197,6 +232,79 @@ export function ClrBuGlMapSettings() {
             )}
           </tbody>
         </table>
+      </div>
+
+      {/* Branch rules. Separate from the BU table because they answer a
+          different question — which shop, not which kind of shop — and because
+          some branches have no BU at all: RFM is a BRANCH dimension value with
+          no Location behind it, so no BU rule could ever reach it. */}
+      <div className="flex flex-col gap-2">
+        <p className="text-[13px] font-bold m-0" style={{ color: "var(--text-heading)" }}>
+          กฎรายสาขา (ชนะกฎ BU)
+        </p>
+        <p className="text-[12px] m-0" style={{ color: "var(--text-muted)" }}>
+          สาขาที่ระบุไว้ที่นี่จะใช้บัญชีนี้เสมอ ไม่สนใจ BU · สาขาที่ไม่มีในตารางนี้จะไปใช้กฎ BU ต่อ
+        </p>
+
+        <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border-card)" }}>
+          <table className="w-full text-[13px] border-collapse">
+            <thead>
+              <tr style={{ background: "var(--bg-card-alt)", borderBottom: "1px solid var(--border-light)" }}>
+                {["สาขา", "บัญชี G/L", "หมายเหตุ", ""].map((h, i) => (
+                  <th key={h + i} className="px-3 py-2.5 text-left font-semibold whitespace-nowrap"
+                    style={{ color: "var(--text-secondary)" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {branchRules.length === 0 ? (
+                <EmptyRow label="— ยังไม่มีกฎรายสาขา —" />
+              ) : (
+                branchRules.map((r) => (
+                  <tr key={r.id} style={{ borderBottom: "1px solid var(--border-light)" }}>
+                    <td className="px-3 py-2 font-semibold whitespace-nowrap font-mono" style={{ color: "var(--text-primary)" }}>
+                      {r.branchCode}
+                    </td>
+                    <td className="px-3 py-2 font-mono whitespace-nowrap" style={{ color: "var(--text-primary)" }}>
+                      {r.glAccountNo}
+                    </td>
+                    <td className="px-3 py-2 text-[12px]" style={{ color: "var(--text-muted)" }}>{r.note ?? "—"}</td>
+                    <td className="px-3 py-2 text-right whitespace-nowrap">
+                      <Button variant="ghost" size="sm"
+                        loading={savingBu === `branch:${r.branchCode.toUpperCase()}`}
+                        onClick={() => void saveBranch(r.branchCode, "")}>
+                        ลบกฎ
+                      </Button>
+                    </td>
+                  </tr>
+                ))
+              )}
+              <tr style={{ background: "var(--bg-card-alt)" }}>
+                <td className="px-3 py-2">
+                  <input value={newBranch} onChange={(e) => setNewBranch(e.target.value)}
+                    placeholder="รหัสสาขา เช่น RFM"
+                    className="text-[13px] px-2 py-1 rounded-lg outline-none w-40 font-mono"
+                    style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-input)" }} />
+                </td>
+                <td className="px-3 py-2">
+                  <input value={newBranchGl} onChange={(e) => setNewBranchGl(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") void saveBranch(newBranch, newBranchGl); }}
+                    placeholder="บัญชี G/L"
+                    className="text-[13px] px-2 py-1 rounded-lg outline-none w-40 font-mono"
+                    style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-input)" }} />
+                </td>
+                <td className="px-3 py-2" />
+                <td className="px-3 py-2 text-right whitespace-nowrap">
+                  <Button variant="primary" size="sm" icon={<Save size={13} />}
+                    loading={savingBu === `branch:${newBranch.trim().toUpperCase()}`}
+                    onClick={() => void saveBranch(newBranch, newBranchGl)}>
+                    เพิ่มกฎ
+                  </Button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

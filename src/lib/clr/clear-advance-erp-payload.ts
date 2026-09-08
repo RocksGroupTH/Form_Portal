@@ -48,6 +48,15 @@ export interface ClrJournalInput {
    * the four BUs nobody has ruled on yet.
    */
   buGlAccounts?: Record<string, string>;
+  /**
+   * BRANCH → G/L account, also expense lines only (`AccClrBranchGlMap`).
+   *
+   * Checked before the BU map, being the more specific of the two. It exists
+   * because some branches have no BU to key on: RFM ("Rocks Malaysia") is a
+   * BRANCH dimension value with no Location behind it, so `buCode` resolves to
+   * nothing and a BU rule can never match it.
+   */
+  branchGlAccounts?: Record<string, string>;
   departmentCode: string;
   /** Fallback branch for lines that have no per-item branch (VAT, WHT, advance reversal, bank diff). */
   defaultBranchCode?: string | null;
@@ -206,11 +215,18 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
     ...(resolveBu(branchCode) ? { buCode: resolveBu(branchCode) } : null),
   });
 
-  /** The account this expense posts to: its BU's, or the one it was coded to. */
+  /**
+   * The account this expense posts to: its branch's, else its BU's, else the one
+   * it was coded to. Branch first because it names one shop where the BU names a
+   * kind of shop, and because some branches have no BU at all.
+   */
   const expenseGl = (it: ClrJournalItem): string => {
+    const branch = (it.branchCode ?? "").trim().toUpperCase();
+    const byBranch = branch ? (input.branchGlAccounts ?? {})[branch] : undefined;
+    if ((byBranch ?? "").trim()) return byBranch!.trim();
     const bu = resolveBu(it.branchCode);
-    const mapped = bu ? (input.buGlAccounts ?? {})[bu] : undefined;
-    return (mapped ?? "").trim() || it.glAccountNo;
+    const byBu = bu ? (input.buGlAccounts ?? {})[bu] : undefined;
+    return (byBu ?? "").trim() || it.glAccountNo;
   };
 
   const lines: PpapJournalLinePayload[] = [];

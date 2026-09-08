@@ -132,3 +132,100 @@ export async function listCompanyBus(
     locations: Number(r.Locations ?? 0),
   }));
 }
+
+/* ─────────────────── branch-level rules (more specific) ─────────────────── */
+
+export interface ClrBranchGlMapRow {
+  id: number;
+  company: string;
+  branchCode: string;
+  glAccountNo: string;
+  isActive: boolean;
+  note: string | null;
+}
+
+/**
+ * BRANCH → G/L for one BC company.
+ *
+ * The BU rule cannot reach every case. RFM ("Rocks Malaysia") is a BRANCH
+ * dimension value in PCTH with no Location behind it, so no BU resolves for it
+ * and a BU-keyed rule never matches — and a branch is a different question
+ * anyway: BU says what kind of shop, branch says which one.
+ *
+ * Branch wins over BU where both answer, being the more specific.
+ */
+export async function loadBranchGlAccounts(company: string): Promise<Record<string, string>> {
+  const co = (company ?? "").trim().toUpperCase();
+  if (!co) return {};
+  const pool = await getAccPool();
+  const res = await pool
+    .request()
+    .input("co", sql.NVarChar, co)
+    .query(`
+      SELECT BranchCode, GlAccountNo FROM [dbo].[AccClrBranchGlMap]
+      WHERE Company = @co AND IsActive = 1
+    `);
+  const out: Record<string, string> = {};
+  for (const r of res.recordset as Record<string, unknown>[]) {
+    const br = String(r.BranchCode ?? "").trim().toUpperCase();
+    const gl = String(r.GlAccountNo ?? "").trim();
+    if (br && gl) out[br] = gl;
+  }
+  return out;
+}
+
+/** Every branch rule for the settings screen. */
+export async function listBranchGlMap(company: string): Promise<ClrBranchGlMapRow[]> {
+  const co = (company ?? "").trim().toUpperCase();
+  if (!co) return [];
+  const pool = await getAccPool();
+  const res = await pool
+    .request()
+    .input("co", sql.NVarChar, co)
+    .query(`
+      SELECT Id, Company, BranchCode, GlAccountNo, IsActive, Note
+      FROM [dbo].[AccClrBranchGlMap]
+      WHERE Company = @co
+      ORDER BY BranchCode
+    `);
+  return (res.recordset as Record<string, unknown>[]).map((r) => ({
+    id: r.Id as number,
+    company: String(r.Company ?? ""),
+    branchCode: String(r.BranchCode ?? ""),
+    glAccountNo: String(r.GlAccountNo ?? ""),
+    isActive: r.IsActive === true || r.IsActive === 1,
+    note: (r.Note as string) ?? null,
+  }));
+}
+
+/** Add or change one branch's account. Blank account = delete the rule. */
+export async function upsertBranchGlMap(input: {
+  company: string;
+  branchCode: string;
+  glAccountNo: string;
+  note?: string | null;
+}): Promise<void> {
+  const co = (input.company ?? "").trim().toUpperCase();
+  const br = (input.branchCode ?? "").trim().toUpperCase();
+  const gl = (input.glAccountNo ?? "").trim();
+  if (!co || !br) throw new Error("ต้องระบุ Company และสาขา");
+
+  const pool = await getAccPool();
+  if (!gl) {
+    await pool.request().input("co", sql.NVarChar, co).input("br", sql.NVarChar, br)
+      .query(`DELETE FROM [dbo].[AccClrBranchGlMap] WHERE Company=@co AND BranchCode=@br`);
+    return;
+  }
+  await pool.request()
+    .input("co", sql.NVarChar, co)
+    .input("br", sql.NVarChar, br)
+    .input("gl", sql.NVarChar, gl)
+    .input("note", sql.NVarChar, input.note ?? null)
+    .query(`
+      MERGE [dbo].[AccClrBranchGlMap] AS t
+      USING (SELECT @co AS Company, @br AS BranchCode) AS s
+        ON t.Company = s.Company AND t.BranchCode = s.BranchCode
+      WHEN MATCHED THEN UPDATE SET GlAccountNo=@gl, Note=@note, IsActive=1, UpdatedAt=SYSDATETIME()
+      WHEN NOT MATCHED THEN INSERT (Company, BranchCode, GlAccountNo, Note) VALUES (@co, @br, @gl, @note);
+    `);
+}

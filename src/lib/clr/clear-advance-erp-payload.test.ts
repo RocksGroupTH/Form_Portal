@@ -723,3 +723,44 @@ test("a blank mapping is not a mapping", () => {
   const p = buildClearAdvanceJournalPayload(buBase({ DOCO: "   " }, "PC1073"));
   assert.equal(p.lines[0].accountNo, "610322005");
 });
+
+/* ── a branch rule, which beats the BU rule ── */
+
+test("a branch rule redirects the expense line", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    branchGlAccounts: { RFM: "110723001" },
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 500, vatAmount: 0, whtAmount: 0, branchCode: "RFM" }],
+  }));
+  assert.equal(p.lines[0].accountNo, "110723001");
+});
+
+/* RFM has no Location and therefore no BU — the case the BU table cannot reach. */
+test("a branch with no BU is still redirected", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    branchGlAccounts: { RFM: "110723001" },
+    buGlAccounts: { DOCO: "110721001" },
+    branchBu: new Map(),
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 500, vatAmount: 0, whtAmount: 0, branchCode: "RFM" }],
+  }));
+  assert.equal(p.lines[0].accountNo, "110723001");
+});
+
+test("branch beats BU where both answer", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    branchGlAccounts: { PC2002: "110723001" },
+    buGlAccounts: { DOCO: "110721001" },
+    branchBu: new Map([["PC2002", { buCode: "DOCO", isBlocked: false }]]),
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 500, vatAmount: 0, whtAmount: 0, branchCode: "PC2002" }],
+  }));
+  assert.equal(p.lines[0].accountNo, "110723001");
+});
+
+test("a branch with no rule still falls through to its BU", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    branchGlAccounts: { RFM: "110723001" },
+    buGlAccounts: { DOCO: "110721001" },
+    branchBu: new Map([["PC2002", { buCode: "DOCO", isBlocked: false }]]),
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 500, vatAmount: 0, whtAmount: 0, branchCode: "PC2002" }],
+  }));
+  assert.equal(p.lines[0].accountNo, "110721001");
+});

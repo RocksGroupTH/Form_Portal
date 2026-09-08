@@ -6,7 +6,7 @@ import { getRequest } from "@/lib/clr/clear-advance-request-service";
 import { loadClearAdvanceErpContext } from "@/lib/clr/clear-advance-erp-context";
 import { buildClearAdvanceJournalPayload } from "@/lib/clr/clear-advance-erp-payload";
 import { loadBranchLookup } from "@/lib/erp/location-lookup";
-import { loadBuGlAccounts } from "@/lib/clr/clr-bu-gl-map-service";
+import { loadBranchGlAccounts, loadBuGlAccounts } from "@/lib/clr/clr-bu-gl-map-service";
 import { isRocksPcBrand } from "@/features/clear-advance/constants";
 import { AP3_FORM_CODE } from "@/features/clear-advance/constants";
 import type { PpapJournalLinePayload } from "@/lib/acc/erp-ppap-payload";
@@ -314,6 +314,9 @@ export async function previewClrErpJournal(ids: number[]): Promise<ClrPreviewIte
       const buGlAccounts = isRocksPcBrand(req.brandCode)
         ? await loadBuGlAccounts(target.interfaceTarget)
         : {};
+      const branchGlAccounts = isRocksPcBrand(req.brandCode)
+        ? await loadBranchGlAccounts(target.interfaceTarget)
+        : {};
       const payload = buildClearAdvanceJournalPayload({
         requestNo: req.requestNo ?? String(id),
         postingDate,
@@ -327,6 +330,7 @@ export async function previewClrErpJournal(ids: number[]): Promise<ClrPreviewIte
         staffId: req.staffId,
         branchBu,
         buGlAccounts,
+        branchGlAccounts,
         whtPayees: req.clear.whtItems ?? [],
       });
 
@@ -465,6 +469,9 @@ export async function sendClrErpBatch(ids: number[], userId: number): Promise<Cl
       const buGlAccounts = isRocksPcBrand(req.brandCode)
         ? await loadBuGlAccounts(target.interfaceTarget)
         : {};
+      const branchGlAccounts = isRocksPcBrand(req.brandCode)
+        ? await loadBranchGlAccounts(target.interfaceTarget)
+        : {};
       const payload = buildClearAdvanceJournalPayload({
         requestNo: req.requestNo ?? String(id),
         postingDate,
@@ -478,6 +485,7 @@ export async function sendClrErpBatch(ids: number[], userId: number): Promise<Cl
         staffId: req.staffId,
         branchBu,
         buGlAccounts,
+        branchGlAccounts,
         whtPayees: req.clear.whtItems ?? [],
       });
 
