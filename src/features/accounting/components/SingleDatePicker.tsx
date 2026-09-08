@@ -8,7 +8,7 @@ import {
   TH_MONTHS,
   addMonths,
   buildMonthCells,
-  formatThaiYmd,
+  formatThaiYmdShort,
   parseYmd,
   displayYear,
   toYmd,
@@ -153,7 +153,13 @@ export function SingleDatePicker({
     setOpen(false);
   }
 
-  const display = formatThaiYmd(value);
+  // The ABBREVIATED month, not the full one. This control's only consumer is
+  // AP-4's expense grid, where the column is 148px and "13 สิงหาคม 2026" was
+  // clipped by the `truncate` below to "13 สิงหาคม 20…" — which reads as a
+  // broken year, not as a narrow box. The panel's own heading still spells the
+  // month out (`TH_MONTHS` at the month header), because it has the room and a
+  // month being chosen deserves its full name.
+  const display = formatThaiYmdShort(value);
 
   const panel = open && panelRect ? (
     <div
