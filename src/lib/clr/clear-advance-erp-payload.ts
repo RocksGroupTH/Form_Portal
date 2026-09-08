@@ -22,6 +22,8 @@ export interface ClrJournalItem {
   /** The seller who issued it — becomes the VAT line's name and VAT registration. */
   taxId?: string | null;
   payeeName?: string | null;
+  /** The seller's branch, five digits — becomes `Branch Code` on the VAT line. */
+  taxBranchCode?: string | null;
   /** The date printed on this line's receipt — decides the Z-ADJ marker (§4.1). */
   expenseDate?: string | null;
 }
@@ -233,6 +235,9 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
         taxInvoiceBase: r2(it.amountBeforeVat),
         ...(sellerName ? { taxInvoiceName: sellerName } : null),
         ...(sellerTaxId ? { taxVatRegistrationNo: sellerTaxId } : null),
+        // Left out when unknown so BC keeps the vendor card's own branch,
+        // rather than being handed a blank for a tax filing.
+        ...(taxText(it.taxBranchCode, 5) ? { taxBranchCode: taxText(it.taxBranchCode, 5) } : null),
       });
     }
 

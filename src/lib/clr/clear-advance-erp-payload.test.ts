@@ -623,3 +623,28 @@ test("values too long for their BC fields are cut, not sent whole", () => {
   assert.equal(vat.taxInvoiceNo!.length, 35);
   assert.equal(vat.taxInvoiceName!.length, 250);
 });
+
+/* The seller's branch — `Branch Code` on the VAT line, captioned Tax Branch Code
+ * in the sheet. Five digits: 00000 is the head office. */
+test("a VAT line carries the seller's branch when it is known", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    items: [vatItem({ docNo: "INV-A", taxBranchCode: "00001" })],
+  }));
+  assert.equal(p.lines.find((l) => l.accountNo === "115030")!.taxBranchCode, "00001");
+});
+
+/* Left out when unknown, so BC keeps the vendor card's own branch rather than
+ * being handed a blank that would go onto a tax filing. */
+test("an unknown seller branch sends no key", () => {
+  const p = buildClearAdvanceJournalPayload(base({ items: [vatItem({ docNo: "INV-A" })] }));
+  assert.equal("taxBranchCode" in p.lines.find((l) => l.accountNo === "115030")!, false);
+});
+
+test("no other line carries the seller's branch", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    items: [vatItem({ docNo: "INV-A", taxBranchCode: "00001" })],
+  }));
+  for (const l of p.lines.filter((x) => x.accountNo !== "115030")) {
+    assert.equal(l.taxBranchCode, undefined, `${l.accountType} ${l.accountNo}`);
+  }
+});

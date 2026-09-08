@@ -31,6 +31,12 @@ export interface OcrRow {
    */
   dateText?: string;
   docNo: string;
+  /**
+   * The seller's branch exactly as the invoice prints it. Carried through the
+   * modal so the rule that turns it into a code runs on our side, and so a
+   * reviewer can see what was read.
+   */
+  taxBranchText: string;
   branchCode: string;
   glAccountNo: string;
   glAccountName: string;

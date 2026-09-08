@@ -33,6 +33,12 @@ export interface ReceiptDoc extends ReceiptExtractResult {
    */
   dateText?: string | null;
   /**
+   * The seller's branch exactly as printed — "สำนักงานใหญ่", "สาขาที่ 00001".
+   * `taxBranchCode()` turns it into the five-digit code BC keeps; the raw
+   * wording is carried so a reviewer can see what was read.
+   */
+  taxBranchText?: string | null;
+  /**
    * How many model entries were folded into this row. Absent on a document that
    * arrived as one entry; set when a multi-page document was answered per page,
    * so the confirm modal can tell the reviewer the row is a merge of several.
@@ -121,6 +127,14 @@ export const RECEIPT_SYSTEM = [
   "  the transferred amount and vat and wht are null.",
   "- taxId: payee 13-digit tax id, digits only.",
   "- payeeName, payeeAddress: the seller/payee name and address (original language).",
+  "- taxBranchText: the SELLER's own branch, copied exactly as printed —",
+  "  \"สำนักงานใหญ่\", \"สาขาที่ 00001\", \"Head Office\". It sits with the seller's name,",
+  "  address and tax id, usually in the letterhead. This is the branch that ISSUED the",
+  "  invoice.",
+  "  Do NOT take the \"สาขา\" printed beside OUR name in the buyer block — that is our",
+  "  branch, not theirs. If only one branch is printed and you cannot tell whose it is,",
+  "  answer null: a wrong branch here goes onto a tax filing, and an empty one simply",
+  "  leaves the vendor's own on file.",
   "- branchHint: EVERY entry may carry this, including an \"other\" one. Copy any wording on",
   "  the page that says which shop, store, site or outlet the spending was FOR — a purpose",
   '  line such as "ค่าอุปกรณ์ Dec\'25 สำหรับ Central Khonkaen2", a project or destination',
@@ -137,7 +151,7 @@ export const RECEIPT_SYSTEM = [
 
 export const RECEIPT_USER_TEXT =
   "Extract every document in these pages. Return only a JSON array; each entry has the keys: " +
-  "kind, pages, date, description, docNo, amountBeforeVat, vat, wht, taxId, payeeName, payeeAddress, branchHint " +
+  "kind, pages, date, description, docNo, amountBeforeVat, vat, wht, taxId, payeeName, payeeAddress, taxBranchText, branchHint " +
   '(an "other" entry has kind, pages and branchHint only).';
 
 /** An account the line's branch is allowed to charge (§6 decides the set). */
@@ -252,6 +266,7 @@ type AiJson = {
   wht?: number | string | null;
   taxId?: string | null;
   payeeName?: string | null;
+  taxBranchText?: string | null;
   payeeAddress?: string | null;
   branchHint?: string | null;
 };
@@ -438,6 +453,9 @@ function toDoc(entry: AiJson, kind: ReceiptKind): ReceiptDoc {
     wht: toNum(entry.wht),
     taxId: entry.taxId ? String(entry.taxId).replace(/\D/g, "").slice(0, 13) || null : null,
     payeeName: toStr(entry.payeeName),
+    // Kept verbatim; taxBranchCode() turns it into the five-digit code, the
+    // way thaiPrintedDate() handles the printed date.
+    taxBranchText: toStr(entry.taxBranchText),
     payeeAddress: toStr(entry.payeeAddress),
     total: beforeVat != null ? Math.round((beforeVat + (vat ?? 0)) * 100) / 100 : null,
     vat,

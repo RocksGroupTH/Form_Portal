@@ -383,7 +383,7 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                     แก้ไขได้เฉพาะในขั้นบัญชี (ACCOUNT) เท่านั้น — บันทึกจะอัปเดตรายการทันที ก่อนส่งต่อ Head
                   </p>
                   <div className="overflow-x-auto -mx-1 px-1">
-                    <table className="w-full border-collapse" style={{ minWidth: 1120 }}>
+                    <table className="w-full border-collapse" style={{ minWidth: 1240 }}>
                       <thead>
                         <tr className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>#</th>
@@ -396,6 +396,7 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>เลขที่ใบกำกับ</th>
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>เลขผู้เสียภาษี</th>
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>ชื่อผู้ขาย</th>
+                          <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>สาขาผู้ขาย</th>
                           <th className="px-2 py-1.5 text-right" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>ก่อน VAT</th>
                           <th className="px-2 py-1.5 text-right" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>VAT</th>
                           <th className="px-2 py-1.5 text-right" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>WHT</th>
@@ -466,6 +467,20 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                                 onChange={(e) => {
                                   const next = [...editItems];
                                   next[i] = { ...next[i], payeeName: e.target.value || null };
+                                  setEditItems(next);
+                                }}
+                              />
+                            </td>
+                            <td className="px-2 py-1.5" style={{ borderBottom: "1px solid var(--border-light)" }}>
+                              <input
+                                className="text-[12px] px-2 py-1 rounded outline-none w-24"
+                                style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-input)" }}
+                                value={it.taxBranchCode ?? ""}
+                                placeholder="00000"
+                                maxLength={5}
+                                onChange={(e) => {
+                                  const next = [...editItems];
+                                  next[i] = { ...next[i], taxBranchCode: e.target.value || null };
                                   setEditItems(next);
                                 }}
                               />

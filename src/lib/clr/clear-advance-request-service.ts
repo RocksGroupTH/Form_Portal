@@ -136,6 +136,7 @@ function mapItemRow(x: Record<string, unknown>): ClearAdvanceItem {
     taxId: (x.TaxId as string) ?? null,
     payeeName: (x.PayeeName as string) ?? null,
     payeeAddress: (x.PayeeAddress as string) ?? null,
+    taxBranchCode: (x.TaxBranchCode as string) ?? null,
     sourceFileId: (x.SourceFileId as number) ?? null,
   };
 }
@@ -535,13 +536,14 @@ async function persistClear(
       .input("itemTaxId", sql.NVarChar, it.taxId ?? null)
       .input("itemPayee", sql.NVarChar, it.payeeName ?? null)
       .input("itemAddr", sql.NVarChar, it.payeeAddress ?? null)
+      .input("itemBranch", sql.NVarChar, it.taxBranchCode ?? null)
       .query(`INSERT INTO [dbo].[AccClearAdvanceItem]
                 (ClearAdvanceId, [LineNo], ExpenseDate, DocNo, GlAccountNo, GlAccountName, Description,
                  BranchCode, AmountBeforeVat, VatAmount, TotalInclVat, WhtAmount, NetAmount, SortOrder, SourceFileId,
-                 TaxId, PayeeName, PayeeAddress)
+                 TaxId, PayeeName, PayeeAddress, TaxBranchCode)
               VALUES (@cid, @lineNo, @date, @docNo, @glNo, @glName, @desc, @branch,
                       @before, @vat, @total, @whtAmt, @net, @sort, @srcFile,
-                      @itemTaxId, @itemPayee, @itemAddr)`);
+                      @itemTaxId, @itemPayee, @itemAddr, @itemBranch)`);
   }
 
   // Replace WHT certificate lines.

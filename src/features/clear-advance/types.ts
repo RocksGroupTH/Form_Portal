@@ -27,6 +27,12 @@ export interface ClearAdvanceItem {
   taxId?: string | null;
   payeeName?: string | null;
   payeeAddress?: string | null;
+  /**
+   * The seller's branch as the Revenue Department's five-digit code (00000 =
+   * head office). Becomes `Branch Code` on the VAT line; null sends nothing and
+   * leaves BC on whatever the vendor card holds.
+   */
+  taxBranchCode?: string | null;
   /** AccRequestFile.Id this line was OCR-filled from — cleared with its receipt. */
   sourceFileId?: number | null;
 }

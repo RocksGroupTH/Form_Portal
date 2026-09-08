@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { PND_LABEL, suggestPndType } from "@/lib/clr/wht-pnd-core";
+import { taxBranchCode } from "@/lib/clr/tax-branch-core";
 import {
   Check, Paperclip, Camera, X, Plus, Trash2, Banknote, User, Mail, FileText,
 } from "lucide-react";
@@ -106,6 +107,8 @@ interface LineRow {
   taxId: string;
   payeeName: string;
   payeeAddress: string;
+  /** The seller's branch as its five-digit code — 00000 is the head office. */
+  taxBranchCode: string;
 }
 
 /** One editable WHT-certificate row in state. */
@@ -127,7 +130,7 @@ function emptyLine(): LineRow {
   return {
     expenseDate: "", docNo: "", glAccountNo: "", glAccountName: "",
     description: "", branchCode: "", amountBeforeVat: "", vatAmount: "", whtAmount: "",
-    taxId: "", payeeName: "", payeeAddress: "",
+    taxId: "", payeeName: "", payeeAddress: "", taxBranchCode: "",
   };
 }
 
@@ -179,6 +182,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       taxId: x.taxId ?? "",
       payeeName: x.payeeName ?? "",
       payeeAddress: x.payeeAddress ?? "",
+      taxBranchCode: x.taxBranchCode ?? "",
       expenseDate: x.expenseDate ?? "",
       docNo: x.docNo ?? "",
       glAccountNo: x.glAccountNo ?? "",
@@ -544,6 +548,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
               taxId: l.taxId.trim() || null,
               payeeName: l.payeeName.trim() || null,
               payeeAddress: l.payeeAddress.trim() || null,
+              taxBranchCode: l.taxBranchCode.trim() || null,
               sourceFileId: l.sourceFileId ?? null,
             };
           }),
@@ -757,6 +762,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
     dateText?: string | null;
     description: string | null; docNo: string | null;
     wht: number | null; taxId: string | null; payeeName: string | null; payeeAddress: string | null;
+    taxBranchText: string | null;
     total: number | null; vat: number | null; beforeVat: number | null;
   }
 
@@ -859,6 +865,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           taxId: r.taxId ?? "",
           payeeName: r.payeeName ?? "",
           payeeAddress: r.payeeAddress ?? "",
+          taxBranchText: r.taxBranchText ?? "",
           totalAmount: r.total != null ? String(r.total) : "",
         }));
       }
@@ -951,6 +958,8 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           taxId: r.taxId,
           payeeName: r.payeeName,
           payeeAddress: r.payeeAddress,
+          // The printed wording becomes the code by rule here, not in the model.
+          taxBranchCode: taxBranchCode(r.taxBranchText) ?? "",
         };
       }
       return next;

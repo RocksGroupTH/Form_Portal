@@ -204,6 +204,7 @@ function toJournalItems(
       docNo: it.docNo ?? null,
       taxId: it.taxId ?? null,
       payeeName: it.payeeName ?? null,
+      taxBranchCode: it.taxBranchCode ?? null,
     }));
 }
 
