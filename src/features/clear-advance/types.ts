@@ -33,6 +33,12 @@ export interface ClearAdvanceItem {
    * leaves BC on whatever the vendor card holds.
    */
   taxBranchCode?: string | null;
+  /**
+   * The seller's Vendor No. in BC, chosen by accounting. Becomes
+   * `Tax Vendor No.` on the VAT line. Null where the seller is not a vendor
+   * of ours, which is ordinary for a one-off purchase.
+   */
+  taxVendorNo?: string | null;
   /** AccRequestFile.Id this line was OCR-filled from — cleared with its receipt. */
   sourceFileId?: number | null;
 }

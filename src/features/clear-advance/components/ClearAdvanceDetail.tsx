@@ -112,6 +112,12 @@ interface VatRegistrant {
   vatRegisteredOn: string | null;
   address: string | null;
 }
+interface TaxVendorCandidate {
+  vendorNo: string;
+  displayName: string | null;
+  taxRegistrationNumber: string | null;
+}
+
 type VatCheck =
   | { state: "checking" }
   | { state: "found"; registrant: VatRegistrant; checkedAt: string | null }
@@ -168,6 +174,15 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
    * about the invoice, the second is the RD not answering.
    */
   const [vatByTin, setVatByTin] = useState<Record<string, VatCheck>>({});
+  /**
+   * BC vendor cards carrying each seller tax id, keyed by the id.
+   *
+   * A list, never an answer: one tax id maps to many cards — Central Pattana has
+   * 24 under one number, one per mall, told apart only by a prefix in the name.
+   * Picking the first would be right once in twenty-four times and wrong exactly
+   * where the branch matters, so accounting chooses and blank stays valid.
+   */
+  const [vendorsByTin, setVendorsByTin] = useState<Record<string, TaxVendorCandidate[] | "loading">>({});
   const [editBusy, setEditBusy] = useState(false);
 
   useEffect(() => {
@@ -649,6 +664,78 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                                 )}
                               </span>
                             )}
+                            {/* The BC vendor for this seller — Tax Vendor No. on
+                                the VAT line. Loaded on demand and offered as a
+                                list, because one tax id maps to many cards and
+                                the right one is a judgement about which branch
+                                issued the invoice. Blank is a valid answer. */}
+                            {(() => {
+                              const v2 = vendorsByTin[tin];
+                              const load = async () => {
+                                setVendorsByTin((p) => ({ ...p, [tin]: "loading" }));
+                                try {
+                                  const res = await fetch(
+                                    `/api/request/clear-advance/tax-vendors?brand=${encodeURIComponent(request.brandCode ?? "")}&taxId=${tin}`,
+                                  );
+                                  const j = (await res.json()) as { ok: boolean; data?: TaxVendorCandidate[] };
+                                  setVendorsByTin((p) => ({ ...p, [tin]: j.ok ? (j.data ?? []) : [] }));
+                                } catch {
+                                  setVendorsByTin((p) => ({ ...p, [tin]: [] }));
+                                }
+                              };
+                              if (it.taxVendorNo) {
+                                return (
+                                  <span className="text-[11px]" style={{ color: "var(--text-info-green)" }}>
+                                    Vendor: {it.taxVendorNo}
+                                    <button type="button"
+                                      className="ml-1 underline cursor-pointer border-none bg-transparent p-0 text-[11px]"
+                                      style={{ color: "var(--nav-active-text)" }}
+                                      onClick={() => setEditItems((prev) => prev.map((x, j) => (
+                                        j === i ? { ...x, taxVendorNo: null } : x
+                                      )))}>
+                                      ล้าง
+                                    </button>
+                                  </span>
+                                );
+                              }
+                              if (!v2) {
+                                return (
+                                  <button type="button" onClick={load}
+                                    className="text-[11px] px-2 py-0.5 rounded-lg cursor-pointer"
+                                    style={{ background: "var(--bg-badge)", color: "var(--text-secondary)", border: "none" }}>
+                                    หา Vendor
+                                  </button>
+                                );
+                              }
+                              if (v2 === "loading") {
+                                return <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>กำลังหา…</span>;
+                              }
+                              if (v2.length === 0) {
+                                return (
+                                  <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>
+                                    ไม่มี Vendor ที่ตรงเลขนี้ — เว้นว่างไว้
+                                  </span>
+                                );
+                              }
+                              return (
+                                <select
+                                  className="text-[11px] px-2 py-0.5 rounded-lg"
+                                  style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-input)", maxWidth: "26rem" }}
+                                  value=""
+                                  onChange={(e) => {
+                                    const no = e.target.value;
+                                    if (!no) return;
+                                    setEditItems((prev) => prev.map((x, j) => (j === i ? { ...x, taxVendorNo: no } : x)));
+                                  }}>
+                                  <option value="">— เลือก Vendor ({v2.length} รายการ) —</option>
+                                  {v2.map((c) => (
+                                    <option key={c.vendorNo} value={c.vendorNo}>
+                                      {c.vendorNo} · {c.displayName ?? ""}
+                                    </option>
+                                  ))}
+                                </select>
+                              );
+                            })()}
                             {/* Stored answers are kept rather than re-asked on a
                                 timer, so the date says how old this one is and the
                                 link is there for whoever doubts it. */}

@@ -648,3 +648,29 @@ test("no other line carries the seller's branch", () => {
     assert.equal(l.taxBranchCode, undefined, `${l.accountType} ${l.accountNo}`);
   }
 });
+
+/* Tax Vendor No. — the seller's BC vendor, chosen by accounting. Its OnValidate
+ * in the codeunit fills the name, branch and VAT registration from the card, so
+ * the codeunit sets it before the explicit keys, which then win. */
+test("a chosen vendor reaches the VAT line", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    items: [vatItem({ docNo: "INV-A", taxVendorNo: "VTD0030" })],
+  }));
+  assert.equal(p.lines.find((l) => l.accountNo === "115030")!.taxVendorNo, "VTD0030");
+});
+
+/* Blank is the ordinary case: a one-off seller is not a vendor of ours, and no
+ * key is sent rather than an empty one. */
+test("no chosen vendor sends no key", () => {
+  const p = buildClearAdvanceJournalPayload(base({ items: [vatItem({ docNo: "INV-A" })] }));
+  assert.equal("taxVendorNo" in p.lines.find((l) => l.accountNo === "115030")!, false);
+});
+
+test("no other line carries the vendor key", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    items: [vatItem({ docNo: "INV-A", taxVendorNo: "VTD0030" })],
+  }));
+  for (const l of p.lines.filter((x) => x.accountNo !== "115030")) {
+    assert.equal(l.taxVendorNo, undefined, `${l.accountType} ${l.accountNo}`);
+  }
+});
