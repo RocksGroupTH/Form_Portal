@@ -41,3 +41,42 @@ export function suggestPndType(taxId: string | null | undefined): PndType | null
   if (digits.length !== 13) return null;
   return digits.startsWith("0") ? "PND53" : "PND3";
 }
+
+/**
+ * Why this clearing may not leave the account step, on the ภ.ง.ด. side.
+ *
+ * The same two conditions the journal builder refuses on, asked one step
+ * earlier. They used to be discovered at send time — after all three approvals,
+ * by whoever pressed "ส่งเข้า ERP", who is not the person who can fix it. The
+ * account step is where the type is chosen, so it is where the omission belongs.
+ *
+ * The wording lives here so the screen and the server say the same sentence: a
+ * gate that phrases itself twice eventually phrases itself differently.
+ *
+ * Only withholding that exists is gated. No WHT on any line means no payee rows
+ * are expected and none are missing anything.
+ */
+export function pndBlockReason(
+  items: { whtAmount?: number | null }[] | null | undefined,
+  payees: { pndType?: PndType | null }[] | null | undefined,
+): string | null {
+  const total =
+    Math.round((items ?? []).reduce((s, it) => s + Number(it.whtAmount ?? 0), 0) * 100) / 100;
+  if (!(total > 0)) return null;
+
+  const rows = payees ?? [];
+  // Each message names the way out, and they are different ways. Accounting
+  // chooses the ภ.ง.ด. type and can do that here; it cannot invent a payee,
+  // because the name, tax id and address come off the receipt the requester
+  // holds. So a missing payee row goes back, and a missing type does not.
+  if (rows.length === 0) {
+    return `มีภาษีหัก ณ ที่จ่าย ฿${total.toLocaleString("th-TH", { minimumFractionDigits: 2 })} แต่ไม่มีรายการผู้รับเงิน — ใช้ “ส่งกลับแก้ไข” ให้ผู้ขอเพิ่มผู้รับเงินก่อน`;
+  }
+
+  const missing: number[] = [];
+  rows.forEach((w, i) => {
+    if (!w.pndType) missing.push(i + 1);
+  });
+  if (missing.length === 0) return null;
+  return `ยังไม่ได้ระบุประเภท ภ.ง.ด. ของผู้รับเงินรายที่ ${missing.join(", ")} — เลือกในตาราง “ประเภท ภ.ง.ด. ต่อผู้รับเงิน” ด้านล่างก่อนอนุมัติ`;
+}

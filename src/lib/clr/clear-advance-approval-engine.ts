@@ -7,6 +7,7 @@ import type { Actor } from "@/lib/acc/approval-engine";
 import { getRequest, setAccountAction } from "@/lib/clr/clear-advance-request-service";
 import { listClrApprovers, roleForStep } from "@/lib/clr/clear-advance-approver-service";
 import { linesMissingTaxVendor } from "@/lib/clr/tax-vendor-core";
+import { pndBlockReason } from "@/lib/clr/wht-pnd-core";
 import {
   CLR_NEXT_STEP,
   CLR_STEP_LABEL_TH,
@@ -76,6 +77,12 @@ export async function approveCurrentStep(
         `กรุณาเลือก Vendor ผู้ขายให้ครบก่อนอนุมัติ — รายการที่ ${missing.join(", ")} มี VAT แต่ยังไม่ได้เลือก Vendor`,
       );
     }
+    // The ภ.ง.ด. type, on the same terms and for the same reason: the journal
+    // builder refuses without it, and refusing there means the discovery lands
+    // on whoever pressed "ส่งเข้า ERP" — after three approvals, and not on
+    // anyone who can still choose.
+    const pndProblem = pndBlockReason(before.clear?.items, before.clear?.whtItems);
+    if (pndProblem) throw new Error(pndProblem);
     await setAccountAction(requestId, opts.pvDocNo ?? null, opts.paymentDate ?? null);
   }
 

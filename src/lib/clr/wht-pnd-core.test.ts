@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { PND_VENDOR_NO, suggestPndType } from "./wht-pnd-core";
+import { PND_VENDOR_NO, suggestPndType, pndBlockReason } from "./wht-pnd-core";
 
 /* A juristic person is registered by the DBD with a number beginning 0; an
  * individual uses a national id, which begins 1-8. Measured against the 2,178
@@ -40,4 +40,35 @@ test("letters mixed into the digits do not pad the length", () => {
 test("each type names the vendor accounting clears", () => {
   assert.equal(PND_VENDOR_NO.PND3, "WHT-PND.3");
   assert.equal(PND_VENDOR_NO.PND53, "WHT-PND.53");
+});
+
+/* ── the account-step gate ── */
+
+const line = (wht: number) => ({ whtAmount: wht });
+const payee = (t: "PND3" | "PND53" | null) => ({ pndType: t });
+
+/* Withholding that does not exist cannot be missing a type. */
+test("no withholding, nothing to answer for", () => {
+  assert.equal(pndBlockReason([line(0)], []), null);
+  assert.equal(pndBlockReason([], []), null);
+  assert.equal(pndBlockReason(null, null), null);
+});
+
+test("a payee with a type passes", () => {
+  assert.equal(pndBlockReason([line(30)], [payee("PND3")]), null);
+});
+
+test("a payee without one blocks, and is named by row", () => {
+  const r = pndBlockReason([line(30)], [payee("PND3"), payee(null), payee(null)]);
+  assert.match(r ?? "", /รายที่ 2, 3/);
+});
+
+/* The journal builder refuses this too — WHT with nobody to attribute it to. */
+test("withholding with no payee rows at all blocks", () => {
+  assert.match(pndBlockReason([line(30)], []) ?? "", /ส่งกลับแก้ไข/);
+});
+
+/* Amounts across lines are summed the way the payload sums them. */
+test("withholding spread over lines still counts", () => {
+  assert.match(pndBlockReason([line(10.005), line(20)], [payee(null)]) ?? "", /ภ\.ง\.ด/);
 });

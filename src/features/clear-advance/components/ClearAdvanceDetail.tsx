@@ -22,6 +22,7 @@ import { CLR_STEP_CODES, CLR_STEP_LABEL_TH, type ClrStepCode } from "@/features/
 import type { AccFileMeta } from "@/features/accounting/types";
 import type { ClearAdvanceItem, ClearAdvanceRequest, ClrApproval } from "@/features/clear-advance/types";
 import { linesMissingTaxVendor } from "@/lib/clr/tax-vendor-core";
+import { pndBlockReason } from "@/lib/clr/wht-pnd-core";
 import { SellerVendorCard } from "@/features/clear-advance/components/SellerVendorCard";
 
 function money(n: number | null | undefined): string {
@@ -253,6 +254,13 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
      Read from the rows on screen, not the ones last fetched: autosave writes
      without re-fetching, so the request's own copy lags a vendor just chosen. */
   const missingVendorLines = linesMissingTaxVendor(isAccountStep ? editItems : items);
+  /* Same rows, same reason: the ภ.ง.ด. type the journal builder refuses without.
+     The sentence comes from the same function the server uses, so the screen and
+     the refusal cannot drift apart. */
+  const pndProblem = isAccountStep
+    ? pndBlockReason(editItems, editWht)
+    : pndBlockReason(items, whtItems);
+  const accountBlocked = missingVendorLines.length > 0 || !!pndProblem;
 
   /* Seed the editor from the request at the account step. The snapshot taken
      here is what "unchanged" means — autosave compares against it, so seeding
@@ -325,6 +333,7 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
         `กรุณาเลือก Vendor ผู้ขายให้ครบก่อนอนุมัติ — รายการที่ ${missingVendorLines.join(", ")}`,
       );
     }
+    if (pndProblem) return toast.error(pndProblem);
     // An edit still sitting in the debounce would be approved over: the server
     // checks the stored rows, which would not yet hold the vendor on screen.
     await flushSave();
@@ -497,13 +506,19 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                 เลือกในการ์ด “ผู้ขาย” ด้านล่าง (ค้นด้วยเลขผู้เสียภาษีหรือชื่อผู้ขาย) แล้วบันทึก จึงจะอนุมัติได้
               </p>
             )}
+            {pndProblem && (
+              <p className="text-[12px] m-0 px-3 py-2 rounded-lg"
+                style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
+                {pndProblem}
+              </p>
+            )}
             <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={handleAccountApprove} disabled={busy || missingVendorLines.length > 0}
-                title={missingVendorLines.length > 0 ? "ต้องเลือก Vendor ผู้ขายของรายการที่มี VAT ให้ครบก่อน" : undefined}
+              <button type="button" onClick={handleAccountApprove} disabled={busy || accountBlocked}
+                title={accountBlocked ? (pndProblem ?? "ต้องเลือก Vendor ผู้ขายของรายการที่มี VAT ให้ครบก่อน") : undefined}
                 className="inline-flex items-center gap-2 text-[13px] font-medium px-4 py-2 rounded-lg"
                 style={{ background: "var(--bg-info-green)", color: "var(--text-info-green)", border: "1px solid var(--border-info-green)",
-                  opacity: missingVendorLines.length > 0 ? 0.5 : 1,
-                  cursor: missingVendorLines.length > 0 ? "not-allowed" : "pointer" }}>
+                  opacity: accountBlocked ? 0.5 : 1,
+                  cursor: accountBlocked ? "not-allowed" : "pointer" }}>
                 <ThumbsUp size={14} /> อนุมัติ
               </button>
               <button type="button" onClick={() => { setAccAction("return"); setAccComment(""); }} disabled={busy}
