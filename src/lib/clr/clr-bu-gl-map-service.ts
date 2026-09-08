@@ -1,4 +1,6 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
+import { getAppPool } from "@/lib/db/mssql";
+import { env } from "@/env";
 
 export interface ClrBuGlMapRow {
   id: number;
@@ -99,4 +101,34 @@ export async function upsertBuGlMap(input: {
       WHEN MATCHED THEN UPDATE SET GlAccountNo=@gl, Note=@note, IsActive=1, UpdatedAt=SYSDATETIME()
       WHEN NOT MATCHED THEN INSERT (Company, BuCode, GlAccountNo, Note) VALUES (@co, @bu, @gl, @note);
     `);
+}
+
+/**
+ * Every BU that exists in this Company's Locations, with how many use it.
+ *
+ * The settings screen lists these rather than a free-text box: a rule typed
+ * against a BU that no Location carries is a rule that never fires, and nothing
+ * on screen would say so. The count is there because it is the difference
+ * between a BU worth ruling on and one with four shops in it.
+ */
+export async function listCompanyBus(
+  company: string,
+): Promise<{ buCode: string; locations: number }[]> {
+  const co = (company ?? "").trim().toUpperCase();
+  if (!co) return [];
+  const pool = await getAppPool(env.MSSQL_ERP_DATA_DATABASE);
+  const res = await pool
+    .request()
+    .input("co", sql.NVarChar, co)
+    .query(`
+      SELECT BuCode, COUNT(*) AS Locations
+      FROM [dbo].[ErpLocation]
+      WHERE BrandCode = @co AND NULLIF(LTRIM(RTRIM(ISNULL(BuCode,''))),'') IS NOT NULL
+      GROUP BY BuCode
+      ORDER BY COUNT(*) DESC
+    `);
+  return (res.recordset as Record<string, unknown>[]).map((r) => ({
+    buCode: String(r.BuCode ?? ""),
+    locations: Number(r.Locations ?? 0),
+  }));
 }
