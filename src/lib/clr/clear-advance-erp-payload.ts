@@ -17,6 +17,8 @@ export interface ClrJournalItem {
   whtAmount: number;
   branchCode: string | null;
   description?: string | null;
+  /** The tax invoice's own number — becomes `Tax Invoice No.` on its VAT line. */
+  docNo?: string | null;
   /** The date printed on this line's receipt — decides the Z-ADJ marker (§4.1). */
   expenseDate?: string | null;
 }
@@ -168,27 +170,34 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
   });
 
   const lines: PpapJournalLinePayload[] = [];
-  let vatTotal = 0, whtTotal = 0;
+  let whtTotal = 0;
 
   for (const it of items) {
+    const adj = isPriorPeriod(it.expenseDate, postingDate) ? PRIOR_PERIOD_ADJ_CODE : undefined;
+
     if (r2(it.amountBeforeVat) !== 0) {
-      lines.push(glLine(
-        it.glAccountNo,
-        it.amountBeforeVat,
-        it.branchCode,
-        it.description,
-        isPriorPeriod(it.expenseDate, postingDate) ? PRIOR_PERIOD_ADJ_CODE : undefined,
-      ));
+      lines.push(glLine(it.glAccountNo, it.amountBeforeVat, it.branchCode, it.description, adj));
     }
-    vatTotal += it.vatAmount || 0;
+
+    // One VAT line per invoice, immediately after its own expense line.
+    //
+    // It used to be a single line carrying the sum of every item's VAT. Tax
+    // Invoice No., Date, Base and Name (spec §5.4) each belong to one specific
+    // invoice, and a summed line has no honest value to put in them — so the
+    // split comes first and the keys go on afterwards.
+    //
+    // The line takes its item's own branch, and its BU and Z-ADJ marker with it:
+    // the VAT on a prior-period receipt is part of that same adjustment, and
+    // belongs to the same branch as the expense it was charged on.
+    const vat = r2(it.vatAmount || 0);
+    if (vat > 0) {
+      if (!c.vatInputGlAccountNo) throw new Error("มี VAT แต่ยังไม่ได้ตั้งค่าบัญชีภาษีซื้อ (VAT input) ของแบรนด์นี้");
+      lines.push(glLine(c.vatInputGlAccountNo, vat, it.branchCode, it.description, adj));
+    }
+
     whtTotal += it.whtAmount || 0;
   }
-  vatTotal = r2(vatTotal); whtTotal = r2(whtTotal);
-
-  if (vatTotal > 0) {
-    if (!c.vatInputGlAccountNo) throw new Error("มี VAT แต่ยังไม่ได้ตั้งค่าบัญชีภาษีซื้อ (VAT input) ของแบรนด์นี้");
-    lines.push(glLine(c.vatInputGlAccountNo, vatTotal, null));
-  }
+  whtTotal = r2(whtTotal);
   if (whtTotal > 0) {
     // Spec §5.3: a Vendor line at WHT-PND.3 / WHT-PND.53, not a G/L line at the
     // configured WHT-payable account. Accounting clears these against the

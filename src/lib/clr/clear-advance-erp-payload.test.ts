@@ -215,7 +215,12 @@ test("each expense line is judged on its own date", () => {
 
 /* The VAT, WHT, vendor and bank lines have no document date of their own, so a
  * marker on them would be derived from someone else's receipt (spec §4.1). */
-test("only expense lines are ever marked", () => {
+/* The marker belongs to a receipt, so it reaches that receipt's expense line and
+ * its VAT line — since spec §5.4 split the VAT per invoice, the VAT on a
+ * prior-period receipt is part of the same adjustment. It must still not reach
+ * the vendor or bank lines, which belong to the clearing rather than to any one
+ * receipt. */
+test("the marker reaches a receipt's own lines and no others", () => {
   const p = buildClearAdvanceJournalPayload(base({
     postingDate: "2026-08-20",
     advanceAmount: 5000,
@@ -223,8 +228,12 @@ test("only expense lines are ever marked", () => {
     whtPayees: [{ pndType: "PND3" }],
   }));
   for (const l of p.lines) {
-    const isExpense = l.accountNo === "610322005";
-    assert.equal(l.adjCode, isExpense ? "M-ADJ" : undefined, `line ${l.accountType} ${l.accountNo}`);
+    const belongsToTheReceipt = l.accountNo === "610322005" || l.accountNo === "115030";
+    assert.equal(
+      l.adjCode,
+      belongsToTheReceipt ? "M-ADJ" : undefined,
+      `line ${l.accountType} ${l.accountNo}`,
+    );
   }
 });
 
@@ -330,7 +339,10 @@ test("the lines with no branch of their own follow the default branch", () => {
     items: [{ glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 30, branchCode: "HQ01" }],
     whtPayees: [{ pndType: "PND3" }],
   }));
-  assert.equal(p.lines.find((l) => l.accountNo === "115030")!.buCode, "DODO-M");
+  // Not the VAT line: since spec §5.4 it belongs to its own invoice and follows
+  // that item's branch (HQ01 → COCO), so it is no longer one of the lines with
+  // no branch of their own.
+  assert.equal(p.lines.find((l) => l.accountNo === "115030")!.buCode, "COCO");
   // By account, not by type: the WHT line is a Vendor line too now, and comes
   // first, so finding "the Vendor line" would silently test the wrong one.
   assert.equal(p.lines.find((l) => l.accountNo === "ADV0001")!.buCode, "DODO-M");
@@ -421,4 +433,101 @@ test("the WHT vendor line follows the default branch and its BU", () => {
   const wht = p.lines.find((l) => l.accountNo === "WHT-PND.53")!;
   assert.equal(wht.branchCode, "PCCT01");
   assert.equal(wht.buCode, "CTPS");
+});
+
+/* ── One VAT line per invoice (spec §5.4) ──────────────────────────────────
+ *
+ * It used to be a single G/L line carrying the sum of every item's VAT. Tax
+ * Invoice No., Date, Base and Name each belong to one invoice, and a summed line
+ * cannot carry them for two — so the shape has to change before the keys can go
+ * on.
+ */
+
+test("two receipts with VAT make two VAT lines", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    advanceAmount: 5000,
+    items: [
+      { glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 0, branchCode: "HQ01", docNo: "INV-A" },
+      { glAccountNo: "610319001", amountBeforeVat: 2000, vatAmount: 140, whtAmount: 0, branchCode: "HQ01", docNo: "INV-B" },
+    ],
+  }));
+  const vat = p.lines.filter((l) => l.accountNo === "115030");
+  assert.equal(vat.length, 2);
+  assert.deepEqual(vat.map((l) => l.amount), [70, 140]);
+});
+
+test("an item with no VAT makes no VAT line", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    advanceAmount: 5000,
+    items: [
+      { glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 0, branchCode: "HQ01" },
+      { glAccountNo: "610319001", amountBeforeVat: 2000, vatAmount: 0, whtAmount: 0, branchCode: "HQ01" },
+    ],
+  }));
+  assert.equal(p.lines.filter((l) => l.accountNo === "115030").length, 1);
+});
+
+/* Each VAT line belongs to its own receipt, so it takes that line's branch —
+ * and its BU with it — rather than the request's default. */
+test("a VAT line follows its own item's branch and BU", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    advanceAmount: 5000,
+    branchBu: bu({ PCCT01: "CTPS", HQ01: "COCO" }),
+    items: [
+      { glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 0, branchCode: "PCCT01" },
+      { glAccountNo: "610319001", amountBeforeVat: 2000, vatAmount: 140, whtAmount: 0, branchCode: "HQ01" },
+    ],
+  }));
+  const vat = p.lines.filter((l) => l.accountNo === "115030");
+  assert.deepEqual(vat.map((l) => l.branchCode), ["PCCT01", "HQ01"]);
+  assert.deepEqual(vat.map((l) => l.buCode), ["CTPS", "COCO"]);
+});
+
+/* A prior-period receipt's VAT is part of that same adjustment. */
+test("a VAT line inherits its item's Z-ADJ marker", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    postingDate: "2026-09-08",
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 0, branchCode: "HQ01", expenseDate: "2026-07-15" }],
+  }));
+  assert.equal(p.lines.find((l) => l.accountNo === "115030")!.adjCode, "M-ADJ");
+});
+
+test("the VAT total is unchanged by the split", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    advanceAmount: 5000,
+    items: [
+      { glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 0, branchCode: "HQ01" },
+      { glAccountNo: "610319001", amountBeforeVat: 2000, vatAmount: 140, whtAmount: 0, branchCode: "HQ01" },
+    ],
+  }));
+  assert.equal(
+    p.lines.filter((l) => l.accountNo === "115030").reduce((s, l) => s + l.amount, 0),
+    210,
+  );
+});
+
+/* Each invoice's expense and its VAT sit together, in the order the receipts
+ * were entered — easier to read against the paper than every VAT line piled at
+ * the end. */
+test("each VAT line follows its own expense line", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    advanceAmount: 5000,
+    items: [
+      { glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 0, branchCode: "HQ01" },
+      { glAccountNo: "610319001", amountBeforeVat: 2000, vatAmount: 140, whtAmount: 0, branchCode: "HQ01" },
+    ],
+  }));
+  assert.deepEqual(
+    p.lines.slice(0, 4).map((l) => l.accountNo),
+    ["610322005", "115030", "610319001", "115030"],
+  );
+});
+
+/* The account is still required, and still refuses before anything is built —
+ * on the first invoice that carries VAT rather than once at the end. */
+test("VAT with no configured input account still refuses", () => {
+  assert.throws(() => buildClearAdvanceJournalPayload(base({
+    config: { ...cfg, vatInputGlAccountNo: null },
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 0, branchCode: "HQ01" }],
+  })), /ภาษีซื้อ/);
 });

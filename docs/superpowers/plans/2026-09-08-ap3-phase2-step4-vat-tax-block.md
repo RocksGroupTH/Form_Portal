@@ -165,13 +165,13 @@ is the point of the ACCOUNT-step columns.
 
 ---
 
-## Task 2: One VAT line per invoice
+## Task 2: One VAT line per invoice — *done 2026-09-08*
 
 **Files:**
 - Modify: `src/lib/clr/clear-advance-erp-payload.ts` (the `vatTotal` branch)
 - Test: `src/lib/clr/clear-advance-erp-payload.test.ts`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 /* ── The VAT line is per invoice (spec §5.4) ───────────────────────────────
@@ -246,9 +246,9 @@ test("the VAT total is unchanged by the split", () => {
 });
 ```
 
-- [ ] **Step 2: Run and watch them fail**
+- [x] **Step 2: Run and watch them fail**
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Move the VAT line inside the item loop: for each item whose `vatAmount` rounds
 above 0, push a `glLine` at `c.vatInputGlAccountNo` for that item's VAT, with
@@ -260,10 +260,41 @@ first VAT-carrying item, not once at the end.
 `ClrJournalItem` gains `docNo?: string | null` — the invoice number, needed by
 Task 3 and easiest to add while the loop is being rewritten.
 
-- [ ] **Step 4: Run tests and typecheck** — the existing single-VAT-line tests
+- [x] **Step 4: Run tests and typecheck** — the existing single-VAT-line tests
 change count, not intent; check each one still asks what it asked.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
+
+### Two existing tests changed meaning, not just count
+
+**`only expense lines are ever marked`** was right until the VAT line belonged to
+a receipt. A prior-period receipt's VAT is part of that same adjustment, so it
+carries M-ADJ now — the assertion would have been wrong to keep. What the test
+was actually protecting is that the marker does not reach the vendor and bank
+lines, which belong to the clearing rather than to any one receipt; it says that,
+and is renamed to match.
+
+**`the lines with no branch of their own follow the default branch`** listed the
+VAT line among them. It no longer is one: it follows its own item's branch. The
+assertion now expects `COCO` from HQ01 rather than `DODO-M` from the default,
+and says why.
+
+### Confirmed against a real clearing
+
+`ADC26-09014` re-previewed after the change — the same request that went to BC
+as `PVA2609-0015` with one summed VAT line of 230:
+
+```
+G/L 610301019  1000  PCCT01 CTPS M-ADJ
+G/L 211111001    70  PCCT01 CTPS M-ADJ   ← its own invoice's VAT
+G/L 610322005  3000  HQ01   COCO -
+G/L 211111001   160  HQ01   COCO -       ← the other invoice's
+Vendor WHT-PND.53  0 PCCT01 CTPS -
+Vendor ADV0080     0 PCCT01 CTPS -
+```
+
+Each VAT line sits under its own expense line, on that receipt's branch and BU,
+carrying that receipt's marker. 70 + 160 is the 230 that used to be one line.
 
 ---
 
