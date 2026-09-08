@@ -44,7 +44,11 @@ export interface OcrRow {
   amountBeforeVat: string;
   vatAmount: string;
   whtAmount: string;
-  /** Read from the receipt, not edited here — carried through to the WHT certificate. */
+  /**
+   * The seller off the tax invoice — checked and corrected here, because this is
+   * the one moment the reviewer has the receipt in front of them. They become
+   * the VAT line's Tax Invoice Name and VAT registration in BC.
+   */
   taxId: string;
   payeeName: string;
   payeeAddress: string;
@@ -255,9 +259,38 @@ export function OcrConfirmModal({
                 </F>
                 {/* Branch and account belong to an expense line; a slip only carries
                     a date and an amount. */}
-                {r.kind === "receipt" && (
+                {/* The tax-VAT block: who issued the invoice. Thirteen digits is
+                  longer than anything else on this form, so it gets a row of its
+                  own rather than a third of one. */}
+              {r.kind === "receipt" && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <F label="เลขผู้เสียภาษี (ผู้ขาย)">
+                    <input className={cellClass} style={{ ...cellStyle, width: "100%" }}
+                      inputMode="numeric" placeholder="เลข 13 หลัก"
+                      value={r.taxId} onChange={(e) => update(r.key, { taxId: e.target.value })} />
+                  </F>
+                  <F label="สาขาผู้ขาย">
+                    <input className={cellClass} style={{ ...cellStyle, width: "100%" }}
+                      placeholder="สำนักงานใหญ่ / สาขาที่ 00001"
+                      value={r.taxBranchText}
+                      onChange={(e) => update(r.key, { taxBranchText: e.target.value })} />
+                  </F>
+                </div>
+              )}
+
+              {r.kind === "receipt" && (
+                <F label="ชื่อผู้ขาย">
+                  <input className={cellClass} style={{ ...cellStyle, width: "100%" }} placeholder="—"
+                    value={r.payeeName} onChange={(e) => update(r.key, { payeeName: e.target.value })} />
+                </F>
+              )}
+
+              {r.kind === "receipt" && (
                   <>
-                    <F label="สาขา">
+                    {/* Ours, not the seller's — the two now sit near each other,
+                        and filling one into the other would post the expense to the
+                        wrong shop and file the tax against the wrong branch. */}
+                    <F label="สาขาที่ใช้จ่าย (ของเรา)">
                       <BranchPicker options={branches} value={r.branchCode} noBrand={!brandChosen}
                         disabled={!brandChosen} inline
                         onPick={(code) => update(r.key, {
