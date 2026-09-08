@@ -33,6 +33,12 @@ export interface ClearAdvanceWhtItem {
   taxId: string | null;        // เลขที่ผู้เสียภาษี (user fills)
   payeeName: string | null;    // ชื่อ-สกุล/ชื่อบริษัท (user fills)
   payeeAddress: string | null; // ที่อยู่ (user fills)
+  /**
+   * ภ.ง.ด. type, which picks the BC vendor at send time (WHT-PND.3 / .53).
+   * Null means nobody has decided — distinct from deciding "individual", and
+   * what the send refuses on rather than choosing a vendor for accounting.
+   */
+  pndType?: "PND3" | "PND53" | null;
   amount: number | null;       // ค่าใช้จ่าย
   whtAmount: number | null;    // ภาษีหัก ณ ที่จ่าย
   netAmount: number | null;    // จำนวนจ่ายสุทธิ

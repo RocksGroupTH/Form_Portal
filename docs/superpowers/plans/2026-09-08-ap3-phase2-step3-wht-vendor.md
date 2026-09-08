@@ -144,13 +144,13 @@ for the two editors, so the Thai wording is written once.
 
 ---
 
-## Task 2: Somewhere to keep the decision
+## Task 2: Somewhere to keep the decision — *done 2026-09-08*
 
 **Files:**
 - Create: `migrations/139_wht_pnd_type.sql`
 - Modify: `src/features/clear-advance/types.ts:27-40`
 
-- [ ] **Step 1: Write the migration**
+- [x] **Step 1: Write the migration**
 
 ```sql
 -- The ภ.ง.ด. type decided for one WHT payee — what picks the BC vendor at send
@@ -174,7 +174,7 @@ IF NOT EXISTS (
   ALTER TABLE [dbo].[AccClearAdvanceWht] ADD [PndType] NVARCHAR(10) NULL;
 ```
 
-- [ ] **Step 2: Apply it to UAT and Production**
+- [x] **Step 2: Apply it to UAT and Production**
 
 AP-3 runs UAT-gated, but the column goes to both so the schemas do not drift —
 the same order AP-3 Phase 1 used (`Rocks_Portal_Form_UAT` first, then
@@ -182,7 +182,20 @@ the same order AP-3 Phase 1 used (`Rocks_Portal_Form_UAT` first, then
 
 Verify: the column exists in both, and every existing row reads NULL.
 
-- [ ] **Step 3: Add it to the type**
+**Applied 2026-09-08.** `Rocks_Portal_Form_UAT`: column present, 2 rows, both
+NULL — the two existing payees keep no type, as intended. `Rocks_Portal_Form`:
+column present, 0 rows, since AP-3 is not live there.
+
+The `mssql-rocks` MCP refuses DDL ("only INSERT/UPDATE/DELETE allowed"), so the
+file was run through the app's own pool with `getAppPool` over both database
+names from the environment. Worth knowing for the next migration.
+
+The file guards on `OBJECT_ID('dbo.AccClearAdvanceWht')` rather than a database
+name: this table exists in exactly the two databases it belongs in, so the guard
+travels with the object instead of hard-coding where it lives — unlike migration
+138, which names `Rocks_ERP_Data` because that one table is shared estate.
+
+- [x] **Step 3: Add it to the type**
 
 In `src/features/clear-advance/types.ts`, after `payeeAddress`:
 
@@ -191,7 +204,7 @@ In `src/features/clear-advance/types.ts`, after `payeeAddress`:
   pndType?: "PND3" | "PND53" | null;
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add migrations/139_wht_pnd_type.sql src/features/clear-advance/types.ts
