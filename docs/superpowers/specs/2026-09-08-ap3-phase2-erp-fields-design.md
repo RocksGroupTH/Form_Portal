@@ -325,6 +325,10 @@ Vendor, and BC fills it here rather than the portal choosing it.
 Bus. Posting Group and VAT Prod. Posting Group are standard `Gen. Journal Line`
 fields.
 
+**All ten go on the VAT line and nowhere else** (user, 2026-09-08). A posting
+group on an expense, vendor or bank line would change how BC treats that line,
+and the tax fields belong to an invoice, which is what a VAT line represents.
+
 **Two structural problems Step 4 has to solve first, neither visible in the
 sheet:**
 
