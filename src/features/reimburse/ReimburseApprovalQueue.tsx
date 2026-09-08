@@ -20,7 +20,6 @@ import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
 import { fmtBaht } from "@/features/travel-booking/components/shared";
 import { ExpenseAccountPicker } from "@/features/reimburse/components/ExpenseAccountPicker";
-import { useReimburseAccess } from "@/features/reimburse/hooks/useReimburseAccess";
 // Type-only, and deliberately from the pure module rather than `./queue-service`
 // — that file imports `getAccPool`, which reaches `@/lib/db/mssql` and `@/env`
 // at module scope. A type-only import is erased at build time regardless of
@@ -85,6 +84,16 @@ interface QueueData {
   rows: ReimburseQueueRow[];
   paymentOptions: string[];
   suggested: string | null;
+  /**
+   * Roster membership on `AccReimburseApprover`, for the notice below — NOT a
+   * gate. `boolean | null`: `null` while the server itself could not read the
+   * roster, which must never render as "you are not on it". Lives on this
+   * route rather than a separate `/access` fetch since 2026-09-09 — see the
+   * route's own docblock for why splitting it out cost every `/request` hub
+   * visit and every AP-4 settings-page visit an unwanted `Rocks_Portal_HR`
+   * lookup.
+   */
+  isReimburseApprover: boolean | null;
 }
 
 class ApiError extends Error {
@@ -363,10 +372,12 @@ export function ReimburseApprovalQueue() {
   const { data, error, isLoading, mutate } = useSWR("/api/request/reimburse/approvals", fetcher);
   // Roster membership, for the notice below — NOT a gate. Sight of this page
   // is decided by the route's own `approvalQueue` check; this only says
-  // whether the actions will work. A separate endpoint rather than a field on
-  // the queue payload, so the answer comes from the same place the hub card
-  // and the settings page already read it from.
-  const { isReimburseApprover } = useReimburseAccess();
+  // whether the actions will work. Read straight off this fetch's own
+  // payload — it used to be a separate `useReimburseAccess()` call
+  // (`/api/request/reimburse/access`) for one day, which meant every visit to
+  // the `/request` hub and to AP-4's settings page paid a `Rocks_Portal_HR`
+  // lookup neither of them needed. See the `/approvals` route's docblock.
+  const isReimburseApprover = data?.isReimburseApprover ?? null;
 
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [bulkDate, setBulkDate] = useState("");

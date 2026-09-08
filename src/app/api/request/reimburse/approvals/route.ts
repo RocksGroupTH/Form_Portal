@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { isAdminRole } from "@/lib/roles";
+import { buildAccActor } from "@/lib/acc/actor-context";
 import { resolveReimburseTabsByEmail } from "@/lib/acc/reimburse/access-tabs";
 import { decideReimburseMenuAccess } from "@/lib/acc/reimburse/settings-tabs";
 import { listReimburseAccountQueue } from "@/lib/acc/reimburse/queue-service";
-import { getReimbursePaymentOptions } from "@/lib/acc/reimburse/approval-service";
+import {
+  getReimbursePaymentOptions,
+  resolveReimburseApprover,
+} from "@/lib/acc/reimburse/approval-service";
 
 /**
  * GET /api/request/reimburse/approvals — the accounting queue AP-4's ACCOUNT
@@ -22,7 +26,46 @@ import { getReimbursePaymentOptions } from "@/lib/acc/reimburse/approval-service
  * correct, not a bug to special-case: `AccReimburseAccess` exists precisely so
  * "may edit the payment rules" and "may approve a payment" are not the same
  * tick (see `settings-tabs.ts`'s own docblock).
+ *
+ * **`isReimburseApprover` rides along on this same response, since
+ * 2026-09-09.** It briefly lived on `GET /api/request/reimburse/access`
+ * (2026-09-08) — the endpoint `useReimburseAccess()` backs, which the
+ * `/request` hub and the AP-4 settings page also read — so every visit to
+ * either paid a `Rocks_Portal_HR` lookup (`buildAccActor` →
+ * `findActiveEmployeeByEmail`) plus a roster read that only this page's
+ * notice used, and a degraded HR connection held that whole response (this
+ * route's own `approvalQueue` gate included) for the driver's 15s default
+ * timeout — `src/lib/db/mssql.ts` sets none. Moved here, where the only
+ * caller is the page that needs it and the viewer is already being resolved
+ * for the `approvalQueue` gate above. It is a NOTICE, not a gate: whether
+ * somebody may actually take the ACCOUNT or ACCOUNT_FINAL step is re-decided
+ * inside the approval service (`requireApproverStaffId`), inside the
+ * transaction that writes, and nothing here is consulted there. `boolean |
+ * null` — `null` when the roster could not be read, which must never be
+ * reported as "you are not on it".
  */
+
+/**
+ * Roster membership, for the notice — never a gate (see the docblock above).
+ * Asked for ADMINS TOO: the admin role already passes `decideReimburseMenuAccess`
+ * above, so an admin reaches the queue automatically, and an admin with no
+ * approver row hits the identical wall. Failure degrades to `null`, never
+ * `false` — telling somebody they are off a roster nobody could read would be
+ * a wrong statement, where saying nothing is merely a missing one.
+ */
+async function resolveIsReimburseApprover(
+  userId: number,
+  email: string | null,
+): Promise<boolean | null> {
+  try {
+    const actor = await buildAccActor(userId, email);
+    return (await resolveReimburseApprover(actor)) != null;
+  } catch (err) {
+    console.error("[reimburse/approvals] approver roster read failed — reporting unknown", err);
+    return null;
+  }
+}
+
 export async function GET() {
   const session = await requireAuth();
   if (session instanceof Response) return session;
@@ -44,20 +87,25 @@ export async function GET() {
     // failed grant read and carries on reporting no grants, because it answers
     // menu *visibility* which every route re-resolves anyway. This read IS the
     // gate, so an unreadable grant list must be a 500 rather than a queue.
-    const granted = admin
-      ? []
-      : await resolveReimburseTabsByEmail(session.user.email ?? null);
+    const email = session.user.email ?? null;
+    const granted = admin ? [] : await resolveReimburseTabsByEmail(email);
     if (!decideReimburseMenuAccess(admin, granted, "approvalQueue")) {
       return NextResponse.json({ ok: false, error: "ไม่มีสิทธิ์เข้าถึง" }, { status: 403 });
     }
 
-    const [rows, options] = await Promise.all([
+    const [rows, options, isReimburseApprover] = await Promise.all([
       listReimburseAccountQueue(),
       getReimbursePaymentOptions(),
+      resolveIsReimburseApprover(Number(session.user.id), email),
     ]);
     return NextResponse.json({
       ok: true,
-      data: { rows, paymentOptions: options.dates, suggested: options.defaultDate },
+      data: {
+        rows,
+        paymentOptions: options.dates,
+        suggested: options.defaultDate,
+        isReimburseApprover,
+      },
     });
   } catch (err) {
     console.error("[api/request/reimburse/approvals] GET", err);

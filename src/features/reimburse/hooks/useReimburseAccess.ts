@@ -16,12 +16,6 @@ interface ReimburseAccessData {
    * existing on the wire is not a reason to widen every consumer of it early.
    */
   approvalQueue: boolean;
-  /**
-   * Is this viewer on `AccReimburseApprover` — the pool that takes the two
-   * accounting steps? **A notice, never a gate.** `null` means the roster could
-   * not be read, which must not be shown as "you are not on it".
-   */
-  isReimburseApprover: boolean | null;
 }
 
 const fetcher = async (url: string) => {
@@ -50,10 +44,14 @@ const fetcher = async (url: string) => {
  * a viewer can hold the `approvalQueue` tick and no `AccReimburseApprover` row,
  * see the full queue, and act on none of it.
  *
- * `isReimburseApprover` REPORTS that situation rather than changing it, so the
- * queue can say it before the first click instead of after N failures. It is
- * still not a gate, and the page must not treat it as one — see its own comment
- * for why it is three-valued.
+ * That roster-membership question — reported to the queue page as
+ * `isReimburseApprover` — used to be answered on this same endpoint
+ * (2026-09-08) and moved to `GET /api/request/reimburse/approvals` the next
+ * day: this hook is read by the `/request` hub and by AP-4's settings page,
+ * neither of which needed it, so every visit to either was paying a
+ * `Rocks_Portal_HR` lookup for a question only the queue's own notice asked.
+ * See that route's docblock. This hook does not expose the field — the queue
+ * page reads it straight off its own `/approvals` fetch instead.
  */
 export function useReimburseAccess() {
   const { data, error, isLoading } = useSWR("/api/request/reimburse/access", fetcher);
@@ -85,17 +83,5 @@ export function useReimburseAccess() {
      * might disappear once the real answer arrives.
      */
     approvalQueue: access?.approvalQueue ?? false,
-    /**
-     * Roster membership, for the queue's "you may look but not approve"
-     * notice. **Not an authorization answer** — every action re-decides it
-     * server-side inside the transaction that writes.
-     *
-     * Defaults to `null`, not `false`, and stays `null` while loading, on a
-     * failed fetch, and when the server itself could not read the roster. The
-     * caller must render the notice on a strict `=== false` only: telling
-     * somebody they are off a roster that nobody could read would be a wrong
-     * statement, where saying nothing is merely a missing one.
-     */
-    isReimburseApprover: access?.isReimburseApprover ?? null,
   };
 }

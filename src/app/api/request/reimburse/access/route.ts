@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { isAdminRole } from "@/lib/roles";
-import { buildAccActor } from "@/lib/acc/actor-context";
 import { resolveReimburseTabsByEmail } from "@/lib/acc/reimburse/access-tabs";
-import { resolveReimburseApprover } from "@/lib/acc/reimburse/approval-service";
 import {
   decideReimburseMenuAccess,
   filterGrantableReimburseTabKeys,
@@ -30,21 +28,25 @@ import {
  * until something is ticked, which is why an empty grant list leaves a
  * non-admin exactly where they were before they were added.
  *
- * The approval pool is a different question again, and since 2026-09-08 this
- * endpoint *reports* the answer without ever *deciding* on it.
- * `isReimburseApprover` is a NOTICE, not a gate: whether somebody may take the
- * ACCOUNT or ACCOUNT_FINAL step is re-decided inside the approval service where
- * the money moves (`requireApproverStaffId`), inside the transaction that
- * writes, and nothing here is consulted there. It exists because the queue's
- * guaranteed first experience is otherwise "select all → approve → N failures":
- * `AccReimburseApprover` ships empty, and a granted non-admin does not even
- * reach the helpful `NOT_ACCOUNT_APPROVER_ERROR` — `authorizeAccRequest(…,
- * "read")` refuses them first with a generic message. Saying so up front costs
- * nothing and blocks nothing; the design deliberately lets them look.
+ * The approval pool is a different question again, and it is deliberately NOT
+ * answered here. Whether somebody may take the ACCOUNT or ACCOUNT_FINAL step
+ * comes from `AccReimburseApprover`, checked inside the approval service where
+ * the money moves — a menu tick only grants sight of the queue, not the right
+ * to act inside it.
  *
- * It is `boolean | null`, and the null arm is the point: an unreadable roster
- * must not be reported as "you are not on it". The client renders the notice
- * only on a strict `false`.
+ * It briefly was answered here (`isReimburseApprover`, 2026-09-08) and moved
+ * out the same day: this route backs `useReimburseAccess()`, which the
+ * `/request` hub reads for the "reimburse-approvals" card and the AP-4
+ * settings page reads for `canSettings` — every visit to either paid a
+ * `Rocks_Portal_HR` lookup (`buildAccActor` → `findActiveEmployeeByEmail`)
+ * plus an `AccReimburseApprover` read that neither of them needed, for every
+ * signed-in user. `src/lib/db/mssql.ts` sets no `requestTimeout`, so the
+ * driver's 15s default applies — a degraded HR connection held this whole
+ * response, `approvalQueue` included, for every hub visit rather than only
+ * for the one page that used the field. `isReimburseApprover` now lives on
+ * `GET /api/request/reimburse/approvals`, which only the accounting queue
+ * fetches and which already resolves the same viewer for its own gate — see
+ * that route's docblock.
  */
 export async function GET(_req: NextRequest) {
   const session = await requireAuth();
@@ -81,23 +83,6 @@ export async function GET(_req: NextRequest) {
     const menus = filterReimburseMenuKeys(granted);
     const approvalQueue = decideReimburseMenuAccess(admin, granted, "approvalQueue");
     const clearance = decideReimburseMenuAccess(admin, granted, "clearance");
-    // Roster membership, for the queue's notice. Resolved from
-    // `AccReimburseApprover` through the approval service's own
-    // `resolveReimburseApprover` rather than a second query of the same table —
-    // two lookups of "may this person approve" that could disagree is exactly
-    // the shape this endpoint's docblock warns about.
-    //
-    // Asked for ADMINS TOO: the admin role passes `decideReimburseMenuAccess`,
-    // so an admin reaches the queue automatically, and an admin with no
-    // approver row hits the identical wall. `null` on failure — never `false`,
-    // which would tell somebody they are off a roster nobody could read.
-    let isReimburseApprover: boolean | null = null;
-    try {
-      const actor = await buildAccActor(Number(session.user.id), email);
-      isReimburseApprover = (await resolveReimburseApprover(actor)) != null;
-    } catch (err) {
-      console.error("[reimburse/access] approver roster read failed — reporting unknown", err);
-    }
     return NextResponse.json({
       ok: true,
       data: {
@@ -107,7 +92,6 @@ export async function GET(_req: NextRequest) {
         menus,
         approvalQueue,
         clearance,
-        isReimburseApprover,
       },
     });
   } catch (err) {
