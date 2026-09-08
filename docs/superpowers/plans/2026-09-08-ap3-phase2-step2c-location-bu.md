@@ -226,12 +226,16 @@ Confirmed against the real tables — PCTH 25 blocked, KSI 1, UNO 1, PCMY 0,
 matching a direct SQL count; `PC1021` reads `{ buCode: "COCO", isBlocked: true }`
 and `HQ01` reads `{ buCode: "COCO", isBlocked: false }`.
 
-**Not yet wired to anything.** Task 5 decides what the send does with a blocked
-branch — warn in the preview, or refuse. Nothing today reads the flag.
+**Decided 2026-09-08: warn, still allow the send.** Task 5 surfaces a blocked
+branch in the preview and lets accounting send anyway. Refusing would rest on an
+assumption nobody has tested — that BC rejects *every* blocked-dimension line —
+and a wrong guess there would block work that actually posts. A warning is
+useless if the send was going to succeed; a block is damaging. The flag is
+recorded now and nothing reads it yet.
 
 ---
 
-## Task 4: The Sync tab on the AP-3 settings page
+## Task 4: The Sync tab on the AP-3 settings page — *done 2026-09-08*
 
 **Files:**
 - Create: `src/app/api/request/clear-advance/settings/locations/route.ts` (GET)
@@ -239,7 +243,7 @@ branch — warn in the preview, or refuse. Nothing today reads the flag.
 - Create: `src/features/clear-advance/components/settings/ClrLocationSyncPanel.tsx`
 - Modify: `src/app/(dashboard)/request/clear-advance/settings/page.tsx:15-40`
 
-- [ ] **Step 1: The routes**
+- [x] **Step 1: The routes**
 
 Both follow `src/app/api/request/accounting/settings/erp-accounts/sync/route.ts`:
 **`requireRole(["IT Admin", "System Admin"])`, not a tab grant.** `ErpLocation`
@@ -250,22 +254,34 @@ comment rather than restating it thinly.
 GET returns the rows for the brand plus the last sync from `ErpSyncLog`, so the
 tab can show when it last ran without a second call.
 
-- [ ] **Step 2: The panel**
+- [x] **Step 2: The panel**
 
 A Sync button, the last-sync line, and a table of Code / Name / Branch / BU /
-Dept. The button is hidden for a non-admin rather than shown and then refused —
-the same choice the ERP accounts panel makes.
+Dept.
+
+**The hide-for-non-admin rule turned out not to apply here.** The AP-2 panel
+hides its button because that page is opened by a tab grant. The whole AP-3
+settings page is already gated to IT Admin / System Admin
+(`settings/page.tsx:60`), so a non-admin never reaches the panel to be refused.
+The routes still carry `requireRole` — they are reachable on their own.
+
+Built in `components/admin/`, not the `components/settings/` this plan named:
+every other AP-3 settings panel lives in `admin/` and there is no `settings/`
+directory to join.
+
+The table also carries the blocked badge from Task 3b, with a count above it.
+It is the one place the flag is visible today.
 
 Show the BU spread as a summary line (`COCO 130 · DODO-M 36 · …`): it is the
 one number that tells an accountant at a glance whether the sync brought back
 what they expected.
 
-- [ ] **Step 3: Register the tab**
+- [x] **Step 3: Register the tab**
 
 In `settings/page.tsx`, add `"locations"` to `TabKey` and a `TABS` entry —
 label "Location / BU", an icon consistent with the others.
 
-- [ ] **Step 4: Verify on screen**
+- [x] **Step 4: Verify on screen**
 
 Open `/request/clear-advance/settings?tab=locations`, press Sync, and confirm
 240 rows land with the BU spread above. Then:
@@ -278,7 +294,23 @@ WHERE BrandCode = 'PCTH' AND IsActive = 1 GROUP BY BuCode ORDER BY COUNT(*) DESC
 Expected: COCO 130, DODO-M 36, DOCO 29, DODO 13, CTPS 11, DODO-A 9, LICNS 8,
 EXPR 4.
 
-- [ ] **Step 5: Commit**
+**Confirmed on screen 2026-09-08.** The tab rendered exactly that spread over 240
+rows, the Sync button ran (`ErpSyncLog` id 1006, PCTH, success, 240) and the
+last-sync line moved from 14:53 to 15:19 once it finished. Switching to PCMY
+refetched: 43 rows, `COCO 37 · DOCO 5 · CTPS 1`, and no blocked warning — correct,
+PCMY has none.
+
+**Two things worth knowing.**
+
+The sync takes about twelve seconds for PCTH; the button holds its loading state
+throughout, and a snapshot taken during it still shows the old timestamp. That is
+the refresh being honest, not a stale read.
+
+The tab lists 43 PCMY Locations where the journal lookup builds 42 branches — the
+same `INTRANSIT` / `MW001` pair from Task 3. The two numbers count different
+things and both are right: this tab shows Locations, the lookup keys by branch.
+
+- [x] **Step 5: Commit**
 
 ---
 
