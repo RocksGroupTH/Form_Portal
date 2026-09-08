@@ -2,10 +2,15 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   GRANTABLE_REIMBURSE_TABS,
+  REIMBURSE_MENU_KEYS,
   REIMBURSE_SETTINGS_TAB_ORDER,
+  decideReimburseMenuAccess,
   decideReimburseTabAccess,
   filterGrantableReimburseTabKeys,
+  filterReimburseMenuKeys,
+  filterStorableReimburseKeys,
   isGrantableReimburseTabKey,
+  isReimburseMenuKey,
 } from "./settings-tabs";
 
 /* ── what the page shows ── */
@@ -97,4 +102,47 @@ test("an unknown tab is refused even to a holder of every grant", () => {
   assert.equal(decideReimburseTabAccess(false, everything, "erp-config"), false);
   assert.equal(decideReimburseTabAccess(false, everything, "__proto__"), false);
   assert.equal(decideReimburseTabAccess(false, everything, ""), false);
+});
+
+test("a menu key is not a grantable settings tab, and vice versa", () => {
+  // The whole point of the split. A menu tick that satisfied
+  // `isGrantableReimburseTabKey` would be a way past
+  // `requireReimburseSettingsTab` into the configuration routes.
+  for (const k of REIMBURSE_MENU_KEYS) {
+    assert.equal(isGrantableReimburseTabKey(k), false, `${k} must not be a settings tab`);
+  }
+  for (const t of GRANTABLE_REIMBURSE_TABS) {
+    assert.equal(isReimburseMenuKey(t.key), false, `${t.key} must not be a menu`);
+  }
+});
+
+test("both vocabularies store, only the right one authorises", () => {
+  const mixed = ["rules", "approvalQueue", "access", "nonsense"];
+  // `access` is a real tab key but never grantable; `nonsense` is neither.
+  assert.deepEqual(filterStorableReimburseKeys(mixed), ["rules", "approvalQueue"]);
+  assert.deepEqual(filterGrantableReimburseTabKeys(mixed), ["rules"]);
+  assert.deepEqual(filterReimburseMenuKeys(mixed), ["approvalQueue"]);
+});
+
+test("an admin sees every menu; a non-admin sees only what is ticked", () => {
+  assert.equal(decideReimburseMenuAccess(true, [], "approvalQueue"), true);
+  assert.equal(decideReimburseMenuAccess(true, [], "clearance"), true);
+  assert.equal(decideReimburseMenuAccess(false, ["approvalQueue"], "approvalQueue"), true);
+  assert.equal(decideReimburseMenuAccess(false, ["approvalQueue"], "clearance"), false);
+  assert.equal(decideReimburseMenuAccess(false, [], "approvalQueue"), false);
+});
+
+test("an unknown menu key is inert even for an admin", () => {
+  // The table has no CHECK, so a row naming any string can exist. An admin
+  // passing every REAL menu must still not pass a made-up one, or a stray row
+  // becomes a capability.
+  assert.equal(decideReimburseMenuAccess(true, ["nonsense"], "nonsense"), false);
+  assert.equal(decideReimburseMenuAccess(false, ["nonsense"], "nonsense"), false);
+});
+
+test("storable keys are de-duplicated and trimmed, in the caller's order", () => {
+  assert.deepEqual(
+    filterStorableReimburseKeys([" approvalQueue ", "rules", "approvalQueue"]),
+    ["approvalQueue", "rules"],
+  );
 });

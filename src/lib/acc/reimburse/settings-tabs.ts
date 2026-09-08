@@ -103,6 +103,101 @@ export function filterGrantableReimburseTabKeys(keys: string[]): string[] {
   return out;
 }
 
+/* ── the MENU vocabulary ──────────────────────────────────────────────────
+ *
+ * A second set of keys in the same `AccReimburseAccessTab.TabKey` column, and
+ * keeping the two apart is the design rather than an accident of naming. A tab
+ * key grants sight of a CONFIGURATION screen; a menu key grants sight of a
+ * WORKING screen. `requireReimburseSettingsTab` gates the first, so a menu key
+ * that satisfied `isGrantableReimburseTabKey` would be a way into the settings
+ * routes — which is why that function must go on refusing these.
+ *
+ * No migration: migration 120 deliberately put no CHECK on `TabKey` (its own
+ * header says so), which is what makes a second vocabulary possible without one
+ * — and exactly what makes the code-side split load-bearing.
+ *
+ * AP-17 reached the same arrangement first; `booking-approver-tabs.ts` is the
+ * shape being copied, including the storable-vs-grantable pair below.
+ */
+export const REIMBURSE_MENU_KEYS = ["approvalQueue", "clearance"] as const;
+
+export type ReimburseMenuKey = (typeof REIMBURSE_MENU_KEYS)[number];
+
+/**
+ * The label each menu carries, as a `Record` for the same reason
+ * `REIMBURSE_TAB_LABELS` is one: adding a key without copy is a typecheck
+ * failure rather than a blank checkbox.
+ */
+const REIMBURSE_MENU_LABELS: Record<ReimburseMenuKey, string> = {
+  approvalQueue: "คิวอนุมัติ (บัญชี)",
+  clearance: "เคลียร์เอกสารอนุมัติ",
+};
+
+export const REIMBURSE_MENUS: readonly { key: ReimburseMenuKey; label: string }[] =
+  REIMBURSE_MENU_KEYS.map((key) => ({ key, label: REIMBURSE_MENU_LABELS[key] }));
+
+export function isReimburseMenuKey(key: string): boolean {
+  const k = String(key).trim();
+  for (const m of REIMBURSE_MENUS) if (m.key === k) return true;
+  return false;
+}
+
+/** Keep only known MENU keys, trimmed, de-duplicated, in the caller's order. */
+export function filterReimburseMenuKeys(keys: string[]): string[] {
+  const seen: Record<string, true> = {};
+  const out: string[] = [];
+  for (const raw of keys) {
+    const k = String(raw).trim();
+    if (isReimburseMenuKey(k) && !seen[k]) {
+      seen[k] = true;
+      out.push(k);
+    }
+  }
+  return out;
+}
+
+/**
+ * Everything that may be STORED in `AccReimburseAccessTab` — tabs ∪ menus.
+ *
+ * Storage takes the union; authorization keeps the narrow filters. Before AP-17
+ * drew this distinction its menu ticks were dropped on read AND on write, so
+ * ticking one saved nothing at all and the bug looked like a UI fault.
+ */
+export function filterStorableReimburseKeys(keys: string[]): string[] {
+  const seen: Record<string, true> = {};
+  const out: string[] = [];
+  for (const raw of keys) {
+    const k = String(raw).trim();
+    if ((isGrantableReimburseTabKey(k) || isReimburseMenuKey(k)) && !seen[k]) {
+      seen[k] = true;
+      out.push(k);
+    }
+  }
+  return out;
+}
+
+/**
+ * May this caller open this AP-4 working screen?
+ *
+ * An admin passes every REAL menu and no made-up one. That asymmetry matters:
+ * the table has no CHECK, so `decideReimburseMenuAccess(true, [], anything)`
+ * returning true would turn a typo in a stray row into a capability.
+ *
+ * This answers SIGHT only. Whether the viewer may act on what they see comes
+ * from `AccReimburseApprover`, checked inside the approval service where the
+ * money moves — a person with the tick and no approver row gets an empty queue.
+ */
+export function decideReimburseMenuAccess(
+  isAdmin: boolean,
+  granted: string[],
+  menu: string,
+): boolean {
+  const wanted = String(menu).trim();
+  if (!isReimburseMenuKey(wanted)) return false;
+  if (isAdmin) return true;
+  return filterReimburseMenuKeys(granted).indexOf(wanted) !== -1;
+}
+
 /* ── The decision ────────────────────────────────────────────────────────── */
 
 /**
