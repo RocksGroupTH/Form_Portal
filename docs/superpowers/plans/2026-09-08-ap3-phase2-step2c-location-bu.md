@@ -197,6 +197,38 @@ separately instead of assuming them equal. Both carry `COCO`, so the collision
 changes no answer today; the first-wins rule keeps it from changing by row order
 if they ever diverge.
 
+### Task 3b: the blocked branch (added on request, 2026-09-08)
+
+The lookup returns `{ buCode, isBlocked }` per branch, not a bare BU string.
+
+**Why it earns its place:** 27 of PCTH's BRANCH dimension values are blocked in
+BC and 25 active Locations still point at them — closed stores like
+อยุธยาซิตี้พาร์ค and เอ็มควอเทียร์. BC refuses a journal line carrying a blocked
+dimension value, one line at a time, with a reason nothing on this side stores.
+That is the same shape of silent per-line failure as the BRANCH≠DEPT bug: the
+send reports partial success and the reason is only in BC.
+
+**Blocked is joined, never stored.** It belongs to the BRANCH dimension value and
+moves on the dimension sync's schedule; copying it into `ErpLocation` would make
+a second truth that goes stale between two syncs. The join is `LEFT`, and a
+missing dimension row counts as open — a brand whose dimension values have never
+been synced has no rows at all, and reading that silence as "blocked" would flag
+every branch it has. Absent data must not manufacture a warning.
+
+**One inclusion rule changed.** The query no longer requires `BuCode IS NOT NULL`,
+so a Location with no BU now yields an entry with `buCode: null` instead of
+vanishing. The caller still sends no `buCode` key for it — absence is what makes
+the codeunit apply its fallback — but the blocked flag stays visible either way.
+Verified this added no rows: the branch counts are unchanged at 240 / 18 / 42 /
+40, so every active Location currently has a BU.
+
+Confirmed against the real tables — PCTH 25 blocked, KSI 1, UNO 1, PCMY 0,
+matching a direct SQL count; `PC1021` reads `{ buCode: "COCO", isBlocked: true }`
+and `HQ01` reads `{ buCode: "COCO", isBlocked: false }`.
+
+**Not yet wired to anything.** Task 5 decides what the send does with a blocked
+branch — warn in the preview, or refuse. Nothing today reads the flag.
+
 ---
 
 ## Task 4: The Sync tab on the AP-3 settings page

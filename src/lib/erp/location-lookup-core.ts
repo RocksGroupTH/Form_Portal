@@ -1,38 +1,56 @@
 /**
- * Pure read-side shaping for Locations — no IO, so the tests can import it.
- * `location-lookup.ts` wraps this with the database read.
+ * Branch → { Business Unit, blocked } for one brand, folded out of the synced
+ * Locations and the BRANCH dimension values.
+ *
+ * Pure on purpose: the database read lives in `location-lookup.ts`, so the tests
+ * import this file and not the connection pool (`src/env.ts` validates the whole
+ * environment the moment it loads).
  */
 
-export interface LocationBuRow {
+export interface LocationRow {
   branchCode: string | null;
   buCode: string | null;
+  /** The BRANCH dimension value is blocked in BC. Joined at read time, not stored. */
+  isBranchBlocked: boolean;
+}
+
+export interface BranchLookupEntry {
+  /**
+   * Null when the Location carries no BU. The caller then sends no `buCode`
+   * key at all, and that absence is what makes codeunit 50263 apply its own
+   * fallback — a blank string would be sent as an answer.
+   */
+  buCode: string | null;
+  /**
+   * BC refuses a journal line whose dimension value is blocked, one line at a
+   * time, with a reason nothing on this side stores. Knowing before the send is
+   * the point.
+   */
+  isBlocked: boolean;
+}
+
+function clean(v: string | null | undefined): string | null {
+  const t = v?.trim();
+  return t ? t : null;
 }
 
 /**
- * Branch code → the BU its Location is bound to, keyed upper-case.
- *
- * Both sides of the eventual lookup are untrusted for case: the branch comes off
- * an expense line, the BU out of BC. A case mismatch would not fail loudly — it
- * would quietly fall through to the codeunit's `COCO` default, which is the very
- * thing this map exists to stop.
- *
- * A row missing either half is left out rather than mapped to "". Absence is
- * meaningful downstream: the payload sends no `buCode` key at all, which is what
- * makes the codeunit apply its own fallback. A blank value would instead be sent
- * as an answer.
- *
- * Two Locations should never claim the same branch. If BC ever returns that, the
- * first wins — arbitrary, but deterministic, which beats resolving by row order
- * differently on each sync.
+ * First row wins for a repeated branch. PCMY has two Locations on branch MW001
+ * (`INTRANSIT` and `MW001` itself), so this is not hypothetical — both are COCO
+ * today, and first-wins keeps the answer the same on every sync rather than
+ * following whatever order the rows arrive in.
  */
-export function buildBranchBuMap(rows: readonly LocationBuRow[]): Map<string, string> {
-  const map = new Map<string, string>();
+export function buildBranchLookup(rows: readonly LocationRow[]): Map<string, BranchLookupEntry> {
+  const map = new Map<string, BranchLookupEntry>();
   for (const r of rows) {
-    const branch = r.branchCode?.trim().toUpperCase();
-    const bu = r.buCode?.trim();
-    if (!branch || !bu) continue;
+    // Both sides are upper-cased: the branch reaches this map from an expense
+    // line and the BU from BC, neither guarantees case, and a miss would not
+    // fail loudly — it would quietly return the COCO default, which is the exact
+    // bug this lookup exists to fix.
+    const branch = clean(r.branchCode)?.toUpperCase();
+    if (!branch) continue;
     if (map.has(branch)) continue;
-    map.set(branch, bu);
+    map.set(branch, { buCode: clean(r.buCode), isBlocked: r.isBranchBlocked });
   }
   return map;
 }
