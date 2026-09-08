@@ -544,7 +544,12 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                     </p>
                     <SaveStatus state={saveState} onRetry={() => void saveNow()} />
                   </div>
-                  <div className="overflow-x-auto -mx-1 px-1">
+                  {/* show-x-scroll: `.acc-theme *` hides every scrollbar, so a
+                      table wider than the page scrolled with nothing on screen
+                      to say it could — the ก่อน VAT / VAT / WHT columns sat off
+                      the right edge and looked missing. The AP-3 form's own grid
+                      already opts back in; this one had not. */}
+                  <div className="overflow-x-auto show-x-scroll pb-1 -mx-1 px-1">
                     <table className="w-full border-collapse" style={{ minWidth: 1240 }}>
                       <thead>
                         <tr className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
@@ -906,7 +911,7 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
       {/* WHT certificate table */}
       {whtItems.length > 0 && (
         <Section title="หนังสือรับรองการหักภาษี ณ ที่จ่าย" icon={<ReceiptText size={15} />}>
-          <div className="overflow-x-auto -mx-1 px-1">
+          <div className="overflow-x-auto show-x-scroll pb-1 -mx-1 px-1">
             <table className="w-full border-collapse" style={{ minWidth: 820 }}>
               <thead>
                 <tr className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
@@ -1093,7 +1098,7 @@ function ExpenseTable({ items, advanceAmount }: { items: ClearAdvanceItem[]; adv
     return { it, before, vat, total, wht, net, balance, i };
   });
   return (
-    <div className="overflow-x-auto -mx-1 px-1">
+    <div className="overflow-x-auto show-x-scroll pb-1 -mx-1 px-1">
       <table className="w-full border-collapse" style={{ minWidth: 980 }}>
         <thead>
           <tr className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
