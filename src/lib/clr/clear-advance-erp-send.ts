@@ -186,6 +186,7 @@ function toJournalItems(
       whtAmount: it.whtAmount ?? 0,
       branchCode: it.branchCode ?? null,
       description: it.description ?? null,
+      expenseDate: it.expenseDate ?? null,
     }));
 }
 
