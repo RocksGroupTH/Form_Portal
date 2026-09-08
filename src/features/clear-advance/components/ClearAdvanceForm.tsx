@@ -216,6 +216,8 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   // next to each field and clear themselves as the field is fixed (errors are
   // derived from live state, not stored). rootRef locates the first bad field.
   const [submitAttempted, setSubmitAttempted] = useState(false);
+  /** The "print AP-3.1 before you send" reminder. */
+  const [printNotice, setPrintNotice] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
   // Unsaved-change tracking (P1.2). Dirty = the requester edited a field since the
@@ -655,6 +657,27 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
    * The tab is opened before the save, inside the click, because a browser
    * blocks `window.open` that arrives after an await.
    */
+  /**
+   * The reminder before sending.
+   *
+   * AP-3.1 is the sheet the receipts are stapled behind — accounting gets paper,
+   * not a screen — and the moment it is easiest to forget is the moment the form
+   * leaves. Validation runs first so the notice only appears on a request that
+   * can actually be sent; reading a reminder and then being told the form is
+   * incomplete would be the wrong order.
+   *
+   * A notice, not a gate: it does not check that anything was printed. The
+   * button to do it is simply there while the thought is.
+   */
+  function requestSubmit() {
+    const errs = collectErrors();
+    if (errs.length) {
+      handleSubmit(); // same validation, same scroll-to-field, same message
+      return;
+    }
+    setPrintNotice(true);
+  }
+
   async function handlePrint() {
     const errs = collectErrors();
     if (errs.length) {
@@ -1792,9 +1815,41 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
             พิมพ์ AP-3.1
           </Button>
           <Button variant="secondary" onClick={handleSave} loading={saving} disabled={submitting}>บันทึกแบบร่าง</Button>
-          <Button variant="primary" onClick={handleSubmit} loading={submitting} disabled={saving}>ส่งคำขอ</Button>
+          <Button variant="primary" onClick={requestSubmit} loading={submitting} disabled={saving}>ส่งคำขอ</Button>
         </div>
       )}
+
+      <Dialog
+        open={printNotice}
+        onOpenChange={(o) => { if (!o && !submitting) setPrintNotice(false); }}
+        title="ก่อนส่งคำขอ — อย่าลืมพิมพ์ AP-3.1"
+        scrollable={false}
+      >
+        <div className="px-5 py-4 flex flex-col gap-4">
+          <p className="text-[13px] m-0" style={{ color: "var(--text-secondary)" }}>
+            พิมพ์แบบฟอร์ม <b style={{ color: "var(--text-heading)" }}>AP-3.1</b> ให้ผู้ขอเซ็น
+            แล้ว <b style={{ color: "var(--text-heading)" }}>แนบไปกับใบเสร็จตัวจริงส่งแผนกบัญชี</b> —
+            ระบบส่งได้เฉพาะข้อมูล ตัวเอกสารยังต้องเดินทางเป็นกระดาษ
+          </p>
+          <p className="text-[12px] m-0 px-3 py-2 rounded-lg"
+            style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
+            พิมพ์ตอนนี้ได้เลย หน้าพิมพ์จะเปิดในแท็บใหม่ · หรือพิมพ์ทีหลังจากหน้ารายละเอียดคำขอก็ได้
+          </p>
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="ghost" size="sm" disabled={submitting} onClick={() => setPrintNotice(false)}>
+              ยกเลิก
+            </Button>
+            <Button variant="secondary" size="sm" icon={<Printer size={14} />} disabled={submitting}
+              onClick={handlePrint}>
+              พิมพ์ AP-3.1
+            </Button>
+            <Button variant="primary" size="sm" loading={submitting}
+              onClick={() => { setPrintNotice(false); void handleSubmit(); }}>
+              ส่งคำขอ
+            </Button>
+          </div>
+        </div>
+      </Dialog>
 
       {/* Confirm popup for file delete */}
       <Dialog
