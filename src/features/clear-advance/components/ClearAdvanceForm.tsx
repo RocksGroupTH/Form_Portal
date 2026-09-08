@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { PND_LABEL, suggestPndType } from "@/lib/clr/wht-pnd-core";
 import { taxBranchCode } from "@/lib/clr/tax-branch-core";
 import {
-  Check, Paperclip, Camera, X, Plus, Trash2, Banknote, User, Mail, FileText,
+  Check, Paperclip, Camera, X, Plus, Trash2, Banknote, User, Mail, FileText, Printer,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
@@ -638,6 +638,59 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       onSaved(id);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /**
+   * Print AP-3.1 from the form.
+   *
+   * The sheet is what the employee signs and staples in front of the receipts,
+   * so it may only be printed from data that is complete and stored: the same
+   * `collectErrors` the submit runs, then a draft save, then the sheet — which
+   * reads the request back from the server and would otherwise print whatever
+   * was last persisted rather than what is on screen.
+   *
+   * The tab is opened before the save, inside the click, because a browser
+   * blocks `window.open` that arrives after an await.
+   */
+  async function handlePrint() {
+    const errs = collectErrors();
+    if (errs.length) {
+      setSubmitAttempted(true);
+      const firstKey = errs[0].key;
+      requestAnimationFrame(() => {
+        const box = rootRef.current?.querySelector<HTMLElement>(`[data-err="${firstKey}"]`);
+        if (!box) return;
+        box.scrollIntoView({ behavior: "smooth", block: "center" });
+        const focusable = box.querySelector<HTMLElement>("input, select, textarea, button");
+        (focusable ?? box).focus?.();
+      });
+      toast.error(
+        errs.length === 1
+          ? errs[0].message
+          : `กรอกข้อมูลให้ครบ ${errs.length} รายการก่อนจึงจะพิมพ์ได้`,
+      );
+      return;
+    }
+
+    const tab = window.open("", "_blank");
+    setSaving(true);
+    try {
+      const id = await persist();
+      onSaved(id);
+      const href = `/request/clear-advance/${id}/print`;
+      if (tab) {
+        tab.location.href = href;
+      } else {
+        // Pop-up blocked: the draft is saved either way, so say where it went
+        // rather than losing the click.
+        toast.success("บันทึกแบบร่างแล้ว — เปิดหน้าพิมพ์ไม่ได้ (เบราว์เซอร์บล็อก) กดปุ่มพิมพ์อีกครั้ง");
+      }
+    } catch (e) {
+      tab?.close();
+      toast.error(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ — ยังพิมพ์ไม่ได้");
     } finally {
       setSaving(false);
     }
@@ -1732,6 +1785,10 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
 
       {!readOnly && (
         <div className="flex items-center justify-end gap-2">
+          <Button variant="ghost" icon={<Printer size={14} />} onClick={handlePrint}
+            loading={saving} disabled={submitting}>
+            พิมพ์ AP-3.1
+          </Button>
           <Button variant="secondary" onClick={handleSave} loading={saving} disabled={submitting}>บันทึกแบบร่าง</Button>
           <Button variant="primary" onClick={handleSubmit} loading={submitting} disabled={saving}>ส่งคำขอ</Button>
         </div>
