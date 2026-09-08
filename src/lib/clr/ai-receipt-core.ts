@@ -1,4 +1,5 @@
 import type { ReceiptExtractResult } from "./slip-verify";
+import { isOwnTaxId } from "@/lib/clr/own-tax-ids";
 
 /**
  * Pure prompt text + response parsing for AI receipt reading — no IO, no
@@ -162,6 +163,20 @@ export const RECEIPT_USER_TEXT =
   "Extract every document in these pages. Return only a JSON array; each entry has the keys: " +
   "kind, pages, date, description, docNo, amountBeforeVat, vat, wht, taxId, payeeName, payeeAddress, taxBranchText, branchHint " +
   '(an "other" entry has kind, pages and branchHint only).';
+
+/**
+ * The seller's tax id, or null when the reader handed back one of ours.
+ *
+ * A tax invoice prints two and we are always the customer on an expense receipt,
+ * so our own number can only have come from the wrong block. It is dropped
+ * rather than passed on: an empty field asks to be filled, while a plausible
+ * wrong one asks to be accepted, and this one ends up on a tax filing.
+ */
+function sellerTaxId(raw: unknown): string | null {
+  const digits = raw ? String(raw).replace(/\D/g, "").slice(0, 13) : "";
+  if (!digits) return null;
+  return isOwnTaxId(digits) ? null : digits;
+}
 
 /** An account the line's branch is allowed to charge (§6 decides the set). */
 export interface GlCandidate {
@@ -460,7 +475,7 @@ function toDoc(entry: AiJson, kind: ReceiptKind): ReceiptDoc {
     description: toStr(entry.description),
     docNo: toStr(entry.docNo),
     wht: toNum(entry.wht),
-    taxId: entry.taxId ? String(entry.taxId).replace(/\D/g, "").slice(0, 13) || null : null,
+    taxId: sellerTaxId(entry.taxId),
     payeeName: toStr(entry.payeeName),
     // Kept verbatim; taxBranchCode() turns it into the five-digit code, the
     // way thaiPrintedDate() handles the printed date.
