@@ -1785,7 +1785,9 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
 
       {!readOnly && (
         <div className="flex items-center justify-end gap-2">
-          <Button variant="ghost" icon={<Printer size={14} />} onClick={handlePrint}
+          {/* secondary, not ghost: ghost's border is transparent, so the button
+              had no edge while the two beside it did. */}
+          <Button variant="secondary" icon={<Printer size={14} />} onClick={handlePrint}
             loading={saving} disabled={submitting}>
             พิมพ์ AP-3.1
           </Button>
