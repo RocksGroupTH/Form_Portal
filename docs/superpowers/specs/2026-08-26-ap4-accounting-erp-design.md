@@ -69,6 +69,56 @@ on the answer. Until it is measured, CLAUDE.md's "AP-4 never reaches Business
 Central, deliberately" is still true — stage 3 is what makes it false, and
 that paragraph is rewritten there, not here.
 
+## Amendment — 2026-09-09
+
+**Stage 2 (§4) shipped**, on the same branch, plan
+`docs/superpowers/plans/2026-09-09-ap4-hub-erp-settings-and-queue.md`. It
+carried two things §4 did not scope — a read-only Interface ERP queue, and the
+merge of AP-4's two hub cards into one — because the user asked for both
+directly.
+
+- **Open item #1 is answered, and it never needed measuring.** §10 asks
+  whether Business Central's posting call returns the posted document number,
+  and treats the answer as blocking stages 3 and 4. It is not blocking and the
+  question was already settled in the code: **`AccRequest.ErpDocumentNo`
+  exists** (migration 108) and **two forms already write it** — AP-2's and
+  AP-3's senders both extract `results[].documentNo` from the response. So
+  §5.3's proposed `AccRequest.ErpPvNo` is a **third** name for a column that
+  is already there twice over and should not be added. What stages 3 and 4
+  are actually blocked on is narrower and entirely external: nobody has
+  supplied the Business Central call itself.
+- **The queue reads `(Approved, NULL)`, not `(ManagerApproved, ACCOUNT_FINAL)`
+  as §6 designs.** That is a consequence of stage 4 not being built rather
+  than a disagreement with it: §6 moves `ACCOUNT_FINAL` to after the send, and
+  that move must land **after** a sender exists — done first, every approved
+  claim parks at a step nothing can advance. While `ACCOUNT_FINAL` is still
+  terminal, `Status='Approved'` is what names a finished claim, so that is
+  what the queue selects. When stage 4 lands, this predicate moves with it.
+- **The queue is read-only and says so on screen.** No send button, no
+  selection, no export. There is nothing to post with, and
+  `CK_AccRequest_ErpInterfaceStatus` admits only `Pending`/`Sent`/`Failed` —
+  no value means "waiting for a sender that does not exist" — so neither a
+  button nor a status was invented to fill the gap.
+- **"Ready to post" is derived from the item rows, and nothing gates on it
+  yet.** `AccReimburseItem.Category` may be null or blank on a claim that has
+  cleared both accounting steps, and `setReimburseItemAccounts` claims
+  `CurrentStepCode='ACCOUNT'`, so a claim can reach this queue unready with no
+  in-app path to correction. Stage 3 resolves it: either a readiness gate at
+  `ACCOUNT_FINAL` or a widened edit window. Recorded rather than patched,
+  because guessing which belongs to the send's design.
+- **`AccBrandErpTargetSetting` is one of the seven per-form tables and has no
+  per-form writer anywhere in `src/`** — measured 2026-09-09, zero override
+  rows on any form. AP-4's Interface ERP tab therefore covers four of the
+  seven (G/L account, bank account, journal batch, branch code — what a
+  journal line carries) and deliberately not this one: a settings section for
+  a table nothing writes is a control with no counterpart. A form can still
+  *read* an override of it that nothing can create.
+- **§4's premise that overrides are unreachable from any UI was already false
+  when this spec was written.** AP-2 has written per-form rows since its
+  branch merged — 14 of them across five tables, measured 2026-09-09 and
+  identical in both form databases. CLAUDE.md said the same thing and has been
+  corrected in the same commit as this block.
+
 ---
 
 AP-4 today stops being interesting the moment the manager approves. The two
