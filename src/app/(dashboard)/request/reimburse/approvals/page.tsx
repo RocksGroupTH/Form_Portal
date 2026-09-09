@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ThumbsUp, Upload } from "lucide-react";
+import { backTo } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
@@ -61,6 +62,7 @@ function parseTab(raw: string | null): TabKey {
 function ApprovalsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const from = searchParams.get("from");
   const activeTab = useMemo(() => parseTab(searchParams.get("tab")), [searchParams]);
 
   const setTab = useCallback(
@@ -91,7 +93,13 @@ function ApprovalsContent() {
         // `/request` no longer even carries a card that names this page
         // directly. AP-17's equivalent queue backs to its hub for the same
         // reason.
-        backHref="/request/reimburse/admin"
+        //
+        // `backTo`, not a bare string: the `?from=admin` tag has to survive
+        // every hop, or Back from here lands on the full `/request` page for
+        // somebody who arrived through Settings → Accounting Admin. Three
+        // pages deep is the normal case — hub card → AP-4 hub → this queue —
+        // and each one passes on the tag it was given.
+        backHref={backTo("/request/reimburse/admin", from)}
       />
 
       <div

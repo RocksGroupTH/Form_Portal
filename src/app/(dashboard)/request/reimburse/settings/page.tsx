@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { Building2, FileCheck, Link2, Settings, ShieldCheck, Users } from "lucide-react";
-import { requestBackHref } from "@/lib/request-hub-nav";
+import { backTo } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { ReimburseApproverSettings } from "@/features/reimburse/components/settings/ReimburseApproverSettings";
@@ -171,7 +171,15 @@ function ReimburseSettingsContent() {
         icon={Settings}
         title="ตั้งค่าขอเบิกเงินคืนพนักงาน"
         subtitle="AP-4 · แบรนด์ที่เบิกได้ ระเบียบการจ่าย Interface ERP ผู้อนุมัติฝ่ายบัญชี และสิทธิ์เข้าถึง"
-        backHref={requestBackHref(searchParams.get("from"))}
+        // AP-4's hub, not `/request`. `requestBackHref` was correct while this
+        // page WAS a card on the hub — there was nothing in between to go back
+        // to. Task 5 put `/request/reimburse/admin` between them, so backing
+        // past it skipped a level, which is what every sibling settings page
+        // already avoided: AP-2's is `backTo("/request/advance/admin", …)`.
+        // `backTo` keeps the `?from=admin` tag so Back still reaches the
+        // management-only view for somebody who came through Settings →
+        // Accounting Admin.
+        backHref={backTo("/request/reimburse/admin", searchParams.get("from"))}
       />
 
       <div
