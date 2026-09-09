@@ -48,8 +48,21 @@ function row(overrides: Partial<Record<string, unknown>> = {}): Record<string, u
   };
 }
 
+/**
+ * A scope covering every brand `row()` ever defaults to, and a target map
+ * that maps each brand to itself — mirrors `queue-service.test.ts`'s own
+ * constants. Every test above the "brand scope" section is about
+ * `belongsInErpQueue`'s own predicate, not about scope.
+ */
+const ALL_SCOPE = ["PCTH", "KSI", "PCMY", "UNO"];
+const SELF_TARGETS = new Map(ALL_SCOPE.map((c) => [c, c]));
+
 test("an AP-1 claim at the identical Status='Approved' is dropped", () => {
-  const out = accumulateErpQueueRows([row({ Id: 1, FormCode: "AP-1", Status: "Approved" })]);
+  const out = accumulateErpQueueRows(
+    [row({ Id: 1, FormCode: "AP-1", Status: "Approved" })],
+    ALL_SCOPE,
+    SELF_TARGETS,
+  );
   assert.deepEqual(out, []);
 });
 
@@ -58,12 +71,20 @@ test("an AP-4 claim not yet past ACCOUNT_FINAL — ManagerApproved — is droppe
   // req.CurrentStepCode = 'ACCOUNT'`) would hand the accumulator, and the
   // exact case a `const status = "Approved";` rebinding defeats — drilled
   // below.
-  const out = accumulateErpQueueRows([row({ Id: 1, FormCode: "AP-4", Status: "ManagerApproved" })]);
+  const out = accumulateErpQueueRows(
+    [row({ Id: 1, FormCode: "AP-4", Status: "ManagerApproved" })],
+    ALL_SCOPE,
+    SELF_TARGETS,
+  );
   assert.deepEqual(out, []);
 });
 
 test("an AP-4 claim at Status='Approved' survives", () => {
-  const out = accumulateErpQueueRows([row({ Id: 1, FormCode: "AP-4", Status: "Approved" })]);
+  const out = accumulateErpQueueRows(
+    [row({ Id: 1, FormCode: "AP-4", Status: "Approved" })],
+    ALL_SCOPE,
+    SELF_TARGETS,
+  );
   assert.equal(out.length, 1);
   assert.equal(out[0].id, 1);
   assert.equal(out[0].formCode, "AP-4");
@@ -73,7 +94,11 @@ test("an AP-4 claim at Status='Approved' survives", () => {
 test("a claim with no lines gets itemCount 0 and erpReadiness([])'s message — not a phantom line 1", () => {
   // ItemId is null (no row joined), which must not be read as "one item with
   // a null category" — see erp-queue-policy.ts's own comment on the join.
-  const out = accumulateErpQueueRows([row({ Id: 1, ItemId: null, ItemCategory: null, ItemAmount: null })]);
+  const out = accumulateErpQueueRows(
+    [row({ Id: 1, ItemId: null, ItemCategory: null, ItemAmount: null })],
+    ALL_SCOPE,
+    SELF_TARGETS,
+  );
   assert.equal(out.length, 1);
   assert.equal(out[0].itemCount, 0);
   assert.equal(out[0].readiness.ready, false);
@@ -81,9 +106,11 @@ test("a claim with no lines gets itemCount 0 and erpReadiness([])'s message — 
 });
 
 test("a claim with one item missing its category gets itemCount 1 and a line-1 issue, not the empty-claim message", () => {
-  const out = accumulateErpQueueRows([
-    row({ Id: 1, ItemId: 10, ItemCategory: null, ItemAmount: 500 }),
-  ]);
+  const out = accumulateErpQueueRows(
+    [row({ Id: 1, ItemId: 10, ItemCategory: null, ItemAmount: 500 })],
+    ALL_SCOPE,
+    SELF_TARGETS,
+  );
   assert.equal(out.length, 1);
   assert.equal(out[0].itemCount, 1);
   assert.equal(out[0].readiness.ready, false);
@@ -91,19 +118,25 @@ test("a claim with one item missing its category gets itemCount 1 and a line-1 i
 });
 
 test("a claim whose every line has a category is ready", () => {
-  const out = accumulateErpQueueRows([
-    row({ Id: 1, ItemId: 10, ItemCategory: "5100-01", ItemAmount: 500 }),
-  ]);
+  const out = accumulateErpQueueRows(
+    [row({ Id: 1, ItemId: 10, ItemCategory: "5100-01", ItemAmount: 500 })],
+    ALL_SCOPE,
+    SELF_TARGETS,
+  );
   assert.equal(out[0].readiness.ready, true);
   assert.deepEqual(out[0].readiness.issues, []);
 });
 
 test("a claim with several joined item rows fans back into one row with the right item count", () => {
-  const out = accumulateErpQueueRows([
-    row({ Id: 1, ItemId: 10, ItemCategory: "5100-01", ItemAmount: 300 }),
-    row({ Id: 1, ItemId: 11, ItemCategory: null, ItemAmount: 200 }),
-    row({ Id: 1, ItemId: 12, ItemCategory: "5100-02", ItemAmount: 100 }),
-  ]);
+  const out = accumulateErpQueueRows(
+    [
+      row({ Id: 1, ItemId: 10, ItemCategory: "5100-01", ItemAmount: 300 }),
+      row({ Id: 1, ItemId: 11, ItemCategory: null, ItemAmount: 200 }),
+      row({ Id: 1, ItemId: 12, ItemCategory: "5100-02", ItemAmount: 100 }),
+    ],
+    ALL_SCOPE,
+    SELF_TARGETS,
+  );
   assert.equal(out.length, 1);
   assert.equal(out[0].itemCount, 3);
   assert.deepEqual(out[0].readiness.issues, ["บรรทัดที่ 2 ยังไม่ได้เลือกผังบัญชี"]);
@@ -114,11 +147,15 @@ test("req.Id DESC order survives the item-row fan-out flatten", () => {
   // recordset — a LEFT JOIN with more than one claim does not guarantee every
   // one claim's rows are contiguous, and the Map+order flatten must not
   // depend on them being so.
-  const out = accumulateErpQueueRows([
-    row({ Id: 5, ItemId: 50, ItemCategory: "5100-01", ItemAmount: 100 }),
-    row({ Id: 3, ItemId: 30, ItemCategory: "5100-01", ItemAmount: 200 }),
-    row({ Id: 5, ItemId: 51, ItemCategory: "5100-01", ItemAmount: 150 }),
-  ]);
+  const out = accumulateErpQueueRows(
+    [
+      row({ Id: 5, ItemId: 50, ItemCategory: "5100-01", ItemAmount: 100 }),
+      row({ Id: 3, ItemId: 30, ItemCategory: "5100-01", ItemAmount: 200 }),
+      row({ Id: 5, ItemId: 51, ItemCategory: "5100-01", ItemAmount: 150 }),
+    ],
+    ALL_SCOPE,
+    SELF_TARGETS,
+  );
   assert.deepEqual(
     out.map((r: ReimburseErpQueueRow) => r.id),
     [5, 3],
@@ -133,12 +170,64 @@ test("a leaked AP-3 row contributes no phantom item to a real AP-4 claim's count
   // belongsInErpQueue refuses is dropped before its item columns are ever
   // read, so it cannot inflate another claim's itemCount even by accident of
   // id collision.
-  const out = accumulateErpQueueRows([
-    row({ Id: 1, FormCode: "AP-4", Status: "Approved", ItemId: 10, ItemCategory: "5100-01", ItemAmount: 100 }),
-    row({ Id: 1, FormCode: "AP-3", Status: "Approved", ItemId: 999, ItemCategory: "9999-99", ItemAmount: 999 }),
-  ]);
+  const out = accumulateErpQueueRows(
+    [
+      row({ Id: 1, FormCode: "AP-4", Status: "Approved", ItemId: 10, ItemCategory: "5100-01", ItemAmount: 100 }),
+      row({ Id: 1, FormCode: "AP-3", Status: "Approved", ItemId: 999, ItemCategory: "9999-99", ItemAmount: 999 }),
+    ],
+    ALL_SCOPE,
+    SELF_TARGETS,
+  );
   assert.equal(out.length, 1);
   assert.equal(out[0].itemCount, 1);
+});
+
+/* ─────────────────────────── brand scope ─────────────────────────── */
+
+test("scope === null (no active roster row at all) answers zero rows, never every row", () => {
+  // Pins the behaviour this whole feature keeps naming: `null` must not
+  // collapse into `[]` on its way through — see `accumulateErpQueueRows`'s own
+  // docblock (`./erp-queue-policy.ts`).
+  const out = accumulateErpQueueRows([row({ Id: 1 })], null, SELF_TARGETS);
+  assert.deepEqual(out, []);
+});
+
+test("a claim outside the caller's ticked targets is dropped", () => {
+  const out = accumulateErpQueueRows([row({ Id: 1, BrandCode: "PCTH" })], ["KSI"], SELF_TARGETS);
+  assert.deepEqual(out, []);
+});
+
+test("a claim inside the caller's ticked targets survives", () => {
+  const out = accumulateErpQueueRows(
+    [row({ Id: 1, BrandCode: "KSI" })],
+    ["KSI", "PCMY"],
+    SELF_TARGETS,
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, 1);
+});
+
+test("a claim brand with no entry in claimTargets is out of every scope — the fail-safe direction", () => {
+  // ROCKS, seeded by migration 092, is exactly this case: a brand
+  // AccBrandErpInterface has no row for.
+  const out = accumulateErpQueueRows([row({ Id: 1, BrandCode: "ROCKS" })], ALL_SCOPE, SELF_TARGETS);
+  assert.deepEqual(out, []);
+});
+
+test("scope is checked once per claim id — an out-of-scope claim's later item rows do not resurrect it", () => {
+  // If the check ran only on `!byId.has(id)` without also being re-applied to
+  // every row that still finds no entry, a claim's SECOND item row would
+  // silently start a fresh (unfiltered) accumulator entry once the first row
+  // had been correctly dropped.
+  const out = accumulateErpQueueRows(
+    [
+      row({ Id: 1, BrandCode: "PCTH", ItemId: 10, ItemCategory: "5100-01", ItemAmount: 100 }),
+      row({ Id: 1, BrandCode: "PCTH", ItemId: 11, ItemCategory: "5100-02", ItemAmount: 200 }),
+    ],
+    ["KSI"],
+    SELF_TARGETS,
+  );
+  assert.deepEqual(out, []);
 });
 
 test("every passthrough field is read off the row, not invented", () => {
@@ -151,23 +240,27 @@ test("every passthrough field is read off the row, not invented", () => {
   // return — nothing sends, so nothing has been sent — which is exactly why
   // they need a case with values in it. A passthrough that quietly drops them
   // would be invisible until the send lands and then look like the send's bug.
-  const out = accumulateErpQueueRows([
-    row({
-      Id: 42,
-      RequestNo: "RBM26-00042",
-      BrandCode: "KSI",
-      RequesterFullName: "Preecha Sukjai",
-      TotalAmount: "2500.50",
-      ErpInterfaceStatus: "Failed",
-      ErpDocumentNo: "PV26-0007",
-      ErpInterfaceEnvironment: "Sandbox",
-      ErpInterfaceSentAt: new Date("2026-09-05T02:30:00Z"),
-      ErpInterfaceError: "vendor not found",
-      ItemId: 1,
-      ItemCategory: "5100-01",
-      ItemAmount: 100,
-    }),
-  ]);
+  const out = accumulateErpQueueRows(
+    [
+      row({
+        Id: 42,
+        RequestNo: "RBM26-00042",
+        BrandCode: "KSI",
+        RequesterFullName: "Preecha Sukjai",
+        TotalAmount: "2500.50",
+        ErpInterfaceStatus: "Failed",
+        ErpDocumentNo: "PV26-0007",
+        ErpInterfaceEnvironment: "Sandbox",
+        ErpInterfaceSentAt: new Date("2026-09-05T02:30:00Z"),
+        ErpInterfaceError: "vendor not found",
+        ItemId: 1,
+        ItemCategory: "5100-01",
+        ItemAmount: 100,
+      }),
+    ],
+    ALL_SCOPE,
+    SELF_TARGETS,
+  );
   const r = out[0];
   assert.equal(r.id, 42);
   assert.equal(r.requestNo, "RBM26-00042");

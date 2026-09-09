@@ -1,4 +1,5 @@
 import { AP4_FORM_CODE } from "@/features/reimburse/constants";
+import { canActOnTarget } from "./brand-scope";
 
 /**
  * Which claims the accounting queue shows.
@@ -14,7 +15,23 @@ import { AP4_FORM_CODE } from "@/features/reimburse/constants";
  * this chain is reachable from a pool. If a future edit needs a value from a
  * module that is NOT itself import-free, inline the literal instead of
  * importing it, with a comment saying why — the property worth keeping is
- * "never reaches `@/env`", not "literally zero import statements".
+ * "never reaches `@/env`", not "literally zero import statements". Same
+ * reasoning covers `canActOnTarget` from `./brand-scope`: that module also
+ * imports nothing (see its own docblock), so pulling in one pure predicate
+ * costs nothing on this chain either.
+ *
+ * **Filtering by brand scope lives HERE too, for the identical reason the
+ * `(formCode, status, stepCode)` predicate does.** `listReimburseAccountQueue`
+ * (`./queue-service.ts`) loads the caller's scope and the claim-brand→target
+ * map once each and hands both to `accumulateAccountQueueRows` below, which
+ * re-derives "is this row's brand in scope" from the row's own `BrandCode`
+ * rather than trusting a WHERE clause to have filtered it — the same
+ * SQL-text-cannot-be-trusted lesson this file's header already states for the
+ * form/status/step predicate, applied to a second predicate added later.
+ * Sight is not the only control (see `approval-service.ts`'s
+ * `requireApproverScopeFor`, which is the one that actually refuses an
+ * action), but a queue that lists a row nobody may act on is its own kind of
+ * wrong, and this is where that gets fixed.
  *
  * **`formCode` is not decoration — it is the fix for a bug three review
  * rounds took to pin down.** The predicate used to be `(status, stepCode)`
@@ -106,16 +123,40 @@ function toYmd(d: Date): string {
  * `erp-queue-policy.ts`'s own docblock records for its sibling queue.
  * `queue-service.test.ts` hands this function rows shaped exactly like that
  * exploit, mirroring `erp-queue-service.test.ts`.
+ *
+ * `scope` and `claimTargets` are both **required**, with no default — an
+ * optional parameter that silently defaulted to "unrestricted" is how a
+ * caller added later gets an unscoped queue with no compile error, the same
+ * property AP-17's `listAccountQueue` requires of its own `access` parameter
+ * (`booking-brand-scope-guard.test.ts`). `scope === null` means the caller has
+ * no active `AccReimburseApprover` row at all — see
+ * `requireApproverScopeFor`'s docblock in `approval-service.ts` for why that
+ * is never the same thing as an empty scope — and answers zero rows rather
+ * than every row: this queue does not fall back to "show everything" for
+ * anyone, admins included, mirroring `listMyWorkRows`' AP-4 arm. A row whose
+ * `BrandCode` resolves to no target at all (`claimTargets` has no entry —
+ * `ROCKS`, seeded by migration 092, is exactly this) is out of every scope,
+ * the same fail-safe direction `canActOnTarget` takes for a `null` target.
  */
 export function accumulateAccountQueueRows(
   recordset: readonly Record<string, unknown>[],
+  scope: readonly string[] | null,
+  claimTargets: ReadonlyMap<string, string>,
 ): ReimburseQueueRow[] {
+  // Never convert `null` to `[]` here — see the docblock above.
+  if (scope === null) return [];
+
   const rows: ReimburseQueueRow[] = [];
   for (const x of recordset) {
     const formCode = (x.FormCode as string | null) ?? "";
     const status = (x.Status as string | null) ?? "";
     const stepCode = (x.CurrentStepCode as string | null) ?? null;
     if (!belongsInAccountQueue(formCode, status, stepCode)) continue;
+
+    const brandCode = (x.BrandCode as string | null) ?? "";
+    const target = claimTargets.get(brandCode.trim().toUpperCase()) ?? null;
+    if (!canActOnTarget(scope, target)) continue;
+
     rows.push({
       id: x.Id as number,
       requestNo: (x.RequestNo as string | null) ?? "",

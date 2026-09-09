@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { isAdminRole } from "@/lib/roles";
+import { buildAccActor } from "@/lib/acc/actor-context";
 import { resolveReimburseTabsByEmail } from "@/lib/acc/reimburse/access-tabs";
 import { decideReimburseMenuAccess } from "@/lib/acc/reimburse/settings-tabs";
 import { listReimburseErpQueue } from "@/lib/acc/reimburse/erp-queue-service";
 
 /**
- * GET /api/request/reimburse/erp-queue — every APPROVED AP-4 claim, with its
- * current Business Central posting status (always unset today — nothing sends
- * yet) and whether its lines are ready to post.
+ * GET /api/request/reimburse/erp-queue — every APPROVED AP-4 claim `staffId`/
+ * `email` may act on, with its current Business Central posting status
+ * (always unset today — nothing sends yet) and whether its lines are ready to
+ * post.
  *
  * **The gate is the same `approvalQueue` menu key `/api/request/reimburse/
  * approvals` uses, not a new one.** A person who may work the accounting
@@ -25,6 +27,11 @@ import { listReimburseErpQueue } from "@/lib/acc/reimburse/erp-queue-service";
  * `AccReimburseApprover`, so unlike that route this one carries no
  * `isReimburseApprover` notice. Nothing on this screen can fail with "you are
  * not on the roster" because nothing on this screen can be clicked.
+ *
+ * **Sight IS scoped, since migration 144 (2026-09-10) — see the identical
+ * note on `approvals/route.ts`.** `listReimburseErpQueue` filters by the
+ * caller's own brand scope; a viewer with no active `AccReimburseApprover` row
+ * sees an empty list rather than every approved claim.
  */
 export async function GET() {
   const session = await requireAuth();
@@ -44,7 +51,18 @@ export async function GET() {
       return NextResponse.json({ ok: false, error: "ไม่มีสิทธิ์เข้าถึง" }, { status: 403 });
     }
 
-    const rows = await listReimburseErpQueue();
+    // Degrades `staffId` to `null` on a failed HR lookup rather than failing
+    // the whole request — `loadApproverScopeByStaffId` still has the login
+    // email to fall back to. Mirrors `approvals/route.ts`'s
+    // `resolveReimburseActor`.
+    let staffId: number | null = null;
+    try {
+      staffId = (await buildAccActor(Number(session.user.id), email)).staffId;
+    } catch (err) {
+      console.error("[reimburse/erp-queue] buildAccActor failed — falling back to email match only", err);
+    }
+
+    const rows = await listReimburseErpQueue(staffId, email);
     return NextResponse.json({ ok: true, data: rows });
   } catch (err) {
     console.error("[api/request/reimburse/erp-queue] GET", err);

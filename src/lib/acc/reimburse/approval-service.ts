@@ -40,9 +40,12 @@ import { AP4_FORM_CODE } from "@/features/reimburse/constants";
 import { defaultPaymentRound, getReimbursePaymentDates } from "./payment-calendar";
 import { getReimburseRequest } from "./request-service";
 import { listReimburseApprovers } from "./settings-service";
+import { canActOnTarget } from "./brand-scope";
+import { loadApproverScopeByStaffId, resolveClaimTarget } from "./brand-scope-load";
 import {
   NOT_ACCOUNT_APPROVER_ERROR,
   NOT_AT_STEP_ERROR,
+  REIMBURSE_SCOPE_ERROR,
   REJECT_NOT_AVAILABLE_ERROR,
   SELF_CANCEL_WINDOW_HOURS,
   STATE_AFTER_APPROVE,
@@ -96,6 +99,86 @@ async function requireApproverStaffId(actor: ReimburseActor): Promise<number> {
   const approver = await resolveReimburseApprover(actor);
   if (!approver) throw new AccForbiddenError(NOT_ACCOUNT_APPROVER_ERROR);
   return approver.staffId;
+}
+
+/* ─────────────────────────── the per-brand scope ─────────────────────────── */
+
+/**
+ * May this actor act on a claim filed under `brandCode`? Throws
+ * `AccForbiddenError` (403, `REIMBURSE_SCOPE_ERROR`) when not.
+ *
+ * The companion to `requireApproverStaffId`, and the two answer different
+ * questions — one is not a stricter version of the other:
+ *
+ *  - `requireApproverStaffId` — is this person an approver at ALL. A
+ *    membership question, decided once per call and safe to ask outside a
+ *    transaction (`approval-service.ts`'s own header explains why: it stays
+ *    there, unmoved, in every one of the five callers below).
+ *  - `requireApproverScopeFor` — of the brands ticked for them, does THIS
+ *    claim's brand belong. A per-row question, and the brief for this task is
+ *    explicit about where it must be decided: "inside the transaction that
+ *    claims the row", the way `approveByAccount` (AP-17,
+ *    `travel-booking/approval.ts`) re-decides the per-diem dependency after
+ *    its own claim rather than trusting anything read before the transaction
+ *    opened. Every one of the five callers passes a `brandCode` read via
+ *    `claimedBrandCode(tx, requestId)` — a fresh `SELECT` on the SAME
+ *    transaction that has just claimed the row, never a value carried in from
+ *    an earlier read. A stale page, a replayed POST, or an admin narrowing
+ *    this approver's ticked brands between page load and click must not slip
+ *    past a value memoised before any of that could have happened.
+ *
+ * **`null` from `loadApproverScopeByStaffId` is not `[]`, and the two branches
+ * below must never collapse into one.** `null` means no active
+ * `AccReimburseApprover` row at all — already refused, membership-wide, by
+ * `requireApproverStaffId` at every one of this function's call sites, so
+ * reaching it here means the roster changed in the narrow window between that
+ * check and this one. Writing `canActOnTarget(scope ?? [], target)` would
+ * still refuse (an empty scope refuses everything `canActOnTarget` is ever
+ * asked, by `brand-scope.ts`'s own design), so the bug would be invisible
+ * today — but it throws away the distinction the very first caller needs:
+ * `NOT_ACCOUNT_APPROVER_ERROR` ("you are not an approver") reads correctly
+ * either way, `REIMBURSE_SCOPE_ERROR` ("you are, but not of this group") does
+ * not — it is a lie about someone the roster no longer recognises at all.
+ *
+ * **An unmapped claim brand is out of every scope, not a bypass.**
+ * `resolveClaimTarget` answers `null` for a brand with no
+ * `AccBrandErpInterface` row — `ROCKS`, which migration 092 really does seed
+ * for AP-4, is exactly such a brand — and `canActOnTarget` refuses a `null`
+ * target unconditionally, for anyone's scope. That is the fail-safe
+ * direction `brand-scope-load.ts`'s own docblock asks for: invisible to every
+ * scoped approver rather than actionable by all of them. It costs something
+ * real — such a claim is actionable by nobody but an admin — and that is
+ * `resolveClaimTarget`'s own note to make, not this function's to repeat.
+ */
+async function requireApproverScopeFor(
+  actor: ReimburseActor,
+  brandCode: string | null,
+): Promise<void> {
+  const scope = await loadApproverScopeByStaffId(actor.staffId, actor.email);
+  if (scope == null) {
+    throw new AccForbiddenError(NOT_ACCOUNT_APPROVER_ERROR);
+  }
+
+  const target = await resolveClaimTarget(brandCode);
+  if (!canActOnTarget(scope, target)) {
+    throw new AccForbiddenError(REIMBURSE_SCOPE_ERROR);
+  }
+}
+
+/**
+ * The request's own `BrandCode`, read fresh on the transaction that has just
+ * claimed the row — never a value carried in from before the transaction
+ * opened. `BrandCode` itself is fixed at submit and no action here rewrites
+ * it, so this is not about a race on the VALUE changing; it is about never
+ * handing `requireApproverScopeFor` something read before the claim, which is
+ * exactly the shape of staleness a scope narrowed since page load produces.
+ */
+async function claimedBrandCode(tx: AccTx, requestId: number): Promise<string | null> {
+  const res = await tx
+    .request()
+    .input("id", sql.Int, requestId)
+    .query(`SELECT BrandCode FROM [dbo].[AccRequest] WHERE Id=@id`);
+  return (res.recordset[0]?.BrandCode as string | null | undefined) ?? null;
 }
 
 /** AP-1's rule, restated for AP-4: an approval row must name a real person. */
@@ -489,6 +572,10 @@ export async function approveReimburseAccountCheck(
       stepCode: after.nextStep,
       paymentDate: chosen,
     });
+    // Brand scope, decided from the database on the transaction that has just
+    // claimed the row — see requireApproverScopeFor's own docblock for why it
+    // is not asked before this point.
+    await requireApproverScopeFor(actor, await claimedBrandCode(tx, requestId));
     await closeApprovalRow(tx, requestId, "ACCOUNT", "Approved", staffId, actor.email, null, true);
     await openApprovalRow(tx, requestId, "ACCOUNT_FINAL");
     await logActivity(tx, requestId, actor.userId, "account_checked", chosen);
@@ -580,6 +667,12 @@ export async function setReimburseItemAccounts(
       );
     if (claim.rowsAffected[0] !== 1) throw new AccConflictError(NOT_AT_STEP_ERROR);
 
+    // Brand scope, decided from the database on the transaction that has just
+    // claimed the row — see requireApproverScopeFor's own docblock. This edit
+    // repoints where the claim's money posts, so it is bound by the SAME
+    // scope an approval at this step is.
+    await requireApproverScopeFor(actor, await claimedBrandCode(tx, requestId));
+
     const current = await tx
       .request()
       .input("rid", sql.Int, requestId)
@@ -643,6 +736,9 @@ export async function approveReimburseFinal(
       status: after.status,
       stepCode: after.nextStep,
     });
+    // Brand scope, decided from the database on the transaction that has just
+    // claimed the row — see requireApproverScopeFor's own docblock.
+    await requireApproverScopeFor(actor, await claimedBrandCode(tx, requestId));
     await closeApprovalRow(
       tx, requestId, "ACCOUNT_FINAL", "Approved", staffId, actor.email, null, false,
     );
@@ -732,6 +828,13 @@ export async function rejectReimburse(
     // step 2 fixed — the rejection mail and the detail page both print
     // "วันที่จ่าย" underneath the refusal.
     await claimStep(tx, requestId, step, { status: "Rejected", stepCode: null, paymentDate: null });
+    // Brand scope, only where `requireApproverStaffId` was the one asked above
+    // — `mayReject` restricts this action to MANAGER today, so `isAccountStep`
+    // is unreachable in practice, but the two conditions are kept in the same
+    // shape `returnReimburse` uses below rather than assuming that stays true.
+    if (isAccountStep(step)) {
+      await requireApproverScopeFor(actor, await claimedBrandCode(tx, requestId));
+    }
     await closeApprovalRow(tx, requestId, step, "Rejected", staffId, actor.email, comment, false);
     await logActivity(tx, requestId, actor.userId, "rejected", comment);
   });
@@ -800,6 +903,12 @@ export async function returnReimburse(
     // requester would open a request they have to edit with a payment date
     // printed on it.
     await claimStep(tx, requestId, step, { status: "Returned", stepCode: null, paymentDate: null });
+    // Brand scope, only where `requireApproverStaffId` was the one asked above
+    // — a return at MANAGER is the requester's own manager, not an accounting
+    // approver, and has no Interface group to be out of.
+    if (isAccountStep(step)) {
+      await requireApproverScopeFor(actor, await claimedBrandCode(tx, requestId));
+    }
     await closeApprovalRow(tx, requestId, step, "Returned", staffId, actor.email, comment, false);
     await logActivity(tx, requestId, actor.userId, "returned", comment);
   });

@@ -38,6 +38,17 @@ export const NOT_ACCOUNT_APPROVER_ERROR =
   "ไม่มีสิทธิ์ — คุณไม่ได้อยู่ในรายชื่อผู้อนุมัติฝ่ายบัญชีของแบบฟอร์ม AP-4";
 
 /**
+ * On the roster, but the claim's own brand resolves to an Interface target
+ * outside this approver's ticked set (`AccReimburseApproverBrand`, migration
+ * 144). Distinct from `NOT_ACCOUNT_APPROVER_ERROR` above: that one says "you
+ * are not an approver at all", this one says "you are, but not of this claim's
+ * group" — conflating the two would send somebody who IS an approver looking
+ * for their name on a roster they are already on.
+ */
+export const REIMBURSE_SCOPE_ERROR =
+  "ไม่มีสิทธิ์ — แบรนด์นี้ไม่ได้อยู่ในกลุ่ม Interface ที่คุณดูแล";
+
+/**
  * `mayReject` refused a non-MANAGER step. Names what IS available rather than
  * a bare "ไม่มีสิทธิ์": an accounting approver reading only that would look for
  * a permission fix, when the truth is this step never offers reject at all.

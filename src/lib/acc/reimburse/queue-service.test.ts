@@ -44,47 +44,68 @@ function row(overrides: Partial<Record<string, unknown>> = {}): Record<string, u
   };
 }
 
+/**
+ * A scope covering every brand `row()` ever defaults to, and a target map
+ * that maps each brand to itself — the shape `AccBrandErpInterface` takes
+ * when nobody has configured anything but the default (every claim brand IS
+ * an interface brand code here). Every test above the "brand scope" section
+ * below is about `belongsInAccountQueue`'s own predicate, not about scope, so
+ * they all pass these two so scope never becomes the reason a case fails.
+ */
+const ALL_SCOPE = ["PCTH", "KSI", "PCMY", "UNO"];
+const SELF_TARGETS = new Map(ALL_SCOPE.map((c) => [c, c]));
+
 test("an AP-1 claim at the identical (ManagerApproved, ACCOUNT) tuple is dropped", () => {
-  const out = accumulateAccountQueueRows([row({ Id: 1, FormCode: "AP-1" })]);
+  const out = accumulateAccountQueueRows([row({ Id: 1, FormCode: "AP-1" })], ALL_SCOPE, SELF_TARGETS);
   assert.deepEqual(out, []);
 });
 
 test("an AP-4 claim already past ACCOUNT — Status='Approved', no step — is dropped", () => {
-  const out = accumulateAccountQueueRows([
-    row({ Id: 1, FormCode: "AP-4", Status: "Approved", CurrentStepCode: null }),
-  ]);
+  const out = accumulateAccountQueueRows(
+    [row({ Id: 1, FormCode: "AP-4", Status: "Approved", CurrentStepCode: null })],
+    ALL_SCOPE,
+    SELF_TARGETS,
+  );
   assert.deepEqual(out, []);
 });
 
 test("an AP-4 claim at ACCOUNT_FINAL — the same status, the other step — is dropped", () => {
   // ACCOUNT and ACCOUNT_FINAL both sit at ManagerApproved; a status-only check
   // would put this claim in the wrong queue.
-  const out = accumulateAccountQueueRows([
-    row({ Id: 1, FormCode: "AP-4", Status: "ManagerApproved", CurrentStepCode: "ACCOUNT_FINAL" }),
-  ]);
+  const out = accumulateAccountQueueRows(
+    [row({ Id: 1, FormCode: "AP-4", Status: "ManagerApproved", CurrentStepCode: "ACCOUNT_FINAL" })],
+    ALL_SCOPE,
+    SELF_TARGETS,
+  );
   assert.deepEqual(out, []);
 });
 
 test("an AP-4 claim at (ManagerApproved, ACCOUNT) survives", () => {
-  const out = accumulateAccountQueueRows([
-    row({ Id: 1, FormCode: "AP-4", Status: "ManagerApproved", CurrentStepCode: "ACCOUNT" }),
-  ]);
+  const out = accumulateAccountQueueRows(
+    [row({ Id: 1, FormCode: "AP-4", Status: "ManagerApproved", CurrentStepCode: "ACCOUNT" })],
+    ALL_SCOPE,
+    SELF_TARGETS,
+  );
   assert.equal(out.length, 1);
   assert.equal(out[0].id, 1);
 });
 
 test("id, brand, requester, item count and payment date are read off the row", () => {
-  const out = accumulateAccountQueueRows([
-    row({
-      Id: 42,
-      RequestNo: "RBM26-00042",
-      BrandCode: "KSI",
-      RequesterFullName: "Preecha Sukjai",
-      TotalAmount: "2500.50",
-      PaymentDate: new Date("2026-09-25T00:00:00Z"),
-      ItemCount: 3,
-    }),
-  ]);
+  const out = accumulateAccountQueueRows(
+    [
+      row({
+        Id: 42,
+        RequestNo: "RBM26-00042",
+        BrandCode: "KSI",
+        RequesterFullName: "Preecha Sukjai",
+        TotalAmount: "2500.50",
+        PaymentDate: new Date("2026-09-25T00:00:00Z"),
+        ItemCount: 3,
+      }),
+    ],
+    ALL_SCOPE,
+    SELF_TARGETS,
+  );
   const r: ReimburseQueueRow = out[0];
   assert.equal(r.id, 42);
   assert.equal(r.requestNo, "RBM26-00042");
@@ -110,24 +131,82 @@ test("a claim at ACCOUNT with the WRONG status is dropped — status is not deco
   // opened the hole silently. This case is what makes that comment true: the
   // step is exactly right and only the status is wrong.
   assert.deepEqual(
-    accumulateAccountQueueRows([row({ Status: "Submitted", CurrentStepCode: "ACCOUNT" })]),
+    accumulateAccountQueueRows(
+      [row({ Status: "Submitted", CurrentStepCode: "ACCOUNT" })],
+      ALL_SCOPE,
+      SELF_TARGETS,
+    ),
     [],
   );
 });
 
 test("a null PaymentDate stays null — the ACCOUNT step is where one gets set", () => {
-  const out = accumulateAccountQueueRows([row({ Id: 1, PaymentDate: null })]);
+  const out = accumulateAccountQueueRows([row({ Id: 1, PaymentDate: null })], ALL_SCOPE, SELF_TARGETS);
   assert.equal(out[0].paymentDate, null);
 });
 
 test("order is preserved across multiple rows", () => {
-  const out = accumulateAccountQueueRows([
-    row({ Id: 5 }),
-    row({ Id: 3 }),
-    row({ Id: 7 }),
-  ]);
+  const out = accumulateAccountQueueRows(
+    [row({ Id: 5 }), row({ Id: 3 }), row({ Id: 7 })],
+    ALL_SCOPE,
+    SELF_TARGETS,
+  );
   assert.deepEqual(
     out.map((r) => r.id),
     [5, 3, 7],
   );
+});
+
+/* ─────────────────────────── brand scope ─────────────────────────── */
+
+test("scope === null (no active roster row at all) answers zero rows, never every row", () => {
+  // Pins the behaviour this whole feature keeps naming: `null` must not
+  // collapse into `[]` on its way through — see `accumulateAccountQueueRows`'s
+  // own docblock (`./queue-policy.ts`).
+  const out = accumulateAccountQueueRows(
+    [row({ Id: 1, FormCode: "AP-4", Status: "ManagerApproved", CurrentStepCode: "ACCOUNT" })],
+    null,
+    SELF_TARGETS,
+  );
+  assert.deepEqual(out, []);
+});
+
+test("a claim outside the caller's ticked targets is dropped", () => {
+  const out = accumulateAccountQueueRows(
+    [row({ Id: 1, BrandCode: "PCTH" })],
+    ["KSI"],
+    SELF_TARGETS,
+  );
+  assert.deepEqual(out, []);
+});
+
+test("a claim inside the caller's ticked targets survives", () => {
+  const out = accumulateAccountQueueRows(
+    [row({ Id: 1, BrandCode: "KSI" })],
+    ["KSI", "PCMY"],
+    SELF_TARGETS,
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, 1);
+});
+
+test("a claim brand with no entry in claimTargets is out of every scope — the fail-safe direction", () => {
+  // ROCKS, seeded by migration 092, is exactly this case: a brand
+  // AccBrandErpInterface has no row for. It must not become visible to
+  // whoever happens to have the widest scope.
+  const out = accumulateAccountQueueRows(
+    [row({ Id: 1, BrandCode: "ROCKS" })],
+    ALL_SCOPE,
+    SELF_TARGETS,
+  );
+  assert.deepEqual(out, []);
+});
+
+test("brand comparison is case-insensitive and trimmed, matching canActOnTarget", () => {
+  const out = accumulateAccountQueueRows(
+    [row({ Id: 1, BrandCode: " ksi " })],
+    ["KSI"],
+    new Map([["KSI", "KSI"]]),
+  );
+  assert.equal(out.length, 1);
 });

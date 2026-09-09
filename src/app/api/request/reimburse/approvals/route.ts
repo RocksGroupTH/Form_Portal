@@ -19,13 +19,27 @@ import {
  * decides whether this viewer may open the page at all —
  * `decideReimburseMenuAccess`, backed by `AccReimburseAccess` /
  * `AccReimburseAccessTab`. Whether a *row* may be acted on is re-decided per
- * action by the approval service against `AccReimburseApprover`
- * (`resolveReimburseApprover`, `approval-service.ts`), inside the same
- * transaction that writes. A viewer with the menu tick and no approver row
- * therefore sees every row here and gets a 403 from every action — that is
- * correct, not a bug to special-case: `AccReimburseAccess` exists precisely so
- * "may edit the payment rules" and "may approve a payment" are not the same
- * tick (see `settings-tabs.ts`'s own docblock).
+ * action by the approval service against `AccReimburseApprover` AND
+ * `AccReimburseApproverBrand` (`resolveReimburseApprover` /
+ * `requireApproverScopeFor`, `approval-service.ts`), inside the same
+ * transaction that writes.
+ *
+ * **Sight is now scoped too, since migration 144 (2026-09-10).** Until then a
+ * viewer with the menu tick and no approver row saw every row here and got a
+ * 403 from every action — recorded as "correct, not a bug to special-case",
+ * because `AccReimburseAccess` exists precisely so "may edit the payment
+ * rules" and "may approve a payment" are not the same tick (see
+ * `settings-tabs.ts`'s own docblock). That reasoning is unchanged for
+ * MEMBERSHIP — it still is correct that the menu tick alone does not make
+ * someone an approver. What changed is that `listReimburseAccountQueue` now
+ * filters by the caller's own brand scope (`loadApproverScopeByStaffId`), and
+ * a caller with no active `AccReimburseApprover` row at all gets `null` back,
+ * which the accumulator (`queue-policy.ts`) reads as ZERO rows rather than
+ * every row — the same "an admin with no roster row sees nothing" rule
+ * `listMyWorkRows`' AP-4 arm applies. A menu-only viewer with no approver row
+ * therefore now sees an empty queue rather than every claim; the 403-on-every-
+ * action half of the old sentence is unaffected — see `resolveReimburseActor`
+ * below for how the queue's scope and this notice share one lookup.
  *
  * **`isReimburseApprover` rides along on this same response, since
  * 2026-09-09.** It briefly lived on `GET /api/request/reimburse/access`
@@ -46,6 +60,31 @@ import {
  */
 
 /**
+ * The actor behind this session, for BOTH the queue's brand-scope filter and
+ * the `isReimburseApprover` notice below — resolved once so the two never
+ * disagree about which roster row (matched by StaffId, or by login email)
+ * "this person" is.
+ *
+ * Degrades `staffId` to `null` on a failed HR lookup rather than failing the
+ * whole request: `loadApproverScopeByStaffId` still has the login email to
+ * fall back to, the same fallback `findActiveApprover` uses everywhere else.
+ * A pool failure genuinely inside the queue's OWN read (`getAccPool`) is a
+ * different failure surface and is left to the route's own top-level `try` —
+ * this only shields the HR half.
+ */
+async function resolveReimburseActor(
+  userId: number,
+  email: string | null,
+): Promise<{ userId: number; email: string | null; staffId: number | null }> {
+  try {
+    return await buildAccActor(userId, email);
+  } catch (err) {
+    console.error("[reimburse/approvals] buildAccActor failed — falling back to email match only", err);
+    return { userId, email: email?.trim() || null, staffId: null };
+  }
+}
+
+/**
  * Roster membership, for the notice — never a gate (see the docblock above).
  * Asked for ADMINS TOO: the admin role already passes `decideReimburseMenuAccess`
  * above, so an admin reaches the queue automatically, and an admin with no
@@ -53,12 +92,12 @@ import {
  * `false` — telling somebody they are off a roster nobody could read would be
  * a wrong statement, where saying nothing is merely a missing one.
  */
-async function resolveIsReimburseApprover(
-  userId: number,
-  email: string | null,
-): Promise<boolean | null> {
+async function resolveIsReimburseApprover(actor: {
+  userId: number;
+  email: string | null;
+  staffId: number | null;
+}): Promise<boolean | null> {
   try {
-    const actor = await buildAccActor(userId, email);
     return (await resolveReimburseApprover(actor)) != null;
   } catch (err) {
     console.error("[reimburse/approvals] approver roster read failed — reporting unknown", err);
@@ -93,10 +132,14 @@ export async function GET() {
       return NextResponse.json({ ok: false, error: "ไม่มีสิทธิ์เข้าถึง" }, { status: 403 });
     }
 
+    // Resolved once — see resolveReimburseActor's own docblock for why the
+    // queue's brand-scope filter and the isReimburseApprover notice must
+    // share this one lookup rather than each building their own.
+    const actor = await resolveReimburseActor(Number(session.user.id), email);
     const [rows, options, isReimburseApprover] = await Promise.all([
-      listReimburseAccountQueue(),
+      listReimburseAccountQueue(actor.staffId, actor.email),
       getReimbursePaymentOptions(),
-      resolveIsReimburseApprover(Number(session.user.id), email),
+      resolveIsReimburseApprover(actor),
     ]);
     return NextResponse.json({
       ok: true,

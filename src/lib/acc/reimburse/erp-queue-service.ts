@@ -60,21 +60,42 @@
  * same readiness answer for the wrong reason — `erpReadiness([])` and
  * `erpReadiness([{ category: null, amount: ... }])` both report "not ready"
  * but for different reasons, and only one of them is true here.
+ *
+ * ## Brand scope, not a widened WHERE clause
+ *
+ * `staffId`/`email` load the caller's scope and the claim-brand→target map
+ * (`loadClaimBrandTargets`, loaded ONCE — never `resolveClaimTarget` per row)
+ * BEFORE the query runs, and both are handed to `accumulateErpQueueRows`,
+ * which filters from the row's own `BrandCode` — the same reason
+ * `queue-service.ts` gives for its sibling queue, and the same file-history
+ * this module's own header already states for why a WHERE-clause predicate is
+ * not to be trusted at face value.
  */
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { AP4_FORM_CODE } from "@/features/reimburse/constants";
 import { accumulateErpQueueRows } from "./erp-queue-policy";
 import type { ReimburseErpQueueRow } from "./erp-queue-policy";
+import { loadApproverScopeByStaffId, loadClaimBrandTargets } from "./brand-scope-load";
 
 export type { ReimburseErpQueueRow } from "./erp-queue-policy";
 
 /**
- * Every APPROVED AP-4 claim, joined to its lines, in the shape the Interface
- * ERP tab renders. The WHERE clause is the first, cheap layer (see the file
- * header); `accumulateErpQueueRows` is the second, real one.
+ * Every APPROVED AP-4 claim `staffId`/`email` may act on, joined to its
+ * lines, in the shape the Interface ERP tab renders. The WHERE clause is the
+ * first, cheap layer (see the file header); `accumulateErpQueueRows` is the
+ * second, real one.
  */
-export async function listReimburseErpQueue(): Promise<ReimburseErpQueueRow[]> {
+export async function listReimburseErpQueue(
+  staffId: number | null,
+  email: string | null,
+): Promise<ReimburseErpQueueRow[]> {
   const pool = await getAccPool();
+  // Both reads run BEFORE the query below, and neither is interposed between
+  // the query's own closing `);` and the `return` — see
+  // erp-queue-service-guard.test.ts's own adjacency pin for why nothing may
+  // sit in that particular gap.
+  const scope = await loadApproverScopeByStaffId(staffId, email);
+  const claimTargets = await loadClaimBrandTargets();
   const res = await pool
     .request()
     .input("form", sql.NVarChar, AP4_FORM_CODE)
@@ -90,5 +111,5 @@ export async function listReimburseErpQueue(): Promise<ReimburseErpQueueRow[]> {
       ORDER BY req.Id DESC, i.SortOrder ASC, i.Id ASC
     `);
 
-  return accumulateErpQueueRows(res.recordset as Record<string, unknown>[]);
+  return accumulateErpQueueRows(res.recordset as Record<string, unknown>[], scope, claimTargets);
 }

@@ -207,18 +207,23 @@ test("the return statement is the query call's very next statement — nothing i
   // `erp-queue-service.test.ts` are what actually exercise the values
   // `accumulateErpQueueRows` receives; this is what catches an edit at commit
   // time before that test even has to.
+  // `, scope, claimTargets` is pinned by NAME, mirroring
+  // `queue-service-guard.test.ts`'s identical fix — see that file's own
+  // comment on this test for why an unanchored gap after `Record<string,
+  // unknown>[]` would let `scope`/`claimTargets` be quietly rebound.
   assert.ok(
-    /`\)\s*;\s*return\s+accumulateErpQueueRows\(\s*res\.recordset\s+as\s+Record<string,\s*unknown>\[\]\s*,?\s*\)\s*;/.test(
+    /`\)\s*;\s*return\s+accumulateErpQueueRows\(\s*res\.recordset\s+as\s+Record<string,\s*unknown>\[\]\s*,\s*scope\s*,\s*claimTargets\s*,?\s*\)\s*;/.test(
       src,
     ),
-    "erp-queue-service.ts no longer hands accumulateErpQueueRows the query's own recordset as the " +
-      "very next statement after the query call. Anything interposed there — a mutation loop " +
-      "rewriting each row in place, a .map spreading a FormCode or Status over each row into a new " +
-      "array, a filter, a helper that rebuilds the array — feeds the row-level gate values the " +
-      "database never returned, and every other test in this file and in erp-queue-service.test.ts " +
-      "stays green while the queue lists claims that never cleared ACCOUNT_FINAL. If the query " +
-      "genuinely needs another statement between it and the return, move the transformation INSIDE " +
-      "accumulateErpQueueRows, where the behavioural tests can see it",
+    "erp-queue-service.ts no longer hands accumulateErpQueueRows the query's own recordset, scope and " +
+      "claimTargets as the very next statement after the query call. Anything interposed there — a " +
+      "mutation loop rewriting each row in place, a .map spreading a FormCode or Status over each row " +
+      "into a new array, a filter, a helper that rebuilds the array — feeds the row-level gate values " +
+      "the database never returned, and every other test in this file and in erp-queue-service.test.ts " +
+      "stays green while the queue lists claims that never cleared ACCOUNT_FINAL, or a claim outside " +
+      "this caller's brand scope. If the query genuinely needs another statement between it and the " +
+      "return, move the transformation INSIDE accumulateErpQueueRows, where the behavioural tests can " +
+      "see it",
   );
 });
 

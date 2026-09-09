@@ -2,9 +2,11 @@
  * AP-4 — which approved claims belong in the ERP queue, and whether they are
  * ready to post.
  *
- * Deliberately free of any import that reaches a pool: this module imports
- * nothing, so it is testable without a database. Every function is total over
- * plain values.
+ * Deliberately free of any import that reaches a pool: `./brand-scope` is the
+ * only import this file has ever needed to add, and it also imports nothing
+ * (see its own docblock) — the property worth keeping is "never reaches
+ * `@/env`", not "literally zero import statements". So this module stays
+ * testable without a database. Every function is total over plain values.
  *
  * ## Why FormCode matters
  *
@@ -21,7 +23,20 @@
  * document read, correctable by an accountant, and validated only for length —
  * it may be null or blank. So "ready to post" is a property of the lines, not
  * of the claim's status.
+ *
+ * ## Brand scope, in this accumulator too
+ *
+ * `listReimburseErpQueue` (`./erp-queue-service.ts`) loads the caller's scope
+ * and the claim-brand→target map once each and hands both to
+ * `accumulateErpQueueRows` below — the same shape `queue-policy.ts`'s sibling
+ * accumulator uses, and the same reason: a WHERE clause is only as trustworthy
+ * as SQL text can be, and this file's own row-loop history above already says
+ * why that is not very. Sight is not the control — `approval-service.ts`'s
+ * `requireApproverScopeFor` is — but a claim nobody may send should not be
+ * the one an accountant sees "ready to post" beside.
  */
+
+import { canActOnTarget } from "./brand-scope";
 
 export type ErpReadiness = { ready: boolean; issues: string[] };
 
@@ -215,10 +230,25 @@ interface AccumulatedRow {
  * `Map` keyed on `Id` and only flattened back to `ReimburseErpQueueRow[]` at
  * the end — `order` preserves the caller's own row order (in practice
  * `req.Id DESC`), which the `Map` alone would not.
+ *
+ * `scope` and `claimTargets` are both **required**, with no default — see the
+ * module header and `queue-policy.ts`'s identical parameter for
+ * `accumulateAccountQueueRows`. `scope === null` (no active roster row at
+ * all) answers zero rows; a claim whose `BrandCode` resolves to no target in
+ * `claimTargets` is out of every scope. Checked once per claim id, on the
+ * FIRST row for that id — `BrandCode` cannot change across a claim's own
+ * joined item rows, so re-checking on every one would be redundant, but the
+ * check has to happen before `byId.set(id, acc)` or a later item row for an
+ * out-of-scope claim would find nothing in the map and start a fresh entry.
  */
 export function accumulateErpQueueRows(
   recordset: readonly Record<string, unknown>[],
+  scope: readonly string[] | null,
+  claimTargets: ReadonlyMap<string, string>,
 ): ReimburseErpQueueRow[] {
+  // Never convert `null` to `[]` here — see the docblock above.
+  if (scope === null) return [];
+
   const byId = new Map<number, AccumulatedRow>();
   const order: number[] = [];
 
@@ -227,6 +257,12 @@ export function accumulateErpQueueRows(
     const formCode = (x.FormCode as string | null) ?? "";
     const status = (x.Status as string | null) ?? "";
     if (!belongsInErpQueue(formCode, status)) continue;
+
+    if (!byId.has(id)) {
+      const brandCode = (x.BrandCode as string | null) ?? "";
+      const target = claimTargets.get(brandCode.trim().toUpperCase()) ?? null;
+      if (!canActOnTarget(scope, target)) continue;
+    }
 
     let acc = byId.get(id);
     if (!acc) {

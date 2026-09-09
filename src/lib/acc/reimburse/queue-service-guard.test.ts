@@ -233,17 +233,22 @@ test("the return statement is the query call's very next statement — nothing i
   // satisfy adjacency. `queue-service.test.ts` is what actually exercises the
   // values `accumulateAccountQueueRows` receives; this is what catches an
   // edit at commit time before that test even has to.
+  // `, scope, claimTargets` is pinned by NAME, not left open with `.*` — see
+  // `formCode`/`status`/`stepCode`'s own rebinding tests above for why an
+  // unanchored gap would let `scope`/`claimTargets` be quietly rebound to
+  // something that is not what `loadApproverScopeByStaffId` /
+  // `loadClaimBrandTargets` actually returned.
   assert.ok(
-    /`\)\s*;\s*return\s+accumulateAccountQueueRows\(\s*res\.recordset\s+as\s+Record<string,\s*unknown>\[\]\s*,?\s*\)\s*;/.test(
+    /`\)\s*;\s*return\s+accumulateAccountQueueRows\(\s*res\.recordset\s+as\s+Record<string,\s*unknown>\[\]\s*,\s*scope\s*,\s*claimTargets\s*,?\s*\)\s*;/.test(
       src,
     ),
-    "queue-service.ts no longer hands accumulateAccountQueueRows the query's own recordset as the " +
-      "very next statement after the query call. Anything interposed there — a mutation loop " +
-      "rewriting each row in place, a .map spreading a FormCode/Status/CurrentStepCode over each row " +
-      "into a new array, a filter, a helper — feeds the row-level gate values the database never " +
-      "returned, and every other test in this file and in queue-service.test.ts stays green while the " +
-      "queue lists an AP-1 claim or an ACCOUNT_FINAL claim under a header saying it is awaiting the " +
-      "accounting check. If the query genuinely needs another statement between it and the return, " +
+    "queue-service.ts no longer hands accumulateAccountQueueRows the query's own recordset, scope and " +
+      "claimTargets as the very next statement after the query call. Anything interposed there — a " +
+      "mutation loop rewriting each row in place, a .map spreading a FormCode/Status/CurrentStepCode " +
+      "over each row into a new array, a filter, a helper — feeds the row-level gate values the " +
+      "database never returned, and every other test in this file and in queue-service.test.ts stays " +
+      "green while the queue lists an AP-1 claim, an ACCOUNT_FINAL claim, or a claim outside this " +
+      "caller's brand scope. If the query genuinely needs another statement between it and the return, " +
       "move the transformation INSIDE accumulateAccountQueueRows, where the behavioural tests can see it",
   );
 });

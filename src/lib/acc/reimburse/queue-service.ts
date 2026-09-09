@@ -46,16 +46,28 @@
  * passed while the check became tautological. Only a behavioural test that
  * hands the function an actual row and checks what comes back closes that —
  * `queue-service.test.ts`, mirroring `erp-queue-service.test.ts`.
+ *
+ * **The WHERE clause is not widened for brand scope, and never should be.**
+ * `staffId`/`email` load the caller's scope (`loadApproverScopeByStaffId`) and
+ * the claim-brand→target map (`loadClaimBrandTargets`, loaded ONCE — never
+ * `resolveClaimTarget` per row, which would be a query per row on an
+ * authorization path) BEFORE the query runs, and both are handed to
+ * `accumulateAccountQueueRows` to filter the same way it already filters
+ * `(FormCode, Status, CurrentStepCode)` — from the row's own `BrandCode`, not
+ * from a second WHERE-clause predicate this file's own history says cannot be
+ * trusted at face value.
  */
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { AP4_FORM_CODE } from "@/features/reimburse/constants";
 import { accumulateAccountQueueRows } from "./queue-policy";
 import type { ReimburseQueueRow } from "./queue-policy";
+import { loadApproverScopeByStaffId, loadClaimBrandTargets } from "./brand-scope-load";
 
 export type { ReimburseQueueRow } from "./queue-policy";
 
 /**
- * Every AP-4 claim currently awaiting the accounting check.
+ * Every AP-4 claim currently awaiting the accounting check, that `staffId`/
+ * `email` may act on.
  *
  * The WHERE clause is the first, cheap layer (see the file header);
  * `accumulateAccountQueueRows` is the second, real one — see that function's
@@ -67,8 +79,17 @@ export type { ReimburseQueueRow } from "./queue-policy";
  * name but the item table's FK is straight to the request, exactly as
  * `request-service.ts`'s own item read uses it).
  */
-export async function listReimburseAccountQueue(): Promise<ReimburseQueueRow[]> {
+export async function listReimburseAccountQueue(
+  staffId: number | null,
+  email: string | null,
+): Promise<ReimburseQueueRow[]> {
   const pool = await getAccPool();
+  // Both reads run BEFORE the query below, and neither is interposed between
+  // the query's own closing `);` and the `return` — see
+  // queue-service-guard.test.ts's own adjacency pin for why nothing may sit
+  // in that particular gap.
+  const scope = await loadApproverScopeByStaffId(staffId, email);
+  const claimTargets = await loadClaimBrandTargets();
   const res = await pool
     .request()
     .input("form", sql.NVarChar, AP4_FORM_CODE)
@@ -83,5 +104,5 @@ export async function listReimburseAccountQueue(): Promise<ReimburseQueueRow[]> 
       ORDER BY r.SubmittedAt ASC
     `);
 
-  return accumulateAccountQueueRows(res.recordset as Record<string, unknown>[]);
+  return accumulateAccountQueueRows(res.recordset as Record<string, unknown>[], scope, claimTargets);
 }
