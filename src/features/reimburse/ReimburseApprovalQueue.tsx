@@ -15,9 +15,6 @@ import {
   RotateCcw,
   ThumbsUp,
 } from "lucide-react";
-import { PageContainer } from "@/components/layout/PageContainer";
-import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
-import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
 import { fmtBaht } from "@/features/travel-booking/components/shared";
 import { ExpenseAccountPicker } from "@/features/reimburse/components/ExpenseAccountPicker";
 // Type-only, and deliberately from the pure module rather than `./queue-service`
@@ -560,19 +557,7 @@ export function ReimburseApprovalQueue() {
   const forbidden = error instanceof ApiError && error.status === 403;
 
   return (
-    <PageContainer className="acc-theme py-6 px-3 sm:px-0">
-      <PageHeaderBar
-        icon={ThumbsUp}
-        title="คิวอนุมัติ (บัญชี) — ขอเบิกเงินคืนพนักงาน"
-        titleExtra={<FormEnvironmentChip formCode="AP-4" />}
-        subtitle="รายการที่ผู้จัดการอนุมัติแล้ว รอบัญชีเลือกวันที่จ่ายและส่งต่อขั้นสุดท้าย"
-        // The hub, not `/request/reimburse` — that is the REQUESTER's fill
-        // form, and the only entry point to this page is the card on
-        // `/request`. AP-17's equivalent queue backs to its hub for the same
-        // reason.
-        backHref="/request"
-      />
-
+    <>
       {/*
         A NOTICE, not a block. `isReimburseApprover === false` says this viewer
         holds the `approvalQueue` grant (or is an admin) but has no active
@@ -816,6 +801,6 @@ export function ReimburseApprovalQueue() {
           </button>
         </div>
       )}
-    </PageContainer>
+    </>
   );
 }
