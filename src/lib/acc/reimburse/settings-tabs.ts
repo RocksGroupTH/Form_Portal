@@ -14,8 +14,11 @@
  * approve a payment" the same tick. `AccReimburseAccess` (migration 120) exists
  * so the two can be handed out separately.
  *
- * **Two of the four tabs are not grantable**, where AP-1 and AP-17 each exclude
- * one:
+ * **Three of the five tabs are not grantable.** AP-1 and AP-17 each exclude
+ * one for the first reason below; AP-4 excludes a second tab for a third,
+ * sharper reason again, and a third tab for the reason CLAUDE.md gives for
+ * AP-1's own `erpInterface` grant ("Do not grant `erpInterface` to a
+ * non-admin yet"):
  *
  * - `access` — the สิทธิ์เข้าถึง tab itself. Whoever can open it can grant
  *   themselves everything else, which is the reason both siblings give.
@@ -23,11 +26,20 @@
  *   payment-approval pool, so granting it would open a route from "may edit the
  *   checklist" to "may approve money" — the coupling `AccReimburseAccess` was
  *   added to avoid. Excluding it here is what keeps that true.
+ * - `erpInterface` — AP-4's own Business Central posting configuration
+ *   (journal batch, bank account, branch code per brand). Unlike AP-1, where
+ *   this same tab **is** grantable, AP-4's version is gated but **not
+ *   brand-scoped**: a brand-scoped approver holding the grant could set
+ *   another brand's posting configuration, exactly the gap CLAUDE.md records
+ *   for AP-1's `gl-accounts` / `bank-accounts` / `journal-batches` /
+ *   `branch-codes` routes. Excluding it here is what keeps that gap from
+ *   being handed to anyone at all until it is closed. Its route stays
+ *   `requireRole` rather than `requireReimburseSettingsTab`.
  *
- * Both exclusions are enforced in `decideReimburseTabAccess`, not by a database
- * constraint. `AccReimburseAccessTab` has no CHECK on `TabKey` and is writable
- * from more than one place, so a row naming any string can appear; the
- * grantable test is what makes such a row inert.
+ * All three exclusions are enforced in `decideReimburseTabAccess`, not by a
+ * database constraint. `AccReimburseAccessTab` has no CHECK on `TabKey` and is
+ * writable from more than one place, so a row naming any string can appear;
+ * the grantable test is what makes such a row inert.
  *
  * This module imports nothing, so it is unit-tested without a database:
  * anything reachable from a pool drags `@/env` in, which validates the whole
@@ -39,10 +51,15 @@
  * Every tab the AP-4 settings page shows, in the order it shows them.
  *
  * Configuration first, then the two rosters: which brands may be claimed
- * against, the rules a requester agrees to, who approves the money, and who may
- * change any of it. `GRANTABLE_REIMBURSE_TABS` is filtered from this array
- * rather than written out again, so the checkbox columns on the สิทธิ์เข้าถึง
- * tab follow the strip automatically.
+ * against, the rules a requester agrees to, AP-4's own Business Central
+ * posting configuration, who approves the money, and who may change any of
+ * it. `erpInterface` sits with the configuration tabs and directly ahead of
+ * the two rosters — the same relative position `erpInterface` holds on AP-1's
+ * strip, immediately before the tab that hands out access — even though it is
+ * not itself grantable here; see the module docblock for why.
+ * `GRANTABLE_REIMBURSE_TABS` is filtered from this array rather than written
+ * out again, so the checkbox columns on the สิทธิ์เข้าถึง tab follow the strip
+ * automatically.
  *
  * This is the display order only. `approvers` remains the tab the page *opens*
  * on — see `parseTabKey` and the page's docblock — because AP-4 cannot process
@@ -51,13 +68,15 @@
 export const REIMBURSE_SETTINGS_TAB_ORDER = [
   "brands",
   "rules",
+  "erpInterface",
   "approvers",
   "access",
 ] as const;
 
 export type ReimburseSettingsTabKey = (typeof REIMBURSE_SETTINGS_TAB_ORDER)[number];
 
-/** The two keys an admin can tick. */
+/** The two keys an admin can tick. `erpInterface` is deliberately not one of
+ *  them — see the module docblock. */
 export type GrantableReimburseTabKey = Extract<ReimburseSettingsTabKey, "rules" | "brands">;
 
 /**

@@ -15,13 +15,37 @@ import {
 
 /* ── what the page shows ── */
 
-test("the strip runs brands, rules, approvers, access", () => {
-  assert.deepEqual(REIMBURSE_SETTINGS_TAB_ORDER, ["brands", "rules", "approvers", "access"]);
+test("the strip runs brands, rules, erpInterface, approvers, access", () => {
+  assert.deepEqual(REIMBURSE_SETTINGS_TAB_ORDER, [
+    "brands",
+    "rules",
+    "erpInterface",
+    "approvers",
+    "access",
+  ]);
   // สิทธิ์เข้าถึง last is the part that is not merely a preference: it is the
-  // tab that hands out the other three, so it reads as the end of the list.
+  // tab that hands out the other four, so it reads as the end of the list.
   assert.equal(
     REIMBURSE_SETTINGS_TAB_ORDER[REIMBURSE_SETTINGS_TAB_ORDER.length - 1],
     "access",
+  );
+});
+
+test("erpInterface is a real tab and is NOT grantable", () => {
+  // Task 2's whole point: AP-4's own Business Central posting configuration is
+  // gated but not brand-scoped (see settings-tabs.ts's module docblock), so
+  // unlike AP-1's own grantable `erpInterface` tab, this one must stay
+  // admin-only. The existing tests above do not pin this — a mistake here
+  // would only surface as a route accepting a grant it should refuse.
+  assert.ok(
+    REIMBURSE_SETTINGS_TAB_ORDER.indexOf("erpInterface") !== -1,
+    "erpInterface is missing from the tab strip",
+  );
+  assert.equal(isGrantableReimburseTabKey("erpInterface"), false);
+  assert.equal(
+    GRANTABLE_REIMBURSE_TABS.map((t) => t.key as string).indexOf("erpInterface"),
+    -1,
+    "erpInterface must not appear in the grantable list",
   );
 });
 

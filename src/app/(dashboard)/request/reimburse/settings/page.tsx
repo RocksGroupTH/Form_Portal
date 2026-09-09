@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Building2, FileCheck, Settings, ShieldCheck, Users } from "lucide-react";
+import { Building2, FileCheck, Link2, Settings, ShieldCheck, Users } from "lucide-react";
 import { requestBackHref } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
@@ -12,6 +12,7 @@ import { ReimburseApproverSettings } from "@/features/reimburse/components/setti
 import { ReimburseRuleSettings } from "@/features/reimburse/components/settings/ReimburseRuleSettings";
 import { ReimburseBrandSettings } from "@/features/reimburse/components/settings/ReimburseBrandSettings";
 import { ReimburseAccessSettings } from "@/features/reimburse/components/settings/ReimburseAccessSettings";
+import { ReimburseErpInterfaceSettings } from "@/features/reimburse/components/settings/ReimburseErpInterfaceSettings";
 import { useReimburseAccess } from "@/features/reimburse/hooks/useReimburseAccess";
 import {
   REIMBURSE_SETTINGS_TAB_ORDER,
@@ -20,15 +21,17 @@ import {
 
 /**
  * AP-4 settings — the accounting approver pool, the acknowledgement checklist,
- * the brand allowlist and the per-person access grants.
+ * the brand allowlist, AP-4's own Business Central posting configuration and
+ * the per-person access grants.
  *
  * Laid out as AP-1's `/request/accounting/settings` is: a tab strip inside one
  * card, each tab a feature component that owns its own fetching. The two pages
  * should be indistinguishable apart from what is on them.
  *
  * **Approvers is the default tab, and is deliberately not the first one.** The
- * strip runs configuration-first — brands, rules, then the two rosters — but the
- * page opens on ผู้อนุมัติบัญชี, as AP-1's does, and here for a sharper reason:
+ * strip runs configuration-first — brands, rules, erpInterface, then the two
+ * rosters — but the page opens on ผู้อนุมัติบัญชี, as AP-1's does, and here for
+ * a sharper reason:
  * `AccReimburseApprover` ships empty, and until it has two active rows every
  * AP-4 request stops at the accounting step with "ไม่มีสิทธิ์ —
  * คุณไม่ได้อยู่ในรายชื่อผู้อนุมัติฝ่ายบัญชีของแบบฟอร์ม AP-4". The one thing that
@@ -44,9 +47,12 @@ import {
  *
  * **Who reaches this page** is no longer role alone. An IT Admin or System Admin
  * sees every tab, as before. A non-admin holding at least one grant sees only
- * the tabs they hold — never `approvers` or `access`, which are not grantable —
- * and every route behind those tabs re-resolves the grant server-side on each
- * call (`requireReimburseSettingsTab`). The gate here is presentational.
+ * the tabs they hold — never `approvers`, `erpInterface` or `access`, none of
+ * which are grantable — and every route behind those tabs re-resolves the
+ * grant server-side on each call (`requireReimburseSettingsTab`). The gate
+ * here is presentational. `erpInterface`'s own route stays `requireRole`
+ * outright — see `settings-tabs.ts` for why it is not brand-scoped and
+ * therefore not safe to hand to a scoped approver yet.
  */
 
 type TabKey = ReimburseSettingsTabKey;
@@ -55,6 +61,7 @@ const TAB_META: Record<TabKey, { label: string; icon: React.ReactNode }> = {
   approvers: { label: "ผู้อนุมัติบัญชี", icon: <Users size={15} /> },
   rules: { label: "ระเบียบการจ่าย", icon: <FileCheck size={15} /> },
   brands: { label: "แบรนด์ที่เบิกได้", icon: <Building2 size={15} /> },
+  erpInterface: { label: "Interface ERP", icon: <Link2 size={15} /> },
   access: { label: "สิทธิ์เข้าถึง", icon: <ShieldCheck size={15} /> },
 };
 
@@ -163,7 +170,7 @@ function ReimburseSettingsContent() {
       <PageHeaderBar
         icon={Settings}
         title="ตั้งค่าขอเบิกเงินคืนพนักงาน"
-        subtitle="AP-4 · แบรนด์ที่เบิกได้ ระเบียบการจ่าย ผู้อนุมัติฝ่ายบัญชี และสิทธิ์เข้าถึง"
+        subtitle="AP-4 · แบรนด์ที่เบิกได้ ระเบียบการจ่าย Interface ERP ผู้อนุมัติฝ่ายบัญชี และสิทธิ์เข้าถึง"
         backHref={requestBackHref(searchParams.get("from"))}
       />
 
@@ -200,6 +207,7 @@ function ReimburseSettingsContent() {
           {shownTab === "approvers" && <ReimburseApproverSettings />}
           {shownTab === "rules" && <ReimburseRuleSettings />}
           {shownTab === "brands" && <ReimburseBrandSettings />}
+          {shownTab === "erpInterface" && <ReimburseErpInterfaceSettings />}
           {shownTab === "access" && <ReimburseAccessSettings />}
         </div>
       </div>

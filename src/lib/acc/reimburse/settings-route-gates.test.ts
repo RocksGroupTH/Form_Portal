@@ -45,6 +45,13 @@ const ROUTE_GATES: { route: string; gate: Gate; publicRead?: "GET" }[] = [
   },
   { route: "rules", gate: { kind: "tab", tab: "rules" }, publicRead: "GET" },
   { route: "brands", gate: { kind: "tab", tab: "brands" } },
+  {
+    route: "erp-interface",
+    gate: {
+      kind: "role",
+      why: "not brand-scoped (see settings-tabs.ts) — a scoped grant holder could set another brand's posting configuration",
+    },
+  },
 ];
 
 async function readRouteFile(route: string): Promise<string> {
@@ -149,7 +156,7 @@ test("every AP-4 settings handler opens with the gate its table entry names", as
   // than merged on the strength of the file already having an entry.
   assert.equal(
     handlerCount,
-    9,
+    11,
     "the AP-4 settings routes gained or lost a handler — check its gate, then update this number",
   );
 });
