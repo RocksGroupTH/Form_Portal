@@ -43,3 +43,34 @@ export function resolveSellerTaxId(
 function digits(v: string | null | undefined): string {
   return (v ?? "").replace(/\D/g, "").slice(0, 13);
 }
+
+/**
+ * What a seller tax-id box accepts: digits, and at most thirteen of them.
+ *
+ * A Thai tax id is exactly thirteen digits, so anything else in the box is a
+ * typo or a paste that brought its formatting along ("0-1055-43210-12-3", a
+ * trailing space, a copied line break). Filtering as it is typed means the value
+ * that reaches the database is the value the RD lookup can use, rather than one
+ * that silently never matches.
+ *
+ * The cap is not cosmetic: the lookup asks the RD only for a 13-digit number, so
+ * a fourteenth digit typed by accident turns a working field into one that
+ * quietly stops checking.
+ */
+export function normalizeTaxIdInput(raw: string): string {
+  return (raw ?? "").replace(/\D/g, "").slice(0, 13);
+}
+
+/**
+ * What to say under the box, or nothing.
+ *
+ * Empty says nothing here — a line with no VAT has no seller to identify, and
+ * the places that do care about a blank already explain it in their own words.
+ * A half-typed number is the case worth naming: it looks filled in, and it is
+ * the state in which the registry check silently does not run.
+ */
+export function taxIdNotice(raw: string | null | undefined): string | null {
+  const d = normalizeTaxIdInput(raw ?? "");
+  if (d.length === 0 || d.length === 13) return null;
+  return `ยังไม่ครบ 13 หลัก (ตอนนี้ ${d.length}) — ยังตรวจกับกรมสรรพากรไม่ได้`;
+}

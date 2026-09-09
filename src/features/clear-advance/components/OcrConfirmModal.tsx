@@ -7,6 +7,7 @@ import { PoweredByClaude } from "@/components/ui/PoweredByClaude";
 import type { BranchOption, GlAccountOption } from "@/features/clear-advance/types";
 import type { ReceiptKind } from "@/lib/clr/ai-receipt-core";
 import { BranchPicker, GlPicker, cellClass, cellStyle, isPickerPanelOpen } from "./LinePickers";
+import { normalizeTaxIdInput, taxIdNotice } from "@/lib/clr/seller-tax-id";
 
 /** One OCR candidate awaiting the user's confirmation. Mirrors the editable half
  *  of an expense line plus the WHT-certificate fields the receipt also carries,
@@ -336,9 +337,23 @@ export function OcrConfirmModal({
               {r.kind === "receipt" && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <F label="เลขผู้เสียภาษี (ผู้ขาย)">
-                    <input className={cellClass} style={{ ...cellStyle, width: "100%" }}
-                      inputMode="numeric" placeholder="เลข 13 หลัก"
-                      value={r.taxId} onChange={(e) => update(r.key, { taxId: e.target.value })} />
+                    {/* Digits only, thirteen of them: the RD lookup below asks
+                        only about a 13-digit number, so a stray character or a
+                        fourteenth digit used to leave a field that looks filled
+                        in and silently never checks. */}
+                    <input className={cellClass}
+                      style={{
+                        ...cellStyle, width: "100%",
+                        border: taxIdNotice(r.taxId) ? "1px solid var(--color-warning)" : cellStyle.border,
+                      }}
+                      inputMode="numeric" placeholder="เลข 13 หลัก" maxLength={13}
+                      value={r.taxId}
+                      onChange={(e) => update(r.key, { taxId: normalizeTaxIdInput(e.target.value) })} />
+                    {taxIdNotice(r.taxId) && (
+                      <span className="text-[10px]" style={{ color: "var(--color-warning)" }}>
+                        {taxIdNotice(r.taxId)}
+                      </span>
+                    )}
                     {/* Only the empty state says anything. A number that is there
                         needs no caption — the reviewer is looking at the invoice —
                         and a standing warning on every read is one more line to
