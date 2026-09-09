@@ -121,7 +121,14 @@ export async function loadClaimBrandTargets(): Promise<Map<string, string>> {
  * to every scoped approver rather than visible to all of them.
  *
  * **This deliberately disagrees with `erp-interface-settings-service.ts`,
- * which answers the same question as `interfaceBrandCode ?? code` — the brand
+ * — specifically its OLD flat loader, `loadReimburseErpInterfaceSettings`,
+ * which Task 7 deletes; the grouped `loadReimburseErpGroups` that replaced it
+ * drops such a brand into an `unassigned` bucket instead, which agrees with
+ * this function. Once the flat loader is gone this paragraph describes history
+ * rather than a live divergence, and the reasoning below is still why this
+ * function must keep answering `null`.
+ *
+ * The flat loader answers the same question as `interfaceBrandCode ?? code` — the brand
  * mapped to ITSELF.** Both are right for their own purpose and the divergence
  * is the point: that one is building a settings screen, where showing an
  * unmapped brand under a group named after itself is merely unhelpful; this

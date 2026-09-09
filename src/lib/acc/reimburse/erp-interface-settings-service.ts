@@ -36,17 +36,29 @@ import { AP4_FORM_CODE } from "@/features/reimburse/constants";
  * shipped once: `resolveJournalBatchName` (`erp-journal-context.ts`) looks a
  * claim brand's journal batch up by its *interface* brand first, and only
  * falls back to the claim brand's own row when that lookup misses. A
- * target-keyed batch is exactly the row that first lookup finds — so the
- * moment any claim brand in the group also carries its own per-form batch
- * override (from an earlier, non-grouped save, or from a future one), that
- * override silently wins over the group's batch for that one brand alone,
- * and the settings screen and the eventual send payload disagree about which
- * batch was used. That is the literal AP-2 failure this module's previous
- * revision already recorded: "the screen displayed TRAVELING while the
- * payload correctly sent BEE." Keying the batch on the claim brand for every
- * member removes the ambiguity `resolveJournalBatchName` would otherwise have
- * to resolve, because there is only ever one row per (claim brand, AP-4) to
- * find.
+ * target-keyed batch is exactly the row that first lookup finds — so it BEATS
+ * every claim-brand row, including AP-4's own per-form override, rather than
+ * losing to one. (An earlier revision of this paragraph had that backwards,
+ * and the direction is the whole point: the danger of a target-keyed batch is
+ * that it wins silently, not that it is silently overridden.) That is the
+ * literal AP-2 failure this module's previous revision recorded — "the screen
+ * displayed TRAVELING while the payload correctly sent BEE": the screen read
+ * the claim brand's row and the payload took the target's.
+ *
+ * **The residual, and the one rule AP-4's eventual send must follow.** Keying
+ * AP-4's own writes on the claim brand does not make `resolveJournalBatchName`
+ * claim-first — it is still target-first for everybody. AP-1's group save
+ * writes a batch onto the target brand as a `FormCode IS NULL` default, so for
+ * a group whose target is not itself an AP-4 claim brand, this settings screen
+ * reads AP-4's claim-brand row while `ctx.brandAccounts[...].journalBatchName`
+ * reads AP-1's target default — the same two answers, still live in `ctx`.
+ *
+ * **So AP-4's send must resolve the batch the way AP-2's does**
+ * (`advance-erp-context.ts`): `listBrandJournalBatches(claimBrand, "AP-4")`,
+ * preferring the row whose `formCode === "AP-4"` — and **never**
+ * `ctx.brandAccounts[...].journalBatchName`, which is target-first and will
+ * disagree with what an admin sees on this screen. That is the sentence the
+ * person who writes the send needs, and it is why this whole paragraph exists.
  *
  * **No G/L account field.** AP-4 already resolves a G/L per expense *line*
  * (`AccReimburseItem.Category`), proposed by the AI document read and
@@ -291,6 +303,23 @@ export interface ReimburseErpGroupSaveInput {
  * `brandCode` from `listFormBrands(AP4_FORM_CODE)` — never from `BRANDS` and
  * never trusted verbatim off the request body — is the responsibility of the
  * route that calls this function.
+ *
+ * **It writes only the members it is handed; it does not remove the ones it is
+ * not.** A brand previously mapped to this target and absent from
+ * `input.members` keeps its mapping and stays in the group on the next load.
+ * AP-1's `saveTargetGroup` does the removal pass itself; here it is
+ * `removeReimburseErpMember`, and **the caller must pair the two** — Task 7's
+ * route and Task 8's modal are what compute which brands left. Splitting it
+ * this way keeps a single-member edit from having to send the whole group, but
+ * it means a save alone can never shrink a group.
+ *
+ * **A group with no members saves nothing at all, including its journal
+ * batch.** The batch is fanned out per member (see the module docblock), so an
+ * empty `members` makes this whole function a no-op rather than storing a
+ * batch nobody uses. That is the right behaviour and the unavoidable
+ * consequence of claim-brand keying — but a screen must disable the batch
+ * field on an empty group rather than accept a save that silently does
+ * nothing.
  */
 export async function saveReimburseErpGroup(
   input: ReimburseErpGroupSaveInput,

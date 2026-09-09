@@ -259,6 +259,17 @@ export async function mergeFormBrandBranch(
 
   if (deptOn) {
     if (!fixedDept) throw new Error("กรุณาเลือก Fix Dept");
+    // Refused, not silently dropped. `AccBrandBranchCode.BranchCode` is NOT
+    // NULL (059:89) and the write below is `if (branch) { INSERT … }` after an
+    // unconditional DELETE — so with a blank branch the Fix Dept setting is
+    // not merely unwritten, it is unrepresentable: the admin ticks it, saves,
+    // is told it worked, reloads, and the tick is gone. `upsertBrandBranch`
+    // (AP-1's writer of the same columns) already refuses this with the same
+    // message; without it here the two writers disagree about whether the
+    // state is legal, and only the stricter one says so. AP-1's screen also
+    // blocks it client-side, which is not a rule — a control removed from a
+    // page never is.
+    if (!branch) throw new Error("กรุณาเลือก Branch Code");
     const mapping = await getBrandErpInterfaceMap(brand, form);
     const interfaceBrand = mapping?.interfaceBrandCode ?? null;
     if (!interfaceBrand) {
