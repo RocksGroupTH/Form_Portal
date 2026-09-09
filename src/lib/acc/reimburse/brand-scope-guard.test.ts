@@ -77,12 +77,18 @@ function code(file: string): string {
  * name it is asked about.
  */
 function bodyOf(src: string, name: string): string {
-  const marker = `export async function ${name}(`;
-  const start = src.indexOf(marker);
+  // Exported first, then the private form. Round 7 added assertions about
+  // `claimedBrandCode` and `requireApproverScopeFor`, which are file-local —
+  // the export-only version raised "has it been renamed?" on two functions
+  // that were sitting right there, which is the wrong failure and would have
+  // been read as a rename rather than as a helper limitation.
+  const marker = [`export async function ${name}(`, `async function ${name}(`].find(
+    (m) => src.indexOf(m) >= 0,
+  );
+  const start = marker == null ? -1 : src.indexOf(marker);
   assert.ok(
-    start >= 0,
-    `${name} not found (as \`export async function ${name}(\`) — has it been renamed or had its ` +
-      "export dropped?",
+    start >= 0 && marker != null,
+    `${name} not found (as \`async function ${name}(\`, exported or not) — has it been renamed?`,
   );
   const rest = src.slice(start + marker.length);
   const next = rest.search(/\n(?:export async function|async function|function) /);
@@ -238,4 +244,87 @@ test("listMyWorkRows' AP-4 arm still resolves brand scope through AccBrandErpInt
         "every AP-4 approver",
     );
   }
+
+  // **Token presence catches deletion and weakening; it does not catch
+  // INVERSION.** A re-review changed `AND EXISTS (` to `AND NOT EXISTS (` —
+  // one word — and all three tokens above stayed put while every AP-4
+  // approver's My Work filled with exactly the claims OUTSIDE their scope and
+  // none of the ones inside it. Measured green. This surface has no
+  // behavioural test at all (the query needs a pool), so the polarity has to
+  // be pinned here or nowhere.
+  assert.ok(
+    /AND\s+EXISTS\s*\(\s*\n?\s*SELECT\s+1\s+FROM\s+\[dbo\]\.\[AccReimburseApproverBrand\]/.test(body),
+    "listMyWorkRows' AP-4 brand-scope clause is no longer `AND EXISTS (SELECT 1 FROM " +
+      "[dbo].[AccReimburseApproverBrand] …`. A NOT EXISTS here inverts the whole control: every " +
+      "approver sees precisely the claims they may NOT act on, and none of the ones they may — " +
+      "while the three token assertions above stay green, because inversion removes nothing",
+  );
+});
+
+/* ─────────── Round 7: what the CALL-SITE pin above cannot reach ───────────
+ *
+ * Every assertion above pins the five call sites. A re-review then moved each
+ * of them one level away and measured 1384/1384 green each time. The four
+ * below close the reachable ones. They are not a claim to have closed the
+ * class — see this file's own closing note.
+ */
+
+test("claimedBrandCode really reads the claim's own BrandCode from the database", () => {
+  const body = bodyOf(code(SERVICE_FILE), "claimedBrandCode");
+  // The call-site pin says every path passes `await claimedBrandCode(tx,
+  // requestId)`, and its failure message claims that stops a claim being
+  // "checked against the wrong brand entirely". It does not: `return "PCTH";`
+  // in here satisfies every one of those pins and checks every claim in the
+  // system against PCTH. C1's mutation, relocated by one function.
+  assert.ok(
+    /\[dbo\]\.\[AccRequest\]/.test(body) && /BrandCode/.test(body) && /@id/.test(body),
+    "claimedBrandCode no longer SELECTs BrandCode from [dbo].[AccRequest] by @id. Every scope check " +
+      "in this file is only as good as what this function returns — a constant here is checked " +
+      "against by all five paths and refuses nobody, while every call-site assertion above stays green",
+  );
+  assert.ok(
+    /res\.recordset\[0\]\?\.BrandCode/.test(body),
+    "claimedBrandCode no longer returns the row's own BrandCode — it queries and then answers " +
+      "something else, which is the same hole with one more step in it",
+  );
+});
+
+test("each action path opens exactly one transaction, so the check cannot be moved after the commit", () => {
+  // A re-review lifted the pinned statement into a SECOND `inTransaction`
+  // after the first: `tx` stays in scope so `tsc` is clean, the pinned line
+  // stays byte-for-byte intact, and the approval — status transition, closed
+  // approval row, activity log — COMMITS before the out-of-scope approver is
+  // refused. Measured green. One transaction per path is the invariant that
+  // makes "inside the transaction that claims the row" mean anything.
+  const src = code(SERVICE_FILE);
+  for (const name of ACTIONS) {
+    const body = bodyOf(src, name);
+    const opens = body.split("inTransaction(").length - 1;
+    assert.equal(
+      opens,
+      1,
+      `${name} opens ${opens} transactions, not 1. The scope check is only "inside the transaction ` +
+        `that claims the row" while there is one transaction to be inside; a second one after the ` +
+        `first lets the approval commit and refuses afterwards, with every call-site pin still green`,
+    );
+  }
+});
+
+test("requireApproverScopeFor still refuses on canActOnTarget's answer alone", () => {
+  const body = bodyOf(code(SERVICE_FILE), "requireApproverScopeFor");
+  // `canActOnTarget` is behaviourally tested in brand-scope.test.ts; that this
+  // function GATES on it is not, and nothing else covers this body — the
+  // loaders it calls reach a pool. `if (!canActOnTarget(...) && <anything>)`
+  // was measured green.
+  assert.ok(
+    /if\s*\(\s*!canActOnTarget\(\s*scope\s*,\s*target\s*\)\s*\)\s*\{/.test(body),
+    "requireApproverScopeFor no longer refuses on `if (!canActOnTarget(scope, target))` alone. An " +
+      "extra conjunct there — `&& target === '__never__'` was the measured version — makes the throw " +
+      "unreachable while every call site still calls this function and awaits it",
+  );
+  assert.ok(
+    /if\s*\(\s*scope\s*==\s*null\s*\)\s*\{/.test(body),
+    "requireApproverScopeFor no longer refuses a null scope. `null` means no active approver row at " +
+      "all, and it must not fall through to canActOnTarget, whose contract is about an EMPTY scope",
+  );
 });
