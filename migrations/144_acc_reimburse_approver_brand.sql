@@ -39,7 +39,9 @@ CREATE TABLE [dbo].[AccReimburseApproverBrand] (
   CONSTRAINT [UQ_AccReimburseApproverBrand] UNIQUE ([ApproverId], [InterfaceBrandCode])
 );
 GO
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_AccReimburseApproverBrand_Approver')
+IF NOT EXISTS (SELECT 1 FROM sys.indexes
+               WHERE name = 'IX_AccReimburseApproverBrand_Approver'
+                 AND object_id = OBJECT_ID('dbo.AccReimburseApproverBrand'))
   CREATE INDEX [IX_AccReimburseApproverBrand_Approver]
     ON [dbo].[AccReimburseApproverBrand] ([ApproverId]);
 GO

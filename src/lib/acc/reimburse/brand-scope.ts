@@ -29,7 +29,24 @@
  * Kept as a local, import-free literal on purpose — see the module docblock
  * and the drift guard in brand-scope.test.ts.
  */
-const SCOPE_BRAND_CODES: readonly string[] = ["PCTH", "KSI", "PCMY", "UNO"];
+export const SCOPE_BRAND_CODES: readonly string[] = ["PCTH", "KSI", "PCMY", "UNO"];
+
+/**
+ * Is this a real, recognised target code? The one place the four-code
+ * vocabulary is applied, so `isApproverScope` and `canActOnTarget` agree with
+ * `normalizeScopeTargets` about what counts rather than each deciding for
+ * itself.
+ *
+ * `AccReimburseApproverBrand.InterfaceBrandCode` deliberately has no CHECK
+ * constraint (migration 144, mirroring 038), so a blank or foreign value is
+ * representable in the table. This function is what makes such a row inert
+ * instead of a grant.
+ */
+function isKnownTarget(value: unknown): boolean {
+  return (
+    typeof value === "string" && SCOPE_BRAND_CODES.indexOf(value.trim().toUpperCase()) !== -1
+  );
+}
 
 /**
  * Does this set of targets make its owner an approver at all?
@@ -37,9 +54,17 @@ const SCOPE_BRAND_CODES: readonly string[] = ["PCTH", "KSI", "PCMY", "UNO"];
  * Zero targets answers false, not true. There is no "empty means every
  * brand" branch here — see the module docblock for why that must never be
  * added.
+ *
+ * It counts RECOGNISED targets, not array entries. `[""]` and `["ROCKS"]`
+ * both answer false, because `canActOnTarget` would refuse every real brand
+ * for such an owner and the two must not disagree about whether that person
+ * is an approver. This matters concretely: the settings service keeps
+ * `AccReimburseApprover.IsActive` in step with this answer, so counting bare
+ * entries would mark somebody active with a scope that grants nothing — the
+ * table has no CHECK on the column, so a blank row is representable.
  */
 export function isApproverScope(targets: readonly string[]): boolean {
-  return targets.length > 0;
+  return targets.some(isKnownTarget);
 }
 
 /**
@@ -56,10 +81,14 @@ export function canActOnTarget(
   targets: readonly string[],
   target: string | null,
 ): boolean {
-  if (targets.length === 0) return false;
   const normalized = (target ?? "").trim().toUpperCase();
   if (!normalized) return false;
-  return targets.some((t) => t.trim().toUpperCase() === normalized);
+  // `t` is typed `string` but arrives from a NOT NULL column with no CHECK, and
+  // from JSON on the settings POST. A null or a number slipping through must
+  // refuse, not throw: an exception inside an approver loop fails the whole
+  // request where a refusal fails one row, and a crash is a worse way to be
+  // safe than a no.
+  return targets.some((t) => isKnownTarget(t) && String(t).trim().toUpperCase() === normalized);
 }
 
 /**
@@ -85,10 +114,8 @@ export function normalizeScopeTargets(raw: readonly unknown[]): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   for (const item of raw) {
-    if (typeof item !== "string") continue;
-    const code = item.trim().toUpperCase();
-    if (!code) continue;
-    if (SCOPE_BRAND_CODES.indexOf(code) === -1) continue;
+    if (!isKnownTarget(item)) continue;
+    const code = (item as string).trim().toUpperCase();
     if (seen.has(code)) continue;
     seen.add(code);
     out.push(code);
