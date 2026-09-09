@@ -62,8 +62,13 @@ export async function GET() {
       "reimburse/erp-queue",
     );
 
-    const rows = await listReimburseErpQueue(actor.staffId, actor.email);
-    return NextResponse.json({ ok: true, data: rows });
+    // The whole result, not just `rows` — `scope` and `unmappedBrandCount` are
+    // what let the screen tell "nothing is pending" apart from "everything
+    // pending is outside your brands" and from "claims exist that NOBODY can
+    // see". Same three-field shape `approvals/route.ts` returns, deliberately:
+    // the two queues must not explain the same silence differently.
+    const result = await listReimburseErpQueue(actor.staffId, actor.email);
+    return NextResponse.json({ ok: true, data: result });
   } catch (err) {
     console.error("[api/request/reimburse/erp-queue] GET", err);
     return NextResponse.json({ ok: false, error: "Internal server error" }, { status: 500 });

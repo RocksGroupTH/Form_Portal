@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 // `erp-queue-service.test.ts` because it is the behavioural test FOR
 // `listReimburseErpQueue`'s row-mapping logic, even though the function under
 // test physically lives in the import-free module that logic had to move to.
-import { accumulateErpQueueRows } from "./erp-queue-policy";
+import { accumulateErpQueueRows, countUnmappedErpBrandClaims } from "./erp-queue-policy";
 import type { ReimburseErpQueueRow } from "./erp-queue-policy";
 
 /**
@@ -284,4 +284,42 @@ test("every passthrough field is read off the row, not invented", () => {
   // hold is the exact overclaim this feature keeps having to walk back.
   assert.equal(r.formCode, "AP-4");
   assert.equal(r.status, "Approved");
+});
+
+/* ───────────────── unmapped brands, counted for the screen ───────────────── */
+
+test("countUnmappedErpBrandClaims counts CLAIMS, not joined item rows", () => {
+  // This queue fans one claim out into one row per line, so a plain row count
+  // reports three unmapped claims where there is one. Its sibling on the
+  // account queue needs no such de-duplication — that one joins items by
+  // COUNT(*) subquery — which is why the two functions are not shared.
+  const rows = [
+    row({ Id: 7, BrandCode: "ROCKS", ItemId: 70, ItemCategory: "5100-01", ItemAmount: 100 }),
+    row({ Id: 7, BrandCode: "ROCKS", ItemId: 71, ItemCategory: "5100-01", ItemAmount: 200 }),
+    row({ Id: 7, BrandCode: "ROCKS", ItemId: 72, ItemCategory: null, ItemAmount: 50 }),
+  ];
+  assert.equal(countUnmappedErpBrandClaims(rows, SELF_TARGETS), 1);
+});
+
+test("a mapped brand is never counted, however out of scope it is", () => {
+  // The count is about the CLAIM being invisible to everybody, not about this
+  // viewer. A PCMY claim a KSI-only approver cannot see is still mapped, so it
+  // is somebody else's to action — counting it would tell an admin to go fix a
+  // mapping that is already correct.
+  assert.equal(countUnmappedErpBrandClaims([row({ Id: 1, BrandCode: "PCMY" })], SELF_TARGETS), 0);
+});
+
+test("a row that does not belong on this queue at all is never counted", () => {
+  // An AP-1 claim, or an AP-4 claim not yet at Approved, is not this queue's
+  // business whether its brand is mapped or not.
+  const rows = [
+    row({ Id: 1, FormCode: "AP-1", Status: "Approved", BrandCode: "ROCKS" }),
+    row({ Id: 2, FormCode: "AP-4", Status: "ManagerApproved", BrandCode: "ROCKS" }),
+  ];
+  assert.equal(countUnmappedErpBrandClaims(rows, SELF_TARGETS), 0);
+});
+
+test("two different unmapped claims count twice", () => {
+  const rows = [row({ Id: 1, BrandCode: "ROCKS" }), row({ Id: 2, BrandCode: "NOPE" })];
+  assert.equal(countUnmappedErpBrandClaims(rows, SELF_TARGETS), 2);
 });

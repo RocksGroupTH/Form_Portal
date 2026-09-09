@@ -73,7 +73,7 @@
  */
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { AP4_FORM_CODE } from "@/features/reimburse/constants";
-import { accumulateErpQueueRows } from "./erp-queue-policy";
+import { accumulateErpQueueRows, countUnmappedErpBrandClaims } from "./erp-queue-policy";
 import type { ReimburseErpQueueRow } from "./erp-queue-policy";
 import { loadApproverScopeByStaffId, loadClaimBrandTargets } from "./brand-scope-load";
 
@@ -85,10 +85,24 @@ export type { ReimburseErpQueueRow } from "./erp-queue-policy";
  * first, cheap layer (see the file header); `accumulateErpQueueRows` is the
  * second, real one.
  */
+export interface ReimburseErpQueueResult {
+  rows: ReimburseErpQueueRow[];
+  /**
+   * This caller's ticked Interface targets, or `null` when they hold no active
+   * `AccReimburseApprover` row — the same three-valued distinction
+   * `listReimburseAccountQueue` reports and `requireApproverScopeFor` makes,
+   * so the two queues and the action can never disagree about which of the
+   * three "you see nothing" situations this is.
+   */
+  scope: string[] | null;
+  /** See `countUnmappedErpBrandClaims` (`./erp-queue-policy.ts`). */
+  unmappedBrandCount: number;
+}
+
 export async function listReimburseErpQueue(
   staffId: number | null,
   email: string | null,
-): Promise<ReimburseErpQueueRow[]> {
+): Promise<ReimburseErpQueueResult> {
   const pool = await getAccPool();
   // Both reads run BEFORE the query below, and neither is interposed between
   // the query's own closing `);` and the `return` — see
@@ -111,5 +125,8 @@ export async function listReimburseErpQueue(
       ORDER BY req.Id DESC, i.SortOrder ASC, i.Id ASC
     `);
 
-  return accumulateErpQueueRows(res.recordset as Record<string, unknown>[], scope, claimTargets);
+  const recordset = res.recordset as Record<string, unknown>[];
+  const rows = accumulateErpQueueRows(recordset, scope, claimTargets);
+  const unmappedBrandCount = countUnmappedErpBrandClaims(recordset, claimTargets);
+  return { rows, scope, unmappedBrandCount };
 }

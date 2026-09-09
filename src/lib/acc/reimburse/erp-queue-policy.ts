@@ -320,3 +320,43 @@ export function accumulateErpQueueRows(
     };
   });
 }
+
+/**
+ * How many DISTINCT claims on this queue have a `BrandCode` resolving to no
+ * Interface target at all — the ERP queue's counterpart to
+ * `countUnmappedBrandRows` (`./queue-policy.ts`), and the same operational
+ * problem: `ROCKS`, which migration 092 really does seed for AP-4, has no
+ * `AccBrandErpInterface` row, so a claim under it is out of EVERY approver's
+ * scope and vanishes from this list for everybody with nothing on screen to
+ * say why.
+ *
+ * **Distinct claims, not recordset rows.** This queue LEFT JOINs
+ * `AccReimburseItem`, so one claim with three lines arrives as three rows and
+ * a plain row count would report three unmapped claims where there is one.
+ * The account queue's counterpart needs no such de-duplication because its
+ * items are joined by `COUNT(*)` subquery rather than fanned out — the two
+ * functions are deliberately not shared for exactly this reason.
+ *
+ * **Independent of `scope`.** `canActOnTarget` refuses a `null` target for
+ * anyone, so this answers the same for whoever asks.
+ */
+export function countUnmappedErpBrandClaims(
+  recordset: readonly Record<string, unknown>[],
+  claimTargets: ReadonlyMap<string, string>,
+): number {
+  const seen = new Set<number>();
+  for (const x of recordset) {
+    const formCode = (x.FormCode as string | null) ?? "";
+    const status = (x.Status as string | null) ?? "";
+    if (!belongsInErpQueue(formCode, status)) continue;
+
+    const brandCode = (x.BrandCode as string | null) ?? "";
+    const target = claimTargets.get(brandCode.trim().toUpperCase()) ?? null;
+    if (target !== null) continue;
+
+    const id = x.Id as number;
+    if (seen.has(id)) continue;
+    seen.add(id);
+  }
+  return seen.size;
+}

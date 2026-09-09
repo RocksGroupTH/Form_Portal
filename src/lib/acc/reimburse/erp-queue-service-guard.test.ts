@@ -241,19 +241,57 @@ test("the return statement is the query call's very next statement — nothing i
   // `queue-service-guard.test.ts`'s identical fix — see that file's own
   // comment on this test for why an unanchored gap after `Record<string,
   // unknown>[]` would let `scope`/`claimTargets` be quietly rebound.
+  // The shape changed when this queue gained `unmappedBrandCount` (I1's second
+  // half), and THIS ASSERTION IS WHAT CAUGHT THE CHANGE — a legitimate edit
+  // tripping it is the guard working, not the guard being in the way. What it
+  // pins is now the same shape `queue-service-guard.test.ts` pins for the
+  // sibling queue: `recordset` is bound as the query's very next statement,
+  // and both consumers read it by name below. It is NOT relaxed to admit an
+  // arbitrary gap — that would be the guard being edited away rather than
+  // updated, which is precisely how the two rebinding holes above got in.
   assert.ok(
-    /`\)\s*;\s*return\s+accumulateErpQueueRows\(\s*res\.recordset\s+as\s+Record<string,\s*unknown>\[\]\s*,\s*scope\s*,\s*claimTargets\s*,?\s*\)\s*;/.test(
+    /`\)\s*;\s*const\s+recordset\s*=\s*res\.recordset\s+as\s+Record<string,\s*unknown>\[\]\s*;/.test(src),
+    "erp-queue-service.ts no longer binds `const recordset = res.recordset as Record<string, unknown>[];` " +
+      "as the very next statement after the query call. Anything interposed there — a mutation loop " +
+      "rewriting each row in place, a .map spreading a FormCode or Status over each row into a new " +
+      "array, a filter, a helper that rebuilds the array — feeds the row-level gate values the " +
+      "database never returned, and every other test in this file and in erp-queue-service.test.ts " +
+      "stays green while the queue lists claims that never cleared ACCOUNT_FINAL, or a claim outside " +
+      "this caller's brand scope. If the query genuinely needs another statement before `recordset` " +
+      "is bound, move the transformation INSIDE accumulateErpQueueRows, where the behavioural tests " +
+      "can see it",
+  );
+});
+
+/**
+ * The sibling of `queue-service-guard.test.ts`'s own three-field test, added
+ * with `unmappedBrandCount` (I1's second half). `recordset` reaching the two
+ * functions unmutated proves nothing about whether `scope`/`claimTargets` were
+ * rebound at the CALL SITES, or whether the returned object quietly drops a
+ * field. All three are pinned by NAME rather than left open with `.*`.
+ */
+test("rows, unmappedBrandCount and the returned object all read off recordset/scope/claimTargets by name", () => {
+  const src = code(SERVICE_FILE);
+  assert.ok(
+    /const\s+rows\s*=\s*accumulateErpQueueRows\(\s*recordset\s*,\s*scope\s*,\s*claimTargets\s*\)\s*;/.test(src),
+    "erp-queue-service.ts's `const rows = …` no longer reads " +
+      "`accumulateErpQueueRows(recordset, scope, claimTargets)` — a rebound argument here defeats " +
+      "every guard on the accumulator itself",
+  );
+  assert.ok(
+    /const\s+unmappedBrandCount\s*=\s*countUnmappedErpBrandClaims\(\s*recordset\s*,\s*claimTargets\s*\)\s*;/.test(
       src,
     ),
-    "erp-queue-service.ts no longer hands accumulateErpQueueRows the query's own recordset, scope and " +
-      "claimTargets as the very next statement after the query call. Anything interposed there — a " +
-      "mutation loop rewriting each row in place, a .map spreading a FormCode or Status over each row " +
-      "into a new array, a filter, a helper that rebuilds the array — feeds the row-level gate values " +
-      "the database never returned, and every other test in this file and in erp-queue-service.test.ts " +
-      "stays green while the queue lists claims that never cleared ACCOUNT_FINAL, or a claim outside " +
-      "this caller's brand scope. If the query genuinely needs another statement between it and the " +
-      "return, move the transformation INSIDE accumulateErpQueueRows, where the behavioural tests can " +
-      "see it",
+    "erp-queue-service.ts's `const unmappedBrandCount = …` no longer reads " +
+      "`countUnmappedErpBrandClaims(recordset, claimTargets)` — a hardcoded 0 here would satisfy every " +
+      "other check in this file while silently telling `ReimburseErpQueue.tsx` that no claim is ever " +
+      "stuck on an unmapped brand, which is the DEFAULT state on a fresh deployment (migration 092 " +
+      "seeds ROCKS, and `AccBrandErpInterface` has no row for it)",
+  );
+  assert.ok(
+    /return\s*\{\s*rows\s*,\s*scope\s*,\s*unmappedBrandCount\s*\}\s*;/.test(src),
+    "erp-queue-service.ts no longer returns `{ rows, scope, unmappedBrandCount }` verbatim — dropping " +
+      "any one of the three silently removes it from the API response `ReimburseErpQueue.tsx` reads",
   );
 });
 

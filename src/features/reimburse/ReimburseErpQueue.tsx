@@ -44,9 +44,24 @@ import type { ErpReadiness, ReimburseErpQueueRow } from "@/lib/acc/reimburse/erp
  * gap was seen, not closed.
  */
 
+/**
+ * What `GET /api/request/reimburse/erp-queue` answers — three fields, not a
+ * bare array, and the two extra ones exist for the same reason
+ * `ReimburseApprovalQueue.tsx`'s do: an empty list has three different causes
+ * and used to render one sentence for all of them. `scope` is this caller's
+ * ticked Interface targets (`null` = no active approver row at all);
+ * `unmappedBrandCount` counts claims whose brand maps to NO target, which are
+ * invisible to everybody rather than just to this viewer.
+ */
+interface ErpQueueData {
+  rows: ReimburseErpQueueRow[];
+  scope: string[] | null;
+  unmappedBrandCount: number;
+}
+
 interface ApiEnvelope {
   ok: boolean;
-  data?: ReimburseErpQueueRow[];
+  data?: ErpQueueData;
   error?: string;
 }
 
@@ -58,13 +73,13 @@ class ApiError extends Error {
   }
 }
 
-async function fetcher(url: string): Promise<ReimburseErpQueueRow[]> {
+async function fetcher(url: string): Promise<ErpQueueData> {
   const res = await fetch(url);
   const json = (await res.json().catch(() => null)) as ApiEnvelope | null;
   if (!json?.ok) {
     throw new ApiError(typeof json?.error === "string" ? json.error : "โหลดข้อมูลไม่สำเร็จ", res.status);
   }
-  return json.data ?? [];
+  return json.data ?? { rows: [], scope: null, unmappedBrandCount: 0 };
 }
 
 /** Full date + time, local getters. `th-TH` alone is the Buddhist calendar — see AP-3's own comment on the identical line. */
@@ -193,13 +208,19 @@ function ReadinessCell({ readiness }: { readiness: ErpReadiness }) {
 }
 
 export function ReimburseErpQueue() {
-  const { data, error, isLoading } = useSWR<ReimburseErpQueueRow[]>(
+  const { data, error, isLoading } = useSWR<ErpQueueData>(
     "/api/request/reimburse/erp-queue",
     fetcher,
     { refreshInterval: 30_000 },
   );
 
-  const rows = data ?? [];
+  const rows = data?.rows ?? [];
+  // Both default to the value that says nothing rather than one that claims
+  // something: `null` is "we do not know your scope" — which the empty state
+  // reads as the plain no-rows message — and 0 is "no claim is stuck". Both
+  // are correct while the fetch is in flight or has failed.
+  const scope = data?.scope ?? null;
+  const unmappedBrandCount = data?.unmappedBrandCount ?? 0;
   const forbidden = error instanceof ApiError && error.status === 403;
 
   const [brand, setBrand] = useState<string>("__ALL__");
@@ -300,8 +321,31 @@ export function ReimburseErpQueue() {
           <div className="flex flex-col items-center gap-3 py-12 text-center">
             <FileX size={32} style={{ color: "var(--text-muted)" }} />
             <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>
-              {rows.length === 0 ? "ไม่มีรายการที่อนุมัติแล้วรอส่งเข้า ERP" : "ไม่มีรายการตามเงื่อนไข"}
+              {rows.length > 0
+                ? "ไม่มีรายการตามเงื่อนไข"
+                : scope && scope.length > 0
+                  ? `ไม่มีรายการในกลุ่มที่คุณดูแล (${scope.join(", ")})`
+                  : "ไม่มีรายการที่อนุมัติแล้วรอส่งเข้า ERP"}
             </p>
+            {/*
+              The third state, and the reason this queue reports a count at
+              all: claims that are pending and that NOBODY's scope can cover,
+              because their brand maps to no Interface target. Independent of
+              `scope` — it reads the same for every viewer — and it is the
+              DEFAULT on a fresh deployment, since migration 092 seeds ROCKS
+              and `AccBrandErpInterface` has no row for it. Without this line
+              such a claim simply vanishes with the same sentence that means
+              "nothing is pending".
+            */}
+            {rows.length === 0 && unmappedBrandCount > 0 && (
+              <p
+                className="text-[12px] leading-relaxed max-w-[420px] mx-auto m-0"
+                style={{ color: "var(--text-faint)" }}
+              >
+                มี {unmappedBrandCount} รายการที่แบรนด์ยังไม่ได้ผูกกับกลุ่ม Interface ERP จึงไม่แสดงให้ใครเห็น
+                — ผู้ดูแลระบบผูกแบรนด์ได้ที่ ตั้งค่าขอเบิกเงินคืนพนักงาน → Interface ERP
+              </p>
+            )}
           </div>
         ) : (
           <div className="overflow-x-auto no-scrollbar max-h-[min(72vh,760px)] overflow-y-auto">
