@@ -151,10 +151,13 @@ test("every AP-4 settings handler opens with the gate its table entry names", as
   // Was 11. `settings/approvers` (GET + POST) is gone with the tab it
   // belonged to — its job (adding/reactivating an `AccReimburseApprover` row)
   // is now a side effect of ticking a brand on `settings/access`'s own POST —
-  // so the count drops by two handlers, to 9.
+  // so the count dropped by two handlers, to 9. SDD Task 7 then added
+  // `erp-interface`'s `DELETE` (un-mapping a claim brand from its group,
+  // standalone from the grouped `POST` — see that route's own docblock for
+  // why), which is +1, to 10.
   assert.equal(
     handlerCount,
-    9,
+    10,
     "the AP-4 settings routes gained or lost a handler — check its gate, then update this number",
   );
 });
