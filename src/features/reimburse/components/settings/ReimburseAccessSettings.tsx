@@ -559,17 +559,25 @@ export function ReimburseAccessSettings() {
       ? data.error ?? "โหลดข้อมูลไม่สำเร็จ"
       : null;
   const activeCount = rows.filter((r) => r.isActive).length;
-  // The accounting-approver count, off `approverActive` — the REAL
-  // `AccReimburseApprover.IsActive` flag, not `isActive` above (สิทธิ์เข้าถึง's
-  // own settings-tab/menu switch, a different question) and not
-  // `brandTargets.length > 0` either. Review round 1, IMPORTANT #1: a row
-  // written before `setReimburseApproverBrands` existed can be active with
-  // zero brand rows (migration 144 shipped with no backfill), and
-  // `findActiveApprover` reads the database flag alone — counting by ticks
-  // would undercount exactly those people and let both banners below claim
-  // "nobody can approve" while somebody still can. This is what the two
-  // commissioning banners key on.
-  const approverActiveCount = rows.filter((r) => r.approverActive).length;
+  // The accounting-approver count. `approverActive` alone (the REAL
+  // `AccReimburseApprover.IsActive` flag) was right before brand scoping
+  // shipped, when the flag and "can act on some claim" were the same
+  // question — that reasoning is what the comment here used to argue, and
+  // the final review measured it false. Since `setReimburseApproverBrands`
+  // derives `IsActive` from the tick count, the flag and the ticks agree for
+  // any row this screen has ever saved — but migration 144 shipped with no
+  // backfill, so every approver that existed before it is exactly the
+  // counter-example: `approverActive = true` with zero
+  // `AccReimburseApproverBrand` rows, and `canActOnTarget` refuses every
+  // brand for an empty scope (`brand-scope.ts`). Counting the flag alone
+  // therefore UNDERcounts the failure the two banners below exist to catch —
+  // it can read "2 active approvers" while both hold zero ticks and neither
+  // can actually approve anything. `brandTargets.length > 0` is what the
+  // approval path itself gates on (`isApproverScope`), so it is what this
+  // count has to agree with.
+  const approverActiveCount = rows.filter(
+    (r) => r.approverActive && r.brandTargets.length > 0,
+  ).length;
 
   const call = async (
     method: "POST" | "PATCH",
@@ -647,7 +655,7 @@ export function ReimburseAccessSettings() {
           หน้านี้รวมสองสิทธิ์ไว้ในที่เดียว — <strong>ผู้อนุมัติฝ่ายบัญชี (AP-4)</strong> ติ๊กแบรนด์
           ด้านล่าง กับ <strong>แท็บตั้งค่า</strong> และ <strong>หน้าใช้งาน</strong> เช่น
           คิวอนุมัติ (บัญชี) · IT Admin และ System Admin เห็นทุกแท็บและทุกหน้าอยู่แล้วโดยไม่ต้องอยู่ในรายชื่อนี้
-          และอนุมัติได้ทุกแบรนด์อยู่แล้ว · <strong>ติ๊กแบรนด์กับติ๊กแท็บเป็นอิสระจากกัน</strong> —
+          · <strong>ติ๊กแบรนด์กับติ๊กแท็บเป็นอิสระจากกัน</strong> —
           ติ๊กแบรนด์ไม่ได้แปลว่าแก้ตั้งค่าได้ และติ๊กแท็บ/หน้าใช้งานไม่ได้แปลว่าอนุมัติจ่ายเงินได้
         </p>
 

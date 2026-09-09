@@ -216,9 +216,13 @@ export function ReimburseErpQueue() {
 
   const rows = data?.rows ?? [];
   // Both default to the value that says nothing rather than one that claims
-  // something: `null` is "we do not know your scope" — which the empty state
-  // reads as the plain no-rows message — and 0 is "no claim is stuck". Both
-  // are correct while the fetch is in flight or has failed.
+  // something, for while the fetch is in flight or has failed — neither
+  // default is ever read by the empty-state message below in that window,
+  // since `isLoading`/`error`/`forbidden` each render their own branch first.
+  // Once `data` has actually loaded, `null` is a real, meaningful answer — "no
+  // active AccReimburseApprover row at all" — and the empty state (M5, final
+  // review) says so explicitly rather than folding it into the plain no-rows
+  // sentence; `0` for `unmappedBrandCount` still means "no claim is stuck".
   const scope = data?.scope ?? null;
   const unmappedBrandCount = data?.unmappedBrandCount ?? 0;
   const forbidden = error instanceof ApiError && error.status === 403;
@@ -321,11 +325,25 @@ export function ReimburseErpQueue() {
           <div className="flex flex-col items-center gap-3 py-12 text-center">
             <FileX size={32} style={{ color: "var(--text-muted)" }} />
             <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>
+              {/*
+                M5 (final review): `scope === null` (no active
+                `AccReimburseApprover` row at all) used to collapse into the
+                same positive "nothing pending" sentence as `scope.length ===
+                0` (a real roster row with zero ticks) and as a genuinely
+                empty queue. This page and `ReimburseApprovalQueue.tsx` sit on
+                one settings-driven pair of tabs and must not explain the same
+                silence differently — that page now tells the three states
+                apart, and this queue reads the identical `scope` field, so it
+                gets the same three sentences rather than a fourth wording of
+                its own.
+              */}
               {rows.length > 0
                 ? "ไม่มีรายการตามเงื่อนไข"
-                : scope && scope.length > 0
-                  ? `ไม่มีรายการในกลุ่มที่คุณดูแล (${scope.join(", ")})`
-                  : "ไม่มีรายการที่อนุมัติแล้วรอส่งเข้า ERP"}
+                : scope === null
+                  ? "คุณยังไม่ได้เป็นผู้อนุมัติฝ่ายบัญชีของ AP-4 จึงไม่แสดงรายการให้ — ผู้ดูแลระบบติ๊กแบรนด์ที่คุณอนุมัติได้ (อย่างน้อย 1 แบรนด์) ได้ที่ ตั้งค่าขอเบิกเงินคืนพนักงาน → สิทธิ์เข้าถึง"
+                  : scope.length === 0
+                    ? "คุณเป็นผู้อนุมัติฝ่ายบัญชีแล้ว แต่ยังไม่ได้ติ๊กแบรนด์ใดเลย จึงไม่แสดงรายการให้ — ผู้ดูแลระบบติ๊กแบรนด์ที่คุณอนุมัติได้ (อย่างน้อย 1 แบรนด์) ได้ที่ ตั้งค่าขอเบิกเงินคืนพนักงาน → สิทธิ์เข้าถึง"
+                    : `ไม่มีรายการในกลุ่มที่คุณดูแล (${scope.join(", ")})`}
             </p>
             {/*
               The third state, and the reason this queue reports a count at

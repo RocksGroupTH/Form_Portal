@@ -24,7 +24,7 @@ const CARDS: HubCard[] = [
   },
   {
     title: "ตั้งค่า",
-    desc: "แบรนด์ที่เบิกได้ · ระเบียบการจ่าย · Interface ERP · ผู้อนุมัติฝ่ายบัญชี · สิทธิ์เข้าถึง",
+    desc: "แบรนด์ที่เบิกได้ · ระเบียบการจ่าย · Interface ERP · สิทธิ์เข้าถึง (รวมผู้อนุมัติฝ่ายบัญชี)",
     href: "/request/reimburse/settings",
     icon: <Settings size={20} />,
   },

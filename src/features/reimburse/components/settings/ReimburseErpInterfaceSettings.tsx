@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
 import {
@@ -35,7 +35,28 @@ interface BranchOpt { code: string; displayName: string | null }
 interface CompanyErp { gl: AcctOpt[]; bank: AcctOpt[]; journalBatch: BatchOpt[]; branch: BranchOpt[] }
 interface CompanyDept { department: ErpDeptOption[] }
 
-const fetcher = (url: string) => fetch(url).then((r) => r.json());
+/**
+ * Throws on a non-2xx status OR a resolved `{ ok: false }` body — not just a
+ * network failure. Found in the final review: the old
+ * `fetch(url).then(r => r.json())` resolved normally for a 500 carrying
+ * `{ ok: false, error }`, so SWR treated that as a successful revalidation and
+ * overwrote the last good `data` with the failure body. That is what let a
+ * failed refetch after a successful Save make `groups` (and this modal's own
+ * `editGroup`) go empty — SWR's actual default, once the fetcher rejects
+ * instead of resolving, is to KEEP the last good `data` and set `error`
+ * beside it, which is what the three failure states below now rely on. It is
+ * also what makes the plain `mutate()` calls in `refresh()`/`load()` actually
+ * reject on failure, instead of resolving quietly with a success toast beside
+ * a red failure panel.
+ */
+async function fetcher(url: string) {
+  const res = await fetch(url);
+  const json = await res.json().catch(() => null);
+  if (!res.ok || !json?.ok) {
+    throw new Error(typeof json?.error === "string" ? json.error : "โหลดข้อมูลไม่สำเร็จ");
+  }
+  return json;
+}
 
 function decode(v: string | null | undefined): string {
   if (!v?.trim()) return "—";
@@ -152,9 +173,9 @@ function MemberBrandChips({ members }: { members: ReimburseErpMemberRow[] }) {
  * replacement for the old one-card-per-claim-brand list. `group.ready` is
  * read straight off the server: a member's bank account and the group's
  * journal batch both fall back to AP-1's own defaults when AP-4 has no
- * override, so a group can read ครบแล้ว with zero rows of its own under
+ * override, so a group can read ตั้งค่าครบ with zero rows of its own under
  * `FormCode = 'AP-4'` — see `erp-interface-settings-service.ts`'s docblock.
- * That is why this card never says "AP-4 has its own configuration"; ครบแล้ว
+ * That is why this card never says "AP-4 has its own configuration"; ตั้งค่าครบ
  * means configured, whoever configured it.
  */
 function ReimburseErpGroupCard({ group, onEdit }: { group: ReimburseErpGroup; onEdit: () => void }) {
@@ -251,6 +272,11 @@ function FixDeptControl({
   deptAsBranch,
   fixedErpDeptCode,
   disabled,
+  /** I6 (final review): true when the `erp-accounts` department fetch itself
+   *  failed. Distinguishes "the list couldn't load" from "this branch has no
+   *  departments" — before this, both rendered the same enabled button that
+   *  opened onto an empty picker with no explanation either way. */
+  deptFailed,
   onPick,
   onClear,
 }: {
@@ -258,6 +284,7 @@ function FixDeptControl({
   deptAsBranch: boolean;
   fixedErpDeptCode: string;
   disabled?: boolean;
+  deptFailed?: boolean;
   onPick: () => void;
   onClear: () => void;
 }) {
@@ -314,7 +341,13 @@ function FixDeptControl({
       type="button"
       onClick={onPick}
       disabled={pickDisabled}
-      title={pickDisabled ? "เลือก Branch ก่อน" : "เลือก Dept ERP ที่ต้องการ Fix"}
+      title={
+        pickDisabled
+          ? "เลือก Branch ก่อน"
+          : deptFailed
+            ? "โหลดรายการแผนกไม่สำเร็จ — กด รีเฟรช"
+            : "เลือก Dept ERP ที่ต้องการ Fix"
+      }
       className="mt-1.5 w-full inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[10px] font-medium transition-opacity hover:opacity-90 disabled:opacity-45 disabled:cursor-not-allowed"
       style={{
         border: "1px dashed color-mix(in srgb, var(--border-input) 85%, transparent)",
@@ -410,16 +443,31 @@ function ReimburseErpGroupModal({
   group,
   unassigned,
   erp,
+  erpFailed,
   departmentOptions,
+  deptFailed,
   onClose,
   onSaved,
 }: {
   group: ReimburseErpGroup;
   unassigned: ReimburseErpMemberRow[];
   erp: CompanyErp | undefined;
+  /** True when the `erp-master` fetch itself failed — distinct from `!erp`,
+   *  which is also true for a company that genuinely has no rows yet. Without
+   *  the distinction an admin sees the same `erpUnavailableLabel` placeholder
+   *  either way — "Business Central really has nothing" and "the request
+   *  500'd" read identically, and only one of those is fixed by retrying. */
+  erpFailed: boolean;
   departmentOptions: ErpDeptOption[];
+  /** True when the `erp-accounts` (department) fetch itself failed — same
+   *  distinction as `erpFailed`, fed to `FixDeptControl`'s title so an empty
+   *  picker reads as "couldn't load" rather than "this branch has no
+   *  departments". */
+  deptFailed: boolean;
   onClose: () => void;
-  onSaved: () => void;
+  /** May return a promise — see `handleSave`'s own comment for why it is
+   *  awaited rather than fired and forgotten. */
+  onSaved: () => void | Promise<void>;
 }) {
   const [journalDraft, setJournalDraft] = useState(group.journalBatchName ?? "");
   const [members, setMembers] = useState<DraftMember[]>(() => group.members.map(toDraft));
@@ -455,6 +503,9 @@ function ReimburseErpGroupModal({
   const branchOpts = useMemo(() => branchOptions(erp?.branch ?? []), [erp]);
   const journalOpts = useMemo(() => batchOptions(erp?.journalBatch ?? [], journalDraft), [erp, journalDraft]);
   const noErp = !erp;
+  // Distinct wording for "the fetch itself failed" versus "this company
+  // genuinely has nothing yet" — see the `erpFailed` prop's own comment.
+  const erpUnavailableLabel = erpFailed ? "โหลดข้อมูล ERP ไม่สำเร็จ — กด รีเฟรช" : "ไม่มีข้อมูลจาก ERP";
 
   const addOptions = useMemo(
     () => unassigned
@@ -548,7 +599,17 @@ function ReimburseErpGroupModal({
       const j = (await res.json()) as { ok: boolean; error?: string };
       if (!j.ok) throw new Error(j.error ?? "บันทึกไม่สำเร็จ");
       toast.success(`บันทึก ${group.targetName} แล้ว`);
-      onSaved();
+      // Awaited, not fire-and-forget (found in the final review). `busy`
+      // (hence every trash button's `disabled`) stays true until this
+      // resolves, so a click on a just-added-then-saved member's trash icon
+      // cannot land while `persistedCodes` — derived from the `group` prop —
+      // still reflects the pre-save state. Without the await, `setSaving(false)`
+      // in `finally` ran the instant the POST resolved, re-enabling those
+      // buttons a full round trip before the refetch this triggers actually
+      // updated `group`; a click in that window took the "never saved, nothing
+      // to delete" branch in `handleRemove` for a member that really was saved
+      // — the exact no-DELETE bug this file's own history already fixed once.
+      await onSaved();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ");
     } finally {
@@ -605,14 +666,23 @@ function ReimburseErpGroupModal({
                   value={journalDraft}
                   onChange={setJournalDraft}
                   options={journalOpts}
-                  placeholder={noErp ? "ไม่มีข้อมูลจาก ERP" : "— เลือก Journal Batch —"}
-                  emptyLabel={noErp ? "ไม่มีข้อมูลจาก ERP" : "— เลือก Journal Batch —"}
+                  placeholder={noErp ? erpUnavailableLabel : "— เลือก Journal Batch —"}
+                  emptyLabel={noErp ? erpUnavailableLabel : "— เลือก Journal Batch —"}
                   searchPlaceholder="ค้นหา Journal Batch..."
                   triggerBackground="var(--bg-card)"
-                  disabled={busy}
+                  // `saveReimburseErpGroup`'s own docblock: an empty group
+                  // saves nothing at all, including this field — the batch is
+                  // fanned out per member, so there is nowhere to store one
+                  // with zero members. Save is already disabled for the same
+                  // reason (`saveDisabledReason`); leaving this field live
+                  // would let an admin pick a value that Save then silently
+                  // discards on close.
+                  disabled={busy || members.length === 0}
                 />
                 <p className="text-[10px] m-0 mt-1.5" style={{ color: "var(--text-faint)" }}>
-                  ใช้ร่วมทุกแบรนด์เบิกในกลุ่มนี้
+                  {members.length === 0
+                    ? "เพิ่มแบรนด์เบิกอย่างน้อย 1 แบรนด์ก่อนจึงจะตั้งค่านี้ได้"
+                    : "ใช้ร่วมทุกแบรนด์เบิกในกลุ่มนี้"}
                 </p>
               </div>
 
@@ -698,8 +768,8 @@ function ReimburseErpGroupModal({
                                 value={member.bankAccountNo}
                                 onChange={(v) => updateMember(member.brandCode, { bankAccountNo: v })}
                                 options={bankOpts}
-                                placeholder={noErp ? "ไม่มีข้อมูลจาก ERP" : "— เลือก Bank —"}
-                                emptyLabel={noErp ? "ไม่มีข้อมูลจาก ERP" : "— เลือก Bank —"}
+                                placeholder={noErp ? erpUnavailableLabel : "— เลือก Bank —"}
+                                emptyLabel={noErp ? erpUnavailableLabel : "— เลือก Bank —"}
                                 searchPlaceholder="ค้นหา Bank..."
                                 triggerBackground="var(--bg-card)"
                                 disabled={busy}
@@ -711,8 +781,8 @@ function ReimburseErpGroupModal({
                                 value={member.branchCode}
                                 onChange={(v) => handleBranchChange(member.brandCode, v)}
                                 options={branchOpts}
-                                placeholder={noErp ? "ไม่มีข้อมูลจาก ERP" : "— ไม่ระบุ · ใช้แผนกผู้ขอ —"}
-                                emptyLabel={noErp ? "ไม่มีข้อมูลจาก ERP" : "— ไม่ระบุ · ใช้แผนกผู้ขอ —"}
+                                placeholder={noErp ? erpUnavailableLabel : "— ไม่ระบุ · ใช้แผนกผู้ขอ —"}
+                                emptyLabel={noErp ? erpUnavailableLabel : "— ไม่ระบุ · ใช้แผนกผู้ขอ —"}
                                 searchPlaceholder="ค้นหา Branch..."
                                 triggerBackground="var(--bg-card)"
                                 wrapLabel
@@ -723,6 +793,7 @@ function ReimburseErpGroupModal({
                                 deptAsBranch={member.deptAsBranch}
                                 fixedErpDeptCode={member.fixedErpDeptCode}
                                 disabled={busy}
+                                deptFailed={deptFailed}
                                 onPick={() => setDeptPick({ brandCode: member.brandCode, branchCode: member.branchCode, initialCode: member.fixedErpDeptCode })}
                                 onClear={() => updateMember(member.brandCode, { deptAsBranch: false, fixedErpDeptCode: "" })}
                               />
@@ -736,8 +807,8 @@ function ReimburseErpGroupModal({
                               value={member.bankAccountNo}
                               onChange={(v) => updateMember(member.brandCode, { bankAccountNo: v })}
                               options={bankOpts}
-                              placeholder={noErp ? "ไม่มีข้อมูลจาก ERP" : "— เลือก Bank —"}
-                              emptyLabel={noErp ? "ไม่มีข้อมูลจาก ERP" : "— เลือก Bank —"}
+                              placeholder={noErp ? erpUnavailableLabel : "— เลือก Bank —"}
+                              emptyLabel={noErp ? erpUnavailableLabel : "— เลือก Bank —"}
                               searchPlaceholder="ค้นหา Bank..."
                               triggerBackground="var(--bg-card)"
                               disabled={busy}
@@ -747,8 +818,8 @@ function ReimburseErpGroupModal({
                                 value={member.branchCode}
                                 onChange={(v) => handleBranchChange(member.brandCode, v)}
                                 options={branchOpts}
-                                placeholder={noErp ? "ไม่มีข้อมูลจาก ERP" : "— ไม่ระบุ · ใช้แผนกผู้ขอ —"}
-                                emptyLabel={noErp ? "ไม่มีข้อมูลจาก ERP" : "— ไม่ระบุ · ใช้แผนกผู้ขอ —"}
+                                placeholder={noErp ? erpUnavailableLabel : "— ไม่ระบุ · ใช้แผนกผู้ขอ —"}
+                                emptyLabel={noErp ? erpUnavailableLabel : "— ไม่ระบุ · ใช้แผนกผู้ขอ —"}
                                 searchPlaceholder="ค้นหา Branch..."
                                 triggerBackground="var(--bg-card)"
                                 wrapLabel
@@ -759,6 +830,7 @@ function ReimburseErpGroupModal({
                                 deptAsBranch={member.deptAsBranch}
                                 fixedErpDeptCode={member.fixedErpDeptCode}
                                 disabled={busy}
+                                deptFailed={deptFailed}
                                 onPick={() => setDeptPick({ brandCode: member.brandCode, branchCode: member.branchCode, initialCode: member.fixedErpDeptCode })}
                                 onClear={() => updateMember(member.brandCode, { deptAsBranch: false, fixedErpDeptCode: "" })}
                               />
@@ -895,12 +967,12 @@ export function ReimburseErpInterfaceSettings() {
     ERP_INTERFACE_URL,
     fetcher,
   );
-  const { data: erpData, isLoading: erpLoading, mutate: mutateErp } =
+  const { data: erpData, error: erpError, isLoading: erpLoading, mutate: mutateErp } =
     useSWR<{ ok: boolean; data?: Record<string, CompanyErp> }>(
       "/api/request/advance/settings/erp-master",
       fetcher,
     );
-  const { data: deptData, mutate: mutateDept } =
+  const { data: deptData, error: deptError, isLoading: deptLoading, mutate: mutateDept } =
     useSWR<{ ok: boolean; data?: Record<string, CompanyDept> }>(
       "/api/request/accounting/settings/erp-accounts",
       fetcher,
@@ -911,11 +983,38 @@ export function ReimburseErpInterfaceSettings() {
   const unassigned = useMemo(() => view?.unassigned ?? [], [view]);
   const erpByCompany = erpData?.data ?? {};
   const deptByCompany = deptData?.data ?? {};
+  // I6 (final review): these two fetches used to carry no failure state at
+  // all — a 500 rendered identically to "Business Central genuinely has no
+  // accounts" / "no departments". `erpFailed` feeds the modal's per-field
+  // placeholder text (`erpUnavailableLabel`); `deptFailed` feeds the Fix Dept
+  // control the same way, both distinguishing "the request failed" from "this
+  // company/branch really has nothing" — only one of those is fixed by
+  // retrying.
+  const erpFailed = !erpLoading && !!erpError;
+  const deptFailed = !deptLoading && !!deptError;
 
   const [editTargetCode, setEditTargetCode] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  const load = () => { void mutate(); void mutateErp(); void mutateDept(); };
+  /**
+   * Refetch all three, swallowing whatever they throw.
+   *
+   * `handleSave` inside the modal now AWAITS this (I6, final review) so
+   * `busy` — and every trash button's `disabled` — stays true until the
+   * post-save refetch has actually landed, not merely until the POST itself
+   * resolved; see that function's own comment for the race this closes. A
+   * rejection here must never propagate into `handleSave`'s `catch`, which
+   * would misreport a successful save as a failed one — the SWR `error` state
+   * each hook already carries is what `failed`/`erpFailed`/`deptFailed` below
+   * render off, so nothing is lost by swallowing it here too.
+   */
+  const load = async () => {
+    try {
+      await Promise.all([mutate(), mutateErp(), mutateDept()]);
+    } catch {
+      // Intentionally swallowed — see the comment above.
+    }
+  };
 
   async function refresh() {
     setRefreshing(true);
@@ -929,21 +1028,52 @@ export function ReimburseErpInterfaceSettings() {
     }
   }
 
-  const editGroup = editTargetCode ? groups.find((g) => g.targetCode === editTargetCode) ?? null : null;
+  /**
+   * The last group `editTargetCode` resolved to, kept alive across a failed
+   * refetch.
+   *
+   * Found in the final review: `editGroup` used to be `groups.find(...) ??
+   * null` alone, with nothing guarding the moment `groups` reads empty. The
+   * likeliest trigger was the admin's own Save: POST succeeds → `onSaved()`
+   * → the GET refetch it triggers fails → `groups` reads `[]` for that
+   * render → `editGroup` becomes `null` → the modal (which renders on
+   * `editGroup` below) unmounts, silently, with every unsaved edit in it.
+   * `fetcher` now rejects rather than resolving on a failed response (see its
+   * own comment), which already keeps SWR's `data` from being clobbered by a
+   * `{ ok: false }` body in the common case — this ref is the belt-and-braces
+   * half: it only ever updates to a REAL match, never to `null` while a group
+   * is still open, so nothing about SWR's own retry/caching behaviour is what
+   * this modal's survival depends on.
+   */
+  const lastKnownGroupRef = useRef<ReimburseErpGroup | null>(null);
+  useEffect(() => {
+    if (!editTargetCode) {
+      lastKnownGroupRef.current = null;
+      return;
+    }
+    const match = groups.find((g) => g.targetCode === editTargetCode);
+    if (match) lastKnownGroupRef.current = match;
+  }, [editTargetCode, groups]);
+
+  const editGroup = editTargetCode
+    ? groups.find((g) => g.targetCode === editTargetCode) ?? lastKnownGroupRef.current
+    : null;
   const loading = isLoading && !view;
   /**
    * A failed read must never render as an empty one.
    *
-   * `fetcher` is `fetch().then(r => r.json())`, which does **not** throw on a
-   * non-2xx — so a 500 or a 403 arrives as `data = { ok: false }` with SWR's
-   * `error` unset, `view` undefined, and `groups` empty. Without this branch
+   * `fetcher` throws on a non-2xx status or a resolved `{ ok: false }` body
+   * (see its own comment) — before that fix it resolved normally for either,
+   * so a 500 or a 403 arrived as `data = { ok: false }` with SWR's `error`
+   * unset, `view` undefined, and `groups` empty. Without this branch
    * `nothingConfigured` is vacuously true and the screen tells an admin there
    * are no AP-4 brands, sending them to fix a tab that is not the problem,
-   * with รีเฟรช disabled so they cannot even retry. Both arms are needed and
-   * neither is redundant: `error` catches only a network failure. This is the
-   * exact failure CLAUDE.md records for the API-key change log ("A failed read
-   * of the change log must never render as an empty one"), which had the same
-   * two-arm shape.
+   * with รีเฟรช disabled so they cannot even retry. The `(!!data && !data.ok)`
+   * arm is now mostly a defensive fallback — the throwing fetcher means SWR
+   * should never actually store such a `data` — but costs nothing to keep.
+   * This is the exact failure CLAUDE.md records for the API-key change log
+   * ("A failed read of the change log must never render as an empty one"),
+   * which had the same two-arm shape.
    */
   const failed = !loading && (!!error || (!!data && !data.ok));
   const nothingConfigured =
@@ -1032,7 +1162,9 @@ export function ReimburseErpInterfaceSettings() {
           group={editGroup}
           unassigned={unassigned}
           erp={erpByCompany[editGroup.targetCode]}
+          erpFailed={erpFailed}
           departmentOptions={deptByCompany[editGroup.targetCode]?.department ?? []}
+          deptFailed={deptFailed}
           onClose={() => setEditTargetCode(null)}
           onSaved={load}
         />

@@ -73,9 +73,9 @@ export function isApproverScope(targets: readonly string[]): boolean {
  * An empty `targets` refuses unconditionally — there is no all-access
  * shortcut to fall into. A `target` that does not resolve to anything (null,
  * blank — an unmapped claim brand) also refuses: the fail-safe direction is
- * that it is visible to nobody but an admin, not to everybody, which mirrors
- * AP-1's own `canActOnInterfaceTarget` on this one point even though the two
- * modules disagree about the empty-`targets` case.
+ * that it is visible to nobody at all, until an admin maps the brand — not to
+ * everybody — which mirrors AP-1's own `canActOnInterfaceTarget` on this one
+ * point even though the two modules disagree about the empty-`targets` case.
  */
 export function canActOnTarget(
   targets: readonly string[],

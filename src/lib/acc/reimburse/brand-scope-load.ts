@@ -136,8 +136,9 @@ export async function loadClaimBrandTargets(): Promise<Map<string, string>> {
  * What an unmapped brand costs, so it is read rather than discovered: a claim
  * filed under one — `ROCKS`, which migration 092 really does seed for AP-4,
  * making this the DEFAULT state on a fresh deployment — is actionable by
- * **nobody but an admin** and appears on no approver's queue. Deleting a
- * mapping does the same thing to every claim already filed under it. Both
+ * **nobody at all, until an admin maps the brand**, and appears on no
+ * approver's queue. Deleting a mapping does the same thing to every claim
+ * already filed under it. Both
  * queues therefore report `unmappedBrandCount` and say so on screen, naming
  * the fix (an admin maps the brand at Settings → Interface ERP), rather than
  * rendering the same "nothing is pending" line they would show if there were

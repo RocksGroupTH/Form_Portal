@@ -16,9 +16,9 @@ import path from "node:path";
  * ruling ("the queue shows every claim, authority is re-decided per action")
  * that Task 5 deliberately reversed. See the route's own docblock, which
  * carries the corrected account and the reasoning. CLAUDE.md and the design
- * spec still state the old ruling as of this writing; that correction is
- * Task 9's, not this file's — noted here so nobody reads this test's silence
- * as confirmation of the stale text.**
+ * spec were corrected to match by Task 9 (commit `b2184dd`) — noted here
+ * only so a reader of this file's history does not mistake its earlier
+ * silence for confirmation of what was, for a while, stale text elsewhere.**
  *
  * What has NOT changed, and is what this file still guards: sight of the
  * ENDPOINT — being answered at all, scoped or not — is gated on exactly one

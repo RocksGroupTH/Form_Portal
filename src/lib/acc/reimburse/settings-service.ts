@@ -179,10 +179,14 @@ export async function reorderRules(orderedIds: number[], userId: number): Promis
  * `upsertReimburseApprover` and `setReimburseApproverActive` used to live here
  * — the pair the deleted `settings/approvers` route called to add/reactivate
  * and to turn an approver off or on. Removed 2026-09-10 along with that route:
- * `setReimburseApproverBrands` below is now the only writer of
- * `AccReimburseApprover`, and adding either of these back would let two
- * writers race on the same `IsActive` column — see that function's own
- * docblock for why it derives the flag rather than accepting one.
+ * `setReimburseApproverBrands` below writes `AccReimburseApproverBrand` and
+ * can only ever move `AccReimburseApprover.IsActive` toward 0 (or leave it
+ * where it was) — never toward 1 by itself. Turning it back on is
+ * `setReimburseAccessAndApprovalActive`'s job (`./access-service.ts`), called
+ * from the same route's PATCH; see that function's own docblock for the
+ * `EXISTS` check that gates reactivation on a tick actually surviving, and
+ * `setReimburseApproverBrands`' own docblock below for why the two writers
+ * do not race even though both touch the same column.
  */
 
 /* ─────────────────────── per-brand scope (AccReimburseApproverBrand) ─────────────────────── */
@@ -219,26 +223,48 @@ export async function listReimburseApproverBrands(): Promise<Map<number, string[
 }
 
 /**
- * The single writer for AP-4's per-brand approver scope, and THE switch — this
- * is what `settings/access`'s POST calls, and, since 2026-09-10, the ONLY
- * writer of `AccReimburseApprover` left in this file. It replaced a direct
- * call to `upsertReimburseApprover` + `setReimburseApproverActive`, the pair
- * the deleted `settings/approvers` route used for this purpose; both were
- * removed with that route rather than left as an unused second path, because
- * either one gaining a new caller that also touches brands would race this
- * function on the same `IsActive` column.
+ * The single writer for AP-4's per-brand approver scope — but, since the fix
+ * below, ONE of two writers of `AccReimburseApprover.IsActive`, not the only
+ * one. This is what `settings/access`'s POST calls, when an admin edits
+ * somebody's ticked brands. The route's PATCH calls a different function,
+ * `setReimburseAccessAndApprovalActive` (`./access-service.ts`), when an
+ * admin flips the row's own off/on switch — that one is a real, separate
+ * toggle, kept in step with the tick set by its own `EXISTS` check rather
+ * than by there being only one place `IsActive` is written.
  *
- * **There is deliberately no separate active toggle.** `IsActive` is derived
- * from `targets` (`isApproverScope`), never posted independently, for the
- * same reason `ApiKey.ExpiresAt` is a single nullable column rather than a
- * boolean plus a date: a toggle plus a tick set can hold two contradictory
- * states — active with nothing ticked, or inactive with brands still ticked —
- * that then have to be defended against on every read. One derived value
- * cannot be contradictory.
+ * **Ticks may only ever turn approval OFF; only the PATCH turns it back ON.**
+ * The MERGE below writes
+ * `IsActive = CASE WHEN @active = 0 THEN 0 ELSE t.IsActive END` — zero
+ * recognised targets forces `IsActive` to 0 regardless of what it held, and a
+ * non-empty target set leaves whatever `IsActive` already was untouched; it
+ * never sets it to 1. **Before this fix the MERGE wrote `IsActive = @active`
+ * unconditionally** (derived from the tick count alone, with no memory of the
+ * row's own prior state), which reactivated a deactivated approver as a side
+ * effect of an ordinary brand-tick edit: an admin deactivates X through the
+ * PATCH (`AccReimburseAccess.IsActive = 0` AND, via that function's own
+ * `EXISTS` check, `AccReimburseApprover.IsActive = 0` — brand rows left
+ * intact by design, so an admin can see what a deactivated person still
+ * holds and set it up before switching them back on); the admin later adjusts
+ * one of X's brand ticks on that same row — the checkboxes render on every
+ * row with no active-guard — and the old MERGE derived `active = true` from
+ * the non-empty tick set and wrote it straight to `IsActive`, silently
+ * restoring X's authority to approve real payments while the สถานะ badge kept
+ * reading "ปิด". Found in the final whole-branch review, before it shipped.
+ *
+ * **The two writers do not race, because each owns a different direction of
+ * the same column.** `setReimburseAccessAndApprovalActive`'s own docblock has
+ * the mirror image of the rule above: its `@active = 0` branch always
+ * succeeds, and its `@active = 1` branch (an admin switching a row back on)
+ * sets `IsActive = 1` only when a brand tick still exists, checked live with
+ * an `EXISTS` rather than trusted from any value read before that statement.
+ * Between the two functions, `IsActive` can move 1 → 0 by either path, and
+ * 0 → 1 only through the PATCH's own `EXISTS` check — ticking a brand alone
+ * can never be what turns someone back into an active approver, which is
+ * exactly the property the bug above violated.
  *
  * One `writeBothPools` transaction, in order: MERGE the `AccReimburseApprover`
  * row on `StaffId` (the same MERGE shape the deleted `upsertReimburseApprover`
- * used, plus the derived `IsActive`), delete every existing
+ * used, plus the guarded `IsActive` above), delete every existing
  * `AccReimburseApproverBrand` row for that approver, then insert one row per
  * normalized target.
  *
@@ -291,7 +317,8 @@ export async function setReimburseApproverBrands(
         `MERGE [dbo].[AccReimburseApprover] AS t
          USING (SELECT @staff AS StaffId) AS s ON t.StaffId = s.StaffId
          WHEN MATCHED THEN UPDATE SET
-           Email = @email, DisplayName = @name, IsActive = @active,
+           Email = @email, DisplayName = @name,
+           IsActive = CASE WHEN @active = 0 THEN 0 ELSE t.IsActive END,
            UpdatedBy = @user, UpdatedAt = SYSDATETIME()
          WHEN NOT MATCHED THEN
            INSERT (StaffId, Email, DisplayName, IsActive, CreatedBy)

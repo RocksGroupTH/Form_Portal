@@ -13,8 +13,11 @@ import {
 import {
   accountCheckActorStaffId,
   finalStepRefusal,
+  REIMBURSE_SCOPE_ERROR,
   type ReimburseApprovalContext,
 } from "@/lib/acc/reimburse/approval-policy";
+import { canActOnTarget } from "@/lib/acc/reimburse/brand-scope";
+import { loadApproverScopeByStaffId, resolveClaimTarget } from "@/lib/acc/reimburse/brand-scope-load";
 import { AP4_FORM_CODE } from "@/features/reimburse/constants";
 
 /* ── GET /api/request/reimburse/requests/[id]/approval-context ── */
@@ -91,10 +94,27 @@ export async function GET(
       });
     }
 
-    // Both accounting steps answer to `AccReimburseApprover` — one pool, and
-    // AP-4 approvals are not brand-gated the way AP-1's are.
+    // Both accounting steps answer to `AccReimburseApprover` — one pool — but
+    // each action is additionally scoped to the claim's own Interface-brand
+    // target (`AccReimburseApproverBrand`, migration 144), the same check
+    // `requireApproverScopeFor` makes inside the transaction that writes. A
+    // KSI-only approver opening a PCTH claim by link (the read ACL admits
+    // them) must not see a working Approve button the service will refuse
+    // with `REIMBURSE_SCOPE_ERROR` — that button has to answer `canAct: false`
+    // here, with the same named reason, rather than let the click be the first
+    // place the refusal shows up.
     const approver = await resolveReimburseApprover(actor);
     if (!approver) return NextResponse.json({ ok: true, data: empty });
+
+    const scope = await loadApproverScopeByStaffId(actor.staffId, actor.email);
+    if (scope == null) return NextResponse.json({ ok: true, data: empty });
+    const target = await resolveClaimTarget(request.brandCode);
+    if (!canActOnTarget(scope, target)) {
+      return NextResponse.json({
+        ok: true,
+        data: { ...empty, canAct: false, reason: REIMBURSE_SCOPE_ERROR },
+      });
+    }
 
     if (step === "ACCOUNT_FINAL") {
       // Named refusal, not silence: the person genuinely is an approver, and a

@@ -49,8 +49,9 @@ import type { ExpenseAccount } from "@/lib/acc/reimburse/expense-account-service
  *    a `null` scope rather than falling back to "show everything". So they now
  *    see an EMPTY queue, not a full one — the sentence this docblock used to
  *    carry ("sees a full queue and gets ไม่มีสิทธิ์ from every action") is what
- *    Task 5 changed, and CLAUDE.md/the design spec have not caught up yet
- *    (recorded, not silently left stale, in `approvals-route-authz-guard.test.ts`).
+ *    Task 5 changed. CLAUDE.md and the design spec have since been corrected
+ *    to match (Task 9, commit `b2184dd`) — see `approvals-route-authz-guard.test.ts`
+ *    for the history of that correction.
  *  - A scoped approver (a real `scope: string[]`) sees only the claims whose
  *    brand resolves to one of their ticked Interface targets. Whether a given
  *    click succeeds is STILL re-decided by the approval service inside the
@@ -670,12 +671,23 @@ export function ReimburseApprovalQueue() {
           // all is pending anywhere; `unmappedBrandCount` — independent of
           // WHO is asking, see countUnmappedBrandRows's own docblock — names
           // the fix when the reason is a claim nobody's scope can ever cover.
+          //
+          // A FOURTH case was missing here (found in the final review): a real
+          // roster row with zero ticks. `scope === []` is neither `null` (the
+          // yellow notice above already explains that one) nor a non-empty
+          // array, so it fell into the same generic "nothing pending" sentence
+          // as an honestly empty queue — with `isReimburseApprover` true, no
+          // notice fires either, so an admin who added someone and forgot to
+          // tick a brand saw a page that looked correctly empty instead of one
+          // saying why nothing showed.
           <div className="py-16 text-center px-4">
             <Inbox size={32} style={{ color: "var(--text-faint)", margin: "0 auto 12px" }} />
             <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>
-              {scope && scope.length > 0
-                ? `ไม่มีรายการในกลุ่มที่คุณดูแล (${scope.join(", ")})`
-                : "ไม่มีรายการรอบัญชีอนุมัติ"}
+              {scope !== null && scope.length === 0
+                ? "คุณเป็นผู้อนุมัติฝ่ายบัญชีแล้ว แต่ยังไม่ได้ติ๊กแบรนด์ใดเลย จึงไม่แสดงรายการให้ — ผู้ดูแลระบบติ๊กแบรนด์ที่คุณอนุมัติได้ (อย่างน้อย 1 แบรนด์) ได้ที่ ตั้งค่าขอเบิกเงินคืนพนักงาน → สิทธิ์เข้าถึง"
+                : scope && scope.length > 0
+                  ? `ไม่มีรายการในกลุ่มที่คุณดูแล (${scope.join(", ")})`
+                  : "ไม่มีรายการรอบัญชีอนุมัติ"}
             </p>
             {unmappedBrandCount > 0 && (
               <p

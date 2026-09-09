@@ -147,8 +147,9 @@ async function requireApproverStaffId(actor: ReimburseActor): Promise<number> {
  * target unconditionally, for anyone's scope. That is the fail-safe
  * direction `brand-scope-load.ts`'s own docblock asks for: invisible to every
  * scoped approver rather than actionable by all of them. It costs something
- * real — such a claim is actionable by nobody but an admin — and that is
- * `resolveClaimTarget`'s own note to make, not this function's to repeat.
+ * real — such a claim is actionable by nobody at all, until an admin maps
+ * the brand — and that is `resolveClaimTarget`'s own note to make, not this
+ * function's to repeat.
  */
 async function requireApproverScopeFor(
   actor: ReimburseActor,
