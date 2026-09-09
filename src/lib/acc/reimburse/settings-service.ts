@@ -232,13 +232,31 @@ export async function listReimburseApproverBrands(): Promise<Map<number, string[
  * toggle, kept in step with the tick set by its own `EXISTS` check rather
  * than by there being only one place `IsActive` is written.
  *
- * **Ticks may only ever turn approval OFF; only the PATCH turns it back ON.**
- * The MERGE below writes
- * `IsActive = CASE WHEN @active = 0 THEN 0 ELSE t.IsActive END` — zero
- * recognised targets forces `IsActive` to 0 regardless of what it held, and a
- * non-empty target set leaves whatever `IsActive` already was untouched; it
- * never sets it to 1. **Before this fix the MERGE wrote `IsActive = @active`
- * unconditionally** (derived from the tick count alone, with no memory of the
+ * **The MERGE does not write `IsActive` on an existing row at all. Only the
+ * PATCH moves it, in either direction.** Ticking is about scope; activation is
+ * about the person. Two earlier versions of this statement got that wrong in
+ * opposite directions and both are worth knowing, because each looks like the
+ * fix for the other:
+ *
+ * 1. `IsActive = @active` — derived from the tick count alone, with no memory
+ *    of the row's own prior state — **reactivated a deactivated approver as a
+ *    side effect of an ordinary brand-tick edit** (detail below).
+ * 2. `IsActive = CASE WHEN @active = 0 THEN 0 ELSE t.IsActive END` — the first
+ *    fix, which closed that and opened its mirror: untick a lone brand (the
+ *    row goes inactive, the brand rows are deleted) and then re-tick it, and
+ *    the CASE's `ELSE` keeps the row at 0 forever. The person shows **ใช้งาน**
+ *    with a visible tick and can approve nothing, recoverable only by
+ *    switching them off and on again through a red destructive button. Two
+ *    ordinary clicks, in the commissioning flow this screen exists for.
+ *
+ * Writing nothing is what makes both impossible, and **the OFF direction is
+ * not lost with it**: an active approver whose ticks are all cleared has an
+ * empty scope, and `canActOnTarget` refuses an empty scope for every target,
+ * so all five action paths still refuse. `IsActive` was never what enforced
+ * that — the scope was.
+ *
+ * The bug the first version had (kept because a reader will otherwise
+ * reintroduce it): an admin deactivates X through the
  * row's own prior state), which reactivated a deactivated approver as a side
  * effect of an ordinary brand-tick edit: an admin deactivates X through the
  * PATCH (`AccReimburseAccess.IsActive = 0` AND, via that function's own
@@ -251,16 +269,15 @@ export async function listReimburseApproverBrands(): Promise<Map<number, string[
  * restoring X's authority to approve real payments while the สถานะ badge kept
  * reading "ปิด". Found in the final whole-branch review, before it shipped.
  *
- * **The two writers do not race, because each owns a different direction of
- * the same column.** `setReimburseAccessAndApprovalActive`'s own docblock has
- * the mirror image of the rule above: its `@active = 0` branch always
- * succeeds, and its `@active = 1` branch (an admin switching a row back on)
- * sets `IsActive = 1` only when a brand tick still exists, checked live with
- * an `EXISTS` rather than trusted from any value read before that statement.
- * Between the two functions, `IsActive` can move 1 → 0 by either path, and
- * 0 → 1 only through the PATCH's own `EXISTS` check — ticking a brand alone
- * can never be what turns someone back into an active approver, which is
- * exactly the property the bug above violated.
+ * **The two writers do not race, because only one of them writes the column.**
+ * This function writes `IsActive` **once**, on `WHEN NOT MATCHED` — a brand-new
+ * person, where there is no prior state to preserve.
+ * `setReimburseAccessAndApprovalActive` (`access-service.ts`) owns every
+ * subsequent move, both directions, and its `@active = 1` branch sets
+ * `IsActive = 1` only when a brand tick still exists, checked live with an
+ * `EXISTS` rather than trusted from any value read beforehand. So on an
+ * existing row `IsActive` moves only through the PATCH, and only ever to a
+ * value the ticks support.
  *
  * One `writeBothPools` transaction, in order: MERGE the `AccReimburseApprover`
  * row on `StaffId` (the same MERGE shape the deleted `upsertReimburseApprover`
@@ -318,7 +335,6 @@ export async function setReimburseApproverBrands(
          USING (SELECT @staff AS StaffId) AS s ON t.StaffId = s.StaffId
          WHEN MATCHED THEN UPDATE SET
            Email = @email, DisplayName = @name,
-           IsActive = CASE WHEN @active = 0 THEN 0 ELSE t.IsActive END,
            UpdatedBy = @user, UpdatedAt = SYSDATETIME()
          WHEN NOT MATCHED THEN
            INSERT (StaffId, Email, DisplayName, IsActive, CreatedBy)

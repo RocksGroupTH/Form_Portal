@@ -104,17 +104,33 @@ export async function upsertReimburseAccess(a: {
       .input("staffId", sql.Int, a.staffId)
       .input("email", sql.NVarChar(200), a.email)
       .input("name", sql.NVarChar(200), a.displayName)
-      .input("active", sql.Bit, a.isActive === undefined ? true : a.isActive)
+      // **An ABSENT `isActive` leaves an existing row's flag alone; only an
+      // explicit boolean moves it.** It used to default to `true` and write
+      // unconditionally, so a settings POST that simply omitted the field
+      // reactivated a deactivated person — restoring their settings-tab grants
+      // *and* the `approvalQueue` menu key, i.e. sight of every claim's number,
+      // requester, amount and payment date. Nothing server-side prevented it;
+      // the only thing that did was the grid echoing `isActive: row.isActive`
+      // back on every save, which is a client-side invariant of exactly the
+      // kind the sibling `AccReimburseApprover` bug was raised about.
+      //
+      // A brand-new row still defaults to active — `WHEN NOT MATCHED` has no
+      // prior state to preserve, and adding somebody through the directory
+      // search is a deliberate act. This is the same "absent is not null"
+      // distinction `ApiKey`'s `expiresAt` PATCH makes, for the same reason:
+      // "leave it alone" has to be expressible.
+      .input("active", sql.Bit, a.isActive === undefined ? null : a.isActive)
       .input("by", sql.Int, a.createdBy ?? null)
       .query(`
         MERGE [dbo].[AccReimburseAccess] WITH (HOLDLOCK) AS t
         USING (SELECT @staffId AS StaffId) AS s ON t.StaffId = s.StaffId
         WHEN MATCHED THEN UPDATE SET
-          Email = @email, DisplayName = @name, IsActive = @active,
+          Email = @email, DisplayName = @name,
+          IsActive = COALESCE(@active, t.IsActive),
           UpdatedBy = @by, UpdatedAt = SYSDATETIME()
         WHEN NOT MATCHED THEN
           INSERT (StaffId, Email, DisplayName, IsActive, CreatedBy)
-          VALUES (@staffId, @email, @name, @active, @by);
+          VALUES (@staffId, @email, @name, COALESCE(@active, 1), @by);
       `);
   });
 }
