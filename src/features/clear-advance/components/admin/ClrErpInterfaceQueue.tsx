@@ -18,7 +18,7 @@ import { fmtMoney } from "@/features/clear-advance/components/admin/shared";
 const fetcher = (url: string) =>
   fetch(url).then((r) => r.json()) as Promise<{ ok: boolean; data?: ClrErpQueueRow[]; error?: string }>;
 
-type TabKey = "pending" | "sent" | "failed";
+type TabKey = "pending" | "sent" | "failed" | "cancelled";
 type StatusFilter = "ALL" | "Sent" | "Pending" | "Failed";
 
 function isSent(row: ClrErpQueueRow): boolean { return row.erpStatus === "Sent"; }
@@ -32,8 +32,12 @@ function isPending(row: ClrErpQueueRow): boolean { return row.erpStatus === "Pen
  * deliberately, which is where that gets said.
  */
 function isSelectable(row: ClrErpQueueRow): boolean {
-  return !isSent(row) && !isPending(row) && row.erpStatus !== "Failed";
+  return !isCancelled(row) && !isSent(row) && !isPending(row) && row.erpStatus !== "Failed";
 }
+
+/** Cancelled after approval — in the queue only so the ยกเลิก tab can show it. */
+function isCancelled(row: ClrErpQueueRow): boolean { return row.status === "Cancelled"; }
+
 
 function fmtDateTime(iso: string | null): string {
   if (!iso) return "—";
@@ -406,6 +410,10 @@ export function ClrErpInterfaceQueue() {
   /** The row waiting for the pull-back confirmation. */
   const [pullbackRow, setPullbackRow] = useState<ClrErpQueueRow | null>(null);
   const [pullbackBusy, setPullbackBusy] = useState(false);
+  /** The row waiting for the cancel confirmation, and the reason typed for it. */
+  const [cancelRow, setCancelRow] = useState<ClrErpQueueRow | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelBusy, setCancelBusy] = useState(false);
   const [frozenIds, setFrozenIds] = useState<number[]>([]);
   const [confirmItems, setConfirmItems] = useState<ClrPreviewItem[]>([]);
 
@@ -441,14 +449,15 @@ export function ClrErpInterfaceQueue() {
 
   // split rows (after brand filter)
   const sendableRows = useMemo(() => filteredByBrand.filter(isSelectable), [filteredByBrand]);
+  const cancelledRows = useMemo(() => filteredByBrand.filter(isCancelled), [filteredByBrand]);
   /* A failure is not a send. It used to sit in "ส่งแล้ว" behind a red pill,
      counted in that tab's total, which read as work finished. */
   const sentRows = useMemo(
-    () => filteredByBrand.filter((r) => isSent(r) || isPending(r)),
+    () => filteredByBrand.filter((r) => !isCancelled(r) && (isSent(r) || isPending(r))),
     [filteredByBrand],
   );
   const failedRows = useMemo(
-    () => filteredByBrand.filter((r) => r.erpStatus === "Failed"),
+    () => filteredByBrand.filter((r) => !isCancelled(r) && r.erpStatus === "Failed"),
     [filteredByBrand],
   );
   const failedFiltered = useMemo(() => {
@@ -598,6 +607,32 @@ export function ClrErpInterfaceQueue() {
     }
   }, [pullbackRow, mutate]);
 
+  const doCancel = useCallback(async () => {
+    if (!cancelRow || !cancelReason.trim()) return;
+    setCancelBusy(true);
+    try {
+      const res = await fetch("/api/request/clear-advance/erp/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: cancelRow.id, reason: cancelReason.trim() }),
+      });
+      const json = (await res.json()) as { ok: boolean; error?: string };
+      if (!json.ok) {
+        toast.error(json.error ?? "ยกเลิกไม่สำเร็จ");
+        return;
+      }
+      toast.success("ยกเลิกแล้ว — ย้ายไปแท็บ “ยกเลิก”");
+      setCancelRow(null);
+      setCancelReason("");
+      setTab("cancelled");
+      await mutate();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "ยกเลิกไม่สำเร็จ");
+    } finally {
+      setCancelBusy(false);
+    }
+  }, [cancelRow, cancelReason, mutate]);
+
   /** What the send will post, grouped by the BC company each clearing targets —
    *  the same summary AP-2's confirmation shows. */
   const sendSummary = useMemo(() => {
@@ -695,6 +730,7 @@ export function ClrErpInterfaceQueue() {
           ["pending", `รอส่ง (${sendableRows.length})`],
           ["sent", `ส่งแล้ว (${sentRows.length})`],
           ["failed", `ล้มเหลว (${failedRows.length})`],
+          ["cancelled", `ยกเลิก (${cancelledRows.length})`],
         ] as const).map(([t, label]) => {
           const active = tab === t;
           return (
@@ -754,7 +790,7 @@ export function ClrErpInterfaceQueue() {
                         <input type="checkbox" checked={allSelected} onChange={toggleAll}
                           disabled={selectableIds.length === 0} className="cursor-pointer" />
                       </th>
-                      {["เลขที่", "แบรนด์", "ผู้ยื่น", "Advance", "ใช้จริง", "คืน/จ่ายเพิ่ม", "วันจ่าย", "สถานะ ERP", "Doc No"].map((h) => (
+                      {["เลขที่", "แบรนด์", "ผู้ยื่น", "Advance", "ใช้จริง", "คืน/จ่ายเพิ่ม", "วันจ่าย", "สถานะ ERP", "Doc No", ""].map((h) => (
                         <th key={h} className="px-3 py-2.5 font-semibold whitespace-nowrap text-left"
                           style={{ color: "var(--text-secondary)" }}>{h}</th>
                       ))}
@@ -808,13 +844,24 @@ export function ClrErpInterfaceQueue() {
                           <td className="px-3 py-2 whitespace-nowrap font-mono text-[11px]" style={{ color: "var(--text-secondary)" }}>
                             {row.erpDocumentNo ?? <span style={{ color: "var(--text-faint)" }}>—</span>}
                           </td>
+                          {/* A row can be stuck for a reason the portal cannot fix
+                              — an AP-2 advance with no vendor that can no longer be
+                              given one. Without this it waited in "รอส่ง" for ever. */}
+                          <td className="px-3 py-2 whitespace-nowrap text-right">
+                            <button type="button" onClick={() => { setCancelRow(row); setCancelReason(""); }}
+                              className="text-[12px] font-medium px-2.5 py-1 rounded-lg cursor-pointer bg-transparent"
+                              style={{ color: "var(--status-bad-text)", border: "1px solid color-mix(in srgb, var(--status-bad-text) 35%, transparent)" }}
+                              title="ยกเลิกคำขอนี้ — จะย้ายไปแท็บ ยกเลิก">
+                              ยกเลิก
+                            </button>
+                          </td>
                         </tr>
                       );
                     })}
                   </tbody>
                   <tfoot className="sticky bottom-0 z-10">
                     <tr style={{ borderTop: "2px solid var(--border-card)", background: "color-mix(in srgb, var(--bg-card) 80%, var(--bg-page))", boxShadow: "0 -1px 0 var(--border-card), 0 -8px 16px -10px rgba(0,0,0,0.25)" }}>
-                      <td colSpan={10} className="px-3 py-2.5 font-bold" style={{ color: "var(--text-heading)" }}>
+                      <td colSpan={11} className="px-3 py-2.5 font-bold" style={{ color: "var(--text-heading)" }}>
                         รอส่ง {sendableRows.length} รายการ
                       </td>
                     </tr>
@@ -1000,12 +1047,20 @@ export function ClrErpInterfaceQueue() {
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap"><ErpStatusBadge row={row} onShow={setBcRow} /></td>
                           <td className="px-3 py-2 whitespace-nowrap text-right">
-                            <button type="button" onClick={() => setPullbackRow(row)}
-                              className="text-[12px] font-semibold px-2.5 py-1 rounded-lg cursor-pointer border-none"
-                              style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}
-                              title="ล้างสถานะและย้ายกลับไปแท็บ รอส่ง">
-                              ดึงกลับเพื่อยิงใหม่
-                            </button>
+                            <div className="flex items-center justify-end gap-2">
+                              <button type="button" onClick={() => setPullbackRow(row)}
+                                className="text-[12px] font-semibold px-2.5 py-1 rounded-lg cursor-pointer border-none"
+                                style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}
+                                title="ล้างสถานะและย้ายกลับไปแท็บ รอส่ง">
+                                ดึงกลับเพื่อยิงใหม่
+                              </button>
+                              <button type="button" onClick={() => { setCancelRow(row); setCancelReason(""); }}
+                                className="text-[12px] font-medium px-2.5 py-1 rounded-lg cursor-pointer bg-transparent"
+                                style={{ color: "var(--status-bad-text)", border: "1px solid color-mix(in srgb, var(--status-bad-text) 35%, transparent)" }}
+                                title="เลิกส่งใบนี้ — จะย้ายไปแท็บ ยกเลิก">
+                                ยกเลิก
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -1016,6 +1071,124 @@ export function ClrErpInterfaceQueue() {
             </div>
           )}
         </>
+      )}
+
+      {/* ── ยกเลิก tab ── */}
+      {tab === "cancelled" && (
+        <>
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <span className="text-[13px] font-semibold" style={{ color: "var(--text-heading)" }}>
+              ยกเลิกก่อนส่งเข้า ERP ({cancelledRows.length} รายการ)
+            </span>
+            <span className="text-[11px] ml-auto" style={{ color: "var(--text-muted)" }}>
+              เงินทดรองจ่ายของใบที่ยกเลิกจะกลับไปเคลียร์ใหม่ได้
+            </span>
+          </div>
+
+          {cancelledRows.length === 0 ? (
+            <div className="flex flex-col items-center gap-3 py-12 text-center rounded-xl"
+              style={{ border: "1px solid var(--border-card)", background: "var(--bg-card)" }}>
+              <FileX size={32} style={{ color: "var(--text-muted)" }} />
+              <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>ไม่มีรายการที่ยกเลิก</p>
+            </div>
+          ) : (
+            <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border-card)" }}>
+              <div className="overflow-x-auto no-scrollbar max-h-[min(72vh,760px)] overflow-y-auto" style={{ background: "var(--bg-card)" }}>
+                <table className="w-full text-[12px] border-collapse min-w-[900px]">
+                  <thead className="sticky top-0 z-10"
+                    style={{ background: "var(--bg-card-alt)", boxShadow: "0 1px 0 var(--border-light)" }}>
+                    <tr style={{ borderBottom: "1px solid var(--border-light)" }}>
+                      {["เลขที่", "แบรนด์", "ผู้ยื่น", "Advance", "ใช้จริง", "วันที่ยกเลิก", "เหตุผล"].map((h) => (
+                        <th key={h} className="px-3 py-2.5 font-semibold whitespace-nowrap text-left"
+                          style={{ color: "var(--text-secondary)" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cancelledRows.map((row, idx) => {
+                      const rowBg = idx % 2 === 0 ? "transparent" : "color-mix(in srgb, var(--bg-card) 50%, var(--bg-page))";
+                      return (
+                        <tr key={row.id} style={{ background: rowBg, borderBottom: "1px solid var(--border-light)" }}>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            <span className="font-semibold" style={{ color: "var(--nav-active-text)" }}>{row.requestNo ?? `#${row.id}`}</span>
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{row.brandCode ?? "—"}</td>
+                          <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-primary)" }}>{row.requesterFullName ?? "—"}</td>
+                          <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{row.advanceRequestNo ?? "—"}</td>
+                          <td className="px-3 py-2 whitespace-nowrap text-right tabular-nums" style={{ color: "var(--text-primary)" }}>
+                            {fmtMoney(row.actualTotal)}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>
+                            {fmtDateTime(row.cancelledAt)}
+                          </td>
+                          <td className="px-3 py-2" style={{ color: "var(--text-secondary)", maxWidth: "24rem" }}>
+                            {row.cancelNote ?? "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Cancelling ends a request people are waiting on, and the requester is
+          told the reason — so the reason is required here rather than optional. */}
+      {cancelRow && (
+        <Dialog
+          open={!!cancelRow}
+          onOpenChange={(o) => { if (!o && !cancelBusy) { setCancelRow(null); setCancelReason(""); } }}
+          title="ยกเลิกคำขอนี้?"
+          contentClassName="max-w-[520px]"
+        >
+          <div className="flex flex-col gap-3 p-1">
+            <p className="text-[13px] m-0" style={{ color: "var(--text-secondary)" }}>
+              <b style={{ color: "var(--text-heading)" }}>{cancelRow.requestNo ?? `#${cancelRow.id}`}</b>{" "}
+              จะถูกยกเลิกและย้ายไปแท็บ “ยกเลิก” — ส่งเข้า ERP ไม่ได้อีก
+              และเงินทดรองจ่าย {cancelRow.advanceRequestNo ?? "ของใบนี้"} จะกลับไปเคลียร์ใหม่ได้
+            </p>
+            {cancelRow.erpStatus === "Failed" && (
+              <p className="text-[12px] m-0 px-3 py-2 rounded-lg"
+                style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
+                ⚠️ ใบนี้เคยส่งแล้วล้มเหลว — ถ้า BC รับบางบรรทัดไว้ เอกสารที่ค้างใน Journal Batch
+                <b> ต้องไปลบใน BC เอง</b> การยกเลิกที่นี่ไม่แตะ Business Central
+              </p>
+            )}
+            <label className="text-[12px] font-semibold" style={{ color: "var(--text-heading)" }}>
+              เหตุผลที่ยกเลิก *
+              <textarea
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                rows={3}
+                placeholder="เช่น ใบเบิก AP-2 ไม่มี Vendor และแก้ไม่ได้ — ให้ผู้ขอยื่นใหม่"
+                className="mt-1 w-full text-[13px] rounded-lg px-3 py-2 outline-none resize-none font-normal"
+                style={{ background: "var(--bg-card)", border: "1px solid var(--border-input)", color: "var(--text-primary)" }}
+              />
+            </label>
+            <p className="text-[11px] m-0" style={{ color: "var(--text-muted)" }}>
+              ผู้ขอจะได้รับอีเมลแจ้งพร้อมเหตุผลนี้
+            </p>
+            <div className="flex justify-end gap-2">
+              <button type="button" disabled={cancelBusy} onClick={() => { setCancelRow(null); setCancelReason(""); }}
+                className="text-[13px] font-medium px-4 py-2 rounded-lg cursor-pointer"
+                style={{ color: "var(--text-secondary)", background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}>
+                ไม่ยกเลิก
+              </button>
+              <button type="button" disabled={cancelBusy || !cancelReason.trim()} onClick={doCancel}
+                className="text-[13px] font-medium px-4 py-2 rounded-lg cursor-pointer"
+                style={{
+                  background: "var(--status-bad-text)", color: "#fff", border: "none",
+                  opacity: cancelBusy || !cancelReason.trim() ? 0.55 : 1,
+                  cursor: cancelBusy || !cancelReason.trim() ? "not-allowed" : "pointer",
+                }}>
+                {cancelBusy ? "กำลังยกเลิก..." : "ยืนยันยกเลิก"}
+              </button>
+            </div>
+          </div>
+        </Dialog>
       )}
 
       {/* preview modal */}

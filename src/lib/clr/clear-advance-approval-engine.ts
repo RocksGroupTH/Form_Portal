@@ -263,6 +263,72 @@ export async function returnForEdit(requestId: number, actor: Actor, comment: st
 }
 
 /**
+ * Cancel a clearing that is already approved but has not reached BC.
+ *
+ * There is a state the queue could not get out of: approved, and unsendable for
+ * a reason the portal cannot fix — `ADC26-09027` sits behind an AP-2 advance
+ * with no confirmed vendor, and that advance was itself already sent, so the one
+ * screen that could set a vendor refuses it. The row simply stayed in "รอส่ง"
+ * for ever, counted as work waiting to be done.
+ *
+ * **Never sent, or Failed.** A `Sent` clearing has a complete document in BC
+ * that accounting may already be posting against, and cancelling our side of
+ * that quietly would leave the two ledgers disagreeing with nothing to say so —
+ * the same line `pullBackFailedSend` draws, for the same reason. `Failed` is
+ * allowed because BC refused it, but a partial document may still be sitting in
+ * the batch: that is the requester's and accounting's to clean up, and the
+ * dialog says so.
+ *
+ * The requester is told, because from their side an approved clearing that
+ * disappears is indistinguishable from one that was lost.
+ */
+export async function cancelApprovedClearing(
+  requestId: number,
+  actor: Actor,
+  reason: string,
+): Promise<void> {
+  const note = reason.trim();
+  if (!note) throw new Error("ต้องระบุเหตุผลที่ยกเลิก");
+
+  const pool = await getAccPool();
+  const tx = pool.transaction();
+  await tx.begin();
+  try {
+    const upd = await tx.request().input("rid", sql.Int, requestId).input("by", sql.Int, actor.userId)
+      .query(`UPDATE [dbo].[AccRequest] SET Status='Cancelled', CurrentStepCode=NULL,
+              CancelledBy=@by, CancelledAt=SYSDATETIME(), UpdatedAt=SYSDATETIME()
+              WHERE Id=@rid AND Status='Approved'
+                AND (ErpInterfaceStatus IS NULL OR ErpInterfaceStatus='Failed');
+              SELECT @@ROWCOUNT AS n`);
+    if ((upd.recordset[0].n as number) === 0) {
+      await tx.rollback();
+      throw new Error("ยกเลิกไม่ได้ — คำขอนี้ส่งเข้า BC แล้ว หรือไม่ได้อยู่ในสถานะอนุมัติแล้ว");
+    }
+    await tx.request().input("rid", sql.Int, requestId).input("by", sql.Int, actor.userId)
+      .input("c", sql.NVarChar, note)
+      .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note)
+              VALUES (@rid, @by, 'cancelled_after_approval', @c)`);
+    await tx.commit();
+  } catch (e) {
+    await tx.rollback().catch(() => {});
+    throw e;
+  }
+
+  const req = await getRequest(requestId);
+  if (req) {
+    const no = req.requestNo ?? String(requestId);
+    await notify(
+      requestId,
+      `เคลียร์เงินทดรองจ่าย ${no} ถูกยกเลิกโดยฝ่ายบัญชี`,
+      `<p>คำขอเคลียร์คืนเงินทดรองจ่าย <b>${no}</b> ที่อนุมัติแล้ว ถูกยกเลิกก่อนส่งเข้า Business Central</p>` +
+        `<p>เหตุผล: ${note}</p>` + link(requestId),
+      req.requesterEmail,
+      "Cancelled",
+    );
+  }
+}
+
+/**
  * Requester self-cancel: allowed within 24h of SubmittedAt while still pending the
  * manager (Status = Submitted, step = MANAGER) — i.e. before it reaches Account.
  * The route enforces requester ownership. Notifies the manager + requester by email.
