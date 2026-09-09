@@ -26,6 +26,45 @@
 export type ErpReadiness = { ready: boolean; issues: string[] };
 
 /**
+ * One row of AP-4's Interface ERP queue.
+ *
+ * It lives here rather than beside the query for the reason `ReimburseQueueRow`
+ * lives in `queue-policy.ts`: the shape is what the predicate and the readiness
+ * rule are about, and a screen that renders it must be typeable without
+ * dragging a pool import into the browser bundle.
+ *
+ * `formCode` and `status` are carried deliberately, not for display. They are
+ * what the query re-derives `belongsInErpQueue` from — the row check that has
+ * teeth, as opposed to the WHERE clause a later edit can rearrange while
+ * leaving its pinned text intact. Dropping them from this type is how that
+ * defence gets removed by accident.
+ *
+ * The ERP columns come straight off `AccRequest` and every one of them is
+ * nullable: nothing has been sent, so `erpStatus` is null on every row this
+ * queue currently shows. `readiness` is not a column — it is `erpReadiness`
+ * over the claim's lines, so the screen can say *why* a claim is not ready
+ * rather than only that it is not.
+ */
+export interface ReimburseErpQueueRow {
+  id: number;
+  requestNo: string;
+  brandCode: string;
+  requesterName: string;
+  formCode: string;
+  status: string;
+  submittedAt: string | null;
+  paymentDate: string | null;
+  totalAmount: number;
+  itemCount: number;
+  erpStatus: string | null;
+  erpDocumentNo: string | null;
+  erpEnvironment: string | null;
+  erpSentAt: string | null;
+  erpError: string | null;
+  readiness: ErpReadiness;
+}
+
+/**
  * Only an APPROVED AP-4 claim is in the ERP queue.
  *
  * An allow-list, not a catch-all: unknown statuses are OUT. The only status
