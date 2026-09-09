@@ -1,34 +1,39 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
-import { CheckCircle2, Circle, Link2, RefreshCw, Save } from "lucide-react";
+import {
+  CheckCircle2,
+  Circle,
+  GitBranch,
+  Link2,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Save,
+  Trash2,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui";
+import { Dialog } from "@/components/ui/Dialog";
 import { SearchableSelect } from "@/features/accounting/components/settings/SearchableSelect";
+import { ErpDeptFixDialog, type ErpDeptOption } from "@/features/accounting/components/settings/ErpDeptFixDialog";
+import type {
+  ReimburseErpGroup,
+  ReimburseErpGroupsView,
+  ReimburseErpGroupSaveInput,
+  ReimburseErpMemberRow,
+} from "@/lib/acc/reimburse/erp-interface-settings-service";
 
-interface ConfigRow {
-  brandCode: string;
-  brandName: string;
-  brandLogo: string | null;
-  interfaceTarget: string;
-  targetFromReimburse: boolean;
-  bcName: string | null;
-  bcConnectionName: string | null;
-  bcProfileComplete: boolean;
-  environment: string | null;
-  branchCode: string | null;
-  bankAccountNo: string | null;
-  journalBatchName: string | null;
-  ready: boolean;
-  active: boolean;
-}
+const ERP_INTERFACE_URL = "/api/request/reimburse/settings/erp-interface";
 
 type SelectOption = { value: string; label: string; subLabel?: string };
 interface AcctOpt { accountNo: string; displayName: string | null }
 interface BatchOpt { batchName: string; displayName: string | null; templateName: string | null }
 interface BranchOpt { code: string; displayName: string | null }
 interface CompanyErp { gl: AcctOpt[]; bank: AcctOpt[]; journalBatch: BatchOpt[]; branch: BranchOpt[] }
+interface CompanyDept { department: ErpDeptOption[] }
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -83,8 +88,19 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
   return <p className="text-[10px] font-bold uppercase tracking-wide mb-1.5" style={{ color: "var(--text-faint)" }}>{children}</p>;
 }
 
+function SettingsPanel({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return (
+    <div
+      className={`rounded-xl overflow-hidden ${className}`}
+      style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}
+    >
+      {children}
+    </div>
+  );
+}
+
 /**
- * "ตั้งค่าครบ" / "ยังไม่ครบ" — never "พร้อมส่ง". `row.ready` means the
+ * "ตั้งค่าครบ" / "ยังไม่ครบ" — never "พร้อมส่ง". `ready` means the
  * configuration is complete (a bank account and a journal batch are set and
  * the Business Central profile resolves), not that anything is about to be
  * sent — AP-4 has no send path at all yet (CLAUDE.md: "AP-4 never reaches
@@ -95,7 +111,7 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
 function StatusBadge({ ready }: { ready: boolean }) {
   const Icon = ready ? CheckCircle2 : Circle;
   return (
-    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full"
+    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0"
       style={ready
         ? { background: "rgba(79,163,122,0.15)", color: "var(--text-info-green)" }
         : { background: "var(--bg-badge)", color: "var(--text-muted)" }}>
@@ -104,183 +120,743 @@ function StatusBadge({ ready }: { ready: boolean }) {
   );
 }
 
-function BrandCard({ row, erpByCompany, onSaved }: {
-  row: ConfigRow;
-  erpByCompany: Record<string, CompanyErp>;
-  onSaved: () => void;
-}) {
-  // AP-4 owns its target Company + Bank + Branch + Journal Batch, the same
-  // shape AP-2's panel edits. No G/L account field — see the service's own
-  // docblock for why: Business Central resolves the debit account from the
-  // matched vendor's posting group, not from a configured G/L, and AP-4 has
-  // no reason to expect its eventual payload would need one AP-2's does not.
-  const [targetSel, setTargetSel] = useState(row.interfaceTarget ?? "");
-  const [bank, setBank] = useState(row.bankAccountNo ?? "");
-  const [branch, setBranch] = useState(row.branchCode ?? "");
-  const [batch, setBatch] = useState(row.journalBatchName ?? "");
-  const [busy, setBusy] = useState(false);
+function bcLineFor(group: ReimburseErpGroup): string {
+  return [decode(group.bcName), group.bcConnectionName?.trim()].filter((v) => v && v !== "—").join(" · ") || "—";
+}
 
-  const companyOpts = useMemo(
-    () => Object.keys(erpByCompany).sort().map((c) => ({ value: c, label: c })),
-    [erpByCompany],
+function MemberBrandChips({ members }: { members: ReimburseErpMemberRow[] }) {
+  if (members.length === 0) {
+    return <p className="text-[11px] m-0" style={{ color: "var(--text-muted)" }}>ยังไม่มีแบรนด์เบิก</p>;
+  }
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {members.map((m) => (
+        <span
+          key={m.brandCode}
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium"
+          style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-light)", color: "var(--text-secondary)" }}
+        >
+          {m.brandLogo && (
+            <img src={m.brandLogo} alt="" className="h-3 w-auto object-contain shrink-0"
+              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+          )}
+          {m.brandName}
+        </span>
+      ))}
+    </div>
   );
+}
 
-  // Changing the target Company resets the picks — accounts are
-  // company-specific, so a Bank/Branch/Batch from the old Company must never
-  // be saved here.
-  function onTargetChange(v: string) {
-    if (v === targetSel) return;
-    setTargetSel(v);
-    setBank(""); setBranch(""); setBatch("");
-  }
-
-  const target = targetSel;
-  const erp = erpByCompany[targetSel];
-  const bankOpts = useMemo(() => acctOptions(erp?.bank ?? [], bank), [erp, bank]);
-  const branchOpts = useMemo(() => branchOptions(erp?.branch ?? [], branch), [erp, branch]);
-  const batchOpts = useMemo(() => batchOptions(erp?.journalBatch ?? [], batch), [erp, batch]);
-
-  const targetDirty = targetSel.trim() !== (row.interfaceTarget ?? "").trim();
-  const bankDirty = bank.trim() !== (row.bankAccountNo ?? "").trim();
-  const branchDirty = branch.trim() !== (row.branchCode ?? "").trim();
-  const batchDirty = batch.trim() !== (row.journalBatchName ?? "").trim();
-  const anyDirty = targetDirty || bankDirty || branchDirty || batchDirty;
-
-  async function saveAll() {
-    if (!targetSel.trim()) return toast.error("กรุณาเลือก Company ปลายทาง");
-    if (!bank.trim()) return toast.error("กรุณาเลือก Bank Account");
-    setBusy(true);
-    try {
-      const res = await fetch("/api/request/reimburse/settings/erp-interface", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          brandCode: row.brandCode,
-          interfaceBrandCode: targetSel.trim(),
-          bankAccountNo: bank.trim(),
-          branchCode: branch.trim(),
-          journalBatchName: batch.trim(),
-        }),
-      });
-      const j = (await res.json()) as { ok: boolean; error?: string };
-      if (!j.ok) throw new Error(j.error ?? "บันทึกไม่สำเร็จ");
-      toast.success(`บันทึกการตั้งค่า ${row.brandName} แล้ว`);
-      onSaved();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const noOpts = !erp;
-  const bcLine = [decode(row.bcName), row.bcConnectionName?.trim()].filter((v) => v && v !== "—").join(" · ") || "—";
+/**
+ * One card per interface target (PCTH / KSI / PCMY / UNO) — Task 8's grouped
+ * replacement for the old one-card-per-claim-brand list. `group.ready` is
+ * read straight off the server: a member's bank account and the group's
+ * journal batch both fall back to AP-1's own defaults when AP-4 has no
+ * override, so a group can read ครบแล้ว with zero rows of its own under
+ * `FormCode = 'AP-4'` — see `erp-interface-settings-service.ts`'s docblock.
+ * That is why this card never says "AP-4 has its own configuration"; ครบแล้ว
+ * means configured, whoever configured it.
+ */
+function ReimburseErpGroupCard({ group, onEdit }: { group: ReimburseErpGroup; onEdit: () => void }) {
+  const journalLabel = group.journalBatchName?.trim() || "—";
+  const bcLine = bcLineFor(group);
 
   return (
-    <div className="rounded-xl p-4"
+    <button
+      type="button"
+      onClick={onEdit}
+      className="group w-full text-left rounded-xl p-4 transition-[box-shadow,border-color,transform] duration-200 hover:shadow-md active:scale-[0.998]"
       style={{
-        background: anyDirty ? "var(--bg-info-yellow)" : "var(--bg-card-alt)",
-        border: `1px solid ${anyDirty ? "var(--border-info-yellow)" : row.ready ? "var(--border-info-green)" : "var(--border-card)"}`,
-        opacity: row.active ? 1 : 0.6,
-      }}>
+        background: group.ready ? "var(--bg-info-green)" : "var(--bg-card-alt)",
+        border: `1px solid ${group.ready ? "var(--border-info-green)" : "var(--border-card)"}`,
+      }}
+    >
       <div className="flex items-center gap-3 mb-3">
-        {row.brandLogo && (
-          <img src={row.brandLogo} alt="" className="h-8 w-auto object-contain shrink-0"
-            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
-        )}
-        <div className="min-w-0 flex-1">
-          <p className="text-[13px] font-bold m-0 truncate" style={{ color: "var(--text-heading)" }}>{row.brandName}</p>
-          <p className="text-[10px] m-0 font-mono" style={{ color: "var(--text-muted)" }}>
-            {row.brandCode} → {target || "—"} · {(row.targetFromReimburse || targetDirty) ? "(AP-4)" : "(จาก AP-1)"}
-            {row.environment ? ` · ${row.environment === "Sandbox" ? "UAT" : "PROD"}` : ""}
-          </p>
-        </div>
-        <StatusBadge ready={row.ready} />
-      </div>
-
-      {!row.active && (
-        <p className="text-[11px] m-0 mb-3 px-3 py-2 rounded-lg"
-          style={{ background: "var(--bg-badge)", color: "var(--text-muted)" }}>
-          แบรนด์นี้ปิดใช้งานอยู่ในแท็บ “แบรนด์ที่เบิกได้” — ยังแก้ไขการตั้งค่าด้านล่างได้ตามปกติ
-        </p>
-      )}
-
-      <div className="mb-3 pb-3" style={{ borderBottom: "1px solid var(--border-light)" }}>
-        <FieldLabel>Company ปลายทาง (AP-4)</FieldLabel>
-        <SearchableSelect
-          value={targetSel}
-          onChange={onTargetChange}
-          options={companyOpts}
-          placeholder="— เลือก Company —"
-          emptyLabel="— เลือก Company —"
-          searchPlaceholder="ค้นหา Company..."
-          triggerBackground="var(--bg-card)"
-        />
-        <p className="text-[10px] m-0 mt-1" style={{ color: "var(--text-faint)" }}>BC: {bcLine}</p>
-      </div>
-      {target && !row.bcProfileComplete && (
-        <p className="text-[11px] m-0 mb-3 px-3 py-2 rounded-lg"
-          style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
-          ⚠️ การเชื่อมต่อ BC ของ Company นี้ยังไม่ครบ — ตั้งค่าที่ Accounting → Interface ERP ก่อน
-        </p>
-      )}
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div className="min-w-0">
-          <FieldLabel>Bank Account (AP-4)</FieldLabel>
-          <SearchableSelect value={bank} onChange={setBank} options={bankOpts}
-            placeholder={noOpts ? "เลือกปลายทางก่อน" : "— เลือก Bank —"}
-            emptyLabel={noOpts ? "เลือกปลายทางก่อน" : "— เลือก Bank —"}
-            searchPlaceholder="ค้นหา Bank..." triggerBackground="var(--bg-card)" />
-        </div>
-        <div className="min-w-0">
-          <FieldLabel>Branch (AP-4) · ไม่บังคับ</FieldLabel>
-          <SearchableSelect value={branch} onChange={setBranch} options={branchOpts}
-            placeholder={noOpts ? "เลือกปลายทางก่อน" : "— ไม่ระบุ · ใช้แผนกผู้ขอ —"}
-            emptyLabel={noOpts ? "เลือกปลายทางก่อน" : "— ไม่ระบุ · ใช้แผนกผู้ขอ —"}
-            searchPlaceholder="ค้นหา Branch..." triggerBackground="var(--bg-card)" />
-          <p className="text-[10px] m-0 mt-0.5" style={{ color: "var(--text-faint)" }}>
-            เลือก “— ไม่ระบุ —” เพื่อใช้แผนกของผู้ขอ (map HR→ERP)
-          </p>
-        </div>
-        <div className="min-w-0">
-          <FieldLabel>Journal Batch (AP-4)</FieldLabel>
-          <SearchableSelect value={batch} onChange={setBatch} options={batchOpts}
-            placeholder={noOpts ? "เลือกปลายทางก่อน" : "— เลือก Batch —"}
-            emptyLabel={noOpts ? "เลือกปลายทางก่อน" : "— เลือก Batch —"}
-            searchPlaceholder="ค้นหา Batch..." triggerBackground="var(--bg-card)" />
-          {target && !noOpts && batchOpts.length === 0 && (
-            <p className="text-[10px] m-0 mt-0.5" style={{ color: "var(--text-muted)" }}>
-              ไม่พบ Journal Batch ของ {target} ใน ERP
-            </p>
+        <div
+          className="flex items-center justify-center shrink-0 rounded-lg p-1.5"
+          style={{ background: "var(--bg-card)", border: "1px solid var(--border-light)" }}
+        >
+          {group.targetLogo && (
+            <img src={group.targetLogo} alt="" className="h-7 w-auto object-contain"
+              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
           )}
         </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] font-bold m-0 truncate" style={{ color: "var(--text-heading)" }}>
+            {group.targetName}
+          </p>
+          <p className="text-[10px] m-0 font-mono" style={{ color: "var(--text-muted)" }}>{group.targetCode}</p>
+        </div>
+        <StatusBadge ready={group.ready} />
       </div>
 
-      <div className="flex items-center justify-between gap-3 mt-3 pt-3"
-        style={{ borderTop: "1px solid var(--border-light)" }}>
-        <p className="text-[10px] m-0" style={{ color: "var(--text-faint)" }}>
-          AP-4 กำหนดเอง: Company ปลายทาง · Bank · Branch · Journal Batch
+      <div className="mb-3">
+        <MemberBrandChips members={group.members} />
+      </div>
+
+      <div className="pt-3 flex flex-col gap-1.5" style={{ borderTop: "1px solid var(--border-light)" }}>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "var(--text-faint)" }}>
+            Journal Batch
+          </span>
+          <span className="text-[11px] font-medium truncate max-w-[60%]" style={{ color: journalLabel === "—" ? "var(--text-muted)" : "var(--text-primary)" }} title={journalLabel}>
+            {journalLabel}
+          </span>
+        </div>
+        <p className="text-[10px] m-0 truncate" style={{ color: "var(--text-faint)" }} title={bcLine}>
+          {bcLine}{group.environment ? ` · ${group.environment === "Sandbox" ? "UAT" : "PROD"}` : ""}
         </p>
-        <Button variant="primary" icon={<Save size={15} />} onClick={saveAll}
-          loading={busy} disabled={!anyDirty}>บันทึก</Button>
+      </div>
+
+      <div className="flex justify-end mt-3">
+        <span
+          className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-lg opacity-80 group-hover:opacity-100"
+          style={{ color: "var(--nav-active-text)", background: "var(--nav-active-bg)" }}
+        >
+          <Pencil size={12} />
+          แก้ไข
+        </span>
+      </div>
+    </button>
+  );
+}
+
+function UnassignedBrandChip({ row }: { row: ReimburseErpMemberRow }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium"
+      style={{ background: "var(--bg-card-alt)", border: "1px dashed var(--border-light)", color: "var(--text-secondary)" }}
+    >
+      {row.brandLogo && (
+        <img src={row.brandLogo} alt="" className="h-3.5 w-auto object-contain shrink-0"
+          onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+      )}
+      {row.brandName}
+      <span className="font-mono text-[9px]" style={{ color: "var(--text-faint)" }}>{row.brandCode}</span>
+    </span>
+  );
+}
+
+/**
+ * The "Fix Dept" control beneath a row's Branch Code select — a trimmed copy
+ * of AP-1's `ErpDeptFixField` (not exported from `BrandErpInterfaceSettings.tsx`,
+ * so it cannot be imported; the picker it opens, `ErpDeptFixDialog`, IS
+ * exported and is reused as-is below). Disabled until a Branch Code is picked
+ * — `mergeFormBrandBranch` refuses `deptAsBranch: true` with a blank branch,
+ * so this keeps that state out of reach from the UI rather than only
+ * reporting it after a failed save.
+ */
+function FixDeptControl({
+  branchCode,
+  deptAsBranch,
+  fixedErpDeptCode,
+  disabled,
+  onPick,
+  onClear,
+}: {
+  branchCode: string;
+  deptAsBranch: boolean;
+  fixedErpDeptCode: string;
+  disabled?: boolean;
+  onPick: () => void;
+  onClear: () => void;
+}) {
+  const active = deptAsBranch && !!fixedErpDeptCode.trim();
+  const pickDisabled = disabled || !branchCode.trim();
+
+  if (active) {
+    return (
+      <div
+        className="mt-1.5 w-full flex items-center justify-between gap-2 px-2 py-1 rounded-lg"
+        style={{
+          background: "color-mix(in srgb, var(--text-info-green) 10%, var(--bg-card))",
+          border: "1px solid color-mix(in srgb, var(--text-info-green) 28%, transparent)",
+        }}
+        title={`Journal ใช้ Dept: ${fixedErpDeptCode}`}
+      >
+        <div className="flex items-center gap-1.5 min-w-0">
+          <GitBranch size={11} className="shrink-0" style={{ color: "var(--text-info-green)" }} />
+          <span className="text-[9px] font-bold uppercase tracking-wide shrink-0" style={{ color: "var(--text-info-green)" }}>
+            Fix
+          </span>
+          <span className="font-mono text-[11px] font-semibold leading-none" style={{ color: "var(--text-primary)" }}>
+            {fixedErpDeptCode}
+          </span>
+        </div>
+        <div className="flex items-center gap-0.5 shrink-0">
+          <button
+            type="button"
+            onClick={onPick}
+            disabled={pickDisabled}
+            title="เปลี่ยน Dept"
+            className="inline-flex items-center justify-center h-6 w-6 rounded-md transition-opacity hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{ color: "var(--text-secondary)", border: "1px solid color-mix(in srgb, var(--text-info-green) 25%, var(--border-light))", background: "var(--bg-card)" }}
+          >
+            <Pencil size={11} />
+          </button>
+          <button
+            type="button"
+            onClick={onClear}
+            disabled={disabled}
+            title="ยกเลิก Fix Dept"
+            className="inline-flex items-center justify-center h-6 w-6 rounded-md transition-opacity hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{ color: "var(--text-muted)", border: "1px solid color-mix(in srgb, var(--text-info-green) 25%, var(--border-light))", background: "var(--bg-card)" }}
+          >
+            <X size={11} />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onPick}
+      disabled={pickDisabled}
+      title={pickDisabled ? "เลือก Branch ก่อน" : "เลือก Dept ERP ที่ต้องการ Fix"}
+      className="mt-1.5 w-full inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[10px] font-medium transition-opacity hover:opacity-90 disabled:opacity-45 disabled:cursor-not-allowed"
+      style={{
+        border: "1px dashed color-mix(in srgb, var(--border-input) 85%, transparent)",
+        background: "color-mix(in srgb, var(--bg-card) 60%, transparent)",
+        color: "var(--text-muted)",
+      }}
+    >
+      <Plus size={11} className="shrink-0" style={{ color: "var(--text-faint)" }} />
+      <span>Fix Dept</span>
+    </button>
+  );
+}
+
+interface DraftMember {
+  brandCode: string;
+  brandName: string;
+  brandLogo: string | null;
+  bankAccountNo: string;
+  branchCode: string;
+  deptAsBranch: boolean;
+  fixedErpDeptCode: string;
+}
+
+function toDraft(m: ReimburseErpMemberRow): DraftMember {
+  return {
+    brandCode: m.brandCode,
+    brandName: m.brandName,
+    brandLogo: m.brandLogo,
+    bankAccountNo: m.bankAccountNo ?? "",
+    branchCode: m.branchCode ?? "",
+    deptAsBranch: m.deptAsBranch,
+    fixedErpDeptCode: m.fixedErpDeptCode ?? "",
+  };
+}
+
+const MEMBER_ROW_GRID = "minmax(160px,1.1fr) minmax(0,1fr) minmax(0,1.3fr) 2.75rem";
+
+function MemberBrandCell({ brandName, brandCode, brandLogo }: { brandName: string; brandCode: string; brandLogo: string | null }) {
+  return (
+    <div className="flex items-center gap-2 min-w-0">
+      {brandLogo ? (
+        <img src={brandLogo} alt="" className="h-8 w-8 object-contain shrink-0 rounded-md p-0.5"
+          style={{ background: "var(--bg-card)" }}
+          onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+      ) : (
+        <span className="h-8 w-8 shrink-0 rounded-md flex items-center justify-center text-[9px] font-bold"
+          style={{ background: "var(--bg-card)", color: "var(--text-muted)" }}>
+          {brandCode.slice(0, 2)}
+        </span>
+      )}
+      <div className="min-w-0 flex-1">
+        <p className="text-[12px] font-semibold m-0 truncate leading-tight" style={{ color: "var(--text-heading)" }}>{brandName}</p>
+        <p className="text-[10px] m-0 font-mono leading-tight mt-0.5" style={{ color: "var(--text-faint)" }}>{brandCode}</p>
       </div>
     </div>
   );
 }
 
 /**
- * AP-4's Interface ERP tab — Task 2 of the ERP-settings-and-queue work.
+ * The edit modal for one group — Task 8, Step 2 of the brief.
  *
- * Reads/writes through `/api/request/reimburse/settings/erp-interface`
- * (Task 2's own route, `requireRole` on both methods — this tab is
- * deliberately not grantable, see `settings-tabs.ts`). Bank / Branch /
- * Journal Batch option lists are read from AP-2's existing
- * `/api/request/advance/settings/erp-master`, not a new AP-4 copy of it: that
- * endpoint reads `Rocks_ERP_Data` — Business Central's mirror, keyed by
- * Company and unrelated to which form is asking — the same way
- * `ReimburseBrandSettings` already reads AP-1's `all-brands` endpoint for the
- * brand master rather than duplicating it.
+ * **No G/L Account column and no Description column**, unlike AP-1's
+ * near-identical-looking table (`TargetErpGroupEditForm` in
+ * `BrandErpInterfaceSettings.tsx`). AP-4 resolves its G/L per expense LINE
+ * (`AccReimburseItem.Category`), proposed by the AI document read and
+ * corrected by accounting from the queue (`PATCH .../requests/[id]/items`) —
+ * a per-brand default underneath a per-line answer would be a second answer
+ * to a question this form already settles elsewhere. Description lives on
+ * `AccBrandGlAccount.ErpDescription`, a table AP-4 never writes; see
+ * `erp-interface-settings-service.ts`'s own docblock for both.
+ *
+ * **Removal is immediate, not deferred to Save.** A member present when the
+ * modal opened (`originalCodes`) is removed by calling `DELETE
+ * ?brandCode=` right away — `saveReimburseErpGroup` never removes a member on
+ * its own (see the service docblock), and deferring removal to the Save
+ * button would trap an admin who wants to empty a group entirely: Save is
+ * disabled on an empty member list (there is nowhere to put the journal
+ * batch — see below), so if removal only took effect at Save time, removing
+ * the last member would leave no way to ever persist that removal. A member
+ * added in this session and not yet saved has no server row to delete, so
+ * removing it is local-only.
+ *
+ * **Save posts the whole current member list plus the shared Journal
+ * Batch.** `saveReimburseErpGroup` fans the batch out to every member's own
+ * claim-brand row — see the service docblock for why it must never be stored
+ * once against the target — so Save is disabled outright on an empty group,
+ * disabled while any member has no Bank Account, and disabled while any
+ * member has Fix Dept set with a blank Branch Code (`mergeFormBrandBranch`
+ * refuses that combination server-side); the reason is named next to the
+ * button in each case, per the brief.
+ */
+function ReimburseErpGroupModal({
+  group,
+  unassigned,
+  erp,
+  departmentOptions,
+  onClose,
+  onSaved,
+}: {
+  group: ReimburseErpGroup;
+  unassigned: ReimburseErpMemberRow[];
+  erp: CompanyErp | undefined;
+  departmentOptions: ErpDeptOption[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [journalDraft, setJournalDraft] = useState(group.journalBatchName ?? "");
+  const [members, setMembers] = useState<DraftMember[]>(() => group.members.map(toDraft));
+  const [originalCodes] = useState<Set<string>>(() => new Set(group.members.map((m) => m.brandCode)));
+  const [addCode, setAddCode] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [removingCode, setRemovingCode] = useState<string | null>(null);
+  const [deptPick, setDeptPick] = useState<{ brandCode: string; branchCode: string; initialCode: string } | null>(null);
+
+  const bankOpts = useMemo(() => acctOptions(erp?.bank ?? []), [erp]);
+  const branchOpts = useMemo(() => branchOptions(erp?.branch ?? []), [erp]);
+  const journalOpts = useMemo(() => batchOptions(erp?.journalBatch ?? [], journalDraft), [erp, journalDraft]);
+  const noErp = !erp;
+
+  const addOptions = useMemo(
+    () => unassigned
+      .filter((u) => !members.some((m) => m.brandCode === u.brandCode))
+      .map((u) => ({ value: u.brandCode, label: `${u.brandName} (${u.brandCode})` })),
+    [unassigned, members],
+  );
+
+  const missingBank = members.find((m) => !m.bankAccountNo.trim());
+  const missingDeptBranch = members.find((m) => m.deptAsBranch && !m.branchCode.trim());
+  const saveDisabledReason: string | null =
+    members.length === 0
+      ? "เพิ่มแบรนด์เบิกอย่างน้อย 1 แบรนด์ก่อนบันทึก"
+      : missingBank
+        ? `กรุณาเลือก Bank Account ให้ ${missingBank.brandName}`
+        : missingDeptBranch
+          ? `กรุณาเลือก Branch Code ให้ ${missingDeptBranch.brandName} ก่อนตั้ง Fix Dept`
+          : null;
+
+  function updateMember(brandCode: string, patch: Partial<DraftMember>) {
+    setMembers((prev) => prev.map((m) => (m.brandCode === brandCode ? { ...m, ...patch } : m)));
+  }
+
+  function handleBranchChange(brandCode: string, value: string) {
+    // Clearing the branch cannot leave a Fix Dept referencing a branch that
+    // no longer has a value — see this component's own docblock.
+    if (value.trim()) {
+      updateMember(brandCode, { branchCode: value });
+    } else {
+      updateMember(brandCode, { branchCode: value, deptAsBranch: false, fixedErpDeptCode: "" });
+    }
+  }
+
+  function handleAdd() {
+    if (!addCode) return;
+    const row = unassigned.find((u) => u.brandCode === addCode);
+    if (!row) return;
+    setMembers((prev) => prev.concat([{
+      brandCode: row.brandCode,
+      brandName: row.brandName,
+      brandLogo: row.brandLogo,
+      bankAccountNo: "",
+      branchCode: "",
+      deptAsBranch: false,
+      fixedErpDeptCode: "",
+    }]));
+    setAddCode("");
+  }
+
+  async function handleRemove(member: DraftMember) {
+    if (!originalCodes.has(member.brandCode)) {
+      // Never saved — nothing to delete server-side.
+      setMembers((prev) => prev.filter((m) => m.brandCode !== member.brandCode));
+      return;
+    }
+    setRemovingCode(member.brandCode);
+    try {
+      const res = await fetch(`${ERP_INTERFACE_URL}?brandCode=${encodeURIComponent(member.brandCode)}`, { method: "DELETE" });
+      const j = (await res.json()) as { ok: boolean; error?: string };
+      if (!j.ok) throw new Error(j.error ?? "ลบไม่สำเร็จ");
+      setMembers((prev) => prev.filter((m) => m.brandCode !== member.brandCode));
+      toast.success(`นำ ${member.brandName} ออกจากกลุ่มแล้ว`);
+      onSaved();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "ลบไม่สำเร็จ");
+    } finally {
+      setRemovingCode(null);
+    }
+  }
+
+  async function handleSave() {
+    if (saveDisabledReason) return;
+    setSaving(true);
+    try {
+      const body: ReimburseErpGroupSaveInput = {
+        targetCode: group.targetCode,
+        journalBatchName: journalDraft.trim() || null,
+        members: members.map((m) => ({
+          brandCode: m.brandCode,
+          bankAccountNo: m.bankAccountNo.trim(),
+          branchCode: m.branchCode.trim() || null,
+          deptAsBranch: m.deptAsBranch,
+          fixedErpDeptCode: m.fixedErpDeptCode.trim() || null,
+        })),
+      };
+      const res = await fetch(ERP_INTERFACE_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = (await res.json()) as { ok: boolean; error?: string };
+      if (!j.ok) throw new Error(j.error ?? "บันทึกไม่สำเร็จ");
+      toast.success(`บันทึก ${group.targetName} แล้ว`);
+      onSaved();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const bcLine = bcLineFor(group);
+  const busy = saving || removingCode != null;
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => { if (!open) onClose(); }}
+      title={`${group.targetName} — Interface ERP`}
+      contentClassName="max-w-4xl max-h-[90vh]"
+      scrollable={false}
+      uniformSurface
+      hideTitle
+    >
+      <div className="flex flex-col min-h-0 max-h-[90vh]">
+        <div className="shrink-0 px-6 pt-5 pb-3.5 pr-14" style={{ borderBottom: "1px solid var(--border-light)" }}>
+          <div className="flex items-start gap-3">
+            <div
+              className="flex items-center justify-center shrink-0 rounded-xl p-2 mt-0.5"
+              style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-light)" }}
+            >
+              {group.targetLogo && (
+                <img src={group.targetLogo} alt="" className="h-8 w-auto object-contain"
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-[16px] font-bold m-0 leading-snug" style={{ color: "var(--text-heading)" }}>
+                {group.targetName}
+                <span className="font-normal" style={{ color: "var(--text-muted)" }}> — Interface ERP (AP-4)</span>
+              </p>
+              <p className="text-[11px] m-0 mt-1" style={{ color: "var(--text-muted)" }}>
+                {group.targetCode} · {members.length} แบรนด์เบิก
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex-1 min-h-0 overflow-y-auto dialog-scroll px-6 py-4">
+          <div className="flex flex-col gap-4">
+            <SettingsPanel className="p-4">
+              <p className="text-[10px] font-bold uppercase tracking-wide m-0 mb-3" style={{ color: "var(--text-faint)" }}>
+                ตั้งค่าร่วมกลุ่ม
+              </p>
+              <div className="min-w-0">
+                <FieldLabel>Journal Batch</FieldLabel>
+                <SearchableSelect
+                  value={journalDraft}
+                  onChange={setJournalDraft}
+                  options={journalOpts}
+                  placeholder={noErp ? "ไม่มีข้อมูลจาก ERP" : "— เลือก Journal Batch —"}
+                  emptyLabel={noErp ? "ไม่มีข้อมูลจาก ERP" : "— เลือก Journal Batch —"}
+                  searchPlaceholder="ค้นหา Journal Batch..."
+                  triggerBackground="var(--bg-card)"
+                  disabled={busy}
+                />
+                <p className="text-[10px] m-0 mt-1.5" style={{ color: "var(--text-faint)" }}>
+                  ใช้ร่วมทุกแบรนด์เบิกในกลุ่มนี้
+                </p>
+              </div>
+
+              <div className="mt-3 pt-3" style={{ borderTop: "1px solid var(--border-light)" }}>
+                <p className="text-[10px] font-bold uppercase tracking-wide m-0 mb-1.5" style={{ color: "var(--text-faint)" }}>
+                  การเชื่อมต่อ BC
+                </p>
+                <p className="text-[11px] m-0" style={{ color: "var(--text-muted)" }}>
+                  {bcLine}{group.environment ? ` · ${group.environment === "Sandbox" ? "UAT" : "PROD"}` : ""}
+                </p>
+              </div>
+
+              {!group.profileComplete && (
+                <p className="text-[11px] m-0 mt-3 px-3 py-2 rounded-lg"
+                  style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
+                  ตั้งค่าการเชื่อมต่อ BC ให้ครบที่ Settings → Brand Config หรือ Accounting → Interface ERP ก่อน
+                </p>
+              )}
+            </SettingsPanel>
+
+            <div>
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wide m-0" style={{ color: "var(--text-faint)" }}>
+                    บัญชีแยกตามแบรนด์เบิก
+                  </p>
+                  {/*
+                   * No G/L Account column and no Description column here, unlike
+                   * AP-1's TargetErpGroupEditForm — see this component's own
+                   * docblock above for why AP-4 has neither.
+                   */}
+                  <p className="text-[11px] m-0 mt-0.5" style={{ color: "var(--text-muted)" }}>
+                    Bank · Branch (+ Fix Dept) ตั้งแยกต่อแบรนด์
+                  </p>
+                </div>
+                <span className="text-[10px] font-medium" style={{ color: "var(--text-muted)" }}>
+                  {members.length} แบรนด์
+                </span>
+              </div>
+
+              <SettingsPanel>
+                <div
+                  className="hidden lg:grid items-end gap-3 px-3 py-2.5 text-[10px] font-bold uppercase tracking-wide"
+                  style={{ color: "var(--text-faint)", gridTemplateColumns: MEMBER_ROW_GRID, background: "var(--bg-card)", borderBottom: "1px solid var(--border-light)" }}
+                >
+                  <span>แบรนด์เบิก</span>
+                  <span>Bank Account</span>
+                  <span>Branch Code</span>
+                  <span className="sr-only">ลบ</span>
+                </div>
+
+                {members.length === 0 ? (
+                  <p className="text-[12px] m-0 px-4 py-8 text-center" style={{ color: "var(--text-muted)" }}>
+                    ยังไม่มีแบรนด์เบิก — เพิ่มจากด้านล่าง
+                  </p>
+                ) : (
+                  <div className="flex flex-col">
+                    {members.map((member, index) => {
+                      const rowRemoving = removingCode === member.brandCode;
+                      return (
+                        <div
+                          key={member.brandCode}
+                          style={{ borderBottom: index < members.length - 1 ? "1px solid var(--border-light)" : undefined }}
+                        >
+                          {/* Mobile / tablet */}
+                          <div className="lg:hidden p-3 space-y-2.5">
+                            <div className="flex items-center justify-between gap-2">
+                              <MemberBrandCell brandName={member.brandName} brandCode={member.brandCode} brandLogo={member.brandLogo} />
+                              <button
+                                type="button"
+                                onClick={() => void handleRemove(member)}
+                                disabled={busy}
+                                className="inline-flex items-center justify-center h-8 w-8 rounded-lg shrink-0"
+                                style={{ color: "var(--text-muted)", border: "1px solid var(--border-light)", background: "var(--bg-card)" }}
+                                title={`นำ ${member.brandName} ออกจากกลุ่ม`}
+                              >
+                                {rowRemoving ? <RefreshCw size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                              </button>
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-semibold m-0 mb-1" style={{ color: "var(--text-faint)" }}>Bank Account</p>
+                              <SearchableSelect
+                                value={member.bankAccountNo}
+                                onChange={(v) => updateMember(member.brandCode, { bankAccountNo: v })}
+                                options={bankOpts}
+                                placeholder={noErp ? "ไม่มีข้อมูลจาก ERP" : "— เลือก Bank —"}
+                                emptyLabel={noErp ? "ไม่มีข้อมูลจาก ERP" : "— เลือก Bank —"}
+                                searchPlaceholder="ค้นหา Bank..."
+                                triggerBackground="var(--bg-card)"
+                                disabled={busy}
+                              />
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-semibold m-0 mb-1" style={{ color: "var(--text-faint)" }}>Branch Code</p>
+                              <SearchableSelect
+                                value={member.branchCode}
+                                onChange={(v) => handleBranchChange(member.brandCode, v)}
+                                options={branchOpts}
+                                placeholder={noErp ? "ไม่มีข้อมูลจาก ERP" : "— ไม่ระบุ · ใช้แผนกผู้ขอ —"}
+                                emptyLabel={noErp ? "ไม่มีข้อมูลจาก ERP" : "— ไม่ระบุ · ใช้แผนกผู้ขอ —"}
+                                searchPlaceholder="ค้นหา Branch..."
+                                triggerBackground="var(--bg-card)"
+                                wrapLabel
+                                disabled={busy}
+                              />
+                              <FixDeptControl
+                                branchCode={member.branchCode}
+                                deptAsBranch={member.deptAsBranch}
+                                fixedErpDeptCode={member.fixedErpDeptCode}
+                                disabled={busy}
+                                onPick={() => setDeptPick({ brandCode: member.brandCode, branchCode: member.branchCode, initialCode: member.fixedErpDeptCode })}
+                                onClear={() => updateMember(member.brandCode, { deptAsBranch: false, fixedErpDeptCode: "" })}
+                              />
+                            </div>
+                          </div>
+
+                          {/* Desktop */}
+                          <div className="hidden lg:grid items-start gap-3 px-3 py-3" style={{ gridTemplateColumns: MEMBER_ROW_GRID }}>
+                            <MemberBrandCell brandName={member.brandName} brandCode={member.brandCode} brandLogo={member.brandLogo} />
+                            <SearchableSelect
+                              value={member.bankAccountNo}
+                              onChange={(v) => updateMember(member.brandCode, { bankAccountNo: v })}
+                              options={bankOpts}
+                              placeholder={noErp ? "ไม่มีข้อมูลจาก ERP" : "— เลือก Bank —"}
+                              emptyLabel={noErp ? "ไม่มีข้อมูลจาก ERP" : "— เลือก Bank —"}
+                              searchPlaceholder="ค้นหา Bank..."
+                              triggerBackground="var(--bg-card)"
+                              disabled={busy}
+                            />
+                            <div>
+                              <SearchableSelect
+                                value={member.branchCode}
+                                onChange={(v) => handleBranchChange(member.brandCode, v)}
+                                options={branchOpts}
+                                placeholder={noErp ? "ไม่มีข้อมูลจาก ERP" : "— ไม่ระบุ · ใช้แผนกผู้ขอ —"}
+                                emptyLabel={noErp ? "ไม่มีข้อมูลจาก ERP" : "— ไม่ระบุ · ใช้แผนกผู้ขอ —"}
+                                searchPlaceholder="ค้นหา Branch..."
+                                triggerBackground="var(--bg-card)"
+                                wrapLabel
+                                disabled={busy}
+                              />
+                              <FixDeptControl
+                                branchCode={member.branchCode}
+                                deptAsBranch={member.deptAsBranch}
+                                fixedErpDeptCode={member.fixedErpDeptCode}
+                                disabled={busy}
+                                onPick={() => setDeptPick({ brandCode: member.brandCode, branchCode: member.branchCode, initialCode: member.fixedErpDeptCode })}
+                                onClear={() => updateMember(member.brandCode, { deptAsBranch: false, fixedErpDeptCode: "" })}
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => void handleRemove(member)}
+                              disabled={busy}
+                              className="inline-flex items-center justify-center h-8 w-8 rounded-lg mx-auto mt-1 transition-colors hover:opacity-80"
+                              style={{
+                                color: "var(--text-muted)",
+                                border: "1px solid var(--border-light)",
+                                background: "var(--bg-card)",
+                                cursor: busy ? "not-allowed" : "pointer",
+                                opacity: busy ? 0.5 : 1,
+                              }}
+                              title={`นำ ${member.brandName} ออกจากกลุ่ม`}
+                            >
+                              {rowRemoving ? <RefreshCw size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div
+                  className="px-3 py-3 flex flex-col sm:flex-row sm:items-center gap-2.5"
+                  style={{ borderTop: "1px dashed var(--border-light)", background: "var(--bg-card)" }}
+                >
+                  <div className="flex items-center gap-1.5 shrink-0 sm:min-w-[7.5rem]">
+                    <Plus size={14} style={{ color: "var(--nav-active-text)" }} />
+                    <span className="text-[11px] font-semibold" style={{ color: "var(--text-secondary)" }}>เพิ่มแบรนด์</span>
+                  </div>
+                  <div className="flex flex-1 min-w-0 items-center gap-2">
+                    <div className="flex-1 min-w-0">
+                      <SearchableSelect
+                        value={addCode}
+                        onChange={setAddCode}
+                        options={addOptions}
+                        placeholder={addOptions.length === 0 ? "ไม่มีแบรนด์ว่าง" : "เลือกแบรนด์เบิก..."}
+                        emptyLabel={addOptions.length === 0 ? "ไม่มีแบรนด์ว่าง" : "เลือกแบรนด์เบิก..."}
+                        searchPlaceholder="ค้นหาแบรนด์..."
+                        triggerBackground="var(--bg-card-alt)"
+                        disabled={busy || addOptions.length === 0}
+                      />
+                    </div>
+                    <Button type="button" variant="secondary" className="shrink-0" disabled={busy || !addCode} onClick={handleAdd}>
+                      เพิ่ม
+                    </Button>
+                  </div>
+                </div>
+              </SettingsPanel>
+            </div>
+          </div>
+        </div>
+
+        <div
+          className="shrink-0 px-6 py-4 flex flex-wrap items-center justify-between gap-3"
+          style={{ borderTop: "1px solid var(--border-light)", background: "var(--bg-card-alt)" }}
+        >
+          <p className="text-[10px] m-0 flex items-center gap-1.5 max-w-[26rem]" style={{ color: saveDisabledReason ? "var(--text-info-yellow)" : "var(--text-faint)" }}>
+            {saveDisabledReason ? (
+              <>
+                <Circle size={12} style={{ color: "var(--text-info-yellow)" }} />
+                {saveDisabledReason}
+              </>
+            ) : (
+              <>
+                <CheckCircle2 size={12} style={{ color: "var(--text-info-green)" }} />
+                พร้อมบันทึก
+              </>
+            )}
+          </p>
+          <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
+            <Button type="button" variant="primary" icon={<Save size={15} />} onClick={() => void handleSave()} loading={saving} disabled={!!saveDisabledReason || busy}>
+              บันทึก
+            </Button>
+            <Button type="button" variant="secondary" onClick={onClose} disabled={busy}>
+              ปิด
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {deptPick && (
+        <ErpDeptFixDialog
+          open
+          onOpenChange={(open) => { if (!open) setDeptPick(null); }}
+          targetBrandName={group.targetName}
+          targetBrandCode={group.targetCode}
+          branchCode={deptPick.branchCode}
+          initialCode={deptPick.initialCode}
+          departmentOptions={departmentOptions}
+          onConfirm={(code) => {
+            updateMember(deptPick.brandCode, { deptAsBranch: true, fixedErpDeptCode: code });
+            setDeptPick(null);
+          }}
+        />
+      )}
+    </Dialog>
+  );
+}
+
+/**
+ * AP-4's Interface ERP tab — grouped by interface target since SDD Task 8,
+ * the way AP-1's own tab groups (`BrandErpInterfaceSettings.tsx`). Reads
+ * `/api/request/reimburse/settings/erp-interface` (Task 6's service, Task 7's
+ * route — `requireRole` on every method, this tab is deliberately not
+ * grantable, see `settings-tabs.ts`).
+ *
+ * Bank / Branch / Journal Batch option lists come from AP-2's existing
+ * `/api/request/advance/settings/erp-master` — the same reuse the old flat
+ * screen already made, since that endpoint reads `Rocks_ERP_Data` keyed by
+ * Company and unrelated to which form is asking. Department options for Fix
+ * Dept come from AP-1's admin-sync GET, `/api/request/accounting/settings/erp-accounts`
+ * (no `brand`/`category` query — the batched shape) — reused rather than
+ * duplicated for the same reason, and reachable here because this whole tab
+ * is admin-only, and `requireSettingsTab`'s admin arm is exactly `requireRole`.
  *
  * **No Sync Vendor button, unlike AP-2's panel.** Vendor sync exists so AP-2's
  * Dr line can match a Business Central vendor at send time; AP-4 has no send
@@ -290,43 +866,50 @@ function BrandCard({ row, erpByCompany, onSaved }: {
  * "แบรนด์ที่เบิกได้" tab (`ReimburseBrandSettings`) that owns the complete
  * active set through `/api/request/reimburse/settings/brands`. Toggling a
  * brand from here too, through a second per-brand endpoint, would be a second
- * way to change the same flag — a deactivated brand still shows its saved
- * posting configuration here, dimmed, with a pointer to that tab instead.
+ * way to change the same flag.
  */
 export function ReimburseErpInterfaceSettings() {
-  const [rows, setRows] = useState<ConfigRow[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const load = useCallback(() => {
-    setLoading(true);
-    fetch("/api/request/reimburse/settings/erp-interface")
-      .then((r) => r.json())
-      .then((j: { ok: boolean; data?: ConfigRow[] }) => setRows(j.ok && j.data ? j.data : []))
-      .catch(() => setRows([]))
-      .finally(() => setLoading(false));
-  }, []);
-
-  useEffect(() => load(), [load]);
-
+  const { data, mutate, isLoading } = useSWR<{ ok: boolean; data?: ReimburseErpGroupsView }>(
+    ERP_INTERFACE_URL,
+    fetcher,
+  );
   const { data: erpData, isLoading: erpLoading, mutate: mutateErp } =
     useSWR<{ ok: boolean; data?: Record<string, CompanyErp> }>(
       "/api/request/advance/settings/erp-master",
       fetcher,
     );
-  const erpByCompany = erpData?.data ?? {};
+  const { data: deptData, mutate: mutateDept } =
+    useSWR<{ ok: boolean; data?: Record<string, CompanyDept> }>(
+      "/api/request/accounting/settings/erp-accounts",
+      fetcher,
+    );
 
+  const view = data?.data;
+  const groups = useMemo(() => view?.groups ?? [], [view]);
+  const unassigned = useMemo(() => view?.unassigned ?? [], [view]);
+  const erpByCompany = erpData?.data ?? {};
+  const deptByCompany = deptData?.data ?? {};
+
+  const [editTargetCode, setEditTargetCode] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  async function refreshErp() {
+
+  const load = () => { void mutate(); void mutateErp(); void mutateDept(); };
+
+  async function refresh() {
     setRefreshing(true);
     try {
-      await mutateErp();
-      toast.success("รีเฟรชข้อมูล ERP แล้ว");
+      await Promise.all([mutate(), mutateErp(), mutateDept()]);
+      toast.success("รีเฟรชข้อมูลแล้ว");
     } catch {
       toast.error("รีเฟรชไม่สำเร็จ");
     } finally {
       setRefreshing(false);
     }
   }
+
+  const editGroup = editTargetCode ? groups.find((g) => g.targetCode === editTargetCode) ?? null : null;
+  const loading = isLoading && !view;
+  const nothingConfigured = !loading && groups.every((g) => g.members.length === 0) && unassigned.length === 0;
 
   return (
     <div className="flex flex-col gap-4">
@@ -337,7 +920,7 @@ export function ReimburseErpInterfaceSettings() {
             <Link2 size={15} style={{ color: "var(--nav-active-text)" }} /> Interface ERP (AP-4)
           </p>
           <p className="text-[11px] m-0 mt-1" style={{ color: "var(--text-muted)" }}>
-            Bank · Branch · Journal Batch ดึงจาก Rocks_ERP_Data (ตาม Company) —
+            จัดกลุ่มตาม Company ปลายทาง — Bank · Branch · Journal Batch ดึงจาก Rocks_ERP_Data —
             การตั้งค่านี้เป็นการเตรียมข้อมูลไว้ล่วงหน้า AP-4 ยังไม่มีขั้นตอนส่งเข้า Business Central
           </p>
         </div>
@@ -346,9 +929,9 @@ export function ReimburseErpInterfaceSettings() {
             type="button"
             variant="secondary"
             icon={<RefreshCw size={15} className={refreshing || erpLoading ? "animate-spin" : ""} />}
-            onClick={() => void refreshErp()}
+            onClick={() => void refresh()}
             loading={refreshing}
-            disabled={rows.length === 0}
+            disabled={!view}
           >
             รีเฟรช
           </Button>
@@ -357,16 +940,52 @@ export function ReimburseErpInterfaceSettings() {
 
       {loading ? (
         <p className="text-[13px] py-8 text-center" style={{ color: "var(--text-muted)" }}>กำลังโหลด...</p>
-      ) : rows.length === 0 ? (
+      ) : nothingConfigured ? (
         <p className="text-[13px] py-8 text-center" style={{ color: "var(--text-muted)" }}>
           ยังไม่มีแบรนด์ที่เบิกได้สำหรับ AP-4 (ตั้งค่าที่แท็บ “แบรนด์ที่เบิกได้”)
         </p>
       ) : (
-        <div className="flex flex-col gap-3">
-          {rows.map((r) => (
-            <BrandCard key={r.brandCode} row={r} erpByCompany={erpByCompany} onSaved={load} />
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {groups.map((group) => (
+              <ReimburseErpGroupCard key={group.targetCode} group={group} onEdit={() => setEditTargetCode(group.targetCode)} />
+            ))}
+          </div>
+
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wide m-0 mb-2" style={{ color: "var(--text-faint)" }}>
+              ยังไม่ได้จัดกลุ่ม
+            </p>
+            {unassigned.length === 0 ? (
+              <p className="text-[11px] m-0" style={{ color: "var(--text-muted)" }}>
+                ทุกแบรนด์เบิกได้ถูกจัดกลุ่มแล้ว
+              </p>
+            ) : (
+              <>
+                <div className="flex flex-wrap gap-2">
+                  {unassigned.map((row) => (
+                    <UnassignedBrandChip key={row.brandCode} row={row} />
+                  ))}
+                </div>
+                <p className="text-[10px] m-0 mt-2" style={{ color: "var(--text-faint)" }}>
+                  เพิ่มแบรนด์เหล่านี้เข้ากลุ่มจากปุ่ม “แก้ไข” บนกลุ่มปลายทางที่ต้องการ
+                </p>
+              </>
+            )}
+          </div>
+        </>
+      )}
+
+      {editGroup && (
+        <ReimburseErpGroupModal
+          key={editGroup.targetCode}
+          group={editGroup}
+          unassigned={unassigned}
+          erp={erpByCompany[editGroup.targetCode]}
+          departmentOptions={deptByCompany[editGroup.targetCode]?.department ?? []}
+          onClose={() => setEditTargetCode(null)}
+          onSaved={load}
+        />
       )}
     </div>
   );
