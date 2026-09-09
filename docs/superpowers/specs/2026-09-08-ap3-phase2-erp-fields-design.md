@@ -390,6 +390,38 @@ Step-specific:
 - **4** — the VAT line carries the posting groups and the tax block, and its
   Document Date differs from the journal's Posting Date.
 
+### 2026-09-09 — BU DODO and both posting-date rules, sent and accepted
+
+Two clearings built to differ only in direction, so the date rule could not be
+right by accident. Both went out at the wire with the account, BU, Document Type
+and Posting Date read off the preview, and BC answered with a document and no
+error.
+
+| | `ADC26-09028` → **`PVA2609-0025`** | `ADC26-09029` → **`PVA2609-0026`** |
+| --- | --- | --- |
+| Direction | company pays 687.53 | employee returns 120.00 |
+| Document Type | **Payment** | **Refund** |
+| Posting Date | **2026-09-18** — วันจ่ายตามรอบ | **2026-09-04** — วันที่โอนคืน |
+| Expense line | 110721001, BU **DODO**, branch PC3001 | 110721001, BU **DODO**, branch PC3001 |
+
+Both expense lines were coded `610101014` on the form; `110721001` on the wire is
+the BU rule firing. DODO was the untested half of it — DOCO and DODO-M were
+proved on 2026-09-08 and share the code path, but "shares the code path" is what
+Step 2c already showed to be worth checking anyway.
+
+Neither posting date is today's date, the expense date, or the date the slip's
+OCR read, so the value can only have come from the field the rule names.
+
+**What this still does not prove.** As with every send, "Sent" means the codeunit
+accepted the payload; reading the BU dimension and the account back belongs in
+BC. Nothing in the portal can do it — codeunit 50263 exposes only
+`CreateFromJson`.
+
+**Blocked, and not a defect:** `ADC26-09027` (also DODO, Payment) cannot be sent
+because its AP-2 advance `ADV26-00009` has no confirmed vendor, and that advance
+never entered the AP-2 ERP queue, so there is no screen on which to confirm one.
+`ADC26-09023` and `ADC26-09006` sit on the same gap.
+
 ## 7. Out of scope
 
 - **WHT and the clear-advance vendor amounts stay at 0.**
