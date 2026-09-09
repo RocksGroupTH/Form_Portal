@@ -3,7 +3,7 @@ import { requireRole } from "@/lib/api-auth";
 import {
   getReimburseAccessIdByStaffId,
   listReimburseAccess,
-  setReimburseAccessActive,
+  setReimburseAccessAndApprovalActive,
   upsertReimburseAccess,
 } from "@/lib/acc/reimburse/access-service";
 import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
@@ -60,16 +60,34 @@ const HR_UNAVAILABLE =
  * carrying its `settingsTabs` grants AND its `brandTargets`, so the merged
  * grid can render both tick groups off one row.
  *
- * `AccReimburseAccess` stays the base list: every row on screen is one of its
- * rows, in its order. `brandTargets` is joined on afterward, from a different
- * table on a different surrogate key — `listReimburseApproverBrands()` is
- * keyed by `AccReimburseApprover.Id`, not by `AccReimburseAccess.Id` (this
- * row's own `id`), so the join goes through `StaffId`, the one column the two
- * rosters agree on: resolve this row's `AccReimburseApprover.Id` from
+ * `AccReimburseAccess` is the base list for every MATCHED row, in its order.
+ * `brandTargets` is joined on afterward, from a different table on a
+ * different surrogate key — `listReimburseApproverBrands()` is keyed by
+ * `AccReimburseApprover.Id`, not by `AccReimburseAccess.Id` (this row's own
+ * `id`), so the join goes through `StaffId`, the one column the two rosters
+ * agree on: resolve this row's `AccReimburseApprover.Id` from
  * `listReimburseApprovers()` first, THEN look that id up in the brand map.
  * A person with no `AccReimburseApprover` row yet (never ticked a brand)
  * simply reads `[]` — not an error, and not "unrestricted"; see
  * `brand-scope.ts` for why AP-4 has no state where absence means "all".
+ *
+ * **Orphan approvers are unioned in, not just joined.** Review round 1 found
+ * that a base list built from `AccReimburseAccess` alone silently drops any
+ * `AccReimburseApprover` row with no matching `AccReimburseAccess` row —
+ * migration 144 shipped with no backfill, so every approver added through the
+ * now-deleted `settings/approvers` route before this migration landed is
+ * exactly such a row, and `findActiveApprover` still answers off
+ * `AccReimburseApprover.IsActive` alone (Task 5 has not yet wired brand-scope
+ * enforcement into it), so these are REAL, currently-active approval grants —
+ * not a stale artefact. Dropping them from the list would have made the one
+ * screen meant to show every AP-4 grant hide some of them, undercounted both
+ * commissioning banners, and left no UI path to switch such a person off
+ * (`setReimburseApproverActive` no longer exists). `hasAccessRow: false`
+ * marks these on the wire so the client can render them honestly — see the
+ * grid component's own comment for what that renders as. Only ACTIVE orphans
+ * are surfaced: an inactive orphan approves nothing already (`IsActive = 0`),
+ * so it poses none of the risk above and there is nothing on this screen for
+ * an admin to act on for it.
  * Requires IT Admin or System Admin.
  */
 export async function GET() {
@@ -82,15 +100,41 @@ export async function GET() {
       listReimburseApprovers(),
       listReimburseApproverBrands(),
     ]);
-    const approverIdByStaffId = new Map(approverRows.map((a) => [a.staffId, a.id]));
-    const data = accessRows.map((row) => {
-      const approverId = approverIdByStaffId.get(row.staffId);
+    const approverByStaffId = new Map(approverRows.map((a) => [a.staffId, a]));
+
+    const matched = accessRows.map((row) => {
+      const approver = approverByStaffId.get(row.staffId) ?? null;
       return {
         ...row,
-        brandTargets: approverId != null ? (brandMap.get(approverId) ?? []) : [],
+        brandTargets: approver ? (brandMap.get(approver.id) ?? []) : [],
+        // The real `AccReimburseApprover.IsActive` flag — NOT derived from
+        // `brandTargets.length > 0` here, on purpose. Every row written
+        // through `setReimburseApproverBrands` keeps the two in step, but a
+        // row created before it existed (or before migration 144's tables
+        // did) can still disagree, and it is the DATABASE flag —
+        // `findActiveApprover`'s own predicate — that decides whether this
+        // person can act today, not what this screen infers from ticks.
+        approverActive: approver?.isActive ?? false,
+        hasAccessRow: true,
       };
     });
-    return NextResponse.json({ ok: true, data });
+
+    const matchedStaffIds = new Set(accessRows.map((r) => r.staffId));
+    const orphans = approverRows
+      .filter((a) => a.isActive && !matchedStaffIds.has(a.staffId))
+      .map((a) => ({
+        id: null as number | null,
+        staffId: a.staffId,
+        email: a.email,
+        displayName: a.displayName,
+        isActive: false,
+        settingsTabs: [] as string[],
+        brandTargets: brandMap.get(a.id) ?? [],
+        approverActive: true,
+        hasAccessRow: false,
+      }));
+
+    return NextResponse.json({ ok: true, data: [...matched, ...orphans] });
   } catch (err) {
     console.error("[api/request/reimburse/settings/access] GET", err);
     return NextResponse.json({ ok: false, error: "Internal server error" }, { status: 500 });
@@ -211,18 +255,35 @@ export async function POST(req: NextRequest) {
     // docblock), so there is no separate active flag to post here.
     if (Array.isArray(body.brandTargets)) {
       const targets = normalizeScopeTargets(body.brandTargets as unknown[]);
-      await setReimburseApproverBrands(employee.staffId, targets, Number(session.user.id), {
-        // The HR address, preferred in the same order the deleted
-        // `settings/approvers` route preferred it: `AccReimburseApprover.Email`
-        // is `findActiveApprover`'s only fallback for an approver with no HR
-        // row, and the second arm of `/my-work`'s AP-4 clause — the posted
-        // address is only the fallback when HR has none. `AccReimburseAccess`
-        // deliberately keeps the posted address instead (see `upsertReimburseAccess`
-        // above); the two rosters are allowed to disagree about which email is
-        // authoritative because they answer different questions.
-        email: employee.email ?? employee.emailCompBr ?? email,
-        displayName,
-      });
+      try {
+        await setReimburseApproverBrands(employee.staffId, targets, Number(session.user.id), {
+          // The HR address, preferred in the same order the deleted
+          // `settings/approvers` route preferred it: `AccReimburseApprover.Email`
+          // is `findActiveApprover`'s only fallback for an approver with no HR
+          // row, and the second arm of `/my-work`'s AP-4 clause — the posted
+          // address is only the fallback when HR has none. `AccReimburseAccess`
+          // deliberately keeps the posted address instead (see `upsertReimburseAccess`
+          // above); the two rosters are allowed to disagree about which email is
+          // authoritative because they answer different questions.
+          //
+          // `||` on TRIMMED values, not `??`: HR's `Email` column can hold
+          // `''` as easily as `null` (NOT NULL accepts an empty string), and
+          // `??` only falls through on nullish, so a blank-but-present HR
+          // email would pass `""` straight into `setReimburseApproverBrands`
+          // — which throws exactly for this, per its own hardened guard.
+          email: employee.email?.trim() || employee.emailCompBr?.trim() || email,
+          displayName,
+        });
+      } catch (err) {
+        // `setReimburseApproverBrands` throws a plain `Error` carrying Thai
+        // guidance (hardened in Task 3 for precisely this caller) when the
+        // identity it was handed is blank. The outer catch below answers a
+        // bare English 500 for everything, which would swallow that message
+        // — so it is surfaced here as a 400 instead, before the request ever
+        // reaches that catch.
+        const message = err instanceof Error ? err.message : "บันทึกสิทธิ์อนุมัติไม่สำเร็จ";
+        return NextResponse.json({ ok: false, error: message }, { status: 400 });
+      }
     }
 
     return NextResponse.json({ ok: true });
@@ -235,7 +296,13 @@ export async function POST(req: NextRequest) {
 /**
  * PATCH /api/request/reimburse/settings/access
  * Body: { staffId, isActive }
- * Soft delete / restore — the row stays so history keeps reading.
+ * Soft delete / restore — the row stays so history keeps reading. Since
+ * review round 1, this turns off (or back on) BOTH grants a StaffId can
+ * carry on the merged grid, not `AccReimburseAccess` alone — see
+ * `setReimburseAccessAndApprovalActive`'s own docblock for the full mechanics
+ * (why deactivating an approver never deletes their brand ticks, why
+ * reactivating restores approval only if a tick survived, and why either
+ * table alone matching is enough).
  *
  * It sends no `settingsTabs` and must not: `resolveReimburseTabsByEmail` tests
  * `IsActive = 1`, so deactivating already revokes every tab without deleting a
@@ -256,7 +323,7 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "isActive required" }, { status: 400 });
     }
 
-    await setReimburseAccessActive(staffId, body.isActive, Number(session.user.id));
+    await setReimburseAccessAndApprovalActive(staffId, body.isActive, Number(session.user.id));
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("[api/request/reimburse/settings/access] PATCH", err);

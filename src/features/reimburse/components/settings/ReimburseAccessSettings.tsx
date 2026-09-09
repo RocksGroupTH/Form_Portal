@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import {
   AlertTriangle,
@@ -21,22 +21,91 @@ const ENDPOINT = "/api/request/reimburse/settings/access";
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
 interface ReimburseAccessRow {
-  id: number;
+  /**
+   * `AccReimburseAccess.Id` — `null` for a row that exists ONLY as an
+   * `AccReimburseApprover` orphan (see `hasAccessRow` below and the GET
+   * route's own docblock). `staffId`, never this field, is what identifies a
+   * row on screen: it is the one column every write on this grid resolves by,
+   * and the one value guaranteed non-null on every row.
+   */
+  id: number | null;
   staffId: number;
   email: string;
   displayName: string;
+  /** `AccReimburseAccess.IsActive` — settings-tab/menu sight. `false` and
+   *  meaningless for an orphan row (`hasAccessRow === false`), which has no
+   *  such row to be active or not; read `approverActive` instead for those. */
   isActive: boolean;
   settingsTabs: string[];
   /**
    * The ticked `AccReimburseApproverBrand` codes for this person's
    * `AccReimburseApprover` row — `[]` when they have never ticked one (which
    * includes never having a row at all; see the GET route's own docblock for
-   * how the join is made). This IS the on/off switch for real approval
-   * authority: `≥1 ⇒ AccReimburseApprover.IsActive = 1`. There is no separate
-   * flag to read instead — see `brand-scope.ts` for why AP-4 must have no
-   * state where an empty set means "unrestricted".
+   * how the join is made). The tick set is what an admin edits; it is not
+   * always the same thing as `approverActive` below — see that field.
    */
   brandTargets: string[];
+  /**
+   * The REAL `AccReimburseApprover.IsActive` flag, as read from the
+   * database — not derived from `brandTargets.length > 0` here. Every row
+   * this screen itself writes keeps the two in step (`setReimburseApproverBrands`
+   * derives `IsActive` from the tick count), but a row created before that
+   * function existed can still disagree, and `findActiveApprover` — the
+   * predicate that actually decides who may act today — reads this flag
+   * alone. The two commissioning banners below count THIS, not the ticks.
+   */
+  approverActive: boolean;
+  /**
+   * Whether an `AccReimburseAccess` row exists for this StaffId at all.
+   * `false` marks an "orphan" — an active `AccReimburseApprover` row with no
+   * matching settings-access row, unioned into the list by the GET route so
+   * this screen never hides a real approval grant (review round 1, IMPORTANT
+   * #1). An orphan has no สิทธิ์เข้าถึง to switch on/off, so the สถานะ column
+   * reads off `approverActive` instead of `isActive` for these — see
+   * `displayActiveFor` below.
+   */
+  hasAccessRow: boolean;
+}
+
+/**
+ * What the สถานะ badge and button should treat as "on", for either shape of
+ * row. A matched row (`hasAccessRow`) is about สิทธิ์เข้าถึง, so it reads
+ * `isActive`; an orphan has no such row, so it reads the approver row's own
+ * `approverActive` instead — never a hardcoded `false`, which would show an
+ * active approver as permanently "ปิด" with no way to tell.
+ */
+function displayActiveFor(row: ReimburseAccessRow): boolean {
+  return row.hasAccessRow ? row.isActive : row.approverActive;
+}
+
+/**
+ * The confirm-dialog body for turning a row off. The PATCH behind this
+ * button (`setReimburseAccessAndApprovalActive`) now stops BOTH grants a row
+ * can carry, so the copy has to say what actually happens rather than the
+ * fixed "จะเข้าหน้าตั้งค่า AP-4 ไม่ได้อีก" it used to always show — review
+ * round 1, IMPORTANT #2: an admin offboarding a leaver read that as the whole
+ * story while the person's approval authority and brand ticks stayed live.
+ *
+ * Three shapes, chosen by what this row actually holds:
+ * - an orphan (no AccReimburseAccess row) has only approval to lose;
+ * - a matched row that is currently an active approver loses both;
+ * - a matched row with no approval authority loses only สิทธิ์เข้าถึง — saying
+ *   "and stop approving" to somebody who cannot approve anything today would
+ *   be confusing, not merely redundant.
+ * Every branch also says the ticks survive and reactivating restores them —
+ * `setReimburseAccessAndApprovalActive` never deletes a brand row, only the
+ * derived `IsActive` flag, which is exactly why the ticks stay visible on a
+ * "ปิด" row (see that function's own docblock for the mechanism).
+ */
+function buildDeactivateMessage(row: ReimburseAccessRow): string {
+  const who = `${row.displayName} (${row.email})`;
+  if (!row.hasAccessRow) {
+    return `ปิดสิทธิ์อนุมัติของ ${who}? จะอนุมัติจ่ายเงินไม่ได้อีก (แบรนด์ที่ติ๊กไว้ยังอยู่ครบ ถ้าเปิดกลับจะได้สิทธิ์เท่าเดิม ตราบใดที่ยังติ๊กแบรนด์อยู่)`;
+  }
+  if (row.approverActive) {
+    return `ปิดสิทธิ์เข้าถึงของ ${who}? จะเข้าหน้าตั้งค่า AP-4 ไม่ได้ และจะหยุดเป็นผู้อนุมัติฝ่ายบัญชีทันทีด้วย (แท็บและแบรนด์ที่ติ๊กไว้ยังอยู่ครบ ถ้าเปิดกลับจะได้สิทธิ์เท่าเดิม ตราบใดที่ยังติ๊กแบรนด์อยู่)`;
+  }
+  return `ปิดสิทธิ์เข้าถึงของ ${who}? จะเข้าหน้าตั้งค่า AP-4 ไม่ได้อีก (แท็บที่ติ๊กไว้ยังอยู่ ถ้าเปิดกลับจะได้เท่าเดิม)`;
 }
 
 /* ── Confirm Modal — same shape as the AP-17 and UAT Users panels' ── */
@@ -194,10 +263,24 @@ function BrandTickCells({
 }) {
   const [checked, setChecked] = useState<Set<string>>(() => new Set(row.brandTargets));
   const [saving, setSaving] = useState(false);
+  // Review round 1, MINOR #6: guards the re-seed effect below while THIS
+  // row's own click is in flight. Without it, an unrelated SWR revalidation
+  // — another row's tick, a focus revalidation, a second render — can land
+  // mid-save carrying the pre-click `brandTargets`, and the effect would
+  // reset `checked` to that stale value, visibly flipping the box the admin
+  // just clicked back. AP-1's `ApproverInterfaceCells` guards the same shape
+  // with a `skipSaveRef`, but that component saves through a watched effect;
+  // this one saves directly in the click handler, so the guard here protects
+  // the RE-SEED itself rather than a second, redundant save.
+  const savingRef = useRef(false);
 
   useEffect(() => {
+    if (savingRef.current) return;
     setChecked(new Set(row.brandTargets));
-  }, [row.id, row.brandTargets]);
+    // `staffId`, not `id` — `id` is `null` for an orphan row (see the
+    // interface's own comment), and `staffId` is the one column guaranteed
+    // to identify this row.
+  }, [row.staffId, row.brandTargets]);
 
   const toggle = async (code: string) => {
     const next = new Set(checked);
@@ -205,6 +288,7 @@ function BrandTickCells({
     else next.add(code);
     setChecked(next);
     setSaving(true);
+    savingRef.current = true;
     try {
       const res = await fetch(ENDPOINT, {
         method: "POST",
@@ -236,17 +320,14 @@ function BrandTickCells({
       setChecked(new Set(row.brandTargets));
     } finally {
       setSaving(false);
+      savingRef.current = false;
     }
   };
 
   return (
     <>
       {ERP_INTERFACE_BRANDS.map((b) => (
-        <td
-          key={b.id}
-          className="px-3 py-2.5 text-center"
-          style={{ background: "color-mix(in srgb, var(--color-warning) 6%, transparent)" }}
-        >
+        <td key={b.id} className="px-3 py-2.5 text-center">
           <TabGrantCheckbox
             checked={checked.has(b.id)}
             saving={saving}
@@ -271,9 +352,12 @@ function TabGrantCells({
   const [saving, setSaving] = useState(false);
 
   // The server's answer is the truth; re-seed whenever SWR brings a new one.
+  // `staffId`, not `id` — `id` is `null` for an orphan row (no
+  // `AccReimburseAccess` row at all; see the interface's own comment) and
+  // `staffId` is the one column guaranteed to identify this row.
   useEffect(() => {
     setChecked(new Set(row.settingsTabs));
-  }, [row.id, row.settingsTabs]);
+  }, [row.staffId, row.settingsTabs]);
 
   const toggle = async (key: string) => {
     const next = new Set(checked);
@@ -343,16 +427,18 @@ function TabGrantCells({
           left border rather than blending into the settings-tab checkboxes
           beside it. Ticks render on inactive rows for the same reason the tab
           group's do: hiding them would leave an admin unable to see what a
-          deactivated person still holds. */}
+          deactivated person still holds.
+          NO background override here (review round 1, MINOR #5) — an opaque
+          `--bg-card-alt` painted over every menu cell blocked the `<tr>`'s own
+          `--bg-row-stripe` and `:hover` beneath it, so zebra striping and
+          hover would have shown in some columns and not others. The border
+          alone is what marks the group boundary; the checkbox's own accent
+          colour is what marks the group itself. */}
       {REIMBURSE_MENUS.map((menu, idx) => (
         <td
           key={menu.key}
           className="px-3 py-2.5 text-center"
-          style={
-            idx === 0
-              ? { borderLeft: "1px solid var(--border-light)", background: "var(--bg-card-alt)" }
-              : { background: "var(--bg-card-alt)" }
-          }
+          style={idx === 0 ? { borderLeft: "1px solid var(--border-light)" } : undefined}
         >
           <TabGrantCheckbox
             checked={checked.has(menu.key)}
@@ -381,13 +467,20 @@ function TabGrantCells({
  * fan-out to everyone granted a settings tab, none of which is about
  * approving. What changed is that the former ผู้อนุมัติบัญชี **tab** is gone:
  * its brand ticks now render as extra columns on THIS grid, joined onto each
- * row by the `settings/access` GET route. **The brand tick set is the switch**
- * — ticking ≥1 brand is what makes `AccReimburseApprover.IsActive = 1`, and
- * unticking the last one is what turns it back off. There is no separate
- * on/off control for approval the way there is for สิทธิ์เข้าถึง's own สถานะ
- * column below (see `brand-scope.ts` and `setReimburseApproverBrands`'s own
- * docblock for why one derived value is preferred over a toggle that could
- * contradict it).
+ * row by the `settings/access` GET route. **The brand tick set is the primary
+ * switch** — ticking ≥1 brand is what makes `AccReimburseApprover.IsActive =
+ * 1`, and unticking the last one is what turns it back off, with no separate
+ * per-brand-group toggle to contradict it (see `brand-scope.ts` and
+ * `setReimburseApproverBrands`'s own docblock for why). **The สถานะ column
+ * below is a second, coarser switch on the same flag** — turning it off
+ * clears approval authority too, regardless of ticks (the ticks themselves
+ * survive; only the derived `IsActive` does not — see
+ * `setReimburseAccessAndApprovalActive`'s own docblock, added in review
+ * round 1 after the button was found to silently leave approval live while
+ * reading "ปิด"), and turning it back on restores approval only if a tick
+ * still exists. The two controls answer different questions — "which brands"
+ * versus "on or off at all, for everything this row holds" — and never
+ * disagree about the end state.
  *
  * **Unlike AP-1's equivalent grid, an all-unticked row is not "unrestricted"
  * here.** AP-1 collapses "every code ticked" and "none ticked" to the same
@@ -396,10 +489,14 @@ function TabGrantCells({
  * this grid means zero brands and zero approval authority, full stop.
  *
  * **Two commissioning states get an alarm banner, carried over from the
- * deleted ผู้อนุมัติบัญชี tab's own panel:** nobody with a brand ticked (every
- * AP-4 claim stops dead at the accounting step) and exactly one person with a
- * brand ticked (the two-person rule then stalls every claim at the final
- * step — "the one that looks fine until it is tried"). Neither banner is about
+ * deleted ผู้อนุมัติบัญชี tab's own panel:** nobody able to approve (every
+ * AP-4 claim stops dead at the accounting step) and exactly one person able
+ * to approve (the two-person rule then stalls every claim at the final
+ * step — "the one that looks fine until it is tried"). Both count
+ * `approverActive`, the real `AccReimburseApprover.IsActive` flag — NOT
+ * `brandTargets.length > 0`, which would undercount a row created before
+ * `setReimburseApproverBrands` existed (see that field's own comment).
+ * Neither banner is about
  * สิทธิ์เข้าถึง's OWN roster: an admin who has added people here with no ticks
  * of either kind is a neutral state and gets no banner, same as before —
  * nothing is hidden and nothing is broken by that, because admins keep every
@@ -412,9 +509,19 @@ function TabGrantCells({
  * Table shape follows `UatUserSettings`: one สถานะ column in which the badge
  * reports the state and the round button beside it performs the single
  * available action. Deactivation is a soft delete — rows are never removed, so
- * the history of who could edit what stays readable. That สถานะ column is
- * still `AccReimburseAccess.IsActive` alone — settings-tab and menu sight —
- * and is unrelated to whether the same row approves anything.
+ * the history of who could edit what stays readable. As of review round 1
+ * that สถานะ column reports and controls BOTH grants at once — settings-tab
+ * sight AND approval authority — never `AccReimburseAccess.IsActive` alone;
+ * `displayActiveFor` below is the one place that answer is computed, and
+ * every other reader of "is this row on" goes through it.
+ *
+ * **Some rows have no `AccReimburseAccess` row at all.** The GET route unions
+ * in "orphan" `AccReimburseApprover` rows — active approvers added before
+ * this screen existed, with no settings-access counterpart — so this screen
+ * never hides a real approval grant (review round 1, IMPORTANT #1). An
+ * orphan's `id` is `null` and its `isActive` is always `false` (there is no
+ * access row to be active); `hasAccessRow` is what tells the two apart, and
+ * `staffId`, not `id`, is what identifies a row everywhere in this file.
  */
 export function ReimburseAccessSettings() {
   const {
@@ -452,10 +559,17 @@ export function ReimburseAccessSettings() {
       ? data.error ?? "โหลดข้อมูลไม่สำเร็จ"
       : null;
   const activeCount = rows.filter((r) => r.isActive).length;
-  // The accounting-approver count, off the brand ticks — NOT `isActive` above,
-  // which is สิทธิ์เข้าถึง's own settings-tab/menu switch and answers a
-  // different question. This is what the two commissioning banners key on.
-  const approverActiveCount = rows.filter((r) => r.brandTargets.length > 0).length;
+  // The accounting-approver count, off `approverActive` — the REAL
+  // `AccReimburseApprover.IsActive` flag, not `isActive` above (สิทธิ์เข้าถึง's
+  // own settings-tab/menu switch, a different question) and not
+  // `brandTargets.length > 0` either. Review round 1, IMPORTANT #1: a row
+  // written before `setReimburseApproverBrands` existed can be active with
+  // zero brand rows (migration 144 shipped with no backfill), and
+  // `findActiveApprover` reads the database flag alone — counting by ticks
+  // would undercount exactly those people and let both banners below claim
+  // "nobody can approve" while somebody still can. This is what the two
+  // commissioning banners key on.
+  const approverActiveCount = rows.filter((r) => r.approverActive).length;
 
   const call = async (
     method: "POST" | "PATCH",
@@ -556,7 +670,12 @@ export function ReimburseAccessSettings() {
             onSelect={(u: ADResult) => {
               void call("POST", { email: u.email, displayName: u.name });
             }}
-            existingEmails={rows.filter((r) => r.isActive).map((r) => r.email)}
+            // `displayActiveFor`, not `r.isActive` alone — an orphan row's
+            // `isActive` is always `false` (no access row to be active), but
+            // it is still somebody real on the roster and the AD search
+            // should mark them "already added" the same as any other active
+            // row.
+            existingEmails={rows.filter(displayActiveFor).map((r) => r.email)}
           />
         )}
 
@@ -689,8 +808,11 @@ export function ReimburseAccessSettings() {
                     {/* The menu group — a second, unrelated vocabulary of keys
                         stored in the same TabKey column (see settings-tabs.ts
                         for why the two are kept apart in code). Given its own
-                        left border and tinted background so the column split
-                        reads even without the heading above it. */}
+                        left border so the column split reads even without the
+                        heading above it; the background here matches the row's
+                        own (headers do not stripe, so it is purely cosmetic
+                        and, unlike the body cells below, does not need to let
+                        anything show through). */}
                     {REIMBURSE_MENUS.map((menu, idx) => (
                       <th
                         key={menu.key}
@@ -707,110 +829,146 @@ export function ReimburseAccessSettings() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r, idx) => (
-                    <tr
-                      key={r.id}
-                      className="transition-colors hover:!bg-[var(--bg-row-hover)]"
-                      style={{
-                        borderBottom: "1px solid var(--border-light)",
-                        background: idx % 2 === 1 ? "var(--bg-row-stripe)" : undefined,
-                      }}
-                    >
-                      <td className="px-4 py-2.5 font-medium" style={{ color: "var(--text-primary)" }}>
-                        {r.displayName}
-                      </td>
-                      <td className="px-4 py-2.5" style={{ color: "var(--text-muted)" }}>
-                        {r.email}
-                      </td>
-                      <td className="px-4 py-2.5" style={{ color: "var(--text-muted)" }}>
-                        {r.staffId}
-                      </td>
-                      {/* Brand-approval ticks — a different table
-                          (`AccReimburseApprover`/`AccReimburseApproverBrand`),
-                          joined onto this row by the GET route. Rendered
-                          regardless of สิทธิ์เข้าถึง's own `isActive`: a person
-                          can be an active approver while their settings-tab
-                          access is switched off, and vice versa — the two are
-                          independent, see the component docblock above. */}
-                      <BrandTickCells row={r} onSaved={() => void mutate()} />
-                      {/* Ticks render on every row, active or not. Deactivating
-                          does not delete grant rows — `resolveReimburseTabsByEmail`
-                          filters `IsActive = 1`, so access stops immediately and
-                          comes back exactly as it was on reactivation. Hiding
-                          the ticks would leave an admin unable to see what a
-                          deactivated person still holds, or to set it up before
-                          switching them on. The save cannot flip the status: the
-                          payload echoes `isActive` back unchanged. */}
-                      <TabGrantCells row={r} onSaved={() => void mutate()} />
-                      <td className="px-4 py-2.5">
-                        <div className="flex items-center justify-center gap-2">
-                          <span
-                            className="text-[10px] font-bold px-2 py-0.5 rounded"
-                            style={
-                              r.isActive
-                                ? { background: "var(--status-ok-bg)", color: "var(--status-ok-text)" }
-                                : { background: "var(--bg-badge)", color: "var(--text-muted)" }
-                            }
-                          >
-                            {r.isActive ? "ใช้งาน" : "ปิด"}
-                          </span>
-                          <button
-                            type="button"
-                            disabled={busyStaffId === r.staffId}
-                            onClick={() => {
-                              if (!r.isActive) {
-                                void call("PATCH", { staffId: r.staffId, isActive: true }, r.staffId);
-                                return;
+                  {rows.map((r, idx) => {
+                    // The one true "is this row currently active" answer,
+                    // reused for the badge, the button's colour/icon and the
+                    // click handler's branch — see `displayActiveFor`'s own
+                    // comment for why an orphan reads `approverActive`
+                    // instead of a hardcoded `false`.
+                    const active = displayActiveFor(r);
+                    return (
+                      <tr
+                        // `staffId`, not `id` — `id` is `null` for an orphan
+                        // row (no `AccReimburseAccess` row at all), and
+                        // `staffId` is the one column guaranteed unique and
+                        // non-null across BOTH rosters this grid unions.
+                        key={r.staffId}
+                        className="transition-colors hover:!bg-[var(--bg-row-hover)]"
+                        style={{
+                          borderBottom: "1px solid var(--border-light)",
+                          background: idx % 2 === 1 ? "var(--bg-row-stripe)" : undefined,
+                        }}
+                      >
+                        <td className="px-4 py-2.5 font-medium" style={{ color: "var(--text-primary)" }}>
+                          {r.displayName}
+                          {/* An orphan — an active AccReimburseApprover row
+                              unioned in with no matching AccReimburseAccess
+                              row (see the GET route's own docblock, review
+                              round 1 IMPORTANT #1). Named here rather than
+                              only in the สถานะ column, so it reads next to
+                              the identity it qualifies rather than being
+                              mistaken for a second status. */}
+                          {!r.hasAccessRow && (
+                            <span
+                              className="block text-[10px] font-normal mt-0.5"
+                              style={{ color: "var(--text-faint)" }}
+                            >
+                              ไม่มีสิทธิ์แท็บตั้งค่า — เป็นผู้อนุมัติฝ่ายบัญชีเท่านั้น
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5" style={{ color: "var(--text-muted)" }}>
+                          {r.email}
+                        </td>
+                        <td className="px-4 py-2.5" style={{ color: "var(--text-muted)" }}>
+                          {r.staffId}
+                        </td>
+                        {/* Brand-approval ticks — a different table
+                            (`AccReimburseApprover`/`AccReimburseApproverBrand`),
+                            joined onto this row by the GET route. Rendered
+                            regardless of สิทธิ์เข้าถึง's own `isActive`: a person
+                            can be an active approver while their settings-tab
+                            access is switched off, and vice versa — the two are
+                            independent, see the component docblock above. */}
+                        <BrandTickCells row={r} onSaved={() => void mutate()} />
+                        {/* Ticks render on every row, active or not. Deactivating
+                            does not delete grant rows — `resolveReimburseTabsByEmail`
+                            filters `IsActive = 1`, so access stops immediately and
+                            comes back exactly as it was on reactivation. Hiding
+                            the ticks would leave an admin unable to see what a
+                            deactivated person still holds, or to set it up before
+                            switching them on. The save cannot flip the status: the
+                            payload echoes `isActive` back unchanged. */}
+                        <TabGrantCells row={r} onSaved={() => void mutate()} />
+                        <td className="px-4 py-2.5">
+                          <div className="flex items-center justify-center gap-2">
+                            <span
+                              className="text-[10px] font-bold px-2 py-0.5 rounded"
+                              style={
+                                active
+                                  ? { background: "var(--status-ok-bg)", color: "var(--status-ok-text)" }
+                                  : { background: "var(--bg-badge)", color: "var(--text-muted)" }
                               }
-                              setConfirmAction({
-                                title: "ปิดสิทธิ์เข้าถึง",
-                                message: `ปิดสิทธิ์เข้าถึงของ ${r.displayName} (${r.email})? จะเข้าหน้าตั้งค่า AP-4 ไม่ได้อีก (แท็บที่ติ๊กไว้ยังอยู่ ถ้าเปิดกลับจะได้เท่าเดิม)`,
-                                danger: true,
-                                onConfirm: () => {
-                                  setConfirmAction(null);
-                                  void call(
-                                    "PATCH",
-                                    { staffId: r.staffId, isActive: false },
-                                    r.staffId,
-                                  );
-                                },
-                              });
-                            }}
-                            className="inline-flex items-center justify-center rounded-full border-none shrink-0 enabled:cursor-pointer disabled:cursor-default disabled:opacity-70"
-                            style={
-                              r.isActive
-                                ? {
-                                    width: 24,
-                                    height: 24,
-                                    background: "var(--status-bad-bg)",
-                                    color: "var(--status-bad-text)",
-                                  }
-                                : {
-                                    width: 24,
-                                    height: 24,
-                                    background: "var(--status-ok-bg)",
-                                    color: "var(--status-ok-text)",
-                                  }
-                            }
-                            title={r.isActive ? "ปิดการใช้งาน" : "เปิดใช้งาน"}
-                            aria-label={
-                              r.isActive
-                                ? `ปิดการใช้งาน ${r.displayName}`
-                                : `เปิดใช้งาน ${r.displayName}`
-                            }
-                          >
-                            {busyStaffId === r.staffId ? (
-                              <Loader2 size={13} className="animate-spin" />
-                            ) : r.isActive ? (
-                              <UserX size={13} />
-                            ) : (
-                              <UserCheck size={13} />
-                            )}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                            >
+                              {active ? "ใช้งาน" : "ปิด"}
+                            </span>
+                            <button
+                              type="button"
+                              disabled={busyStaffId === r.staffId}
+                              onClick={() => {
+                                if (!active) {
+                                  void call("PATCH", { staffId: r.staffId, isActive: true }, r.staffId);
+                                  return;
+                                }
+                                setConfirmAction({
+                                  // The title and message both adapt to what
+                                  // this row actually holds — see
+                                  // `buildDeactivateMessage`'s own comment.
+                                  // Review round 1, IMPORTANT #2: the old
+                                  // fixed copy claimed only "จะเข้าหน้าตั้งค่า
+                                  // AP-4 ไม่ได้อีก" while the PATCH now also
+                                  // stops real approval authority — an admin
+                                  // reading only the dialog would not know
+                                  // that.
+                                  title: r.hasAccessRow ? "ปิดสิทธิ์เข้าถึง" : "ปิดสิทธิ์อนุมัติ",
+                                  message: buildDeactivateMessage(r),
+                                  danger: true,
+                                  onConfirm: () => {
+                                    setConfirmAction(null);
+                                    void call(
+                                      "PATCH",
+                                      { staffId: r.staffId, isActive: false },
+                                      r.staffId,
+                                    );
+                                  },
+                                });
+                              }}
+                              className="inline-flex items-center justify-center rounded-full border-none shrink-0 enabled:cursor-pointer disabled:cursor-default disabled:opacity-70"
+                              style={
+                                active
+                                  ? {
+                                      width: 24,
+                                      height: 24,
+                                      background: "var(--status-bad-bg)",
+                                      color: "var(--status-bad-text)",
+                                    }
+                                  : {
+                                      width: 24,
+                                      height: 24,
+                                      background: "var(--status-ok-bg)",
+                                      color: "var(--status-ok-text)",
+                                    }
+                              }
+                              title={active ? "ปิดการใช้งาน" : "เปิดใช้งาน"}
+                              aria-label={
+                                active
+                                  ? `ปิดการใช้งาน ${r.displayName}`
+                                  : `เปิดใช้งาน ${r.displayName}`
+                              }
+                            >
+                              {busyStaffId === r.staffId ? (
+                                <Loader2 size={13} className="animate-spin" />
+                              ) : active ? (
+                                <UserX size={13} />
+                              ) : (
+                                <UserCheck size={13} />
+                              )}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

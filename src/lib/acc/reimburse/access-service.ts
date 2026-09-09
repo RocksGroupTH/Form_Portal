@@ -120,23 +120,65 @@ export async function upsertReimburseAccess(a: {
 }
 
 /**
- * Soft delete / restore. Rows are never removed — history stays readable, and
- * the grant rows survive, so restoring someone restores exactly the tabs they
- * had (`resolveReimburseTabsByEmail` tests `IsActive`, not the grant rows).
+ * Soft delete / restore — and, since review round 1 on the merged
+ * สิทธิ์เข้าถึง grid (2026-09-10), the ONE off switch on that screen, so it
+ * has to be honest about both grants a row can carry.
  *
- * `updatedBy` is stamped alongside `UpdatedAt`: turning access off is the one
- * write on this table with a real audit question behind it, and recording
- * *when* without *who* answers half of it. Optional only so a future
- * non-interactive caller can honestly say it had no acting user rather than
- * borrow one; every route call passes it.
+ * **Before this fix it wrote `AccReimburseAccess.IsActive` alone.** The grid
+ * shows a person's `AccReimburseApproverBrand` ticks on the very same row, so
+ * an admin clicking "ปิด" here — reading only "ปิดสิทธิ์เข้าถึง" — would see
+ * the row settle on a red "ปิด" badge while that person's
+ * `AccReimburseApprover` row, and their brand ticks, stayed exactly as
+ * active as before. The button lied about what it did.
+ *
+ * **Two independent `UPDATE`s, because a StaffId on this screen may have
+ * either row without the other.** `settings/access`'s GET unions in
+ * `AccReimburseApprover` rows with no matching `AccReimburseAccess` row (an
+ * "orphan" — see that route's own docblock), and a freshly-added
+ * สิทธิ์เข้าถึง row often has no `AccReimburseApprover` row yet (nobody has
+ * ticked a brand for them). Both are legitimate, common states, so requiring
+ * both tables to match before this succeeds would make the button fail for
+ * exactly the rows review round 1 asked it to handle:
+ *
+ * - `AccReimburseAccess.IsActive` is set to `@active` outright, unchanged
+ *   from before.
+ * - `AccReimburseApprover.IsActive` is set to `@active AND (this approver
+ *   currently holds ≥1 AccReimburseApproverBrand row)` — computed with a live
+ *   `EXISTS`, never trusted from the caller, so this path cannot violate the
+ *   invariant `setReimburseApproverBrands` maintains: `IsActive` can never be
+ *   1 for zero ticks. Deactivating always succeeds (`@active = 0`
+ *   short-circuits the `CASE` to 0 regardless of ticks); reactivating restores
+ *   approval authority only when the person still holds a tick — turning
+ *   สิทธิ์เข้าถึง back on for somebody who was never an approver, or who has
+ *   since been unticked to zero brands, must not silently hand them approval
+ *   back.
+ *
+ * **Brand rows are never touched here.** Deactivating clears `IsActive` but
+ * leaves every `AccReimburseApproverBrand` row exactly as it was — the same
+ * "revokes without deleting" shape `AccReimburseAccessTab` already has (see
+ * that table's own service) — so the grid keeps showing the ticks on a "ปิด"
+ * row (an admin needs to see what a deactivated person still holds, and to
+ * set it up before switching them back on) and reactivating restores exactly
+ * the same authority they had, not a blank slate.
+ *
+ * **Throws only when NEITHER table has a matching StaffId** — a genuinely
+ * unknown person. Either update alone landing is not an error: a StaffId
+ * with only a settings-access row, or only an approver row, is the normal
+ * case this fix exists to keep working.
+ *
+ * `updatedBy` is stamped alongside `UpdatedAt` on whichever row(s) exist:
+ * turning access off is the one write on this table with a real audit
+ * question behind it, and recording *when* without *who* answers half of it.
+ * Optional only so a future non-interactive caller can honestly say it had no
+ * acting user rather than borrow one; every route call passes it.
  */
-export async function setReimburseAccessActive(
+export async function setReimburseAccessAndApprovalActive(
   staffId: number,
   isActive: boolean,
   updatedBy?: number | null,
 ): Promise<void> {
   await writeBothPools(async (tx) => {
-    const r = await tx
+    const accessResult = await tx
       .request()
       .input("staffId", sql.Int, staffId)
       .input("active", sql.Bit, isActive)
@@ -146,13 +188,41 @@ export async function setReimburseAccessActive(
         SET IsActive = @active, UpdatedBy = @by, UpdatedAt = SYSDATETIME()
         WHERE StaffId = @staffId
       `);
-    // Check the row count rather than reporting success on a no-op. A PATCH for
-    // a StaffId that is not on the roster would otherwise answer ok, and the
-    // caller would believe access had been revoked when nothing was written.
-    // Throwing inside writeBothPools rolls both databases back, which is also
-    // what should happen if the two ever disagree about who is on the list.
-    if (r.rowsAffected[0] !== 1) {
-      throw new Error(`ไม่พบผู้มีสิทธิ์เข้าถึงรหัสพนักงาน ${staffId}`);
+
+    // `EXISTS` against the approver's OWN brand rows, evaluated live inside
+    // this same UPDATE — not a count passed in from the caller, so a stale
+    // read can never tell this statement a tick exists when it does not (or
+    // the reverse). Deactivating (`@active = 0`) never reaches the `EXISTS`
+    // branch at all: the CASE's first arm already answers 0.
+    const approverResult = await tx
+      .request()
+      .input("staffId", sql.Int, staffId)
+      .input("active", sql.Bit, isActive)
+      .input("by", sql.Int, updatedBy ?? null)
+      .query(`
+        UPDATE a
+        SET a.IsActive = CASE
+              WHEN @active = 0 THEN 0
+              WHEN EXISTS (
+                SELECT 1 FROM [dbo].[AccReimburseApproverBrand] b
+                WHERE b.ApproverId = a.Id
+              ) THEN 1
+              ELSE 0
+            END,
+            a.UpdatedBy = @by,
+            a.UpdatedAt = SYSDATETIME()
+        FROM [dbo].[AccReimburseApprover] a
+        WHERE a.StaffId = @staffId
+      `);
+
+    // Check the row counts rather than reporting success on a double no-op. A
+    // PATCH for a StaffId on NEITHER roster would otherwise answer ok, and the
+    // caller would believe something had been revoked when nothing was
+    // written. Throwing inside writeBothPools rolls both databases back,
+    // which is also what should happen if the two ever disagree about who is
+    // on either list.
+    if (accessResult.rowsAffected[0] !== 1 && approverResult.rowsAffected[0] !== 1) {
+      throw new Error(`ไม่พบผู้มีสิทธิ์เข้าถึงหรือผู้อนุมัติรหัสพนักงาน ${staffId}`);
     }
   });
 }

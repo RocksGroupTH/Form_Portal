@@ -189,10 +189,9 @@ export function filterReimburseMenuKeys(keys: string[]): string[] {
 
 /**
  * Everything that may be STORED in `AccReimburseAccessTab` — **GRANTABLE tabs ∪
- * menus**, not every settings tab. `access` and `approvers` are excluded here as
- * well as from `decideReimburseTabAccess`, so a row naming either can never be
- * written in the first place; the two exclusions above say why each is not
- * grantable.
+ * menus**, not every settings tab. `access` is excluded here as well as from
+ * `decideReimburseTabAccess`, so a row naming it can never be written in the
+ * first place; the module docblock says why it is not grantable.
  *
  * Storage takes that union; authorization keeps the narrow filters. Before AP-17
  * drew this distinction its menu ticks were dropped on read AND on write, so
@@ -245,11 +244,11 @@ export function decideReimburseMenuAccess(
  * Pure on purpose: the guard around it needs a session and a pool, and this is
  * the part worth pinning in tests.
  *
- * - an admin passes everything, `access` and `approvers` included — that is the
- *   role the grants are handed out from, and locking an admin out of the tab
- *   that grants access would leave nobody able to grant it;
+ * - an admin passes everything, `access` included — that is the role the
+ *   grants are handed out from, and locking an admin out of the tab that
+ *   grants access would leave nobody able to grant it;
  * - a non-admin passes only a tab that is *both* grantable and in their list, so
- *   `access` and `approvers` fail **even if a row for them exists**.
+ *   `access` fails **even if a row for it exists**.
  */
 export function decideReimburseTabAccess(
   isAdmin: boolean,
