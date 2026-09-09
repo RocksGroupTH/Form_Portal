@@ -84,10 +84,8 @@ const HR_UNAVAILABLE =
  * commissioning banners, and left no UI path to switch such a person off
  * (`setReimburseApproverActive` no longer exists). `hasAccessRow: false`
  * marks these on the wire so the client can render them honestly — see the
- * grid component's own comment for what that renders as. Only ACTIVE orphans
- * are surfaced: an inactive orphan approves nothing already (`IsActive = 0`),
- * so it poses none of the risk above and there is nothing on this screen for
- * an admin to act on for it.
+ * grid component's own comment for what that renders as. Inactive orphans are
+ * listed too — see the filter below for why active-only was wrong.
  * Requires IT Admin or System Admin.
  */
 export async function GET() {
@@ -121,7 +119,21 @@ export async function GET() {
 
     const matchedStaffIds = new Set(accessRows.map((r) => r.staffId));
     const orphans = approverRows
-      .filter((a) => a.isActive && !matchedStaffIds.has(a.staffId))
+      // **Inactive orphans are listed too, and the first version of this was
+      // active-only.** The reasoning for active-only was that an inactive
+      // orphan approves nothing and so there is nothing to act on — true of
+      // the row, false of the screen: switching an orphan off through this
+      // grid made it VANISH mid-interaction, because deactivating is exactly
+      // what drops it out of an active-only filter. The admin who had just
+      // clicked ปิด then had no way to click it back on, which is the same
+      // dead end the whole orphan union was added to close.
+      //
+      // It also matches what this grid already does with the access roster:
+      // `listReimburseAccess(false)` returns inactive rows, so a deactivated
+      // person stays visible with their grants shown — CLAUDE.md records that
+      // as deliberate, because hiding them leaves an admin unable to see what
+      // somebody switched off still holds.
+      .filter((a) => !matchedStaffIds.has(a.staffId))
       .map((a) => ({
         id: null as number | null,
         staffId: a.staffId,
@@ -130,7 +142,10 @@ export async function GET() {
         isActive: false,
         settingsTabs: [] as string[],
         brandTargets: brandMap.get(a.id) ?? [],
-        approverActive: true,
+        // Read off the row, not hardcoded — the filter above no longer
+        // guarantees it is true, and a deactivated orphan must render as ปิด
+        // rather than as an active approver.
+        approverActive: a.isActive,
         hasAccessRow: false,
       }));
 
