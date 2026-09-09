@@ -12,6 +12,7 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { AP4_FORM_CODE } from "@/features/reimburse/constants";
 import { listBrandErpInterfaceMaps } from "@/lib/acc/brand-erp-interface-map-service";
+import { normalizeScopeTargets } from "./brand-scope";
 
 /**
  * The ticked interface-brand targets for the active `AccReimburseApprover`
@@ -56,8 +57,16 @@ export async function loadApproverScopeByStaffId(
       .request()
       .input("email", sql.NVarChar, trimmedEmail)
       .query(
+        // ORDER BY, not an arbitrary TOP 1: `findActiveApprover` resolves a
+        // shared email deterministically, by taking the first row of
+        // `listReimburseApprovers()`'s `ORDER BY DisplayName, StaffId`. Two
+        // active rows sharing an address is a contemplated case
+        // (`approval-policy.test.ts` pins it), so the two must agree about
+        // WHICH of them the actor is — otherwise a person's scope and their
+        // approver identity could come from different rows.
         `SELECT TOP 1 Id FROM [dbo].[AccReimburseApprover]
-         WHERE IsActive = 1 AND LOWER(LTRIM(RTRIM(Email))) = @email`,
+         WHERE IsActive = 1 AND LOWER(LTRIM(RTRIM(Email))) = @email
+         ORDER BY DisplayName, StaffId`,
       );
     approverId = (byEmail.recordset[0]?.Id as number | undefined) ?? null;
   }
@@ -72,8 +81,15 @@ export async function loadApproverScopeByStaffId(
        WHERE ApproverId = @approver
        ORDER BY InterfaceBrandCode`,
     );
-  return (brands.recordset as { InterfaceBrandCode: string }[]).map((row) =>
-    String(row.InterfaceBrandCode ?? "").trim(),
+  // Normalised on the way OUT, not left to each caller. The column has no CHECK
+  // (migration 144, mirroring 038), so a hand-inserted `'rocks'` or `'  KSI '`
+  // is representable — and while `canActOnTarget` re-normalises at comparison
+  // time, a caller who reasonably writes `scope.length > 0` instead of
+  // `isApproverScope(scope)` would read such a row as a real scope. That is the
+  // exact mistake Task 2's review caught once already; one call here removes the
+  // footgun rather than relying on every future caller to avoid it.
+  return normalizeScopeTargets(
+    (brands.recordset as { InterfaceBrandCode: string }[]).map((row) => row.InterfaceBrandCode),
   );
 }
 
@@ -103,6 +119,24 @@ export async function loadClaimBrandTargets(): Promise<Map<string, string>> {
  * `null` when the brand is blank or has no mapping at all — the fail-safe
  * direction `canActOnTarget` also takes for an unresolved target: invisible
  * to every scoped approver rather than visible to all of them.
+ *
+ * **This deliberately disagrees with `erp-interface-settings-service.ts`,
+ * which answers the same question as `interfaceBrandCode ?? code` — the brand
+ * mapped to ITSELF.** Both are right for their own purpose and the divergence
+ * is the point: that one is building a settings screen, where showing an
+ * unmapped brand under a group named after itself is merely unhelpful; this
+ * one decides who may approve a payment, where "unknown" must never widen to
+ * "anyone". Do not make them agree by giving this one the fallback.
+ *
+ * What the disagreement costs, so it is read rather than discovered: a claim
+ * filed under a brand with no mapping — `ROCKS`, which migration 092 really
+ * does seed for AP-4 — is actionable by **nobody but an admin**, while the
+ * Interface ERP tab shows that brand grouped as though configured. Deleting a
+ * mapping does the same thing silently. Task 5 says so on screen rather than
+ * rendering an unexplained empty queue.
+ *
+ * **Batch callers want `loadClaimBrandTargets` instead.** This issues a query
+ * per call, so using it per queue row is an N+1 on an authorization path.
  */
 export async function resolveClaimTarget(brandCode: string | null): Promise<string | null> {
   if (!brandCode) return null;

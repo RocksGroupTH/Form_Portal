@@ -313,12 +313,24 @@ export async function setReimburseApproverBrands(
   const normalized = normalizeScopeTargets(targets);
   const active = isApproverScope(normalized);
 
+  // A blank identity is refused rather than written. Both columns are NOT NULL
+  // and NOT NULL accepts `''`, so a caller that defaults a missing field to the
+  // empty string would blank the roster row on a tick change — and `Email` is
+  // `findActiveApprover`'s ONLY fallback for an approver with no
+  // `Rocks_Portal_HR.Employee` row, as well as the second arm of `/my-work`'s
+  // AP-4 clause. The person would silently stop being findable on the path that
+  // decides who may approve a payment, with nothing raised anywhere.
+  const email = identity.email?.trim() ?? "";
+  const displayName = identity.displayName?.trim() ?? "";
+  if (!email) throw new Error("กรุณาระบุอีเมลของผู้อนุมัติ");
+  if (!displayName) throw new Error("กรุณาระบุชื่อผู้อนุมัติ");
+
   await writeBothPools(async (tx) => {
     await tx
       .request()
       .input("staff", sql.Int, staffId)
-      .input("email", sql.NVarChar(200), identity.email)
-      .input("name", sql.NVarChar(200), identity.displayName)
+      .input("email", sql.NVarChar(200), email)
+      .input("name", sql.NVarChar(200), displayName)
       .input("active", sql.Bit, active ? 1 : 0)
       .input("user", sql.Int, userId || null)
       .query(
@@ -339,7 +351,7 @@ export async function setReimburseApproverBrands(
       .query(`SELECT Id FROM [dbo].[AccReimburseApprover] WHERE StaffId = @staff`);
     const approverId = idResult.recordset[0]?.Id as number | undefined;
     if (approverId == null) {
-      throw new Error("AccReimburseApprover row not found immediately after MERGE");
+      throw new Error("ไม่พบแถวผู้อนุมัติหลังบันทึก — โปรดลองใหม่");
     }
 
     await tx
