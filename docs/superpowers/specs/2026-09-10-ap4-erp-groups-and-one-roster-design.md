@@ -287,3 +287,46 @@ alternative — treating zero rows as "all brands" — is exactly AP-1's bug.
   AP-4 has no send to use it.
 - **`AccBrandErpTargetSetting`.** Still has no per-form writer anywhere.
 - **Merging the two roster tables.** Only the screen merges.
+
+---
+
+## Amendment — 2026-09-10, as built
+
+All three changes shipped, plan
+`docs/superpowers/plans/2026-09-10-ap4-erp-groups-and-one-roster.md`, nine
+tasks. What the spec above did not anticipate, recorded so the body reads as
+the design and this block as what happened:
+
+- **The batch residual is real and survives the fan-out.** §1 says target-keyed
+  storage would reproduce AP-2's bug and claim-brand keying avoids it. Half
+  right: keying AP-4's own writes on the claim brand does not make
+  `resolveJournalBatchName` claim-first — it is **target-first for everybody**,
+  and AP-1's group save puts a batch on the target as a `FormCode IS NULL`
+  default. So for a group whose target is not itself an AP-4 claim brand, the
+  settings screen and `ctx.brandAccounts` still disagree. **AP-4's send must
+  resolve the batch the way AP-2's `advance-erp-context.ts` does** and never
+  through `ctx.brandAccounts`. That sentence is the one the send's author
+  needs, and the spec did not contain it.
+- **The `unmapped brand` case needed a screen, not just a rule.** §3 says an
+  unmapped claim brand is out of every scope and calls that the fail-safe
+  direction. It is — but `ROCKS` is the *default* claimable brand on a fresh
+  deployment, so on day one every AP-4 claim is invisible to everybody with the
+  same "nothing is pending" line the queues show when there genuinely is
+  nothing. Both queues now report `unmappedBrandCount` and name the fix.
+- **§3's grid had to list `AccReimburseApprover` rows with no
+  `AccReimburseAccess` row.** Not anticipated: 144 has no backfill, so any
+  pre-existing approver is exactly such a row, and listing only the access
+  roster hid them, undercounted both banners, and left no way to switch them
+  off once `setReimburseApproverActive` went with its route.
+- **Migration 144's index guard needed `AND object_id = OBJECT_ID(...)`.** The
+  plan's own inline SQL omitted it. An index name is unique only within its
+  table, so the unscoped form can be satisfied by a same-named index elsewhere
+  and skip creating this one silently — a bug this repo had already named and
+  fixed three times (120, 133, 134), and 120 is the precedent 144 cites.
+- **Seven review rounds, and the last two produced no new behaviour.** Twelve
+  mutations survived a guard across them, every one found by a person
+  constructing an attack rather than by a regex getting stronger. The guards
+  now say what they do not cover, and the reason no further round would help is
+  written on them: the test that would close the class — inject a pool and
+  inspect what the check receives — cannot exist here, because importing any of
+  these services reaches `@/env`.
