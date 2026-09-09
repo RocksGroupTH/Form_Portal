@@ -254,3 +254,53 @@ test("erp-queue-service.ts calls accumulateErpQueueRows exactly once — no deco
       "the exported function's own body rather than anywhere in the source",
   );
 });
+
+/* ─────────────── What the two seam assertions above do NOT cover ───────────────
+ *
+ * Round five ended the arms race by losing it twice more, and the result is
+ * worth writing down rather than answering with a seventh regex.
+ *
+ * The pair — "the return is the query's next statement" plus "the accumulator
+ * is called exactly once" — was argued to be sound together: if there is one
+ * call and it is adjacent, the real call IS the adjacent one. **That argument
+ * is false**, and an adversarial review defeated it with two shapes, each
+ * measured at a full green suite and a clean `tsc --noEmit`:
+ *
+ *   1. **An alias.** `const accumulate = accumulateErpQueueRows;` contains
+ *      no `accumulateErpQueueRows(`, so the counter sees one call — the
+ *      never-called decoy helper's — and that one is adjacent. The real
+ *      function is then free to rewrite every row in place before calling
+ *      through the alias.
+ *   2. **Doctoring the request chain.** A wrapper that binds and replaces
+ *      `req.query` rewrites each row as the query resolves, *upstream* of the
+ *      return statement entirely. Exactly-once is satisfied trivially,
+ *      adjacency is untouched, and nothing textual changed between the query
+ *      and the return. **Body-scoping the regexes would not catch this one**,
+ *      which is why doing that was not the fix.
+ *
+ * **So: these two assertions catch an ACCIDENT and make a hostile edit
+ * conspicuous in a diff. They do not prove the recordset is undoctored, and
+ * nothing in this repository does.** What would is a test that hands the
+ * service an injected pool and inspects what `accumulateErpQueueRows` receives
+ * — and that cannot exist here, because importing `erp-queue-service.ts` reaches
+ * `@/env`, which validates the whole environment at import and throws off a
+ * configured machine. An integration harness with a real database is the only
+ * thing that closes it, and this repo has none.
+ *
+ * Keep them anyway: they cost one regex each, they fail at commit time, and
+ * every shape that defeats them (an alias assignment, a monkey-patched
+ * `query`, a "shape probe" helper nobody calls) is loud in review in a way an
+ * edited literal is not. **What must not happen is a future reader concluding
+ * from their titles that the seam is covered.** The layer that genuinely has
+ * teeth is `erp-queue-service.test.ts`: it hands
+ * `accumulateErpQueueRows` rows and checks what comes back, so it is
+ * blind to how they were obtained but cannot be fooled about what the function
+ * does with them.
+ *
+ * Eight mutations have now survived a guard in this feature across five review
+ * rounds. **Every one was found by a person constructing an attack, and not
+ * one by a regex getting stronger.** That is the transferable lesson, and it
+ * is the same one `queue-service.ts`'s own docblock reached from the other
+ * direction three rounds earlier: a regex over source text cannot verify what
+ * the source means.
+ */

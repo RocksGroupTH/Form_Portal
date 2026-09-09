@@ -181,4 +181,14 @@ test("every passthrough field is read off the row, not invented", () => {
   assert.equal(r.erpEnvironment, "Sandbox");
   assert.equal(r.erpSentAt, new Date("2026-09-05T02:30:00Z").toISOString());
   assert.equal(r.erpError, "vendor not found");
+  // `formCode` and `status` are echoed onto the row, and `ReimburseErpQueueRow`'s
+  // docblock says they are there because the query re-derives the gate from
+  // them — "dropping them from this type is how that defence gets removed by
+  // accident". Measured in round five: hardcoding either one on the OUTPUT
+  // survived the whole suite, because the gate had already read them into
+  // locals. The echo is not the defence and nothing renders it, so the failure
+  // was cosmetic — but a type whose docblock claims a role its value does not
+  // hold is the exact overclaim this feature keeps having to walk back.
+  assert.equal(r.formCode, "AP-4");
+  assert.equal(r.status, "Approved");
 });
