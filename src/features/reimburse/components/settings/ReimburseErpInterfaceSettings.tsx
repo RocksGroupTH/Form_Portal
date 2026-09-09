@@ -113,7 +113,7 @@ function StatusBadge({ ready }: { ready: boolean }) {
   return (
     <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0"
       style={ready
-        ? { background: "rgba(79,163,122,0.15)", color: "var(--text-info-green)" }
+        ? { background: "color-mix(in srgb, var(--text-info-green) 15%, transparent)", color: "var(--text-info-green)" }
         : { background: "var(--bg-badge)", color: "var(--text-muted)" }}>
       <Icon size={12} />{ready ? "ตั้งค่าครบ" : "ยังไม่ครบ"}
     </span>
@@ -387,7 +387,7 @@ function MemberBrandCell({ brandName, brandCode, brandLogo }: { brandName: strin
  * `erp-interface-settings-service.ts`'s own docblock for both.
  *
  * **Removal is immediate, not deferred to Save.** A member present when the
- * modal opened (`originalCodes`) is removed by calling `DELETE
+ * modal opened (`persistedCodes`) is removed by calling `DELETE
  * ?brandCode=` right away — `saveReimburseErpGroup` never removes a member on
  * its own (see the service docblock), and deferring removal to the Save
  * button would trap an admin who wants to empty a group entirely: Save is
@@ -423,7 +423,29 @@ function ReimburseErpGroupModal({
 }) {
   const [journalDraft, setJournalDraft] = useState(group.journalBatchName ?? "");
   const [members, setMembers] = useState<DraftMember[]>(() => group.members.map(toDraft));
-  const [originalCodes] = useState<Set<string>>(() => new Set(group.members.map((m) => m.brandCode)));
+  /**
+   * Which members are actually PERSISTED — derived from the `group` prop, not
+   * snapshotted at mount.
+   *
+   * It was a `useState` initialiser, and that was wrong in both directions
+   * because `handleSave` calls `onSaved()` (refetch) but not `onClose()`, so
+   * this modal stays mounted with its key unchanged across a save. Open a
+   * group → เพิ่มแบรนด์ → บันทึก → press the trash on that same row: the
+   * mount-time snapshot still says the brand was never saved, so `handleRemove`
+   * splices it locally and issues NO DELETE — and `saveReimburseErpGroup`
+   * never removes members it is not handed, so the mapping survives, no error
+   * is shown, and the brand reappears grouped on the next open. A second Save
+   * cannot remove it either. The mirror case is harmless but the same root
+   * cause: after a successful DELETE, re-adding and re-removing sent a DELETE
+   * for a row that no longer existed.
+   *
+   * `onSaved()` refreshes `group`, so deriving from it is correct after every
+   * operation rather than only before the first.
+   */
+  const persistedCodes = useMemo(
+    () => new Set(group.members.map((m) => m.brandCode)),
+    [group],
+  );
   const [addCode, setAddCode] = useState("");
   const [saving, setSaving] = useState(false);
   const [removingCode, setRemovingCode] = useState<string | null>(null);
@@ -483,7 +505,7 @@ function ReimburseErpGroupModal({
   }
 
   async function handleRemove(member: DraftMember) {
-    if (!originalCodes.has(member.brandCode)) {
+    if (!persistedCodes.has(member.brandCode)) {
       // Never saved — nothing to delete server-side.
       setMembers((prev) => prev.filter((m) => m.brandCode !== member.brandCode));
       return;
@@ -869,7 +891,7 @@ function ReimburseErpGroupModal({
  * way to change the same flag.
  */
 export function ReimburseErpInterfaceSettings() {
-  const { data, mutate, isLoading } = useSWR<{ ok: boolean; data?: ReimburseErpGroupsView }>(
+  const { data, error, mutate, isLoading } = useSWR<{ ok: boolean; data?: ReimburseErpGroupsView }>(
     ERP_INTERFACE_URL,
     fetcher,
   );
@@ -909,7 +931,23 @@ export function ReimburseErpInterfaceSettings() {
 
   const editGroup = editTargetCode ? groups.find((g) => g.targetCode === editTargetCode) ?? null : null;
   const loading = isLoading && !view;
-  const nothingConfigured = !loading && groups.every((g) => g.members.length === 0) && unassigned.length === 0;
+  /**
+   * A failed read must never render as an empty one.
+   *
+   * `fetcher` is `fetch().then(r => r.json())`, which does **not** throw on a
+   * non-2xx — so a 500 or a 403 arrives as `data = { ok: false }` with SWR's
+   * `error` unset, `view` undefined, and `groups` empty. Without this branch
+   * `nothingConfigured` is vacuously true and the screen tells an admin there
+   * are no AP-4 brands, sending them to fix a tab that is not the problem,
+   * with รีเฟรช disabled so they cannot even retry. Both arms are needed and
+   * neither is redundant: `error` catches only a network failure. This is the
+   * exact failure CLAUDE.md records for the API-key change log ("A failed read
+   * of the change log must never render as an empty one"), which had the same
+   * two-arm shape.
+   */
+  const failed = !loading && (!!error || (!!data && !data.ok));
+  const nothingConfigured =
+    !loading && !failed && groups.every((g) => g.members.length === 0) && unassigned.length === 0;
 
   return (
     <div className="flex flex-col gap-4">
@@ -931,7 +969,10 @@ export function ReimburseErpInterfaceSettings() {
             icon={<RefreshCw size={15} className={refreshing || erpLoading ? "animate-spin" : ""} />}
             onClick={() => void refresh()}
             loading={refreshing}
-            disabled={!view}
+            // Only while the first load is in flight. It used to be `!view`,
+            // which disabled the one control that could recover from a failed
+            // read — exactly when a retry is what the admin wants.
+            disabled={loading}
           >
             รีเฟรช
           </Button>
@@ -940,6 +981,15 @@ export function ReimburseErpInterfaceSettings() {
 
       {loading ? (
         <p className="text-[13px] py-8 text-center" style={{ color: "var(--text-muted)" }}>กำลังโหลด...</p>
+      ) : failed ? (
+        <div className="py-8 text-center">
+          <p className="text-[13px] m-0" style={{ color: "var(--text-danger)" }}>
+            โหลดการตั้งค่า Interface ERP ไม่สำเร็จ
+          </p>
+          <p className="text-[12px] mt-1.5 m-0" style={{ color: "var(--text-muted)" }}>
+            นี่ไม่ได้แปลว่ายังไม่ได้ตั้งค่า — กด “รีเฟรช” เพื่อลองใหม่
+          </p>
+        </div>
       ) : nothingConfigured ? (
         <p className="text-[13px] py-8 text-center" style={{ color: "var(--text-muted)" }}>
           ยังไม่มีแบรนด์ที่เบิกได้สำหรับ AP-4 (ตั้งค่าที่แท็บ “แบรนด์ที่เบิกได้”)

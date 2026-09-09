@@ -120,27 +120,28 @@ export async function loadClaimBrandTargets(): Promise<Map<string, string>> {
  * direction `canActOnTarget` also takes for an unresolved target: invisible
  * to every scoped approver rather than visible to all of them.
  *
- * **This deliberately disagrees with `erp-interface-settings-service.ts`,
- * — specifically its OLD flat loader, `loadReimburseErpInterfaceSettings`,
- * which Task 7 deletes; the grouped `loadReimburseErpGroups` that replaced it
- * drops such a brand into an `unassigned` bucket instead, which agrees with
- * this function. Once the flat loader is gone this paragraph describes history
- * rather than a live divergence, and the reasoning below is still why this
- * function must keep answering `null`.
+ * **Answering `null` is the whole point, and it must never gain a fallback.**
+ * This decides who may approve a payment: "unknown" widening to "anyone" is
+ * the failure the brand scope exists to prevent, so an unmapped brand is
+ * out of every scope rather than in all of them.
  *
- * The flat loader answers the same question as `interfaceBrandCode ?? code` — the brand
- * mapped to ITSELF.** Both are right for their own purpose and the divergence
- * is the point: that one is building a settings screen, where showing an
- * unmapped brand under a group named after itself is merely unhelpful; this
- * one decides who may approve a payment, where "unknown" must never widen to
- * "anyone". Do not make them agree by giving this one the fallback.
+ * *History, because a reader may find the older reasoning elsewhere:* the
+ * settings tab's flat loader used to answer the same question as
+ * `interfaceBrandCode ?? code` — the brand mapped to ITSELF — and this
+ * paragraph named that as a deliberate divergence. That loader is **deleted**.
+ * Its grouped replacement, `loadReimburseErpGroups`, puts such a brand in an
+ * `unassigned` bucket, which agrees with this function, so there is no
+ * divergence left to defend.
  *
- * What the disagreement costs, so it is read rather than discovered: a claim
- * filed under a brand with no mapping — `ROCKS`, which migration 092 really
- * does seed for AP-4 — is actionable by **nobody but an admin**, while the
- * Interface ERP tab shows that brand grouped as though configured. Deleting a
- * mapping does the same thing silently. Task 5 says so on screen rather than
- * rendering an unexplained empty queue.
+ * What an unmapped brand costs, so it is read rather than discovered: a claim
+ * filed under one — `ROCKS`, which migration 092 really does seed for AP-4,
+ * making this the DEFAULT state on a fresh deployment — is actionable by
+ * **nobody but an admin** and appears on no approver's queue. Deleting a
+ * mapping does the same thing to every claim already filed under it. Both
+ * queues therefore report `unmappedBrandCount` and say so on screen, naming
+ * the fix (an admin maps the brand at Settings → Interface ERP), rather than
+ * rendering the same "nothing is pending" line they would show if there were
+ * genuinely nothing.
  *
  * **Batch callers want `loadClaimBrandTargets` instead.** This issues a query
  * per call, so using it per queue row is an N+1 on an authorization path.
