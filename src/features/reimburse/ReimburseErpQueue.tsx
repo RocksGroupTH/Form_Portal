@@ -23,12 +23,25 @@ import type { ErpReadiness, ReimburseErpQueueRow } from "@/lib/acc/reimburse/erp
  * table, the badges and the formatting, but its selection, its send action,
  * its preview modal and its Excel export are deliberately not carried over.
  *
- * **Readiness is shown so a claim's problem is visible before the send exists
- * to reject it.** `erpReadiness` (`./erp-queue-policy.ts`) names which line is
- * missing its G/L account; showing that now means an accountant can already
- * start fixing it from `ExpenseAccountsPanel` on the accounting-approval tab
- * (`ReimburseApprovalQueue.tsx`), rather than discovering it only once sending
- * exists and rejects the claim.
+ * **Readiness here is early warning, not something fixable from this screen.**
+ * `erpReadiness` (`./erp-queue-policy.ts`) names which line is missing its
+ * G/L account, but every row on THIS queue is `Status='Approved'` — past
+ * `ACCOUNT_FINAL` by construction, since `belongsInErpQueue` admits nothing
+ * else. `ExpenseAccountsPanel`'s save route, `setReimburseItemAccounts`,
+ * claims the request with `WHERE … Status='ManagerApproved' AND
+ * CurrentStepCode='ACCOUNT'` (`approval-service.ts`) — a predicate no row here
+ * can ever satisfy — so the PATCH refuses every one of them with a 409. The
+ * window to correct a line's category closes at `ACCOUNT_FINAL`; what this
+ * screen shows is the problem surfacing one step too late to act on in-app.
+ *
+ * **Nothing currently requires a non-null `Category` before `ACCOUNT_FINAL`
+ * either** — `approveReimburseAccountCheck`/the final approval check no
+ * category at all — so a claim can arrive here unready with no in-app path to
+ * correction. The send task this queue is staged for needs one of: a
+ * readiness gate that refuses to let `ACCOUNT_FINAL` close a claim with a
+ * missing category, or a widened edit window that lets accounting fix a line
+ * after `Approved`. Neither exists yet; this comment is the record that the
+ * gap was seen, not closed.
  */
 
 interface ApiEnvelope {
@@ -76,7 +89,9 @@ function fmtYmd(raw: string | null): string {
 }
 
 function EnvBadge({ env }: { env: string | null }) {
-  if (!env) return null;
+  if (!env) {
+    return <span style={{ color: "var(--text-faint)" }}>—</span>;
+  }
   const isSandbox = env === "Sandbox";
   return (
     <span
@@ -202,16 +217,20 @@ export function ReimburseErpQueue() {
 
   return (
     <>
-      <div
-        className="rounded-xl px-3.5 py-3 mb-4 flex items-start gap-2.5"
-        style={{ background: "var(--bg-info-yellow)", border: "1px solid var(--border-info-yellow)" }}
-      >
-        <Info size={15} className="shrink-0 mt-0.5" style={{ color: "var(--text-info-yellow)" }} />
-        <p className="text-[12.5px] leading-relaxed m-0" style={{ color: "var(--text-info-yellow)" }}>
-          รายการด้านล่างคือคำขอเบิกเงินคืนที่อนุมัติครบแล้วและรอส่งเข้า Business Central —
-          ระบบยังไม่เปิดใช้งานการส่งจริง ฟังก์ชันส่งข้อมูลจะเปิดใช้งานเมื่อเชื่อมต่อกับ Business Central แล้ว
-        </p>
-      </div>
+      {/* A refused viewer must not read "the list below is…" above "ไม่มีสิทธิ์เข้าถึง" —
+          `ReimburseApprovalQueue` gates its own notice on `!forbidden` for the same reason. */}
+      {!forbidden && (
+        <div
+          className="rounded-xl px-3.5 py-3 mb-4 flex items-start gap-2.5"
+          style={{ background: "var(--bg-info-yellow)", border: "1px solid var(--border-info-yellow)" }}
+        >
+          <Info size={15} className="shrink-0 mt-0.5" style={{ color: "var(--text-info-yellow)" }} />
+          <p className="text-[12.5px] leading-relaxed m-0" style={{ color: "var(--text-info-yellow)" }}>
+            รายการด้านล่างคือคำขอเบิกเงินคืนที่อนุมัติครบแล้วและรอส่งเข้า Business Central —
+            ระบบยังไม่เปิดใช้งานการส่งจริง ฟังก์ชันส่งข้อมูลจะเปิดใช้งานเมื่อเชื่อมต่อกับ Business Central แล้ว
+          </p>
+        </div>
+      )}
 
       {rows.length > 0 && (
         <div className="flex items-center gap-2 mb-4 flex-wrap">
@@ -250,8 +269,10 @@ export function ReimburseErpQueue() {
         </div>
       )}
 
-      <div className="rounded-2xl overflow-hidden" style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)" }}>
-        {isLoading ? (
+      {/* No card of its own — the page's shared `rounded-2xl` card (`page.tsx`)
+          supplies the border and background, exactly as AP-3's tab bodies rely
+          on their page for the same chrome. */}
+      {isLoading ? (
           <div className="flex items-center justify-center py-16">
             <Loader2 size={24} className="animate-spin" style={{ color: "var(--text-muted)" }} />
           </div>
@@ -359,7 +380,6 @@ export function ReimburseErpQueue() {
             </table>
           </div>
         )}
-      </div>
     </>
   );
 }

@@ -8,7 +8,7 @@
  * as `queue-service.ts` does for the accounting-approval queue. A tester's
  * claim belongs on a tester's queue.
  *
- * ## Two layers, for the reason `queue-service.ts`'s own docblock records
+ * ## Two layers, and what each one can and cannot catch
  *
  * `AccRequest` is shared, and AP-1 and AP-3 both park their own approved
  * claims at the identical `Status = 'Approved'` — AP-3's
@@ -16,14 +16,37 @@
  * form. `queue-service.ts` records three separate SQL rearrangements that each
  * kept a text-guard's pinned substrings while quietly widening what the WHERE
  * clause actually selected (an AND loosened to an OR, a re-parenthesisation, a
- * policy call stripped of its guarding `if`) — a lesson this file inherits
- * rather than re-derives. So the WHERE clause below is the first, cheaper
- * layer: correct on its own, but not trusted alone. `req.FormCode` and
- * `req.Status` are read back off the result set and handed to
- * `belongsInErpQueue` (`./erp-queue-policy.ts`), which re-derives the whole
- * predicate from what the database actually returned rather than from what the
- * WHERE clause merely appears to say. A row it refuses is dropped before it
- * reaches the client, regardless of how the SQL above is later reshaped.
+ * policy call stripped of its guarding `if`) — a lesson this file inherits.
+ *
+ * **The SQL text pin (`erp-queue-service-guard.test.ts`) catches an edited
+ * WHERE clause.** It is a regex over this file's own source, and it can only
+ * ever prove that `FormCode = @form` still appears somewhere and that `@form`
+ * is still bound to `AP4_FORM_CODE` — it says nothing about what the query
+ * actually returns, and nothing about what the row loop does with what comes
+ * back.
+ *
+ * **The behavioural test (`erp-queue-service.test.ts`) catches a rebinding
+ * inside the row loop, which a WHERE-clause pin cannot see at all.** A review
+ * round found exactly this: the WHERE clause left untouched, `req.FormCode` and
+ * `req.Status` still selected, `belongsInErpQueue` still called and gated with
+ * `if (!… ) continue;` — every SQL-text assertion this file could pass — while
+ * the row-loop code that used to read `const status = (x.Status as string |
+ * null) ?? "";` had become `const status = "Approved";`. That single line makes
+ * `belongsInErpQueue(formCode, status)` tautological for every row the widened
+ * WHERE clause (`... OR req.CurrentStepCode = 'ACCOUNT'`) now returns, and the
+ * queue lists claims still parked at `(ManagerApproved, ACCOUNT)` under a
+ * header saying they are approved and waiting to post. No SQL-text regex
+ * catches that, because nothing about the SQL text changed to hide the row
+ * check — the row check itself was fed a lie. **Neither layer is sufficient
+ * alone**; the behavioural test is what closes the gap, because it hands
+ * `accumulateErpQueueRows` a row shaped exactly like the exploit
+ * (`{FormCode:"AP-4", Status:"ManagerApproved"}`) and asserts it is dropped —
+ * no regex needs to be written correctly for that to work.
+ *
+ * The row loop itself now lives in `accumulateErpQueueRows`
+ * (`./erp-queue-policy.ts`), not here — see that function's own docblock for
+ * why it has to live in an import-free module rather than in this one.
+ * `listReimburseErpQueue` below is the pool call and one call into it.
  *
  * ## Readiness is a property of the lines, not the header
  *
@@ -40,68 +63,15 @@
  */
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { AP4_FORM_CODE } from "@/features/reimburse/constants";
-import { belongsInErpQueue, erpReadiness } from "./erp-queue-policy";
+import { accumulateErpQueueRows } from "./erp-queue-policy";
 import type { ReimburseErpQueueRow } from "./erp-queue-policy";
 
 export type { ReimburseErpQueueRow } from "./erp-queue-policy";
 
-/** `TotalAmount` etc. arrive from `mssql` typed loosely; coerce rather than trust. */
-function num(v: unknown): number {
-  if (v === null || v === undefined) return 0;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function numOrNull(v: unknown): number | null {
-  if (v === null || v === undefined) return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
-function isoOrNull(v: unknown): string | null {
-  return v instanceof Date ? v.toISOString() : null;
-}
-
-/** Date column -> YYYY-MM-DD using local getters — the server runs Thai wall time. */
-function toYmd(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-/** One claim, accumulated across its joined item rows before `erpReadiness` runs over `items`. */
-interface AccumulatedRow {
-  id: number;
-  requestNo: string;
-  brandCode: string;
-  requesterName: string;
-  formCode: string;
-  status: string;
-  submittedAt: string | null;
-  paymentDate: string | null;
-  totalAmount: number;
-  erpStatus: string | null;
-  erpDocumentNo: string | null;
-  erpEnvironment: string | null;
-  erpSentAt: string | null;
-  erpError: string | null;
-  items: { category: string | null; amount: number | null }[];
-}
-
 /**
  * Every APPROVED AP-4 claim, joined to its lines, in the shape the Interface
- * ERP tab renders.
- *
- * `FormCode` and `Status` are read back off every joined row rather than
- * assumed from the WHERE clause, so `belongsInErpQueue` has real values to
- * re-derive the predicate from — see the file header for why that is the
- * layer with teeth. A row it disagrees with is dropped from the accumulator
- * before any of its item rows are collected, so a leaked AP-1/AP-3 row cannot
- * contribute a phantom entry to this queue's item counts either.
- *
- * The join fans one claim out to one row per item (or one row with every item
- * column NULL, for a claim with none), so results are accumulated into a Map
- * keyed on `req.Id` and only flattened back to `ReimburseErpQueueRow[]` at the
- * end — `order` preserves the SQL's own `req.Id DESC` ordering, which the Map
- * alone would not.
+ * ERP tab renders. The WHERE clause is the first, cheap layer (see the file
+ * header); `accumulateErpQueueRows` is the second, real one.
  */
 export async function listReimburseErpQueue(): Promise<ReimburseErpQueueRow[]> {
   const pool = await getAccPool();
@@ -120,67 +90,5 @@ export async function listReimburseErpQueue(): Promise<ReimburseErpQueueRow[]> {
       ORDER BY req.Id DESC, i.SortOrder ASC, i.Id ASC
     `);
 
-  const byId = new Map<number, AccumulatedRow>();
-  const order: number[] = [];
-
-  for (const x of res.recordset as Record<string, unknown>[]) {
-    const id = x.Id as number;
-    const formCode = (x.FormCode as string | null) ?? "";
-    const status = (x.Status as string | null) ?? "";
-    if (!belongsInErpQueue(formCode, status)) continue;
-
-    let acc = byId.get(id);
-    if (!acc) {
-      acc = {
-        id,
-        requestNo: (x.RequestNo as string | null) ?? "",
-        brandCode: (x.BrandCode as string | null) ?? "",
-        requesterName: (x.RequesterFullName as string | null) ?? "",
-        formCode,
-        status,
-        submittedAt: isoOrNull(x.SubmittedAt),
-        paymentDate: x.PaymentDate ? toYmd(x.PaymentDate as Date) : null,
-        totalAmount: num(x.TotalAmount),
-        erpStatus: (x.ErpInterfaceStatus as string | null) ?? null,
-        erpDocumentNo: (x.ErpDocumentNo as string | null) ?? null,
-        erpEnvironment: (x.ErpInterfaceEnvironment as string | null) ?? null,
-        erpSentAt: isoOrNull(x.ErpInterfaceSentAt),
-        erpError: (x.ErpInterfaceError as string | null) ?? null,
-        items: [],
-      };
-      byId.set(id, acc);
-      order.push(id);
-    }
-
-    // A claim with no items at all joins to one row with ItemId NULL — do not
-    // count that as a line with a missing category (see the file header).
-    if (x.ItemId != null) {
-      acc.items.push({
-        category: (x.ItemCategory as string | null) ?? null,
-        amount: numOrNull(x.ItemAmount),
-      });
-    }
-  }
-
-  return order.map((id) => {
-    const acc = byId.get(id)!;
-    return {
-      id: acc.id,
-      requestNo: acc.requestNo,
-      brandCode: acc.brandCode,
-      requesterName: acc.requesterName,
-      formCode: acc.formCode,
-      status: acc.status,
-      submittedAt: acc.submittedAt,
-      paymentDate: acc.paymentDate,
-      totalAmount: acc.totalAmount,
-      itemCount: acc.items.length,
-      erpStatus: acc.erpStatus,
-      erpDocumentNo: acc.erpDocumentNo,
-      erpEnvironment: acc.erpEnvironment,
-      erpSentAt: acc.erpSentAt,
-      erpError: acc.erpError,
-      readiness: erpReadiness(acc.items),
-    };
-  });
+  return accumulateErpQueueRows(res.recordset as Record<string, unknown>[]);
 }

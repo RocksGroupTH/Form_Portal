@@ -15,18 +15,22 @@ import { ReimburseErpQueue } from "@/features/reimburse/ReimburseErpQueue";
  * **This page owns the shell; `ReimburseApprovalQueue` and `ReimburseErpQueue`
  * are body-only.** AP-1, AP-2 and AP-3 all give the ERP queue its own tab
  * rather than its own route, and `/request/clear-advance/admin/approvals/page.tsx`
- * is the model this file copies: the `parseTab`/`setTab`/`TABS` shape, the
- * `?tab=interface` convention (the default tab carries no query param), and
- * the `<Suspense>` wrapper `useSearchParams` requires.
+ * is the model this file copies — not just its `parseTab`/`setTab`/`TABS`
+ * shape and `?tab=interface` convention, but the ENCLOSED tab shape every
+ * other tabbed page in this app shares (including AP-4's own settings page
+ * one click away): one page-level `rounded-2xl` card holding the strip
+ * (`px-4 pt-4`, active tab `background: var(--bg-card)`, `shrink-0` buttons,
+ * `overflow-x-auto no-scrollbar` so narrow viewports scroll the strip rather
+ * than compressing its labels) plus a `p-5` body. An earlier version of this
+ * page put the strip directly on the page background with neither of those —
+ * caught in review because it was measurably different from every sibling
+ * tabbed page, not because it looked wrong in isolation.
  *
- * **`ReimburseApprovalQueue` keeps its own outer card**, unlike AP-3's
- * `ClrApprovalsQueue`/`ClrErpInterfaceQueue`, which render body content only
- * and rely on their page's shared `rounded-2xl` card for the border and
- * background. Wrapping `ReimburseApprovalQueue` in a second such card here
- * would nest two bordered boxes around the same content; leaving its own card
- * alone keeps the existing tab's screen exactly as it rendered before this
- * split, tab strip aside. `ReimburseErpQueue` was written the same way for the
- * same reason, so both tabs' bodies carry equivalent chrome.
+ * **Both bodies are chrome-less**, relying on this card for their border and
+ * background rather than carrying a second one of their own — the same as
+ * AP-3's `ClrApprovalsQueue`/`ClrErpInterfaceQueue`. `ReimburseApprovalQueue`
+ * keeps only its OWN conditional `pb-24` (space for its sticky bottom action
+ * bar), which is about its own content, not chrome.
  *
  * Header icon/title/backHref are the exact values `ReimburseApprovalQueue`
  * rendered on its own `PageHeaderBar` before this split; the subtitle now
@@ -86,29 +90,40 @@ function ApprovalsContent() {
         backHref="/request"
       />
 
-      <div className="flex items-center gap-1 mb-4" style={{ borderBottom: "1px solid var(--border-card)" }}>
-        {TABS.map((tab) => {
-          const active = activeTab === tab.key;
-          return (
-            <button
-              key={tab.key}
-              type="button"
-              onClick={() => setTab(tab.key)}
-              className="flex items-center gap-1.5 px-4 py-2.5 text-[13px] font-semibold cursor-pointer border-none bg-transparent rounded-t-lg transition-colors"
-              style={{
-                color: active ? "var(--nav-active-text)" : "var(--text-muted)",
-                borderBottom: active ? "2px solid var(--nav-active-text)" : "2px solid transparent",
-                marginBottom: "-1px",
-              }}
-            >
-              {tab.icon}
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>
+      <div
+        className="rounded-2xl overflow-hidden"
+        style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)" }}
+      >
+        <div
+          className="flex gap-1 px-4 pt-4 pb-0 overflow-x-auto overflow-y-hidden no-scrollbar"
+          style={{ borderBottom: "1px solid var(--border-card)" }}
+        >
+          {TABS.map((tab) => {
+            const active = activeTab === tab.key;
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setTab(tab.key)}
+                className="flex items-center gap-1.5 px-4 py-2.5 text-[13px] font-semibold cursor-pointer border-none rounded-t-lg transition-colors shrink-0"
+                style={{
+                  background: active ? "var(--bg-card)" : "transparent",
+                  color: active ? "var(--nav-active-text)" : "var(--text-muted)",
+                  borderBottom: active ? "2px solid var(--nav-active-text)" : "2px solid transparent",
+                  marginBottom: "-1px",
+                }}
+              >
+                {tab.icon}
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
 
-      {activeTab === "approve" ? <ReimburseApprovalQueue /> : <ReimburseErpQueue />}
+        <div className="p-5">
+          {activeTab === "approve" ? <ReimburseApprovalQueue /> : <ReimburseErpQueue />}
+        </div>
+      </div>
     </PageContainer>
   );
 }

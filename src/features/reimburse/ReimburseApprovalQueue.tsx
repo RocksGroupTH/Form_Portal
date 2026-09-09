@@ -592,10 +592,11 @@ export function ReimburseApprovalQueue() {
         </div>
       )}
 
-      <div
-        className={`rounded-2xl overflow-hidden ${selectedCount > 0 ? "pb-24" : ""}`}
-        style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)" }}
-      >
+      {/* No card of its own — the page's shared `rounded-2xl` card (`page.tsx`)
+          supplies the border and background; only the conditional bottom
+          padding for the sticky action bar stays here, since that is about
+          this component's own content, not chrome. */}
+      <div className={selectedCount > 0 ? "pb-24" : undefined}>
         {isLoading ? (
           <p className="text-[13px] py-10 text-center" style={{ color: "var(--text-muted)" }}>
             กำลังโหลด...

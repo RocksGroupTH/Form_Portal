@@ -117,3 +117,157 @@ export function erpReadiness(
     issues,
   };
 }
+
+/* ── The accumulator — the second, real layer against a leaked AP-1/AP-3 row ──
+ *
+ * `erp-queue-service.ts`'s query is the first, cheap layer (`WHERE
+ * req.FormCode = @form AND req.Status = 'Approved'`), and it is trusted only
+ * as far as SQL text can be trusted — `queue-service.ts`'s own docblock records
+ * three rounds of a WHERE clause quietly widening while a text guard's pinned
+ * substrings stayed intact. `belongsInErpQueue` above is what re-derives the
+ * predicate from the row instead of the SQL, but on its own that only helps if
+ * whatever calls it actually hands it the row's own values — a caller that
+ * writes `const status = "Approved";` instead of reading `x.Status` satisfies
+ * every check `belongsInErpQueue` could ever run, and still lists a claim still
+ * parked at `(ManagerApproved, ACCOUNT)` under a header saying it is approved
+ * and waiting to post. That caller is `accumulateErpQueueRows`, so it has to
+ * live somewhere a test can hand it a row shaped exactly like that and watch it
+ * get dropped — which is why it lives HERE rather than in `erp-queue-service.ts`
+ * itself: that file's first import (`getAccPool`) reaches `@/lib/db/mssql` →
+ * `@/env`, which validates the whole environment at import and throws outside a
+ * configured machine, so nothing that imports it can be exercised with a plain
+ * array in `erp-queue-service.test.ts`. `team-member/service.test.ts` documents
+ * the identical split for `service.ts` vs. `mapping.ts`; this is the same
+ * shape, applied to a newer table.
+ */
+
+/** `TotalAmount` etc. arrive from `mssql` typed loosely; coerce rather than trust. */
+function num(v: unknown): number {
+  if (v === null || v === undefined) return 0;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function numOrNull(v: unknown): number | null {
+  if (v === null || v === undefined) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function isoOrNull(v: unknown): string | null {
+  return v instanceof Date ? v.toISOString() : null;
+}
+
+/** Date column -> YYYY-MM-DD using local getters — the server runs Thai wall time. */
+function toYmd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** One claim, accumulated across its joined item rows before `erpReadiness` runs over `items`. */
+interface AccumulatedRow {
+  id: number;
+  requestNo: string;
+  brandCode: string;
+  requesterName: string;
+  formCode: string;
+  status: string;
+  submittedAt: string | null;
+  paymentDate: string | null;
+  totalAmount: number;
+  erpStatus: string | null;
+  erpDocumentNo: string | null;
+  erpEnvironment: string | null;
+  erpSentAt: string | null;
+  erpError: string | null;
+  items: { category: string | null; amount: number | null }[];
+}
+
+/**
+ * Turns `erp-queue-service.ts`'s raw joined recordset into
+ * `ReimburseErpQueueRow[]` — the WHOLE mapping loop: the row-level
+ * `belongsInErpQueue` gate, the `Map`+`order` flatten that fans one claim's
+ * joined item rows back into one row, the `ItemId != null` guard that tells
+ * "no items" apart from "one item with a NULL category", `itemCount`, and the
+ * final `erpReadiness` call.
+ *
+ * `formCode` and `status` are read off each raw row (`x.FormCode`,
+ * `x.Status`) rather than assumed, exactly as `queue-service.ts`'s loop reads
+ * `r.FormCode` — see the section header above for why a rebinding here is the
+ * actual hole a SQL-text guard cannot see. A row `belongsInErpQueue` refuses
+ * is dropped before it can contribute anything, including a phantom item to
+ * another claim's count.
+ *
+ * The join fans one claim out to one row per item (or one row with every item
+ * column NULL, for a claim with none), so results are accumulated into a
+ * `Map` keyed on `Id` and only flattened back to `ReimburseErpQueueRow[]` at
+ * the end — `order` preserves the caller's own row order (in practice
+ * `req.Id DESC`), which the `Map` alone would not.
+ */
+export function accumulateErpQueueRows(
+  recordset: readonly Record<string, unknown>[],
+): ReimburseErpQueueRow[] {
+  const byId = new Map<number, AccumulatedRow>();
+  const order: number[] = [];
+
+  for (const x of recordset) {
+    const id = x.Id as number;
+    const formCode = (x.FormCode as string | null) ?? "";
+    const status = (x.Status as string | null) ?? "";
+    if (!belongsInErpQueue(formCode, status)) continue;
+
+    let acc = byId.get(id);
+    if (!acc) {
+      acc = {
+        id,
+        requestNo: (x.RequestNo as string | null) ?? "",
+        brandCode: (x.BrandCode as string | null) ?? "",
+        requesterName: (x.RequesterFullName as string | null) ?? "",
+        formCode,
+        status,
+        submittedAt: isoOrNull(x.SubmittedAt),
+        paymentDate: x.PaymentDate ? toYmd(x.PaymentDate as Date) : null,
+        totalAmount: num(x.TotalAmount),
+        erpStatus: (x.ErpInterfaceStatus as string | null) ?? null,
+        erpDocumentNo: (x.ErpDocumentNo as string | null) ?? null,
+        erpEnvironment: (x.ErpInterfaceEnvironment as string | null) ?? null,
+        erpSentAt: isoOrNull(x.ErpInterfaceSentAt),
+        erpError: (x.ErpInterfaceError as string | null) ?? null,
+        items: [],
+      };
+      byId.set(id, acc);
+      order.push(id);
+    }
+
+    // A claim with no items at all joins to one row with ItemId NULL — do not
+    // count that as a line with a missing category (see erp-queue-service.ts's
+    // own header for why the distinction matters).
+    if (x.ItemId != null) {
+      acc.items.push({
+        category: (x.ItemCategory as string | null) ?? null,
+        amount: numOrNull(x.ItemAmount),
+      });
+    }
+  }
+
+  return order.map((id) => {
+    const acc = byId.get(id)!;
+    return {
+      id: acc.id,
+      requestNo: acc.requestNo,
+      brandCode: acc.brandCode,
+      requesterName: acc.requesterName,
+      formCode: acc.formCode,
+      status: acc.status,
+      submittedAt: acc.submittedAt,
+      paymentDate: acc.paymentDate,
+      totalAmount: acc.totalAmount,
+      itemCount: acc.items.length,
+      erpStatus: acc.erpStatus,
+      erpDocumentNo: acc.erpDocumentNo,
+      erpEnvironment: acc.erpEnvironment,
+      erpSentAt: acc.erpSentAt,
+      erpError: acc.erpError,
+      readiness: erpReadiness(acc.items),
+    };
+  });
+}
