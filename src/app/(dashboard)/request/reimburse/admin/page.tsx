@@ -6,7 +6,7 @@ import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
 import { HoverCard } from "@/components/ui/HoverCard";
-import { Receipt, ClipboardCheck, Upload, Settings } from "lucide-react";
+import { Receipt, ClipboardCheck, Settings } from "lucide-react";
 
 interface HubCard {
   title: string;
@@ -17,26 +17,10 @@ interface HubCard {
 
 const CARDS: HubCard[] = [
   {
-    title: "ฟอร์ม AP-4",
-    desc: "สร้างคำขอใหม่ / ฉบับร่างของฉัน",
-    href: "/request/reimburse",
-    icon: <Receipt size={20} />,
-  },
-  {
     title: "คิวอนุมัติ (บัญชี)",
     desc: "รายการที่ผู้จัดการอนุมัติแล้ว รอบัญชีเลือกวันที่จ่ายและส่งต่อ",
     href: "/request/reimburse/approvals",
     icon: <ClipboardCheck size={20} />,
-  },
-  {
-    title: "Interface ERP",
-    desc: "รายการที่อนุมัติแล้ว รอส่งเข้า Business Central",
-    // The `?tab=interface` companion to the queue's own default tab — see
-    // `/request/reimburse/approvals/page.tsx`. `withReturnTag` below appends
-    // `&from=admin` (not `?`) because this href already carries a query
-    // string.
-    href: "/request/reimburse/approvals?tab=interface",
-    icon: <Upload size={20} />,
   },
   {
     title: "ตั้งค่า",
@@ -70,10 +54,20 @@ function HubCardView({ card, href }: { card: HubCard; href: string }) {
  * `/request/accounting/travel-booking` a third — this is AP-4 catching up to
  * a convention every other multi-surface form already follows.
  *
+ * Two cards, not four, since 2026-09-10: this hub used to also link straight
+ * to the fill form and to a standalone Interface ERP card. A survey of all
+ * five form hubs (AP-1, AP-2, AP-3, AP-4, AP-17) found AP-4 was the only one
+ * doing either — AP-2 and AP-3 both put ERP behind a tab, exactly where the
+ * surviving queue card already puts it
+ * (`/request/reimburse/approvals?tab=interface`), so the standalone card was a
+ * second, redundant door to the same tab. The form stays reachable from
+ * `reimburse-form` on `/request` and from Home; nothing else pointed at it
+ * once this card was gone, so removing it did not strand the form.
+ *
  * Every card here is a link, not a gate: access to what each one opens is
  * re-decided server-side at the destination (`requireReimburseSettingsTab` /
  * `requireRole` for settings, `decideReimburseMenuAccess` for the queue), so
- * this page shows all four unconditionally rather than hiding one behind a
+ * this page shows both cards unconditionally rather than hiding one behind a
  * client-side read of `useReimburseAccess()` — the same reason AP-2's and
  * AP-3's hubs do not gate their own cards either.
  */
@@ -87,7 +81,7 @@ export default function ReimburseAdminHubPage() {
         icon={Receipt}
         title="ขอเบิกเงินคืนพนักงาน · AP-4"
         titleExtra={<FormEnvironmentChip formCode="AP-4" />}
-        subtitle="ฟอร์ม คิวอนุมัติ Interface ERP และตั้งค่า (AP-4)"
+        subtitle="คิวอนุมัติ (บัญชี) และตั้งค่า (AP-4)"
         backHref={backHref}
       />
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

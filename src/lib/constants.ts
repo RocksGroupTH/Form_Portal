@@ -150,7 +150,7 @@ export const REQUEST_CARDS: NavItem[] = [
     id: "reimburse-admin",
     label: "ขอเบิกเงินคืนพนักงาน (ออฟฟิต)",
     icon: "Receipt",
-    desc: "ฟอร์ม AP-4 · คิวอนุมัติ (บัญชี) · Interface ERP · ตั้งค่า",
+    desc: "คิวอนุมัติ (บัญชี) · Interface ERP · ตั้งค่า",
     href: "/request/reimburse/admin",
     group: "Settings",
     groupTh: "ตั้งค่า",
@@ -173,14 +173,21 @@ export const REQUEST_CARDS: NavItem[] = [
     // card pointed at the accounting queue — the one form on this hub with two
     // management doors where every other form has one. It now opens
     // `/request/reimburse/admin`, AP-4's own hub (modelled on
-    // `/request/advance/admin`), which links onward to the form, the queue, its
-    // Interface ERP tab and settings — the same move AP-17 made on 2026-08-27,
-    // in one commit: delete the redundant card AND make the survivor reach the
-    // work. The `id` was renamed off its old `-settings` suffix for the same
-    // reason `advance` and `clear-advance` carry no such suffix even though
-    // their hrefs also end in `/admin` — this card no longer leads to settings
-    // alone. See `RequestHubPage`'s filter below for how this card's own
-    // visibility is gated now that it also stands in for the queue's reach.
+    // `/request/advance/admin`) — the same move AP-17 made on 2026-08-27, in one
+    // commit: delete the redundant card AND make the survivor reach the work.
+    // The `id` was renamed off its old `-settings` suffix for the same reason
+    // `advance` and `clear-advance` carry no such suffix even though their
+    // hrefs also end in `/admin` — this card no longer leads to settings alone.
+    // See `RequestHubPage`'s filter below for how this card's own visibility is
+    // gated now that it also stands in for the queue's reach.
+    //
+    // As of 2026-09-10 that hub links onward to only the queue and settings,
+    // not four destinations: of the five form hubs, AP-4 was the only one also
+    // linking its own fill form and the only one with a standalone Interface
+    // ERP card — AP-2 and AP-3 both put ERP behind a tab, exactly where AP-4's
+    // own queue page now does too. Both dropped destinations stay reachable,
+    // just not from this hub: the form through `reimburse-form` below (and
+    // Home), the ERP tab as the queue page's own second tab.
     manage: true,
   },
   {
