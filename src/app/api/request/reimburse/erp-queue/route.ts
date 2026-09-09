@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { isAdminRole } from "@/lib/roles";
-import { buildAccActor } from "@/lib/acc/actor-context";
+import { resolveReimburseRouteActor } from "@/lib/acc/reimburse/route-actor";
 import { resolveReimburseTabsByEmail } from "@/lib/acc/reimburse/access-tabs";
 import { decideReimburseMenuAccess } from "@/lib/acc/reimburse/settings-tabs";
 import { listReimburseErpQueue } from "@/lib/acc/reimburse/erp-queue-service";
@@ -51,18 +51,18 @@ export async function GET() {
       return NextResponse.json({ ok: false, error: "ไม่มีสิทธิ์เข้าถึง" }, { status: 403 });
     }
 
-    // Degrades `staffId` to `null` on a failed HR lookup rather than failing
-    // the whole request — `loadApproverScopeByStaffId` still has the login
-    // email to fall back to. Mirrors `approvals/route.ts`'s
-    // `resolveReimburseActor`.
-    let staffId: number | null = null;
-    try {
-      staffId = (await buildAccActor(Number(session.user.id), email)).staffId;
-    } catch (err) {
-      console.error("[reimburse/erp-queue] buildAccActor failed — falling back to email match only", err);
-    }
+    // Shared with `approvals/route.ts` — see `resolveReimburseRouteActor`'s
+    // own docblock (`@/lib/acc/reimburse/route-actor`) for why the two routes
+    // must resolve this identically rather than each building it inline: they
+    // used to disagree about which `email` value to pass on to
+    // `loadApproverScopeByStaffId` (trimmed vs. raw).
+    const actor = await resolveReimburseRouteActor(
+      Number(session.user.id),
+      email,
+      "reimburse/erp-queue",
+    );
 
-    const rows = await listReimburseErpQueue(staffId, email);
+    const rows = await listReimburseErpQueue(actor.staffId, actor.email);
     return NextResponse.json({ ok: true, data: rows });
   } catch (err) {
     console.error("[api/request/reimburse/erp-queue] GET", err);

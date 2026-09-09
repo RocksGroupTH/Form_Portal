@@ -80,6 +80,36 @@ test("@form is bound to AP4_FORM_CODE — not a literal string, not another form
   );
 });
 
+/**
+ * Round 1 (2026-09-10) — mirrors `queue-service-guard.test.ts`'s identical
+ * pair, added for the same measured mutation: `scope`/`claimTargets` being
+ * NAMED correctly at the `accumulateErpQueueRows(res.recordset …, scope,
+ * claimTargets)` call site proves nothing about what those two identifiers
+ * were actually bound to. A hardcoded `["PCTH","KSI","PCMY","UNO"]` /
+ * `new Map([…, ["ROCKS","PCTH"]])` in place of the two loader calls below
+ * passed the full suite with a clean typecheck.
+ */
+test("scope is bound to loadApproverScopeByStaffId(staffId, email) — not a hardcoded or unrestricted decoy", () => {
+  const src = code(SERVICE_FILE);
+  assert.ok(
+    /const\s+scope\s*=\s*await\s+loadApproverScopeByStaffId\(\s*staffId\s*,\s*email\s*\)/.test(src),
+    "erp-queue-service.ts's `const scope = …` no longer reads " +
+      "`await loadApproverScopeByStaffId(staffId, email)` — a decoy array here satisfies the naming " +
+      "pin at the accumulator call site below while silently making the ERP queue unscoped for everyone",
+  );
+});
+
+test("claimTargets is bound to loadClaimBrandTargets() — not a hardcoded map", () => {
+  const src = code(SERVICE_FILE);
+  assert.ok(
+    /const\s+claimTargets\s*=\s*await\s+loadClaimBrandTargets\(\s*\)/.test(src),
+    "erp-queue-service.ts's `const claimTargets = …` no longer reads `await loadClaimBrandTargets()` " +
+      "— a decoy Map here (mapping an unmapped brand like ROCKS to something actionable) satisfies " +
+      "the naming pin at the accumulator call site below while silently granting every claim an " +
+      "Interface target nobody configured",
+  );
+});
+
 test("the row loop still selects FormCode and passes it to belongsInErpQueue", () => {
   const src = code(POLICY_FILE);
   assert.ok(

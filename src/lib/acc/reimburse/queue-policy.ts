@@ -170,3 +170,38 @@ export function accumulateAccountQueueRows(
   }
   return rows;
 }
+
+/**
+ * How many claims at the AP-4 tuple have a `BrandCode` resolving to no
+ * Interface target at all — `ROCKS`, which migration 092 really does seed for
+ * AP-4, is exactly this case (`AccBrandErpInterface` has no row for it).
+ *
+ * **Independent of `scope`, deliberately.** An unmapped brand is out of EVERY
+ * approver's scope (`canActOnTarget` refuses a `null` target unconditionally,
+ * for anyone), so this count answers the same for whoever asks — unlike
+ * `accumulateAccountQueueRows`'s own output. Reported alongside `rows` rather
+ * than folded into it: before this a claim in this state simply vanished from
+ * the queue with nothing on screen to say why, which reads identically to
+ * "nothing is pending" and to "everything pending belongs to a different
+ * approver's brands" — three different situations rendering one Thai
+ * sentence. `ReimburseApprovalQueue.tsx` is what turns this number into a
+ * sentence naming the fix (an admin maps the brand at Settings → Interface
+ * ERP); this function only counts.
+ */
+export function countUnmappedBrandRows(
+  recordset: readonly Record<string, unknown>[],
+  claimTargets: ReadonlyMap<string, string>,
+): number {
+  let count = 0;
+  for (const x of recordset) {
+    const formCode = (x.FormCode as string | null) ?? "";
+    const status = (x.Status as string | null) ?? "";
+    const stepCode = (x.CurrentStepCode as string | null) ?? null;
+    if (!belongsInAccountQueue(formCode, status, stepCode)) continue;
+
+    const brandCode = (x.BrandCode as string | null) ?? "";
+    const target = claimTargets.get(brandCode.trim().toUpperCase()) ?? null;
+    if (target === null) count += 1;
+  }
+  return count;
+}

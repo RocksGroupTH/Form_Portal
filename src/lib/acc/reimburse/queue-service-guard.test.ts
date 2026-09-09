@@ -94,6 +94,44 @@ test("@form is bound to AP4_FORM_CODE — not a literal string, not another form
   );
 });
 
+/**
+ * Round 1 (2026-09-10): `scope`/`claimTargets` being NAMED correctly at the
+ * `accumulateAccountQueueRows(res.recordset …, scope, claimTargets)` call site
+ * (the adjacency pin further down) proves nothing about what those two
+ * IDENTIFIERS were actually bound to. Review measured it directly —
+ * ```ts
+ * const scope = ["PCTH", "KSI", "PCMY", "UNO"];
+ * const claimTargets = new Map([["PCTH","PCTH"], …, ["ROCKS","PCTH"]]);
+ * ```
+ * — replacing the two loader calls below: 1367/1367 pass and `tsc --noEmit`
+ * is clean, because `loadApproverScopeByStaffId` / `loadClaimBrandTargets`
+ * then appear in this file only inside a comment. These two assertions pin
+ * the VALUE each identifier is bound to, the same shape this file already
+ * uses for `formCode`/`status`/`stepCode` inside `queue-policy.ts`'s own row
+ * loop (see the "circular-rebinding" tests below).
+ */
+test("scope is bound to loadApproverScopeByStaffId(staffId, email) — not a hardcoded or unrestricted decoy", () => {
+  const src = code(SERVICE_FILE);
+  assert.ok(
+    /const\s+scope\s*=\s*await\s+loadApproverScopeByStaffId\(\s*staffId\s*,\s*email\s*\)/.test(src),
+    "queue-service.ts's `const scope = …` no longer reads " +
+      "`await loadApproverScopeByStaffId(staffId, email)` — a decoy array here (or any value not " +
+      "actually read from AccReimburseApproverBrand) satisfies the naming pin at the accumulator call " +
+      "site below while silently making the queue unscoped for everyone",
+  );
+});
+
+test("claimTargets is bound to loadClaimBrandTargets() — not a hardcoded map", () => {
+  const src = code(SERVICE_FILE);
+  assert.ok(
+    /const\s+claimTargets\s*=\s*await\s+loadClaimBrandTargets\(\s*\)/.test(src),
+    "queue-service.ts's `const claimTargets = …` no longer reads `await loadClaimBrandTargets()` — a " +
+      "decoy Map here (mapping every brand, including an unmapped one like ROCKS, to something " +
+      "actionable) satisfies the naming pin at the accumulator call site below while silently " +
+      "granting every claim an Interface target nobody configured",
+  );
+});
+
 test("the row loop still selects FormCode and passes it to belongsInAccountQueue", () => {
   const src = code(POLICY_FILE);
   assert.ok(
@@ -203,7 +241,7 @@ test("belongsInAccountQueue still GATES the row, rather than being called and ig
   );
 });
 
-test("the return statement is the query call's very next statement — nothing is interposed", () => {
+test("recordset is bound the query call's very next statement — nothing is interposed", () => {
   const src = code(SERVICE_FILE);
   // Mirrors the identical fix in `erp-queue-service-guard.test.ts` — read that
   // file's own comment on this test for the full account of the gap it
@@ -212,44 +250,76 @@ test("the return statement is the query call's very next statement — nothing i
   // by mutation IN PLACE —
   //
   //   for (const r of res.recordset) { r.FormCode = AP4_FORM_CODE; r.Status = "ManagerApproved"; }
-  //   return accumulateAccountQueueRows(res.recordset as Record<string, unknown>[]);
+  //   const recordset = res.recordset as Record<string, unknown>[];
   //
   // — which needs no `.map`, no `.filter`, no helper, and builds no new
   // array, so the call-site text an unanchored regex looks for is left
   // completely untouched while every row has already been rewritten before
-  // `accumulateAccountQueueRows` ever sees it.
+  // `recordset` is ever bound.
   //
-  // The fix is anchoring WHERE the call is allowed to appear: immediately
+  // The fix is anchoring WHERE the binding is allowed to appear: immediately
   // (whitespace only) after the query call's own closing `` `); ``, with
   // nothing else between them. An interposed `for` loop, a `.map` assigned to
   // a local first, or a helper call needs a STATEMENT to sit in that gap, and
   // a statement there breaks the match regardless of what it does to the
   // rows.
   //
+  // **Round 1 (2026-09-10): the pin moved off `return accumulateAccountQueueRows(…)`
+  // onto `const recordset = …` because the function now returns an object
+  // (`{ rows, scope, unmappedBrandCount }`, I1) built from TWO calls over the
+  // same recordset — `accumulateAccountQueueRows` and `countUnmappedBrandRows`
+  // — so there is no longer one `return` statement to anchor on. Pinning the
+  // EARLIEST point (the recordset binding itself) rather than either call
+  // keeps the same property: nothing between the query and the first use of
+  // its result can have rewritten a row.**
+  //
   // **This is a statement-adjacency pin, not a proof the recordset reaches
-  // the accumulator unmodified — say so rather than overclaim it.** A
+  // either function unmodified — say so rather than overclaim it.** A
   // mutation written inside the query call's own argument list, or a Proxy
   // substituted for `res.recordset` upstream of this statement, would still
   // satisfy adjacency. `queue-service.test.ts` is what actually exercises the
   // values `accumulateAccountQueueRows` receives; this is what catches an
   // edit at commit time before that test even has to.
-  // `, scope, claimTargets` is pinned by NAME, not left open with `.*` — see
-  // `formCode`/`status`/`stepCode`'s own rebinding tests above for why an
-  // unanchored gap would let `scope`/`claimTargets` be quietly rebound to
-  // something that is not what `loadApproverScopeByStaffId` /
-  // `loadClaimBrandTargets` actually returned.
   assert.ok(
-    /`\)\s*;\s*return\s+accumulateAccountQueueRows\(\s*res\.recordset\s+as\s+Record<string,\s*unknown>\[\]\s*,\s*scope\s*,\s*claimTargets\s*,?\s*\)\s*;/.test(
-      src,
-    ),
-    "queue-service.ts no longer hands accumulateAccountQueueRows the query's own recordset, scope and " +
-      "claimTargets as the very next statement after the query call. Anything interposed there — a " +
-      "mutation loop rewriting each row in place, a .map spreading a FormCode/Status/CurrentStepCode " +
-      "over each row into a new array, a filter, a helper — feeds the row-level gate values the " +
-      "database never returned, and every other test in this file and in queue-service.test.ts stays " +
-      "green while the queue lists an AP-1 claim, an ACCOUNT_FINAL claim, or a claim outside this " +
-      "caller's brand scope. If the query genuinely needs another statement between it and the return, " +
-      "move the transformation INSIDE accumulateAccountQueueRows, where the behavioural tests can see it",
+    /`\)\s*;\s*const\s+recordset\s*=\s*res\.recordset\s+as\s+Record<string,\s*unknown>\[\]\s*;/.test(src),
+    "queue-service.ts no longer binds `const recordset = res.recordset as Record<string, unknown>[];` " +
+      "as the very next statement after the query call. Anything interposed there — a mutation loop " +
+      "rewriting each row in place, a .map spreading a FormCode/Status/CurrentStepCode over each row " +
+      "into a new array, a filter, a helper — feeds the row-level gate values the database never " +
+      "returned, and every other test in this file and in queue-service.test.ts stays green while the " +
+      "queue lists an AP-1 claim, an ACCOUNT_FINAL claim, or a claim outside this caller's brand " +
+      "scope. If the query genuinely needs another statement before `recordset` is bound, move the " +
+      "transformation INSIDE accumulateAccountQueueRows, where the behavioural tests can see it",
+  );
+});
+
+/**
+ * Round 1 (2026-09-10, I1). `recordset` reaching the two functions unmutated
+ * (the test above) proves nothing about whether `scope`/`claimTargets` were
+ * rebound at the CALL SITES themselves, or whether the returned object
+ * silently drops one of its three fields. `, scope, claimTargets` and the
+ * three-field return are pinned by NAME, not left open with `.*` — the same
+ * reasoning `formCode`/`status`/`stepCode`'s own rebinding tests give above.
+ */
+test("rows, unmappedBrandCount and the returned object all read off recordset/scope/claimTargets by name", () => {
+  const src = code(SERVICE_FILE);
+  assert.ok(
+    /const\s+rows\s*=\s*accumulateAccountQueueRows\(\s*recordset\s*,\s*scope\s*,\s*claimTargets\s*\)\s*;/.test(src),
+    "queue-service.ts's `const rows = …` no longer reads " +
+      "`accumulateAccountQueueRows(recordset, scope, claimTargets)` — a rebound argument here defeats " +
+      "every guard on the accumulator itself",
+  );
+  assert.ok(
+    /const\s+unmappedBrandCount\s*=\s*countUnmappedBrandRows\(\s*recordset\s*,\s*claimTargets\s*\)\s*;/.test(src),
+    "queue-service.ts's `const unmappedBrandCount = …` no longer reads " +
+      "`countUnmappedBrandRows(recordset, claimTargets)` — a hardcoded 0 here would satisfy every " +
+      "other check in this file while silently telling `ReimburseApprovalQueue.tsx` that no claim is " +
+      "ever stuck on an unmapped brand",
+  );
+  assert.ok(
+    /return\s*\{\s*rows\s*,\s*scope\s*,\s*unmappedBrandCount\s*\}\s*;/.test(src),
+    "queue-service.ts no longer returns `{ rows, scope, unmappedBrandCount }` verbatim — dropping any " +
+      "one of the three silently removes it from the API response `ReimburseApprovalQueue.tsx` reads",
   );
 });
 

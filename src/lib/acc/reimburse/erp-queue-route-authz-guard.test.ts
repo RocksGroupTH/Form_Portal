@@ -14,13 +14,22 @@ import path from "node:path";
  * `listReimburseErpQueue`. Its own docblock records why it exists at all:
  * that file's check was deleted locally and `npm test` reported 1300 pass, 0
  * fail — nothing else in the suite noticed a full accounting queue becoming
- * readable by anyone signed in. This route is in the identical position:
- * `listReimburseErpQueue` takes no viewer and filters on nothing but form
- * code and status, so the `approvalQueue` gate in the route handler is the
- * ONLY place sight is decided. `erp-queue/route.ts`'s own docblock is
- * explicit that there is no per-row re-decision behind it either — unlike
- * `approvals/route.ts`, this queue is read-only, so there is no action step
- * to fall back on if the menu gate were ever silently lost.
+ * readable by anyone signed in. This route is in the identical position for
+ * the ENDPOINT itself: `decideReimburseMenuAccess` is the only thing between
+ * every authenticated employee and this endpoint answering at all.
+ *
+ * **Updated 2026-09-10 (Task 5's fix round, mirroring the identical
+ * correction on `approvals-route-authz-guard.test.ts`): `listReimburseErpQueue`
+ * no longer "takes no viewer and filters on nothing but form code and
+ * status" — it now filters further by brand scope
+ * (`AccReimburseApproverBrand`, migration 144), the same as
+ * `listReimburseAccountQueue`.** That is a SECOND, later filter on WHICH rows
+ * a granted viewer's own request returns; it is not a substitute for this
+ * gate, which still decides whether the endpoint answers anything at all.
+ * `erp-queue/route.ts`'s own docblock carries the corrected account. This
+ * queue is still read-only with no per-row re-decision behind it — unlike
+ * `approvals/route.ts`, there is no action step to fall back on if the menu
+ * gate were ever silently lost.
  *
  * Same technique as the file this copies, for the same reason: the route
  * cannot be imported and exercised here (`@/lib/acc/pool` → `@/env`
@@ -44,9 +53,10 @@ test("the erp-queue route gates sight on the approvalQueue menu grant", () => {
     /decideReimburseMenuAccess\(\s*admin\s*,\s*granted\s*,\s*"approvalQueue"\s*\)/,
     "GET /api/request/reimburse/erp-queue no longer calls " +
       'decideReimburseMenuAccess(admin, granted, "approvalQueue") — that check is the ONLY thing ' +
-      "between every authenticated employee and every APPROVED AP-4 claim's request number, " +
-      "requester name, amount and payment date, because listReimburseErpQueue itself filters on " +
-      "form code and status and knows nothing about the viewer",
+      "between every authenticated employee and this endpoint answering at all. " +
+      "listReimburseErpQueue filters further by brand scope since migration 144, but that is a " +
+      "second, later filter on WHICH rows a granted viewer's own request returns — not a substitute " +
+      "for this gate",
   );
   assert.match(
     src,

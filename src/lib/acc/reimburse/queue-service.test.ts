@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 // `listReimburseAccountQueue`'s row-mapping logic, even though the function
 // under test physically lives in the import-free module that logic had to
 // move to.
-import { accumulateAccountQueueRows } from "./queue-policy";
+import { accumulateAccountQueueRows, countUnmappedBrandRows } from "./queue-policy";
 import type { ReimburseQueueRow } from "./queue-policy";
 
 /**
@@ -209,4 +209,40 @@ test("brand comparison is case-insensitive and trimmed, matching canActOnTarget"
     new Map([["KSI", "KSI"]]),
   );
   assert.equal(out.length, 1);
+});
+
+/* ─────────────────────────── unmapped-brand count (I1) ─────────────────────────── */
+
+test("countUnmappedBrandRows is zero when every claim's brand resolves to a target", () => {
+  const rows = [row({ Id: 1, BrandCode: "PCTH" }), row({ Id: 2, BrandCode: "KSI" })];
+  assert.equal(countUnmappedBrandRows(rows, SELF_TARGETS), 0);
+});
+
+test("countUnmappedBrandRows counts a claim brand with no entry in claimTargets", () => {
+  // ROCKS, seeded by migration 092.
+  const rows = [row({ Id: 1, BrandCode: "ROCKS" })];
+  assert.equal(countUnmappedBrandRows(rows, SELF_TARGETS), 1);
+});
+
+test("countUnmappedBrandRows is independent of scope — it is not passed one at all", () => {
+  // The whole point: an unmapped brand is invisible to every scope, so the
+  // count must not vary with who is asking. There is no scope parameter to
+  // even get this wrong with.
+  const rows = [row({ Id: 1, BrandCode: "ROCKS" }), row({ Id: 2, BrandCode: "PCTH" })];
+  assert.equal(countUnmappedBrandRows(rows, SELF_TARGETS), 1);
+});
+
+test("countUnmappedBrandRows ignores a row that does not belong in the queue at all", () => {
+  // An AP-1 claim, or an AP-4 claim past ACCOUNT — belongsInAccountQueue
+  // refuses it before its brand is even looked up, same as the accumulator.
+  const rows = [
+    row({ Id: 1, FormCode: "AP-1", BrandCode: "ROCKS" }),
+    row({ Id: 2, Status: "Approved", CurrentStepCode: null, BrandCode: "ROCKS" }),
+  ];
+  assert.equal(countUnmappedBrandRows(rows, SELF_TARGETS), 0);
+});
+
+test("countUnmappedBrandRows counts every unmapped row, not just the first", () => {
+  const rows = [row({ Id: 1, BrandCode: "ROCKS" }), row({ Id: 2, BrandCode: "ROCKS" })];
+  assert.equal(countUnmappedBrandRows(rows, SELF_TARGETS), 2);
 });

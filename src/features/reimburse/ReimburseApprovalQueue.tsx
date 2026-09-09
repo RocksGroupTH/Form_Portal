@@ -35,14 +35,34 @@ import type { ExpenseAccount } from "@/lib/acc/reimburse/expense-account-service
  * where `approveReimburseAccountCheck` (`approval-service.ts`) fixes the
  * payment date and hands the claim to the second accountant.
  *
- * **Sight of this page is `approvalQueue` (`decideReimburseMenuAccess`), not
- * `AccReimburseApprover` membership.** The route answers every row to anyone
- * holding the menu grant; whether a given click succeeds is re-decided by the
- * approval service against the roster, inside the same transaction that
- * writes. A viewer with the tick and no approver row therefore sees a full
- * queue and gets "ไม่มีสิทธิ์" from every action — that is correct, not a bug
- * to special-case, because `AccReimburseAccess` exists precisely so "may see
- * the queue" and "may approve money" are not the same tick.
+ * **Sight of the PAGE is `approvalQueue` (`decideReimburseMenuAccess`), not
+ * `AccReimburseApprover` membership — but sight of ROWS is scoped, since
+ * migration 144 (2026-09-10).** These used to be the same fact; they are not
+ * any more, and the distinction is what the yellow notice below and the
+ * three-way empty state exist to explain:
+ *
+ *  - The menu grant decides whether this viewer reaches the endpoint at all.
+ *    A viewer with the tick and no active `AccReimburseApprover` row still
+ *    reaches it — but their own brand scope is `null` (no active roster row,
+ *    `requireApproverScopeFor`'s own three-valued distinction,
+ *    `approval-service.ts`), and `accumulateAccountQueueRows` answers `[]` for
+ *    a `null` scope rather than falling back to "show everything". So they now
+ *    see an EMPTY queue, not a full one — the sentence this docblock used to
+ *    carry ("sees a full queue and gets ไม่มีสิทธิ์ from every action") is what
+ *    Task 5 changed, and CLAUDE.md/the design spec have not caught up yet
+ *    (recorded, not silently left stale, in `approvals-route-authz-guard.test.ts`).
+ *  - A scoped approver (a real `scope: string[]`) sees only the claims whose
+ *    brand resolves to one of their ticked Interface targets. Whether a given
+ *    click succeeds is STILL re-decided by the approval service inside the
+ *    same transaction that writes — the row filter here is sight, not the
+ *    control, and a stale page or a bookmark from before a scope narrowed is
+ *    still refused server-side regardless of what this page shows.
+ *  - A third state — `unmappedBrandCount > 0` — is neither of the above:
+ *    claims exist, pending, that NOBODY's scope can ever cover, because their
+ *    own `BrandCode` resolves to no Interface target at all
+ *    (`AccBrandErpInterface` has no row — `ROCKS`, migration 092's seed, is
+ *    exactly this). Rendering that identically to "nothing is pending" would
+ *    make a stuck claim invisible with no way for anyone to learn why.
  *
  * **One payment-date control for the whole selection, not a picker per row and
  * not a dropdown of rounds.** `paymentDateProblem` (`approval-policy.ts`,
@@ -91,6 +111,22 @@ interface QueueData {
    * lookup.
    */
   isReimburseApprover: boolean | null;
+  /**
+   * This viewer's own ticked Interface targets — `null` when they hold no
+   * active `AccReimburseApprover` row at all (see `isReimburseApprover`
+   * above, which is the same fact from `AccReimburseApprover` alone; this is
+   * the fact from the join with `AccReimburseApproverBrand`). An empty array
+   * should not occur in practice — `setReimburseApproverBrands` keeps
+   * `IsActive` in step with `targets.length > 0` — but is handled the same as
+   * a non-empty one rather than assumed impossible.
+   */
+  scope: string[] | null;
+  /**
+   * Claims at `(ManagerApproved, ACCOUNT)` whose own `BrandCode` resolves to
+   * no Interface target at all — invisible to every scope, not just this
+   * viewer's. See `countUnmappedBrandRows` (`queue-policy.ts`).
+   */
+  unmappedBrandCount: number;
 }
 
 class ApiError extends Error {
@@ -375,6 +411,12 @@ export function ReimburseApprovalQueue() {
   // the `/request` hub and to AP-4's settings page paid a `Rocks_Portal_HR`
   // lookup neither of them needed. See the `/approvals` route's docblock.
   const isReimburseApprover = data?.isReimburseApprover ?? null;
+  // I1 (2026-09-10): `scope` and `unmappedBrandCount` are what let the empty
+  // state below tell "nothing pending", "everything pending is outside your
+  // scope" and "some claims are stuck on an unmapped brand" apart — see
+  // `ReimburseAccountQueueResult`'s own docblock (`queue-service.ts`).
+  const scope = data?.scope ?? null;
+  const unmappedBrandCount = data?.unmappedBrandCount ?? 0;
 
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [bulkDate, setBulkDate] = useState("");
@@ -561,18 +603,22 @@ export function ReimburseApprovalQueue() {
       {/*
         A NOTICE, not a block. `isReimburseApprover === false` says this viewer
         holds the `approvalQueue` grant (or is an admin) but has no active
-        `AccReimburseApprover` row, so every action here will refuse — and it
-        refuses unhelpfully: `authorizeAccRequest(…, "read")` answers the
-        generic "ไม่มีสิทธิ์เข้าถึงคำขอนี้" before the roster check's own
-        `NOT_ACCOUNT_APPROVER_ERROR` is ever reached, and breaks the expand
-        panel with no explanation. Without this line the guaranteed first
-        experience of an empty roster is select-all → approve → N failures.
+        `AccReimburseApprover` row.
+
+        **Since migration 144 (2026-09-10, I1) this ALSO means their own brand
+        scope is `null`, so the row filter below now answers them an EMPTY
+        queue, not a full one.** The wording changed with it: it used to say
+        "you can open this queue" (true when every row was shown regardless of
+        roster membership) and left the empty-state placeholder to speak for
+        itself with no idea why it was empty. Now this notice is the only
+        place that says rows are hidden at all — the generic empty-state text
+        below carries on rendering under it, honestly, since it no longer
+        claims anything this notice does not already explain.
 
         Strict `=== false` on purpose: the flag is three-valued, and `null`
         (loading, a failed fetch, or a roster the server itself could not read)
         must render nothing rather than tell somebody they are off a list
-        nobody could see. Looking stays allowed — that is the design, not an
-        oversight to close here.
+        nobody could see.
       */}
       {isReimburseApprover === false && !forbidden && (
         <div
@@ -584,10 +630,10 @@ export function ReimburseApprovalQueue() {
         >
           <Info size={15} className="shrink-0 mt-0.5" style={{ color: "var(--text-info-yellow)" }} />
           <p className="text-[12.5px] leading-relaxed m-0" style={{ color: "var(--text-info-yellow)" }}>
-            คุณเปิดดูคิวนี้ได้ แต่ยังไม่ได้เป็น
-            <strong> ผู้อนุมัติฝ่ายบัญชี</strong> ของ AP-4 — การอนุมัติ ส่งกลับ
-            และแก้รหัสบัญชีจะถูกปฏิเสธ ผู้ดูแลระบบติ๊กแบรนด์ที่คุณอนุมัติได้ (อย่างน้อย 1
-            แบรนด์) ได้ที่ ตั้งค่าขอเบิกเงินคืนพนักงาน → สิทธิ์เข้าถึง
+            คุณเปิดหน้านี้ได้ แต่ยังไม่ได้เป็น
+            <strong> ผู้อนุมัติฝ่ายบัญชี</strong> ของ AP-4 — ระบบจึงไม่แสดงรายการใด ๆ ให้
+            (การอนุมัติ ส่งกลับ และแก้รหัสบัญชีก็จะถูกปฏิเสธเช่นกัน) ผู้ดูแลระบบติ๊กแบรนด์ที่คุณอนุมัติได้
+            (อย่างน้อย 1 แบรนด์) ได้ที่ ตั้งค่าขอเบิกเงินคืนพนักงาน → สิทธิ์เข้าถึง
           </p>
         </div>
       )}
@@ -617,11 +663,29 @@ export function ReimburseApprovalQueue() {
             {error instanceof Error ? error.message : "โหลดข้อมูลไม่สำเร็จ"}
           </p>
         ) : rows.length === 0 ? (
+          // I1 (2026-09-10): three genuinely different situations used to
+          // render this identical sentence, which is false in at least the
+          // second of them. `scope` names which brands this viewer covers
+          // when they are a real approver, rather than claiming nothing at
+          // all is pending anywhere; `unmappedBrandCount` — independent of
+          // WHO is asking, see countUnmappedBrandRows's own docblock — names
+          // the fix when the reason is a claim nobody's scope can ever cover.
           <div className="py-16 text-center px-4">
             <Inbox size={32} style={{ color: "var(--text-faint)", margin: "0 auto 12px" }} />
             <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>
-              ไม่มีรายการรอบัญชีอนุมัติ
+              {scope && scope.length > 0
+                ? `ไม่มีรายการในกลุ่มที่คุณดูแล (${scope.join(", ")})`
+                : "ไม่มีรายการรอบัญชีอนุมัติ"}
             </p>
+            {unmappedBrandCount > 0 && (
+              <p
+                className="text-[12px] mt-2 leading-relaxed max-w-[420px] mx-auto"
+                style={{ color: "var(--text-faint)" }}
+              >
+                มี {unmappedBrandCount} รายการที่แบรนด์ยังไม่ได้ผูกกับกลุ่ม Interface ERP จึงไม่แสดงให้ใครเห็น
+                — ผู้ดูแลระบบผูกแบรนด์ได้ที่ ตั้งค่าขอเบิกเงินคืนพนักงาน → Interface ERP
+              </p>
+            )}
           </div>
         ) : (
           <>

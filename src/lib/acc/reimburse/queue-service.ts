@@ -59,11 +59,32 @@
  */
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { AP4_FORM_CODE } from "@/features/reimburse/constants";
-import { accumulateAccountQueueRows } from "./queue-policy";
+import { accumulateAccountQueueRows, countUnmappedBrandRows } from "./queue-policy";
 import type { ReimburseQueueRow } from "./queue-policy";
 import { loadApproverScopeByStaffId, loadClaimBrandTargets } from "./brand-scope-load";
 
 export type { ReimburseQueueRow } from "./queue-policy";
+
+/**
+ * What `listReimburseAccountQueue` answers — `rows` alone used to be the
+ * whole return value, and that was the gap review round 1 measured (I1): an
+ * unmapped-brand claim (`ROCKS`, migration 092's seed) and an out-of-scope
+ * claim both simply vanished from `rows` with nothing on screen able to tell
+ * them apart from "nothing is pending at all". `scope` and
+ * `unmappedBrandCount` are what let `ReimburseApprovalQueue.tsx` say which.
+ */
+export interface ReimburseAccountQueueResult {
+  rows: ReimburseQueueRow[];
+  /**
+   * This caller's own ticked Interface targets, or `null` when they hold no
+   * active `AccReimburseApprover` row at all — the exact three-valued
+   * distinction `requireApproverScopeFor` (`approval-service.ts`) makes, so
+   * the screen and the action can never disagree about which one this is.
+   */
+  scope: string[] | null;
+  /** See `countUnmappedBrandRows` (`./queue-policy.ts`) — independent of `scope`. */
+  unmappedBrandCount: number;
+}
 
 /**
  * Every AP-4 claim currently awaiting the accounting check, that `staffId`/
@@ -82,12 +103,12 @@ export type { ReimburseQueueRow } from "./queue-policy";
 export async function listReimburseAccountQueue(
   staffId: number | null,
   email: string | null,
-): Promise<ReimburseQueueRow[]> {
+): Promise<ReimburseAccountQueueResult> {
   const pool = await getAccPool();
   // Both reads run BEFORE the query below, and neither is interposed between
-  // the query's own closing `);` and the `return` — see
-  // queue-service-guard.test.ts's own adjacency pin for why nothing may sit
-  // in that particular gap.
+  // the query's own closing `);` and the `const recordset = …` that follows
+  // it — see queue-service-guard.test.ts's own adjacency pin for why nothing
+  // may sit in that particular gap.
   const scope = await loadApproverScopeByStaffId(staffId, email);
   const claimTargets = await loadClaimBrandTargets();
   const res = await pool
@@ -104,5 +125,8 @@ export async function listReimburseAccountQueue(
       ORDER BY r.SubmittedAt ASC
     `);
 
-  return accumulateAccountQueueRows(res.recordset as Record<string, unknown>[], scope, claimTargets);
+  const recordset = res.recordset as Record<string, unknown>[];
+  const rows = accumulateAccountQueueRows(recordset, scope, claimTargets);
+  const unmappedBrandCount = countUnmappedBrandRows(recordset, claimTargets);
+  return { rows, scope, unmappedBrandCount };
 }

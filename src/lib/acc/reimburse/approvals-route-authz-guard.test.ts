@@ -10,11 +10,22 @@ import path from "node:path";
  * every authenticated employee in the company there is exactly one thing: the
  * `decideReimburseMenuAccess(…, "approvalQueue")` check in the handler.
  *
- * Nothing else stands behind it. `listReimburseAccountQueue` takes no viewer
- * and filters on nothing but the form code and the state tuple — by design,
- * per this stage's ruling that the queue shows every claim and authority is
- * re-decided per action (see the route's own docblock). That ruling is what
- * makes THIS gate load-bearing: it is the only place sight is decided.
+ * **Updated 2026-09-10 (Task 5's fix round): `listReimburseAccountQueue` now
+ * DOES take a viewer and filters by brand scope (`AccReimburseApproverBrand`,
+ * migration 144) — this paragraph used to claim the opposite, describing a
+ * ruling ("the queue shows every claim, authority is re-decided per action")
+ * that Task 5 deliberately reversed. See the route's own docblock, which
+ * carries the corrected account and the reasoning. CLAUDE.md and the design
+ * spec still state the old ruling as of this writing; that correction is
+ * Task 9's, not this file's — noted here so nobody reads this test's silence
+ * as confirmation of the stale text.**
+ *
+ * What has NOT changed, and is what this file still guards: sight of the
+ * ENDPOINT — being answered at all, scoped or not — is gated on exactly one
+ * thing, `decideReimburseMenuAccess(…, "approvalQueue")`. Brand scope decides
+ * WHICH rows a granted viewer's own request returns; it is not a second gate
+ * on the route itself, and an ungranted viewer never reaches the query at all
+ * regardless of what their own scope would have allowed.
  *
  * **Measured, not assumed:** the whole check was deleted from the route
  * locally and `npm test` reported 1300 pass, 0 fail. Not one existing test
@@ -43,8 +54,10 @@ test("the approvals route gates sight on the approvalQueue menu grant", () => {
     /decideReimburseMenuAccess\(\s*admin\s*,\s*granted\s*,\s*"approvalQueue"\s*\)/,
     "GET /api/request/reimburse/approvals no longer calls " +
       'decideReimburseMenuAccess(admin, granted, "approvalQueue") — that check is the ONLY thing ' +
-      "between every authenticated employee and the full AP-4 accounting queue, because the queue " +
-      "loader itself filters on form code and state and knows nothing about the viewer",
+      "between every authenticated employee and this endpoint answering at all. The queue loader " +
+      "filters further by brand scope since migration 144, but that is a second, later filter on " +
+      "WHICH rows a granted viewer's own request returns — it is not a substitute for this gate, " +
+      "which still decides whether the endpoint answers anything at all",
   );
   assert.match(
     src,

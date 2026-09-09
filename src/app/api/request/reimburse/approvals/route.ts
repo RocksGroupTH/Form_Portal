@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { isAdminRole } from "@/lib/roles";
-import { buildAccActor } from "@/lib/acc/actor-context";
+import { resolveReimburseRouteActor } from "@/lib/acc/reimburse/route-actor";
 import { resolveReimburseTabsByEmail } from "@/lib/acc/reimburse/access-tabs";
 import { decideReimburseMenuAccess } from "@/lib/acc/reimburse/settings-tabs";
 import { listReimburseAccountQueue } from "@/lib/acc/reimburse/queue-service";
@@ -38,8 +38,9 @@ import {
  * every row — the same "an admin with no roster row sees nothing" rule
  * `listMyWorkRows`' AP-4 arm applies. A menu-only viewer with no approver row
  * therefore now sees an empty queue rather than every claim; the 403-on-every-
- * action half of the old sentence is unaffected — see `resolveReimburseActor`
- * below for how the queue's scope and this notice share one lookup.
+ * action half of the old sentence is unaffected — see
+ * `resolveReimburseRouteActor` (`@/lib/acc/reimburse/route-actor`) below for
+ * how the queue's scope and this notice share one lookup.
  *
  * **`isReimburseApprover` rides along on this same response, since
  * 2026-09-09.** It briefly lived on `GET /api/request/reimburse/access`
@@ -58,31 +59,6 @@ import {
  * null` — `null` when the roster could not be read, which must never be
  * reported as "you are not on it".
  */
-
-/**
- * The actor behind this session, for BOTH the queue's brand-scope filter and
- * the `isReimburseApprover` notice below — resolved once so the two never
- * disagree about which roster row (matched by StaffId, or by login email)
- * "this person" is.
- *
- * Degrades `staffId` to `null` on a failed HR lookup rather than failing the
- * whole request: `loadApproverScopeByStaffId` still has the login email to
- * fall back to, the same fallback `findActiveApprover` uses everywhere else.
- * A pool failure genuinely inside the queue's OWN read (`getAccPool`) is a
- * different failure surface and is left to the route's own top-level `try` —
- * this only shields the HR half.
- */
-async function resolveReimburseActor(
-  userId: number,
-  email: string | null,
-): Promise<{ userId: number; email: string | null; staffId: number | null }> {
-  try {
-    return await buildAccActor(userId, email);
-  } catch (err) {
-    console.error("[reimburse/approvals] buildAccActor failed — falling back to email match only", err);
-    return { userId, email: email?.trim() || null, staffId: null };
-  }
-}
 
 /**
  * Roster membership, for the notice — never a gate (see the docblock above).
@@ -132,11 +108,15 @@ export async function GET() {
       return NextResponse.json({ ok: false, error: "ไม่มีสิทธิ์เข้าถึง" }, { status: 403 });
     }
 
-    // Resolved once — see resolveReimburseActor's own docblock for why the
-    // queue's brand-scope filter and the isReimburseApprover notice must
+    // Resolved once — see resolveReimburseRouteActor's own docblock for why
+    // the queue's brand-scope filter and the isReimburseApprover notice must
     // share this one lookup rather than each building their own.
-    const actor = await resolveReimburseActor(Number(session.user.id), email);
-    const [rows, options, isReimburseApprover] = await Promise.all([
+    const actor = await resolveReimburseRouteActor(
+      Number(session.user.id),
+      email,
+      "reimburse/approvals",
+    );
+    const [queue, options, isReimburseApprover] = await Promise.all([
       listReimburseAccountQueue(actor.staffId, actor.email),
       getReimbursePaymentOptions(),
       resolveIsReimburseApprover(actor),
@@ -144,7 +124,14 @@ export async function GET() {
     return NextResponse.json({
       ok: true,
       data: {
-        rows,
+        rows: queue.rows,
+        // I1 (2026-09-10): what `ReimburseApprovalQueue.tsx` needs to tell
+        // "nothing pending", "everything pending is outside your scope" and
+        // "some claims are stuck on an unmapped brand" apart on screen —
+        // three situations that used to render one identical empty state.
+        // See `ReimburseAccountQueueResult`'s own docblock (`queue-service.ts`).
+        scope: queue.scope,
+        unmappedBrandCount: queue.unmappedBrandCount,
         paymentOptions: options.dates,
         suggested: options.defaultDate,
         isReimburseApprover,
