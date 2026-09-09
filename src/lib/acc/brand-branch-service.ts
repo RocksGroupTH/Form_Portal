@@ -3,6 +3,7 @@ import { writeBothPools } from "@/lib/acc/dual-write";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import { getAllowedBrands } from "@/lib/acc/brand-options";
 import { deleteAccCachedByPrefix } from "@/lib/acc/acc-cache";
+import { getBrandErpInterfaceMap } from "@/lib/acc/brand-erp-interface-map-service";
 import {
   erpDimensionHasCode,
   listErpDimensionOptions,
@@ -222,18 +223,50 @@ export async function upsertBrandBranch(
 /**
  * Write one per-form BranchCode override for `formCode`, or clear it when
  * `branchCode` is null (falls back to the NULL-default row).
+ *
+ * `deptAsBranch`/`fixedErpDeptCode` carry the same Fix Dept override the
+ * admin editor (`upsertBrandBranch`) writes on the default row — a branch
+ * that is not a fixed code but the requester's own mapped ERP department,
+ * with `fixedErpDeptCode` as the fallback when that mapping is absent. When
+ * `deptAsBranch` is true this runs the same validation `upsertBrandBranch`
+ * runs — `assertFixedErpDeptInErp`, refusing a blank code and a code absent
+ * from `ErpDimensionValue` for the target — but resolved differently:
+ * `upsertBrandBranch` has no form in hand, so it reads the *default*
+ * `AccBrandErpInterface` row (`resolveInterfaceBrandForClaim`, bounded to
+ * `FormCode IS NULL`); this function has both `brandCode` and `formCode`, so
+ * it resolves `formCode`'s own current mapping instead
+ * (`getBrandErpInterfaceMap`, override-or-default) — the target this specific
+ * write's Fix Dept is actually being saved against. A caller that upserts the
+ * interface mapping and then calls this in the same save (as AP-4's grouped
+ * Interface ERP save does, per member, in that order) sees its own
+ * just-written target here, not whatever AP-1's default happens to be.
  */
 export async function mergeFormBrandBranch(
   brandCode: string,
   formCode: string,
   branchCode: string | null,
+  deptAsBranch: boolean,
+  fixedErpDeptCode: string | null,
   userId: number,
 ): Promise<void> {
   const brand = brandCode.trim().toUpperCase();
   const form = formCode.trim().toUpperCase();
   const branch = branchCode?.trim() || null;
+  const deptOn = !!deptAsBranch;
+  const fixedDept = deptOn ? fixedErpDeptCode?.trim() || null : null;
   if (!brand) throw new Error("กรุณาระบุแบรนด์");
   if (!form) throw new Error("กรุณาระบุ FormCode");
+
+  if (deptOn) {
+    if (!fixedDept) throw new Error("กรุณาเลือก Fix Dept");
+    const mapping = await getBrandErpInterfaceMap(brand, form);
+    const interfaceBrand = mapping?.interfaceBrandCode ?? null;
+    if (!interfaceBrand) {
+      throw new Error("กรุณาเลือกแบรนด์ปลายทางก่อนกำหนด Dept จาก ERP");
+    }
+    await assertFixedErpDeptInErp(interfaceBrand, fixedDept);
+  }
+
   await writeBothPools(async (tx) => {
     await tx
       .request()
@@ -249,11 +282,13 @@ export async function mergeFormBrandBranch(
         .input("brand", sql.NVarChar, brand)
         .input("formCode", sql.NVarChar(20), form)
         .input("branch", sql.NVarChar, branch)
+        .input("deptAsBranch", sql.Bit, deptOn ? 1 : 0)
+        .input("fixedErpDept", sql.NVarChar, fixedDept)
         .input("user", sql.Int, userId || null)
         .query(`
           INSERT INTO [dbo].[AccBrandBranchCode]
-            (BrandCode, BranchCode, FormCode, IsActive, SortOrder, DeptAsBranch, CreatedBy)
-          VALUES (@brand, @branch, @formCode, 1, 0, 0, @user)
+            (BrandCode, BranchCode, FormCode, IsActive, SortOrder, DeptAsBranch, FixedErpDeptCode, CreatedBy)
+          VALUES (@brand, @branch, @formCode, 1, 0, @deptAsBranch, @fixedErpDept, @user)
         `);
     }
   });
