@@ -6,26 +6,30 @@
  * `@/lib/acc/travel-booking/settings-tabs`), deliberately the same shape. Two
  * things about AP-4 differ, both worth reading before editing this file.
  *
- * **The grants hang off their own roster.** AP-17 keeps them on
- * `AccBookingApprover`, which is an access list and nothing more. AP-4's
- * `AccReimburseApprover` is the pool that takes the ACCOUNT and ACCOUNT_FINAL
- * steps — being on it means approving real reimbursement payments — so hanging
- * settings grants there would make "may edit the payment rules" and "may
- * approve a payment" the same tick. `AccReimburseAccess` (migration 120) exists
- * so the two can be handed out separately.
+ * **The approval grant still hangs off its own roster — only its tab is
+ * gone.** AP-17 keeps its settings grants on `AccBookingApprover`, which is an
+ * access list and nothing more. AP-4's `AccReimburseApprover` is the pool that
+ * takes the ACCOUNT and ACCOUNT_FINAL steps — being on it means approving real
+ * reimbursement payments — so hanging settings grants there would make "may
+ * edit the payment rules" and "may approve a payment" the same tick.
+ * `AccReimburseAccess` (migration 120) exists so the two can be handed out
+ * separately, and that split still holds: what changed on 2026-09-10 is that
+ * the former ผู้อนุมัติบัญชี **tab** was removed. Its per-brand ticks
+ * (`AccReimburseApproverBrand`, migration 144) now render as extra columns on
+ * the สิทธิ์เข้าถึง grid — joined onto `AccReimburseAccess`'s rows by the
+ * `settings/access` route, never stored in that table. Ticking ≥1 brand there
+ * is what makes `AccReimburseApprover.IsActive` true; the two tables never
+ * merge, only the screen does.
  *
- * **Three of the five tabs are not grantable.** AP-1 and AP-17 each exclude
- * one for the first reason below; AP-4 excludes a second tab for a third,
- * sharper reason again, and a third tab for the reason CLAUDE.md gives for
- * AP-1's own `erpInterface` grant ("Do not grant `erpInterface` to a
- * non-admin yet"):
+ * **Two of the four tabs are not grantable.** AP-1 and AP-17 each exclude one
+ * for the first reason below; AP-4 excludes a second tab for the reason
+ * CLAUDE.md gives for AP-1's own `erpInterface` grant ("Do not grant
+ * `erpInterface` to a non-admin yet"):
  *
  * - `access` — the สิทธิ์เข้าถึง tab itself. Whoever can open it can grant
- *   themselves everything else, which is the reason both siblings give.
- * - `approvers` — the ผู้อนุมัติบัญชี tab, and the sharper case. It edits the
- *   payment-approval pool, so granting it would open a route from "may edit the
- *   checklist" to "may approve money" — the coupling `AccReimburseAccess` was
- *   added to avoid. Excluding it here is what keeps that true.
+ *   themselves everything else, which is the reason both siblings give — and
+ *   sharper now, since the same grid also carries the brand ticks that make
+ *   somebody an approver.
  * - `erpInterface` — AP-4's own Business Central posting configuration
  *   (journal batch, bank account, branch code per brand). Unlike AP-1, where
  *   this same tab **is** grantable, AP-4's version is gated but **not
@@ -36,7 +40,7 @@
  *   being handed to anyone at all until it is closed. Its route stays
  *   `requireRole` rather than `requireReimburseSettingsTab`.
  *
- * All three exclusions are enforced in `decideReimburseTabAccess`, not by a
+ * Both exclusions are enforced in `decideReimburseTabAccess`, not by a
  * database constraint. `AccReimburseAccessTab` has no CHECK on `TabKey` and is
  * writable from more than one place, so a row naming any string can appear;
  * the grantable test is what makes such a row inert.
@@ -50,26 +54,28 @@
 /**
  * Every tab the AP-4 settings page shows, in the order it shows them.
  *
- * Configuration first, then the two rosters: which brands may be claimed
- * against, the rules a requester agrees to, AP-4's own Business Central
- * posting configuration, who approves the money, and who may change any of
- * it. `erpInterface` sits with the configuration tabs and directly ahead of
- * the two rosters — the same relative position `erpInterface` holds on AP-1's
- * strip, immediately before the tab that hands out access — even though it is
- * not itself grantable here; see the module docblock for why.
+ * Configuration first, then the one roster left as its own tab: which brands
+ * may be claimed against, the rules a requester agrees to, AP-4's own Business
+ * Central posting configuration, and who may change any of it — which, since
+ * 2026-09-10, is also where who approves the money is set, as brand ticks on
+ * that same grid. `erpInterface` sits with the configuration tabs and directly
+ * ahead of สิทธิ์เข้าถึง — the same relative position it holds on AP-1's strip,
+ * immediately before the tab that hands out access — even though it is not
+ * itself grantable here; see the module docblock for why.
  * `GRANTABLE_REIMBURSE_TABS` is filtered from this array rather than written
  * out again, so the checkbox columns on the สิทธิ์เข้าถึง tab follow the strip
  * automatically.
  *
- * This is the display order only. `approvers` remains the tab the page *opens*
- * on — see `parseTabKey` and the page's docblock — because AP-4 cannot process
- * a single claim until that list has two active rows.
+ * This is the display order only. `access` is now the tab the page *opens*
+ * on — see `parseTabKey` and the page's docblock — because the payment-approval
+ * pool its grid now surfaces still has to hold at least two active rows (two
+ * people with at least one brand ticked each) before AP-4 can process a single
+ * claim.
  */
 export const REIMBURSE_SETTINGS_TAB_ORDER = [
   "brands",
   "rules",
   "erpInterface",
-  "approvers",
   "access",
 ] as const;
 

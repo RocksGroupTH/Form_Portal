@@ -2,10 +2,19 @@
 
 import { useEffect, useState } from "react";
 import useSWR from "swr";
-import { Check, Loader2, Plus, ShieldCheck, UserCheck, UserX } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  Loader2,
+  Plus,
+  ShieldCheck,
+  UserCheck,
+  UserX,
+} from "lucide-react";
 import { toast } from "sonner";
 import { ADSearchModal, type ADResult } from "@/components/settings/ADSearchModal";
 import { GRANTABLE_REIMBURSE_TABS, REIMBURSE_MENUS } from "@/lib/acc/reimburse/settings-tabs";
+import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
 
 const ENDPOINT = "/api/request/reimburse/settings/access";
 
@@ -18,6 +27,16 @@ interface ReimburseAccessRow {
   displayName: string;
   isActive: boolean;
   settingsTabs: string[];
+  /**
+   * The ticked `AccReimburseApproverBrand` codes for this person's
+   * `AccReimburseApprover` row — `[]` when they have never ticked one (which
+   * includes never having a row at all; see the GET route's own docblock for
+   * how the join is made). This IS the on/off switch for real approval
+   * authority: `≥1 ⇒ AccReimburseApprover.IsActive = 1`. There is no separate
+   * flag to read instead — see `brand-scope.ts` for why AP-4 must have no
+   * state where an empty set means "unrestricted".
+   */
+  brandTargets: string[];
 }
 
 /* ── Confirm Modal — same shape as the AP-17 and UAT Users panels' ── */
@@ -83,9 +102,10 @@ function ConfirmModal({
  *
  * One checkbox per entry in `GRANTABLE_REIMBURSE_TABS`, which is derived from
  * the settings page's own tab order — so the columns and the tabs cannot drift.
- * Two of the four tabs can never appear among them: `access`, because whoever
- * opens it could grant themselves the rest, and `approvers`, because that tab
- * edits the pool that approves real payments.
+ * `access` can never appear among them: whoever opens it could grant
+ * themselves the rest — including, since 2026-09-10, the brand-approval ticks
+ * rendered by `BrandTickCells` above, which are a THIRD, unrelated grant group
+ * on this same grid and post to a different table entirely.
  *
  * `REIMBURSE_MENUS` renders as a second, visually distinct group of the same
  * shape — a different vocabulary of keys, stored in the same `TabKey` column,
@@ -144,6 +164,101 @@ function TabGrantCheckbox({
  * whole mechanism: nothing else about the checkbox differs, and a screen
  * reader still gets the truth from `ariaLabel`, which names the group. */
 const MENU_ACCENT = "var(--color-action)";
+
+/* The brand group's accent — a third semantic colour, distinct from both the
+ * settings-tab group's green and the menu group's blue, because this group
+ * answers a materially different question: not "may this person see a
+ * screen", but "may this person approve a real payment". `--color-warning`
+ * is single-valued across both themes (see globals.css), same as
+ * `--color-action`, so no dark-mode branch is needed here either. */
+const BRAND_ACCENT = "var(--color-warning)";
+
+/**
+ * The four brand-approval columns — `AccReimburseApproverBrand`, joined onto
+ * this row by the GET route from `AccReimburseApprover`'s own table (see that
+ * route's docblock for the join). Modelled on AP-1's
+ * `ApproverInterfaceBrandTable` / `ApproverInterfaceCells`, but NOT its
+ * emptiness semantics: AP-1 collapses "all four ticked" to `null` and "none
+ * ticked" to `[]`, and both read back as unrestricted (every code allowed).
+ * AP-4 must not reproduce that — see `brand-scope.ts`'s module docblock — so
+ * this always posts the ticked set verbatim, never collapsed and never
+ * translated into "all". Zero ticks here really does mean zero brands, which
+ * `isApproverScope` (server-side) reads as "not an approver".
+ */
+function BrandTickCells({
+  row,
+  onSaved,
+}: {
+  row: ReimburseAccessRow;
+  onSaved: () => void;
+}) {
+  const [checked, setChecked] = useState<Set<string>>(() => new Set(row.brandTargets));
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setChecked(new Set(row.brandTargets));
+  }, [row.id, row.brandTargets]);
+
+  const toggle = async (code: string) => {
+    const next = new Set(checked);
+    if (next.has(code)) next.delete(code);
+    else next.add(code);
+    setChecked(next);
+    setSaving(true);
+    try {
+      const res = await fetch(ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          // Same identity echo as `TabGrantCells` below, and for the same
+          // reason: `email`/`displayName`/`isActive` are unrelated to this
+          // save's own field (`brandTargets`, a different table entirely) but
+          // must still be sent so the route's `AccReimburseAccess` upsert does
+          // not rename or reactivate/deactivate this person as a side effect
+          // of a brand tick.
+          email: row.email,
+          displayName: row.displayName,
+          isActive: row.isActive,
+          // The ticked set, sent verbatim and in a fixed order — never `null`,
+          // never collapsed. See the component docblock above.
+          brandTargets: ERP_INTERFACE_BRANDS.filter((b) => next.has(b.id)).map((b) => b.id),
+        }),
+      });
+      const json = await res.json();
+      if (json.ok) {
+        onSaved();
+      } else {
+        toast.error(json.error ?? "บันทึกไม่สำเร็จ");
+        setChecked(new Set(row.brandTargets));
+      }
+    } catch {
+      toast.error("บันทึกไม่สำเร็จ");
+      setChecked(new Set(row.brandTargets));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
+      {ERP_INTERFACE_BRANDS.map((b) => (
+        <td
+          key={b.id}
+          className="px-3 py-2.5 text-center"
+          style={{ background: "color-mix(in srgb, var(--color-warning) 6%, transparent)" }}
+        >
+          <TabGrantCheckbox
+            checked={checked.has(b.id)}
+            saving={saving}
+            onChange={() => void toggle(b.id)}
+            ariaLabel={`${row.displayName || row.email} — อนุมัติแบรนด์: ${b.name}`}
+            accent={BRAND_ACCENT}
+          />
+        </td>
+      ))}
+    </>
+  );
+}
 
 function TabGrantCells({
   row,
@@ -207,8 +322,14 @@ function TabGrantCells({
 
   return (
     <>
-      {GRANTABLE_REIMBURSE_TABS.map((tab) => (
-        <td key={tab.key} className="px-3 py-2.5 text-center">
+      {GRANTABLE_REIMBURSE_TABS.map((tab, idx) => (
+        <td
+          key={tab.key}
+          className="px-3 py-2.5 text-center"
+          // Left border on the first cell only, matching the header's own
+          // boundary between the brand-approval group and this one.
+          style={idx === 0 ? { borderLeft: "1px solid var(--border-light)" } : undefined}
+        >
           <TabGrantCheckbox
             checked={checked.has(tab.key)}
             saving={saving}
@@ -247,19 +368,42 @@ function TabGrantCells({
 }
 
 /**
- * AP-4's สิทธิ์เข้าถึง tab — who may open which of AP-4's back-office settings.
+ * AP-4's สิทธิ์เข้าถึง tab — who may open which of AP-4's back-office settings,
+ * AND, since 2026-09-10, who approves real reimbursement payments.
  *
- * **Not the approval pool.** ผู้อนุมัติบัญชี (`AccReimburseApprover`) decides who
- * takes the two accounting steps on real reimbursement payments; this list
- * decides who may edit the payment-rule checklist and the brand allowlist.
- * Migration 120 adds a second table rather than reusing the first precisely so
- * one can be handed out without the other.
+ * **Two tables, still not merged — the screen is what merged.**
+ * `AccReimburseApprover` decides who takes the two accounting steps on real
+ * reimbursement payments; `AccReimburseAccess` decides who may edit the
+ * payment-rule checklist and the brand allowlist. Migration 120 added a second
+ * table rather than reusing the first precisely so one can be handed out
+ * without the other, and that is still true — merging the tables would widen
+ * the read ACL, `/my-work`'s pending list and the approval-notification
+ * fan-out to everyone granted a settings tab, none of which is about
+ * approving. What changed is that the former ผู้อนุมัติบัญชี **tab** is gone:
+ * its brand ticks now render as extra columns on THIS grid, joined onto each
+ * row by the `settings/access` GET route. **The brand tick set is the switch**
+ * — ticking ≥1 brand is what makes `AccReimburseApprover.IsActive = 1`, and
+ * unticking the last one is what turns it back off. There is no separate
+ * on/off control for approval the way there is for สิทธิ์เข้าถึง's own สถานะ
+ * column below (see `brand-scope.ts` and `setReimburseApproverBrands`'s own
+ * docblock for why one derived value is preferred over a toggle that could
+ * contradict it).
  *
- * Unlike AP-17's identically-shaped panel, an empty list here is a **neutral**
- * state and gets no alarm banner: nothing is hidden and nothing is broken by
- * it, because admins keep every tab and this roster only ever *adds* people.
- * AP-17's empty roster hides its queue and report from everyone, which is why
- * that one shouts.
+ * **Unlike AP-1's equivalent grid, an all-unticked row is not "unrestricted"
+ * here.** AP-1 collapses "every code ticked" and "none ticked" to the same
+ * stored shape and reads zero rows as "every brand allowed" — a measured
+ * fail-open this table deliberately does not reproduce. Zero brand ticks on
+ * this grid means zero brands and zero approval authority, full stop.
+ *
+ * **Two commissioning states get an alarm banner, carried over from the
+ * deleted ผู้อนุมัติบัญชี tab's own panel:** nobody with a brand ticked (every
+ * AP-4 claim stops dead at the accounting step) and exactly one person with a
+ * brand ticked (the two-person rule then stalls every claim at the final
+ * step — "the one that looks fine until it is tried"). Neither banner is about
+ * สิทธิ์เข้าถึง's OWN roster: an admin who has added people here with no ticks
+ * of either kind is a neutral state and gets no banner, same as before —
+ * nothing is hidden and nothing is broken by that, because admins keep every
+ * tab and menu regardless of this list.
  *
  * Membership alone grants nothing either — the ticks do. Somebody added and
  * left with no boxes ticked has exactly the access they had before, which is
@@ -268,7 +412,9 @@ function TabGrantCells({
  * Table shape follows `UatUserSettings`: one สถานะ column in which the badge
  * reports the state and the round button beside it performs the single
  * available action. Deactivation is a soft delete — rows are never removed, so
- * the history of who could edit what stays readable.
+ * the history of who could edit what stays readable. That สถานะ column is
+ * still `AccReimburseAccess.IsActive` alone — settings-tab and menu sight —
+ * and is unrelated to whether the same row approves anything.
  */
 export function ReimburseAccessSettings() {
   const {
@@ -306,6 +452,10 @@ export function ReimburseAccessSettings() {
       ? data.error ?? "โหลดข้อมูลไม่สำเร็จ"
       : null;
   const activeCount = rows.filter((r) => r.isActive).length;
+  // The accounting-approver count, off the brand ticks — NOT `isActive` above,
+  // which is สิทธิ์เข้าถึง's own settings-tab/menu switch and answers a
+  // different question. This is what the two commissioning banners key on.
+  const approverActiveCount = rows.filter((r) => r.brandTargets.length > 0).length;
 
   const call = async (
     method: "POST" | "PATCH",
@@ -335,6 +485,37 @@ export function ReimburseAccessSettings() {
 
   return (
     <div className="flex flex-col gap-4">
+      {/* ── Commissioning banners — carried over verbatim in spirit from the
+          deleted ผู้อนุมัติบัญชี tab's own panel. Keyed on the brand ticks
+          (`approverActiveCount`), never on สิทธิ์เข้าถึง's own `activeCount`:
+          the two answer different questions, and this banner is about whether
+          AP-4's accounting step can move at all. */}
+      {!isLoading && !loadError && approverActiveCount === 0 && (
+        <div
+          className="rounded-xl px-4 py-3 flex items-start gap-2.5"
+          style={{ background: "var(--status-bad-bg)", color: "var(--status-bad-text)" }}
+        >
+          <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+          <p className="text-[12px] leading-relaxed">
+            ยังไม่มีผู้อนุมัติฝ่ายบัญชีที่เปิดใช้งาน (ยังไม่มีใครติ๊กแบรนด์เลยสักคน) — คำขอ AP-4
+            ทุกใบจะค้างที่ขั้นตรวจสอบของบัญชี และไม่มีใครกดอนุมัติได้ กรุณาติ๊กแบรนด์ให้ผู้มีสิทธิ์เข้าถึงอย่างน้อย 2 คน
+          </p>
+        </div>
+      )}
+      {!isLoading && !loadError && approverActiveCount === 1 && (
+        <div
+          className="rounded-xl px-4 py-3 flex items-start gap-2.5"
+          style={{ background: "var(--status-pending-bg)", color: "var(--status-pending-text)" }}
+        >
+          <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+          <p className="text-[12px] leading-relaxed">
+            มีผู้อนุมัติฝ่ายบัญชีที่เปิดใช้งานเพียง 1 คน — AP-4 กำหนดให้ผู้ที่ตรวจสอบ (ขั้นบัญชี)
+            กับผู้ที่อนุมัติขั้นสุดท้ายต้องไม่ใช่คนเดียวกัน คำขอจะค้างที่ขั้นอนุมัติสุดท้าย
+            จนกว่าจะมีผู้อนุมัติที่เปิดใช้งานอย่างน้อย 2 คน
+          </p>
+        </div>
+      )}
+
       <div
         className="rounded-xl p-4"
         style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)" }}
@@ -345,15 +526,15 @@ export function ReimburseAccessSettings() {
             สิทธิ์เข้าถึง
           </h2>
           <span className="text-[10px]" style={{ color: "var(--text-faint)" }}>
-            เปิดใช้งาน {activeCount} / {rows.length} คน
+            เปิดใช้งาน {activeCount} / {rows.length} คน · ผู้อนุมัติฝ่ายบัญชี {approverActiveCount} คน
           </span>
         </div>
         <p className="text-[11px] mb-3 leading-relaxed" style={{ color: "var(--text-muted)" }}>
-          ให้คนที่ไม่ใช่แอดมินเห็นเฉพาะสิ่งที่ติ๊กให้ — <strong>แท็บตั้งค่า</strong> ของ AP-4
-          และ <strong>หน้าใช้งาน</strong> เช่น คิวอนุมัติ (บัญชี) ·
-          IT Admin และ System Admin เห็นทุกแท็บและทุกหน้าอยู่แล้วโดยไม่ต้องอยู่ในรายชื่อนี้ ·
-          <strong> คนละรายชื่อกับ &quot;ผู้อนุมัติบัญชี&quot;</strong> — อยู่ในนี้ (หรือติ๊กคิวอนุมัติ)
-          ไม่ได้แปลว่าอนุมัติจ่ายเงินได้
+          หน้านี้รวมสองสิทธิ์ไว้ในที่เดียว — <strong>ผู้อนุมัติฝ่ายบัญชี (AP-4)</strong> ติ๊กแบรนด์
+          ด้านล่าง กับ <strong>แท็บตั้งค่า</strong> และ <strong>หน้าใช้งาน</strong> เช่น
+          คิวอนุมัติ (บัญชี) · IT Admin และ System Admin เห็นทุกแท็บและทุกหน้าอยู่แล้วโดยไม่ต้องอยู่ในรายชื่อนี้
+          และอนุมัติได้ทุกแบรนด์อยู่แล้ว · <strong>ติ๊กแบรนด์กับติ๊กแท็บเป็นอิสระจากกัน</strong> —
+          ติ๊กแบรนด์ไม่ได้แปลว่าแก้ตั้งค่าได้ และติ๊กแท็บ/หน้าใช้งานไม่ได้แปลว่าอนุมัติจ่ายเงินได้
         </p>
 
         <div className="mb-4">
@@ -393,18 +574,26 @@ export function ReimburseAccessSettings() {
           </p>
         ) : (
           <>
+            {/* Verbatim header note for the new brand group, then the
+                existing note for the settings-tab group — two short lines
+                rather than one crowded one, since they answer two different
+                questions. */}
+            <p className="text-[11px] mb-1" style={{ color: "var(--color-warning)" }}>
+              ติ๊กแบรนด์ที่อนุมัติได้ — อย่างน้อย 1 แบรนด์จึงจะเป็นผู้อนุมัติ ·
+              ไม่ติ๊กเลย = ไม่ใช่ผู้อนุมัติ
+            </p>
             <p className="text-[11px] mb-2" style={{ color: "var(--text-muted)" }}>
               ติ๊กแท็บที่ให้แก้ได้ — ถ้าไม่ติ๊กเลย จะยังเข้าหน้าตั้งค่าไม่ได้
             </p>
             <div className="overflow-x-auto">
-              <table className="w-full text-[11px] min-w-[880px]">
+              <table className="w-full text-[11px] min-w-[1080px]">
                 <thead>
                   {/* Group heading row. The three identity columns and สถานะ
-                      span both rows unchanged; the two grant groups each get a
-                      labelled span above their own checkbox columns so an
-                      admin reads "may open the settings tab" and "may open the
-                      working screen" as two different questions, not one wide
-                      block of checkboxes. */}
+                      span both rows unchanged; the three grant groups each get
+                      a labelled span above their own checkbox columns so an
+                      admin reads "may approve this brand", "may open the
+                      settings tab" and "may open the working screen" as three
+                      different questions, not one wide block of checkboxes. */}
                   <tr
                     style={{
                       borderBottom: "1px solid var(--border-light)",
@@ -420,10 +609,23 @@ export function ReimburseAccessSettings() {
                     <th rowSpan={2} className="text-left px-4 py-2 font-semibold align-bottom" style={{ color: "var(--text-muted)" }}>
                       รหัสพนักงาน
                     </th>
+                    {/* The brand-approval group — AccReimburseApproverBrand,
+                        joined onto this row by the GET route (see the route's
+                        own docblock). This is AP-4's payment-approval pool,
+                        not a settings grant, which is why it gets its own
+                        accent and sits first, ahead of the two sight-only
+                        groups. */}
+                    <th
+                      colSpan={ERP_INTERFACE_BRANDS.length}
+                      className="text-center px-3 py-1.5 font-semibold whitespace-nowrap"
+                      style={{ color: "var(--color-warning)" }}
+                    >
+                      ผู้อนุมัติฝ่ายบัญชี (ติ๊กแบรนด์)
+                    </th>
                     <th
                       colSpan={GRANTABLE_REIMBURSE_TABS.length}
                       className="text-center px-3 py-1.5 font-semibold whitespace-nowrap"
-                      style={{ color: "var(--text-info-green)" }}
+                      style={{ color: "var(--text-info-green)", borderLeft: "1px solid var(--border-light)" }}
                     >
                       แท็บตั้งค่า
                     </th>
@@ -447,15 +649,39 @@ export function ReimburseAccessSettings() {
                       background: "var(--bg-card-alt)",
                     }}
                   >
+                    {/* The four brand-approval columns, same logo-over-code
+                        shape as AP-1's ApproverInterfaceBrandTable header. */}
+                    {ERP_INTERFACE_BRANDS.map((b) => (
+                      <th
+                        key={b.id}
+                        className="text-center px-3 py-2 font-semibold whitespace-nowrap w-20"
+                        style={{ color: "var(--text-muted)" }}
+                      >
+                        <img
+                          src={`/brandlogo/${b.id.toLowerCase()}-200.png`}
+                          alt={b.name}
+                          className="h-5 w-auto object-contain mx-auto mb-0.5"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).style.display = "none";
+                          }}
+                        />
+                        <span className="block text-[10px]">{b.id}</span>
+                      </th>
+                    ))}
                     {/* The grantable settings tabs, in the settings page's own
                         order — both lists come from GRANTABLE_REIMBURSE_TABS,
                         which is filtered from the page's tab order, so a new
-                        grantable tab appears in both or in neither. */}
-                    {GRANTABLE_REIMBURSE_TABS.map((tab) => (
+                        grantable tab appears in both or in neither. Its own
+                        left border marks the boundary with the brand group. */}
+                    {GRANTABLE_REIMBURSE_TABS.map((tab, idx) => (
                       <th
                         key={tab.key}
                         className="text-center px-3 py-2 font-semibold whitespace-nowrap"
-                        style={{ color: "var(--text-muted)" }}
+                        style={
+                          idx === 0
+                            ? { color: "var(--text-muted)", borderLeft: "1px solid var(--border-light)" }
+                            : { color: "var(--text-muted)" }
+                        }
                       >
                         {tab.label}
                       </th>
@@ -499,6 +725,14 @@ export function ReimburseAccessSettings() {
                       <td className="px-4 py-2.5" style={{ color: "var(--text-muted)" }}>
                         {r.staffId}
                       </td>
+                      {/* Brand-approval ticks — a different table
+                          (`AccReimburseApprover`/`AccReimburseApproverBrand`),
+                          joined onto this row by the GET route. Rendered
+                          regardless of สิทธิ์เข้าถึง's own `isActive`: a person
+                          can be an active approver while their settings-tab
+                          access is switched off, and vice versa — the two are
+                          independent, see the component docblock above. */}
+                      <BrandTickCells row={r} onSaved={() => void mutate()} />
                       {/* Ticks render on every row, active or not. Deactivating
                           does not delete grant rows — `resolveReimburseTabsByEmail`
                           filters `IsActive = 1`, so access stops immediately and

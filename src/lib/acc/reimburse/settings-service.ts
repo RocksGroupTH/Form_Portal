@@ -175,64 +175,15 @@ export async function reorderRules(orderedIds: number[], userId: number): Promis
   });
 }
 
-/**
- * Add someone to AP-4's accounting pool, or reactivate them.
- *
- * Keyed on `StaffId`, which is the column's `UNIQUE` constraint and the identity
- * the two-person rule compares — so re-adding a retired approver restores the
- * row rather than colliding with it, and the id stays the one both databases
- * already agree on.
+/*
+ * `upsertReimburseApprover` and `setReimburseApproverActive` used to live here
+ * — the pair the deleted `settings/approvers` route called to add/reactivate
+ * and to turn an approver off or on. Removed 2026-09-10 along with that route:
+ * `setReimburseApproverBrands` below is now the only writer of
+ * `AccReimburseApprover`, and adding either of these back would let two
+ * writers race on the same `IsActive` column — see that function's own
+ * docblock for why it derives the flag rather than accepting one.
  */
-export async function upsertReimburseApprover(
-  a: { staffId: number; email: string; displayName: string },
-  userId: number,
-): Promise<void> {
-  await writeBothPools(async (tx) => {
-    await tx
-      .request()
-      .input("staff", sql.Int, a.staffId)
-      .input("email", sql.NVarChar(200), a.email)
-      .input("name", sql.NVarChar(200), a.displayName)
-      .input("user", sql.Int, userId || null)
-      .query(
-        `MERGE [dbo].[AccReimburseApprover] AS t
-         USING (SELECT @staff AS StaffId) AS s ON t.StaffId = s.StaffId
-         WHEN MATCHED THEN UPDATE SET
-           Email = @email, DisplayName = @name, IsActive = 1,
-           UpdatedBy = @user, UpdatedAt = SYSDATETIME()
-         WHEN NOT MATCHED THEN
-           INSERT (StaffId, Email, DisplayName, IsActive, CreatedBy)
-           VALUES (@staff, @email, @name, 1, @user);`,
-      );
-  });
-}
-
-/**
- * Turn an approver off or on. Soft, like every other roster in this app: the
- * `AccApproval` rows they actioned name them by StaffId, and the two-person rule
- * reads that history.
- *
- * Keyed on StaffId rather than the surrogate id — dual-write prefers a natural
- * key, because it is the one value that cannot drift between the two databases.
- */
-export async function setReimburseApproverActive(
-  staffId: number,
-  isActive: boolean,
-  userId: number,
-): Promise<void> {
-  await writeBothPools(async (tx) => {
-    await tx
-      .request()
-      .input("staff", sql.Int, staffId)
-      .input("active", sql.Bit, isActive ? 1 : 0)
-      .input("user", sql.Int, userId || null)
-      .query(
-        `UPDATE [dbo].[AccReimburseApprover]
-         SET IsActive = @active, UpdatedBy = @user, UpdatedAt = SYSDATETIME()
-         WHERE StaffId = @staff`,
-      );
-  });
-}
 
 /* ─────────────────────── per-brand scope (AccReimburseApproverBrand) ─────────────────────── */
 
@@ -268,9 +219,14 @@ export async function listReimburseApproverBrands(): Promise<Map<number, string[
 }
 
 /**
- * The single writer for AP-4's per-brand approver scope, and THE switch —
- * this is what Task 4's settings route calls, replacing a direct call to
- * `upsertReimburseApprover` + `setReimburseApproverActive` for this purpose.
+ * The single writer for AP-4's per-brand approver scope, and THE switch — this
+ * is what `settings/access`'s POST calls, and, since 2026-09-10, the ONLY
+ * writer of `AccReimburseApprover` left in this file. It replaced a direct
+ * call to `upsertReimburseApprover` + `setReimburseApproverActive`, the pair
+ * the deleted `settings/approvers` route used for this purpose; both were
+ * removed with that route rather than left as an unused second path, because
+ * either one gaining a new caller that also touches brands would race this
+ * function on the same `IsActive` column.
  *
  * **There is deliberately no separate active toggle.** `IsActive` is derived
  * from `targets` (`isApproverScope`), never posted independently, for the
@@ -278,15 +234,13 @@ export async function listReimburseApproverBrands(): Promise<Map<number, string[
  * boolean plus a date: a toggle plus a tick set can hold two contradictory
  * states — active with nothing ticked, or inactive with brands still ticked —
  * that then have to be defended against on every read. One derived value
- * cannot be contradictory. `setReimburseApproverActive` above still exists
- * for whatever legacy callers have not moved to this function; it must not
- * gain a new caller that also touches brands, or the two writers race on the
- * same column.
+ * cannot be contradictory.
  *
  * One `writeBothPools` transaction, in order: MERGE the `AccReimburseApprover`
- * row on `StaffId` (same shape as `upsertReimburseApprover`, plus the derived
- * `IsActive`), delete every existing `AccReimburseApproverBrand` row for that
- * approver, then insert one row per normalized target.
+ * row on `StaffId` (the same MERGE shape the deleted `upsertReimburseApprover`
+ * used, plus the derived `IsActive`), delete every existing
+ * `AccReimburseApproverBrand` row for that approver, then insert one row per
+ * normalized target.
  *
  * **The child rows' `ApproverId` is re-selected inside this same transaction,
  * on this same pool — never carried over from the other database.**

@@ -15,16 +15,15 @@ import {
 
 /* ── what the page shows ── */
 
-test("the strip runs brands, rules, erpInterface, approvers, access", () => {
+test("the strip runs brands, rules, erpInterface, access", () => {
   assert.deepEqual(REIMBURSE_SETTINGS_TAB_ORDER, [
     "brands",
     "rules",
     "erpInterface",
-    "approvers",
     "access",
   ]);
   // สิทธิ์เข้าถึง last is the part that is not merely a preference: it is the
-  // tab that hands out the other four, so it reads as the end of the list.
+  // tab that hands out the other three, so it reads as the end of the list.
   assert.equal(
     REIMBURSE_SETTINGS_TAB_ORDER[REIMBURSE_SETTINGS_TAB_ORDER.length - 1],
     "access",
@@ -76,12 +75,13 @@ test("the grantable keys are a subset of the tabs the page actually has", () => 
   }
 });
 
-test("access and approvers are never grantable", () => {
-  // `access` — whoever opens it can grant themselves the rest.
-  // `approvers` — that tab is AP-4's payment-approval pool, so granting it
-  // would be a route from "may edit the checklist" to "may approve money".
+test("access is never grantable", () => {
+  // Whoever opens it can grant themselves the rest — sharper now that the
+  // same tab also carries the brand ticks that make somebody an approver.
+  // `approvers` is no longer a tab at all; `isGrantableReimburseTabKey`
+  // answers false for it the same way it does for any other unknown string,
+  // covered below by "nonsense".
   assert.equal(isGrantableReimburseTabKey("access"), false);
-  assert.equal(isGrantableReimburseTabKey("approvers"), false);
   assert.equal(isGrantableReimburseTabKey("rules"), true);
   assert.equal(isGrantableReimburseTabKey("brands"), true);
   assert.equal(isGrantableReimburseTabKey("nonsense"), false);
@@ -98,8 +98,8 @@ test("filtering keeps known keys, trimmed, de-duplicated, in the caller's order"
 
 /* ── the decision ── */
 
-test("an admin passes everything, access and approvers included", () => {
-  for (const tab of ["rules", "brands", "access", "approvers"]) {
+test("an admin passes everything, access included", () => {
+  for (const tab of ["rules", "brands", "access"]) {
     assert.equal(decideReimburseTabAccess(true, [], tab), true, tab);
   }
 });
@@ -112,12 +112,11 @@ test("a non-admin passes only a grantable tab that is in their list", () => {
   assert.equal(decideReimburseTabAccess(false, ["rules"], " rules "), true);
 });
 
-test("a stored row for access or approvers stays inert", () => {
+test("a stored row for access stays inert", () => {
   // AccReimburseAccessTab has no CHECK on TabKey and is writable from more than
   // one place, so a row naming any string can appear. The grantable test is
   // what makes it harmless — do not weaken this to a bare membership check.
   assert.equal(decideReimburseTabAccess(false, ["access"], "access"), false);
-  assert.equal(decideReimburseTabAccess(false, ["approvers"], "approvers"), false);
   assert.equal(decideReimburseTabAccess(false, ["access", "rules"], "rules"), true);
 });
 

@@ -9,29 +9,43 @@ import {
 import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
 import { setReimburseAccessTabs } from "@/lib/acc/reimburse/access-tabs";
 import { filterStorableReimburseKeys } from "@/lib/acc/reimburse/settings-tabs";
+import {
+  listReimburseApproverBrands,
+  listReimburseApprovers,
+  setReimburseApproverBrands,
+} from "@/lib/acc/reimburse/settings-service";
+import { normalizeScopeTargets } from "@/lib/acc/reimburse/brand-scope";
 
 /*
- * AP-4's สิทธิ์เข้าถึง tab — who may open which of AP-4's back-office settings.
+ * AP-4's สิทธิ์เข้าถึง tab — who may open which of AP-4's back-office settings,
+ * and, since 2026-09-10, who approves real payments.
  *
- * **This roster is not the approval pool.** `AccReimburseApprover`
- * (`settings/approvers`) decides who takes the ACCOUNT and ACCOUNT_FINAL steps
- * on real reimbursement payments; `AccReimburseAccess` decides who may edit the
- * payment-rule checklist and the brand allowlist. Keeping them apart is the
- * whole reason migration 120 adds a second table rather than reusing the first.
+ * **This roster is not the approval pool, even though this screen now shows
+ * both.** `AccReimburseApprover` decides who takes the ACCOUNT and
+ * ACCOUNT_FINAL steps on real reimbursement payments; `AccReimburseAccess`
+ * decides who may edit the payment-rule checklist and the brand allowlist.
+ * Keeping the two TABLES apart is the whole reason migration 120 adds a second
+ * one rather than reusing the first, and that still holds — what merged is the
+ * SCREEN, not the storage. The former `settings/approvers` route is gone; its
+ * job (adding/reactivating an `AccReimburseApprover` row) is now a side effect
+ * of ticking a brand here, through `setReimburseApproverBrands`, which derives
+ * `IsActive` from the tick count rather than taking it as a separate flag (see
+ * that function's own docblock — there is deliberately no toggle to
+ * contradict the ticks).
  *
  * **Admin only, and deliberately not openable by a grant.** The other AP-4
  * settings tabs can now be handed to an individual
  * (`requireReimburseSettingsTab`); this one cannot, and never will be. It is
- * where the grants are handed out, so anyone who could POST here could write
- * themselves in and then grant themselves the rest — which is why `access` is
- * absent from `GRANTABLE_REIMBURSE_TABS`, along with `approvers`, and why
- * `decideReimburseTabAccess` refuses both for a non-admin even if a row for
- * them exists.
+ * where the grants are handed out — including, now, the brand ticks that make
+ * somebody an approver — so anyone who could POST here could write themselves
+ * in and then grant themselves the rest, which is why `access` is absent from
+ * `GRANTABLE_REIMBURSE_TABS` and why `decideReimburseTabAccess` refuses it for
+ * a non-admin even if a row for them exists.
  *
  * The path matters. `/api/request/reimburse` is mapped to AP-4 in `ROUTE_RULES`
  * (`@/lib/form-environment/classify-path`), so the URL prefix is what decides
- * which form database `getAccPool()` opens. Both tables are shared master
- * tables and every write below goes through `writeBothPools` inside the
+ * which form database `getAccPool()` opens. Every table here is a shared
+ * master table and every write below goes through `writeBothPools` inside the
  * service, so the two databases stay in step regardless.
  */
 
@@ -43,7 +57,19 @@ const HR_UNAVAILABLE =
 /**
  * GET /api/request/reimburse/settings/access
  * The full roster, inactive rows included, for the admin panel — each row
- * carrying its `settingsTabs` grants so the panel can render the ticks.
+ * carrying its `settingsTabs` grants AND its `brandTargets`, so the merged
+ * grid can render both tick groups off one row.
+ *
+ * `AccReimburseAccess` stays the base list: every row on screen is one of its
+ * rows, in its order. `brandTargets` is joined on afterward, from a different
+ * table on a different surrogate key — `listReimburseApproverBrands()` is
+ * keyed by `AccReimburseApprover.Id`, not by `AccReimburseAccess.Id` (this
+ * row's own `id`), so the join goes through `StaffId`, the one column the two
+ * rosters agree on: resolve this row's `AccReimburseApprover.Id` from
+ * `listReimburseApprovers()` first, THEN look that id up in the brand map.
+ * A person with no `AccReimburseApprover` row yet (never ticked a brand)
+ * simply reads `[]` — not an error, and not "unrestricted"; see
+ * `brand-scope.ts` for why AP-4 has no state where absence means "all".
  * Requires IT Admin or System Admin.
  */
 export async function GET() {
@@ -51,7 +77,19 @@ export async function GET() {
   if (session instanceof Response) return session;
 
   try {
-    const data = await listReimburseAccess(false);
+    const [accessRows, approverRows, brandMap] = await Promise.all([
+      listReimburseAccess(false),
+      listReimburseApprovers(),
+      listReimburseApproverBrands(),
+    ]);
+    const approverIdByStaffId = new Map(approverRows.map((a) => [a.staffId, a.id]));
+    const data = accessRows.map((row) => {
+      const approverId = approverIdByStaffId.get(row.staffId);
+      return {
+        ...row,
+        brandTargets: approverId != null ? (brandMap.get(approverId) ?? []) : [],
+      };
+    });
     return NextResponse.json({ ok: true, data });
   } catch (err) {
     console.error("[api/request/reimburse/settings/access] GET", err);
@@ -61,7 +99,7 @@ export async function GET() {
 
 /**
  * POST /api/request/reimburse/settings/access
- * Body: { email, displayName?, isActive?, settingsTabs? }
+ * Body: { email, displayName?, isActive?, settingsTabs?, brandTargets? }
  *
  * `StaffId` is the natural key of the table and is resolved **here**, from HR,
  * by email — the client never supplies one. AD search returns an Entra
@@ -79,10 +117,21 @@ export async function GET() {
  * pre-filter here is deliberately the WIDE one, `filterStorableReimburseKeys`
  * — narrowing it to `filterGrantableReimburseTabKeys` would strip a menu key
  * before `setReimburseAccessTabs`'s own (also wide) filter ever saw it, so a
- * ticked menu would save nothing. Unknown keys — `access` and `approvers`
- * above all, and anything that is neither a grantable tab nor a real menu key
- * — are still dropped before the write either way: the client's list is a
- * request, not a decision.
+ * ticked menu would save nothing. Unknown keys — `access` above all, and
+ * anything that is neither a grantable tab nor a real menu key — are still
+ * dropped before the write either way: the client's list is a request, not a
+ * decision.
+ *
+ * `brandTargets`: the same "omitted leaves it alone, an array is the whole
+ * set" rule as `settingsTabs` — and independently so, since the two write
+ * different tables. The Add flow posts neither, so a brand-new row gets no
+ * settings-tab grant and is not an approver of anything until an admin ticks
+ * something. `normalizeScopeTargets` is applied here, explicitly, before the
+ * array reaches `setReimburseApproverBrands` — which normalizes again
+ * internally — mirroring the two-filter shape `settingsTabs` already has with
+ * `filterStorableReimburseKeys` on both sides of the same call. Neither filter
+ * widens the other's vocabulary: this one only ever narrows to the four
+ * known interface-brand codes, never to a settings-tab or menu key.
  * Requires IT Admin or System Admin.
  */
 export async function POST(req: NextRequest) {
@@ -152,6 +201,28 @@ export async function POST(req: NextRequest) {
           filterStorableReimburseKeys((body.settingsTabs as unknown[]).map((k) => String(k))),
         );
       }
+    }
+
+    // A different table, keyed off the same StaffId this route already
+    // resolved from HR — never off `accessId` above, which names an
+    // `AccReimburseAccess` row and has nothing to do with
+    // `AccReimburseApprover`. `setReimburseApproverBrands` derives
+    // `AccReimburseApprover.IsActive` from the tick count itself (see its own
+    // docblock), so there is no separate active flag to post here.
+    if (Array.isArray(body.brandTargets)) {
+      const targets = normalizeScopeTargets(body.brandTargets as unknown[]);
+      await setReimburseApproverBrands(employee.staffId, targets, Number(session.user.id), {
+        // The HR address, preferred in the same order the deleted
+        // `settings/approvers` route preferred it: `AccReimburseApprover.Email`
+        // is `findActiveApprover`'s only fallback for an approver with no HR
+        // row, and the second arm of `/my-work`'s AP-4 clause — the posted
+        // address is only the fallback when HR has none. `AccReimburseAccess`
+        // deliberately keeps the posted address instead (see `upsertReimburseAccess`
+        // above); the two rosters are allowed to disagree about which email is
+        // authoritative because they answer different questions.
+        email: employee.email ?? employee.emailCompBr ?? email,
+        displayName,
+      });
     }
 
     return NextResponse.json({ ok: true });

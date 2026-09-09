@@ -4,11 +4,10 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Building2, FileCheck, Link2, Settings, ShieldCheck, Users } from "lucide-react";
+import { Building2, FileCheck, Link2, Settings, ShieldCheck } from "lucide-react";
 import { backTo } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
-import { ReimburseApproverSettings } from "@/features/reimburse/components/settings/ReimburseApproverSettings";
 import { ReimburseRuleSettings } from "@/features/reimburse/components/settings/ReimburseRuleSettings";
 import { ReimburseBrandSettings } from "@/features/reimburse/components/settings/ReimburseBrandSettings";
 import { ReimburseAccessSettings } from "@/features/reimburse/components/settings/ReimburseAccessSettings";
@@ -20,45 +19,50 @@ import {
 } from "@/lib/acc/reimburse/settings-tabs";
 
 /**
- * AP-4 settings — the accounting approver pool, the acknowledgement checklist,
- * the brand allowlist, AP-4's own Business Central posting configuration and
- * the per-person access grants.
+ * AP-4 settings — the acknowledgement checklist, the brand allowlist, AP-4's
+ * own Business Central posting configuration, and สิทธิ์เข้าถึง, which now
+ * carries both the per-person tab grants and the accounting-approver roster
+ * on one grid.
  *
  * Laid out as AP-1's `/request/accounting/settings` is: a tab strip inside one
  * card, each tab a feature component that owns its own fetching. The two pages
  * should be indistinguishable apart from what is on them.
  *
- * **Approvers is the default tab, and is deliberately not the first one.** The
- * strip runs configuration-first — brands, rules, erpInterface, then the two
- * rosters — but the page opens on ผู้อนุมัติบัญชี, as AP-1's does, and here for
- * a sharper reason:
- * `AccReimburseApprover` ships empty, and until it has two active rows every
- * AP-4 request stops at the accounting step with "ไม่มีสิทธิ์ —
- * คุณไม่ได้อยู่ในรายชื่อผู้อนุมัติฝ่ายบัญชีของแบบฟอร์ม AP-4". The one thing that
- * blocks the whole form is the thing anybody opening this page should land on,
- * whatever order the tabs read in.
+ * **สิทธิ์เข้าถึง is the default tab, and is deliberately not the first one.**
+ * The strip runs configuration-first — brands, rules, erpInterface — but the
+ * page opens on สิทธิ์เข้าถึง, as AP-1's opened on its own approver tab, and
+ * here for the same sharp reason as before 2026-09-10: `AccReimburseApprover`
+ * ships empty, and until two people each have at least one brand ticked on
+ * this grid, every AP-4 request stops at the accounting step with
+ * "ไม่มีสิทธิ์ — คุณไม่ได้อยู่ในรายชื่อผู้อนุมัติฝ่ายบัญชีของแบบฟอร์ม AP-4". The one
+ * thing that blocks the whole form is the thing anybody opening this page
+ * should land on, whatever order the tabs read in. There used to be a separate
+ * ผู้อนุมัติบัญชี tab carrying that same warning; removing it did not remove the
+ * reason to open here first, it just moved the fix onto this tab's own grid.
  *
- * **สิทธิ์เข้าถึง is last, and it is not a rename of ผู้อนุมัติบัญชี.** The two
- * are separate rosters answering separate questions: ผู้อนุมัติบัญชี
- * (`AccReimburseApprover`) is who may take the two accounting approval steps on
- * real payments; สิทธิ์เข้าถึง (`AccReimburseAccess`, migration 120) is who may
- * open which of these tabs. Keeping them apart is what lets an admin hand out
- * "may edit the checklist" without also handing out "may approve money".
+ * **สิทธิ์เข้าถึง is last on the strip, and it is not merely a settings-tab
+ * grant list any more.** `AccReimburseApprover` (who may take the two
+ * accounting approval steps on real payments, scoped by brand since migration
+ * 144) and `AccReimburseAccess` (`settings/access`, migration 120 — who may
+ * open which of the OTHER tabs) are still two separate tables, never merged —
+ * see `settings-tabs.ts`'s module docblock. What merged is this one screen:
+ * ticking ≥1 brand on a row is what makes that person an active
+ * `AccReimburseApprover`, alongside whatever settings-tab ticks the same row
+ * carries. A person can hold one without the other.
  *
  * **Who reaches this page** is no longer role alone. An IT Admin or System Admin
  * sees every tab, as before. A non-admin holding at least one grant sees only
- * the tabs they hold — never `approvers`, `erpInterface` or `access`, none of
- * which are grantable — and every route behind those tabs re-resolves the
- * grant server-side on each call (`requireReimburseSettingsTab`). The gate
- * here is presentational. `erpInterface`'s own route stays `requireRole`
- * outright — see `settings-tabs.ts` for why it is not brand-scoped and
- * therefore not safe to hand to a scoped approver yet.
+ * the tabs they hold — never `erpInterface` or `access`, neither of which is
+ * grantable — and every route behind those tabs re-resolves the grant
+ * server-side on each call (`requireReimburseSettingsTab`). The gate here is
+ * presentational. `erpInterface`'s own route stays `requireRole` outright —
+ * see `settings-tabs.ts` for why it is not brand-scoped and therefore not safe
+ * to hand to a scoped approver yet.
  */
 
 type TabKey = ReimburseSettingsTabKey;
 
 const TAB_META: Record<TabKey, { label: string; icon: React.ReactNode }> = {
-  approvers: { label: "ผู้อนุมัติบัญชี", icon: <Users size={15} /> },
   rules: { label: "ระเบียบการจ่าย", icon: <FileCheck size={15} /> },
   brands: { label: "แบรนด์ที่เบิกได้", icon: <Building2 size={15} /> },
   erpInterface: { label: "Interface ERP", icon: <Link2 size={15} /> },
@@ -75,7 +79,7 @@ const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] =
 
 function parseTabKey(raw: string | null): TabKey {
   if (raw && TABS.some((t) => t.key === raw)) return raw as TabKey;
-  return "approvers";
+  return "access";
 }
 
 function LoadingState() {
@@ -170,7 +174,7 @@ function ReimburseSettingsContent() {
       <PageHeaderBar
         icon={Settings}
         title="ตั้งค่าขอเบิกเงินคืนพนักงาน"
-        subtitle="AP-4 · แบรนด์ที่เบิกได้ ระเบียบการจ่าย Interface ERP ผู้อนุมัติฝ่ายบัญชี และสิทธิ์เข้าถึง"
+        subtitle="AP-4 · แบรนด์ที่เบิกได้ ระเบียบการจ่าย Interface ERP และสิทธิ์เข้าถึง (รวมผู้อนุมัติฝ่ายบัญชี)"
         // AP-4's hub, not `/request`. `requestBackHref` was correct while this
         // page WAS a card on the hub — there was nothing in between to go back
         // to. Task 5 put `/request/reimburse/admin` between them, so backing
@@ -212,7 +216,6 @@ function ReimburseSettingsContent() {
         </div>
 
         <div className="p-5">
-          {shownTab === "approvers" && <ReimburseApproverSettings />}
           {shownTab === "rules" && <ReimburseRuleSettings />}
           {shownTab === "brands" && <ReimburseBrandSettings />}
           {shownTab === "erpInterface" && <ReimburseErpInterfaceSettings />}
