@@ -95,7 +95,7 @@ function EnvBadge({ env }: { env: string | null }) {
   const isSandbox = env === "Sandbox";
   return (
     <span
-      className="text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ml-1"
+      className="text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0"
       style={
         isSandbox
           ? {
@@ -162,12 +162,17 @@ function ErpStatusBadge({ status, error }: { status: string | null; error: strin
 
 function ReadinessCell({ readiness }: { readiness: ErpReadiness }) {
   if (readiness.ready) {
+    // "มีผังบัญชีครบ" (every line has a G/L account entered), not "พร้อมส่ง"
+    // (ready to send) — this is what erpReadiness (erp-queue-policy.ts) actually
+    // checks: presence of a Category on every line, not that the value is a
+    // real ErpAccounts.AccountNo. A migration-117 claim can carry legacy free
+    // text there and still pass this check; see that function's own docblock.
     return (
       <span
         className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-medium"
         style={{ background: "var(--bg-info-green)", color: "var(--text-info-green)" }}
       >
-        <CheckCircle2 size={11} /> พร้อมส่ง
+        <CheckCircle2 size={11} /> มีผังบัญชีครบ
       </span>
     );
   }
@@ -304,7 +309,13 @@ export function ReimburseErpQueue() {
               <thead className="sticky top-0 z-10" style={{ background: "var(--bg-card-alt)", boxShadow: "0 1px 0 var(--border-light)" }}>
                 <tr style={{ borderBottom: "1px solid var(--border-light)" }}>
                   {["เลขที่", "แบรนด์", "ผู้ยื่น", "วันที่จ่าย", "จำนวนเงิน", "รายการ", "ความพร้อม", "สถานะ ERP", "Doc No (ERP)", "วันที่ส่งเข้า ERP", "Env"].map((h) => (
-                    <th key={h} className="px-3 py-2.5 font-semibold whitespace-nowrap text-left" style={{ color: "var(--text-secondary)" }}>
+                    <th
+                      key={h}
+                      className={`px-3 py-2.5 font-semibold whitespace-nowrap ${
+                        h === "จำนวนเงิน" ? "text-right" : h === "รายการ" ? "text-center" : "text-left"
+                      }`}
+                      style={{ color: "var(--text-secondary)" }}
+                    >
                       {h}
                     </th>
                   ))}

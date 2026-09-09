@@ -169,41 +169,55 @@ test("belongsInErpQueue still GATES the row, rather than being called and ignore
   );
 });
 
-test("the recordset reaches the accumulator undoctored — nothing is interposed", () => {
+test("the return statement is the query call's very next statement — nothing is interposed", () => {
   const src = code(SERVICE_FILE);
   // Found by the re-review of this file's own fix round, after the two
   // rebinding holes above had been closed. Once `accumulateErpQueueRows` reads
   // `FormCode` and `Status` off the row it is handed, the last place left to
-  // tell it a lie is the hand-off itself:
+  // tell it a lie is the hand-off itself — and the ORIGINAL version of this
+  // assertion (an UNANCHORED `return accumulateErpQueueRows(res.recordset as
+  // Record<string, unknown>[])` pin, searched for anywhere in the file) missed
+  // a shape its own reasoning had not considered: mutation IN PLACE, which
+  // needs no `.map`, no `.filter`, no helper, and builds no new array —
   //
-  //   WHERE (req.FormCode = @form AND req.Status = 'Approved')
-  //      OR req.CurrentStepCode = 'ACCOUNT'
-  //   ...
-  //   return accumulateErpQueueRows(
-  //     res.recordset.map((x) => ({ ...x, FormCode: AP4_FORM_CODE, Status: "Approved" })),
-  //   );
+  //   for (const r of res.recordset) { r.FormCode = AP4_FORM_CODE; r.Status = "Approved"; }
+  //   return accumulateErpQueueRows(res.recordset as Record<string, unknown>[]);
   //
-  // Measured: 1331 tests green and `tsc --noEmit` clean, while the queue lists
-  // AP-4 claims still parked at `(ManagerApproved, ACCOUNT)` — claims that
-  // never cleared ACCOUNT_FINAL — under a header saying they are approved and
-  // waiting to post. The behavioural test cannot see this: it calls the
-  // accumulator directly and never observes its caller. So this one assertion
-  // is not the weak outer layer the rest of this file is; it is the only thing
-  // covering the seam between the two layers.
+  // — leaves `res.recordset as Record<string, unknown>[]` sitting inside the
+  // call, verbatim, exactly as the old regex demanded, because the OBJECTS
+  // the array holds were rewritten rather than the array itself. Measured:
+  // 1332 tests green and `tsc --noEmit` clean, while the queue lists AP-4
+  // claims still parked at `(ManagerApproved, ACCOUNT)` — claims that never
+  // cleared ACCOUNT_FINAL — under a header saying they are approved and
+  // waiting to post.
   //
-  // It pins the hand-off VERBATIM rather than merely forbidding `.map(`,
-  // because a rule shaped as "no .map" invites a `.filter`, a helper, or a
-  // `for` loop building a new array — all of which do the same thing.
+  // The fix is not a stronger verbatim pin — no string pin can rule out
+  // mutating the objects a variable already points at. It is anchoring WHERE
+  // the verbatim text is allowed to appear: immediately (whitespace only)
+  // after the query call's own closing `` `); ``, with nothing else between
+  // them. An interposed `for` loop, a `.map` assigned to a local first, or a
+  // helper call needs a STATEMENT to sit in that gap, and a statement there
+  // breaks the match regardless of what it does to the rows.
+  //
+  // **What this still does NOT prove — say so rather than overclaim it.** A
+  // mutation written inside the query call's own argument list, or a Proxy
+  // substituted for `res.recordset` upstream of this statement, would still
+  // satisfy adjacency. This is a statement-adjacency pin, not a proof that
+  // the recordset is unmodified — the behavioural tests in
+  // `erp-queue-service.test.ts` are what actually exercise the values
+  // `accumulateErpQueueRows` receives; this is what catches an edit at commit
+  // time before that test even has to.
   assert.ok(
-    /return\s+accumulateErpQueueRows\(\s*res\.recordset\s+as\s+Record<string,\s*unknown>\[\]\s*,?\s*\)/.test(
+    /`\)\s*;\s*return\s+accumulateErpQueueRows\(\s*res\.recordset\s+as\s+Record<string,\s*unknown>\[\]\s*,?\s*\)\s*;/.test(
       src,
     ),
-    "erp-queue-service.ts no longer hands accumulateErpQueueRows the query's own recordset " +
-      "unaltered. Anything interposed there — a .map spreading a FormCode or Status over each row, " +
-      "a filter, a helper that rebuilds the array — feeds the row-level gate values the database " +
-      "never returned, and every other test in this file and in erp-queue-service.test.ts stays " +
-      "green while the queue lists claims that never cleared ACCOUNT_FINAL. If the query genuinely " +
-      "needs to change shape, move the transformation INSIDE accumulateErpQueueRows, where the " +
-      "behavioural tests can see it",
+    "erp-queue-service.ts no longer hands accumulateErpQueueRows the query's own recordset as the " +
+      "very next statement after the query call. Anything interposed there — a mutation loop " +
+      "rewriting each row in place, a .map spreading a FormCode or Status over each row into a new " +
+      "array, a filter, a helper that rebuilds the array — feeds the row-level gate values the " +
+      "database never returned, and every other test in this file and in erp-queue-service.test.ts " +
+      "stays green while the queue lists claims that never cleared ACCOUNT_FINAL. If the query " +
+      "genuinely needs another statement between it and the return, move the transformation INSIDE " +
+      "accumulateErpQueueRows, where the behavioural tests can see it",
   );
 });

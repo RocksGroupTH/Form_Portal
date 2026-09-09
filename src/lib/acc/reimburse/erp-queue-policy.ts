@@ -87,6 +87,19 @@ export function belongsInErpQueue(formCode: string, status: string): boolean {
  * comes back, and discovering a second problem is a waste of a round trip.
  * Lines are numbered as a human counts them (1, 2, 3...), not as a programmer
  * counts arrays.
+ *
+ * **This checks PRESENCE, not that the value is a real `ErpAccounts.AccountNo`.**
+ * Migration 117 added `Category` to hold free text such as `'AP-4.2'`, and it
+ * was only later repurposed to hold a G/L account code (`ExpenseAccountPicker.tsx`
+ * renders the legacy free-text case specially, for exactly this reason). A
+ * claim carrying one of those legacy strings passes this check and is
+ * reported "ready" by the screen that renders it — the label there says
+ * `มีผังบัญชีครบ` ("every line has a G/L account entered"), which is literally
+ * what this function verifies, and stops short of claiming the value is
+ * correct. Validating against the ERP mirror (`Rocks_ERP_Data.ErpAccounts`)
+ * is a join this module deliberately does not make — it belongs with the
+ * send, in `erp-queue-service.ts`, which already opens the pool this would
+ * need.
  */
 export function erpReadiness(
   items: readonly { category: string | null; amount: number | null }[],

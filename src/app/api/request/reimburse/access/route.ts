@@ -36,8 +36,9 @@ import {
  *
  * It briefly was answered here (`isReimburseApprover`, 2026-09-08) and moved
  * out the same day: this route backs `useReimburseAccess()`, which the
- * `/request` hub reads for the "reimburse-approvals" card and the AP-4
- * settings page reads for `canSettings` — every visit to either paid a
+ * `/request` hub reads for the "reimburse-admin" card — gated on the union
+ * `canSettings || approvalQueue`, see that page's own comment on the filter —
+ * and the AP-4 settings page reads for `canSettings` — every visit to either paid a
  * `Rocks_Portal_HR` lookup (`buildAccActor` → `findActiveEmployeeByEmail`)
  * plus an `AccReimburseApprover` read that neither of them needed, for every
  * signed-in user. `src/lib/db/mssql.ts` sets no `requestTimeout`, so the
