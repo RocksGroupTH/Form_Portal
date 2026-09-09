@@ -490,10 +490,25 @@ function ReimburseErpGroupModal({
    * `onSaved()` refreshes `group`, so deriving from it is correct after every
    * operation rather than only before the first.
    */
-  const persistedCodes = useMemo(
-    () => new Set(group.members.map((m) => m.brandCode)),
-    [group],
-  );
+  /**
+   * Codes this modal has itself POSTed successfully, remembered locally.
+   *
+   * `await onSaved()` closes the *timing* window but not the *failure* one: if
+   * the post-save refetch fails, `group` keeps its pre-save value, so a member
+   * that really was persisted is absent from it and `handleRemove` takes the
+   * "never saved, nothing to delete" branch — the same no-DELETE bug, reached
+   * through a failed GET instead of a race. `load()` swallows the rejection,
+   * so the admin has seen a success toast and has no reason to suspect it.
+   *
+   * A ref rather than state: nothing renders from it, and it must not be reset
+   * by the re-render the refetch causes when it succeeds.
+   */
+  const locallySavedRef = useRef<Set<string>>(new Set());
+  const persistedCodes = useMemo(() => {
+    const set = new Set(group.members.map((m) => m.brandCode));
+    locallySavedRef.current.forEach((code) => set.add(code));
+    return set;
+  }, [group]);
   const [addCode, setAddCode] = useState("");
   const [saving, setSaving] = useState(false);
   const [removingCode, setRemovingCode] = useState<string | null>(null);
@@ -598,6 +613,11 @@ function ReimburseErpGroupModal({
       });
       const j = (await res.json()) as { ok: boolean; error?: string };
       if (!j.ok) throw new Error(j.error ?? "บันทึกไม่สำเร็จ");
+      // Recorded BEFORE the refetch, because the refetch is what can fail.
+      // Every member in this body is now persisted server-side whatever
+      // happens next, so `handleRemove` must send a DELETE for any of them
+      // even if `group` never catches up — see `locallySavedRef`'s docblock.
+      body.members.forEach((m) => locallySavedRef.current.add(m.brandCode));
       toast.success(`บันทึก ${group.targetName} แล้ว`);
       // Awaited, not fire-and-forget (found in the final review). `busy`
       // (hence every trash button's `disabled`) stays true until this
