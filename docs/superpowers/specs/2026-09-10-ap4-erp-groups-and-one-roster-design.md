@@ -231,8 +231,12 @@ AP-4 gets its own guard of the same shape.
 
 **The claim brand maps to a target through `AccBrandErpInterface`**, the same
 map AP-1 uses — read per form, `FormCode='AP-4'` with the `NULL` default
-behind it. A claim whose brand maps to no target is visible to nobody but an
-admin, and that is the fail-safe direction.
+behind it. A claim whose brand maps to no target is visible to **nobody at
+all** — there is no admin exemption anywhere in AP-4's approval path, so an
+admin sees and can do no more than anyone else with such a claim. That is the
+fail-safe direction, and it is why both queues report `unmappedBrandCount` and
+name the fix rather than rendering silence. *(An earlier draft of this sentence
+said "nobody but an admin", which was never true of the code.)*
 
 ### What must not be lost with the tab
 

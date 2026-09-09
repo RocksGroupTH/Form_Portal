@@ -40,6 +40,21 @@ left as written on 2026-08-26, dated history rather than current state.
   `AccReimburseApprover` means select-all → approve → N failures — is answered
   by a **notice**, not a filter: `/api/request/reimburse/access` reports
   `isReimburseApprover` and the queue says so before the first click.
+
+  **↑ Superseded 2026-09-10 — this bullet is history, not current behaviour.**
+  Sight is now scoped by brand: the queues return only claims whose brand maps
+  to one of the viewer's ticked Interface targets
+  (`AccReimburseApproverBrand`, migration 144), and a viewer with no active
+  `AccReimburseApprover` row sees none — which is what §3.3 asked for in the
+  first place. The user chose it directly ("คุมทั้งเห็นและกดได้ เหมือน
+  AP-1"). What the paragraph above still gets right, and what survived the
+  reversal, is the half that was never about the queue: **filtering a list is
+  not a control.** The five action paths refuse out of scope on their own,
+  inside the transaction that claims the row, regardless of what any list
+  showed — because a scoped approver holding an id from a link or a bookmark
+  still reaches the action. See
+  `docs/superpowers/specs/2026-09-10-ap4-erp-groups-and-one-roster-design.md`
+  §3 and CLAUDE.md's AP-4 queue paragraph, which carries the same note.
 - **A G/L-account picker shipped that this spec never scoped.**
   `PATCH /api/request/reimburse/requests/[id]/items` lets accounting correct
   the AI-proposed `AccReimburseItem.Category` per line, from the queue, while
