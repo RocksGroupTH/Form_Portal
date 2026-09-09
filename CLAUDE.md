@@ -831,7 +831,7 @@ off. One of them has since been seeded; measured 2026-08-21:**
 An employee itemises money they spent out of pocket, attaches the AP-4.1 Excel summary and the receipts, ticks every line of a compliance checklist, and three approvals later the company pays them back.
 
 - **Pages:** `/request/reimburse/admin` (the hub — see below), `/request/reimburse` (fill/resume draft), `/request/reimburse/[id]` (detail + timeline), `/request/reimburse/approvals` (two tabs: the accounting queue and Interface ERP), `/request/reimburse/settings` — **five** tabs in the order `REIMBURSE_SETTINGS_TAB_ORDER` declares, configuration before rosters: **แบรนด์ที่เบิกได้**, **ระเบียบการจ่าย**, **Interface ERP** (added 2026-09-09), **ผู้อนุมัติบัญชี** (the approval pool), and **สิทธิ์เข้าถึง** last. The page still *opens* on ผู้อนุมัติบัญชี rather than the first tab, because an empty approver pool stops every claim dead and is the one thing that has to be set before AP-4 works at all
-  - **`erpInterface` is a tab, not a grant.** It is in `REIMBURSE_SETTINGS_TAB_ORDER` and deliberately **not** in `GRANTABLE_REIMBURSE_TABS`, so its route stays `requireRole` admin-only. It writes the per-form rows that decide which G/L account, bank account, journal batch and branch code a claim's journal lines carry — the same argument that keeps `approvers` and `access` ungrantable, applied to money rather than to power.
+  - **`erpInterface` is a tab, not a grant.** It is in `REIMBURSE_SETTINGS_TAB_ORDER` and deliberately **not** in `GRANTABLE_REIMBURSE_TABS`, so its route stays `requireRole` admin-only. It writes the per-form rows that decide which company the claim interfaces to, and which bank account, journal batch and branch code its journal lines carry — the same argument that keeps `approvers` and `access` ungrantable, applied to money rather than to power.
 - **AP-4 has one hub card, not two** (2026-09-09). `reimburse-approvals` was deleted from `REQUEST_CARDS` and `reimburse-settings` became `reimburse-admin`, pointing at `/request/reimburse/admin` — the same merge AP-17 made on 2026-08-27, and for the same reason: a card per destination stops scaling the moment a form has three of them. **`manage: true` and the absence of `devHostOnly` both survive the merge and must**: the first exempts the card from the form's own `available` switch, so dropping it hides AP-4's whole management area whenever the form is switched off; the second is why commissioning is possible at all, since AP-4 ships with `AccReimburseApprover` empty and a seeded `ROCKS` brand that is not one of the four in `src/lib/brand.ts`, both fixable only from this page and only on the live host.
   - **The card's filter arm is the union `canSettings || approvalQueue`, and neither flag alone.** `approvalQueue` alone hides the settings door from a non-admin holding only a `rules` or `brands` tick; `canSettings` alone hides the hub from somebody holding only the queue grant. Either grant is a reason to reach the hub, and every destination on it re-decides its own access server-side. **Known and not fixed**: both flags are `false` on a *failed* `/access` fetch as well as while loading, and this hub renders no error banner the way AP-17's does, so an `/access` outage silently removes the card.
   - The merged card is now gated where the old settings card was not, so a plain employee with no AP-4 grant no longer sees it. That costs them nothing — `reimburse-form` is a separate, ungated card in the Accounting group — and what the old card did for that same person was open a page that answered "ไม่มีสิทธิ์เข้าถึง", since it has always been `requireRole` server-side.
@@ -1287,10 +1287,24 @@ resolve differently. Going through the helpers is what makes that automatic.
 **`AccBrandErpTargetSetting` is the seventh, and it has no per-form writer
 anywhere in `src/`** — measured 2026-09-09, zero override rows on any form. A
 form can therefore *read* an override of it that nothing in this application
-can create. Deliberately left that way: AP-4's Interface ERP tab covers G/L
-account, bank account, journal batch and branch code, which is what a journal
-line carries, and adding a fifth section for a table nothing writes would be a
-control with no counterpart.
+can create. Deliberately left that way: adding a section for a table nothing
+writes would be a control with no counterpart.
+
+**AP-4's Interface ERP tab writes four of the seven, and `AccBrandGlAccount` is
+deliberately not among them.** It covers `AccBrandErpInterface` (Company
+ปลายทาง — which BC company the claim interfaces to), `AccBrandBankAccount`,
+`AccBrandJournalBatch` and `AccBrandBranchCode`. **There is no G/L account
+field, and that is a decision, not an omission**: AP-2 dropped it because
+Business Central resolves the debit account from the matched vendor's posting
+group rather than from a configured G/L, and there is no reason to expect
+AP-4's eventual payload to need one AP-2's does not. `saveReimburseErpInterfaceSettings`
+calls `mergeFormBrandAccount("bank", …)` and never `"gl"`; the reason is on that
+service's own docblock. **CLAUDE.md said the opposite for one commit, on
+2026-09-09** — a reader who believes AP-4 has a per-form G/L account will go
+looking for configuration that does not exist, or read `AccBrandGlAccount`'s
+`NULL` default as an AP-4 override when it is the default that answers *every*
+form. The remaining two of the seven, `AccBrandGlAccount` and
+`DepartmentErpMap`, are untouched by AP-4 entirely.
 
 **Key libs (`src/lib/acc/`):** `pool`, `sequence`, `payment-calendar`, `payment-calendar-core`, `employee-context`, `brand-options`, `access`, `settings-service`, `request-service`, `approval-engine`, `report-service`, `email-queue`, `email-templates`, `calc`, `erp-environment-shared`, `per-form-config`, plus `travel-booking/*` and `reimburse/*`.
 

@@ -108,11 +108,17 @@ directly.
   because guessing which belongs to the send's design.
 - **`AccBrandErpTargetSetting` is one of the seven per-form tables and has no
   per-form writer anywhere in `src/`** — measured 2026-09-09, zero override
-  rows on any form. AP-4's Interface ERP tab therefore covers four of the
-  seven (G/L account, bank account, journal batch, branch code — what a
-  journal line carries) and deliberately not this one: a settings section for
-  a table nothing writes is a control with no counterpart. A form can still
-  *read* an override of it that nothing can create.
+  rows on any form. A settings section for a table nothing writes is a control
+  with no counterpart, so AP-4's Interface ERP tab does not have one; a form
+  can still *read* an override of it that nothing can create.
+- **AP-4's Interface ERP tab writes four of the seven, and the G/L account is
+  deliberately not one of them.** It covers `AccBrandErpInterface` (Company
+  ปลายทาง), `AccBrandBankAccount`, `AccBrandJournalBatch` and
+  `AccBrandBranchCode`. §4 assumes a G/L account field; AP-2 dropped it because
+  Business Central resolves the debit account from the matched vendor's posting
+  group, and AP-4 followed. So the seven divide as four written, one
+  (`AccBrandErpTargetSetting`) written by nothing anywhere, and two
+  (`AccBrandGlAccount`, `DepartmentErpMap`) untouched by AP-4.
 - **§4's premise that overrides are unreachable from any UI was already false
   when this spec was written.** AP-2 has written per-form rows since its
   branch merged — 14 of them across five tables, measured 2026-09-09 and
