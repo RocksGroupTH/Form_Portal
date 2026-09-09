@@ -8,6 +8,7 @@ import { getAccPool, sql } from "@/lib/acc/pool";
 import { writeBothPools } from "@/lib/acc/dual-write";
 import { RULE_TEXT_MAX } from "@/features/reimburse/constants";
 import type { ReimburseApprover, ReimburseRule } from "@/features/reimburse/types";
+import { isApproverScope, normalizeScopeTargets } from "./brand-scope";
 
 /** Every currently-active rule a requester must tick before submitting (spec §5.2 field 6), in display order. */
 export async function listActiveRules(): Promise<ReimburseRule[]> {
@@ -230,5 +231,131 @@ export async function setReimburseApproverActive(
          SET IsActive = @active, UpdatedBy = @user, UpdatedAt = SYSDATETIME()
          WHERE StaffId = @staff`,
       );
+  });
+}
+
+/* ─────────────────────── per-brand scope (AccReimburseApproverBrand) ─────────────────────── */
+
+/**
+ * Every approver's ticked interface-brand targets, keyed by
+ * `AccReimburseApprover.Id` — the same key AP-1's
+ * `loadInterfaceBrandsByApproverIds` uses for `AccApproverInterfaceBrand`, so
+ * a settings grid can join this straight onto `listReimburseApprovers()`'s
+ * `id` field.
+ *
+ * An approver with no `AccReimburseApproverBrand` rows is simply absent from
+ * the map — the caller reads that with `?? []`. That is a different question
+ * from `loadApproverScopeByStaffId`'s `null`-vs-`[]` distinction in
+ * `brand-scope-load.ts`: this function lists *every* approver's brands for a
+ * grid, not "does this one specific person have an active roster row at all".
+ */
+export async function listReimburseApproverBrands(): Promise<Map<number, string[]>> {
+  const pool = await getAccPool();
+  const r = await pool
+    .request()
+    .query(
+      `SELECT ApproverId, InterfaceBrandCode
+       FROM [dbo].[AccReimburseApproverBrand]
+       ORDER BY ApproverId, InterfaceBrandCode`,
+    );
+  const map = new Map<number, string[]>();
+  for (const row of r.recordset as { ApproverId: number; InterfaceBrandCode: string }[]) {
+    const list = map.get(row.ApproverId) ?? [];
+    list.push(String(row.InterfaceBrandCode ?? "").trim());
+    map.set(row.ApproverId, list);
+  }
+  return map;
+}
+
+/**
+ * The single writer for AP-4's per-brand approver scope, and THE switch —
+ * this is what Task 4's settings route calls, replacing a direct call to
+ * `upsertReimburseApprover` + `setReimburseApproverActive` for this purpose.
+ *
+ * **There is deliberately no separate active toggle.** `IsActive` is derived
+ * from `targets` (`isApproverScope`), never posted independently, for the
+ * same reason `ApiKey.ExpiresAt` is a single nullable column rather than a
+ * boolean plus a date: a toggle plus a tick set can hold two contradictory
+ * states — active with nothing ticked, or inactive with brands still ticked —
+ * that then have to be defended against on every read. One derived value
+ * cannot be contradictory. `setReimburseApproverActive` above still exists
+ * for whatever legacy callers have not moved to this function; it must not
+ * gain a new caller that also touches brands, or the two writers race on the
+ * same column.
+ *
+ * One `writeBothPools` transaction, in order: MERGE the `AccReimburseApprover`
+ * row on `StaffId` (same shape as `upsertReimburseApprover`, plus the derived
+ * `IsActive`), delete every existing `AccReimburseApproverBrand` row for that
+ * approver, then insert one row per normalized target.
+ *
+ * **The child rows' `ApproverId` is re-selected inside this same transaction,
+ * on this same pool — never carried over from the other database.**
+ * `writeBothPools` runs this callback once against production and once
+ * against UAT; each call MERGEs and re-reads `Id` against its own connection,
+ * so the two form databases' independent identity counters — which are kept
+ * in lockstep by every dual-write inserting through the same statements, not
+ * by copying an id across — are what keeps the two `ApproverId` values equal.
+ * Copying an id between the two pools is `upsertVehicle`'s one deliberate
+ * exception (`dual-write.ts`), forced by a cross-table foreign key that has no
+ * analogue here; reproducing it would be the wrong pattern for this table.
+ *
+ * `targets` is normalized (`normalizeScopeTargets`) before anything is
+ * written, so a duplicate, blank or unrecognised entry in the posted body
+ * never reaches the table — consistent with `AccReimburseApproverBrand`
+ * having no CHECK constraint on `InterfaceBrandCode` to catch it for us.
+ */
+export async function setReimburseApproverBrands(
+  staffId: number,
+  targets: string[],
+  userId: number,
+  identity: { email: string; displayName: string },
+): Promise<void> {
+  const normalized = normalizeScopeTargets(targets);
+  const active = isApproverScope(normalized);
+
+  await writeBothPools(async (tx) => {
+    await tx
+      .request()
+      .input("staff", sql.Int, staffId)
+      .input("email", sql.NVarChar(200), identity.email)
+      .input("name", sql.NVarChar(200), identity.displayName)
+      .input("active", sql.Bit, active ? 1 : 0)
+      .input("user", sql.Int, userId || null)
+      .query(
+        `MERGE [dbo].[AccReimburseApprover] AS t
+         USING (SELECT @staff AS StaffId) AS s ON t.StaffId = s.StaffId
+         WHEN MATCHED THEN UPDATE SET
+           Email = @email, DisplayName = @name, IsActive = @active,
+           UpdatedBy = @user, UpdatedAt = SYSDATETIME()
+         WHEN NOT MATCHED THEN
+           INSERT (StaffId, Email, DisplayName, IsActive, CreatedBy)
+           VALUES (@staff, @email, @name, @active, @user);`,
+      );
+
+    // Re-select within this same transaction/pool — see the docblock above.
+    const idResult = await tx
+      .request()
+      .input("staff", sql.Int, staffId)
+      .query(`SELECT Id FROM [dbo].[AccReimburseApprover] WHERE StaffId = @staff`);
+    const approverId = idResult.recordset[0]?.Id as number | undefined;
+    if (approverId == null) {
+      throw new Error("AccReimburseApprover row not found immediately after MERGE");
+    }
+
+    await tx
+      .request()
+      .input("approver", sql.Int, approverId)
+      .query(`DELETE FROM [dbo].[AccReimburseApproverBrand] WHERE ApproverId = @approver`);
+
+    for (const target of normalized) {
+      await tx
+        .request()
+        .input("approver", sql.Int, approverId)
+        .input("target", sql.NVarChar(20), target)
+        .query(
+          `INSERT INTO [dbo].[AccReimburseApproverBrand] (ApproverId, InterfaceBrandCode)
+           VALUES (@approver, @target)`,
+        );
+    }
   });
 }
