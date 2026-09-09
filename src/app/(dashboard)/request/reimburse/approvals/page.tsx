@@ -83,11 +83,15 @@ function ApprovalsContent() {
         title="คิวอนุมัติ (บัญชี) — ขอเบิกเงินคืนพนักงาน"
         titleExtra={<FormEnvironmentChip formCode="AP-4" />}
         subtitle={tabMeta.subtitle}
-        // The hub, not `/request/reimburse` — that is the REQUESTER's fill
-        // form, and the only entry point to this page is the card on
-        // `/request`. AP-17's equivalent queue backs to its hub for the same
+        // AP-4's own hub, `/request/reimburse/admin` — not `/request/reimburse`,
+        // which is the REQUESTER's fill form. This used to back straight to
+        // `/request` on the claim that the card there was the only entry
+        // point; that stopped being true once AP-4 gained a hub of its own
+        // (Task 5) the way AP-1, AP-2, AP-3 and AP-17 already had, and
+        // `/request` no longer even carries a card that names this page
+        // directly. AP-17's equivalent queue backs to its hub for the same
         // reason.
-        backHref="/request"
+        backHref="/request/reimburse/admin"
       />
 
       <div

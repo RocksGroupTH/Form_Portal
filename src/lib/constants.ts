@@ -147,52 +147,40 @@ export const REQUEST_CARDS: NavItem[] = [
     manage: true,
   },
   {
-    id: "reimburse-settings",
+    id: "reimburse-admin",
     label: "ขอเบิกเงินคืนพนักงาน (ออฟฟิต)",
     icon: "Receipt",
-    desc: "ฟอร์ม AP-4 · แบรนด์ · ระเบียบการจ่าย · ผู้อนุมัติบัญชี · สิทธิ์เข้าถึง",
-    href: "/request/reimburse/settings",
+    desc: "ฟอร์ม AP-4 · คิวอนุมัติ (บัญชี) · Interface ERP · ตั้งค่า",
+    href: "/request/reimburse/admin",
     group: "Settings",
     groupTh: "ตั้งค่า",
     badge: "AP-4",
-    // Deliberately **not** `devHostOnly`, unlike its two neighbours.
+    // Deliberately **not** `devHostOnly`, unlike its AP-1/AP-2/AP-3 neighbours.
     //
     // For AP-1 and AP-17 that flag is cosmetic — their approver and brand tables
     // are populated, so hiding the card off localhost hides a page nobody needs.
     // AP-4 ships with `AccReimburseApprover` empty, so until a System Admin adds
     // somebody every claim stops dead at the ACCOUNT step, and migration 092
     // seeds `AccFormBrand` with `ROCKS`, which is not one of the four brands in
-    // `src/lib/brand.ts`. Both are fixed here and nowhere else. The card was
-    // hiding the one page needed to commission the form, on the only host where
-    // commissioning happens, while the page itself is `requireRole`-gated
-    // server-side and was therefore authorized anyway.
-    manage: true,
-  },
-  {
-    id: "reimburse-approvals",
-    label: "คิวอนุมัติ (บัญชี) — เบิกเงินคืนพนักงาน",
-    icon: "Receipt",
-    desc: "ฟอร์ม AP-4 · รายการที่ผู้จัดการอนุมัติแล้ว รอบัญชีเลือกวันที่จ่ายและส่งต่อ",
-    href: "/request/reimburse/approvals",
-    group: "Settings",
-    groupTh: "ตั้งค่า",
-    badge: "AP-4",
-    // Deliberately not `devHostOnly` — the same argument the settings card
-    // above gives, verbatim: the people who work this queue are not on
-    // localhost. This card was missing entirely through Task 5's first round
-    // — the route and the page existed with no link to either anywhere in
-    // `src/`, so the only way in was typing the URL.
+    // `src/lib/brand.ts`. Both are fixed from the ตั้งค่า card on the hub this
+    // card opens, and nowhere else. The card was hiding the one page needed to
+    // commission the form, on the only host where commissioning happens, while
+    // that page itself is `requireRole`-gated server-side and was therefore
+    // authorized anyway.
     //
-    // Unlike every other card in this list, whether this one shows is not a
-    // static flag — `RequestHubPage` gates it on the viewer's own
-    // `approvalQueue` grant (`useReimburseAccess()`), because a card that is
-    // wrong for nine people out of ten (the roster was measured empty; only
-    // an admin or a specifically granted person can act here at all) is
-    // worth hiding from the rest even though showing it would leak nothing —
-    // the route answers 403 regardless. `RequestHubPage`'s filter is the
-    // enforcement; `manage: true` here only keeps it exempt from the
-    // per-form `available` filter, the same reason every other management
-    // card carries it.
+    // One card, not two: `id` used to be `reimburse-settings`, pointing straight
+    // at `/request/reimburse/settings`, while a second `reimburse-approvals`
+    // card pointed at the accounting queue — the one form on this hub with two
+    // management doors where every other form has one. It now opens
+    // `/request/reimburse/admin`, AP-4's own hub (modelled on
+    // `/request/advance/admin`), which links onward to the form, the queue, its
+    // Interface ERP tab and settings — the same move AP-17 made on 2026-08-27,
+    // in one commit: delete the redundant card AND make the survivor reach the
+    // work. The `id` was renamed off its old `-settings` suffix for the same
+    // reason `advance` and `clear-advance` carry no such suffix even though
+    // their hrefs also end in `/admin` — this card no longer leads to settings
+    // alone. See `RequestHubPage`'s filter below for how this card's own
+    // visibility is gated now that it also stands in for the queue's reach.
     manage: true,
   },
   {
