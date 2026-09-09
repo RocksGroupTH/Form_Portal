@@ -41,9 +41,20 @@ import path from "node:path";
  *   widened WHERE clause returns. **A regex cannot catch a correctly-shaped
  *   call fed a wrong value** — only a behavioural test that supplies a row
  *   and checks what comes back can, which is why `queue-service.test.ts`
- *   exists and is the layer that actually closes this hole, not this file.
- *   The `formCode`/`status`/`stepCode`-rebinding assertions below stay
- *   anyway, as a second, cheaper tripwire — belt, not suspenders.
+ *   exists.
+ *
+ *   **But which layer catches which rebinding is a measurement, not a
+ *   principle, and this comment had it backwards for one commit.** It said
+ *   the behavioural test "is the layer that actually closes this hole, not
+ *   this file", and called the assertions below a cheaper second tripwire.
+ *   Round five measured it: rebinding `status` was caught by the REGEX ALONE
+ *   — every behavioural case then in the file happened to pair a wrong status
+ *   with a wrong step, and `belongsInAccountQueue` refuses on either, so none
+ *   of them could tell the two apart. A reader trusting the old sentence
+ *   could have deleted the assertion that was doing the work. Both layers now
+ *   catch it, because `queue-service.test.ts` gained the case that was
+ *   missing (right step, wrong status) — and the lesson is the general one:
+ *   **do not write down which layer catches a mutation without drilling it.**
  *
  * So: neither this file nor the behavioural test is sufficient alone. This
  * file catches an edit at commit time that a behavioural test would only
@@ -234,5 +245,38 @@ test("the return statement is the query call's very next statement — nothing i
       "queue lists an AP-1 claim or an ACCOUNT_FINAL claim under a header saying it is awaiting the " +
       "accounting check. If the query genuinely needs another statement between it and the return, " +
       "move the transformation INSIDE accumulateAccountQueueRows, where the behavioural tests can see it",
+  );
+});
+
+test("queue-service.ts calls accumulateAccountQueueRows exactly once — no decoy satisfies the pin above", () => {
+  const src = code(SERVICE_FILE);
+  // Round five. The adjacency assertion above runs its regex against the WHOLE
+  // file, so it only ever required the anchored shape to appear SOMEWHERE — not
+  // inside the function that actually runs. A never-called helper carrying a
+  // template literal that ends in ```);`` and a matching
+  // `return accumulateAccountQueueRows(res.recordset as Record<string, unknown>[]);`
+  // satisfies it on its own, freeing the real function to interpose whatever it
+  // likes. Measured on both queues: every guard green, the full suite green,
+  // `tsc --noEmit` clean, every row rewritten before the gate saw it.
+  //
+  // This closes it without parsing TypeScript. If the file calls
+  // accumulateAccountQueueRows exactly once, and that one call is
+  // adjacent to a query's closing ```);``, then the call the real function
+  // makes IS the adjacent one — a decoy needs a second occurrence to exist at
+  // all, and this assertion is what that second occurrence trips. The two
+  // assertions are only sound TOGETHER: adjacency alone permits a decoy, and
+  // exactly-once alone permits an interposed statement.
+  const calls = src.split("accumulateAccountQueueRows(").length - 1;
+  assert.equal(
+    calls,
+    1,
+    `queue-service.ts names accumulateAccountQueueRows(${""} ${calls} time(s), not once. ` +
+      "The assertion above anchors the call to the query's closing backtick-paren, but it searches " +
+      "the whole file — so a second occurrence anywhere, including in a helper nothing calls, can " +
+      "satisfy that anchor while the real function interposes a mutation loop between its query and " +
+      "its return. Every other test here and in queue-service.test.ts stays green while the " +
+      "queue lists an AP-1 claim, or an ACCOUNT_FINAL claim, under a header saying it awaits the accounting check. If this file genuinely needs to " +
+      "call the accumulator twice, the anchored assertion above must be rewritten to match inside " +
+      "the exported function's own body rather than anywhere in the source",
   );
 });

@@ -93,6 +93,26 @@ test("id, brand, requester, item count and payment date are read off the row", (
   assert.equal(r.totalAmount, 2500.5);
   assert.equal(r.paymentDate, "2026-09-25");
   assert.equal(r.itemCount, 3);
+  // `submittedAt` was the one rendered field no test named, and the re-review
+  // measured what that cost: hardcoding it to null left the whole suite green
+  // while `ReimburseApprovalQueue` printed `ส่งเมื่อ —` on every row. It is an
+  // ISO string rather than `toYmd`'s date, because the queue shows a time.
+  assert.equal(r.submittedAt, new Date("2026-09-01T03:00:00Z").toISOString());
+});
+
+test("a claim at ACCOUNT with the WRONG status is dropped — status is not decoration", () => {
+  // The guard file used to say the status rebinding was caught by "the
+  // behavioural layer, not this file". Measured in round five: it was caught by
+  // the regex ALONE, because every behavioural case here happened to pair a
+  // wrong status with a wrong step, and `belongsInAccountQueue` refuses on
+  // either. So the comment pointed a reader at the layer that was NOT doing the
+  // work, and deleting the assertion it called a "cheaper tripwire" would have
+  // opened the hole silently. This case is what makes that comment true: the
+  // step is exactly right and only the status is wrong.
+  assert.deepEqual(
+    accumulateAccountQueueRows([row({ Status: "Submitted", CurrentStepCode: "ACCOUNT" })]),
+    [],
+  );
 });
 
 test("a null PaymentDate stays null — the ACCOUNT step is where one gets set", () => {

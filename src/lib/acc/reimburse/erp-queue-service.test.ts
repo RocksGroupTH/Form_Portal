@@ -140,3 +140,45 @@ test("a leaked AP-3 row contributes no phantom item to a real AP-4 claim's count
   assert.equal(out.length, 1);
   assert.equal(out[0].itemCount, 1);
 });
+
+test("every passthrough field is read off the row, not invented", () => {
+  // The sibling `queue-service.test.ts` had the same gap and the re-review
+  // measured what it cost there: `submittedAt` was the one rendered field no
+  // test named, and hardcoding it to null left the whole suite green while the
+  // screen printed a dash on every row. Nothing here named ANY of them.
+  //
+  // The five `Erp*` columns are all null on every row this queue can currently
+  // return — nothing sends, so nothing has been sent — which is exactly why
+  // they need a case with values in it. A passthrough that quietly drops them
+  // would be invisible until the send lands and then look like the send's bug.
+  const out = accumulateErpQueueRows([
+    row({
+      Id: 42,
+      RequestNo: "RBM26-00042",
+      BrandCode: "KSI",
+      RequesterFullName: "Preecha Sukjai",
+      TotalAmount: "2500.50",
+      ErpInterfaceStatus: "Failed",
+      ErpDocumentNo: "PV26-0007",
+      ErpInterfaceEnvironment: "Sandbox",
+      ErpInterfaceSentAt: new Date("2026-09-05T02:30:00Z"),
+      ErpInterfaceError: "vendor not found",
+      ItemId: 1,
+      ItemCategory: "5100-01",
+      ItemAmount: 100,
+    }),
+  ]);
+  const r = out[0];
+  assert.equal(r.id, 42);
+  assert.equal(r.requestNo, "RBM26-00042");
+  assert.equal(r.brandCode, "KSI");
+  assert.equal(r.requesterName, "Preecha Sukjai");
+  assert.equal(r.totalAmount, 2500.5);
+  assert.equal(r.submittedAt, new Date("2026-09-01T03:00:00Z").toISOString());
+  assert.equal(r.paymentDate, "2026-09-30");
+  assert.equal(r.erpStatus, "Failed");
+  assert.equal(r.erpDocumentNo, "PV26-0007");
+  assert.equal(r.erpEnvironment, "Sandbox");
+  assert.equal(r.erpSentAt, new Date("2026-09-05T02:30:00Z").toISOString());
+  assert.equal(r.erpError, "vendor not found");
+});

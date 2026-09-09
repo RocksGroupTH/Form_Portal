@@ -118,7 +118,9 @@ directly.
   Business Central resolves the debit account from the matched vendor's posting
   group, and AP-4 followed. So the seven divide as four written, one
   (`AccBrandErpTargetSetting`) written by nothing anywhere, and two
-  (`AccBrandGlAccount`, `DepartmentErpMap`) untouched by AP-4.
+  (`AccBrandGlAccount`, `DepartmentErpMap`) read by AP-4 — through
+  `loadErpJournalBuildContext(AP4_FORM_CODE)`, per-form predicate and all — but
+  never written by it.
 - **§4's premise that overrides are unreachable from any UI was already false
   when this spec was written.** AP-2 has written per-form rows since its
   branch merged — 14 of them across five tables, measured 2026-09-09 and

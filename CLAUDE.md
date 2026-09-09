@@ -1304,7 +1304,13 @@ service's own docblock. **CLAUDE.md said the opposite for one commit, on
 looking for configuration that does not exist, or read `AccBrandGlAccount`'s
 `NULL` default as an AP-4 override when it is the default that answers *every*
 form. The remaining two of the seven, `AccBrandGlAccount` and
-`DepartmentErpMap`, are untouched by AP-4 entirely.
+`DepartmentErpMap`, are **read by AP-4 and never written by it** — the
+distinction this section keeps everywhere else, and it matters here too:
+`loadReimburseErpInterfaceSettings` reaches both on every load of this very
+tab, through `loadErpJournalBuildContext(AP4_FORM_CODE)` →
+`listBrandAccounts("gl", null, "AP-4")` and `loadDeptGlOverridesByTarget(…,
+"AP-4")`, and both apply the per-form predicate, so an AP-4 override of either
+would win if one existed. Nothing in this application can create one.
 
 **Key libs (`src/lib/acc/`):** `pool`, `sequence`, `payment-calendar`, `payment-calendar-core`, `employee-context`, `brand-options`, `access`, `settings-service`, `request-service`, `approval-engine`, `report-service`, `email-queue`, `email-templates`, `calc`, `erp-environment-shared`, `per-form-config`, plus `travel-booking/*` and `reimburse/*`.
 

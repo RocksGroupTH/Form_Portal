@@ -221,3 +221,36 @@ test("the return statement is the query call's very next statement — nothing i
       "accumulateErpQueueRows, where the behavioural tests can see it",
   );
 });
+
+test("erp-queue-service.ts calls accumulateErpQueueRows exactly once — no decoy satisfies the pin above", () => {
+  const src = code(SERVICE_FILE);
+  // Round five. The adjacency assertion above runs its regex against the WHOLE
+  // file, so it only ever required the anchored shape to appear SOMEWHERE — not
+  // inside the function that actually runs. A never-called helper carrying a
+  // template literal that ends in ```);`` and a matching
+  // `return accumulateErpQueueRows(res.recordset as Record<string, unknown>[]);`
+  // satisfies it on its own, freeing the real function to interpose whatever it
+  // likes. Measured on both queues: every guard green, the full suite green,
+  // `tsc --noEmit` clean, every row rewritten before the gate saw it.
+  //
+  // This closes it without parsing TypeScript. If the file calls
+  // accumulateErpQueueRows exactly once, and that one call is
+  // adjacent to a query's closing ```);``, then the call the real function
+  // makes IS the adjacent one — a decoy needs a second occurrence to exist at
+  // all, and this assertion is what that second occurrence trips. The two
+  // assertions are only sound TOGETHER: adjacency alone permits a decoy, and
+  // exactly-once alone permits an interposed statement.
+  const calls = src.split("accumulateErpQueueRows(").length - 1;
+  assert.equal(
+    calls,
+    1,
+    `erp-queue-service.ts names accumulateErpQueueRows(${""} ${calls} time(s), not once. ` +
+      "The assertion above anchors the call to the query's closing backtick-paren, but it searches " +
+      "the whole file — so a second occurrence anywhere, including in a helper nothing calls, can " +
+      "satisfy that anchor while the real function interposes a mutation loop between its query and " +
+      "its return. Every other test here and in erp-queue-service.test.ts stays green while the " +
+      "queue lists claims that never cleared ACCOUNT_FINAL. If this file genuinely needs to " +
+      "call the accumulator twice, the anchored assertion above must be rewritten to match inside " +
+      "the exported function's own body rather than anywhere in the source",
+  );
+});
