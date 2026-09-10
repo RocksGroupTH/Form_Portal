@@ -32,7 +32,17 @@ export function useGlOptionsByBranch(
     const missing = (key ? key.split("|") : []).filter((c) => !requested.current.has(c));
     if (missing.length === 0) return;
     missing.forEach((c) => requested.current.add(c));
-    let cancelled = false;
+    /* Deliberately not cancelled on cleanup.
+       `requested` is marked before the fetch resolves, so a discarded answer is
+       never re-requested — and the answer arrives after the branch set has
+       already changed at least once, because the account grid seeds its rows
+       from an effect: the key goes "" → "HQ01" within the mount, the "HQ01"
+       flight is cleaned up, and the re-run then sees HQ01 already requested and
+       does nothing. The list came back 200 and was thrown away, and the picker
+       said "ไม่พบบัญชี" for a branch with 32 accounts.
+       There is nothing to cancel here anyway: this fills a cache of reference
+       data, keyed by branch, so a late answer is still the right answer and
+       applying it twice changes nothing. */
     Promise.all(
       missing.map((code) =>
         fetch(`/api/request/clear-advance/options/gl-accounts?branch=${encodeURIComponent(code)}`)
@@ -44,9 +54,8 @@ export function useGlOptionsByBranch(
           }),
       ),
     ).then((entries) => {
-      if (!cancelled) setByBranch((prev) => ({ ...prev, ...Object.fromEntries(entries) }));
+      setByBranch((prev) => ({ ...prev, ...Object.fromEntries(entries) }));
     });
-    return () => { cancelled = true; };
   }, [key]);
 
   return byBranch;
