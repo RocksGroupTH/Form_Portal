@@ -69,9 +69,32 @@ function todayYmd(): string {
 
 const box = { background: "var(--bg-card)", border: "1px solid var(--border-card)", boxShadow: "var(--shadow-sm)" } as const;
 
-function Section({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
+/**
+ * Break one section out of the page's 1200px column, centred on the viewport.
+ *
+ * The account step's grid is thirteen editable columns and renders about
+ * 1870px wide. Inside the form column that left roughly 700px of it — the
+ * seller's registry answer, the vendor, and all three money columns — behind a
+ * horizontal scrollbar, so the figures an accountant is checking were the ones
+ * they had to go looking for. The rest of the page is a form and reads badly
+ * at that width, so only this section widens.
+ *
+ * `50%` in a margin resolves against the parent's width, so the card recentres
+ * itself on the viewport whatever the column is doing; the 3rem keeps the page
+ * gutter, and the 1900px cap stops it sprawling on an ultrawide monitor. Below
+ * about 1250px viewport the two terms cancel and the card sits where it always
+ * did.
+ */
+const FULL_BLEED: React.CSSProperties = {
+  width: "min(100vw - 3rem, 1900px)",
+  marginLeft: "calc(50% - min(50vw - 1.5rem, 950px))",
+};
+
+function Section({
+  title, icon, wide, children,
+}: { title: string; icon: React.ReactNode; wide?: boolean; children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl overflow-hidden mb-4" style={box}>
+    <div className="rounded-2xl overflow-hidden mb-4" style={wide ? { ...box, ...FULL_BLEED } : box}>
       <div className="flex items-center gap-2.5 px-5 py-3"
         style={{ borderBottom: "1px solid var(--border-card)", background: "var(--bg-card-alt)" }}>
         <span className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
@@ -450,7 +473,7 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
       )}
 
       {/* Approval timeline + actions */}
-      <Section title="ขั้นตอนการอนุมัติ" icon={<CheckCircle size={15} />}>
+      <Section title="ขั้นตอนการอนุมัติ" icon={<CheckCircle size={15} />} wide={isAccountStep}>
         {/* Manager step action buttons */}
         {isManagerStep && (
           <div className="mb-4 pb-4 flex flex-wrap gap-2" style={{ borderBottom: "1px solid var(--border-light)" }}>
