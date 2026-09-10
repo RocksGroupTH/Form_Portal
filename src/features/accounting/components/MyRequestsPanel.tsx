@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Search, Inbox, Loader2, ChevronRight, Send, ClipboardCheck, Maximize2, Minimize2 } from "lucide-react";
+import { Search, Inbox, Loader2, ChevronRight, Send, ClipboardCheck } from "lucide-react";
 import type { ReportRow } from "@/lib/acc/report-service";
 import type { AccRequest } from "@/features/accounting/types";
 import { formatNextApprovalDetail, getMyWorkStatusBucket, myWorkStatusLabel, myWorkStatusStyle, type MyWorkStatusBucket, type MyWorkViewerContext } from "@/lib/acc/approval-display";
@@ -9,7 +9,7 @@ import { REQUEST_CARDS } from "@/lib/constants";
 import { isPendingApprovalStatus, statusLabelDisplay } from "@/features/accounting/constants";
 import { MultiSelectFilter, inDateRange, isMultiSelectActive, matchesMultiSelectValue } from "@/features/accounting/components/ApprovalQueueFilters";
 import { FilterDateRangePicker } from "@/features/accounting/components/FilterDateRangePicker";
-import { SidePanel, SidePanelClose } from "@/components/ui/SidePanel";
+import { SidePanel, SidePanelClose, SidePanelExpand } from "@/components/ui/SidePanel";
 import { RequestDetail } from "@/features/accounting/components/RequestDetail";
 import { TravelBookingDetail } from "@/features/travel-booking/components/TravelBookingDetail";
 import type { TravelBookingRequest } from "@/features/travel-booking/types";
@@ -667,21 +667,11 @@ function RequestRowList({
               ตรวจสอบรายละเอียดและเอกสารแนบ
             </p>
           </div>
+          {/* Beside Close, because both act on the panel rather than on the
+              request inside it. Shared with AP-4's queue drawer since 2026-09-10
+              — the labels are the half that drifts when this is duplicated. */}
           <div className="flex items-center gap-1 shrink-0">
-            {/* Beside Close, because both act on the panel rather than on the
-                request inside it. Labelled and titled: an icon pair alone does
-                not say which way it is about to go. */}
-            <button
-              type="button"
-              onClick={() => setDrawerWide((v) => !v)}
-              aria-pressed={drawerWide}
-              aria-label={drawerWide ? "ย่อกล่องรายละเอียดกลับ" : "ขยายกล่องรายละเอียด"}
-              title={drawerWide ? "ย่อกลับ" : "ขยายเต็มความกว้าง"}
-              className="w-6 h-6 flex items-center justify-center rounded-md cursor-pointer border-none bg-transparent p-0"
-              style={{ color: "var(--text-muted)" }}
-            >
-              {drawerWide ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-            </button>
+            <SidePanelExpand wide={drawerWide} onToggle={() => setDrawerWide((v) => !v)} />
             <SidePanelClose onClick={() => setDrawerId(null)} />
           </div>
         </div>

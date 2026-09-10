@@ -20,7 +20,7 @@ import { ExpenseAccountPicker } from "@/features/reimburse/components/ExpenseAcc
 import { VendorPicker } from "@/features/reimburse/components/VendorPicker";
 import { ReimburseQueueFilterBar } from "@/features/reimburse/components/ReimburseQueueFilterBar";
 import { claimReadiness } from "@/features/reimburse/lib/queue-readiness";
-import { SidePanel, SidePanelClose } from "@/components/ui/SidePanel";
+import { SidePanel, SidePanelClose, SidePanelExpand } from "@/components/ui/SidePanel";
 import { Dialog } from "@/components/ui/Dialog";
 import { PaymentDatePicker } from "@/features/accounting/components/PaymentDatePicker";
 import { ReimburseDetail } from "@/features/reimburse/components/ReimburseDetail";
@@ -600,6 +600,11 @@ export function ReimburseApprovalQueue() {
   const [drawerId, setDrawerId] = useState<number | null>(null);
   const [drawerDetail, setDrawerDetail] = useState<ReimburseDetailData | null>(null);
   const [drawerLoading, setDrawerLoading] = useState(false);
+  /**
+   * Not reset when the drawer closes: somebody who wants the wide view for one
+   * claim almost always wants it for the next.
+   */
+  const [drawerWide, setDrawerWide] = useState(false);
 
   useEffect(() => {
     if (drawerId == null) {
@@ -1379,7 +1384,12 @@ export function ReimburseApprovalQueue() {
       </Dialog>
 
       {/* Same drawer /my-request opens, so a claim reads the same in both. */}
-      <SidePanel open={drawerId != null} onClose={() => setDrawerId(null)} width="min(980px, 100vw)" zIndex={60}>
+      <SidePanel
+        open={drawerId != null}
+        onClose={() => setDrawerId(null)}
+        width={drawerWide ? "min(1680px, 100vw)" : "min(980px, 100vw)"}
+        zIndex={60}
+      >
         <div
           className="flex items-center justify-between px-4 py-3 shrink-0"
           style={{ borderBottom: "1px solid var(--border-light)" }}
@@ -1392,7 +1402,10 @@ export function ReimburseApprovalQueue() {
               ตรวจสอบรายละเอียดและเอกสารแนบ
             </p>
           </div>
-          <SidePanelClose onClick={() => setDrawerId(null)} />
+          <div className="flex items-center gap-1 shrink-0">
+            <SidePanelExpand wide={drawerWide} onToggle={() => setDrawerWide((v) => !v)} />
+            <SidePanelClose onClick={() => setDrawerId(null)} />
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto no-scrollbar px-4 py-4 acc-theme">
