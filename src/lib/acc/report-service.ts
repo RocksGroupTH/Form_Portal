@@ -4,6 +4,7 @@ import { amountInBaht, rateAsOfYmd } from "@/lib/acc/currency-display";
 import { paymentRoundsForApprovals } from "@/lib/acc/payment-calendar";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { queryBothPools } from "@/lib/acc/query-both";
+import { perFormOrderBy, perFormPredicate } from "@/lib/acc/per-form-config";
 import {
   resolveViewerEnvironmentMap,
   type FormEnvironmentValue,
@@ -11,6 +12,7 @@ import {
 import { keepRowsInCurrentEnvironment } from "@/lib/form-environment/current-rows";
 import { hrEmployeeTable } from "@/lib/hr/constants";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
+import { AP4_FORM_CODE } from "@/features/reimburse/constants";
 import {
   fmtTravelSpanLabel,
   fmtTravelDatesList,
@@ -691,6 +693,10 @@ export async function listMyWorkRows(
       .request()
       .input("staffId", sql.Int, staffId)
       .input("email", sql.NVarChar, email ?? "")
+      // For the AP-4 brand-scope subquery below — `perFormPredicate` binds
+      // `@formCode` by name, so it must be an `.input()` here regardless of
+      // every other FormCode test in this query being a plain literal.
+      .input("formCode", sql.NVarChar, AP4_FORM_CODE)
       .query(
         buildListQuery(
           "request",
@@ -721,7 +727,28 @@ export async function listMyWorkRows(
                    steps rather than one. Matched on StaffId first and login
                    email second, the same two ways findActiveApprover() resolves
                    an actor — an approver with no Rocks_Portal_HR.Employee row
-                   may act, so their queue has to find them too. */
+                   may act, so their queue has to find them too.
+
+                   The inner EXISTS against AccReimburseApproverBrand is the
+                   per-brand scope (migration 144, 2026-09-10): a row on the
+                   roster is not enough on its own any more, the claim's own
+                   BrandCode must also resolve (through AccBrandErpInterface's
+                   per-form default/override) to one of this approver's ticked
+                   Interface targets. An admin with no roster row at all still
+                   finds no 'ra' row and so still finds nothing here — unchanged
+                   from before this table existed.
+
+                   *** DEPLOYMENT HAZARD, not a degradation ***
+                   listMyWorkRows runs through queryBothPools against BOTH
+                   Rocks_Portal_Form and Rocks_Portal_Form_UAT, and SQL Server
+                   binds object names at COMPILE time. AccReimburseApproverBrand
+                   missing from EITHER database is "Invalid object name", not an
+                   empty result — this whole query throws, which breaks
+                   /my-work and Home's pending count for EVERY user of EVERY
+                   form, not only AP-4's. Exactly the hazard CLAUDE.md already
+                   records for migration 090 (AccReimburseApprover itself).
+                   Migration 144 MUST reach both form databases before this
+                   code deploys. */
                 OR (
                   r.FormCode = 'AP-4'
                   AND a.StepCode IN ('ACCOUNT', 'ACCOUNT_FINAL')
@@ -736,6 +763,16 @@ export async function listMyWorkRows(
                           AND LOWER(LTRIM(RTRIM(COALESCE(ra.Email, N''))))
                             = LOWER(LTRIM(RTRIM(@email)))
                         )
+                      )
+                      AND EXISTS (
+                        SELECT 1 FROM [dbo].[AccReimburseApproverBrand] rab
+                        WHERE rab.ApproverId = ra.Id
+                          AND rab.InterfaceBrandCode = (
+                            SELECT TOP 1 abei.InterfaceBrandCode
+                            FROM [dbo].[AccBrandErpInterface] abei
+                            WHERE abei.BrandCode = r.BrandCode AND ${perFormPredicate("abei")}
+                            ORDER BY ${perFormOrderBy("abei")}
+                          )
                       )
                   )
                 )

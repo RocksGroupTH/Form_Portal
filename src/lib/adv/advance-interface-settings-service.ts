@@ -140,7 +140,9 @@ export async function saveAdvanceInterfacePerForm(
   await Promise.all([
     upsertFormBrandErpInterfaceMap(brandCode, values.interfaceBrandCode, AP2_FORM_CODE, userId),
     mergeFormBrandAccount("bank", brandCode, AP2_FORM_CODE, values.bankAccountNo, null, userId),
-    mergeFormBrandBranch(brandCode, AP2_FORM_CODE, values.branchCode || null, userId),
+    // AP-2 has no Fix Dept control of its own yet — always false/null, same as
+    // every other caller before AP-4's grouped Interface ERP tab added it.
+    mergeFormBrandBranch(brandCode, AP2_FORM_CODE, values.branchCode || null, false, null, userId),
     mergeFormBrandBatch(brandCode, AP2_FORM_CODE, values.journalBatchName || null, userId),
   ]);
 }

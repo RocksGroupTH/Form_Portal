@@ -75,7 +75,6 @@ interface TravelBookingTabProps {
     /** The configured country's own rates, so they can be named before any date is typed. */
     countryLog: readonly { effectiveDate: string; amount: number }[];
   };
-  allowanceRate: number | null;
   reasons: TravelReasonOption[];
   accommodations: Accommodation[];
   vehicles: VehicleOption[];
@@ -95,7 +94,6 @@ export function TravelBookingTab({
   tab,
   isContinuation,
   perDiemEstimate,
-  allowanceRate,
   reasons,
   accommodations,
   vehicles,

@@ -262,6 +262,10 @@
   --bg-info-yellow: #fdf6ec;
   --border-info-yellow: #f3ddbd;
   --text-info-yellow: #b5793a;
+  /* Same red as --status-bad-bg — referenced by AP-3's ClrErpInterfaceQueue
+     and AP-4's ReimburseErpQueue readiness/ERP-status pills, always paired
+     with --status-bad-text, but never itself defined until this fix. */
+  --bg-info-red: #fce9e9;
 
   /* Focus rings */
   --ring-action: 0 0 0 3px rgba(76, 116, 196, 0.22);
@@ -380,6 +384,8 @@
   --bg-info-yellow: #2b2113;
   --border-info-yellow: #5c451f;
   --text-info-yellow: #e8b96a;
+  /* Same red as --status-bad-bg (dark) — see the light theme's comment. */
+  --bg-info-red: #2f1d1d;
 
   --ring-action: 0 0 0 3px rgba(127, 160, 224, 0.30);
   --ring-danger: 0 0 0 3px rgba(226, 154, 154, 0.30);

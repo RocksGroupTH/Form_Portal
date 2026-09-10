@@ -11,6 +11,7 @@
  * a total function over plain values; `approval-service.ts` is the half that
  * needs a transaction. Same split as `./item-money.ts`; see its header.
  */
+import { ymd } from "@/lib/acc/payment-calendar-core";
 import { paymentRoundsInMonth } from "./payment-calendar";
 import { canActFinalStep, FINAL_SAME_PERSON_ERROR } from "./two-person";
 import type { ReimburseStatus, ReimburseStepCode } from "@/features/reimburse/constants";
@@ -36,6 +37,25 @@ export const RETURN_COMMENT_REQUIRED = "กรุณาระบุสิ่ง�
 export const NOT_ACCOUNT_APPROVER_ERROR =
   "ไม่มีสิทธิ์ — คุณไม่ได้อยู่ในรายชื่อผู้อนุมัติฝ่ายบัญชีของแบบฟอร์ม AP-4";
 
+/**
+ * On the roster, but the claim's own brand resolves to an Interface target
+ * outside this approver's ticked set (`AccReimburseApproverBrand`, migration
+ * 144). Distinct from `NOT_ACCOUNT_APPROVER_ERROR` above: that one says "you
+ * are not an approver at all", this one says "you are, but not of this claim's
+ * group" — conflating the two would send somebody who IS an approver looking
+ * for their name on a roster they are already on.
+ */
+export const REIMBURSE_SCOPE_ERROR =
+  "ไม่มีสิทธิ์ — แบรนด์นี้ไม่ได้อยู่ในกลุ่ม Interface ที่คุณดูแล";
+
+/**
+ * `mayReject` refused a non-MANAGER step. Names what IS available rather than
+ * a bare "ไม่มีสิทธิ์": an accounting approver reading only that would look for
+ * a permission fix, when the truth is this step never offers reject at all.
+ */
+export const REJECT_NOT_AVAILABLE_ERROR =
+  "ขั้นตอนนี้ไม่สามารถไม่อนุมัติได้ — มีเพียงผู้จัดการเท่านั้นที่ปฏิเสธคำขอได้ ขั้นบัญชีมีเพียงส่งกลับแก้ไขเท่านั้น";
+
 /** The request moved between the page load and the click. Reload, do not retry. */
 export const NOT_AT_STEP_ERROR =
   "คำขอนี้ไม่ได้อยู่ในขั้นตอนที่ดำเนินการได้แล้ว — กรุณาโหลดหน้านี้ใหม่";
@@ -49,10 +69,6 @@ export const STEP_TOKEN_REQUIRED =
   "คำขอไม่ถูกต้อง — ไม่ได้ระบุขั้นตอนที่ต้องการดำเนินการ";
 
 export const PAYMENT_DATE_REQUIRED = "กรุณาเลือกวันที่จ่าย";
-
-/** A date the picker would never have offered — see `getReimbursePaymentDates`. */
-export const PAYMENT_DATE_NOT_A_ROUND =
-  "วันที่จ่ายไม่อยู่ในรอบที่กำหนด (ศุกร์ที่ 1 และ 3 ของเดือน)";
 
 /**
  * The `ACCOUNT` row carries no `ActionedByStaffId`, so who took step 2 cannot be
@@ -156,6 +172,17 @@ export function isReimburseStepCode(value: unknown): value is ReimburseStepCode 
 /** True for the two steps `AccReimburseApprover` answers for (spec §3.2 rows 2 and 3). */
 export function isAccountStep(step: ReimburseStepCode): boolean {
   return step === "ACCOUNT" || step === "ACCOUNT_FINAL";
+}
+
+/**
+ * Rejecting ends a claim; both accounting steps keep only ส่งกลับแก้ไข.
+ *
+ * The decision is in the spec's §1 table. A control removed from a page is not
+ * a rule, so this is checked in the service — `rejectReimburse` refuses a
+ * non-MANAGER step before it claims anything.
+ */
+export function mayReject(stepCode: string | null): boolean {
+  return stepCode === "MANAGER";
 }
 
 /* ─────────────────────────── who may act ─────────────────────────── */
@@ -316,16 +343,38 @@ export function isYmd(value: unknown): value is string {
   return d.getFullYear() === year && d.getMonth() === month0 && d.getDate() === day;
 }
 
+export const PAYMENT_DATE_OUT_OF_RANGE =
+  "วันที่จ่ายต้องอยู่ระหว่าง 1 เดือนย้อนหลังถึง 12 เดือนข้างหน้า";
+
 /**
- * Which of `validDates` a posted payment date is, or the message refusing it.
+ * What is wrong with a posted payment date, or `null` if nothing is.
  *
- * The picker is not the authority — this is (spec §3.4, "The picker accepts
- * nothing else"). `validDates` must be the output of `getReimbursePaymentDates`,
- * which is already holiday-shifted, so an exact string match is the whole test.
+ * **This is a sanity bound, not the payment rule.** It replaced a membership
+ * test against `getReimbursePaymentDates` on 2026-09-08: accounting picks the
+ * date, and a claim that legitimately needs one off the 1st/3rd-Friday round —
+ * an urgent payment, a corrected round — can have it without an admin editing
+ * the database. The round is still computed and still shown, as the suggested
+ * value beside the control.
+ *
+ * What it refuses is only what nobody means: a year typed wrong. Ten years out
+ * is indistinguishable from a deliberate choice to anything downstream, and
+ * this is the path that writes `AccRequest.PaymentDate`.
+ *
+ * `today` is a parameter rather than `new Date()` so the edges are testable —
+ * the edges are the only place a window can be wrong. The caller passes the
+ * server's day; the browser's is not consulted anywhere on this path.
+ *
+ * `ymd` (from `@/lib/acc/payment-calendar-core`, imported above rather than
+ * redeclared here) formats with local getters, never `toISOString` — the
+ * driver runs with `useUTC: false` on a Thai wall clock, and a UTC format
+ * would move this window's edge by a day for half of every Thai day.
  */
-export function paymentDateError(raw: unknown, validDates: readonly string[]): string | null {
-  if (!isYmd(raw)) return PAYMENT_DATE_REQUIRED;
-  return validDates.indexOf(raw) >= 0 ? null : PAYMENT_DATE_NOT_A_ROUND;
+export function paymentDateProblem(raw: unknown, today: string): string | null {
+  if (!isYmd(raw) || !isYmd(today)) return PAYMENT_DATE_REQUIRED;
+  const [ty, tm, td] = today.split("-").map(Number);
+  const min = ymd(new Date(ty, tm - 1 - 1, td));
+  const max = ymd(new Date(ty + 1, tm - 1, td));
+  return raw >= min && raw <= max ? null : PAYMENT_DATE_OUT_OF_RANGE;
 }
 
 /* ─────────────────────────── the default round ─────────────────────────── */

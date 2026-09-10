@@ -35,15 +35,19 @@ import { getHolidaySet, shiftPaymentDay, ymd } from "@/lib/acc/payment-calendar"
 import { queueEmail } from "@/lib/acc/email-queue";
 import { esc } from "@/lib/acc/email-templates";
 import { AccConflictError, AccForbiddenError } from "@/lib/acc/request-errors";
+import type { ItemAccountEdit } from "@/lib/acc/reimburse/item-account-edits";
 import { env } from "@/env";
 import { AP4_FORM_CODE } from "@/features/reimburse/constants";
 import { defaultPaymentRound, getReimbursePaymentDates } from "./payment-calendar";
 import { getReimburseRequest } from "./request-service";
 import { listReimburseApprovers } from "./settings-service";
+import { canActOnTarget } from "./brand-scope";
+import { loadApproverScopeByStaffId, resolveClaimTarget } from "./brand-scope-load";
 import {
   NOT_ACCOUNT_APPROVER_ERROR,
   NOT_AT_STEP_ERROR,
-  PAYMENT_DATE_NOT_A_ROUND,
+  REIMBURSE_SCOPE_ERROR,
+  REJECT_NOT_AVAILABLE_ERROR,
   SELF_CANCEL_WINDOW_HOURS,
   STATE_AFTER_APPROVE,
   STATUS_AT_STEP,
@@ -51,7 +55,8 @@ import {
   finalStepRefusal,
   findActiveApprover,
   isAccountStep,
-  paymentDateError,
+  mayReject,
+  paymentDateProblem,
   rejectCommentOrError,
   returnCommentOrError,
   selfCancelDeadline,
@@ -97,6 +102,87 @@ async function requireApproverStaffId(actor: ReimburseActor): Promise<number> {
   return approver.staffId;
 }
 
+/* ─────────────────────────── the per-brand scope ─────────────────────────── */
+
+/**
+ * May this actor act on a claim filed under `brandCode`? Throws
+ * `AccForbiddenError` (403, `REIMBURSE_SCOPE_ERROR`) when not.
+ *
+ * The companion to `requireApproverStaffId`, and the two answer different
+ * questions — one is not a stricter version of the other:
+ *
+ *  - `requireApproverStaffId` — is this person an approver at ALL. A
+ *    membership question, decided once per call and safe to ask outside a
+ *    transaction (`approval-service.ts`'s own header explains why: it stays
+ *    there, unmoved, in every one of the five callers below).
+ *  - `requireApproverScopeFor` — of the brands ticked for them, does THIS
+ *    claim's brand belong. A per-row question, and the brief for this task is
+ *    explicit about where it must be decided: "inside the transaction that
+ *    claims the row", the way `approveByAccount` (AP-17,
+ *    `travel-booking/approval.ts`) re-decides the per-diem dependency after
+ *    its own claim rather than trusting anything read before the transaction
+ *    opened. Every one of the five callers passes a `brandCode` read via
+ *    `claimedBrandCode(tx, requestId)` — a fresh `SELECT` on the SAME
+ *    transaction that has just claimed the row, never a value carried in from
+ *    an earlier read. A stale page, a replayed POST, or an admin narrowing
+ *    this approver's ticked brands between page load and click must not slip
+ *    past a value memoised before any of that could have happened.
+ *
+ * **`null` from `loadApproverScopeByStaffId` is not `[]`, and the two branches
+ * below must never collapse into one.** `null` means no active
+ * `AccReimburseApprover` row at all — already refused, membership-wide, by
+ * `requireApproverStaffId` at every one of this function's call sites, so
+ * reaching it here means the roster changed in the narrow window between that
+ * check and this one. Writing `canActOnTarget(scope ?? [], target)` would
+ * still refuse (an empty scope refuses everything `canActOnTarget` is ever
+ * asked, by `brand-scope.ts`'s own design), so the bug would be invisible
+ * today — but it throws away the distinction the very first caller needs:
+ * `NOT_ACCOUNT_APPROVER_ERROR` ("you are not an approver") reads correctly
+ * either way, `REIMBURSE_SCOPE_ERROR` ("you are, but not of this group") does
+ * not — it is a lie about someone the roster no longer recognises at all.
+ *
+ * **An unmapped claim brand is out of every scope, not a bypass.**
+ * `resolveClaimTarget` answers `null` for a brand with no
+ * `AccBrandErpInterface` row — `ROCKS`, which migration 092 really does seed
+ * for AP-4, is exactly such a brand — and `canActOnTarget` refuses a `null`
+ * target unconditionally, for anyone's scope. That is the fail-safe
+ * direction `brand-scope-load.ts`'s own docblock asks for: invisible to every
+ * scoped approver rather than actionable by all of them. It costs something
+ * real — such a claim is actionable by nobody at all, until an admin maps
+ * the brand — and that is `resolveClaimTarget`'s own note to make, not this
+ * function's to repeat.
+ */
+async function requireApproverScopeFor(
+  actor: ReimburseActor,
+  brandCode: string | null,
+): Promise<void> {
+  const scope = await loadApproverScopeByStaffId(actor.staffId, actor.email);
+  if (scope == null) {
+    throw new AccForbiddenError(NOT_ACCOUNT_APPROVER_ERROR);
+  }
+
+  const target = await resolveClaimTarget(brandCode);
+  if (!canActOnTarget(scope, target)) {
+    throw new AccForbiddenError(REIMBURSE_SCOPE_ERROR);
+  }
+}
+
+/**
+ * The request's own `BrandCode`, read fresh on the transaction that has just
+ * claimed the row — never a value carried in from before the transaction
+ * opened. `BrandCode` itself is fixed at submit and no action here rewrites
+ * it, so this is not about a race on the VALUE changing; it is about never
+ * handing `requireApproverScopeFor` something read before the claim, which is
+ * exactly the shape of staleness a scope narrowed since page load produces.
+ */
+async function claimedBrandCode(tx: AccTx, requestId: number): Promise<string | null> {
+  const res = await tx
+    .request()
+    .input("id", sql.Int, requestId)
+    .query(`SELECT BrandCode FROM [dbo].[AccRequest] WHERE Id=@id`);
+  return (res.recordset[0]?.BrandCode as string | null | undefined) ?? null;
+}
+
 /** AP-1's rule, restated for AP-4: an approval row must name a real person. */
 function requireActorStaffId(actor: ReimburseActor): number {
   if (actor.staffId == null) {
@@ -110,8 +196,8 @@ function requireActorStaffId(actor: ReimburseActor): number {
 /**
  * The dates the accounting check may choose from, and the one it opens on.
  *
- * `dates` are holiday-shifted and ascending — what the picker offers and what
- * `paymentDateError` validates against. `defaultDate` is the round
+ * `dates` are holiday-shifted and ascending — what the picker offers as the
+ * suggested round. `defaultDate` is the round
  * `defaultPaymentRound` picks for `from` (spec §3.4: the first round whose own
  * week's Monday noon has not passed), mapped through the same shift so the
  * default is always one of `dates` rather than a date beside one.
@@ -137,6 +223,18 @@ export async function getReimbursePaymentOptions(
 
   // Only offer it if it survived the same filter `dates` went through.
   return { dates, defaultDate: dates.indexOf(shifted) >= 0 ? shifted : null };
+}
+
+/**
+ * The server's own day, for `paymentDateProblem`'s bound — never the browser's.
+ *
+ * Built from `ymd`, already imported above from `@/lib/acc/payment-calendar`
+ * (itself a re-export of the pure `payment-calendar-core.ts`), rather than a
+ * second formatter: that function already formats with local getters, never
+ * `toISOString`, which is what the bound needs on a Thai wall clock.
+ */
+function todayYmd(): string {
+  return ymd(new Date());
 }
 
 /* ─────────────────────────── mail ─────────────────────────── */
@@ -447,13 +545,74 @@ export async function approveReimburseManager(
  *
  * The status deliberately does not move — see `STATUS_AT_STEP`.
  *
- * `paymentDate` is validated against `getReimbursePaymentDates` before anything
- * is written: the picker offers only valid rounds, but the picker is a
- * suggestion the client can ignore and this is the authority. `IsChecked` is set
- * on the row rather than being demanded as a separate flag the way AP-1 does —
- * for AP-4 the check *is* this action, so a second boolean saying it happened
- * could only ever disagree with the row it sits on.
+ * `paymentDate` is validated against `paymentDateProblem` before anything is
+ * written: accounting picks the date now (2026-09-08), so this is a sanity
+ * bound against a typo'd year, not a membership test against a generated
+ * round — see that function's own docblock. Since the bound does not depend
+ * on which rounds are still on offer, there is nothing here that can go stale
+ * between page load and click, so every refusal is a plain 400 — no
+ * `AccConflictError` branch, unlike the round-membership check this replaced.
+ * `IsChecked` is set on the row rather than being demanded as a separate flag
+ * the way AP-1 does — for AP-4 the check *is* this action, so a second boolean
+ * saying it happened could only ever disagree with the row it sits on.
  */
+/**
+ * Set a claim's payment date WITHOUT approving it.
+ *
+ * The queue lets an accountant fill dates while reading the claims and approve
+ * in a batch afterwards; before this the only writer of `PaymentDate` was
+ * `approveReimburseAccountCheck`, so a date existed only in the browser until
+ * the moment of approval — and a page reload lost every one of them. AP-17 has
+ * had exactly this endpoint for the same reason.
+ *
+ * **It is not a weaker approve.** Every guard the approval carries is here and
+ * in the same order, because this writes the figure somebody is paid on:
+ *
+ *  - `requireApproverStaffId` — membership, once, outside the transaction;
+ *  - `paymentDateProblem` — the same bound the approve applies, so the two
+ *    cannot disagree about which dates are acceptable;
+ *  - the state predicate **claimed**, not read: a conditional `UPDATE` bounded
+ *    on form, status and step, checked on `rowsAffected`. A claim that has
+ *    moved on answers 409 rather than having its date rewritten after the fact;
+ *  - `requireApproverScopeFor` decided from the database **inside that
+ *    transaction**, because a date is where money lands and is bound by the
+ *    same brand scope an approval is.
+ *
+ * It deliberately does NOT advance the step. The claim stays at
+ * `(ManagerApproved, ACCOUNT)` and the accountant still has to approve it —
+ * which is what makes this safe to call on every keystroke of a date field.
+ */
+export async function setReimbursePaymentDate(
+  requestId: number,
+  actor: ReimburseActor,
+  paymentDate: unknown,
+): Promise<void> {
+  await requireApproverStaffId(actor);
+
+  const problem = paymentDateProblem(paymentDate, todayYmd());
+  if (problem) throw new AccConflictError(problem);
+  const chosen = paymentDate as string;
+
+  await inTransaction(async (tx) => {
+    const claim = await tx
+      .request()
+      .input("id", sql.Int, requestId)
+      .input("form", sql.NVarChar, AP4_FORM_CODE)
+      .input("status", sql.NVarChar, STATUS_AT_STEP.ACCOUNT)
+      .input("step", sql.NVarChar, "ACCOUNT")
+      .input("pay", sql.Date, chosen)
+      .query(
+        `UPDATE [dbo].[AccRequest]
+         SET PaymentDate = @pay, UpdatedAt = SYSDATETIME()
+         WHERE Id=@id AND FormCode=@form AND Status=@status AND CurrentStepCode=@step`,
+      );
+    if (claim.rowsAffected[0] !== 1) throw new AccConflictError(NOT_AT_STEP_ERROR);
+
+    await requireApproverScopeFor(actor, await claimedBrandCode(tx, requestId));
+    await logActivity(tx, requestId, actor.userId, "payment_date_set", chosen);
+  });
+}
+
 export async function approveReimburseAccountCheck(
   requestId: number,
   actor: ReimburseActor,
@@ -461,18 +620,8 @@ export async function approveReimburseAccountCheck(
 ): Promise<void> {
   const staffId = await requireApproverStaffId(actor);
 
-  const validDates = await getReimbursePaymentDates();
-  const dateError = paymentDateError(paymentDate, validDates);
-  if (dateError) {
-    // The round list is a moving target: `getReimbursePaymentDates` drops a
-    // round once its own cut-off has passed, so a dialog left open across
-    // midnight offers a date that is no longer offered. That is staleness — the
-    // same date can never become valid again — and 400 is the client's
-    // retryable phase, which would invite a retry that cannot succeed. A missing
-    // or malformed date is a genuine bad request and keeps its 400.
-    if (dateError === PAYMENT_DATE_NOT_A_ROUND) throw new AccConflictError(dateError);
-    throw new Error(dateError);
-  }
+  const problem = paymentDateProblem(paymentDate, todayYmd());
+  if (problem) throw new Error(problem);
   const chosen = paymentDate as string;
 
   const after = STATE_AFTER_APPROVE.ACCOUNT;
@@ -482,6 +631,10 @@ export async function approveReimburseAccountCheck(
       stepCode: after.nextStep,
       paymentDate: chosen,
     });
+    // Brand scope, decided from the database on the transaction that has just
+    // claimed the row — see requireApproverScopeFor's own docblock for why it
+    // is not asked before this point.
+    await requireApproverScopeFor(actor, await claimedBrandCode(tx, requestId));
     await closeApprovalRow(tx, requestId, "ACCOUNT", "Approved", staffId, actor.email, null, true);
     await openApprovalRow(tx, requestId, "ACCOUNT_FINAL");
     await logActivity(tx, requestId, actor.userId, "account_checked", chosen);
@@ -493,6 +646,146 @@ export async function approveReimburseAccountCheck(
     for (const email of await approverEmails(staffId)) {
       await notifyQuietly(updated, email, "AccountChecked", "รออนุมัติขั้นสุดท้าย (บัญชี)");
     }
+  });
+}
+
+/* ─────────────────────────── the accounting queue's own edit: which account ─────────────────────────── */
+
+/**
+ * Accounting corrects the proposed G/L account (`AccReimburseItem.Category`)
+ * on one or more lines, while the claim is still theirs to correct.
+ *
+ * Not a state transition — `Status`/`CurrentStepCode` do not move — but two
+ * properties are carried over from the transitions above on purpose:
+ *
+ * - **The authorization is the SAME check `approveReimburseAccountCheck` makes**,
+ *   `requireApproverStaffId`, not the broader "read" ACL a by-id GET route
+ *   uses. `authorizeAccRequest`'s read verdict also admits AP-1's shared
+ *   `AccApprover` roster (`canAccessAccountArea`) via `isOwnFormRosterApprover`'s
+ *   OR — an AP-1 approver who has never been added to AP-4's own
+ *   `AccReimburseApprover` can already *read* this claim and must not also be
+ *   able to repoint where its money posts. Run in the service, before the
+ *   transaction below — the roster is configuration, not a raced value, so it
+ *   needs no lock the way the state check does.
+ * - **The "still theirs" predicate is CLAIMED, not merely read, inside the
+ *   transaction that writes.** This database runs READ COMMITTED, where a
+ *   bare `SELECT`'s shared lock is released at the end of that statement —
+ *   `inTransaction` opens no stronger isolation level. A `SELECT` here would
+ *   leave a real window: it takes its lock, releases it, and only then do the
+ *   item `UPDATE`s below run, as a **sequential loop, one round trip per
+ *   line** — not instantaneous. A concurrent `approveReimburseAccountCheck`
+ *   could claim the row to `ACCOUNT_FINAL` and commit inside that window, and
+ *   the loop's `UPDATE`s — which carried no state predicate of their own —
+ *   would land anyway: the G/L account changing after the checking accountant
+ *   has already signed off. Only one of the two possible orderings was safe
+ *   under a plain `SELECT`; under READ COMMITTED neither is. Fixed the way
+ *   `claimStep` (twenty lines up) fixes the identical shape for a real
+ *   transition: a conditional `UPDATE … WHERE <expected state>`, which takes
+ *   an exclusive lock and — inside a transaction — holds it to commit. Every
+ *   other action that can touch this row claims it the same way, so once this
+ *   claim succeeds nothing else can be mutating `AccReimburseItem` underneath
+ *   it until this transaction ends.
+ *
+ * That same claim is what makes the read below honest: `current` is read
+ * only after the claim holds the row's lock, so it cannot be racing a
+ * concurrent write to the same items. It does two jobs — logging `old → new`
+ * per line (this repo's own precedent: `ApiKeyLog` carries a full `old → new`
+ * for `renamed` / `expiry_changed`, never only the new value) and catching a
+ * posted item id that does not belong to this request **before** any write,
+ * rather than partway through the loop below.
+ *
+ * The per-item `UPDATE` loop, rather than one set-based statement joined to
+ * `AccRequest`, is deliberate: the state predicate already lives on the claim
+ * above, so the loop does not need to repeat it, and keeping one `UPDATE` per
+ * line keeps each line's own `rowsAffected` check legible — the moment a
+ * single id turns out not to belong to this request, the response can say so
+ * plainly, which a combined rowcount from a set-based statement could not.
+ * The `current` read above already refuses a foreign id before the loop even
+ * starts, so the loop's own scoping (`Id=@iid AND RequestId=@rid`) is a
+ * second, redundant guard against the same mistake — cheap insurance, not
+ * load-bearing on its own.
+ */
+export async function setReimburseItemAccounts(
+  requestId: number,
+  actor: ReimburseActor,
+  edits: readonly ItemAccountEdit[],
+): Promise<number> {
+  await requireApproverStaffId(actor);
+  if (edits.length === 0) return 0;
+
+  return inTransaction(async (tx) => {
+    const claim = await tx
+      .request()
+      .input("id", sql.Int, requestId)
+      .input("form", sql.NVarChar, AP4_FORM_CODE)
+      .input("status", sql.NVarChar, STATUS_AT_STEP.ACCOUNT)
+      .input("step", sql.NVarChar, "ACCOUNT")
+      .query(
+        `UPDATE [dbo].[AccRequest] SET UpdatedAt = SYSDATETIME()
+         WHERE Id=@id AND FormCode=@form AND Status=@status AND CurrentStepCode=@step`,
+      );
+    if (claim.rowsAffected[0] !== 1) throw new AccConflictError(NOT_AT_STEP_ERROR);
+
+    // Brand scope, decided from the database on the transaction that has just
+    // claimed the row — see requireApproverScopeFor's own docblock. This edit
+    // repoints where the claim's money posts, so it is bound by the SAME
+    // scope an approval at this step is.
+    await requireApproverScopeFor(actor, await claimedBrandCode(tx, requestId));
+
+    const current = await tx
+      .request()
+      .input("rid", sql.Int, requestId)
+      .query(`SELECT Id, Category, VendorNo FROM [dbo].[AccReimburseItem] WHERE RequestId=@rid`);
+    const before = new Map(
+      (current.recordset as { Id: number; Category: string | null; VendorNo: string | null }[]).map(
+        (r) => [r.Id, { category: r.Category, vendorNo: r.VendorNo }],
+      ),
+    );
+    for (const edit of edits) {
+      if (!before.has(edit.id)) throw new AccConflictError(NOT_AT_STEP_ERROR);
+    }
+
+    let count = 0;
+    for (const edit of edits) {
+      // `VendorNo` is written only when the caller sent the field. Absent means
+      // "leave it alone" — see `ItemAccountEdit.vendorNo` for why this one field
+      // does not follow `Category`'s clear-on-absent rule, and what a client
+      // that predates migration 147 would otherwise erase.
+      const touchesVendor = "vendorNo" in edit;
+      const req = tx
+        .request()
+        .input("iid", sql.Int, edit.id)
+        .input("rid", sql.Int, requestId)
+        .input("category", sql.NVarChar(50), edit.category);
+      if (touchesVendor) req.input("vendor", sql.NVarChar(20), edit.vendorNo ?? null);
+      const res = await req.query(
+        `UPDATE [dbo].[AccReimburseItem]
+         SET Category=@category${touchesVendor ? ", VendorNo=@vendor" : ""}
+         WHERE Id=@iid AND RequestId=@rid`,
+      );
+      if (res.rowsAffected[0] !== 1) throw new AccConflictError(NOT_AT_STEP_ERROR);
+      count += 1;
+    }
+
+    await logActivity(
+      tx,
+      requestId,
+      actor.userId,
+      "item_account_updated",
+      edits
+        .map((e) => {
+          const was = before.get(e.id);
+          const gl = `#${e.id}: ${was?.category ?? "-"}→${e.category ?? "-"}`;
+          // Only when it was actually written, so the log does not record a
+          // vendor change on a body that never mentioned one.
+          return "vendorNo" in e
+            ? `${gl} | vendor ${was?.vendorNo ?? "-"}→${e.vendorNo ?? "-"}`
+            : gl;
+        })
+        .join(", ")
+        .slice(0, 2000),
+    );
+    return count;
   });
 }
 
@@ -520,6 +813,9 @@ export async function approveReimburseFinal(
       status: after.status,
       stepCode: after.nextStep,
     });
+    // Brand scope, decided from the database on the transaction that has just
+    // claimed the row — see requireApproverScopeFor's own docblock.
+    await requireApproverScopeFor(actor, await claimedBrandCode(tx, requestId));
     await closeApprovalRow(
       tx, requestId, "ACCOUNT_FINAL", "Approved", staffId, actor.email, null, false,
     );
@@ -566,17 +862,26 @@ async function assertMayTakeFinalStep(
 /* ─────────────────────────── rejection, at any step ─────────────────────────── */
 
 /**
- * Reject at whichever step is pending: `Rejected`, `CurrentStepCode` cleared,
- * the reason stored on the approval row and shown on the timeline (spec §3.2.1).
+ * Reject the manager step: `Rejected`, `CurrentStepCode` cleared, the reason
+ * stored on the approval row and shown on the timeline (spec §3.2.1).
+ *
+ * Rejecting is terminal, and the spec's §1 table makes that only the manager's
+ * call — both accounting steps keep ส่งกลับแก้ไข instead, which leaves the claim
+ * alive with its running number rather than ending it. `mayReject` is checked
+ * first, before the comment is even read, so a step this action is not open to
+ * never claims or writes anything. The queue no longer renders a Reject control
+ * at either accounting step; this is what makes that a rule rather than a UI
+ * choice somebody could route around.
+ *
+ * `assertMayTakeFinalStep` below is a *different* question — whether a
+ * candidate is a different person from the ACCOUNT actor — and stays wired for
+ * `step === "ACCOUNT_FINAL"` even though `mayReject` now refuses that step
+ * before this function reaches it: the two checks answer different things and
+ * neither one substitutes for the other.
  *
  * The reason is required and refused **here**. The dialog disables its button on
  * an empty box; that is a courtesy, not a control, and a request rejected with
  * no reason leaves the requester with nothing to fix.
- *
- * Step 3 applies the two-person rule to a rejection as well as an approval —
- * spec §3.2 gives the same "any active approver except the actor of step 2" to
- * both actions on that row. Rejecting somebody else's check is an action on the
- * books in exactly the way approving it is.
  */
 export async function rejectReimburse(
   requestId: number,
@@ -584,6 +889,8 @@ export async function rejectReimburse(
   step: ReimburseStepCode,
   rawComment: unknown,
 ): Promise<void> {
+  if (!mayReject(step)) throw new AccForbiddenError(REJECT_NOT_AVAILABLE_ERROR);
+
   const { comment, error } = rejectCommentOrError(rawComment);
   if (error) throw new Error(error);
 
@@ -598,6 +905,13 @@ export async function rejectReimburse(
     // step 2 fixed — the rejection mail and the detail page both print
     // "วันที่จ่าย" underneath the refusal.
     await claimStep(tx, requestId, step, { status: "Rejected", stepCode: null, paymentDate: null });
+    // Brand scope, only where `requireApproverStaffId` was the one asked above
+    // — `mayReject` restricts this action to MANAGER today, so `isAccountStep`
+    // is unreachable in practice, but the two conditions are kept in the same
+    // shape `returnReimburse` uses below rather than assuming that stays true.
+    if (isAccountStep(step)) {
+      await requireApproverScopeFor(actor, await claimedBrandCode(tx, requestId));
+    }
     await closeApprovalRow(tx, requestId, step, "Rejected", staffId, actor.email, comment, false);
     await logActivity(tx, requestId, actor.userId, "rejected", comment);
   });
@@ -666,6 +980,12 @@ export async function returnReimburse(
     // requester would open a request they have to edit with a payment date
     // printed on it.
     await claimStep(tx, requestId, step, { status: "Returned", stepCode: null, paymentDate: null });
+    // Brand scope, only where `requireApproverStaffId` was the one asked above
+    // — a return at MANAGER is the requester's own manager, not an accounting
+    // approver, and has no Interface group to be out of.
+    if (isAccountStep(step)) {
+      await requireApproverScopeFor(actor, await claimedBrandCode(tx, requestId));
+    }
     await closeApprovalRow(tx, requestId, step, "Returned", staffId, actor.email, comment, false);
     await logActivity(tx, requestId, actor.userId, "returned", comment);
   });
