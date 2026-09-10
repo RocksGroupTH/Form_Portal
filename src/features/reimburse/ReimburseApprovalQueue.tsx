@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
 import {
@@ -18,6 +18,14 @@ import {
 import { fmtBaht } from "@/features/travel-booking/components/shared";
 import { ExpenseAccountPicker } from "@/features/reimburse/components/ExpenseAccountPicker";
 import { VendorPicker } from "@/features/reimburse/components/VendorPicker";
+import { ReimburseQueueFilterBar } from "@/features/reimburse/components/ReimburseQueueFilterBar";
+import { ErpInterfaceBrandTabs } from "@/features/accounting/components/ErpInterfaceBrandTabs";
+import { ERP_INTERFACE_UNASSIGNED } from "@/features/accounting/lib/erp-interface-target";
+import {
+  EMPTY_REIMBURSE_QUEUE_FILTERS,
+  applyReimburseQueueFilters,
+  type ReimburseQueueFilters,
+} from "@/features/reimburse/lib/queue-filters";
 // Type-only, and deliberately from the pure module rather than `./queue-service`
 // — that file imports `getAccPool`, which reaches `@/lib/db/mssql` and `@/env`
 // at module scope. A type-only import is erased at build time regardless of
@@ -583,7 +591,73 @@ export function ReimburseApprovalQueue() {
    */
   const [rowDates, setRowDates] = useState<Map<number, string>>(new Map());
 
-  const rows = data?.rows ?? [];
+  const allRows: ReimburseQueueRow[] = data?.rows ?? [];
+
+  /**
+   * Which Interface group is on screen, and the filters over it.
+   *
+   * The tab is the outer cut and the filters the inner one, in that order:
+   * "PCTH, and of those the ones from Operations" is the question an approver
+   * asks, and it makes the tab counts stable while a filter is typed — counting
+   * after the filters would make every tab read 0 the moment a search matched
+   * nothing, which looks like the groups being empty rather than the search.
+   */
+  const [interfaceTarget, setInterfaceTarget] = useState("");
+  const [filters, setFilters] = useState<ReimburseQueueFilters>(EMPTY_REIMBURSE_QUEUE_FILTERS);
+
+  const codeOf = (t: string | null) => (t ?? "").trim().toUpperCase() || ERP_INTERFACE_UNASSIGNED;
+
+  const ifaceCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const r of allRows) {
+      const c = codeOf(r.interfaceTarget);
+      counts[c] = (counts[c] ?? 0) + 1;
+    }
+    return counts;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allRows]);
+
+  // The first group that actually holds something, once the queue has loaded.
+  // Landing on an empty tab when a full one exists is the same failure as
+  // showing an empty page: correct, and read as "there is nothing".
+  useEffect(() => {
+    if (interfaceTarget) return;
+    const first = Object.keys(ifaceCounts).find((c) => (ifaceCounts[c] ?? 0) > 0);
+    if (first) setInterfaceTarget(first);
+  }, [ifaceCounts, interfaceTarget]);
+
+  const rows = useMemo(() => {
+    const inTab = interfaceTarget
+      ? allRows.filter((r) => codeOf(r.interfaceTarget) === interfaceTarget)
+      : allRows;
+    return applyReimburseQueueFilters(inTab, filters);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allRows, interfaceTarget, filters]);
+
+  /**
+   * The options each multi-select offers — from the rows in the CURRENT TAB,
+   * not the whole queue and not a master list. A department with no pending
+   * claim here is a filter that can only ever return nothing.
+   */
+  const departmentOptions = useMemo(() => {
+    const s = new Set<string>();
+    for (const r of allRows) {
+      if (interfaceTarget && codeOf(r.interfaceTarget) !== interfaceTarget) continue;
+      if (r.requesterDepartmentName) s.add(r.requesterDepartmentName);
+    }
+    return Array.from(s).sort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allRows, interfaceTarget]);
+
+  const brandOptions = useMemo(() => {
+    const s = new Set<string>();
+    for (const r of allRows) {
+      if (interfaceTarget && codeOf(r.interfaceTarget) !== interfaceTarget) continue;
+      if (r.brandCode) s.add(r.brandCode);
+    }
+    return Array.from(s).sort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allRows, interfaceTarget]);
 
   // The default follows `suggested` until the accountant edits it by hand —
   // never overwritten again after that, including across a refetch, or a
@@ -844,7 +918,37 @@ export function ReimburseApprovalQueue() {
           <p className="text-[13px] py-10 text-center" style={{ color: "var(--color-danger)" }}>
             {error instanceof Error ? error.message : "โหลดข้อมูลไม่สำเร็จ"}
           </p>
-        ) : rows.length === 0 ? (
+        ) : (
+          <>
+            {/* Above the empty state, not inside the populated branch. Both are
+                reasons the list can be short, so hiding them when it is empty
+                takes away the two controls that explain why: an approver on a
+                tab that happens to be empty, or with a filter still set from
+                earlier, would read "ไม่มีรายการ" as the whole queue. */}
+            <ErpInterfaceBrandTabs
+              activeCode={interfaceTarget}
+              onChange={(code) => {
+                setInterfaceTarget(code);
+                // The rows underneath just changed; carrying ticks across would
+                // approve claims the approver can no longer see.
+                setSelectedIds(new Set());
+              }}
+              counts={ifaceCounts}
+              showUnassigned={false}
+              className="mb-4"
+            />
+
+            <ReimburseQueueFilterBar
+              filters={filters}
+              onChange={(next) => {
+                setFilters(next);
+                setSelectedIds(new Set());
+              }}
+              departmentOptions={departmentOptions}
+              brandOptions={brandOptions}
+            />
+
+            {rows.length === 0 ? (
           // I1 (2026-09-10): three genuinely different situations used to
           // render this identical sentence, which is false in at least the
           // second of them. `scope` names which brands this viewer covers
@@ -879,11 +983,11 @@ export function ReimburseApprovalQueue() {
                 — ผู้ดูแลระบบผูกแบรนด์ได้ที่ ตั้งค่าขอเบิกเงินคืนพนักงาน → Interface ERP
               </p>
             )}
-          </div>
-        ) : (
-          <>
-            <div
-              className="flex items-center gap-3 px-5 py-3"
+              </div>
+            ) : (
+              <>
+                <div
+                  className="flex items-center gap-3 px-5 py-3"
               style={{ borderBottom: "1px solid var(--border-light)", background: "var(--bg-card-alt)" }}
             >
               <QueueCheckbox checked={allSelected} onChange={toggleAll} ariaLabel="เลือกทั้งหมด" />
@@ -1063,7 +1167,9 @@ export function ReimburseApprovalQueue() {
                   </div>
                 );
               })}
-            </div>
+                </div>
+              </>
+            )}
           </>
         )}
       </div>
