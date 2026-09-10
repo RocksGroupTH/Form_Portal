@@ -25,7 +25,8 @@ is.
 | What is "Vendor"? | The **BC vendor number** from `ErpVendors`, not the seller printed on the receipt. |
 | Where is it stored? | `AccReimburseItem.VendorNo NVARCHAR(20) NULL`, migration 147. |
 | Per line or per claim? | **Per line**, like the G/L account beside it. One claim can reimburse purchases from several sellers. |
-| Payment date | Unchanged: one control for the whole selection, **outside** the table. |
+| Payment date | **Per claim**, seeded from the suggested round; the bulk control stays as a "fill every selected claim" convenience. Outside the line table, because it belongs to the claim. |
+| Line layout | The **full** detail-view table — all thirteen columns — plus `G/L` and `Vendor`. |
 | New endpoint for the write? | **No.** `setReimburseItemAccounts` is extended. |
 | Vendor list endpoint | New, `GET /api/request/reimburse/vendors?brand=…`, modelled on AP-3's. |
 | Picker component | The searchable picker is **extracted** from `ExpenseAccountPicker` and shared by both. |
@@ -117,12 +118,41 @@ exactly like "this company has no vendors".
 
 ## 6. UI
 
-**One table on the queue, one row per expense line:** วันที่ · เลขที่เอกสาร ·
-รายละเอียด · ยอด · **G/L** · **Vendor**.
+*(Revised 2026-09-10 after the first review. The original said the lines kept
+their list layout with two fields bolted on, and that the payment date stayed a
+single control for the whole selection. Both were replaced by what follows.)*
 
-**วันจ่าย stays outside it.** `PaymentDate` is a column on `AccRequest`, not on
-`AccReimburseItem`: one date per claim. Putting the control in the table would
-tell the approver they can set it per line, and they cannot.
+**The expense lines are the full table, the same columns the detail view
+prints** — ลำดับที่ · วันที่ · เลขที่เอกสาร · รายละเอียด · สาขา · เลขผู้เสียภาษี ·
+ผู้ขาย · ที่อยู่ · ก่อน VAT · VAT · ค่าใช้จ่ายรวม · หัก ณ ที่จ่าย · จ่ายสุทธิ —
+**plus `G/L` and `Vendor` as two more columns in the same row**. An approver
+deciding which BC card a line posts to is reading the seller, the tax id and
+the address to decide it; those three were not on this screen at all, and the
+decision was being made from a description and an amount.
+
+`รายการ` is **not** among them, for the reason §8 gives: it *is* the G/L
+account, so it appears once, as the editable `G/L` column.
+
+That is fifteen columns. The card scrolls horizontally in its own container, as
+the detail view's table already does — the page must not widen.
+
+**The payment date is per claim, not per selection.** Each claim carries its own
+date field, seeded from the suggested round. This is a change from what is
+there: today one control at the bottom of the queue sets a single date and the
+approve loop sends it to every selected id. **The server already works this
+way** — `POST .../requests/[id]/approve` takes `paymentDate` per request and
+validates it with `paymentDateProblem`, so the loop was sending the same value N
+times by choice, not by constraint. Nothing server-side changes.
+
+The bulk control is kept, retitled to say what it now does: it fills every
+selected claim's field. Approving a batch is the point of this queue, and
+losing "same date for all of these" to gain per-claim would be a bad trade — but
+the field that is actually submitted is the claim's own, so what an approver
+sees on a row is what that row gets.
+
+`PaymentDate` remains a column on `AccRequest`, one per claim. It is therefore
+**not** a column inside the line table: putting it there would tell an approver
+they can set it per expense line, and they cannot.
 
 **The searchable picker is extracted, not copied.** `ExpenseAccountPicker`
 already solves everything a vendor picker needs — a filter-as-you-type list
