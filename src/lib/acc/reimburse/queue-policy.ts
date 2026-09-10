@@ -84,6 +84,38 @@ export interface ReimburseQueueRow {
   /** Null until the ACCOUNT step sets one — this queue is where that happens. */
   paymentDate: string | null;
   itemCount: number;
+  /**
+   * The requester's HR department, and the code the ERP posts against
+   * (`AccRequest.RequesterDepartmentName` / `RequesterDepartmentCode`, both
+   * stamped at save and re-stamped at submit).
+   *
+   * Here so the queue can show and filter by แผนก the way AP-1's does. Measured
+   * 2026-09-10, every AP-4 request carries both — the columns are written by the
+   * same `resolveRequesterForActor` AP-1 uses — but a claim written before the
+   * column existed would read empty rather than absent, so both are nullable.
+   */
+  requesterDepartmentName: string | null;
+  requesterDepartmentCode: string | null;
+  /**
+   * When the line manager approved, which is when this claim entered this queue.
+   *
+   * From `AccApproval`, not `AccRequest`: the header records no per-step time.
+   * Null when the row cannot be found — a claim advanced by some path that left
+   * no approval row would otherwise show a blank cell with no explanation.
+   */
+  managerApprovedAt: string | null;
+  /**
+   * The Interface target this claim's brand resolves to, or null when the brand
+   * maps to none.
+   *
+   * Already computed here — `canActOnTarget` is decided from it a few lines
+   * below — and now carried out so the queue can group by it without asking a
+   * second time. Null is exactly the `unmappedBrandCount` case (`ROCKS` today),
+   * and such a claim is out of every approver's scope, so it never reaches this
+   * array at all. It is nullable for the type's sake, not because a row here
+   * can carry it.
+   */
+  interfaceTarget: string | null;
 }
 
 /** `TotalAmount` etc. arrive from `mssql` typed loosely; coerce rather than trust. */
@@ -166,6 +198,12 @@ export function accumulateAccountQueueRows(
       totalAmount: num(x.TotalAmount),
       paymentDate: x.PaymentDate ? toYmd(x.PaymentDate as Date) : null,
       itemCount: num(x.ItemCount),
+      requesterDepartmentName: (x.RequesterDepartmentName as string | null) ?? null,
+      requesterDepartmentCode: (x.RequesterDepartmentCode as string | null) ?? null,
+      managerApprovedAt: x.ManagerApprovedAt
+        ? (x.ManagerApprovedAt as Date).toISOString()
+        : null,
+      interfaceTarget: target,
     });
   }
   return rows;

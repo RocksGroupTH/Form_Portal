@@ -119,7 +119,14 @@ export async function listReimburseAccountQueue(
     .query(`
       SELECT r.Id, r.RequestNo, r.BrandCode, r.RequesterFullName, r.SubmittedAt,
              r.TotalAmount, r.PaymentDate, r.FormCode, r.Status, r.CurrentStepCode,
-             (SELECT COUNT(*) FROM [dbo].[AccReimburseItem] i WHERE i.RequestId = r.Id) AS ItemCount
+             r.RequesterDepartmentName, r.RequesterDepartmentCode,
+             (SELECT COUNT(*) FROM [dbo].[AccReimburseItem] i WHERE i.RequestId = r.Id) AS ItemCount,
+             -- The manager's sign-off time. MAX, not TOP 1: a claim returned and
+             -- resubmitted has more than one MANAGER row, and the queue is about
+             -- the approval that put it here — the latest one.
+             (SELECT MAX(a.ActionedAt) FROM [dbo].[AccApproval] a
+               WHERE a.RequestId = r.Id AND a.StepCode = 'MANAGER' AND a.Status = 'Approved'
+             ) AS ManagerApprovedAt
       FROM [dbo].[AccRequest] r
       WHERE r.FormCode = @form AND r.Status = @status AND r.CurrentStepCode = @step
       ORDER BY r.SubmittedAt ASC
