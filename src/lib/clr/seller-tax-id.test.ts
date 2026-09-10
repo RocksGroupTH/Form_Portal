@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { resolveSellerTaxId } from "./seller-tax-id";
+import { normalizeTaxIdInput, resolveSellerTaxId, taxIdNotice } from "./seller-tax-id";
 
 const OURS = "0105559040818";   // Rocks PC
 const SELLER = "0105560171921"; // Genesis Supply Chain
@@ -44,4 +44,31 @@ test("nothing read means nothing", () => {
  * field is only ever used to detect a swap. */
 test("when neither is ours the seller field is believed", () => {
   assert.equal(resolveSellerTaxId(SELLER, "0994000165676"), SELLER);
+});
+
+/* ── what the box accepts ── */
+
+test("the box keeps digits and drops the printing", () => {
+  assert.equal(normalizeTaxIdInput(" 0-1055-60171-92-1 "), "0105560171921");
+  assert.equal(normalizeTaxIdInput("abc"), "");
+});
+
+/* Thirteen is the whole number; a fourteenth digit is a slip that would
+ * otherwise stop the RD lookup from ever running again on that line. */
+test("the box stops at thirteen digits", () => {
+  assert.equal(normalizeTaxIdInput("01055601719219999"), "0105560171921");
+  assert.equal(normalizeTaxIdInput("0105560171921").length, 13);
+});
+
+test("a complete number and an empty box both say nothing", () => {
+  assert.equal(taxIdNotice("0105560171921"), null);
+  assert.equal(taxIdNotice(""), null);
+  assert.equal(taxIdNotice(null), null);
+});
+
+/* The half-typed number is the one worth naming: it looks filled in, and it is
+ * the state in which the registry check silently does not run. */
+test("a half-typed number says how far it got", () => {
+  assert.match(taxIdNotice("010556017") ?? "", /9/);
+  assert.match(taxIdNotice("0-1055-6") ?? "", /ยังไม่ครบ 13 หลัก/);
 });

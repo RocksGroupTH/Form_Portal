@@ -10,6 +10,7 @@ import {
 import type { ClearAdvanceDetail as ClearDetail } from "@/features/clear-advance/types";
 import { Dialog } from "@/components/ui/Dialog";
 import { PND_LABEL } from "@/lib/clr/wht-pnd-core";
+import { normalizeTaxIdInput, taxIdNotice } from "@/lib/clr/seller-tax-id";
 import { Avatar } from "@/components/ui/Avatar";
 import {
   AttachmentViewer,
@@ -613,17 +614,33 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                               />
                             </td>
                             <td className="px-2 py-1.5" style={{ borderBottom: "1px solid var(--border-light)" }}>
+                              {/* Digits only, thirteen of them. Anything else in
+                                  this box is a typo or a paste that brought its
+                                  formatting along, and the RD lookup asks only
+                                  about a 13-digit number — so a fourteenth digit
+                                  typed by accident used to turn a working field
+                                  into one that quietly stopped checking. */}
                               <input
                                 className="text-[12px] px-2 py-1 rounded outline-none w-36"
-                                style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-input)" }}
+                                style={{
+                                  background: "var(--bg-input)", color: "var(--text-primary)",
+                                  border: `1px solid ${taxIdNotice(it.taxId) ? "var(--color-warning)" : "var(--border-input)"}`,
+                                }}
                                 value={it.taxId ?? ""}
                                 placeholder="เลข 13 หลัก"
+                                inputMode="numeric"
+                                maxLength={13}
                                 onChange={(e) => {
                                   const next = [...editItems];
-                                  next[i] = { ...next[i], taxId: e.target.value || null };
+                                  next[i] = { ...next[i], taxId: normalizeTaxIdInput(e.target.value) || null };
                                   setEditItems(next);
                                 }}
                               />
+                              {taxIdNotice(it.taxId) && (
+                                <div className="text-[10px] mt-0.5" style={{ color: "var(--color-warning)", maxWidth: "9rem" }}>
+                                  {taxIdNotice(it.taxId)}
+                                </div>
+                              )}
                             </td>
                             <td className="px-2 py-1.5" style={{ borderBottom: "1px solid var(--border-light)" }}>
                               <input
