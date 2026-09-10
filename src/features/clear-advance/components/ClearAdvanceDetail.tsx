@@ -31,6 +31,7 @@ import { VendorCell } from "@/features/clear-advance/components/VendorCell";
 import { RdCell } from "@/features/clear-advance/components/RdCell";
 import { useGlOptionsByBranch } from "@/features/clear-advance/hooks/useGlOptionsByBranch";
 import { GlCell } from "@/features/clear-advance/components/GlCell";
+import { PaymentDatePicker } from "@/components/ui/PaymentDatePicker";
 import { isRocksPcBrand } from "@/features/clear-advance/constants";
 import { pndBlockReason } from "@/lib/clr/wht-pnd-core";
 
@@ -59,12 +60,6 @@ function fmtDateOnly(raw: string | null | undefined): string {
   const d = new Date(raw);
   if (isNaN(d.getTime())) return raw;
   return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
-}
-
-/** Today as YYYY-MM-DD via local getters (server is Thai time). */
-function todayYmd(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 const box = { background: "var(--bg-card)", border: "1px solid var(--border-card)", boxShadow: "var(--shadow-sm)" } as const;
@@ -247,6 +242,33 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
      seller made six calls for one answer. */
   const { vendors, list: vendorList, load: loadVendors } = useTaxVendors(request.brandCode ?? null);
   const { byTin: rdByTin, ask: askRd } = useRdVatByTin(editItems.map((it) => it.taxId));
+
+  /* The payment rounds, from the calendar AP-1 and AP-2 already share — there
+     is no AP-3 endpoint because there is no AP-3 rule; it is the same 2nd and
+     4th Friday, shifted off holidays. Only fetched while the account step is
+     open, and only the company-pays case can choose from them. */
+  const [paymentRounds, setPaymentRounds] = useState<string[]>([]);
+  useEffect(() => {
+    if (!isAccountStep || !companyPaysExtra) return;
+    let cancelled = false;
+    fetch("/api/request/advance/payment-dates")
+      .then((r) => r.json())
+      .then((j: { ok?: boolean; data?: { dates?: string[]; default?: string | null } }) => {
+        if (cancelled || !j?.data?.dates) return;
+        setPaymentRounds(j.data.dates);
+        /* Seeded with the round the claim belongs to, the way AP-2 does, so the
+           common case is confirm-and-approve. Never over an existing pick. */
+        setPaymentDate((prev) => prev || j.data?.default || "");
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [isAccountStep, companyPaysExtra]);
+
+  /* A date stored before this rule existed, or from a round that has since
+     passed. Shown rather than dropped — but it is about to become a posting
+     date in BC, so it has to be re-picked before this step can end. */
+  const paymentDateOffCycle =
+    companyPaysExtra && !!paymentDate && paymentRounds.length > 0 && !paymentRounds.includes(paymentDate);
   /* A non-home brand books every line to FORCE_GL_NON_ROCKS_PC at save time, so
      the cell shows the forced account rather than a picker. */
   const glForced = !!request.brandCode && !isRocksPcBrand(request.brandCode);
@@ -255,7 +277,7 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
      the last step that can edit a line. `glMissingMessage` is the sentence the
      server throws, so the screen and the refusal cannot drift apart. */
   const missingGlLines = linesMissingGl(isAccountStep ? editItems : items);
-  const accountBlocked = missingVendorLines.length > 0 || !!pndProblem || missingGlLines.length > 0;
+  const accountBlocked = missingVendorLines.length > 0 || !!pndProblem || missingGlLines.length > 0 || paymentDateOffCycle;
 
   /* Seed the editor from the request at the account step. The snapshot taken
      here is what "unchanged" means — autosave compares against it, so seeding
@@ -329,7 +351,10 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
   async function handleAccountApprove() {
     // Payment date is required only when the company pays extra (company owes the requester).
     if (companyPaysExtra && !paymentDate) {
-      return toast.error("กรณีบริษัทต้องจ่ายเพิ่ม กรุณาระบุวันจ่าย (ศุกร์)");
+      return toast.error("กรณีบริษัทต้องจ่ายเพิ่ม กรุณาระบุวันจ่าย");
+    }
+    if (paymentDateOffCycle) {
+      return toast.error("วันที่จ่ายไม่อยู่ในรอบที่กำหนด (ศุกร์ที่ 2 หรือ 4)");
     }
     if (missingVendorLines.length > 0) {
       return toast.error(
@@ -487,16 +512,43 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] font-semibold" style={{ color: "var(--text-secondary)" }}>
-                  วันจ่าย (ศุกร์){companyPaysExtra ? " *" : ""}
+                  วันจ่าย{companyPaysExtra ? " *" : ""}
                 </label>
-                <input type="date" className="text-[13px] px-3 py-2 rounded-lg outline-none"
-                  style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-input)" }}
-                  value={paymentDate}
-                  min={todayYmd()}
-                  onChange={(e) => setPaymentDate(e.target.value)} />
-                <span className="text-[10px]" style={{ color: "var(--text-faint)" }}>
-                  {companyPaysExtra ? "บริษัทต้องจ่ายเพิ่ม — ระบุวันจ่าย" : "ระบุเมื่อมีการจ่ายเงินให้ผู้ขอ"}
-                </span>
+                {companyPaysExtra ? (
+                  <>
+                    {/* Locked to the rounds treasury actually pays on. It used to
+                        be a bare date input whose only rule was "not in the
+                        past", and the word (ศุกร์) on the label was the whole of
+                        the policy — this date becomes the G/L posting date in
+                        BC, where an off-cycle one matches no payment run and a
+                        closed-period one is refused after three approvals. */}
+                    <PaymentDatePicker
+                      value={paymentDate}
+                      onChange={setPaymentDate}
+                      allowedDates={paymentRounds}
+                    />
+                    <span className="text-[10px]" style={{ color: paymentDateOffCycle ? "var(--color-danger)" : "var(--text-faint)" }}>
+                      {paymentDateOffCycle
+                        ? "วันจ่ายเดิมไม่อยู่ในรอบที่กำหนดแล้ว — เลือกใหม่ก่อนอนุมัติ"
+                        : "บริษัทต้องจ่ายเพิ่ม — เลือกรอบจ่าย (ศุกร์ที่ 2/4)"}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    {/* Nothing to choose. The employee's transfer already has a
+                        date and the journal posts on it either way, so a second
+                        editable field could only ever disagree with the first. */}
+                    <div className="text-[13px] px-3 py-2 rounded-lg"
+                      style={{ background: "var(--bg-card-alt)", color: "var(--text-muted)", border: "1px dashed var(--border-card)" }}>
+                      {fmtDateOnly(clear?.refundTransferDate ?? null) || "—"}
+                    </div>
+                    <span className="text-[10px]" style={{ color: "var(--text-faint)" }}>
+                      {(clear?.refundToCompany ?? 0) > 0
+                        ? "พนักงานโอนคืนบริษัท — ใช้วันที่โอนคืน แก้ที่ช่อง “วันที่โอนเงินคืน”"
+                        : "ไม่มีการจ่ายเงิน"}
+                    </span>
+                  </>
+                )}
               </div>
             </div>
             <label className="text-[12px] flex items-center gap-2" style={{ color: "var(--text-secondary)" }}>
