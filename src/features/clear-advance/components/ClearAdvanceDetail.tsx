@@ -732,7 +732,7 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
                               <RdCell
                                 item={it}
                                 answer={rdByTin[(it.taxId ?? "").replace(/\D/g, "")]}
-                                onRecheck={() => void askRd((it.taxId ?? "").replace(/\D/g, ""), true)}
+                                onRecheck={(refresh) => void askRd((it.taxId ?? "").replace(/\D/g, ""), refresh)}
                                 onApply={(patch) => {
                                   const next = [...editItems];
                                   next[i] = { ...next[i], ...patch };
@@ -804,12 +804,6 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
                     </table>
                   </div>
 
-                  {/* Who the seller is, per receipt: what the Revenue
-                      Department's register says, and which BC vendor card they
-                      are. One card per line rather than a strip of controls
-                      under the table — the two questions are about the same
-                      seller and belong beside each other, and each card names
-                      the line it is about. */}
                   {editWht.length > 0 && (
                     <div className="flex flex-col gap-2">
                       <p className="text-[11px] font-bold m-0" style={{ color: "var(--text-muted)" }}>

@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import type { ClearAdvanceItem } from "@/features/clear-advance/types";
 import { vendorMatches } from "@/lib/clr/tax-vendor-core";
-import { PICKER_PANEL_ATTR } from "@/features/clear-advance/components/LinePickers";
+import { PickerPanel, useAnchoredPopup } from "@/features/clear-advance/components/LinePickers";
 import type { TaxVendorCandidate } from "@/features/clear-advance/hooks/useTaxVendors";
 
 /**
@@ -27,13 +27,20 @@ export function VendorCell({
   onPick,
 }: {
   item: Pick<ClearAdvanceItem, "taxId" | "payeeName" | "vatAmount" | "taxVendorNo">;
-  vendors: TaxVendorCandidate[] | "loading" | null;
+  vendors: TaxVendorCandidate[] | "loading" | "failed" | null;
   list: TaxVendorCandidate[];
   onLoad: () => void;
   onPick: (vendorNo: string | null) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [term, setTerm] = useState("");
+  /* The grid's own picker machinery, not a second implementation of it: the
+     panel portals to <body> in viewport coords so the table's overflow
+     container cannot clip it, closes on outside mousedown and on Escape, and
+     follows any scroll container. A hand-rolled `absolute` panel inside the
+     scroll wrapper is clipped on the last row and near the right edge — which
+     is exactly why this exists. */
+  const { btnRef, popRef, pos } = useAnchoredPopup(open, setOpen, false);
 
   const tin = (item.taxId ?? "").replace(/\D/g, "");
   const hasTin = tin.length === 13;
@@ -59,12 +66,14 @@ export function VendorCell({
   return (
     <div className="relative flex flex-col gap-0.5" style={{ minWidth: 190 }}>
       <button
+        ref={btnRef}
         type="button"
+        title={vat > 0 ? "ต้องระบุ — ใช้เป็น Tax Vendor No. บนบรรทัด VAT" : "ไม่บังคับ — บรรทัดนี้ไม่มี VAT"}
         onClick={() => {
           const next = !open;
           setOpen(next);
           if (!next) return;
-          if (vendors === null) onLoad();
+          if (vendors === null || vendors === "failed") onLoad();
           /* Seeded with the seller off the receipt, so the common case is
              open-and-pick rather than open-and-type. Not when one is already
              chosen: an open then is a change of mind, and the receipt's name is
@@ -89,16 +98,7 @@ export function VendorCell({
       </button>
 
       {open && (
-        <div
-          {...{ [PICKER_PANEL_ATTR]: "" }}
-          className="absolute z-30 top-full left-0 mt-1 rounded-lg overflow-hidden"
-          style={{
-            minWidth: 320,
-            background: "var(--bg-card)",
-            border: "1px solid var(--border-card)",
-            boxShadow: "0 8px 24px -8px rgba(0,0,0,0.35)",
-          }}
-        >
+        <PickerPanel inline={false} pos={pos} panelRef={popRef}>
           <div className="p-2" style={{ borderBottom: "1px solid var(--border-light)" }}>
             <input
               autoFocus
@@ -112,6 +112,10 @@ export function VendorCell({
           <div className="max-h-56 overflow-y-auto slim-scroll">
             {vendors === "loading" ? (
               <p className="px-3 py-2 text-[11px] m-0" style={{ color: "var(--text-muted)" }}>กำลังโหลด…</p>
+            ) : vendors === "failed" ? (
+              <p className="px-3 py-2 text-[11px] m-0" style={{ color: "var(--text-muted)" }}>
+                โหลดรายชื่อ Vendor ไม่สำเร็จ — ปิดแล้วเปิดใหม่เพื่อลองอีกครั้ง
+              </p>
             ) : (
               <>
                 <button
@@ -159,7 +163,7 @@ export function VendorCell({
               </>
             )}
           </div>
-        </div>
+        </PickerPanel>
       )}
     </div>
   );

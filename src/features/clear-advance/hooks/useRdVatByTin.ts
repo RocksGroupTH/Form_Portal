@@ -1,7 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { RdVatRegistrant } from "@/lib/clr/rd-vat-core";
+import type { RdAnswerState, RdVatRegistrant } from "@/lib/clr/rd-vat-core";
+
+/* Kept in step with the button's rule by the compiler: `tinsNeedingRdCheck`
+   decides what to ask about from `RdAnswerState`, and drifting the two apart
+   would silently change what the button counts. */
+type _StatesMatch = RdAnswer["state"] extends RdAnswerState
+  ? RdAnswerState extends RdAnswer["state"] ? true : never
+  : never;
+const _statesMatch: _StatesMatch = true;
+void _statesMatch;
 
 export type RdAnswer =
   | { state: "checking" }

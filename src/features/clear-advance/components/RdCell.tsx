@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import type { ClearAdvanceItem } from "@/features/clear-advance/types";
 import { sameRegisteredName } from "@/lib/clr/rd-vat-core";
-import { PICKER_PANEL_ATTR } from "@/features/clear-advance/components/LinePickers";
+import { PickerPanel, useAnchoredPopup } from "@/features/clear-advance/components/LinePickers";
 import type { RdAnswer } from "@/features/clear-advance/hooks/useRdVatByTin";
 
 const money = (n: number) =>
@@ -36,10 +36,17 @@ export function RdCell({
 }: {
   item: Pick<ClearAdvanceItem, "taxId" | "payeeName" | "taxBranchCode" | "vatAmount">;
   answer: RdAnswer | undefined;
-  onRecheck: () => void;
+  /** `refresh` forces a new ask of the registry; without it a stored answer
+   *  is returned. The card drew the same distinction — ลองใหม่ after a failed
+   *  check read the store, ตรวจใหม่ overwrote it. */
+  onRecheck: (refresh: boolean) => void;
   onApply: (patch: { payeeName: string; taxBranchCode: string | null }) => void;
 }) {
   const [open, setOpen] = useState(false);
+  /* Portalled and self-closing, like every other picker on this row — an
+     `absolute` panel inside the table's overflow container is clipped on the
+     last row and near the right edge. */
+  const { btnRef, popRef, pos } = useAnchoredPopup(open, setOpen, false);
 
   const tin = (item.taxId ?? "").replace(/\D/g, "");
   const hasTin = tin.length === 13;
@@ -68,7 +75,7 @@ export function RdCell({
       return { text: "…", color: "var(--text-faint)", bg: "transparent", title: "กำลังตรวจกับกรมสรรพากร…" };
     }
     if (answer.state === "unknown") {
-      return { text: "!", color: "var(--text-faint)", bg: "transparent", title: "ตรวจไม่สำเร็จ — คลิกเพื่อลองใหม่" };
+      return { text: "!", color: "var(--text-faint)", bg: "transparent", title: "ตรวจไม่สำเร็จ — คลิกเพื่อดูและลองใหม่" };
     }
     if (answer.state === "unregistered") {
       /* Not being VAT registered is only a problem if VAT was charged. A
@@ -88,6 +95,7 @@ export function RdCell({
   return (
     <div className="relative">
       <button
+        ref={btnRef}
         type="button"
         onClick={() => setOpen((o) => !o)}
         title={chip.title}
@@ -98,22 +106,14 @@ export function RdCell({
       </button>
 
       {open && (
-        <div
-          {...{ [PICKER_PANEL_ATTR]: "" }}
-          className="absolute z-30 top-full left-0 mt-1 rounded-lg p-2.5 flex flex-col gap-1.5"
-          style={{
-            minWidth: 300,
-            background: "var(--bg-card)",
-            border: "1px solid var(--border-card)",
-            boxShadow: "0 8px 24px -8px rgba(0,0,0,0.35)",
-          }}
-        >
+        <PickerPanel inline={false} pos={pos} panelRef={popRef}>
+          <div className="p-2.5 flex flex-col gap-1.5">
           {!answer || answer.state === "checking" ? (
             <Muted>กำลังตรวจกับกรมสรรพากร…</Muted>
           ) : answer.state === "unknown" ? (
             <span className="text-[11px] flex items-center gap-1" style={{ color: "var(--text-faint)" }}>
               ตรวจไม่สำเร็จ
-              <LinkButton onClick={onRecheck}>ลองใหม่</LinkButton>
+              <LinkButton onClick={() => onRecheck(false)}>ลองใหม่</LinkButton>
             </span>
           ) : answer.state === "unregistered" ? (
             <>
@@ -124,7 +124,7 @@ export function RdCell({
               ) : (
                 <Muted>ไม่อยู่ในทะเบียน VAT — ปกติสำหรับบุคคลธรรมดาหรือผู้ขายรายย่อย</Muted>
               )}
-              <CheckedAt at={answer.checkedAt} onRefresh={onRecheck} />
+              <CheckedAt at={answer.checkedAt} onRefresh={() => onRecheck(true)} />
             </>
           ) : reg ? (
             differs ? (
@@ -145,7 +145,7 @@ export function RdCell({
                   >
                     ใช้ข้อมูลจากสรรพากร
                   </button>
-                  <CheckedAt at={answer.checkedAt} onRefresh={onRecheck} />
+                  <CheckedAt at={answer.checkedAt} onRefresh={() => onRecheck(true)} />
                 </div>
               </>
             ) : (
@@ -154,11 +154,12 @@ export function RdCell({
                   ✓ ตรงกับใบกำกับ — {rdFullName}
                   {reg.branchCode ? ` · สาขา ${reg.branchCode}` : ""}
                 </span>
-                <CheckedAt at={answer.checkedAt} onRefresh={onRecheck} />
+                <CheckedAt at={answer.checkedAt} onRefresh={() => onRecheck(true)} />
               </>
             )
           ) : null}
-        </div>
+          </div>
+        </PickerPanel>
       )}
     </div>
   );

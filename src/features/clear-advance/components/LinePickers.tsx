@@ -18,7 +18,7 @@ export const cellStyle = {
  *  ABOVE the table's overflow container / the dialog instead of being clipped. */
 type Anchor = { top: number; left: number; width: number; above: boolean };
 
-function useAnchoredPopup(open: boolean, setOpen: (v: boolean) => void, inline: boolean) {
+export function useAnchoredPopup(open: boolean, setOpen: (v: boolean) => void, inline: boolean) {
   const btnRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<Anchor | null>(null);
@@ -99,7 +99,7 @@ const PANEL_SURFACE = {
  * modal is open and traps focus inside the content, which leaves a body-level
  * panel unclickable — so there it renders inline, under its own field.
  */
-function PickerPanel({
+export function PickerPanel({
   inline, pos, panelRef, children,
 }: {
   inline: boolean;

@@ -46,7 +46,7 @@ export function fetchVendors(brandCode: string | null): Promise<TaxVendorCandida
  * the list is what carries its name.
  */
 export function useTaxVendors(brandCode: string | null) {
-  const [vendors, setVendors] = useState<TaxVendorCandidate[] | "loading" | null>(null);
+  const [vendors, setVendors] = useState<TaxVendorCandidate[] | "loading" | "failed" | null>(null);
 
   const load = useCallback(async () => {
     setVendors((prev) => (prev === null ? "loading" : prev));
@@ -54,7 +54,13 @@ export function useTaxVendors(brandCode: string | null) {
       setVendors(await fetchVendors(brandCode));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "โหลดรายชื่อ Vendor ไม่สำเร็จ");
-      setVendors([]);
+      /* "failed", not an empty list. One state now serves the whole grid, so an
+         empty list would read as "this Company has no vendors" and, because a
+         cell only loads while the state is null, nothing would ever ask again —
+         one blip and every row is stuck until the page is reloaded. "failed" is
+         distinct from null so the eager load does not retry in a loop, and a
+         cell opening again does. */
+      setVendors("failed");
     }
   }, [brandCode]);
 
