@@ -556,6 +556,63 @@ export async function approveReimburseManager(
  * the way AP-1 does — for AP-4 the check *is* this action, so a second boolean
  * saying it happened could only ever disagree with the row it sits on.
  */
+/**
+ * Set a claim's payment date WITHOUT approving it.
+ *
+ * The queue lets an accountant fill dates while reading the claims and approve
+ * in a batch afterwards; before this the only writer of `PaymentDate` was
+ * `approveReimburseAccountCheck`, so a date existed only in the browser until
+ * the moment of approval — and a page reload lost every one of them. AP-17 has
+ * had exactly this endpoint for the same reason.
+ *
+ * **It is not a weaker approve.** Every guard the approval carries is here and
+ * in the same order, because this writes the figure somebody is paid on:
+ *
+ *  - `requireApproverStaffId` — membership, once, outside the transaction;
+ *  - `paymentDateProblem` — the same bound the approve applies, so the two
+ *    cannot disagree about which dates are acceptable;
+ *  - the state predicate **claimed**, not read: a conditional `UPDATE` bounded
+ *    on form, status and step, checked on `rowsAffected`. A claim that has
+ *    moved on answers 409 rather than having its date rewritten after the fact;
+ *  - `requireApproverScopeFor` decided from the database **inside that
+ *    transaction**, because a date is where money lands and is bound by the
+ *    same brand scope an approval is.
+ *
+ * It deliberately does NOT advance the step. The claim stays at
+ * `(ManagerApproved, ACCOUNT)` and the accountant still has to approve it —
+ * which is what makes this safe to call on every keystroke of a date field.
+ */
+export async function setReimbursePaymentDate(
+  requestId: number,
+  actor: ReimburseActor,
+  paymentDate: unknown,
+): Promise<void> {
+  await requireApproverStaffId(actor);
+
+  const problem = paymentDateProblem(paymentDate, todayYmd());
+  if (problem) throw new AccConflictError(problem);
+  const chosen = paymentDate as string;
+
+  await inTransaction(async (tx) => {
+    const claim = await tx
+      .request()
+      .input("id", sql.Int, requestId)
+      .input("form", sql.NVarChar, AP4_FORM_CODE)
+      .input("status", sql.NVarChar, STATUS_AT_STEP.ACCOUNT)
+      .input("step", sql.NVarChar, "ACCOUNT")
+      .input("pay", sql.Date, chosen)
+      .query(
+        `UPDATE [dbo].[AccRequest]
+         SET PaymentDate = @pay, UpdatedAt = SYSDATETIME()
+         WHERE Id=@id AND FormCode=@form AND Status=@status AND CurrentStepCode=@step`,
+      );
+    if (claim.rowsAffected[0] !== 1) throw new AccConflictError(NOT_AT_STEP_ERROR);
+
+    await requireApproverScopeFor(actor, await claimedBrandCode(tx, requestId));
+    await logActivity(tx, requestId, actor.userId, "payment_date_set", chosen);
+  });
+}
+
 export async function approveReimburseAccountCheck(
   requestId: number,
   actor: ReimburseActor,

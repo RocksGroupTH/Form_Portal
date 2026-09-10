@@ -573,7 +573,16 @@ export function ReimburseApprovalQueue() {
    * below was sending one value N times by choice, not by constraint, so
    * nothing server-side changed to allow this.
    */
-  const dateFor = (id: number) => rowDates.get(id) ?? effectiveDate;
+  /**
+   * The date this claim shows, in falling order of authority: what was just
+   * typed on the row, then what is STORED on the claim, then the shared field.
+   *
+   * The middle arm arrived with the payment-date endpoint. Without it a reload
+   * showed the shared value over a date the database already held, and the
+   * accountant would have had to re-pick a date they had already saved.
+   */
+  const dateFor = (id: number) =>
+    rowDates.get(id) ?? rows.find((r) => r.id === id)?.paymentDate ?? effectiveDate;
 
   /**
    * Optimistic values for a line whose save is in flight, keyed by item id.
@@ -633,6 +642,7 @@ export function ReimburseApprovalQueue() {
   >(new Map());
   const [savingItems, setSavingItems] = useState<Set<number>>(new Set());
   const [rowErrors, setRowErrors] = useState<Map<number, string>>(new Map());
+  const [dateErrors, setDateErrors] = useState<Map<number, string>>(new Map());
 
   /**
    * One save at a time per claim.
@@ -732,6 +742,72 @@ export function ReimburseApprovalQueue() {
         });
         // Either way: on success this brings back the saved value and drops the
         // optimistic entry; on failure it re-reads what is actually stored.
+        await mutate();
+      });
+
+    saveChains.current.set(requestId, next);
+    await next;
+  }
+
+  /**
+   * Persist one claim's payment date.
+   *
+   * Optimistic and reverting like `saveItemField`, and chained on the SAME
+   * per-claim promise, because both this and a line edit claim the claim's row
+   * in a transaction. Two in flight against one claim would race and the loser
+   * would answer 409 — a conflict this screen invented rather than another
+   * accountant.
+   *
+   * The step is not advanced: the claim still has to be approved. Before this
+   * endpoint existed the date lived only in the browser, so a reload lost every
+   * one an accountant had chosen.
+   */
+  async function savePaymentDate(requestId: number, date: string): Promise<void> {
+    const previousValue = rowDates.get(requestId);
+    setRowDates((prev) => new Map(prev).set(requestId, date));
+    setDateErrors((prev) => {
+      if (!prev.has(requestId)) return prev;
+      const m = new Map(prev);
+      m.delete(requestId);
+      return m;
+    });
+
+    const previous = saveChains.current.get(requestId) ?? Promise.resolve();
+    const next = previous
+      .catch(() => {})
+      .then(async () => {
+        let message: string | null = null;
+        try {
+          const res = await fetch(`/api/request/reimburse/requests/${requestId}/payment-date`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ date }),
+          });
+          const json = await res.json().catch(() => null);
+          if (!json?.ok) {
+            message =
+              typeof json?.error === "string"
+                ? json.error
+                : res.status === 409
+                  ? "คำขอนี้ถูกดำเนินการไปแล้ว — โหลดใหม่"
+                  : "บันทึกวันที่จ่ายไม่สำเร็จ";
+          }
+        } catch {
+          message = "เครือข่ายขัดข้อง — ยังไม่ได้บันทึก";
+        }
+
+        if (message) {
+          // Back to whatever it was — DELETING when it had none of its own, so
+          // the row falls through to the shared field again rather than being
+          // pinned to an empty string.
+          setRowDates((prev) => {
+            const m = new Map(prev);
+            if (previousValue === undefined) m.delete(requestId);
+            else m.set(requestId, previousValue);
+            return m;
+          });
+          setDateErrors((prev) => new Map(prev).set(requestId, message as string));
+        }
         await mutate();
       });
 
@@ -1253,13 +1329,14 @@ export function ReimburseApprovalQueue() {
                                           type="button"
                                           title="ใช้วันที่ร่วม"
                                           aria-label={`ใช้วันที่ร่วมกับ ${d.claim.requestNo}`}
-                                          onClick={() =>
-                                            setRowDates((prev) => {
-                                              const m = new Map(prev);
-                                              m.delete(d.claim.id);
-                                              return m;
-                                            })
-                                          }
+                                          onClick={() => {
+                                            // Saves the shared value rather than
+                                            // dropping the local one: the date is
+                                            // persisted now, so forgetting it here
+                                            // would leave the row showing one date
+                                            // and the database holding another.
+                                            void savePaymentDate(d.claim.id, effectiveDate);
+                                          }}
                                           className="shrink-0 cursor-pointer border-none bg-transparent p-0"
                                           style={{ color: "var(--text-muted)" }}
                                         >
@@ -1267,6 +1344,16 @@ export function ReimburseApprovalQueue() {
                                         </button>
                                       )}
                                   </div>
+                                  {/* Beside the control that failed: a toast
+                                      names none of the rows on this screen. */}
+                                  {dateErrors.get(d.claim.id) && (
+                                    <span
+                                      className="block text-[10.5px] mt-0.5 leading-tight"
+                                      style={{ color: "var(--color-danger)" }}
+                                    >
+                                      {dateErrors.get(d.claim.id)}
+                                    </span>
+                                  )}
                                 </td>
 
                               </>
@@ -1370,11 +1457,7 @@ export function ReimburseApprovalQueue() {
                 mode="suggest"
                 hint="วันจ่าย: ศุกร์ที่ 1 และ 3 ของเดือน (เลื่อนกลับ 1 วันถ้าตรงวันหยุด) — เลือกวันอื่นได้"
                 onChange={(ymd) => {
-                  setRowDates((prev) => {
-                    const m = new Map(prev);
-                    m.set(claim.id, ymd);
-                    return m;
-                  });
+                  void savePaymentDate(claim.id, ymd);
                   setEditingPaymentId(null);
                 }}
               />
