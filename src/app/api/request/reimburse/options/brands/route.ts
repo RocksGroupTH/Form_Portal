@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
-import { getAllowedBrands } from "@/lib/acc/brand-options";
+import { getAllowedBrands, listAllBrands } from "@/lib/acc/brand-options";
+import { orderBrandsForDisplay } from "@/features/reimburse/lib/brand-order";
 import { AP4_FORM_CODE } from "@/features/reimburse/constants";
 
 /**
@@ -25,8 +26,25 @@ export async function GET() {
   if (session instanceof Response) return session;
 
   try {
-    const data = await getAllowedBrands(AP4_FORM_CODE);
-    return NextResponse.json({ ok: true, data });
+    // Ordered like the settings tab that grants them, which renders the
+    // company brand master. `getAllowedBrands` sorts by AccFormBrand.SortOrder,
+    // and nothing in this app lets an admin set that column — it is written
+    // from the position of each code in whatever array the settings POST
+    // carried, i.e. the order the boxes were ticked. See `brand-order.ts`.
+    //
+    // Here and not in `getAllowedBrands`: AP-1, AP-2, AP-3 and AP-17 read that
+    // same function, as do the ERP config services, and this is AP-4's ask.
+    // A failed master read answers [], which orderBrandsForDisplay treats as
+    // a no-op — the picker then falls back to the stored order rather than
+    // losing a brand, so an unreachable Rocks_Codex costs ordering, not work.
+    const [data, master] = await Promise.all([
+      getAllowedBrands(AP4_FORM_CODE),
+      listAllBrands().catch(() => []),
+    ]);
+    return NextResponse.json({
+      ok: true,
+      data: orderBrandsForDisplay(data, master.map((b) => b.brandCode)),
+    });
   } catch (e) {
     console.error("[api/request/reimburse/options/brands] GET", e);
     return NextResponse.json(

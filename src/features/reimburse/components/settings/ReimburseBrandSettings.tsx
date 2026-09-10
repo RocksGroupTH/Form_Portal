@@ -6,6 +6,7 @@ import { AlertTriangle, Save } from "lucide-react";
 import { toast } from "sonner";
 import { SettingOption, SettingOptionGroup } from "@/components/settings/SettingOption";
 import type { AccBrandOption } from "@/features/accounting/types";
+import { orderBrandCodesForSave } from "@/features/reimburse/lib/brand-order";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -78,7 +79,16 @@ export function ReimburseBrandSettings() {
       const res = await fetch(ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ brandCodes: Array.from(checked) }),
+        // In the order this grid renders them, not the order they were
+        // ticked. `setFormBrands` writes SortOrder from the array position
+        // and the AP-4 form's picker reads it back, so posting a Set's
+        // insertion order made the form disagree with the page that set it.
+        body: JSON.stringify({
+          brandCodes: orderBrandCodesForSave(
+            checked,
+            allBrands.map((b) => b.brandCode),
+          ),
+        }),
       });
       const json = await res.json();
       if (json.ok) {
