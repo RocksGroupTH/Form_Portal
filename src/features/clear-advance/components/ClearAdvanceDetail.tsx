@@ -242,13 +242,20 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
      registry in particular was asked once per card, so six lines sharing a
      seller made six calls for one answer. */
   const { vendors, list: vendorList, load: loadVendors } = useTaxVendors(request.brandCode ?? null);
-  const { byTin: rdByTin, ask: askRd } = useRdVatByTin(editItems.map((it) => it.taxId));
+  /* Only while the grid is editable. `editItems` is seeded from the request for
+     every viewer, so asking for its tax ids unconditionally had a manager's
+     page load reaching the registry's 15-second SOAP for a column that is not
+     on their screen. */
+  const { byTin: rdByTin, ask: askRd } = useRdVatByTin(
+    isAccountStep ? editItems.map((it) => it.taxId) : [],
+  );
 
   /* The payment rounds, from the calendar AP-1 and AP-2 already share — there
      is no AP-3 endpoint because there is no AP-3 rule; it is the same 2nd and
      4th Friday, shifted off holidays. Only fetched while the account step is
      open, and only the company-pays case can choose from them. */
   const [paymentRounds, setPaymentRounds] = useState<string[]>([]);
+  const [roundsAttempt, setRoundsAttempt] = useState(0);
   useEffect(() => {
     if (!isAccountStep || !companyPaysExtra) return;
     let cancelled = false;
@@ -261,9 +268,15 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
            common case is confirm-and-approve. Never over an existing pick. */
         setPaymentDate((prev) => prev || j.data?.default || "");
       })
-      .catch(() => {});
+      .catch(() => {
+        /* Not swallowed. With no rounds the picker offers nothing and approval
+           is blocked with no way forward, so the officer is told and the next
+           render tries again — the same failure the G/L options and the OCR
+           suggestions each had to be taught to survive. */
+        if (!cancelled) { toast.error("โหลดรอบวันจ่ายไม่สำเร็จ — กำลังลองใหม่"); setRoundsAttempt((n) => n + 1); }
+      });
     return () => { cancelled = true; };
-  }, [isAccountStep, companyPaysExtra]);
+  }, [isAccountStep, companyPaysExtra, roundsAttempt]);
 
   /* A date stored before this rule existed, or from a round that has since
      passed. Shown rather than dropped — but it is about to become a posting
@@ -298,8 +311,9 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
      cell to be opened. The module cache makes that free after the first. */
   useEffect(() => {
     if (vendors !== null) return;
+    if (!isAccountStep) return; // no picker on screen, no list to fetch
     if (editItems.some((it) => (it.taxVendorNo ?? "").trim())) void loadVendors();
-  }, [editItems, vendors, loadVendors]);
+  }, [isAccountStep, editItems, vendors, loadVendors]);
 
   // Requester self-cancel: they own it, still pending the manager (before Account),
   // within 24h of submit. Sends an email to the manager + requester on cancel.

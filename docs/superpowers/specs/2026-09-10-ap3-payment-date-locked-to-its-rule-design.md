@@ -50,7 +50,7 @@ treasury calendar would reject every honest one.
 |---|---|---|
 | `refund < 0` | `PaymentDatePicker`, locked to the allowed rounds, seeded with the default round, **required** | Must be present **and** a member of `getPaymentDates()` |
 | `refund > 0` | Read-only, showing `refundTransferDate` and saying where it came from | Derived from stored `refundTransferDate`; the client's value is ignored |
-| `refund = 0` | Read-only; the stored value or `—` | Passed through unchanged |
+| `refund = 0` | Read-only, saying there is no payment. A legacy stored value is not shown, because on a settled clearing it would be a date for a movement that did not happen | Passed through unchanged, so nothing stored is lost |
 
 A stored date that is no longer an allowed round is **shown, flagged, and
 blocks approval** until it is re-picked — but only in the `refund < 0` case,

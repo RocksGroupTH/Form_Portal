@@ -20,7 +20,7 @@ export interface TaxVendorCandidate {
  */
 const vendorListCache = new Map<string, Promise<TaxVendorCandidate[]>>();
 
-export function fetchVendors(brandCode: string | null): Promise<TaxVendorCandidate[]> {
+function fetchVendors(brandCode: string | null): Promise<TaxVendorCandidate[]> {
   const key = brandCode ?? "";
   const hit = vendorListCache.get(key);
   if (hit) return hit;
@@ -56,8 +56,8 @@ export function useTaxVendors(brandCode: string | null) {
       toast.error(e instanceof Error ? e.message : "โหลดรายชื่อ Vendor ไม่สำเร็จ");
       /* "failed", not an empty list. One state now serves the whole grid, so an
          empty list would read as "this Company has no vendors" and, because a
-         cell only loads while the state is null, nothing would ever ask again —
-         one blip and every row is stuck until the page is reloaded. "failed" is
+         cell only loads while the state is null or failed, nothing would ever ask
+         again — one blip and every row is stuck until reload. "failed" is
          distinct from null so the eager load does not retry in a loop, and a
          cell opening again does. */
       setVendors("failed");
