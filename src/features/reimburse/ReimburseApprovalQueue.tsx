@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { fmtBaht } from "@/features/travel-booking/components/shared";
 import { ExpenseAccountPicker } from "@/features/reimburse/components/ExpenseAccountPicker";
+import { VendorPicker } from "@/features/reimburse/components/VendorPicker";
 // Type-only, and deliberately from the pure module rather than `./queue-service`
 // — that file imports `getAccPool`, which reaches `@/lib/db/mssql` and `@/env`
 // at module scope. A type-only import is erased at build time regardless of
@@ -28,6 +29,7 @@ import type { ReimburseQueueRow } from "@/lib/acc/reimburse/queue-policy";
 // scope. Only the shape is needed here; `ExpenseAccountPicker` above already
 // proves that pattern is safe (it does the same import).
 import type { ReimburseDetail as ReimburseDetailData, ReimburseItem } from "@/features/reimburse/types";
+import type { TaxVendorCandidate } from "@/lib/clr/tax-vendor-service";
 import type { ExpenseAccount } from "@/lib/acc/reimburse/expense-account-service";
 
 /**
@@ -255,6 +257,47 @@ function QueueCheckbox({
  * actually changed are sent, so a save cannot accidentally re-stamp every
  * other row's untouched value.
  */
+/**
+ * The columns, in the AP-4.1 sheet's own order — the same set the detail view
+ * prints, so an approver checking one against the other reads them in the same
+ * places.
+ *
+ * `รายการ` is **not** among them and its absence is deliberate: that column
+ * **is** the G/L account (`AccReimburseItem.Category` — see
+ * `ExpenseAccountPicker`), so it appears once, at the end, as the editable
+ * `G/L` cell. A second column repeating it would be two controls for one fact.
+ */
+const LINE_COLUMNS: readonly { label: string; right?: boolean; width?: string }[] = [
+  { label: "ลำดับที่", width: "58px" },
+  { label: "วันที่", width: "92px" },
+  { label: "เลขที่เอกสาร", width: "150px" },
+  { label: "รายละเอียด", width: "220px" },
+  { label: "สาขา", width: "110px" },
+  { label: "เลขผู้เสียภาษี", width: "130px" },
+  { label: "ผู้ขาย", width: "180px" },
+  { label: "ที่อยู่", width: "240px" },
+  { label: "ก่อน VAT", right: true, width: "100px" },
+  { label: "VAT", right: true, width: "90px" },
+  { label: "ค่าใช้จ่ายรวม", right: true, width: "110px" },
+  { label: "หัก ณ ที่จ่าย", right: true, width: "100px" },
+  { label: "จ่ายสุทธิ", right: true, width: "110px" },
+  { label: "G/L", width: "210px" },
+  { label: "Vendor", width: "210px" },
+];
+
+const HEAD_CELL = "text-[11px] font-semibold uppercase tracking-wide py-2 px-2 whitespace-nowrap";
+const BODY_CELL = "text-[12.5px] py-2 px-2 align-middle";
+
+/** Every vendor card in the claim's Company — see the route's own note on why the whole list. */
+async function vendorsFetcher(url: string): Promise<TaxVendorCandidate[]> {
+  const res = await fetch(url);
+  const json = await res.json().catch(() => null);
+  if (!json?.ok) {
+    throw new Error(typeof json?.error === "string" ? json.error : "โหลดรายชื่อ Vendor ไม่สำเร็จ");
+  }
+  return json.data as TaxVendorCandidate[];
+}
+
 function ExpenseAccountsPanel({
   requestId,
   brandCode,
@@ -272,15 +315,23 @@ function ExpenseAccountsPanel({
       : null,
     accountsFetcher,
   );
+  // Brand-keyed like the accounts above, so SWR dedupes it across every
+  // expanded row of the same brand rather than fetching 1,604 cards per claim.
+  const { data: vendors, isLoading: vendorsLoading } = useSWR(
+    brandCode ? `/api/request/reimburse/vendors?brand=${encodeURIComponent(brandCode)}` : null,
+    vendorsFetcher,
+  );
 
-  // Item id -> the value picked in this panel, overriding the loaded row.
-  // Starts empty — a picker with no entry here falls through to `it.category`
-  // below, so there is nothing to seed. It is never reset by an SWR
-  // revalidation either (the list revalidates on window focus, and clobbering
-  // it on every one of those would silently discard whatever the accountant
-  // was mid-choosing); the only reset is unmounting, which collapsing the row
-  // does, so re-expanding always starts from what is actually saved.
-  const [edits, setEdits] = useState<Map<number, string | null>>(new Map());
+  // Item id -> the value picked in this panel, overriding the loaded row. Two
+  // maps rather than one of pairs: an accountant can change either field alone,
+  // and "was this one touched" has to stay answerable per field — a single map
+  // of objects would make an untouched vendor indistinguishable from one
+  // deliberately cleared. Neither is reset by an SWR revalidation (the list
+  // revalidates on window focus, and clobbering them there would discard
+  // whatever was mid-choosing); the only reset is unmounting, which collapsing
+  // the row does, so re-expanding always starts from what is actually saved.
+  const [catEdits, setCatEdits] = useState<Map<number, string | null>>(new Map());
+  const [vendorEdits, setVendorEdits] = useState<Map<number, string | null>>(new Map());
   const [saving, setSaving] = useState(false);
 
   // Rows with no persisted id cannot be a save target — every row this route
@@ -291,10 +342,15 @@ function ExpenseAccountsPanel({
     (it): it is ReimburseItem & { id: number } => it.id != null,
   );
 
-  const dirty = Array.from(edits.entries()).filter(([id, value]) => {
-    const original = items.find((it) => it.id === id)?.category ?? null;
-    return value !== original;
-  });
+  const catOf = (it: ReimburseItem & { id: number }) =>
+    catEdits.has(it.id) ? (catEdits.get(it.id) ?? null) : (it.category ?? null);
+  const vendorOf = (it: ReimburseItem & { id: number }) =>
+    vendorEdits.has(it.id) ? (vendorEdits.get(it.id) ?? null) : (it.vendorNo ?? null);
+
+  /** The rows where either field differs from what is stored. */
+  const dirty = items.filter(
+    (it) => catOf(it) !== (it.category ?? null) || vendorOf(it) !== (it.vendorNo ?? null),
+  );
 
   async function save() {
     if (dirty.length === 0 || saving) return;
@@ -304,13 +360,23 @@ function ExpenseAccountsPanel({
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          items: dirty.map(([id, category]) => ({ id, category })),
+          // Both fields on every dirty row, always. Sending the displayed value
+          // for the field that was not touched cannot overwrite anything — it
+          // IS the stored value. `vendorNo`'s absent-means-leave-alone rule
+          // (`item-account-edits.ts`) exists for the client that predates
+          // migration 147, not for this one.
+          items: dirty.map((it) => ({
+            id: it.id,
+            category: catOf(it),
+            vendorNo: vendorOf(it),
+          })),
         }),
       });
       const json = await res.json().catch(() => null);
       if (json?.ok) {
         toast.success("บันทึกบัญชีแล้ว");
-        setEdits(new Map());
+        setCatEdits(new Map());
+        setVendorEdits(new Map());
       } else {
         // A 409 here means the claim moved out of accounting's hands between
         // load and save (approved, returned, or edited by someone else) —
@@ -351,38 +417,110 @@ function ExpenseAccountsPanel({
           — ไม่มีรายการ —
         </p>
       ) : (
-        items.map((it) => (
-          <div key={it.id} className="flex items-center gap-2.5">
-            <div className="flex-1 min-w-0">
-              <p
-                className="text-[12.5px] m-0 truncate"
-                style={{ color: "var(--text-primary)" }}
-                title={it.description || undefined}
-              >
-                {it.description || "—"}
-              </p>
-              <p className="text-[11px] m-0 tabular-nums" style={{ color: "var(--text-muted)" }}>
-                ฿{fmtBaht(it.amount)}
-              </p>
-            </div>
-            <div className="w-[210px] shrink-0">
-              <ExpenseAccountPicker
-                value={edits.has(it.id) ? (edits.get(it.id) ?? null) : (it.category ?? null)}
-                onChange={(next) => {
-                  setEdits((prev) => {
-                    const m = new Map(prev);
-                    m.set(it.id, next);
-                    return m;
-                  });
-                }}
-                accounts={accounts ?? []}
-                loading={accountsLoading}
-                brandChosen={!!brandCode}
-                ariaLabel={`เลือกบัญชีสำหรับ ${it.description || "รายการ"}`}
-              />
-            </div>
-          </div>
-        ))
+        // Fifteen columns scroll inside this container rather than widening the
+        // queue. The seller, the tax id and the address are here because they
+        // are what an approver reads to decide WHICH vendor card a line posts
+        // against — before this panel showed a description and an amount, and
+        // the decision was being made without them.
+        <div className="overflow-x-auto">
+          <table className="border-collapse" style={{ minWidth: 1920 }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid var(--border-card)" }}>
+                {LINE_COLUMNS.map((c) => (
+                  <th
+                    key={c.label}
+                    className={`${HEAD_CELL} ${c.right ? "text-right" : "text-left"}`}
+                    style={{ color: "var(--text-muted)", width: c.width }}
+                  >
+                    {c.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((it, i) => {
+                // Derived, never stored — see `ReimburseItem.amount`.
+                const beforeVat = (Number(it.amount) || 0) - (Number(it.vatAmount) || 0);
+                const netPaid = (Number(it.amount) || 0) - (Number(it.whtAmount) || 0);
+                return (
+                  <tr key={it.id} style={{ borderBottom: "1px solid var(--border-light)" }}>
+                    <td className={`${BODY_CELL} tabular-nums`} style={{ color: "var(--text-muted)" }}>
+                      {i + 1}
+                    </td>
+                    <td className={`${BODY_CELL} whitespace-nowrap`} style={{ color: "var(--text-primary)" }}>
+                      {fmtYmd(it.expenseDate)}
+                    </td>
+                    <td className={`${BODY_CELL} whitespace-nowrap`} style={{ color: "var(--text-primary)" }}>
+                      {it.documentNo || "—"}
+                    </td>
+                    <td className={`${BODY_CELL} break-words`} style={{ color: "var(--text-primary)" }}>
+                      {it.description || "—"}
+                    </td>
+                    <td className={`${BODY_CELL} break-words`} style={{ color: "var(--text-secondary)" }}>
+                      {it.branchName || "—"}
+                    </td>
+                    <td className={`${BODY_CELL} whitespace-nowrap tabular-nums`} style={{ color: "var(--text-secondary)" }}>
+                      {it.vendorTaxId || "—"}
+                    </td>
+                    <td className={`${BODY_CELL} break-words`} style={{ color: "var(--text-primary)" }}>
+                      {it.vendorName || "—"}
+                    </td>
+                    <td className={`${BODY_CELL} break-words`} style={{ color: "var(--text-secondary)" }}>
+                      {it.vendorAddress || "—"}
+                    </td>
+                    <td className={`${BODY_CELL} text-right tabular-nums`} style={{ color: "var(--text-secondary)" }}>
+                      {fmtBaht(beforeVat)}
+                    </td>
+                    <td className={`${BODY_CELL} text-right tabular-nums`} style={{ color: "var(--text-secondary)" }}>
+                      {fmtBaht(it.vatAmount ?? 0)}
+                    </td>
+                    <td className={`${BODY_CELL} text-right tabular-nums font-semibold`} style={{ color: "var(--text-primary)" }}>
+                      {fmtBaht(it.amount)}
+                    </td>
+                    <td className={`${BODY_CELL} text-right tabular-nums`} style={{ color: "var(--text-secondary)" }}>
+                      {it.whtAmount ? fmtBaht(it.whtAmount) : "—"}
+                    </td>
+                    <td className={`${BODY_CELL} text-right tabular-nums font-semibold`} style={{ color: "var(--text-primary)" }}>
+                      {fmtBaht(netPaid)}
+                    </td>
+                    <td className={BODY_CELL}>
+                      <ExpenseAccountPicker
+                        value={catOf(it)}
+                        onChange={(next) => {
+                          setCatEdits((prev) => {
+                            const m = new Map(prev);
+                            m.set(it.id, next);
+                            return m;
+                          });
+                        }}
+                        accounts={accounts ?? []}
+                        loading={accountsLoading}
+                        brandChosen={!!brandCode}
+                        ariaLabel={`เลือกบัญชีสำหรับ ${it.description || "รายการ"}`}
+                      />
+                    </td>
+                    <td className={BODY_CELL}>
+                      <VendorPicker
+                        value={vendorOf(it)}
+                        onChange={(next) => {
+                          setVendorEdits((prev) => {
+                            const m = new Map(prev);
+                            m.set(it.id, next);
+                            return m;
+                          });
+                        }}
+                        vendors={vendors ?? []}
+                        loading={vendorsLoading}
+                        brandChosen={!!brandCode}
+                        ariaLabel={`เลือก Vendor สำหรับ ${it.description || "รายการ"}`}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
       {items.length > 0 && (
         <div className="flex justify-end pt-0.5">
@@ -429,6 +567,21 @@ export function ReimburseApprovalQueue() {
   // Which rows show their expense lines. A `Set` rather than one id: nothing
   // stops an accountant comparing two claims' line items side by side.
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
+  /**
+   * Request id -> the payment date typed on that claim's own row.
+   *
+   * A claim absent from this map has not been given one and falls through to
+   * `effectiveDate` — the bulk field, itself seeded from the suggested round.
+   * That is what makes the bulk control still work: it does not write into
+   * every row, it is what a row shows when it has nothing of its own, so
+   * changing it moves every claim the accountant has not overridden and leaves
+   * the ones they have.
+   *
+   * Cleared for a claim that leaves the queue, alongside the selection below,
+   * for the same reason: a stale id would re-target whatever number takes its
+   * place.
+   */
+  const [rowDates, setRowDates] = useState<Map<number, string>>(new Map());
 
   const rows = data?.rows ?? [];
 
@@ -455,6 +608,15 @@ export function ReimburseApprovalQueue() {
       });
       return changed ? next : prev;
     });
+    setRowDates((prev) => {
+      let changed = false;
+      const next = new Map<number, string>();
+      prev.forEach((v, id) => {
+        if (live.has(id)) next.set(id, v);
+        else changed = true;
+      });
+      return changed ? next : prev;
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
 
@@ -468,6 +630,17 @@ export function ReimburseApprovalQueue() {
   // intermediate state while retyping a date, and it is already covered: the
   // approve button is disabled on a falsy `effectiveDate`.
   const effectiveDate = dateTouched ? bulkDate : bulkDate || data?.suggested || "";
+
+  /**
+   * The date THIS claim is approved with — its own if one was typed on the row,
+   * the shared field otherwise.
+   *
+   * The server has always taken a date per request: `POST .../[id]/approve`
+   * carries `paymentDate` and validates it with `paymentDateProblem`. The loop
+   * below was sending one value N times by choice, not by constraint, so
+   * nothing server-side changed to allow this.
+   */
+  const dateFor = (id: number) => rowDates.get(id) ?? effectiveDate;
 
   function toggleAll() {
     setSelectedIds(allSelected ? new Set() : new Set(rows.map((r) => r.id)));
@@ -499,8 +672,16 @@ export function ReimburseApprovalQueue() {
   async function approveSelected() {
     const ids = Array.from(selectedIds);
     if (ids.length === 0) return;
-    if (!effectiveDate) {
-      toast.error("กรุณาเลือกวันที่จ่าย");
+    // Each claim's own date, because each claim is approved with its own. A
+    // check on the shared field alone would pass while a row that had been
+    // deliberately cleared went out with nothing.
+    const missing = ids.filter((id) => !dateFor(id));
+    if (missing.length > 0) {
+      toast.error(
+        missing.length === ids.length
+          ? "กรุณาเลือกวันที่จ่าย"
+          : `ยังไม่ได้เลือกวันที่จ่าย ${missing.length} รายการ`,
+      );
       return;
     }
     setBatchRunning(true);
@@ -521,7 +702,7 @@ export function ReimburseApprovalQueue() {
         const res = await fetch(`/api/request/reimburse/requests/${id}/approve`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ step: "ACCOUNT", paymentDate: effectiveDate }),
+          body: JSON.stringify({ step: "ACCOUNT", paymentDate: dateFor(id) }),
         });
         const json = await res.json().catch(() => null);
         if (json?.ok) {
@@ -777,6 +958,60 @@ export function ReimburseApprovalQueue() {
                         <ExpenseAccountsPanel requestId={item.id} brandCode={item.brandCode} />
                       )}
 
+                      {/* This claim's own payment date. Shown on every row, not
+                          only selected ones: an accountant sets the date while
+                          reading the claim, and hiding the field until the
+                          checkbox is ticked would make them do it in the other
+                          order. Empty falls through to the shared field at the
+                          bottom, which is what makes that control still work —
+                          it fills nothing, it is simply what a row without an
+                          answer of its own shows. */}
+                      <div className="flex items-center gap-2 mt-2 flex-wrap">
+                        <label
+                          className="text-[11.5px] font-medium shrink-0"
+                          htmlFor={`paydate-${item.id}`}
+                          style={{ color: "var(--text-muted)" }}
+                        >
+                          วันที่จ่าย
+                        </label>
+                        <input
+                          id={`paydate-${item.id}`}
+                          type="date"
+                          value={dateFor(item.id)}
+                          disabled={batchRunning}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setRowDates((prev) => {
+                              const m = new Map(prev);
+                              m.set(item.id, v);
+                              return m;
+                            });
+                          }}
+                          className="text-[12px] rounded-lg px-2.5 py-1 outline-none disabled:opacity-50"
+                          style={{
+                            background: "var(--bg-input)",
+                            color: "var(--text-primary)",
+                            border: "1px solid var(--border-input)",
+                          }}
+                        />
+                        {rowDates.has(item.id) && rowDates.get(item.id) !== effectiveDate && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setRowDates((prev) => {
+                                const m = new Map(prev);
+                                m.delete(item.id);
+                                return m;
+                              })
+                            }
+                            className="text-[11.5px] font-medium cursor-pointer border-none bg-transparent p-0"
+                            style={{ color: "var(--text-muted)" }}
+                          >
+                            ใช้วันที่ร่วม
+                          </button>
+                        )}
+                      </div>
+
                       {isReturning ? (
                         <div className="flex flex-col gap-2 mt-1">
                           <textarea
@@ -843,8 +1078,10 @@ export function ReimburseApprovalQueue() {
           </span>
 
           <div className="flex items-center gap-2 flex-wrap min-w-0">
+            {/* Retitled: it no longer IS the date, it is the date a claim
+                takes when it has none of its own. */}
             <label className="text-[12px] font-medium shrink-0" style={{ color: "var(--text-muted)" }}>
-              วันที่จ่าย
+              วันที่จ่าย (ใช้ร่วม)
             </label>
             <input
               type="date"

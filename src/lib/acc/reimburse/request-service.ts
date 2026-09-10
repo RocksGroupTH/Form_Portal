@@ -98,6 +98,7 @@ function mapItemRow(x: Record<string, unknown>): ReimburseItem {
     vendorTaxId: (x.VendorTaxId as string) ?? null,
     vendorName: (x.VendorName as string) ?? null,
     vendorAddress: (x.VendorAddress as string) ?? null,
+    vendorNo: (x.VendorNo as string) ?? null,
     sourceFileId: (x.SourceFileId as number) ?? null,
     description: (x.Description as string) ?? "",
     amount: Number(x.Amount) || 0,
@@ -163,7 +164,7 @@ async function loadItems(pool: AccPool, requestId: number): Promise<ReimburseIte
     .input("rid", sql.Int, requestId)
     .query(
       `SELECT Id, SortOrder, ExpenseDate, DocumentNo, Category, BranchName, VendorTaxId, VendorName, VendorAddress,
-              SourceFileId, Description, Amount, VatAmount, WhtAmount
+              VendorNo, SourceFileId, Description, Amount, VatAmount, WhtAmount
        FROM [dbo].[AccReimburseItem] WHERE RequestId=@rid ORDER BY SortOrder, Id`,
     );
   const items = (r.recordset as Record<string, unknown>[]).map(mapItemRow);
