@@ -24,11 +24,15 @@ import type { AccFileMeta } from "@/features/accounting/types";
 import type { ClearAdvanceItem, ClearAdvanceRequest, ClrApproval } from "@/features/clear-advance/types";
 import { linesMissingTaxVendor } from "@/lib/clr/tax-vendor-core";
 import { glMissingMessage, linesMissingGl } from "@/lib/clr/clear-advance-line-validation";
+import { tinsNeedingRdCheck } from "@/lib/clr/rd-vat-core";
+import { useTaxVendors } from "@/features/clear-advance/hooks/useTaxVendors";
+import { useRdVatByTin } from "@/features/clear-advance/hooks/useRdVatByTin";
+import { VendorCell } from "@/features/clear-advance/components/VendorCell";
+import { RdCell } from "@/features/clear-advance/components/RdCell";
 import { useGlOptionsByBranch } from "@/features/clear-advance/hooks/useGlOptionsByBranch";
 import { GlCell } from "@/features/clear-advance/components/GlCell";
 import { isRocksPcBrand } from "@/features/clear-advance/constants";
 import { pndBlockReason } from "@/lib/clr/wht-pnd-core";
-import { SellerVendorCard } from "@/features/clear-advance/components/SellerVendorCard";
 
 function money(n: number | null | undefined): string {
   return (n ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -122,27 +126,6 @@ interface Props {
   onChanged?: () => void;
 }
 
-interface VatRegistrant {
-  nid: string;
-  titleName: string | null;
-  name: string | null;
-  branchNumber: number | null;
-  branchCode: string | null;
-  vatRegisteredOn: string | null;
-  address: string | null;
-}
-interface TaxVendorCandidate {
-  vendorNo: string;
-  displayName: string | null;
-  taxRegistrationNumber: string | null;
-}
-
-type VatCheck =
-  | { state: "checking" }
-  | { state: "found"; registrant: VatRegistrant; checkedAt: string | null }
-  | { state: "unregistered"; checkedAt: string | null }
-  | { state: "unknown" };
-
 export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged }: Props) {
   const clear = request.clear;
   const items = clear?.items ?? [];
@@ -222,27 +205,6 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
     dirty.current = true;
     setEditWhtState(v);
   };
-  /**
-   * What the Revenue Department holds for each seller tax id on this clearing,
-   * keyed by the id. Checked on demand here rather than on open: accounting is
-   * usually correcting one line, and the register is a call out of the building.
-   *
-   * "unregistered" and "could not check" stay separate — the first is a fact
-   * about the invoice, the second is the RD not answering.
-   */
-  const [vatByTin, setVatByTin] = useState<Record<string, VatCheck>>({});
-  /**
-   * BC vendor cards carrying each seller tax id, keyed by the id.
-   *
-   * A list, never an answer: one tax id maps to many cards — Central Pattana has
-   * 24 under one number, one per mall, told apart only by a prefix in the name.
-   * Picking the first would be right once in twenty-four times and wrong exactly
-   * where the branch matters, so accounting chooses and blank stays valid.
-   */
-  const [vendorsByRow, setVendorsByRow] = useState<Record<number, TaxVendorCandidate[] | "loading">>({});
-  /* The name search is per row, not per tax id: it is a way of looking, and two
-     rows looking for the same seller may be typing different things. */
-  const [vendorNameTerm, setVendorNameTerm] = useState<Record<number, string>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -279,6 +241,12 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
   /* The account list for every branch the lines use. Fetched here rather than
      on the requester's form, which no longer shows the column. */
   const glByBranch = useGlOptionsByBranch(editItems.map((it) => it.branchCode));
+  /* The seller's BC vendor and the registry's answer about their tax id, both
+     for the whole grid. They used to live one-per-card below the table; the
+     registry in particular was asked once per card, so six lines sharing a
+     seller made six calls for one answer. */
+  const { vendors, list: vendorList, load: loadVendors } = useTaxVendors(request.brandCode ?? null);
+  const { byTin: rdByTin, ask: askRd } = useRdVatByTin(editItems.map((it) => it.taxId));
   /* A non-home brand books every line to FORCE_GL_NON_ROCKS_PC at save time, so
      the cell shows the forced account rather than a picker. */
   const glForced = !!request.brandCode && !isRocksPcBrand(request.brandCode);
@@ -301,6 +269,14 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
     savedSnapshot.current = JSON.stringify({ items: seedItems, wht: seedWht });
     dirty.current = false;
   }, [isAccountStep, clear?.items, clear?.whtItems]);
+
+  /* A stored vendor is a bare number — the list is what carries its name, so a
+     grid that opens with one already chosen loads it without waiting for a
+     cell to be opened. The module cache makes that free after the first. */
+  useEffect(() => {
+    if (vendors !== null) return;
+    if (editItems.some((it) => (it.taxVendorNo ?? "").trim())) void loadVendors();
+  }, [editItems, vendors, loadVendors]);
 
   // Requester self-cancel: they own it, still pending the manager (before Account),
   // within 24h of submit. Sends an email to the manager + requester on cancel.
@@ -531,7 +507,7 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
               <p className="text-[12px] m-0 px-3 py-2 rounded-lg"
                 style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
                 รายการที่ {missingVendorLines.join(", ")} มี VAT แต่ยังไม่ได้เลือก Vendor ผู้ขาย —
-                เลือกในการ์ด “ผู้ขาย” ด้านล่าง (ค้นด้วยเลขผู้เสียภาษีหรือชื่อผู้ขาย) แล้วบันทึก จึงจะอนุมัติได้
+                เลือกในคอลัมน์ “Vendor” ของตารางด้านบน แล้วบันทึก จึงจะอนุมัติได้
               </p>
             )}
             {missingGlLines.length > 0 && (
@@ -578,6 +554,32 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
                       แก้ไขได้เฉพาะในขั้นบัญชี (ACCOUNT) — บันทึกอัตโนมัติ
                     </p>
                     <SaveStatus state={saveState} onRetry={() => void saveNow()} />
+                    {/* One ask for every tax id the registry has not answered
+                        for yet. Counted by id, not by row: six receipts from
+                        one seller are one question. It never forces a refresh —
+                        a stored answer never expires, and the way to get a
+                        newer one is ตรวจใหม่ on that row. */}
+                    {(() => {
+                      const pending = tinsNeedingRdCheck(editItems, rdByTin);
+                      return (
+                        <button
+                          type="button"
+                          disabled={pending.length === 0}
+                          title={pending.length === 0 ? "ตรวจกับกรมสรรพากรครบทุกเลขแล้ว" : undefined}
+                          onClick={() => pending.forEach((tin) => void askRd(tin))}
+                          className="text-[11px] px-2 py-0.5 rounded-lg border-none"
+                          style={{
+                            background: pending.length === 0 ? "var(--bg-card-alt)" : "var(--nav-active-bg)",
+                            color: pending.length === 0 ? "var(--text-faint)" : "var(--nav-active-text)",
+                            cursor: pending.length === 0 ? "default" : "pointer",
+                          }}
+                        >
+                          {pending.length === 0
+                            ? "ตรวจสรรพากรครบแล้ว"
+                            : `ตรวจสรรพากร (${pending.length} รายการ)`}
+                        </button>
+                      );
+                    })()}
                   </div>
                   {/* show-x-scroll: `.acc-theme *` hides every scrollbar, so a
                       table wider than the page scrolled with nothing on screen
@@ -585,7 +587,7 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
                       the right edge and looked missing. The AP-3 form's own grid
                       already opts back in; this one had not. */}
                   <div className="overflow-x-auto show-x-scroll pb-1 -mx-1 px-1">
-                    <table className="w-full border-collapse" style={{ minWidth: 1240 }}>
+                    <table className="w-full border-collapse" style={{ minWidth: 1500 }}>
                       <thead>
                         <tr className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>#</th>
@@ -602,6 +604,8 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>เลขผู้เสียภาษี</th>
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>ชื่อผู้ขาย</th>
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>สาขาผู้ขาย</th>
+                          <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>RD</th>
+                          <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>Vendor</th>
                           <th className="px-2 py-1.5 text-right" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>ก่อน VAT</th>
                           <th className="px-2 py-1.5 text-right" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>VAT</th>
                           <th className="px-2 py-1.5 text-right" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>WHT</th>
@@ -724,6 +728,31 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
                                 }}
                               />
                             </td>
+                            <td className="px-2 py-1.5" style={{ borderBottom: "1px solid var(--border-light)" }}>
+                              <RdCell
+                                item={it}
+                                answer={rdByTin[(it.taxId ?? "").replace(/\D/g, "")]}
+                                onRecheck={() => void askRd((it.taxId ?? "").replace(/\D/g, ""), true)}
+                                onApply={(patch) => {
+                                  const next = [...editItems];
+                                  next[i] = { ...next[i], ...patch };
+                                  setEditItems(next);
+                                }}
+                              />
+                            </td>
+                            <td className="px-2 py-1.5" style={{ borderBottom: "1px solid var(--border-light)", minWidth: 200 }}>
+                              <VendorCell
+                                item={it}
+                                vendors={vendors}
+                                list={vendorList}
+                                onLoad={() => void loadVendors()}
+                                onPick={(vendorNo) => {
+                                  const next = [...editItems];
+                                  next[i] = { ...next[i], taxVendorNo: vendorNo };
+                                  setEditItems(next);
+                                }}
+                              />
+                            </td>
                             <td className="px-2 py-1.5 text-right" style={{ borderBottom: "1px solid var(--border-light)" }}>
                               <input
                                 type="number"
@@ -781,25 +810,6 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
                       under the table — the two questions are about the same
                       seller and belong beside each other, and each card names
                       the line it is about. */}
-                  {editItems.length > 0 && (
-                    <div className="flex flex-col gap-2">
-                      <p className="text-[11px] font-bold m-0" style={{ color: "var(--text-muted)" }}>
-                        ผู้ขาย — ตรวจกับกรมสรรพากร และเลือก Vendor
-                      </p>
-                      {editItems.map((it, i) => (
-                        <SellerVendorCard
-                          key={it.id ?? i}
-                          index={i}
-                          item={it}
-                          brandCode={request.brandCode ?? null}
-                          onChange={(patch) =>
-                            setEditItems((prev) => prev.map((x, j) => (j === i ? { ...x, ...patch } : x)))
-                          }
-                        />
-                      ))}
-                    </div>
-                  )}
-
                   {editWht.length > 0 && (
                     <div className="flex flex-col gap-2">
                       <p className="text-[11px] font-bold m-0" style={{ color: "var(--text-muted)" }}>
