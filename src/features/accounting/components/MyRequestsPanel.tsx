@@ -14,6 +14,8 @@ import { RequestDetail } from "@/features/accounting/components/RequestDetail";
 import { TravelBookingDetail } from "@/features/travel-booking/components/TravelBookingDetail";
 import type { TravelBookingRequest } from "@/features/travel-booking/types";
 import { ReimburseDetail } from "@/features/reimburse/components/ReimburseDetail";
+import { ClearAdvanceDetail } from "@/features/clear-advance/components/ClearAdvanceDetail";
+import type { ClearAdvanceRequest } from "@/features/clear-advance/types";
 import type { ReimburseDetail as ReimburseDetailData } from "@/features/reimburse/types";
 import { AdvanceDetailPanel } from "@/features/advance/components/AdvanceDetailPanel";
 import { useFormEnvironments } from "@/lib/hooks/useFormEnvironments";
@@ -158,13 +160,16 @@ function RequestRowList({
    * sets of local state that then disagree about which one the approve button
    * belongs to. One panel that changes width has none of that.
    *
-   * **It is the shared drawer, so this widens AP-1's, AP-3's and AP-17's too**
-   * (AP-2 has its own panel and is excluded above). That is the intent, not a
-   * side effect: every one of them is the same table problem at a different
-   * width. It is a viewer's own preference, changes no data, and is not reset on
-   * close — somebody who wants the wide view usually wants it for the next row too.
+   * **It is the shared drawer, so this widens AP-1's and AP-17's too.** AP-2 and
+   * AP-3 each have a drawer of their own and are excluded from this one, so they
+   * are unaffected — the branch this landed on said AP-3 widened with the rest,
+   * which was true until AP-3 got its own panel on master.
+   *
+   * A viewer's own preference: it changes no data, and it is not reset on close,
+   * because somebody who wants the wide view usually wants it for the next row too.
    */
   const [drawerWide, setDrawerWide] = useState(false);
+  const [caDetail, setCaDetail] = useState<ClearAdvanceRequest | null>(null);
   const [drawerFormCode, setDrawerFormCode] = useState<string | null>(null);
   const [loadingDrawer, setLoadingDrawer] = useState(false);
   const [q, setQ] = useState("");
@@ -229,7 +234,9 @@ function RequestRowList({
         ? `/api/request/travel-booking/requests/${id}`
         : formCode === "AP-4"
           ? `/api/request/reimburse/requests/${id}`
-          : `/api/request/accounting/requests/${id}`;
+          : formCode === "AP-3"
+            ? `/api/request/clear-advance/requests/${id}`
+            : `/api/request/accounting/requests/${id}`;
     fetch(url)
       .then((r) => readApiJson<{ ok: boolean; data?: AccRequest | TravelBookingRequest | ReimburseDetailData; error?: string }>(r))
       .then((json) => {
@@ -237,6 +244,7 @@ function RequestRowList({
         if (json.ok && json.data) {
           if (formCode === "AP-17") setTbDetail(json.data as TravelBookingRequest);
           else if (formCode === "AP-4") setRbDetail(json.data as ReimburseDetailData);
+          else if (formCode === "AP-3") setCaDetail(json.data as unknown as ClearAdvanceRequest);
           else setDrawerDetail(json.data as AccRequest);
         } else {
           toast.error(json.error ?? "โหลดรายละเอียดไม่สำเร็จ");
@@ -553,7 +561,13 @@ function RequestRowList({
                 <p className="text-[11px] truncate" style={{ color: "var(--text-secondary)" }}>
                   {row.formName ? `${row.formName} · ` : ""}
                   {showRequester ? `${row.requesterFullName ?? "—"} · ` : ""}
-                  เดินทาง {fmtDate(row.travelDate)} · ส่ง {fmtDate(row.submittedAt)}
+                  {/* Both lists span every form, but the query behind them is
+                      AP-1-shaped: it joins AccTravelExpense, so a travel date
+                      exists only on a travel claim. Printing "เดินทาง" on an
+                      AP-2 or AP-3 row labelled an empty dash as a journey that
+                      never happened. It appears only where there is one. */}
+                  {row.travelDate ? `เดินทาง ${fmtDate(row.travelDate)} · ` : ""}
+                  ส่ง {fmtDate(row.submittedAt)}
                 </p>
                 {nextApproval && (
                   <p className="text-[10px] truncate mt-0.5 m-0" style={{ color: "var(--text-muted)" }}>
@@ -597,9 +611,46 @@ function RequestRowList({
         />
       )}
 
-      {/* Detail drawer — same day-selector view as the report / approval queue */}
+      {/* AP-3 (clear advance) — the same document its own page shows, in a drawer.
+          Its detail component takes the request as a prop rather than fetching,
+          so loadDrawer reads it from AP-3's own API: the generic path below is
+          AP-1's, and an AP-3 id is not in AP-1's tables, which answered 404. */}
       <SidePanel
-        open={drawerId != null && drawerFormCode !== "AP-2"}
+        open={drawerFormCode === "AP-3" && drawerId != null}
+        onClose={() => { setDrawerId(null); setCaDetail(null); }}
+        width="min(980px, 100vw)"
+        zIndex={50}
+      >
+        <div className="flex items-center justify-between px-4 py-3 shrink-0"
+          style={{ borderBottom: "1px solid var(--border-light)" }}>
+          <div className="min-w-0">
+            <p className="text-[14px] font-bold truncate m-0" style={{ color: "var(--text-heading)" }}>
+              {caDetail?.requestNo ?? "เคลียร์คืนเงินทดรองจ่าย"}
+            </p>
+            <p className="text-[11px] m-0 mt-0.5" style={{ color: "var(--text-muted)" }}>
+              แบบฟอร์มเคลียร์คืนเงินทดรองจ่าย (AP-3)
+            </p>
+          </div>
+          <SidePanelClose onClick={() => { setDrawerId(null); setCaDetail(null); }} />
+        </div>
+        <div className="flex-1 overflow-y-auto no-scrollbar px-4 py-4 acc-theme">
+          {loadingDrawer || !caDetail ? (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 size={20} className="animate-spin" style={{ color: "var(--text-muted)" }} />
+            </div>
+          ) : (
+            <ClearAdvanceDetail
+              request={caDetail}
+              onChanged={() => { void loadRows(); if (drawerId != null) loadDrawer(drawerId, "AP-3"); }}
+            />
+          )}
+        </div>
+      </SidePanel>
+
+      {/* Detail drawer — same day-selector view as the report / approval queue */}
+{/* AP-2 and AP-3 have their own drawers above. */}
+      <SidePanel
+        open={drawerId != null && drawerFormCode !== "AP-2" && drawerFormCode !== "AP-3"}
         onClose={() => setDrawerId(null)}
         width={drawerWide ? "min(1680px, 100vw)" : "min(720px, 100vw)"}
         zIndex={50}

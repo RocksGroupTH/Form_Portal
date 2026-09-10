@@ -443,6 +443,26 @@ export function sanitizeDownloadName(name: string | null | undefined, fallbackEx
 }
 
 /**
+ * The same name with everything a header cannot carry removed.
+ *
+ * Only the plain `filename` parameter needs this: it is bytes on the wire, so
+ * anything outside ASCII has to go. Every dropped character is a real character
+ * in the name, so a name that is entirely non-ASCII would be left empty — it
+ * falls back to a generic name with the right extension rather than nothing.
+ */
+export function asciiFallbackName(fileName: string, fallbackExtension: string): string {
+  const strip = (v: string) => v.replace(/[^ -~]/g, "");
+  const ascii = strip(fileName).replace(/["\\]/g, "_").trim();
+  const dot = fileName.lastIndexOf(".");
+  const ext = dot > 0 ? strip(fileName.slice(dot + 1)) : "";
+  // A name whose ASCII is only its extension — "ใบเสร็จ.jpg" leaves ".jpg" —
+  // reads as a hidden file rather than a name, so it takes the generic one too.
+  const stem = ascii.startsWith(".") ? "" : ascii.split(".")[0] ?? "";
+  if (/[^_\s]/.test(stem)) return ascii;
+  return `attachment.${ext || fallbackExtension}`;
+}
+
+/**
  * Headers for serving stored bytes back.
  *
  * The type is re-derived from the bytes on every download rather than read from
@@ -465,7 +485,14 @@ export function attachmentResponseHeaders(input: {
 
   return {
     "Content-Type": contentType,
-    "Content-Disposition": `${disposition}; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+    // Two names on purpose. `filename*` carries the real one, percent-encoded
+    // as RFC 5987 requires; `filename` is the ASCII fallback for anything that
+    // cannot read it. The fallback must be ASCII — a header value is a
+    // ByteString, so a Thai character in it throws where the response is built
+    // and the request dies as a 500. That is what happened to every attachment
+    // named in Thai: "สื่อ - Porntip Tuckyen (1).jpg" never downloaded, and the
+    // thumbnail for it rendered as a broken image with no clue why.
+    "Content-Disposition": `${disposition}; filename="${asciiFallbackName(fileName, type?.extension ?? "bin")}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
     "X-Content-Type-Options": "nosniff",
     "Content-Security-Policy": "default-src 'none'; sandbox",
     "Cache-Control": "private, no-store",

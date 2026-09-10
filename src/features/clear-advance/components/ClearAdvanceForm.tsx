@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
 import { toast } from "sonner";
+import { PND_LABEL, suggestPndType } from "@/lib/clr/wht-pnd-core";
+import { taxBranchCode } from "@/lib/clr/tax-branch-core";
 import {
-  Check, Paperclip, Camera, X, Plus, Trash2, Search, Banknote, User, Mail, FileText,
+  Check, Paperclip, Camera, X, Plus, Trash2, Banknote, User, Mail, FileText, Printer,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
@@ -17,6 +18,8 @@ import {
 } from "@/components/ui/AttachmentViewer";
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
 import { PoweredByClaude } from "@/components/ui/PoweredByClaude";
+import { BranchPicker, GlPicker, cellClass, cellStyle } from "./LinePickers";
+import { OcrConfirmModal, type OcrRow } from "./OcrConfirmModal";
 import type { AccBrandOption, AccFileMeta } from "@/features/accounting/types";
 import type {
   BranchOption,
@@ -52,13 +55,6 @@ const fieldStyle = {
   color: "var(--text-primary)",
   border: "1px solid var(--border-card)",
 } as const;
-const cellClass = "text-[12px] px-2 py-1.5 rounded-lg outline-none";
-const cellStyle = {
-  background: "var(--bg-input, var(--bg-card))",
-  color: "var(--text-primary)",
-  border: "1px solid var(--border-card)",
-} as const;
-
 const COMPANY_BANK_LINE =
   "โอนคืน: บริษัท ร็อคส์ พีซี จำกัด · กสิกรไทย 772-1-01878-9 สาขาเซ็นทรัลเวิลด์";
 
@@ -106,6 +102,13 @@ interface LineRow {
   amountBeforeVat: string;
   vatAmount: string;
   whtAmount: string;
+  /** The seller off the tax invoice, as the OCR read it. Accounting can correct
+   *  it at the ACCOUNT step; it becomes the VAT line's tax fields in BC. */
+  taxId: string;
+  payeeName: string;
+  payeeAddress: string;
+  /** The seller's branch as its five-digit code — 00000 is the head office. */
+  taxBranchCode: string;
 }
 
 /** One editable WHT-certificate row in state. */
@@ -117,6 +120,8 @@ interface WhtRow {
   taxId: string;
   payeeName: string;
   payeeAddress: string;
+  /** "" = nobody has chosen yet, which is what the row shows and what it saves. */
+  pndType: "PND3" | "PND53" | "";
   amount: string;
   whtAmount: string;
 }
@@ -125,6 +130,7 @@ function emptyLine(): LineRow {
   return {
     expenseDate: "", docNo: "", glAccountNo: "", glAccountName: "",
     description: "", branchCode: "", amountBeforeVat: "", vatAmount: "", whtAmount: "",
+    taxId: "", payeeName: "", payeeAddress: "", taxBranchCode: "",
   };
 }
 
@@ -134,14 +140,20 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   // True while the brand-scoped pending-advance list is being fetched — avoids
   // flashing the "ไม่มีเงินทดรองจ่าย" empty state before the list has loaded.
   const [pendingLoading, setPendingLoading] = useState(false);
-  const [glAccounts, setGlAccounts] = useState<GlAccountOption[]>([]);
+  // Each line's account list is fetched for that line's branch (§2.4), keyed by
+  // branch code so switching back to a branch already seen costs no round trip.
+  const [glByBranch, setGlByBranch] = useState<Record<string, GlAccountOption[]>>({});
+  const glRequested = useRef<Set<string>>(new Set());
   const [branches, setBranches] = useState<BranchOption[]>([]);
   const [files, setFiles] = useState<AccFileMeta[]>([]);
   const [refundProofFiles, setRefundProofFiles] = useState<AccFileMeta[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadingProof, setUploadingProof] = useState(false);
   const [ocrScanning, setOcrScanning] = useState(false);
-  const [slipScanning, setSlipScanning] = useState(false);
+  // OCR candidates awaiting confirmation (§7) — null while the modal is closed.
+  const [ocrRows, setOcrRows] = useState<OcrRow[] | null>(null);
+  // Pages the reader dropped for being neither receipt nor slip — shown as a count.
+  const [ocrSkipped, setOcrSkipped] = useState(0);
 
   const [brandCode, setBrandCode] = useState(initial?.brandCode ?? "");
   const [advanceRequestId, setAdvanceRequestId] = useState<number | null>(initial?.clear?.advanceRequestId ?? null);
@@ -167,6 +179,10 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
     return it.map((x) => ({
       id: x.id,
       sourceFileId: x.sourceFileId ?? undefined,
+      taxId: x.taxId ?? "",
+      payeeName: x.payeeName ?? "",
+      payeeAddress: x.payeeAddress ?? "",
+      taxBranchCode: x.taxBranchCode ?? "",
       expenseDate: x.expenseDate ?? "",
       docNo: x.docNo ?? "",
       glAccountNo: x.glAccountNo ?? "",
@@ -187,6 +203,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       taxId: w.taxId ?? "",
       payeeName: w.payeeName ?? "",
       payeeAddress: w.payeeAddress ?? "",
+      pndType: w.pndType ?? "",
       amount: w.amount != null ? String(w.amount) : "",
       whtAmount: w.whtAmount != null ? String(w.whtAmount) : "",
     })),
@@ -199,6 +216,8 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   // next to each field and clear themselves as the field is fixed (errors are
   // derived from live state, not stored). rootRef locates the first bad field.
   const [submitAttempted, setSubmitAttempted] = useState(false);
+  /** The "print AP-3.1 before you send" reminder. */
+  const [printNotice, setPrintNotice] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
   // Unsaved-change tracking (P1.2). Dirty = the requester edited a field since the
@@ -263,14 +282,11 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
     // NOT gated — it can be slow (Graph photo fetch returns a large base64 image),
     // so the form renders immediately and the cards show a skeleton until it lands
     // (same concept as AP-1).
-    Promise.all([
-      fetch("/api/request/clear-advance/options/brands").then((r) => r.json()),
-      fetch("/api/request/clear-advance/options/gl-accounts").then((r) => r.json()),
-    ])
-      .then(([b, gl]) => {
+    fetch("/api/request/clear-advance/options/brands")
+      .then((r) => r.json())
+      .then((b) => {
         if (cancelled) return;
         if (b?.ok) setBrands(b.data ?? []);
-        if (gl?.ok) setGlAccounts(gl.data ?? []);
       })
       .catch(() => {})
       .finally(() => { if (!cancelled) setReady(true); });
@@ -287,6 +303,57 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
     }).catch(() => {}).finally(() => { if (!cancelled) setEmployeeLoading(false); });
     return () => { cancelled = true; };
   }, [initial?.id]);
+
+  // Fetch the account list for every branch the lines currently use. The server
+  // decides which accounts a branch may charge, so nothing is filtered here.
+  const branchKeys = useMemo(
+    () => Array.from(new Set(lines.map((l) => l.branchCode).filter(Boolean))).sort().join("|"),
+    [lines],
+  );
+  useEffect(() => {
+    const missing = (branchKeys ? branchKeys.split("|") : []).filter((c) => !glRequested.current.has(c));
+    if (missing.length === 0) return;
+    missing.forEach((c) => glRequested.current.add(c));
+    let cancelled = false;
+    Promise.all(
+      missing.map((code) =>
+        fetch(`/api/request/clear-advance/options/gl-accounts?branch=${encodeURIComponent(code)}`)
+          .then((r) => r.json())
+          .then((j: { ok: boolean; data?: GlAccountOption[] }) => [code, j.ok ? j.data ?? [] : []] as const)
+          .catch(() => {
+            glRequested.current.delete(code); // let a later render retry
+            return [code, [] as GlAccountOption[]] as const;
+          }),
+      ),
+    ).then((entries) => {
+      if (!cancelled) setGlByBranch((prev) => ({ ...prev, ...Object.fromEntries(entries) }));
+    });
+    return () => { cancelled = true; };
+  }, [branchKeys]);
+
+  // Changing a line's branch can invalidate the account already on it — drop the
+  // pick rather than submit an account that branch is not allowed to charge.
+  useEffect(() => {
+    if (readOnly) return;
+    setLines((prev) => {
+      let changed = false;
+      const next = prev.map((l) => {
+        const opts = l.branchCode ? glByBranch[l.branchCode] : undefined;
+        if (!l.glAccountNo || !opts || opts.some((o) => o.glAccountNo === l.glAccountNo)) return l;
+        changed = true;
+        return { ...l, glAccountNo: "", glAccountName: "" };
+      });
+      return changed ? next : prev;
+    });
+  }, [glByBranch, lines, readOnly]);
+
+  /** Options for one line, keeping a stored account visible on a read-only request
+   *  even when the current branch filter would no longer offer it. */
+  const glOptionsFor = (l: LineRow): GlAccountOption[] => {
+    const opts = (l.branchCode && glByBranch[l.branchCode]) || [];
+    if (!l.glAccountNo || opts.some((o) => o.glAccountNo === l.glAccountNo)) return opts;
+    return [{ glAccountNo: l.glAccountNo, nameTh: l.glAccountName || null, nameEn: null, dimensionType: "Employee" }, ...opts];
+  };
 
   // Branch + pending-advance options are scoped to the chosen brand.
   useEffect(() => {
@@ -365,6 +432,31 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
 
   /* ── line mutations ── */
 
+  /**
+   * A blank expense line the user fills in themselves.
+   *
+   * Every line used to come from the AI reading an attachment, which made the
+   * read a hard dependency for data entry: a receipt it classified as something
+   * other than a receipt could not be entered at all, and the reviewer's only
+   * options were to photograph it again or give up. The row is otherwise
+   * ordinary — `sourceFileId` is null, which the service and the validators
+   * already allow, and the receipt still has to be attached for the request to
+   * be accepted.
+   */
+  function addLine() {
+    setLines((p) => [...p, emptyLine()]);
+  }
+
+  /** Only a hand-added line is removable here. A line the AI produced belongs to
+   *  its attachment and goes when that file goes (`doRemoveFile`), so that the
+   *  two can never disagree about what the receipts say. */
+  function removeLine(idx: number) {
+    setLines((p) => {
+      const kept = p.filter((_, i) => i !== idx);
+      return kept.length > 0 ? kept : [emptyLine()];
+    });
+  }
+
   function updateLine(idx: number, patch: Partial<LineRow>) {
     setLines((p) => p.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
   }
@@ -372,12 +464,24 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   function addWht() {
     setWhtRows((p) => [...p, {
       expenseDate: "", docNo: "", description: "", taxId: "",
-      payeeName: "", payeeAddress: "", amount: "", whtAmount: "",
+      payeeName: "", payeeAddress: "", pndType: "", amount: "", whtAmount: "",
     }]);
   }
   function removeWht(idx: number) { setWhtRows((p) => p.filter((_, i) => i !== idx)); }
   function updateWht(idx: number, patch: Partial<WhtRow>) {
     setWhtRows((p) => p.map((w, i) => (i === idx ? { ...w, ...patch } : w)));
+  }
+
+  /**
+   * Typing a tax id fills the ภ.ง.ด. type — but only on a row where nobody has
+   * chosen one. Re-seeding on every keystroke would mean correcting a typo in
+   * the id silently discards a deliberate choice, and the row is a decision of
+   * record: it picks the vendor accounting has to clear.
+   */
+  function updateWhtTaxId(idx: number, taxId: string) {
+    setWhtRows((p) => p.map((w, i) => (
+      i === idx ? { ...w, taxId, pndType: w.pndType || (suggestPndType(taxId) ?? "") } : w
+    )));
   }
 
   /** Prefill the WHT certificate table from the expense lines that carry WHT. */
@@ -391,6 +495,9 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       taxId: "",
       payeeName: "",
       payeeAddress: "",
+      // No tax id on an expense line, so there is nothing to suggest from yet.
+      // It fills in as soon as one is typed.
+      pndType: "",
       amount: l.amountBeforeVat,
       whtAmount: l.whtAmount,
     })));
@@ -440,6 +547,10 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
               whtAmount: wht,
               netAmount: round2(total - wht),
               sortOrder: i,
+              taxId: l.taxId.trim() || null,
+              payeeName: l.payeeName.trim() || null,
+              payeeAddress: l.payeeAddress.trim() || null,
+              taxBranchCode: l.taxBranchCode.trim() || null,
               sourceFileId: l.sourceFileId ?? null,
             };
           }),
@@ -454,6 +565,9 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
             taxId: w.taxId.trim() || null,
             payeeName: w.payeeName.trim() || null,
             payeeAddress: w.payeeAddress.trim() || null,
+            // What the row shows is what it saves — the suggestion is seeded into
+            // the visible value, never inferred behind the user's back at save.
+            pndType: w.pndType || null,
             amount: num(w.amount) || null,
             whtAmount: num(w.whtAmount) || null,
             netAmount: round2(num(w.amount) - num(w.whtAmount)),
@@ -486,6 +600,24 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
    * message inline and focus the first bad field. Server validation stays the
    * source of truth — these messages match it (P1.1: no client/server conflict).
    */
+  /**
+   * Branches on saved lines that the picker would no longer offer.
+   *
+   * `options/branches` returns only the ones BC has not blocked, so a line
+   * holding a code outside that list is holding one that was blocked or deleted
+   * after it was chosen. Empty while the list is still loading — a slow fetch
+   * must not read as "every branch is blocked".
+   */
+  const staleBranches = useMemo(() => {
+    if (branches.length === 0) return [];
+    const known = new Set(branches.map((b) => b.code));
+    const out: string[] = [];
+    for (const l of lines) {
+      if (l.branchCode && !known.has(l.branchCode) && !out.includes(l.branchCode)) out.push(l.branchCode);
+    }
+    return out;
+  }, [branches, lines]);
+
   function collectErrors(): { key: string; message: string }[] {
     const errs: { key: string; message: string }[] = [];
     if (!brandCode) errs.push({ key: "brand", message: "กรุณาเลือกแบรนด์" });
@@ -498,6 +630,22 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
         if (!l.expenseDate) { errs.push({ key: "lines", message: "มีรายการค่าใช้จ่ายที่ยังไม่ได้ระบุวันที่" }); break; }
         if (!glForced && !l.glAccountNo) { errs.push({ key: "lines", message: "มีรายการค่าใช้จ่ายที่ยังไม่ได้เลือกหมวด (รายการ)" }); break; }
         if (!(num(l.amountBeforeVat) > 0)) { errs.push({ key: "lines", message: "มีรายการที่จำนวนเงินก่อน VAT ไม่ถูกต้อง" }); break; }
+        /* The OCR review card refuses to save a row without a branch, but a row
+           added by hand with "เพิ่มแถว" never passes through it. Same rule, one
+           step later, so there is no way around it. */
+        if (!l.branchCode) { errs.push({ key: "lines", message: "มีรายการที่ยังไม่ได้เลือกสาขาที่ใช้จ่าย" }); break; }
+        /* A branch that is no longer offered was blocked or removed in BC after
+           this draft was saved — the picker never offers a blocked one, so a
+           value that is not in the list cannot have been chosen today. Caught
+           here rather than at the send, where it surfaces as a badge only the
+           accountant sees, on a request the requester can no longer edit. */
+        if (staleBranches.includes(l.branchCode)) {
+          errs.push({
+            key: "lines",
+            message: `สาขา ${l.branchCode} ถูกปิดใช้งาน/Block ใน BC แล้ว — กรุณาเลือกสาขาใหม่`,
+          });
+          break;
+        }
       }
     }
     if (whtMismatch) errs.push({ key: "wht", message: "ยอดภาษีหัก ณ ที่จ่ายในตารางใบรับรอง ไม่ตรงกับยอดในรายการค่าใช้จ่าย" });
@@ -526,6 +674,80 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       onSaved(id);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /**
+   * Print AP-3.1 from the form.
+   *
+   * The sheet is what the employee signs and staples in front of the receipts,
+   * so it may only be printed from data that is complete and stored: the same
+   * `collectErrors` the submit runs, then a draft save, then the sheet — which
+   * reads the request back from the server and would otherwise print whatever
+   * was last persisted rather than what is on screen.
+   *
+   * The tab is opened before the save, inside the click, because a browser
+   * blocks `window.open` that arrives after an await.
+   */
+  /**
+   * The reminder before sending.
+   *
+   * AP-3.1 is the sheet the receipts are stapled behind — accounting gets paper,
+   * not a screen — and the moment it is easiest to forget is the moment the form
+   * leaves. Validation runs first so the notice only appears on a request that
+   * can actually be sent; reading a reminder and then being told the form is
+   * incomplete would be the wrong order.
+   *
+   * A notice, not a gate: it does not check that anything was printed. The
+   * button to do it is simply there while the thought is.
+   */
+  function requestSubmit() {
+    const errs = collectErrors();
+    if (errs.length) {
+      handleSubmit(); // same validation, same scroll-to-field, same message
+      return;
+    }
+    setPrintNotice(true);
+  }
+
+  async function handlePrint() {
+    const errs = collectErrors();
+    if (errs.length) {
+      setSubmitAttempted(true);
+      const firstKey = errs[0].key;
+      requestAnimationFrame(() => {
+        const box = rootRef.current?.querySelector<HTMLElement>(`[data-err="${firstKey}"]`);
+        if (!box) return;
+        box.scrollIntoView({ behavior: "smooth", block: "center" });
+        const focusable = box.querySelector<HTMLElement>("input, select, textarea, button");
+        (focusable ?? box).focus?.();
+      });
+      toast.error(
+        errs.length === 1
+          ? errs[0].message
+          : `กรอกข้อมูลให้ครบ ${errs.length} รายการก่อนจึงจะพิมพ์ได้`,
+      );
+      return;
+    }
+
+    const tab = window.open("", "_blank");
+    setSaving(true);
+    try {
+      const id = await persist();
+      onSaved(id);
+      const href = `/request/clear-advance/${id}/print`;
+      if (tab) {
+        tab.location.href = href;
+      } else {
+        // Pop-up blocked: the draft is saved either way, so say where it went
+        // rather than losing the click.
+        toast.success("บันทึกแบบร่างแล้ว — เปิดหน้าพิมพ์ไม่ได้ (เบราว์เซอร์บล็อก) กดปุ่มพิมพ์อีกครั้ง");
+      }
+    } catch (e) {
+      tab?.close();
+      toast.error(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ — ยังพิมพ์ไม่ได้");
     } finally {
       setSaving(false);
     }
@@ -593,7 +815,6 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       if (f.size > 4 * 1024 * 1024) return toast.error(`${f.name}: ไฟล์ใหญ่เกิน 4MB`);
     }
     const isProof = refType === "refund_proof";
-    const firstFile = filesArr[0];
     (isProof ? setUploadingProof : setUploading)(true);
     if (isProof) setSlipWarn(null);
     try {
@@ -628,13 +849,13 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           (isProof ? setRefundProofFiles : setFiles)((prev) =>
             prev.some((x) => x.id === newFile.id) ? prev : [...prev, newFile],
           );
-          if (!isProof && isOcrable(f)) ocrDocs.push({ file: f, fileId: j.data.id });
+          if (isOcrable(f)) ocrDocs.push({ file: f, fileId: j.data.id });
         }
       }
       toast.success("แนบไฟล์แล้ว");
-      // Auto-verify the refund slip amount against the required refund (best-effort).
-      if (isProof && firstFile && isOcrable(firstFile)) void verifyRefundSlip(firstFile);
-      // Read each receipt / tax invoice → one expense line per file (best-effort).
+      // Both boxes go through the same reader: the model says what each page is
+      // (receipt / slip / other), and that — not the box it was dropped in —
+      // decides where the values land (decision: 2026-09-01).
       if (ocrDocs.length) void verifyReceipts(ocrDocs);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "อัปโหลดไม่สำเร็จ");
@@ -644,129 +865,244 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   }
 
   interface ReceiptData {
-    date: string | null; description: string | null; docNo: string | null;
+    kind: "receipt" | "slip";
+    date: string | null;
+    /** The date exactly as the model copied it — shown in the confirm modal so a
+     *  misread character is visible without opening the attachment. */
+    dateText?: string | null;
+    description: string | null; docNo: string | null;
     wht: number | null; taxId: string | null; payeeName: string | null; payeeAddress: string | null;
+    taxBranchText: string | null;
     total: number | null; vat: number | null; beforeVat: number | null;
   }
 
-  /** OCR a single receipt image → parsed fields (or null on failure). */
-  async function ocrReceipt(file: File): Promise<ReceiptData | null> {
+  /** OCR one receipt image → one entry per receipt/slip found in it, plus the
+   *  count of pages that were neither (§8) and the document-level branch hint. */
+  async function ocrReceipt(
+    file: File,
+  ): Promise<{ rows: ReceiptData[]; skipped: number; branchHint: string | null }> {
+    const nothing = { rows: [] as ReceiptData[], skipped: 0, branchHint: null };
     try {
       const fd = new FormData();
       fd.append("file", file);
       const res = await fetch("/api/request/clear-advance/verify-receipt", { method: "POST", body: fd });
-      const j = (await res.json()) as { ok: boolean; data?: ReceiptData };
-      if (!j.ok || !j.data) return null;
-      const d = j.data;
-      if (d.date == null && d.docNo == null && d.beforeVat == null && d.description == null) return null;
-      return d;
+      const j = (await res.json()) as {
+        ok: boolean; data?: ReceiptData[]; skippedPages?: number; branchHint?: string | null;
+      };
+      if (!j.ok || !j.data) return nothing;
+      return {
+        rows: j.data.filter(
+          (d) => d.date != null || d.docNo != null || d.beforeVat != null || d.description != null,
+        ),
+        skipped: j.skippedPages ?? 0,
+        branchHint: j.branchHint ?? null,
+      };
+    } catch {
+      return nothing;
+    }
+  }
+
+  /** Branch suggested for one upload from its hint (§10). One per document: a
+   *  bundle is one spend, and the reviewer re-picks any line that differs. */
+  async function suggestBranch(
+    hint: string | null,
+  ): Promise<{ code: string; name: string | null; close: boolean } | null> {
+    if (!hint || !brandCode) return null;
+    try {
+      const res = await fetch("/api/request/clear-advance/suggest-branch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hint, brand: brandCode }),
+      });
+      const j = (await res.json()) as {
+        ok: boolean; data?: { code: string; name: string | null; close?: boolean } | null;
+      };
+      return j.ok && j.data ? { ...j.data, close: j.data.close === true } : null;
     } catch {
       return null;
     }
   }
 
   /**
-   * OCR each uploaded receipt / tax invoice — ONE expense line per file. Each
-   * file's date / doc no. / amount-before-VAT / VAT fills the next empty line
-   * (a new line is appended when none is free), all as editable defaults. Never
-   * overwrites a line the user already filled.
+   * OCR each uploaded receipt / tax invoice — ONE expense line per invoice
+   * number, so a photo holding two invoices yields two rows (§8). The parsed
+   * values do NOT reach the expense table: they open the confirmation modal
+   * (§7), and only ยืนยันบันทึก writes them.
    */
+  /**
+   * Files uploaded for the read the confirm modal is showing.
+   *
+   * The upload is committed to the request before the model is called, so a
+   * cancelled read used to leave its file behind: six identical orphans piled
+   * up on one draft during testing, and a request that reached the ERP carried
+   * the same receipt twice. Cancelling rejects the read, and the upload was
+   * only ever its input, so it goes with it. Confirming keeps them — they are
+   * the evidence behind the expense lines.
+   */
+  const [ocrFileIds, setOcrFileIds] = useState<number[]>([]);
+
   async function verifyReceipts(docs: { file: File; fileId: number }[]) {
     setOcrScanning(true);
     try {
-    const parsed: { data: ReceiptData; fileId: number }[] = [];
-    for (const d of docs) {
-      const r = await ocrReceipt(d.file); // serialized — the OCR worker is shared
-      if (r) parsed.push({ data: r, fileId: d.fileId });
-    }
-    if (parsed.length === 0) return;
-
-    setLines((prev) => {
-      const next = [...prev];
-      const isBlank = (l: LineRow) =>
-        !l.glAccountNo && !l.expenseDate && !l.docNo && !l.description && !num(l.amountBeforeVat) && !num(l.vatAmount);
-      for (const { data: r, fileId } of parsed) {
-        let idx = next.findIndex(isBlank);
-        if (idx < 0) { next.push(emptyLine()); idx = next.length - 1; }
-        const l = { ...next[idx], sourceFileId: fileId };
-        if (r.date) l.expenseDate = r.date;
-        if (r.docNo) l.docNo = r.docNo;
-        if (r.description) l.description = r.description;
-        if (r.beforeVat != null) l.amountBeforeVat = String(r.beforeVat);
-        if (r.vat != null) l.vatAmount = String(r.vat);
-        if (r.wht != null && r.wht > 0) l.whtAmount = String(r.wht);
-        next[idx] = l;
-      }
-      return next;
-    });
-
-    // Docs that carry withholding tax → prefill a WHT-certificate row (opens the
-    // WHT section; keeps its total matching the line WHT). Payee/tax-id best-effort.
-    const whtDocs = parsed.map((p) => p.data).filter((r) => (r.wht ?? 0) > 0);
-    if (whtDocs.length) {
-      setWhtRows((prev) => [
-        ...prev,
-        ...whtDocs.map((r) => ({
+      const candidates: OcrRow[] = [];
+      let skipped = 0;
+      for (const d of docs) {
+        const read = await ocrReceipt(d.file); // serialized — the OCR worker is shared
+        skipped += read.skipped;
+        // Resolve the branch BEFORE the modal opens. Branch decides which G/L
+        // accounts a line may charge, and the modal asks for a G/L suggestion the
+        // moment a row has a branch — so the branch has to be on the row first,
+        // or the account would be suggested against the wrong (empty-branch) list.
+        const branch = await suggestBranch(read.branchHint);
+        read.rows.forEach((r, i) => candidates.push({
+          key: `${d.fileId}-${i}`,
+          kind: r.kind,
+          include: true,
+          sourceFileId: d.fileId,
+          fileName: d.file.name,
           expenseDate: r.date ?? "",
+          dateText: r.dateText ?? undefined,
           docNo: r.docNo ?? "",
+          branchCode: branch?.code ?? "",
+          branchSuggested: !!branch,
+          branchClose: branch?.close ?? false,
+          glAccountNo: "",
+          glAccountName: "",
           description: r.description ?? "",
+          amountBeforeVat: r.beforeVat != null ? String(r.beforeVat) : "",
+          vatAmount: r.vat != null ? String(r.vat) : "",
+          whtAmount: r.wht != null && r.wht > 0 ? String(r.wht) : "",
           taxId: r.taxId ?? "",
           payeeName: r.payeeName ?? "",
           payeeAddress: r.payeeAddress ?? "",
-          amount: r.beforeVat != null ? String(r.beforeVat) : r.total != null ? String(r.total) : "",
-          whtAmount: String(r.wht),
-        })),
-      ]);
-    }
-
-    toast.success(
-      parsed.length === 1
-        ? "อ่านเอกสารมาเติมเป็น 1 รายการให้แล้ว — กรุณาตรวจสอบ/แก้ไข"
-        : `อ่าน ${parsed.length} เอกสารมาเติมเป็น ${parsed.length} รายการให้แล้ว — กรุณาตรวจสอบ/แก้ไข`,
-    );
+          taxBranchText: r.taxBranchText ?? "",
+          totalAmount: r.total != null ? String(r.total) : "",
+        }));
+      }
+      // Open even with no rows when pages were dropped: the count is the only
+      // report the reviewer gets that something was thrown away.
+      if (candidates.length === 0 && skipped === 0) return;
+      setOcrSkipped(skipped);
+      setOcrFileIds(docs.map((d) => d.fileId));
+      setOcrRows(candidates);
     } finally {
       setOcrScanning(false);
     }
   }
 
-  /** OCR the refund slip: Claude vision first, fallback Tesseract. */
-  async function verifyRefundSlip(file: File) {
-    if (!(refundToCompany > 0)) return;
-    setSlipScanning(true);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("expected", String(refundToCompany));
-      const res = await fetch("/api/request/clear-advance/verify-slip", { method: "POST", body: fd });
-      const j = (await res.json()) as {
-        ok: boolean;
-        data?: {
-          configured: boolean; matched: boolean; expected: number;
-          bestAmount: number | null; date: string | null; amounts: number[];
-        };
-      };
-      if (!j.ok || !j.data || !j.data.configured) { setSlipWarn(null); return; }
-      const { matched, bestAmount, date, amounts } = j.data;
+  /** The user accepted (possibly re-classified, possibly edited) OCR rows. A
+   *  receipt fills the next empty expense line, appending one when none is free
+   *  and never overwriting a line the user already filled; a slip fills the
+   *  refund-transfer fields. The row's kind decides, not the upload box. */
+  /** Cancelled the read — drop its rows and the upload they were read from. The
+   *  deletes are best-effort and silent: failing to tidy up must not put an
+   *  error in front of someone who only pressed ยกเลิก. */
+  async function cancelOcrRows() {
+    const ids = ocrFileIds;
+    setOcrRows(null);
+    setOcrFileIds([]);
+    if (ids.length === 0) return;
+    // Both boxes, because either can start a read: the reader decides what a page
+    // is, not the box it was dropped in. Clearing only the receipt list left a
+    // cancelled slip on screen after it had been deleted from the server — and a
+    // refund proof that is required to submit, sitting there already gone.
+    setFiles((prev) => prev.filter((f) => !ids.includes(f.id)));
+    setRefundProofFiles((prev) => prev.filter((f) => !ids.includes(f.id)));
+    await Promise.all(
+      ids.map((fileId) =>
+        fetch(`/api/request/clear-advance/requests/${requestId}/files?fileId=${fileId}`, {
+          method: "DELETE",
+        }).catch(() => undefined),
+      ),
+    );
+  }
 
-      // Read-from-file → default the editable fields (user can still edit).
-      if (bestAmount != null) setRefundTransferAmount(String(bestAmount));
-      if (date) setRefundTransferDate(date);
+  function acceptOcrRows(accepted: OcrRow[]) {
+    setOcrRows(null);
+    setOcrFileIds([]);
+    if (accepted.length === 0) return;
 
-      if (matched) {
-        setSlipWarn(null);
-        toast.success(`อ่านสลิปแล้ว: ฿${(bestAmount ?? refundToCompany).toLocaleString()} ตรงกับยอดที่ต้องโอนคืน`);
+    const rows = accepted.filter((r) => r.kind === "receipt");
+    const slips = accepted.filter((r) => r.kind === "slip");
+
+    // A slip is the proof of money going back to the company: take its amount
+    // and date as the editable defaults, and say so when it disagrees with the
+    // refund the form computed.
+    const slip = slips[0];
+    if (slip) {
+      const amount = num(slip.amountBeforeVat);
+      if (amount > 0) setRefundTransferAmount(String(amount));
+      if (slip.expenseDate) setRefundTransferDate(slip.expenseDate);
+      if (refundToCompany > 0 && amount > 0 && round2(amount) !== round2(refundToCompany)) {
+        setSlipWarn(
+          `ยอดในสลิปไม่ตรงกับที่ต้องโอนคืน (฿${refundToCompany.toLocaleString()}) — อ่านจากสลิปได้ ฿${amount.toLocaleString()}`,
+        );
       } else {
-        const found = amounts.length
-          ? amounts.slice(0, 5).map((a) => `฿${a.toLocaleString()}`).join(", ")
-          : "ไม่พบตัวเลขยอดเงิน";
-        setSlipWarn(`ยอดในสลิปไม่ตรงกับที่ต้องโอนคืน (฿${refundToCompany.toLocaleString()}) — อ่านจากสลิปได้: ${found}`);
-        if (bestAmount != null) toast("เติมยอด/วันที่จากสลิปให้แล้ว — กรุณาตรวจสอบก่อนส่ง");
+        setSlipWarn(null);
       }
-    } catch {
-      setSlipWarn(null); // OCR unavailable — never block the flow.
-    } finally {
-      setSlipScanning(false);
     }
+
+    if (rows.length === 0) {
+      if (slip) toast.success("เติมยอด/วันที่จากสลิปโอนเงินให้แล้ว — กรุณาตรวจสอบ");
+      return;
+    }
+
+    setLines((prev) => {
+      const next = [...prev];
+      const isBlank = (l: LineRow) =>
+        !l.glAccountNo && !l.expenseDate && !l.docNo && !l.description && !num(l.amountBeforeVat) && !num(l.vatAmount);
+      for (const r of rows) {
+        let idx = next.findIndex(isBlank);
+        if (idx < 0) { next.push(emptyLine()); idx = next.length - 1; }
+        next[idx] = {
+          ...next[idx],
+          sourceFileId: r.sourceFileId,
+          expenseDate: r.expenseDate,
+          docNo: r.docNo,
+          branchCode: r.branchCode,
+          glAccountNo: r.glAccountNo,
+          glAccountName: r.glAccountName,
+          description: r.description,
+          amountBeforeVat: r.amountBeforeVat,
+          vatAmount: r.vatAmount,
+          whtAmount: r.whtAmount,
+          // The seller the OCR read off this invoice. It used to reach the
+          // confirm modal and go no further for the line — kept only where a WHT
+          // row happened to exist — which is why a VAT receipt without
+          // withholding had no seller to send.
+          taxId: r.taxId,
+          payeeName: r.payeeName,
+          payeeAddress: r.payeeAddress,
+          // The printed wording becomes the code by rule here, not in the model.
+          taxBranchCode: taxBranchCode(r.taxBranchText) ?? "",
+        };
+      }
+      return next;
+    });
+
+    // Rows that carry withholding tax → prefill a WHT-certificate row (opens the
+    // WHT section; keeps its total matching the line WHT). Payee/tax-id best-effort.
+    const whtRowsFromOcr = rows.filter((r) => num(r.whtAmount) > 0);
+    if (whtRowsFromOcr.length) {
+      setWhtRows((prev) => [
+        ...prev,
+        ...whtRowsFromOcr.map((r) => ({
+          expenseDate: r.expenseDate,
+          docNo: r.docNo,
+          description: r.description,
+          taxId: r.taxId,
+          payeeName: r.payeeName,
+          payeeAddress: r.payeeAddress,
+          pndType: (suggestPndType(r.taxId) ?? "") as WhtRow["pndType"],
+          amount: r.amountBeforeVat || r.totalAmount,
+          whtAmount: r.whtAmount,
+        })),
+      ]);
+    }
+
+    toast.success(
+      `เพิ่ม ${rows.length} รายการลงตารางค่าใช้จ่ายแล้ว` + (slip ? " · เติมข้อมูลสลิปโอนเงินให้แล้ว" : ""),
+    );
   }
 
   /** Clicking the ✕ opens a confirm popup; the actual delete runs on confirm. */
@@ -1015,7 +1351,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           {!readOnly && advanceRequestId != null && (
             <div className="flex items-start justify-between gap-2 mt-1">
               <p className="text-[11px] m-0" style={{ color: "var(--text-faint)" }}>
-              แนบใบเสร็จ/ใบกำกับภาษี (รูปภาพหรือ PDF · ไทย/อังกฤษ) — <b>1 ไฟล์ = 1 รายการ</b> ระบบจะอ่าน “วันที่ · เลขที่เอกสาร · รายละเอียด · ยอดก่อน VAT · VAT · หัก ณ ที่จ่าย (พร้อมเลขผู้เสียภาษี/ชื่อผู้รับ ถ้ามี)” มาเติมให้ (แก้ไขได้)
+              แนบใบเสร็จ/ใบกำกับภาษี (รูปภาพหรือ PDF · ไทย/อังกฤษ) — <b>1 ใบกำกับ = 1 รายการ</b> (ไฟล์เดียวมีหลายใบได้ · PDF อ่านได้สูงสุด 15 หน้า) ระบบจะอ่าน “วันที่ · เลขที่เอกสาร · รายละเอียด · ยอดก่อน VAT · VAT · หัก ณ ที่จ่าย (พร้อมเลขผู้เสียภาษี/ชื่อผู้รับ ถ้ามี)” มาเติมให้ (แก้ไขได้)
               </p>
               <PoweredByClaude />
             </div>
@@ -1028,10 +1364,13 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       <div className="rounded-2xl p-4 sm:p-5 flex flex-col gap-3" style={box} data-err="lines">
         <div className="flex items-center justify-between gap-2">
           <label className="text-[12px] font-bold" style={labelStyle}>รายการค่าใช้จ่ายจริง *</label>
+          {!readOnly && (
+            <Button variant="ghost" size="sm" type="button" icon={<Plus size={14} />} onClick={addLine}>เพิ่มแถว</Button>
+          )}
         </div>
         {!readOnly && (
           <p className="text-[11px] m-0 -mt-2 leading-relaxed" style={{ color: "var(--text-faint)" }}>
-            1 ไฟล์ = 1 รายการ · ระบบจะอ่าน “วันที่ · เลขที่เอกสาร · รายละเอียด · ยอดก่อน VAT · VAT · หัก ณ ที่จ่าย” มาเติมให้ Auto (สามารถแก้ไขได้)
+            1 ใบกำกับ = 1 รายการ · ระบบจะอ่าน “วันที่ · เลขที่เอกสาร · รายละเอียด · ยอดก่อน VAT · VAT · หัก ณ ที่จ่าย” มาเติมให้ Auto (สามารถแก้ไขได้) · ถ้า AI อ่านใบไหนไม่ออก กด “เพิ่มแถว” แล้วกรอกเองได้
           </p>
         )}
         <FieldError msg={fieldErrors.lines} />
@@ -1044,15 +1383,17 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                 <Th w={34}>#</Th>
                 <Th w={120}>วันที่</Th>
                 <Th w={210}>เลขที่เอกสาร</Th>
+                {/* Branch comes before the G/L account: it filters the account list. */}
+                <Th w={190}>สาขา *</Th>
                 <Th w={220}>รายการ</Th>
                 <Th w={240}>รายละเอียด</Th>
-                <Th w={190}>สาขา</Th>
                 <Th w={100} right>ก่อน VAT</Th>
                 <Th w={90} right>VAT</Th>
                 <Th w={100} right>รวม</Th>
                 <Th w={90} right>WHT</Th>
                 <Th w={100} right>สุทธิ</Th>
                 <Th w={110} right>คงเหลือ</Th>
+                <Th w={40}>{""}</Th>
               </tr>
             </thead>
             <tbody>
@@ -1072,6 +1413,18 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                         onChange={(e) => updateLine(idx, { docNo: e.target.value })} />
                     </Td>
                     <Td>
+                      <BranchPicker options={branches} value={l.branchCode}
+                        disabled={readOnly || !brandCode} noBrand={!brandCode}
+                        onPick={(code) => updateLine(idx, { branchCode: code })} />
+                      {/* Said on the row that holds it, not only in the toast at
+                          submit: the fix is a click away here. */}
+                      {staleBranches.includes(l.branchCode) && (
+                        <span className="block text-[10px] mt-0.5" style={{ color: "var(--color-danger)" }}>
+                          สาขานี้ถูก Block ใน BC — เลือกใหม่
+                        </span>
+                      )}
+                    </Td>
+                    <Td>
                       {glForced ? (
                         <div className="text-[12px] px-2 py-1.5 rounded-lg"
                           style={{ background: "var(--bg-card-alt)", color: "var(--text-muted)", border: "1px dashed var(--border-card)" }}>
@@ -1079,9 +1432,10 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                         </div>
                       ) : (
                         <GlPicker
-                          options={glAccounts}
+                          options={glOptionsFor(l)}
                           valueNo={l.glAccountNo}
-                          disabled={readOnly}
+                          disabled={readOnly || !l.branchCode}
+                          noBranch={!l.branchCode}
                           onPick={(o) => updateLine(idx, { glAccountNo: o?.glAccountNo ?? "", glAccountName: o?.nameTh ?? "" })}
                         />
                       )}
@@ -1092,11 +1446,6 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                         value={l.description} disabled={readOnly} placeholder="—"
                         ref={(el) => autoGrow(el)}
                         onChange={(e) => { autoGrow(e.target); updateLine(idx, { description: e.target.value }); }} />
-                    </Td>
-                    <Td>
-                      <BranchPicker options={branches} value={l.branchCode}
-                        disabled={readOnly || !brandCode} noBrand={!brandCode}
-                        onPick={(code) => updateLine(idx, { branchCode: code })} />
                     </Td>
                     <Td right>
                       <input type="number" min="0" step="0.01" className={`${cellClass} text-right`} style={{ ...cellStyle, width: "100%" }}
@@ -1116,6 +1465,19 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                     </Td>
                     <Td right><ReadCell value={money(c.net)} strong /></Td>
                     <Td right><ReadCell value={money(c.balance)} tone={c.balance < 0 ? "danger" : undefined} /></Td>
+                    <Td>
+                      {/* Only a hand-added line offers this. One the AI produced
+                          is removed by deleting its receipt, so the table and
+                          the attachments cannot drift apart. */}
+                      {!readOnly && !l.sourceFileId && (
+                        <button type="button" onClick={() => removeLine(idx)}
+                          aria-label={`ลบรายการที่ ${idx + 1}`} title="ลบแถวนี้"
+                          className="border-none bg-transparent cursor-pointer p-1 rounded-md"
+                          style={{ color: "var(--text-muted)" }}>
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </Td>
                   </tr>
                 );
               })}
@@ -1129,6 +1491,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                 <Td right><FootVal value={money(sums.wht)} /></Td>
                 <Td right><FootVal value={money(sums.net)} accent /></Td>
                 <Td right />
+                <Td />
               </tr>
             </tfoot>
           </table>
@@ -1143,6 +1506,14 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                 style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}>
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-bold" style={{ color: "var(--text-muted)" }}>รายการที่ {idx + 1}</span>
+                  {!readOnly && !l.sourceFileId && (
+                    <button type="button" onClick={() => removeLine(idx)}
+                      aria-label={`ลบรายการที่ ${idx + 1}`} title="ลบแถวนี้"
+                      className="border-none bg-transparent cursor-pointer p-1 rounded-md"
+                      style={{ color: "var(--text-muted)" }}>
+                      <Trash2 size={14} />
+                    </button>
+                  )}
                 </div>
                 <MField label="วันที่">
                   <input type="date" className={fieldClass} style={fieldStyle}
@@ -1154,6 +1525,16 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                     value={l.docNo} disabled={readOnly} placeholder="—"
                     onChange={(e) => updateLine(idx, { docNo: e.target.value })} />
                 </MField>
+                <MField label="สาขา *">
+                  <BranchPicker options={branches} value={l.branchCode}
+                    disabled={readOnly || !brandCode} noBrand={!brandCode}
+                    onPick={(code) => updateLine(idx, { branchCode: code })} />
+                  {staleBranches.includes(l.branchCode) && (
+                    <span className="block text-[11px] mt-1" style={{ color: "var(--color-danger)" }}>
+                      สาขานี้ถูก Block ใน BC — เลือกใหม่
+                    </span>
+                  )}
+                </MField>
                 <MField label="รายการ">
                   {glForced ? (
                     <div className="text-[12px] px-3 py-2 rounded-xl"
@@ -1162,7 +1543,8 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                     </div>
                   ) : (
                     <GlPicker
-                      options={glAccounts} valueNo={l.glAccountNo} disabled={readOnly}
+                      options={glOptionsFor(l)} valueNo={l.glAccountNo}
+                      disabled={readOnly || !l.branchCode} noBranch={!l.branchCode}
                       onPick={(o) => updateLine(idx, { glAccountNo: o?.glAccountNo ?? "", glAccountName: o?.nameTh ?? "" })}
                     />
                   )}
@@ -1173,11 +1555,6 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                     value={l.description} disabled={readOnly} placeholder="—"
                     ref={(el) => autoGrow(el)}
                     onChange={(e) => { autoGrow(e.target); updateLine(idx, { description: e.target.value }); }} />
-                </MField>
-                <MField label="สาขา">
-                  <BranchPicker options={branches} value={l.branchCode}
-                    disabled={readOnly || !brandCode} noBrand={!brandCode}
-                    onPick={(code) => updateLine(idx, { branchCode: code })} />
                 </MField>
                 <div className="grid grid-cols-2 gap-2">
                   <MField label="ก่อน VAT">
@@ -1251,6 +1628,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                   <Th w={130}>เลขผู้เสียภาษี *</Th>
                   <Th w={150}>ชื่อผู้รับ *</Th>
                   <Th w={170}>ที่อยู่</Th>
+                  <Th w={110}>ภ.ง.ด.</Th>
                   <Th w={100} right>ค่าใช้จ่าย</Th>
                   <Th w={90} right>WHT</Th>
                   {!readOnly && <Th w={34}> </Th>}
@@ -1259,7 +1637,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
               <tbody>
                 {whtRows.length === 0 ? (
                   <tr>
-                    <Td colSpan={readOnly ? 8 : 9}>
+                    <Td colSpan={readOnly ? 9 : 10}>
                       <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
                         ยังไม่มีรายการ — กด “ดึงจากรายการ” หรือ “เพิ่มแถว”
                       </span>
@@ -1281,7 +1659,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                     <Td>
                       <input className={cellClass} style={{ ...cellStyle, width: "100%" }}
                         value={w.taxId} disabled={readOnly} placeholder="เลข 13 หลัก"
-                        onChange={(e) => updateWht(idx, { taxId: e.target.value })} />
+                        onChange={(e) => updateWhtTaxId(idx, e.target.value)} />
                     </Td>
                     <Td>
                       <input className={cellClass} style={{ ...cellStyle, width: "100%" }}
@@ -1292,6 +1670,18 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                       <input className={cellClass} style={{ ...cellStyle, width: "100%" }}
                         value={w.payeeAddress} disabled={readOnly} placeholder="—"
                         onChange={(e) => updateWht(idx, { payeeAddress: e.target.value })} />
+                    </Td>
+                    <Td>
+                      {/* Picks the BC vendor accounting clears against. Suggested
+                          from the tax id, never fixed by it: a 0-prefixed id can
+                          belong to a foreign individual. */}
+                      <select className={cellClass} style={{ ...cellStyle, width: "100%" }}
+                        value={w.pndType} disabled={readOnly}
+                        onChange={(e) => updateWht(idx, { pndType: e.target.value as WhtRow["pndType"] })}>
+                        <option value="">— ยังไม่ระบุ —</option>
+                        <option value="PND3">{PND_LABEL.PND3}</option>
+                        <option value="PND53">{PND_LABEL.PND53}</option>
+                      </select>
                     </Td>
                     <Td right>
                       <input type="number" min="0" step="0.01" className={`${cellClass} text-right`} style={{ ...cellStyle, width: "100%" }}
@@ -1359,7 +1749,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                 <MField label="เลขผู้เสียภาษี *">
                   <input className={fieldClass} style={fieldStyle} inputMode="numeric"
                     value={w.taxId} disabled={readOnly} placeholder="เลข 13 หลัก"
-                    onChange={(e) => updateWht(idx, { taxId: e.target.value })} />
+                    onChange={(e) => updateWhtTaxId(idx, e.target.value)} />
                 </MField>
                 <MField label="ชื่อผู้รับ *">
                   <input className={fieldClass} style={fieldStyle}
@@ -1370,6 +1760,15 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                   <input className={fieldClass} style={fieldStyle}
                     value={w.payeeAddress} disabled={readOnly} placeholder="—"
                     onChange={(e) => updateWht(idx, { payeeAddress: e.target.value })} />
+                </MField>
+                <MField label="ภ.ง.ด.">
+                  <select className={fieldClass} style={fieldStyle}
+                    value={w.pndType} disabled={readOnly}
+                    onChange={(e) => updateWht(idx, { pndType: e.target.value as WhtRow["pndType"] })}>
+                    <option value="">— ยังไม่ระบุ —</option>
+                    <option value="PND3">{PND_LABEL.PND3}</option>
+                    <option value="PND53">{PND_LABEL.PND53}</option>
+                  </select>
                 </MField>
                 <div className="grid grid-cols-2 gap-2">
                   <MField label="ค่าใช้จ่าย">
@@ -1455,10 +1854,48 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
 
       {!readOnly && (
         <div className="flex items-center justify-end gap-2">
+          {/* secondary, not ghost: ghost's border is transparent, so the button
+              had no edge while the two beside it did. */}
+          <Button variant="secondary" icon={<Printer size={14} />} onClick={handlePrint}
+            loading={saving} disabled={submitting}>
+            พิมพ์ AP-3.1
+          </Button>
           <Button variant="secondary" onClick={handleSave} loading={saving} disabled={submitting}>บันทึกแบบร่าง</Button>
-          <Button variant="primary" onClick={handleSubmit} loading={submitting} disabled={saving}>ส่งคำขอ</Button>
+          <Button variant="primary" onClick={requestSubmit} loading={submitting} disabled={saving}>ส่งคำขอ</Button>
         </div>
       )}
+
+      <Dialog
+        open={printNotice}
+        onOpenChange={(o) => { if (!o && !submitting) setPrintNotice(false); }}
+        title="ก่อนส่งคำขอ — อย่าลืมพิมพ์ AP-3.1"
+        scrollable={false}
+      >
+        <div className="px-5 py-4 flex flex-col gap-4">
+          <p className="text-[13px] m-0" style={{ color: "var(--text-secondary)" }}>
+            พิมพ์แบบฟอร์ม <b style={{ color: "var(--text-heading)" }}>AP-3.1</b> ให้ผู้ขอเซ็น
+            แล้ว <b style={{ color: "var(--text-heading)" }}>แนบไปกับใบเสร็จตัวจริงส่งแผนกบัญชี</b> —
+            ระบบส่งได้เฉพาะข้อมูล ตัวเอกสารยังต้องเดินทางเป็นกระดาษ
+          </p>
+          <p className="text-[12px] m-0 px-3 py-2 rounded-lg"
+            style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
+            พิมพ์ตอนนี้ได้เลย หน้าพิมพ์จะเปิดในแท็บใหม่ · หรือพิมพ์ทีหลังจากหน้ารายละเอียดคำขอก็ได้
+          </p>
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="ghost" size="sm" disabled={submitting} onClick={() => setPrintNotice(false)}>
+              ยกเลิก
+            </Button>
+            <Button variant="secondary" size="sm" icon={<Printer size={14} />} disabled={submitting}
+              onClick={handlePrint}>
+              พิมพ์ AP-3.1
+            </Button>
+            <Button variant="primary" size="sm" loading={submitting}
+              onClick={() => { setPrintNotice(false); void handleSubmit(); }}>
+              ส่งคำขอ
+            </Button>
+          </div>
+        </div>
+      </Dialog>
 
       {/* Confirm popup for file delete */}
       <Dialog
@@ -1478,6 +1915,23 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
         </div>
       </Dialog>
 
+      {/* OCR results wait here until the user confirms them (§7) */}
+      {/* Mounted only while there are candidates: a fresh `[]` prop on every closed
+          render would re-seed the modal's local copy in a loop. */}
+      {ocrRows !== null && (
+      <OcrConfirmModal
+        open
+        rows={ocrRows}
+        skippedPages={ocrSkipped}
+        branches={branches}
+        brandChosen={!!brandCode}
+        glForced={glForced}
+        forcedGlLabel={`${FORCE_GL_NON_ROCKS_PC} · เงินจ่ายแทนบริษัทอื่น`}
+        onConfirm={acceptOcrRows}
+        onCancel={() => { void cancelOcrRows(); }}
+      />
+      )}
+
       {/* OCR scanning overlays — shown while Claude reads receipts / transfer slips */}
       {ocrScanning && (
         <TravelExpenseLoadingPopup
@@ -1485,13 +1939,6 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           subtitle="AI กำลังอ่านข้อมูลจากใบเสร็จ / ใบกำกับภาษี"
         />
       )}
-      {slipScanning && (
-        <TravelExpenseLoadingPopup
-          label="กำลังตรวจสอบ..."
-          subtitle="AI กำลังอ่านข้อมูลจากสลิปโอนเงิน"
-        />
-      )}
-
       <AttachmentViewer
         open={viewing != null}
         source={viewing?.source ?? null}
@@ -1547,241 +1994,6 @@ function FootVal({ value, accent, tone }: { value: string; accent?: boolean; ton
   );
 }
 
-/** Searchable G/L account picker (`glAccountNo — nameTh`). */
-function GlPicker({
-  options, valueNo, disabled, onPick,
-}: {
-  options: GlAccountOption[];
-  valueNo: string;
-  disabled?: boolean;
-  onPick: (o: GlAccountOption | null) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [q, setQ] = useState("");
-  const btnRef = useRef<HTMLButtonElement>(null);
-  const popRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number; width: number; above: boolean } | null>(null);
-  const selected = options.find((o) => o.glAccountNo === valueNo) ?? null;
-
-  // Anchor the popup to the button in viewport coords (position: fixed) so it
-  // floats ABOVE the table's overflow container instead of being clipped inside it.
-  const place = () => {
-    const r = btnRef.current?.getBoundingClientRect();
-    if (!r) return;
-    const width = Math.max(260, Math.min(320, window.innerWidth - 16));
-    const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
-    const spaceBelow = window.innerHeight - r.bottom;
-    const above = spaceBelow < 280 && r.top > spaceBelow;
-    setPos({ top: above ? r.top - 4 : r.bottom + 4, left, width, above });
-  };
-
-  useEffect(() => {
-    if (!open) return;
-    place();
-    const onDoc = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (btnRef.current?.contains(t) || popRef.current?.contains(t)) return;
-      setOpen(false);
-    };
-    const reflow = () => place();
-    document.addEventListener("mousedown", onDoc);
-    window.addEventListener("scroll", reflow, true); // capture: follows any scroll container
-    window.addEventListener("resize", reflow);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      window.removeEventListener("scroll", reflow, true);
-      window.removeEventListener("resize", reflow);
-    };
-  }, [open]);
-
-  const filtered = useMemo(() => {
-    const term = q.trim().toLowerCase();
-    const base = !term
-      ? options
-      : options.filter((o) =>
-          o.glAccountNo.toLowerCase().includes(term) ||
-          (o.nameTh ?? "").toLowerCase().includes(term) ||
-          (o.nameEn ?? "").toLowerCase().includes(term));
-    return base.slice(0, 60);
-  }, [q, options]);
-
-  return (
-    <div className="relative">
-      <button ref={btnRef} type="button" disabled={disabled}
-        onClick={() => setOpen((v) => !v)}
-        aria-haspopup="listbox" aria-expanded={open}
-        aria-label={selected ? `รายการ: ${selected.glAccountNo} ${selected.nameTh ?? ""}` : "เลือกรายการบัญชี"}
-        className={`${cellClass} w-full text-left flex items-center gap-1.5 disabled:cursor-not-allowed`}
-        style={{ ...cellStyle, minHeight: 32 }}>
-        <span className="flex-1 min-w-0 truncate" style={{ color: selected ? "var(--text-primary)" : "var(--text-faint)" }}>
-          {selected ? `${selected.glAccountNo} — ${selected.nameTh ?? ""}` : "— เลือกรายการ —"}
-        </span>
-        <Search size={12} className="shrink-0" style={{ color: "var(--text-faint)" }} />
-      </button>
-      {open && pos && createPortal(
-        <div ref={popRef}
-          className="fixed z-[70] rounded-xl overflow-hidden"
-          style={{
-            top: pos.above ? undefined : pos.top,
-            bottom: pos.above ? window.innerHeight - pos.top : undefined,
-            left: pos.left, width: pos.width,
-            background: "var(--bg-dropdown, var(--bg-card))",
-            border: "1px solid var(--border-card)", boxShadow: "var(--shadow-dropdown)",
-          }}>
-          <div className="p-2" style={{ borderBottom: "1px solid var(--border-light)" }}>
-            <input autoFocus className={cellClass} style={{ ...cellStyle, width: "100%" }}
-              aria-label="ค้นหาเลขบัญชี / ชื่อบัญชี"
-              placeholder="ค้นหาเลขบัญชี / ชื่อบัญชี" value={q} onChange={(e) => setQ(e.target.value)} />
-          </div>
-          <div className="max-h-56 overflow-y-auto slim-scroll">
-            {valueNo && (
-              <button type="button" onClick={() => { onPick(null); setOpen(false); setQ(""); }}
-                className="w-full text-left px-3 py-1.5 text-[11px] cursor-pointer border-none bg-transparent"
-                style={{ color: "var(--text-muted)" }}>
-                ล้างการเลือก
-              </button>
-            )}
-            {filtered.length === 0 ? (
-              <p className="px-3 py-2 text-[12px] m-0" style={{ color: "var(--text-muted)" }}>ไม่พบบัญชี</p>
-            ) : filtered.map((o) => (
-              <button key={o.glAccountNo} type="button"
-                onClick={() => { onPick(o); setOpen(false); setQ(""); }}
-                className="w-full text-left px-3 py-1.5 cursor-pointer border-none bg-transparent hover:opacity-80"
-                style={{ background: o.glAccountNo === valueNo ? "var(--nav-active-bg)" : "transparent" }}>
-                <span className="block text-[12px] font-semibold" style={{ color: "var(--text-primary)" }}>{o.glAccountNo}</span>
-                <span className="block text-[11px] truncate" style={{ color: "var(--text-muted)" }}>{o.nameTh ?? o.nameEn ?? ""}</span>
-              </button>
-            ))}
-          </div>
-        </div>,
-        document.body,
-      )}
-    </div>
-  );
-}
-
-/** Branch dimension picker — searchable, shows only the Code in the field.
- *  Same floating-portal behaviour as GlPicker so it isn't clipped by the table. */
-function BranchPicker({
-  options, value, disabled, noBrand, onPick,
-}: {
-  options: BranchOption[];
-  value: string;
-  disabled?: boolean;
-  noBrand?: boolean;
-  onPick: (code: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [q, setQ] = useState("");
-  const btnRef = useRef<HTMLButtonElement>(null);
-  const popRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number; width: number; above: boolean } | null>(null);
-  const selected = options.find((o) => o.code === value) ?? null;
-
-  const place = () => {
-    const r = btnRef.current?.getBoundingClientRect();
-    if (!r) return;
-    const width = Math.max(260, Math.min(320, window.innerWidth - 16));
-    const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
-    const spaceBelow = window.innerHeight - r.bottom;
-    const above = spaceBelow < 280 && r.top > spaceBelow;
-    setPos({ top: above ? r.top - 4 : r.bottom + 4, left, width, above });
-  };
-
-  useEffect(() => {
-    if (!open) return;
-    place();
-    const onDoc = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (btnRef.current?.contains(t) || popRef.current?.contains(t)) return;
-      setOpen(false);
-    };
-    const reflow = () => place();
-    document.addEventListener("mousedown", onDoc);
-    window.addEventListener("scroll", reflow, true);
-    window.addEventListener("resize", reflow);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      window.removeEventListener("scroll", reflow, true);
-      window.removeEventListener("resize", reflow);
-    };
-  }, [open]);
-
-  const filtered = useMemo(() => {
-    const term = q.trim().toLowerCase();
-    const base = !term
-      ? options
-      : options.filter((o) =>
-          o.code.toLowerCase().includes(term) ||
-          (o.name ?? "").toLowerCase().includes(term));
-    return base.slice(0, 80);
-  }, [q, options]);
-
-  return (
-    <div className="relative">
-      <button ref={btnRef} type="button" disabled={disabled}
-        onClick={() => setOpen((v) => !v)}
-        aria-haspopup="listbox" aria-expanded={open}
-        aria-label={selected ? `สาขา: ${selected.code}` : "เลือกสาขา"}
-        className={`${cellClass} w-full text-left flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-60`}
-        style={{ ...cellStyle, minHeight: 32 }}>
-        <span className="flex-1 min-w-0 truncate" style={{ color: selected ? "var(--text-primary)" : "var(--text-faint)" }}>
-          {selected ? selected.code : (noBrand ? "เลือกแบรนด์ก่อน" : "— เลือก —")}
-        </span>
-        <Search size={12} className="shrink-0" style={{ color: "var(--text-faint)" }} />
-      </button>
-      {open && pos && createPortal(
-        <div ref={popRef}
-          className="fixed z-[70] rounded-xl overflow-hidden"
-          style={{
-            top: pos.above ? undefined : pos.top,
-            bottom: pos.above ? window.innerHeight - pos.top : undefined,
-            left: pos.left, width: pos.width,
-            background: "var(--bg-dropdown, var(--bg-card))",
-            border: "1px solid var(--border-card)", boxShadow: "var(--shadow-dropdown)",
-          }}>
-          <div className="p-2" style={{ borderBottom: "1px solid var(--border-light)" }}>
-            <input autoFocus className={cellClass} style={{ ...cellStyle, width: "100%" }}
-              aria-label="ค้นหาสาขา"
-              placeholder="ค้นหาสาขา (Code / ชื่อ)" value={q} onChange={(e) => setQ(e.target.value)} />
-          </div>
-          <div className="max-h-56 overflow-y-auto slim-scroll">
-            {value && (
-              <button type="button" onClick={() => { onPick(""); setOpen(false); setQ(""); }}
-                className="w-full text-left px-3 py-1.5 text-[11px] cursor-pointer border-none bg-transparent"
-                style={{ color: "var(--text-muted)" }}>
-                ล้างการเลือก
-              </button>
-            )}
-            {filtered.length === 0 ? (
-              <p className="px-3 py-2 text-[12px] m-0" style={{ color: "var(--text-muted)" }}>ไม่พบสาขา</p>
-            ) : filtered.map((o) => (
-              <button key={o.code} type="button"
-                onClick={() => { onPick(o.code); setOpen(false); setQ(""); }}
-                className="w-full text-left px-3 py-1.5 cursor-pointer border-none bg-transparent hover:opacity-80"
-                style={{ background: o.code === value ? "var(--nav-active-bg)" : "transparent" }}>
-                <span className="block text-[12px] font-semibold" style={{ color: "var(--text-primary)" }}>{o.code}</span>
-                {o.name && <span className="block text-[11px] truncate" style={{ color: "var(--text-muted)" }}>{o.name}</span>}
-              </button>
-            ))}
-          </div>
-        </div>,
-        document.body,
-      )}
-    </div>
-  );
-}
-
-/**
- * The attach controls plus the thumbnail strip.
- *
- * **Every kind opens the shared in-page viewer** — the one AP-1, AP-4 and AP-17
- * use — so "view" means view. A thumbnail used to be an `<a target="_blank">`
- * pointed at the download route, where `attachmentResponseHeaders` serves
- * anything non-raster as `Content-Disposition: attachment`: the tab downloaded
- * the file and closed, which is not viewing it. The viewer itself lives once in
- * the parent; this only reports which file was clicked.
- */
 function FileArea({
   files, readOnly, uploading, onPick, onRemove, onView, locked, lockedHint,
 }: {

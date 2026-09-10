@@ -64,9 +64,19 @@ export async function listAdvanceInterfaceConfigView(): Promise<AdvanceInterface
   const brandByCode = new Map(allBrands.map((b) => [b.brandCode.toUpperCase(), b]));
   const ifaceByCode = new Map(ifaceMaps.map((m) => [m.brandCode.toUpperCase(), m]));
 
+  /* Every brand in the registry, not only the ones already carrying an
+     AccFormBrand row.
+     The row list used to come from AccFormBrand alone, and the only way to
+     create such a row is the toggle on this very screen — so a brand added to
+     the master (PLM, SMR) had no row, was therefore not listed, and could never
+     be switched on from anywhere. A brand with no row simply reads as off. */
   const codes: string[] = [];
   const seen = new Set<string>();
   for (const b of ap2Brands) {
+    const c = b.brandCode.toUpperCase();
+    if (!seen.has(c)) { seen.add(c); codes.push(c); }
+  }
+  for (const b of allBrands) {
     const c = b.brandCode.toUpperCase();
     if (!seen.has(c)) { seen.add(c); codes.push(c); }
   }
