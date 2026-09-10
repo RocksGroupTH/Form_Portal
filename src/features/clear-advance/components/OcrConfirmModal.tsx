@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { PoweredByClaude } from "@/components/ui/PoweredByClaude";
-import type { BranchOption, GlAccountOption } from "@/features/clear-advance/types";
+import type { BranchOption } from "@/features/clear-advance/types";
 import type { ReceiptKind } from "@/lib/clr/ai-receipt-core";
 import { BranchPicker, cellClass, cellStyle, isPickerPanelOpen } from "./LinePickers";
 import { normalizeTaxIdInput, taxIdNotice } from "@/lib/clr/seller-tax-id";
@@ -130,8 +130,6 @@ export function OcrConfirmModal({
     .map(({ n }) => n);
   // Each row's account list is fetched for that row's branch, exactly like the
   // expense table does — the server decides what a branch may charge.
-  const [glByBranch, setGlByBranch] = useState<Record<string, GlAccountOption[]>>({});
-  const glRequested = useRef<Set<string>>(new Set());
 
   /**
    * What the Revenue Department says about each seller's tax id, keyed by the id.
@@ -176,45 +174,11 @@ export function OcrConfirmModal({
     }
   }, [taxIdKeys]);
 
-  const branchKeys = useMemo(
-    () => Array.from(new Set(rows.map((r) => r.branchCode).filter(Boolean))).sort().join("|"),
-    [rows],
-  );
-  useEffect(() => {
-    const missing = (branchKeys ? branchKeys.split("|") : []).filter((c) => !glRequested.current.has(c));
-    if (missing.length === 0) return;
-    missing.forEach((c) => glRequested.current.add(c));
-    let cancelled = false;
-    Promise.all(
-      missing.map((code) =>
-        fetch(`/api/request/clear-advance/options/gl-accounts?branch=${encodeURIComponent(code)}`)
-          .then((r) => r.json())
-          .then((j: { ok: boolean; data?: GlAccountOption[] }) => [code, j.ok ? j.data ?? [] : []] as const)
-          .catch(() => {
-            glRequested.current.delete(code); // let a later render retry
-            return [code, [] as GlAccountOption[]] as const;
-          }),
-      ),
-    ).then((entries) => {
-      if (!cancelled) setGlByBranch((prev) => ({ ...prev, ...Object.fromEntries(entries) }));
-    });
-    return () => { cancelled = true; };
-  }, [branchKeys]);
-
-  // Switching a row's branch can invalidate the account on it — drop the pick
-  // rather than carry an account that branch is not allowed to charge.
-  useEffect(() => {
-    setRows((prev) => {
-      let changed = false;
-      const next = prev.map((r) => {
-        const opts = r.branchCode ? glByBranch[r.branchCode] : undefined;
-        if (!r.glAccountNo || !opts || opts.some((o) => o.glAccountNo === r.glAccountNo)) return r;
-        changed = true;
-        return { ...r, glAccountNo: "", glAccountName: "" };
-      });
-      return changed ? next : prev;
-    });
-  }, [glByBranch]);
+  /* The per-branch account list used to be fetched here to power the G/L
+     picker, and then to decide whether a branch change had invalidated the
+     pick. The picker is gone — accounting chooses the account now — and the
+     invalidation moved into `update`, where it needs no options to decide. So
+     the requester's OCR review no longer pulls the chart of accounts at all. */
 
   // Ask for a suggested account once a row has a branch (§10). The branch decides
   // which accounts are allowed, so this cannot run any earlier; the server picks
@@ -251,7 +215,22 @@ export function OcrConfirmModal({
   }, [rows, glForced]);
 
   const update = (key: string, patch: Partial<OcrRow>) =>
-    setRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+    setRows((prev) =>
+      prev.map((r) => {
+        if (r.key !== key) return r;
+        /* Changing the branch invalidates the suggested account: the branch is
+           what decides which accounts may be charged. Cleared unconditionally,
+           and here rather than from the fetched option list, because the
+           requester cannot see this field any more — a stale account riding
+           through would fail their own save later with "หมวดบัญชี X ใช้กับสาขา Y
+           ไม่ได้", naming a field they can neither see nor fix. Emptying it also
+           re-arms the suggestion, which asks again for the new branch. */
+        const branchChanged = patch.branchCode !== undefined && patch.branchCode !== r.branchCode;
+        return branchChanged
+          ? { ...r, ...patch, glAccountNo: "", glAccountName: "", glSuggested: false }
+          : { ...r, ...patch };
+      }),
+    );
 
   return (
     <Dialog
