@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/AttachmentViewer";
 import { Dialog } from "@/components/ui";
 import { Avatar } from "@/components/ui/Avatar";
+import { hrPhotoUrl } from "@/lib/hr/photo-url";
 import { UatDataBanner } from "@/components/UatDataBanner";
 import { getBrandById } from "@/lib/brand";
 import { statusLabelDisplay } from "@/features/accounting/constants";
@@ -930,7 +931,7 @@ export function ReimburseDetail({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
           <div className="flex items-center gap-3 min-w-0">
             <div className="shrink-0 rounded-2xl overflow-hidden" style={{ boxShadow: "0 0 0 2px var(--nav-active-bg)" }}>
-              <Avatar name={request.requesterFullName || "?"} size={48} color="var(--nav-active-text)" />
+              <Avatar name={request.requesterFullName || "?"} size={48} photo={hrPhotoUrl(request.staffId)} color="var(--nav-active-text)" />
             </div>
             <div className="min-w-0 flex flex-col gap-0.5">
               <div className="flex items-baseline gap-2 min-w-0">
@@ -960,7 +961,7 @@ export function ReimburseDetail({
           {request.managerEmail && (
             <div className="flex items-center gap-3 min-w-0 border-t md:border-t-0 md:border-l border-[var(--border-light)] pt-4 md:pt-0 md:pl-6">
               <div className="shrink-0 rounded-2xl overflow-hidden" style={{ boxShadow: "0 0 0 2px var(--nav-active-bg)" }}>
-                <Avatar name={request.managerEmail} size={48} color="var(--nav-active-text)" />
+                <Avatar name={request.managerEmail} size={48} photo={hrPhotoUrl(request.managerStaffId)} color="var(--nav-active-text)" />
               </div>
               <div className="min-w-0 flex flex-col gap-0.5">
                 <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
