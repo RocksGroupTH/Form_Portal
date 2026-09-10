@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Search, Inbox, Loader2, ChevronRight, Send, ClipboardCheck } from "lucide-react";
+import { Search, Inbox, Loader2, ChevronRight, Send, ClipboardCheck, Maximize2, Minimize2 } from "lucide-react";
 import type { ReportRow } from "@/lib/acc/report-service";
 import type { AccRequest } from "@/features/accounting/types";
 import { formatNextApprovalDetail, getMyWorkStatusBucket, myWorkStatusLabel, myWorkStatusStyle, type MyWorkStatusBucket, type MyWorkViewerContext } from "@/lib/acc/approval-display";
@@ -144,6 +144,27 @@ function RequestRowList({
   const [drawerDetail, setDrawerDetail] = useState<AccRequest | null>(null);
   const [tbDetail, setTbDetail] = useState<TravelBookingRequest | null>(null);
   const [rbDetail, setRbDetail] = useState<ReimburseDetailData | null>(null);
+
+  /**
+   * How wide the detail drawer opens.
+   *
+   * 720px fits a summary and not much else, and AP-4's รายการค่าใช้จ่ายจริง is a
+   * fourteen-column table laid out to match the AP-4.1 sheet — inside that width
+   * it is almost entirely horizontal scrolling.
+   *
+   * Widening this panel rather than opening the detail in a Dialog is deliberate:
+   * a Dialog would mount a SECOND copy of the detail beside the one already in
+   * the drawer — two `approval-context` fetches, two `people` fetches, and two
+   * sets of local state that then disagree about which one the approve button
+   * belongs to. One panel that changes width has none of that.
+   *
+   * **It is the shared drawer, so this widens AP-1's, AP-3's and AP-17's too**
+   * (AP-2 has its own panel and is excluded above). That is the intent, not a
+   * side effect: every one of them is the same table problem at a different
+   * width. It is a viewer's own preference, changes no data, and is not reset on
+   * close — somebody who wants the wide view usually wants it for the next row too.
+   */
+  const [drawerWide, setDrawerWide] = useState(false);
   const [drawerFormCode, setDrawerFormCode] = useState<string | null>(null);
   const [loadingDrawer, setLoadingDrawer] = useState(false);
   const [q, setQ] = useState("");
@@ -577,7 +598,12 @@ function RequestRowList({
       )}
 
       {/* Detail drawer — same day-selector view as the report / approval queue */}
-      <SidePanel open={drawerId != null && drawerFormCode !== "AP-2"} onClose={() => setDrawerId(null)} width="min(720px, 100vw)" zIndex={50}>
+      <SidePanel
+        open={drawerId != null && drawerFormCode !== "AP-2"}
+        onClose={() => setDrawerId(null)}
+        width={drawerWide ? "min(1680px, 100vw)" : "min(720px, 100vw)"}
+        zIndex={50}
+      >
         <div
           className="flex items-center justify-between px-4 py-3 shrink-0"
           style={{ borderBottom: "1px solid var(--border-light)" }}
@@ -590,7 +616,23 @@ function RequestRowList({
               ตรวจสอบรายละเอียดและเอกสารแนบ
             </p>
           </div>
-          <SidePanelClose onClick={() => setDrawerId(null)} />
+          <div className="flex items-center gap-1 shrink-0">
+            {/* Beside Close, because both act on the panel rather than on the
+                request inside it. Labelled and titled: an icon pair alone does
+                not say which way it is about to go. */}
+            <button
+              type="button"
+              onClick={() => setDrawerWide((v) => !v)}
+              aria-pressed={drawerWide}
+              aria-label={drawerWide ? "ย่อกล่องรายละเอียดกลับ" : "ขยายกล่องรายละเอียด"}
+              title={drawerWide ? "ย่อกลับ" : "ขยายเต็มความกว้าง"}
+              className="w-6 h-6 flex items-center justify-center rounded-md cursor-pointer border-none bg-transparent p-0"
+              style={{ color: "var(--text-muted)" }}
+            >
+              {drawerWide ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            </button>
+            <SidePanelClose onClick={() => setDrawerId(null)} />
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto no-scrollbar px-4 py-4 acc-theme">
