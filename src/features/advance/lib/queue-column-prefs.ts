@@ -22,12 +22,24 @@ export interface ColumnPrefs {
   saveVisibility: (visible: Record<string, boolean>) => void;
 }
 
-export function makeColumnPrefs(columns: ColumnLike[], colsKey: string, orderKey: string): ColumnPrefs {
+/**
+ * `defaultVisibleKeys` names the columns a first-time reader sees. Omit it and
+ * every column is shown — right for a queue whose columns all earn their place.
+ * A wide report (AP-3's Control report offers 18) names its subset instead, and
+ * a key in that subset that is not a real column is ignored rather than trusted.
+ */
+export function makeColumnPrefs(
+  columns: ColumnLike[],
+  colsKey: string,
+  orderKey: string,
+  defaultVisibleKeys?: readonly string[],
+): ColumnPrefs {
   const canonical = columns.map((c) => c.key);
   const known = new Set(canonical);
+  const shown = defaultVisibleKeys ? new Set(defaultVisibleKeys.filter((k) => known.has(k))) : null;
 
   const defaultVisible = canonical.reduce(
-    (acc, k) => ({ ...acc, [k]: true }),
+    (acc, k) => ({ ...acc, [k]: shown ? shown.has(k) : true }),
     {} as Record<string, boolean>,
   );
 

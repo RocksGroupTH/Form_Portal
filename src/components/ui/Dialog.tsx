@@ -15,7 +15,7 @@ const VISUALLY_HIDDEN: React.CSSProperties = {
   border: 0,
 };
 
-export function Dialog({ open, onOpenChange, title, description, children, contentClassName = "", scrollable = true, uniformSurface = false, hideCloseButton = false, bleedBackground = false, hideTitle = false }: {
+export function Dialog({ open, onOpenChange, title, description, children, contentClassName = "", scrollable = true, uniformSurface = false, hideCloseButton = false, bleedBackground = false, hideTitle = false, onEscapeKeyDown }: {
   open: boolean; onOpenChange: (open: boolean) => void;
   title?: string; description?: string; children: React.ReactNode; contentClassName?: string;
   /** When false, content uses flex column layout — children manage their own scroll region */
@@ -28,6 +28,15 @@ export function Dialog({ open, onOpenChange, title, description, children, conte
   bleedBackground?: boolean;
   /** Keep title for screen readers only (Radix a11y requirement) */
   hideTitle?: boolean;
+  /**
+   * Escape pressed while the dialog is open. Call `preventDefault()` to keep the
+   * dialog open — what a dialog does when the keypress belongs to something
+   * nested inside it, such as an open picker panel. Radix registers its own
+   * Escape handler when the dialog mounts, before any nested popup exists, so a
+   * child cannot win this by stopping the event; refusing it here is the only
+   * order-independent way.
+   */
+  onEscapeKeyDown?: (e: KeyboardEvent) => void;
 }) {
   const overflowClass = scrollable ? "overflow-visible flex flex-col" : "overflow-hidden flex flex-col";
   const paddingClass = scrollable ? "p-0" : "p-0";
@@ -40,6 +49,7 @@ export function Dialog({ open, onOpenChange, title, description, children, conte
           style={{ animation: "overlayFadeIn 0.15s ease-out" }} />
         <RadixDialog.Content
           aria-describedby={undefined}
+          onEscapeKeyDown={onEscapeKeyDown}
           className={`fixed left-[50%] top-[50%] z-[71] w-full translate-x-[-50%] translate-y-[-50%] rounded-xl max-h-[90vh] ${paddingClass} ${overflowClass} ${uniformSurface ? "" : "shadow-2xl"} ${contentClassName || "max-w-lg"}`}
           style={{
             backgroundColor: surfaceBg ?? "var(--bg-modal)",

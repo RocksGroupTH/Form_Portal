@@ -4,6 +4,14 @@ import { getAccPool, sql } from "@/lib/acc/pool";
 import { hrEmployeeTable } from "@/lib/hr/constants";
 import { allocateRequestNo } from "@/lib/acc/sequence";
 import { listClrErpBranchOptions } from "@/lib/clr/clear-advance-admin-service";
+import { allowedDimensionTypes } from "@/lib/clr/clear-advance-gl-filter";
+import { suggestPndType } from "@/lib/clr/wht-pnd-core";
+import {
+  isFilledLine,
+  validateLineGlBranch,
+  validateLineMoney,
+  type GlDimensionTypes,
+} from "@/lib/clr/clear-advance-line-validation";
 import {
   resolveManagerEmail,
   resolveRequesterForActor,
@@ -125,6 +133,11 @@ function mapItemRow(x: Record<string, unknown>): ClearAdvanceItem {
     whtAmount: num(x.WhtAmount),
     netAmount: num(x.NetAmount),
     sortOrder: (x.SortOrder as number) ?? 0,
+    taxId: (x.TaxId as string) ?? null,
+    payeeName: (x.PayeeName as string) ?? null,
+    payeeAddress: (x.PayeeAddress as string) ?? null,
+    taxBranchCode: (x.TaxBranchCode as string) ?? null,
+    taxVendorNo: (x.TaxVendorNo as string) ?? null,
     sourceFileId: (x.SourceFileId as number) ?? null,
   };
 }
@@ -139,6 +152,7 @@ function mapWhtRow(x: Record<string, unknown>): ClearAdvanceWhtItem {
     taxId: (x.TaxId as string) ?? null,
     payeeName: (x.PayeeName as string) ?? null,
     payeeAddress: (x.PayeeAddress as string) ?? null,
+    pndType: (x.PndType as "PND3" | "PND53" | null) ?? null,
     amount: num(x.Amount),
     whtAmount: num(x.WhtAmount),
     netAmount: num(x.NetAmount),
@@ -307,12 +321,21 @@ export async function listPendingAdvances(
   }));
 }
 
-/** AP-3.2 G/L expense-category master (active). */
-export async function listGlAccounts(): Promise<GlAccountOption[]> {
+/** AP-3.2 G/L expense-category master (active), narrowed to the line's branch.
+ *  Filtering happens here rather than in the client so the browser is never handed
+ *  accounts the user is not allowed to charge. */
+export async function listGlAccounts(branchCode?: string | null): Promise<GlAccountOption[]> {
   const pool = await getAccPool();
+  // DimensionType is the real rule, not the "สาขา" in the name. The two agreed
+  // exactly for Branch rows (all 11 of them), but the 6 "Both" rows carry no
+  // "สาขา" in their name, so the name test hid them from every branch line.
+  const types = allowedDimensionTypes(branchCode);
   const res = await pool.request()
     .query(`SELECT GlAccountNo, NameTh, NameEn, DimensionType
-            FROM [dbo].[AccClearAdvanceGl] WHERE IsActive = 1 ORDER BY SortOrder, GlAccountNo`);
+            FROM [dbo].[AccClearAdvanceGl]
+            WHERE IsActive = 1
+              AND DimensionType IN (${types.map((t) => `'${t}'`).join(",")})
+            ORDER BY SortOrder, GlAccountNo`);
   return (res.recordset as Record<string, unknown>[]).map((x) => ({
     glAccountNo: x.GlAccountNo as string,
     nameTh: (x.NameTh as string) ?? null,
@@ -332,6 +355,40 @@ export async function listBranches(brandCode: string | null): Promise<BranchOpti
 
 /* ─────────────────────────── validation ─────────────────────────── */
 
+/**
+ * DimensionType of every G/L account in the AP-3 master, active or not.
+ * Inactive rows are included on purpose: a draft written while an account was
+ * still open must stay saveable and submittable — what is being checked here is
+ * that the branch may charge the account, not that the picker still offers it.
+ */
+async function loadGlDimensionTypes(): Promise<GlDimensionTypes> {
+  const pool = await getAccPool();
+  const res = await pool.request()
+    .query(`SELECT GlAccountNo, DimensionType FROM [dbo].[AccClearAdvanceGl]`);
+  return new Map(
+    (res.recordset as Record<string, unknown>[]).map((x) => [
+      String(x.GlAccountNo ?? "").trim(),
+      (x.DimensionType as string) ?? "Employee",
+    ]),
+  );
+}
+
+/**
+ * The line checks the client cannot be trusted to have made, on the request
+ * being written. Throws the Thai messages joined, like the other write guards.
+ */
+async function assertLinesWritable(c: ClearAdvanceDetail, brandCode: string | null): Promise<void> {
+  const lines = (c.items ?? []).filter(isFilledLine);
+  const errs = validateLineMoney(lines);
+  // A non-home brand has every line's G/L overwritten with FORCE_GL_NON_ROCKS_PC
+  // on the way in, so the account the client sent is never stored and checking
+  // it would refuse a request over a value that gets thrown away.
+  if (isRocksPcBrand(brandCode) && lines.some((it) => it.glAccountNo?.trim())) {
+    errs.push(...validateLineGlBranch(lines, await loadGlDimensionTypes()));
+  }
+  if (errs.length) throw new Error(errs.join("\n"));
+}
+
 /** Strict checks run at submit time. Returns Thai error messages (empty = valid). */
 export function validateForSubmit(
   input: ClearAdvanceSaveInput,
@@ -344,15 +401,14 @@ export function validateForSubmit(
   if (!c.advanceRequestId) errs.push("กรุณาเลือกเลขที่ Advance ที่ต้องการเคลียร์");
   // "เป็นค่าใช้จ่ายของ" is derived from the brand — no separate check needed.
 
-  const lines = (c.items ?? []).filter(
-    (it) => it.glAccountNo || it.description?.trim() || n0(it.amountBeforeVat) > 0,
-  );
+  const lines = (c.items ?? []).filter(isFilledLine);
   if (lines.length === 0) errs.push("กรุณาระบุรายละเอียดค่าใช้จ่ายจริงอย่างน้อย 1 รายการ");
   for (const it of lines) {
     if (!it.expenseDate) errs.push("มีรายการค่าใช้จ่ายที่ยังไม่ได้ระบุวันที่");
     if (!it.glAccountNo) errs.push("มีรายการค่าใช้จ่ายที่ยังไม่ได้เลือกหมวด (รายการ)");
     if (!(n0(it.amountBeforeVat) > 0)) errs.push("มีรายการค่าใช้จ่ายที่จำนวนเงินก่อน VAT ไม่ถูกต้อง");
   }
+  errs.push(...validateLineMoney(lines));
 
   // WHT: the certificate section total must equal the line WHT total (AP-3.1 rule).
   const lineWht = round2(lines.reduce((s, it) => s + n0(it.whtAmount), 0));
@@ -410,9 +466,7 @@ async function persistClear(
   // every other brand forces 110723001 (จ่ายแทนบ.อื่น).
   const isRocksPc = isRocksPcBrand(brandCode);
   const expenseOf = brandCode ?? c.expenseOf ?? null;
-  const items = (c.items ?? []).filter(
-    (it) => it.glAccountNo || it.description?.trim() || n0(it.amountBeforeVat) > 0,
-  );
+  const items = (c.items ?? []).filter(isFilledLine);
   const actualTotal = computeActualTotal(items);
   const refund = computeRefund(c.advanceAmount, actualTotal);
 
@@ -477,17 +531,44 @@ async function persistClear(
       .input("net", sql.Decimal(18, 2), net)
       .input("sort", sql.Int, i)
       .input("srcFile", sql.Int, it.sourceFileId ?? null)
+      // The seller off the tax invoice. Transcription, not a decision, so the
+      // incoming value simply wins — unlike the ภ.ง.ด. type, which a save must
+      // never overwrite.
+      .input("itemTaxId", sql.NVarChar, it.taxId ?? null)
+      .input("itemPayee", sql.NVarChar, it.payeeName ?? null)
+      .input("itemAddr", sql.NVarChar, it.payeeAddress ?? null)
+      .input("itemBranch", sql.NVarChar, it.taxBranchCode ?? null)
+      .input("itemVendor", sql.NVarChar, it.taxVendorNo ?? null)
       .query(`INSERT INTO [dbo].[AccClearAdvanceItem]
                 (ClearAdvanceId, [LineNo], ExpenseDate, DocNo, GlAccountNo, GlAccountName, Description,
-                 BranchCode, AmountBeforeVat, VatAmount, TotalInclVat, WhtAmount, NetAmount, SortOrder, SourceFileId)
+                 BranchCode, AmountBeforeVat, VatAmount, TotalInclVat, WhtAmount, NetAmount, SortOrder, SourceFileId,
+                 TaxId, PayeeName, PayeeAddress, TaxBranchCode, TaxVendorNo)
               VALUES (@cid, @lineNo, @date, @docNo, @glNo, @glName, @desc, @branch,
-                      @before, @vat, @total, @whtAmt, @net, @sort, @srcFile)`);
+                      @before, @vat, @total, @whtAmt, @net, @sort, @srcFile,
+                      @itemTaxId, @itemPayee, @itemAddr, @itemBranch, @itemVendor)`);
   }
 
   // Replace WHT certificate lines.
   const whts = (c.whtItems ?? []).filter(
     (w) => n0(w.whtAmount) > 0 || w.taxId?.trim() || w.payeeName?.trim(),
   );
+  // Remember the ภ.ง.ด. type already decided for each row, keyed by the id the
+  // client is about to send back.
+  //
+  // The rows are deleted and re-inserted on every save, so a client that does
+  // not know about the field — an older form, a partial payload, anything but
+  // the two editors — silently reverts somebody's decision, and the row id even
+  // changes underneath it. Demonstrated on 2026-09-08: a type set to PND3 came
+  // back PND53 after an unrelated save. The client's own value still wins; this
+  // only covers the field being absent altogether.
+  const priorPnd = new Map<number, string>();
+  const priorRes = await tx.request().input("cid", sql.Int, clearId)
+    .query(`SELECT Id, PndType FROM [dbo].[AccClearAdvanceWht]
+            WHERE ClearAdvanceId = @cid AND PndType IS NOT NULL`);
+  for (const r of priorRes.recordset as { Id: number; PndType: string }[]) {
+    priorPnd.set(r.Id, r.PndType);
+  }
+
   await tx.request().input("cid", sql.Int, clearId)
     .query(`DELETE FROM [dbo].[AccClearAdvanceWht] WHERE ClearAdvanceId = @cid`);
   for (let i = 0; i < whts.length; i++) {
@@ -501,14 +582,25 @@ async function persistClear(
       .input("taxId", sql.NVarChar, w.taxId ?? null)
       .input("name", sql.NVarChar, w.payeeName ?? null)
       .input("addr", sql.NVarChar, w.payeeAddress ?? null)
+      // Precedence, most deliberate first: what this save says, then what the
+      // row already carried, then what the tax id suggests. `undefined` means
+      // the client never mentioned the field; an explicit null means someone
+      // cleared it, and stays cleared.
+      .input(
+        "pnd",
+        sql.NVarChar,
+        w.pndType !== undefined
+          ? w.pndType
+          : (w.id != null ? priorPnd.get(w.id) ?? null : null) ?? suggestPndType(w.taxId),
+      )
       .input("amt", sql.Decimal(18, 2), n0(w.amount))
       .input("whtAmt", sql.Decimal(18, 2), n0(w.whtAmount))
       .input("net", sql.Decimal(18, 2), round2(n0(w.amount) - n0(w.whtAmount)))
       .input("sort", sql.Int, i)
       .query(`INSERT INTO [dbo].[AccClearAdvanceWht]
                 (ClearAdvanceId, [LineNo], ExpenseDate, DocNo, Description, TaxId, PayeeName, PayeeAddress,
-                 Amount, WhtAmount, NetAmount, SortOrder)
-              VALUES (@cid, @lineNo, @date, @docNo, @desc, @taxId, @name, @addr, @amt, @whtAmt, @net, @sort)`);
+                 PndType, Amount, WhtAmount, NetAmount, SortOrder)
+              VALUES (@cid, @lineNo, @date, @docNo, @desc, @taxId, @name, @addr, @pnd, @amt, @whtAmt, @net, @sort)`);
   }
 
   await tx.request()
@@ -517,14 +609,22 @@ async function persistClear(
     .query(`UPDATE [dbo].[AccRequest] SET TotalAmount=@total, UpdatedAt=SYSDATETIME() WHERE Id=@rid`);
 }
 
-/** Snapshot the linked AP-2 advance's no. + amount (server-trusted, not client). */
+/**
+ * Snapshot the linked AP-2 advance's no. + amount (server-trusted, not client).
+ *
+ * The amount is the THB one. `AccAdvance.Amount` is the face value in the
+ * advance's own currency, so a USD 100 advance would otherwise be cleared as if
+ * the employee had been given 100 baht — the clearing, the refund and the ERP
+ * journal are all in baht. `BaseAmount` carries the converted figure; it is null
+ * on plain THB advances, where the face value already is the baht value.
+ */
 async function snapshotAdvance(
   pool: Awaited<ReturnType<typeof getAccPool>>,
   advanceRequestId: number | null,
 ): Promise<{ requestNo: string | null; amount: number | null }> {
   if (!advanceRequestId) return { requestNo: null, amount: null };
   const r = await pool.request().input("id", sql.Int, advanceRequestId)
-    .query(`SELECT r.RequestNo, a.Amount
+    .query(`SELECT r.RequestNo, COALESCE(a.BaseAmount, a.Amount) AS Amount
             FROM [dbo].[AccRequest] r
             LEFT JOIN [dbo].[AccAdvance] a ON a.RequestId = r.Id
             WHERE r.Id = @id AND r.FormCode = 'AP-2'`);
@@ -543,6 +643,8 @@ export async function saveDraft(
 ): Promise<number> {
   const pool = await getAccPool();
   const requester = await resolveRequesterForActor(loginEmail, null);
+
+  await assertLinesWritable(input.clear, input.brandCode ?? null);
 
   const snap = await snapshotAdvance(pool, input.clear.advanceRequestId ?? null);
   input.clear.advanceRequestNo = snap.requestNo;
@@ -687,6 +789,11 @@ export async function submitRequest(
     { managerStaffId: requester.managerStaffId ?? null },
   );
   if (errors.length) throw new Error(errors.join("\n"));
+
+  // Branch/GL compatibility needs the G/L master, so it cannot live in the pure
+  // validateForSubmit — a draft saved before a branch was changed can still be
+  // carrying an account that branch may not charge.
+  await assertLinesWritable(clear, current.brandCode ?? null);
 
   const managerEmail = await resolveManagerEmail(requester.managerStaffId);
   if (!managerEmail) throw new Error("ไม่พบอีเมลผู้จัดการ (ManagerStaffId) — ไม่สามารถส่งอนุมัติได้");
@@ -838,6 +945,10 @@ export async function saveAccountEdit(
     .query(`SELECT TOP 1 AdvanceAmount FROM [dbo].[AccClearAdvance] WHERE RequestId = @id`);
   if (advRes.recordset.length === 0) throw new Error("ไม่พบข้อมูลเคลียร์");
   input.clear.advanceAmount = num((advRes.recordset[0] as Record<string, unknown>).AdvanceAmount);
+
+  // Checked against input.brandCode — the same brand persistClear books by, so
+  // the accounts validated here are exactly the ones about to be stored.
+  await assertLinesWritable(input.clear, input.brandCode ?? null);
 
   await persistClearOnly(input);
 }

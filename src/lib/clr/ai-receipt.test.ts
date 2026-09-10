@@ -1,0 +1,387 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import {
+  BRANCH_SUGGEST_SYSTEM,
+  RECEIPT_SYSTEM,
+  buildBranchSuggestUserText,
+  buildGlSuggestUserText,
+  parseReceiptDocs,
+  pickSuggestedBranch,
+  pickSuggestedGl,
+  thaiPrintedDate,
+  toDate,
+} from "./ai-receipt-core";
+
+/** Most tests only care about the rows; the skip count has its own tests. */
+const docsOf = (raw: string) => parseReceiptDocs(raw).docs;
+
+const TWO_DOCS = `[
+  {"date":"2026-08-04","description":"ค่าแท็กซี่","docNo":"INV-001","amountBeforeVat":"1,000","vat":70,"wht":null,
+   "taxId":"0105512345678","payeeName":"บจก. เอ","payeeAddress":"กรุงเทพฯ"},
+  {"date":"2026-08-05","description":"ค่าอาหาร","docNo":"INV-002","amountBeforeVat":500,"vat":35,"wht":15,
+   "taxId":null,"payeeName":"บจก. บี","payeeAddress":null}
+]`;
+
+test("two documents in one image -> two rows, each with its own invoice number", () => {
+  const docs = docsOf(TWO_DOCS);
+  assert.equal(docs.length, 2);
+  assert.deepEqual(docs.map((d) => d.docNo), ["INV-001", "INV-002"]);
+  assert.equal(docs[0].beforeVat, 1000);
+  assert.equal(docs[0].vat, 70);
+  assert.equal(docs[0].total, 1070);
+  assert.equal(docs[0].taxId, "0105512345678");
+  assert.equal(docs[1].wht, 15);
+  assert.equal(docs[1].payeeAddress, null);
+});
+
+test("a single-invoice image still yields a one-element array", () => {
+  const docs = docsOf('{"date":"2026-08-04","docNo":"A1","amountBeforeVat":100,"vat":7}');
+  assert.equal(docs.length, 1);
+  assert.equal(docs[0].docNo, "A1");
+  assert.equal(docs[0].total, 107);
+});
+
+test("markdown fences and surrounding prose are tolerated", () => {
+  const docs = docsOf('Here you go:\n```json\n[{"docNo":"B2","amountBeforeVat":50}]\n```\n');
+  assert.equal(docs.length, 1);
+  assert.equal(docs[0].docNo, "B2");
+});
+
+test("entries with nothing usable are dropped", () => {
+  const docs = docsOf('[{"docNo":"C3","amountBeforeVat":10},{"date":null,"docNo":null,"description":null,"amountBeforeVat":null,"payeeName":null}]');
+  assert.equal(docs.length, 1);
+  assert.equal(docs[0].docNo, "C3");
+});
+
+test("unparseable output yields no rows rather than throwing", () => {
+  assert.deepEqual(docsOf("I cannot read this image."), []);
+  assert.deepEqual(docsOf("[{oops}]"), []);
+  assert.deepEqual(docsOf(""), []);
+});
+
+test("each document carries the kind the model classified it as", () => {
+  const docs = docsOf(`[
+    {"kind":"slip","date":"2026-01-06","amountBeforeVat":8969,"docNo":"016006114139DTF04569"},
+    {"kind":"receipt","docNo":"EBYC25120005297","amountBeforeVat":1031}
+  ]`);
+  assert.deepEqual(docs.map((d) => d.kind), ["slip", "receipt"]);
+});
+
+test("only receipts and slips become rows — anything else is counted, not listed", () => {
+  // The AP-3 sample bundle: a BC voucher, a handwritten summary, a slip, a receipt.
+  const read = parseReceiptDocs(`[
+    {"kind":"other","pages":1},
+    {"kind":"other","pages":1},
+    {"kind":"slip","date":"2026-01-06","amountBeforeVat":8969,"docNo":"016006114139DTF04569"},
+    {"kind":"receipt","docNo":"EBYC25120005297","pages":4,"amountBeforeVat":1031}
+  ]`);
+  assert.deepEqual(read.docs.map((d) => d.docNo), ["016006114139DTF04569", "EBYC25120005297"]);
+  assert.equal(read.skippedPages, 2);
+});
+
+test("an invented description on a skipped page never reaches a row", () => {
+  const read = parseReceiptDocs(
+    '[{"kind":"other","pages":2,"description":"บริการเช่าห้อง - ธนง","amountBeforeVat":5000}]',
+  );
+  assert.deepEqual(read.docs, []);
+  assert.equal(read.skippedPages, 2);
+});
+
+test("a skipped entry with no page count still counts as one page", () => {
+  assert.equal(parseReceiptDocs('[{"kind":"other"}]').skippedPages, 1);
+  assert.equal(parseReceiptDocs('[{"kind":"other","pages":0}]').skippedPages, 1);
+  // A nonsense page count cannot inflate the message past a plausible upload.
+  assert.equal(parseReceiptDocs('[{"kind":"other","pages":9999}]').skippedPages, 50);
+});
+
+test("nothing skipped when every page was readable", () => {
+  assert.equal(parseReceiptDocs(TWO_DOCS).skippedPages, 0);
+  assert.equal(parseReceiptDocs("I cannot read this image.").skippedPages, 0);
+});
+
+test("an unlabelled or unknown kind falls back to receipt", () => {
+  assert.equal(docsOf('[{"docNo":"A1","amountBeforeVat":10}]')[0].kind, "receipt");
+  assert.equal(docsOf('[{"kind":"invoice","docNo":"A1","amountBeforeVat":10}]')[0].kind, "receipt");
+});
+
+test("one invoice printed across four pages collapses to one row", () => {
+  // The KEX receipt in the AP-3 sample bundle: the same number on every page,
+  // and the grand total printed only on the last one.
+  const page = (n: number) =>
+    `{"kind":"receipt","docNo":"EBYC25120005297","description":"Transportation .1KG","amountBeforeVat":${n}}`;
+  const docs = docsOf(`[${page(19)},${page(19)},${page(19)},${page(1031)}]`);
+  assert.equal(docs.length, 1);
+  assert.equal(docs[0].beforeVat, 1031);
+  assert.equal(docs[0].mergedEntries, 4);
+});
+
+test("the merged row carries the fields of the page that held the total", () => {
+  const docs = docsOf(`[
+    {"kind":"receipt","docNo":"A-9","description":"หน้าแรก","date":"2026-08-01","amountBeforeVat":19,"vat":1.33},
+    {"kind":"receipt","docNo":"A-9","description":"รวมทั้งสิ้น","date":"2026-08-02","amountBeforeVat":1031,"vat":72.17}
+  ]`);
+  assert.equal(docs.length, 1);
+  assert.equal(docs[0].description, "รวมทั้งสิ้น");
+  assert.equal(docs[0].date, "2026-08-02");
+  assert.equal(docs[0].vat, 72.17);
+  assert.equal(docs[0].total, 1103.17);
+});
+
+test("a document number OCR broke apart is still the same document", () => {
+  // Observed: "KEX1001273 07371" for KEX100127307371 on the same receipt.
+  const docs = docsOf(`[
+    {"kind":"receipt","docNo":"KEX1001273 07371","amountBeforeVat":19},
+    {"kind":"receipt","docNo":"kex100127307371","amountBeforeVat":880}
+  ]`);
+  assert.equal(docs.length, 1);
+  assert.equal(docs[0].beforeVat, 880);
+});
+
+test("a one-character misread stays its own row rather than being guessed at", () => {
+  const docs = docsOf(`[
+    {"kind":"receipt","docNo":"EBYC25120005297","amountBeforeVat":1031},
+    {"kind":"receipt","docNo":"EBYC2512Q005297","amountBeforeVat":1031}
+  ]`);
+  assert.equal(docs.length, 2);
+});
+
+test("two vendors sharing an invoice number keep their own rows", () => {
+  const docs = docsOf(`[
+    {"kind":"receipt","docNo":"001","payeeName":"บจก. เอ","amountBeforeVat":100},
+    {"kind":"receipt","docNo":"001","payeeName":"บจก. บี","amountBeforeVat":200}
+  ]`);
+  assert.equal(docs.length, 2);
+  assert.deepEqual(docs.map((d) => d.payeeName), ["บจก. เอ", "บจก. บี"]);
+});
+
+test("a receipt and a slip carrying the same number are different documents", () => {
+  const docs = docsOf(`[
+    {"kind":"receipt","docNo":"X1","amountBeforeVat":100},
+    {"kind":"slip","docNo":"X1","amountBeforeVat":100}
+  ]`);
+  assert.deepEqual(docs.map((d) => d.kind), ["receipt", "slip"]);
+});
+
+test("entries with no document number are each their own row", () => {
+  const docs = docsOf(`[
+    {"kind":"receipt","description":"ค่าแท็กซี่","amountBeforeVat":100},
+    {"kind":"receipt","description":"ค่าอาหาร","amountBeforeVat":200}
+  ]`);
+  assert.equal(docs.length, 2);
+});
+
+test("a document that arrived once is not marked as merged", () => {
+  assert.equal(docsOf('[{"docNo":"A1","amountBeforeVat":10}]')[0].mergedEntries, undefined);
+});
+
+const NOW = new Date("2026-09-01T00:00:00Z");
+
+test("a date the model already converted is kept as it is", () => {
+  // The K+ slip in the AP-3 sample: "โอนเงินสำเร็จ 6 ม.ค. 69" = 6 January 2026.
+  assert.equal(toDate("2026-01-06", NOW), "2026-01-06");
+  assert.equal(toDate("2025-12-23", NOW), "2025-12-23");
+});
+
+test("a Buddhist year the model forgot to convert is finished off", () => {
+  assert.equal(toDate("2569-01-06", NOW), "2026-01-06");
+  assert.equal(toDate("2568-12-23", NOW), "2025-12-23");
+});
+
+test("a date that cannot exist is refused rather than rolled over", () => {
+  assert.equal(toDate("2026-02-30", NOW), null);
+  assert.equal(toDate("2026-13-01", NOW), null);
+  assert.equal(toDate("2026-00-10", NOW), null);
+  assert.equal(toDate("2026-01-32", NOW), null);
+});
+
+test("a date that has not happened yet is a misread, not a document date", () => {
+  // NOW is 2026-09-01 07:00 in Bangkok.
+  assert.equal(toDate("2026-09-01", NOW), "2026-09-01");
+  assert.equal(toDate("2026-08-31", NOW), "2026-08-31");
+  assert.equal(toDate("2026-09-02", NOW), null);
+  assert.equal(toDate("2027-08-31", NOW), null);
+});
+
+test("today is judged in Bangkok, not UTC", () => {
+  // 18:00 UTC is already the 2nd in Thailand — a slip dated today must not be
+  // refused just because the server's own clock has not turned over.
+  const lateEvening = new Date("2026-09-01T18:00:00Z");
+  assert.equal(toDate("2026-09-02", lateEvening), "2026-09-02");
+  assert.equal(toDate("2026-09-03", lateEvening), null);
+});
+
+test("anything that is not an ISO date is refused", () => {
+  assert.equal(toDate("6 ม.ค. 69", NOW), null);
+  assert.equal(toDate("06/01/2569", NOW), null);
+  assert.equal(toDate("", NOW), null);
+  assert.equal(toDate(null, NOW), null);
+  assert.equal(toDate(20260106, NOW), null);
+});
+
+test("a document keeps only a date that survived the guard", () => {
+  const docs = docsOf('[{"docNo":"A1","date":"2569-01-06","amountBeforeVat":10}]');
+  assert.equal(docs[0].date, "2026-01-06");
+  const bad = docsOf('[{"docNo":"A2","date":"2026-02-30","amountBeforeVat":10}]');
+  assert.equal(bad[0].date, null);
+});
+
+test("the prompt makes the largest line win, not the most repeated one", () => {
+  // The KEX receipt returned "Transportation .1KG" — the wording of its many
+  // repeated 19.00 lines — instead of its one 165.00 line.
+  assert.ok(RECEIPT_SYSTEM.includes("find the single highest one"));
+  assert.ok(RECEIPT_SYSTEM.includes("Never answer with the wording that appears on the"));
+  // The amount half of the rule stays: the totals are the whole document's.
+  assert.ok(RECEIPT_SYSTEM.includes("grand total across all its lines"));
+});
+
+test("the prompt spells out the Thai day-month-year order", () => {
+  assert.ok(RECEIPT_SYSTEM.includes("DAY month YEAR"));
+  assert.ok(RECEIPT_SYSTEM.includes("ม.ค.=01"));
+  assert.ok(RECEIPT_SYSTEM.includes("ธ.ค.=12"));
+  assert.ok(RECEIPT_SYSTEM.includes("subtract 543"));
+});
+
+const ALLOWED = ["610322005", "610101001", "115030"];
+
+test("a suggestion from the candidate list is kept", () => {
+  assert.equal(pickSuggestedGl("610322005", ALLOWED), "610322005");
+  assert.equal(pickSuggestedGl("610322005 — ค่าเดินทาง\n", ALLOWED), "610322005");
+});
+
+test("a suggestion outside the candidate list is discarded", () => {
+  assert.equal(pickSuggestedGl("610999999", ALLOWED), "");
+  // Not a prefix/substring match either — a longer number is a different account.
+  assert.equal(pickSuggestedGl("6103220050", ALLOWED), "");
+  assert.equal(pickSuggestedGl("ไม่มีบัญชีที่ตรง", ALLOWED), "");
+  assert.equal(pickSuggestedGl("", ALLOWED), "");
+});
+
+test("the prompt lists exactly the accounts the branch allows", () => {
+  const text = buildGlSuggestUserText("ค่าแท็กซี่", [
+    { glAccountNo: "610322005", nameTh: "ค่าเดินทาง", nameEn: null },
+    { glAccountNo: "115030", nameTh: null, nameEn: "VAT" },
+  ]);
+  assert.ok(text.includes("610322005 = ค่าเดินทาง"));
+  assert.ok(text.includes("115030 = VAT"));
+  assert.ok(text.includes("ค่าแท็กซี่"));
+});
+
+/* ─────────────────────── branch suggestion (§10) ─────────────────────── */
+
+const BRANCHES = ["PC1037", "PC1101", "PC1111"];
+
+test("a branch from the candidate list is kept", () => {
+  assert.deepEqual(pickSuggestedBranch('{"code":"PC1101","close":false}', BRANCHES),
+    { code: "PC1101", close: false });
+  // Fences and stray prose around the object are the model's habit, not an answer.
+  assert.deepEqual(pickSuggestedBranch('```json\n{"code":"PC1101","close":true}\n```', BRANCHES),
+    { code: "PC1101", close: true });
+});
+
+test("a branch outside the candidate list is discarded", () => {
+  assert.deepEqual(pickSuggestedBranch('{"code":"PC9999"}', BRANCHES), { code: "", close: false });
+  assert.deepEqual(pickSuggestedBranch('{"code":""}', BRANCHES), { code: "", close: false });
+  assert.deepEqual(pickSuggestedBranch("PC1101", BRANCHES), { code: "", close: false });
+  assert.deepEqual(pickSuggestedBranch("", BRANCHES), { code: "", close: false });
+  assert.deepEqual(pickSuggestedBranch("ไม่พบสาขาที่ตรง", BRANCHES), { code: "", close: false });
+});
+
+test("a code named inside prose is not a pick", () => {
+  // The whole `code` value must be the branch: a hedged answer names two, and
+  // scanning for a known token would turn "either of these" into a confident pick.
+  assert.deepEqual(pickSuggestedBranch('{"code":"PC1037 หรือ PC1101","close":true}', BRANCHES),
+    { code: "", close: false });
+});
+
+test("close is only reported alongside a branch that survived the re-check", () => {
+  assert.equal(pickSuggestedBranch('{"code":"PC9999","close":true}', BRANCHES).close, false);
+});
+
+test("the branch prompt lists the brand's branches and the note", () => {
+  const text = buildBranchSuggestUserText("ค่าอุปกรณ์ Dec'25 สำหรับCentral Khonkaen2", [
+    { code: "PC1037", name: "CKK-เซ็นทรัล ขอนแก่น" },
+    { code: "PC1101", name: "CKK2-เซนทรัล ขอนแก่น 2" },
+    { code: "PC1111", name: null },
+  ]);
+  assert.ok(text.includes("PC1101 = CKK2-เซนทรัล ขอนแก่น 2"));
+  assert.ok(text.includes("PC1111 = "));
+  assert.ok(text.includes("Central Khonkaen2"));
+});
+
+test("the branch prompt forbids reading the สาขา printed on the receipt", () => {
+  // That field is the buyer's tax-invoice branch (สำนักงานใหญ่), not the cost centre.
+  assert.ok(RECEIPT_SYSTEM.includes("BUYER"));
+  assert.ok(RECEIPT_SYSTEM.includes("สำนักงานใหญ่"));
+  // Near-identical names must still produce a pick, flagged rather than dropped.
+  assert.ok(BRANCH_SUGGEST_SYSTEM.includes("Always give your best branch"));
+});
+
+test("the branch hint survives pages that produce no row", () => {
+  // The payment voucher naming the destination is classified "other" — it must
+  // stay out of the rows and still hand over the hint.
+  const read = parseReceiptDocs(`[
+    {"kind":"other","pages":2,"branchHint":"ค่าอุปกรณ์ Dec'25 สำหรับCentral Khonkaen2"},
+    {"kind":"receipt","docNo":"INV-1","amountBeforeVat":100,"vat":7}
+  ]`);
+  assert.equal(read.branchHint, "ค่าอุปกรณ์ Dec'25 สำหรับCentral Khonkaen2");
+  assert.equal(read.docs.length, 1);
+  assert.equal(read.skippedPages, 2);
+});
+
+test("no branch hint anywhere in the upload is null, not an empty string", () => {
+  assert.equal(parseReceiptDocs(TWO_DOCS).branchHint, null);
+  assert.equal(parseReceiptDocs('[{"kind":"receipt","docNo":"A","branchHint":"  "}]').branchHint, null);
+});
+
+test("the first hint in the upload wins", () => {
+  const read = parseReceiptDocs(`[
+    {"kind":"other","pages":1,"branchHint":"สำหรับ Central Khonkaen2"},
+    {"kind":"receipt","docNo":"INV-1","branchHint":"สำหรับ Central Rama9"}
+  ]`);
+  assert.equal(read.branchHint, "สำหรับ Central Khonkaen2");
+});
+
+/* ── thaiPrintedDate — the month comes from code, not from the model ───────
+ *
+ * A UAT slip printed "08 ก.ย. 2026" came back as 2026-02-08: the model
+ * confused ก.ย. (September) with ก.พ. (February), even though THAI_DATE_RULES
+ * spells the whole table out. A slip's date is the Posting Date of a Refund
+ * journal, so a seven-month slip is a wrong accounting period.
+ */
+
+test("a Thai abbreviated month is mapped by the table, not by the model", () => {
+  assert.equal(thaiPrintedDate("08 ก.ย. 2026"), "2026-09-08");
+  assert.equal(thaiPrintedDate("8 ก.พ. 2026"), "2026-02-08");
+});
+
+test("every Thai month abbreviation maps to its own number", () => {
+  const months = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
+                  "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+  const got = months.map((m) => thaiPrintedDate(`1 ${m} 2026`));
+  assert.deepEqual(got, months.map((_, i) => `2026-${String(i + 1).padStart(2, "0")}-01`));
+});
+
+test("a full Thai month name is read as well as the abbreviation", () => {
+  assert.equal(thaiPrintedDate("15 กันยายน 2569"), "2026-09-15");
+  assert.equal(thaiPrintedDate("15 กุมภาพันธ์ 2569"), "2026-02-15");
+});
+
+test("a Buddhist year becomes Christian, two digits included", () => {
+  assert.equal(thaiPrintedDate("6 ม.ค. 69"), "2026-01-06");
+  assert.equal(thaiPrintedDate("23 ธ.ค. 2568"), "2025-12-23");
+});
+
+test("a numeric Thai date is day-month-year, never month-day", () => {
+  assert.equal(thaiPrintedDate("23/12/2568"), "2025-12-23");
+  assert.equal(thaiPrintedDate("06-01-2026"), "2026-01-06");
+});
+
+test("text with no readable date, or an impossible one, yields null", () => {
+  assert.equal(thaiPrintedDate("โอนเงินสำเร็จ"), null);
+  assert.equal(thaiPrintedDate(null), null);
+  assert.equal(thaiPrintedDate("30 ก.พ. 2026"), null);
+});
+
+test("an English month is left to the model rather than half-parsed", () => {
+  assert.equal(thaiPrintedDate("08 Sep 2026"), null);
+});

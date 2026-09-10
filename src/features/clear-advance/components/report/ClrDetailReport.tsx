@@ -14,6 +14,8 @@ import { Loader2, FileX, Download } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { FilterDateRangePicker } from "@/features/accounting/components/FilterDateRangePicker";
 import type { ClrDetailRow } from "@/lib/clr/clear-advance-report-service";
+import { makeColumnPrefs } from "@/features/advance/lib/queue-column-prefs";
+import { ColumnToggleMenu, type ColumnToggleOption } from "@/features/travel-booking/components/ColumnToggleMenu";
 import {
   FilterBar,
   ForbiddenState,
@@ -44,29 +46,78 @@ const EMPTY_FILTERS: DetailFilters = {
   to: "",
 };
 
-const COLS: { label: string; align: "left" | "right" }[] = [
-  { label: "เลขที่เคลียร์", align: "left" },
-  { label: "วันที่", align: "left" },
-  { label: "ลำดับ", align: "right" },
-  { label: "รหัสพนักงาน", align: "left" },
-  { label: "ชื่อ", align: "left" },
-  { label: "เป็นค่าใช้จ่ายของ", align: "left" },
-  { label: "สาขา", align: "left" },
-  { label: "วันที่เอกสาร", align: "left" },
-  { label: "เลขที่เอกสาร", align: "left" },
-  { label: "G/L", align: "left" },
-  { label: "ชื่อบัญชี", align: "left" },
-  { label: "รายละเอียด", align: "left" },
-  { label: "ก่อน VAT", align: "right" },
-  { label: "VAT", align: "right" },
-  { label: "รวม", align: "right" },
-  { label: "หัก ณ ที่จ่าย", align: "right" },
-  { label: "จ่ายสุทธิ", align: "right" },
-  { label: "เลขผู้เสียภาษี", align: "left" },
-  { label: "ชื่อ/บริษัท", align: "left" },
-  { label: "ที่อยู่", align: "left" },
-  { label: "Advance (AP-2)", align: "left" },
+interface DetailTotals {
+  before: number;
+  vat: number;
+  total: number;
+  wht: number;
+  net: number;
+}
+
+interface DetailCol {
+  key: string;
+  label: string;
+  align: "left" | "right";
+  render: (r: ClrDetailRow) => React.ReactNode;
+  /** Rendered in this column's footer cell. Columns without one stay blank. */
+  total?: (t: DetailTotals) => React.ReactNode;
+  /** Colour for the value, so the footer can match the column it sums. */
+  color?: string;
+  /** Long free text: clamped with the full value on hover. */
+  wide?: boolean;
+}
+
+const dim = "var(--text-secondary)";
+const txt = (v: string | number | null | undefined) =>
+  v === null || v === undefined || v === "" ? "—" : String(v);
+
+/**
+ * Every column, in the order the report shipped with.
+ *
+ * The reader hides and reorders them (`ColumnToggleMenu` + `makeColumnPrefs`,
+ * the same pair AP-3-Control and AP-2's queues use), which is why each cell is
+ * a render function rather than a hand-written <td>: twenty-one <td>s in a fixed
+ * sequence cannot be reordered, and the totals row was worse — it spanned twelve
+ * columns and counted five money cells by position, so hiding one silently
+ * shifted every figure under the wrong heading.
+ *
+ * All start visible: this table already had all twenty-one, and a redesign of
+ * what a reader sees is not what was asked for. They can hide what they do not
+ * use, and the choice sticks per browser.
+ */
+const SCREEN_COLS: DetailCol[] = [
+  { key: "requestNo", label: "เลขที่เคลียร์", align: "left",
+    render: (r) => <span className="font-semibold" style={{ color: "var(--text-primary)" }}>{txt(r.requestNo)}</span> },
+  { key: "requestDate", label: "วันที่", align: "left", render: (r) => fmtDateOnly(r.requestDate) },
+  { key: "lineNo", label: "ลำดับ", align: "right", render: (r) => r.lineNo },
+  { key: "staffId", label: "รหัสพนักงาน", align: "left", render: (r) => txt(r.staffId) },
+  { key: "requesterFullName", label: "ชื่อ", align: "left", render: (r) => txt(r.requesterFullName) },
+  { key: "expenseOf", label: "เป็นค่าใช้จ่ายของ", align: "left", render: (r) => txt(r.expenseOf) },
+  { key: "branchCode", label: "สาขา", align: "left", render: (r) => txt(r.branchCode) },
+  { key: "expenseDate", label: "วันที่เอกสาร", align: "left", render: (r) => fmtDateOnly(r.expenseDate) },
+  { key: "docNo", label: "เลขที่เอกสาร", align: "left", render: (r) => txt(r.docNo) },
+  { key: "glAccountNo", label: "G/L", align: "left", render: (r) => txt(r.glAccountNo) },
+  { key: "glAccountName", label: "ชื่อบัญชี", align: "left", render: (r) => txt(r.glAccountName) },
+  { key: "description", label: "รายละเอียด", align: "left", wide: true, render: (r) => txt(r.description) },
+  { key: "amountBeforeVat", label: "ก่อน VAT", align: "right",
+    render: (r) => fmtMoney(r.amountBeforeVat), total: (t) => fmtMoney(t.before) },
+  { key: "vatAmount", label: "VAT", align: "right",
+    render: (r) => fmtMoney(r.vatAmount), total: (t) => fmtMoney(t.vat) },
+  { key: "totalInclVat", label: "รวม", align: "right", color: "var(--color-action)",
+    render: (r) => fmtMoney(r.totalInclVat), total: (t) => fmtMoney(t.total) },
+  { key: "whtAmount", label: "หัก ณ ที่จ่าย", align: "right",
+    render: (r) => fmtMoney(r.whtAmount), total: (t) => fmtMoney(t.wht) },
+  { key: "netAmount", label: "จ่ายสุทธิ", align: "right", color: "var(--text-info-green)",
+    render: (r) => fmtMoney(r.netAmount), total: (t) => fmtMoney(t.net) },
+  { key: "taxId", label: "เลขผู้เสียภาษี", align: "left", render: (r) => txt(r.taxId) },
+  { key: "payeeName", label: "ชื่อ/บริษัท", align: "left", render: (r) => txt(r.payeeName) },
+  { key: "payeeAddress", label: "ที่อยู่", align: "left", wide: true, render: (r) => txt(r.payeeAddress) },
+  { key: "advanceRequestNo", label: "Advance (AP-2)", align: "left", render: (r) => txt(r.advanceRequestNo) },
 ];
+
+/** Its own storage keys — a reader arranging this report must not rearrange
+ *  AP-3-Control underneath them. */
+const PREFS = makeColumnPrefs(SCREEN_COLS, "ap3-detail-report-cols", "ap3-detail-report-col-order");
 
 function money2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -77,9 +128,43 @@ export function ClrDetailReport() {
 
   const [filters, setFilters] = useState<DetailFilters>(EMPTY_FILTERS);
   const [rows, setRows] = useState<ClrDetailRow[]>([]);
+  const [visible, setVisible] = useState<Record<string, boolean>>(PREFS.defaultVisible);
+  const [order, setOrder] = useState<string[]>(() => SCREEN_COLS.map((c) => c.key));
   const [loading, setLoading] = useState(true);
   const [forbidden, setForbidden] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  // Read after mount: localStorage does not exist on the server, and seeding
+  // the initial state from it would make the first render disagree.
+  useEffect(() => {
+    setVisible(PREFS.loadVisibility());
+    setOrder(PREFS.loadOrder());
+  }, []);
+
+  const handleVisibleChange = useCallback((next: Record<string, boolean>) => {
+    setVisible(next);
+    PREFS.saveVisibility(next);
+  }, []);
+
+  const handleReorder = useCallback((next: string[]) => {
+    setOrder(next);
+    PREFS.saveOrder(next);
+  }, []);
+
+  const orderedCols = useMemo(() => {
+    const byKey = new Map(SCREEN_COLS.map((c) => [c.key, c]));
+    return order.map((k) => byKey.get(k)).filter((c): c is DetailCol => !!c);
+  }, [order]);
+
+  const pickerColumns = useMemo<ColumnToggleOption<string>[]>(
+    () => orderedCols.map((c) => ({ key: c.key, label: c.label })),
+    [orderedCols],
+  );
+
+  const visibleColumns = useMemo(
+    () => orderedCols.filter((c) => visible[c.key] ?? true),
+    [orderedCols, visible],
+  );
 
   const patch = useCallback((p: Partial<DetailFilters>) => {
     setFilters((prev) => ({ ...prev, ...p }));
@@ -171,6 +256,15 @@ export function ClrDetailReport() {
         />
       </div>
       <div className="flex items-end gap-2">
+        {/* Same control AP-3-Control uses, so a reader who has arranged one
+            already knows how to arrange the other. */}
+        <ColumnToggleMenu
+          columns={pickerColumns}
+          visible={visible}
+          onChange={handleVisibleChange}
+          onReorder={handleReorder}
+          label="คอลัมน์"
+        />
         <Button variant="ghost" size="sm" onClick={() => setFilters(EMPTY_FILTERS)}>
           ล้างตัวกรอง
         </Button>
@@ -222,16 +316,16 @@ export function ClrDetailReport() {
             </div>
           ) : (
             <div className="overflow-x-auto no-scrollbar max-h-[min(72vh,760px)] overflow-y-auto" style={{ background: "var(--bg-card)" }}>
-              <table className="w-full text-[12px] border-collapse min-w-[1900px]">
+              <table className="w-full text-[12px] border-collapse" style={{ minWidth: `${Math.max(600, visibleColumns.length * 110)}px` }}>
                 <thead
                   className="sticky top-0 z-10"
                   style={{ background: "var(--bg-card-alt)", boxShadow: "0 1px 0 var(--border-light)" }}
                 >
                   <tr style={{ borderBottom: "1px solid var(--border-light)" }}>
-                    {COLS.map((col) => (
+                    {visibleColumns.map((col) => (
                       <th
-                        key={col.label}
-                        className={`px-3 py-2.5 font-semibold whitespace-nowrap text-${col.align}`}
+                        key={col.key}
+                        className={`px-3 py-2.5 font-semibold whitespace-nowrap ${col.align === "right" ? "text-right" : "text-left"}`}
                         style={{ color: "var(--text-secondary)" }}
                       >
                         {col.label}
@@ -254,64 +348,27 @@ export function ClrDetailReport() {
                           e.currentTarget.style.background = rowBg;
                         }}
                       >
-                        <td className="px-3 py-2 whitespace-nowrap font-semibold" style={{ color: "var(--text-primary)" }}>
-                          {row.requestNo ?? "—"}
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap tabular-nums" style={{ color: "var(--text-secondary)" }}>
-                          {fmtDateOnly(row.requestDate)}
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap text-right tabular-nums" style={{ color: "var(--text-secondary)" }}>
-                          {row.lineNo}
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-primary)" }}>
-                          {row.staffId ?? "—"}
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-primary)" }}>
-                          {row.requesterFullName ?? "—"}
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>
-                          {row.expenseOf ?? "—"}
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>
-                          {row.branchCode ?? "—"}
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap tabular-nums" style={{ color: "var(--text-secondary)" }}>
-                          {fmtDateOnly(row.expenseDate)}
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>
-                          {row.docNo ?? "—"}
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap tabular-nums" style={{ color: "var(--text-secondary)" }}>
-                          {row.glAccountNo ?? "—"}
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>
-                          {row.glAccountName ?? "—"}
-                        </td>
-                        <td className="px-3 py-2 max-w-[240px] truncate" style={{ color: "var(--text-secondary)" }} title={row.description ?? undefined}>
-                          {row.description ?? "—"}
-                        </td>
-                        {moneyCell(row.amountBeforeVat)}
-                        {moneyCell(row.vatAmount)}
-                        {moneyCell(row.totalInclVat, "var(--color-action)")}
-                        {moneyCell(row.whtAmount)}
-                        {moneyCell(row.netAmount, "var(--text-info-green)")}
-                        <td className="px-3 py-2 whitespace-nowrap tabular-nums" style={{ color: "var(--text-secondary)" }}>
-                          {row.taxId ?? "—"}
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>
-                          {row.payeeName ?? "—"}
-                        </td>
-                        <td className="px-3 py-2 max-w-[240px] truncate" style={{ color: "var(--text-secondary)" }} title={row.payeeAddress ?? undefined}>
-                          {row.payeeAddress ?? "—"}
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>
-                          {row.advanceRequestNo ?? "—"}
-                        </td>
+                        {visibleColumns.map((col) => {
+                          const value = col.render(row);
+                          return (
+                            <td
+                              key={col.key}
+                              className={`px-3 py-2 ${col.wide ? "max-w-[240px] truncate" : "whitespace-nowrap"} ${col.align === "right" ? "text-right tabular-nums" : ""}`}
+                              style={{ color: col.color ?? dim }}
+                              title={col.wide && typeof value === "string" ? value : undefined}
+                            >
+                              {value}
+                            </td>
+                          );
+                        })}
                       </tr>
                     );
                   })}
                 </tbody>
                 <tfoot className="sticky bottom-0 z-10">
+                  {/* One cell per visible column. The old footer spanned twelve
+                      and then counted five money cells by position, so hiding or
+                      moving one put every total under the wrong heading. */}
                   <tr
                     style={{
                       borderTop: "2px solid var(--border-card)",
@@ -319,15 +376,19 @@ export function ClrDetailReport() {
                       boxShadow: "0 -1px 0 var(--border-card), 0 -8px 16px -10px rgba(0,0,0,0.25)",
                     }}
                   >
-                    <td colSpan={12} className="px-3 py-2.5 font-bold" style={{ color: "var(--text-heading)" }}>
-                      รวมทั้งหมด ({rows.length} รายการ)
-                    </td>
-                    <td className="px-3 py-2.5 text-right tabular-nums font-bold" style={{ color: "var(--text-heading)" }}>{fmtMoney(totals.before)}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums font-bold" style={{ color: "var(--text-heading)" }}>{fmtMoney(totals.vat)}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums font-bold" style={{ color: "var(--color-action)" }}>{fmtMoney(totals.total)}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums font-bold" style={{ color: "var(--text-heading)" }}>{fmtMoney(totals.wht)}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums font-bold" style={{ color: "var(--text-info-green)" }}>{fmtMoney(totals.net)}</td>
-                    <td colSpan={4} />
+                    {visibleColumns.map((col, i) => (
+                      <td
+                        key={col.key}
+                        className={`px-3 py-2.5 font-bold ${col.align === "right" ? "text-right tabular-nums" : "whitespace-nowrap"}`}
+                        style={{ color: col.color ?? "var(--text-heading)" }}
+                      >
+                        {col.total
+                          ? col.total(totals)
+                          : i === 0
+                            ? `รวมทั้งหมด (${rows.length} รายการ)`
+                            : ""}
+                      </td>
+                    ))}
                   </tr>
                 </tfoot>
               </table>

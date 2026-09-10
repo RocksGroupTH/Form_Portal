@@ -1,0 +1,282 @@
+# AP-3 Phase 1 — Design
+
+**Scope:** every AP-3 item in `docs/technical-specification-ap-systems.md` that can ship
+**without changing Business Central**. The two items that need CU 50263 extended (VAT
+detail block, Mjus indicator) and §3.1 (delete/overwrite interface) are Phase 2 and are
+deliberately out of scope here.
+
+**Branch:** `feat/ap3-phase1`, cut from `feat/ap3-clear-vendor` (that branch's vendor
+resolution is kept — see §1).
+
+---
+
+## Why no ERP change is needed
+
+`R:\PPFunction\AL\ALProject12_SalesTran\ACCForm\AP\APJournalCreate.al` (CU 50263
+`CreateFromJson`) only ever calls `GenJnlLine.Insert(true)` (line 221). **There is no
+`Post` anywhere in the codeunit.** So:
+
+- a journal batch whose lines do not sum to zero inserts fine — BC only enforces balance
+  at posting time, which accounting performs by hand;
+- `Validate(Amount, 0)` is legal, so zero-amount lines are accepted;
+- `Refund` is already in the `documentType` enum map (line 150);
+- `employeeCode` is already mapped to `External Document No.` (line 214).
+
+---
+
+## 1. Zero-amount WHT and Clear-Advance lines (§2.3, §3.2)
+
+Spec §3.2 requires the WHT line and the Clear-Advance **Vendor** line to be sent as
+**0.00 baht always**, leaving the journal intentionally unbalanced so accounting clears
+and matches the vendor by hand in BC.
+
+**Decision (user, 2026-09-01): follow the spec — send 0.**
+
+The spec says the *line* carries 0, not that the line disappears. Accounting needs the
+vendor line present to match against. So `feat/ap3-clear-vendor`'s work stands: the
+clearing line still resolves and points at the AP-2 vendor via
+`resolveAdvanceVendorNo`; only its **amount** becomes 0. Same for WHT: when
+`whtTotal > 0` the line is still emitted (and the "WHT payable account not configured"
+guard still applies), with amount 0.
+
+Resulting payload for one clearing:
+
+| Line | Account | Amount |
+| :--- | :--- | :--- |
+| Expense (per item) | G/L from the item | real, debit |
+| VAT input | configured VAT input G/L | real, debit |
+| WHT payable | configured WHT G/L | **0** |
+| Clear advance | **Vendor** (from AP-2) | **0** |
+| Bank difference | configured bank account | real, signed |
+
+The bank line stays real: it is actual cash movement, and §3.2 defines its side
+explicitly (debit on Refund, credit on Payment).
+
+The existing tests assert `sum === 0`. That assertion encodes the old rule and must be
+replaced with explicit per-line expectations, including an explicit assertion that the
+journal is unbalanced by exactly the amounts we zeroed.
+
+**UI consequence:** the ERP preview must not present an unbalanced total as an error.
+Any balance check that blocks sending is removed; the preview shows the Debit and Credit
+totals with a short note that the difference is expected.
+
+## 2. Document Type Refund vs Payment (§3.2)
+
+`clear-advance-erp-payload.ts` hardcodes `documentType: "Payment"` on every line.
+
+Rule: **`Refund`** when the employee returns money to the company, **`Payment`** when the
+company pays the employee more. The sign of the bank difference already encodes this —
+`bankAmount = advanceAmount − actualNet`, positive when money comes back. The document
+type is a property of the whole clearing, so it is computed once and applied to every
+line of the journal, not per line.
+
+`Refund` needs no AL change (enum map line 150).
+
+## 3. Expense-line description format (§3.2)
+
+Required: `[ADV no] + "เบิก" + "เคลียร์เงินทดลอง" + [employee name] + [document detail]`.
+
+Today it is `เคลียร์เงินทดรองจ่าย {AP-3 request no}`. The AP-3 number is the wrong
+number — the ADV number of the advance being cleared is what accounting reconciles
+against. Both the ADV number and the clearing employee's name are already on the request
+record. `Description` on a Gen. Journal Line is 100 characters, so the composed string is
+truncated to fit, dropping the trailing document detail first.
+
+## 4. PDF attachments on the reviewer screen (§2.1)
+
+`AttachmentViewer` already renders PDFs inline. `ClearAdvanceDetail.tsx` does not use it —
+it renders images with `<img>` and everything else as a plain download link. Route the
+reviewer's attachment list through `AttachmentViewer` so PDFs open in place.
+
+## 5. Branch selected before GL account (§2.4)
+
+The expense table's column order is currently วันที่ · เลขที่เอกสาร · **รายการ (GL)** ·
+รายละเอียด · **สาขา**. The spec requires สาขา first, because the branch is what filters
+the GL list (§6 below). Move the Branch column ahead of the GL column, and reflect that
+dependency in the UI: with no branch chosen the GL picker is disabled with a hint.
+
+## 6. GL accounts filtered by branch (§2.4)
+
+`listGlAccounts()` returns every active row regardless of branch.
+
+The spec words this rule as the word "สาขา" in the account name, but the master table
+already carries the answer in a column: `AccClearAdvanceGl.DimensionType`, which is
+`Employee` (26 rows), `Branch` (11) or `Both` (6). The name test and the column agree
+exactly for the 11 `Branch` rows — but none of the 6 `Both` rows has "สาขา" in its name,
+so the name test hid them from every branch line.
+
+Rule as built: **HQ** takes `Employee` + `Both` (32 accounts, what HQ already saw);
+**a branch** takes `Branch` + `Both` (17). `Both` belongs to each side — those accounts
+come from the BRANCH dimension too (decision: accounting, 2026-09-01).
+
+Filtering is done server-side so the client cannot be handed accounts it must not offer.
+Changing a row's branch after a GL account is already picked clears that pick when the
+account is no longer allowed — except on a read-only request, where a stored account is
+merged back into the options so historical requests still display it.
+
+The spec only ever contrasts HQ with PC, but PCTH's BRANCH dimension holds 200 `PC*`
+codes, one `HQ*`, and **24 others** — warehouses (`W001`…`W104`, `W-VENDOR`) and
+affiliates (`KSI`, `RFM`, `UNO`, `SMR`, `PLM`, `RUT`, `ROLLS`). All 24 count as branches
+for now, confirmed by accounting on 2026-09-01 and to be revisited if that turns out
+wrong.
+
+## 7. OCR confirmation pop-up (§2.2)
+
+Today `verifyReceipts` writes OCR output straight into `setLines` and shows a toast. The
+spec requires the user to review and correct the extracted values in a pop-up and press
+"ยืนยันบันทึก" before anything reaches the expense table.
+
+The modal holds the parsed rows in local state, every field editable, with Confirm and
+Cancel. Cancel discards; the uploaded file itself stays attached either way. Nothing is
+written to the expense table until Confirm.
+
+## 8. One invoice number per row, and the AI decides what each page is (§2.2)
+
+Today the rule is one *file* per row. A single photo containing two invoices produces one
+row, silently losing an invoice.
+
+The OCR result becomes a list of documents rather than one document, keyed by invoice
+number, and each becomes its own row. This changes the shape returned by the extractor,
+so the prompt asks for an array and the parser validates it.
+
+**Two problems found on a real document** (`R:\ACC Project\Example form\PVA2601-0021.pdf`,
+a 7-page pure scan with no text layer):
+
+**Only page 1 was ever read.** `verify-receipt/route.ts` called `pdfFirstPageToPng`, so
+pages 2-7 never reached the model and nothing told the user they had been dropped. Task 8
+is meaningless without this: it now uses `pdfPagesToPng(buffer, maxPages)` — already in
+the codebase for AP-4 — with an explicit cap, because the vision call is billed per image
+and an unbounded loop turns one careless 40-page upload into 40 billed images.
+
+**One file mixes receipts and a refund slip.** The code decided slip-vs-receipt by which
+upload box the file came from (`isProof`), so on a mixed document one half was always fed
+to the wrong extractor.
+
+**Decision (user, 2026-09-01): the AI classifies each page itself.** The extractor returns
+a `kind` per document — `receipt` (becomes an expense row), `slip` (feeds the refund-slip
+path, never an expense row), or `other` (cover sheets, approval forms, blank scans —
+becomes nothing). The prompt states that one file routinely contains several kinds mixed
+together, and classifies on what the page shows rather than where it sits in the file.
+`isProof` may remain a hint but no longer decides.
+
+Classification will sometimes be wrong, so the confirmation modal (§7) shows the detected
+kind per row and lets the user change it. Rows classified `other` are listed but unticked,
+so nothing is silently discarded without the user seeing that it was.
+
+## 9. Multi-line receipt: description of the largest line, total of all (§2.2)
+
+Required: when a receipt has several line items, the description shown is that of the
+highest-value line, but the amount recorded is the receipt total.
+
+This rule exists only in the Tesseract fallback (`slip-verify.ts`). The primary Claude
+vision path asks for "the main item/service description" and a generic amount, so the two
+paths disagree. The Claude prompt is corrected to state both halves of the rule
+explicitly.
+
+## 9a. Which model reads the documents
+
+`claude-haiku-4-5-20251001`, overridable per environment with
+`ANTHROPIC_RECEIPT_MODEL` — one model for all four calls (receipt extraction, slip,
+GL suggestion, branch suggestion). The key comes from the portal's own API-key registry;
+with no key the code falls back to Tesseract + regex rather than failing.
+
+**Decision (user, 2026-09-02): stay on Haiku.** Sonnet costs exactly 2× ($2/$10 per MTok
+against $1/$5), which on a 7-page bundle is about ฿0.8 more per document — small enough
+that accuracy would justify it. It was not adopted because nothing shows Sonnet fixes the
+one failure that matters: character-level misreads of long reference numbers on a scan
+(`EBYC25120005297` came back once as `EBYC2512Q005297`), which looks like scan quality
+rather than model capability. Revisit with a measurement, not an assumption.
+
+What the observed failures actually cost is uneven, and that matters more than a raw
+accuracy percentage, because every field is reviewed by a human before it is saved:
+
+- A wrong **amount** is caught — it does not match the receipt in the reviewer's hand.
+- A wrong **document number** is caught — one receipt splits into two rows, which is
+  visibly odd.
+- A wrong **date** is the dangerous one. `2026-04-06` and `2026-01-06` look equally
+  plausible, and the slip's date becomes the journal's Posting Date. Future dates are now
+  refused, but a wrong date in the past still passes.
+
+The cheap defence against the date is arithmetic the portal already has rather than a
+better model: on a refund the slip amount must equal the refund owed (it did — 8,969.00),
+and a transfer cannot predate the newest receipt it settles.
+
+## 10. AI-suggested GL account (§2.2)
+
+The pop-up from §7 shows a suggested expense GL account per row, derived from the
+receipt description, which the user can accept or override.
+
+The candidate list is the same branch-filtered set of allowed accounts from §6 — the
+model chooses among accounts the user could have picked by hand, and never invents an
+account number. A suggestion is advisory: it is pre-filled but always editable, and if
+the model returns anything not in the candidate list it is discarded and the field is
+left empty.
+
+## 11. Print AP-3.1 (§2.6)
+
+A Print button on the clearing summary that produces a paper-ready sheet for the employee
+to sign and staple in front of the receipts. Rendered as a print-styled route driven by
+the browser's own print dialog — no PDF library, no new dependency. It shows the header
+(ADV number, employee, department, dates, advance amount), the expense lines, and the
+totals with a signature block.
+
+## 12. Inline payment-date edit in the ERP queue (§4.1)
+
+The AP-3 ERP queue has batch select and a Pending/Sent filter, but the payment date can
+only be changed from the separate account-action form. Add the same inline picker the
+AP-2 queue uses, editable only while the row is still Pending.
+
+## 13. AP-3 report parity with AP-2 (§4.2)
+
+AP-2's report already has stacked multi-value filters, the overdue/aging filter, and
+Christian-era years. The AP-3 report has not been checked against those. Audit it and
+close whichever of the three is missing, reusing AP-2's components rather than writing
+new ones.
+
+---
+
+## Found by QA, deferred to Phase 2 — BC inserts partially and a retry duplicates
+
+An independent review challenged the reasoning in "Why no ERP change is needed" above and
+found a hole in it. The claim that the codeunit never posts is true, and balance
+enforcement really does only happen at posting. But that is not the whole safety story.
+
+`APJournalCreate.al:53` loops the lines and inserts each one through `TryInsertLine`.
+A line that fails increments `FailedCount`; **the lines already inserted stay inserted**,
+and the endpoint returns normally. `clear-advance-erp-send.ts` correctly treats
+`Failed > 0` as a failure and marks the request retryable — but nothing removes what BC
+already wrote, and `AssignDocumentNumbers` allocates a fresh document number on the next
+attempt.
+
+Concretely: the expense line inserts, the vendor line fails because its vendor number does
+not exist in BC, the response is `Inserted: 1, Failed: 1`, and pressing send again writes
+the expense a second time under a new document number.
+
+Fixing this properly means making creation all-or-nothing in AL, or giving it an
+idempotency key so a retry replaces rather than appends. Both change the codeunit, so it
+belongs with the other Phase 2 items below.
+
+## Out of scope (Phase 2)
+
+- §3.2 VAT detail block (Posting Type, VAT Code, Document Date, Tax ID, Vendor Name, VAT
+  Amount) — no VAT field is touched anywhere in CU 50263, and `"Document Date"` is
+  hardcoded to `"Posting Date"` at line 186.
+- §3.2 Mjus indicator `"MS"` — no such field in the payload or the codeunit, and which BC
+  field it writes to is still unconfirmed.
+- §3.1 Delete Document No. + overwriting interface — needs a new BC endpoint.
+- §2.3 DBD lookup for พ.ง.ด. 53 vs 3 — not an ERP change, but blocked on DBD API access.
+- All-or-nothing (or idempotent) journal creation, per the QA finding above.
+- The document type carried on the **vendor** line. Every line currently takes the
+  clearing's type, derived from the bank direction. On a pay-extra clearing that makes the
+  vendor line `Payment`, but the amount accounting later fills in credits the vendor,
+  which in BC terms reads as a Refund. Whether the staged line should carry a different
+  type is an accounting question about Vendor Ledger Entry semantics, not a portal
+  decision — ask before changing it.
+
+## Testing
+
+Payload composition, the document-type rule, the description format, and the GL branch
+filter are pure functions and are covered by unit tests. The OCR modal, the print sheet,
+and the inline date picker are verified in the running app against the UAT database.
+Nothing in Phase 1 can be verified end-to-end against BC until the extension is deployed
+to Sandbox.

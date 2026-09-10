@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENT_COUNT,
+  asciiFallbackName,
   attachmentResponseHeaders,
   checkAttachment,
   checkAttachmentBatch,
@@ -567,4 +568,36 @@ test('"any" still enforces the size cap', () => {
   assert.equal(check.ok, false);
   if (check.ok) return;
   assert.equal(check.status, 413);
+});
+
+/* ── a name a header cannot carry ─────────────────────────────────────────
+ *
+ * A header value is a ByteString. A Thai character in `filename="…"` throws
+ * where the Response is built, and the route's catch turns that into a 500 — so
+ * "สื่อ - Porntip Tuckyen (1).jpg" never downloaded and its thumbnail rendered
+ * as a broken image with nothing to say why. Real file, AP-3 request 900039.
+ */
+test("a Thai filename still produces headers a Response accepts", () => {
+  const h = attachmentResponseHeaders({ bytes: JPEG_BYTES, fileName: "สื่อ - Porntip Tuckyen (1).jpg" });
+  assert.doesNotThrow(() => new Response(new Uint8Array(JPEG_BYTES), { headers: h }));
+});
+
+test("the real name survives in filename*", () => {
+  const h = attachmentResponseHeaders({ bytes: JPEG_BYTES, fileName: "ใบเสร็จ.jpg" });
+  assert.match(h["Content-Disposition"], /filename\*=UTF-8''%E0%B9%83%E0%B8%9A/);
+});
+
+/* The ASCII fallback is what a client that cannot read filename* uses, so it
+ * has to be a name rather than a bare extension or an empty string. */
+test("the ASCII fallback is always a usable name", () => {
+  assert.equal(asciiFallbackName("สื่อ - Porntip (1).jpg", "bin"), "- Porntip (1).jpg");
+  assert.equal(asciiFallbackName("ใบเสร็จ.jpg", "bin"), "attachment.jpg");
+  assert.equal(asciiFallbackName("สลิป", "jpg"), "attachment.jpg");
+  assert.equal(asciiFallbackName("report (2).pdf", "bin"), "report (2).pdf");
+});
+
+test("quotes and backslashes cannot break out of the header", () => {
+  const out = asciiFallbackName('a"b' + String.fromCharCode(92) + 'c.jpg', "bin");
+  assert.ok(!out.includes('"'), out);
+  assert.ok(!out.includes(String.fromCharCode(92)), out);
 });

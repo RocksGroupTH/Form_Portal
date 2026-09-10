@@ -6,6 +6,8 @@ import { requireActorStaffId } from "@/lib/acc/actor-context";
 import type { Actor } from "@/lib/acc/approval-engine";
 import { getRequest, setAccountAction } from "@/lib/clr/clear-advance-request-service";
 import { listClrApprovers, roleForStep } from "@/lib/clr/clear-advance-approver-service";
+import { linesMissingTaxVendor } from "@/lib/clr/tax-vendor-core";
+import { pndBlockReason } from "@/lib/clr/wht-pnd-core";
 import {
   CLR_NEXT_STEP,
   CLR_STEP_LABEL_TH,
@@ -63,6 +65,24 @@ export async function approveCurrentStep(
       // Company must pay the employee the shortfall — a payment date is required.
       throw new Error("กรณีบริษัทต้องจ่ายเพิ่ม กรุณาระบุวันจ่าย (Payment Date)");
     }
+    // Every VAT line must name the seller's vendor before it leaves this step
+    // (user, 2026-09-08). Input tax is claimed against a vendor; a VAT line with
+    // no Tax Vendor No. posts an unattributed claim, and this is the last step
+    // where anyone can still choose one — the head-accounting step cannot edit
+    // lines. Read from the request, not from the caller: the accountant's own
+    // save is what fills this, so the check is on stored state.
+    const missing = linesMissingTaxVendor(before.clear?.items);
+    if (missing.length > 0) {
+      throw new Error(
+        `กรุณาเลือก Vendor ผู้ขายให้ครบก่อนอนุมัติ — รายการที่ ${missing.join(", ")} มี VAT แต่ยังไม่ได้เลือก Vendor`,
+      );
+    }
+    // The ภ.ง.ด. type, on the same terms and for the same reason: the journal
+    // builder refuses without it, and refusing there means the discovery lands
+    // on whoever pressed "ส่งเข้า ERP" — after three approvals, and not on
+    // anyone who can still choose.
+    const pndProblem = pndBlockReason(before.clear?.items, before.clear?.whtItems);
+    if (pndProblem) throw new Error(pndProblem);
     await setAccountAction(requestId, opts.pvDocNo ?? null, opts.paymentDate ?? null);
   }
 
@@ -238,6 +258,72 @@ export async function returnForEdit(requestId: number, actor: Actor, comment: st
       `<p>คำขอ <b>${no}</b> ถูกส่งกลับให้แก้ไข</p><p>หมายเหตุ: ${comment}</p>` + link(requestId),
       req.requesterEmail,
       "Returned",
+    );
+  }
+}
+
+/**
+ * Cancel a clearing that is already approved but has not reached BC.
+ *
+ * There is a state the queue could not get out of: approved, and unsendable for
+ * a reason the portal cannot fix — `ADC26-09027` sits behind an AP-2 advance
+ * with no confirmed vendor, and that advance was itself already sent, so the one
+ * screen that could set a vendor refuses it. The row simply stayed in "รอส่ง"
+ * for ever, counted as work waiting to be done.
+ *
+ * **Never sent, or Failed.** A `Sent` clearing has a complete document in BC
+ * that accounting may already be posting against, and cancelling our side of
+ * that quietly would leave the two ledgers disagreeing with nothing to say so —
+ * the same line `pullBackFailedSend` draws, for the same reason. `Failed` is
+ * allowed because BC refused it, but a partial document may still be sitting in
+ * the batch: that is the requester's and accounting's to clean up, and the
+ * dialog says so.
+ *
+ * The requester is told, because from their side an approved clearing that
+ * disappears is indistinguishable from one that was lost.
+ */
+export async function cancelApprovedClearing(
+  requestId: number,
+  actor: Actor,
+  reason: string,
+): Promise<void> {
+  const note = reason.trim();
+  if (!note) throw new Error("ต้องระบุเหตุผลที่ยกเลิก");
+
+  const pool = await getAccPool();
+  const tx = pool.transaction();
+  await tx.begin();
+  try {
+    const upd = await tx.request().input("rid", sql.Int, requestId).input("by", sql.Int, actor.userId)
+      .query(`UPDATE [dbo].[AccRequest] SET Status='Cancelled', CurrentStepCode=NULL,
+              CancelledBy=@by, CancelledAt=SYSDATETIME(), UpdatedAt=SYSDATETIME()
+              WHERE Id=@rid AND Status='Approved'
+                AND (ErpInterfaceStatus IS NULL OR ErpInterfaceStatus='Failed');
+              SELECT @@ROWCOUNT AS n`);
+    if ((upd.recordset[0].n as number) === 0) {
+      await tx.rollback();
+      throw new Error("ยกเลิกไม่ได้ — คำขอนี้ส่งเข้า BC แล้ว หรือไม่ได้อยู่ในสถานะอนุมัติแล้ว");
+    }
+    await tx.request().input("rid", sql.Int, requestId).input("by", sql.Int, actor.userId)
+      .input("c", sql.NVarChar, note)
+      .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note)
+              VALUES (@rid, @by, 'cancelled_after_approval', @c)`);
+    await tx.commit();
+  } catch (e) {
+    await tx.rollback().catch(() => {});
+    throw e;
+  }
+
+  const req = await getRequest(requestId);
+  if (req) {
+    const no = req.requestNo ?? String(requestId);
+    await notify(
+      requestId,
+      `เคลียร์เงินทดรองจ่าย ${no} ถูกยกเลิกโดยฝ่ายบัญชี`,
+      `<p>คำขอเคลียร์คืนเงินทดรองจ่าย <b>${no}</b> ที่อนุมัติแล้ว ถูกยกเลิกก่อนส่งเข้า Business Central</p>` +
+        `<p>เหตุผล: ${note}</p>` + link(requestId),
+      req.requesterEmail,
+      "Cancelled",
     );
   }
 }

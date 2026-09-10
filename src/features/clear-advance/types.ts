@@ -19,6 +19,26 @@ export interface ClearAdvanceItem {
   whtAmount: number | null;       // ภาษีหัก ณ ที่จ่าย (ถ้ามี)
   netAmount: number | null;       // จำนวนจ่ายสุทธิ (auto = total − WHT)
   sortOrder?: number;
+  /**
+   * The seller who issued this tax invoice, read by the OCR and correctable by
+   * accounting at the ACCOUNT step. Null where the OCR could not read one and
+   * nobody has typed it: the tax fields are then simply not sent for this line.
+   */
+  taxId?: string | null;
+  payeeName?: string | null;
+  payeeAddress?: string | null;
+  /**
+   * The seller's branch as the Revenue Department's five-digit code (00000 =
+   * head office). Becomes `Branch Code` on the VAT line; null sends nothing and
+   * leaves BC on whatever the vendor card holds.
+   */
+  taxBranchCode?: string | null;
+  /**
+   * The seller's Vendor No. in BC, chosen by accounting. Becomes
+   * `Tax Vendor No.` on the VAT line. Null where the seller is not a vendor
+   * of ours, which is ordinary for a one-off purchase.
+   */
+  taxVendorNo?: string | null;
   /** AccRequestFile.Id this line was OCR-filled from — cleared with its receipt. */
   sourceFileId?: number | null;
 }
@@ -33,6 +53,12 @@ export interface ClearAdvanceWhtItem {
   taxId: string | null;        // เลขที่ผู้เสียภาษี (user fills)
   payeeName: string | null;    // ชื่อ-สกุล/ชื่อบริษัท (user fills)
   payeeAddress: string | null; // ที่อยู่ (user fills)
+  /**
+   * ภ.ง.ด. type, which picks the BC vendor at send time (WHT-PND.3 / .53).
+   * Null means nobody has decided — distinct from deciding "individual", and
+   * what the send refuses on rather than choosing a vendor for accounting.
+   */
+  pndType?: "PND3" | "PND53" | null;
   amount: number | null;       // ค่าใช้จ่าย
   whtAmount: number | null;    // ภาษีหัก ณ ที่จ่าย
   netAmount: number | null;    // จำนวนจ่ายสุทธิ

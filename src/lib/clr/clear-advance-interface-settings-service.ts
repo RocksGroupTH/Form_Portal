@@ -47,9 +47,13 @@ export async function listClrInterfaceConfigView(): Promise<ClrInterfaceConfigVi
   const brandByCode = new Map(allBrands.map((b) => [b.brandCode.toUpperCase(), b]));
 
   // Same claim brands AP-2 can post: those mapped in AP-1 ∪ AP-2's overrides.
+  /* Registry brands included, for the same reason AP-2's list includes them: the
+     only way to create an AccFormBrand row is the toggle on this screen, so a
+     brand that has none was invisible and unswitchable. It reads as off. */
   const codes = Array.from(new Set([
     ...Object.keys(ctx.interfaceByClaim),
     ...Array.from(ap2ByCode.keys()),
+    ...allBrands.map((b) => b.brandCode.toUpperCase()),
   ])).sort();
 
   return Promise.all(
