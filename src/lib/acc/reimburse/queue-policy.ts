@@ -74,6 +74,33 @@ export function belongsInAccountQueue(
 }
 
 /** One row of the accounting queue, as the page renders it. */
+/**
+ * One expense line as the queue shows it — the AP-4.1 columns an approver reads
+ * to choose a G/L account and a vendor, plus the two answers themselves.
+ *
+ * The queue carries these now because the screen puts every line in the main
+ * table rather than behind a per-claim expander: a reader compares lines across
+ * claims, and a control that has to be opened one claim at a time cannot be
+ * compared at all.
+ */
+export interface ReimburseQueueItem {
+  id: number;
+  sortOrder: number;
+  expenseDate: string | null;
+  documentNo: string | null;
+  description: string;
+  branchName: string | null;
+  vendorTaxId: string | null;
+  vendorName: string | null;
+  amount: number;
+  vatAmount: number | null;
+  whtAmount: number | null;
+  /** The G/L account. `Category` is its column name — see ExpenseAccountPicker. */
+  category: string | null;
+  /** The BC vendor card (migration 147). */
+  vendorNo: string | null;
+}
+
 export interface ReimburseQueueRow {
   id: number;
   requestNo: string;
@@ -116,6 +143,16 @@ export interface ReimburseQueueRow {
    * can carry it.
    */
   interfaceTarget: string | null;
+  /**
+   * This claim's expense lines.
+   *
+   * Filled by `queue-service.ts` **after** `accumulateAccountQueueRows` has
+   * decided which claims this viewer may act on, in one query over exactly
+   * those ids — not by this function, which stays pure and knows no pool, and
+   * not by the main query, which would return one row per line and make every
+   * claim-level predicate here count lines instead of claims.
+   */
+  items: ReimburseQueueItem[];
 }
 
 /** `TotalAmount` etc. arrive from `mssql` typed loosely; coerce rather than trust. */
@@ -204,6 +241,8 @@ export function accumulateAccountQueueRows(
         ? (x.ManagerApprovedAt as Date).toISOString()
         : null,
       interfaceTarget: target,
+      // Filled in by the caller; see the field's own note.
+      items: [],
     });
   }
   return rows;

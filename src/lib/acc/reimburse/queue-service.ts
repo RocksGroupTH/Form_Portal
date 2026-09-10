@@ -60,10 +60,10 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { AP4_FORM_CODE } from "@/features/reimburse/constants";
 import { accumulateAccountQueueRows, countUnmappedBrandRows } from "./queue-policy";
-import type { ReimburseQueueRow } from "./queue-policy";
+import type { ReimburseQueueItem, ReimburseQueueRow } from "./queue-policy";
 import { loadApproverScopeByStaffId, loadClaimBrandTargets } from "./brand-scope-load";
 
-export type { ReimburseQueueRow } from "./queue-policy";
+export type { ReimburseQueueItem, ReimburseQueueRow } from "./queue-policy";
 
 /**
  * What `listReimburseAccountQueue` answers — `rows` alone used to be the
@@ -135,5 +135,76 @@ export async function listReimburseAccountQueue(
   const recordset = res.recordset as Record<string, unknown>[];
   const rows = accumulateAccountQueueRows(recordset, scope, claimTargets);
   const unmappedBrandCount = countUnmappedBrandRows(recordset, claimTargets);
+  // AFTER the accumulator, deliberately, and never between the query above and
+  // the `const recordset` that reads it — that gap is pinned by
+  // queue-service-guard.test.ts. Only the claims this viewer may actually act
+  // on are queried for lines, so a scoped approver never causes a read of
+  // another group's expense detail.
+  await attachQueueItems(pool, rows);
   return { rows, scope, unmappedBrandCount };
+}
+
+/**
+ * Load every expense line of `rows` in one query and hang them off their claim.
+ *
+ * One query for all of them rather than one per claim: the queue is a handful
+ * of claims today and a query per row is the shape that stops being a handful
+ * quietly. Mutates in place because the rows are this function's caller's and
+ * nothing else has seen them yet.
+ *
+ * An empty `rows` short-circuits: an `IN ()` list is a syntax error, and
+ * building one from a scoped approver's empty queue is exactly when it happens.
+ */
+async function attachQueueItems(
+  pool: Awaited<ReturnType<typeof getAccPool>>,
+  rows: ReimburseQueueRow[],
+): Promise<void> {
+  if (rows.length === 0) return;
+
+  const req = pool.request();
+  // Parameterised one id at a time — `rows` ids come from the database above,
+  // but building SQL by interpolating them anyway is the habit that eventually
+  // interpolates something that did not.
+  const names = rows.map((r, i) => {
+    req.input(`id${i}`, sql.Int, r.id);
+    return `@id${i}`;
+  });
+
+  const res = await req.query(`
+    SELECT Id, RequestId, SortOrder, ExpenseDate, DocumentNo, Description,
+           BranchName, VendorTaxId, VendorName, Amount, VatAmount, WhtAmount,
+           Category, VendorNo
+    FROM [dbo].[AccReimburseItem]
+    WHERE RequestId IN (${names.join(", ")})
+    ORDER BY RequestId, SortOrder, Id
+  `);
+
+  const byRequest = new Map<number, ReimburseQueueItem[]>();
+  for (const x of res.recordset as Record<string, unknown>[]) {
+    const rid = x.RequestId as number;
+    const list = byRequest.get(rid) ?? [];
+    list.push({
+      id: x.Id as number,
+      sortOrder: (x.SortOrder as number) ?? list.length,
+      expenseDate: x.ExpenseDate ? toYmdLocal(x.ExpenseDate as Date) : null,
+      documentNo: (x.DocumentNo as string | null) ?? null,
+      description: (x.Description as string | null) ?? "",
+      branchName: (x.BranchName as string | null) ?? null,
+      vendorTaxId: (x.VendorTaxId as string | null) ?? null,
+      vendorName: (x.VendorName as string | null) ?? null,
+      amount: Number(x.Amount) || 0,
+      vatAmount: x.VatAmount === null || x.VatAmount === undefined ? null : Number(x.VatAmount),
+      whtAmount: x.WhtAmount === null || x.WhtAmount === undefined ? null : Number(x.WhtAmount),
+      category: (x.Category as string | null) ?? null,
+      vendorNo: (x.VendorNo as string | null) ?? null,
+    });
+    byRequest.set(rid, list);
+  }
+
+  for (const row of rows) row.items = byRequest.get(row.id) ?? [];
+}
+
+/** Local getters — the server runs Thai wall time, `toISOString` would shift the day. */
+function toYmdLocal(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
