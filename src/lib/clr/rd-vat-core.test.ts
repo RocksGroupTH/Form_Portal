@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   buildRdVatRequest,
+  tinsNeedingRdCheck,
   parseRdVatResponse,
   registrantFullName,
   sameRegisteredName,
@@ -100,4 +101,56 @@ test("a different company is still a difference", () => {
 test("an empty name matches nothing", () => {
   assert.equal(sameRegisteredName("", "บริษัท ก จำกัด"), false);
   assert.equal(sameRegisteredName(null, null), false);
+});
+
+/* ── which tax ids the "ตรวจสรรพากร" button still has to ask about ── */
+
+test("six rows sharing a tax id are one thing to ask about", () => {
+  const items = [{ taxId: "0105556000001" }, { taxId: "0105556000001" }, { taxId: "0105556000001" }];
+  assert.deepEqual(tinsNeedingRdCheck(items, {}), ["0105556000001"]);
+});
+
+test("an id already answered is not asked again", () => {
+  const items = [{ taxId: "0105556000001" }, { taxId: "0994000000002" }];
+  assert.deepEqual(
+    tinsNeedingRdCheck(items, { "0105556000001": { state: "found" } }),
+    ["0994000000002"],
+  );
+});
+
+test("an unregistered answer is an answer", () => {
+  assert.deepEqual(
+    tinsNeedingRdCheck([{ taxId: "0105556000001" }], { "0105556000001": { state: "unregistered" } }),
+    [],
+  );
+});
+
+test("a failed check is asked again", () => {
+  assert.deepEqual(
+    tinsNeedingRdCheck([{ taxId: "0105556000001" }], { "0105556000001": { state: "unknown" } }),
+    ["0105556000001"],
+  );
+});
+
+test("one already in flight is not queued twice", () => {
+  assert.deepEqual(
+    tinsNeedingRdCheck([{ taxId: "0105556000001" }], { "0105556000001": { state: "checking" } }),
+    [],
+  );
+});
+
+test("an id that is not thirteen digits is not a question for the registry", () => {
+  assert.deepEqual(tinsNeedingRdCheck([{ taxId: "123" }, { taxId: null }, { taxId: "" }], {}), []);
+});
+
+test("punctuation in a typed tax id does not make a second id", () => {
+  assert.deepEqual(
+    tinsNeedingRdCheck([{ taxId: "0105556000001" }, { taxId: "0-1055-56000-00-1" }], {}),
+    ["0105556000001"],
+  );
+});
+
+test("no lines is nothing to ask", () => {
+  assert.deepEqual(tinsNeedingRdCheck(null, {}), []);
+  assert.deepEqual(tinsNeedingRdCheck([], {}), []);
 });

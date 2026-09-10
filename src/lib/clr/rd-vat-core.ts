@@ -131,3 +131,35 @@ export function sameRegisteredName(
   const x = norm(a);
   return x !== "" && x === norm(b);
 }
+
+/** What the account screen knows about one tax id, as far as this rule cares. */
+export type RdAnswerState = "checking" | "found" | "unregistered" | "unknown";
+
+/**
+ * The distinct tax ids on these lines that the registry has not answered for.
+ *
+ * This is both the count the "ตรวจสรรพากร" button shows and the work it does.
+ * It counts ids rather than rows because six receipts from one seller are one
+ * question — the per-card check this replaces asked six separate times for the
+ * same answer, against a SOAP service behind a 15-second timeout.
+ *
+ * `unknown` is a failed check and is asked again. `unregistered` is a real
+ * answer and is not — the register simply has nothing on that number, which is
+ * ordinary for an individual seller. `checking` is already in flight. Anything
+ * that is not thirteen digits is not a question the registry can take.
+ */
+export function tinsNeedingRdCheck(
+  items: readonly { taxId?: string | null }[] | null | undefined,
+  answers: Readonly<Record<string, { state: RdAnswerState }>>,
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const it of items ?? []) {
+    const tin = (it.taxId ?? "").replace(/\D/g, "");
+    if (tin.length !== 13 || seen.has(tin)) continue;
+    seen.add(tin);
+    const state = answers[tin]?.state;
+    if (state === undefined || state === "unknown") out.push(tin);
+  }
+  return out;
+}

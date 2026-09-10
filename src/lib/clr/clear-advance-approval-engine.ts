@@ -8,6 +8,8 @@ import { getRequest, setAccountAction } from "@/lib/clr/clear-advance-request-se
 import { listClrApprovers, roleForStep } from "@/lib/clr/clear-advance-approver-service";
 import { linesMissingTaxVendor } from "@/lib/clr/tax-vendor-core";
 import { glMissingMessage, linesMissingGl } from "@/lib/clr/clear-advance-line-validation";
+import { resolveClrPaymentDate } from "@/lib/clr/clear-advance-payment-date";
+import { getPaymentDates } from "@/lib/acc/payment-calendar";
 import { pndBlockReason } from "@/lib/clr/wht-pnd-core";
 import {
   CLR_NEXT_STEP,
@@ -61,11 +63,20 @@ export async function approveCurrentStep(
 
   // The Account (AP) step records the PV/PPEX doc no. + (conditional) payment date.
   if (step === "ACCOUNT") {
+    /* The payment date, and whether the caller was even entitled to choose it.
+       Only the company-pays case reaches for the calendar — a refund is dated
+       by the employee's transfer, so asking the holiday table about it would
+       be a query whose answer is not used. It used to be enough for the date
+       to be non-empty: any Wednesday passed, and became a G/L posting date in
+       BC that no payment run matches. */
     const refund = before.clear?.refundToCompany ?? 0;
-    if (refund < 0 && !opts.paymentDate) {
-      // Company must pay the employee the shortfall — a payment date is required.
-      throw new Error("กรณีบริษัทต้องจ่ายเพิ่ม กรุณาระบุวันจ่าย (Payment Date)");
-    }
+    const decided = resolveClrPaymentDate({
+      refundToCompany: refund,
+      refundTransferDate: before.clear?.refundTransferDate,
+      submitted: opts.paymentDate,
+      allowedRounds: refund < 0 ? await getPaymentDates() : [],
+    });
+    if (!decided.ok) throw new Error(decided.error);
     // Every VAT line must name the seller's vendor before it leaves this step
     // (user, 2026-09-08). Input tax is claimed against a vendor; a VAT line with
     // no Tax Vendor No. posts an unattributed claim, and this is the last step
@@ -92,7 +103,7 @@ export async function approveCurrentStep(
     // document to BC and put the discovery on whoever pressed "ส่งเข้า ERP".
     const missingGl = linesMissingGl(before.clear?.items);
     if (missingGl.length > 0) throw new Error(glMissingMessage(missingGl));
-    await setAccountAction(requestId, opts.pvDocNo ?? null, opts.paymentDate ?? null);
+    await setAccountAction(requestId, opts.pvDocNo ?? null, decided.paymentDate);
   }
 
   const pool = await getAccPool();
