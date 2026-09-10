@@ -405,7 +405,11 @@ export function validateForSubmit(
   if (lines.length === 0) errs.push("กรุณาระบุรายละเอียดค่าใช้จ่ายจริงอย่างน้อย 1 รายการ");
   for (const it of lines) {
     if (!it.expenseDate) errs.push("มีรายการค่าใช้จ่ายที่ยังไม่ได้ระบุวันที่");
-    if (!it.glAccountNo) errs.push("มีรายการค่าใช้จ่ายที่ยังไม่ได้เลือกหมวด (รายการ)");
+    /* The G/L account is deliberately not checked here. The requester used to
+       choose it and no longer sees the field at all — accounting does, at the
+       ACCOUNT step, which is where `linesMissingGl` now refuses to let a
+       clearing pass without one. Asking for it at submit would block a person
+       who has no way to answer. */
     if (!(n0(it.amountBeforeVat) > 0)) errs.push("มีรายการค่าใช้จ่ายที่จำนวนเงินก่อน VAT ไม่ถูกต้อง");
   }
   errs.push(...validateLineMoney(lines));

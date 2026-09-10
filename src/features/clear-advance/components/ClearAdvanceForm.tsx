@@ -18,14 +18,13 @@ import {
 } from "@/components/ui/AttachmentViewer";
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
 import { PoweredByClaude } from "@/components/ui/PoweredByClaude";
-import { BranchPicker, GlPicker, cellClass, cellStyle } from "./LinePickers";
+import { BranchPicker, cellClass, cellStyle } from "./LinePickers";
 import { OcrConfirmModal, type OcrRow } from "./OcrConfirmModal";
 import type { AccBrandOption, AccFileMeta } from "@/features/accounting/types";
 import type {
   BranchOption,
   ClearAdvanceRequest,
   ClearAdvanceSaveInput,
-  GlAccountOption,
   PendingAdvanceOption,
 } from "@/features/clear-advance/types";
 import {
@@ -142,8 +141,6 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   const [pendingLoading, setPendingLoading] = useState(false);
   // Each line's account list is fetched for that line's branch (§2.4), keyed by
   // branch code so switching back to a branch already seen costs no round trip.
-  const [glByBranch, setGlByBranch] = useState<Record<string, GlAccountOption[]>>({});
-  const glRequested = useRef<Set<string>>(new Set());
   const [branches, setBranches] = useState<BranchOption[]>([]);
   const [files, setFiles] = useState<AccFileMeta[]>([]);
   const [refundProofFiles, setRefundProofFiles] = useState<AccFileMeta[]>([]);
@@ -304,56 +301,11 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
     return () => { cancelled = true; };
   }, [initial?.id]);
 
-  // Fetch the account list for every branch the lines currently use. The server
-  // decides which accounts a branch may charge, so nothing is filtered here.
-  const branchKeys = useMemo(
-    () => Array.from(new Set(lines.map((l) => l.branchCode).filter(Boolean))).sort().join("|"),
-    [lines],
-  );
-  useEffect(() => {
-    const missing = (branchKeys ? branchKeys.split("|") : []).filter((c) => !glRequested.current.has(c));
-    if (missing.length === 0) return;
-    missing.forEach((c) => glRequested.current.add(c));
-    let cancelled = false;
-    Promise.all(
-      missing.map((code) =>
-        fetch(`/api/request/clear-advance/options/gl-accounts?branch=${encodeURIComponent(code)}`)
-          .then((r) => r.json())
-          .then((j: { ok: boolean; data?: GlAccountOption[] }) => [code, j.ok ? j.data ?? [] : []] as const)
-          .catch(() => {
-            glRequested.current.delete(code); // let a later render retry
-            return [code, [] as GlAccountOption[]] as const;
-          }),
-      ),
-    ).then((entries) => {
-      if (!cancelled) setGlByBranch((prev) => ({ ...prev, ...Object.fromEntries(entries) }));
-    });
-    return () => { cancelled = true; };
-  }, [branchKeys]);
-
-  // Changing a line's branch can invalidate the account already on it — drop the
-  // pick rather than submit an account that branch is not allowed to charge.
-  useEffect(() => {
-    if (readOnly) return;
-    setLines((prev) => {
-      let changed = false;
-      const next = prev.map((l) => {
-        const opts = l.branchCode ? glByBranch[l.branchCode] : undefined;
-        if (!l.glAccountNo || !opts || opts.some((o) => o.glAccountNo === l.glAccountNo)) return l;
-        changed = true;
-        return { ...l, glAccountNo: "", glAccountName: "" };
-      });
-      return changed ? next : prev;
-    });
-  }, [glByBranch, lines, readOnly]);
-
-  /** Options for one line, keeping a stored account visible on a read-only request
-   *  even when the current branch filter would no longer offer it. */
-  const glOptionsFor = (l: LineRow): GlAccountOption[] => {
-    const opts = (l.branchCode && glByBranch[l.branchCode]) || [];
-    if (!l.glAccountNo || opts.some((o) => o.glAccountNo === l.glAccountNo)) return opts;
-    return [{ glAccountNo: l.glAccountNo, nameTh: l.glAccountName || null, nameEn: null, dimensionType: "Employee" }, ...opts];
-  };
+  /* The per-branch G/L option cache used to live here, because the requester
+     picked the account. Accounting picks it now, on the detail grid, so the
+     cache moved to `useGlOptionsByBranch` and this form no longer fetches the
+     chart of accounts at all. Clearing a line's account when its branch
+     changes moved into `updateLine`, where it needs no options to decide. */
 
   // Branch + pending-advance options are scoped to the chosen brand.
   useEffect(() => {
@@ -458,7 +410,22 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   }
 
   function updateLine(idx: number, patch: Partial<LineRow>) {
-    setLines((p) => p.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
+    setLines((p) =>
+      p.map((l, i) => {
+        if (i !== idx) return l;
+        /* Changing the branch invalidates the G/L account, because the account
+           is branch-dependent — `allowedDimensionTypes` decides which accounts
+           a branch may charge. Accounting chooses the account and the
+           requester cannot see it, which is exactly why this has to be silent
+           and automatic: leaving a now-illegal account on the line would fail
+           `validateLineGlBranch` on the requester's own save, with an error
+           naming a field they can neither see nor fix. */
+        const branchChanged = patch.branchCode !== undefined && patch.branchCode !== l.branchCode;
+        return branchChanged
+          ? { ...l, ...patch, glAccountNo: "", glAccountName: "" }
+          : { ...l, ...patch };
+      }),
+    );
   }
 
   function addWht() {
@@ -628,7 +595,6 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
     } else {
       for (const l of valid) {
         if (!l.expenseDate) { errs.push({ key: "lines", message: "มีรายการค่าใช้จ่ายที่ยังไม่ได้ระบุวันที่" }); break; }
-        if (!glForced && !l.glAccountNo) { errs.push({ key: "lines", message: "มีรายการค่าใช้จ่ายที่ยังไม่ได้เลือกหมวด (รายการ)" }); break; }
         if (!(num(l.amountBeforeVat) > 0)) { errs.push({ key: "lines", message: "มีรายการที่จำนวนเงินก่อน VAT ไม่ถูกต้อง" }); break; }
         /* The OCR review card refuses to save a row without a branch, but a row
            added by hand with "เพิ่มแถว" never passes through it. Same rule, one
@@ -1328,13 +1294,11 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           </div>
         )}
 
-        {/* "เป็นค่าใช้จ่ายของ" = the selected brand (no separate field). */}
-        {glForced && (
-          <p className="text-[11px] mt-1 px-2.5 py-1.5 rounded-lg m-0"
-            style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
-            ค่าใช้จ่ายของบริษัทอื่น (ไม่ใช่ Rocks PC) → ทุกบรรทัดใช้บัญชี {FORCE_GL_NON_ROCKS_PC} อัตโนมัติ (คอลัมน์ “รายการ” ถูกล็อก)
-          </p>
-        )}
+        {/* "เป็นค่าใช้จ่ายของ" = the selected brand (no separate field).
+            The banner that used to sit here explained that the "รายการ" column
+            was locked to FORCE_GL_NON_ROCKS_PC. The requester has no such
+            column any more — accounting chooses the account — so it explained
+            a lock nobody can see. The forcing itself still happens, at save. */}
       </div>
 
       {/* Receipts (refType clear_doc) — attach first: each file OCR-fills one expense line */}
@@ -1385,7 +1349,6 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                 <Th w={210}>เลขที่เอกสาร</Th>
                 {/* Branch comes before the G/L account: it filters the account list. */}
                 <Th w={190}>สาขา *</Th>
-                <Th w={220}>รายการ</Th>
                 <Th w={240}>รายละเอียด</Th>
                 <Th w={100} right>ก่อน VAT</Th>
                 <Th w={90} right>VAT</Th>
@@ -1422,22 +1385,6 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                         <span className="block text-[10px] mt-0.5" style={{ color: "var(--color-danger)" }}>
                           สาขานี้ถูก Block ใน BC — เลือกใหม่
                         </span>
-                      )}
-                    </Td>
-                    <Td>
-                      {glForced ? (
-                        <div className="text-[12px] px-2 py-1.5 rounded-lg"
-                          style={{ background: "var(--bg-card-alt)", color: "var(--text-muted)", border: "1px dashed var(--border-card)" }}>
-                          {FORCE_GL_NON_ROCKS_PC} · เงินจ่ายแทนบริษัทอื่น
-                        </div>
-                      ) : (
-                        <GlPicker
-                          options={glOptionsFor(l)}
-                          valueNo={l.glAccountNo}
-                          disabled={readOnly || !l.branchCode}
-                          noBranch={!l.branchCode}
-                          onPick={(o) => updateLine(idx, { glAccountNo: o?.glAccountNo ?? "", glAccountName: o?.nameTh ?? "" })}
-                        />
                       )}
                     </Td>
                     <Td>
@@ -1533,20 +1480,6 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                     <span className="block text-[11px] mt-1" style={{ color: "var(--color-danger)" }}>
                       สาขานี้ถูก Block ใน BC — เลือกใหม่
                     </span>
-                  )}
-                </MField>
-                <MField label="รายการ">
-                  {glForced ? (
-                    <div className="text-[12px] px-3 py-2 rounded-xl"
-                      style={{ background: "var(--bg-card)", color: "var(--text-muted)", border: "1px dashed var(--border-card)" }}>
-                      {FORCE_GL_NON_ROCKS_PC} · เงินจ่ายแทนบริษัทอื่น
-                    </div>
-                  ) : (
-                    <GlPicker
-                      options={glOptionsFor(l)} valueNo={l.glAccountNo}
-                      disabled={readOnly || !l.branchCode} noBranch={!l.branchCode}
-                      onPick={(o) => updateLine(idx, { glAccountNo: o?.glAccountNo ?? "", glAccountName: o?.nameTh ?? "" })}
-                    />
                   )}
                 </MField>
                 <MField label="รายละเอียด">
@@ -1926,7 +1859,6 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
         branches={branches}
         brandChosen={!!brandCode}
         glForced={glForced}
-        forcedGlLabel={`${FORCE_GL_NON_ROCKS_PC} · เงินจ่ายแทนบริษัทอื่น`}
         onConfirm={acceptOcrRows}
         onCancel={() => { void cancelOcrRows(); }}
       />

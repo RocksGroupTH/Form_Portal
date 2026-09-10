@@ -6,7 +6,7 @@ import { Dialog } from "@/components/ui/Dialog";
 import { PoweredByClaude } from "@/components/ui/PoweredByClaude";
 import type { BranchOption, GlAccountOption } from "@/features/clear-advance/types";
 import type { ReceiptKind } from "@/lib/clr/ai-receipt-core";
-import { BranchPicker, GlPicker, cellClass, cellStyle, isPickerPanelOpen } from "./LinePickers";
+import { BranchPicker, cellClass, cellStyle, isPickerPanelOpen } from "./LinePickers";
 import { normalizeTaxIdInput, taxIdNotice } from "@/lib/clr/seller-tax-id";
 
 /** One OCR candidate awaiting the user's confirmation. Mirrors the editable half
@@ -106,7 +106,7 @@ function F({ label, children }: { label: string; children: ReactNode }) {
  * uploaded file stays attached to the request.
  */
 export function OcrConfirmModal({
-  open, rows: incoming, skippedPages, branches, brandChosen, glForced, forcedGlLabel, onConfirm, onCancel,
+  open, rows: incoming, skippedPages, branches, brandChosen, glForced, onConfirm, onCancel,
 }: {
   open: boolean;
   rows: OcrRow[];
@@ -119,7 +119,6 @@ export function OcrConfirmModal({
   brandChosen: boolean;
   /** The brand books every line to one fixed account, so no G/L is chosen here. */
   glForced: boolean;
-  forcedGlLabel?: string;
   onConfirm: (rows: OcrRow[]) => void;
   onCancel: () => void;
 }) {
@@ -456,32 +455,11 @@ export function OcrConfirmModal({
                         </span>
                       )}
                     </F>
-                    <F label="รายการ">
-                      {glForced ? (
-                        <div className="text-[12px] px-2 py-1.5 rounded-lg"
-                          style={{ background: "var(--bg-card)", color: "var(--text-muted)", border: "1px dashed var(--border-card)" }}>
-                          {forcedGlLabel}
-                        </div>
-                      ) : (
-                        <>
-                          <GlPicker
-                            options={(r.branchCode && glByBranch[r.branchCode]) || []}
-                            valueNo={r.glAccountNo}
-                            disabled={!r.branchCode}
-                            noBranch={!r.branchCode}
-                            inline
-                            onPick={(o) => update(r.key, {
-                              glAccountNo: o?.glAccountNo ?? "", glAccountName: o?.nameTh ?? "", glSuggested: false,
-                            })}
-                          />
-                          {r.glSuggested && (
-                            <span className="text-[10px]" style={{ color: "var(--text-faint)" }}>
-                              AI แนะนำจากรายละเอียด — เปลี่ยนได้
-                            </span>
-                          )}
-                        </>
-                      )}
-                    </F>
+                    {/* The "รายการ" cell was here. Accounting chooses the G/L
+                        account now, on the detail grid, so the requester is not
+                        shown one to confirm — but the suggestion below still
+                        runs and still rides along on the row, which is what
+                        puts a pre-filled grid in front of the account officer. */}
                   </>
                 )}
               </div>

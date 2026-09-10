@@ -7,6 +7,7 @@ import type { Actor } from "@/lib/acc/approval-engine";
 import { getRequest, setAccountAction } from "@/lib/clr/clear-advance-request-service";
 import { listClrApprovers, roleForStep } from "@/lib/clr/clear-advance-approver-service";
 import { linesMissingTaxVendor } from "@/lib/clr/tax-vendor-core";
+import { glMissingMessage, linesMissingGl } from "@/lib/clr/clear-advance-line-validation";
 import { pndBlockReason } from "@/lib/clr/wht-pnd-core";
 import {
   CLR_NEXT_STEP,
@@ -83,6 +84,14 @@ export async function approveCurrentStep(
     // anyone who can still choose.
     const pndProblem = pndBlockReason(before.clear?.items, before.clear?.whtItems);
     if (pndProblem) throw new Error(pndProblem);
+    // Every posting line must name its G/L account before it leaves this step.
+    // The requester used to choose it and no longer sees the field at all, so
+    // accounting owns it — and this is the last step that can edit a line, the
+    // same reason the two checks above live here. A line with no account is
+    // dropped from the journal without a word, which would send an unbalanced
+    // document to BC and put the discovery on whoever pressed "ส่งเข้า ERP".
+    const missingGl = linesMissingGl(before.clear?.items);
+    if (missingGl.length > 0) throw new Error(glMissingMessage(missingGl));
     await setAccountAction(requestId, opts.pvDocNo ?? null, opts.paymentDate ?? null);
   }
 

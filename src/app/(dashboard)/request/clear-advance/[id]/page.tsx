@@ -28,6 +28,9 @@ function ClearAdvanceDetailContent() {
   const [request, setRequest] = useState<ClearAdvanceRequest | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  /* Whether this viewer is accounting. The server decides it — see the GET
+     handler — and the G/L column is theirs alone. */
+  const [canSeeGlAccount, setCanSeeGlAccount] = useState(false);
 
   const fetchRequest = useCallback(() => {
     if (requestId == null || Number.isNaN(requestId)) {
@@ -39,10 +42,12 @@ function ClearAdvanceDetailContent() {
     setLoading(true);
     fetch(`/api/request/clear-advance/requests/${requestId}`)
       .then((r) => r.json())
-      .then((json: { ok: boolean; data?: ClearAdvanceRequest }) => {
+      .then((json: { ok: boolean; data?: ClearAdvanceRequest; canSeeGlAccount?: boolean }) => {
         if (cancelled) return;
-        if (json.ok && json.data) setRequest(json.data);
-        else setNotFound(true);
+        if (json.ok && json.data) {
+          setRequest(json.data);
+          setCanSeeGlAccount(json.canSeeGlAccount === true);
+        } else setNotFound(true);
       })
       .catch(() => { if (!cancelled) setNotFound(true); })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -89,7 +94,7 @@ function ClearAdvanceDetailContent() {
         </div>
       )}
 
-      <ClearAdvanceDetail request={request} onChanged={fetchRequest} />
+      <ClearAdvanceDetail request={request} canSeeGlAccount={canSeeGlAccount} onChanged={fetchRequest} />
     </PageContainer>
   );
 }

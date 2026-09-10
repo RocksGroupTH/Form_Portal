@@ -33,7 +33,14 @@ export async function GET(
     if (!req) {
       return NextResponse.json({ ok: false, error: "not found" }, { status: 404 });
     }
-    return NextResponse.json({ ok: true, data: req });
+    /* Who may see the "รายการ" (G/L) column. `isAccountArea` is accounting-area
+       access or an active approver on this form's own roster, and for AP-3 that
+       roster check is exactly ["ACCOUNT", "HEAD"] (request-acl.ts) — the line
+       manager comes from the requester's ManagerStaffId in HR, not from it. So
+       the flag already means "accounting, not the requester and not the
+       manager", which is the audience the column is for. The gate computed it
+       to decide the 403; it was being thrown away. */
+    return NextResponse.json({ ok: true, data: req, canSeeGlAccount: gate.viewer.isAccountArea });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Internal server error";
     console.error("[api/request/clear-advance/requests/[id]] GET", message);
