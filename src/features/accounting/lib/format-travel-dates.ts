@@ -1,8 +1,10 @@
-const TH_WEEKDAYS = ["อา", "จ", "อ", "พ", "พฤ", "ศ", "ส"] as const;
-const TH_MONTHS_SHORT = [
-  "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
-  "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค.",
-] as const;
+// Both vocabularies come from `thai-calendar.ts`, which its own header says
+// exists so that "a third hand-written copy" cannot disagree with the others.
+// This file kept private copies of both — the weekday list was character-for-
+// character `TH_DAYS`, and the abbreviated months are now used by AP-4's date
+// picker as well, so a copy here would have been the disagreement that header
+// warns about rather than a hypothetical one.
+import { TH_DAYS, TH_MONTHS_SHORT } from "./thai-calendar";
 
 /** Weekday + "DD MMM" for day chips, from YYYY-MM-DD (local). */
 export function fmtDayChipDate(ymd: string | null): { weekday: string; dayMonth: string } | null {
@@ -10,7 +12,7 @@ export function fmtDayChipDate(ymd: string | null): { weekday: string; dayMonth:
   const p = ymd.split("-").map(Number);
   if (p.length !== 3 || !p[0]) return null;
   const dt = new Date(p[0], p[1] - 1, p[2]);
-  return { weekday: TH_WEEKDAYS[dt.getDay()], dayMonth: `${p[2]} ${TH_MONTHS_SHORT[p[1] - 1]}` };
+  return { weekday: TH_DAYS[dt.getDay()], dayMonth: `${p[2]} ${TH_MONTHS_SHORT[p[1] - 1]}` };
 }
 
 /** Panel title for a travel day (detail view / form tabs). */

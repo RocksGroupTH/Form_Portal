@@ -9,6 +9,8 @@ import {
   buildMonthCells,
   displayYear,
   formatThaiYmd,
+  formatThaiYmdShort,
+  TH_MONTHS_SHORT,
   addMonths,
 } from "./thai-calendar";
 
@@ -58,6 +60,21 @@ test("a month starting on Sunday has no leading pad", () => {
 test("the year shown is Buddhist, the year stored is Gregorian", () => {
   assert.equal(displayYear(2026), 2026);
   assert.equal(formatThaiYmd("2026-08-25"), "25 สิงหาคม 2026");
+  // The abbreviated form differs in the month table and in nothing else — same
+  // day, same Gregorian year, same empty answer for junk. AP-4's date column is
+  // 148px and the long form was being clipped to "25 สิงหาคม 20…", which reads
+  // as a broken year rather than as a narrow box.
+  assert.equal(formatThaiYmdShort("2026-08-25"), "25 ส.ค. 2026");
+  assert.equal(formatThaiYmdShort("2026-01-01"), "1 ม.ค. 2026");
+  assert.equal(formatThaiYmdShort("2026-12-31"), "31 ธ.ค. 2026");
+  assert.equal(formatThaiYmdShort(""), "");
+  assert.equal(formatThaiYmdShort("2026-02-29"), "");
+  // Twelve months, and each abbreviation still has its trailing full stop —
+  // that stop is part of the Thai word, not punctuation a caller added.
+  assert.equal(TH_MONTHS_SHORT.length, 12);
+  for (const m of TH_MONTHS_SHORT) {
+    assert.ok(m.endsWith("."), `${m} is missing the abbreviation's full stop`);
+  }
 });
 
 test("an unparseable date formats to the empty string, not to NaN", () => {

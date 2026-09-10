@@ -30,21 +30,21 @@ type Gate =
 
 const ROUTE_GATES: { route: string; gate: Gate; publicRead?: "GET" }[] = [
   {
-    route: "approvers",
-    gate: {
-      kind: "role",
-      why: "edits the pool that approves real payments — granting it would be a route from 'may edit the checklist' to 'may approve money'",
-    },
-  },
-  {
     route: "access",
     gate: {
       kind: "role",
-      why: "hands out the grants — anyone who could POST here could grant themselves the rest",
+      why: "hands out the grants — anyone who could POST here could grant themselves the rest — and, since 2026-09-10, the per-brand approval ticks the former settings/approvers route used to gate on its own",
     },
   },
   { route: "rules", gate: { kind: "tab", tab: "rules" }, publicRead: "GET" },
   { route: "brands", gate: { kind: "tab", tab: "brands" } },
+  {
+    route: "erp-interface",
+    gate: {
+      kind: "role",
+      why: "not brand-scoped (see settings-tabs.ts) — a scoped grant holder could set another brand's posting configuration",
+    },
+  },
 ];
 
 async function readRouteFile(route: string): Promise<string> {
@@ -147,9 +147,17 @@ test("every AP-4 settings handler opens with the gate its table entry names", as
 
   // Pinned so a new handler on an existing route has to be looked at rather
   // than merged on the strength of the file already having an entry.
+  //
+  // Was 11. `settings/approvers` (GET + POST) is gone with the tab it
+  // belonged to — its job (adding/reactivating an `AccReimburseApprover` row)
+  // is now a side effect of ticking a brand on `settings/access`'s own POST —
+  // so the count dropped by two handlers, to 9. SDD Task 7 then added
+  // `erp-interface`'s `DELETE` (un-mapping a claim brand from its group,
+  // standalone from the grouped `POST` — see that route's own docblock for
+  // why), which is +1, to 10.
   assert.equal(
     handlerCount,
-    9,
+    10,
     "the AP-4 settings routes gained or lost a handler — check its gate, then update this number",
   );
 });
@@ -169,11 +177,13 @@ test("every tab-gated route names a tab an admin can actually tick", () => {
   }
 });
 
-test("the two power-handing tabs have a route in this table, and it is admin-only", () => {
-  // The table is only a guarantee for the routes it lists. These two are the
-  // ones whose absence would matter, so their presence is asserted rather than
-  // assumed.
-  for (const route of ["approvers", "access"]) {
+test("the power-handing tab has a route in this table, and it is admin-only", () => {
+  // The table is only a guarantee for the routes it lists. This is the one
+  // whose absence would matter, so its presence is asserted rather than
+  // assumed. `settings/approvers` used to be a second entry here; deleting the
+  // route deleted the power it handed out too — see `settings/access`'s own
+  // POST, which now derives an `AccReimburseApprover` row from brand ticks.
+  for (const route of ["access"]) {
     const rule = ROUTE_GATES.find((r) => r.route === route);
     assert.ok(rule, `${route} has no entry — its gate is unasserted`);
     assert.equal(rule.gate.kind, "role", `${route} must stay admin-only`);

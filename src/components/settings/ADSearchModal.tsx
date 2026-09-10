@@ -9,8 +9,9 @@ import { Search, X } from "lucide-react";
  * Lifted from `UatUserSettings`'s private copy — the richest of the four the
  * settings surfaces each carried (title, subtitle, already-added marking) — and
  * imported today by `UatUserSettings` itself, AP-17's `BookingApproverSettings`
- * and AP-4's `ReimburseApproverSettings`. It is the one new panels should
- * import.
+ * and AP-4's `ReimburseAccessSettings` (formerly also `ReimburseApproverSettings`,
+ * deleted 2026-09-10 when its roster merged onto `ReimburseAccessSettings`'s own
+ * grid). It is the one new panels should import.
  *
  * The three remaining private copies are deliberately left alone, because they
  * are not the same component wearing different formatting:

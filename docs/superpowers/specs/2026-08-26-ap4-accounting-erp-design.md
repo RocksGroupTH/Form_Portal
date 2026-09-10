@@ -4,6 +4,146 @@
 **Branch:** `feat/ap-4-reimbursement`
 **Status:** design agreed, not built
 
+---
+
+## Amendment — 2026-09-08
+
+**Stage 1 (§3) shipped**, on `feat/ap4-accounting-and-erp`, fourteen commits
+(`1db0bb9..2769193`) — the plan is
+`docs/superpowers/plans/2026-09-08-ap4-accounting-queue.md`. This block is
+what a reader following the body below needs corrected; the body itself is
+left as written on 2026-08-26, dated history rather than current state.
+
+- **The payment date is not a round-membership choice, contrary to §3.2.**
+  §3.2 describes the queue's control as offering "one payment date for the
+  whole selection, from `getReimbursePaymentOptions`" — a list of 1st/3rd-
+  Friday rounds. What shipped instead is `paymentDateProblem`
+  (`approval-policy.ts`): a one-month-back/twelve-months-forward sanity
+  bound, so accounting may pick any real calendar date and the round is
+  offered only as the field's default. `PAYMENT_DATE_NOT_A_ROUND` and its 409
+  never shipped — see CLAUDE.md's AP-4 section for why a fixed bound replaced
+  a membership test.
+- **The queue shows a granted non-approver EVERY claim, not the empty queue
+  §3.3 promises.** §3.3 says "a person with the tick and no approver row sees
+  an empty queue and cannot act". What shipped is the second half only: the
+  route answers every row parked at `(ManagerApproved, ACCOUNT)` to anyone
+  holding the `approvalQueue` grant, and authority is re-decided per action by
+  the approval service against `AccReimburseApprover`, inside the transaction
+  that writes. **The shipped behaviour is the one kept**, ruled 2026-09-08 on
+  review: filtering the queue by the approver roster would conflate "may see"
+  with "may act", which is the exact coupling `AccReimburseAccess` was added to
+  prevent — a grant that only ever shows an empty page is not a grant, and the
+  filter would be a second, weaker copy of an authorization rule that already
+  lives where the money moves. The defect was that a spec decision had been
+  reversed silently; it is recorded here and in CLAUDE.md's AP-4 queue
+  paragraph rather than reverted. The consequence — an empty
+  `AccReimburseApprover` means select-all → approve → N failures — is answered
+  by a **notice**, not a filter: `/api/request/reimburse/access` reports
+  `isReimburseApprover` and the queue says so before the first click.
+
+  **↑ Superseded 2026-09-10 — this bullet is history, not current behaviour.**
+  Sight is now scoped by brand: the queues return only claims whose brand maps
+  to one of the viewer's ticked Interface targets
+  (`AccReimburseApproverBrand`, migration 144), and a viewer with no active
+  `AccReimburseApprover` row sees none — which is what §3.3 asked for in the
+  first place. The user chose it directly ("คุมทั้งเห็นและกดได้ เหมือน
+  AP-1"). What the paragraph above still gets right, and what survived the
+  reversal, is the half that was never about the queue: **filtering a list is
+  not a control.** The five action paths refuse out of scope on their own,
+  inside the transaction that claims the row, regardless of what any list
+  showed — because a scoped approver holding an id from a link or a bookmark
+  still reaches the action. See
+  `docs/superpowers/specs/2026-09-10-ap4-erp-groups-and-one-roster-design.md`
+  §3 and CLAUDE.md's AP-4 queue paragraph, which carries the same note.
+- **A G/L-account picker shipped that this spec never scoped.**
+  `PATCH /api/request/reimburse/requests/[id]/items` lets accounting correct
+  the AI-proposed `AccReimburseItem.Category` per line, from the queue, while
+  the claim is still at `ACCOUNT`. §5.2 below is still accurate about what
+  stage 3 will do to that column — this route edits it under its current name
+  and type, and does not touch the rename.
+- **§7's migration number and the alignment-table count in §4/§7 are both
+  stale.** 122 is taken — the tree runs to 143. How many migration numbers
+  are currently duplicated is not worth pinning down here: it was eleven when
+  this amendment was first drafted and is twelve as of this correction — `137`
+  joined (`137_acc_advance_payee_bank_branch.sql` and `137_fx_rate_cache.sql`)
+  when the AP-2 work merged into this branch's base — and a count that moves
+  under a merge is exactly why the sentence's own advice, `ls migrations/`, is
+  the only thing here safe to rely on; do not restate a number and expect it
+  to still be right. `check:alignment`'s target is **27** tables, not 25:
+  AP-17's per-diem-by-country and brand-scoped-access migrations (133, 134)
+  moved it after this spec was written. Neither figure matters to what
+  shipped — **stage 1 needed no migration at all**, which §7 already says and
+  is the fact most likely to be missed by a reader who follows its migration
+  table rather than its prose.
+
+**Stage 2 (§4) is scoped here but not started** — per-AP-4 ERP settings gets
+its own plan. **Stages 3 and 4 (§5, §6) remain blocked on this spec's own open
+item #1**: whether Business Central's posting call returns the posted
+document number has never been measured, and §5.3's PV-number design depends
+on the answer. Until it is measured, CLAUDE.md's "AP-4 never reaches Business
+Central, deliberately" is still true — stage 3 is what makes it false, and
+that paragraph is rewritten there, not here.
+
+## Amendment — 2026-09-09
+
+**Stage 2 (§4) shipped**, on the same branch, plan
+`docs/superpowers/plans/2026-09-09-ap4-hub-erp-settings-and-queue.md`. It
+carried two things §4 did not scope — a read-only Interface ERP queue, and the
+merge of AP-4's two hub cards into one — because the user asked for both
+directly.
+
+- **Open item #1 is answered, and it never needed measuring.** §10 asks
+  whether Business Central's posting call returns the posted document number,
+  and treats the answer as blocking stages 3 and 4. It is not blocking and the
+  question was already settled in the code: **`AccRequest.ErpDocumentNo`
+  exists** (migration 108) and **two forms already write it** — AP-2's and
+  AP-3's senders both extract `results[].documentNo` from the response. So
+  §5.3's proposed `AccRequest.ErpPvNo` is a **third** name for a column that
+  is already there twice over and should not be added. What stages 3 and 4
+  are actually blocked on is narrower and entirely external: nobody has
+  supplied the Business Central call itself.
+- **The queue reads `(Approved, NULL)`, not `(ManagerApproved, ACCOUNT_FINAL)`
+  as §6 designs.** That is a consequence of stage 4 not being built rather
+  than a disagreement with it: §6 moves `ACCOUNT_FINAL` to after the send, and
+  that move must land **after** a sender exists — done first, every approved
+  claim parks at a step nothing can advance. While `ACCOUNT_FINAL` is still
+  terminal, `Status='Approved'` is what names a finished claim, so that is
+  what the queue selects. When stage 4 lands, this predicate moves with it.
+- **The queue is read-only and says so on screen.** No send button, no
+  selection, no export. There is nothing to post with, and
+  `CK_AccRequest_ErpInterfaceStatus` admits only `Pending`/`Sent`/`Failed` —
+  no value means "waiting for a sender that does not exist" — so neither a
+  button nor a status was invented to fill the gap.
+- **"Ready to post" is derived from the item rows, and nothing gates on it
+  yet.** `AccReimburseItem.Category` may be null or blank on a claim that has
+  cleared both accounting steps, and `setReimburseItemAccounts` claims
+  `CurrentStepCode='ACCOUNT'`, so a claim can reach this queue unready with no
+  in-app path to correction. Stage 3 resolves it: either a readiness gate at
+  `ACCOUNT_FINAL` or a widened edit window. Recorded rather than patched,
+  because guessing which belongs to the send's design.
+- **`AccBrandErpTargetSetting` is one of the seven per-form tables and has no
+  per-form writer anywhere in `src/`** — measured 2026-09-09, zero override
+  rows on any form. A settings section for a table nothing writes is a control
+  with no counterpart, so AP-4's Interface ERP tab does not have one; a form
+  can still *read* an override of it that nothing can create.
+- **AP-4's Interface ERP tab writes four of the seven, and the G/L account is
+  deliberately not one of them.** It covers `AccBrandErpInterface` (Company
+  ปลายทาง), `AccBrandBankAccount`, `AccBrandJournalBatch` and
+  `AccBrandBranchCode`. §4 assumes a G/L account field; AP-2 dropped it because
+  Business Central resolves the debit account from the matched vendor's posting
+  group, and AP-4 followed. So the seven divide as four written, one
+  (`AccBrandErpTargetSetting`) written by nothing anywhere, and two
+  (`AccBrandGlAccount`, `DepartmentErpMap`) read by AP-4 — through
+  `loadErpJournalBuildContext(AP4_FORM_CODE)`, per-form predicate and all — but
+  never written by it.
+- **§4's premise that overrides are unreachable from any UI was already false
+  when this spec was written.** AP-2 has written per-form rows since its
+  branch merged — 14 of them across five tables, measured 2026-09-09 and
+  identical in both form databases. CLAUDE.md said the same thing and has been
+  corrected in the same commit as this block.
+
+---
+
 AP-4 today stops being interesting the moment the manager approves. The two
 accounting steps exist and work, but there is no queue to work them from, no
 route to Business Central, and no record of what was paid. This spec covers

@@ -21,6 +21,23 @@ export const TH_MONTHS = [
   "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม",
 ] as const;
 
+/**
+ * The abbreviated forms, for a control too narrow to hold "สิงหาคม".
+ *
+ * Here rather than beside a consumer, for the reason this file's header gives:
+ * a second table of month names is how two parts of one app come to disagree.
+ * `format-travel-dates.ts` kept a private copy of exactly this list and now
+ * imports it.
+ *
+ * The trailing full stop is part of the Thai abbreviation, not punctuation
+ * added by the caller — "ส.ค." is the word, and a caller that trims it produces
+ * something that is not an abbreviation of anything.
+ */
+export const TH_MONTHS_SHORT = [
+  "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
+  "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค.",
+] as const;
+
 export interface YmdParts {
   year: number;
   month0: number;
@@ -92,6 +109,21 @@ export function formatThaiYmd(ymd: string): string {
   const p = parseYmd(ymd);
   if (!p) return "";
   return `${p.day} ${TH_MONTHS[p.month0]} ${displayYear(p.year)}`;
+}
+
+/**
+ * `"2026-08-25"` → `"25 ส.ค. 2026"`; `""` for anything unparseable, exactly as
+ * `formatThaiYmd` does — the two differ in the month table and in nothing else,
+ * so a caller can swap between them without acquiring a second empty-value rule.
+ *
+ * For a control that has to hold a whole date in about 100px. "13 สิงหาคม 2026"
+ * does not fit AP-4's 148px date column and was being clipped to
+ * "13 สิงหาคม 20…", which reads as a broken year rather than as a narrow box.
+ */
+export function formatThaiYmdShort(ymd: string): string {
+  const p = parseYmd(ymd);
+  if (!p) return "";
+  return `${p.day} ${TH_MONTHS_SHORT[p.month0]} ${displayYear(p.year)}`;
 }
 
 /** Step the visible month, carrying across the year boundary in both directions. */
