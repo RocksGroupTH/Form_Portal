@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Avatar } from "@/components/ui/Avatar";
+import { hrPhotoUrl } from "@/lib/hr/photo-url";
 import { Search, Inbox, Loader2, ChevronRight, Send, ClipboardCheck } from "lucide-react";
 import type { ReportRow } from "@/lib/acc/report-service";
 import type { AccRequest } from "@/features/accounting/types";
@@ -510,6 +512,21 @@ function RequestRowList({
               className="w-full text-left rounded-xl p-3 flex items-center gap-3 cursor-pointer transition-colors"
               style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}
             >
+              {/* Whose request this is, on the same flag that decides whether to
+                  name them: in คำขอของฉัน every row is the reader's own, which
+                  is why the name is hidden there, and a wall of one's own face
+                  would say even less. In งานของฉัน the requester is the thing
+                  being scanned for — a queue of 78 is five people. The photos
+                  are one cached URL each, so a long list asks for as many
+                  images as it has distinct people, not rows. */}
+              {showRequester && (
+                <Avatar
+                  name={row.requesterFullName || "?"}
+                  size={36}
+                  photo={hrPhotoUrl(row.staffId)}
+                  color="var(--nav-active-text)"
+                />
+              )}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap mb-0.5">
                   <span className="text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>
