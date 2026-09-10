@@ -11,7 +11,7 @@ import { REQUEST_CARDS } from "@/lib/constants";
 import { isPendingApprovalStatus, statusLabelDisplay } from "@/features/accounting/constants";
 import { MultiSelectFilter, inDateRange, isMultiSelectActive, matchesMultiSelectValue } from "@/features/accounting/components/ApprovalQueueFilters";
 import { FilterDateRangePicker } from "@/features/accounting/components/FilterDateRangePicker";
-import { SidePanel, SidePanelClose } from "@/components/ui/SidePanel";
+import { SidePanel, SidePanelClose, SidePanelExpand } from "@/components/ui/SidePanel";
 import { RequestDetail } from "@/features/accounting/components/RequestDetail";
 import { TravelBookingDetail } from "@/features/travel-booking/components/TravelBookingDetail";
 import type { TravelBookingRequest } from "@/features/travel-booking/types";
@@ -148,6 +148,29 @@ function RequestRowList({
   const [drawerDetail, setDrawerDetail] = useState<AccRequest | null>(null);
   const [tbDetail, setTbDetail] = useState<TravelBookingRequest | null>(null);
   const [rbDetail, setRbDetail] = useState<ReimburseDetailData | null>(null);
+
+  /**
+   * How wide the detail drawer opens.
+   *
+   * 720px fits a summary and not much else, and AP-4's รายการค่าใช้จ่ายจริง is a
+   * fourteen-column table laid out to match the AP-4.1 sheet — inside that width
+   * it is almost entirely horizontal scrolling.
+   *
+   * Widening this panel rather than opening the detail in a Dialog is deliberate:
+   * a Dialog would mount a SECOND copy of the detail beside the one already in
+   * the drawer — two `approval-context` fetches, two `people` fetches, and two
+   * sets of local state that then disagree about which one the approve button
+   * belongs to. One panel that changes width has none of that.
+   *
+   * **It is the shared drawer, so this widens AP-1's and AP-17's too.** AP-2 and
+   * AP-3 each have a drawer of their own and are excluded from this one, so they
+   * are unaffected — the branch this landed on said AP-3 widened with the rest,
+   * which was true until AP-3 got its own panel on master.
+   *
+   * A viewer's own preference: it changes no data, and it is not reset on close,
+   * because somebody who wants the wide view usually wants it for the next row too.
+   */
+  const [drawerWide, setDrawerWide] = useState(false);
   const [caDetail, setCaDetail] = useState<ClearAdvanceRequest | null>(null);
   const [drawerFormCode, setDrawerFormCode] = useState<string | null>(null);
   const [loadingDrawer, setLoadingDrawer] = useState(false);
@@ -642,8 +665,13 @@ function RequestRowList({
       </SidePanel>
 
       {/* Detail drawer — same day-selector view as the report / approval queue */}
-      {/* AP-2 and AP-3 have their own drawers above. */}
-      <SidePanel open={drawerId != null && drawerFormCode !== "AP-2" && drawerFormCode !== "AP-3"} onClose={() => setDrawerId(null)} width="min(720px, 100vw)" zIndex={50}>
+{/* AP-2 and AP-3 have their own drawers above. */}
+      <SidePanel
+        open={drawerId != null && drawerFormCode !== "AP-2" && drawerFormCode !== "AP-3"}
+        onClose={() => setDrawerId(null)}
+        width={drawerWide ? "min(1680px, 100vw)" : "min(720px, 100vw)"}
+        zIndex={50}
+      >
         <div
           className="flex items-center justify-between px-4 py-3 shrink-0"
           style={{ borderBottom: "1px solid var(--border-light)" }}
@@ -656,7 +684,13 @@ function RequestRowList({
               ตรวจสอบรายละเอียดและเอกสารแนบ
             </p>
           </div>
-          <SidePanelClose onClick={() => setDrawerId(null)} />
+          {/* Beside Close, because both act on the panel rather than on the
+              request inside it. Shared with AP-4's queue drawer since 2026-09-10
+              — the labels are the half that drifts when this is duplicated. */}
+          <div className="flex items-center gap-1 shrink-0">
+            <SidePanelExpand wide={drawerWide} onToggle={() => setDrawerWide((v) => !v)} />
+            <SidePanelClose onClick={() => setDrawerId(null)} />
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto no-scrollbar px-4 py-4 acc-theme">

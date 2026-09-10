@@ -9,17 +9,17 @@ import {
   Clock,
   FileCheck,
   FileText,
-  ImageIcon,
   Info,
   ListChecks,
   Mail,
-  Download,
   Paperclip,
   Receipt,
   RotateCcw,
   ThumbsDown,
   ThumbsUp,
   User,
+  ReceiptText,
+  X,
   XCircle,
 } from "lucide-react";
 import {
@@ -30,11 +30,9 @@ import {
 } from "@/components/ui/AttachmentViewer";
 import { Dialog } from "@/components/ui";
 import { Avatar } from "@/components/ui/Avatar";
-import { hrPhotoUrl } from "@/lib/hr/photo-url";
 import { UatDataBanner } from "@/components/UatDataBanner";
 import { getBrandById } from "@/lib/brand";
 import { statusLabelDisplay } from "@/features/accounting/constants";
-import { PaymentDatePicker } from "@/features/accounting/components/PaymentDatePicker";
 import { fmtBaht } from "@/features/travel-booking/components/shared";
 import { sumReimburseItems } from "@/lib/acc/reimburse/calc";
 import {
@@ -45,11 +43,13 @@ import {
 // Type-only: `approval-policy` imports `./payment-calendar`, which reaches the
 // holiday lookup through a dynamic import — a runtime import here would pull
 // `@/lib/db/mssql` and `@/env` into the browser bundle.
+import { FileThumb } from "@/components/ui/FileThumb";
 import type { ReimburseApprovalContext } from "@/lib/acc/reimburse/approval-policy";
 import type {
   ReimburseApproval,
   ReimburseDetail as ReimburseDetailData,
   ReimburseFileMeta,
+  ReimburseItemDetail,
   ReimburseRule,
 } from "@/features/reimburse/types";
 
@@ -182,11 +182,25 @@ const APPROVE_DONE_LABEL: Record<ReimburseStepCode, string> = {
  * alignment cannot drift apart from each other; the cells are still written
  * out, because each formats differently.
  */
+/**
+ * The columns of the read-only table, in the AP-4.1 sheet's own order.
+ *
+ * **`รายการ` (`AccReimburseItem.Category`) is deliberately absent**, and it is
+ * not a spare field: it is the **G/L account** this line books to — see
+ * `ExpenseAccountPicker`, which writes it, and `erp-queue-policy.ts`, which
+ * calls a claim unready without it. It was dropped from this view on
+ * 2026-09-10 at the user's request, knowing that. Accounting sets and reads it
+ * on the คิวอนุมัติ (บัญชี) page instead, which is the only place it can be
+ * changed.
+ *
+ * These entries are positional: each one pairs with the `<td>` at the same
+ * index below, and `colSpan` is computed from the length. Adding or removing
+ * one here means doing the same there.
+ */
 const ITEM_COLUMNS: readonly { label: string; right?: boolean }[] = [
   { label: "ลำดับที่" },
   { label: "วันที่" },
   { label: "เลขที่เอกสาร" },
-  { label: "รายการ" },
   { label: "รายละเอียด" },
   { label: "สาขา" },
   { label: "เลขผู้เสียภาษี" },
@@ -199,8 +213,16 @@ const ITEM_COLUMNS: readonly { label: string; right?: boolean }[] = [
   { label: "จ่ายสุทธิ", right: true },
 ];
 
-/** AP-4's rounds, not AP-1's — see `src/lib/acc/reimburse/payment-calendar.ts`. */
-const AP4_ROUNDS_HINT = "วันจ่าย: ศุกร์ที่ 1 และ 3 ของเดือน (เลื่อนกลับ 1 วันถ้าตรงวันหยุด)";
+/**
+ * AP-4's rounds, not AP-1's — see `src/lib/acc/reimburse/payment-calendar.ts`.
+ *
+ * **A suggested schedule, not a constraint**, and the wording says so since
+ * 2026-09-08. It read like a rule while this page used `PaymentDatePicker`,
+ * which disables every day outside the round list; that restriction is gone —
+ * see the picker's own comment below for why.
+ */
+const AP4_ROUNDS_HINT =
+  "รอบจ่ายปกติ: ศุกร์ที่ 1 และ 3 ของเดือน (เลื่อนกลับ 1 วันถ้าตรงวันหยุด) — เลือกวันอื่นได้";
 
 function approvalActorLabel(a: ReimburseApproval): string | null {
   if (a.status === "Pending") {
@@ -233,11 +255,6 @@ function approvalActorPrefix(status: ReimburseApproval["status"], withdrawn = fa
   if (status === "Rejected") return "ไม่อนุมัติโดย";
   if (status === "Returned") return withdrawn ? "ยกเลิกโดย" : "ส่งกลับโดย";
   return "รอดำเนินการโดย";
-}
-
-function isImageFile(f: ReimburseFileMeta): boolean {
-  if (f.contentType?.startsWith("image/")) return true;
-  return /\.(png|jpe?g|gif|webp|heic|heif)$/i.test(f.fileName);
 }
 
 /* ─────────────────────────── small pieces ─────────────────────────── */
@@ -381,41 +398,127 @@ function DetailRow({ label, value }: { label: string; value: React.ReactNode }) 
  * associates with `.pdf`. The download stays, because approving is not the only
  * reason to want the file.
  */
-function FileLink({ file, onView }: { file: ReimburseFileMeta; onView: () => void }) {
-  const image = isImageFile(file);
+/**
+ * The lines printed inside one attached document, under the expense row that
+ * charges for them.
+ *
+ * The read-only twin of the form's `DocumentLinesPanel`, not an import of it:
+ * that one lives inside a horizontally-scrolled flex grid and is positioned
+ * `sticky left-0` at the scroller's measured width, machinery that has no
+ * meaning inside a `<td colSpan>`. What is shared is the shape a reader has
+ * already learned — the same caption, the same five columns, the same
+ * "รวมตามเอกสาร" footer and the same warning that it does not add up to the
+ * amount claimed.
+ */
+function DocumentLines({
+  index,
+  vendorName,
+  lines,
+  onClose,
+}: {
+  index: number;
+  vendorName?: string | null;
+  lines: ReimburseItemDetail[];
+  onClose: () => void;
+}) {
+  const total = lines.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
   return (
     <div
-      className="flex items-center gap-2.5 rounded-lg px-3 py-2 min-w-0"
+      className="mx-2 my-2 rounded-xl px-3 py-2.5"
       style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}
     >
-      <span className="shrink-0" style={{ color: "var(--nav-active-text)" }}>
-        {image ? <ImageIcon size={16} /> : <FileText size={16} />}
-      </span>
-      <button
-        type="button"
-        onClick={onView}
-        className="flex-1 min-w-0 text-left text-[12.5px] font-semibold truncate cursor-zoom-in border-none bg-transparent p-0"
-        style={{ color: "var(--text-primary)" }}
-        title={file.fileName}
-      >
-        {file.fileName}
-      </button>
-      <a
-        href={file.url}
-        target="_blank"
-        rel="noopener noreferrer"
-        aria-label={`ดาวน์โหลด ${file.fileName}`}
-        title="ดาวน์โหลด"
-        className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center no-underline"
-        style={{ background: "var(--bg-card)", color: "var(--text-muted)" }}
-      >
-        <Download size={14} />
-      </a>
+      <div className="flex items-center justify-between gap-3 mb-1.5">
+        <p className="text-[12px] font-bold m-0 min-w-0 truncate" style={{ color: "var(--text-heading)" }}>
+          รายการในเอกสาร
+          <span className="font-normal" style={{ color: "var(--text-muted)" }}>
+            {` · แถวที่ ${index + 1}`}
+            {vendorName ? ` · ${vendorName}` : ""}
+            {` · ${lines.length} บรรทัด`}
+          </span>
+        </p>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label={`ปิดรายการย่อยของรายการที่ ${index + 1}`}
+          title="ปิด"
+          className="w-6 h-6 rounded-md flex items-center justify-center cursor-pointer border-none bg-transparent p-0 shrink-0"
+          style={{ color: "var(--text-muted)" }}
+        >
+          <X size={14} />
+        </button>
+      </div>
+
+      <table className="w-full border-collapse">
+        <thead>
+          <tr>
+            {["#", "รายละเอียด", "จำนวน", "ราคา/หน่วย", "มูลค่า"].map((h, hi) => (
+              <th
+                key={h}
+                className={`text-[10.5px] font-semibold uppercase tracking-wide py-1 px-2 whitespace-nowrap ${hi >= 2 ? "text-right" : "text-left"}`}
+                style={{ color: "var(--text-muted)" }}
+              >
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {lines.map((d, di) => (
+            <tr key={`${index}-${di}`} style={{ borderTop: "1px solid var(--border-light)" }}>
+              <td className="text-[12px] py-1.5 px-2 tabular-nums" style={{ color: "var(--text-faint)" }}>
+                {di + 1}
+              </td>
+              <td className="text-[12px] py-1.5 px-2 break-words" style={{ color: "var(--text-primary)" }}>
+                {d.description || "—"}
+              </td>
+              <td className="text-[12px] py-1.5 px-2 text-right tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                {d.quantity == null ? "—" : fmtMoney(d.quantity)}
+              </td>
+              <td className="text-[12px] py-1.5 px-2 text-right tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                {d.unitPrice == null ? "—" : fmtMoney(d.unitPrice)}
+              </td>
+              <td className="text-[12px] py-1.5 px-2 text-right tabular-nums font-semibold" style={{ color: "var(--text-primary)" }}>
+                {d.amount == null ? "—" : fmtMoney(d.amount)}
+              </td>
+            </tr>
+          ))}
+          <tr style={{ borderTop: "1px solid var(--border-card)" }}>
+            <td />
+            <td className="text-[12px] py-1.5 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>
+              รวมตามเอกสาร
+            </td>
+            <td />
+            <td />
+            <td className="text-[12px] py-1.5 px-2 text-right tabular-nums font-bold" style={{ color: "var(--text-primary)" }}>
+              {fmtMoney(total)}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      {/* Says out loud what the footer is not. These lines are transcribed from
+          the document so a reader can check it; the claimed amount is the
+          row's own ค่าใช้จ่ายรวม above, and the two need not agree — a
+          document can itemise more than is being claimed from it. */}
+      <p className="text-[11px] m-0 mt-1.5" style={{ color: "var(--text-faint)" }}>
+        คัดลอกมาจากเอกสารเพื่อให้ตรวจได้ ไม่ได้นำมารวมเป็นยอด — ยอดที่เบิกคือ ค่าใช้จ่ายรวม ของแถวด้านบน
+      </p>
     </div>
   );
 }
 
 /* ─────────────────────────── main ─────────────────────────── */
+
+/** What `GET .../[id]/people` answers — see that route. */
+interface ReimbursePeople {
+  requester: { photoUrl: string | null };
+  manager: {
+    fullName: string | null;
+    position: string | null;
+    email: string | null;
+    photoUrl: string | null;
+  } | null;
+}
 
 export function ReimburseDetail({
   request,
@@ -502,6 +605,37 @@ export function ReimburseDetail({
   // refetch below.
   const [ctxNonce, setCtxNonce] = useState(0);
 
+  /**
+   * Requester and manager as the directory knows them — photo, and for the
+   * manager the name and job title the claim never stored.
+   *
+   * Decoration, and treated as such: there is no error state and no retry. The
+   * card renders initials and the stored email without it, which is what it did
+   * before this existed, so a Graph outage costs faces rather than the panel.
+   *
+   * A local `cancelled` inside the effect rather than a ref set on mount —
+   * `reactStrictMode` is on, so a ref cleared in a cleanup stays cleared through
+   * the second mount and every later read returns early. `receipt-amount`'s
+   * `aliveRef` is the cautionary tale; this is the shape the rest of the file
+   * uses.
+   */
+  /** Which expense row has its document lines open — one at a time, like the form's grid. */
+  const [openItem, setOpenItem] = useState<string | null>(null);
+
+  const [people, setPeople] = useState<ReimbursePeople | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/request/reimburse/requests/${request.id}/people`)
+      .then((r) => r.json())
+      .then((json: { ok: boolean; data?: ReimbursePeople }) => {
+        if (!cancelled && json.ok && json.data) setPeople(json.data);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [request.id]);
+
   // Re-asked whenever the request moves, not just on mount: after an approval
   // the step has changed and the previous answer describes a step that is over.
   useEffect(() => {
@@ -523,8 +657,11 @@ export function ReimburseDetail({
     };
   }, [request.id, request.currentStepCode, request.status, request.updatedAt, ctxNonce]);
 
-  // The picker opens on the round the server chose with `defaultPaymentRound`,
-  // and the approver may pick any other valid round instead (spec §3.4).
+  // The field opens on the round the server chose with `defaultPaymentRound`,
+  // and the approver may replace it with any date the server's own bound
+  // accepts — not merely another round. Spec §3.4 said "another valid round";
+  // `paymentDateProblem` superseded that on 2026-09-08 (see the spec's dated
+  // amendment block), and this page followed the queue on the same day.
   useEffect(() => {
     setPaymentDate(ctx?.defaultPaymentDate ?? "");
   }, [ctx?.defaultPaymentDate]);
@@ -745,19 +882,25 @@ export function ReimburseDetail({
                   <RotateCcw size={14} />
                   ส่งกลับแก้ไข
                 </button>
-                <button
-                  type="button"
-                  onClick={() => { setAction("reject"); setComment(""); }}
-                  className="inline-flex items-center gap-2 text-[13px] font-medium px-4 py-2 rounded-lg transition-colors cursor-pointer"
-                  style={{
-                    color: "var(--color-danger)",
-                    border: "1px solid rgba(220,38,38,0.25)",
-                    background: "rgba(220,38,38,0.06)",
-                  }}
-                >
-                  <ThumbsDown size={14} />
-                  ไม่อนุมัติ
-                </button>
+                {/* Reject is the manager's alone (spec §1) — `rejectReimburse`
+                    refuses it server-side at either accounting step, so the
+                    button is withheld there rather than offering a click that
+                    can only come back as an error. */}
+                {step === "MANAGER" && (
+                  <button
+                    type="button"
+                    onClick={() => { setAction("reject"); setComment(""); }}
+                    className="inline-flex items-center gap-2 text-[13px] font-medium px-4 py-2 rounded-lg transition-colors cursor-pointer"
+                    style={{
+                      color: "var(--color-danger)",
+                      border: "1px solid rgba(220,38,38,0.25)",
+                      background: "rgba(220,38,38,0.06)",
+                    }}
+                  >
+                    <ThumbsDown size={14} />
+                    ไม่อนุมัติ
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -931,7 +1074,12 @@ export function ReimburseDetail({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
           <div className="flex items-center gap-3 min-w-0">
             <div className="shrink-0 rounded-2xl overflow-hidden" style={{ boxShadow: "0 0 0 2px var(--nav-active-bg)" }}>
-              <Avatar name={request.requesterFullName || "?"} size={48} photo={hrPhotoUrl(request.staffId)} color="var(--nav-active-text)" />
+              <Avatar
+                name={request.requesterFullName || "?"}
+                size={48}
+                photo={people?.requester.photoUrl ?? undefined}
+                color="var(--nav-active-text)"
+              />
             </div>
             <div className="min-w-0 flex flex-col gap-0.5">
               <div className="flex items-baseline gap-2 min-w-0">
@@ -961,15 +1109,36 @@ export function ReimburseDetail({
           {request.managerEmail && (
             <div className="flex items-center gap-3 min-w-0 border-t md:border-t-0 md:border-l border-[var(--border-light)] pt-4 md:pt-0 md:pl-6">
               <div className="shrink-0 rounded-2xl overflow-hidden" style={{ boxShadow: "0 0 0 2px var(--nav-active-bg)" }}>
-                <Avatar name={request.managerEmail} size={48} photo={hrPhotoUrl(request.managerStaffId)} color="var(--nav-active-text)" />
+                <Avatar
+                  name={people?.manager?.fullName || request.managerEmail}
+                  size={48}
+                  photo={people?.manager?.photoUrl ?? undefined}
+                  color="var(--nav-active-text)"
+                />
               </div>
               <div className="min-w-0 flex flex-col gap-0.5">
                 <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                   หัวหน้างาน (ผู้จัดการ)
                 </span>
-                {request.managerStaffId != null && (
-                  <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
-                    #{request.managerStaffId}
+                {/* The claim stores the manager's id and email and no name, so
+                    this card read "#10176" and an address until the directory
+                    lookup above arrived. The name is shown once it does, with
+                    the id beside it exactly as the requester's is. */}
+                <div className="flex items-baseline gap-2 min-w-0">
+                  {people?.manager?.fullName && (
+                    <span className="text-[14px] font-bold truncate" style={{ color: "var(--text-primary)" }}>
+                      {people.manager.fullName}
+                    </span>
+                  )}
+                  {request.managerStaffId != null && (
+                    <span className="text-[11px] shrink-0" style={{ color: "var(--text-muted)" }}>
+                      #{request.managerStaffId}
+                    </span>
+                  )}
+                </div>
+                {people?.manager?.position && (
+                  <span className="text-[12px] truncate" style={{ color: "var(--text-muted)" }}>
+                    {people.manager.position}
                   </span>
                 )}
                 <span className="inline-flex items-center gap-1 text-[12px] truncate" style={{ color: "var(--text-secondary)" }}>
@@ -999,12 +1168,16 @@ export function ReimburseDetail({
                   {ITEM_COLUMNS.map((c) => (
                     <th
                       key={c.label}
-                      className={`text-[11px] font-semibold uppercase tracking-wide py-2 px-2 ${c.right ? "text-right" : "text-left"}`}
+                      className={`text-[11px] font-semibold uppercase tracking-wide py-2 px-2 whitespace-nowrap ${c.right ? "text-right" : "text-left"}`}
                       style={{ color: "var(--text-muted)" }}
                     >
                       {c.label}
                     </th>
                   ))}
+                  {/* The expand column carries no label: the button says what
+                      it does, and a heading over it would read as a data
+                      column in a table laid out to match the AP-4.1 sheet. */}
+                  <th className="w-9" aria-label="รายละเอียดในเอกสาร" />
                 </tr>
               </thead>
               <tbody>
@@ -1012,8 +1185,16 @@ export function ReimburseDetail({
                   // Derived, never stored — see `ReimburseItem.amount`.
                   const beforeVat = (Number(it.amount) || 0) - (Number(it.vatAmount) || 0);
                   const netPaid = (Number(it.amount) || 0) - (Number(it.whtAmount) || 0);
+                  // The lines printed inside the attached document. Loaded with
+                  // the claim already (`AccReimburseItemDetail`, joined in
+                  // `getReimburseRequest`) and simply never rendered here until
+                  // now — this needs no endpoint and no extra fetch.
+                  const lines = it.details ?? [];
+                  const rowKey = String(it.id ?? `i${i}`);
+                  const isOpen = openItem === rowKey;
                   return (
-                    <tr key={it.id ?? i} style={{ borderBottom: "1px solid var(--border-light)" }}>
+                    <React.Fragment key={rowKey}>
+                    <tr style={{ borderBottom: "1px solid var(--border-light)" }}>
                       <td className="text-[13px] py-2 px-2 tabular-nums" style={{ color: "var(--text-muted)" }}>
                         {i + 1}
                       </td>
@@ -1022,9 +1203,6 @@ export function ReimburseDetail({
                       </td>
                       <td className="text-[13px] py-2 px-2 whitespace-nowrap" style={{ color: "var(--text-primary)" }}>
                         {it.documentNo || "—"}
-                      </td>
-                      <td className="text-[13px] py-2 px-2 whitespace-nowrap" style={{ color: "var(--text-primary)" }}>
-                        {it.category || "—"}
                       </td>
                       <td className="text-[13px] py-2 px-2 break-words" style={{ color: "var(--text-primary)" }}>
                         {it.description || "—"}
@@ -1056,7 +1234,39 @@ export function ReimburseDetail({
                       <td className="text-[13px] py-2 px-2 text-right tabular-nums font-semibold" style={{ color: "var(--text-primary)" }}>
                         {fmtMoney(netPaid)}
                       </td>
+                      <td className="py-2 px-1 align-middle">
+                        {/* Only where there is something to open — a control
+                            that does nothing on most rows teaches people to
+                            stop pressing it on the rows where it works. Same
+                            reasoning, and the same icons, as the form's grid. */}
+                        {lines.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setOpenItem(isOpen ? null : rowKey)}
+                            aria-expanded={isOpen}
+                            aria-label={`${isOpen ? "ปิด" : "ดู"}รายการย่อยของรายการที่ ${i + 1}`}
+                            title={`เอกสารนี้มี ${lines.length} รายการย่อย`}
+                            className="w-7 h-7 rounded-lg flex items-center justify-center cursor-pointer border-none shrink-0"
+                            style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}
+                          >
+                            {isOpen ? <X size={14} /> : <ReceiptText size={14} />}
+                          </button>
+                        )}
+                      </td>
                     </tr>
+                    {isOpen && (
+                      <tr>
+                        <td colSpan={ITEM_COLUMNS.length + 1} className="p-0">
+                          <DocumentLines
+                            index={i}
+                            vendorName={it.vendorName}
+                            lines={lines}
+                            onClose={() => setOpenItem(null)}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
                   );
                 })}
               </tbody>
@@ -1094,9 +1304,19 @@ export function ReimburseDetail({
               — ไม่มีไฟล์ —
             </p>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            // Tiles, wrapping, the way AP-17's and AP-3's attachment
+            // sections already read. A receipt is a picture, and a list of
+            // file names asks the reader to open each one to find out which
+            // is which.
+            <div className="flex flex-wrap gap-3">
               {attachments.map((f) => (
-                <FileLink key={f.id} file={f} onView={() => viewFile(f)} />
+                <FileThumb
+                  key={f.id}
+                  fileName={f.fileName}
+                  contentType={f.contentType}
+                  url={f.url}
+                  onView={() => viewFile(f)}
+                />
               ))}
             </div>
           )}
@@ -1143,14 +1363,61 @@ export function ReimburseDetail({
             ยอดรวม{" "}
             <strong style={{ color: "var(--text-heading)" }}>฿{fmtMoney(request.totalAmount ?? itemsTotal)}</strong>
           </p>
+          {/*
+            A free date within the server's own bound, not a round picker —
+            the same control the accounting queue uses
+            (`ReimburseApprovalQueue.tsx`), deliberately not a third one.
+
+            `PaymentDatePicker` cannot express this: it *disables* every day
+            outside the `dates` it is handed, and that is correct for AP-1,
+            whose server rule genuinely IS round membership. AP-4's is not —
+            `paymentDateProblem` (`approval-policy.ts`) replaced the membership
+            test with a one-month-back/twelve-months-forward sanity bound on
+            2026-09-08, so this page's restriction was a client-only rule with
+            no server counterpart: the same accountant, on the same claim,
+            could pick a date from the queue that this dialog refused. The
+            rounds survive as the field's default and the note under it.
+
+            The `<input type="date">` browser control carries no `min`/`max`
+            here for the same reason the queue's does not: the bound is the
+            server's, re-derived against the SERVER's day inside the
+            transaction that writes, and a `min` computed from the browser's
+            clock would disagree with it near midnight.
+          */}
           {needsPaymentDate && (
-            <PaymentDatePicker
-              dates={ctx?.paymentDates ?? []}
-              value={paymentDate}
-              onChange={setPaymentDate}
-              loading={ctx == null}
-              hint={AP4_ROUNDS_HINT}
-            />
+            <div className="flex flex-col gap-1.5 max-w-[320px] mx-auto w-full">
+              <label
+                className="text-[11px] font-semibold uppercase tracking-wide"
+                style={{ color: "var(--text-muted)" }}
+                htmlFor="ap4-payment-date"
+              >
+                วันที่จ่าย
+              </label>
+              <input
+                id="ap4-payment-date"
+                type="date"
+                value={paymentDate}
+                disabled={ctx == null || busy}
+                onChange={(e) => setPaymentDate(e.target.value)}
+                className="text-[13px] rounded-lg px-2.5 py-2 outline-none disabled:opacity-50"
+                style={{
+                  background: "var(--bg-input)",
+                  color: "var(--text-primary)",
+                  border: "1px solid var(--border-input)",
+                }}
+              />
+              {ctx?.defaultPaymentDate && (
+                <span
+                  className="text-[11.5px] inline-flex items-center gap-1"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  <Clock size={12} /> รอบที่แนะนำ {fmtDateOnly(ctx.defaultPaymentDate)} — แก้ไขได้
+                </span>
+              )}
+              <span className="text-[10.5px]" style={{ color: "var(--text-faint)" }}>
+                {AP4_ROUNDS_HINT}
+              </span>
+            </div>
           )}
         </div>
         <div className="flex justify-end gap-2">

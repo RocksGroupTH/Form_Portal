@@ -1275,21 +1275,31 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
             </div>
           )}
 
-          {/* The picker is over `AccFormBrand`, so what it offers is a setting,
-              not the navbar brand. A resumed request whose saved code has since
-              been removed from that list keeps it and is told why — changing it
-              silently would move the claim to a different company — but it can
-              no longer be submitted against, so the copy asks for a new choice
-              rather than implying the old one still works. Suppressed entirely
-              when the list failed to load: "no longer allowed" is a statement
-              about the allowlist, and during an outage there is none to read. */}
-          {!brandsError && !brandsLoading && brandOptions.length > 0 && (
-            <p className="text-[11.5px] mt-1.5 m-0" style={{ color: "var(--text-faint)" }}>
-              {selectedBrand && !(allowedBrands ?? []).some((b) => b.brandCode === selectedBrand.brandCode)
-                ? "แบรนด์ที่บันทึกไว้กับคำขอนี้ ปัจจุบันไม่อยู่ในรายการที่อนุญาตแล้ว — กรุณาเลือกแบรนด์ใหม่จากรายการข้างต้นก่อนส่งคำขอ"
-                : "รายการแบรนด์ที่อนุญาตให้เบิกในแบบฟอร์ม AP-4 (ตั้งค่าโดยผู้ดูแลระบบ)"}
-            </p>
-          )}
+          {/* Only when something is wrong. This line used to carry a neutral
+              caption in its else-branch as well, naming the allowlist on every
+              render; it restated the picker directly above it and was dropped
+              on 2026-09-10 — see `brand-help-copy-guard.test.ts`.
+
+              What is left must stay. The picker is over `AccFormBrand`, so what
+              it offers is a setting, not the navbar brand, and a resumed request
+              whose saved code has since been removed from that list keeps it —
+              changing it silently would move the claim to a different company.
+              `POST .../submit` then refuses that code, and this is the only
+              thing on screen that says why, which is why the copy asks for a new
+              choice rather than implying the old one still works.
+
+              Suppressed entirely when the list failed to load: "no longer
+              allowed" is a statement about the allowlist, and during an outage
+              there is none to read. */}
+          {!brandsError &&
+            !brandsLoading &&
+            brandOptions.length > 0 &&
+            selectedBrand &&
+            !(allowedBrands ?? []).some((b) => b.brandCode === selectedBrand.brandCode) && (
+              <p className="text-[11.5px] mt-1.5 m-0" style={{ color: "var(--text-faint)" }}>
+                แบรนด์ที่บันทึกไว้กับคำขอนี้ ปัจจุบันไม่อยู่ในรายการที่อนุญาตแล้ว — กรุณาเลือกแบรนด์ใหม่จากรายการข้างต้นก่อนส่งคำขอ
+              </p>
+            )}
         </div>
 
         <div>

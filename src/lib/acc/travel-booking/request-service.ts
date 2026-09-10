@@ -17,7 +17,7 @@ import { queueEmail } from "@/lib/acc/email-queue";
 import { buildTravelBookingEmail } from "@/lib/acc/travel-booking/email-templates";
 import { computePerDiem } from "@/lib/acc/travel-booking/perdiem";
 import { isTravelDateTooSoon } from "@/features/travel-booking/lib/earliest-travel-date";
-import { getAllowanceLog } from "@/lib/acc/travel-booking/allowance-log";
+import { getPerDiemEmployeeLog } from "@/lib/acc/travel-booking/allowance-log";
 import {
   listAccommodations,
   listRentVehicles,
@@ -1235,8 +1235,14 @@ export async function submitTravelBookingGroup(
   // the country rates are one list; the country itself is per TAB, because a
   // group can hold a Kuala Lumpur trip and a Bangkok one, so the resolution
   // happens inside the loop and the loading does not.
-  const log = await getAllowanceLog(emp.id);
-  const countryRates = await listPerDiemCountryRates();
+  // The submit runs on AP-17's own route, so the resolver answers correctly
+  // here; the recompute is the one that cannot use it. `uat` was already
+  // resolved above (isUatRequest(), for the manager checks) — the same
+  // question, so it is reused rather than asked a second time.
+  const [log, countryRates] = await Promise.all([
+    getPerDiemEmployeeLog(emp.id, emp.staffId ?? null, uat),
+    listPerDiemCountryRates(),
+  ]);
   const continuationFlags: boolean[] = [];
   const perDiems: { days: number; total: number }[] = [];
   for (let i = 0; i < tabs.length; i++) {
@@ -1302,13 +1308,20 @@ export async function submitTravelBookingGroup(
           .query(`UPDATE [dbo].[AccRequest] SET RequestNo=@no WHERE Id=@id`);
       }
 
+      // AllowanceSnapshot is otherwise written only by upsertTravelBooking, at
+      // save. A draft saved before a rate changed — a UAT rate being set, or an
+      // HR rate changing in production — would print the old figure beside a
+      // total priced from the new one. Submit is the moment the figure is fixed,
+      // so the snapshot is fixed with it.
       await tx.request()
         .input("id", sql.Int, requestId)
         .input("cont", sql.Bit, continuationFlags[i] ? 1 : 0)
         .input("days", sql.Int, perDiems[i].days)
         .input("total", sql.Decimal(18, 2), perDiems[i].total)
+        .input("allowance", sql.Decimal(18, 2), emp.allowance ?? null)
         .query(`UPDATE [dbo].[AccTravelBooking] SET
-                IsContinuation=@cont, PerDiemDays=@days, PerDiemTotal=@total, UpdatedAt=SYSDATETIME()
+                IsContinuation=@cont, PerDiemDays=@days, PerDiemTotal=@total,
+                AllowanceSnapshot=@allowance, UpdatedAt=SYSDATETIME()
                 WHERE RequestId=@id`);
 
       // Reset any prior approval (e.g. resubmit after Return) before creating the MANAGER step.

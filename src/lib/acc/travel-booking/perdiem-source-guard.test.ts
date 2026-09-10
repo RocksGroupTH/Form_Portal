@@ -30,24 +30,24 @@ function code(file: string): string {
 }
 
 /**
- * Every non-test file allowed to import `getAllowanceLog`, and why.
+ * Every non-test file allowed to name `getPerDiemEmployeeLog` /
+ * `getPerDiemEmployeeLogMap`, and why.
  *
- * This is an ALLOW-LIST, not a count of one. An earlier draft of the design
- * asserted a single importer; that would have been red the day it was written
- * and would have contradicted the design's own instructions, which keep the two
- * batching services and the history route exactly as they are.
+ * This is an ALLOW-LIST, not a count. An earlier draft of the country design
+ * asserted a single importer of `getAllowanceLog`; that would have been red the
+ * day it was written. What made a single-importer assertion finally correct for
+ * `getAllowanceLog` is the wrapper below — the four consumers now name the
+ * wrapper, not the raw reader.
  */
-const ALLOWED_ALLOWANCE_IMPORTERS = [
-  // The resolver itself — the one place that decides country-vs-employee.
-  "lib/acc/travel-booking/perdiem-source.ts",
-  // Batches one log per employee across a whole report; routing that through a
-  // per-request resolver would be N+1.
+const ALLOWED_PERDIEM_LOG_IMPORTERS = [
+  // Batches one log per subject across a whole report.
   "lib/acc/travel-booking/report-service.ts",
   // Loads one log for a whole submit group, then resolves per tab.
   "lib/acc/travel-booking/request-service.ts",
   // Loads one log per surviving trip inside the cancelling transaction.
   "lib/acc/travel-booking/perdiem-recompute.ts",
-  // Serves the requester their own allowance history verbatim; prices nothing.
+  // Serves the requester their own allowance history; prices nothing, but it is
+  // what feeds the browser's estimate, so it must resolve the same log.
   "app/api/request/travel-booking/allowance-log/route.ts",
 ];
 
@@ -60,21 +60,50 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-test("only the named files import getAllowanceLog", () => {
+/**
+ * `getAllowanceLog` reads HR and nothing else. Once anything but its own file
+ * names it, a per-diem figure is being computed from the employee's REAL HR
+ * allowance with no chance for a UAT tester's own rate to replace it — which is
+ * silent, and lands on `AccRequest.TotalAmount`.
+ */
+test("only allowance-log.ts names getAllowanceLog", () => {
+  const offenders: string[] = [];
+  for (const file of sourceFiles(SRC)) {
+    const rel = path.relative(SRC, file).split(path.sep).join("/");
+    if (rel === "lib/acc/travel-booking/allowance-log.ts") continue;
+    if (/\bgetAllowanceLog\b/.test(code(rel))) offenders.push(rel);
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    "these read the HR allowance log directly, bypassing getPerDiemEmployeeLog — a UAT tester " +
+      "would be priced at their real compensation: " + offenders.join(", "),
+  );
+});
+
+/**
+ * The naming arm is `\bgetPerDiemEmployeeLog\w*` rather than the narrower
+ * `getPerDiemEmployeeLog(Map)?\b` a first draft used — that pattern's trailing
+ * `\b` never matches inside `getPerDiemEmployeeLogWithSource`, because the
+ * character right after `Log` there is `W`, a word character, so the boundary
+ * assertion fails and the whole alternative fails with it. `\w*` instead
+ * consumes whatever suffix follows and still lands on a boundary, so it matches
+ * `getPerDiemEmployeeLog`, `...Map` and `...WithSource` alike.
+ */
+test("only the named files import the per-diem log wrapper", () => {
   const importers: string[] = [];
   for (const file of sourceFiles(SRC)) {
     const rel = path.relative(SRC, file).split(path.sep).join("/");
-    // Its own definition is not an import of itself.
     if (rel === "lib/acc/travel-booking/allowance-log.ts") continue;
-    if (/\bgetAllowanceLog\b/.test(code(rel))) importers.push(rel);
+    if (/\bgetPerDiemEmployeeLog\w*/.test(code(rel))) importers.push(rel);
   }
-
-  assert.ok(importers.length > 0, "nothing imports getAllowanceLog — has it been renamed?");
+  assert.ok(importers.length > 0, "nothing imports getPerDiemEmployeeLog — has it been renamed?");
   assert.deepEqual(
     importers.slice().sort(),
-    ALLOWED_ALLOWANCE_IMPORTERS.slice().sort(),
-    "a new file computes a per-diem figure from the employee log directly. It must go through " +
-      "perDiemLogFor, or the country rate silently does not apply to whatever it computes.",
+    ALLOWED_PERDIEM_LOG_IMPORTERS.slice().sort(),
+    "a new file computes a per-diem figure from the employee log. It must go through " +
+      "getPerDiemEmployeeLog and perDiemLogFor, or the country rate and the UAT override " +
+      "silently do not apply to whatever it computes.",
   );
 });
 
@@ -101,6 +130,52 @@ test("every file that prices a trip also resolves the rate", () => {
 });
 
 /**
+ * The three server pricers and the route that feeds the browser's estimate must
+ * all CALL the wrapper — matched as a call, because a comment naming it would
+ * satisfy a bare identifier and `code()` only strips whole-line `//` comments.
+ *
+ * Deliberately not `PRICERS`: that list's fourth member is
+ * features/travel-booking/hooks/useTravelBookingForm.ts, a "use client" file
+ * that gets its log from the route and must never open a server pool itself —
+ * Fast_Core or the UAT form database alike; see the client-bundle test below.
+ *
+ * The call arm carries the same `\w*` fix as the naming arm above, for the same
+ * reason: `getPerDiemEmployeeLogWithSource(` needs the suffix consumed before
+ * the `(` is checked for.
+ */
+test("every server-side pricer calls the per-diem log wrapper", () => {
+  for (const file of ALLOWED_PERDIEM_LOG_IMPORTERS) {
+    const src = code(file);
+    assert.ok(
+      /\bgetPerDiemEmployeeLog\w*\s*\(/.test(src),
+      `${file} names the wrapper but never calls it — a UAT tester would be priced at their ` +
+        "real HR compensation",
+    );
+  }
+});
+
+/**
+ * The client half of the same rule. Importing a getCorePool() reader into the
+ * form hook pulls @/lib/db/mssql -> @/env into the browser bundle and breaks the
+ * build — which no type error predicts, and whose "obvious fix" is to make the
+ * override reach the browser some other way. getUatFormPool() carries the
+ * identical hazard, not a lesser one: since migration 139 moved
+ * `TesterPerDiem` out of Fast_Core into `Rocks_Portal_Form_UAT` (`UatTester`
+ * itself stayed in Fast_Core, unmoved), getUatFormPool() is the literal pool
+ * `per-diem.ts` now reads through, but it is still exported from the same
+ * @/lib/db/mssql that pulls @/env in — naming it here would break the build
+ * exactly as naming getCorePool() would.
+ */
+test("the form hook reaches no server-side per-diem reader", () => {
+  const src = code("features/travel-booking/hooks/useTravelBookingForm.ts");
+  assert.ok(
+    !/getPerDiemEmployeeLog|getCorePool|getUatFormPool|uatPerDiemLog/.test(src),
+    "useTravelBookingForm.ts is a client component: it must take the resolved log from " +
+      "/api/request/travel-booking/allowance-log, never open a database pool itself",
+  );
+});
+
+/**
  * The recompute's SELECT is the one that costs money. `r.CountryCode` can be
  * deleted from it while tidying and nothing fails to compile: the value simply
  * arrives `undefined`, `perDiemLogFor` answers "employee", and a foreign trip is
@@ -113,6 +188,22 @@ test("the recompute reads the request's country", () => {
     /r\.CountryCode/.test(src),
     "perdiem-recompute.ts's group SELECT no longer names r.CountryCode — a cancellation will " +
       "re-price every surviving foreign trip in the group at the employee's Thai allowance",
+  );
+});
+
+/**
+ * The other column in the recompute's SELECT that costs money if it is tidied
+ * away. Without `r.StaffId` the UAT override lookup is handed `undefined`, finds
+ * nothing, and every UAT trip in the group is re-priced at the tester's real HR
+ * allowance — inside the transaction that cancels a sibling, writing both
+ * PerDiemTotal and AccRequest.TotalAmount. It fails no typecheck.
+ */
+test("the recompute reads the request's StaffId", () => {
+  const src = code("lib/acc/travel-booking/perdiem-recompute.ts");
+  assert.ok(
+    /r\.StaffId/.test(src),
+    "perdiem-recompute.ts's group SELECT no longer names r.StaffId — a cancellation will " +
+      "re-price every surviving UAT trip in the group at the tester's real HR allowance",
   );
 });
 

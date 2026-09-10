@@ -10,27 +10,45 @@ interface Entry {
   amount: number;
 }
 
+interface AllowanceLogResponse {
+  entries: Entry[];
+  allowanceSource?: "hr" | "uat";
+}
+
 function fmtDate(iso: string): string {
   const [y, m, d] = iso.split("-");
   return `${d}/${m}/${y}`;
 }
 
 /**
- * Read-only per-diem allowance history for the current requester
- * (Rocks_Portal_HR.dbo.EmployeeAllowanceLog). No edit — this is the authoritative HR log,
- * changed only in the HR system.
+ * Read-only per-diem allowance history for the current requester. No edit
+ * either way, but the footer names which log it is: when `allowanceSource` is
+ * `"hr"` this is `Rocks_Portal_HR.dbo.EmployeeAllowanceLog` — the authoritative
+ * HR log, changed only in the HR system — and when it is `"uat"` this is a
+ * tester's own `Rocks_Portal_Form_UAT.dbo.TesterPerDiem` rate, changed only
+ * at Settings → UAT Users.
  */
 export function AllowanceHistoryModal({ open, onClose, requesterStaffId }: { open: boolean; onClose: () => void; requesterStaffId?: number | null }) {
   const [entries, setEntries] = useState<Entry[] | null>(null);
+  const [allowanceSource, setAllowanceSource] = useState<"hr" | "uat" | undefined>(undefined);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setLoading(true);
     setEntries(null);
+    setAllowanceSource(undefined);
     fetch(`/api/request/travel-booking/allowance-log?requesterStaffId=${requesterStaffId ?? ""}`)
       .then((r) => r.json())
-      .then((j) => setEntries(j.ok ? ((j.data?.entries as Entry[]) ?? []) : []))
+      .then((j) => {
+        if (j.ok) {
+          const data = j.data as AllowanceLogResponse | undefined;
+          setEntries((data?.entries as Entry[]) ?? []);
+          setAllowanceSource(data?.allowanceSource);
+        } else {
+          setEntries([]);
+        }
+      })
       .catch(() => setEntries([]))
       .finally(() => setLoading(false));
   }, [open, requesterStaffId]);
@@ -99,7 +117,10 @@ export function AllowanceHistoryModal({ open, onClose, requesterStaffId }: { ope
         </div>
 
         <p className="text-[11px] flex items-center gap-1.5" style={{ color: "var(--text-faint)" }}>
-          <History size={12} className="shrink-0" /> ข้อมูลจากระบบ HR — แก้ไขได้ที่ระบบต้นทางเท่านั้น
+          <History size={12} className="shrink-0" />{" "}
+          {allowanceSource === "uat"
+            ? "เรตทดสอบสำหรับ UAT — ตั้งค่าที่ ตั้งค่า → UAT Users"
+            : "ข้อมูลจากระบบ HR — แก้ไขได้ที่ระบบต้นทางเท่านั้น"}
         </p>
       </div>
     </Dialog>

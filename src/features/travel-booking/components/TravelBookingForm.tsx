@@ -53,7 +53,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
     anchorRequestId,
     tabs, activeTabIndex, setActiveTabIndex, addTab, removeTab, updateTab,
     reasons, accommodations, vehicles, rentVehicles,
-    employee, employeeHint, employeeEmail, employeeLoading, manager, managerReason,
+    employee, employeeHint, employeeEmail, employeeLoading, manager, managerReason, displayRate,
     colleagues, colleaguesLoading, requesterEnvironment,
     existingRanges, requesterStaffId, setRequesterStaffId, selectedRequester,
     brands,
@@ -287,7 +287,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
                         style={{ color: "var(--nav-active-text)" }}
                         title="ดูประวัติเบี้ยเลี้ยง"
                       >
-                        <Wallet size={11} /> ฿{employee.allowance != null ? fmtBaht(employee.allowance) : "-"}/วัน
+                        <Wallet size={11} /> ฿{displayRate != null ? fmtBaht(displayRate) : "-"}/วัน
                         <History size={11} className="opacity-70" />
                       </button>
                     </div>
@@ -428,7 +428,6 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
               countryLog: [],
             }
           }
-          allowanceRate={employee?.allowance ?? null}
           reasons={reasons}
           accommodations={accommodations}
           vehicles={vehicles}

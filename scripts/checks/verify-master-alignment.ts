@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 /**
- * Assert the 25 shared configuration tables are identical in Rocks_Portal_Form
+ * Assert the 28 shared configuration tables are identical in Rocks_Portal_Form
  * and Rocks_Portal_Form_UAT.
  *
  * Per-form routing means AP-1 may read one copy while AP-17 reads the other, so
@@ -46,22 +46,23 @@ function loadDotEnvLocal() {
 }
 
 /**
- * The 25 tables dual-write keeps in step.
+ * The 28 tables dual-write keeps in step.
  *
  * `AccBookingApprover` and `AccBookingApproverTab` are AP-17's, added with its
  * own approver roster and per-tab grants.
  *
- * The last four are AP-4's. `AccReimburseApprover` decides who may take
+ * The next four are AP-4's. `AccReimburseApprover` decides who may take
  * either accounting step and `AccReimburseRule` is the checklist
  * `AccReimburseRuleAck` stores tick-by-id against — so both have to carry the
  * same rows *and the same ids* in each database, or a UAT tester's AP-4 request
  * stalls at ACCOUNT with an empty pool and a submitted claim renders somebody
  * else's rule text.
  *
- * `AccReimburseAccess` and `AccReimburseAccessTab` (migration 106) are the
- * per-person settings-tab grants, and the id argument applies to them twice
- * over: the grant rows name `AccReimburseAccess.Id`, so drifted counters would
- * hand one person another's tabs.
+ * `AccReimburseAccess` and `AccReimburseAccessTab` (migration 120, renumbered
+ * from 106 on 2026-08-25 — master's own 106 is an unrelated journal-batch key
+ * change) are the per-person settings-tab grants, and the id argument applies
+ * to them twice over: the grant rows name `AccReimburseAccess.Id`, so drifted
+ * counters would hand one person another's tabs.
  */
 const MASTER_TABLES = [
   "AccFormMaster",
@@ -99,6 +100,12 @@ const MASTER_TABLES = [
   // booking-approver-brands.ts, so the same lockstep argument applies: absent
   // from 061/064, no identity floor.
   "AccBookingApproverBrand",
+  // Which brands each AP-4 accounting approver may act on (migration 144).
+  // Unlike AP-1's AccApproverInterfaceBrand, zero rows here means zero
+  // brands — see src/lib/acc/reimburse/brand-scope.ts. Dual-written, same
+  // lockstep argument as the two rows above: absent from 061/064, no
+  // identity floor.
+  "AccReimburseApproverBrand",
 ];
 
 /**

@@ -18,8 +18,15 @@ import { AP4_FORM_CODE } from "@/features/reimburse/constants";
 /* ── POST /api/request/reimburse/requests/[id]/reject ── */
 
 /**
- * Reject at whichever of AP-4's three steps is pending. A rejection ends the
- * request: `Rejected`, `CurrentStepCode` cleared, the reason on the timeline.
+ * Reject the manager step. A rejection ends the request: `Rejected`,
+ * `CurrentStepCode` cleared, the reason on the timeline.
+ *
+ * Only `MANAGER` may actually reject — `rejectReimburse` refuses either
+ * accounting step with `mayReject` before it claims or writes anything (spec
+ * §1). This route still dispatches whatever step the record is at, rather than
+ * pre-filtering to MANAGER itself, so an accounting-step call reaches the
+ * service's refusal and gets one Thai answer either way, instead of two
+ * versions of "no" that could drift apart.
  *
  * The step acted on comes from the record, never from the body, for the same
  * reason the approve route works that way. The body's `step` is a staleness

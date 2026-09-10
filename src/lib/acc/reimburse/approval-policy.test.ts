@@ -8,7 +8,7 @@ import {
   ACCOUNT_ACTOR_UNKNOWN_ERROR,
   NOT_ACCOUNT_APPROVER_ERROR,
   NOT_AT_STEP_ERROR,
-  PAYMENT_DATE_NOT_A_ROUND,
+  PAYMENT_DATE_OUT_OF_RANGE,
   PAYMENT_DATE_REQUIRED,
   REJECT_COMMENT_REQUIRED,
   STEP_TOKEN_REQUIRED,
@@ -21,7 +21,8 @@ import {
   isAccountStep,
   isReimburseStepCode,
   isYmd,
-  paymentDateError,
+  mayReject,
+  paymentDateProblem,
   rejectCommentOrError,
   CANCEL_WINDOW_EXPIRED_ERROR,
   RETURN_COMMENT_REQUIRED,
@@ -177,6 +178,15 @@ test("a reason is trimmed and kept", () => {
   assert.deepEqual(rejectCommentOrError("  ใบเสร็จไม่ครบ  "), { comment: "ใบเสร็จไม่ครบ", error: null });
 });
 
+/* ─────────────────────────── who may reject (task 7) ─────────────────────────── */
+
+test("only the manager may reject", () => {
+  assert.equal(mayReject("MANAGER"), true);
+  assert.equal(mayReject("ACCOUNT"), false);
+  assert.equal(mayReject("ACCOUNT_FINAL"), false);
+  assert.equal(mayReject(null), false);
+});
+
 test("a YYYY-MM-DD that is not a real day is not a date", () => {
   assert.equal(isYmd("2026-08-07"), true);
   assert.equal(isYmd("2026-02-31"), false);
@@ -185,13 +195,38 @@ test("a YYYY-MM-DD that is not a real day is not a date", () => {
   assert.equal(isYmd(null), false);
 });
 
-test("a payment date the picker would not offer is refused", () => {
-  const valid = ["2026-08-07", "2026-08-21"];
-  assert.equal(paymentDateError("2026-08-07", valid), null);
-  // A perfectly real Friday — just the 2nd one, which is AP-1's round.
-  assert.equal(paymentDateError("2026-08-14", valid), PAYMENT_DATE_NOT_A_ROUND);
-  assert.equal(paymentDateError("", valid), PAYMENT_DATE_REQUIRED);
-  assert.equal(paymentDateError(undefined, valid), PAYMENT_DATE_REQUIRED);
+test("a real date inside the window is accepted", () => {
+  assert.equal(paymentDateProblem("2026-09-18", "2026-09-08"), null);
+  // A Wednesday. The round rule is gone: this is no longer a 1st/3rd Friday and
+  // is now perfectly acceptable.
+  assert.equal(paymentDateProblem("2026-09-16", "2026-09-08"), null);
+});
+
+test("the window's exact edges", () => {
+  // One month back to the day, and twelve months forward to the day: both in.
+  assert.equal(paymentDateProblem("2026-08-08", "2026-09-08"), null);
+  assert.equal(paymentDateProblem("2027-09-08", "2026-09-08"), null);
+  // One day beyond either edge: out.
+  assert.equal(paymentDateProblem("2026-08-07", "2026-09-08"), PAYMENT_DATE_OUT_OF_RANGE);
+  assert.equal(paymentDateProblem("2027-09-09", "2026-09-08"), PAYMENT_DATE_OUT_OF_RANGE);
+});
+
+test("a typo'd year is what the bound exists for", () => {
+  assert.equal(paymentDateProblem("2036-09-18", "2026-09-08"), PAYMENT_DATE_OUT_OF_RANGE);
+  assert.equal(paymentDateProblem("0226-09-18", "2026-09-08"), PAYMENT_DATE_OUT_OF_RANGE);
+});
+
+test("a missing or malformed date is still refused", () => {
+  for (const bad of [null, undefined, "", "  ", "2026-9-8", "08/09/2026", "2026-02-30", 20260908]) {
+    assert.equal(paymentDateProblem(bad, "2026-09-08"), PAYMENT_DATE_REQUIRED);
+  }
+});
+
+test("the window is computed from the day passed in, never from the clock", () => {
+  // The service passes the server's today. A function that read the clock could
+  // not be tested at its own edges, which is the only place it can be wrong.
+  assert.equal(paymentDateProblem("2026-01-15", "2026-01-01"), null);
+  assert.equal(paymentDateProblem("2026-01-15", "2025-01-01"), PAYMENT_DATE_OUT_OF_RANGE);
 });
 
 /* ─────────────────────────── the default round ─────────────────────────── */
