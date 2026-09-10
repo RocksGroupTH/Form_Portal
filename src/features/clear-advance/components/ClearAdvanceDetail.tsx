@@ -33,6 +33,7 @@ import { useGlOptionsByBranch } from "@/features/clear-advance/hooks/useGlOption
 import { GlCell } from "@/features/clear-advance/components/GlCell";
 import { PaymentDatePicker } from "@/components/ui/PaymentDatePicker";
 import { advanceBcDocLabel } from "@/lib/clr/advance-bc-doc";
+import { refundEvidenceMessage, refundEvidenceMissing } from "@/lib/clr/refund-evidence";
 import { isRocksPcBrand } from "@/features/clear-advance/constants";
 import { hrPhotoUrl } from "@/lib/hr/photo-url";
 import { pndBlockReason } from "@/lib/clr/wht-pnd-core";
@@ -292,7 +293,38 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
      the last step that can edit a line. `glMissingMessage` is the sentence the
      server throws, so the screen and the refusal cannot drift apart. */
   const missingGlLines = linesMissingGl(isAccountStep ? editItems : items);
-  const accountBlocked = missingVendorLines.length > 0 || !!pndProblem || missingGlLines.length > 0 || paymentDateOffCycle;
+
+  /* The refund as the officer's unsaved edits leave it. The stored figure does
+     not move while they type — autosave writes but nothing refetches — so a
+     warning read off `clear` would arrive only after they pressed approve.
+
+     Always recomputed, never `it.netAmount`: that column is derived and only
+     refreshed when persistClear writes, so on a row being edited it still
+     holds the figure from before the edit. ExpenseTable may read it because it
+     renders saved rows; this reads the ones being typed into. Same arithmetic
+     as `lineTotals` on the server, which is what will decide the stored sign. */
+  const liveRefund = isAccountStep
+    ? Math.round(
+        ((clear?.advanceAmount ?? 0) -
+          editItems.reduce(
+            (sum, it) =>
+              sum + ((it.amountBeforeVat ?? 0) + (it.vatAmount ?? 0) - (it.whtAmount ?? 0)),
+            0,
+          )) * 100,
+      ) / 100
+    : refund;
+  /* Cutting an expense can turn "the company owes me" into "I owe the company"
+     — for money the requester has not sent, because until this edit they did
+     not owe it. Nothing on this screen can fix that, so the message points at
+     ส่งกลับแก้ไข and the server refuses the approval too. */
+  const refundGap = isAccountStep
+    ? refundEvidenceMissing({
+        refundToCompany: liveRefund,
+        refundTransferDate: clear?.refundTransferDate,
+        proofCount: refundProofFiles.length,
+      })
+    : null;
+  const accountBlocked = missingVendorLines.length > 0 || !!pndProblem || missingGlLines.length > 0 || paymentDateOffCycle || !!refundGap;
 
   /* Seed the editor from the request at the account step. The snapshot taken
      here is what "unchanged" means — autosave compares against it, so seeding
@@ -372,6 +404,7 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
     if (paymentDateOffCycle) {
       return toast.error("วันที่จ่ายไม่อยู่ในรอบที่กำหนด (ศุกร์ที่ 2 หรือ 4)");
     }
+    if (refundGap) return toast.error(refundEvidenceMessage(refundGap));
     if (missingVendorLines.length > 0) {
       return toast.error(
         `กรุณาเลือก Vendor ผู้ขายให้ครบก่อนอนุมัติ — รายการที่ ${missingVendorLines.join(", ")}`,
@@ -576,6 +609,12 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
                 style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
                 รายการที่ {missingVendorLines.join(", ")} มี VAT แต่ยังไม่ได้เลือก Vendor ผู้ขาย —
                 เลือกในคอลัมน์ “Vendor” ของตารางด้านบน แล้วบันทึก จึงจะอนุมัติได้
+              </p>
+            )}
+            {refundGap && (
+              <p className="text-[12px] m-0 px-3 py-2 rounded-lg"
+                style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
+                {refundEvidenceMessage(refundGap)}
               </p>
             )}
             {missingGlLines.length > 0 && (
