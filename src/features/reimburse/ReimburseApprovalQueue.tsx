@@ -5,6 +5,7 @@ import Link from "next/link";
 import useSWR from "swr";
 import { toast } from "sonner";
 import {
+  CalendarDays,
   Check,
   Clock,
   Inbox,
@@ -19,6 +20,10 @@ import { ExpenseAccountPicker } from "@/features/reimburse/components/ExpenseAcc
 import { VendorPicker } from "@/features/reimburse/components/VendorPicker";
 import { ReimburseQueueFilterBar } from "@/features/reimburse/components/ReimburseQueueFilterBar";
 import { claimReadiness } from "@/features/reimburse/lib/queue-readiness";
+import { SidePanel, SidePanelClose } from "@/components/ui/SidePanel";
+import { Dialog } from "@/components/ui/Dialog";
+import { PaymentDatePicker } from "@/features/accounting/components/PaymentDatePicker";
+import { ReimburseDetail } from "@/features/reimburse/components/ReimburseDetail";
 import { ErpInterfaceBrandTabs } from "@/features/accounting/components/ErpInterfaceBrandTabs";
 import { ERP_INTERFACE_UNASSIGNED } from "@/features/accounting/lib/erp-interface-target";
 import {
@@ -580,6 +585,44 @@ export function ReimburseApprovalQueue() {
    * a value that looks saved and is not is the failure this whole screen must
    * not produce, because approving reads the stored row, not the cell.
    */
+  /**
+   * The claim open in the detail drawer.
+   *
+   * A drawer rather than a link away: an approver deciding a vendor needs the
+   * receipt and the approval history, and losing the queue -- its tab, its
+   * filters, and every account picked but not yet saved -- to read them is a
+   * worse trade than a panel over the top. Same SidePanel and the same
+   * ReimburseDetail that /my-request opens, so the two read identically.
+   */
+  /** Which claim's payment date is being chosen in the calendar dialog. */
+  const [editingPaymentId, setEditingPaymentId] = useState<number | null>(null);
+
+  const [drawerId, setDrawerId] = useState<number | null>(null);
+  const [drawerDetail, setDrawerDetail] = useState<ReimburseDetailData | null>(null);
+  const [drawerLoading, setDrawerLoading] = useState(false);
+
+  useEffect(() => {
+    if (drawerId == null) {
+      setDrawerDetail(null);
+      return;
+    }
+    let cancelled = false;
+    setDrawerLoading(true);
+    setDrawerDetail(null);
+    fetch(`/api/request/reimburse/requests/${drawerId}`)
+      .then((r) => r.json())
+      .then((json: { ok: boolean; data?: ReimburseDetailData }) => {
+        if (!cancelled && json.ok && json.data) setDrawerDetail(json.data);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setDrawerLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [drawerId]);
+
   const [optimistic, setOptimistic] = useState<
     Map<number, { category?: string | null; vendorNo?: string | null }>
   >(new Map());
@@ -1037,14 +1080,15 @@ export function ReimburseApprovalQueue() {
                                   {/* Opens the claim. An approver deciding a
                                       vendor sometimes needs the receipt itself,
                                       and the number is where they look for it. */}
-                                  <Link
-                                    href={`/request/reimburse/${d.claim.id}`}
-                                    className="text-[13px] font-bold no-underline hover:underline"
+                                  <button
+                                    type="button"
+                                    onClick={() => setDrawerId(d.claim.id)}
+                                    className="text-[13px] font-bold cursor-pointer border-none bg-transparent p-0 text-left hover:underline"
                                     style={{ color: "var(--nav-active-text)" }}
                                     title={`เปิดเอกสาร ${d.claim.requestNo}`}
                                   >
                                     {d.claim.requestNo || "-"}
-                                  </Link>
+                                  </button>
                                   {ready && !ready.ready && (
                                     <span
                                       className="block text-[10.5px] mt-0.5 leading-tight"
@@ -1179,26 +1223,25 @@ export function ReimburseApprovalQueue() {
                                       endpoint that sets it on its own — the
                                       approve route is the only writer. */}
                                   <div className="flex items-center gap-1.5">
-                                    <input
-                                      type="date"
-                                      value={dateFor(d.claim.id)}
+                                    {/* A calendar, not a native date field: the
+                                        rounds are a fortnight apart and seeing
+                                        that the 25th is the 4th Friday is most
+                                        of what makes a date the right one. */}
+                                    <button
+                                      type="button"
                                       disabled={batchRunning}
-                                      aria-label={`วันที่จ่ายของ ${d.claim.requestNo}`}
-                                      onChange={(e) => {
-                                        const v = e.target.value;
-                                        setRowDates((prev) => {
-                                          const m = new Map(prev);
-                                          m.set(d.claim.id, v);
-                                          return m;
-                                        });
-                                      }}
-                                      className="text-[12px] rounded-lg px-2 py-1 outline-none disabled:opacity-50"
+                                      onClick={() => setEditingPaymentId(d.claim.id)}
+                                      aria-label={`เลือกวันที่จ่ายของ ${d.claim.requestNo}`}
+                                      className="inline-flex items-center gap-1.5 text-[12px] rounded-lg px-2 py-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                                       style={{
                                         background: "var(--bg-input)",
-                                        color: "var(--text-primary)",
+                                        color: dateFor(d.claim.id) ? "var(--text-primary)" : "var(--text-muted)",
                                         border: "1px solid var(--border-input)",
                                       }}
-                                    />
+                                    >
+                                      <CalendarDays size={12} />
+                                      {dateFor(d.claim.id) ? fmtYmd(dateFor(d.claim.id)) : "เลือกวันที่"}
+                                    </button>
                                     {rowDates.has(d.claim.id) &&
                                       rowDates.get(d.claim.id) !== effectiveDate && (
                                         <button
@@ -1282,6 +1325,99 @@ export function ReimburseApprovalQueue() {
           </button>
         </div>
       )}
+
+      {/* One claim at a time. `mode="suggest"` is load-bearing: AP-4's server
+          accepts any date inside a bound rather than a round, so a calendar
+          that refused everything else would refuse dates the server takes —
+          which is exactly the split that took AP-4's DETAIL page off this
+          component. The rounds are still tinted, because they are the answer
+          nearly every claim wants. */}
+      <Dialog
+        open={editingPaymentId != null}
+        onOpenChange={(open) => {
+          if (!open) setEditingPaymentId(null);
+        }}
+        title={`วันที่จ่าย · ${rows.find((r) => r.id === editingPaymentId)?.requestNo ?? ""}`}
+      >
+        {(() => {
+          const claim = rows.find((r) => r.id === editingPaymentId);
+          if (!claim) return null;
+          return (
+            <>
+              {claim.managerApprovedAt && (
+                <p className="text-[11px] mb-2 px-1 leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                  ผจก. อนุมัติ {fmtDateTime(claim.managerApprovedAt)}
+                  {data?.suggested ? (
+                    <>
+                      {" — "}
+                      <strong>รอบที่แนะนำ {fmtYmd(data.suggested)}</strong>
+                    </>
+                  ) : (
+                    ""
+                  )}
+                  <br />
+                  แต่ละรอบปิดรับเที่ยงวันจันทร์ของสัปดาห์นั้น · เลือกวันอื่นได้ตามจริง
+                </p>
+              )}
+              <PaymentDatePicker
+                dates={data?.paymentOptions ?? []}
+                value={dateFor(claim.id)}
+                mode="suggest"
+                hint="วันจ่าย: ศุกร์ที่ 1 และ 3 ของเดือน (เลื่อนกลับ 1 วันถ้าตรงวันหยุด) — เลือกวันอื่นได้"
+                onChange={(ymd) => {
+                  setRowDates((prev) => {
+                    const m = new Map(prev);
+                    m.set(claim.id, ymd);
+                    return m;
+                  });
+                  setEditingPaymentId(null);
+                }}
+              />
+            </>
+          );
+        })()}
+      </Dialog>
+
+      {/* Same drawer /my-request opens, so a claim reads the same in both. */}
+      <SidePanel open={drawerId != null} onClose={() => setDrawerId(null)} width="min(980px, 100vw)" zIndex={60}>
+        <div
+          className="flex items-center justify-between px-4 py-3 shrink-0"
+          style={{ borderBottom: "1px solid var(--border-light)" }}
+        >
+          <div className="min-w-0">
+            <p className="text-[14px] font-bold truncate m-0" style={{ color: "var(--text-heading)" }}>
+              {drawerDetail?.requestNo ?? "รายละเอียดคำขอ"}
+            </p>
+            <p className="text-[11px] m-0 mt-0.5" style={{ color: "var(--text-muted)" }}>
+              ตรวจสอบรายละเอียดและเอกสารแนบ
+            </p>
+          </div>
+          <SidePanelClose onClick={() => setDrawerId(null)} />
+        </div>
+
+        <div className="flex-1 overflow-y-auto no-scrollbar px-4 py-4 acc-theme">
+          {drawerLoading ? (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 size={24} className="animate-spin" style={{ color: "var(--text-muted)" }} />
+            </div>
+          ) : drawerDetail ? (
+            <ReimburseDetail
+              request={drawerDetail}
+              onChanged={() => {
+                // The claim may have left this queue -- returned, or approved
+                // from inside the panel. Refetch both rather than trusting the
+                // list still describes it.
+                void mutate();
+                setDrawerId(null);
+              }}
+            />
+          ) : (
+            <p className="text-[13px] py-10 text-center m-0" style={{ color: "var(--color-danger)" }}>
+              โหลดรายละเอียดไม่สำเร็จ
+            </p>
+          )}
+        </div>
+      </SidePanel>
     </>
   );
 }
