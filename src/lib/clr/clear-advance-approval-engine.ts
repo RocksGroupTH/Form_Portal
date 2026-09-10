@@ -9,6 +9,7 @@ import { listClrApprovers, roleForStep } from "@/lib/clr/clear-advance-approver-
 import { linesMissingTaxVendor } from "@/lib/clr/tax-vendor-core";
 import { glMissingMessage, linesMissingGl } from "@/lib/clr/clear-advance-line-validation";
 import { resolveClrPaymentDate } from "@/lib/clr/clear-advance-payment-date";
+import { refundEvidenceMessage, refundEvidenceMissing } from "@/lib/clr/refund-evidence";
 import { getPaymentDates } from "@/lib/acc/payment-calendar";
 import { pndBlockReason } from "@/lib/clr/wht-pnd-core";
 import {
@@ -103,6 +104,18 @@ export async function approveCurrentStep(
     // document to BC and put the discovery on whoever pressed "ส่งเข้า ERP".
     const missingGl = linesMissingGl(before.clear?.items);
     if (missingGl.length > 0) throw new Error(glMissingMessage(missingGl));
+    /* A clearing can arrive here owing money it was never asked to evidence.
+       The refund fields are required at submit, but about the sign the
+       clearing had then — accounting's own edits to the lines can flip it, and
+       the employee has not transferred anything because until that edit they
+       did not owe it. Nothing the officer can type fixes that, so this refuses
+       the approval and points at ส่งกลับแก้ไข. */
+    const refundGap = refundEvidenceMissing({
+      refundToCompany: refund,
+      refundTransferDate: before.clear?.refundTransferDate,
+      proofCount: before.clear?.refundProofFiles?.length ?? 0,
+    });
+    if (refundGap) throw new Error(refundEvidenceMessage(refundGap));
     await setAccountAction(requestId, opts.pvDocNo ?? null, decided.paymentDate);
   }
 
