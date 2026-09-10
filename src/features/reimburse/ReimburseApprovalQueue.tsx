@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
 import {
@@ -305,6 +305,28 @@ async function vendorsFetcher(url: string): Promise<TaxVendorCandidate[]> {
   }
   return json.data as TaxVendorCandidate[];
 }
+
+/**
+ * The queue's own columns — one claim per row, the questions this screen exists
+ * to answer lined up so nine claims can be compared without scrolling past each
+ * in turn. Which is oldest, which has no payment date yet, which department it
+ * came from: a card stacked those vertically and made comparing them impossible.
+ *
+ * The checkbox and the action cell are rendered outside this list because
+ * neither is data: one selects the row, the other holds controls. `colSpan` for
+ * the expand and return rows is therefore `length + 2`.
+ */
+const QUEUE_COLUMNS: readonly { label: string; right?: boolean; width?: string }[] = [
+  { label: "เลขที่", width: "140px" },
+  { label: "วันที่ส่ง", width: "140px" },
+  { label: "ผจก. อนุมัติ", width: "140px" },
+  { label: "วันจ่าย", width: "170px" },
+  { label: "ผู้ขอ", width: "170px" },
+  { label: "แผนก", width: "160px" },
+  { label: "Dept", width: "90px" },
+  { label: "แบรนด์", width: "90px" },
+  { label: "ยอด", right: true, width: "120px" },
+];
 
 function ExpenseAccountsPanel({
   requestId,
@@ -986,187 +1008,283 @@ export function ReimburseApprovalQueue() {
               </div>
             ) : (
               <>
-                <div
-                  className="flex items-center gap-3 px-5 py-3"
-              style={{ borderBottom: "1px solid var(--border-light)", background: "var(--bg-card-alt)" }}
-            >
-              <QueueCheckbox checked={allSelected} onChange={toggleAll} ariaLabel="เลือกทั้งหมด" />
-              <span className="text-[12px] font-medium" style={{ color: "var(--text-muted)" }}>
-                เลือกทั้งหมด ({rows.length} รายการ)
-              </span>
-            </div>
+                {/* A flat table, the shape AP-1's queue reads in. The cards it
+                    replaces stacked one claim's facts vertically, which meant
+                    nine claims could not be compared without scrolling past
+                    each in turn — and comparing is the whole job here: which
+                    of these is oldest, which has no date yet, which department
+                    they came from. Fixed columns line those answers up.
 
-            <div className="flex flex-col">
-              {rows.map((item) => {
-                const isSelected = selectedIds.has(item.id);
-                const isReturning = returnRowId === item.id;
-                return (
-                  <div
-                    key={item.id}
-                    className="flex items-start gap-3 px-5 py-4"
-                    style={{ borderBottom: "1px solid var(--border-light)" }}
-                  >
-                    <div className="pt-1">
-                      <QueueCheckbox
-                        checked={isSelected}
-                        onChange={() => toggleOne(item.id)}
-                        ariaLabel={`เลือก ${item.requestNo}`}
-                      />
-                    </div>
-
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap mb-1">
-                        <span className="text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>
-                          {item.requestNo || "-"}
-                        </span>
-                        {item.brandCode && (
-                          <span
-                            className="px-1.5 py-0.5 rounded text-[10.5px] font-bold"
-                            style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}
-                          >
-                            {item.brandCode}
-                          </span>
-                        )}
-                        <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>
-                          {item.requesterName || "-"}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-2 flex-wrap text-[11.5px] mb-2" style={{ color: "var(--text-muted)" }}>
-                        <span>ส่งเมื่อ {fmtDateTime(item.submittedAt)}</span>
-                        <span>· {item.itemCount} รายการ</span>
-                        <span>· {fmtBaht(item.totalAmount)} บาท</span>
-                        {item.paymentDate && <span>· กำหนดจ่าย {fmtYmd(item.paymentDate)}</span>}
-                      </div>
-
-                      {/* Expand the claim's expense lines and their G/L accounts in place
-                          — see `ExpenseAccountsPanel`'s own header for why this reuses the
-                          by-id detail read rather than a new list endpoint. */}
-                      <button
-                        type="button"
-                        onClick={() => toggleExpanded(item.id)}
-                        className="inline-flex items-center gap-1 text-[11.5px] font-medium mb-2 cursor-pointer border-none bg-transparent p-0"
-                        style={{ color: "var(--nav-active-text)" }}
+                    It scrolls inside its own container rather than widening
+                    the page, like the expense table inside it. */}
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse" style={{ minWidth: 1240 }}>
+                    <thead>
+                      <tr
+                        style={{
+                          borderBottom: "1px solid var(--border-light)",
+                          background: "var(--bg-card-alt)",
+                        }}
                       >
-                        <ListChecks size={12} />
-                        {expandedIds.has(item.id) ? "ซ่อนรายการค่าใช้จ่าย" : "ดูรายการ / เลือกบัญชี"}
-                        <ChevronDown
-                          size={12}
-                          style={{
-                            transform: expandedIds.has(item.id) ? "rotate(180deg)" : undefined,
-                            transition: "transform 0.15s",
-                          }}
-                        />
-                      </button>
-                      {expandedIds.has(item.id) && (
-                        <ExpenseAccountsPanel requestId={item.id} brandCode={item.brandCode} />
-                      )}
-
-                      {/* This claim's own payment date. Shown on every row, not
-                          only selected ones: an accountant sets the date while
-                          reading the claim, and hiding the field until the
-                          checkbox is ticked would make them do it in the other
-                          order. Empty falls through to the shared field at the
-                          bottom, which is what makes that control still work —
-                          it fills nothing, it is simply what a row without an
-                          answer of its own shows. */}
-                      <div className="flex items-center gap-2 mt-2 flex-wrap">
-                        <label
-                          className="text-[11.5px] font-medium shrink-0"
-                          htmlFor={`paydate-${item.id}`}
-                          style={{ color: "var(--text-muted)" }}
-                        >
-                          วันที่จ่าย
-                        </label>
-                        <input
-                          id={`paydate-${item.id}`}
-                          type="date"
-                          value={dateFor(item.id)}
-                          disabled={batchRunning}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setRowDates((prev) => {
-                              const m = new Map(prev);
-                              m.set(item.id, v);
-                              return m;
-                            });
-                          }}
-                          className="text-[12px] rounded-lg px-2.5 py-1 outline-none disabled:opacity-50"
-                          style={{
-                            background: "var(--bg-input)",
-                            color: "var(--text-primary)",
-                            border: "1px solid var(--border-input)",
-                          }}
-                        />
-                        {rowDates.has(item.id) && rowDates.get(item.id) !== effectiveDate && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setRowDates((prev) => {
-                                const m = new Map(prev);
-                                m.delete(item.id);
-                                return m;
-                              })
-                            }
-                            className="text-[11.5px] font-medium cursor-pointer border-none bg-transparent p-0"
-                            style={{ color: "var(--text-muted)" }}
-                          >
-                            ใช้วันที่ร่วม
-                          </button>
-                        )}
-                      </div>
-
-                      {isReturning ? (
-                        <div className="flex flex-col gap-2 mt-1">
-                          <textarea
-                            value={returnComment}
-                            onChange={(e) => setReturnComment(e.target.value)}
-                            rows={2}
-                            placeholder="ระบุสิ่งที่ต้องแก้ไข"
-                            autoFocus
-                            className="w-full text-[13px] px-3 py-2 rounded-lg resize-y"
-                            style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-card)" }}
+                        <th className="px-4 py-3 w-9">
+                          <QueueCheckbox
+                            checked={allSelected}
+                            onChange={toggleAll}
+                            ariaLabel={`เลือกทั้งหมด (${rows.length} รายการ)`}
                           />
-                          <div className="flex gap-2">
-                            <button
-                              type="button"
-                              disabled={returnBusy || returnComment.trim() === ""}
-                              onClick={() => void submitReturn(item.id)}
-                              className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold px-3 py-1.5 rounded-lg cursor-pointer disabled:cursor-not-allowed disabled:opacity-55"
-                              style={{ background: "var(--color-action)", color: "#fff", border: "none" }}
+                        </th>
+                        {QUEUE_COLUMNS.map((c) => (
+                          <th
+                            key={c.label}
+                            className={`text-[11px] font-semibold uppercase tracking-wide py-3 px-3 whitespace-nowrap ${
+                              c.right ? "text-right" : "text-left"
+                            }`}
+                            style={{ color: "var(--text-muted)", width: c.width }}
+                          >
+                            {c.label}
+                          </th>
+                        ))}
+                        {/* No heading: the cell holds controls, and a label
+                            over them would read as a data column. */}
+                        <th className="w-[220px]" aria-label="การดำเนินการ" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((item) => {
+                        const isSelected = selectedIds.has(item.id);
+                        const isReturning = returnRowId === item.id;
+                        const isExpanded = expandedIds.has(item.id);
+                        return (
+                          <Fragment key={item.id}>
+                            <tr
+                              style={{
+                                borderBottom: isExpanded || isReturning ? undefined : "1px solid var(--border-light)",
+                                background: isSelected ? "var(--nav-active-bg)" : undefined,
+                              }}
                             >
-                              {returnBusy ? <Loader2 size={13} className="animate-spin" /> : null}
-                              ยืนยันส่งกลับ
-                            </button>
-                            <button
-                              type="button"
-                              disabled={returnBusy}
-                              onClick={closeReturn}
-                              className="text-[12.5px] font-medium px-3 py-1.5 rounded-lg cursor-pointer"
-                              style={{ background: "var(--bg-card-alt)", color: "var(--text-secondary)", border: "1px solid var(--border-card)" }}
-                            >
-                              ยกเลิก
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => openReturn(item.id)}
-                          className="inline-flex items-center gap-1.5 text-[12px] font-medium px-3 py-1.5 rounded-lg cursor-pointer"
-                          style={{
-                            background: "var(--bg-info-yellow)",
-                            color: "var(--text-info-yellow)",
-                            border: "1px solid var(--border-info-yellow)",
-                          }}
-                        >
-                          <RotateCcw size={13} /> ส่งกลับแก้ไข
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+                              <td className="px-4 py-3 align-middle">
+                                <QueueCheckbox
+                                  checked={isSelected}
+                                  onChange={() => toggleOne(item.id)}
+                                  ariaLabel={`เลือก ${item.requestNo}`}
+                                />
+                              </td>
+                              <td className="py-3 px-3 align-middle whitespace-nowrap">
+                                <span className="text-[13px] font-bold" style={{ color: "var(--nav-active-text)" }}>
+                                  {item.requestNo || "-"}
+                                </span>
+                              </td>
+                              <td
+                                className="text-[12px] py-3 px-3 align-middle whitespace-nowrap"
+                                style={{ color: "var(--text-secondary)" }}
+                              >
+                                {fmtDateTime(item.submittedAt)}
+                              </td>
+                              <td
+                                className="text-[12px] py-3 px-3 align-middle whitespace-nowrap"
+                                style={{ color: "var(--text-secondary)" }}
+                              >
+                                {/* When the manager signed, which is when this
+                                    claim entered this queue. Null only if it
+                                    arrived by some path that left no approval
+                                    row — shown as a dash rather than blank so
+                                    the gap is legible. */}
+                                {fmtDateTime(item.managerApprovedAt)}
+                              </td>
+                              <td className="py-3 px-3 align-middle">
+                                {/* The claim's own date, editable in place. It
+                                    is a column because it is an answer this
+                                    screen exists to give, not a detail of the
+                                    claim — and per row, because each claim is
+                                    approved with its own. Empty falls through
+                                    to the shared field at the bottom. */}
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="date"
+                                    value={dateFor(item.id)}
+                                    disabled={batchRunning}
+                                    aria-label={`วันที่จ่ายของ ${item.requestNo}`}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      setRowDates((prev) => {
+                                        const m = new Map(prev);
+                                        m.set(item.id, v);
+                                        return m;
+                                      });
+                                    }}
+                                    className="text-[12px] rounded-lg px-2 py-1 outline-none disabled:opacity-50"
+                                    style={{
+                                      background: "var(--bg-input)",
+                                      color: "var(--text-primary)",
+                                      border: "1px solid var(--border-input)",
+                                    }}
+                                  />
+                                  {rowDates.has(item.id) && rowDates.get(item.id) !== effectiveDate && (
+                                    <button
+                                      type="button"
+                                      title="ใช้วันที่ร่วม"
+                                      aria-label={`ใช้วันที่ร่วมกับ ${item.requestNo}`}
+                                      onClick={() =>
+                                        setRowDates((prev) => {
+                                          const m = new Map(prev);
+                                          m.delete(item.id);
+                                          return m;
+                                        })
+                                      }
+                                      className="shrink-0 cursor-pointer border-none bg-transparent p-0"
+                                      style={{ color: "var(--text-muted)" }}
+                                    >
+                                      <RotateCcw size={12} />
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="text-[12.5px] py-3 px-3 align-middle" style={{ color: "var(--text-primary)" }}>
+                                {item.requesterName || "-"}
+                              </td>
+                              <td className="text-[12px] py-3 px-3 align-middle" style={{ color: "var(--text-secondary)" }}>
+                                {item.requesterDepartmentName || "—"}
+                              </td>
+                              <td className="py-3 px-3 align-middle whitespace-nowrap">
+                                {item.requesterDepartmentCode ? (
+                                  <span
+                                    className="px-1.5 py-0.5 rounded text-[10.5px] font-bold"
+                                    style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}
+                                  >
+                                    {item.requesterDepartmentCode}
+                                  </span>
+                                ) : (
+                                  <span className="text-[12px]" style={{ color: "var(--text-faint)" }}>
+                                    —
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-3 px-3 align-middle whitespace-nowrap">
+                                {item.brandCode && (
+                                  <span
+                                    className="px-1.5 py-0.5 rounded text-[10.5px] font-bold"
+                                    style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}
+                                  >
+                                    {item.brandCode}
+                                  </span>
+                                )}
+                              </td>
+                              <td
+                                className="text-[13px] py-3 px-3 align-middle text-right tabular-nums font-semibold whitespace-nowrap"
+                                style={{ color: "var(--text-primary)" }}
+                              >
+                                {fmtBaht(item.totalAmount)}
+                                <span
+                                  className="block text-[10.5px] font-normal"
+                                  style={{ color: "var(--text-faint)" }}
+                                >
+                                  {item.itemCount} รายการ
+                                </span>
+                              </td>
+                              <td className="py-3 px-3 align-middle">
+                                <div className="flex items-center gap-2 justify-end flex-wrap">
+                                  {/* Expands the claim's expense lines, their
+                                      G/L accounts and their vendors in place —
+                                      see `ExpenseAccountsPanel`'s header for
+                                      why it reuses the by-id detail read. */}
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleExpanded(item.id)}
+                                    aria-expanded={isExpanded}
+                                    className="inline-flex items-center gap-1 text-[11.5px] font-medium cursor-pointer border-none bg-transparent p-0 whitespace-nowrap"
+                                    style={{ color: "var(--nav-active-text)" }}
+                                  >
+                                    <ListChecks size={12} />
+                                    {isExpanded ? "ซ่อนรายการ" : "ดูรายการ / บัญชี"}
+                                    <ChevronDown
+                                      size={12}
+                                      style={{
+                                        transform: isExpanded ? "rotate(180deg)" : undefined,
+                                        transition: "transform 0.15s",
+                                      }}
+                                    />
+                                  </button>
+                                  {!isReturning && (
+                                    <button
+                                      type="button"
+                                      onClick={() => openReturn(item.id)}
+                                      className="inline-flex items-center gap-1 text-[11.5px] font-medium px-2 py-1 rounded-lg cursor-pointer whitespace-nowrap"
+                                      style={{
+                                        background: "var(--bg-info-yellow)",
+                                        color: "var(--text-info-yellow)",
+                                        border: "1px solid var(--border-info-yellow)",
+                                      }}
+                                    >
+                                      <RotateCcw size={12} /> ส่งกลับ
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+
+                            {isExpanded && (
+                              <tr style={{ borderBottom: isReturning ? undefined : "1px solid var(--border-light)" }}>
+                                <td colSpan={QUEUE_COLUMNS.length + 2} className="px-4 pb-3">
+                                  <ExpenseAccountsPanel requestId={item.id} brandCode={item.brandCode} />
+                                </td>
+                              </tr>
+                            )}
+
+                            {isReturning && (
+                              <tr style={{ borderBottom: "1px solid var(--border-light)" }}>
+                                <td colSpan={QUEUE_COLUMNS.length + 2} className="px-4 pb-3">
+                                  <div className="flex flex-col gap-2">
+                                    <textarea
+                                      value={returnComment}
+                                      onChange={(e) => setReturnComment(e.target.value)}
+                                      rows={2}
+                                      placeholder="ระบุสิ่งที่ต้องแก้ไข"
+                                      autoFocus
+                                      className="w-full text-[13px] px-3 py-2 rounded-lg resize-y"
+                                      style={{
+                                        background: "var(--bg-input)",
+                                        color: "var(--text-primary)",
+                                        border: "1px solid var(--border-card)",
+                                      }}
+                                    />
+                                    <div className="flex gap-2">
+                                      <button
+                                        type="button"
+                                        disabled={returnBusy || returnComment.trim() === ""}
+                                        onClick={() => void submitReturn(item.id)}
+                                        className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-3 py-1.5 rounded-lg cursor-pointer disabled:cursor-not-allowed disabled:opacity-55"
+                                        style={{
+                                          background: "var(--bg-info-yellow)",
+                                          color: "var(--text-info-yellow)",
+                                          border: "1px solid var(--border-info-yellow)",
+                                        }}
+                                      >
+                                        {returnBusy ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
+                                        ยืนยันส่งกลับ
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={returnBusy}
+                                        onClick={closeReturn}
+                                        className="text-[12px] font-medium px-3 py-1.5 rounded-lg cursor-pointer disabled:cursor-not-allowed"
+                                        style={{
+                                          background: "transparent",
+                                          color: "var(--text-muted)",
+                                          border: "1px solid var(--border-card)",
+                                        }}
+                                      >
+                                        ยกเลิก
+                                      </button>
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               </>
             )}
