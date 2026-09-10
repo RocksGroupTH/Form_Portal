@@ -193,12 +193,14 @@ charge, and the marker can be added later without disturbing anything here.
 
 ## Tests
 
-| Test | Where |
-|---|---|
-| `linesMissingGl` — zero-amount lines ignored, blank and whitespace caught, 1-based row numbers, several rows | `clear-advance-line-validation.test.ts`, mirroring `tax-vendor-core.test.ts:51-67` |
-| `ACCOUNT` approve refused while any posting line has no account | approval-engine test |
-| `<GlCell>` / `useGlOptionsByBranch` — branch change clears, `glForced` locks, a stored account outside the current filter still renders | new test file |
-| The detail GET returns `canSeeGlAccount` true for an `ACCOUNT`/`HEAD` approver and an admin, false for the requester and the line manager | route or ACL test |
+| Test | Where | Status |
+|---|---|---|
+| `linesMissingGl` — zero-amount lines ignored, blank and whitespace caught, 1-based row numbers, several rows | `clear-advance-line-validation.test.ts`, mirroring `tax-vendor-core.test.ts:51-67` | done |
+| `glMissingMessage` — the officer is told which rows | `clear-advance-line-validation.test.ts` | done, replaces the planned approval-engine test |
+| `glOptionsForLine` — branch's list, no branch, list not yet arrived, no duplicate, a stored account the branch no longer offers still renders first | `useGlOptionsByBranch.test.ts` | done |
+| `useGlOptionsByBranch`'s fetch-and-cache effect | — | **not covered.** It is a React hook and this repo carries no renderer; adding one is a dependency decision for the owner, not something to slip into this change. The gap was not free: the effect shipped with a bug that dropped a 200 response and left the picker empty, caught in the browser and fixed in a follow-up commit |
+| `<GlCell>` rendering — `glForced` lock, disabled with no branch | — | not covered, same reason |
+| The detail GET returns `canSeeGlAccount` true for an `ACCOUNT`/`HEAD` approver and an admin, false for the requester and the line manager | — | **not covered.** `isAccountArea` is assembled from three IO calls in `buildAccAclViewer` with no pure seam to test against; verified by hand in the browser instead (true for an accounting viewer) |
 
 ## Open questions
 
