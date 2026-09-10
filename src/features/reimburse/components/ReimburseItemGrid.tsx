@@ -1,7 +1,7 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronUp, CircleAlert, Plus, Trash2 } from "lucide-react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { CircleAlert, Plus, ReceiptText, Trash2, X } from "lucide-react";
 import { SingleDatePicker } from "@/features/accounting/components/SingleDatePicker";
 import type { ExpenseAccount } from "@/lib/acc/reimburse/expense-account-service";
 import { fmtBaht } from "@/features/travel-booking/components/shared";
@@ -371,13 +371,19 @@ function DocumentLinesPanel({
             {` · ${lines.length} บรรทัด`}
           </span>
         </p>
+        {/* An icon, matching the row's own toggle. The word it replaces was this
+            button's whole accessible name, so `aria-label` is not decoration
+            here — without it a screen reader reaches an unnamed button — and
+            `title` keeps the word for a sighted reader who hesitates over it. */}
         <button
           type="button"
           onClick={onClose}
-          className="text-[12px] cursor-pointer border-none bg-transparent p-0 shrink-0"
+          aria-label={`ปิดรายการย่อยของรายการที่ ${index + 1}`}
+          title="ปิด"
+          className="w-6 h-6 rounded-md flex items-center justify-center cursor-pointer border-none bg-transparent p-0 shrink-0"
           style={{ color: "var(--text-muted)" }}
         >
-          ปิด
+          <X size={14} />
         </button>
       </div>
 
@@ -505,20 +511,27 @@ export function ReimburseItemGrid({
    * — and a hard-coded number is what the first version of this panel used and
    * what made it look arbitrary at every window size but one.
    *
-   * `useLayoutEffect` so the first paint already has a width; the observer then
-   * keeps it right as the window resizes and as the side nav opens and closes.
+   * **A callback ref, not an effect over a ref.** The scroller renders only
+   * under `items.length > 0` and a new form seeds zero items (`seedItems`), so
+   * on that first render there is no node: a `useLayoutEffect` with an empty
+   * dependency list — which is what this was — read `null`, returned early, and
+   * never ran again, so the observer was never attached for the life of the
+   * component. `viewWidth` stayed 0 and the panel shrank to its own text. A
+   * callback ref fires when React attaches the node and again with `null` when
+   * it detaches, which is exactly the lifetime the observer wants, and it still
+   * measures before paint. Guarded by `detail-panel-width-guard.test.ts`.
    */
-  const scrollerRef = useRef<HTMLDivElement | null>(null);
   const [viewWidth, setViewWidth] = useState(0);
-  useLayoutEffect(() => {
-    const el = scrollerRef.current;
+  const observerRef = useRef<ResizeObserver | null>(null);
+  const measureScroller = useCallback((el: HTMLDivElement | null) => {
+    observerRef.current?.disconnect();
+    observerRef.current = null;
     if (!el) return;
-    const measure = () => setViewWidth(el.clientWidth);
-    measure();
+    setViewWidth(el.clientWidth);
     if (typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(measure);
+    const ro = new ResizeObserver(() => setViewWidth(el.clientWidth));
     ro.observe(el);
-    return () => ro.disconnect();
+    observerRef.current = ro;
   }, []);
 
   // The total the server will store: the blank trailing row contributes
@@ -561,7 +574,7 @@ export function ReimburseItemGrid({
         // scrolls with no affordance at all — nothing on screen says the table
         // continues to the right. AP-3's expense grid opted back in the same
         // way; the class exists for exactly this.
-        <div ref={scrollerRef} className="overflow-x-auto show-x-scroll pb-1">
+        <div ref={measureScroller} className="overflow-x-auto show-x-scroll pb-1">
           <div style={{ minWidth: ROW_MIN_WIDTH }} className="flex flex-col gap-2">
             {/* Same inset and the same template as a row, plus a transparent
                 border so the header's columns line up with the bordered rows
@@ -622,6 +635,7 @@ export function ReimburseItemGrid({
                       value={item.expenseDate ?? ""}
                       onChange={(ymd) => onUpdate(index, { expenseDate: ymd || null })}
                       ariaLabel={`วันที่ของรายการที่ ${index + 1}`}
+                      monthFormat="short"
                       placeholder="เลือกวันที่..."
                       hasError={dateBad}
                     />
@@ -725,7 +739,12 @@ export function ReimburseItemGrid({
                           className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer border-none shrink-0"
                           style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}
                         >
-                          {isOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                          {/* The document, not a direction. A chevron only says
+                              "this opens"; the receipt says what opens, which is
+                              what tells this button apart from the row-level
+                              chevrons elsewhere on the page. `X` to close, because
+                              an open panel is dismissed rather than collapsed. */}
+                          {isOpen ? <X size={15} /> : <ReceiptText size={15} />}
                         </button>
                       )}
                       <button
@@ -751,7 +770,13 @@ export function ReimburseItemGrid({
                       position: "sticky",
                       left: 0,
                       alignSelf: "flex-start",
-                      width: viewWidth || undefined,
+                      // Never `undefined`: with no width at all, the
+                      // `alignSelf` above shrinks the panel to its own text.
+                      // "100%" is the ROW width here, which is wider than the
+                      // card but never wider than the scroller's existing
+                      // content — so it cannot move the horizontal scroll
+                      // either, and a measured render replaces it immediately.
+                      width: viewWidth || "100%",
                     }}
                   >
                     <DocumentLinesPanel
