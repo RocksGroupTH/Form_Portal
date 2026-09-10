@@ -27,6 +27,7 @@ import { glMissingMessage, linesMissingGl } from "@/lib/clr/clear-advance-line-v
 import { useGlOptionsByBranch } from "@/features/clear-advance/hooks/useGlOptionsByBranch";
 import { GlCell } from "@/features/clear-advance/components/GlCell";
 import { isRocksPcBrand } from "@/features/clear-advance/constants";
+import { hrPhotoUrl } from "@/lib/hr/photo-url";
 import { pndBlockReason } from "@/lib/clr/wht-pnd-core";
 import { SellerVendorCard } from "@/features/clear-advance/components/SellerVendorCard";
 
@@ -935,7 +936,7 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
       <Section title="ผู้ขอ" icon={<User size={15} />}>
         <div className="flex items-center gap-3 min-w-0">
           <div className="shrink-0 rounded-2xl overflow-hidden" style={{ boxShadow: "0 0 0 2px var(--nav-active-bg)" }}>
-            <Avatar name={request.requesterFullName || "?"} size={48} color="var(--nav-active-text)" />
+            <Avatar name={request.requesterFullName || "?"} size={48} photo={hrPhotoUrl(request.staffId)} color="var(--nav-active-text)" />
           </div>
           <div className="min-w-0 flex flex-col gap-0.5">
             <div className="flex items-baseline gap-2 min-w-0">
