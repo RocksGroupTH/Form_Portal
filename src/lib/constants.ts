@@ -147,25 +147,47 @@ export const REQUEST_CARDS: NavItem[] = [
     manage: true,
   },
   {
-    id: "reimburse-settings",
+    id: "reimburse-admin",
     label: "ขอเบิกเงินคืนพนักงาน (ออฟฟิต)",
     icon: "Receipt",
-    desc: "ฟอร์ม AP-4 · แบรนด์ · ระเบียบการจ่าย · ผู้อนุมัติบัญชี · สิทธิ์เข้าถึง",
-    href: "/request/reimburse/settings",
+    desc: "คิวอนุมัติ (บัญชี) · Interface ERP · ตั้งค่า",
+    href: "/request/reimburse/admin",
     group: "Settings",
     groupTh: "ตั้งค่า",
     badge: "AP-4",
-    // Deliberately **not** `devHostOnly`, unlike its two neighbours.
+    // Deliberately **not** `devHostOnly`, unlike its AP-1/AP-2/AP-3 neighbours.
     //
     // For AP-1 and AP-17 that flag is cosmetic — their approver and brand tables
     // are populated, so hiding the card off localhost hides a page nobody needs.
     // AP-4 ships with `AccReimburseApprover` empty, so until a System Admin adds
     // somebody every claim stops dead at the ACCOUNT step, and migration 092
     // seeds `AccFormBrand` with `ROCKS`, which is not one of the four brands in
-    // `src/lib/brand.ts`. Both are fixed here and nowhere else. The card was
-    // hiding the one page needed to commission the form, on the only host where
-    // commissioning happens, while the page itself is `requireRole`-gated
-    // server-side and was therefore authorized anyway.
+    // `src/lib/brand.ts`. Both are fixed from the ตั้งค่า card on the hub this
+    // card opens, and nowhere else. The card was hiding the one page needed to
+    // commission the form, on the only host where commissioning happens, while
+    // that page itself is `requireRole`-gated server-side and was therefore
+    // authorized anyway.
+    //
+    // One card, not two: `id` used to be `reimburse-settings`, pointing straight
+    // at `/request/reimburse/settings`, while a second `reimburse-approvals`
+    // card pointed at the accounting queue — the one form on this hub with two
+    // management doors where every other form has one. It now opens
+    // `/request/reimburse/admin`, AP-4's own hub (modelled on
+    // `/request/advance/admin`) — the same move AP-17 made on 2026-08-27, in one
+    // commit: delete the redundant card AND make the survivor reach the work.
+    // The `id` was renamed off its old `-settings` suffix for the same reason
+    // `advance` and `clear-advance` carry no such suffix even though their
+    // hrefs also end in `/admin` — this card no longer leads to settings alone.
+    // See `RequestHubPage`'s filter below for how this card's own visibility is
+    // gated now that it also stands in for the queue's reach.
+    //
+    // As of 2026-09-10 that hub links onward to only the queue and settings,
+    // not four destinations: of the five form hubs, AP-4 was the only one also
+    // linking its own fill form and the only one with a standalone Interface
+    // ERP card — AP-2 and AP-3 both put ERP behind a tab, exactly where AP-4's
+    // own queue page now does too. Both dropped destinations stay reachable,
+    // just not from this hub: the form through `reimburse-form` below (and
+    // Home), the ERP tab as the queue page's own second tab.
     manage: true,
   },
   {

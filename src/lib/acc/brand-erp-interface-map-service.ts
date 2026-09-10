@@ -131,18 +131,34 @@ export async function upsertBrandErpInterfaceMap(
   return mapRow(inserted);
 }
 
+/**
+ * Delete one mapping row for `claimBrandCode`.
+ *
+ * `formCode` omitted (or `null`) targets the default — AP-1's own editor,
+ * which has no form selector and always means the shared row. AP-4's grouped
+ * Interface ERP tab passes its own form code instead, so removing a brand
+ * from a group clears only AP-4's override and leaves the default (and any
+ * other form's override) untouched.
+ */
 export async function deleteBrandErpInterfaceMap(
   claimBrandCode: string,
+  formCode: string | null = null,
 ): Promise<void> {
   const claim = claimBrandCode.trim().toUpperCase();
   if (!claim) throw new Error("กรุณาระบุแบรนด์เบิก");
+  const form = formCode ? formCode.trim().toUpperCase() : null;
 
   await writeBothPools(async (tx) => {
-    // Bounded to the default. Unbounded, this deletes every form's override for
-    // the brand as well — the editor only ever meant to clear the shared row.
-    await tx.request().input("brand", sql.NVarChar, claim).query(`
+    const req = tx.request().input("brand", sql.NVarChar, claim);
+    if (form) req.input("formCode", sql.NVarChar(20), form);
+    // Bounded to `form` — the default for AP-1's own editor, or one form's own
+    // override for a caller like AP-4's. Unbounded, or bounded to the wrong
+    // side, this deletes either the shared default (breaking every form with
+    // no override of its own) or sweeps another form's override away instead
+    // of the caller's own.
+    await req.query(`
         DELETE FROM [dbo].[AccBrandErpInterface]
-        WHERE BrandCode = @brand AND ${perFormWriteMatch(null)}
+        WHERE BrandCode = @brand AND ${perFormWriteMatch(form)}
       `);
   });
 }

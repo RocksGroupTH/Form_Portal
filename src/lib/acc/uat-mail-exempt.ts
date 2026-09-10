@@ -51,7 +51,7 @@ function normalizeEmail(email: string | null | undefined): string {
  * own lookups use (`getActiveUatTester` in `src/lib/uat-tester/service.ts`).
  *
  * Pure: `activeTesters` is gathered by the caller from the active rows of
- * `UatTester` (Fast_Core) — nothing here touches a database.
+ * `UatTester` (`Fast_Core`) — nothing here touches a database.
  */
 export function isUatMailExempt(
   recipient: string | null | undefined,

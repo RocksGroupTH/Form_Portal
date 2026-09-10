@@ -1,10 +1,8 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { writeBothPools } from "@/lib/acc/dual-write";
-import { getAllowanceLog } from "@/lib/acc/travel-booking/allowance-log";
 import {
   PER_DIEM_HOME_COUNTRY,
   isPerDiemCountry,
-  perDiemLogFor,
   type PerDiemCountryRate,
 } from "@/lib/acc/travel-booking/perdiem-country";
 
@@ -20,13 +18,15 @@ import {
  *
  * ── One resolver, and the guard that keeps it one ──
  *
- * `getAllowanceLog` is imported here and, apart from the route that serves the
- * requester's own allowance history unchanged, nowhere else that prices a trip.
- * Four things compute a per-diem figure — the estimate on the form, the submit,
- * the recompute after a cancellation, and the report's displayed rate — and
- * they disagreed about nothing before because there was only one input. Adding
- * a second input is exactly the kind of change that lets them drift, so they
- * all come through `perDiemLogFor`.
+ * This file no longer imports `getAllowanceLog` — its old convenience wrapper,
+ * `resolvePerDiemLog`, had no callers and is deleted. The employee log itself
+ * now comes from `getPerDiemEmployeeLog` / `getPerDiemEmployeeLogMap`
+ * (`allowance-log.ts`), the one place a UAT tester's own configured rate can
+ * replace their real HR allowance. Every consumer still folds the country rate
+ * in through `perDiemLogFor` below, so the four pricing paths — the estimate on
+ * the form, the submit, the recompute after a cancellation, and the report's
+ * displayed rate — keep agreeing for the reason they always did: one input,
+ * not two computed separately.
  */
 
 /**
@@ -147,24 +147,6 @@ export async function setPerDiemCountryRateActive(
               SET IsActive = @active, UpdatedBy = @user, UpdatedAt = SYSDATETIME()
               WHERE Id = @id`);
   });
-}
-
-/**
- * The convenience wrapper for a caller holding one request.
- *
- * Two queries. A caller with a whole group in hand should load the two lists
- * itself and call `perDiemLogFor` per trip instead — the country is per trip, so
- * this would otherwise be two queries per trip.
- */
-export async function resolvePerDiemLog(
-  employeeId: string | null,
-  countryCode: string | null,
-): Promise<ReturnType<typeof perDiemLogFor>> {
-  const [log, rates] = await Promise.all([
-    employeeId ? getAllowanceLog(employeeId) : Promise.resolve([]),
-    listPerDiemCountryRates(),
-  ]);
-  return perDiemLogFor(countryCode, log, rates);
 }
 
 /** Local getters, never toISOString — the server runs on Thai wall clock. */

@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { ChevronDown, ChevronUp, CircleAlert, Plus, Trash2 } from "lucide-react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { CircleAlert, Plus, ReceiptText, Trash2, X } from "lucide-react";
 import { SingleDatePicker } from "@/features/accounting/components/SingleDatePicker";
 import type { ExpenseAccount } from "@/lib/acc/reimburse/expense-account-service";
 import { fmtBaht } from "@/features/travel-booking/components/shared";
@@ -12,7 +12,7 @@ import {
   isBlankItemRow,
   rowLabel,
 } from "@/lib/acc/reimburse/item-money";
-import type { ReimburseItem } from "@/features/reimburse/types";
+import type { ReimburseItem, ReimburseItemDetail } from "@/features/reimburse/types";
 
 /**
  * รายการค่าใช้จ่ายจริง (spec §5.2 field 4) — the repeating expense grid.
@@ -233,14 +233,28 @@ const ROW_MIN_WIDTH =
   (ROW_PAD_X + ROW_BORDER_X) * 2;
 
 /**
- * The detail panel sits **below the horizontal scroller**, not inside it, so it
- * is exactly as wide as the card and needs no width of its own.
+ * The detail panel sits **inside the scroller, directly under its own row**,
+ * pinned `sticky left-0` and given the scroller's own measured width.
  *
- * It used to be pinned `sticky left-0` inside the scroller at a fixed 860px.
- * That put it in a 2,156px-wide row, which meant its width was unrelated to the
- * card's and closing it moved the horizontal scroll out from under the reader.
- * Out here neither is true: one panel, full width, and the table keeps its
- * scroll position when the panel opens and closes.
+ * This is the third arrangement and the first that satisfies both constraints,
+ * so the history is worth keeping. It began under the row at a **fixed 860px**;
+ * inside a ~2,000px row that width was unrelated to the card's, and the panel
+ * looked arbitrary. It was then moved out below the scroller, which fixed the
+ * width by making it the card's — at the cost of the thing the reader actually
+ * needs, which is seeing the lines beside the row they belong to. With eight
+ * rows on screen, a panel at the bottom captioned "แถวที่ 1" asks the reader to
+ * hold the mapping in their head.
+ *
+ * Measuring rather than guessing is what makes under-the-row work now. The
+ * width comes from a `ResizeObserver` on the scroller, so it is the visible
+ * card's width at every window size instead of a number that was right once.
+ *
+ * Two properties this must not lose, both of which the fixed-width version did:
+ * the panel is **narrower than the row**, so opening and closing it cannot
+ * change the scroller's content width and cannot move the horizontal scroll out
+ * from under the reader; and it needs `alignSelf: "flex-start"`, because the
+ * rows live in a `flex flex-col` whose default `stretch` would blow it back out
+ * to `ROW_MIN_WIDTH` and undo the whole thing.
  */
 const DETAIL_GRID =
   "grid grid-cols-[34px_minmax(0,1fr)_90px_120px_130px] gap-3 items-baseline";
@@ -322,6 +336,117 @@ function ReadOnlyMoney({
 }
 
 
+/**
+ * The lines the document read copied out of one row's attachment.
+ *
+ * Its own component because it is now rendered once per open row from inside
+ * the row loop, rather than once at the bottom from values the parent had to
+ * re-derive (`openIndex` / `openItem` / `openLines` / `openTotal`, all deleted
+ * with it). Those existed only because the panel could not see the row.
+ */
+function DocumentLinesPanel({
+  index,
+  vendorName,
+  lines,
+  onClose,
+}: {
+  index: number;
+  vendorName: string | null | undefined;
+  lines: readonly ReimburseItemDetail[];
+  onClose: () => void;
+}) {
+  const total = lines.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
+  return (
+    <div
+      className="border rounded-xl px-3 pt-2.5 pb-3"
+      style={{ borderColor: "var(--color-action)", background: "var(--bg-card-alt)" }}
+    >
+      <div className="flex items-baseline justify-between gap-3 pb-2">
+        <p className="text-[12px] font-semibold m-0" style={{ color: "var(--text-primary)" }}>
+          รายการในเอกสาร
+          <span className="font-normal" style={{ color: "var(--text-muted)" }}>
+            {" · แถวที่ "}
+            {index + 1}
+            {vendorName ? ` · ${vendorName}` : ""}
+            {` · ${lines.length} บรรทัด`}
+          </span>
+        </p>
+        {/* An icon, matching the row's own toggle. The word it replaces was this
+            button's whole accessible name, so `aria-label` is not decoration
+            here — without it a screen reader reaches an unnamed button — and
+            `title` keeps the word for a sighted reader who hesitates over it. */}
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label={`ปิดรายการย่อยของรายการที่ ${index + 1}`}
+          title="ปิด"
+          className="w-6 h-6 rounded-md flex items-center justify-center cursor-pointer border-none bg-transparent p-0 shrink-0"
+          style={{ color: "var(--text-muted)" }}
+        >
+          <X size={14} />
+        </button>
+      </div>
+
+      <div className={`${DETAIL_GRID} pb-1.5`}>
+        <span className={HEAD_CLASS} style={{ color: "var(--text-muted)" }}>#</span>
+        <span className={HEAD_CLASS} style={{ color: "var(--text-muted)" }}>รายละเอียด</span>
+        <span className={`${HEAD_CLASS} text-right`} style={{ color: "var(--text-muted)" }}>จำนวน</span>
+        <span className={`${HEAD_CLASS} text-right`} style={{ color: "var(--text-muted)" }}>ราคา/หน่วย</span>
+        <span className={`${HEAD_CLASS} text-right`} style={{ color: "var(--text-muted)" }}>มูลค่า</span>
+      </div>
+
+      {lines.map((d, di) => (
+        <div
+          key={`d-${index}-${di}`}
+          className={`${DETAIL_GRID} py-1.5`}
+          style={{ borderTop: "1px solid var(--border-light)" }}
+        >
+          <span className="text-[12px] tabular-nums" style={{ color: "var(--text-faint)" }}>
+            {di + 1}
+          </span>
+          <span className="text-[12.5px] break-words leading-snug" style={{ color: "var(--text-primary)" }}>
+            {d.description}
+          </span>
+          <span className="text-[12.5px] tabular-nums text-right" style={{ color: "var(--text-secondary)" }}>
+            {d.quantity == null ? "—" : fmtBaht(d.quantity)}
+          </span>
+          <span className="text-[12.5px] tabular-nums text-right" style={{ color: "var(--text-secondary)" }}>
+            {d.unitPrice == null ? "—" : fmtBaht(d.unitPrice)}
+          </span>
+          <span
+            className="text-[12.5px] tabular-nums text-right font-semibold"
+            style={{ color: "var(--text-primary)" }}
+          >
+            {d.amount == null ? "—" : fmtBaht(d.amount)}
+          </span>
+        </div>
+      ))}
+
+      {/* The document's own total, for checking it against the row above.
+          Labelled as the document's so it cannot be read as the figure
+          being claimed — the note below says which one that is. */}
+      <div className={`${DETAIL_GRID} pt-2`} style={{ borderTop: "1px solid var(--border-card)" }}>
+        <span />
+        <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
+          รวมตามเอกสาร
+        </span>
+        <span />
+        <span />
+        <span
+          className="text-[12.5px] tabular-nums text-right font-semibold"
+          style={{ color: "var(--text-primary)" }}
+        >
+          {fmtBaht(round2(total))}
+        </span>
+      </div>
+
+      <p className="text-[11px] m-0 pt-2" style={{ color: "var(--text-faint)" }}>
+        คัดลอกมาจากเอกสารเพื่อให้ตรวจได้ ไม่ได้นำมารวมเป็นยอด — ยอดที่เบิกคือ ค่าใช้จ่ายรวม ของแถวด้านบน
+      </p>
+    </div>
+  );
+}
+
 export function ReimburseItemGrid({
   items,
   onUpdate,
@@ -378,13 +503,36 @@ export function ReimburseItemGrid({
     setOpenRow((prev) => (prev === key ? null : key));
   }, []);
 
-  // The row whose lines the panel is showing. Resolved here rather than in the
-  // loop because the panel renders outside it — and re-resolved on every render
-  // so a row deleted while open simply stops matching and the panel closes.
-  const openIndex = openRow ? Number(openRow.slice("row-".length)) : -1;
-  const openItem = openIndex >= 0 ? items[openIndex] : undefined;
-  const openLines = openItem?.details ?? [];
-  const openTotal = openLines.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
+  /**
+   * The scroller's own visible width, for the detail panel to match.
+   *
+   * Measured rather than assumed: the panel sits inside a container whose
+   * min-width is over 2,000px, so "100%" there is the ROW width, not the card's
+   * — and a hard-coded number is what the first version of this panel used and
+   * what made it look arbitrary at every window size but one.
+   *
+   * **A callback ref, not an effect over a ref.** The scroller renders only
+   * under `items.length > 0` and a new form seeds zero items (`seedItems`), so
+   * on that first render there is no node: a `useLayoutEffect` with an empty
+   * dependency list — which is what this was — read `null`, returned early, and
+   * never ran again, so the observer was never attached for the life of the
+   * component. `viewWidth` stayed 0 and the panel shrank to its own text. A
+   * callback ref fires when React attaches the node and again with `null` when
+   * it detaches, which is exactly the lifetime the observer wants, and it still
+   * measures before paint. Guarded by `detail-panel-width-guard.test.ts`.
+   */
+  const [viewWidth, setViewWidth] = useState(0);
+  const observerRef = useRef<ResizeObserver | null>(null);
+  const measureScroller = useCallback((el: HTMLDivElement | null) => {
+    observerRef.current?.disconnect();
+    observerRef.current = null;
+    if (!el) return;
+    setViewWidth(el.clientWidth);
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setViewWidth(el.clientWidth));
+    ro.observe(el);
+    observerRef.current = ro;
+  }, []);
 
   // The total the server will store: the blank trailing row contributes
   // nothing, and `sumReimburseItems` is the same function it totals with.
@@ -426,7 +574,7 @@ export function ReimburseItemGrid({
         // scrolls with no affordance at all — nothing on screen says the table
         // continues to the right. AP-3's expense grid opted back in the same
         // way; the class exists for exactly this.
-        <div className="overflow-x-auto show-x-scroll pb-1">
+        <div ref={measureScroller} className="overflow-x-auto show-x-scroll pb-1">
           <div style={{ minWidth: ROW_MIN_WIDTH }} className="flex flex-col gap-2">
             {/* Same inset and the same template as a row, plus a transparent
                 border so the header's columns line up with the bordered rows
@@ -462,241 +610,187 @@ export function ReimburseItemGrid({
               const lineCount = lines.length;
               const isOpen = lineCount > 0 && openRow === rowKey;
               return (
-                <div
-                  key={item.id ?? rowKey}
-                  className={`${ROW_GRID} ${ROW_INSET} border py-2 items-center`}
-                  style={{
-                    gridTemplateColumns: ROW_TEMPLATE,
-                    // The panel is no longer under this row — it sits at the
-                    // bottom of the card — so the open row is marked here
-                    // instead; otherwise nothing on screen says which row the
-                    // panel is showing.
-                    borderColor: isOpen ? "var(--color-action)" : "var(--border-card)",
-                    background: "var(--bg-card-alt)",
-                    borderRadius: 12,
-                  }}
-                >
-                  <span
-                    className="text-[13px] tabular-nums font-semibold text-center"
-                    style={{ color: "var(--text-muted)" }}
+                <Fragment key={item.id ?? rowKey}>
+                  <div
+                    className={`${ROW_GRID} ${ROW_INSET} border py-2 items-center`}
+                    style={{
+                      gridTemplateColumns: ROW_TEMPLATE,
+                      // The panel is no longer under this row — it sits at the
+                      // bottom of the card — so the open row is marked here
+                      // instead; otherwise nothing on screen says which row the
+                      // panel is showing.
+                      borderColor: isOpen ? "var(--color-action)" : "var(--border-card)",
+                      background: "var(--bg-card-alt)",
+                      borderRadius: 12,
+                    }}
                   >
-                    {index + 1}
-                  </span>
+                    <span
+                      className="text-[13px] tabular-nums font-semibold text-center"
+                      style={{ color: "var(--text-muted)" }}
+                    >
+                      {index + 1}
+                    </span>
 
-                  <SingleDatePicker
-                    value={item.expenseDate ?? ""}
-                    onChange={(ymd) => onUpdate(index, { expenseDate: ymd || null })}
-                    ariaLabel={`วันที่ของรายการที่ ${index + 1}`}
-                    placeholder="เลือกวันที่..."
-                    hasError={dateBad}
-                  />
+                    <SingleDatePicker
+                      value={item.expenseDate ?? ""}
+                      onChange={(ymd) => onUpdate(index, { expenseDate: ymd || null })}
+                      ariaLabel={`วันที่ของรายการที่ ${index + 1}`}
+                      monthFormat="short"
+                      placeholder="เลือกวันที่..."
+                      hasError={dateBad}
+                    />
 
-                  <TextCell
-                    ariaLabel={`เลขที่เอกสารของรายการที่ ${index + 1}`}
-                    placeholder="ABC1234"
-                    value={item.documentNo}
-                    maxLength={100}
-                    onChange={(v) => onUpdate(index, { documentNo: v })}
-                  />
+                    <TextCell
+                      ariaLabel={`เลขที่เอกสารของรายการที่ ${index + 1}`}
+                      placeholder="ABC1234"
+                      value={item.documentNo}
+                      maxLength={100}
+                      onChange={(v) => onUpdate(index, { documentNo: v })}
+                    />
 
-                  <TextCell
-                    ariaLabel={`รายละเอียดของรายการที่ ${index + 1}`}
-                    placeholder="ค่าอะไร..."
-                    value={item.description}
-                    maxLength={500}
-                    // "" not null: `Description` is NOT NULL in the database,
-                    // and the other text columns are nullable.
-                    onChange={(v) => onUpdate(index, { description: v ?? "" })}
-                  />
+                    <TextCell
+                      ariaLabel={`รายละเอียดของรายการที่ ${index + 1}`}
+                      placeholder="ค่าอะไร..."
+                      value={item.description}
+                      maxLength={500}
+                      // "" not null: `Description` is NOT NULL in the database,
+                      // and the other text columns are nullable.
+                      onChange={(v) => onUpdate(index, { description: v ?? "" })}
+                    />
 
-                  <TextCell
-                    ariaLabel={`สาขาของรายการที่ ${index + 1}`}
-                    placeholder="—"
-                    value={item.branchName}
-                    maxLength={200}
-                    onChange={(v) => onUpdate(index, { branchName: v })}
-                  />
+                    <TextCell
+                      ariaLabel={`สาขาของรายการที่ ${index + 1}`}
+                      placeholder="—"
+                      value={item.branchName}
+                      maxLength={200}
+                      onChange={(v) => onUpdate(index, { branchName: v })}
+                    />
 
-                  <TextCell
-                    ariaLabel={`เลขประจำตัวผู้เสียภาษีของรายการที่ ${index + 1}`}
-                    placeholder="0105547161674"
-                    value={item.vendorTaxId}
-                    maxLength={20}
-                    onChange={(v) => onUpdate(index, { vendorTaxId: v })}
-                  />
+                    <TextCell
+                      ariaLabel={`เลขประจำตัวผู้เสียภาษีของรายการที่ ${index + 1}`}
+                      placeholder="0105547161674"
+                      value={item.vendorTaxId}
+                      maxLength={20}
+                      onChange={(v) => onUpdate(index, { vendorTaxId: v })}
+                    />
 
-                  <TextCell
-                    ariaLabel={`ชื่อผู้ขายของรายการที่ ${index + 1}`}
-                    placeholder="ผู้ขาย"
-                    value={item.vendorName}
-                    maxLength={300}
-                    onChange={(v) => onUpdate(index, { vendorName: v })}
-                  />
+                    <TextCell
+                      ariaLabel={`ชื่อผู้ขายของรายการที่ ${index + 1}`}
+                      placeholder="ผู้ขาย"
+                      value={item.vendorName}
+                      maxLength={300}
+                      onChange={(v) => onUpdate(index, { vendorName: v })}
+                    />
 
-                  <TextCell
-                    ariaLabel={`ที่อยู่ผู้ขายของรายการที่ ${index + 1}`}
-                    placeholder="—"
-                    value={item.vendorAddress}
-                    maxLength={500}
-                    onChange={(v) => onUpdate(index, { vendorAddress: v })}
-                  />
+                    <TextCell
+                      ariaLabel={`ที่อยู่ผู้ขายของรายการที่ ${index + 1}`}
+                      placeholder="—"
+                      value={item.vendorAddress}
+                      maxLength={500}
+                      onChange={(v) => onUpdate(index, { vendorAddress: v })}
+                    />
 
-                  <MoneyCell
-                    ariaLabel={`ค่าใช้จ่ายก่อน VAT ของรายการที่ ${index + 1}`}
-                    value={beforeVat}
-                    placeholder="0.00"
-                    // Typing here sets the stored VAT-inclusive `amount`,
-                    // keeping whatever VAT the row already holds. Editing
-                    // either of these two moves the total; the total itself is
-                    // read-only, so the three can never be made to disagree.
-                    onChange={(next) =>
-                      onUpdate(index, { amount: round2((next ?? 0) + (Number(item.vatAmount) || 0)) })
-                    }
-                  />
+                    <MoneyCell
+                      ariaLabel={`ค่าใช้จ่ายก่อน VAT ของรายการที่ ${index + 1}`}
+                      value={beforeVat}
+                      placeholder="0.00"
+                      // Typing here sets the stored VAT-inclusive `amount`,
+                      // keeping whatever VAT the row already holds. Editing
+                      // either of these two moves the total; the total itself is
+                      // read-only, so the three can never be made to disagree.
+                      onChange={(next) =>
+                        onUpdate(index, { amount: round2((next ?? 0) + (Number(item.vatAmount) || 0)) })
+                      }
+                    />
 
-                  <MoneyCell
-                    ariaLabel={`VAT ของรายการที่ ${index + 1}`}
-                    value={item.vatAmount}
-                    placeholder="—"
-                    // null, not 0: VAT genuinely not specified is not VAT of
-                    // zero. The total follows so ก่อน VAT stays put.
-                    onChange={(next) =>
-                      onUpdate(index, { vatAmount: next, amount: round2(beforeVat + (next ?? 0)) })
-                    }
-                  />
+                    <MoneyCell
+                      ariaLabel={`VAT ของรายการที่ ${index + 1}`}
+                      value={item.vatAmount}
+                      placeholder="—"
+                      // null, not 0: VAT genuinely not specified is not VAT of
+                      // zero. The total follows so ก่อน VAT stays put.
+                      onChange={(next) =>
+                        onUpdate(index, { vatAmount: next, amount: round2(beforeVat + (next ?? 0)) })
+                      }
+                    />
 
-                  <ReadOnlyMoney value={item.amount} emphasis hasError={amountBad} />
+                    <ReadOnlyMoney value={item.amount} emphasis hasError={amountBad} />
 
-                  <MoneyCell
-                    ariaLabel={`หัก ณ ที่จ่าย ของรายการที่ ${index + 1}`}
-                    value={item.whtAmount}
-                    placeholder="—"
-                    onChange={(next) => onUpdate(index, { whtAmount: next })}
-                  />
+                    <MoneyCell
+                      ariaLabel={`หัก ณ ที่จ่าย ของรายการที่ ${index + 1}`}
+                      value={item.whtAmount}
+                      placeholder="—"
+                      onChange={(next) => onUpdate(index, { whtAmount: next })}
+                    />
 
-                  <ReadOnlyMoney value={netPaid} />
+                    <ReadOnlyMoney value={netPaid} />
 
-                  <span className="flex items-center gap-1 justify-self-end">
-                    {/* Only where there is something to open. A control that
-                        does nothing on most rows teaches people to stop
-                        pressing it on the rows where it works. */}
-                    {lineCount > 0 && (
+                    <span className="flex items-center gap-1 justify-self-end">
+                      {/* Only where there is something to open. A control that
+                          does nothing on most rows teaches people to stop
+                          pressing it on the rows where it works. */}
+                      {lineCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => toggleRow(rowKey)}
+                          aria-expanded={isOpen}
+                          aria-label={`${isOpen ? "ปิด" : "ดู"}รายการย่อยของรายการที่ ${index + 1}`}
+                          title={`เอกสารนี้มี ${lineCount} รายการย่อย`}
+                          className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer border-none shrink-0"
+                          style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}
+                        >
+                          {/* The document, not a direction. A chevron only says
+                              "this opens"; the receipt says what opens, which is
+                              what tells this button apart from the row-level
+                              chevrons elsewhere on the page. `X` to close, because
+                              an open panel is dismissed rather than collapsed. */}
+                          {isOpen ? <X size={15} /> : <ReceiptText size={15} />}
+                        </button>
+                      )}
                       <button
                         type="button"
-                        onClick={() => toggleRow(rowKey)}
-                        aria-expanded={isOpen}
-                        aria-label={`${isOpen ? "ปิด" : "ดู"}รายการย่อยของรายการที่ ${index + 1}`}
-                        title={`เอกสารนี้มี ${lineCount} รายการย่อย`}
+                        onClick={() => onRemove(index)}
+                        aria-label={`ลบรายการที่ ${index + 1}`}
+                        title="ลบรายการนี้"
                         className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer border-none shrink-0"
-                        style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}
+                        style={{ background: "var(--bg-card)", color: "var(--color-danger)" }}
                       >
-                        {isOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                        <Trash2 size={15} />
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => onRemove(index)}
-                      aria-label={`ลบรายการที่ ${index + 1}`}
-                      title="ลบรายการนี้"
-                      className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer border-none shrink-0"
-                      style={{ background: "var(--bg-card)", color: "var(--color-danger)" }}
-                    >
-                      <Trash2 size={15} />
-                    </button>
-                  </span>
-                </div>
+                    </span>
+                  </div>
+                {isOpen && (
+                  // Pinned to the left edge of what is visible, at exactly the
+                  // scroller's width — see DETAIL_GRID's note for the two
+                  // arrangements this replaces and what each one cost.
+                  // `alignSelf` is load-bearing: without it the column flex's
+                  // default `stretch` widens this back to ROW_MIN_WIDTH.
+                  <div
+                    style={{
+                      position: "sticky",
+                      left: 0,
+                      alignSelf: "flex-start",
+                      // Never `undefined`: with no width at all, the
+                      // `alignSelf` above shrinks the panel to its own text.
+                      // "100%" is the ROW width here, which is wider than the
+                      // card but never wider than the scroller's existing
+                      // content — so it cannot move the horizontal scroll
+                      // either, and a measured render replaces it immediately.
+                      width: viewWidth || "100%",
+                    }}
+                  >
+                    <DocumentLinesPanel
+                      index={index}
+                      vendorName={item.vendorName}
+                      lines={lines}
+                      onClose={() => setOpenRow(null)}
+                    />
+                  </div>
+                )}
+                </Fragment>
               );
             })}
           </div>
-        </div>
-      )}
-
-      {openLines.length > 0 && (
-        // Full width of the card, at the bottom, below the scroller — see
-        // DETAIL_GRID above for why it is not inside it any more.
-        <div
-          className="border rounded-xl px-3 pt-2.5 pb-3"
-          style={{ borderColor: "var(--color-action)", background: "var(--bg-card-alt)" }}
-        >
-          <div className="flex items-baseline justify-between gap-3 pb-2">
-            <p className="text-[12px] font-semibold m-0" style={{ color: "var(--text-primary)" }}>
-              รายการในเอกสาร
-              <span className="font-normal" style={{ color: "var(--text-muted)" }}>
-                {" · แถวที่ "}
-                {openIndex + 1}
-                {openItem?.vendorName ? ` · ${openItem.vendorName}` : ""}
-                {` · ${openLines.length} บรรทัด`}
-              </span>
-            </p>
-            <button
-              type="button"
-              onClick={() => setOpenRow(null)}
-              className="text-[12px] cursor-pointer border-none bg-transparent p-0 shrink-0"
-              style={{ color: "var(--text-muted)" }}
-            >
-              ปิด
-            </button>
-          </div>
-
-          <div className={`${DETAIL_GRID} pb-1.5`}>
-            <span className={HEAD_CLASS} style={{ color: "var(--text-muted)" }}>#</span>
-            <span className={HEAD_CLASS} style={{ color: "var(--text-muted)" }}>รายละเอียด</span>
-            <span className={`${HEAD_CLASS} text-right`} style={{ color: "var(--text-muted)" }}>จำนวน</span>
-            <span className={`${HEAD_CLASS} text-right`} style={{ color: "var(--text-muted)" }}>ราคา/หน่วย</span>
-            <span className={`${HEAD_CLASS} text-right`} style={{ color: "var(--text-muted)" }}>มูลค่า</span>
-          </div>
-
-          {openLines.map((d, di) => (
-            <div
-              key={`${openRow}-d-${di}`}
-              className={`${DETAIL_GRID} py-1.5`}
-              style={{ borderTop: "1px solid var(--border-light)" }}
-            >
-              <span className="text-[12px] tabular-nums" style={{ color: "var(--text-faint)" }}>
-                {di + 1}
-              </span>
-              <span className="text-[12.5px] break-words leading-snug" style={{ color: "var(--text-primary)" }}>
-                {d.description}
-              </span>
-              <span className="text-[12.5px] tabular-nums text-right" style={{ color: "var(--text-secondary)" }}>
-                {d.quantity == null ? "—" : fmtBaht(d.quantity)}
-              </span>
-              <span className="text-[12.5px] tabular-nums text-right" style={{ color: "var(--text-secondary)" }}>
-                {d.unitPrice == null ? "—" : fmtBaht(d.unitPrice)}
-              </span>
-              <span
-                className="text-[12.5px] tabular-nums text-right font-semibold"
-                style={{ color: "var(--text-primary)" }}
-              >
-                {d.amount == null ? "—" : fmtBaht(d.amount)}
-              </span>
-            </div>
-          ))}
-
-          {/* The document's own total, for checking it against the row above.
-              Labelled as the document's so it cannot be read as the figure
-              being claimed — the note below says which one that is. */}
-          <div
-            className={`${DETAIL_GRID} pt-2`}
-            style={{ borderTop: "1px solid var(--border-card)" }}
-          >
-            <span />
-            <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
-              รวมตามเอกสาร
-            </span>
-            <span />
-            <span />
-            <span
-              className="text-[12.5px] tabular-nums text-right font-semibold"
-              style={{ color: "var(--text-primary)" }}
-            >
-              {fmtBaht(round2(openTotal))}
-            </span>
-          </div>
-
-          <p className="text-[11px] m-0 pt-2" style={{ color: "var(--text-faint)" }}>
-            คัดลอกมาจากเอกสารเพื่อให้ตรวจได้ ไม่ได้นำมารวมเป็นยอด — ยอดที่เบิกคือ ค่าใช้จ่ายรวม ของแถวด้านบน
-          </p>
         </div>
       )}
 

@@ -1,10 +1,10 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { writeBothPools } from "@/lib/acc/dual-write";
-import { filterGrantableReimburseTabKeys } from "@/lib/acc/reimburse/settings-tabs";
+import { filterStorableReimburseKeys } from "@/lib/acc/reimburse/settings-tabs";
 
 /**
  * Per-person AP-4 settings-tab grants, stored in `AccReimburseAccessTab`
- * (migration 106) against `AccReimburseAccess.Id`.
+ * (migration 120) against `AccReimburseAccess.Id`.
  *
  * The AP-4 counterpart of `@/lib/acc/travel-booking/booking-approver-tabs`, and
  * deliberately the same shape — the rules for reading and replacing grants
@@ -12,6 +12,12 @@ import { filterGrantableReimburseTabKeys } from "@/lib/acc/reimburse/settings-ta
  * uses its approver roster, AP-4 uses `AccReimburseAccess`, a roster that
  * exists precisely so a settings grant is not also an approval right. See
  * `./settings-tabs`.
+ *
+ * **Two vocabularies live in `TabKey`.** Settings tabs grant sight of
+ * configuration; menu keys (`approvalQueue`, `clearance`) grant sight of a
+ * working screen. Storage takes the union — `filterStorableReimburseKeys` — and
+ * authorization keeps the narrow filters, in `settings-tabs.ts`. Narrowing the
+ * filter here is what made AP-17's equivalent tick save nothing at all.
  *
  * A shared master table, so every write goes through `writeBothPools` and the
  * pair is asserted by `npm run check:alignment`.
@@ -44,7 +50,7 @@ export async function loadReimburseTabsByAccessIds(
     // A MISSING TABLE degrades to no grants — never to all. That decides
     // whether a non-admin sees the AP-4 settings page at all, so a permissive
     // default would open it to everyone on the roster for as long as the schema
-    // is behind. 106 has to reach both databases, and this is the window before
+    // is behind. 120 has to reach both databases, and this is the window before
     // it has.
     //
     // ANY OTHER FAILURE rethrows, and the narrowness is the point. This read
@@ -69,7 +75,7 @@ export async function loadReimburseTabsByAccessIds(
   }
 
   for (const id of accessIds) {
-    map.set(id, filterGrantableReimburseTabKeys(byAccess.get(id) ?? []));
+    map.set(id, filterStorableReimburseKeys(byAccess.get(id) ?? []));
   }
   return map;
 }
@@ -91,7 +97,7 @@ export async function setReimburseAccessTabs(
   accessId: number,
   keys: string[],
 ): Promise<void> {
-  const wanted = filterGrantableReimburseTabKeys(keys);
+  const wanted = filterStorableReimburseKeys(keys);
   await writeBothPools(async (tx) => {
     await tx
       .request()

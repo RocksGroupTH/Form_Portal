@@ -42,6 +42,20 @@ export interface ReimburseItem {
   /** ที่อยู่ of the seller. Migration 118. */
   vendorAddress?: string | null;
   /**
+   * The Business Central vendor card this line posts against
+   * (`AccReimburseItem.VendorNo`, migration 147).
+   *
+   * **Not the three fields above.** Those are the seller as printed on the
+   * receipt, read by the AI and owned by the requester; this is accounting's
+   * answer about which BC card to post to, chosen on คิวอนุมัติ (บัญชี). One tax
+   * id maps to many cards, so the two cannot be derived from each other, and
+   * keeping both is what lets somebody check the right card was picked.
+   *
+   * Null is ordinary: a one-off purchase from a seller who is not a vendor of
+   * ours, and every line written before migration 147.
+   */
+  vendorNo?: string | null;
+  /**
    * `AccRequestFile.Id` of the attachment this row was read from, or null for a
    * row typed by hand. Migration 119.
    *

@@ -28,16 +28,18 @@ import {
  *   `AccReimburseAccess` joined to `AccReimburseAccessTab`.
  *   `resolveReimburseTabsByEmail` matches only `IsActive = 1`, so deactivating
  *   someone revokes every tab without touching a grant row;
- * - **`decideReimburseTabAccess` makes the decision.** It is where `access` and
- *   `approvers` are refused unconditionally for a non-admin, whatever the grant
- *   table says. Testing grant-list membership here instead would be a second
- *   copy of that rule, and only one of the two would ever be corrected.
+ * - **`decideReimburseTabAccess` makes the decision.** It is where `access` is
+ *   refused unconditionally for a non-admin, whatever the grant table says.
+ *   Testing grant-list membership here instead would be a second copy of that
+ *   rule, and only one of the two would ever be corrected.
  *
  * `tab` is typed `GrantableReimburseTabKey`, so a caller cannot hand this
- * function `"access"` or `"approvers"` and have the answer turn on runtime data.
- * Those two tabs' routes — `settings/access` and `settings/approvers` — stay on
- * `requireRole` for every method: they are the ones that hand out the access and
- * the payment-approval role.
+ * function `"access"` and have the answer turn on runtime data. That tab's
+ * route — `settings/access` — stays on `requireRole` for every method: it is
+ * the one that hands out both the settings-tab grants and, since 2026-09-10,
+ * the per-brand approval ticks (`AccReimburseApproverBrand`) rendered on the
+ * same grid. The former `settings/approvers` route is gone; there is no
+ * second route to name here any more.
  *
  * Returns the session, or the `Response` to return — the same shape
  * `requireAuth()` uses, so a handler stays two lines.

@@ -5,7 +5,7 @@ import { requireAuth } from "@/lib/api-auth";
 import { guardVisionRequest, visionImageBlock } from "@/lib/acc/vision-guard";
 import { statusForVisionError } from "@/lib/acc/vision-error";
 import { pdfPagesToPng } from "@/lib/pdf-to-image";
-import { MAX_PDF_PAGES, sheetToText } from "@/lib/acc/sheet-text";
+import { MAX_PDF_PAGES_BUNDLE, sheetToText } from "@/lib/acc/sheet-text";
 import {
   listSuggestedExpenseAccounts,
   type ExpenseAccount,
@@ -32,7 +32,7 @@ import {
  * **Three kinds in, rows out.** The response is always `{ rows: [...] }`:
  *
  * - **image** — one receipt, so zero or one row.
- * - **pdf** — rasterised to at most `MAX_PDF_PAGES` pages and sent as images,
+ * - **pdf** — rasterised to at most `MAX_PDF_PAGES_BUNDLE` pages and sent as images,
  *   still one document, so zero or one row. A quotation or tax invoice runs to
  *   two pages routinely; a page cap is what stops one careless upload of a long
  *   statement becoming an unbounded, billed-per-image call.
@@ -197,11 +197,34 @@ const COMMON_RULES = [
   "- ช่องไหนอ่านไม่ออกหรือไม่แน่ใจ ให้ตอบ null เฉพาะช่องนั้น อย่าเดา",
 ].join("\n");
 
+/*
+ * A file may be a BUNDLE, and the prompt has to say so.
+ *
+ * It used to assert "ถ้ามีหลายรูป ทั้งหมดคือเอกสารฉบับเดียวกันคนละหน้า" — every
+ * image is a page of one document. That is true of a two-page invoice and false
+ * of what AP-4 actually receives: a payment-voucher pack whose cover sheet,
+ * clear-advance summary and bank slip all come BEFORE the itemised receipt.
+ * Told they were one document, the model reasonably answered with the cover
+ * sheet's figures and no lines.
+ *
+ * What does NOT change is that the answer is still ONE row. The claim is the
+ * expense the pack evidences, not the pack's cover, and the summary and the
+ * slip restate the same money — they must not become extra rows.
+ * `MAX_DOCUMENT_ROWS` still enforces that in code, which is what makes it safe
+ * to relax the wording here.
+ */
 function documentPrompt(candidates: ExpenseAccount[]): string {
   return [
-    "รูปนี้คือเอกสารค่าใช้จ่าย 1 ฉบับ — ใบเสร็จรับเงิน ใบกำกับภาษี ใบเสนอราคา หรือสลิป",
-    "ถ้ามีหลายรูป ทั้งหมดคือเอกสารฉบับเดียวกันคนละหน้า",
-    "ให้ตอบ rows เป็น 1 รายการ (หรือ 0 รายการถ้าอ่านไม่ออกเลย)",
+    "รูปที่ส่งมาคือไฟล์แนบ 1 ไฟล์ ซึ่งอาจมีเอกสารมากกว่า 1 ฉบับรวมกันอยู่",
+    "เช่น ใบปะหน้า (Payment Voucher) สรุปยอดเคลียร์เงินทดรองจ่าย สลิปโอนเงิน แล้วจึงตามด้วยใบเสร็จ",
+    "",
+    "ให้เลือกเอกสารที่แจกแจงรายการค่าใช้จ่ายจริง (ใบเสร็จรับเงิน ใบกำกับภาษี หรือใบเสนอราคา) เป็นเอกสารหลัก",
+    "เอกสารหลักอาจไม่ได้อยู่หน้าแรก ให้ดูให้ครบทุกหน้าก่อนตัดสินใจ",
+    "ถ้าเอกสารหลักมีหลายหน้า ให้ถือว่าทุกหน้ารวมกันเป็นฉบับเดียว และรวม lines จากทุกหน้าเข้าด้วยกัน",
+    "",
+    "ให้ตอบ rows เป็น 1 รายการเสมอ (หรือ 0 รายการถ้าอ่านไม่ออกเลย)",
+    "ใบปะหน้า สรุปยอด และสลิปโอนเงิน คือเงินก้อนเดียวกันกับใบเสร็จ ห้ามนับเป็นรายการเพิ่ม",
+    "ถ้าในไฟล์ไม่มีเอกสารที่แจกแจงรายการเลย ให้ตอบ lines เป็นลิสต์ว่าง",
     "",
     COMMON_RULES,
     accountRules(candidates),
@@ -259,7 +282,7 @@ export async function POST(req: NextRequest) {
         { type: "text", text: documentPrompt(candidates) },
       ];
     } else if (guard.kind === "pdf") {
-      const pages = await pdfPagesToPng(guard.bytes, MAX_PDF_PAGES);
+      const pages = await pdfPagesToPng(guard.bytes, MAX_PDF_PAGES_BUNDLE);
       content = [
         ...pages.map((p) => visionImageBlock(p, "image/png")),
         { type: "text", text: documentPrompt(candidates) },
