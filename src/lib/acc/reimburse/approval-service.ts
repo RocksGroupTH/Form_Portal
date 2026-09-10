@@ -35,6 +35,7 @@ import { getHolidaySet, shiftPaymentDay, ymd } from "@/lib/acc/payment-calendar"
 import { queueEmail } from "@/lib/acc/email-queue";
 import { esc } from "@/lib/acc/email-templates";
 import { AccConflictError, AccForbiddenError } from "@/lib/acc/request-errors";
+import type { ItemAccountEdit } from "@/lib/acc/reimburse/item-account-edits";
 import { env } from "@/env";
 import { AP4_FORM_CODE } from "@/features/reimburse/constants";
 import { defaultPaymentRound, getReimbursePaymentDates } from "./payment-calendar";
@@ -650,7 +651,7 @@ export async function approveReimburseAccountCheck(
 export async function setReimburseItemAccounts(
   requestId: number,
   actor: ReimburseActor,
-  edits: readonly { id: number; category: string | null }[],
+  edits: readonly ItemAccountEdit[],
 ): Promise<number> {
   await requireApproverStaffId(actor);
   if (edits.length === 0) return 0;
@@ -677,9 +678,11 @@ export async function setReimburseItemAccounts(
     const current = await tx
       .request()
       .input("rid", sql.Int, requestId)
-      .query(`SELECT Id, Category FROM [dbo].[AccReimburseItem] WHERE RequestId=@rid`);
+      .query(`SELECT Id, Category, VendorNo FROM [dbo].[AccReimburseItem] WHERE RequestId=@rid`);
     const before = new Map(
-      (current.recordset as { Id: number; Category: string | null }[]).map((r) => [r.Id, r.Category]),
+      (current.recordset as { Id: number; Category: string | null; VendorNo: string | null }[]).map(
+        (r) => [r.Id, { category: r.Category, vendorNo: r.VendorNo }],
+      ),
     );
     for (const edit of edits) {
       if (!before.has(edit.id)) throw new AccConflictError(NOT_AT_STEP_ERROR);
@@ -687,14 +690,22 @@ export async function setReimburseItemAccounts(
 
     let count = 0;
     for (const edit of edits) {
-      const res = await tx
+      // `VendorNo` is written only when the caller sent the field. Absent means
+      // "leave it alone" — see `ItemAccountEdit.vendorNo` for why this one field
+      // does not follow `Category`'s clear-on-absent rule, and what a client
+      // that predates migration 147 would otherwise erase.
+      const touchesVendor = "vendorNo" in edit;
+      const req = tx
         .request()
         .input("iid", sql.Int, edit.id)
         .input("rid", sql.Int, requestId)
-        .input("category", sql.NVarChar(50), edit.category)
-        .query(
-          `UPDATE [dbo].[AccReimburseItem] SET Category=@category WHERE Id=@iid AND RequestId=@rid`,
-        );
+        .input("category", sql.NVarChar(50), edit.category);
+      if (touchesVendor) req.input("vendor", sql.NVarChar(20), edit.vendorNo ?? null);
+      const res = await req.query(
+        `UPDATE [dbo].[AccReimburseItem]
+         SET Category=@category${touchesVendor ? ", VendorNo=@vendor" : ""}
+         WHERE Id=@iid AND RequestId=@rid`,
+      );
       if (res.rowsAffected[0] !== 1) throw new AccConflictError(NOT_AT_STEP_ERROR);
       count += 1;
     }
@@ -705,7 +716,15 @@ export async function setReimburseItemAccounts(
       actor.userId,
       "item_account_updated",
       edits
-        .map((e) => `#${e.id}: ${before.get(e.id) ?? "-"}→${e.category ?? "-"}`)
+        .map((e) => {
+          const was = before.get(e.id);
+          const gl = `#${e.id}: ${was?.category ?? "-"}→${e.category ?? "-"}`;
+          // Only when it was actually written, so the log does not record a
+          // vendor change on a body that never mentioned one.
+          return "vendorNo" in e
+            ? `${gl} | vendor ${was?.vendorNo ?? "-"}→${e.vendorNo ?? "-"}`
+            : gl;
+        })
         .join(", ")
         .slice(0, 2000),
     );

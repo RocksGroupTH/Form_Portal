@@ -22,14 +22,36 @@
 
 export const CATEGORY_MAX_LEN = 50;
 
+/** `AccReimburseItem.VendorNo` is `NVARCHAR(20)` (migration 147), matching `ErpVendors.VendorNo`. */
+export const VENDOR_NO_MAX_LEN = 20;
+
 export const ITEM_ACCOUNT_EDITS_EMPTY_ERROR = "ไม่มีรายการที่จะบันทึก";
 export const ITEM_ACCOUNT_EDIT_INVALID_ERROR = "ข้อมูลที่ส่งมาไม่ถูกต้อง";
 export const ITEM_ACCOUNT_TOO_LONG_ERROR = `รหัสบัญชียาวเกิน ${CATEGORY_MAX_LEN} ตัวอักษร`;
+export const ITEM_VENDOR_TOO_LONG_ERROR = `รหัส Vendor ยาวเกิน ${VENDOR_NO_MAX_LEN} ตัวอักษร`;
 
 /** One line's new `Category` — trimmed; `null` clears the stored value. */
 export interface ItemAccountEdit {
   id: number;
   category: string | null;
+  /**
+   * The BC vendor card (`AccReimburseItem.VendorNo`, migration 147).
+   *
+   * **Present means "set it", absent means "leave it alone"**, which is the one
+   * asymmetry with `category` above and is deliberate. `category` has always
+   * treated an omitted field as a clear; changing that now would be a silent
+   * behaviour change to a path in daily use. But a *new* field cannot take that
+   * rule: the client that predates migration 147 sends a body naming only
+   * `category`, both clients are live during a deploy, and under a
+   * clear-on-absent rule the old one would wipe every vendor an approver had
+   * just chosen. Same trap CLAUDE.md records on `ApiKey.expiresAt`, where an
+   * absent field erased a stored date on a rename — and the same remedy, a
+   * presence test rather than a truthiness one.
+   *
+   * `null` clears it, and clearing is an ordinary answer: a one-off purchase
+   * from a seller who is not a vendor of ours.
+   */
+  vendorNo?: string | null;
 }
 
 export type ItemAccountEditsResult =
@@ -74,9 +96,32 @@ export function parseItemAccountEdits(raw: unknown): ItemAccountEditsResult {
       return { edits: null, error: ITEM_ACCOUNT_TOO_LONG_ERROR };
     }
 
+    // `in`, not a truthiness or undefined test: absent and explicit null mean
+    // different things here — see `ItemAccountEdit.vendorNo`.
+    const hasVendor =
+      typeof entry === "object" && entry !== null && "vendorNo" in (entry as Record<string, unknown>);
+    let vendorNo: string | null = null;
+    if (hasVendor) {
+      const vendorRaw = (entry as { vendorNo?: unknown }).vendorNo;
+      if (vendorRaw !== null && typeof vendorRaw !== "string") {
+        return { edits: null, error: ITEM_ACCOUNT_EDIT_INVALID_ERROR };
+      }
+      const v = typeof vendorRaw === "string" ? vendorRaw.trim() : "";
+      if (v.length > VENDOR_NO_MAX_LEN) {
+        return { edits: null, error: ITEM_VENDOR_TOO_LONG_ERROR };
+      }
+      vendorNo = v === "" ? null : v;
+    }
+
     if (seen.has(id)) continue;
     seen.add(id);
-    out.push({ id, category: trimmed === "" ? null : trimmed });
+    // The key is added only when it was sent, so a caller that never mentions
+    // the vendor produces an edit that cannot touch the column downstream.
+    out.push(
+      hasVendor
+        ? { id, category: trimmed === "" ? null : trimmed, vendorNo }
+        : { id, category: trimmed === "" ? null : trimmed },
+    );
   }
 
   if (out.length === 0) return { edits: null, error: ITEM_ACCOUNT_EDITS_EMPTY_ERROR };
