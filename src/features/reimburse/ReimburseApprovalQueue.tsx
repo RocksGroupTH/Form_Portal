@@ -1,15 +1,14 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import useSWR from "swr";
 import { toast } from "sonner";
 import {
   Check,
-  ChevronDown,
   Clock,
   Inbox,
   Info,
-  ListChecks,
   Loader2,
   Lock,
   RotateCcw,
@@ -19,6 +18,7 @@ import { fmtBaht } from "@/features/travel-booking/components/shared";
 import { ExpenseAccountPicker } from "@/features/reimburse/components/ExpenseAccountPicker";
 import { VendorPicker } from "@/features/reimburse/components/VendorPicker";
 import { ReimburseQueueFilterBar } from "@/features/reimburse/components/ReimburseQueueFilterBar";
+import { claimReadiness } from "@/features/reimburse/lib/queue-readiness";
 import { ErpInterfaceBrandTabs } from "@/features/accounting/components/ErpInterfaceBrandTabs";
 import { ERP_INTERFACE_UNASSIGNED } from "@/features/accounting/lib/erp-interface-target";
 import {
@@ -31,7 +31,7 @@ import {
 // at module scope. A type-only import is erased at build time regardless of
 // where it is written, but pointing at the import-free home keeps that true by
 // construction rather than by relying on erasure to save a mistake later.
-import type { ReimburseQueueRow } from "@/lib/acc/reimburse/queue-policy";
+import type { ReimburseQueueItem, ReimburseQueueRow } from "@/lib/acc/reimburse/queue-policy";
 // Both type-only for the same reason: `.../types` is import-free, but
 // `expense-account-service.ts` is not — it opens `getErpDataPool()` at module
 // scope. Only the shape is needed here; `ExpenseAccountPicker` above already
@@ -160,16 +160,6 @@ async function fetcher(url: string): Promise<QueueData> {
   return json.data as QueueData;
 }
 
-/** The full claim — reused from the by-id detail route, not a new endpoint. `ReimburseQueueRow` carries no line items on purpose (the queue list query only needs a count), so expanding a row asks for exactly what the detail page already asks for. */
-async function detailFetcher(url: string): Promise<ReimburseDetailData> {
-  const res = await fetch(url);
-  const json = await res.json().catch(() => null);
-  if (!json?.ok) {
-    throw new Error(typeof json?.error === "string" ? json.error : "โหลดรายการไม่สำเร็จ");
-  }
-  return json.data as ReimburseDetailData;
-}
-
 /** The existing options route (`expense-account-service.ts`'s `listExpenseAccounts`), unchanged — brand-keyed, so SWR's cache dedupes it across every row of the same brand. */
 async function accountsFetcher(url: string): Promise<ExpenseAccount[]> {
   const res = await fetch(url);
@@ -205,11 +195,14 @@ function QueueCheckbox({
   onChange,
   ariaLabel,
   disabled,
+  title,
 }: {
   checked: boolean;
   onChange: () => void;
   ariaLabel: string;
   disabled?: boolean;
+  /** Why it is disabled. A silent disabled box reads as a broken one. */
+  title?: string;
 }) {
   return (
     <button
@@ -217,6 +210,7 @@ function QueueCheckbox({
       role="checkbox"
       aria-checked={checked}
       aria-label={ariaLabel}
+      title={title}
       disabled={disabled}
       onClick={(e) => {
         e.stopPropagation();
@@ -296,6 +290,88 @@ const LINE_COLUMNS: readonly { label: string; right?: boolean; width?: string }[
 const HEAD_CELL = "text-[11px] font-semibold uppercase tracking-wide py-2 px-2 whitespace-nowrap";
 const BODY_CELL = "text-[12.5px] py-2 px-2 align-middle";
 
+
+/**
+ * The queue's columns, in the order the user specified.
+ *
+ * `claimLevel` marks the six that belong to the request rather than to the
+ * line; they are rendered once per claim with `rowSpan` and tinted, so the eye
+ * can tell "this is about the whole request" from "this is about this line".
+ * วันจ่าย is claim-level too — `PaymentDate` is a column on `AccRequest`, one
+ * per claim — even though it reads last.
+ *
+ * The select checkbox and the action cell are outside this list because neither
+ * is data.
+ */
+const FLAT_COLUMNS: readonly {
+  label: string;
+  right?: boolean;
+  width?: string;
+  claimLevel?: boolean;
+}[] = [
+  { label: "เลขที่", width: "150px", claimLevel: true },
+  { label: "วันที่ส่ง", width: "130px", claimLevel: true },
+  { label: "ผจก. อนุมัติ", width: "130px", claimLevel: true },
+  { label: "ผู้ขอ", width: "170px", claimLevel: true },
+  { label: "Dept", width: "80px", claimLevel: true },
+  { label: "แบรนด์", width: "80px", claimLevel: true },
+  { label: "ลำดับที่", width: "60px" },
+  { label: "วันที่", width: "95px" },
+  { label: "เลขที่เอกสาร", width: "150px" },
+  { label: "รายละเอียด", width: "220px" },
+  { label: "สาขา", width: "110px" },
+  { label: "เลขผู้เสียภาษี", width: "125px" },
+  { label: "ผู้ขาย", width: "180px" },
+  { label: "ก่อน VAT", right: true, width: "95px" },
+  { label: "VAT", right: true, width: "85px" },
+  { label: "ค่าใช้จ่ายรวม", right: true, width: "105px" },
+  { label: "หัก ณ ที่จ่าย", right: true, width: "95px" },
+  { label: "จ่ายสุทธิ", right: true, width: "105px" },
+  { label: "G/L", width: "210px" },
+  { label: "Vendor", width: "210px" },
+  { label: "วันจ่าย", width: "160px", claimLevel: true },
+];
+
+/** One table row: a claim and one of its lines, plus where it sits in the group. */
+interface FlatRow {
+  key: string;
+  claim: ReimburseQueueRow;
+  /** Null only for a claim with no lines at all, which cannot be approved. */
+  item: ReimburseQueueItem | null;
+  groupIndex: number;
+  groupSize: number;
+}
+
+/**
+ * One row per expense line, carrying the group meta the `rowSpan` needs.
+ *
+ * A claim with no lines still produces one row: dropping it would hide a claim
+ * that is genuinely in this queue and genuinely stuck, which is worse than a
+ * row saying so. `groupSize` is 1 there, so the `rowSpan` is still correct.
+ *
+ * Same shape as AP-1's `expandApprovalRows` / `withRequestGroupMeta` pair,
+ * collapsed into one pass because AP-4 has one level of nesting rather than two.
+ */
+function expandQueueRows(rows: readonly ReimburseQueueRow[]): FlatRow[] {
+  const out: FlatRow[] = [];
+  for (const claim of rows) {
+    if (claim.items.length === 0) {
+      out.push({ key: `${claim.id}-empty`, claim, item: null, groupIndex: 0, groupSize: 1 });
+      continue;
+    }
+    claim.items.forEach((item, i) => {
+      out.push({
+        key: `${claim.id}-${item.id}`,
+        claim,
+        item,
+        groupIndex: i,
+        groupSize: claim.items.length,
+      });
+    });
+  }
+  return out;
+}
+
 /** Every vendor card in the claim's Company — see the route's own note on why the whole list. */
 async function vendorsFetcher(url: string): Promise<TaxVendorCandidate[]> {
   const res = await fetch(url);
@@ -307,269 +383,85 @@ async function vendorsFetcher(url: string): Promise<TaxVendorCandidate[]> {
 }
 
 /**
- * The queue's own columns — one claim per row, the questions this screen exists
- * to answer lined up so nine claims can be compared without scrolling past each
- * in turn. Which is oldest, which has no payment date yet, which department it
- * came from: a card stacked those vertically and made comparing them impossible.
+ * The two editable cells on a line: its G/L account and its BC vendor.
  *
- * The checkbox and the action cell are rendered outside this list because
- * neither is data: one selects the row, the other holds controls. `colSpan` for
- * the expand and return rows is therefore `length + 2`.
+ * A component of its own so each can call `useSWR` for the brand its claim
+ * belongs to — hooks cannot be called from inside a `map`, and a queue tab can
+ * hold claims from several claim brands that share one Interface target. SWR
+ * dedupes by key, so N lines of the same brand still make one request each for
+ * accounts and vendors.
+ *
+ * **It renders no save button.** Picking writes immediately; see
+ * `saveItemField`. The cell shows its own in-flight and failed states, because
+ * a toast that has scrolled away cannot tell you WHICH of twenty lines did not
+ * save.
  */
-const QUEUE_COLUMNS: readonly { label: string; right?: boolean; width?: string }[] = [
-  { label: "เลขที่", width: "140px" },
-  { label: "วันที่ส่ง", width: "140px" },
-  { label: "ผจก. อนุมัติ", width: "140px" },
-  { label: "วันจ่าย", width: "170px" },
-  { label: "ผู้ขอ", width: "170px" },
-  { label: "แผนก", width: "160px" },
-  { label: "Dept", width: "90px" },
-  { label: "แบรนด์", width: "90px" },
-  { label: "ยอด", right: true, width: "120px" },
-];
-
-function ExpenseAccountsPanel({
-  requestId,
+function LineAccountCells({
   brandCode,
+  item,
+  category,
+  vendorNo,
+  busy,
+  error,
+  onChange,
 }: {
-  requestId: number;
   brandCode: string;
+  requestId: number;
+  item: ReimburseQueueItem;
+  category: string | null;
+  vendorNo: string | null;
+  busy: boolean;
+  error?: string;
+  onChange: (patch: { category?: string | null; vendorNo?: string | null }) => void;
 }) {
-  const { data, error, isLoading, mutate } = useSWR(
-    `/api/request/reimburse/requests/${requestId}`,
-    detailFetcher,
-  );
   const { data: accounts, isLoading: accountsLoading } = useSWR(
     brandCode
       ? `/api/request/reimburse/options/expense-accounts?brand=${encodeURIComponent(brandCode)}`
       : null,
     accountsFetcher,
   );
-  // Brand-keyed like the accounts above, so SWR dedupes it across every
-  // expanded row of the same brand rather than fetching 1,604 cards per claim.
   const { data: vendors, isLoading: vendorsLoading } = useSWR(
     brandCode ? `/api/request/reimburse/vendors?brand=${encodeURIComponent(brandCode)}` : null,
     vendorsFetcher,
   );
 
-  // Item id -> the value picked in this panel, overriding the loaded row. Two
-  // maps rather than one of pairs: an accountant can change either field alone,
-  // and "was this one touched" has to stay answerable per field — a single map
-  // of objects would make an untouched vendor indistinguishable from one
-  // deliberately cleared. Neither is reset by an SWR revalidation (the list
-  // revalidates on window focus, and clobbering them there would discard
-  // whatever was mid-choosing); the only reset is unmounting, which collapsing
-  // the row does, so re-expanding always starts from what is actually saved.
-  const [catEdits, setCatEdits] = useState<Map<number, string | null>>(new Map());
-  const [vendorEdits, setVendorEdits] = useState<Map<number, string | null>>(new Map());
-  const [saving, setSaving] = useState(false);
-
-  // Rows with no persisted id cannot be a save target — every row this route
-  // ever reads back from `getReimburseRequest` has one, but the type is
-  // optional (a not-yet-saved draft row can lack it), so this is a type guard
-  // rather than a filter expected to remove anything in practice.
-  const items = (data?.items ?? []).filter(
-    (it): it is ReimburseItem & { id: number } => it.id != null,
-  );
-
-  const catOf = (it: ReimburseItem & { id: number }) =>
-    catEdits.has(it.id) ? (catEdits.get(it.id) ?? null) : (it.category ?? null);
-  const vendorOf = (it: ReimburseItem & { id: number }) =>
-    vendorEdits.has(it.id) ? (vendorEdits.get(it.id) ?? null) : (it.vendorNo ?? null);
-
-  /** The rows where either field differs from what is stored. */
-  const dirty = items.filter(
-    (it) => catOf(it) !== (it.category ?? null) || vendorOf(it) !== (it.vendorNo ?? null),
-  );
-
-  async function save() {
-    if (dirty.length === 0 || saving) return;
-    setSaving(true);
-    try {
-      const res = await fetch(`/api/request/reimburse/requests/${requestId}/items`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          // Both fields on every dirty row, always. Sending the displayed value
-          // for the field that was not touched cannot overwrite anything — it
-          // IS the stored value. `vendorNo`'s absent-means-leave-alone rule
-          // (`item-account-edits.ts`) exists for the client that predates
-          // migration 147, not for this one.
-          items: dirty.map((it) => ({
-            id: it.id,
-            category: catOf(it),
-            vendorNo: vendorOf(it),
-          })),
-        }),
-      });
-      const json = await res.json().catch(() => null);
-      if (json?.ok) {
-        toast.success("บันทึกบัญชีแล้ว");
-        setCatEdits(new Map());
-        setVendorEdits(new Map());
-      } else {
-        // A 409 here means the claim moved out of accounting's hands between
-        // load and save (approved, returned, or edited by someone else) —
-        // refetch so the panel stops offering a save that can only fail again,
-        // exactly the reasoning `approveSelected` above already applies.
-        toast.error(json?.error ?? "บันทึกไม่สำเร็จ");
-      }
-    } catch {
-      toast.error("เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง");
-    } finally {
-      setSaving(false);
-      void mutate();
-    }
-  }
-
-  if (isLoading) {
-    return (
-      <p className="text-[12px] py-3 text-center m-0" style={{ color: "var(--text-muted)" }}>
-        กำลังโหลดรายการ...
-      </p>
-    );
-  }
-  if (error || !data) {
-    return (
-      <p className="text-[12px] py-3 text-center m-0" style={{ color: "var(--color-danger)" }}>
-        {error instanceof Error ? error.message : "โหลดรายการไม่สำเร็จ"}
-      </p>
-    );
-  }
-
   return (
-    <div
-      className="flex flex-col gap-2.5 mt-2 rounded-xl p-3"
-      style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-light)" }}
-    >
-      {items.length === 0 ? (
-        <p className="text-[12px] m-0" style={{ color: "var(--text-faint)" }}>
-          — ไม่มีรายการ —
-        </p>
-      ) : (
-        // Fifteen columns scroll inside this container rather than widening the
-        // queue. The seller, the tax id and the address are here because they
-        // are what an approver reads to decide WHICH vendor card a line posts
-        // against — before this panel showed a description and an amount, and
-        // the decision was being made without them.
-        <div className="overflow-x-auto">
-          <table className="border-collapse" style={{ minWidth: 1920 }}>
-            <thead>
-              <tr style={{ borderBottom: "1px solid var(--border-card)" }}>
-                {LINE_COLUMNS.map((c) => (
-                  <th
-                    key={c.label}
-                    className={`${HEAD_CELL} ${c.right ? "text-right" : "text-left"}`}
-                    style={{ color: "var(--text-muted)", width: c.width }}
-                  >
-                    {c.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((it, i) => {
-                // Derived, never stored — see `ReimburseItem.amount`.
-                const beforeVat = (Number(it.amount) || 0) - (Number(it.vatAmount) || 0);
-                const netPaid = (Number(it.amount) || 0) - (Number(it.whtAmount) || 0);
-                return (
-                  <tr key={it.id} style={{ borderBottom: "1px solid var(--border-light)" }}>
-                    <td className={`${BODY_CELL} tabular-nums`} style={{ color: "var(--text-muted)" }}>
-                      {i + 1}
-                    </td>
-                    <td className={`${BODY_CELL} whitespace-nowrap`} style={{ color: "var(--text-primary)" }}>
-                      {fmtYmd(it.expenseDate)}
-                    </td>
-                    <td className={`${BODY_CELL} whitespace-nowrap`} style={{ color: "var(--text-primary)" }}>
-                      {it.documentNo || "—"}
-                    </td>
-                    <td className={`${BODY_CELL} break-words`} style={{ color: "var(--text-primary)" }}>
-                      {it.description || "—"}
-                    </td>
-                    <td className={`${BODY_CELL} break-words`} style={{ color: "var(--text-secondary)" }}>
-                      {it.branchName || "—"}
-                    </td>
-                    <td className={`${BODY_CELL} whitespace-nowrap tabular-nums`} style={{ color: "var(--text-secondary)" }}>
-                      {it.vendorTaxId || "—"}
-                    </td>
-                    <td className={`${BODY_CELL} break-words`} style={{ color: "var(--text-primary)" }}>
-                      {it.vendorName || "—"}
-                    </td>
-                    <td className={`${BODY_CELL} break-words`} style={{ color: "var(--text-secondary)" }}>
-                      {it.vendorAddress || "—"}
-                    </td>
-                    <td className={`${BODY_CELL} text-right tabular-nums`} style={{ color: "var(--text-secondary)" }}>
-                      {fmtBaht(beforeVat)}
-                    </td>
-                    <td className={`${BODY_CELL} text-right tabular-nums`} style={{ color: "var(--text-secondary)" }}>
-                      {fmtBaht(it.vatAmount ?? 0)}
-                    </td>
-                    <td className={`${BODY_CELL} text-right tabular-nums font-semibold`} style={{ color: "var(--text-primary)" }}>
-                      {fmtBaht(it.amount)}
-                    </td>
-                    <td className={`${BODY_CELL} text-right tabular-nums`} style={{ color: "var(--text-secondary)" }}>
-                      {it.whtAmount ? fmtBaht(it.whtAmount) : "—"}
-                    </td>
-                    <td className={`${BODY_CELL} text-right tabular-nums font-semibold`} style={{ color: "var(--text-primary)" }}>
-                      {fmtBaht(netPaid)}
-                    </td>
-                    <td className={BODY_CELL}>
-                      <ExpenseAccountPicker
-                        value={catOf(it)}
-                        onChange={(next) => {
-                          setCatEdits((prev) => {
-                            const m = new Map(prev);
-                            m.set(it.id, next);
-                            return m;
-                          });
-                        }}
-                        accounts={accounts ?? []}
-                        loading={accountsLoading}
-                        brandChosen={!!brandCode}
-                        ariaLabel={`เลือกบัญชีสำหรับ ${it.description || "รายการ"}`}
-                      />
-                    </td>
-                    <td className={BODY_CELL}>
-                      <VendorPicker
-                        value={vendorOf(it)}
-                        onChange={(next) => {
-                          setVendorEdits((prev) => {
-                            const m = new Map(prev);
-                            m.set(it.id, next);
-                            return m;
-                          });
-                        }}
-                        vendors={vendors ?? []}
-                        loading={vendorsLoading}
-                        brandChosen={!!brandCode}
-                        ariaLabel={`เลือก Vendor สำหรับ ${it.description || "รายการ"}`}
-                      />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+    <>
+      <td className="py-2 px-2 align-middle">
+        <div className="flex items-center gap-1.5">
+          <div className="flex-1 min-w-0">
+            <ExpenseAccountPicker
+              value={category}
+              onChange={(next) => onChange({ category: next })}
+              accounts={accounts ?? []}
+              loading={accountsLoading}
+              brandChosen={!!brandCode}
+              ariaLabel={`เลือกบัญชีสำหรับ ${item.description || "รายการ"}`}
+            />
+          </div>
+          {busy && <Loader2 size={12} className="animate-spin shrink-0" style={{ color: "var(--text-muted)" }} />}
         </div>
-      )}
-      {items.length > 0 && (
-        <div className="flex justify-end pt-0.5">
-          <button
-            type="button"
-            onClick={() => void save()}
-            disabled={saving || dirty.length === 0}
-            className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-3 py-1.5 rounded-lg cursor-pointer disabled:cursor-not-allowed disabled:opacity-55"
-            style={{ background: "var(--color-action)", color: "#fff", border: "none" }}
-          >
-            {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
-            บันทึกบัญชี{dirty.length > 0 ? ` (${dirty.length})` : ""}
-          </button>
-        </div>
-      )}
-    </div>
+      </td>
+      <td className="py-2 px-2 align-middle">
+        <VendorPicker
+          value={vendorNo}
+          onChange={(next) => onChange({ vendorNo: next })}
+          vendors={vendors ?? []}
+          loading={vendorsLoading}
+          brandChosen={!!brandCode}
+          ariaLabel={`เลือก Vendor สำหรับ ${item.description || "รายการ"}`}
+        />
+        {/* Beside the control that failed, not in a toast. Twenty lines save
+            independently here and a toast names none of them. */}
+        {error && (
+          <span className="block text-[10.5px] mt-0.5 leading-tight" style={{ color: "var(--color-danger)" }}>
+            {error}
+          </span>
+        )}
+      </td>
+    </>
   );
 }
-
 export function ReimburseApprovalQueue() {
   const { data, error, isLoading, mutate } = useSWR("/api/request/reimburse/approvals", fetcher);
   // Roster membership, for the notice below — NOT a gate. Sight of this page
@@ -596,7 +488,6 @@ export function ReimburseApprovalQueue() {
   const [returnBusy, setReturnBusy] = useState(false);
   // Which rows show their expense lines. A `Set` rather than one id: nothing
   // stops an accountant comparing two claims' line items side by side.
-  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
   /**
    * Request id -> the payment date typed on that claim's own row.
    *
@@ -681,6 +572,8 @@ export function ReimburseApprovalQueue() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allRows, interfaceTarget]);
 
+
+
   // The default follows `suggested` until the accountant edits it by hand —
   // never overwritten again after that, including across a refetch, or a
   // half-typed choice would vanish under someone mid-edit.
@@ -738,19 +631,166 @@ export function ReimburseApprovalQueue() {
    */
   const dateFor = (id: number) => rowDates.get(id) ?? effectiveDate;
 
+  /**
+   * Optimistic values for a line whose save is in flight, keyed by item id.
+   *
+   * The picker shows what was just chosen while the PATCH runs, and the entry
+   * is dropped when the queue refetches with the saved value — or, on failure,
+   * dropped immediately so the cell snaps back to what the database still
+   * holds. Reverting rather than leaving the choice on screen is the point:
+   * a value that looks saved and is not is the failure this whole screen must
+   * not produce, because approving reads the stored row, not the cell.
+   */
+  const [optimistic, setOptimistic] = useState<
+    Map<number, { category?: string | null; vendorNo?: string | null }>
+  >(new Map());
+  const [savingItems, setSavingItems] = useState<Set<number>>(new Set());
+  const [rowErrors, setRowErrors] = useState<Map<number, string>>(new Map());
+
+  /**
+   * One save at a time per claim.
+   *
+   * Every PATCH claims the claim's row with a conditional UPDATE inside a
+   * transaction (`setReimburseItemAccounts`), so two in flight against the same
+   * claim race for it and the loser answers 409 — a conflict invented by this
+   * screen rather than by another accountant. Chained per claim, they queue
+   * instead; different claims still save in parallel.
+   */
+  const saveChains = useRef<Map<number, Promise<void>>>(new Map());
+
+  const categoryOf = (item: ReimburseQueueItem) => {
+    const o = optimistic.get(item.id);
+    return o && "category" in o ? (o.category ?? null) : item.category;
+  };
+  const vendorOf = (item: ReimburseQueueItem) => {
+    const o = optimistic.get(item.id);
+    return o && "vendorNo" in o ? (o.vendorNo ?? null) : item.vendorNo;
+  };
+
+  /**
+   * Write one line's G/L account or vendor immediately.
+   *
+   * Both fields are always sent, because `setReimburseItemAccounts` rewrites
+   * `Category` from the payload unconditionally — sending only `vendorNo` would
+   * clear the account. `vendorNo`'s own absent-means-leave-alone rule is for the
+   * client that predates migration 147, not for this one.
+   */
+  async function saveItemField(
+    requestId: number,
+    item: ReimburseQueueItem,
+    patch: { category?: string | null; vendorNo?: string | null },
+  ): Promise<void> {
+    setOptimistic((prev) => {
+      const m = new Map(prev);
+      m.set(item.id, { ...(m.get(item.id) ?? {}), ...patch });
+      return m;
+    });
+    setRowErrors((prev) => {
+      if (!prev.has(item.id)) return prev;
+      const m = new Map(prev);
+      m.delete(item.id);
+      return m;
+    });
+    setSavingItems((prev) => new Set(prev).add(item.id));
+
+    const previous = saveChains.current.get(requestId) ?? Promise.resolve();
+    const next = previous
+      .catch(() => {})
+      .then(async () => {
+        // Read AFTER the queue clears, so a second pick on the same line sends
+        // the first one's value too rather than reverting it.
+        const body = {
+          items: [
+            {
+              id: item.id,
+              category: "category" in patch ? (patch.category ?? null) : categoryOf(item),
+              vendorNo: "vendorNo" in patch ? (patch.vendorNo ?? null) : vendorOf(item),
+            },
+          ],
+        };
+        let message: string | null = null;
+        try {
+          const res = await fetch(`/api/request/reimburse/requests/${requestId}/items`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const json = await res.json().catch(() => null);
+          if (!json?.ok) {
+            message =
+              typeof json?.error === "string"
+                ? json.error
+                : res.status === 409
+                  ? "คำขอนี้ถูกดำเนินการไปแล้ว — โหลดใหม่"
+                  : "บันทึกไม่สำเร็จ";
+          }
+        } catch {
+          message = "เครือข่ายขัดข้อง — ยังไม่ได้บันทึก";
+        }
+
+        if (message) {
+          // Revert: drop the optimistic entry so the cell falls back to the
+          // stored value, and say so on the row itself.
+          setOptimistic((prev) => {
+            const m = new Map(prev);
+            m.delete(item.id);
+            return m;
+          });
+          setRowErrors((prev) => new Map(prev).set(item.id, message as string));
+        }
+        setSavingItems((prev) => {
+          const s = new Set(prev);
+          s.delete(item.id);
+          return s;
+        });
+        // Either way: on success this brings back the saved value and drops the
+        // optimistic entry; on failure it re-reads what is actually stored.
+        await mutate();
+      });
+
+    saveChains.current.set(requestId, next);
+    await next;
+  }
+
+  /** Readiness per claim, for the checkbox and the reason beside the number. */
+  const readinessById = useMemo(() => {
+    const m = new Map<number, ReturnType<typeof claimReadiness>>();
+    for (const r of rows) {
+      m.set(
+        r.id,
+        claimReadiness({
+          items: r.items.map((it) => ({
+            id: it.id,
+            category: categoryOf(it),
+            vendorNo: vendorOf(it),
+          })),
+          paymentDate: dateFor(r.id),
+        }),
+      );
+    }
+    return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, optimistic, rowDates, effectiveDate]);
+
+  const readyRows = useMemo(
+    () => rows.filter((r) => readinessById.get(r.id)?.ready),
+    [rows, readinessById],
+  );
+  const allReadySelected =
+    readyRows.length > 0 && readyRows.every((r) => selectedIds.has(r.id));
+
+  /** Select-all covers only the claims that can actually be approved. */
+  function toggleAllReady() {
+    setSelectedIds(allReadySelected ? new Set() : new Set(readyRows.map((r) => r.id)));
+  }
+
+  const displayRows = useMemo(() => expandQueueRows(rows), [rows]);
+
   function toggleAll() {
     setSelectedIds(allSelected ? new Set() : new Set(rows.map((r) => r.id)));
   }
   function toggleOne(id: number) {
     setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-  function toggleExpanded(id: number) {
-    setExpandedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -1008,17 +1048,16 @@ export function ReimburseApprovalQueue() {
               </div>
             ) : (
               <>
-                {/* A flat table, the shape AP-1's queue reads in. The cards it
-                    replaces stacked one claim's facts vertically, which meant
-                    nine claims could not be compared without scrolling past
-                    each in turn — and comparing is the whole job here: which
-                    of these is oldest, which has no date yet, which department
-                    they came from. Fixed columns line those answers up.
+                {/* ONE row per expense line, with the claim's own columns
+                    rowSpan-ed across its lines. The per-claim expander is gone:
+                    choosing a G/L account and a vendor is the work this screen
+                    exists for, and a control that has to be opened one claim at
+                    a time cannot be compared across claims.
 
-                    It scrolls inside its own container rather than widening
-                    the page, like the expense table inside it. */}
+                    Twenty-three columns scroll inside this container rather than
+                    widening the page. */}
                 <div className="overflow-x-auto">
-                  <table className="w-full border-collapse" style={{ minWidth: 1240 }}>
+                  <table className="border-collapse" style={{ minWidth: 2600 }}>
                     <thead>
                       <tr
                         style={{
@@ -1026,188 +1065,309 @@ export function ReimburseApprovalQueue() {
                           background: "var(--bg-card-alt)",
                         }}
                       >
-                        <th className="px-4 py-3 w-9">
+                        <th className="px-3 py-3 w-9">
                           <QueueCheckbox
-                            checked={allSelected}
-                            onChange={toggleAll}
-                            ariaLabel={`เลือกทั้งหมด (${rows.length} รายการ)`}
+                            checked={allReadySelected}
+                            onChange={toggleAllReady}
+                            ariaLabel={`เลือกทุกใบที่ข้อมูลครบ (${readyRows.length} รายการ)`}
+                            disabled={readyRows.length === 0}
                           />
                         </th>
-                        {QUEUE_COLUMNS.map((c) => (
+                        {FLAT_COLUMNS.map((c) => (
                           <th
                             key={c.label}
-                            className={`text-[11px] font-semibold uppercase tracking-wide py-3 px-3 whitespace-nowrap ${
+                            className={`text-[11px] font-semibold uppercase tracking-wide py-3 px-2 whitespace-nowrap ${
                               c.right ? "text-right" : "text-left"
                             }`}
-                            style={{ color: "var(--text-muted)", width: c.width }}
+                            style={{
+                              color: "var(--text-muted)",
+                              width: c.width,
+                              // The claim-level columns are shaded so the eye
+                              // can tell "this belongs to the whole request"
+                              // from "this belongs to the line".
+                              background: c.claimLevel ? "var(--nav-active-bg)" : undefined,
+                            }}
                           >
                             {c.label}
                           </th>
                         ))}
-                        {/* No heading: the cell holds controls, and a label
-                            over them would read as a data column. */}
-                        <th className="w-[220px]" aria-label="การดำเนินการ" />
+                        <th className="w-[110px]" aria-label="การดำเนินการ" />
                       </tr>
                     </thead>
                     <tbody>
-                      {rows.map((item) => {
-                        const isSelected = selectedIds.has(item.id);
-                        const isReturning = returnRowId === item.id;
-                        const isExpanded = expandedIds.has(item.id);
+                      {displayRows.map((d) => {
+                        const item = d.item;
+                        const claimCells = d.groupIndex === 0;
+                        const span = d.groupSize;
+                        const ready = readinessById.get(d.claim.id);
+                        const isSelected = selectedIds.has(d.claim.id);
+                        const err = item ? rowErrors.get(item.id) : undefined;
+                        // Derived, never stored — see `ReimburseItem.amount`.
+                        const beforeVat = item ? (item.amount || 0) - (item.vatAmount || 0) : 0;
+                        const netPaid = item ? (item.amount || 0) - (item.whtAmount || 0) : 0;
                         return (
-                          <Fragment key={item.id}>
-                            <tr
-                              style={{
-                                borderBottom: isExpanded || isReturning ? undefined : "1px solid var(--border-light)",
-                                background: isSelected ? "var(--nav-active-bg)" : undefined,
-                              }}
-                            >
-                              <td className="px-4 py-3 align-middle">
+                          <tr
+                            key={d.key}
+                            style={{
+                              // Only under the LAST line of a claim, so the
+                              // group reads as one block rather than as N.
+                              borderBottom:
+                                d.groupIndex === span - 1 ? "1px solid var(--border-card)" : undefined,
+                              background: isSelected ? "var(--nav-active-bg)" : undefined,
+                            }}
+                          >
+                            {claimCells && (
+                              <td rowSpan={span} className="px-3 py-3 align-top">
                                 <QueueCheckbox
                                   checked={isSelected}
-                                  onChange={() => toggleOne(item.id)}
-                                  ariaLabel={`เลือก ${item.requestNo}`}
+                                  onChange={() => toggleOne(d.claim.id)}
+                                  disabled={!ready?.ready}
+                                  ariaLabel={`เลือก ${d.claim.requestNo}`}
+                                  title={ready?.reason ?? undefined}
                                 />
                               </td>
-                              <td className="py-3 px-3 align-middle whitespace-nowrap">
-                                <span className="text-[13px] font-bold" style={{ color: "var(--nav-active-text)" }}>
-                                  {item.requestNo || "-"}
-                                </span>
-                              </td>
+                            )}
+
+                            {claimCells && (
+                              <>
+                                <td rowSpan={span} className="py-3 px-2 align-top whitespace-nowrap">
+                                  {/* Opens the claim. An approver deciding a
+                                      vendor sometimes needs the receipt itself,
+                                      and the number is where they look for it. */}
+                                  <Link
+                                    href={`/request/reimburse/${d.claim.id}`}
+                                    className="text-[13px] font-bold no-underline hover:underline"
+                                    style={{ color: "var(--nav-active-text)" }}
+                                    title={`เปิดเอกสาร ${d.claim.requestNo}`}
+                                  >
+                                    {d.claim.requestNo || "-"}
+                                  </Link>
+                                  {ready && !ready.ready && (
+                                    <span
+                                      className="block text-[10.5px] mt-0.5 leading-tight"
+                                      style={{ color: "var(--text-warning)" }}
+                                    >
+                                      {ready.reason}
+                                    </span>
+                                  )}
+                                </td>
+                                <td
+                                  rowSpan={span}
+                                  className="text-[12px] py-3 px-2 align-top whitespace-nowrap"
+                                  style={{ color: "var(--text-secondary)" }}
+                                >
+                                  {fmtDateTime(d.claim.submittedAt)}
+                                </td>
+                                <td
+                                  rowSpan={span}
+                                  className="text-[12px] py-3 px-2 align-top whitespace-nowrap"
+                                  style={{ color: "var(--text-secondary)" }}
+                                >
+                                  {fmtDateTime(d.claim.managerApprovedAt)}
+                                </td>
+                                <td
+                                  rowSpan={span}
+                                  className="text-[12.5px] py-3 px-2 align-top"
+                                  style={{ color: "var(--text-primary)" }}
+                                >
+                                  {d.claim.requesterName || "-"}
+                                  <span
+                                    className="block text-[10.5px] mt-0.5"
+                                    style={{ color: "var(--text-faint)" }}
+                                  >
+                                    {d.claim.requesterDepartmentName || "—"}
+                                  </span>
+                                </td>
+                                <td rowSpan={span} className="py-3 px-2 align-top whitespace-nowrap">
+                                  {d.claim.requesterDepartmentCode ? (
+                                    <span
+                                      className="px-1.5 py-0.5 rounded text-[10.5px] font-bold"
+                                      style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}
+                                    >
+                                      {d.claim.requesterDepartmentCode}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[12px]" style={{ color: "var(--text-faint)" }}>
+                                      —
+                                    </span>
+                                  )}
+                                </td>
+                                <td rowSpan={span} className="py-3 px-2 align-top whitespace-nowrap">
+                                  {d.claim.brandCode && (
+                                    <span
+                                      className="px-1.5 py-0.5 rounded text-[10.5px] font-bold"
+                                      style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}
+                                    >
+                                      {d.claim.brandCode}
+                                    </span>
+                                  )}
+                                </td>
+                              </>
+                            )}
+
+                            {item ? (
+                              <>
+                                <td className="text-[12px] py-2 px-2 tabular-nums" style={{ color: "var(--text-muted)" }}>
+                                  {d.groupIndex + 1}
+                                </td>
+                                <td className="text-[12px] py-2 px-2 whitespace-nowrap" style={{ color: "var(--text-primary)" }}>
+                                  {fmtYmd(item.expenseDate)}
+                                </td>
+                                <td className="text-[12px] py-2 px-2 whitespace-nowrap" style={{ color: "var(--text-primary)" }}>
+                                  {item.documentNo || "—"}
+                                </td>
+                                <td className="text-[12px] py-2 px-2 break-words" style={{ color: "var(--text-primary)" }}>
+                                  {item.description || "—"}
+                                </td>
+                                <td className="text-[12px] py-2 px-2 break-words" style={{ color: "var(--text-secondary)" }}>
+                                  {item.branchName || "—"}
+                                </td>
+                                <td className="text-[12px] py-2 px-2 whitespace-nowrap tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                                  {item.vendorTaxId || "—"}
+                                </td>
+                                <td className="text-[12px] py-2 px-2 break-words" style={{ color: "var(--text-primary)" }}>
+                                  {item.vendorName || "—"}
+                                </td>
+                                <td className="text-[12px] py-2 px-2 text-right tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                                  {fmtBaht(beforeVat)}
+                                </td>
+                                <td className="text-[12px] py-2 px-2 text-right tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                                  {item.vatAmount ? fmtBaht(item.vatAmount) : "—"}
+                                </td>
+                                <td className="text-[12.5px] py-2 px-2 text-right tabular-nums font-semibold" style={{ color: "var(--text-primary)" }}>
+                                  {fmtBaht(item.amount)}
+                                </td>
+                                <td className="text-[12px] py-2 px-2 text-right tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                                  {item.whtAmount ? fmtBaht(item.whtAmount) : "—"}
+                                </td>
+                                <td className="text-[12.5px] py-2 px-2 text-right tabular-nums font-semibold" style={{ color: "var(--text-primary)" }}>
+                                  {fmtBaht(netPaid)}
+                                </td>
+                                <LineAccountCells
+                                  brandCode={d.claim.brandCode}
+                                  requestId={d.claim.id}
+                                  item={item}
+                                  category={categoryOf(item)}
+                                  vendorNo={vendorOf(item)}
+                                  busy={savingItems.has(item.id)}
+                                  error={err}
+                                  onChange={(patch) => void saveItemField(d.claim.id, item, patch)}
+                                />
+                              </>
+                            ) : (
+                              // A claim with no lines. It cannot be approved
+                              // (`claimReadiness` refuses it), and saying so in
+                              // the row beats fourteen empty cells.
                               <td
-                                className="text-[12px] py-3 px-3 align-middle whitespace-nowrap"
-                                style={{ color: "var(--text-secondary)" }}
+                                colSpan={14}
+                                className="text-[12px] py-3 px-2"
+                                style={{ color: "var(--text-faint)" }}
                               >
-                                {fmtDateTime(item.submittedAt)}
+                                — ไม่มีรายการค่าใช้จ่ายในคำขอนี้ —
                               </td>
-                              <td
-                                className="text-[12px] py-3 px-3 align-middle whitespace-nowrap"
-                                style={{ color: "var(--text-secondary)" }}
-                              >
-                                {/* When the manager signed, which is when this
-                                    claim entered this queue. Null only if it
-                                    arrived by some path that left no approval
-                                    row — shown as a dash rather than blank so
-                                    the gap is legible. */}
-                                {fmtDateTime(item.managerApprovedAt)}
-                              </td>
-                              <td className="py-3 px-3 align-middle">
-                                {/* The claim's own date, editable in place. It
-                                    is a column because it is an answer this
-                                    screen exists to give, not a detail of the
-                                    claim — and per row, because each claim is
-                                    approved with its own. Empty falls through
-                                    to the shared field at the bottom. */}
-                                <div className="flex items-center gap-1.5">
-                                  <input
-                                    type="date"
-                                    value={dateFor(item.id)}
-                                    disabled={batchRunning}
-                                    aria-label={`วันที่จ่ายของ ${item.requestNo}`}
-                                    onChange={(e) => {
-                                      const v = e.target.value;
-                                      setRowDates((prev) => {
-                                        const m = new Map(prev);
-                                        m.set(item.id, v);
-                                        return m;
-                                      });
-                                    }}
-                                    className="text-[12px] rounded-lg px-2 py-1 outline-none disabled:opacity-50"
-                                    style={{
-                                      background: "var(--bg-input)",
-                                      color: "var(--text-primary)",
-                                      border: "1px solid var(--border-input)",
-                                    }}
-                                  />
-                                  {rowDates.has(item.id) && rowDates.get(item.id) !== effectiveDate && (
-                                    <button
-                                      type="button"
-                                      title="ใช้วันที่ร่วม"
-                                      aria-label={`ใช้วันที่ร่วมกับ ${item.requestNo}`}
-                                      onClick={() =>
+                            )}
+
+                            {claimCells && (
+                              <>
+                                <td rowSpan={span} className="py-3 px-2 align-top">
+                                  {/* Per claim, not per line: PaymentDate is a
+                                      column on AccRequest. Kept in the screen
+                                      until approve, because AP-4 has no
+                                      endpoint that sets it on its own — the
+                                      approve route is the only writer. */}
+                                  <div className="flex items-center gap-1.5">
+                                    <input
+                                      type="date"
+                                      value={dateFor(d.claim.id)}
+                                      disabled={batchRunning}
+                                      aria-label={`วันที่จ่ายของ ${d.claim.requestNo}`}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
                                         setRowDates((prev) => {
                                           const m = new Map(prev);
-                                          m.delete(item.id);
+                                          m.set(d.claim.id, v);
                                           return m;
-                                        })
-                                      }
-                                      className="shrink-0 cursor-pointer border-none bg-transparent p-0"
-                                      style={{ color: "var(--text-muted)" }}
-                                    >
-                                      <RotateCcw size={12} />
-                                    </button>
-                                  )}
-                                </div>
-                              </td>
-                              <td className="text-[12.5px] py-3 px-3 align-middle" style={{ color: "var(--text-primary)" }}>
-                                {item.requesterName || "-"}
-                              </td>
-                              <td className="text-[12px] py-3 px-3 align-middle" style={{ color: "var(--text-secondary)" }}>
-                                {item.requesterDepartmentName || "—"}
-                              </td>
-                              <td className="py-3 px-3 align-middle whitespace-nowrap">
-                                {item.requesterDepartmentCode ? (
-                                  <span
-                                    className="px-1.5 py-0.5 rounded text-[10.5px] font-bold"
-                                    style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}
-                                  >
-                                    {item.requesterDepartmentCode}
-                                  </span>
-                                ) : (
-                                  <span className="text-[12px]" style={{ color: "var(--text-faint)" }}>
-                                    —
-                                  </span>
-                                )}
-                              </td>
-                              <td className="py-3 px-3 align-middle whitespace-nowrap">
-                                {item.brandCode && (
-                                  <span
-                                    className="px-1.5 py-0.5 rounded text-[10.5px] font-bold"
-                                    style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}
-                                  >
-                                    {item.brandCode}
-                                  </span>
-                                )}
-                              </td>
-                              <td
-                                className="text-[13px] py-3 px-3 align-middle text-right tabular-nums font-semibold whitespace-nowrap"
-                                style={{ color: "var(--text-primary)" }}
-                              >
-                                {fmtBaht(item.totalAmount)}
-                                <span
-                                  className="block text-[10.5px] font-normal"
-                                  style={{ color: "var(--text-faint)" }}
-                                >
-                                  {item.itemCount} รายการ
-                                </span>
-                              </td>
-                              <td className="py-3 px-3 align-middle">
-                                <div className="flex items-center gap-2 justify-end flex-wrap">
-                                  {/* Expands the claim's expense lines, their
-                                      G/L accounts and their vendors in place —
-                                      see `ExpenseAccountsPanel`'s header for
-                                      why it reuses the by-id detail read. */}
-                                  <button
-                                    type="button"
-                                    onClick={() => toggleExpanded(item.id)}
-                                    aria-expanded={isExpanded}
-                                    className="inline-flex items-center gap-1 text-[11.5px] font-medium cursor-pointer border-none bg-transparent p-0 whitespace-nowrap"
-                                    style={{ color: "var(--nav-active-text)" }}
-                                  >
-                                    <ListChecks size={12} />
-                                    {isExpanded ? "ซ่อนรายการ" : "ดูรายการ / บัญชี"}
-                                    <ChevronDown
-                                      size={12}
+                                        });
+                                      }}
+                                      className="text-[12px] rounded-lg px-2 py-1 outline-none disabled:opacity-50"
                                       style={{
-                                        transform: isExpanded ? "rotate(180deg)" : undefined,
-                                        transition: "transform 0.15s",
+                                        background: "var(--bg-input)",
+                                        color: "var(--text-primary)",
+                                        border: "1px solid var(--border-input)",
                                       }}
                                     />
-                                  </button>
-                                  {!isReturning && (
+                                    {rowDates.has(d.claim.id) &&
+                                      rowDates.get(d.claim.id) !== effectiveDate && (
+                                        <button
+                                          type="button"
+                                          title="ใช้วันที่ร่วม"
+                                          aria-label={`ใช้วันที่ร่วมกับ ${d.claim.requestNo}`}
+                                          onClick={() =>
+                                            setRowDates((prev) => {
+                                              const m = new Map(prev);
+                                              m.delete(d.claim.id);
+                                              return m;
+                                            })
+                                          }
+                                          className="shrink-0 cursor-pointer border-none bg-transparent p-0"
+                                          style={{ color: "var(--text-muted)" }}
+                                        >
+                                          <RotateCcw size={12} />
+                                        </button>
+                                      )}
+                                  </div>
+                                </td>
+
+                                <td rowSpan={span} className="py-3 px-2 align-top">
+                                  {returnRowId === d.claim.id ? (
+                                    <div className="flex flex-col gap-1.5 w-[240px]">
+                                      <textarea
+                                        value={returnComment}
+                                        onChange={(e) => setReturnComment(e.target.value)}
+                                        rows={2}
+                                        placeholder="ระบุสิ่งที่ต้องแก้ไข"
+                                        autoFocus
+                                        className="w-full text-[12px] px-2 py-1.5 rounded-lg resize-y"
+                                        style={{
+                                          background: "var(--bg-input)",
+                                          color: "var(--text-primary)",
+                                          border: "1px solid var(--border-card)",
+                                        }}
+                                      />
+                                      <div className="flex gap-1.5">
+                                        <button
+                                          type="button"
+                                          disabled={returnBusy || returnComment.trim() === ""}
+                                          onClick={() => void submitReturn(d.claim.id)}
+                                          className="inline-flex items-center gap-1 text-[11.5px] font-semibold px-2 py-1 rounded-lg cursor-pointer disabled:cursor-not-allowed disabled:opacity-55"
+                                          style={{
+                                            background: "var(--bg-info-yellow)",
+                                            color: "var(--text-info-yellow)",
+                                            border: "1px solid var(--border-info-yellow)",
+                                          }}
+                                        >
+                                          {returnBusy ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />}
+                                          ยืนยัน
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={returnBusy}
+                                          onClick={closeReturn}
+                                          className="text-[11.5px] font-medium px-2 py-1 rounded-lg cursor-pointer disabled:cursor-not-allowed"
+                                          style={{
+                                            background: "transparent",
+                                            color: "var(--text-muted)",
+                                            border: "1px solid var(--border-card)",
+                                          }}
+                                        >
+                                          ยกเลิก
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
                                     <button
                                       type="button"
-                                      onClick={() => openReturn(item.id)}
+                                      onClick={() => openReturn(d.claim.id)}
                                       className="inline-flex items-center gap-1 text-[11.5px] font-medium px-2 py-1 rounded-lg cursor-pointer whitespace-nowrap"
                                       style={{
                                         background: "var(--bg-info-yellow)",
@@ -1218,69 +1378,10 @@ export function ReimburseApprovalQueue() {
                                       <RotateCcw size={12} /> ส่งกลับ
                                     </button>
                                   )}
-                                </div>
-                              </td>
-                            </tr>
-
-                            {isExpanded && (
-                              <tr style={{ borderBottom: isReturning ? undefined : "1px solid var(--border-light)" }}>
-                                <td colSpan={QUEUE_COLUMNS.length + 2} className="px-4 pb-3">
-                                  <ExpenseAccountsPanel requestId={item.id} brandCode={item.brandCode} />
                                 </td>
-                              </tr>
+                              </>
                             )}
-
-                            {isReturning && (
-                              <tr style={{ borderBottom: "1px solid var(--border-light)" }}>
-                                <td colSpan={QUEUE_COLUMNS.length + 2} className="px-4 pb-3">
-                                  <div className="flex flex-col gap-2">
-                                    <textarea
-                                      value={returnComment}
-                                      onChange={(e) => setReturnComment(e.target.value)}
-                                      rows={2}
-                                      placeholder="ระบุสิ่งที่ต้องแก้ไข"
-                                      autoFocus
-                                      className="w-full text-[13px] px-3 py-2 rounded-lg resize-y"
-                                      style={{
-                                        background: "var(--bg-input)",
-                                        color: "var(--text-primary)",
-                                        border: "1px solid var(--border-card)",
-                                      }}
-                                    />
-                                    <div className="flex gap-2">
-                                      <button
-                                        type="button"
-                                        disabled={returnBusy || returnComment.trim() === ""}
-                                        onClick={() => void submitReturn(item.id)}
-                                        className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-3 py-1.5 rounded-lg cursor-pointer disabled:cursor-not-allowed disabled:opacity-55"
-                                        style={{
-                                          background: "var(--bg-info-yellow)",
-                                          color: "var(--text-info-yellow)",
-                                          border: "1px solid var(--border-info-yellow)",
-                                        }}
-                                      >
-                                        {returnBusy ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
-                                        ยืนยันส่งกลับ
-                                      </button>
-                                      <button
-                                        type="button"
-                                        disabled={returnBusy}
-                                        onClick={closeReturn}
-                                        className="text-[12px] font-medium px-3 py-1.5 rounded-lg cursor-pointer disabled:cursor-not-allowed"
-                                        style={{
-                                          background: "transparent",
-                                          color: "var(--text-muted)",
-                                          border: "1px solid var(--border-card)",
-                                        }}
-                                      >
-                                        ยกเลิก
-                                      </button>
-                                    </div>
-                                  </div>
-                                </td>
-                              </tr>
-                            )}
-                          </Fragment>
+                          </tr>
                         );
                       })}
                     </tbody>
