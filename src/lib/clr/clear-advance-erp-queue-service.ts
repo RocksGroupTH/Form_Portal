@@ -57,7 +57,17 @@ export async function listErpQueueRows(): Promise<ClrErpQueueRow[]> {
              ORDER BY log.Id DESC) AS CancelNote
     FROM [dbo].[AccRequest] req
     LEFT JOIN [dbo].[AccClearAdvance] c ON c.RequestId = req.Id
-    WHERE req.FormCode = @form AND req.Status IN ('Approved', 'Cancelled')
+    WHERE req.FormCode = @form
+      AND (req.Status = 'Approved'
+           /* Cancelled AFTER approval only. Status alone also matches a requester
+              self-cancel, which happens before the manager has even seen it — those
+              never reached this queue, and listing them here reads as accounting
+              having killed work it never received. The activity log is what tells
+              the two apart. */
+           OR (req.Status = 'Cancelled'
+               AND EXISTS (SELECT 1 FROM [dbo].[AccActivityLog] log
+                            WHERE log.RequestId = req.Id
+                              AND log.Action = 'cancelled_after_approval')))
     ORDER BY req.Id DESC
   `);
 
