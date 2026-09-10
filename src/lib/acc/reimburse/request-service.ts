@@ -285,6 +285,38 @@ async function loadApprovals(pool: AccPool, requestId: number): Promise<Reimburs
 /* ─────────────────────────── reads ─────────────────────────── */
 
 /** Full request: header + items (ordered by SortOrder) + acked rule ids + attachments + approvals. */
+/**
+ * The two emails an AP-4 claim stores about people, and nothing else.
+ *
+ * `GET .../[id]/people` needs exactly these to ask the directory for a photo.
+ * `getReimburseRequest` would answer them too, along with every expense line,
+ * every document line under it and every attachment — four query sets the
+ * caller has already loaded to render the panel this decorates.
+ *
+ * Pinned to AP-4: `AccRequest` is every form's header. The route authorizes
+ * before it calls this, and the pin means a mismatch here reads as "no such
+ * claim" rather than quietly answering about another form's.
+ */
+export async function getReimburseContactEmails(
+  id: number,
+): Promise<{ requesterEmail: string | null; managerEmail: string | null } | null> {
+  const pool = await getAccPool();
+  const r = await pool
+    .request()
+    .input("id", sql.Int, id)
+    .input("form", sql.NVarChar, AP4_FORM_CODE)
+    .query(
+      `SELECT RequesterEmail, ManagerEmail FROM [dbo].[AccRequest]
+       WHERE Id = @id AND FormCode = @form`,
+    );
+  const row = r.recordset[0] as { RequesterEmail: string | null; ManagerEmail: string | null } | undefined;
+  if (!row) return null;
+  return {
+    requesterEmail: row.RequesterEmail ?? null,
+    managerEmail: row.ManagerEmail ?? null,
+  };
+}
+
 export async function getReimburseRequest(id: number): Promise<ReimburseDetail | null> {
   const pool = await getAccPool();
   const headRes = await pool
