@@ -23,6 +23,10 @@ import { CLR_STEP_CODES, CLR_STEP_LABEL_TH, type ClrStepCode } from "@/features/
 import type { AccFileMeta } from "@/features/accounting/types";
 import type { ClearAdvanceItem, ClearAdvanceRequest, ClrApproval } from "@/features/clear-advance/types";
 import { linesMissingTaxVendor } from "@/lib/clr/tax-vendor-core";
+import { glMissingMessage, linesMissingGl } from "@/lib/clr/clear-advance-line-validation";
+import { useGlOptionsByBranch } from "@/features/clear-advance/hooks/useGlOptionsByBranch";
+import { GlCell } from "@/features/clear-advance/components/GlCell";
+import { isRocksPcBrand } from "@/features/clear-advance/constants";
 import { hrPhotoUrl } from "@/lib/hr/photo-url";
 import { pndBlockReason } from "@/lib/clr/wht-pnd-core";
 import { SellerVendorCard } from "@/features/clear-advance/components/SellerVendorCard";
@@ -105,6 +109,17 @@ function ApprovalStatusBadge({ status }: { status: string }) {
 
 interface Props {
   request: ClearAdvanceRequest;
+  /**
+   * Whether this viewer is accounting, and so may see and set the G/L account.
+   *
+   * The requester used to choose it; they no longer see the column at all, and
+   * neither does the manager. This component cannot work that out for itself —
+   * it knows which step the request is at, not who is looking — so the server
+   * decides it in the detail GET and hands it down. Defaults to false so a
+   * mount that does not know (MyRequestsPanel, which is the requester's own
+   * list) hides the column, which is the right answer there.
+   */
+  canSeeGlAccount?: boolean;
   onChanged?: () => void;
 }
 
@@ -129,7 +144,7 @@ type VatCheck =
   | { state: "unregistered"; checkedAt: string | null }
   | { state: "unknown" };
 
-export function ClearAdvanceDetail({ request, onChanged }: Props) {
+export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged }: Props) {
   const clear = request.clear;
   const items = clear?.items ?? [];
   const whtItems = clear?.whtItems ?? [];
@@ -262,7 +277,18 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
   const pndProblem = isAccountStep
     ? pndBlockReason(editItems, editWht)
     : pndBlockReason(items, whtItems);
-  const accountBlocked = missingVendorLines.length > 0 || !!pndProblem;
+  /* The account list for every branch the lines use. Fetched here rather than
+     on the requester's form, which no longer shows the column. */
+  const glByBranch = useGlOptionsByBranch(editItems.map((it) => it.branchCode));
+  /* A non-home brand books every line to FORCE_GL_NON_ROCKS_PC at save time, so
+     the cell shows the forced account rather than a picker. */
+  const glForced = !!request.brandCode && !isRocksPcBrand(request.brandCode);
+
+  /* The G/L account, on the same terms: accounting chooses it now, and this is
+     the last step that can edit a line. `glMissingMessage` is the sentence the
+     server throws, so the screen and the refusal cannot drift apart. */
+  const missingGlLines = linesMissingGl(isAccountStep ? editItems : items);
+  const accountBlocked = missingVendorLines.length > 0 || !!pndProblem || missingGlLines.length > 0;
 
   /* Seed the editor from the request at the account step. The snapshot taken
      here is what "unchanged" means — autosave compares against it, so seeding
@@ -335,6 +361,7 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
         `กรุณาเลือก Vendor ผู้ขายให้ครบก่อนอนุมัติ — รายการที่ ${missingVendorLines.join(", ")}`,
       );
     }
+    if (missingGlLines.length > 0) return toast.error(glMissingMessage(missingGlLines));
     if (pndProblem) return toast.error(pndProblem);
     // An edit still sitting in the debounce would be approved over: the server
     // checks the stored rows, which would not yet hold the vendor on screen.
@@ -508,6 +535,13 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                 เลือกในการ์ด “ผู้ขาย” ด้านล่าง (ค้นด้วยเลขผู้เสียภาษีหรือชื่อผู้ขาย) แล้วบันทึก จึงจะอนุมัติได้
               </p>
             )}
+            {missingGlLines.length > 0 && (
+              <p className="text-[12px] m-0 px-3 py-2 rounded-lg"
+                style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
+                รายการที่ {missingGlLines.join(", ")} ยังไม่ได้เลือก “รายการ” (หมวดบัญชี) —
+                เลือกในตารางด้านบน แล้วบันทึก จึงจะอนุมัติได้
+              </p>
+            )}
             {pndProblem && (
               <p className="text-[12px] m-0 px-3 py-2 rounded-lg"
                 style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
@@ -558,6 +592,9 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>#</th>
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>วันที่</th>
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>รายละเอียด</th>
+                          {canSeeGlAccount && (
+                            <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>รายการ</th>
+                          )}
                           {/* From the tax invoice, and accounting holds it — so
                               they can type what the OCR could not read. These
                               three become the VAT line's Tax Invoice No., VAT
@@ -601,6 +638,24 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                                 }}
                               />
                             </td>
+                            {canSeeGlAccount && (
+                              <td className="px-2 py-1.5" style={{ borderBottom: "1px solid var(--border-light)", minWidth: 200 }}>
+                                <GlCell
+                                  line={it}
+                                  optionsByBranch={glByBranch}
+                                  glForced={glForced}
+                                  onPick={(o) => {
+                                    const next = [...editItems];
+                                    next[i] = {
+                                      ...next[i],
+                                      glAccountNo: o?.glAccountNo ?? null,
+                                      glAccountName: o?.nameTh ?? null,
+                                    };
+                                    setEditItems(next);
+                                  }}
+                                />
+                              </td>
+                            )}
                             <td className="px-2 py-1.5" style={{ borderBottom: "1px solid var(--border-light)" }}>
                               <input
                                 className="text-[12px] px-2 py-1 rounded outline-none w-32"
@@ -918,7 +973,7 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
           {items.length === 0 ? (
             <p className="text-[12px] m-0" style={{ color: "var(--text-muted)" }}>— ไม่มีรายการ</p>
           ) : (
-            <ExpenseTable items={items} advanceAmount={clear?.advanceAmount ?? 0} />
+            <ExpenseTable items={items} advanceAmount={clear?.advanceAmount ?? 0} showGl={canSeeGlAccount} />
           )}
         </div>
 
@@ -1101,7 +1156,20 @@ function TdD({ children, right }: { children: React.ReactNode; right?: boolean }
   );
 }
 
-function ExpenseTable({ items, advanceAmount }: { items: ClearAdvanceItem[]; advanceAmount: number }) {
+/**
+ * The read-only expense grid.
+ *
+ * `showGl` is off for the requester and the manager: the G/L account is
+ * accounting's, chosen at the ACCOUNT step, and showing it to the person who
+ * did not choose it invites a question they cannot act on. The description
+ * beside it is the requester's own words and stays either way — the column
+ * simply loses its accounting half rather than disappearing.
+ */
+function ExpenseTable({
+  items,
+  advanceAmount,
+  showGl,
+}: { items: ClearAdvanceItem[]; advanceAmount: number; showGl: boolean }) {
   let cumNet = 0;
   const totals = { before: 0, vat: 0, total: 0, wht: 0, net: 0 };
   const rows = items.map((it, i) => {
@@ -1120,7 +1188,7 @@ function ExpenseTable({ items, advanceAmount }: { items: ClearAdvanceItem[]; adv
       <table className="w-full border-collapse" style={{ minWidth: 980 }}>
         <thead>
           <tr className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-            <ThD>#</ThD><ThD>วันที่</ThD><ThD>เลขที่เอกสาร</ThD><ThD>รายการ</ThD>
+            <ThD>#</ThD><ThD>วันที่</ThD><ThD>เลขที่เอกสาร</ThD><ThD>{showGl ? "รายการ" : "รายละเอียด"}</ThD>
             <ThD>สาขา</ThD><ThD right>ก่อน VAT</ThD><ThD right>VAT</ThD><ThD right>รวม</ThD>
             <ThD right>WHT</ThD><ThD right>สุทธิ</ThD><ThD right>คงเหลือ</ThD>
           </tr>
@@ -1132,11 +1200,17 @@ function ExpenseTable({ items, advanceAmount }: { items: ClearAdvanceItem[]; adv
               <TdD>{fmtDateOnly(it.expenseDate)}</TdD>
               <TdD>{it.docNo ?? "—"}</TdD>
               <TdD>
-                <span className="block">{it.glAccountNo ?? "—"}</span>
-                {(it.glAccountName || it.description) && (
-                  <span className="block text-[11px]" style={{ color: "var(--text-muted)" }}>
-                    {[it.glAccountName, it.description].filter(Boolean).join(" · ")}
-                  </span>
+                {showGl ? (
+                  <>
+                    <span className="block">{it.glAccountNo ?? "—"}</span>
+                    {(it.glAccountName || it.description) && (
+                      <span className="block text-[11px]" style={{ color: "var(--text-muted)" }}>
+                        {[it.glAccountName, it.description].filter(Boolean).join(" · ")}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span className="block">{it.description || "—"}</span>
                 )}
               </TdD>
               <TdD>{it.branchCode ?? "—"}</TdD>

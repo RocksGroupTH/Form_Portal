@@ -1,7 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  glMissingMessage,
   isFilledLine,
+  linesMissingGl,
   validateLineGlBranch,
   validateLineMoney,
 } from "./clear-advance-line-validation";
@@ -155,5 +157,52 @@ test("a line counts as filled on exactly what the writer keeps", () => {
   assert.equal(
     isFilledLine(line({ glAccountNo: null, description: "   ", amountBeforeVat: null })),
     false,
+  );
+});
+
+/* ── the G/L account, which accounting owes before the account step ends ── */
+
+test("a posting line with no account is reported by row number", () => {
+  assert.deepEqual(linesMissingGl([line({ amountBeforeVat: 100, glAccountNo: null })]), [1]);
+  assert.deepEqual(linesMissingGl([line({ amountBeforeVat: 100, glAccountNo: "   " })]), [1]);
+});
+
+test("a posting line with an account is fine", () => {
+  assert.deepEqual(linesMissingGl([line({ amountBeforeVat: 100, glAccountNo: "610101001" })]), []);
+});
+
+test("a line that posts nothing is not asked for an account", () => {
+  // toJournalItems drops amountBeforeVat === 0, so demanding one here would
+  // block the step over a row that can never reach the journal.
+  assert.deepEqual(linesMissingGl([line({ amountBeforeVat: 0, glAccountNo: null })]), []);
+  assert.deepEqual(linesMissingGl([line({ amountBeforeVat: null, glAccountNo: null })]), []);
+});
+
+test("a negative posting line still needs an account", () => {
+  assert.deepEqual(linesMissingGl([line({ amountBeforeVat: -100, glAccountNo: null })]), [1]);
+});
+
+test("row numbers are 1-based and skip the rows that are fine", () => {
+  assert.deepEqual(
+    linesMissingGl([
+      line({ amountBeforeVat: 100, glAccountNo: "610101001" }),
+      line({ amountBeforeVat: 0, glAccountNo: null }),
+      line({ amountBeforeVat: 100, glAccountNo: null }),
+      line({ amountBeforeVat: 100, glAccountNo: null }),
+    ]),
+    [3, 4],
+  );
+});
+
+test("no lines is not a violation", () => {
+  assert.deepEqual(linesMissingGl(null), []);
+  assert.deepEqual(linesMissingGl(undefined), []);
+  assert.deepEqual(linesMissingGl([]), []);
+});
+
+test("the account officer is told which rows, not just that something is wrong", () => {
+  assert.equal(
+    glMissingMessage([3, 4]),
+    "กรุณาเลือกรายการ (หมวดบัญชี) ให้ครบก่อนอนุมัติ — รายการที่ 3, 4 ยังไม่ได้เลือก",
   );
 });
