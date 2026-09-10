@@ -15,6 +15,12 @@ import { attachmentKind } from "@/components/ui/AttachmentViewer";
  * belong to other forms' work — but they are the reason this lives here rather
  * than beside AP-4.
  *
+ * `cursor-pointer`, not `cursor-zoom-in`: AP-17's and AP-3's attachment tiles
+ * both use the hand, and a magnifier on this one alone makes the same gesture
+ * read as a different action on three screens that are meant to be one. The
+ * zoom cursor is kept where it is actually about magnifying a picture in place
+ * — `IdCardUpload` — rather than about opening a viewer.
+ *
  * `attachmentKind(fileName, contentType)` decides the tile, name first and
  * declared type second: SharePoint answers `application/octet-stream` often
  * enough that trusting the header alone mislabels an ordinary `.pdf`.
@@ -47,7 +53,7 @@ export function FileThumb({
           onClick={onView}
           title={fileName}
           aria-label={`ดู ${fileName}`}
-          className="w-full h-full rounded-xl overflow-hidden cursor-zoom-in border p-0 flex flex-col items-center justify-center gap-1"
+          className="w-full h-full rounded-xl overflow-hidden cursor-pointer border p-0 flex flex-col items-center justify-center gap-1"
           style={{ borderColor: "var(--border-card)", background: "var(--bg-card-alt)" }}
         >
           {kind === "image" ? (
