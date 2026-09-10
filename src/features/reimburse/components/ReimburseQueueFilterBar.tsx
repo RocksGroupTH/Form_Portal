@@ -54,7 +54,7 @@ export function ReimburseQueueFilterBar({
       className="rounded-xl p-3 mb-4"
       style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)" }}
     >
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-x-3 gap-y-2.5 grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 items-start">
         <Field label="เลขที่">
           <input
             value={filters.requestNo}
@@ -67,14 +67,14 @@ export function ReimburseQueueFilterBar({
 
         {/* Two inputs under one label: a range is one question, and labelling
             them separately made the pair read as two unrelated filters. */}
-        <Field label="วันที่ส่ง">
-          <div className="flex items-center gap-1.5">
+        <Field label="วันที่ส่ง" className="sm:col-span-2">
+          <div className="flex items-center gap-1.5 min-w-0">
             <input
               type="date"
               value={filters.submittedFrom}
               onChange={(e) => set("submittedFrom", e.target.value)}
               aria-label="วันที่ส่ง ตั้งแต่"
-              className={filterInputCls}
+              className={`${filterInputCls} min-w-0`}
               style={filterInputStyle}
             />
             <span className="text-[12px] shrink-0" style={{ color: "var(--text-faint)" }}>
@@ -85,7 +85,7 @@ export function ReimburseQueueFilterBar({
               value={filters.submittedTo}
               onChange={(e) => set("submittedTo", e.target.value)}
               aria-label="วันที่ส่ง ถึง"
-              className={filterInputCls}
+              className={`${filterInputCls} min-w-0`}
               style={filterInputStyle}
             />
           </div>
@@ -134,9 +134,17 @@ export function ReimburseQueueFilterBar({
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({
+  label,
+  children,
+  className = "",
+}: {
+  label: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
   return (
-    <div className="min-w-0 flex flex-col gap-1">
+    <div className={`min-w-0 flex flex-col gap-1 ${className}`}>
       <label className="text-[11px] font-semibold" style={{ color: "var(--text-muted)" }}>
         {label}
       </label>

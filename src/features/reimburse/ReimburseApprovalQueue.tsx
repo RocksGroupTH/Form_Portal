@@ -232,64 +232,6 @@ function QueueCheckbox({
   );
 }
 
-/**
- * One row's expense lines, expanded in place, each with the G/L account
- * picker on it — surfacing machinery that already existed and was unreachable
- * from any screen: the document reader already proposes an account per line
- * (`receipt-item/route.ts`), and the picker component already renders one
- * (`ExpenseAccountPicker.tsx`, historically unused — see its own header for
- * why a value that is not in the list must still show the raw text rather
- * than blank). This component is the first place either is reachable from a
- * screen.
- *
- * **What the save route does NOT do is check the account against Business
- * Central.** `setReimburseItemAccounts` writes the trimmed string; the only
- * gate is `parseItemAccountEdits`' `CATEGORY_MAX_LEN` bound
- * (`item-account-edits.ts`), which is the `NVARCHAR(50)` column width and
- * nothing more. Neither this route nor `persistReimburseItems` compares
- * `AccReimburseItem.Category` to `ErpAccounts`. That check belongs to the
- * stage that posts (spec §5.2), where a bad account is a rejected journal
- * rather than a typo in a column — and it has to land on BOTH write paths,
- * not just this one. **This paragraph replaces a sentence that claimed the
- * validation already existed**; it did not, and a reader in stage 3 would
- * have concluded the work was done.
- *
- * Edits are local until "บันทึก" — nothing here autosaves a line while an
- * accountant is still choosing between two close matches, and only the lines
- * actually changed are sent, so a save cannot accidentally re-stamp every
- * other row's untouched value.
- */
-/**
- * The columns, in the AP-4.1 sheet's own order — the same set the detail view
- * prints, so an approver checking one against the other reads them in the same
- * places.
- *
- * `รายการ` is **not** among them and its absence is deliberate: that column
- * **is** the G/L account (`AccReimburseItem.Category` — see
- * `ExpenseAccountPicker`), so it appears once, at the end, as the editable
- * `G/L` cell. A second column repeating it would be two controls for one fact.
- */
-const LINE_COLUMNS: readonly { label: string; right?: boolean; width?: string }[] = [
-  { label: "ลำดับที่", width: "58px" },
-  { label: "วันที่", width: "92px" },
-  { label: "เลขที่เอกสาร", width: "150px" },
-  { label: "รายละเอียด", width: "220px" },
-  { label: "สาขา", width: "110px" },
-  { label: "เลขผู้เสียภาษี", width: "130px" },
-  { label: "ผู้ขาย", width: "180px" },
-  { label: "ที่อยู่", width: "240px" },
-  { label: "ก่อน VAT", right: true, width: "100px" },
-  { label: "VAT", right: true, width: "90px" },
-  { label: "ค่าใช้จ่ายรวม", right: true, width: "110px" },
-  { label: "หัก ณ ที่จ่าย", right: true, width: "100px" },
-  { label: "จ่ายสุทธิ", right: true, width: "110px" },
-  { label: "G/L", width: "210px" },
-  { label: "Vendor", width: "210px" },
-];
-
-const HEAD_CELL = "text-[11px] font-semibold uppercase tracking-wide py-2 px-2 whitespace-nowrap";
-const BODY_CELL = "text-[12.5px] py-2 px-2 align-middle";
-
 
 /**
  * The queue's columns, in the order the user specified.
@@ -327,7 +269,7 @@ const FLAT_COLUMNS: readonly {
   { label: "ค่าใช้จ่ายรวม", right: true, width: "105px" },
   { label: "หัก ณ ที่จ่าย", right: true, width: "95px" },
   { label: "จ่ายสุทธิ", right: true, width: "105px" },
-  { label: "G/L", width: "210px" },
+  { label: "G/L Account", width: "210px" },
   { label: "Vendor", width: "210px" },
   { label: "วันจ่าย", width: "160px", claimLevel: true },
 ];
@@ -483,9 +425,6 @@ export function ReimburseApprovalQueue() {
   const [bulkDate, setBulkDate] = useState("");
   const [dateTouched, setDateTouched] = useState(false);
   const [batchRunning, setBatchRunning] = useState(false);
-  const [returnRowId, setReturnRowId] = useState<number | null>(null);
-  const [returnComment, setReturnComment] = useState("");
-  const [returnBusy, setReturnBusy] = useState(false);
   // Which rows show their expense lines. A `Set` rather than one id: nothing
   // stops an accountant comparing two claims' line items side by side.
   /**
@@ -871,49 +810,6 @@ export function ReimburseApprovalQueue() {
     void mutate();
   }
 
-  function openReturn(id: number) {
-    setReturnRowId(id);
-    setReturnComment("");
-  }
-  function closeReturn() {
-    setReturnRowId(null);
-    setReturnComment("");
-  }
-
-  /** `returnCommentOrError` on the server refuses a blank comment too; this is the courtesy, not the control. */
-  async function submitReturn(id: number) {
-    const comment = returnComment.trim();
-    if (!comment) {
-      toast.error("กรุณาระบุสิ่งที่ต้องแก้ไข");
-      return;
-    }
-    setReturnBusy(true);
-    try {
-      const res = await fetch(`/api/request/reimburse/requests/${id}/return`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ step: "ACCOUNT", comment }),
-      });
-      const json = await res.json().catch(() => null);
-      if (json?.ok) {
-        toast.success("ส่งกลับให้ผู้ขอแก้ไขแล้ว");
-      } else if (res.status === 409) {
-        toast.error("รายการนี้มีการเปลี่ยนแปลงจากผู้อื่นแล้ว — โหลดรายการใหม่แล้ว");
-      } else {
-        toast.error(json?.error ?? "ส่งกลับไม่สำเร็จ");
-      }
-    } catch {
-      toast.error("เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง");
-    } finally {
-      setReturnBusy(false);
-      closeReturn();
-      // Same rule as the approve loop: success, conflict or plain failure all
-      // refetch. A row this action failed to move is exactly the row whose
-      // on-screen state is most likely stale.
-      void mutate();
-    }
-  }
-
   const forbidden = error instanceof ApiError && error.status === 403;
 
   return (
@@ -996,6 +892,14 @@ export function ReimburseApprovalQueue() {
                 setSelectedIds(new Set());
               }}
               counts={ifaceCounts}
+              // Only the groups this approver actually covers. `scope` is their
+              // ticked AccReimburseApproverBrand set; `null` means no active
+              // roster row at all, and passing null through shows every tab,
+              // which is the pre-scope behaviour and correct for an admin
+              // looking at a queue they cannot act on. A tab for a group whose
+              // claims are all filtered out by the row-level scope could only
+              // ever read 0 and invite a click that shows nothing.
+              visibleCodes={scope && scope.length > 0 ? scope : null}
               showUnassigned={false}
               className="mb-4"
             />
@@ -1091,7 +995,6 @@ export function ReimburseApprovalQueue() {
                             {c.label}
                           </th>
                         ))}
-                        <th className="w-[110px]" aria-label="การดำเนินการ" />
                       </tr>
                     </thead>
                     <tbody>
@@ -1318,67 +1221,6 @@ export function ReimburseApprovalQueue() {
                                   </div>
                                 </td>
 
-                                <td rowSpan={span} className="py-3 px-2 align-top">
-                                  {returnRowId === d.claim.id ? (
-                                    <div className="flex flex-col gap-1.5 w-[240px]">
-                                      <textarea
-                                        value={returnComment}
-                                        onChange={(e) => setReturnComment(e.target.value)}
-                                        rows={2}
-                                        placeholder="ระบุสิ่งที่ต้องแก้ไข"
-                                        autoFocus
-                                        className="w-full text-[12px] px-2 py-1.5 rounded-lg resize-y"
-                                        style={{
-                                          background: "var(--bg-input)",
-                                          color: "var(--text-primary)",
-                                          border: "1px solid var(--border-card)",
-                                        }}
-                                      />
-                                      <div className="flex gap-1.5">
-                                        <button
-                                          type="button"
-                                          disabled={returnBusy || returnComment.trim() === ""}
-                                          onClick={() => void submitReturn(d.claim.id)}
-                                          className="inline-flex items-center gap-1 text-[11.5px] font-semibold px-2 py-1 rounded-lg cursor-pointer disabled:cursor-not-allowed disabled:opacity-55"
-                                          style={{
-                                            background: "var(--bg-info-yellow)",
-                                            color: "var(--text-info-yellow)",
-                                            border: "1px solid var(--border-info-yellow)",
-                                          }}
-                                        >
-                                          {returnBusy ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />}
-                                          ยืนยัน
-                                        </button>
-                                        <button
-                                          type="button"
-                                          disabled={returnBusy}
-                                          onClick={closeReturn}
-                                          className="text-[11.5px] font-medium px-2 py-1 rounded-lg cursor-pointer disabled:cursor-not-allowed"
-                                          style={{
-                                            background: "transparent",
-                                            color: "var(--text-muted)",
-                                            border: "1px solid var(--border-card)",
-                                          }}
-                                        >
-                                          ยกเลิก
-                                        </button>
-                                      </div>
-                                    </div>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      onClick={() => openReturn(d.claim.id)}
-                                      className="inline-flex items-center gap-1 text-[11.5px] font-medium px-2 py-1 rounded-lg cursor-pointer whitespace-nowrap"
-                                      style={{
-                                        background: "var(--bg-info-yellow)",
-                                        color: "var(--text-info-yellow)",
-                                        border: "1px solid var(--border-info-yellow)",
-                                      }}
-                                    >
-                                      <RotateCcw size={12} /> ส่งกลับ
-                                    </button>
-                                  )}
-                                </td>
                               </>
                             )}
                           </tr>
