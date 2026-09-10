@@ -32,6 +32,7 @@ import { RdCell } from "@/features/clear-advance/components/RdCell";
 import { useGlOptionsByBranch } from "@/features/clear-advance/hooks/useGlOptionsByBranch";
 import { GlCell } from "@/features/clear-advance/components/GlCell";
 import { PaymentDatePicker } from "@/components/ui/PaymentDatePicker";
+import { advanceBcDocLabel } from "@/lib/clr/advance-bc-doc";
 import { isRocksPcBrand } from "@/features/clear-advance/constants";
 import { pndBlockReason } from "@/lib/clr/wht-pnd-core";
 
@@ -1014,8 +1015,11 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
 
       {/* Linked advance + expense ledger */}
       <Section title="เงินทดรองจ่ายที่เคลียร์" icon={<Wallet size={15} />}>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <AmountTile label="เลขที่ AP-2" value={clear?.advanceRequestNo ?? "—"} plain />
+          {/* Beside the AP-2 number because it is the same advance, named the
+              way BC names it — the number an accountant reconciles against. */}
+          <AmountTile label="Doc No (BC)" {...advanceBcDocLabel(clear?.advanceErpDocumentNo, clear?.advanceErpStatus)} plain />
           <AmountTile label="วงเงินที่ได้รับ" value={`฿${money(clear?.advanceAmount)}`} />
           <AmountTile label="ใช้จ่ายจริง (สุทธิ)" value={`฿${money(clear?.actualTotal)}`} />
         </div>
@@ -1331,12 +1335,17 @@ function FileThumbs({ files, onView }: { files: AccFileMeta[]; onView: (f: AccFi
   );
 }
 
-function AmountTile({ label, value, plain }: { label: string; value: string; plain?: boolean }) {
+/** `muted` is for a tile whose value is the reason there is no value — it
+ *  should read as a note, not as a figure. */
+function AmountTile({ label, value, text, plain, muted }: {
+  label: string; value?: string; text?: string; plain?: boolean; muted?: boolean;
+}) {
+  const shown = value ?? text ?? "—";
   return (
     <div className="rounded-xl px-3.5 py-3 min-w-0" style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}>
       <p className="text-[10px] font-semibold uppercase tracking-wide m-0 mb-1.5" style={{ color: "var(--text-muted)" }}>{label}</p>
-      <p className={`m-0 break-words ${plain ? "text-[13px] font-semibold" : "text-[15px] font-bold tabular-nums"}`}
-        style={{ color: "var(--text-heading)" }}>{value}</p>
+      <p className={`m-0 break-words ${muted ? "text-[12px]" : plain ? "text-[13px] font-semibold" : "text-[15px] font-bold tabular-nums"}`}
+        style={{ color: muted ? "var(--text-muted)" : "var(--text-heading)" }}>{shown}</p>
     </div>
   );
 }

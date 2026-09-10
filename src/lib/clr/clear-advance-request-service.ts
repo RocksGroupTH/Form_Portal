@@ -111,6 +111,8 @@ function mapClearRow(r: Record<string, unknown>): ClearAdvanceDetail {
     refundTransferDate: r.RefundTransferDate ? toYmd(r.RefundTransferDate as Date) : null,
     refundTransferAmount: num(r.RefundTransferAmount),
     pvDocNo: (r.PvDocNo as string) ?? null,
+    advanceErpDocumentNo: (r.AdvanceErpDocumentNo as string) ?? null,
+    advanceErpStatus: (r.AdvanceErpStatus as string) ?? null,
     paymentDate: r.PaymentDate ? toYmd(r.PaymentDate as Date) : null,
     items: [],
     whtItems: [],
@@ -165,7 +167,16 @@ async function loadClear(
   requestId: number,
 ): Promise<ClearAdvanceDetail | null> {
   const head = await pool.request().input("rid", sql.Int, requestId)
-    .query(`SELECT TOP 1 * FROM [dbo].[AccClearAdvance] WHERE RequestId = @rid`);
+    .query(`
+      SELECT TOP 1 c.*,
+             -- The BC document the advance itself created, and how that send
+             -- went. The account step is deciding whether this clearing can go
+             -- to BC, and the state of the advance under it is part of that.
+             adv.ErpDocumentNo AS AdvanceErpDocumentNo,
+             adv.ErpInterfaceStatus AS AdvanceErpStatus
+      FROM [dbo].[AccClearAdvance] c
+      LEFT JOIN [dbo].[AccRequest] adv ON adv.Id = c.AdvanceRequestId
+      WHERE c.RequestId = @rid`);
   if (head.recordset.length === 0) return null;
   const clear = mapClearRow(head.recordset[0] as Record<string, unknown>);
   const clearId = clear.id!;
