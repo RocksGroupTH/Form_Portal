@@ -10,6 +10,7 @@ import { REQUEST_CARDS } from "@/lib/constants";
 import { travelExpenseEntryHref } from "@/features/accounting/lib/navigation";
 import { travelBookingEntryHref } from "@/features/travel-booking/lib/navigation";
 import { useErpSandboxDevHost } from "@/features/accounting/hooks/useErpSandboxDevHost";
+import { useReimburseAccess } from "@/features/reimburse/hooks/useReimburseAccess";
 import { useFormEnvironments } from "@/lib/hooks/useFormEnvironments";
 import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
 import { withRequestReturn } from "@/lib/request-hub-nav";
@@ -176,6 +177,21 @@ export default function RequestHubPage() {
   const { brand } = useBrand();
   const currentBrand = getBrandById(brand);
   const isDevHost = useErpSandboxDevHost();
+  // Gates the merged "reimburse-admin" card alone — see its own comment in
+  // constants.ts for why this is the one card in REQUEST_CARDS whose
+  // visibility is not a static flag. The card is AP-4's single door onto its
+  // hub (settings tabs, the accounting queue, its Interface ERP tab), so
+  // either grant is a reason to show it — see the filter arm below.
+  //
+  // Known gap, left open: both flags default to `false` on a FAILED
+  // `/access` fetch, the same as while it is loading (see the hook's own
+  // docblock) — and unlike AP-17's hub, this page renders no error banner
+  // telling "you hold nothing" apart from "the check itself failed". An
+  // `/access` outage therefore silently removes this card for everyone,
+  // admins included. Not fixed here — recorded so the next reader finds a
+  // decision, not an omission.
+  const { canSettings: reimburseCanSettings, approvalQueue: reimburseApprovalQueueGranted } =
+    useReimburseAccess();
 
   /**
    * `?group=Settings` narrows the hub to one group's cards. Settings →
@@ -219,6 +235,17 @@ export default function RequestHubPage() {
       // Without this the pilot could not be worked at all from the real host,
       // which is the whole point of running UAT beside Production.
       (!item.devHostOnly || isDevHost || isUatViewer) &&
+      // The one card gated on a per-viewer authorization flag rather than a
+      // static one — see its own comment in constants.ts. `manage: true`
+      // still exempts it from the availability arm below; this is a second,
+      // independent condition, not a replacement for that one. The condition
+      // is a UNION, not either flag alone: `reimburseCanSettings` alone would
+      // hide the hub from someone holding only the queue's `approvalQueue`
+      // grant, and `reimburseApprovalQueueGranted` alone would hide the
+      // settings door from someone holding only a `rules` or `brands` tick.
+      // Either grant is a reason to reach the hub — what each destination on
+      // it then allows is re-decided there, server-side.
+      (item.id !== "reimburse-admin" || reimburseCanSettings || reimburseApprovalQueueGranted) &&
       // `available` answers "may I file a new one", not "may I work what
       // already exists" — pickEnvironment draws that same line for a record's
       // own id. A `manage: true` card is the approval queue / report /

@@ -9,6 +9,7 @@ import {
   addMonths,
   buildMonthCells,
   formatThaiYmd,
+  formatThaiYmdShort,
   parseYmd,
   displayYear,
   toYmd,
@@ -48,6 +49,12 @@ export interface SingleDatePickerProps {
   disabled?: boolean;
   /** Announced to screen readers; the trigger is a button, not an input. */
   ariaLabel?: string;
+  /**
+   * How the chosen date spells its month on the trigger. `"full"` is the
+   * default because it is what every other date in this app reads like;
+   * `"short"` is opt-in, for a control too narrow to hold "สิงหาคม".
+   */
+  monthFormat?: "full" | "short";
 }
 
 export function SingleDatePicker({
@@ -60,6 +67,7 @@ export function SingleDatePicker({
   hasError = false,
   disabled = false,
   ariaLabel,
+  monthFormat = "full",
 }: SingleDatePickerProps) {
   const [open, setOpen] = useState(false);
   const [panelRect, setPanelRect] = useState<{ top: number; left: number; width: number } | null>(null);
@@ -153,7 +161,18 @@ export function SingleDatePicker({
     setOpen(false);
   }
 
-  const display = formatThaiYmd(value);
+  // Spelled out unless the caller asks otherwise, so a form adopting this
+  // control reads like the rest of the app by default. AP-4's expense grid is
+  // the one caller that asks: its column is 148px and "13 สิงหาคม 2026" was
+  // clipped by the `truncate` below to "13 สิงหาคม 20…" — which reads as a
+  // broken year, not as a narrow box. Making that the default would hand the
+  // abbreviation to AP-1 and AP-17 the moment either adopted the control, with
+  // no code change on their side and nothing on screen to notice.
+  //
+  // The panel's own heading always spells the month out (`TH_MONTHS` at the
+  // month header), whatever this is set to: it has the room, and a month being
+  // chosen deserves its full name.
+  const display = monthFormat === "short" ? formatThaiYmdShort(value) : formatThaiYmd(value);
 
   const panel = open && panelRect ? (
     <div

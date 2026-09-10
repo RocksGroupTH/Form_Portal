@@ -1,7 +1,8 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { continuationFlags, type ChainTrip } from "@/lib/acc/travel-booking/continuation-chain";
 import { computePerDiem } from "@/lib/acc/travel-booking/perdiem";
-import { getAllowanceLog } from "@/lib/acc/travel-booking/allowance-log";
+import { getPerDiemEmployeeLog } from "@/lib/acc/travel-booking/allowance-log";
+import { uatByRecordId } from "@/lib/acc/travel-booking/perdiem-uat-gate";
 import { perDiemLogFor, type PerDiemCountryRate } from "@/lib/acc/travel-booking/perdiem-country";
 import { listPerDiemCountryRates } from "@/lib/acc/travel-booking/perdiem-source";
 import { perDiemWritable } from "@/lib/acc/travel-booking/perdiem-window";
@@ -50,9 +51,14 @@ export async function recomputeGroupPerDiem(
     // would silently revert to a domestic rate and nothing on any screen would
     // contradict it. Deleting this column from the SELECT fails no typecheck:
     // the value simply arrives undefined.
+    //
+    // r.StaffId is load-bearing for exactly the same reason and in exactly the
+    // same way. It is how a UAT tester's own per-diem rate is found; without it
+    // the lookup finds nothing and every UAT trip in the group is re-priced at
+    // the tester's REAL HR allowance, here, inside the same transaction.
     .query(`SELECT t.RequestId, t.SortOrder, t.DepartDate, t.ReturnDate,
                    t.IsContinuation, t.PerDiemDays, t.PerDiemTotal,
-                   r.Status, r.EmployeeId, r.CountryCode
+                   r.Status, r.EmployeeId, r.CountryCode, r.StaffId
               FROM [dbo].[AccTravelBooking] t
               INNER JOIN [dbo].[AccRequest] r ON r.Id = t.RequestId
              WHERE t.GroupKey = @gk`);
@@ -77,11 +83,12 @@ export async function recomputeGroupPerDiem(
    * country other than TH**.
    *
    * That condition is not an optimisation. `perdiem-recompute.test.ts`'s
-   * preamble records that it runs with no database because no fixture row
-   * carries an `EmployeeId`, so `getAllowanceLog` — the only real network call
-   * this module can make — is never reached. Loading rates unconditionally would
-   * break that and force the test to grow a second stub for a list that, on
-   * every domestic group, cannot change the answer.
+   * preamble records that it runs with no database: no fixture row carries an
+   * `EmployeeId`, so `getAllowanceLog`'s HR read is never reached, and no
+   * fixture `RequestId` reaches 900000, so `getPerDiemEmployeeLog`'s UAT
+   * per-diem read (`uatByRecordId`) is never issued either. Loading rates
+   * unconditionally would break that and force the test to grow a second stub
+   * for a list that, on every domestic group, cannot change the answer.
    */
   let countryRates: PerDiemCountryRate[] | null = null;
   const loadRates = async (): Promise<PerDiemCountryRate[]> => {
@@ -116,12 +123,21 @@ export async function recomputeGroupPerDiem(
     let rateCountry: string | null = null;
 
     if (writable) {
-      // `getAllowanceLog` from `./allowance-log` — the same reader
-      // `submitTravelBookingGroup` uses at request-service.ts:1170. It takes its
-      // own pool rather than this transaction, which is fine: it only reads, and
-      // the allowance history is not something this transaction is changing.
       const employeeId = x.EmployeeId as string | null;
-      const log = employeeId ? await getAllowanceLog(employeeId) : [];
+      // `uatByRecordId`, NOT resolveFormEnvironment(). This runs inside somebody
+      // else's transaction and may have no request scope, where the resolver
+      // silently answers Production — which would re-price a UAT trip at real HR
+      // and write it to both PerDiemTotal and AccRequest.TotalAmount. The id is
+      // exact and needs no headers.
+      //
+      // It is also what keeps this module's unit test database-free: no fixture
+      // RequestId reaches 900000, so the UAT per-diem read is never issued, exactly
+      // as `loadRates`'s `country !== "TH"` gate keeps the rate list unread.
+      const log = await getPerDiemEmployeeLog(
+        employeeId,
+        (x.StaffId as number | null) ?? null,
+        uatByRecordId(requestId),
+      );
       // Same resolver the submit used, handed this trip's own country — so a
       // recompute cannot price a trip differently from the way it was first
       // priced. A trip with no foreign country never loads the rate list at all.

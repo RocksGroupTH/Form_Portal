@@ -1,7 +1,12 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { isBaht } from "@/lib/acc/currency";
 import { currencyWord, rateAsOfYmd } from "@/lib/acc/currency-display";
-import { getAllowanceLog } from "@/lib/acc/travel-booking/allowance-log";
+import {
+  getPerDiemEmployeeLogMap,
+  perDiemLogSubjectKey,
+  type PerDiemLogSubject,
+} from "@/lib/acc/travel-booking/allowance-log";
+import { uatByRecordId } from "@/lib/acc/travel-booking/perdiem-uat-gate";
 import { perDiemLogFor } from "@/lib/acc/travel-booking/perdiem-country";
 import {
   bookingBrandScope,
@@ -279,28 +284,42 @@ export async function queryTravelBookingReport(
   const res = await req.query(sqlText);
   const raw = res.recordset as Record<string, unknown>[];
 
-  // Batch-load one allowance-rate history per distinct employee (avoids N duplicate queries
-  // for requesters who submitted more than one AP-17 request in the filtered range).
-  const employeeIds = Array.from(
-    new Set(raw.map((x) => x.EmployeeId as string | null).filter((id): id is string => !!id)),
-  );
-  const logByEmployee = new Map<string, AllowanceLogEntry[]>();
-  // One list for the whole report, beside the per-employee batch. This column
+  // One subject per row, deduped by the map itself. The override is keyed on
+  // StaffId while the HR log is keyed on EmployeeId, and both columns are in
+  // BASE_CTE — so the two keys are carried together and the decision is made
+  // once, inside getPerDiemEmployeeLogMap, never per row here.
+  //
+  // `x.Id` is AccRequest.Id. There is NO RequestId column on these rows: writing
+  // `x.RequestId` compiles (raw is Record<string, unknown>), arrives undefined,
+  // and would silently drop the override from every row of every UAT report.
+  //
+  // Built through ONE helper, `subjectFor`, called again below when the same
+  // rows are re-walked to read the map back. Two separate literals here agreed
+  // by coincidence; a one-sided edit to either would mismatch the key the other
+  // builds, and `logBySubject.get(...)?.log ?? []` would silently answer an
+  // empty log — a report printing 0 in เรทเบี้ยเลี้ยง beside a non-zero stored
+  // total, with no error anywhere.
+  const subjectFor = (x: Record<string, unknown>): PerDiemLogSubject => ({
+    employeeId: (x.EmployeeId as string | null) ?? null,
+    staffId: (x.StaffId as number | null) ?? null,
+    uat: uatByRecordId(x.Id as number),
+  });
+  const subjects: PerDiemLogSubject[] = raw.map(subjectFor);
+
+  // One list for the whole report, beside the batched subject load. This column
   // re-derives the rate from scratch rather than reading what was stored, so it
   // has to be given the same input the write had — otherwise it prints the
   // employee's Thai rate against a country-rate total, and a reader dividing one
   // by the other gets a day count that contradicts the column beside it.
-  const [countryRates] = await Promise.all([
+  const [countryRates, logBySubject] = await Promise.all([
     listPerDiemCountryRates(),
-    ...employeeIds.map(async (id) => {
-      logByEmployee.set(id, await getAllowanceLog(id));
-    }),
+    getPerDiemEmployeeLogMap(subjects),
   ]);
 
   return raw.map((x) => {
     const departDate = x.DepartDate ? ymd(x.DepartDate as Date) : null;
     const returnDate = x.ReturnDate ? ymd(x.ReturnDate as Date) : null;
-    const log = (x.EmployeeId as string | null) ? logByEmployee.get(x.EmployeeId as string) ?? [] : [];
+    const log = logBySubject.get(perDiemLogSubjectKey(subjectFor(x)))?.log ?? [];
     const { perDiemRate, rateChangeNote } = computeReportPerDiemDisplay(
       departDate,
       returnDate,

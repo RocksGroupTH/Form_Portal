@@ -54,6 +54,21 @@ export interface PaymentDatePickerProps {
    * caller identical.
    */
   hint?: string;
+  /**
+   * What `dates` MEANS.
+   *
+   * `"restrict"` (the default, and AP-1's) — those are the only selectable days.
+   * AP-1's server rule really is round membership, so a calendar that refuses
+   * everything else is telling the truth.
+   *
+   * `"suggest"` — every real day is selectable and `dates` are merely
+   * highlighted. AP-4 needs this and must not be given the default: since
+   * 2026-09-08 its server accepts any date within a bound (a month back, a year
+   * forward) rather than a round, so restricting here would refuse dates the
+   * server takes — the same two-rules-one-claim split that took AP-4's DETAIL
+   * page off this component in the first place.
+   */
+  mode?: "restrict" | "suggest";
 }
 
 /** Calendar limited to the payment dates the caller offers (holiday-adjusted server-side). */
@@ -63,8 +78,9 @@ export function PaymentDatePicker({
   onChange,
   loading,
   hint = AP1_ROUNDS_HINT,
+  mode = "restrict",
 }: PaymentDatePickerProps) {
-  const allowed = useMemo(() => new Set(dates), [dates]);
+  const suggested = useMemo(() => new Set(dates), [dates]);
 
   const initialMonth = useMemo(() => {
     const fromValue = value ? parseYmd(value) : null;
@@ -191,7 +207,10 @@ export function PaymentDatePicker({
             return <div key={`e-${i}`} className="h-9" />;
           }
           const ymd = toYmd(viewYear, viewMonth0, day);
-          const isAllowed = allowed.has(ymd);
+          // Two questions now, and they are only the same one under
+          // "restrict": is this day IN the offered set, and may it be picked.
+          const isSuggested = suggested.has(ymd);
+          const isAllowed = mode === "suggest" ? true : isSuggested;
           const isSelected = value === ymd;
           const isToday = ymd === toYmd(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
 
@@ -203,16 +222,22 @@ export function PaymentDatePicker({
               onClick={() => isAllowed && onChange(ymd)}
               className="h-9 rounded-lg text-[12px] font-semibold tabular-nums transition-colors border-none"
               style={{
+                // Tinted by SUGGESTION, dimmed by PERMISSION. Under
+                // "suggest" an ordinary day is plain but fully legible and
+                // clickable; the rounds still stand out, which is the whole
+                // point of showing a calendar rather than a text field.
                 background: isSelected
                   ? "var(--nav-active-text)"
-                  : isAllowed
+                  : isSuggested
                     ? "var(--nav-active-bg)"
                     : "transparent",
                 color: isSelected
                   ? "var(--bg-card)"
-                  : isAllowed
+                  : isSuggested
                     ? "var(--nav-active-text)"
-                    : "var(--text-faint)",
+                    : isAllowed
+                      ? "var(--text-primary)"
+                      : "var(--text-faint)",
                 cursor: isAllowed ? "pointer" : "default",
                 opacity: isAllowed ? 1 : 0.35,
                 boxShadow: isToday && !isSelected && isAllowed
