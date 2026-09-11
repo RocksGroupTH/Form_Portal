@@ -91,7 +91,7 @@ export function VendorCell({
           {chosenNo
             ? `${chosenNo}${chosen?.displayName ? ` · ${chosen.displayName}` : ""}`
             : vat > 0
-              ? "— ต้องเลือก —"
+              ? "— ไม่ระบุ —"
               : "— เลือก (เว้นว่างได้) —"}
         </span>
         <Search size={11} className="shrink-0" style={{ color: "var(--text-faint)" }} />

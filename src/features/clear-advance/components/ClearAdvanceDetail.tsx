@@ -32,6 +32,8 @@ import { VendorCell } from "@/features/clear-advance/components/VendorCell";
 import { RdCell } from "@/features/clear-advance/components/RdCell";
 import { useGlOptionsByBranch } from "@/features/clear-advance/hooks/useGlOptionsByBranch";
 import { GlCell } from "@/features/clear-advance/components/GlCell";
+import { BranchPicker } from "@/features/clear-advance/components/LinePickers";
+import type { BranchOption } from "@/features/clear-advance/types";
 import { PaymentDatePicker } from "@/components/ui/PaymentDatePicker";
 import { advanceBcDocLabel } from "@/lib/clr/advance-bc-doc";
 import { refundEvidenceMessage, refundEvidenceMissing } from "@/lib/clr/refund-evidence";
@@ -229,6 +231,9 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
      accountant sees which line, not an error after clicking.
      Read from the rows on screen, not the ones last fetched: autosave writes
      without re-fetching, so the request's own copy lags a vendor just chosen. */
+  /* Lines whose seller has no BC vendor card chosen. Said, not enforced: the
+     approval stopped waiting on it on 2026-09-11, because the VAT line carries
+     the seller by name, tax id and branch whether or not a card is linked. */
   const missingVendorLines = linesMissingTaxVendor(isAccountStep ? editItems : items);
   /* Same rows, same reason: the ภ.ง.ด. type the journal builder refuses without.
      The sentence comes from the same function the server uses, so the screen and
@@ -239,6 +244,23 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
   /* The account list for every branch the lines use. Fetched here rather than
      on the requester's form, which no longer shows the column. */
   const glByBranch = useGlOptionsByBranch(editItems.map((it) => it.branchCode));
+  /* The branches this brand has, so the account step can set one. The G/L list
+     is keyed by branch and the picker stays disabled without it, so a line the
+     requester left unbranched could not be given an account at all — and the
+     column that would have fixed it was on their form, not this one (user,
+     2026-09-11). Only while the grid is editable: it is one more request per
+     page load and a manager's screen has no use for it. */
+  const [branches, setBranches] = useState<BranchOption[]>([]);
+  useEffect(() => {
+    const brand = (request.brandCode ?? "").trim();
+    if (!isAccountStep || !brand) { setBranches([]); return; }
+    let cancelled = false;
+    fetch(`/api/request/clear-advance/options/branches?brand=${encodeURIComponent(brand)}`)
+      .then((r) => r.json())
+      .then((j: { ok: boolean; data?: BranchOption[] }) => { if (!cancelled && j.ok) setBranches(j.data ?? []); })
+      .catch(() => { if (!cancelled) setBranches([]); });
+    return () => { cancelled = true; };
+  }, [isAccountStep, request.brandCode]);
   /* The seller's BC vendor and the registry's answer about their tax id, both
      for the whole grid. They used to live one-per-card below the table; the
      registry in particular was asked once per card, so six lines sharing a
@@ -324,7 +346,15 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
         proofCount: refundProofFiles.length,
       })
     : null;
-  const accountBlocked = missingVendorLines.length > 0 || !!pndProblem || missingGlLines.length > 0 || paymentDateOffCycle || !!refundGap;
+  const accountBlocked = !!pndProblem || missingGlLines.length > 0 || paymentDateOffCycle || !!refundGap;
+  /* Why, in the order the approve handler refuses in, so the tooltip and the
+     toast name the same thing. */
+  const accountBlockReason =
+    paymentDateOffCycle ? "วันที่จ่ายไม่อยู่ในรอบที่กำหนด (ศุกร์ที่ 2 หรือ 4)"
+    : refundGap ? refundEvidenceMessage(refundGap)
+    : missingGlLines.length > 0 ? glMissingMessage(missingGlLines)
+    : pndProblem ? pndProblem
+    : null;
 
   /* Seed the editor from the request at the account step. The snapshot taken
      here is what "unchanged" means — autosave compares against it, so seeding
@@ -412,11 +442,6 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
       return toast.error("วันที่จ่ายไม่อยู่ในรอบที่กำหนด (ศุกร์ที่ 2 หรือ 4)");
     }
     if (refundGap) return toast.error(refundEvidenceMessage(refundGap));
-    if (missingVendorLines.length > 0) {
-      return toast.error(
-        `กรุณาเลือก Vendor ผู้ขายให้ครบก่อนอนุมัติ — รายการที่ ${missingVendorLines.join(", ")}`,
-      );
-    }
     if (missingGlLines.length > 0) return toast.error(glMissingMessage(missingGlLines));
     if (pndProblem) return toast.error(pndProblem);
     // An edit still sitting in the debounce would be approved over: the server
@@ -612,10 +637,13 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
               ตรวจสอบแล้ว
             </label>
             {missingVendorLines.length > 0 && (
+              /* Grey, and it does not say "จึงจะอนุมัติได้" any more: it is worth
+                 knowing which lines have no vendor card, and it is not worth
+                 holding a clearing for. */
               <p className="text-[12px] m-0 px-3 py-2 rounded-lg"
-                style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
-                รายการที่ {missingVendorLines.join(", ")} มี VAT แต่ยังไม่ได้เลือก Vendor ผู้ขาย —
-                เลือกในคอลัมน์ “Vendor” ของตารางด้านบน แล้วบันทึก จึงจะอนุมัติได้
+                style={{ background: "var(--bg-card-alt)", color: "var(--text-muted)", border: "1px solid var(--border-card)" }}>
+                รายการที่ {missingVendorLines.join(", ")} ยังไม่ได้เลือก Vendor ผู้ขาย —
+                เลือกได้ในคอลัมน์ “Vendor” ถ้ามี Vendor card ใน BC (ไม่บังคับ)
               </p>
             )}
             {refundGap && (
@@ -639,7 +667,11 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
             )}
             <div className="flex flex-wrap gap-2">
               <button type="button" onClick={handleAccountApprove} disabled={busy || accountBlocked}
-                title={accountBlocked ? (pndProblem ?? "ต้องเลือก Vendor ผู้ขายของรายการที่มี VAT ให้ครบก่อน") : undefined}
+                /* Name the thing that is actually holding it. The fallback
+                   used to be the vendor rule, which no longer blocks anything
+                   — a button refusing to press over a field that is optional
+                   is worse than one that says nothing. */
+                title={accountBlocked ? (accountBlockReason ?? undefined) : undefined}
                 className="inline-flex items-center gap-2 text-[13px] font-medium px-4 py-2 rounded-lg"
                 style={{ background: "var(--bg-info-green)", color: "var(--text-info-green)", border: "1px solid var(--border-info-green)",
                   opacity: accountBlocked ? 0.5 : 1,
@@ -707,7 +739,8 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>#</th>
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>วันที่</th>
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>รายละเอียด</th>
-                          {/* The two starred columns are what the approve
+                          <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>สาขาที่ใช้จ่าย</th>
+                          {/* The starred column is what the approve
                               button waits for. They were the only required
                               fields on this grid with nothing to say so, and
                               the first anyone learned of it was a button that
@@ -728,7 +761,7 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>ชื่อผู้ขาย</th>
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>สาขาผู้ขาย</th>
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>RD</th>
-                          <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>Vendor *</th>
+                          <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>Vendor</th>
                           <th className="px-2 py-1.5 text-right" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>ก่อน VAT</th>
                           <th className="px-2 py-1.5 text-right" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>VAT</th>
                           <th className="px-2 py-1.5 text-right" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>WHT</th>
@@ -760,6 +793,23 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
                                 onChange={(e) => {
                                   const next = [...editItems];
                                   next[i] = { ...next[i], description: e.target.value };
+                                  setEditItems(next);
+                                }}
+                              />
+                            </td>
+                            <td className="px-2 py-1.5" style={{ borderBottom: "1px solid var(--border-light)", minWidth: 170 }}>
+                              <BranchPicker
+                                options={branches}
+                                value={it.branchCode ?? ""}
+                                noBrand={!request.brandCode}
+                                onPick={(code) => {
+                                  const next = [...editItems];
+                                  /* The account goes with the branch it was
+                                     chosen under — the list is per branch, so
+                                     keeping it would leave an account this
+                                     branch does not offer. Same rule the
+                                     requester's form applies. */
+                                  next[i] = { ...next[i], branchCode: code, glAccountNo: null, glAccountName: null };
                                   setEditItems(next);
                                 }}
                               />

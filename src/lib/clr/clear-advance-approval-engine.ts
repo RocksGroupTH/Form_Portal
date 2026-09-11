@@ -6,7 +6,6 @@ import { requireActorStaffId } from "@/lib/acc/actor-context";
 import type { Actor } from "@/lib/acc/approval-engine";
 import { getRequest, setAccountAction } from "@/lib/clr/clear-advance-request-service";
 import { listClrApprovers, roleForStep } from "@/lib/clr/clear-advance-approver-service";
-import { linesMissingTaxVendor } from "@/lib/clr/tax-vendor-core";
 import { glMissingMessage, linesMissingGl } from "@/lib/clr/clear-advance-line-validation";
 import { resolveClrPaymentDate } from "@/lib/clr/clear-advance-payment-date";
 import { refundEvidenceMessage, refundEvidenceMissing } from "@/lib/clr/refund-evidence";
@@ -79,18 +78,16 @@ export async function approveCurrentStep(
       allowedRounds: refund < 0 ? await getPaymentDates() : [],
     });
     if (!decided.ok) throw new Error(decided.error);
-    // Every VAT line must name the seller's vendor before it leaves this step
-    // (user, 2026-09-08). Input tax is claimed against a vendor; a VAT line with
-    // no Tax Vendor No. posts an unattributed claim, and this is the last step
-    // there is — approving it finishes the request. Read from the request, not
-    // from the caller: the accountant's own
-    // save is what fills this, so the check is on stored state.
-    const missing = linesMissingTaxVendor(before.clear?.items);
-    if (missing.length > 0) {
-      throw new Error(
-        `กรุณาเลือก Vendor ผู้ขายให้ครบก่อนอนุมัติ — รายการที่ ${missing.join(", ")} มี VAT แต่ยังไม่ได้เลือก Vendor`,
-      );
-    }
+    /* The seller's BC vendor is no longer a condition of approving (user,
+       2026-09-11). It was required from 2026-09-08 on the reasoning that input
+       tax is claimed against a vendor — but the VAT line does not depend on it:
+       `clear-advance-erp-payload` sends `taxVendorNo` only when there is one,
+       and identifies the seller on its own terms with `taxInvoiceName`,
+       `taxVatRegistrationNo` and `taxBranchCode`, which the requester now fills
+       and the registry check verifies. The vendor links the line to a BC vendor
+       card; it does not make the claim attributable. So a clearing no longer
+       waits on one, and accounting fills it when there is a card to point at.
+    */
     // The ภ.ง.ด. type, on the same terms and for the same reason: the journal
     // builder refuses without it, and refusing there means the discovery lands
     // on whoever pressed "ส่งเข้า ERP" — after the request is approved, and
