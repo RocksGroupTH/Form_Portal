@@ -1003,8 +1003,6 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
         );
       }
 
-      if (candidates.length === 0 && skipped === 0) return;
-
       /* Straight into the table (CR, 2026-09-11). The rows are editable there
          like any other, and deleting a receipt still removes the line it
          filled — so there is nothing left for a confirm step to add except the
@@ -1019,6 +1017,11 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
         fileCount: docs.length,
         skippedPages: skipped,
       });
+      /* Silence is only correct when the read had nothing to report. A file
+         that produced no row at all is the loudest thing this dialog says —
+         the receipt is simply missing from the clearing — so the early return
+         that used to sit above `acceptOcrRows` had to go: it skipped exactly
+         the case the count note exists for. */
       if (notes.length > 0) setOcrNotes(notes);
     } finally {
       setOcrScanning(false);
