@@ -40,14 +40,6 @@ export interface ReceiptDoc extends ReceiptExtractResult {
    */
   taxBranchText?: string | null;
   /**
-   * How many pages of the upload this document covers, as the model answered.
-   *
-   * Kept so a read can be measured against what it was given: documents plus
-   * skipped pages should account for every page sent, and a shortfall is a read
-   * that missed things rather than an upload that had nothing on it.
-   */
-  pages?: number;
-  /**
    * How many model entries were folded into this row. Absent on a document that
    * arrived as one entry; set when a multi-page document was answered per page,
    * so the confirm modal can tell the reviewer the row is a merge of several.
@@ -479,10 +471,6 @@ function toDoc(entry: AiJson, kind: ReceiptKind): ReceiptDoc {
   const vat = toNum(entry.vat);
   return {
     kind,
-    // What the model says this document covers. Only "other" entries used to
-    // keep it (as the skip count); a receipt's was discarded, which left no way
-    // to tell a read that covered the upload from one that missed most of it.
-    pages: toPages(entry.pages),
     // The printed text wins where we can read it: mapping a Thai month is a
     // table lookup here and a recollection in the model. Both answers still go
     // through toDate, which rejects an impossible or future date either way.

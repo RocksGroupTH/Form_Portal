@@ -21,37 +21,6 @@ import type { ReceiptDoc } from "./ai-receipt-core";
  * One suspect document escalates the whole upload, because the pages are read in
  * a single call — a second pass is all of them or none.
  */
-export function needsStrongerRead(
-  docs: readonly ReceiptDoc[],
-  read?: {
-    /** Pages handed to the model in this call. */
-    pagesSent?: number;
-    /** Pages it called neither a receipt nor a slip. */
-    skippedPages?: number;
-    /** The answer hit the token limit, so the JSON was cut off mid-array. */
-    outputTruncated?: boolean;
-  },
-): boolean {
-  if (docs.some((d) => d.kind === "receipt" && (d.vat ?? 0) > 0 && !d.taxId)) return true;
-
-  /* An answer that ran out of room is a failed read whatever it contains: the
-     array was cut mid-entry, so what parsed is a prefix of what was seen. */
-  if (read?.outputTruncated) return true;
-
-  /* Pages that produced neither a document nor a skip (user, 2026-09-11). The
-     same nine-page bundle came back as one row on one run and seven on another,
-     and the one-row run was not a bad document — it was a bad read of eight
-     good ones, and every signal above it was blind to that because the single
-     document it did return was complete.
-
-     Counted by the pages the documents themselves claim to cover, so one
-     invoice printed across four pages accounts for four and does not escalate.
-     A document that did not say counts as one, which is what the model is told
-     to answer when it does not run over. */
-  const sent = read?.pagesSent ?? 0;
-  if (sent > 0) {
-    const covered = docs.reduce((n, d) => n + Math.max(1, d.pages ?? 1), 0) + (read?.skippedPages ?? 0);
-    if (covered < sent) return true;
-  }
-  return false;
+export function needsStrongerRead(docs: readonly ReceiptDoc[]): boolean {
+  return docs.some((d) => d.kind === "receipt" && (d.vat ?? 0) > 0 && !d.taxId);
 }
