@@ -238,11 +238,18 @@ const brRow = (patch: Partial<Parameters<typeof ocrReadNotes>[0]["rows"][number]
     ...patch,
   });
 
-test("a VAT line whose seller was read but whose branch was not is reported", () => {
-  const notes = ocrReadNotes({ rows: [row(), brRow()], fileCount: 2, skippedPages: 0 });
+test("an empty branch alone is no longer a finding — it is filled and flagged instead", () => {
+  assert.deepEqual(ocrReadNotes({ rows: [row(), brRow()], fileCount: 2, skippedPages: 0 }), []);
+});
+
+test("the row that was filled is the one reported, by its number", () => {
+  const notes = ocrReadNotes({
+    rows: [row(), brRow({ taxBranchCode: "00000", taxBranchDefaulted: true })],
+    fileCount: 2, skippedPages: 0,
+  });
   assert.equal(notes.length, 1);
   assert.equal(notes[0].kind, "tax-branch");
-  assert.equal(notes[0].row, 2);
+  assert.deepEqual(notes[0].rows, [2]);
   assert.match(notes[0].text, /00000/);
 });
 
@@ -275,10 +282,75 @@ test("a half-read tax id does not count as having identified the seller", () => 
 
 test("the branch note comes after the registry's findings about the same seller", () => {
   const notes = ocrReadNotes({
-    rows: [brRow({ payeeName: "ร้านค้าทั่วไป" })],
+    rows: [brRow({ payeeName: "ร้านค้าทั่วไป", taxBranchCode: "00000", taxBranchDefaulted: true })],
     fileCount: 1,
     skippedPages: 0,
     rd: { "0105560171921": found("บริษัท เจเนซิส ซัพพลาย เชน จำกัด") },
   });
   assert.deepEqual(notes.map((n) => n.kind), ["rd-name", "tax-branch"]);
+});
+
+/* Counting by pages rather than by files, and the summary that says what the
+   read actually covered (user, 2026-09-11). A nine-page PDF that produced one
+   row said nothing at all: the old rule compared rows against the number of
+   files, and one row out of one file reads as a clean read. */
+
+test("pages that became neither a row nor a skip are reported", () => {
+  const notes = ocrReadNotes({ rows: [row()], fileCount: 1, skippedPages: 0, pagesRead: 9 });
+  const count = notes.find((n) => n.kind === "count");
+  assert.ok(count, "expected a count note");
+  assert.match(count.text, /9/);
+  assert.match(count.text, /1/);
+});
+
+test("every page accounted for raises no count note — the skips are their own note", () => {
+  const notes = ocrReadNotes({ rows: [row(), row(), row()], fileCount: 1, skippedPages: 6, pagesRead: 9 });
+  assert.deepEqual(notes.map((n) => n.kind), ["skipped"]);
+});
+
+test("more rows than pages is not a problem — two invoices can share a page", () => {
+  assert.deepEqual(
+    ocrReadNotes({ rows: [row(), row(), row()], fileCount: 1, skippedPages: 0, pagesRead: 2 }),
+    [],
+  );
+});
+
+test("without a page count it still falls back to counting files", () => {
+  const notes = ocrReadNotes({ rows: [row()], fileCount: 4, skippedPages: 0 });
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].kind, "count");
+});
+
+test("a truncated PDF is called out — pages past the cap were never read", () => {
+  const notes = ocrReadNotes({
+    rows: [row(), row()], fileCount: 1, skippedPages: 0, pagesRead: 15, truncated: true,
+  });
+  assert.ok(notes.some((n) => n.kind === "truncated"));
+});
+
+/* The seller's branch: filled rather than asked about (user, 2026-09-11). */
+
+test("rows whose branch was defaulted are named once, together", () => {
+  const notes = ocrReadNotes({
+    rows: [
+      row({ taxId: "0105560171921", payeeName: "บ.", vatAmount: 7, taxBranchCode: "00000", taxBranchDefaulted: true }),
+      row({ taxId: "0105560171921", payeeName: "บ.", vatAmount: 7, taxBranchCode: "00000", taxBranchDefaulted: true }),
+      row({ taxId: "0105560171921", payeeName: "บ.", vatAmount: 7, taxBranchCode: "00001" }),
+    ],
+    fileCount: 1, skippedPages: 0, pagesRead: 3,
+  });
+  const b = notes.filter((n) => n.kind === "tax-branch");
+  assert.equal(b.length, 1, "one note, not one per row");
+  assert.match(b[0].text, /1, 2/);
+  assert.match(b[0].text, /00000/);
+});
+
+test("a branch the reader actually found is not called defaulted", () => {
+  assert.deepEqual(
+    ocrReadNotes({
+      rows: [row({ taxId: "0105560171921", payeeName: "บ.", vatAmount: 7, taxBranchCode: "00000" })],
+      fileCount: 1, skippedPages: 0, pagesRead: 1,
+    }),
+    [],
+  );
 });

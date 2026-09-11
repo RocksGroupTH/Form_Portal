@@ -14,6 +14,17 @@
 const HEAD_OFFICE = /สำนักงานใหญ่|สนญ|head\s*office|h\.?o\.?$/i;
 
 /**
+ * What a line gets when the invoice's branch could not be read.
+ *
+ * `taxBranchCode` still answers null for "nothing readable" — that is the
+ * honest answer and other callers depend on it. The receipt-read path fills
+ * this in on top (user, 2026-09-11) because nearly every invoice is the head
+ * office and chasing the field row by row costs more than it saves. The read
+ * dialog names the rows it was filled on, so it is a default, not a claim.
+ */
+export const DEFAULT_TAX_BRANCH_CODE = "00000";
+
+/**
  * Null means nothing readable was printed — and nothing is then sent, so BC
  * keeps whatever the vendor card holds. A guess here would put a branch on a tax
  * filing, which is not a field to be helpful in.

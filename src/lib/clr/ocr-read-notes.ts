@@ -38,12 +38,14 @@ import { sameRegisteredName, type RdAnswerState } from "@/lib/clr/rd-vat-core";
  */
 export type OcrReadNote =
   | { kind: "count"; text: string }
+  | { kind: "truncated"; text: string }
   | { kind: "skipped"; text: string }
   | { kind: "date"; row: number; text: string }
   | { kind: "branch"; row: number; text: string }
   | { kind: "rd-unregistered"; row: number; text: string }
   | { kind: "rd-name"; row: number; text: string }
-  | { kind: "tax-branch"; row: number; text: string };
+  /** One note for all the rows whose branch was defaulted, not one each. */
+  | { kind: "tax-branch"; rows: number[]; text: string };
 
 /** What the registry said about one tax id, as far as this rule cares. */
 export interface RdLookup {
@@ -67,21 +69,56 @@ export function ocrReadNotes(read: {
     /** The seller's branch, five digits — 00000 is the head office. */
     taxBranchCode?: string | null;
     vatAmount?: number | null;
+    /** True when nothing was read and 00000 was filled in for the head office. */
+    taxBranchDefaulted?: boolean;
   }[];
   /** Files the requester attached for this read. */
   fileCount: number;
   skippedPages: number;
+  /**
+   * Pages the reader actually looked at, across those files.
+   *
+   * This is what the count is measured against. Files are the wrong unit: a
+   * nine-page PDF that produced one row is one row from one file, which the
+   * file rule reads as a clean read and says nothing about — the loudest
+   * possible failure, silent. Pages are what the money is printed on.
+   */
+  pagesRead?: number;
+  /** The reader stopped at its page cap; pages past it were never looked at. */
+  truncated?: boolean;
   /** The registry's answers, keyed by the thirteen digits of the tax id. */
   rd?: Readonly<Record<string, RdLookup>>;
 }): OcrReadNote[] {
   const notes: OcrReadNote[] = [];
 
-  /* Fewer rows than files, never the other way: one PDF routinely holds
-     several receipts, and more rows than files is the reader working. */
-  if (read.fileCount > 0 && read.rows.length < read.fileCount) {
+  /* Every page has to end up somewhere: a row, or the skip count. What is
+     neither was looked at and produced nothing, and that is a receipt whose
+     money is missing from the clearing while the total looks settled.
+
+     More rows than pages is fine — two invoices can share one page. */
+  const pages = read.pagesRead ?? 0;
+  if (pages > 0) {
+    const accounted = read.rows.length + read.skippedPages;
+    if (accounted < pages) {
+      notes.push({
+        kind: "count",
+        text: `อ่าน ${pages} หน้า ได้ ${read.rows.length} รายการ · ข้าม ${read.skippedPages} หน้า`
+          + ` — เหลืออีก ${pages - accounted} หน้าที่ไม่ได้กลายเป็นรายการ ตรวจว่ามีใบเสร็จตกหล่นหรือไม่`,
+      });
+    }
+  } else if (read.fileCount > 0 && read.rows.length < read.fileCount) {
+    /* No page count — an older reader, or the Tesseract fallback. Falls back to
+       files, which is weaker but better than counting nothing. */
     notes.push({
       kind: "count",
       text: `อ่านได้ ${read.rows.length} รายการ จาก ${read.fileCount} ไฟล์ที่แนบ — ตรวจว่ามีใบเสร็จตกหล่นหรือไม่`,
+    });
+  }
+
+  if (read.truncated) {
+    notes.push({
+      kind: "truncated",
+      text: `ไฟล์ยาวเกินที่ระบบอ่านได้ (${pages} หน้า) — หน้าหลังจากนี้ยังไม่ได้อ่าน กรุณาแยกไฟล์แล้วแนบเพิ่ม`,
     });
   }
 
@@ -142,22 +179,25 @@ export function ocrReadNotes(read: {
     });
   });
 
-  /* Only where the reader plainly had the invoice in focus: it took a whole
-     tax id and a name off it, and the line claims input VAT, so the document is
-     a tax invoice and the branch was printed on it. A row whose seller could
-     not be read at all has a bigger problem, and the required-tax-id rule says
-     so at submit. */
-  read.rows.forEach((r, i) => {
-    if (!(Number(r.vatAmount ?? 0) > 0)) return;
-    if ((r.taxId ?? "").replace(/\D/g, "").length !== 13) return;
-    if (!(r.payeeName ?? "").trim()) return;
-    if ((r.taxBranchCode ?? "").trim()) return;
+  /* The rows that were given 00000 because nothing was read (user,
+     2026-09-11). Filled rather than asked about — the head office is what
+     nearly every invoice says — but said once, because it is still a value
+     nobody read off the paper and it goes on a tax filing.
+
+     One note for all of them: this used to be one per row, and five identical
+     sentences is how a dialog teaches people to dismiss it. */
+  const defaulted = read.rows
+    .map((r, i) => ({ r, n: i + 1 }))
+    .filter(({ r }) => r.taxBranchDefaulted === true)
+    .map(({ n }) => n);
+  if (defaulted.length > 0) {
     notes.push({
       kind: "tax-branch",
-      row: i + 1,
-      text: `รายการที่ ${i + 1} — อ่านสาขาผู้ขายจากใบกำกับไม่ได้ (สำนักงานใหญ่ = 00000)`,
+      rows: defaulted,
+      text: `รายการที่ ${defaulted.join(", ")} — ไม่พบสาขาผู้ขายบนใบกำกับ ระบบเติม 00000 (สำนักงานใหญ่) ให้`
+        + ` กรุณาตรวจกับเอกสารถ้าเป็นสาขา`,
     });
-  });
+  }
 
   return notes;
 }

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { PND_LABEL, suggestPndType } from "@/lib/clr/wht-pnd-core";
-import { taxBranchCode } from "@/lib/clr/tax-branch-core";
+import { DEFAULT_TAX_BRANCH_CODE, taxBranchCode } from "@/lib/clr/tax-branch-core";
 import {
   Check, Paperclip, Camera, X, Plus, Trash2, Banknote, User, Mail, FileText, Printer,
 } from "lucide-react";
@@ -47,6 +47,8 @@ interface OcrRow {
   dateText?: string;
   docNo: string;
   taxBranchText: string;
+  /** 00000 was filled in because the invoice's branch could not be read. */
+  taxBranchDefaulted: boolean;
   branchCode: string;
   branchSuggested?: boolean;
   /** The reader saw another branch fitting nearly as well. */
@@ -926,14 +928,15 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
    *  count of pages that were neither (§8) and the document-level branch hint. */
   async function ocrReceipt(
     file: File,
-  ): Promise<{ rows: ReceiptData[]; skipped: number; branchHint: string | null }> {
-    const nothing = { rows: [] as ReceiptData[], skipped: 0, branchHint: null };
+  ): Promise<{ rows: ReceiptData[]; skipped: number; branchHint: string | null; pages: number; truncated: boolean }> {
+    const nothing = { rows: [] as ReceiptData[], skipped: 0, branchHint: null, pages: 0, truncated: false };
     try {
       const fd = new FormData();
       fd.append("file", file);
       const res = await fetch("/api/request/clear-advance/verify-receipt", { method: "POST", body: fd });
       const j = (await res.json()) as {
         ok: boolean; data?: ReceiptData[]; skippedPages?: number; branchHint?: string | null;
+        pagesRead?: number; maybeTruncated?: boolean;
       };
       if (!j.ok || !j.data) return nothing;
       return {
@@ -942,6 +945,10 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
         ),
         skipped: j.skippedPages ?? 0,
         branchHint: j.branchHint ?? null,
+        /* The route has always sent these and nothing read them, which is why a
+           nine-page PDF that produced one row could pass for a clean read. */
+        pages: j.pagesRead ?? 0,
+        truncated: j.maybeTruncated === true,
       };
     } catch {
       return nothing;
@@ -999,9 +1006,13 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
     try {
       const candidates: OcrRow[] = [];
       let skipped = 0;
+      let pagesRead = 0;
+      let truncated = false;
       for (const d of docs) {
         const read = await ocrReceipt(d.file); // serialized — the OCR worker is shared
         skipped += read.skipped;
+        pagesRead += read.pages;
+        truncated = truncated || read.truncated;
         // Resolve the branch BEFORE the modal opens. Branch decides which G/L
         // accounts a line may charge, and the modal asks for a G/L suggestion the
         // moment a row has a branch — so the branch has to be on the row first,
@@ -1029,6 +1040,11 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           payeeName: r.payeeName ?? "",
           payeeAddress: r.payeeAddress ?? "",
           taxBranchText: r.taxBranchText ?? "",
+          /* Nothing readable on the invoice → the head office, which is what
+             nearly every one of them says (user, 2026-09-11). Filled rather
+             than left for the requester to chase, and remembered so the dialog
+             can say it was us and not the paper. */
+          taxBranchDefaulted: taxBranchCode(r.taxBranchText) == null,
           totalAmount: r.total != null ? String(r.total) : "",
         }));
       }
@@ -1092,7 +1108,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
          like any other, and deleting a receipt still removes the line it
          filled — so there is nothing left for a confirm step to add except the
          things the read was unsure about, which the dialog below says. */
-      acceptOcrRows(candidates);
+      acceptOcrRows(candidates, { pages: pagesRead, skipped });
       const notes = ocrReadNotes({
         rows: candidates.map((r) => ({
           expenseDate: r.expenseDate,
@@ -1102,11 +1118,14 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           payeeName: r.payeeName,
           /* The same conversion acceptOcrRows will do a moment later — the row
              still holds the raw printed text at this point. */
-          taxBranchCode: taxBranchCode(r.taxBranchText) ?? "",
+          taxBranchCode: taxBranchCode(r.taxBranchText) ?? DEFAULT_TAX_BRANCH_CODE,
+          taxBranchDefaulted: r.taxBranchDefaulted,
           vatAmount: num(r.vatAmount),
         })),
         fileCount: docs.length,
         skippedPages: skipped,
+        pagesRead,
+        truncated,
         rd,
       });
       /* Silence is only correct when the read had nothing to report. A file
@@ -1129,7 +1148,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
      confirm step there is no rejected read: a row lands with its file and goes
      with it — deleting a receipt already drops the line it filled. */
 
-  function acceptOcrRows(accepted: OcrRow[]) {
+  function acceptOcrRows(accepted: OcrRow[], read?: { pages: number; skipped: number }) {
     if (accepted.length === 0) return;
 
     const rows = accepted.filter((r) => r.kind === "receipt");
@@ -1183,8 +1202,10 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           taxId: r.taxId,
           payeeName: r.payeeName,
           payeeAddress: r.payeeAddress,
-          // The printed wording becomes the code by rule here, not in the model.
-          taxBranchCode: taxBranchCode(r.taxBranchText) ?? "",
+          // The printed wording becomes the code by rule here, not in the model —
+          // and when it says nothing, the head office (user, 2026-09-11). The
+          // read dialog names the rows this was filled on.
+          taxBranchCode: taxBranchCode(r.taxBranchText) ?? DEFAULT_TAX_BRANCH_CODE,
         };
       }
       return next;
@@ -1210,8 +1231,15 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       ]);
     }
 
+    /* What the read covered, every time — not only when something looks wrong.
+       A clean read stays a toast and opens no dialog, but "6 รายการ" alone
+       cannot be checked against the paper in hand, and "จาก 9 หน้า" can. */
+    const coverage = read && read.pages > 0
+      ? ` (จาก ${read.pages} หน้า${read.skipped > 0 ? ` · ข้าม ${read.skipped} หน้า` : ""})`
+      : "";
     toast.success(
-      `เพิ่ม ${rows.length} รายการลงตารางค่าใช้จ่ายแล้ว` + (slip ? " · เติมข้อมูลสลิปโอนเงินให้แล้ว" : ""),
+      `เพิ่ม ${rows.length} รายการลงตารางค่าใช้จ่ายแล้ว${coverage}`
+        + (slip ? " · เติมข้อมูลสลิปโอนเงินให้แล้ว" : ""),
     );
   }
 
