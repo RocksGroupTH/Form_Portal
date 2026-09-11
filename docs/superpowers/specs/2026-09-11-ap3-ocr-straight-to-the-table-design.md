@@ -183,9 +183,21 @@ branch — the BU and the BRANCH dimension — and having two columns called
 `สาขา` on one row, one of them the seller's, is how the wrong one gets typed
 into.
 
-Nothing here gates anything. The columns are advisory on the requester's form
-exactly as they are on the account grid, and the account step's four approval
-gates are untouched.
+The tax id is required to submit (user, same day): `เลขผู้เสียภาษี *`, and
+`collectErrors` refuses a line without one, or with fewer than thirteen digits
+— the state `taxIdNotice` already names on the row, where the number looks
+filled in and the registry check silently does not run. The name and the branch
+stay optional: the register can supply both from the number, and neither is
+what the input VAT is claimed against.
+
+Note the consequence: a plain `ใบเสร็จรับเงิน` carrying no tax id at all cannot
+be submitted on a line of its own. If that turns out to be common, the rule to
+scope it to is `vatAmount > 0` — a line claiming no input VAT has no seller to
+identify — rather than dropping it.
+
+The columns themselves gate nothing else. They are advisory on the requester's
+form exactly as they are on the account grid, and the account step's four
+approval gates are untouched.
 
 The read-time RD check and its dialog notes stay. They are not the same job:
 the dialog is what says "look at this" once, after a read of perhaps a dozen

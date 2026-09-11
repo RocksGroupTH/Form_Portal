@@ -652,6 +652,22 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           });
           break;
         }
+        /* The seller's tax id, required since the column became visible (user,
+           2026-09-11). It is what the input VAT is claimed against and what the
+           registry check needs; blank, it reaches accounting as a line nobody
+           can attribute, days after the receipt stopped being in anyone's hand.
+           Held to thirteen digits for the same reason `taxIdNotice` says so on
+           the row: a half-typed number looks filled in and silently checks
+           against nothing. */
+        const tin = l.taxId.replace(/\D/g, "");
+        if (tin.length === 0) {
+          errs.push({ key: "lines", message: "มีรายการที่ยังไม่ได้กรอกเลขผู้เสียภาษีของผู้ขาย" });
+          break;
+        }
+        if (tin.length !== 13) {
+          errs.push({ key: "lines", message: `มีรายการที่เลขผู้เสียภาษีไม่ครบ 13 หลัก (ตอนนี้ ${tin.length})` });
+          break;
+        }
       }
     }
     if (whtMismatch) errs.push({ key: "wht", message: "ยอดภาษีหัก ณ ที่จ่ายในตารางใบรับรอง ไม่ตรงกับยอดในรายการค่าใช้จ่าย" });
@@ -1481,7 +1497,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                 {/* Branch comes before the G/L account: it filters the account list. */}
                 <Th w={190}>สาขาที่ใช้จ่าย *</Th>
                 <Th w={240}>รายละเอียด</Th>
-                <Th w={150}>เลขผู้เสียภาษี</Th>
+                <Th w={150}>เลขผู้เสียภาษี *</Th>
                 <Th w={220}>ชื่อผู้ขาย</Th>
                 <Th w={110}>สาขาผู้ขาย</Th>
                 <Th w={56}>RD</Th>
@@ -1671,7 +1687,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                     ref={(el) => autoGrow(el)}
                     onChange={(e) => { autoGrow(e.target); updateLine(idx, { description: e.target.value }); }} />
                 </MField>
-                <MField label="เลขผู้เสียภาษี (ผู้ขาย)">
+                <MField label="เลขผู้เสียภาษี (ผู้ขาย) *">
                   <div className="flex items-center gap-2">
                     <input className={fieldClass} style={{ ...fieldStyle, borderColor: taxIdNotice(l.taxId) ? "var(--color-warning)" : undefined }}
                       value={l.taxId} disabled={readOnly} placeholder="เลข 13 หลัก"
