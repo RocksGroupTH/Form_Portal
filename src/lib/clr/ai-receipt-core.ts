@@ -511,13 +511,6 @@ export function normalizeDocNo(docNo: string): string {
  * vendors do issue an invoice "001": without it the second one silently vanishes
  * into the first, and a lost expense line is worse than a duplicate row the user
  * deletes. Null for an entry with no number — those never merge.
- *
- * The number is compared whole. A tax invoice and a receipt that share a serial
- * under different prefixes — IV-202608271 and RT-202608271 — were merged for an
- * hour on 2026-09-11 and the user reversed it the same day: different numbers
- * are different documents, and the number is what says so. If a bundle really
- * does carry one purchase twice, that is a duplicate row to delete, not a rule
- * to infer from the prefix.
  */
 function docKey(d: ReceiptDoc): string | null {
   if (!d.docNo) return null;
