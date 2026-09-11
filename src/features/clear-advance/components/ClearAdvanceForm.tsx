@@ -1388,7 +1388,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                 style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
                 {!brandCode
                   ? "กรุณาเลือกแบรนด์ก่อนเลือกเงินทดรองจ่ายที่ต้องการเคลียร์"
-                  : "ไม่มีเงินทดรองจ่ายที่รออนุมัติให้เคลียร์สำหรับแบรนด์นี้"}
+                  : "ไม่มีเงินทดรองจ่ายที่เคลียร์ได้สำหรับแบรนด์นี้ — ต้องเป็นใบที่อนุมัติและจ่ายเงินออก (ส่ง ERP) แล้ว และยังไม่ถูกเคลียร์"}
               </p>
             )
           ) : (
@@ -1480,7 +1480,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                 thirteen digits, and this is what retries the ones the registry
                 dropped. */}
             {!readOnly && (() => {
-              const pending = tinsNeedingRdCheck(
+              const pendingTins = tinsNeedingRdCheck(
                 lines.map((l) => ({ taxId: l.taxId })),
                 rdByTin,
               );
@@ -1488,17 +1488,17 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
               return (
                 <button
                   type="button"
-                  disabled={pending.length === 0}
-                  title={pending.length === 0 ? "ตรวจกับกรมสรรพากรครบทุกเลขแล้ว" : undefined}
-                  onClick={() => pending.forEach((tin) => void askRd(tin))}
+                  disabled={pendingTins.length === 0}
+                  title={pendingTins.length === 0 ? "ตรวจกับกรมสรรพากรครบทุกเลขแล้ว" : undefined}
+                  onClick={() => pendingTins.forEach((tin) => void askRd(tin))}
                   className="text-[11px] px-2 py-1 rounded-lg border-none"
                   style={{
-                    background: pending.length === 0 ? "var(--bg-card-alt)" : "var(--nav-active-bg)",
-                    color: pending.length === 0 ? "var(--text-faint)" : "var(--nav-active-text)",
-                    cursor: pending.length === 0 ? "default" : "pointer",
+                    background: pendingTins.length === 0 ? "var(--bg-card-alt)" : "var(--nav-active-bg)",
+                    color: pendingTins.length === 0 ? "var(--text-faint)" : "var(--nav-active-text)",
+                    cursor: pendingTins.length === 0 ? "default" : "pointer",
                   }}
                 >
-                  {pending.length === 0 ? "ตรวจสรรพากรครบแล้ว" : `ตรวจสรรพากร (${pending.length} รายการ)`}
+                  {pendingTins.length === 0 ? "ตรวจสรรพากรครบแล้ว" : `ตรวจสรรพากร (${pendingTins.length} รายการ)`}
                 </button>
               );
             })()}
