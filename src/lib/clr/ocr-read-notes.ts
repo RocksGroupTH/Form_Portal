@@ -1,5 +1,6 @@
 import { thaiPrintedDate } from "@/lib/clr/ai-receipt-core";
 import { sameRegisteredName, type RdAnswerState } from "@/lib/clr/rd-vat-core";
+import { taxIdChecksumOk } from "@/lib/clr/seller-tax-id";
 
 /**
  * What to tell the requester after the AI has read their receipts.
@@ -44,6 +45,10 @@ export type OcrReadNote =
   | { kind: "branch"; row: number; text: string }
   | { kind: "rd-unregistered"; row: number; text: string }
   | { kind: "rd-name"; row: number; text: string }
+  /** The number fails its own check digit — known misread, no network needed. */
+  | { kind: "tax-id-invalid"; row: number; text: string }
+  /** The name came from our vendor master rather than the registry. */
+  | { kind: "vendor-name"; row: number; text: string }
   /** One note for all the rows whose branch was defaulted, not one each. */
   | { kind: "tax-branch"; rows: number[]; text: string };
 
@@ -77,6 +82,9 @@ export function ocrReadNotes(read: {
      * two names sitting next to each other looking nothing alike.
      */
     payeeNameRead?: string | null;
+    /** Where `payeeName` came from when it was not the reader: the Revenue
+     *  Department's register, or our own vendor master. */
+    payeeNameSource?: "rd" | "vendor";
     /** The seller's branch, five digits — 00000 is the head office. */
     taxBranchCode?: string | null;
     vatAmount?: number | null;
@@ -168,9 +176,38 @@ export function ocrReadNotes(read: {
      check teaches them to dismiss this dialog. The account officer's own
      ตรวจสรรพากร button asks again on a screen where the number is visible and
      editable, which is where an unanswered check belongs. */
+  /* Before the registry is consulted at all. A number that fails its own check
+     digit was misread, and saying "ไม่พบในระบบสรรพากร" about it sends the reader
+     looking for a company that was never the question. */
   read.rows.forEach((r, i) => {
     const tin = (r.taxId ?? "").replace(/\D/g, "");
-    if (tin.length !== 13) return;
+    if (tin.length !== 13 || taxIdChecksumOk(tin)) return;
+    notes.push({
+      kind: "tax-id-invalid",
+      row: i + 1,
+      text: `รายการที่ ${i + 1} — เลขผู้เสียภาษี ${tin} ไม่ถูกต้องตามหลักตรวจสอบ`
+        + ` (AI น่าจะอ่านผิด) กรุณาตรวจกับเอกสาร`,
+    });
+  });
+
+  /* A seller we already trade with, named from our own vendor master. It is
+     the answer the registry would have given, without the registry: a SOAP
+     service behind a fifteen-second timeout that is silent often enough for
+     this to be the usual path rather than the fallback. */
+  read.rows.forEach((r, i) => {
+    if (r.payeeNameSource !== "vendor" || !r.payeeNameRead) return;
+    if (sameRegisteredName(r.payeeNameRead, r.payeeName)) return;
+    notes.push({
+      kind: "vendor-name",
+      row: i + 1,
+      text: `รายการที่ ${i + 1} — ใช้ชื่อผู้ขายจากทะเบียนผู้ขายของบริษัท “${r.payeeName}”`
+        + ` แทนที่อ่านได้ “${r.payeeNameRead}”`,
+    });
+  });
+
+  read.rows.forEach((r, i) => {
+    const tin = (r.taxId ?? "").replace(/\D/g, "");
+    if (tin.length !== 13 || !taxIdChecksumOk(tin)) return;
     const answer = read.rd?.[tin];
     if (!answer) return;
     if (answer.state === "unregistered") {

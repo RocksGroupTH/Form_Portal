@@ -143,14 +143,14 @@ test("a name that is not the registered one is reported, with the registered one
 
 test("a tax id the register holds nothing for is reported with the number", () => {
   const notes = ocrReadNotes({
-    rows: [rdRow({ taxId: "0105560999999" })],
+    rows: [rdRow({ taxId: "0105560999996" })],
     fileCount: 1,
     skippedPages: 0,
-    rd: { "0105560999999": { state: "unregistered" } },
+    rd: { "0105560999996": { state: "unregistered" } },
   });
   assert.equal(notes.length, 1);
   assert.equal(notes[0].kind, "rd-unregistered");
-  assert.match(notes[0].text, /0105560999999/);
+  assert.match(notes[0].text, /0105560999996/);
 });
 
 test("the registry not answering is silent — it is a failed check, not a finding", () => {
@@ -214,10 +214,10 @@ test("the tax id is matched by its digits, however the reader punctuated it", ()
 
 test("rd findings come after the counts and the row notes they share a dialog with", () => {
   const notes = ocrReadNotes({
-    rows: [rdRow({ branchClose: true, taxId: "0105560999999" })],
+    rows: [rdRow({ branchClose: true, taxId: "0105560999996" })],
     fileCount: 3,
     skippedPages: 1,
-    rd: { "0105560999999": { state: "unregistered" } },
+    rd: { "0105560999996": { state: "unregistered" } },
   });
   assert.deepEqual(notes.map((n) => n.kind), ["count", "skipped", "branch", "rd-unregistered"]);
 });
@@ -400,4 +400,53 @@ test("without the applied name it is still reported the old way", () => {
   });
   assert.equal(notes.length, 1);
   assert.match(notes[0].text, /ไม่ตรงกับที่จดทะเบียน/);
+});
+
+/* The check digit, said before the registry is asked (user, 2026-09-12). It is
+   the finding that needs no network and cannot be wrong: a number that fails it
+   was misread, whatever the registry would have said. */
+
+test("a tax id that fails its own check digit is reported as a misread", () => {
+  const notes = ocrReadNotes({
+    rows: [rdRow({ taxId: "0105564122694", payeeName: "บริษัท พีพี แสตมป์ จำกัด" })],
+    fileCount: 1, skippedPages: 0,
+  });
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].kind, "tax-id-invalid");
+  assert.equal(notes[0].row, 1);
+  assert.match(notes[0].text, /0105564122694/);
+});
+
+test("a tax id that passes says nothing about its digits", () => {
+  assert.deepEqual(
+    ocrReadNotes({ rows: [rdRow({ taxId: "0105564122649" })], fileCount: 1, skippedPages: 0 }),
+    [],
+  );
+});
+
+test("a number known wrong is not also reported as unregistered", () => {
+  const notes = ocrReadNotes({
+    rows: [rdRow({ taxId: "0105564122694" })],
+    fileCount: 1, skippedPages: 0,
+    rd: { "0105564122694": { state: "unregistered" } },
+  });
+  assert.deepEqual(notes.map((n) => n.kind), ["tax-id-invalid"]);
+});
+
+/* Our own vendor master answers instantly and does not time out, so a seller we
+   already trade with gets its registered name from there when the registry is
+   silent. */
+test("a vendor we know supplies the name the registry did not", () => {
+  const notes = ocrReadNotes({
+    rows: [rdRow({
+      payeeName: "บริษัท พีพี แสตมป์ จำกัด",
+      payeeNameRead: "บริษัท พีพี สแตมป จำกัด",
+      payeeNameSource: "vendor",
+    })],
+    fileCount: 1, skippedPages: 0,
+  });
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].kind, "vendor-name");
+  assert.match(notes[0].text, /บริษัท พีพี แสตมป์ จำกัด/);
+  assert.match(notes[0].text, /บริษัท พีพี สแตมป จำกัด/);
 });
