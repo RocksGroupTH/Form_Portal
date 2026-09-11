@@ -672,19 +672,23 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           });
           break;
         }
-        /* The seller's tax id, required since the column became visible (user,
-           2026-09-11). It is what the input VAT is claimed against and what the
-           registry check needs; blank, it reaches accounting as a line nobody
+        /* The seller's tax id, required on a line that claims input VAT (user,
+           2026-09-11). It is what the VAT is claimed against and what the
+           registry check needs; blank, it reaches accounting as a claim nobody
            can attribute, days after the receipt stopped being in anyone's hand.
-           Held to thirteen digits for the same reason `taxIdNotice` says so on
-           the row: a half-typed number looks filled in and silently checks
-           against nothing. */
+           A line with no VAT is left alone — a plain ใบเสร็จรับเงิน from a
+           small seller carries no tax id and there is nothing to identify.
+           Same shape as the rule one table down, where the certificate's payee
+           is required only once WHT has been withheld. */
         const tin = l.taxId.replace(/\D/g, "");
-        if (tin.length === 0) {
-          errs.push({ key: "lines", message: "มีรายการที่ยังไม่ได้กรอกเลขผู้เสียภาษีของผู้ขาย" });
+        if (num(l.vatAmount) > 0 && tin.length === 0) {
+          errs.push({ key: "lines", message: "มีรายการที่มี VAT แต่ยังไม่ได้กรอกเลขผู้เสียภาษีของผู้ขาย" });
           break;
         }
-        if (tin.length !== 13) {
+        /* Whatever was typed has to be a whole tax id, VAT or not: a half-typed
+           number looks filled in and silently checks against nothing, which is
+           what `taxIdNotice` already says on the row. */
+        if (tin.length > 0 && tin.length !== 13) {
           errs.push({ key: "lines", message: `มีรายการที่เลขผู้เสียภาษีไม่ครบ 13 หลัก (ตอนนี้ ${tin.length})` });
           break;
         }

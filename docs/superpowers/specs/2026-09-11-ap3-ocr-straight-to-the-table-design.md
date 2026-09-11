@@ -183,17 +183,25 @@ branch — the BU and the BRANCH dimension — and having two columns called
 `สาขา` on one row, one of them the seller's, is how the wrong one gets typed
 into.
 
-The tax id is required to submit (user, same day): `เลขผู้เสียภาษี *`, and
-`collectErrors` refuses a line without one, or with fewer than thirteen digits
-— the state `taxIdNotice` already names on the row, where the number looks
-filled in and the registry check silently does not run. The name and the branch
-stay optional: the register can supply both from the number, and neither is
-what the input VAT is claimed against.
+The tax id is required to submit on a line that claims input VAT (user, same
+day): `เลขผู้เสียภาษี *`, and `collectErrors` refuses such a line without one.
+A line with no VAT is left alone — a plain `ใบเสร็จรับเงิน` from a small seller
+carries no tax id and there is nothing to identify. Same shape as the rule one
+table down, where the certificate's payee is required only once WHT has been
+withheld, and the header keeps its `*` for the same reason that one does.
 
-Note the consequence: a plain `ใบเสร็จรับเงิน` carrying no tax id at all cannot
-be submitted on a line of its own. If that turns out to be common, the rule to
-scope it to is `vatAmount > 0` — a line claiming no input VAT has no seller to
-identify — rather than dropping it.
+Whatever *is* typed must be a whole tax id, VAT or not: thirteen digits or the
+submit is refused with the count, because a half-typed number looks filled in
+and silently checks against nothing — the state `taxIdNotice` already names on
+the row.
+
+The name and the branch stay optional: the register supplies both from the
+number, and neither is what the VAT is claimed against.
+
+`ดึงจากรายการ` carries the tax id, the payee name and the address from the
+expense line into the WHT certificate row, and suggests the ภ.ง.ด. type from
+the number. The certificate's payee is the seller of the invoice the tax was
+withheld from, so retyping it was work the form created for itself.
 
 The columns themselves gate nothing else. They are advisory on the requester's
 form exactly as they are on the account grid, and the account step's four
