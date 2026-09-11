@@ -221,3 +221,64 @@ test("rd findings come after the counts and the row notes they share a dialog wi
   });
   assert.deepEqual(notes.map((n) => n.kind), ["count", "skipped", "branch", "rd-unregistered"]);
 });
+
+/* The seller's branch, when the reader got everything about the seller except
+   that (user, 2026-09-11). A Thai tax invoice prints it by law, so a blank one
+   means the read missed it — not that it is the head office. Warned rather than
+   guessed: sending nothing leaves BC to use the vendor card's branch, which
+   somebody maintains, and filling in 00000 would overwrite that with an
+   assumption on a tax filing. */
+
+const brRow = (patch: Partial<Parameters<typeof ocrReadNotes>[0]["rows"][number]> = {}) =>
+  row({
+    taxId: "0105560171921",
+    payeeName: "บริษัท เจเนซิส ซัพพลาย เชน จำกัด",
+    taxBranchCode: "",
+    vatAmount: 121.62,
+    ...patch,
+  });
+
+test("a VAT line whose seller was read but whose branch was not is reported", () => {
+  const notes = ocrReadNotes({ rows: [row(), brRow()], fileCount: 2, skippedPages: 0 });
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].kind, "tax-branch");
+  assert.equal(notes[0].row, 2);
+  assert.match(notes[0].text, /00000/);
+});
+
+test("a branch that was read says nothing", () => {
+  assert.deepEqual(
+    ocrReadNotes({ rows: [brRow({ taxBranchCode: "00000" })], fileCount: 1, skippedPages: 0 }),
+    [],
+  );
+});
+
+test("a real branch number says nothing either", () => {
+  assert.deepEqual(
+    ocrReadNotes({ rows: [brRow({ taxBranchCode: "00001" })], fileCount: 1, skippedPages: 0 }),
+    [],
+  );
+});
+
+test("no VAT means no tax invoice, so no branch to have missed", () => {
+  assert.deepEqual(ocrReadNotes({ rows: [brRow({ vatAmount: 0 })], fileCount: 1, skippedPages: 0 }), []);
+});
+
+test("a seller the reader could not identify is a different problem, not this one", () => {
+  assert.deepEqual(ocrReadNotes({ rows: [brRow({ taxId: "" })], fileCount: 1, skippedPages: 0 }), []);
+  assert.deepEqual(ocrReadNotes({ rows: [brRow({ payeeName: "" })], fileCount: 1, skippedPages: 0 }), []);
+});
+
+test("a half-read tax id does not count as having identified the seller", () => {
+  assert.deepEqual(ocrReadNotes({ rows: [brRow({ taxId: "010556017" })], fileCount: 1, skippedPages: 0 }), []);
+});
+
+test("the branch note comes after the registry's findings about the same seller", () => {
+  const notes = ocrReadNotes({
+    rows: [brRow({ payeeName: "ร้านค้าทั่วไป" })],
+    fileCount: 1,
+    skippedPages: 0,
+    rd: { "0105560171921": found("บริษัท เจเนซิส ซัพพลาย เชน จำกัด") },
+  });
+  assert.deepEqual(notes.map((n) => n.kind), ["rd-name", "tax-branch"]);
+});

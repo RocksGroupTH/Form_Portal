@@ -20,6 +20,12 @@ import { sameRegisteredName, type RdAnswerState } from "@/lib/clr/rd-vat-core";
  *   branch   the model saw two branches that fit nearly as well. The one it
  *            picked is real and correctly formatted, so no rule can object —
  *            it just decides the BU and the BRANCH dimension.
+ *   branch   the seller's own branch, missing from a tax invoice that named
+ *            the seller in every other respect. Thai law has the invoice print
+ *            it, so a blank is the read missing it — not the head office. It is
+ *            warned about rather than filled in: an empty value sends nothing
+ *            and BC uses the vendor card's branch, which somebody maintains,
+ *            while a guessed 00000 would overwrite that on a tax filing.
  *   rd       the Revenue Department disagreeing about the seller: a tax id it
  *            holds no registration for, or a registered name that is not the
  *            one on the row. The requester has no tax-id column, so the
@@ -36,7 +42,8 @@ export type OcrReadNote =
   | { kind: "date"; row: number; text: string }
   | { kind: "branch"; row: number; text: string }
   | { kind: "rd-unregistered"; row: number; text: string }
-  | { kind: "rd-name"; row: number; text: string };
+  | { kind: "rd-name"; row: number; text: string }
+  | { kind: "tax-branch"; row: number; text: string };
 
 /** What the registry said about one tax id, as far as this rule cares. */
 export interface RdLookup {
@@ -57,6 +64,9 @@ export function ocrReadNotes(read: {
     branchClose?: boolean;
     taxId?: string | null;
     payeeName?: string | null;
+    /** The seller's branch, five digits — 00000 is the head office. */
+    taxBranchCode?: string | null;
+    vatAmount?: number | null;
   }[];
   /** Files the requester attached for this read. */
   fileCount: number;
@@ -129,6 +139,23 @@ export function ocrReadNotes(read: {
       kind: "rd-name",
       row: i + 1,
       text: `รายการที่ ${i + 1} — ชื่อผู้ขายไม่ตรงกับที่จดทะเบียน (สรรพากร: ${answer.registeredName})`,
+    });
+  });
+
+  /* Only where the reader plainly had the invoice in focus: it took a whole
+     tax id and a name off it, and the line claims input VAT, so the document is
+     a tax invoice and the branch was printed on it. A row whose seller could
+     not be read at all has a bigger problem, and the required-tax-id rule says
+     so at submit. */
+  read.rows.forEach((r, i) => {
+    if (!(Number(r.vatAmount ?? 0) > 0)) return;
+    if ((r.taxId ?? "").replace(/\D/g, "").length !== 13) return;
+    if (!(r.payeeName ?? "").trim()) return;
+    if ((r.taxBranchCode ?? "").trim()) return;
+    notes.push({
+      kind: "tax-branch",
+      row: i + 1,
+      text: `รายการที่ ${i + 1} — อ่านสาขาผู้ขายจากใบกำกับไม่ได้ (สำนักงานใหญ่ = 00000)`,
     });
   });
 

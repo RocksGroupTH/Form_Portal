@@ -1100,6 +1100,10 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           branchClose: r.branchClose,
           taxId: r.taxId,
           payeeName: r.payeeName,
+          /* The same conversion acceptOcrRows will do a moment later — the row
+             still holds the raw printed text at this point. */
+          taxBranchCode: taxBranchCode(r.taxBranchText) ?? "",
+          vatAmount: num(r.vatAmount),
         })),
         fileCount: docs.length,
         skippedPages: skipped,
