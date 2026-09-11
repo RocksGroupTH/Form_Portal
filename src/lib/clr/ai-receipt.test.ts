@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   BRANCH_SUGGEST_SYSTEM,
   RECEIPT_SYSTEM,
+  RECEIPT_USER_TEXT,
   buildBranchSuggestUserText,
   buildGlSuggestUserText,
   parseReceiptDocs,
@@ -308,10 +309,31 @@ test("the branch prompt lists the brand's branches and the note", () => {
   assert.ok(text.includes("Central Khonkaen2"));
 });
 
-test("the branch prompt forbids reading the สาขา printed on the receipt", () => {
-  // That field is the buyer's tax-invoice branch (สำนักงานใหญ่), not the cost centre.
-  assert.ok(RECEIPT_SYSTEM.includes("BUYER"));
+test("the สาขา field is taxBranchText's, and only branchHint keeps out of it", () => {
+  /* This test used to assert the opposite — that the prompt called the printed
+     สาขา the BUYER's and told the reader to "ignore that field completely".
+     It did, and the reader obeyed: every receipt came back with
+     taxBranchText null, including one printing "สาขา : สำนักงานใหญ่" in 34px
+     (verified against the live reader, 2026-09-12). The branch text landed in
+     payeeAddress or nowhere, every row was stamped 00000 by the default, and
+     the read dialog told the requester no branch was printed on invoices that
+     plainly printed one. Two instructions ten lines apart, and the later one
+     won. */
+  assert.ok(RECEIPT_SYSTEM.includes("it is taxBranchText's field"));
+  assert.ok(!RECEIPT_SYSTEM.includes("Ignore that field completely"));
   assert.ok(RECEIPT_SYSTEM.includes("สำนักงานใหญ่"));
+  /* The other two places the branch vanished into: glued onto the end of the
+     company name, and filed as the street address. Both are answered by the
+     worked split, which is what actually made the reader fill the field. */
+  assert.ok(RECEIPT_SYSTEM.includes("payeeName is the COMPANY NAME ONLY"));
+  /* The seller is found by transcribing the two party blocks first, and the
+     operative half of that rule lives in the user turn — see the comment on
+     RECEIPT_USER_TEXT for why the system prompt alone did not move the reader. */
+  assert.ok(RECEIPT_SYSTEM.includes("sellerBlock, buyerBlock: COPY THESE FIRST"));
+  assert.ok(RECEIPT_USER_TEXT.includes("transcribe its two party blocks"));
+  assert.ok(RECEIPT_USER_TEXT.includes("Put sellerBlock and buyerBlock in each entry, first."));
+  assert.ok(RECEIPT_SYSTEM.includes("Never leave the bracket inside payeeName"));
+  assert.ok(RECEIPT_SYSTEM.includes("taxBranchText  = สาขาที่ 00012 บางนา"));
   // Near-identical names must still produce a pick, flagged rather than dropped.
   assert.ok(BRANCH_SUGGEST_SYSTEM.includes("Always give your best branch"));
 });

@@ -71,6 +71,39 @@ export function normalizeTaxIdInput(raw: string): string {
  */
 export function taxIdNotice(raw: string | null | undefined): string | null {
   const d = normalizeTaxIdInput(raw ?? "");
-  if (d.length === 0 || d.length === 13) return null;
-  return `ยังไม่ครบ 13 หลัก (ตอนนี้ ${d.length}) — ยังตรวจกับกรมสรรพากรไม่ได้`;
+  if (d.length === 0) return null;
+  if (d.length < 13) return `ยังไม่ครบ 13 หลัก (ตอนนี้ ${d.length}) — ยังตรวจกับกรมสรรพากรไม่ได้`;
+  /* Said apart from "ไม่พบในระบบสรรพากร", which is a different finding: that
+     one can mean a company that never registered for VAT, and it needs the
+     registry to have answered at all. This needs nothing and cannot be wrong
+     about the number being wrong. */
+  if (!taxIdChecksumOk(d)) return "เลขนี้ไม่ถูกต้องตามหลักตรวจสอบ — ตรวจกับเอกสารอีกครั้ง";
+  return null;
+}
+
+/**
+ * Whether thirteen digits are a possible Thai tax id, by their own check digit.
+ *
+ * The Revenue Department's numbering carries its proof in the last digit:
+ * weight the first twelve by 13 down to 2, and the remainder decides what the
+ * thirteenth must be. So a number can be known wrong without asking anybody —
+ * no registry, no network, no fifteen-second SOAP timeout.
+ *
+ * This is the check that fits the failure we actually have. The reader does not
+ * invent tax ids; it misreads them off a scan, a digit at a time, and that is
+ * exactly what a check digit catches. Measured on the user's ใบกำกับหลายใบ.pdf:
+ * five of the six misread numbers fail here, including พีพี แสตมป์'s with its
+ * last two digits transposed (…649 read as …694).
+ *
+ * It is a necessary condition, never a sufficient one. Roughly one wrong number
+ * in ten still lands on a valid check digit — 0705564000572 did, in the same
+ * bundle — so this narrows what has to be looked at; it does not bless what
+ * passes.
+ */
+export function taxIdChecksumOk(raw: string | null | undefined): boolean {
+  const d = normalizeTaxIdInput(raw ?? "");
+  if (d.length !== 13) return false;
+  let sum = 0;
+  for (let i = 0; i < 12; i++) sum += Number(d[i]) * (13 - i);
+  return (11 - (sum % 11)) % 10 === Number(d[12]);
 }

@@ -20,6 +20,17 @@ export interface TaxVendorCandidate {
  */
 const vendorListCache = new Map<string, Promise<TaxVendorCandidate[]>>();
 
+/**
+ * The same list, for code that is not a component.
+ *
+ * The receipt read wants it once, mid-await, to name a seller from our own
+ * books; it has no state to hold and nothing to render while it waits. Sharing
+ * the cache means the account step opening afterwards does not fetch again.
+ */
+export function loadTaxVendors(brandCode: string | null): Promise<TaxVendorCandidate[]> {
+  return fetchVendors(brandCode);
+}
+
 function fetchVendors(brandCode: string | null): Promise<TaxVendorCandidate[]> {
   const key = brandCode ?? "";
   const hit = vendorListCache.get(key);

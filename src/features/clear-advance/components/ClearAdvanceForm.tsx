@@ -21,8 +21,9 @@ import { PoweredByClaude } from "@/components/ui/PoweredByClaude";
 import { BranchPicker, cellClass, cellStyle } from "./LinePickers";
 import { OcrReadNotesDialog } from "./OcrReadNotesDialog";
 import { ocrReadNotes, type OcrReadNote, type RdLookup } from "@/lib/clr/ocr-read-notes";
-import { registrantFullName, tinsNeedingRdCheck, type RdVatRegistrant } from "@/lib/clr/rd-vat-core";
-import { normalizeTaxIdInput, taxIdNotice } from "@/lib/clr/seller-tax-id";
+import { loadTaxVendors } from "@/features/clear-advance/hooks/useTaxVendors";
+import { registrantFullName, sameRegisteredName, tinsNeedingRdCheck, type RdVatRegistrant } from "@/lib/clr/rd-vat-core";
+import { normalizeTaxIdInput, taxIdChecksumOk, taxIdNotice } from "@/lib/clr/seller-tax-id";
 import { RdCell } from "@/features/clear-advance/components/RdCell";
 import { useRdVatByTin } from "@/features/clear-advance/hooks/useRdVatByTin";
 import type { ReceiptKind } from "@/lib/clr/ai-receipt-core";
@@ -47,6 +48,11 @@ interface OcrRow {
   dateText?: string;
   docNo: string;
   taxBranchText: string;
+  /** What the reader answered for payeeName, kept when a registered name
+   *  replaced it, so the dialog can show both. */
+  payeeNameRead?: string;
+  /** Which register replaced it: the Revenue Department's, or our own books. */
+  payeeNameSource?: "rd" | "vendor";
   /** 00000 was filled in because the invoice's branch could not be read. */
   taxBranchDefaulted: boolean;
   branchCode: string;
@@ -1104,6 +1110,48 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
         }),
       );
 
+      /* The register is the authority on who a tax id belongs to, so its name
+         goes onto the row rather than being offered for someone to apply by
+         hand (user, 2026-09-12). What the reader answered is kept beside it —
+         the dialog shows both, because a tax id taken off the wrong block of
+         the invoice comes back with a perfectly real registered name attached,
+         and two names that look nothing alike is the only thing that says so.
+         Only a "found" answer replaces anything: "unregistered" and a registry
+         that did not answer both leave the row exactly as read. */
+      /* Our own books, keyed by tax id. The registry is the legal authority
+         and answers first, but it is a SOAP service behind a fifteen-second
+         timeout and silent often enough that this is the usual path rather
+         than the fallback — and a seller we already trade with is a seller we
+         already have the registered name of. Failing to load it is not a
+         finding: the rows stay exactly as read. */
+      const vendorByTin = new Map<string, string>();
+      try {
+        for (const v of await loadTaxVendors(brandCode)) {
+          const tin = (v.taxRegistrationNumber ?? "").replace(/\D/g, "");
+          if (tin.length === 13 && v.displayName?.trim()) vendorByTin.set(tin, v.displayName.trim());
+        }
+      } catch { /* our own list not answering is not a finding either */ }
+
+      for (const r of candidates) {
+        if (r.kind !== "receipt") continue;
+        const tin = r.taxId.replace(/\D/g, "");
+        /* A number that fails its own check digit was misread, so looking a
+           seller up by it can only name the wrong company. The dialog reports
+           it; nothing is filled from it. */
+        if (!taxIdChecksumOk(tin)) continue;
+        const answer = rd[tin];
+        const known = answer?.state === "found" && answer.registeredName
+          ? { name: answer.registeredName, source: "rd" as const }
+          : vendorByTin.has(tin)
+            ? { name: vendorByTin.get(tin)!, source: "vendor" as const }
+            : null;
+        if (!known) continue;
+        if (sameRegisteredName(r.payeeName, known.name)) continue;
+        r.payeeNameRead = r.payeeName;
+        r.payeeName = known.name;
+        r.payeeNameSource = known.source;
+      }
+
       /* Straight into the table (CR, 2026-09-11). The rows are editable there
          like any other, and deleting a receipt still removes the line it
          filled — so there is nothing left for a confirm step to add except the
@@ -1116,6 +1164,8 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           branchClose: r.branchClose,
           taxId: r.taxId,
           payeeName: r.payeeName,
+          payeeNameRead: r.payeeNameRead,
+          payeeNameSource: r.payeeNameSource,
           /* The same conversion acceptOcrRows will do a moment later — the row
              still holds the raw printed text at this point. */
           taxBranchCode: taxBranchCode(r.taxBranchText) ?? DEFAULT_TAX_BRANCH_CODE,
