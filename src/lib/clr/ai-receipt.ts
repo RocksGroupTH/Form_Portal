@@ -30,20 +30,6 @@ import { needsStrongerRead } from "./receipt-escalation";
 const MODEL = process.env.ANTHROPIC_RECEIPT_MODEL || "claude-haiku-4-5-20251001";
 
 /**
- * Reading a receipt is transcription, so there is nothing for sampling to be
- * creative about — and nothing set this, which means every call ran at the
- * SDK default of 1.0. That is why one nine-page bundle came back as one row on
- * one run, six on the next and seven on the one after, with ฿1,344.60 on a page
- * reading as ฿1,256.64 the second time: a claim whose total depends on when it
- * was uploaded (user, 2026-09-11).
- *
- * It does not make the model right, only repeatable — the same pages give the
- * same answer, so a wrong read can be reproduced and fixed rather than argued
- * about. Nothing else about the call changes.
- */
-const READ_TEMPERATURE = 0;
-
-/**
  * The model a suspect read is retried with. Most receipts never reach it: see
  * `needsStrongerRead` for the one signal that sends them, and what a rotated
  * tax invoice did to the small model to earn it.
@@ -74,7 +60,6 @@ export async function extractReceiptsWithAI(
     const res = await client.messages.create({
       model: MODEL,
       max_tokens: 4096,
-      temperature: READ_TEMPERATURE,
       system: RECEIPT_SYSTEM,
       messages: [
         {
@@ -119,7 +104,6 @@ async function readWithModel(
   const res = await client.messages.create({
     model,
     max_tokens: 4096,
-    temperature: READ_TEMPERATURE,
     system: RECEIPT_SYSTEM,
     messages: [
       {
@@ -158,7 +142,6 @@ export async function suggestGlAccountWithAI(
     const res = await client.messages.create({
       model: MODEL,
       max_tokens: 32,
-      temperature: READ_TEMPERATURE,
       system: GL_SUGGEST_SYSTEM,
       messages: [{ role: "user", content: buildGlSuggestUserText(text, candidates) }],
     });
@@ -192,7 +175,6 @@ export async function suggestBranchWithAI(
     const res = await client.messages.create({
       model: MODEL,
       max_tokens: 64,
-      temperature: READ_TEMPERATURE,
       system: BRANCH_SUGGEST_SYSTEM,
       messages: [{ role: "user", content: buildBranchSuggestUserText(text, candidates) }],
     });
@@ -242,7 +224,6 @@ export async function extractSlipWithAI(
     const res = await client.messages.create({
       model: MODEL,
       max_tokens: 256,
-      temperature: READ_TEMPERATURE,
       system: SLIP_SYSTEM,
       messages: [
         {
