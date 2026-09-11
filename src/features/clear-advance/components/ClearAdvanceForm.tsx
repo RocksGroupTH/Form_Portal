@@ -1388,7 +1388,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                 style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
                 {!brandCode
                   ? "กรุณาเลือกแบรนด์ก่อนเลือกเงินทดรองจ่ายที่ต้องการเคลียร์"
-                  : "ไม่มีเงินทดรองจ่ายที่เคลียร์ได้สำหรับแบรนด์นี้ — ต้องเป็นใบที่อนุมัติและจ่ายเงินออก (ส่ง ERP) แล้ว และยังไม่ถูกเคลียร์"}
+                  : "ไม่มีเงินทดรองจ่ายที่เคลียร์ได้สำหรับแบรนด์นี้ — ต้องเป็นใบที่อนุมัติแล้วและยังไม่ถูกเคลียร์"}
               </p>
             )
           ) : (
