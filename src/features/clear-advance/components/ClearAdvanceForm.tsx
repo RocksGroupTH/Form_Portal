@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { PND_LABEL, suggestPndType } from "@/lib/clr/wht-pnd-core";
 import { taxBranchCode } from "@/lib/clr/tax-branch-core";
@@ -1805,7 +1805,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           )}
 
           <div className="overflow-x-auto -mx-1 px-1 hidden md:block">
-            <table className="w-full border-collapse" style={{ minWidth: 820 }}>
+            <table className="w-full border-collapse" style={{ minWidth: 980 }}>
               <thead>
                 <tr className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                   <Th w={34}>#</Th>
@@ -1813,6 +1813,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                   <Th w={100}>เลขที่เอกสาร</Th>
                   <Th w={130}>เลขผู้เสียภาษี *</Th>
                   <Th w={150}>ชื่อผู้รับ *</Th>
+                  <Th w={170}>ที่อยู่</Th>
                   <Th w={110}>ภ.ง.ด.</Th>
                   <Th w={100} right>ค่าใช้จ่าย</Th>
                   <Th w={90} right>WHT</Th>
@@ -1822,15 +1823,14 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
               <tbody>
                 {whtRows.length === 0 ? (
                   <tr>
-                    <Td colSpan={readOnly ? 8 : 9}>
+                    <Td colSpan={readOnly ? 9 : 10}>
                       <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
                         ยังไม่มีรายการ — กด “ดึงจากรายการ” หรือ “เพิ่มแถว”
                       </span>
                     </Td>
                   </tr>
                 ) : whtRows.map((w, idx) => (
-                  <Fragment key={idx}>
-                  <tr className="align-top">
+                  <tr key={idx} className="align-top">
                     <Td><span className="text-[12px] tabular-nums" style={{ color: "var(--text-muted)" }}>{idx + 1}</span></Td>
                     <Td>
                       <input type="date" className={cellClass} style={{ ...cellStyle, width: "100%" }}
@@ -1851,6 +1851,20 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                       <input className={cellClass} style={{ ...cellStyle, width: "100%" }}
                         value={w.payeeName} disabled={readOnly} placeholder="ชื่อ-สกุล / บริษัท"
                         onChange={(e) => updateWht(idx, { payeeName: e.target.value })} />
+                    </Td>
+                    <Td>
+                      {/* Wraps down its column rather than running off the end
+                          of a one-line box. An address here passes a hundred
+                          characters and about twenty of them fit — the one
+                          field a reader checks against the register was the one
+                          they could not read. Growing the row is cheaper than
+                          widening the column, which would push the amounts off
+                          the right edge. */}
+                      <textarea rows={1} className={cellClass}
+                        style={{ ...cellStyle, width: "100%", resize: "none", overflow: "hidden", minHeight: 30, lineHeight: 1.35 }}
+                        value={w.payeeAddress} disabled={readOnly} placeholder="—"
+                        ref={(el) => autoGrow(el)}
+                        onChange={(e) => { autoGrow(e.target); updateWht(idx, { payeeAddress: e.target.value }); }} />
                     </Td>
                     <Td>
                       {/* Picks the BC vendor accounting clears against. Suggested
@@ -1884,33 +1898,15 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                       </Td>
                     )}
                   </tr>
-                  {/* The address on a line of its own, under the row it belongs
-                      to. It was a 170px column, which showed about twenty
-                      characters of an address that runs to a hundred and is
-                      printed in full on the certificate — so the one field
-                      nobody could read was the one a reader has to check.
-                      Stretching the column instead would have pushed every
-                      amount off the right edge. */}
-                  <tr className="align-top">
-                    <Td />
-                    <Td colSpan={readOnly ? 7 : 8}>
-                      <label className="flex items-baseline gap-2">
-                        <span className="text-[10px] font-bold uppercase tracking-wide shrink-0"
-                          style={{ color: "var(--text-muted)" }}>ที่อยู่</span>
-                        <textarea rows={1} className={cellClass}
-                          style={{ ...cellStyle, width: "100%", resize: "none", overflow: "hidden", minHeight: 30, lineHeight: 1.35 }}
-                          value={w.payeeAddress} disabled={readOnly} placeholder="ที่อยู่ผู้รับเงินตามที่จดทะเบียน"
-                          ref={(el) => autoGrow(el)}
-                          onChange={(e) => { autoGrow(e.target); updateWht(idx, { payeeAddress: e.target.value }); }} />
-                      </label>
-                    </Td>
-                  </tr>
-                  </Fragment>
                 ))}
               </tbody>
               <tfoot>
                 <tr className="text-[12px] font-bold" style={{ color: "var(--text-heading)" }}>
-                  <Td colSpan={7}><span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>รวม WHT</span></Td>
+                  {/* #, วันที่, เลขที่เอกสาร, เลขผู้เสียภาษี, ชื่อผู้รับ, ที่อยู่,
+                      ภ.ง.ด. and ค่าใช้จ่าย — eight, so รวม WHT lands under the
+                      WHT column. It spanned seven, which left the header a cell
+                      wider than this row. */}
+                  <Td colSpan={8}><span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>รวม WHT</span></Td>
                   <Td right><FootVal value={money(certWht)} accent={!whtMismatch} tone={whtMismatch ? "danger" : undefined} /></Td>
                   {!readOnly && <Td />}
                 </tr>
