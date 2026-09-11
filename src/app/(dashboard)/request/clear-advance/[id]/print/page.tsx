@@ -3,7 +3,8 @@
 import { Suspense, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { Printer } from "lucide-react";
-import type { ClearAdvanceItem, ClearAdvanceRequest } from "@/features/clear-advance/types";
+import type { ClearAdvanceItem, ClearAdvanceRequest, ClearAdvanceWhtItem } from "@/features/clear-advance/types";
+import { PND_LABEL } from "@/lib/clr/wht-pnd-core";
 
 /**
  * AP-3.1 on paper — the sheet the employee signs and staples in front of the
@@ -55,6 +56,9 @@ const PRINT_CSS = `
     min-height: 0; margin: 0; padding: 0; border: none; box-shadow: none;
   }
   #ap31-sheet .ap31-sign { margin-top: 14mm; }
+  /* The certificate block is read as one thing — split across a fold, a row of
+     it is a payee with no heading above it. */
+  #ap31-sheet .ap31-wht { break-inside: avoid; }
   .ap31-noprint { display: none !important; }
   html, body { background: #fff !important; }
   /* A logo is the one thing on this sheet that is not black on white. */
@@ -145,6 +149,10 @@ function PrintContent() {
 
   const clear = request.clear;
   const items: ClearAdvanceItem[] = clear?.items ?? [];
+  /* The certificates accounting has to issue for the tax withheld above. Only
+     printed when there are any — a heading over an empty table on every other
+     sheet teaches people to skip the section on the sheets that have one. */
+  const whtItems: ClearAdvanceWhtItem[] = clear?.whtItems ?? [];
 
   // The brand the money was drawn against, not whichever one the switcher is on:
   // a printed sheet is evidence, and it has to name its own request's brand.
@@ -306,6 +314,68 @@ function PrintContent() {
             />
           </tbody>
         </table>
+
+        {whtItems.length > 0 && (
+          <div className="ap31-wht mb-8">
+            <p className="text-[12px] font-bold m-0 mb-1.5">หนังสือรับรองการหักภาษี ณ ที่จ่าย</p>
+            <table className="w-full" style={{ borderCollapse: "collapse", tableLayout: "fixed" }}>
+              {/*
+                Measured at 186mm like the grid above. ที่อยู่ and ชื่อผู้รับ are
+                the two values here with no ceiling, so they are the two that
+                wrap; everything else is sized to stay on one line — a tax id
+                or a ภ.ง.ด. type broken in half is what this sheet exists to
+                avoid, since these rows become the certificates themselves.
+
+                Each of those has a few pixels over what it needs rather than
+                the fraction it fit in first: a tax id cleared its column by
+                0.9px and a figure by 0.5, which is not a margin, it is a
+                coincidence of this font. The room comes from the two that wrap
+                anyway.
+              */}
+              <colgroup>
+                <col style={{ width: "3.4%" }} />
+                <col style={{ width: "10.3%" }} />
+                <col style={{ width: "13.7%" }} />
+                <col style={{ width: "17.5%" }} />
+                <col style={{ width: "17.5%" }} />
+                <col style={{ width: "8.2%" }} />
+                <col style={{ width: "9.8%" }} />
+                <col style={{ width: "9.8%" }} />
+                <col style={{ width: "9.8%" }} />
+              </colgroup>
+              <thead>
+                <tr className="text-[11px] font-bold">
+                  <Th>#</Th><Th>วันที่</Th><Th>เลขผู้เสียภาษี</Th><Th>ชื่อผู้รับ</Th><Th>ที่อยู่</Th>
+                  <Th>ภ.ง.ด.</Th><Th right>ค่าใช้จ่าย</Th><Th right>WHT</Th><Th right>สุทธิ</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {whtItems.map((w, i) => (
+                  <tr key={w.id ?? i}>
+                    <Td>{i + 1}</Td>
+                    <Td>{fmtDateOnly(w.expenseDate)}</Td>
+                    <Td>{w.taxId ?? "—"}</Td>
+                    <Td>{w.payeeName ?? "—"}</Td>
+                    <Td>{w.payeeAddress ?? "—"}</Td>
+                    <Td>{w.pndType ? PND_LABEL[w.pndType] : "—"}</Td>
+                    <Td right>{money(w.amount)}</Td>
+                    <Td right>{money(w.whtAmount)}</Td>
+                    <Td right>{money(w.netAmount ?? (w.amount ?? 0) - (w.whtAmount ?? 0))}</Td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="font-bold">
+                  <Td colSpan={7}>รวม</Td>
+                  <Td right>{money(whtItems.reduce((s, w) => s + (w.whtAmount ?? 0), 0))}</Td>
+                  <Td right>
+                    {money(whtItems.reduce((s, w) => s + (w.netAmount ?? (w.amount ?? 0) - (w.whtAmount ?? 0)), 0))}
+                  </Td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
 
         {/* The point of the printed sheet: a wet signature to staple to the receipts. */}
         <div className="ap31-sign flex justify-end">
