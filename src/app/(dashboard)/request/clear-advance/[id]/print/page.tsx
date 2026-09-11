@@ -205,9 +205,14 @@ function PrintContent() {
               label2="รหัสพนักงาน" value2={request.staffId != null ? String(request.staffId) : "—"} />
             <HeaderRow label="ตำแหน่ง" value={request.requesterPosition ?? "—"}
               label2="แผนก" value2={request.requesterDepartmentName ?? "—"} />
-            <HeaderRow label="บริษัท" value={request.companyName ?? "—"}
-              label2="วันที่ยื่นคำขอ" value2={fmtDateOnly(request.submittedAt ?? request.createdAt)} />
-            <HeaderRow label="วันที่พิมพ์" value={fmtDateOnly(new Date().toISOString().slice(0, 10))} />
+            {/* The company takes the whole width. It is the one value here
+                with no natural ceiling — a registered name plus its
+                (สำนักงานใหญ่) suffix — and at half a row it wrapped on the
+                shortest of the group's names by a single pixel. Widening the
+                column only moves where that happens. */}
+            <HeaderRow label="บริษัท" value={request.companyName ?? "—"} wide />
+            <HeaderRow label="วันที่ยื่นคำขอ" value={fmtDateOnly(request.submittedAt ?? request.createdAt)}
+              label2="วันที่พิมพ์" value2={fmtDateOnly(new Date().toISOString().slice(0, 10))} />
           </tbody>
         </table>
 
@@ -367,13 +372,40 @@ function Td({ children, right, nowrap, colSpan }: {
 /** A row of the header block: one labelled field, or two side by side. The
  *  second is optional because the fields are an odd number, and an empty pair
  *  keeps the column widths of the rows above it. */
-function HeaderRow({ label, value, label2, value2 }: { label: string; value: string; label2?: string; value2?: string }) {
+/**
+ * A row of the header block: one labelled field, or two side by side. The
+ * second is optional because the fields are an odd number, and an empty pair
+ * keeps the column widths of the rows above it.
+ *
+ * The widths are measured, not guessed. At 186mm — the A4 width the @page
+ * margins leave — the four columns were 23/27/18/32, which gave the first
+ * value 165.8px of text while "บริษัท ร็อคส์ พีซี จำกัด (สำนักงานใหญ่)" needs
+ * 166.8: the company name wrapped, by one pixel, on every sheet. The last
+ * column meanwhile had 101px it never used, the longest thing in it being a
+ * department name at 124.
+ *
+ * So the slack moves to where the long values are. The first value now has
+ * 215px — about eleven Thai characters past the longest company name in use —
+ * and every label still fits on one line, the longest being
+ * "เลขที่เงินทดรองจ่าย (ADV)" at 121.3px against 132.6 available.
+ */
+function HeaderRow({ label, value, label2, value2, wide }: {
+  label: string; value: string; label2?: string; value2?: string;
+  /** One value across the rest of the row, for a value with no ceiling. */
+  wide?: boolean;
+}) {
   return (
     <tr>
-      <td className="text-[11px] font-semibold py-1 pr-2" style={{ width: "23%" }}>{label}</td>
-      <td className="text-[11px] py-1 pr-6" style={{ width: "27%" }}>{value}</td>
-      <td className="text-[11px] font-semibold py-1 pr-2" style={{ width: "18%" }}>{label2 ?? ""}</td>
-      <td className="text-[11px] py-1">{value2 ?? ""}</td>
+      <td className="text-[11px] font-semibold py-1 pr-2" style={{ width: "20%" }}>{label}</td>
+      {wide ? (
+        <td className="text-[11px] py-1" colSpan={3}>{value}</td>
+      ) : (
+        <>
+          <td className="text-[11px] py-1 pr-6" style={{ width: "34%" }}>{value}</td>
+          <td className="text-[11px] font-semibold py-1 pr-2" style={{ width: "15%" }}>{label2 ?? ""}</td>
+          <td className="text-[11px] py-1">{value2 ?? ""}</td>
+        </>
+      )}
     </tr>
   );
 }
