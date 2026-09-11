@@ -1410,10 +1410,13 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                   p.purpose?.trim() ? p.purpose.trim().slice(0, 40) : null,
                 ].filter(Boolean).join(" · ");
                 return (
+                  /* The missing vendor is said once, in the note below the
+                     field, and not also here (user, 2026-09-11): an option
+                     already carries an amount, a date and a purpose, and a
+                     warning appended to that reads as part of the advance. */
                   <option key={p.advanceRequestId} value={p.advanceRequestId}>
                     {p.advanceRequestNo ?? `#${p.advanceRequestId}`} · ฿{money(p.advanceAmount)}
                     {hint ? ` — ${hint}` : ""}
-                    {p.hasAdvanceVendor ? "" : "  ⚠ ยังไม่มี Vendor ใน AP-2"}
                   </option>
                 );
               })}
