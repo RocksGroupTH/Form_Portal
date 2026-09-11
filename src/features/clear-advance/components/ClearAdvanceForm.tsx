@@ -491,7 +491,21 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
     )));
   }
 
-  /** Prefill the WHT certificate table from the expense lines that carry WHT. */
+  /**
+   * Prefill the WHT certificate table from the expense lines that carry WHT.
+   *
+   * The seller comes with them. This used to copy only the date, the document
+   * number and the amounts, on the reasoning that an expense line holds no tax
+   * id — true while those fields were invisible, and false since they became
+   * columns the requester fills. The payee of a withholding certificate is the
+   * seller of the invoice it was withheld from, so retyping the same thirteen
+   * digits one table down was work the form was creating for itself, and a
+   * second chance to get them wrong.
+   *
+   * The ภ.ง.ด. type follows from the tax id, the same way typing one into the
+   * certificate row suggests it — a number that starts with 0 is a company
+   * (ภ.ง.ด.53), anything else a natural person (ภ.ง.ด.3).
+   */
   function prefillWhtFromLines() {
     const src = lines.filter((l) => num(l.whtAmount) > 0);
     if (src.length === 0) { toast.error("ยังไม่มีรายการที่มีภาษีหัก ณ ที่จ่าย"); return; }
@@ -499,16 +513,22 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       expenseDate: l.expenseDate,
       docNo: l.docNo,
       description: l.description,
-      taxId: "",
-      payeeName: "",
-      payeeAddress: "",
-      // No tax id on an expense line, so there is nothing to suggest from yet.
-      // It fills in as soon as one is typed.
-      pndType: "",
+      taxId: l.taxId,
+      payeeName: l.payeeName,
+      payeeAddress: l.payeeAddress,
+      pndType: (suggestPndType(l.taxId) ?? "") as WhtRow["pndType"],
       amount: l.amountBeforeVat,
       whtAmount: l.whtAmount,
     })));
-    toast.success("ดึงรายการหัก ณ ที่จ่ายจากค่าใช้จ่ายแล้ว — กรุณากรอกเลขผู้เสียภาษี/ชื่อผู้รับ");
+    /* Both fields are required here, so a line that has not got its own tax id
+       yet — a draft saved before the column was filled — is named rather than
+       left for the submit to refuse. */
+    const short = src.filter((l) => !l.taxId.trim() || !l.payeeName.trim()).length;
+    toast.success(
+      short === 0
+        ? "ดึงรายการหัก ณ ที่จ่ายจากค่าใช้จ่ายแล้ว — เติมเลขผู้เสียภาษี / ชื่อผู้รับ / ภ.ง.ด. ให้ด้วย"
+        : `ดึงรายการหัก ณ ที่จ่ายแล้ว — อีก ${short} รายการยังไม่มีเลขผู้เสียภาษี/ชื่อผู้รับ กรุณากรอกให้ครบ`,
+    );
   }
 
   /* ── persistence ── */
