@@ -1141,14 +1141,38 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
               label="จำนวนเงินที่โอนคืนจริง"
               value={
                 clear?.refundTransferAmount != null ? (
-                  <span>
-                    ฿{clear.refundTransferAmount.toLocaleString()}
-                    {Math.abs((clear.refundTransferAmount ?? 0) - refund) > 0.01 && (
-                      <span className="text-[11px] ml-2" style={{ color: "var(--text-warning, var(--text-muted))" }}>
-                        (ต้องโอนคืน ฿{refund.toLocaleString()})
+                  (() => {
+                    /* Red, and the figure goes red with it. A slip that
+                       disagrees with the amount owed is the one thing on this
+                       card an accountant has to catch, and it was an amber
+                       11px note beside a black number: the number read as
+                       settled and the note did not argue loudly enough (user,
+                       2026-09-11).
+
+                       Two different disagreements, because they are two
+                       different mistakes. The note used to print
+                       "ต้องโอนคืน ฿{refund}" for both, which on a clearing the
+                       company pays out reads "must return ฿-2,319" — nothing is
+                       owed back there, and a slip on it is the anomaly. */
+                    const paid = clear.refundTransferAmount ?? 0;
+                    const owed = refund > 0 ? refund : 0;
+                    const problem =
+                      refund > 0
+                        ? (Math.abs(paid - refund) > 0.01
+                            ? `⚠ ต้องโอนคืน ฿${owed.toLocaleString()}`
+                            : null)
+                        : (paid > 0 ? "⚠ ใบนี้บริษัทเป็นฝ่ายจ่าย — ไม่ควรมียอดโอนคืน" : null);
+                    return (
+                      <span style={problem ? { color: "var(--text-danger)", fontWeight: 700 } : undefined}>
+                        ฿{paid.toLocaleString()}
+                        {problem && (
+                          <span className="text-[12px] ml-2 font-bold" style={{ color: "var(--text-danger)" }}>
+                            {problem}
+                          </span>
+                        )}
                       </span>
-                    )}
-                  </span>
+                    );
+                  })()
                 ) : "—"
               }
             />
