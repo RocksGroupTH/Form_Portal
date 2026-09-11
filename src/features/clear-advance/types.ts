@@ -178,6 +178,16 @@ export interface PendingAdvanceOption {
   origAmount: number | null;
   /** FX rate used to convert to THB (origAmount × exchangeRate = advanceAmount). */
   exchangeRate: number | null;
+  /**
+   * Whether the AP-2 has a confirmed BC vendor.
+   *
+   * The clearing journal credits that vendor to clear the advance, so without
+   * one the whole AP-3 can be filled in, approved, and only then refuse to
+   * build — which is what happened to ADC26-09034. Said at the point of
+   * choosing instead. Advances approved before AP-2 required a vendor are the
+   * ones that have none.
+   */
+  hasAdvanceVendor: boolean;
 }
 
 /** AP-3.2 G/L expense-category master option (dropdown for a line's รายการ). */

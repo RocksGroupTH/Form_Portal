@@ -312,7 +312,9 @@ export async function listPendingAdvances(
              -- must never be treated as if its face value were baht.
              COALESCE(a.BaseAmount, a.Amount) AS AdvanceAmount,
              a.Currency, a.Amount AS OrigAmount, a.ExchangeRate,
-             a.NeedByDate, a.Purpose
+             a.NeedByDate, a.Purpose,
+             CASE WHEN a.VendorMatchStatus = 'confirmed'
+                   AND LTRIM(RTRIM(ISNULL(a.MatchedVendorNo,''))) <> '' THEN 1 ELSE 0 END AS HasVendor
       FROM [dbo].[AccRequest] r
       JOIN [dbo].[AccAdvance] a ON a.RequestId = r.Id
       WHERE r.FormCode = 'AP-2' AND r.Status = 'Approved' AND r.StaffId = @staffId
@@ -335,6 +337,7 @@ export async function listPendingAdvances(
     currency: (x.Currency as string) ?? null,
     origAmount: x.OrigAmount != null ? num(x.OrigAmount) : null,
     exchangeRate: x.ExchangeRate != null ? num(x.ExchangeRate) : null,
+    hasAdvanceVendor: (x.HasVendor as number) === 1,
   }));
 }
 
