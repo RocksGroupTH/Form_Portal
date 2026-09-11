@@ -1413,6 +1413,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                   <option key={p.advanceRequestId} value={p.advanceRequestId}>
                     {p.advanceRequestNo ?? `#${p.advanceRequestId}`} · ฿{money(p.advanceAmount)}
                     {hint ? ` — ${hint}` : ""}
+                    {p.hasAdvanceVendor ? "" : "  ⚠ ยังไม่มี Vendor ใน AP-2"}
                   </option>
                 );
               })}
@@ -1420,6 +1421,19 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           )}
         </Field>
         <FieldError msg={fieldErrors.advance} />
+        {/* Not a gate (user, 2026-09-11). The clearing is allowed to proceed —
+            the vendor belongs to the AP-2 and accounting fills it there — but
+            it is the one missing piece that nothing on this form can fix and
+            that nothing downstream reports until the journal is built, after
+            the whole AP-3 has been filled in and approved. Only advances
+            approved before AP-2 required a vendor have none. */}
+        {selectedOption && !selectedOption.hasAdvanceVendor && (
+          <p className="text-[11px] m-0 mt-1.5 px-3 py-2 rounded-lg"
+            style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
+            ใบเบิกนี้ยังไม่ได้เลือก Vendor ใน AP-2 — เคลียร์ต่อได้ตามปกติ แต่จะส่งเข้า ERP ไม่ได้
+            จนกว่าบัญชีจะเลือก Vendor ในใบ {selectedOption.advanceRequestNo ?? "AP-2"} ก่อน
+          </p>
+        )}
         </div>
         {advanceRequestId != null && (
           <div className="flex items-center justify-between gap-3 rounded-xl px-4 py-3"
