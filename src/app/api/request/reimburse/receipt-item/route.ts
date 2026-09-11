@@ -114,17 +114,14 @@ const RowSchema = z.object({
     .number()
     .nullable()
     .describe("The withholding tax figure in baht if one is printed, or null."),
-  lines: z
-    .array(
-      z.object({
-        description: z.string().nullable().describe("What this line is for, in Thai, as printed."),
-        quantity: z.number().nullable().describe("The quantity column, or null."),
-        unitPrice: z.number().nullable().describe("The unit price column, or null."),
-        amount: z.number().nullable().describe("This line's own value before tax, or null."),
-      }),
-    )
-    .describe("Every itemised line printed inside the document. Empty if it itemises nothing."),
 });
+
+/* `lines` -- every itemised line printed inside the document -- was asked for
+   here until 2026-09-11 and is not any more, at the user's request. The grid no
+   longer shows them, so reading them bought nothing and cost tokens on every
+   attachment: a quotation with thirty lines made the model transcribe thirty
+   lines nobody would open. AccReimburseItemDetail and its loaders stay -- rows
+   already read keep what they hold, and the detail view still prints them. */
 
 const AnswerSchema = z.object({
   rows: z.array(RowSchema).describe("One entry per expense line found. Empty if none is legible."),
@@ -332,7 +329,9 @@ export async function POST(req: NextRequest) {
           today,
         ),
         accountNo: r.accountNo && offered.has(r.accountNo.trim()) ? r.accountNo.trim() : null,
-        lines: sanitizeDetailLines(r.lines),
+        // `lines` used to be sanitised and returned here. The answer no longer
+        // carries them; see the note beside the schema.
+        lines: [],
       }))
       // A row where nothing survived sanitising is not a row — it would reach
       // the grid as a blank line the requester has to notice and delete.

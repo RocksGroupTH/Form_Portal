@@ -145,12 +145,10 @@ function rowFromFields(f: ReadRow, sortOrder: number, sourceDocId: string): Reim
     amount: f.amount ?? 0,
     vatAmount: f.vat,
     whtAmount: f.withholdingTax,
-    // Undefined rather than `[]` when the document itemised nothing, so the
-    // grid can tell that apart from a row typed by hand — neither has a panel
-    // worth opening, and both should look the same.
-    details: f.lines.length
-      ? f.lines.map((l, i) => ({ sortOrder: i, ...l }))
-      : undefined,
+    // No `details`: the read no longer asks the model for the document's own
+    // lines, and the grid no longer has a panel to open them in. Left off the
+    // object entirely rather than set to `[]`, so a row read today is
+    // indistinguishable from one typed by hand — which is now true of both.
   };
 }
 
