@@ -195,12 +195,19 @@ function PrintContent() {
           <tbody>
             <HeaderRow label="เลขที่เงินทดรองจ่าย (ADV)" value={clear?.advanceRequestNo ?? "—"}
               label2="วงเงินที่ได้รับ" value2={`${money(advanceAmount)} ${clear?.currency ?? "THB"}`} />
+            {/* The employee code sits beside the name it belongs to, as its own
+                labelled field rather than in a parenthesis — this sheet is
+                stapled to the receipts and read by someone matching it against
+                a payroll record, and a bare number after a name reads as part
+                of the name. It is `StaffId`, the same number the control
+                report's รหัสพนักงาน column carries. */}
             <HeaderRow label="ผู้ขอเคลียร์" value={request.requesterFullName ?? "—"}
-              label2="ตำแหน่ง" value2={request.requesterPosition ?? "—"} />
-            <HeaderRow label="แผนก" value={request.requesterDepartmentName ?? "—"}
-              label2="บริษัท" value2={request.companyName ?? "—"} />
-            <HeaderRow label="วันที่ยื่นคำขอ" value={fmtDateOnly(request.submittedAt ?? request.createdAt)}
-              label2="วันที่พิมพ์" value2={fmtDateOnly(new Date().toISOString().slice(0, 10))} />
+              label2="รหัสพนักงาน" value2={request.staffId != null ? String(request.staffId) : "—"} />
+            <HeaderRow label="ตำแหน่ง" value={request.requesterPosition ?? "—"}
+              label2="แผนก" value2={request.requesterDepartmentName ?? "—"} />
+            <HeaderRow label="บริษัท" value={request.companyName ?? "—"}
+              label2="วันที่ยื่นคำขอ" value2={fmtDateOnly(request.submittedAt ?? request.createdAt)} />
+            <HeaderRow label="วันที่พิมพ์" value={fmtDateOnly(new Date().toISOString().slice(0, 10))} />
           </tbody>
         </table>
 
@@ -344,13 +351,16 @@ function Td({ children, right, nowrap, colSpan }: {
   );
 }
 
-function HeaderRow({ label, value, label2, value2 }: { label: string; value: string; label2: string; value2: string }) {
+/** A row of the header block: one labelled field, or two side by side. The
+ *  second is optional because the fields are an odd number, and an empty pair
+ *  keeps the column widths of the rows above it. */
+function HeaderRow({ label, value, label2, value2 }: { label: string; value: string; label2?: string; value2?: string }) {
   return (
     <tr>
       <td className="text-[11px] font-semibold py-1 pr-2" style={{ width: "23%" }}>{label}</td>
       <td className="text-[11px] py-1 pr-6" style={{ width: "27%" }}>{value}</td>
-      <td className="text-[11px] font-semibold py-1 pr-2" style={{ width: "18%" }}>{label2}</td>
-      <td className="text-[11px] py-1">{value2}</td>
+      <td className="text-[11px] font-semibold py-1 pr-2" style={{ width: "18%" }}>{label2 ?? ""}</td>
+      <td className="text-[11px] py-1">{value2 ?? ""}</td>
     </tr>
   );
 }
