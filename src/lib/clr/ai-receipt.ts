@@ -50,6 +50,50 @@ const MODEL = process.env.ANTHROPIC_RECEIPT_MODEL || "claude-haiku-4-5-20251001"
 const ESCALATE_MODEL = process.env.ANTHROPIC_RECEIPT_MODEL_ESCALATE || MODEL;
 
 /**
+ * The ceiling on one reply.
+ *
+ * It was 4096, and that is what "AI อ่านได้ใบเดียว" was the whole time. A
+ * nine-page bundle of nine invoices answers with more JSON than that, the reply
+ * stops mid-entry, the array never closes, and `parseReceiptDocs` gets nothing
+ * it can parse — so a read that saw everything returned one row, or none, and
+ * said nothing about it. Measured on that bundle: stop_reason `max_tokens` and
+ * zero rows at 4096; `end_turn`, 4,431 output tokens and seven rows at 8192.
+ *
+ * Not a cost: max_tokens is a ceiling, and a reply that needs 4,431 is billed
+ * for 4,431 whatever this says.
+ */
+const MAX_OUTPUT_TOKENS = 8192;
+
+/**
+ * Deliberately no `temperature`.
+ *
+ * Setting it to 0 is the obvious way to stop the same receipt reading three
+ * different ways, and it does — on one invoice. On the nine-invoice bundle it
+ * degenerates: greedy decoding falls into a repetition loop partway through a
+ * Thai address and emits "นนนนนน…" until it runs out of tokens, 16,384 of them,
+ * returning nothing. Measured 2026-09-12, the same file that reads cleanly in
+ * 4,431 tokens with the parameter left alone (user: "ถ้าใส่ temperature 0 ถ้า 1
+ * ไฟล์มีหลายใบกำกับ AI อ่านไม่ได้" — it was already true).
+ *
+ * So the run-to-run spread stays, and the answer to it is the two-block
+ * transcription above plus the checks on the account grid, not the sampler.
+ */
+async function readOnce(
+  client: import("@anthropic-ai/sdk").default,
+  body: Omit<import("@anthropic-ai/sdk").Anthropic.MessageCreateParamsNonStreaming, "max_tokens">,
+): Promise<{ text: string; truncated: boolean }> {
+  const res = await client.messages.create({ ...body, max_tokens: MAX_OUTPUT_TOKENS });
+  const part = res.content.find((c) => c.type === "text");
+  return {
+    text: part && "text" in part ? part.text : "",
+    /* The reply ran out of room. Every complete entry before the cut is real
+       and the rest is gone, so the caller says so rather than presenting a
+       short read as a whole one. */
+    truncated: res.stop_reason === "max_tokens",
+  };
+}
+
+/**
  * Read every document in an upload with Claude vision. `images` is one image, or
  * the consecutive pages of one PDF — they go in a single call so a tax invoice
  * printed across four pages is recognised as ONE document, not four. Returns one
@@ -68,9 +112,8 @@ export async function extractReceiptsWithAI(
     if (!apiKey) return nothing;
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
     const client = new Anthropic({ apiKey });
-    const res = await client.messages.create({
+    const res = await readOnce(client, {
       model: MODEL,
-      max_tokens: 4096,
       system: RECEIPT_SYSTEM,
       messages: [
         {
@@ -85,8 +128,7 @@ export async function extractReceiptsWithAI(
         },
       ],
     });
-    const textPart = res.content.find((c) => c.type === "text");
-    const first = parseReceiptDocs(textPart && "text" in textPart ? textPart.text : "");
+    const first = { ...parseReceiptDocs(res.text), replyTruncated: res.truncated };
 
     // A VAT invoice whose seller tax id came back empty was misread, not
     // unlabelled — read it again with the stronger model. Once only, and only
@@ -112,9 +154,8 @@ async function readWithModel(
   mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif",
   model: string,
 ): Promise<ReceiptRead> {
-  const res = await client.messages.create({
+  const res = await readOnce(client, {
     model,
-    max_tokens: 4096,
     system: RECEIPT_SYSTEM,
     messages: [
       {
@@ -129,8 +170,7 @@ async function readWithModel(
       },
     ],
   });
-  const textPart = res.content.find((c) => c.type === "text");
-  return parseReceiptDocs(textPart && "text" in textPart ? textPart.text : "");
+  return { ...parseReceiptDocs(res.text), replyTruncated: res.truncated };
 }
 
 /**

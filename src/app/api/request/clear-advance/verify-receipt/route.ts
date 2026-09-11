@@ -65,7 +65,12 @@ export async function POST(req: NextRequest) {
     if (ai.docs.length > 0 || ai.skippedPages > 0) {
       return NextResponse.json({
         ok: true, data: ai.docs, source: "ai",
-        pagesRead: pages.length, skippedPages: ai.skippedPages, maybeTruncated,
+        /* Two ways a read can be short of the paper, and the requester needs the
+           same thing from both — split the file and attach the rest. One is the
+           page cap above; the other is the model's reply running out of room
+           mid-array, which drops every entry after the cut. */
+        pagesRead: pages.length, skippedPages: ai.skippedPages,
+        maybeTruncated: maybeTruncated || ai.replyTruncated === true,
         // Document-level: the page naming the destination is usually the voucher,
         // which produces no row of its own, so this cannot ride on a row.
         branchHint: ai.branchHint,

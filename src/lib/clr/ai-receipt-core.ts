@@ -58,6 +58,12 @@ export interface ReceiptRead {
    */
   skippedPages: number;
   /**
+   * The model's reply ran out of room before it finished the array. Complete
+   * entries before the cut are real; everything after is simply gone, and a
+   * short read must not be presented as a whole one.
+   */
+  replyTruncated?: boolean;
+  /**
    * Wording from anywhere in the upload that names which store the spend was
    * FOR — "ค่าอุปกรณ์ Dec'25 สำหรับCentral Khonkaen2". Document-level, not per
    * row: a bundle covers one trip or one delivery run, and the reviewer sets any
