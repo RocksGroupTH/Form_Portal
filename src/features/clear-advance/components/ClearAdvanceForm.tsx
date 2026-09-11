@@ -19,7 +19,44 @@ import {
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
 import { PoweredByClaude } from "@/components/ui/PoweredByClaude";
 import { BranchPicker, cellClass, cellStyle } from "./LinePickers";
-import { OcrConfirmModal, type OcrRow } from "./OcrConfirmModal";
+import { OcrReadNotesDialog } from "./OcrReadNotesDialog";
+import { ocrReadNotes, type OcrReadNote } from "@/lib/clr/ocr-read-notes";
+
+/**
+ * One document the reader found, on its way to the expense table.
+ *
+ * It used to be the confirm modal's row type and was exported from there. With
+ * the rows going straight into the table the shape has one producer and one
+ * consumer, both below, so it lives here.
+ */
+interface OcrRow {
+  key: string;
+  kind: ReceiptKind;
+  /** Kept so `acceptOcrRows` stays a pure merge; every row is taken now. */
+  include: boolean;
+  sourceFileId?: number;
+  fileName?: string;
+  expenseDate: string;
+  /** The date as the model copied it, before conversion — what `ocrReadNotes`
+   *  compares against to catch a misread of the characters themselves. */
+  dateText?: string;
+  docNo: string;
+  taxBranchText: string;
+  branchCode: string;
+  branchSuggested?: boolean;
+  /** The reader saw another branch fitting nearly as well. */
+  branchClose?: boolean;
+  glAccountNo: string;
+  glAccountName: string;
+  description: string;
+  amountBeforeVat: string;
+  vatAmount: string;
+  whtAmount: string;
+  taxId: string;
+  payeeName: string;
+  payeeAddress: string;
+  totalAmount: string;
+}
 import type { AccBrandOption, AccFileMeta } from "@/features/accounting/types";
 import type {
   BranchOption,
@@ -148,9 +185,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   const [uploadingProof, setUploadingProof] = useState(false);
   const [ocrScanning, setOcrScanning] = useState(false);
   // OCR candidates awaiting confirmation (§7) — null while the modal is closed.
-  const [ocrRows, setOcrRows] = useState<OcrRow[] | null>(null);
   // Pages the reader dropped for being neither receipt nor slip — shown as a count.
-  const [ocrSkipped, setOcrSkipped] = useState(0);
 
   const [brandCode, setBrandCode] = useState(initial?.brandCode ?? "");
   const [advanceRequestId, setAdvanceRequestId] = useState<number | null>(initial?.clear?.advanceRequestId ?? null);
@@ -905,7 +940,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
    * only ever its input, so it goes with it. Confirming keeps them — they are
    * the evidence behind the expense lines.
    */
-  const [ocrFileIds, setOcrFileIds] = useState<number[]>([]);
+  const [ocrNotes, setOcrNotes] = useState<OcrReadNote[] | null>(null);
 
   async function verifyReceipts(docs: { file: File; fileId: number }[]) {
     setOcrScanning(true);
@@ -945,12 +980,46 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           totalAmount: r.total != null ? String(r.total) : "",
         }));
       }
-      // Open even with no rows when pages were dropped: the count is the only
-      // report the reviewer gets that something was thrown away.
+      /* The account the AI would have suggested. It used to be asked for from
+         inside the confirm modal, once a row had a branch; with no modal it is
+         asked here, before the rows are written, so a line reaches the table
+         complete. The requester never sees it — they have no G/L column — but
+         the account officer arrives at a filled grid and only confirms it,
+         which was the point of moving the account to accounting. */
+      if (!glForced) {
+        await Promise.all(
+          candidates.map(async (r) => {
+            if (r.kind !== "receipt" || !r.branchCode || !r.description.trim()) return;
+            try {
+              const res = await fetch("/api/request/clear-advance/suggest-gl", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ description: r.description, branch: r.branchCode }),
+              });
+              const j = (await res.json()) as { ok: boolean; data?: { glAccountNo: string; nameTh: string | null } | null };
+              if (j.ok && j.data) { r.glAccountNo = j.data.glAccountNo; r.glAccountName = j.data.nameTh ?? ""; }
+            } catch { /* a suggestion is a convenience; accounting picks either way */ }
+          }),
+        );
+      }
+
       if (candidates.length === 0 && skipped === 0) return;
-      setOcrSkipped(skipped);
-      setOcrFileIds(docs.map((d) => d.fileId));
-      setOcrRows(candidates);
+
+      /* Straight into the table (CR, 2026-09-11). The rows are editable there
+         like any other, and deleting a receipt still removes the line it
+         filled — so there is nothing left for a confirm step to add except the
+         things the read was unsure about, which the dialog below says. */
+      acceptOcrRows(candidates);
+      const notes = ocrReadNotes({
+        rows: candidates.map((r) => ({
+          expenseDate: r.expenseDate,
+          dateText: r.dateText,
+          branchClose: r.branchClose,
+        })),
+        fileCount: docs.length,
+        skippedPages: skipped,
+      });
+      if (notes.length > 0) setOcrNotes(notes);
     } finally {
       setOcrScanning(false);
     }
@@ -960,32 +1029,12 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
    *  receipt fills the next empty expense line, appending one when none is free
    *  and never overwriting a line the user already filled; a slip fills the
    *  refund-transfer fields. The row's kind decides, not the upload box. */
-  /** Cancelled the read — drop its rows and the upload they were read from. The
-   *  deletes are best-effort and silent: failing to tidy up must not put an
-   *  error in front of someone who only pressed ยกเลิก. */
-  async function cancelOcrRows() {
-    const ids = ocrFileIds;
-    setOcrRows(null);
-    setOcrFileIds([]);
-    if (ids.length === 0) return;
-    // Both boxes, because either can start a read: the reader decides what a page
-    // is, not the box it was dropped in. Clearing only the receipt list left a
-    // cancelled slip on screen after it had been deleted from the server — and a
-    // refund proof that is required to submit, sitting there already gone.
-    setFiles((prev) => prev.filter((f) => !ids.includes(f.id)));
-    setRefundProofFiles((prev) => prev.filter((f) => !ids.includes(f.id)));
-    await Promise.all(
-      ids.map((fileId) =>
-        fetch(`/api/request/clear-advance/requests/${requestId}/files?fileId=${fileId}`, {
-          method: "DELETE",
-        }).catch(() => undefined),
-      ),
-    );
-  }
+  /* `cancelOcrRows` lived here. It deleted the uploaded files when a read was
+     rejected, which is what kept six orphan attachments off one draft. With no
+     confirm step there is no rejected read: a row lands with its file and goes
+     with it — deleting a receipt already drops the line it filled. */
 
   function acceptOcrRows(accepted: OcrRow[]) {
-    setOcrRows(null);
-    setOcrFileIds([]);
     if (accepted.length === 0) return;
 
     const rows = accepted.filter((r) => r.kind === "receipt");
@@ -1848,20 +1897,10 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
         </div>
       </Dialog>
 
-      {/* OCR results wait here until the user confirms them (§7) */}
-      {/* Mounted only while there are candidates: a fresh `[]` prop on every closed
-          render would re-seed the modal's local copy in a loop. */}
-      {ocrRows !== null && (
-      <OcrConfirmModal
-        open
-        rows={ocrRows}
-        skippedPages={ocrSkipped}
-        branches={branches}
-        brandChosen={!!brandCode}
-        glForced={glForced}
-        onConfirm={acceptOcrRows}
-        onCancel={() => { void cancelOcrRows(); }}
-      />
+      {/* What the read was unsure about. Opens only when there is something to
+          say — a clean read puts its rows in the table and stays quiet. */}
+      {ocrNotes !== null && (
+        <OcrReadNotesDialog notes={ocrNotes} onClose={() => setOcrNotes(null)} />
       )}
 
       {/* OCR scanning overlays — shown while Claude reads receipts / transfer slips */}
