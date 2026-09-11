@@ -203,19 +203,21 @@ export interface ClrQueueRow {
   refundToCompany: number | null;
 }
 
+/* HEAD is kept only so a request still sitting on a pre-2026-09-11 row reads
+   as a name rather than a code — nothing routes there any more. */
 const STEP_LABEL: Record<string, string> = {
   MANAGER: "ผู้จัดการ", ACCOUNT: "บัญชี", HEAD: "หัวหน้าบัญชี",
 };
 
 /**
  * AP-3 requests currently in the approval flow (Status='Submitted').
- * `step` optionally narrows to one step (ACCOUNT / HEAD) for a role's queue.
+ * `step` optionally narrows to one step (MANAGER / ACCOUNT) for a role's queue.
  */
 export async function listApprovalQueue(step?: string | null): Promise<ClrQueueRow[]> {
   const pool = await getAccPool();
   const r = pool.request().input("form", sql.NVarChar, AP3_FORM_CODE);
   let stepClause = "";
-  if (step === "ACCOUNT" || step === "HEAD" || step === "MANAGER") {
+  if (step === "ACCOUNT" || step === "MANAGER") {
     r.input("step", sql.NVarChar, step);
     stepClause = "AND req.CurrentStepCode = @step";
   }

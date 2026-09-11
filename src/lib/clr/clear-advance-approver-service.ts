@@ -2,10 +2,19 @@ import { getAccPool, sql } from "@/lib/acc/pool";
 import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
 import type { ClrStepCode } from "@/features/clear-advance/constants";
 
-/** Configured ACCOUNT/HEAD approver for AP-3 (Manager comes from HR, not this table). */
+/**
+ * The one AP-3 step with a configured roster.
+ *
+ * It was `"ACCOUNT" | "HEAD"` until the head-accounting step was removed
+ * (2026-09-11). The column keeps its CHECK on both values and its existing
+ * `HEAD` rows; this is what the application will read and write.
+ */
+export type ClrApproverRole = "ACCOUNT";
+
+/** Configured ACCOUNT approver for AP-3 (Manager comes from HR, not this table). */
 export interface ClrApprover {
   id: number;
-  role: "ACCOUNT" | "HEAD";
+  role: ClrApproverRole;
   email: string;
   staffId: number | null;
   displayName: string | null;
@@ -21,16 +30,20 @@ export interface ClrApprover {
   photoUrl: string | null;
 }
 
-/** The approver role that owns a given step. MANAGER is resolved from HR, not here. */
-export function roleForStep(step: ClrStepCode): "ACCOUNT" | "HEAD" | null {
-  if (step === "ACCOUNT") return "ACCOUNT";
-  if (step === "HEAD") return "HEAD";
-  return null;
+/**
+ * The approver role that owns a given step. MANAGER is resolved from HR, not here.
+ *
+ * Only one step has a configured roster since head accounting was removed
+ * (2026-09-11). The `AccClearAdvanceApprover` table still accepts a `HEAD` row
+ * and still holds the ones it had — nothing reads them.
+ */
+export function roleForStep(step: ClrStepCode): ClrApproverRole | null {
+  return step === "ACCOUNT" ? "ACCOUNT" : null;
 }
 
 /** List AP-3 approvers for a role (active only by default). */
 export async function listClrApprovers(
-  role: "ACCOUNT" | "HEAD",
+  role: ClrApproverRole,
   activeOnly = true,
 ): Promise<ClrApprover[]> {
   const pool = await getAccPool();
@@ -55,7 +68,7 @@ export async function listClrApprovers(
 /** True if the email is an active AP-3 approver for the given role. */
 export async function isClrApprover(
   email: string | null,
-  role: "ACCOUNT" | "HEAD",
+  role: ClrApproverRole,
 ): Promise<boolean> {
   if (!email?.trim()) return false;
   const pool = await getAccPool();
@@ -73,9 +86,15 @@ export async function isClrApprover(
 /** All AP-3 approvers (both roles, incl. inactive) for the settings page. */
 export async function listAllClrApprovers(): Promise<ClrApprover[]> {
   const pool = await getAccPool();
+  /* The account roster only. Rows left over from the head-accounting step are
+     kept in the table — they record who was configured when the requests of
+     that era were approved — but they are not configuration any more, and
+     listing them would put a role on the settings screen that approves
+     nothing. */
   const res = await pool.request()
     .query(`SELECT Id, Role, Email, StaffId, DisplayName, IsActive
             FROM [dbo].[AccClearAdvanceApprover]
+            WHERE Role = 'ACCOUNT'
             ORDER BY Role, DisplayName, Email`);
   return (res.recordset as Record<string, unknown>[]).map((r) => ({
     id: r.Id as number,
@@ -90,12 +109,12 @@ export async function listAllClrApprovers(): Promise<ClrApprover[]> {
 
 /** Create or update an AP-3 approver. StaffId/DisplayName auto-filled from HR by email. */
 export async function upsertClrApprover(
-  input: { id?: number; role: "ACCOUNT" | "HEAD"; email: string; isActive?: boolean },
+  input: { id?: number; role: ClrApproverRole; email: string; isActive?: boolean },
   userId: number,
 ): Promise<void> {
   const email = input.email.trim();
   if (!email) throw new Error("กรุณากรอกอีเมล");
-  if (input.role !== "ACCOUNT" && input.role !== "HEAD") throw new Error("บทบาทไม่ถูกต้อง");
+  if (input.role !== "ACCOUNT") throw new Error("บทบาทไม่ถูกต้อง");
 
   // Enrich from HR (best-effort) so the approval actor + display resolve.
   let staffId: number | null = null;

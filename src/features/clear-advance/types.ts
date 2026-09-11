@@ -1,6 +1,6 @@
 import type { RequestStatus } from "@/features/accounting/constants";
 import type { AccFileMeta, PendingFile } from "@/features/accounting/types";
-import type { ClrStepCode } from "./constants";
+import type { ClrAnyStepCode, ClrStepCode } from "./constants";
 
 /** One actual-expense line (AP-3.1 section 1). */
 export interface ClearAdvanceItem {
@@ -110,7 +110,8 @@ export interface ClearAdvanceSaveInput {
 /** One approval-chain row for the detail page. */
 export interface ClrApproval {
   id: number;
-  stepCode: ClrStepCode;
+  /** Historical rows can name a step the chain no longer has — see ClrAnyStepCode. */
+  stepCode: ClrAnyStepCode;
   stepOrder: number;
   stepLabel: string;
   assignedStaffId: number | null;

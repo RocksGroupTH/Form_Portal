@@ -50,7 +50,7 @@ export async function GET(req: NextRequest) {
     const header = [
       "วันที่ส่ง", "เลขที่เคลียร์ (ADC)", "รหัสพนักงาน", "เลขที่ Advance (AP-2)", "ชื่อ", "แผนก",
       "วงเงินที่ได้รับ", "เป็นค่าใช้จ่ายของ", "รวมใช้จริง", "โอนคืนบริษัท", "เบิกเพิ่ม",
-      "PV", "Payment Date", "ผู้จัดการอนุมัติ", "บัญชี Action", "หัวหน้าบัญชีอนุมัติ",
+      "PV", "Payment Date", "ผู้จัดการอนุมัติ", "บัญชี Action",
       "รออนุมัติที่", "สถานะ",
     ];
     const body = rows.map((r) => [
@@ -60,7 +60,6 @@ export async function GET(req: NextRequest) {
       r.pvDocNo ?? "", fmtD(r.paymentDate),
       withDate(r.managerApprovedName, r.managerApprovedAt),
       withDate(r.accountActionedName, r.accountActionedAt),
-      withDate(r.headApprovedName, r.headApprovedAt),
       r.pendingOn ?? "",
       STATUS_LABEL_TH[r.overallStatus as keyof typeof STATUS_LABEL_TH] ?? r.overallStatus,
     ]);
@@ -69,7 +68,7 @@ export async function GET(req: NextRequest) {
     const totalRow = [
       "รวมทั้งหมด", "", "", "", "", "",
       sum("advanceAmount"), "", sum("actualTotal"), sum("refundToCompany"), sum("extraToEmployee"),
-      "", "", "", "", "", "", "",
+      "", "", "", "", "", "",
     ];
 
     const ws = XLSX.utils.aoa_to_sheet([header, ...body, totalRow]);

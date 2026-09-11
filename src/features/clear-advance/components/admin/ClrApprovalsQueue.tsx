@@ -14,14 +14,16 @@ import {
   fmtMoney,
 } from "./shared";
 
-type StepFilter = "ALL" | "ACCOUNT" | "HEAD";
+type StepFilter = "ALL" | "MANAGER" | "ACCOUNT";
 
 const STEP_FILTERS: { key: StepFilter; label: string }[] = [
   { key: "ALL", label: "ทั้งหมด" },
+  { key: "MANAGER", label: "ผู้จัดการ" },
   { key: "ACCOUNT", label: "บัญชี" },
-  { key: "HEAD", label: "หัวหน้าบัญชี" },
 ];
 
+/* HEAD keeps a colour only so a pre-2026-09-11 row still reads as a step
+   rather than as a blank chip. Nothing is routed there. */
 const STEP_COLOR: Record<string, string> = {
   MANAGER: "#6366f1",
   ACCOUNT: "#0ea5a4",

@@ -83,11 +83,13 @@ export async function loadAccRequestAcl(
  *     which role may *act* is decided per step by the approve/reject routes
  *     (`canAct` in `.../advance/requests/[id]/approve`), and a DIRECTOR must be
  *     able to read the attachments of a request still sitting at HEAD_ACC.
- *   - **AP-3** — `AccClearAdvanceApprover`, roles ACCOUNT and HEAD. The MANAGER
- *     step is not on that roster; it comes from HR and is already covered by
- *     `isAssignedManager` against `AccRequest.ManagerStaffId`, which AP-3's
- *     submit populates. This mirrors the gate AP-3's own approval-queue route
- *     already applies (`canAccessAccountArea || isClrApprover(ACCOUNT|HEAD)`).
+ *   - **AP-3** — `AccClearAdvanceApprover`, the ACCOUNT role (head accounting
+ *     was removed from the chain on 2026-09-11 and its rows grant nothing).
+ *     The MANAGER step is not on that roster either; it comes from HR and is
+ *     already covered by `isAssignedManager` against
+ *     `AccRequest.ManagerStaffId`, which AP-3's submit populates. This mirrors
+ *     the gate AP-3's own approval-queue route already applies
+ *     (`canAccessAccountArea || isClrApprover(ACCOUNT)`).
  *
  * The widening is one-way in both directions: the lookup runs only when the
  * *row* is that form's, so an AP-2 approver gains nothing on an AP-1, AP-3 or
@@ -110,10 +112,7 @@ async function isOwnFormRosterApprover(
     return hits.some(Boolean);
   }
   if (formCode === AP3_FORM_CODE) {
-    const hits = await Promise.all(
-      (["ACCOUNT", "HEAD"] as const).map((role) => isClrApprover(email, role)),
-    );
-    return hits.some(Boolean);
+    return isClrApprover(email, "ACCOUNT");
   }
   return false;
 }

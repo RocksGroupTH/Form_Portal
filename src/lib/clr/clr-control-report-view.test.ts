@@ -33,8 +33,6 @@ function fixtureRow(overrides: Partial<ClrControlRow> & Pick<ClrControlRow, "id"
     managerApprovedAt: null,
     accountActionedName: null,
     accountActionedAt: null,
-    headApprovedName: null,
-    headApprovedAt: null,
     pendingOn: null,
     overallStatus: "Submitted",
     ...overrides,

@@ -29,7 +29,7 @@ export async function POST(
     return NextResponse.json({ ok: false, error: "not found" }, { status: 404 });
   }
   const step = clrReq.currentStepCode;
-  if (step !== "MANAGER" && step !== "ACCOUNT" && step !== "HEAD") {
+  if (step !== "MANAGER" && step !== "ACCOUNT") {
     return NextResponse.json({ ok: false, error: "ไม่อยู่ในขั้นอนุมัติ" }, { status: 400 });
   }
 
@@ -55,9 +55,9 @@ export async function POST(
       const actionActor = await resolveAccActorForAction(actor, session.user.role, clrReq.managerStaffId);
       await approveCurrentStep(id, actionActor);
     } else {
-      // ACCOUNT or HEAD — configured AP-3 approver of that role, or an admin.
-      const role = step; // "ACCOUNT" | "HEAD"
-      const allowed = (await isClrApprover(actor.email, role)) || isAdminRole(session.user.role);
+      // ACCOUNT — a configured AP-3 approver, or an admin. Approving it
+      // finishes the request: head accounting was removed on 2026-09-11.
+      const allowed = (await isClrApprover(actor.email, "ACCOUNT")) || isAdminRole(session.user.role);
       if (!allowed) {
         return NextResponse.json({ ok: false, error: "ไม่มีสิทธิ์อนุมัติในขั้นนี้" }, { status: 403 });
       }

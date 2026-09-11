@@ -4,7 +4,7 @@ import { canAccessAccountArea } from "@/lib/acc/access";
 import { isClrApprover } from "@/lib/clr/clear-advance-approver-service";
 import { listApprovalQueue } from "@/lib/clr/clear-advance-admin-service";
 
-/** GET /api/request/clear-advance/approvals?step=ACCOUNT|HEAD — AP-3 approval queue */
+/** GET /api/request/clear-advance/approvals?step=MANAGER|ACCOUNT — AP-3 approval queue */
 export async function GET(req: NextRequest) {
   const session = await requireAuth();
   if (session instanceof Response) return session;
@@ -12,8 +12,7 @@ export async function GET(req: NextRequest) {
   const email = session.user.email ?? null;
   const allowed =
     (await canAccessAccountArea(email, session.user.role)) ||
-    (await isClrApprover(email, "ACCOUNT")) ||
-    (await isClrApprover(email, "HEAD"));
+    (await isClrApprover(email, "ACCOUNT"));
   if (!allowed) {
     return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
   }

@@ -280,12 +280,6 @@ const SCREEN_COLS: ScreenCol[] = [
     render: (r) => <ApprovalCell name={r.accountActionedName} at={r.accountActionedAt} />,
   },
   {
-    key: "headApproved",
-    label: "หัวหน้าบัญชีอนุมัติ",
-    align: "left",
-    render: (r) => <ApprovalCell name={r.headApprovedName} at={r.headApprovedAt} />,
-  },
-  {
     key: "pendingOn",
     label: "รอที่ใคร",
     align: "left",

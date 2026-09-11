@@ -1185,7 +1185,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
               </p>
             )}
             <span className="text-[11px] mt-0.5" style={{ color: "var(--text-faint)" }}>
-              ลำดับอนุมัติ: ผู้จัดการ → บัญชี → หัวหน้าบัญชี
+              ลำดับอนุมัติ: ผู้จัดการ → บัญชี
             </span>
           </div>
         </div>

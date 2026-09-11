@@ -14,6 +14,7 @@ import { getPaymentDates } from "@/lib/acc/payment-calendar";
 import { pndBlockReason } from "@/lib/clr/wht-pnd-core";
 import {
   CLR_NEXT_STEP,
+  CLR_STEP_CODES,
   CLR_STEP_LABEL_TH,
   type ClrStepCode,
 } from "@/features/clear-advance/constants";
@@ -44,7 +45,7 @@ function link(id: number): string {
 }
 
 /**
- * Approve the current step and advance the fixed chain MANAGER → ACCOUNT → HEAD.
+ * Approve the current step and advance the fixed chain MANAGER → ACCOUNT.
  * State-guarded against double-processing. Authorization is enforced by the API route.
  */
 export async function approveCurrentStep(
@@ -81,8 +82,8 @@ export async function approveCurrentStep(
     // Every VAT line must name the seller's vendor before it leaves this step
     // (user, 2026-09-08). Input tax is claimed against a vendor; a VAT line with
     // no Tax Vendor No. posts an unattributed claim, and this is the last step
-    // where anyone can still choose one — the head-accounting step cannot edit
-    // lines. Read from the request, not from the caller: the accountant's own
+    // there is — approving it finishes the request. Read from the request, not
+    // from the caller: the accountant's own
     // save is what fills this, so the check is on stored state.
     const missing = linesMissingTaxVendor(before.clear?.items);
     if (missing.length > 0) {
@@ -92,14 +93,14 @@ export async function approveCurrentStep(
     }
     // The ภ.ง.ด. type, on the same terms and for the same reason: the journal
     // builder refuses without it, and refusing there means the discovery lands
-    // on whoever pressed "ส่งเข้า ERP" — after three approvals, and not on
-    // anyone who can still choose.
+    // on whoever pressed "ส่งเข้า ERP" — after the request is approved, and
+    // not on anyone who can still choose.
     const pndProblem = pndBlockReason(before.clear?.items, before.clear?.whtItems);
     if (pndProblem) throw new Error(pndProblem);
     // Every posting line must name its G/L account before it leaves this step.
     // The requester used to choose it and no longer sees the field at all, so
-    // accounting owns it — and this is the last step that can edit a line, the
-    // same reason the two checks above live here. A line with no account is
+    // accounting owns it — and this is the last step there is, the same reason
+    // the two checks above live here. A line with no account is
     // dropped from the journal without a word, which would send an unbalanced
     // document to BC and put the discovery on whoever pressed "ส่งเข้า ERP".
     const missingGl = linesMissingGl(before.clear?.items);
@@ -147,7 +148,7 @@ export async function approveCurrentStep(
     if (nextStep) {
       await tx.request().input("rid", sql.Int, requestId).input("next", sql.NVarChar, nextStep)
         .query(`UPDATE [dbo].[AccRequest] SET CurrentStepCode=@next, UpdatedAt=SYSDATETIME() WHERE Id=@rid`);
-      const stepOrder = nextStep === "ACCOUNT" ? 2 : 3;
+      const stepOrder = CLR_STEP_CODES.indexOf(nextStep) + 1;
       await tx.request().input("rid", sql.Int, requestId)
         .input("step", sql.NVarChar, nextStep).input("order", sql.Int, stepOrder)
         .query(`INSERT INTO [dbo].[AccClearAdvanceApproval] (RequestId, StepCode, StepOrder, Status)
@@ -243,7 +244,7 @@ export async function reject(
 }
 
 /**
- * Any current approver (Manager / Account / Head) returns the request to the
+ * Either current approver (Manager / Account) returns the request to the
  * requester for revision. Comment required. Sends it back to Draft-editable
  * ("Returned") so the requester can revise and resubmit from the start.
  */
@@ -257,7 +258,7 @@ export async function returnForEdit(requestId: number, actor: Actor, comment: st
   try {
     const upd = await tx.request().input("rid", sql.Int, requestId)
       .query(`UPDATE [dbo].[AccRequest] SET Status='Returned', CurrentStepCode=NULL, UpdatedAt=SYSDATETIME()
-              WHERE Id=@rid AND Status='Submitted' AND CurrentStepCode IN ('MANAGER','ACCOUNT','HEAD');
+              WHERE Id=@rid AND Status='Submitted' AND CurrentStepCode IN ('MANAGER','ACCOUNT');
               SELECT @@ROWCOUNT AS n`);
     if ((upd.recordset[0].n as number) === 0) {
       await tx.rollback();
