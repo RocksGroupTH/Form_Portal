@@ -30,18 +30,26 @@ import { needsStrongerRead } from "./receipt-escalation";
 const MODEL = process.env.ANTHROPIC_RECEIPT_MODEL || "claude-haiku-4-5-20251001";
 
 /**
- * Reading a receipt is transcription, so there is nothing for sampling to be
- * creative about — and nothing set this, which means every call ran at the
- * SDK default of 1.0. That is why one nine-page bundle came back as one row on
- * one run, six on the next and seven on the one after, with ฿1,344.60 on a page
- * reading as ฿1,256.64 the second time: a claim whose total depends on when it
- * was uploaded (user, 2026-09-11).
+ * Reading a receipt is transcription, not writing, so there is nothing for
+ * sampling to be creative about — and the default is 1.0, which is why the same
+ * nine-page bundle came back as one row on one run, six on the next and seven
+ * on the one after, with ฿1,344.60 on one page reading as ฿1,256.64 the second
+ * time (user, 2026-09-11). A claim whose total depends on when it was uploaded
+ * is not a claim.
  *
- * It does not make the model right, only repeatable — the same pages give the
- * same answer, so a wrong read can be reproduced and fixed rather than argued
- * about. Nothing else about the call changes.
+ * It does not make the model infallible, only repeatable: the same pages now
+ * give the same answer, so a wrong read can be reproduced and fixed rather than
+ * argued about.
  */
 const READ_TEMPERATURE = 0;
+
+/**
+ * Room for the answer. Fifteen pages of a busy bundle is a long JSON array, and
+ * an array cut off at the limit parses as a prefix — documents silently missing
+ * with nothing to say they were seen. `stop_reason` now says when that happened
+ * and the read is retried; the ceiling is raised so it mostly does not.
+ */
+const READ_MAX_TOKENS = 8192;
 
 /**
  * The model a suspect read is retried with. Most receipts never reach it: see
@@ -73,7 +81,7 @@ export async function extractReceiptsWithAI(
     const client = new Anthropic({ apiKey });
     const res = await client.messages.create({
       model: MODEL,
-      max_tokens: 4096,
+      max_tokens: READ_MAX_TOKENS,
       temperature: READ_TEMPERATURE,
       system: RECEIPT_SYSTEM,
       messages: [
@@ -94,8 +102,15 @@ export async function extractReceiptsWithAI(
 
     // A VAT invoice whose seller tax id came back empty was misread, not
     // unlabelled — read it again with the stronger model. Once only, and only
-    // for the documents that earned it.
-    if (ESCALATE_MODEL !== MODEL && needsStrongerRead(first.docs)) {
+    // for the documents that earned it. Two more signals join it: an answer cut
+    // off at the token limit, and a read that left most of the pages it was
+    // given unaccounted for.
+    const suspect = needsStrongerRead(first.docs, {
+      pagesSent: images.length,
+      skippedPages: first.skippedPages,
+      outputTruncated: res.stop_reason === "max_tokens",
+    });
+    if (ESCALATE_MODEL !== MODEL && suspect) {
       try {
         const retry = await readWithModel(client, images, mediaType, ESCALATE_MODEL);
         // Keep the better answer, not merely the newer one: if the second pass
@@ -118,7 +133,7 @@ async function readWithModel(
 ): Promise<ReceiptRead> {
   const res = await client.messages.create({
     model,
-    max_tokens: 4096,
+    max_tokens: READ_MAX_TOKENS,
     temperature: READ_TEMPERATURE,
     system: RECEIPT_SYSTEM,
     messages: [
