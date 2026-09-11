@@ -1,4 +1,5 @@
 import "server-only";
+import { countPdfPageObjects } from "./pdf-page-count";
 
 /**
  * Render the first page of a PDF to a PNG buffer so it can be fed to the
@@ -50,9 +51,20 @@ export async function pdfPagesToPng(
     if (pages.length >= maxPages) break;
   }
   if (pages.length === 0) throw new Error("PDF has no pages");
-  // What the document says it holds, against what came out of the loop. The
-  // cap is a deliberate stop and not a shortfall, so it is the ceiling here.
-  const total = typeof doc.length === "number" ? doc.length : pages.length;
+  // What the document holds, against what came out of the loop. The cap is a
+  // deliberate stop and not a shortfall, so it is the ceiling here.
+  //
+  // `doc.length` is not trusted on its own: on 2026-09-11 a nine-page file that
+  // a plain Node process reads as nine came back through this same library
+  // inside the Next server as one page AND `length: 1`, on byte-identical input
+  // (SHA-256 checked). A loader that fails to walk the page tree understates
+  // both numbers together, so the two agreeing proves nothing. The raw count
+  // below is read off the bytes and cannot be talked down by the loader.
+  const total = Math.max(
+    typeof doc.length === "number" ? doc.length : 0,
+    countPdfPageObjects(buffer),
+    pages.length,
+  );
   const expected = Math.min(total, maxPages);
   if (pages.length < expected) {
     throw new Error(`อ่าน PDF ได้ไม่ครบ — ได้ ${pages.length} จาก ${expected} หน้า กรุณาลองใหม่อีกครั้ง`);
