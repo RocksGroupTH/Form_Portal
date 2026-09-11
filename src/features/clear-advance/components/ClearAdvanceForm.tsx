@@ -52,7 +52,7 @@ interface OcrRow {
    *  replaced it, so the dialog can show both. */
   payeeNameRead?: string;
   /** Which register replaced it: the Revenue Department's, or our own books. */
-  payeeNameSource?: "rd" | "vendor";
+  payeeNameSource?: "rd" | "vendor" | "history";
   /** 00000 was filled in because the invoice's branch could not be read. */
   taxBranchDefaulted: boolean;
   branchCode: string;
@@ -1132,6 +1132,21 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
         }
       } catch { /* our own list not answering is not a finding either */ }
 
+      /* Sellers this brand has cleared before and an accountant approved. Last
+         of the three, because it is history rather than a register — but it is
+         the only one that knows the shop on the corner: seven of the twelve
+         sellers ever cleared here have no vendor card, which is what petty cash
+         is for. The check digit and the ambiguous-spelling rule are applied
+         server-side, so what arrives here is already the part worth trusting. */
+      const historyByTin = new Map<string, string>();
+      try {
+        const res = await fetch(
+          `/api/request/clear-advance/known-sellers?brand=${encodeURIComponent(brandCode)}`,
+        );
+        const j = (await res.json()) as { ok: boolean; data?: Record<string, string> };
+        if (j.ok) for (const [tin, name] of Object.entries(j.data ?? {})) historyByTin.set(tin, name);
+      } catch { /* nor is our own history */ }
+
       for (const r of candidates) {
         if (r.kind !== "receipt") continue;
         const tin = r.taxId.replace(/\D/g, "");
@@ -1144,7 +1159,9 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           ? { name: answer.registeredName, source: "rd" as const }
           : vendorByTin.has(tin)
             ? { name: vendorByTin.get(tin)!, source: "vendor" as const }
-            : null;
+            : historyByTin.has(tin)
+              ? { name: historyByTin.get(tin)!, source: "history" as const }
+              : null;
         if (!known) continue;
         if (sameRegisteredName(r.payeeName, known.name)) continue;
         r.payeeNameRead = r.payeeName;

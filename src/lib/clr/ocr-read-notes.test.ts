@@ -450,3 +450,32 @@ test("a vendor we know supplies the name the registry did not", () => {
   assert.match(notes[0].text, /บริษัท พีพี แสตมป์ จำกัด/);
   assert.match(notes[0].text, /บริษัท พีพี สแตมป จำกัด/);
 });
+
+test("a name from a past clearing is named as that, not as a vendor card", () => {
+  const notes = ocrReadNotes({
+    rows: [rdRow({
+      payeeName: "บริษัท เจเนซิส ซัพพลาย เชน จำกัด",
+      payeeNameRead: "บริษัท เจนีซิส ซัพพลาย เซน จำกัด",
+      payeeNameSource: "history",
+    })],
+    fileCount: 1, skippedPages: 0,
+  });
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].kind, "history-name");
+  assert.match(notes[0].text, /เคยอนุมัติแล้ว/);
+  assert.match(notes[0].text, /บริษัท เจเนซิส ซัพพลาย เชน จำกัด/);
+  assert.match(notes[0].text, /บริษัท เจนีซิส ซัพพลาย เซน จำกัด/);
+});
+
+test("the vendor card is still named as the vendor card", () => {
+  const notes = ocrReadNotes({
+    rows: [rdRow({
+      payeeName: "บริษัท พีพี แสตมป์ จำกัด",
+      payeeNameRead: "บริษัท พีพี สแตมป จำกัด",
+      payeeNameSource: "vendor",
+    })],
+    fileCount: 1, skippedPages: 0,
+  });
+  assert.equal(notes[0].kind, "vendor-name");
+  assert.match(notes[0].text, /ทะเบียนผู้ขายของบริษัท/);
+});

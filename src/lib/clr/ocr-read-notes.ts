@@ -49,6 +49,8 @@ export type OcrReadNote =
   | { kind: "tax-id-invalid"; row: number; text: string }
   /** The name came from our vendor master rather than the registry. */
   | { kind: "vendor-name"; row: number; text: string }
+  /** The name came from a clearing this brand has already approved. */
+  | { kind: "history-name"; row: number; text: string }
   /** One note for all the rows whose branch was defaulted, not one each. */
   | { kind: "tax-branch"; rows: number[]; text: string };
 
@@ -84,7 +86,7 @@ export function ocrReadNotes(read: {
     payeeNameRead?: string | null;
     /** Where `payeeName` came from when it was not the reader: the Revenue
      *  Department's register, or our own vendor master. */
-    payeeNameSource?: "rd" | "vendor";
+    payeeNameSource?: "rd" | "vendor" | "history";
     /** The seller's branch, five digits — 00000 is the head office. */
     taxBranchCode?: string | null;
     vatAmount?: number | null;
@@ -195,13 +197,20 @@ export function ocrReadNotes(read: {
      service behind a fifteen-second timeout that is silent often enough for
      this to be the usual path rather than the fallback. */
   read.rows.forEach((r, i) => {
-    if (r.payeeNameSource !== "vendor" || !r.payeeNameRead) return;
+    if (!r.payeeNameRead) return;
+    if (r.payeeNameSource !== "vendor" && r.payeeNameSource !== "history") return;
     if (sameRegisteredName(r.payeeNameRead, r.payeeName)) return;
+    /* Named by where it came from, not lumped together. Our vendor card is a
+       record somebody opened deliberately; a past clearing is a name that got
+       past an approver, which is weaker, and the requester deserves to know
+       which of the two is vouching for the row. */
+    const vendor = r.payeeNameSource === "vendor";
     notes.push({
-      kind: "vendor-name",
+      kind: vendor ? "vendor-name" : "history-name",
       row: i + 1,
-      text: `รายการที่ ${i + 1} — ใช้ชื่อผู้ขายจากทะเบียนผู้ขายของบริษัท “${r.payeeName}”`
-        + ` แทนที่อ่านได้ “${r.payeeNameRead}”`,
+      text: `รายการที่ ${i + 1} — ใช้ชื่อผู้ขายจาก`
+        + (vendor ? "ทะเบียนผู้ขายของบริษัท" : "รายการเคลียร์ที่เคยอนุมัติแล้ว")
+        + ` “${r.payeeName}” แทนที่อ่านได้ “${r.payeeNameRead}”`,
     });
   });
 
