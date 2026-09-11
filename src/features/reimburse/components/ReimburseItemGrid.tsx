@@ -3,6 +3,8 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { CircleAlert, Plus, Trash2 } from "lucide-react";
 import { SingleDatePicker } from "@/features/accounting/components/SingleDatePicker";
+import { SellerCheckCells } from "@/features/reimburse/components/SellerCheckCells";
+import { taxIdProblem } from "@/features/reimburse/lib/vendor-check";
 import type { ExpenseAccount } from "@/lib/acc/reimburse/expense-account-service";
 import { fmtBaht } from "@/features/travel-booking/components/shared";
 import { sumReimburseItems } from "@/lib/acc/reimburse/calc";
@@ -125,7 +127,7 @@ function MoneyCell({
 export interface ItemRowProblem {
   /** Index into the grid's own array — the row the user is looking at. */
   index: number;
-  kind: "date" | "amount";
+  kind: "date" | "amount" | "taxId";
   label: string;
 }
 
@@ -161,6 +163,14 @@ export function findItemRowProblems(items: ReimburseItem[]): ItemRowProblem[] {
     const amount = Number(it.amount);
     if (!Number.isFinite(amount) || amount <= 0) {
       problems.push({ index, kind: "amount", label: amountNotPositiveMsg(label) });
+    }
+    // A tax id that cannot be right blocks the submit. EMPTY does not: the
+    // column is nullable, plenty of receipts carry no tax id at all, and the
+    // rule asked for was "ไม่ครบ 13 หลัก" — a number that is being typed is not
+    // yet a wrong one. `taxIdProblem` answers null for blank for that reason.
+    const taxProblem = taxIdProblem(it.vendorTaxId);
+    if (taxProblem) {
+      problems.push({ index, kind: "taxId", label: `${label}: ${taxProblem}` });
     }
   });
   return problems;
@@ -505,20 +515,13 @@ export function ReimburseItemGrid({
                       onChange={(v) => onUpdate(index, { branchName: v })}
                     />
 
-                    <TextCell
-                      ariaLabel={`เลขประจำตัวผู้เสียภาษีของรายการที่ ${index + 1}`}
-                      placeholder="0105547161674"
-                      value={item.vendorTaxId}
-                      maxLength={20}
-                      onChange={(v) => onUpdate(index, { vendorTaxId: v })}
-                    />
-
-                    <TextCell
-                      ariaLabel={`ชื่อผู้ขายของรายการที่ ${index + 1}`}
-                      placeholder="ผู้ขาย"
-                      value={item.vendorName}
-                      maxLength={300}
-                      onChange={(v) => onUpdate(index, { vendorName: v })}
+                    {/* Two cells, one component: the number is looked up and
+                        the name is what the answer is about. */}
+                    <SellerCheckCells
+                      index={index}
+                      taxId={item.vendorTaxId}
+                      vendorName={item.vendorName}
+                      onChange={(patch) => onUpdate(index, patch)}
                     />
 
                     <TextCell
