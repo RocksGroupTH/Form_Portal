@@ -283,8 +283,15 @@ export async function listMyDrafts(userId: number): Promise<ClearAdvanceDraftSum
 
 /**
  * Pending AP-2 advances the current user may still clear.
- * = approved AP-2 advances owned by this staff, not already referenced by a
+ * = approved AP-2 advances owned by this staff **whose money has actually gone
+ *   out** — `ErpInterfaceStatus = 'Sent'` — and not already referenced by a
  *   non-rejected/non-cancelled AP-3 (derivation — no write-back to AP-2 tables).
+ *
+ * Approved is not the same as paid (user, 2026-09-11). An advance sits approved
+ * until accounting sends it to BC, and until then the employee is holding
+ * nothing: offering it here invites a clearing of money nobody received, whose
+ * journal would credit an advance the ledger has never debited. Seventeen of
+ * the thirty-three approved advances on UAT had never been sent.
  */
 export async function listPendingAdvances(
   loginEmail: string,
@@ -310,6 +317,7 @@ export async function listPendingAdvances(
       FROM [dbo].[AccRequest] r
       JOIN [dbo].[AccAdvance] a ON a.RequestId = r.Id
       WHERE r.FormCode = 'AP-2' AND r.Status = 'Approved' AND r.StaffId = @staffId
+        AND r.ErpInterfaceStatus = 'Sent'
         AND (@brand IS NULL OR r.BrandCode = @brand)
         AND NOT EXISTS (
           SELECT 1 FROM [dbo].[AccClearAdvance] c
