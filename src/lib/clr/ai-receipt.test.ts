@@ -6,6 +6,7 @@ import {
   buildBranchSuggestUserText,
   buildGlSuggestUserText,
   parseReceiptDocs,
+  docSerial,
   pickSuggestedBranch,
   pickSuggestedGl,
   thaiPrintedDate,
@@ -384,4 +385,59 @@ test("text with no readable date, or an impossible one, yields null", () => {
 
 test("an English month is left to the model rather than half-parsed", () => {
   assert.equal(thaiPrintedDate("08 Sep 2026"), null);
+});
+
+/* A tax invoice and its receipt are one purchase printed twice — the seller
+   gives both, and the bundle scans both. They differ only in the prefix that
+   names the document type (user, 2026-09-11: "ควรดูจากเลขที่เอกสาร"), and two
+   rows for one purchase is a claim paid twice. */
+
+test("the serial is what is left after the document-type prefix", () => {
+  assert.equal(docSerial("IV-202608271"), "202608271");
+  assert.equal(docSerial("RT-202608271"), "202608271");
+  assert.equal(docSerial("INV202608120001"), "202608120001");
+  assert.equal(docSerial("UNI016-26083325"), "016-26083325");
+});
+
+test("a number with no prefix is its own serial", () => {
+  assert.equal(docSerial("11690082163"), "11690082163");
+  assert.equal(docSerial("5-241538"), "5-241538");
+});
+
+test("an all-letter number keeps itself rather than collapsing to nothing", () => {
+  assert.equal(docSerial("ABC"), "ABC");
+});
+
+test("the invoice and the receipt for one purchase become one row", () => {
+  const docs = docsOf(`[
+    {"kind":"receipt","docNo":"IV-202608271","payeeName":"บริษัท พีพี แสตมป์ จำกัด","amountBeforeVat":313.08,"vat":21.92},
+    {"kind":"receipt","docNo":"RT-202608271","payeeName":"บริษัท พีพี แสตมป์ จำกัด","amountBeforeVat":313.08,"vat":21.92}
+  ]`);
+  assert.equal(docs.length, 1);
+  assert.equal(docs[0].beforeVat, 313.08);
+  assert.equal(docs[0].mergedEntries, 2);
+});
+
+test("two receipts from one seller with different serials stay two rows", () => {
+  const docs = docsOf(`[
+    {"kind":"receipt","docNo":"RT-202608271","payeeName":"บริษัท พีพี แสตมป์ จำกัด","amountBeforeVat":313.08},
+    {"kind":"receipt","docNo":"RT-202608061","payeeName":"บริษัท พีพี แสตมป์ จำกัด","amountBeforeVat":313.08}
+  ]`);
+  assert.equal(docs.length, 2);
+});
+
+test("the same serial from two sellers is two purchases, not one", () => {
+  const docs = docsOf(`[
+    {"kind":"receipt","docNo":"IV-001","payeeName":"ร้าน ก","amountBeforeVat":100},
+    {"kind":"receipt","docNo":"RT-001","payeeName":"ร้าน ข","amountBeforeVat":200}
+  ]`);
+  assert.equal(docs.length, 2);
+});
+
+test("a slip is never merged into a receipt that shares its serial", () => {
+  const docs = docsOf(`[
+    {"kind":"receipt","docNo":"IV-77","payeeName":"ร้าน ก","amountBeforeVat":100},
+    {"kind":"slip","docNo":"RT-77","payeeName":"ร้าน ก","amountBeforeVat":100}
+  ]`);
+  assert.deepEqual(docs.map((d) => d.kind), ["receipt", "slip"]);
 });
