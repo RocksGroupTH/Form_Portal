@@ -65,7 +65,18 @@ export function ocrReadNotes(read: {
     dateText?: string | null;
     branchClose?: boolean;
     taxId?: string | null;
+    /** The name on the row now — the register's, once the read applied it. */
     payeeName?: string | null;
+    /**
+     * What the reader answered, kept when the register's name replaced it.
+     *
+     * Both are said in the note. The registered name is the one that will be
+     * filed, but a tax id read off the wrong block of the invoice comes back
+     * with a real registered name attached to it — our own company's, on the
+     * bundle that started this — and the only thing that gives it away is the
+     * two names sitting next to each other looking nothing alike.
+     */
+    payeeNameRead?: string | null;
     /** The seller's branch, five digits — 00000 is the head office. */
     taxBranchCode?: string | null;
     vatAmount?: number | null;
@@ -171,11 +182,21 @@ export function ocrReadNotes(read: {
       return;
     }
     if (answer.state !== "found" || !answer.registeredName) return;
-    if (sameRegisteredName(r.payeeName, answer.registeredName)) return;
+    /* Compare against what the READER said. Once the registered name has been
+       written onto the row, r.payeeName agrees with the register by
+       construction, and comparing that would silence the note on exactly the
+       rows it now exists to report. */
+    const asRead = r.payeeNameRead ?? r.payeeName;
+    if (sameRegisteredName(asRead, answer.registeredName)) return;
+    const applied = r.payeeNameRead != null
+      && sameRegisteredName(r.payeeName, answer.registeredName);
     notes.push({
       kind: "rd-name",
       row: i + 1,
-      text: `รายการที่ ${i + 1} — ชื่อผู้ขายไม่ตรงกับที่จดทะเบียน (สรรพากร: ${answer.registeredName})`,
+      text: applied
+        ? `รายการที่ ${i + 1} — ใช้ชื่อจากสรรพากร “${answer.registeredName}”`
+          + ` แทนที่อ่านได้ “${asRead}” — ตรวจว่าเป็นผู้ขายรายเดียวกัน`
+        : `รายการที่ ${i + 1} — ชื่อผู้ขายไม่ตรงกับที่จดทะเบียน (สรรพากร: ${answer.registeredName})`,
     });
   });
 

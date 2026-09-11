@@ -354,3 +354,50 @@ test("a branch the reader actually found is not called defaulted", () => {
     [],
   );
 });
+
+/* The register is the authority on who a tax id belongs to, so the read now
+   writes its name onto the row instead of leaving a mismatch for someone to
+   reconcile by hand (user, 2026-09-12). The note stops being a complaint and
+   becomes a receipt for an edit the form already made — and it quotes BOTH
+   names, because a registered name that arrives looking nothing like the one
+   on the paper is how a misread tax id shows itself. */
+
+test("a name replaced by the register's is reported as an edit, not a mismatch", () => {
+  const notes = ocrReadNotes({
+    rows: [rdRow({
+      payeeName: "บริษัท เจเนซิส ซัพพลาย เชน จำกัด",
+      payeeNameRead: "บริษัท เจนีซิส ซัพพลาย เชน จำกัด",
+    })],
+    fileCount: 1, skippedPages: 0,
+    rd: { "0105560171921": found("บริษัท เจเนซิส ซัพพลาย เชน จำกัด") },
+  });
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].kind, "rd-name");
+  assert.match(notes[0].text, /สรรพากร/);
+  assert.match(notes[0].text, /บริษัท เจเนซิส ซัพพลาย เชน จำกัด/, "the name now on the row");
+  assert.match(notes[0].text, /บริษัท เจนีซิส ซัพพลาย เชน จำกัด/, "and the one the reader gave");
+});
+
+test("a reader that already agreed with the register says nothing", () => {
+  assert.deepEqual(
+    ocrReadNotes({
+      rows: [rdRow({
+        payeeName: "บริษัท เจเนซิส ซัพพลาย เชน จำกัด",
+        payeeNameRead: "บริษัท เจเนซิส ซัพพลาย เชน จำกัด",
+      })],
+      fileCount: 1, skippedPages: 0,
+      rd: { "0105560171921": found("บริษัท เจเนซิส ซัพพลาย เชน จำกัด") },
+    }),
+    [],
+  );
+});
+
+test("without the applied name it is still reported the old way", () => {
+  const notes = ocrReadNotes({
+    rows: [rdRow({ payeeName: "ร้านค้าทั่วไป" })],
+    fileCount: 1, skippedPages: 0,
+    rd: { "0105560171921": found("บริษัท เจเนซิส ซัพพลาย เชน จำกัด") },
+  });
+  assert.equal(notes.length, 1);
+  assert.match(notes[0].text, /ไม่ตรงกับที่จดทะเบียน/);
+});
