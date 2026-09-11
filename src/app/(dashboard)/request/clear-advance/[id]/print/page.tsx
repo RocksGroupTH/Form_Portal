@@ -219,17 +219,30 @@ function PrintContent() {
             column that gives — it is the only one that can wrap and still be
             read.
           */}
+          {/*
+            The five money columns are sized by the widest figure they must
+            hold, not by an even share. At 8.8% they gave 51.8px of text and
+            "999,999.00" needs 56.2 — so anything from a hundred thousand up
+            wrapped onto a second line, mid-number, on a sheet somebody signs.
+            9.5% holds it. The 3.5% comes out of รายการ, the only column that
+            can wrap and still be read.
+
+            Above ฿999,999.00 on a single line a figure wraps again. That is
+            accepted: this is a petty-advance clearing, and buying the seventh
+            digit costs รายการ another 6% — about forty characters of the
+            description, on every sheet, for a line nobody files.
+          */}
           <colgroup>
             <col style={{ width: "4%" }} />
             <col style={{ width: "11%" }} />
             <col style={{ width: "11%" }} />
-            <col style={{ width: "22%" }} />
+            <col style={{ width: "18.5%" }} />
             <col style={{ width: "8%" }} />
-            <col style={{ width: "8.8%" }} />
-            <col style={{ width: "8.8%" }} />
-            <col style={{ width: "8.8%" }} />
-            <col style={{ width: "8.8%" }} />
-            <col style={{ width: "8.8%" }} />
+            <col style={{ width: "9.5%" }} />
+            <col style={{ width: "9.5%" }} />
+            <col style={{ width: "9.5%" }} />
+            <col style={{ width: "9.5%" }} />
+            <col style={{ width: "9.5%" }} />
           </colgroup>
           <thead>
             <tr className="text-[11px] font-bold">
