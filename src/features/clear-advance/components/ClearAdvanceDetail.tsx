@@ -707,8 +707,17 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>#</th>
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>วันที่</th>
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>รายละเอียด</th>
+                          {/* The two starred columns are what the approve
+                              button waits for. They were the only required
+                              fields on this grid with nothing to say so, and
+                              the first anyone learned of it was a button that
+                              would not press (user, 2026-09-11). Conditional in
+                              the same way the requester's เลขผู้เสียภาษี * is —
+                              a G/L on any line carrying an amount, a Vendor on
+                              any line carrying VAT — and starred for the same
+                              reason. */}
                           {canSeeGlAccount && (
-                            <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>รายการ</th>
+                            <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>รายการ *</th>
                           )}
                           {/* From the tax invoice, and accounting holds it — so
                               they can type what the OCR could not read. These
@@ -719,7 +728,7 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>ชื่อผู้ขาย</th>
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>สาขาผู้ขาย</th>
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>RD</th>
-                          <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>Vendor</th>
+                          <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>Vendor *</th>
                           <th className="px-2 py-1.5 text-right" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>ก่อน VAT</th>
                           <th className="px-2 py-1.5 text-right" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>VAT</th>
                           <th className="px-2 py-1.5 text-right" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>WHT</th>
