@@ -20,7 +20,9 @@ import { TravelExpenseLoadingPopup } from "@/features/accounting/components/Trav
 import { PoweredByClaude } from "@/components/ui/PoweredByClaude";
 import { BranchPicker, cellClass, cellStyle } from "./LinePickers";
 import { OcrReadNotesDialog } from "./OcrReadNotesDialog";
-import { ocrReadNotes, type OcrReadNote } from "@/lib/clr/ocr-read-notes";
+import { ocrReadNotes, type OcrReadNote, type RdLookup } from "@/lib/clr/ocr-read-notes";
+import { registrantFullName, type RdVatRegistrant } from "@/lib/clr/rd-vat-core";
+import type { ReceiptKind } from "@/lib/clr/ai-receipt-core";
 
 /**
  * One document the reader found, on its way to the expense table.
@@ -1003,6 +1005,39 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
         );
       }
 
+      /* The Revenue Department, on the seller of every receipt (user,
+         2026-09-11). This check lived in the confirm screen and went with it,
+         and it is the one thing there that nothing downstream repeats in time
+         to help the requester: they have no tax-id column, so a number that
+         belongs to nobody and a name the model invented both reach accounting
+         looking like data. Asked per distinct id, not per row — six receipts
+         from one seller are one question, and the registry is a SOAP service
+         behind a long timeout. A failure answers nothing and says nothing;
+         the account officer's own button asks again where the field is
+         visible. */
+      const rd: Record<string, RdLookup> = {};
+      await Promise.all(
+        Array.from(new Set(
+          candidates
+            .filter((r) => r.kind === "receipt")
+            .map((r) => r.taxId.replace(/\D/g, ""))
+            .filter((t) => t.length === 13),
+        )).map(async (tin) => {
+          try {
+            const res = await fetch(`/api/request/clear-advance/vat-registrant?taxId=${tin}`);
+            const j = (await res.json()) as {
+              ok: boolean;
+              data?: { registrant: RdVatRegistrant | null } | null;
+            };
+            if (!j.ok) return;
+            const reg = j.data?.registrant ?? null;
+            rd[tin] = reg
+              ? { state: "found", registeredName: registrantFullName(reg) }
+              : { state: "unregistered" };
+          } catch { /* the registry not answering is not a finding */ }
+        }),
+      );
+
       /* Straight into the table (CR, 2026-09-11). The rows are editable there
          like any other, and deleting a receipt still removes the line it
          filled — so there is nothing left for a confirm step to add except the
@@ -1013,9 +1048,12 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           expenseDate: r.expenseDate,
           dateText: r.dateText,
           branchClose: r.branchClose,
+          taxId: r.taxId,
+          payeeName: r.payeeName,
         })),
         fileCount: docs.length,
         skippedPages: skipped,
+        rd,
       });
       /* Silence is only correct when the read had nothing to report. A file
          that produced no row at all is the loudest thing this dialog says —

@@ -28,7 +28,7 @@ export function OcrReadNotesDialog({
   /* Counts first, then the rows, because the first question is "did anything
      go missing" and the second is "which line do I look at". */
   const totals = notes.filter((n) => n.kind === "count" || n.kind === "skipped");
-  const rows = notes.filter((n) => n.kind === "date" || n.kind === "branch");
+  const rows = notes.filter((n) => n.kind !== "count" && n.kind !== "skipped");
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }} title="อ่านใบเสร็จแล้ว — มีบางอย่างที่ควรตรวจ">

@@ -1,4 +1,5 @@
 import { thaiPrintedDate } from "@/lib/clr/ai-receipt-core";
+import { sameRegisteredName, type RdAnswerState } from "@/lib/clr/rd-vat-core";
 
 /**
  * What to tell the requester after the AI has read their receipts.
@@ -19,6 +20,12 @@ import { thaiPrintedDate } from "@/lib/clr/ai-receipt-core";
  *   branch   the model saw two branches that fit nearly as well. The one it
  *            picked is real and correctly formatted, so no rule can object —
  *            it just decides the BU and the BRANCH dimension.
+ *   rd       the Revenue Department disagreeing about the seller: a tax id it
+ *            holds no registration for, or a registered name that is not the
+ *            one on the row. The requester has no tax-id column, so the
+ *            finding is the whole of what they get — and it is the part that
+ *            matters, because a name the model invented and a number that
+ *            belongs to nobody both read as perfectly good data.
  *
  * It reports and nothing more. Every row it mentions is already in the table
  * and editable, so dismissing the dialog loses nothing.
@@ -27,7 +34,16 @@ export type OcrReadNote =
   | { kind: "count"; text: string }
   | { kind: "skipped"; text: string }
   | { kind: "date"; row: number; text: string }
-  | { kind: "branch"; row: number; text: string };
+  | { kind: "branch"; row: number; text: string }
+  | { kind: "rd-unregistered"; row: number; text: string }
+  | { kind: "rd-name"; row: number; text: string };
+
+/** What the registry said about one tax id, as far as this rule cares. */
+export interface RdLookup {
+  state: RdAnswerState;
+  /** The registered name, title included, as `registrantFullName` writes it. */
+  registeredName?: string | null;
+}
 
 function fmtDay(ymd: string): string {
   const [y, m, d] = ymd.slice(0, 10).split("-");
@@ -35,10 +51,18 @@ function fmtDay(ymd: string): string {
 }
 
 export function ocrReadNotes(read: {
-  rows: readonly { expenseDate: string; dateText?: string | null; branchClose?: boolean }[];
+  rows: readonly {
+    expenseDate: string;
+    dateText?: string | null;
+    branchClose?: boolean;
+    taxId?: string | null;
+    payeeName?: string | null;
+  }[];
   /** Files the requester attached for this read. */
   fileCount: number;
   skippedPages: number;
+  /** The registry's answers, keyed by the thirteen digits of the tax id. */
+  rd?: Readonly<Record<string, RdLookup>>;
 }): OcrReadNote[] {
   const notes: OcrReadNote[] = [];
 
@@ -77,6 +101,34 @@ export function ocrReadNotes(read: {
       kind: "date",
       row: i + 1,
       text: `รายการที่ ${i + 1} — วันที่บนเอกสารอ่านว่า “${r.dateText}” แต่บันทึกเป็น ${fmtDay(r.expenseDate)}`,
+    });
+  });
+
+  /* Only an answer is a finding. `unknown` is the registry failing to answer —
+     it is behind a SOAP service and a 15-second timeout, and saying "we could
+     not check" to someone who cannot see the field and did not ask for the
+     check teaches them to dismiss this dialog. The account officer's own
+     ตรวจสรรพากร button asks again on a screen where the number is visible and
+     editable, which is where an unanswered check belongs. */
+  read.rows.forEach((r, i) => {
+    const tin = (r.taxId ?? "").replace(/\D/g, "");
+    if (tin.length !== 13) return;
+    const answer = read.rd?.[tin];
+    if (!answer) return;
+    if (answer.state === "unregistered") {
+      notes.push({
+        kind: "rd-unregistered",
+        row: i + 1,
+        text: `รายการที่ ${i + 1} — ไม่พบเลขผู้เสียภาษี ${tin} ในระบบสรรพากร`,
+      });
+      return;
+    }
+    if (answer.state !== "found" || !answer.registeredName) return;
+    if (sameRegisteredName(r.payeeName, answer.registeredName)) return;
+    notes.push({
+      kind: "rd-name",
+      row: i + 1,
+      text: `รายการที่ ${i + 1} — ชื่อผู้ขายไม่ตรงกับที่จดทะเบียน (สรรพากร: ${answer.registeredName})`,
     });
   });
 

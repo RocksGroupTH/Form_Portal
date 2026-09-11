@@ -92,3 +92,132 @@ test("everything at once, counted first and then row by row", () => {
 test("no rows and no files is not worth a dialog", () => {
   assert.deepEqual(ocrReadNotes({ rows: [], fileCount: 0, skippedPages: 0 }), []);
 });
+
+/* The Revenue Department check, back on the requester's page (user,
+   2026-09-11). It ran inside the confirm screen and went with it; the seller's
+   tax id is not a column the requester has, so the finding is all they get —
+   and it is the part that matters, because a name the model invented and a
+   number that belongs to nobody both look like perfectly good data. */
+
+const rdRow = (patch: Partial<Parameters<typeof ocrReadNotes>[0]["rows"][number]> = {}) =>
+  row({ taxId: "0105560171921", payeeName: "บริษัท เจเนซิส ซัพพลาย เชน จำกัด", ...patch });
+
+const found = (name: string) => ({ state: "found" as const, registeredName: name });
+
+test("a seller the register confirms, spelled the same, says nothing", () => {
+  assert.deepEqual(
+    ocrReadNotes({
+      rows: [rdRow()],
+      fileCount: 1,
+      skippedPages: 0,
+      rd: { "0105560171921": found("บริษัท เจเนซิส ซัพพลาย เชน จำกัด") },
+    }),
+    [],
+  );
+});
+
+test("spacing is not a difference — the register and the invoice space names differently", () => {
+  assert.deepEqual(
+    ocrReadNotes({
+      rows: [rdRow({ payeeName: "บริษัทเจเนซิสซัพพลายเชนจำกัด" })],
+      fileCount: 1,
+      skippedPages: 0,
+      rd: { "0105560171921": found("บริษัท เจเนซิส ซัพพลาย เชน จำกัด") },
+    }),
+    [],
+  );
+});
+
+test("a name that is not the registered one is reported, with the registered one", () => {
+  const notes = ocrReadNotes({
+    rows: [rdRow({ payeeName: "ร้านค้าทั่วไป" })],
+    fileCount: 1,
+    skippedPages: 0,
+    rd: { "0105560171921": found("บริษัท เจเนซิส ซัพพลาย เชน จำกัด") },
+  });
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].kind, "rd-name");
+  assert.equal(notes[0].row, 1);
+  assert.match(notes[0].text, /บริษัท เจเนซิส ซัพพลาย เชน จำกัด/);
+});
+
+test("a tax id the register holds nothing for is reported with the number", () => {
+  const notes = ocrReadNotes({
+    rows: [rdRow({ taxId: "0105560999999" })],
+    fileCount: 1,
+    skippedPages: 0,
+    rd: { "0105560999999": { state: "unregistered" } },
+  });
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].kind, "rd-unregistered");
+  assert.match(notes[0].text, /0105560999999/);
+});
+
+test("the registry not answering is silent — it is a failed check, not a finding", () => {
+  assert.deepEqual(
+    ocrReadNotes({
+      rows: [rdRow()],
+      fileCount: 1,
+      skippedPages: 0,
+      rd: { "0105560171921": { state: "unknown" } },
+    }),
+    [],
+  );
+});
+
+test("no rd answers at all is silent, the same way", () => {
+  assert.deepEqual(ocrReadNotes({ rows: [rdRow()], fileCount: 1, skippedPages: 0 }), []);
+});
+
+test("a row with no tax id read is not an rd finding", () => {
+  assert.deepEqual(
+    ocrReadNotes({ rows: [rdRow({ taxId: "" })], fileCount: 1, skippedPages: 0, rd: {} }),
+    [],
+  );
+});
+
+test("a found registrant whose name the register does not hold is not a mismatch", () => {
+  assert.deepEqual(
+    ocrReadNotes({
+      rows: [rdRow()],
+      fileCount: 1,
+      skippedPages: 0,
+      rd: { "0105560171921": { state: "found", registeredName: null } },
+    }),
+    [],
+  );
+});
+
+test("one seller on three receipts is answered once and reported on each row", () => {
+  const notes = ocrReadNotes({
+    rows: [rdRow({ payeeName: "ร้านค้า" }), rdRow({ payeeName: "ร้านค้า" }), rdRow()],
+    fileCount: 3,
+    skippedPages: 0,
+    rd: { "0105560171921": found("บริษัท เจเนซิส ซัพพลาย เชน จำกัด") },
+  });
+  assert.deepEqual(
+    notes.map((n) => [n.kind, "row" in n ? n.row : null]),
+    [["rd-name", 1], ["rd-name", 2]],
+  );
+});
+
+test("the tax id is matched by its digits, however the reader punctuated it", () => {
+  const notes = ocrReadNotes({
+    rows: [rdRow({ taxId: "0-1055-60171-92-1", payeeName: "ร้านค้า" })],
+    fileCount: 1,
+    skippedPages: 0,
+    rd: { "0105560171921": found("บริษัท เจเนซิส ซัพพลาย เชน จำกัด") },
+  });
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].kind, "rd-name");
+});
+
+test("rd findings come after the counts and the row notes they share a dialog with", () => {
+  const notes = ocrReadNotes({
+    rows: [rdRow({ branchClose: true, taxId: "0105560999999" })],
+    fileCount: 3,
+    skippedPages: 1,
+    rd: { "0105560999999": { state: "unregistered" } },
+  });
+  assert.deepEqual(notes.map((n) => n.kind), ["count", "skipped", "branch", "rd-unregistered"]);
+});

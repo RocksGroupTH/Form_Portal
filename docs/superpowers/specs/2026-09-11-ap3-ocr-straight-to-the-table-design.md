@@ -22,7 +22,7 @@ and that is where most of the modal's checking belongs anyway.
 
 | The modal did | Now |
 |---|---|
-| Revenue Department check on the seller's tax id | `RdCell` on the account grid, per row, with the comparison popover and `ตรวจใหม่` |
+| Revenue Department check on the seller's tax id | `RdCell` on the account grid, per row, with the comparison popover and `ตรวจใหม่` — **and, since the addendum below, in the read path too** |
 | Offer the registered name in place of the read one | the same popover's `ใช้ข้อมูลจากสรรพากร` |
 | Normalise the tax id, warn on a bad one | the account grid's `เลขผู้เสียภาษี` cell |
 | Refuse to save a receipt row with no branch | no branch ⇒ no G/L can be picked ⇒ `linesMissingGl` refuses the approval |
@@ -120,3 +120,33 @@ requester deletes one row's file and corrects the other.
 | `ocrReadNotes` — fewer rows than files, skipped pages, a date disagreement, a near-tie branch, several at once, and a clean read producing nothing | `ocr-read-notes.test.ts` |
 | The date comparison — same day reported as clean, a different day reported, an unparseable `dateText` ignored rather than guessed | same |
 | The dialog and the read path | not covered — React; the browser pass covers them |
+
+---
+
+## Addendum, 2026-09-11 — the Revenue Department check comes back to the read
+
+The table above sent the RD check to the account grid and left it there, on the
+reasoning that accounting is who acts on it. The requester's own page was then
+the only place in the flow that does not check, and the user asked for it back
+(option A of three: automatic during the read, reported in this dialog; not a
+column on the requester's table, which would reverse decision B1).
+
+So the read now asks the register about the seller of every receipt, before the
+rows are written, and two more things can be said:
+
+| Note | When |
+|---|---|
+| `rd-unregistered` | the register holds no VAT registration for the tax id the reader took off the receipt |
+| `rd-name` | it holds one, and the registered name is not the name on the row — compared with `sameRegisteredName`, so spacing is not a difference |
+
+Asked once per distinct tax id rather than once per row: six receipts from one
+seller are one question, and the register is a SOAP service behind a long
+timeout. A failure answers nothing and says nothing — `unknown` is not a
+finding, and telling someone who cannot see the field that a check they did not
+ask for could not run teaches them to dismiss this dialog. The account
+officer's `ตรวจสรรพากร` button asks again on a screen where the number is
+visible and editable, which is where an unanswered check belongs.
+
+The requester still has no tax-id column, so the note is the whole of what they
+get. That is also why it is worth saying: a name the model invented and a
+number that belongs to nobody both reach accounting looking like ordinary data.
