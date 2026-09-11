@@ -6,6 +6,7 @@ import useSWR from "swr";
 import { toast } from "sonner";
 import {
   CalendarDays,
+  Sparkles,
   Check,
   Clock,
   Inbox,
@@ -815,6 +816,51 @@ export function ReimburseApprovalQueue() {
     await next;
   }
 
+  const [suggestingId, setSuggestingId] = useState<number | null>(null);
+
+  /**
+   * Ask the model for a G/L account on every line of this claim that has none.
+   *
+   * Per claim and on a button, not per keystroke and not for the whole queue on
+   * open: each line is a model call, so the cost has to be something the
+   * accountant chooses to spend. It fills only EMPTY lines -- a line already set
+   * is somebody's answer and a suggestion does not get to overwrite it.
+   *
+   * Chained on the same per-claim promise as the other writes, because the
+   * route ends in setReimburseItemAccounts and therefore claims the claim's row
+   * in a transaction, exactly as a manual pick does.
+   */
+  async function suggestGl(requestId: number): Promise<void> {
+    if (suggestingId != null) return;
+    setSuggestingId(requestId);
+    const previous = saveChains.current.get(requestId) ?? Promise.resolve();
+    const next = previous
+      .catch(() => {})
+      .then(async () => {
+        try {
+          const res = await fetch(`/api/request/reimburse/requests/${requestId}/suggest-gl`, {
+            method: "POST",
+          });
+          const json = await res.json().catch(() => null);
+          if (json?.ok) {
+            const filled = Number(json?.data?.filled ?? 0);
+            // "0" is a real answer, not a failure: every line may already be
+            // set, or the model may have declined every one. Saying which beats
+            // a success toast that changed nothing on screen.
+            toast.success(filled > 0 ? `เติมบัญชีให้ ${filled} รายการ` : "ไม่มีรายการที่ต้องเติม");
+          } else {
+            toast.error(json?.error ?? "เดาบัญชีไม่สำเร็จ");
+          }
+        } catch {
+          toast.error("เครือข่ายขัดข้อง — ลองใหม่อีกครั้ง");
+        }
+        setSuggestingId(null);
+        await mutate();
+      });
+    saveChains.current.set(requestId, next);
+    await next;
+  }
+
   /** Readiness per claim, for the checkbox and the reason beside the number. */
   const readinessById = useMemo(() => {
     const m = new Map<number, ReturnType<typeof claimReadiness>>();
@@ -1177,6 +1223,30 @@ export function ReimburseApprovalQueue() {
                                     >
                                       {ready.reason}
                                     </span>
+                                  )}
+                                  {/* Only while something is missing. A button
+                                      that can only report "nothing to do" is a
+                                      button people learn to ignore. */}
+                                  {ready?.missing.includes("gl") && (
+                                    <button
+                                      type="button"
+                                      disabled={suggestingId != null}
+                                      onClick={() => void suggestGl(d.claim.id)}
+                                      title="ให้ AI เดาบัญชีจากรายละเอียดของแต่ละรายการ"
+                                      className="mt-1 inline-flex items-center gap-1 text-[10.5px] font-medium px-1.5 py-0.5 rounded cursor-pointer disabled:cursor-not-allowed disabled:opacity-55"
+                                      style={{
+                                        background: "var(--nav-active-bg)",
+                                        color: "var(--nav-active-text)",
+                                        border: "1px solid var(--border-card)",
+                                      }}
+                                    >
+                                      {suggestingId === d.claim.id ? (
+                                        <Loader2 size={10} className="animate-spin" />
+                                      ) : (
+                                        <Sparkles size={10} />
+                                      )}
+                                      เดา G/L ด้วย AI
+                                    </button>
                                   )}
                                 </td>
                                 <td
