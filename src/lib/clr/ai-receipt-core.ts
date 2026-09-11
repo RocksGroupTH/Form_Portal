@@ -507,36 +507,21 @@ export function normalizeDocNo(docNo: string): string {
 }
 
 /**
- * The part of a document number that identifies the purchase rather than the
- * kind of paper it is printed on.
- *
- * A seller hands over a tax invoice and a receipt for one purchase, numbered
- * `IV-202608271` and `RT-202608271`, and a bundle scans both — two rows for one
- * purchase, which is a claim paid twice (user, 2026-09-11). What differs is the
- * leading type prefix, so that is what comes off.
- *
- * Only a leading run of A-Z and one separator: enough for IV/RT/INV/CA, and it
- * leaves the rest of the number exactly as `normalizeDocNo` left it, so the
- * one-character-misread rule below is untouched. A number that is all letters
- * keeps itself — otherwise every such number would collapse onto the empty
- * string and merge with the next one.
- */
-export function docSerial(docNo: string): string {
-  const full = normalizeDocNo(docNo);
-  const serial = full.replace(/^[A-Z]+[-/#.]?/, "");
-  return serial || full;
-}
-
-/**
  * What makes two entries the same document. The payee is in the key because two
  * vendors do issue an invoice "001": without it the second one silently vanishes
  * into the first, and a lost expense line is worse than a duplicate row the user
- * deletes. The kind is in it so a transfer slip never merges into the receipt it
- * paid for. Null for an entry with no number — those never merge.
+ * deletes. Null for an entry with no number — those never merge.
+ *
+ * The number is compared whole. A tax invoice and a receipt that share a serial
+ * under different prefixes — IV-202608271 and RT-202608271 — were merged for an
+ * hour on 2026-09-11 and the user reversed it the same day: different numbers
+ * are different documents, and the number is what says so. If a bundle really
+ * does carry one purchase twice, that is a duplicate row to delete, not a rule
+ * to infer from the prefix.
  */
 function docKey(d: ReceiptDoc): string | null {
   if (!d.docNo) return null;
-  return `${d.kind}|${docSerial(d.docNo)}|${(d.payeeName ?? "").replace(/\s+/g, " ").trim().toUpperCase()}`;
+  return `${d.kind}|${normalizeDocNo(d.docNo)}|${(d.payeeName ?? "").replace(/\s+/g, " ").trim().toUpperCase()}`;
 }
 
 /**
