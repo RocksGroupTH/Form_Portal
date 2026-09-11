@@ -225,28 +225,37 @@ function PrintContent() {
             read.
           */}
           {/*
-            The five money columns are sized by the widest figure they must
-            hold, not by an even share. At 8.8% they gave 51.8px of text and
-            "999,999.00" needs 56.2 — so anything from a hundred thousand up
-            wrapped onto a second line, mid-number, on a sheet somebody signs.
-            9.5% holds it. The 3.5% comes out of รายการ, the only column that
-            can wrap and still be read.
+            Every column is sized by the widest thing it must hold, measured at
+            186mm — the A4 width the @page margins leave — not by an even share.
+            รายการ is the only one meant to wrap; a number or a code broken
+            across two lines on a sheet somebody signs reads as two values.
 
-            Above ฿999,999.00 on a single line a figure wraps again. That is
-            accepted: this is a petty-advance clearing, and buying the seventh
-            digit costs รายการ another 6% — about forty characters of the
-            description, on every sheet, for a line nobody files.
+              #              22.5px — two digits and the heading
+              วันที่          74.5 — "10/08/2026" needs 68.3 with padding
+              เลขที่เอกสาร    107  — fifteen characters, "INV202608120001"
+              รายการ         127  — wraps, four or five words a line
+              สาขา            49  — a five-character BC branch code
+              ก่อน VAT/รวม/สุทธิ  67 each — "999,999.00"
+              VAT / WHT       61 each — "99,999.00"
+
+            VAT and WHT are narrower on purpose: they are a fraction of the
+            figure beside them, and 7% of a ฿999,999 line is ฿70,000, which
+            fits. The width they give up is what buys เลขที่เอกสาร its fifteenth
+            character — it was 11% and cut "INV202608120001" in half.
+
+            Beyond those ceilings a value wraps again, and that is accepted: the
+            next digit or character costs รายการ, which every sheet uses.
           */}
           <colgroup>
-            <col style={{ width: "4%" }} />
-            <col style={{ width: "11%" }} />
-            <col style={{ width: "11%" }} />
-            <col style={{ width: "18.5%" }} />
-            <col style={{ width: "8%" }} />
+            <col style={{ width: "3.2%" }} />
+            <col style={{ width: "10.6%" }} />
+            <col style={{ width: "15.2%" }} />
+            <col style={{ width: "18.1%" }} />
+            <col style={{ width: "7%" }} />
             <col style={{ width: "9.5%" }} />
+            <col style={{ width: "8.7%" }} />
             <col style={{ width: "9.5%" }} />
-            <col style={{ width: "9.5%" }} />
-            <col style={{ width: "9.5%" }} />
+            <col style={{ width: "8.7%" }} />
             <col style={{ width: "9.5%" }} />
           </colgroup>
           <thead>
