@@ -132,9 +132,25 @@ export const RECEIPT_SYSTEM = [
   "  grand total across all its lines) — NOT just the amount of the largest line item chosen",
   '  above for description. wht = ภาษีหัก ณ ที่จ่าย amount. For a "slip", amountBeforeVat is',
   "  the transferred amount and vat and wht are null.",
+  "- sellerBlock, buyerBlock: COPY THESE FIRST, before answering anything else about",
+  "  the document. A Thai tax invoice is laid out the same way every time, and every",
+  "  field below comes out of one of these two blocks:",
+  "      sellerBlock = every line printed ABOVE the title \"ใบกำกับภาษี\" /",
+  "                    \"Tax Invoice\" — the letterhead. This is the SELLER.",
+  "      buyerBlock  = every line under the heading \"ลูกค้า\" / \"Customer\" /",
+  "                    \"Bill To\". This is the BUYER, the company paying.",
+  "  Copy each verbatim, line by line, exactly as printed. Do not summarise, and do",
+  "  not decide yet which line is a name or a number — just transcribe.",
+  "  Position and the heading are the signal, never size: the letterhead is often",
+  "  the smaller and plainer of the two, set in small type across the top, while the",
+  "  customer's block is large and left-aligned with its own heading.",
+  "  If the page has no customer block, buyerBlock is null.",
   "- payeeName, payeeAddress: the SELLER — the business that issued this invoice",
-  "  and is being paid. Its name and address, in the original language. On a Thai tax",
-  "  invoice this is the letterhead at the top, not the block addressed to a customer.",
+  "  and is being paid. Its name and address, in the original language.",
+  "  Take BOTH out of sellerBlock, and only out of sellerBlock. Everything the",
+  "  seller answers — name, address, tax id, branch — comes from those lines you",
+  "  just copied. A value that is not in sellerBlock is null here; never borrow it",
+  "  from buyerBlock.",
   "  payeeName is the COMPANY NAME ONLY, and payeeAddress the STREET ADDRESS only.",
   "  A Thai letterhead prints the branch against the name, in brackets or on its own",
   "  line, and it is neither of those two fields. Split it off:",
@@ -150,14 +166,16 @@ export const RECEIPT_SYSTEM = [
   "  Copy the branch you actually see. The customer block usually says",
   "  \"สำนักงานใหญ่\"; answering that for a seller whose letterhead says a numbered",
   "  branch is the one mistake here that cannot be spotted later.",
-  "- taxId: the 13-digit tax id OF THAT SAME COMPANY — the one you just answered in",
-  "  payeeName. Digits only.",
-  "  A tax invoice prints two of these and they are easy to swap. The other one belongs",
-  "  to the CUSTOMER being billed — the block headed \"ลูกค้า\", \"Customer\" or \"Bill To\",",
-  "  which is the company paying, not the one being paid. Never answer with that number.",
+  "- taxId: the 13-digit tax id inside sellerBlock — the same lines you took",
+  "  payeeName from. Digits only.",
+  "  A tax invoice prints two of these and they are easy to swap. The other one sits",
+  "  in the customer block and belongs to the company PAYING, not the one being paid.",
+  "  Never answer with that number.",
+  "  Check yourself before answering: the number you give here must be printed in the",
+  "  same block as the name you gave in payeeName. Two blocks, one answer each.",
   "  If you cannot tell which of the two belongs to the seller, answer null: a wrong tax",
   "  id here is filed with the Revenue Department against the wrong company.",
-  "- buyerTaxId: the OTHER one — the 13-digit tax id in the customer block, the company",
+  "- buyerTaxId: the OTHER one — the 13-digit tax id inside buyerBlock, the company",
   "  being billed. Digits only.",
   "  A Thai tax invoice normally carries TWO 13-digit tax ids: the seller's in the",
   "  letterhead and the customer's in the block addressed to them. Look for both before",
@@ -168,6 +186,10 @@ export const RECEIPT_SYSTEM = [
   "  If you find only one and cannot tell whose it is, put it in buyerTaxId and leave",
   "  taxId null. Naming it as the seller's when it is not is the one answer that does",
   "  damage.",
+  "  Two numbers on the page and only one in your answer means you read one block",
+  "  twice. A filled taxId next to a null buyerTaxId, on a page that plainly carries",
+  "  both, is the shape that mistake takes — go back and find the second one before",
+  "  you answer either.",
   "- taxBranchText: the branch of that same seller, copied exactly as printed —",
   "  \"สำนักงานใหญ่\", \"สาขาที่ 00001\", \"Head Office\". It sits with the seller's name,",
   "  address and tax id, usually in the letterhead — very often in brackets straight",
@@ -195,8 +217,24 @@ export const RECEIPT_SYSTEM = [
 
 export const RECEIPT_USER_TEXT =
   "Extract every document in these pages. Return only a JSON array; each entry has the keys: " +
-  "kind, pages, date, description, docNo, amountBeforeVat, vat, wht, taxId, buyerTaxId, payeeName, payeeAddress, taxBranchText, branchHint " +
-  '(an "other" entry has kind, pages and branchHint only).';
+  "sellerBlock, buyerBlock, kind, pages, date, description, docNo, amountBeforeVat, vat, wht, " +
+  "taxId, buyerTaxId, payeeName, payeeAddress, taxBranchText, branchHint " +
+  '(an "other" entry has kind, pages and branchHint only).\n\n' +
+  /* The operative half of the two-block rule, repeated here and nowhere else in
+     the message. It is in the user turn on purpose: the same words in the system
+     prompt were read, obeyed to the letter of transcribing, and still produced a
+     sellerBlock that was the seller's name glued to the buyer's address and tax
+     id, with buyerBlock null. Last thing before generation is what made the
+     reader look at the page twice (measured against this invoice, 2026-09-12). */
+  "Before you answer anything else about a receipt, transcribe its two party blocks:\n" +
+  '- sellerBlock: every line printed ABOVE the title "ใบกำกับภาษี" / "Tax Invoice",\n' +
+  "  copied verbatim.\n" +
+  '- buyerBlock: every line under the heading "ลูกค้า" / "Customer" / "Bill To",\n' +
+  "  copied verbatim.\n" +
+  "Then take payeeName, payeeAddress, taxBranchText and taxId ONLY from the text you\n" +
+  "put in sellerBlock, and buyerTaxId ONLY from the text you put in buyerBlock. If a\n" +
+  "value is not present in that block, it is null — do not borrow it from the other.\n" +
+  "Put sellerBlock and buyerBlock in each entry, first.";
 
 /** An account the line's branch is allowed to charge (§6 decides the set). */
 export interface GlCandidate {

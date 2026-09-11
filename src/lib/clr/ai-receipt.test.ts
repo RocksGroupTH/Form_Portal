@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   BRANCH_SUGGEST_SYSTEM,
   RECEIPT_SYSTEM,
+  RECEIPT_USER_TEXT,
   buildBranchSuggestUserText,
   buildGlSuggestUserText,
   parseReceiptDocs,
@@ -325,6 +326,12 @@ test("the สาขา field is taxBranchText's, and only branchHint keeps out o
      company name, and filed as the street address. Both are answered by the
      worked split, which is what actually made the reader fill the field. */
   assert.ok(RECEIPT_SYSTEM.includes("payeeName is the COMPANY NAME ONLY"));
+  /* The seller is found by transcribing the two party blocks first, and the
+     operative half of that rule lives in the user turn — see the comment on
+     RECEIPT_USER_TEXT for why the system prompt alone did not move the reader. */
+  assert.ok(RECEIPT_SYSTEM.includes("sellerBlock, buyerBlock: COPY THESE FIRST"));
+  assert.ok(RECEIPT_USER_TEXT.includes("transcribe its two party blocks"));
+  assert.ok(RECEIPT_USER_TEXT.includes("Put sellerBlock and buyerBlock in each entry, first."));
   assert.ok(RECEIPT_SYSTEM.includes("Never leave the bracket inside payeeName"));
   assert.ok(RECEIPT_SYSTEM.includes("taxBranchText  = สาขาที่ 00012 บางนา"));
   // Near-identical names must still produce a pick, flagged rather than dropped.
