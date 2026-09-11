@@ -7,6 +7,10 @@ import type { Actor } from "@/lib/acc/approval-engine";
 import { getRequest, setAccountAction } from "@/lib/clr/clear-advance-request-service";
 import { listClrApprovers, roleForStep } from "@/lib/clr/clear-advance-approver-service";
 import { linesMissingTaxVendor } from "@/lib/clr/tax-vendor-core";
+import { glMissingMessage, linesMissingGl } from "@/lib/clr/clear-advance-line-validation";
+import { resolveClrPaymentDate } from "@/lib/clr/clear-advance-payment-date";
+import { refundEvidenceMessage, refundEvidenceMissing } from "@/lib/clr/refund-evidence";
+import { getPaymentDates } from "@/lib/acc/payment-calendar";
 import { pndBlockReason } from "@/lib/clr/wht-pnd-core";
 import {
   CLR_NEXT_STEP,
@@ -60,11 +64,20 @@ export async function approveCurrentStep(
 
   // The Account (AP) step records the PV/PPEX doc no. + (conditional) payment date.
   if (step === "ACCOUNT") {
+    /* The payment date, and whether the caller was even entitled to choose it.
+       Only the company-pays case reaches for the calendar — a refund is dated
+       by the employee's transfer, so asking the holiday table about it would
+       be a query whose answer is not used. It used to be enough for the date
+       to be non-empty: any Wednesday passed, and became a G/L posting date in
+       BC that no payment run matches. */
     const refund = before.clear?.refundToCompany ?? 0;
-    if (refund < 0 && !opts.paymentDate) {
-      // Company must pay the employee the shortfall — a payment date is required.
-      throw new Error("กรณีบริษัทต้องจ่ายเพิ่ม กรุณาระบุวันจ่าย (Payment Date)");
-    }
+    const decided = resolveClrPaymentDate({
+      refundToCompany: refund,
+      refundTransferDate: before.clear?.refundTransferDate,
+      submitted: opts.paymentDate,
+      allowedRounds: refund < 0 ? await getPaymentDates() : [],
+    });
+    if (!decided.ok) throw new Error(decided.error);
     // Every VAT line must name the seller's vendor before it leaves this step
     // (user, 2026-09-08). Input tax is claimed against a vendor; a VAT line with
     // no Tax Vendor No. posts an unattributed claim, and this is the last step
@@ -83,7 +96,27 @@ export async function approveCurrentStep(
     // anyone who can still choose.
     const pndProblem = pndBlockReason(before.clear?.items, before.clear?.whtItems);
     if (pndProblem) throw new Error(pndProblem);
-    await setAccountAction(requestId, opts.pvDocNo ?? null, opts.paymentDate ?? null);
+    // Every posting line must name its G/L account before it leaves this step.
+    // The requester used to choose it and no longer sees the field at all, so
+    // accounting owns it — and this is the last step that can edit a line, the
+    // same reason the two checks above live here. A line with no account is
+    // dropped from the journal without a word, which would send an unbalanced
+    // document to BC and put the discovery on whoever pressed "ส่งเข้า ERP".
+    const missingGl = linesMissingGl(before.clear?.items);
+    if (missingGl.length > 0) throw new Error(glMissingMessage(missingGl));
+    /* A clearing can arrive here owing money it was never asked to evidence.
+       The refund fields are required at submit, but about the sign the
+       clearing had then — accounting's own edits to the lines can flip it, and
+       the employee has not transferred anything because until that edit they
+       did not owe it. Nothing the officer can type fixes that, so this refuses
+       the approval and points at ส่งกลับแก้ไข. */
+    const refundGap = refundEvidenceMissing({
+      refundToCompany: refund,
+      refundTransferDate: before.clear?.refundTransferDate,
+      proofCount: before.clear?.refundProofFiles?.length ?? 0,
+    });
+    if (refundGap) throw new Error(refundEvidenceMessage(refundGap));
+    await setAccountAction(requestId, opts.pvDocNo ?? null, decided.paymentDate);
   }
 
   const pool = await getAccPool();

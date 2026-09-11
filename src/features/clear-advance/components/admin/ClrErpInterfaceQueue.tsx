@@ -11,6 +11,7 @@ import { FilterMonthPicker } from "@/features/accounting/components/FilterMonthP
 import { sentMonthKey } from "@/features/accounting/components/ApprovalQueueFilters";
 import type { ClrErpQueueRow } from "@/lib/clr/clear-advance-erp-queue-service";
 import type { ClrPreviewItem, ClrPreviewLine } from "@/lib/clr/clear-advance-erp-send";
+import { effectiveSelection } from "@/lib/clr/erp-queue-selection";
 import { fmtMoney } from "@/features/clear-advance/components/admin/shared";
 
 /* ─────────────────────── helpers ─────────────────────── */
@@ -508,7 +509,11 @@ export function ClrErpInterfaceQueue() {
     setSelected(() => allSelected ? new Set() : new Set(selectableIds));
   }, [allSelected, selectableIds]);
 
-  const selectedIds = Array.from(selected);
+  /* Read through the ids that are sendable right now, never straight out of the
+     Set. A tick outlives its row — cancelling a ticked "รอส่ง" row left the id
+     behind, and the preview then drew a journal for a clearing that can never
+     post. See effectiveSelection. */
+  const selectedIds = effectiveSelection(selected, selectableIds);
 
   /** Preview for a given set of ids — shared by the Preview button and the send
    *  confirmation, which needs the same data to say what it is about to post. */

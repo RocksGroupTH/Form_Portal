@@ -17,7 +17,7 @@ export const env = createEnv({
     MSSQL_ENCRYPT: z
       .string()
       .optional()
-      .transform((v) => v === "true"),
+      .transform((v) => v !== "false"),
     MSSQL_TRUST_CERT: z
       .string()
       .optional()

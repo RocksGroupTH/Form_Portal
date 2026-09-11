@@ -1,0 +1,251 @@
+#!/usr/bin/env node
+/**
+ * Secret scanner — shared across the CodexFamily repos (2026-09-04 security
+ * review, RG-17; reworked 2026-09-11 after review). Everything the audit found
+ * committed is caught here: a whole `.env` (OP-Form), Azure AD client secrets
+ * and 8–12 character SQL passwords inside appsettings.json (RocksPC_CORE6), a
+ * `saai` SQL password in a seed script (HR_Portal), the tracked AppConfig.json,
+ * a Meta Workplace token.
+ *
+ *   node scripts/scan-secrets.mjs            # scan every tracked file
+ *   node scripts/scan-secrets.mjs --staged   # scan what is about to be committed (pre-commit)
+ *
+ * Exit 1 on any hit. A line carrying `# secret-scan-ok` (or `// secret-scan-ok`, optionally followed by why)
+ * is allow-listed — use it for documented placeholders only.
+ *
+ * Deliberately high-signal: a hook that cries wolf gets bypassed with
+ * --no-verify. Patterns match credential SHAPES (provider prefixes, connection
+ * strings, secret-looking literals next to a secret-ish key), never bare words.
+ *
+ * Implementation notes (each one was a real hole in the first version):
+ *   - File names come from git with -z and blobs are read through
+ *     `git cat-file --batch` on stdin: no shell, so names with spaces, quotes,
+ *     `%VAR%`, `$x` or Thai characters can neither break the scan nor be
+ *     skipped by it. One git process for the whole commit, not one per file.
+ *   - Binary detection is a NUL byte in the first 8 KB, written as "\u0000"
+ *     (a literal NUL in this source made git treat the scanner as binary and
+ *     would fail OPEN if any tool ever stripped it). UTF-16 files (SSMS saves
+ *     .sql that way) are decoded, not skipped.
+ *   - The captured secret, not just alphanumeric runs, is redacted in output.
+ */
+import { execFileSync, spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+
+const STAGED = process.argv.includes("--staged");
+const MAX_BUFFER = 256 * 1024 * 1024;
+
+// Files that must never be committed at all, whatever they contain.
+const BLOCKED_FILES = [
+  { name: "dotenv file", re: /(^|\/)\.env(\.[^/]+)?$/, allow: /\.(example|sample|template)$/ },
+  { name: "local appsettings", re: /(^|\/)appsettings\.[^/]*local[^/]*\.json$/i, allow: /\.example$/ },
+  { name: "legacy AppConfig.json", re: /(^|\/)AppConfig\.json$/ },
+  // .pem is left to the private-key-block pattern: a public certificate is fine.
+  { name: "private key store", re: /\.(pfx|p12|jks|keystore)$/i },
+];
+
+// Values that are documentation, not credentials. Whole words only — a real
+// secret that merely contains "mock" or "sample" must not be waved through.
+const PLACEHOLDER =
+  /change[_-]?me|your[_-]|xxx|\*{3,}|…|<[^>]+>|\$\{\{|\$\{|\$\(|%[A-Za-z_]+%|\b(?:placeholder|example|redacted|dummy|sample|test|fake|mock|changeit)\b|^test-|-test-/i;
+// Test/spec files hold deliberately fake credentials. File-name based only: a
+// directory called Tests/ can still hold a real appsettings.json.
+const TEST_FILE = /(^|\/)(vitest|playwright|jest|cypress)\.config\.[cm]?[jt]s$|\.(test|spec)\.[cm]?[jt]sx?$|\.test\.ps1$|(^|\/)__(tests|mocks)__\/|(^|\/)mocks?\/|(^|\/)[^/]+\.Tests?\/|Tests?\.[cm]?[jt]s$|Tests?\.cs$/;
+
+// A literal that looks like a real secret: 8+ chars, no spaces or quotes,
+// letters plus at least one digit or strong punctuation, and not a placeholder.
+// The 8-char floor is what the SQL passwords the audit found actually had.
+// Digit-free identifiers such as "auth-token", ".data-api" or "{branch}" are
+// names, not credentials; every real key or password the audit found carries
+// a digit.
+const LOOKS_SECRET = /^(?=.*[A-Za-z])(?=.*(?:[0-9]|[!@#$%^&*+=\/\\|~?]))[^\s"']{8,}$/;
+
+const PATTERNS = [
+  { name: "private-key-block", re: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/ },
+  // Azure AD / Entra client secrets: 3 chars + digit + "Q~" + 30+ chars.
+  { name: "azure-client-secret", re: /\b[A-Za-z0-9._~-]{3}[0-9]Q~[A-Za-z0-9._~-]{30,}/ },
+  { name: "anthropic-key", re: /\bsk-ant-[A-Za-z0-9_-]{20,}/ },
+  { name: "openai-key", re: /\bsk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{32,}/ },
+  { name: "aws-access-key", re: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/ },
+  { name: "slack-token", re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/ },
+  { name: "github-token", re: /\bgh[pousr]_[A-Za-z0-9]{30,}\b|\bgithub_pat_[A-Za-z0-9_]{60,}\b/ },
+  { name: "google-api-key", re: /\bAIza[0-9A-Za-z_-]{35}\b/ },
+  { name: "facebook-workplace-token", re: /\bEAA[A-Za-z0-9]{60,}\b/ },
+  // user:password@host inside a connection URL.
+  {
+    name: "url-credentials",
+    re: /\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|rediss?|amqps?|mssql|sqlserver|ftp|sftp|smtps?):\/\/[^\s:/@"']+:([^\s@"']{4,})@/i,
+    value: 1,
+  },
+  // SQL / ADO / Prisma connection strings carrying a real password.
+  {
+    name: "connection-string-password",
+    re: /(?:Server|Data Source|Host|Addr(?:ess)?|sqlserver:\/\/)[^;'"\n]*;[^'"\n]*(?:Password|Pwd)\s*=\s*([^;'"\s]{4,})/i,
+    value: 1,
+  },
+  // `password: 'literal'` / `"ClientSecret": "literal"` / `SESSION_SECRET = "literal"`
+  // where the literal itself looks like a credential. Variable references never
+  // match because they carry no quoted literal.
+  {
+    name: "secret-literal",
+    re: /(?:[a-z0-9_.-]*(?:secret|token|password|passwd|pwd|api[_-]?key|access[_-]?key|private[_-]?key|signing[_-]?key)[a-z0-9_.-]*)["']?\s*[:=]\s*["']([^"'\n]{8,})["']/i,
+    value: 1,
+    skipFile: /\.md$/,
+  },
+  // .env / shell / yaml / compose style: KEY=value, export KEY=value,
+  // set KEY=value, `KEY: value`, `- KEY=value`, with an optional trailing comment.
+  {
+    name: "env-secret",
+    re: /^\s*(?:export\s+|set\s+|-\s*)?(?:[A-Za-z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|ACCESS_KEY)[A-Za-z0-9_]*)\s*[:=]\s*["']?([^"'\s]{8,})["']?\s*(?:#.*)?$/i,
+    value: 1,
+    onlyFile: /\.(env[^/]*|ya?ml|toml|ini|properties|ps1|sh|bat|cmd)$|(^|\/)\.env|(^|\/)(?:docker-)?compose[^/]*\.ya?ml$/,
+  },
+];
+
+// Never scan these (binaries, generated, vendored, self).
+const SKIP = [
+  /(^|\/)node_modules\//,
+  /(^|\/)\.next\//,
+  /(^|\/)(bin|obj|dist|build|out|coverage|\.superpowers)\//,
+  // Vendored browser libraries (CodeMirror modes, bootstrap, metisMenu).
+  /(^|\/)(wwwroot\/(lib|js\/plugins)|vendor|third[-_]party)\//,
+  /(^|\/)scan-secrets\.mjs$/,
+  /(^|\/)package-lock\.json$/,
+  /\.(png|jpe?g|gif|webp|ico|svg|pdf|pptx|xlsx|docx|woff2?|ttf|eot|map|lock|zip|dll|exe|app|min\.js)$/i,
+];
+
+function gitPathsZ(args) {
+  const out = execFileSync("git", [...args, "-z"], { maxBuffer: MAX_BUFFER });
+  return out.toString("utf8").split("\u0000").filter(Boolean);
+}
+
+// Staged blobs for every path in one git process. Returns Map<path, Buffer>;
+// paths that are not blobs (submodule gitlinks, deleted) are absent.
+function stagedBlobs(paths) {
+  const result = new Map();
+  if (paths.length === 0) return result;
+  const proc = spawnSync("git", ["cat-file", "--batch"], {
+    input: paths.map((p) => `:${p}\n`).join(""),
+    maxBuffer: MAX_BUFFER,
+  });
+  if (proc.status !== 0) throw new Error(`git cat-file --batch failed: ${proc.stderr}`);
+  const buf = proc.stdout;
+  let pos = 0;
+  for (const path of paths) {
+    const nl = buf.indexOf(0x0a, pos);
+    if (nl < 0) break;
+    const header = buf.toString("utf8", pos, nl);
+    pos = nl + 1;
+    const m = /^(\S+) (\S+) (\d+)$/.exec(header);
+    if (!m) continue; // "<name> missing"
+    const size = Number(m[3]);
+    if (m[2] === "blob") result.set(path, buf.subarray(pos, pos + size));
+    pos += size + 1; // trailing newline after the object body
+  }
+  return result;
+}
+
+function decode(buf) {
+  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) return buf.subarray(2).toString("utf16le");
+  if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff) {
+    const le = Buffer.from(buf.subarray(2));
+    le.swap16();
+    return le.toString("utf16le");
+  }
+  if (buf.subarray(0, 8192).includes(0)) return null; // binary
+  return buf.toString("utf8");
+}
+
+function redact(line, secret) {
+  if (!secret) return line.slice(0, 120);
+  const shown = secret.slice(0, 3) + "********";
+  return line.split(secret).join(shown).slice(0, 120);
+}
+
+let files;
+try {
+  files = STAGED
+    ? gitPathsZ(["diff", "--cached", "--name-only", "--diff-filter=ACMR"])
+    : gitPathsZ(["ls-files"]);
+} catch {
+  console.error("scan-secrets: not a git repo / git unavailable");
+  process.exit(2);
+}
+
+const hits = [];
+const toScan = [];
+for (const file of files) {
+  for (const b of BLOCKED_FILES) {
+    if (b.re.test(file) && !(b.allow && b.allow.test(file))) {
+      hits.push({ file, line: 0, name: `blocked file (${b.name})`, text: "" });
+    }
+  }
+  if (!SKIP.some((re) => re.test(file))) toScan.push(file);
+}
+
+let blobs = null;
+if (STAGED) {
+  try {
+    blobs = stagedBlobs(toScan);
+  } catch (e) {
+    console.error(`scan-secrets: ${e.message}`);
+    process.exit(2);
+  }
+}
+
+for (const file of toScan) {
+  let raw;
+  if (STAGED) {
+    raw = blobs.get(file);
+    if (!raw) continue; // submodule / not a blob
+  } else {
+    try {
+      raw = readFileSync(file);
+    } catch {
+      continue; // deleted in the working tree / unreadable
+    }
+  }
+  const text = decode(raw);
+  if (text === null) continue; // binary
+
+  const isTestFile = TEST_FILE.test(file);
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    // `# secret-scan-ok` / `// secret-scan-ok`, optionally followed by why.
+    if (/(?:#|\/\/)\s*secret-scan-ok\b/.test(line)) continue;
+    for (const p of PATTERNS) {
+      if (p.skipFile && p.skipFile.test(file)) continue;
+      if (p.onlyFile && !p.onlyFile.test(file)) continue;
+      // Fake credentials in test files are expected; provider-shaped tokens are not.
+      if (isTestFile && p.value !== undefined) continue;
+      const m = p.re.exec(line);
+      if (!m) continue;
+      let secret = m[0];
+      if (p.value !== undefined) {
+        const v = m[p.value] ?? "";
+        if (PLACEHOLDER.test(v) || !LOOKS_SECRET.test(v)) continue;
+        secret = v;
+      }
+      hits.push({ file, line: i + 1, name: p.name, text: redact(line.trim(), secret) });
+      break;
+    }
+  }
+}
+
+if (hits.length === 0) {
+  if (!STAGED) console.log(`scan-secrets: clean (${files.length} files)`);
+  process.exit(0);
+}
+
+console.error(`\nscan-secrets: ${hits.length} possible secret(s) ${STAGED ? "staged for commit" : "in tracked files"}:\n`);
+for (const h of hits) {
+  console.error(`  ${h.file}${h.line ? ":" + h.line : ""}  [${h.name}]`);
+  if (h.text) console.error(`      ${h.text}`);
+}
+console.error(`
+Move the value to an untracked file (.env.local, appsettings.local.json) or an
+environment variable. If this line is a documented placeholder, append
+"# secret-scan-ok" (or "// secret-scan-ok"). Do not commit with --no-verify —
+a committed secret has to be rotated, not just deleted.
+`);
+process.exit(1);

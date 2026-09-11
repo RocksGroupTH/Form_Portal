@@ -286,6 +286,18 @@ export async function previewClrErpJournal(ids: number[]): Promise<ClrPreviewIte
         out.push({ id, requestNo: null, interfaceTarget: null, environment: null, journalBatchName: null, ok: false, error: "ไม่พบคำขอ", lines: [] });
         continue;
       }
+      /* The queue keeps cancelled rows so the ยกเลิก tab can show them, so an id
+         arriving here is not proof that it is still sendable: a second tab, or
+         another approver, can cancel between the list load and this call. The
+         send refuses the same case, and a preview that draws a journal the send
+         would never post is worse than no preview — it is read as permission. */
+      if (req.status !== "Approved") {
+        throw new Error(
+          req.status === "Cancelled"
+            ? "คำขอนี้ถูกยกเลิกแล้ว — กรุณารีเฟรชรายการ"
+            : "คำขอนี้ไม่อยู่ในสถานะอนุมัติแล้ว — กรุณารีเฟรชรายการ",
+        );
+      }
       if (!req.brandCode) throw new Error("ไม่พบแบรนด์ของคำขอ");
       if (!req.clear) throw new Error("ไม่พบข้อมูลการเคลียร์เงินทดรองจ่าย");
       if (!req.clear.items || req.clear.items.length === 0) throw new Error("ไม่มีรายการค่าใช้จ่าย");

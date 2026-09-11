@@ -111,6 +111,8 @@ function mapClearRow(r: Record<string, unknown>): ClearAdvanceDetail {
     refundTransferDate: r.RefundTransferDate ? toYmd(r.RefundTransferDate as Date) : null,
     refundTransferAmount: num(r.RefundTransferAmount),
     pvDocNo: (r.PvDocNo as string) ?? null,
+    advanceErpDocumentNo: (r.AdvanceErpDocumentNo as string) ?? null,
+    advanceErpStatus: (r.AdvanceErpStatus as string) ?? null,
     paymentDate: r.PaymentDate ? toYmd(r.PaymentDate as Date) : null,
     items: [],
     whtItems: [],
@@ -165,7 +167,16 @@ async function loadClear(
   requestId: number,
 ): Promise<ClearAdvanceDetail | null> {
   const head = await pool.request().input("rid", sql.Int, requestId)
-    .query(`SELECT TOP 1 * FROM [dbo].[AccClearAdvance] WHERE RequestId = @rid`);
+    .query(`
+      SELECT TOP 1 c.*,
+             -- The BC document the advance itself created, and how that send
+             -- went. The account step is deciding whether this clearing can go
+             -- to BC, and the state of the advance under it is part of that.
+             adv.ErpDocumentNo AS AdvanceErpDocumentNo,
+             adv.ErpInterfaceStatus AS AdvanceErpStatus
+      FROM [dbo].[AccClearAdvance] c
+      LEFT JOIN [dbo].[AccRequest] adv ON adv.Id = c.AdvanceRequestId
+      WHERE c.RequestId = @rid`);
   if (head.recordset.length === 0) return null;
   const clear = mapClearRow(head.recordset[0] as Record<string, unknown>);
   const clearId = clear.id!;
@@ -405,7 +416,11 @@ export function validateForSubmit(
   if (lines.length === 0) errs.push("กรุณาระบุรายละเอียดค่าใช้จ่ายจริงอย่างน้อย 1 รายการ");
   for (const it of lines) {
     if (!it.expenseDate) errs.push("มีรายการค่าใช้จ่ายที่ยังไม่ได้ระบุวันที่");
-    if (!it.glAccountNo) errs.push("มีรายการค่าใช้จ่ายที่ยังไม่ได้เลือกหมวด (รายการ)");
+    /* The G/L account is deliberately not checked here. The requester used to
+       choose it and no longer sees the field at all — accounting does, at the
+       ACCOUNT step, which is where `linesMissingGl` now refuses to let a
+       clearing pass without one. Asking for it at submit would block a person
+       who has no way to answer. */
     if (!(n0(it.amountBeforeVat) > 0)) errs.push("มีรายการค่าใช้จ่ายที่จำนวนเงินก่อน VAT ไม่ถูกต้อง");
   }
   errs.push(...validateLineMoney(lines));

@@ -29,7 +29,7 @@ async function connectAppMssql(): Promise<sql.ConnectionPool> {
     user: env.MSSQL_USER,
     password: env.MSSQL_PASSWORD,
     options: {
-      encrypt: env.MSSQL_ENCRYPT ?? false,
+      encrypt: env.MSSQL_ENCRYPT ?? true,
       trustServerCertificate: env.MSSQL_TRUST_CERT !== false,
       serverName: env.MSSQL_TLS_SERVER_NAME || (isIP(env.MSSQL_HOST) ? "localhost" : undefined),
     },

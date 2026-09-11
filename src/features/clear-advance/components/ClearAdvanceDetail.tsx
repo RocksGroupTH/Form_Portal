@@ -10,6 +10,7 @@ import {
 import type { ClearAdvanceDetail as ClearDetail } from "@/features/clear-advance/types";
 import { Dialog } from "@/components/ui/Dialog";
 import { PND_LABEL } from "@/lib/clr/wht-pnd-core";
+import { normalizeTaxIdInput, taxIdNotice } from "@/lib/clr/seller-tax-id";
 import { Avatar } from "@/components/ui/Avatar";
 import {
   AttachmentViewer,
@@ -22,8 +23,20 @@ import { CLR_STEP_CODES, CLR_STEP_LABEL_TH, type ClrStepCode } from "@/features/
 import type { AccFileMeta } from "@/features/accounting/types";
 import type { ClearAdvanceItem, ClearAdvanceRequest, ClrApproval } from "@/features/clear-advance/types";
 import { linesMissingTaxVendor } from "@/lib/clr/tax-vendor-core";
+import { glMissingMessage, linesMissingGl } from "@/lib/clr/clear-advance-line-validation";
+import { tinsNeedingRdCheck } from "@/lib/clr/rd-vat-core";
+import { useTaxVendors } from "@/features/clear-advance/hooks/useTaxVendors";
+import { useRdVatByTin } from "@/features/clear-advance/hooks/useRdVatByTin";
+import { VendorCell } from "@/features/clear-advance/components/VendorCell";
+import { RdCell } from "@/features/clear-advance/components/RdCell";
+import { useGlOptionsByBranch } from "@/features/clear-advance/hooks/useGlOptionsByBranch";
+import { GlCell } from "@/features/clear-advance/components/GlCell";
+import { PaymentDatePicker } from "@/components/ui/PaymentDatePicker";
+import { advanceBcDocLabel } from "@/lib/clr/advance-bc-doc";
+import { refundEvidenceMessage, refundEvidenceMissing } from "@/lib/clr/refund-evidence";
+import { isRocksPcBrand } from "@/features/clear-advance/constants";
+import { hrPhotoUrl } from "@/lib/hr/photo-url";
 import { pndBlockReason } from "@/lib/clr/wht-pnd-core";
-import { SellerVendorCard } from "@/features/clear-advance/components/SellerVendorCard";
 
 function money(n: number | null | undefined): string {
   return (n ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -50,12 +63,6 @@ function fmtDateOnly(raw: string | null | undefined): string {
   const d = new Date(raw);
   if (isNaN(d.getTime())) return raw;
   return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
-}
-
-/** Today as YYYY-MM-DD via local getters (server is Thai time). */
-function todayYmd(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 const box = { background: "var(--bg-card)", border: "1px solid var(--border-card)", boxShadow: "var(--shadow-sm)" } as const;
@@ -103,31 +110,21 @@ function ApprovalStatusBadge({ status }: { status: string }) {
 
 interface Props {
   request: ClearAdvanceRequest;
+  /**
+   * Whether this viewer is accounting, and so may see and set the G/L account.
+   *
+   * The requester used to choose it; they no longer see the column at all, and
+   * neither does the manager. This component cannot work that out for itself —
+   * it knows which step the request is at, not who is looking — so the server
+   * decides it in the detail GET and hands it down. Defaults to false so a
+   * mount that does not know (MyRequestsPanel, which is the requester's own
+   * list) hides the column, which is the right answer there.
+   */
+  canSeeGlAccount?: boolean;
   onChanged?: () => void;
 }
 
-interface VatRegistrant {
-  nid: string;
-  titleName: string | null;
-  name: string | null;
-  branchNumber: number | null;
-  branchCode: string | null;
-  vatRegisteredOn: string | null;
-  address: string | null;
-}
-interface TaxVendorCandidate {
-  vendorNo: string;
-  displayName: string | null;
-  taxRegistrationNumber: string | null;
-}
-
-type VatCheck =
-  | { state: "checking" }
-  | { state: "found"; registrant: VatRegistrant; checkedAt: string | null }
-  | { state: "unregistered"; checkedAt: string | null }
-  | { state: "unknown" };
-
-export function ClearAdvanceDetail({ request, onChanged }: Props) {
+export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged }: Props) {
   const clear = request.clear;
   const items = clear?.items ?? [];
   const whtItems = clear?.whtItems ?? [];
@@ -206,27 +203,6 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
     dirty.current = true;
     setEditWhtState(v);
   };
-  /**
-   * What the Revenue Department holds for each seller tax id on this clearing,
-   * keyed by the id. Checked on demand here rather than on open: accounting is
-   * usually correcting one line, and the register is a call out of the building.
-   *
-   * "unregistered" and "could not check" stay separate — the first is a fact
-   * about the invoice, the second is the RD not answering.
-   */
-  const [vatByTin, setVatByTin] = useState<Record<string, VatCheck>>({});
-  /**
-   * BC vendor cards carrying each seller tax id, keyed by the id.
-   *
-   * A list, never an answer: one tax id maps to many cards — Central Pattana has
-   * 24 under one number, one per mall, told apart only by a prefix in the name.
-   * Picking the first would be right once in twenty-four times and wrong exactly
-   * where the branch matters, so accounting chooses and blank stays valid.
-   */
-  const [vendorsByRow, setVendorsByRow] = useState<Record<number, TaxVendorCandidate[] | "loading">>({});
-  /* The name search is per row, not per tax id: it is a way of looking, and two
-     rows looking for the same seller may be typing different things. */
-  const [vendorNameTerm, setVendorNameTerm] = useState<Record<number, string>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -260,7 +236,95 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
   const pndProblem = isAccountStep
     ? pndBlockReason(editItems, editWht)
     : pndBlockReason(items, whtItems);
-  const accountBlocked = missingVendorLines.length > 0 || !!pndProblem;
+  /* The account list for every branch the lines use. Fetched here rather than
+     on the requester's form, which no longer shows the column. */
+  const glByBranch = useGlOptionsByBranch(editItems.map((it) => it.branchCode));
+  /* The seller's BC vendor and the registry's answer about their tax id, both
+     for the whole grid. They used to live one-per-card below the table; the
+     registry in particular was asked once per card, so six lines sharing a
+     seller made six calls for one answer. */
+  const { vendors, list: vendorList, load: loadVendors } = useTaxVendors(request.brandCode ?? null);
+  /* Only while the grid is editable. `editItems` is seeded from the request for
+     every viewer, so asking for its tax ids unconditionally had a manager's
+     page load reaching the registry's 15-second SOAP for a column that is not
+     on their screen. */
+  const { byTin: rdByTin, ask: askRd } = useRdVatByTin(
+    isAccountStep ? editItems.map((it) => it.taxId) : [],
+  );
+
+  /* The payment rounds, from the calendar AP-1 and AP-2 already share — there
+     is no AP-3 endpoint because there is no AP-3 rule; it is the same 2nd and
+     4th Friday, shifted off holidays. Only fetched while the account step is
+     open, and only the company-pays case can choose from them. */
+  const [paymentRounds, setPaymentRounds] = useState<string[]>([]);
+  const [roundsAttempt, setRoundsAttempt] = useState(0);
+  useEffect(() => {
+    if (!isAccountStep || !companyPaysExtra) return;
+    let cancelled = false;
+    fetch("/api/request/advance/payment-dates")
+      .then((r) => r.json())
+      .then((j: { ok?: boolean; data?: { dates?: string[]; default?: string | null } }) => {
+        if (cancelled || !j?.data?.dates) return;
+        setPaymentRounds(j.data.dates);
+        /* Seeded with the round the claim belongs to, the way AP-2 does, so the
+           common case is confirm-and-approve. Never over an existing pick. */
+        setPaymentDate((prev) => prev || j.data?.default || "");
+      })
+      .catch(() => {
+        /* Not swallowed. With no rounds the picker offers nothing and approval
+           is blocked with no way forward, so the officer is told and the next
+           render tries again — the same failure the G/L options and the OCR
+           suggestions each had to be taught to survive. */
+        if (!cancelled) { toast.error("โหลดรอบวันจ่ายไม่สำเร็จ — กำลังลองใหม่"); setRoundsAttempt((n) => n + 1); }
+      });
+    return () => { cancelled = true; };
+  }, [isAccountStep, companyPaysExtra, roundsAttempt]);
+
+  /* A date stored before this rule existed, or from a round that has since
+     passed. Shown rather than dropped — but it is about to become a posting
+     date in BC, so it has to be re-picked before this step can end. */
+  const paymentDateOffCycle =
+    companyPaysExtra && !!paymentDate && paymentRounds.length > 0 && !paymentRounds.includes(paymentDate);
+  /* A non-home brand books every line to FORCE_GL_NON_ROCKS_PC at save time, so
+     the cell shows the forced account rather than a picker. */
+  const glForced = !!request.brandCode && !isRocksPcBrand(request.brandCode);
+
+  /* The G/L account, on the same terms: accounting chooses it now, and this is
+     the last step that can edit a line. `glMissingMessage` is the sentence the
+     server throws, so the screen and the refusal cannot drift apart. */
+  const missingGlLines = linesMissingGl(isAccountStep ? editItems : items);
+
+  /* The refund as the officer's unsaved edits leave it. The stored figure does
+     not move while they type — autosave writes but nothing refetches — so a
+     warning read off `clear` would arrive only after they pressed approve.
+
+     Always recomputed, never `it.netAmount`: that column is derived and only
+     refreshed when persistClear writes, so on a row being edited it still
+     holds the figure from before the edit. ExpenseTable may read it because it
+     renders saved rows; this reads the ones being typed into. Same arithmetic
+     as `lineTotals` on the server, which is what will decide the stored sign. */
+  const liveRefund = isAccountStep
+    ? Math.round(
+        ((clear?.advanceAmount ?? 0) -
+          editItems.reduce(
+            (sum, it) =>
+              sum + ((it.amountBeforeVat ?? 0) + (it.vatAmount ?? 0) - (it.whtAmount ?? 0)),
+            0,
+          )) * 100,
+      ) / 100
+    : refund;
+  /* Cutting an expense can turn "the company owes me" into "I owe the company"
+     — for money the requester has not sent, because until this edit they did
+     not owe it. Nothing on this screen can fix that, so the message points at
+     ส่งกลับแก้ไข and the server refuses the approval too. */
+  const refundGap = isAccountStep
+    ? refundEvidenceMissing({
+        refundToCompany: liveRefund,
+        refundTransferDate: clear?.refundTransferDate,
+        proofCount: refundProofFiles.length,
+      })
+    : null;
+  const accountBlocked = missingVendorLines.length > 0 || !!pndProblem || missingGlLines.length > 0 || paymentDateOffCycle || !!refundGap;
 
   /* Seed the editor from the request at the account step. The snapshot taken
      here is what "unchanged" means — autosave compares against it, so seeding
@@ -274,6 +338,15 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
     savedSnapshot.current = JSON.stringify({ items: seedItems, wht: seedWht });
     dirty.current = false;
   }, [isAccountStep, clear?.items, clear?.whtItems]);
+
+  /* A stored vendor is a bare number — the list is what carries its name, so a
+     grid that opens with one already chosen loads it without waiting for a
+     cell to be opened. The module cache makes that free after the first. */
+  useEffect(() => {
+    if (vendors !== null) return;
+    if (!isAccountStep) return; // no picker on screen, no list to fetch
+    if (editItems.some((it) => (it.taxVendorNo ?? "").trim())) void loadVendors();
+  }, [isAccountStep, editItems, vendors, loadVendors]);
 
   // Requester self-cancel: they own it, still pending the manager (before Account),
   // within 24h of submit. Sends an email to the manager + requester on cancel.
@@ -326,13 +399,18 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
   async function handleAccountApprove() {
     // Payment date is required only when the company pays extra (company owes the requester).
     if (companyPaysExtra && !paymentDate) {
-      return toast.error("กรณีบริษัทต้องจ่ายเพิ่ม กรุณาระบุวันจ่าย (ศุกร์)");
+      return toast.error("กรณีบริษัทต้องจ่ายเพิ่ม กรุณาระบุวันจ่าย");
     }
+    if (paymentDateOffCycle) {
+      return toast.error("วันที่จ่ายไม่อยู่ในรอบที่กำหนด (ศุกร์ที่ 2 หรือ 4)");
+    }
+    if (refundGap) return toast.error(refundEvidenceMessage(refundGap));
     if (missingVendorLines.length > 0) {
       return toast.error(
         `กรุณาเลือก Vendor ผู้ขายให้ครบก่อนอนุมัติ — รายการที่ ${missingVendorLines.join(", ")}`,
       );
     }
+    if (missingGlLines.length > 0) return toast.error(glMissingMessage(missingGlLines));
     if (pndProblem) return toast.error(pndProblem);
     // An edit still sitting in the debounce would be approved over: the server
     // checks the stored rows, which would not yet hold the vendor on screen.
@@ -483,16 +561,43 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] font-semibold" style={{ color: "var(--text-secondary)" }}>
-                  วันจ่าย (ศุกร์){companyPaysExtra ? " *" : ""}
+                  วันจ่าย{companyPaysExtra ? " *" : ""}
                 </label>
-                <input type="date" className="text-[13px] px-3 py-2 rounded-lg outline-none"
-                  style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-input)" }}
-                  value={paymentDate}
-                  min={todayYmd()}
-                  onChange={(e) => setPaymentDate(e.target.value)} />
-                <span className="text-[10px]" style={{ color: "var(--text-faint)" }}>
-                  {companyPaysExtra ? "บริษัทต้องจ่ายเพิ่ม — ระบุวันจ่าย" : "ระบุเมื่อมีการจ่ายเงินให้ผู้ขอ"}
-                </span>
+                {companyPaysExtra ? (
+                  <>
+                    {/* Locked to the rounds treasury actually pays on. It used to
+                        be a bare date input whose only rule was "not in the
+                        past", and the word (ศุกร์) on the label was the whole of
+                        the policy — this date becomes the G/L posting date in
+                        BC, where an off-cycle one matches no payment run and a
+                        closed-period one is refused after three approvals. */}
+                    <PaymentDatePicker
+                      value={paymentDate}
+                      onChange={setPaymentDate}
+                      allowedDates={paymentRounds}
+                    />
+                    <span className="text-[10px]" style={{ color: paymentDateOffCycle ? "var(--color-danger)" : "var(--text-faint)" }}>
+                      {paymentDateOffCycle
+                        ? "วันจ่ายเดิมไม่อยู่ในรอบที่กำหนดแล้ว — เลือกใหม่ก่อนอนุมัติ"
+                        : "บริษัทต้องจ่ายเพิ่ม — เลือกรอบจ่าย (ศุกร์ที่ 2/4)"}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    {/* Nothing to choose. The employee's transfer already has a
+                        date and the journal posts on it either way, so a second
+                        editable field could only ever disagree with the first. */}
+                    <div className="text-[13px] px-3 py-2 rounded-lg"
+                      style={{ background: "var(--bg-card-alt)", color: "var(--text-muted)", border: "1px dashed var(--border-card)" }}>
+                      {fmtDateOnly(clear?.refundTransferDate ?? null) || "—"}
+                    </div>
+                    <span className="text-[10px]" style={{ color: "var(--text-faint)" }}>
+                      {(clear?.refundToCompany ?? 0) > 0
+                        ? "พนักงานโอนคืนบริษัท — ใช้วันที่โอนคืน แก้ที่ช่อง “วันที่โอนเงินคืน”"
+                        : "ไม่มีการจ่ายเงิน"}
+                    </span>
+                  </>
+                )}
               </div>
             </div>
             <label className="text-[12px] flex items-center gap-2" style={{ color: "var(--text-secondary)" }}>
@@ -503,7 +608,20 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
               <p className="text-[12px] m-0 px-3 py-2 rounded-lg"
                 style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
                 รายการที่ {missingVendorLines.join(", ")} มี VAT แต่ยังไม่ได้เลือก Vendor ผู้ขาย —
-                เลือกในการ์ด “ผู้ขาย” ด้านล่าง (ค้นด้วยเลขผู้เสียภาษีหรือชื่อผู้ขาย) แล้วบันทึก จึงจะอนุมัติได้
+                เลือกในคอลัมน์ “Vendor” ของตารางด้านบน แล้วบันทึก จึงจะอนุมัติได้
+              </p>
+            )}
+            {refundGap && (
+              <p className="text-[12px] m-0 px-3 py-2 rounded-lg"
+                style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
+                {refundEvidenceMessage(refundGap)}
+              </p>
+            )}
+            {missingGlLines.length > 0 && (
+              <p className="text-[12px] m-0 px-3 py-2 rounded-lg"
+                style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
+                รายการที่ {missingGlLines.join(", ")} ยังไม่ได้เลือก “รายการ” (หมวดบัญชี) —
+                เลือกในตารางด้านบน แล้วบันทึก จึงจะอนุมัติได้
               </p>
             )}
             {pndProblem && (
@@ -543,6 +661,32 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                       แก้ไขได้เฉพาะในขั้นบัญชี (ACCOUNT) — บันทึกอัตโนมัติ
                     </p>
                     <SaveStatus state={saveState} onRetry={() => void saveNow()} />
+                    {/* One ask for every tax id the registry has not answered
+                        for yet. Counted by id, not by row: six receipts from
+                        one seller are one question. It never forces a refresh —
+                        a stored answer never expires, and the way to get a
+                        newer one is ตรวจใหม่ on that row. */}
+                    {(() => {
+                      const pending = tinsNeedingRdCheck(editItems, rdByTin);
+                      return (
+                        <button
+                          type="button"
+                          disabled={pending.length === 0}
+                          title={pending.length === 0 ? "ตรวจกับกรมสรรพากรครบทุกเลขแล้ว" : undefined}
+                          onClick={() => pending.forEach((tin) => void askRd(tin))}
+                          className="text-[11px] px-2 py-0.5 rounded-lg border-none"
+                          style={{
+                            background: pending.length === 0 ? "var(--bg-card-alt)" : "var(--nav-active-bg)",
+                            color: pending.length === 0 ? "var(--text-faint)" : "var(--nav-active-text)",
+                            cursor: pending.length === 0 ? "default" : "pointer",
+                          }}
+                        >
+                          {pending.length === 0
+                            ? "ตรวจสรรพากรครบแล้ว"
+                            : `ตรวจสรรพากร (${pending.length} รายการ)`}
+                        </button>
+                      );
+                    })()}
                   </div>
                   {/* show-x-scroll: `.acc-theme *` hides every scrollbar, so a
                       table wider than the page scrolled with nothing on screen
@@ -550,12 +694,15 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                       the right edge and looked missing. The AP-3 form's own grid
                       already opts back in; this one had not. */}
                   <div className="overflow-x-auto show-x-scroll pb-1 -mx-1 px-1">
-                    <table className="w-full border-collapse" style={{ minWidth: 1240 }}>
+                    <table className="w-full border-collapse" style={{ minWidth: 1500 }}>
                       <thead>
                         <tr className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>#</th>
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>วันที่</th>
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>รายละเอียด</th>
+                          {canSeeGlAccount && (
+                            <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>รายการ</th>
+                          )}
                           {/* From the tax invoice, and accounting holds it — so
                               they can type what the OCR could not read. These
                               three become the VAT line's Tax Invoice No., VAT
@@ -564,6 +711,8 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>เลขผู้เสียภาษี</th>
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>ชื่อผู้ขาย</th>
                           <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>สาขาผู้ขาย</th>
+                          <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>RD</th>
+                          <th className="px-2 py-1.5 text-left" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>Vendor</th>
                           <th className="px-2 py-1.5 text-right" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>ก่อน VAT</th>
                           <th className="px-2 py-1.5 text-right" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>VAT</th>
                           <th className="px-2 py-1.5 text-right" style={{ borderBottom: "1px solid var(--border-card)", whiteSpace: "nowrap" }}>WHT</th>
@@ -599,6 +748,24 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                                 }}
                               />
                             </td>
+                            {canSeeGlAccount && (
+                              <td className="px-2 py-1.5" style={{ borderBottom: "1px solid var(--border-light)", minWidth: 200 }}>
+                                <GlCell
+                                  line={it}
+                                  optionsByBranch={glByBranch}
+                                  glForced={glForced}
+                                  onPick={(o) => {
+                                    const next = [...editItems];
+                                    next[i] = {
+                                      ...next[i],
+                                      glAccountNo: o?.glAccountNo ?? null,
+                                      glAccountName: o?.nameTh ?? null,
+                                    };
+                                    setEditItems(next);
+                                  }}
+                                />
+                              </td>
+                            )}
                             <td className="px-2 py-1.5" style={{ borderBottom: "1px solid var(--border-light)" }}>
                               <input
                                 className="text-[12px] px-2 py-1 rounded outline-none w-32"
@@ -613,17 +780,33 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                               />
                             </td>
                             <td className="px-2 py-1.5" style={{ borderBottom: "1px solid var(--border-light)" }}>
+                              {/* Digits only, thirteen of them. Anything else in
+                                  this box is a typo or a paste that brought its
+                                  formatting along, and the RD lookup asks only
+                                  about a 13-digit number — so a fourteenth digit
+                                  typed by accident used to turn a working field
+                                  into one that quietly stopped checking. */}
                               <input
                                 className="text-[12px] px-2 py-1 rounded outline-none w-36"
-                                style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-input)" }}
+                                style={{
+                                  background: "var(--bg-input)", color: "var(--text-primary)",
+                                  border: `1px solid ${taxIdNotice(it.taxId) ? "var(--color-warning)" : "var(--border-input)"}`,
+                                }}
                                 value={it.taxId ?? ""}
                                 placeholder="เลข 13 หลัก"
+                                inputMode="numeric"
+                                maxLength={13}
                                 onChange={(e) => {
                                   const next = [...editItems];
-                                  next[i] = { ...next[i], taxId: e.target.value || null };
+                                  next[i] = { ...next[i], taxId: normalizeTaxIdInput(e.target.value) || null };
                                   setEditItems(next);
                                 }}
                               />
+                              {taxIdNotice(it.taxId) && (
+                                <div className="text-[10px] mt-0.5" style={{ color: "var(--color-warning)", maxWidth: "9rem" }}>
+                                  {taxIdNotice(it.taxId)}
+                                </div>
+                              )}
                             </td>
                             <td className="px-2 py-1.5" style={{ borderBottom: "1px solid var(--border-light)" }}>
                               <input
@@ -648,6 +831,31 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                                 onChange={(e) => {
                                   const next = [...editItems];
                                   next[i] = { ...next[i], taxBranchCode: e.target.value || null };
+                                  setEditItems(next);
+                                }}
+                              />
+                            </td>
+                            <td className="px-2 py-1.5" style={{ borderBottom: "1px solid var(--border-light)" }}>
+                              <RdCell
+                                item={it}
+                                answer={rdByTin[(it.taxId ?? "").replace(/\D/g, "")]}
+                                onRecheck={(refresh) => void askRd((it.taxId ?? "").replace(/\D/g, ""), refresh)}
+                                onApply={(patch) => {
+                                  const next = [...editItems];
+                                  next[i] = { ...next[i], ...patch };
+                                  setEditItems(next);
+                                }}
+                              />
+                            </td>
+                            <td className="px-2 py-1.5" style={{ borderBottom: "1px solid var(--border-light)", minWidth: 200 }}>
+                              <VendorCell
+                                item={it}
+                                vendors={vendors}
+                                list={vendorList}
+                                onLoad={() => void loadVendors()}
+                                onPick={(vendorNo) => {
+                                  const next = [...editItems];
+                                  next[i] = { ...next[i], taxVendorNo: vendorNo };
                                   setEditItems(next);
                                 }}
                               />
@@ -702,31 +910,6 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
                       </tbody>
                     </table>
                   </div>
-
-                  {/* Who the seller is, per receipt: what the Revenue
-                      Department's register says, and which BC vendor card they
-                      are. One card per line rather than a strip of controls
-                      under the table — the two questions are about the same
-                      seller and belong beside each other, and each card names
-                      the line it is about. */}
-                  {editItems.length > 0 && (
-                    <div className="flex flex-col gap-2">
-                      <p className="text-[11px] font-bold m-0" style={{ color: "var(--text-muted)" }}>
-                        ผู้ขาย — ตรวจกับกรมสรรพากร และเลือก Vendor
-                      </p>
-                      {editItems.map((it, i) => (
-                        <SellerVendorCard
-                          key={it.id ?? i}
-                          index={i}
-                          item={it}
-                          brandCode={request.brandCode ?? null}
-                          onChange={(patch) =>
-                            setEditItems((prev) => prev.map((x, j) => (j === i ? { ...x, ...patch } : x)))
-                          }
-                        />
-                      ))}
-                    </div>
-                  )}
 
                   {editWht.length > 0 && (
                     <div className="flex flex-col gap-2">
@@ -863,7 +1046,7 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
       <Section title="ผู้ขอ" icon={<User size={15} />}>
         <div className="flex items-center gap-3 min-w-0">
           <div className="shrink-0 rounded-2xl overflow-hidden" style={{ boxShadow: "0 0 0 2px var(--nav-active-bg)" }}>
-            <Avatar name={request.requesterFullName || "?"} size={48} color="var(--nav-active-text)" />
+            <Avatar name={request.requesterFullName || "?"} size={48} photo={hrPhotoUrl(request.staffId)} color="var(--nav-active-text)" />
           </div>
           <div className="min-w-0 flex flex-col gap-0.5">
             <div className="flex items-baseline gap-2 min-w-0">
@@ -886,8 +1069,11 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
 
       {/* Linked advance + expense ledger */}
       <Section title="เงินทดรองจ่ายที่เคลียร์" icon={<Wallet size={15} />}>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <AmountTile label="เลขที่ AP-2" value={clear?.advanceRequestNo ?? "—"} plain />
+          {/* Beside the AP-2 number because it is the same advance, named the
+              way BC names it — the number an accountant reconciles against. */}
+          <AmountTile label="Doc No (BC)" {...advanceBcDocLabel(clear?.advanceErpDocumentNo, clear?.advanceErpStatus)} plain />
           <AmountTile label="วงเงินที่ได้รับ" value={`฿${money(clear?.advanceAmount)}`} />
           <AmountTile label="ใช้จ่ายจริง (สุทธิ)" value={`฿${money(clear?.actualTotal)}`} />
         </div>
@@ -900,7 +1086,7 @@ export function ClearAdvanceDetail({ request, onChanged }: Props) {
           {items.length === 0 ? (
             <p className="text-[12px] m-0" style={{ color: "var(--text-muted)" }}>— ไม่มีรายการ</p>
           ) : (
-            <ExpenseTable items={items} advanceAmount={clear?.advanceAmount ?? 0} />
+            <ExpenseTable items={items} advanceAmount={clear?.advanceAmount ?? 0} showGl={canSeeGlAccount} />
           )}
         </div>
 
@@ -1083,7 +1269,20 @@ function TdD({ children, right }: { children: React.ReactNode; right?: boolean }
   );
 }
 
-function ExpenseTable({ items, advanceAmount }: { items: ClearAdvanceItem[]; advanceAmount: number }) {
+/**
+ * The read-only expense grid.
+ *
+ * `showGl` is off for the requester and the manager: the G/L account is
+ * accounting's, chosen at the ACCOUNT step, and showing it to the person who
+ * did not choose it invites a question they cannot act on. The description
+ * beside it is the requester's own words and stays either way — the column
+ * simply loses its accounting half rather than disappearing.
+ */
+function ExpenseTable({
+  items,
+  advanceAmount,
+  showGl,
+}: { items: ClearAdvanceItem[]; advanceAmount: number; showGl: boolean }) {
   let cumNet = 0;
   const totals = { before: 0, vat: 0, total: 0, wht: 0, net: 0 };
   const rows = items.map((it, i) => {
@@ -1102,7 +1301,7 @@ function ExpenseTable({ items, advanceAmount }: { items: ClearAdvanceItem[]; adv
       <table className="w-full border-collapse" style={{ minWidth: 980 }}>
         <thead>
           <tr className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-            <ThD>#</ThD><ThD>วันที่</ThD><ThD>เลขที่เอกสาร</ThD><ThD>รายการ</ThD>
+            <ThD>#</ThD><ThD>วันที่</ThD><ThD>เลขที่เอกสาร</ThD><ThD>{showGl ? "รายการ" : "รายละเอียด"}</ThD>
             <ThD>สาขา</ThD><ThD right>ก่อน VAT</ThD><ThD right>VAT</ThD><ThD right>รวม</ThD>
             <ThD right>WHT</ThD><ThD right>สุทธิ</ThD><ThD right>คงเหลือ</ThD>
           </tr>
@@ -1114,11 +1313,17 @@ function ExpenseTable({ items, advanceAmount }: { items: ClearAdvanceItem[]; adv
               <TdD>{fmtDateOnly(it.expenseDate)}</TdD>
               <TdD>{it.docNo ?? "—"}</TdD>
               <TdD>
-                <span className="block">{it.glAccountNo ?? "—"}</span>
-                {(it.glAccountName || it.description) && (
-                  <span className="block text-[11px]" style={{ color: "var(--text-muted)" }}>
-                    {[it.glAccountName, it.description].filter(Boolean).join(" · ")}
-                  </span>
+                {showGl ? (
+                  <>
+                    <span className="block">{it.glAccountNo ?? "—"}</span>
+                    {(it.glAccountName || it.description) && (
+                      <span className="block text-[11px]" style={{ color: "var(--text-muted)" }}>
+                        {[it.glAccountName, it.description].filter(Boolean).join(" · ")}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span className="block">{it.description || "—"}</span>
                 )}
               </TdD>
               <TdD>{it.branchCode ?? "—"}</TdD>
@@ -1184,12 +1389,17 @@ function FileThumbs({ files, onView }: { files: AccFileMeta[]; onView: (f: AccFi
   );
 }
 
-function AmountTile({ label, value, plain }: { label: string; value: string; plain?: boolean }) {
+/** `muted` is for a tile whose value is the reason there is no value — it
+ *  should read as a note, not as a figure. */
+function AmountTile({ label, value, text, plain, muted }: {
+  label: string; value?: string; text?: string; plain?: boolean; muted?: boolean;
+}) {
+  const shown = value ?? text ?? "—";
   return (
     <div className="rounded-xl px-3.5 py-3 min-w-0" style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}>
       <p className="text-[10px] font-semibold uppercase tracking-wide m-0 mb-1.5" style={{ color: "var(--text-muted)" }}>{label}</p>
-      <p className={`m-0 break-words ${plain ? "text-[13px] font-semibold" : "text-[15px] font-bold tabular-nums"}`}
-        style={{ color: "var(--text-heading)" }}>{value}</p>
+      <p className={`m-0 break-words ${muted ? "text-[12px]" : plain ? "text-[13px] font-semibold" : "text-[15px] font-bold tabular-nums"}`}
+        style={{ color: muted ? "var(--text-muted)" : "var(--text-heading)" }}>{shown}</p>
     </div>
   );
 }

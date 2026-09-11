@@ -83,6 +83,13 @@ export interface ClearAdvanceDetail {
   refundTransferDate: string | null;   // วันที่โอนเงินคืน (default จาก OCR สลิป)
   refundTransferAmount: number | null; // ยอดที่โอนคืนจริง (default จาก OCR สลิป, แก้ไขได้)
   pvDocNo: string | null;             // เลขที่ PV/PPEX (Account step)
+  /* Read-only, and optional for that reason: both are the advance's own state,
+     joined in when a clearing is loaded and never supplied by whoever saves
+     one. A writer that had to invent them could only get them wrong. */
+  /** The BC document the AP-2 advance created, read through AdvanceRequestId. */
+  advanceErpDocumentNo?: string | null;
+  /** How that advance's send went — what to say when there is no number. */
+  advanceErpStatus?: string | null;
   paymentDate: string | null;         // วันจ่าย ศุกร์ (Account step, only when company pays extra)
   items: ClearAdvanceItem[];
   whtItems: ClearAdvanceWhtItem[];

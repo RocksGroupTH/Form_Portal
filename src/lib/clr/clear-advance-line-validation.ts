@@ -92,3 +92,38 @@ export function validateLineGlBranch(
   });
   return errs;
 }
+
+/**
+ * Lines that will post but name no G/L account, as 1-based row numbers.
+ *
+ * The account is chosen at the ACCOUNT step and that is the last step which can
+ * edit a line, so this is what stands between an unaccounted expense and a
+ * journal. It pairs with `linesMissingTaxVendor` in tax-vendor-core, and the
+ * approval engine throws on both for the same reason.
+ *
+ * Scoped to `amountBeforeVat !== 0`, which is the other half of the filter
+ * `toJournalItems` applies: a row carrying only a description never reaches the
+ * journal, so demanding an account for it would block the step over nothing.
+ */
+export function linesMissingGl(
+  items: readonly Pick<ClearAdvanceItem, "amountBeforeVat" | "glAccountNo">[] | null | undefined,
+): number[] {
+  const out: number[] = [];
+  (items ?? []).forEach((it, i) => {
+    if (n0(it.amountBeforeVat) === 0) return;
+    if (!(it.glAccountNo ?? "").trim()) out.push(i + 1);
+  });
+  return out;
+}
+
+/**
+ * What to tell the account officer about the rows from `linesMissingGl`.
+ *
+ * Shared so the approve button and the server refusal say the same sentence.
+ * They disagreed about the vendor rule for a while, and being told one thing on
+ * screen and another on submit reads as a bug in the rule rather than a gap in
+ * the form.
+ */
+export function glMissingMessage(rows: readonly number[]): string {
+  return `กรุณาเลือกรายการ (หมวดบัญชี) ให้ครบก่อนอนุมัติ — รายการที่ ${rows.join(", ")} ยังไม่ได้เลือก`;
+}
