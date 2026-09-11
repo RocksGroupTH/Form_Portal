@@ -36,6 +36,10 @@ They ride to the account step, which has all four as editable columns and the
 registry check beside them. The requester attaches the evidence; accounting
 reads it.
 
+> **Reversed the same day** — see the second addendum. Three of the four are
+> columns on the requester's table now, with the same registry check and the
+> same "use the registered name" button the account grid has.
+
 ## What this change has to carry
 
 Three signals exist only inside the modal today and would otherwise go silent.
@@ -150,3 +154,39 @@ visible and editable, which is where an unanswered check belongs.
 The requester still has no tax-id column, so the note is the whole of what they
 get. That is also why it is worth saying: a name the model invented and a
 number that belongs to nobody both reach accounting looking like ordinary data.
+
+---
+
+## Second addendum, 2026-09-11 — the seller is a column on the requester's table
+
+B1 kept the seller off the requester's table and left the finding to the dialog
+above. The user then asked for the columns themselves, with the account step's
+check and suggestion: `เลขผู้เสียภาษี`, `ชื่อผู้ขาย`, `สาขาผู้ขาย` and the `RD`
+cell, editable by the requester.
+
+It is the right way round. The fields were always saved by this form — the
+reader filled them and nothing showed them — and the person who can tell a
+misread name from a real one is the one holding the receipt. A wrong tax id is
+what makes the input VAT unclaimable, and under B1 that was discovered at the
+account step, by which time the receipt is a scan and the seller is a memory.
+
+| | |
+|---|---|
+| Columns | `เลขผู้เสียภาษี` (13-digit, `normalizeTaxIdInput` + `taxIdNotice`), `ชื่อผู้ขาย`, `สาขาผู้ขาย`, and `RdCell` — the same components the account grid uses, not copies |
+| Answers | `useRdVatByTin` over the lines on screen. The endpoint answers from our own table once a number has been asked, so the check the read already ran costs nothing to show, and a hand-typed number is checked as soon as it is thirteen digits |
+| Suggestion | the cell's popover: invoice against register, `ใช้ข้อมูลจากสรรพากร` writes the registered name and branch onto the line |
+| Bulk | `ตรวจสรรพากร (N รายการ)` beside `เพิ่มแถว`, counted by `tinsNeedingRdCheck` — this is what retries the ids the registry dropped |
+| Mobile | the three fields in the line card, the chip beside the tax id |
+
+The existing `สาขา *` column is renamed `สาขาที่ใช้จ่าย *`. It is the expense
+branch — the BU and the BRANCH dimension — and having two columns called
+`สาขา` on one row, one of them the seller's, is how the wrong one gets typed
+into.
+
+Nothing here gates anything. The columns are advisory on the requester's form
+exactly as they are on the account grid, and the account step's four approval
+gates are untouched.
+
+The read-time RD check and its dialog notes stay. They are not the same job:
+the dialog is what says "look at this" once, after a read of perhaps a dozen
+receipts; the column is where it gets fixed.

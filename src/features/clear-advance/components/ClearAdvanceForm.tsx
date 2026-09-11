@@ -21,7 +21,10 @@ import { PoweredByClaude } from "@/components/ui/PoweredByClaude";
 import { BranchPicker, cellClass, cellStyle } from "./LinePickers";
 import { OcrReadNotesDialog } from "./OcrReadNotesDialog";
 import { ocrReadNotes, type OcrReadNote, type RdLookup } from "@/lib/clr/ocr-read-notes";
-import { registrantFullName, type RdVatRegistrant } from "@/lib/clr/rd-vat-core";
+import { registrantFullName, tinsNeedingRdCheck, type RdVatRegistrant } from "@/lib/clr/rd-vat-core";
+import { normalizeTaxIdInput, taxIdNotice } from "@/lib/clr/seller-tax-id";
+import { RdCell } from "@/features/clear-advance/components/RdCell";
+import { useRdVatByTin } from "@/features/clear-advance/hooks/useRdVatByTin";
 import type { ReceiptKind } from "@/lib/clr/ai-receipt-core";
 
 /**
@@ -944,6 +947,13 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
    */
   const [ocrNotes, setOcrNotes] = useState<OcrReadNote[] | null>(null);
 
+  /* The registry, on the sellers of the lines on screen. The same hook the
+     account grid uses, asking the same endpoint, which answers from our own
+     table once a number has been looked up — so the check the read already
+     ran costs nothing to show here, and a number the requester types by hand
+     is checked the moment it is thirteen digits long. */
+  const { byTin: rdByTin, ask: askRd } = useRdVatByTin(lines.map((l) => l.taxId));
+
   async function verifyReceipts(docs: { file: File; fileId: number }[]) {
     setOcrScanning(true);
     try {
@@ -1418,28 +1428,63 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       <div className="rounded-2xl p-4 sm:p-5 flex flex-col gap-3" style={box} data-err="lines">
         <div className="flex items-center justify-between gap-2">
           <label className="text-[12px] font-bold" style={labelStyle}>รายการค่าใช้จ่ายจริง *</label>
-          {!readOnly && (
-            <Button variant="ghost" size="sm" type="button" icon={<Plus size={14} />} onClick={addLine}>เพิ่มแถว</Button>
-          )}
+          <div className="flex items-center gap-2">
+            {/* Asks the registry for every tax id it has not answered for yet.
+                One press for the page: six receipts from one seller are one
+                question, and a row already answered is not asked again. It is
+                here because a hand-typed number is checked the moment it is
+                thirteen digits, and this is what retries the ones the registry
+                dropped. */}
+            {!readOnly && (() => {
+              const pending = tinsNeedingRdCheck(
+                lines.map((l) => ({ taxId: l.taxId })),
+                rdByTin,
+              );
+              if (lines.every((l) => l.taxId.replace(/\D/g, "").length !== 13)) return null;
+              return (
+                <button
+                  type="button"
+                  disabled={pending.length === 0}
+                  title={pending.length === 0 ? "ตรวจกับกรมสรรพากรครบทุกเลขแล้ว" : undefined}
+                  onClick={() => pending.forEach((tin) => void askRd(tin))}
+                  className="text-[11px] px-2 py-1 rounded-lg border-none"
+                  style={{
+                    background: pending.length === 0 ? "var(--bg-card-alt)" : "var(--nav-active-bg)",
+                    color: pending.length === 0 ? "var(--text-faint)" : "var(--nav-active-text)",
+                    cursor: pending.length === 0 ? "default" : "pointer",
+                  }}
+                >
+                  {pending.length === 0 ? "ตรวจสรรพากรครบแล้ว" : `ตรวจสรรพากร (${pending.length} รายการ)`}
+                </button>
+              );
+            })()}
+            {!readOnly && (
+              <Button variant="ghost" size="sm" type="button" icon={<Plus size={14} />} onClick={addLine}>เพิ่มแถว</Button>
+            )}
+          </div>
         </div>
         {!readOnly && (
           <p className="text-[11px] m-0 -mt-2 leading-relaxed" style={{ color: "var(--text-faint)" }}>
-            1 ใบกำกับ = 1 รายการ · ระบบจะอ่าน “วันที่ · เลขที่เอกสาร · รายละเอียด · ยอดก่อน VAT · VAT · หัก ณ ที่จ่าย” มาเติมให้ Auto (สามารถแก้ไขได้) · ถ้า AI อ่านใบไหนไม่ออก กด “เพิ่มแถว” แล้วกรอกเองได้
+            1 ใบกำกับ = 1 รายการ · ระบบจะอ่าน “วันที่ · เลขที่เอกสาร · รายละเอียด · ผู้ขาย (เลขผู้เสียภาษี/ชื่อ/สาขา) · ยอดก่อน VAT · VAT · หัก ณ ที่จ่าย” มาเติมให้ Auto (สามารถแก้ไขได้) · ช่อง RD คือผลตรวจกับกรมสรรพากร กดดูเพื่อเทียบและใช้ชื่อที่จดทะเบียนได้ · ถ้า AI อ่านใบไหนไม่ออก กด “เพิ่มแถว” แล้วกรอกเองได้
           </p>
         )}
         <FieldError msg={fieldErrors.lines} />
         <FieldError msg={fieldErrors.wht} />
 
         <div className="overflow-x-auto overflow-y-auto show-x-scroll max-h-[480px] -mx-1 px-1 pb-1 hidden md:block">
-          <table className="w-full border-collapse" style={{ minWidth: 1620 }}>
+          <table className="w-full border-collapse" style={{ minWidth: 2160 }}>
             <thead>
               <tr className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                 <Th w={34}>#</Th>
                 <Th w={120}>วันที่</Th>
                 <Th w={210}>เลขที่เอกสาร</Th>
                 {/* Branch comes before the G/L account: it filters the account list. */}
-                <Th w={190}>สาขา *</Th>
+                <Th w={190}>สาขาที่ใช้จ่าย *</Th>
                 <Th w={240}>รายละเอียด</Th>
+                <Th w={150}>เลขผู้เสียภาษี</Th>
+                <Th w={220}>ชื่อผู้ขาย</Th>
+                <Th w={110}>สาขาผู้ขาย</Th>
+                <Th w={56}>RD</Th>
                 <Th w={100} right>ก่อน VAT</Th>
                 <Th w={90} right>VAT</Th>
                 <Th w={100} right>รวม</Th>
@@ -1483,6 +1528,42 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                         value={l.description} disabled={readOnly} placeholder="—"
                         ref={(el) => autoGrow(el)}
                         onChange={(e) => { autoGrow(e.target); updateLine(idx, { description: e.target.value }); }} />
+                    </Td>
+                    {/* The seller, as the tax invoice names them. The reader
+                        fills all three; they are shown because nobody but the
+                        person holding the receipt can tell a misread name from
+                        a real one, and because a wrong tax id is what makes the
+                        input VAT unclaimable — discovered at the account step,
+                        by then with no receipt to check against. */}
+                    <Td>
+                      <input className={cellClass}
+                        style={{ ...cellStyle, width: "100%", borderColor: taxIdNotice(l.taxId) ? "var(--color-warning)" : undefined }}
+                        value={l.taxId} disabled={readOnly} placeholder="เลข 13 หลัก"
+                        inputMode="numeric" maxLength={13}
+                        onChange={(e) => updateLine(idx, { taxId: normalizeTaxIdInput(e.target.value) })} />
+                      {taxIdNotice(l.taxId) && (
+                        <span className="block text-[10px] mt-0.5" style={{ color: "var(--color-warning)" }}>
+                          {taxIdNotice(l.taxId)}
+                        </span>
+                      )}
+                    </Td>
+                    <Td>
+                      <input className={cellClass} style={{ ...cellStyle, width: "100%" }}
+                        value={l.payeeName} disabled={readOnly} placeholder="—"
+                        onChange={(e) => updateLine(idx, { payeeName: e.target.value })} />
+                    </Td>
+                    <Td>
+                      <input className={cellClass} style={{ ...cellStyle, width: "100%" }}
+                        value={l.taxBranchCode} disabled={readOnly} placeholder="00000" maxLength={5}
+                        onChange={(e) => updateLine(idx, { taxBranchCode: e.target.value })} />
+                    </Td>
+                    <Td>
+                      <RdCell
+                        item={{ taxId: l.taxId || null, payeeName: l.payeeName || null, taxBranchCode: l.taxBranchCode || null, vatAmount: num(l.vatAmount) }}
+                        answer={rdByTin[l.taxId.replace(/\D/g, "")]}
+                        onRecheck={(refresh) => void askRd(l.taxId.replace(/\D/g, ""), refresh)}
+                        onApply={(patch) => updateLine(idx, { payeeName: patch.payeeName, taxBranchCode: patch.taxBranchCode ?? "" })}
+                      />
                     </Td>
                     <Td right>
                       <input type="number" min="0" step="0.01" className={`${cellClass} text-right`} style={{ ...cellStyle, width: "100%" }}
@@ -1529,7 +1610,10 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
             </tbody>
             <tfoot>
               <tr className="text-[12px] font-bold" style={{ color: "var(--text-heading)" }}>
-                <Td colSpan={6}><span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>รวมทั้งหมด</span></Td>
+                {/* #, วันที่, เลขที่เอกสาร, สาขาที่ใช้จ่าย, รายละเอียด and the
+                    four seller columns — nine, so the totals land under the
+                    amounts they add up. */}
+                <Td colSpan={9}><span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>รวมทั้งหมด</span></Td>
                 <Td right><FootVal value={money(sums.before)} /></Td>
                 <Td right><FootVal value={money(sums.vat)} /></Td>
                 <Td right><FootVal value={money(sums.total)} /></Td>
@@ -1570,7 +1654,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                     value={l.docNo} disabled={readOnly} placeholder="—"
                     onChange={(e) => updateLine(idx, { docNo: e.target.value })} />
                 </MField>
-                <MField label="สาขา *">
+                <MField label="สาขาที่ใช้จ่าย *">
                   <BranchPicker options={branches} value={l.branchCode}
                     disabled={readOnly || !brandCode} noBrand={!brandCode}
                     onPick={(code) => updateLine(idx, { branchCode: code })} />
@@ -1587,6 +1671,37 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                     ref={(el) => autoGrow(el)}
                     onChange={(e) => { autoGrow(e.target); updateLine(idx, { description: e.target.value }); }} />
                 </MField>
+                <MField label="เลขผู้เสียภาษี (ผู้ขาย)">
+                  <div className="flex items-center gap-2">
+                    <input className={fieldClass} style={{ ...fieldStyle, borderColor: taxIdNotice(l.taxId) ? "var(--color-warning)" : undefined }}
+                      value={l.taxId} disabled={readOnly} placeholder="เลข 13 หลัก"
+                      inputMode="numeric" maxLength={13}
+                      onChange={(e) => updateLine(idx, { taxId: normalizeTaxIdInput(e.target.value) })} />
+                    <RdCell
+                      item={{ taxId: l.taxId || null, payeeName: l.payeeName || null, taxBranchCode: l.taxBranchCode || null, vatAmount: num(l.vatAmount) }}
+                      answer={rdByTin[l.taxId.replace(/\D/g, "")]}
+                      onRecheck={(refresh) => void askRd(l.taxId.replace(/\D/g, ""), refresh)}
+                      onApply={(patch) => updateLine(idx, { payeeName: patch.payeeName, taxBranchCode: patch.taxBranchCode ?? "" })}
+                    />
+                  </div>
+                  {taxIdNotice(l.taxId) && (
+                    <span className="block text-[11px] mt-1" style={{ color: "var(--color-warning)" }}>
+                      {taxIdNotice(l.taxId)}
+                    </span>
+                  )}
+                </MField>
+                <div className="grid grid-cols-2 gap-2">
+                  <MField label="ชื่อผู้ขาย">
+                    <input className={fieldClass} style={fieldStyle}
+                      value={l.payeeName} disabled={readOnly} placeholder="—"
+                      onChange={(e) => updateLine(idx, { payeeName: e.target.value })} />
+                  </MField>
+                  <MField label="สาขาผู้ขาย">
+                    <input className={fieldClass} style={fieldStyle}
+                      value={l.taxBranchCode} disabled={readOnly} placeholder="00000" maxLength={5}
+                      onChange={(e) => updateLine(idx, { taxBranchCode: e.target.value })} />
+                  </MField>
+                </div>
                 <div className="grid grid-cols-2 gap-2">
                   <MField label="ก่อน VAT">
                     <input type="number" min="0" step="0.01" inputMode="decimal" className={`${fieldClass} text-right`} style={fieldStyle}
