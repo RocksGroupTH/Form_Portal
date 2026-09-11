@@ -1465,10 +1465,18 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                     <Td right><ReadCell value={money(c.net)} strong /></Td>
                     <Td right><ReadCell value={money(c.balance)} tone={c.balance < 0 ? "danger" : undefined} /></Td>
                     <Td>
-                      {/* Only a hand-added line offers this. One the AI produced
-                          is removed by deleting its receipt, so the table and
-                          the attachments cannot drift apart. */}
-                      {!readOnly && !l.sourceFileId && (
+                      {/* Every line offers this, including one the reader
+                          produced. It used to be hand-added lines only, on the
+                          reasoning that an AI line is removed by deleting its
+                          receipt — which held while one file meant one line and
+                          the confirm screen let unwanted rows be unticked before
+                          they ever arrived. A single PDF of invoices routinely
+                          reads as a dozen lines, so deleting the receipt to drop
+                          one of them takes the other eleven with it, and there
+                          is no longer a screen to untick them on. The receipt
+                          stays; it is the evidence, and it is removable on its
+                          own in the attachments above. */}
+                      {!readOnly && (
                         <button type="button" onClick={() => removeLine(idx)}
                           aria-label={`ลบรายการที่ ${idx + 1}`} title="ลบแถวนี้"
                           className="border-none bg-transparent cursor-pointer p-1 rounded-md"
@@ -1505,7 +1513,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                 style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}>
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-bold" style={{ color: "var(--text-muted)" }}>รายการที่ {idx + 1}</span>
-                  {!readOnly && !l.sourceFileId && (
+                  {!readOnly && (
                     <button type="button" onClick={() => removeLine(idx)}
                       aria-label={`ลบรายการที่ ${idx + 1}`} title="ลบแถวนี้"
                       className="border-none bg-transparent cursor-pointer p-1 rounded-md"
