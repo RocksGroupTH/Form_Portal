@@ -30,13 +30,24 @@ import { needsStrongerRead } from "./receipt-escalation";
 const MODEL = process.env.ANTHROPIC_RECEIPT_MODEL || "claude-haiku-4-5-20251001";
 
 /**
- * The model a suspect read is retried with. Most receipts never reach it: see
- * `needsStrongerRead` for the one signal that sends them, and what a rotated
- * tax invoice did to the small model to earn it.
+ * The model a suspect read is retried with — OFF unless configured.
  *
- * Set to the same value as MODEL to turn escalation off.
+ * It defaulted to claude-sonnet-5, which reads a receipt perhaps ten times the
+ * price of the small model. The trigger is narrow enough that most uploads
+ * never reached it (`needsStrongerRead`: a VAT invoice whose seller tax id came
+ * back empty, which the law says cannot happen — so the read was wrong, and a
+ * rotated tax invoice is what earned the retry). Even so, the decision is that
+ * this shop does not send receipts to the larger model at all (user,
+ * 2026-09-12).
+ *
+ * What is given up: the rotated-invoice case now keeps the small model's
+ * answer, tax id empty, and the account grid's own registry check is where it
+ * gets caught.
+ *
+ * Set ANTHROPIC_RECEIPT_MODEL_ESCALATE to a model name to turn it back on —
+ * no code change, and nothing else in this file needs to know.
  */
-const ESCALATE_MODEL = process.env.ANTHROPIC_RECEIPT_MODEL_ESCALATE || "claude-sonnet-5";
+const ESCALATE_MODEL = process.env.ANTHROPIC_RECEIPT_MODEL_ESCALATE || MODEL;
 
 /**
  * Read every document in an upload with Claude vision. `images` is one image, or
