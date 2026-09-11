@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
-import { CircleAlert, Plus, ReceiptText, Trash2, X } from "lucide-react";
+import { CircleAlert, Plus, Trash2 } from "lucide-react";
 import { SingleDatePicker } from "@/features/accounting/components/SingleDatePicker";
 import type { ExpenseAccount } from "@/lib/acc/reimburse/expense-account-service";
 import { fmtBaht } from "@/features/travel-booking/components/shared";
@@ -232,33 +232,6 @@ const ROW_MIN_WIDTH =
   COLUMN_GAP * COLUMNS.length +
   (ROW_PAD_X + ROW_BORDER_X) * 2;
 
-/**
- * The detail panel sits **inside the scroller, directly under its own row**,
- * pinned `sticky left-0` and given the scroller's own measured width.
- *
- * This is the third arrangement and the first that satisfies both constraints,
- * so the history is worth keeping. It began under the row at a **fixed 860px**;
- * inside a ~2,000px row that width was unrelated to the card's, and the panel
- * looked arbitrary. It was then moved out below the scroller, which fixed the
- * width by making it the card's — at the cost of the thing the reader actually
- * needs, which is seeing the lines beside the row they belong to. With eight
- * rows on screen, a panel at the bottom captioned "แถวที่ 1" asks the reader to
- * hold the mapping in their head.
- *
- * Measuring rather than guessing is what makes under-the-row work now. The
- * width comes from a `ResizeObserver` on the scroller, so it is the visible
- * card's width at every window size instead of a number that was right once.
- *
- * Two properties this must not lose, both of which the fixed-width version did:
- * the panel is **narrower than the row**, so opening and closing it cannot
- * change the scroller's content width and cannot move the horizontal scroll out
- * from under the reader; and it needs `alignSelf: "flex-start"`, because the
- * rows live in a `flex flex-col` whose default `stretch` would blow it back out
- * to `ROW_MIN_WIDTH` and undo the whole thing.
- */
-const DETAIL_GRID =
-  "grid grid-cols-[34px_minmax(0,1fr)_90px_120px_130px] gap-3 items-baseline";
-
 const ROW_TEMPLATE = `${COLUMNS.map((c) => c.width).join(" ")} ${ACTION_COLUMN_WIDTH}px`;
 
 /** Two decimals, without the float noise that makes 2675.0000000000005 reach a payout figure. */
@@ -336,117 +309,6 @@ function ReadOnlyMoney({
 }
 
 
-/**
- * The lines the document read copied out of one row's attachment.
- *
- * Its own component because it is now rendered once per open row from inside
- * the row loop, rather than once at the bottom from values the parent had to
- * re-derive (`openIndex` / `openItem` / `openLines` / `openTotal`, all deleted
- * with it). Those existed only because the panel could not see the row.
- */
-function DocumentLinesPanel({
-  index,
-  vendorName,
-  lines,
-  onClose,
-}: {
-  index: number;
-  vendorName: string | null | undefined;
-  lines: readonly ReimburseItemDetail[];
-  onClose: () => void;
-}) {
-  const total = lines.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
-  return (
-    <div
-      className="border rounded-xl px-3 pt-2.5 pb-3"
-      style={{ borderColor: "var(--color-action)", background: "var(--bg-card-alt)" }}
-    >
-      <div className="flex items-baseline justify-between gap-3 pb-2">
-        <p className="text-[12px] font-semibold m-0" style={{ color: "var(--text-primary)" }}>
-          รายการในเอกสาร
-          <span className="font-normal" style={{ color: "var(--text-muted)" }}>
-            {" · แถวที่ "}
-            {index + 1}
-            {vendorName ? ` · ${vendorName}` : ""}
-            {` · ${lines.length} บรรทัด`}
-          </span>
-        </p>
-        {/* An icon, matching the row's own toggle. The word it replaces was this
-            button's whole accessible name, so `aria-label` is not decoration
-            here — without it a screen reader reaches an unnamed button — and
-            `title` keeps the word for a sighted reader who hesitates over it. */}
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label={`ปิดรายการย่อยของรายการที่ ${index + 1}`}
-          title="ปิด"
-          className="w-6 h-6 rounded-md flex items-center justify-center cursor-pointer border-none bg-transparent p-0 shrink-0"
-          style={{ color: "var(--text-muted)" }}
-        >
-          <X size={14} />
-        </button>
-      </div>
-
-      <div className={`${DETAIL_GRID} pb-1.5`}>
-        <span className={HEAD_CLASS} style={{ color: "var(--text-muted)" }}>#</span>
-        <span className={HEAD_CLASS} style={{ color: "var(--text-muted)" }}>รายละเอียด</span>
-        <span className={`${HEAD_CLASS} text-right`} style={{ color: "var(--text-muted)" }}>จำนวน</span>
-        <span className={`${HEAD_CLASS} text-right`} style={{ color: "var(--text-muted)" }}>ราคา/หน่วย</span>
-        <span className={`${HEAD_CLASS} text-right`} style={{ color: "var(--text-muted)" }}>มูลค่า</span>
-      </div>
-
-      {lines.map((d, di) => (
-        <div
-          key={`d-${index}-${di}`}
-          className={`${DETAIL_GRID} py-1.5`}
-          style={{ borderTop: "1px solid var(--border-light)" }}
-        >
-          <span className="text-[12px] tabular-nums" style={{ color: "var(--text-faint)" }}>
-            {di + 1}
-          </span>
-          <span className="text-[12.5px] break-words leading-snug" style={{ color: "var(--text-primary)" }}>
-            {d.description}
-          </span>
-          <span className="text-[12.5px] tabular-nums text-right" style={{ color: "var(--text-secondary)" }}>
-            {d.quantity == null ? "—" : fmtBaht(d.quantity)}
-          </span>
-          <span className="text-[12.5px] tabular-nums text-right" style={{ color: "var(--text-secondary)" }}>
-            {d.unitPrice == null ? "—" : fmtBaht(d.unitPrice)}
-          </span>
-          <span
-            className="text-[12.5px] tabular-nums text-right font-semibold"
-            style={{ color: "var(--text-primary)" }}
-          >
-            {d.amount == null ? "—" : fmtBaht(d.amount)}
-          </span>
-        </div>
-      ))}
-
-      {/* The document's own total, for checking it against the row above.
-          Labelled as the document's so it cannot be read as the figure
-          being claimed — the note below says which one that is. */}
-      <div className={`${DETAIL_GRID} pt-2`} style={{ borderTop: "1px solid var(--border-card)" }}>
-        <span />
-        <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
-          รวมตามเอกสาร
-        </span>
-        <span />
-        <span />
-        <span
-          className="text-[12.5px] tabular-nums text-right font-semibold"
-          style={{ color: "var(--text-primary)" }}
-        >
-          {fmtBaht(round2(total))}
-        </span>
-      </div>
-
-      <p className="text-[11px] m-0 pt-2" style={{ color: "var(--text-faint)" }}>
-        คัดลอกมาจากเอกสารเพื่อให้ตรวจได้ ไม่ได้นำมารวมเป็นยอด — ยอดที่เบิกคือ ค่าใช้จ่ายรวม ของแถวด้านบน
-      </p>
-    </div>
-  );
-}
-
 export function ReimburseItemGrid({
   items,
   onUpdate,
@@ -498,10 +360,6 @@ export function ReimburseItemGrid({
    * row wholesale and hands back new ids — keyed on those, every panel would
    * close itself on each save.
    */
-  const [openRow, setOpenRow] = useState<string | null>(null);
-  const toggleRow = useCallback((key: string) => {
-    setOpenRow((prev) => (prev === key ? null : key));
-  }, []);
 
   /**
    * The scroller's own visible width, for the detail panel to match.
@@ -521,18 +379,6 @@ export function ReimburseItemGrid({
    * it detaches, which is exactly the lifetime the observer wants, and it still
    * measures before paint. Guarded by `detail-panel-width-guard.test.ts`.
    */
-  const [viewWidth, setViewWidth] = useState(0);
-  const observerRef = useRef<ResizeObserver | null>(null);
-  const measureScroller = useCallback((el: HTMLDivElement | null) => {
-    observerRef.current?.disconnect();
-    observerRef.current = null;
-    if (!el) return;
-    setViewWidth(el.clientWidth);
-    if (typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => setViewWidth(el.clientWidth));
-    ro.observe(el);
-    observerRef.current = ro;
-  }, []);
 
   // The total the server will store: the blank trailing row contributes
   // nothing, and `sumReimburseItems` is the same function it totals with.
@@ -574,7 +420,7 @@ export function ReimburseItemGrid({
         // scrolls with no affordance at all — nothing on screen says the table
         // continues to the right. AP-3's expense grid opted back in the same
         // way; the class exists for exactly this.
-        <div ref={measureScroller} className="overflow-x-auto show-x-scroll pb-1">
+        <div className="overflow-x-auto show-x-scroll pb-1">
           <div style={{ minWidth: ROW_MIN_WIDTH }} className="flex flex-col gap-2">
             {/* Same inset and the same template as a row, plus a transparent
                 border so the header's columns line up with the bordered rows
@@ -606,20 +452,13 @@ export function ReimburseItemGrid({
               // row wholesale, so an id is new after each one and an expanded
               // panel would close itself on every save.
               const rowKey = `row-${index}`;
-              const lines = item.details ?? [];
-              const lineCount = lines.length;
-              const isOpen = lineCount > 0 && openRow === rowKey;
               return (
                 <Fragment key={item.id ?? rowKey}>
                   <div
                     className={`${ROW_GRID} ${ROW_INSET} border py-2 items-center`}
                     style={{
                       gridTemplateColumns: ROW_TEMPLATE,
-                      // The panel is no longer under this row — it sits at the
-                      // bottom of the card — so the open row is marked here
-                      // instead; otherwise nothing on screen says which row the
-                      // panel is showing.
-                      borderColor: isOpen ? "var(--color-action)" : "var(--border-card)",
+                      borderColor: "var(--border-card)",
                       background: "var(--bg-card-alt)",
                       borderRadius: 12,
                     }}
@@ -726,27 +565,6 @@ export function ReimburseItemGrid({
                     <ReadOnlyMoney value={netPaid} />
 
                     <span className="flex items-center gap-1 justify-self-end">
-                      {/* Only where there is something to open. A control that
-                          does nothing on most rows teaches people to stop
-                          pressing it on the rows where it works. */}
-                      {lineCount > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => toggleRow(rowKey)}
-                          aria-expanded={isOpen}
-                          aria-label={`${isOpen ? "ปิด" : "ดู"}รายการย่อยของรายการที่ ${index + 1}`}
-                          title={`เอกสารนี้มี ${lineCount} รายการย่อย`}
-                          className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer border-none shrink-0"
-                          style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}
-                        >
-                          {/* The document, not a direction. A chevron only says
-                              "this opens"; the receipt says what opens, which is
-                              what tells this button apart from the row-level
-                              chevrons elsewhere on the page. `X` to close, because
-                              an open panel is dismissed rather than collapsed. */}
-                          {isOpen ? <X size={15} /> : <ReceiptText size={15} />}
-                        </button>
-                      )}
                       <button
                         type="button"
                         onClick={() => onRemove(index)}
@@ -759,34 +577,6 @@ export function ReimburseItemGrid({
                       </button>
                     </span>
                   </div>
-                {isOpen && (
-                  // Pinned to the left edge of what is visible, at exactly the
-                  // scroller's width — see DETAIL_GRID's note for the two
-                  // arrangements this replaces and what each one cost.
-                  // `alignSelf` is load-bearing: without it the column flex's
-                  // default `stretch` widens this back to ROW_MIN_WIDTH.
-                  <div
-                    style={{
-                      position: "sticky",
-                      left: 0,
-                      alignSelf: "flex-start",
-                      // Never `undefined`: with no width at all, the
-                      // `alignSelf` above shrinks the panel to its own text.
-                      // "100%" is the ROW width here, which is wider than the
-                      // card but never wider than the scroller's existing
-                      // content — so it cannot move the horizontal scroll
-                      // either, and a measured render replaces it immediately.
-                      width: viewWidth || "100%",
-                    }}
-                  >
-                    <DocumentLinesPanel
-                      index={index}
-                      vendorName={item.vendorName}
-                      lines={lines}
-                      onClose={() => setOpenRow(null)}
-                    />
-                  </div>
-                )}
                 </Fragment>
               );
             })}
