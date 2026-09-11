@@ -42,8 +42,6 @@ export interface ClrControlRow {
   managerApprovedAt: string | null;
   accountActionedName: string | null;
   accountActionedAt: string | null;
-  headApprovedName: string | null;
-  headApprovedAt: string | null;
   pendingOn: string | null;         // current step label, or null
   overallStatus: string;            // AccRequest.Status
 }
@@ -85,14 +83,15 @@ export async function listControlRows(f: ClrReportFilters): Promise<ClrControlRo
            c.AdvanceRequestNo, c.AdvanceAmount, c.ExpenseOf, c.ActualTotal, c.RefundToCompany,
            c.RefundTransferDate, c.PvDocNo, c.PaymentDate,
            ${stepSql("MANAGER", "name")} AS MgrName, ${stepSql("MANAGER", "at")} AS MgrAt,
-           ${stepSql("ACCOUNT", "name")} AS AccName, ${stepSql("ACCOUNT", "at")} AS AccAt,
-           ${stepSql("HEAD", "name")}    AS HeadName, ${stepSql("HEAD", "at")}    AS HeadAt
+           ${stepSql("ACCOUNT", "name")} AS AccName, ${stepSql("ACCOUNT", "at")} AS AccAt
     FROM [dbo].[AccRequest] req
     LEFT JOIN [dbo].[AccClearAdvance] c ON c.RequestId = req.Id
     WHERE ${where}
     ORDER BY req.SubmittedAt DESC, req.Id DESC
   `);
 
+  /* HEAD is here only for a row written before the head-accounting step was
+     removed (2026-09-11); nothing can be pending on it now. */
   const stepLabel: Record<string, string> = { MANAGER: "ผู้จัดการ", ACCOUNT: "บัญชี", HEAD: "หัวหน้าบัญชี" };
   return (res.recordset as Record<string, unknown>[]).map((x) => {
     const refund = num(x.RefundToCompany) ?? 0;
@@ -118,8 +117,6 @@ export async function listControlRows(f: ClrReportFilters): Promise<ClrControlRo
       managerApprovedAt: x.MgrAt ? (x.MgrAt as Date).toISOString() : null,
       accountActionedName: (x.AccName as string) ?? null,
       accountActionedAt: x.AccAt ? (x.AccAt as Date).toISOString() : null,
-      headApprovedName: (x.HeadName as string) ?? null,
-      headApprovedAt: x.HeadAt ? (x.HeadAt as Date).toISOString() : null,
       pendingOn: step ? (stepLabel[step] ?? step) : null,
       overallStatus: x.Status as string,
     };

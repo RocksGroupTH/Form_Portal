@@ -35,8 +35,8 @@ export async function GET(
     }
     /* Who may see the "รายการ" (G/L) column. `isAccountArea` is accounting-area
        access or an active approver on this form's own roster, and for AP-3 that
-       roster check is exactly ["ACCOUNT", "HEAD"] (request-acl.ts) — the line
-       manager comes from the requester's ManagerStaffId in HR, not from it. So
+       roster is exactly the ACCOUNT one (request-acl.ts) — the line manager
+       comes from the requester's ManagerStaffId in HR, not from it. So
        the flag already means "accounting, not the requester and not the
        manager", which is the audience the column is for. The gate computed it
        to decide the 403; it was being thrown away. */

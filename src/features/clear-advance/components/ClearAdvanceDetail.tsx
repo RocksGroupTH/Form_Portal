@@ -19,7 +19,8 @@ import {
   type AttachmentSource,
 } from "@/components/ui/AttachmentViewer";
 import { RequestStatusBadge } from "@/features/accounting/components/RequestStatusBadge";
-import { CLR_STEP_CODES, CLR_STEP_LABEL_TH, type ClrStepCode } from "@/features/clear-advance/constants";
+import { CLR_STEP_LABEL_TH, type ClrAnyStepCode } from "@/features/clear-advance/constants";
+import { clrTimelineSteps } from "@/lib/clr/clear-advance-timeline";
 import type { AccFileMeta } from "@/features/accounting/types";
 import type { ClearAdvanceItem, ClearAdvanceRequest, ClrApproval } from "@/features/clear-advance/types";
 import { linesMissingTaxVendor } from "@/lib/clr/tax-vendor-core";
@@ -221,11 +222,10 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
   const inApproval = request.status === "Submitted" && step != null;
   const isManagerStep = inApproval && step === "MANAGER";
   const isAccountStep = inApproval && step === "ACCOUNT";
-  const isHeadStep = inApproval && step === "HEAD";
 
   /* Input tax is claimed against a vendor, so a VAT line has to name one before
-     it leaves the account step — the head step cannot edit lines, so this is the
-     last chance to choose. The server refuses the same thing; this is so the
+     it leaves the account step, which is the last step there is — so this is
+     the last chance to choose. The server refuses the same thing; this is so the
      accountant sees which line, not an error after clicking.
      Read from the rows on screen, not the ones last fetched: autosave writes
      without re-fetching, so the request's own copy lags a vendor just chosen. */
@@ -359,10 +359,17 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
     Date.now() - new Date(request.submittedAt).getTime() <= 24 * 3600 * 1000;
 
   const approvalsByStep = useMemo(() => {
-    const map = new Map<ClrStepCode, ClrApproval>();
+    const map = new Map<ClrAnyStepCode, ClrApproval>();
     for (const a of request.approvals ?? []) map.set(a.stepCode, a);
     return map;
   }, [request.approvals]);
+
+  /* The chain, plus any step this particular request went through that the
+     chain no longer has. See clrTimelineSteps. */
+  const timelineSteps = useMemo(
+    () => clrTimelineSteps(approvalsByStep.keys()),
+    [approvalsByStep],
+  );
 
   async function act(path: string, body?: unknown) {
     setBusy(true);
@@ -949,42 +956,13 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
           </div>
         )}
 
-        {/* Head step — check + approve / revise / reject. */}
-        {isHeadStep && (
-          <div className="mb-4 pb-4 flex flex-col gap-3" style={{ borderBottom: "1px solid var(--border-light)" }}>
-            <p className="text-[11px] m-0" style={{ color: "var(--text-muted)" }}>
-              ขั้นตอน: {CLR_STEP_LABEL_TH.HEAD}
-            </p>
-            <label className="text-[12px] flex items-center gap-2" style={{ color: "var(--text-secondary)" }}>
-              <input type="checkbox" checked={accChecked} onChange={(e) => setAccChecked(e.target.checked)} />
-              ตรวจสอบแล้ว
-            </label>
-            <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={() => act("approve", { isChecked: accChecked })} disabled={busy}
-                className="inline-flex items-center gap-2 text-[13px] font-medium px-4 py-2 rounded-lg cursor-pointer"
-                style={{ background: "var(--bg-info-green)", color: "var(--text-info-green)", border: "1px solid var(--border-info-green)" }}>
-                <ThumbsUp size={14} /> อนุมัติ
-              </button>
-              <button type="button" onClick={() => { setAccAction("return"); setAccComment(""); }} disabled={busy}
-                className="inline-flex items-center gap-2 text-[13px] font-medium px-4 py-2 rounded-lg cursor-pointer"
-                style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
-                <RotateCcw size={14} /> ส่งกลับแก้ไข
-              </button>
-              <button type="button" onClick={() => { setAccAction("reject"); setAccComment(""); }} disabled={busy}
-                className="inline-flex items-center gap-2 text-[13px] font-medium px-4 py-2 rounded-lg cursor-pointer"
-                style={{ color: "var(--color-danger)", border: "1px solid rgba(220,38,38,0.25)", background: "rgba(220,38,38,0.06)" }}>
-                <ThumbsDown size={14} /> ไม่อนุมัติ
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* 3-step timeline (MANAGER → ACCOUNT → HEAD) */}
+        {/* MANAGER → ACCOUNT, plus the head step on a request that went
+            through it before it was removed (2026-09-11). */}
         <div className="flex flex-col gap-0">
-          {CLR_STEP_CODES.map((code, idx) => {
+          {timelineSteps.map((code, idx) => {
             const a = approvalsByStep.get(code);
             const status = a?.status ?? "Pending";
-            const isLast = idx === CLR_STEP_CODES.length - 1;
+            const isLast = idx === timelineSteps.length - 1;
             const who = a?.actionedByName ?? a?.assignedName ?? null;
             return (
               <div key={code} className="flex gap-3">

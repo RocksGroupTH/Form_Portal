@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole } from "@/lib/api-auth";
 import {
+  type ClrApproverRole,
   listAllClrApprovers,
   upsertClrApprover,
   deleteClrApprover,
 } from "@/lib/clr/clear-advance-approver-service";
 
-/* GET — list all AP-3 ACCOUNT/HEAD approvers */
+/* GET — list all AP-3 ACCOUNT approvers */
 export async function GET() {
   const session = await requireRole(["IT Admin", "System Admin"]);
   if (session instanceof Response) return session;
@@ -23,7 +24,7 @@ export async function POST(req: NextRequest) {
   const session = await requireRole(["IT Admin", "System Admin"]);
   if (session instanceof Response) return session;
   try {
-    const body = (await req.json()) as { id?: number; role: "ACCOUNT" | "HEAD"; email: string; isActive?: boolean };
+    const body = (await req.json()) as { id?: number; role: ClrApproverRole; email: string; isActive?: boolean };
     await upsertClrApprover(body, Number(session.user.id));
     return NextResponse.json({ ok: true });
   } catch (e) {

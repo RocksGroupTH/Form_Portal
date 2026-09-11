@@ -29,7 +29,7 @@ export async function POST(
     return NextResponse.json({ ok: false, error: "not found" }, { status: 404 });
   }
   const step = clrReq.currentStepCode;
-  if (step !== "MANAGER" && step !== "ACCOUNT" && step !== "HEAD") {
+  if (step !== "MANAGER" && step !== "ACCOUNT") {
     return NextResponse.json({ ok: false, error: "ไม่อยู่ในขั้นที่สามารถปฏิเสธได้" }, { status: 400 });
   }
 

@@ -13,16 +13,18 @@ import {
   LoadingRow,
 } from "./shared";
 
-type Role = "ACCOUNT" | "HEAD";
+/* One role since head accounting was removed from the chain (2026-09-11).
+   The table still holds its old HEAD rows and they are simply not listed —
+   nothing reads them, and deleting people out of a historical roster would
+   lose who was configured when those requests were approved. */
+type Role = "ACCOUNT";
 
-const ROLES: Role[] = ["ACCOUNT", "HEAD"];
+const ROLES: Role[] = ["ACCOUNT"];
 const ROLE_LABEL: Record<Role, string> = {
   ACCOUNT: "บัญชี (Account Office)",
-  HEAD: "หัวหน้าบัญชี (Head Accounting)",
 };
 const ROLE_HINT: Record<Role, string> = {
-  ACCOUNT: "ขั้นอนุมัติที่ 2 · ตรวจเอกสาร/บัญชี",
-  HEAD: "ขั้นอนุมัติที่ 3 · อนุมัติขั้นสุดท้าย",
+  ACCOUNT: "ขั้นอนุมัติที่ 2 · ขั้นสุดท้าย · ตรวจเอกสาร/บัญชี",
 };
 
 interface ClrApprover {
@@ -236,7 +238,7 @@ export function ClrApproverSettings() {
           ผู้อนุมัติ AP-3
         </h3>
         <p className="text-[12px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-          กำหนดผู้อนุมัติขั้น <b>บัญชี</b> และ <b>หัวหน้าบัญชี</b> · ขั้นผู้จัดการมาจาก HR
+          กำหนดผู้อนุมัติขั้น <b>บัญชี</b> · ขั้นผู้จัดการมาจาก HR
           (ไม่ตั้งค่าที่นี่) · ข้อมูลชื่อ/รหัสพนักงานเติมอัตโนมัติจากอีเมล
         </p>
         <p className="text-[11px] mt-1" style={{ color: "var(--text-faint)" }}>

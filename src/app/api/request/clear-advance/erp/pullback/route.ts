@@ -18,11 +18,9 @@ export async function POST(req: NextRequest) {
 
   const actor = await buildAccActor(Number(session.user.id), session.user.email ?? null);
   if (!isAdminRole(session.user.role)) {
-    const [account, head] = await Promise.all([
-      isClrApprover(actor.email, "ACCOUNT"),
-      isClrApprover(actor.email, "HEAD"),
-    ]);
-    if (!account && !head) {
+    // The account roster only: head accounting was removed from AP-3 on
+    // 2026-09-11 and its rows no longer grant anything.
+    if (!(await isClrApprover(actor.email, "ACCOUNT"))) {
       return NextResponse.json(
         { ok: false, error: "เฉพาะผู้อนุมัติบัญชี/แอดมินเท่านั้น" },
         { status: 403 },
