@@ -19,7 +19,49 @@ import {
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
 import { PoweredByClaude } from "@/components/ui/PoweredByClaude";
 import { BranchPicker, cellClass, cellStyle } from "./LinePickers";
-import { OcrConfirmModal, type OcrRow } from "./OcrConfirmModal";
+import { OcrReadNotesDialog } from "./OcrReadNotesDialog";
+import { ocrReadNotes, type OcrReadNote, type RdLookup } from "@/lib/clr/ocr-read-notes";
+import { registrantFullName, tinsNeedingRdCheck, type RdVatRegistrant } from "@/lib/clr/rd-vat-core";
+import { normalizeTaxIdInput, taxIdNotice } from "@/lib/clr/seller-tax-id";
+import { RdCell } from "@/features/clear-advance/components/RdCell";
+import { useRdVatByTin } from "@/features/clear-advance/hooks/useRdVatByTin";
+import type { ReceiptKind } from "@/lib/clr/ai-receipt-core";
+
+/**
+ * One document the reader found, on its way to the expense table.
+ *
+ * It used to be the confirm modal's row type and was exported from there. With
+ * the rows going straight into the table the shape has one producer and one
+ * consumer, both below, so it lives here.
+ */
+interface OcrRow {
+  key: string;
+  kind: ReceiptKind;
+  /** Kept so `acceptOcrRows` stays a pure merge; every row is taken now. */
+  include: boolean;
+  sourceFileId?: number;
+  fileName?: string;
+  expenseDate: string;
+  /** The date as the model copied it, before conversion — what `ocrReadNotes`
+   *  compares against to catch a misread of the characters themselves. */
+  dateText?: string;
+  docNo: string;
+  taxBranchText: string;
+  branchCode: string;
+  branchSuggested?: boolean;
+  /** The reader saw another branch fitting nearly as well. */
+  branchClose?: boolean;
+  glAccountNo: string;
+  glAccountName: string;
+  description: string;
+  amountBeforeVat: string;
+  vatAmount: string;
+  whtAmount: string;
+  taxId: string;
+  payeeName: string;
+  payeeAddress: string;
+  totalAmount: string;
+}
 import type { AccBrandOption, AccFileMeta } from "@/features/accounting/types";
 import type {
   BranchOption,
@@ -148,9 +190,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   const [uploadingProof, setUploadingProof] = useState(false);
   const [ocrScanning, setOcrScanning] = useState(false);
   // OCR candidates awaiting confirmation (§7) — null while the modal is closed.
-  const [ocrRows, setOcrRows] = useState<OcrRow[] | null>(null);
   // Pages the reader dropped for being neither receipt nor slip — shown as a count.
-  const [ocrSkipped, setOcrSkipped] = useState(0);
 
   const [brandCode, setBrandCode] = useState(initial?.brandCode ?? "");
   const [advanceRequestId, setAdvanceRequestId] = useState<number | null>(initial?.clear?.advanceRequestId ?? null);
@@ -451,7 +491,21 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
     )));
   }
 
-  /** Prefill the WHT certificate table from the expense lines that carry WHT. */
+  /**
+   * Prefill the WHT certificate table from the expense lines that carry WHT.
+   *
+   * The seller comes with them. This used to copy only the date, the document
+   * number and the amounts, on the reasoning that an expense line holds no tax
+   * id — true while those fields were invisible, and false since they became
+   * columns the requester fills. The payee of a withholding certificate is the
+   * seller of the invoice it was withheld from, so retyping the same thirteen
+   * digits one table down was work the form was creating for itself, and a
+   * second chance to get them wrong.
+   *
+   * The ภ.ง.ด. type follows from the tax id, the same way typing one into the
+   * certificate row suggests it — a number that starts with 0 is a company
+   * (ภ.ง.ด.53), anything else a natural person (ภ.ง.ด.3).
+   */
   function prefillWhtFromLines() {
     const src = lines.filter((l) => num(l.whtAmount) > 0);
     if (src.length === 0) { toast.error("ยังไม่มีรายการที่มีภาษีหัก ณ ที่จ่าย"); return; }
@@ -459,16 +513,22 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       expenseDate: l.expenseDate,
       docNo: l.docNo,
       description: l.description,
-      taxId: "",
-      payeeName: "",
-      payeeAddress: "",
-      // No tax id on an expense line, so there is nothing to suggest from yet.
-      // It fills in as soon as one is typed.
-      pndType: "",
+      taxId: l.taxId,
+      payeeName: l.payeeName,
+      payeeAddress: l.payeeAddress,
+      pndType: (suggestPndType(l.taxId) ?? "") as WhtRow["pndType"],
       amount: l.amountBeforeVat,
       whtAmount: l.whtAmount,
     })));
-    toast.success("ดึงรายการหัก ณ ที่จ่ายจากค่าใช้จ่ายแล้ว — กรุณากรอกเลขผู้เสียภาษี/ชื่อผู้รับ");
+    /* Both fields are required here, so a line that has not got its own tax id
+       yet — a draft saved before the column was filled — is named rather than
+       left for the submit to refuse. */
+    const short = src.filter((l) => !l.taxId.trim() || !l.payeeName.trim()).length;
+    toast.success(
+      short === 0
+        ? "ดึงรายการหัก ณ ที่จ่ายจากค่าใช้จ่ายแล้ว — เติมเลขผู้เสียภาษี / ชื่อผู้รับ / ภ.ง.ด. ให้ด้วย"
+        : `ดึงรายการหัก ณ ที่จ่ายแล้ว — อีก ${short} รายการยังไม่มีเลขผู้เสียภาษี/ชื่อผู้รับ กรุณากรอกให้ครบ`,
+    );
   }
 
   /* ── persistence ── */
@@ -610,6 +670,26 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
             key: "lines",
             message: `สาขา ${l.branchCode} ถูกปิดใช้งาน/Block ใน BC แล้ว — กรุณาเลือกสาขาใหม่`,
           });
+          break;
+        }
+        /* The seller's tax id, required on a line that claims input VAT (user,
+           2026-09-11). It is what the VAT is claimed against and what the
+           registry check needs; blank, it reaches accounting as a claim nobody
+           can attribute, days after the receipt stopped being in anyone's hand.
+           A line with no VAT is left alone — a plain ใบเสร็จรับเงิน from a
+           small seller carries no tax id and there is nothing to identify.
+           Same shape as the rule one table down, where the certificate's payee
+           is required only once WHT has been withheld. */
+        const tin = l.taxId.replace(/\D/g, "");
+        if (num(l.vatAmount) > 0 && tin.length === 0) {
+          errs.push({ key: "lines", message: "มีรายการที่มี VAT แต่ยังไม่ได้กรอกเลขผู้เสียภาษีของผู้ขาย" });
+          break;
+        }
+        /* Whatever was typed has to be a whole tax id, VAT or not: a half-typed
+           number looks filled in and silently checks against nothing, which is
+           what `taxIdNotice` already says on the row. */
+        if (tin.length > 0 && tin.length !== 13) {
+          errs.push({ key: "lines", message: `มีรายการที่เลขผู้เสียภาษีไม่ครบ 13 หลัก (ตอนนี้ ${tin.length})` });
           break;
         }
       }
@@ -905,7 +985,14 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
    * only ever its input, so it goes with it. Confirming keeps them — they are
    * the evidence behind the expense lines.
    */
-  const [ocrFileIds, setOcrFileIds] = useState<number[]>([]);
+  const [ocrNotes, setOcrNotes] = useState<OcrReadNote[] | null>(null);
+
+  /* The registry, on the sellers of the lines on screen. The same hook the
+     account grid uses, asking the same endpoint, which answers from our own
+     table once a number has been looked up — so the check the read already
+     ran costs nothing to show here, and a number the requester types by hand
+     is checked the moment it is thirteen digits long. */
+  const { byTin: rdByTin, ask: askRd } = useRdVatByTin(lines.map((l) => l.taxId));
 
   async function verifyReceipts(docs: { file: File; fileId: number }[]) {
     setOcrScanning(true);
@@ -945,12 +1032,85 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           totalAmount: r.total != null ? String(r.total) : "",
         }));
       }
-      // Open even with no rows when pages were dropped: the count is the only
-      // report the reviewer gets that something was thrown away.
-      if (candidates.length === 0 && skipped === 0) return;
-      setOcrSkipped(skipped);
-      setOcrFileIds(docs.map((d) => d.fileId));
-      setOcrRows(candidates);
+      /* The account the AI would have suggested. It used to be asked for from
+         inside the confirm modal, once a row had a branch; with no modal it is
+         asked here, before the rows are written, so a line reaches the table
+         complete. The requester never sees it — they have no G/L column — but
+         the account officer arrives at a filled grid and only confirms it,
+         which was the point of moving the account to accounting. */
+      if (!glForced) {
+        await Promise.all(
+          candidates.map(async (r) => {
+            if (r.kind !== "receipt" || !r.branchCode || !r.description.trim()) return;
+            try {
+              const res = await fetch("/api/request/clear-advance/suggest-gl", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ description: r.description, branch: r.branchCode }),
+              });
+              const j = (await res.json()) as { ok: boolean; data?: { glAccountNo: string; nameTh: string | null } | null };
+              if (j.ok && j.data) { r.glAccountNo = j.data.glAccountNo; r.glAccountName = j.data.nameTh ?? ""; }
+            } catch { /* a suggestion is a convenience; accounting picks either way */ }
+          }),
+        );
+      }
+
+      /* The Revenue Department, on the seller of every receipt (user,
+         2026-09-11). This check lived in the confirm screen and went with it,
+         and it is the one thing there that nothing downstream repeats in time
+         to help the requester: they have no tax-id column, so a number that
+         belongs to nobody and a name the model invented both reach accounting
+         looking like data. Asked per distinct id, not per row — six receipts
+         from one seller are one question, and the registry is a SOAP service
+         behind a long timeout. A failure answers nothing and says nothing;
+         the account officer's own button asks again where the field is
+         visible. */
+      const rd: Record<string, RdLookup> = {};
+      await Promise.all(
+        Array.from(new Set(
+          candidates
+            .filter((r) => r.kind === "receipt")
+            .map((r) => r.taxId.replace(/\D/g, ""))
+            .filter((t) => t.length === 13),
+        )).map(async (tin) => {
+          try {
+            const res = await fetch(`/api/request/clear-advance/vat-registrant?taxId=${tin}`);
+            const j = (await res.json()) as {
+              ok: boolean;
+              data?: { registrant: RdVatRegistrant | null } | null;
+            };
+            if (!j.ok) return;
+            const reg = j.data?.registrant ?? null;
+            rd[tin] = reg
+              ? { state: "found", registeredName: registrantFullName(reg) }
+              : { state: "unregistered" };
+          } catch { /* the registry not answering is not a finding */ }
+        }),
+      );
+
+      /* Straight into the table (CR, 2026-09-11). The rows are editable there
+         like any other, and deleting a receipt still removes the line it
+         filled — so there is nothing left for a confirm step to add except the
+         things the read was unsure about, which the dialog below says. */
+      acceptOcrRows(candidates);
+      const notes = ocrReadNotes({
+        rows: candidates.map((r) => ({
+          expenseDate: r.expenseDate,
+          dateText: r.dateText,
+          branchClose: r.branchClose,
+          taxId: r.taxId,
+          payeeName: r.payeeName,
+        })),
+        fileCount: docs.length,
+        skippedPages: skipped,
+        rd,
+      });
+      /* Silence is only correct when the read had nothing to report. A file
+         that produced no row at all is the loudest thing this dialog says —
+         the receipt is simply missing from the clearing — so the early return
+         that used to sit above `acceptOcrRows` had to go: it skipped exactly
+         the case the count note exists for. */
+      if (notes.length > 0) setOcrNotes(notes);
     } finally {
       setOcrScanning(false);
     }
@@ -960,32 +1120,12 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
    *  receipt fills the next empty expense line, appending one when none is free
    *  and never overwriting a line the user already filled; a slip fills the
    *  refund-transfer fields. The row's kind decides, not the upload box. */
-  /** Cancelled the read — drop its rows and the upload they were read from. The
-   *  deletes are best-effort and silent: failing to tidy up must not put an
-   *  error in front of someone who only pressed ยกเลิก. */
-  async function cancelOcrRows() {
-    const ids = ocrFileIds;
-    setOcrRows(null);
-    setOcrFileIds([]);
-    if (ids.length === 0) return;
-    // Both boxes, because either can start a read: the reader decides what a page
-    // is, not the box it was dropped in. Clearing only the receipt list left a
-    // cancelled slip on screen after it had been deleted from the server — and a
-    // refund proof that is required to submit, sitting there already gone.
-    setFiles((prev) => prev.filter((f) => !ids.includes(f.id)));
-    setRefundProofFiles((prev) => prev.filter((f) => !ids.includes(f.id)));
-    await Promise.all(
-      ids.map((fileId) =>
-        fetch(`/api/request/clear-advance/requests/${requestId}/files?fileId=${fileId}`, {
-          method: "DELETE",
-        }).catch(() => undefined),
-      ),
-    );
-  }
+  /* `cancelOcrRows` lived here. It deleted the uploaded files when a read was
+     rejected, which is what kept six orphan attachments off one draft. With no
+     confirm step there is no rejected read: a row lands with its file and goes
+     with it — deleting a receipt already drops the line it filled. */
 
   function acceptOcrRows(accepted: OcrRow[]) {
-    setOcrRows(null);
-    setOcrFileIds([]);
     if (accepted.length === 0) return;
 
     const rows = accepted.filter((r) => r.kind === "receipt");
@@ -1328,28 +1468,63 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       <div className="rounded-2xl p-4 sm:p-5 flex flex-col gap-3" style={box} data-err="lines">
         <div className="flex items-center justify-between gap-2">
           <label className="text-[12px] font-bold" style={labelStyle}>รายการค่าใช้จ่ายจริง *</label>
-          {!readOnly && (
-            <Button variant="ghost" size="sm" type="button" icon={<Plus size={14} />} onClick={addLine}>เพิ่มแถว</Button>
-          )}
+          <div className="flex items-center gap-2">
+            {/* Asks the registry for every tax id it has not answered for yet.
+                One press for the page: six receipts from one seller are one
+                question, and a row already answered is not asked again. It is
+                here because a hand-typed number is checked the moment it is
+                thirteen digits, and this is what retries the ones the registry
+                dropped. */}
+            {!readOnly && (() => {
+              const pending = tinsNeedingRdCheck(
+                lines.map((l) => ({ taxId: l.taxId })),
+                rdByTin,
+              );
+              if (lines.every((l) => l.taxId.replace(/\D/g, "").length !== 13)) return null;
+              return (
+                <button
+                  type="button"
+                  disabled={pending.length === 0}
+                  title={pending.length === 0 ? "ตรวจกับกรมสรรพากรครบทุกเลขแล้ว" : undefined}
+                  onClick={() => pending.forEach((tin) => void askRd(tin))}
+                  className="text-[11px] px-2 py-1 rounded-lg border-none"
+                  style={{
+                    background: pending.length === 0 ? "var(--bg-card-alt)" : "var(--nav-active-bg)",
+                    color: pending.length === 0 ? "var(--text-faint)" : "var(--nav-active-text)",
+                    cursor: pending.length === 0 ? "default" : "pointer",
+                  }}
+                >
+                  {pending.length === 0 ? "ตรวจสรรพากรครบแล้ว" : `ตรวจสรรพากร (${pending.length} รายการ)`}
+                </button>
+              );
+            })()}
+            {!readOnly && (
+              <Button variant="ghost" size="sm" type="button" icon={<Plus size={14} />} onClick={addLine}>เพิ่มแถว</Button>
+            )}
+          </div>
         </div>
         {!readOnly && (
           <p className="text-[11px] m-0 -mt-2 leading-relaxed" style={{ color: "var(--text-faint)" }}>
-            1 ใบกำกับ = 1 รายการ · ระบบจะอ่าน “วันที่ · เลขที่เอกสาร · รายละเอียด · ยอดก่อน VAT · VAT · หัก ณ ที่จ่าย” มาเติมให้ Auto (สามารถแก้ไขได้) · ถ้า AI อ่านใบไหนไม่ออก กด “เพิ่มแถว” แล้วกรอกเองได้
+            1 ใบกำกับ = 1 รายการ · ระบบจะอ่าน “วันที่ · เลขที่เอกสาร · รายละเอียด · ผู้ขาย (เลขผู้เสียภาษี/ชื่อ/สาขา) · ยอดก่อน VAT · VAT · หัก ณ ที่จ่าย” มาเติมให้ Auto (สามารถแก้ไขได้) · ช่อง RD คือผลตรวจกับกรมสรรพากร กดดูเพื่อเทียบและใช้ชื่อที่จดทะเบียนได้ · ถ้า AI อ่านใบไหนไม่ออก กด “เพิ่มแถว” แล้วกรอกเองได้
           </p>
         )}
         <FieldError msg={fieldErrors.lines} />
         <FieldError msg={fieldErrors.wht} />
 
         <div className="overflow-x-auto overflow-y-auto show-x-scroll max-h-[480px] -mx-1 px-1 pb-1 hidden md:block">
-          <table className="w-full border-collapse" style={{ minWidth: 1620 }}>
+          <table className="w-full border-collapse" style={{ minWidth: 2160 }}>
             <thead>
               <tr className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                 <Th w={34}>#</Th>
                 <Th w={120}>วันที่</Th>
                 <Th w={210}>เลขที่เอกสาร</Th>
                 {/* Branch comes before the G/L account: it filters the account list. */}
-                <Th w={190}>สาขา *</Th>
+                <Th w={190}>สาขาที่ใช้จ่าย *</Th>
                 <Th w={240}>รายละเอียด</Th>
+                <Th w={150}>เลขผู้เสียภาษี *</Th>
+                <Th w={220}>ชื่อผู้ขาย</Th>
+                <Th w={110}>สาขาผู้ขาย</Th>
+                <Th w={56}>RD</Th>
                 <Th w={100} right>ก่อน VAT</Th>
                 <Th w={90} right>VAT</Th>
                 <Th w={100} right>รวม</Th>
@@ -1394,6 +1569,42 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                         ref={(el) => autoGrow(el)}
                         onChange={(e) => { autoGrow(e.target); updateLine(idx, { description: e.target.value }); }} />
                     </Td>
+                    {/* The seller, as the tax invoice names them. The reader
+                        fills all three; they are shown because nobody but the
+                        person holding the receipt can tell a misread name from
+                        a real one, and because a wrong tax id is what makes the
+                        input VAT unclaimable — discovered at the account step,
+                        by then with no receipt to check against. */}
+                    <Td>
+                      <input className={cellClass}
+                        style={{ ...cellStyle, width: "100%", borderColor: taxIdNotice(l.taxId) ? "var(--color-warning)" : undefined }}
+                        value={l.taxId} disabled={readOnly} placeholder="เลข 13 หลัก"
+                        inputMode="numeric" maxLength={13}
+                        onChange={(e) => updateLine(idx, { taxId: normalizeTaxIdInput(e.target.value) })} />
+                      {taxIdNotice(l.taxId) && (
+                        <span className="block text-[10px] mt-0.5" style={{ color: "var(--color-warning)" }}>
+                          {taxIdNotice(l.taxId)}
+                        </span>
+                      )}
+                    </Td>
+                    <Td>
+                      <input className={cellClass} style={{ ...cellStyle, width: "100%" }}
+                        value={l.payeeName} disabled={readOnly} placeholder="—"
+                        onChange={(e) => updateLine(idx, { payeeName: e.target.value })} />
+                    </Td>
+                    <Td>
+                      <input className={cellClass} style={{ ...cellStyle, width: "100%" }}
+                        value={l.taxBranchCode} disabled={readOnly} placeholder="00000" maxLength={5}
+                        onChange={(e) => updateLine(idx, { taxBranchCode: e.target.value })} />
+                    </Td>
+                    <Td>
+                      <RdCell
+                        item={{ taxId: l.taxId || null, payeeName: l.payeeName || null, taxBranchCode: l.taxBranchCode || null, vatAmount: num(l.vatAmount) }}
+                        answer={rdByTin[l.taxId.replace(/\D/g, "")]}
+                        onRecheck={(refresh) => void askRd(l.taxId.replace(/\D/g, ""), refresh)}
+                        onApply={(patch) => updateLine(idx, { payeeName: patch.payeeName, taxBranchCode: patch.taxBranchCode ?? "" })}
+                      />
+                    </Td>
                     <Td right>
                       <input type="number" min="0" step="0.01" className={`${cellClass} text-right`} style={{ ...cellStyle, width: "100%" }}
                         value={l.amountBeforeVat} disabled={readOnly} placeholder="0.00"
@@ -1413,10 +1624,18 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                     <Td right><ReadCell value={money(c.net)} strong /></Td>
                     <Td right><ReadCell value={money(c.balance)} tone={c.balance < 0 ? "danger" : undefined} /></Td>
                     <Td>
-                      {/* Only a hand-added line offers this. One the AI produced
-                          is removed by deleting its receipt, so the table and
-                          the attachments cannot drift apart. */}
-                      {!readOnly && !l.sourceFileId && (
+                      {/* Every line offers this, including one the reader
+                          produced. It used to be hand-added lines only, on the
+                          reasoning that an AI line is removed by deleting its
+                          receipt — which held while one file meant one line and
+                          the confirm screen let unwanted rows be unticked before
+                          they ever arrived. A single PDF of invoices routinely
+                          reads as a dozen lines, so deleting the receipt to drop
+                          one of them takes the other eleven with it, and there
+                          is no longer a screen to untick them on. The receipt
+                          stays; it is the evidence, and it is removable on its
+                          own in the attachments above. */}
+                      {!readOnly && (
                         <button type="button" onClick={() => removeLine(idx)}
                           aria-label={`ลบรายการที่ ${idx + 1}`} title="ลบแถวนี้"
                           className="border-none bg-transparent cursor-pointer p-1 rounded-md"
@@ -1431,7 +1650,10 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
             </tbody>
             <tfoot>
               <tr className="text-[12px] font-bold" style={{ color: "var(--text-heading)" }}>
-                <Td colSpan={6}><span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>รวมทั้งหมด</span></Td>
+                {/* #, วันที่, เลขที่เอกสาร, สาขาที่ใช้จ่าย, รายละเอียด and the
+                    four seller columns — nine, so the totals land under the
+                    amounts they add up. */}
+                <Td colSpan={9}><span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>รวมทั้งหมด</span></Td>
                 <Td right><FootVal value={money(sums.before)} /></Td>
                 <Td right><FootVal value={money(sums.vat)} /></Td>
                 <Td right><FootVal value={money(sums.total)} /></Td>
@@ -1453,7 +1675,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                 style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}>
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-bold" style={{ color: "var(--text-muted)" }}>รายการที่ {idx + 1}</span>
-                  {!readOnly && !l.sourceFileId && (
+                  {!readOnly && (
                     <button type="button" onClick={() => removeLine(idx)}
                       aria-label={`ลบรายการที่ ${idx + 1}`} title="ลบแถวนี้"
                       className="border-none bg-transparent cursor-pointer p-1 rounded-md"
@@ -1472,7 +1694,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                     value={l.docNo} disabled={readOnly} placeholder="—"
                     onChange={(e) => updateLine(idx, { docNo: e.target.value })} />
                 </MField>
-                <MField label="สาขา *">
+                <MField label="สาขาที่ใช้จ่าย *">
                   <BranchPicker options={branches} value={l.branchCode}
                     disabled={readOnly || !brandCode} noBrand={!brandCode}
                     onPick={(code) => updateLine(idx, { branchCode: code })} />
@@ -1489,6 +1711,37 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                     ref={(el) => autoGrow(el)}
                     onChange={(e) => { autoGrow(e.target); updateLine(idx, { description: e.target.value }); }} />
                 </MField>
+                <MField label="เลขผู้เสียภาษี (ผู้ขาย) *">
+                  <div className="flex items-center gap-2">
+                    <input className={fieldClass} style={{ ...fieldStyle, borderColor: taxIdNotice(l.taxId) ? "var(--color-warning)" : undefined }}
+                      value={l.taxId} disabled={readOnly} placeholder="เลข 13 หลัก"
+                      inputMode="numeric" maxLength={13}
+                      onChange={(e) => updateLine(idx, { taxId: normalizeTaxIdInput(e.target.value) })} />
+                    <RdCell
+                      item={{ taxId: l.taxId || null, payeeName: l.payeeName || null, taxBranchCode: l.taxBranchCode || null, vatAmount: num(l.vatAmount) }}
+                      answer={rdByTin[l.taxId.replace(/\D/g, "")]}
+                      onRecheck={(refresh) => void askRd(l.taxId.replace(/\D/g, ""), refresh)}
+                      onApply={(patch) => updateLine(idx, { payeeName: patch.payeeName, taxBranchCode: patch.taxBranchCode ?? "" })}
+                    />
+                  </div>
+                  {taxIdNotice(l.taxId) && (
+                    <span className="block text-[11px] mt-1" style={{ color: "var(--color-warning)" }}>
+                      {taxIdNotice(l.taxId)}
+                    </span>
+                  )}
+                </MField>
+                <div className="grid grid-cols-2 gap-2">
+                  <MField label="ชื่อผู้ขาย">
+                    <input className={fieldClass} style={fieldStyle}
+                      value={l.payeeName} disabled={readOnly} placeholder="—"
+                      onChange={(e) => updateLine(idx, { payeeName: e.target.value })} />
+                  </MField>
+                  <MField label="สาขาผู้ขาย">
+                    <input className={fieldClass} style={fieldStyle}
+                      value={l.taxBranchCode} disabled={readOnly} placeholder="00000" maxLength={5}
+                      onChange={(e) => updateLine(idx, { taxBranchCode: e.target.value })} />
+                  </MField>
+                </div>
                 <div className="grid grid-cols-2 gap-2">
                   <MField label="ก่อน VAT">
                     <input type="number" min="0" step="0.01" inputMode="decimal" className={`${fieldClass} text-right`} style={fieldStyle}
@@ -1600,9 +1853,18 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                         onChange={(e) => updateWht(idx, { payeeName: e.target.value })} />
                     </Td>
                     <Td>
-                      <input className={cellClass} style={{ ...cellStyle, width: "100%" }}
+                      {/* Wraps down its column rather than running off the end
+                          of a one-line box. An address here passes a hundred
+                          characters and about twenty of them fit — the one
+                          field a reader checks against the register was the one
+                          they could not read. Growing the row is cheaper than
+                          widening the column, which would push the amounts off
+                          the right edge. */}
+                      <textarea rows={1} className={cellClass}
+                        style={{ ...cellStyle, width: "100%", resize: "none", overflow: "hidden", minHeight: 30, lineHeight: 1.35 }}
                         value={w.payeeAddress} disabled={readOnly} placeholder="—"
-                        onChange={(e) => updateWht(idx, { payeeAddress: e.target.value })} />
+                        ref={(el) => autoGrow(el)}
+                        onChange={(e) => { autoGrow(e.target); updateWht(idx, { payeeAddress: e.target.value }); }} />
                     </Td>
                     <Td>
                       {/* Picks the BC vendor accounting clears against. Suggested
@@ -1640,7 +1902,11 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
               </tbody>
               <tfoot>
                 <tr className="text-[12px] font-bold" style={{ color: "var(--text-heading)" }}>
-                  <Td colSpan={7}><span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>รวม WHT</span></Td>
+                  {/* #, วันที่, เลขที่เอกสาร, เลขผู้เสียภาษี, ชื่อผู้รับ, ที่อยู่,
+                      ภ.ง.ด. and ค่าใช้จ่าย — eight, so รวม WHT lands under the
+                      WHT column. It spanned seven, which left the header a cell
+                      wider than this row. */}
+                  <Td colSpan={8}><span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>รวม WHT</span></Td>
                   <Td right><FootVal value={money(certWht)} accent={!whtMismatch} tone={whtMismatch ? "danger" : undefined} /></Td>
                   {!readOnly && <Td />}
                 </tr>
@@ -1848,20 +2114,10 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
         </div>
       </Dialog>
 
-      {/* OCR results wait here until the user confirms them (§7) */}
-      {/* Mounted only while there are candidates: a fresh `[]` prop on every closed
-          render would re-seed the modal's local copy in a loop. */}
-      {ocrRows !== null && (
-      <OcrConfirmModal
-        open
-        rows={ocrRows}
-        skippedPages={ocrSkipped}
-        branches={branches}
-        brandChosen={!!brandCode}
-        glForced={glForced}
-        onConfirm={acceptOcrRows}
-        onCancel={() => { void cancelOcrRows(); }}
-      />
+      {/* What the read was unsure about. Opens only when there is something to
+          say — a clean read puts its rows in the table and stays quiet. */}
+      {ocrNotes !== null && (
+        <OcrReadNotesDialog notes={ocrNotes} onClose={() => setOcrNotes(null)} />
       )}
 
       {/* OCR scanning overlays — shown while Claude reads receipts / transfer slips */}
