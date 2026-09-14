@@ -82,12 +82,6 @@ test("exactly one card surviving the name filter is matched without the model", 
   assert.deepEqual(plan, { kind: "matched", vendorNo: "V0004", via: "name" });
 });
 
-test("an empty company list is 'none' rather than a crash", () => {
-  assert.deepEqual(planVendorMatch({ vendorTaxId: "0107537002443", vendorName: "x" }, []), {
-    kind: "none",
-  });
-});
-
 /* ── step 3: what the model answered ── */
 
 test("the model's answer counts only if it is one of the candidates", () => {
@@ -132,4 +126,33 @@ test("a VAT line that already carries a vendor does not", () => {
   assert.equal(vendorRequired({ vatAmount: 7, vendorNo: "V0001", vendorMatchStatus: "auto" }), false);
   // Trimmed-empty is absent: a value can reach this column as "  ".
   assert.equal(vendorRequired({ vatAmount: 7, vendorNo: "   ", vendorMatchStatus: null }), true);
+});
+
+/* ── 'none' is a claim about the SELLER, so it must never be said about us ── */
+
+test("a tax id on several cards whose name narrows to nothing is asked, never called 'none'", () => {
+  // Two cards carry the id and the receipt names neither recognisably. We have
+  // just PROVED the seller has cards, so recording "no card in this company"
+  // would be false — and it is the value that exempts the line from needing a
+  // vendor at all. It goes to the model with the tax id's own cards.
+  const plan = planVendorMatch({ vendorTaxId: "0105566077543", vendorName: "ใบเสร็จเขียนอ่านไม่ออก" }, CARDS);
+  assert.equal(plan.kind, "ask");
+  assert.deepEqual(
+    plan.kind === "ask" ? plan.candidates.map((c) => c.vendorNo) : [],
+    ["V0001", "V0002"],
+  );
+});
+
+test("a tax id on several cards and no name at all is asked too", () => {
+  const plan = planVendorMatch({ vendorTaxId: "0105566077543", vendorName: null }, CARDS);
+  assert.equal(plan.kind, "ask");
+});
+
+test("an empty ledger answers 'unknown', which is not 'none'", () => {
+  // No vendor cards for this company — never synced, or the wrong Company
+  // resolved. Reading that as "this seller has no card" would mark EVERY line
+  // of EVERY claim exempt, silently, and the queue would go green.
+  assert.deepEqual(planVendorMatch({ vendorTaxId: "0107537002443", vendorName: "x" }, []), {
+    kind: "unknown",
+  });
 });

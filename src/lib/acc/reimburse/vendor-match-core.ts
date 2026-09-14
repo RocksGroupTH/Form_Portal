@@ -59,8 +59,24 @@ export type VendorMatchPlan =
   | { kind: "matched"; vendorNo: string; via: "taxId" | "name" }
   /** Several plausible cards — the model picks one of exactly these. */
   | { kind: "ask"; candidates: VendorCard[] }
-  /** No card in this company answers to this seller. */
-  | { kind: "none" };
+  /**
+   * No card in this company answers to this seller.
+   *
+   * **A claim about the SELLER, and the only verdict that releases the line
+   * from needing a vendor at all** — so it may only be reached having actually
+   * looked through a ledger that exists. Anything that is really "we could not
+   * tell" is `unknown`.
+   */
+  | { kind: "none" }
+  /**
+   * The question could not be asked: this company has no vendor cards at all —
+   * never synced, or the wrong Company resolved.
+   *
+   * Distinct from `none` because collapsing the two marks EVERY line of EVERY
+   * claim exempt on a company whose ledger simply has not arrived, silently,
+   * and the whole queue goes green.
+   */
+  | { kind: "unknown" };
 
 /** Digits only. The number is printed grouped and stored bare, or the reverse. */
 function digits(v: string | null | undefined): string {
@@ -99,7 +115,7 @@ export function cardsByName(cards: readonly VendorCard[], sellerName: string | n
 
 /** The ladder, as far as it goes without a model call. */
 export function planVendorMatch(line: VendorMatchLine, cards: readonly VendorCard[]): VendorMatchPlan {
-  if (cards.length === 0) return { kind: "none" };
+  if (cards.length === 0) return { kind: "unknown" };
 
   const byTax = cardsByTaxId(cards, line.vendorTaxId);
   if (byTax.length === 1) return { kind: "matched", vendorNo: byTax[0].vendorNo, via: "taxId" };
@@ -111,6 +127,13 @@ export function planVendorMatch(line: VendorMatchLine, cards: readonly VendorCar
 
   if (byName.length === 1) return { kind: "matched", vendorNo: byName[0].vendorNo, via: "name" };
   if (byName.length > 1) return { kind: "ask", candidates: byName };
+
+  // **The tax id found cards and the name narrowed them to nothing.** That is
+  // not "this seller has no card" — we have just proved the opposite — so it
+  // must not become `none`, which is what exempts the line. The model gets the
+  // tax id's own cards to choose between, which is exactly the question left.
+  if (byTax.length > 1) return { kind: "ask", candidates: byTax };
+
   return { kind: "none" };
 }
 

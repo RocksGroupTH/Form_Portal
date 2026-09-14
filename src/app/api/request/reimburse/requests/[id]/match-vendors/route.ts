@@ -88,7 +88,7 @@ export async function POST(
       return NextResponse.json({ ok: true, data: { matched: 0, none: 0 } });
     }
 
-    const answers = await matchVendorsForClaim(
+    const { edits: answers, ledgerEmpty } = await matchVendorsForClaim(
       company,
       targets.map((it) => ({
         id: it.id as number,
@@ -96,6 +96,19 @@ export async function POST(
         vendorName: it.vendorName ?? null,
       })),
     );
+    // Refused, not reported as "nothing to do": an empty ledger would have
+    // every line answer "this seller has no card", which is the verdict that
+    // releases the line from needing one. Saying so is the only honest answer,
+    // and it names the fix.
+    if (ledgerEmpty) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `ยังไม่มีรายชื่อ Vendor ของบริษัท ${company} — sync Vendor จาก Business Central ก่อน`,
+        },
+        { status: 400 },
+      );
+    }
     if (answers.length === 0) {
       return NextResponse.json({ ok: true, data: { matched: 0, none: 0 } });
     }

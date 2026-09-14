@@ -27,6 +27,17 @@ export interface VendorMatchTarget {
   vendorName?: string | null;
 }
 
+/** What one run answered, and whether it could answer at all. */
+export interface VendorMatchResult {
+  edits: VendorMatchEdit[];
+  /**
+   * The company has no vendor cards — never synced, or the wrong Company
+   * resolved. `edits` is empty and **nothing was decided**, which is not the
+   * same as every seller being absent from the ledger.
+   */
+  ledgerEmpty: boolean;
+}
+
 /** One line's answer, in the shape `setReimburseItemAccounts` takes. */
 export interface VendorMatchEdit {
   id: number;
@@ -44,21 +55,32 @@ export interface VendorMatchEdit {
  * waiting to happen — the same reason `suggest-gl` gives. Most lines never
  * reach the model at all: a tax id that matches one card is decided locally.
  *
- * **Every line gets a verdict, including the ones that find nothing.** That is
- * the point of the feature: `"none"` is what releases the queue's checkbox for
- * a seller who is not a vendor of ours, and a line left with a NULL verdict is
- * indistinguishable from one nobody has looked at.
+ * **A line gets `"none"` only when the ledger was actually searched and this
+ * seller is not in it.** That verdict is the point of the feature — it is what
+ * releases the queue's checkbox for a seller who is not a vendor of ours — and
+ * it is exactly why the two ways of "not finding one" do NOT get it: a model
+ * that declined among real candidates, and a company with no cards at all.
+ * Both leave the line NULL, which reads as "nobody has established this yet"
+ * and keeps it in the set the button retries.
  */
 export async function matchVendorsForClaim(
   company: string,
   lines: readonly VendorMatchTarget[],
-): Promise<VendorMatchEdit[]> {
-  if (lines.length === 0) return [];
+): Promise<VendorMatchResult> {
+  if (lines.length === 0) return { edits: [], ledgerEmpty: false };
 
   // One read for the whole claim. PCTH is the largest company at ~1,600 active
   // cards, which is small enough to filter in memory and far cheaper than a
   // query per line.
   const cards = await listTaxVendors(company);
+  // **Nothing is written when the company has no vendor cards at all.** Every
+  // line would answer "no card for this seller", which is the verdict that
+  // releases the line from needing one — so an unsynced or wrongly resolved
+  // Company would mark a whole claim exempt and turn the queue green. The
+  // caller reports it instead; `planVendorMatch` answers `unknown` for the
+  // same reason, and this is the guard that keeps that answer from being
+  // written as anything.
+  if (cards.length === 0) return { edits: [], ledgerEmpty: true };
 
   const edits: VendorMatchEdit[] = [];
   for (const line of lines) {
@@ -72,6 +94,10 @@ export async function matchVendorsForClaim(
       edits.push({ id: line.id, vendorNo: null, vendorMatchStatus: "none", via: "none" });
       continue;
     }
+    // Unreachable with a non-empty ledger, and left rather than folded into
+    // the branch above: the two mean opposite things, and a future rung that
+    // answers `unknown` for some other reason must not silently become `none`.
+    if (plan.kind === "unknown") continue;
 
     const raw = await matchVendorWithAI(
       (line.vendorName ?? "").trim(),
@@ -87,5 +113,5 @@ export async function matchVendorsForClaim(
     // person, and askable again.
     if (picked) edits.push({ id: line.id, vendorNo: picked, vendorMatchStatus: "auto", via: "ai" });
   }
-  return edits;
+  return { edits, ledgerEmpty: false };
 }
