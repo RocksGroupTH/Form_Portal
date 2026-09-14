@@ -11,9 +11,9 @@ interface ReimburseAccessData {
    * from `AccReimburseAccessTab`, or true for an admin. The route already
    * answered this field (`/api/request/reimburse/access`); nothing here read
    * it until the Request hub needed it to decide whether to show the queue's
-   * own card. `clearance` is on the same response and is left off this type
-   * until something needs it, for the same reason `menus` was — the field
-   * existing on the wire is not a reason to widen every consumer of it early.
+   * own card. It is the only menu key AP-4 has: `clearance` named a screen
+   * that does not exist yet and was removed on 2026-09-14 rather than left as
+   * a column an admin could tick to no effect.
    */
   approvalQueue: boolean;
 }
@@ -34,9 +34,8 @@ const fetcher = async (url: string) => {
  *
  * Answers two questions since 2026-09-08, not one: settings-tab visibility
  * (`settingsTabs`/`canSettings`, as before) and working-screen visibility —
- * `approvalQueue` below, AP-4's counterpart to AP-17's own menu grants.
- * `clearance` is on the same `/api/request/reimburse/access` response and is
- * left off this type until something needs it — see that field's own comment.
+ * `approvalQueue` below, AP-4's counterpart to AP-17's own menu grants, and
+ * since 2026-09-14 the only one.
  * There is still no `canAccount` here: whether somebody may actually take the
  * ACCOUNT or ACCOUNT_FINAL step comes from `AccReimburseApprover`, a different
  * table, checked server-side where the money moves. Being on either list

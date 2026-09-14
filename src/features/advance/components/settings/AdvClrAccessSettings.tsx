@@ -6,7 +6,7 @@ import { Plus, ShieldCheck, Save, UserX, UserCheck } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui";
 import { ADSearchModal, type ADResult } from "@/components/settings/ADSearchModal";
-import { ADV_CLR_MENUS, GRANTABLE_ADV_CLR_TABS } from "@/lib/adv/settings-tabs";
+import { ADV_CLR_MENUS, ALL_ADV_CLR_TABS } from "@/lib/adv/settings-tabs";
 
 const ENDPOINT = "/api/request/advance/settings/access";
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
@@ -212,8 +212,8 @@ export function AdvClrAccessSettings() {
                   />
                   <TickGroup
                     label="แท็บตั้งค่า"
-                    hint="Interface ERP และสิทธิ์เข้าถึงให้ไม่ได้ — ผู้ดูแลระบบเท่านั้น"
-                    items={GRANTABLE_ADV_CLR_TABS}
+                    hint="ทุกแท็บอยู่ครบ — อันที่จางคือให้สิทธิ์ไม่ได้ ชี้เพื่อดูเหตุผล"
+                    items={ALL_ADV_CLR_TABS}
                     has={has}
                     onToggle={(k, on) => toggle(row, k, on)}
                   />
@@ -237,10 +237,22 @@ export function AdvClrAccessSettings() {
   );
 }
 
+/**
+ * One group of ticks.
+ *
+ * **Every tab is listed, including the ones that can never be granted** (user,
+ * 2026-09-14: the column showed four of eight and read as incomplete). Those
+ * render disabled, greyed, with the reason on hover — more honest than omitting
+ * them, since an admin looking for "who may open Interface ERP" should find the
+ * answer here rather than conclude the tab is missing. Nothing about
+ * enforcement changes: `filterStorableAdvClrKeys` still refuses to write them
+ * and `decideAdvClrTabAccess` still refuses to open them for a non-admin, so a
+ * disabled box is a statement rather than the only thing stopping a grant.
+ */
 function TickGroup({ label, hint, items, has, onToggle }: {
   label: string;
   hint: string;
-  items: readonly { key: string; label: string }[];
+  items: readonly { key: string; label: string; adminOnly?: string }[];
   has: (key: string) => boolean;
   onToggle: (key: string, on: boolean) => void;
 }) {
@@ -250,11 +262,20 @@ function TickGroup({ label, hint, items, has, onToggle }: {
       <p className="text-[10px] m-0 mb-2" style={{ color: "var(--text-faint)" }}>{hint}</p>
       <div className="flex flex-col gap-1.5">
         {items.map((it) => (
-          <label key={it.key} className="flex items-center gap-2 text-[12px] cursor-pointer"
-            style={{ color: "var(--text-secondary)" }}>
-            <input type="checkbox" checked={has(it.key)}
+          <label key={it.key}
+            className={`flex items-center gap-2 text-[12px] ${it.adminOnly ? "cursor-not-allowed" : "cursor-pointer"}`}
+            title={it.adminOnly ? `ให้สิทธิ์ไม่ได้ — ${it.adminOnly}` : undefined}
+            style={{ color: it.adminOnly ? "var(--text-faint)" : "var(--text-secondary)" }}>
+            <input type="checkbox" checked={!it.adminOnly && has(it.key)}
+              disabled={!!it.adminOnly}
               onChange={(e) => onToggle(it.key, e.target.checked)} />
             {it.label}
+            {it.adminOnly && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0"
+                style={{ background: "var(--bg-badge)", color: "var(--text-muted)" }}>
+                ผู้ดูแลระบบ
+              </span>
+            )}
           </label>
         ))}
       </div>

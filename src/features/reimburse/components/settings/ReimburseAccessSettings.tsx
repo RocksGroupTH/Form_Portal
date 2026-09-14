@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { ADSearchModal, type ADResult } from "@/components/settings/ADSearchModal";
-import { GRANTABLE_REIMBURSE_TABS, REIMBURSE_MENUS } from "@/lib/acc/reimburse/settings-tabs";
+import { ALL_REIMBURSE_TABS, GRANTABLE_REIMBURSE_TABS, REIMBURSE_MENUS } from "@/lib/acc/reimburse/settings-tabs";
 import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
 
 const ENDPOINT = "/api/request/reimburse/settings/access";
@@ -169,7 +169,9 @@ function ConfirmModal({
 
 /* ── Per-tab and per-menu grants ──
  *
- * One checkbox per entry in `GRANTABLE_REIMBURSE_TABS`, which is derived from
+ * One cell per entry in `ALL_REIMBURSE_TABS` — a checkbox where the tab can
+ * be granted, a dash where it cannot. The saved payload is still built from
+ * `GRANTABLE_REIMBURSE_TABS`, which is derived from
  * the settings page's own tab order — so the columns and the tabs cannot drift.
  * `access` can never appear among them: whoever opens it could grant
  * themselves the rest — including, since 2026-09-10, the brand-approval ticks
@@ -406,20 +408,31 @@ function TabGrantCells({
 
   return (
     <>
-      {GRANTABLE_REIMBURSE_TABS.map((tab, idx) => (
+      {ALL_REIMBURSE_TABS.map((tab, idx) => (
         <td
           key={tab.key}
           className="px-3 py-2.5 text-center"
           // Left border on the first cell only, matching the header's own
           // boundary between the brand-approval group and this one.
           style={idx === 0 ? { borderLeft: "1px solid var(--border-light)" } : undefined}
+          title={tab.adminOnly ? `ให้สิทธิ์ไม่ได้ — ${tab.adminOnly}` : undefined}
         >
-          <TabGrantCheckbox
-            checked={checked.has(tab.key)}
-            saving={saving}
-            onChange={() => void toggle(tab.key)}
-            ariaLabel={`${row.displayName || row.email} — ตั้งค่า: ${tab.label}`}
-          />
+          {tab.adminOnly ? (
+            // A dash, not an unticked box: an empty checkbox invites a click
+            // that would do nothing, and reads as "not granted yet" rather
+            // than "cannot be granted". Enforcement is unchanged either way —
+            // filterStorableReimburseKeys refuses to write these keys and
+            // decideReimburseTabAccess refuses to open them, so this cell is a
+            // statement rather than the thing stopping a grant.
+            <span className="text-[12px]" style={{ color: "var(--text-faint)" }}>—</span>
+          ) : (
+            <TabGrantCheckbox
+              checked={checked.has(tab.key)}
+              saving={saving}
+              onChange={() => void toggle(tab.key)}
+              ariaLabel={`${row.displayName || row.email} — ตั้งค่า: ${tab.label}`}
+            />
+          )}
         </td>
       ))}
       {/* The menu group — a different vocabulary in the same TabKey column
@@ -750,7 +763,7 @@ export function ReimburseAccessSettings() {
                       ผู้อนุมัติฝ่ายบัญชี (ติ๊กแบรนด์)
                     </th>
                     <th
-                      colSpan={GRANTABLE_REIMBURSE_TABS.length}
+                      colSpan={ALL_REIMBURSE_TABS.length}
                       className="text-center px-3 py-1.5 font-semibold whitespace-nowrap"
                       style={{ color: "var(--text-info-green)", borderLeft: "1px solid var(--border-light)" }}
                     >
@@ -795,20 +808,25 @@ export function ReimburseAccessSettings() {
                         <span className="block text-[10px]">{b.id}</span>
                       </th>
                     ))}
-                    {/* The grantable settings tabs, in the settings page's own
-                        order — both lists come from GRANTABLE_REIMBURSE_TABS,
-                        which is filtered from the page's tab order, so a new
-                        grantable tab appears in both or in neither. Its own
-                        left border marks the boundary with the brand group. */}
-                    {GRANTABLE_REIMBURSE_TABS.map((tab, idx) => (
+                    {/* EVERY settings tab, in the page's own order — not only the
+                        grantable two (user, 2026-09-14: the group showed two of
+                        six and read as incomplete). The four that cannot be
+                        handed out render greyed here and disabled below, with
+                        the reason on hover, because an admin looking for "who
+                        may open Interface ERP" should find the answer on this
+                        screen rather than conclude the tab is missing. Both
+                        lists come from ALL_REIMBURSE_TABS, which is mapped from
+                        the page's own tab order, so a new tab appears in the
+                        header and the body or in neither. */}
+                    {ALL_REIMBURSE_TABS.map((tab, idx) => (
                       <th
                         key={tab.key}
                         className="text-center px-3 py-2 font-semibold whitespace-nowrap"
-                        style={
-                          idx === 0
-                            ? { color: "var(--text-muted)", borderLeft: "1px solid var(--border-light)" }
-                            : { color: "var(--text-muted)" }
-                        }
+                        title={tab.adminOnly ? `ให้สิทธิ์ไม่ได้ — ${tab.adminOnly}` : undefined}
+                        style={{
+                          color: tab.adminOnly ? "var(--text-faint)" : "var(--text-muted)",
+                          ...(idx === 0 ? { borderLeft: "1px solid var(--border-light)" } : {}),
+                        }}
                       >
                         {tab.label}
                       </th>

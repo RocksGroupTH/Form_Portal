@@ -170,7 +170,7 @@ export async function GET() {
  * point — the add call and any future partial save send no tabs, and treating
  * that as an empty set would silently revoke every grant the person held.
  * **The name predates the second, menu-key vocabulary** (`approvalQueue`,
- * `clearance`) that AP-4's accounting queue added on top of the settings-tab
+ * ) that AP-4's accounting queue added on top of the settings-tab
  * one — it is kept as-is because the client already sends this field name,
  * and this array now legitimately carries both kinds of key at once. The
  * pre-filter here is deliberately the WIDE one, `filterStorableReimburseKeys`

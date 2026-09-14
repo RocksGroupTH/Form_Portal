@@ -14,7 +14,7 @@ import { filterStorableReimburseKeys } from "@/lib/acc/reimburse/settings-tabs";
  * `./settings-tabs`.
  *
  * **Two vocabularies live in `TabKey`.** Settings tabs grant sight of
- * configuration; menu keys (`approvalQueue`, `clearance`) grant sight of a
+ * configuration; the menu key `approvalQueue` grants sight of a
  * working screen. Storage takes the union — `filterStorableReimburseKeys` — and
  * authorization keeps the narrow filters, in `settings-tabs.ts`. Narrowing the
  * filter here is what made AP-17's equivalent tick save nothing at all.

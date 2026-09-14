@@ -100,6 +100,50 @@ export type ReimburseSettingsTabKey = (typeof REIMBURSE_SETTINGS_TAB_ORDER)[numb
 export type GrantableReimburseTabKey = Extract<ReimburseSettingsTabKey, "rules" | "brands">;
 
 /**
+ * Every settings tab, in strip order, with its label and whether it can be
+ * handed to an individual.
+ *
+ * **The สิทธิ์เข้าถึง grid renders ALL of them** (user, 2026-09-14: the column
+ * group showed two of six and read as incomplete). The four that cannot be
+ * granted render as a disabled box carrying the reason, which is more honest
+ * than omitting them: an admin looking for "who may open Interface ERP" should
+ * find the answer on this screen rather than conclude the tab is missing.
+ *
+ * Showing them changes nothing about what may be stored or opened —
+ * `filterStorableReimburseKeys` still refuses to write them and
+ * `decideReimburseTabAccess` still refuses to open them for a non-admin. A
+ * `Record` over the tab union, so adding a tab without a label or a reason is
+ * a compile error rather than a blank column heading.
+ */
+const REIMBURSE_ALL_TAB_META: Record<
+  ReimburseSettingsTabKey,
+  { label: string; adminOnly?: string }
+> = {
+  brands: { label: "แบรนด์ที่เบิกได้" },
+  rules: { label: "ระเบียบการจ่าย" },
+  glAccounts: {
+    label: "หมวดบัญชี G/L",
+    adminOnly: "เป็นข้อมูลของ AP-3 — ให้สิทธิ์ข้ามฟอร์มไม่ได้",
+  },
+  buGlMap: {
+    label: "Fix G/L by BU or Branch",
+    adminOnly: "เป็นกฎของ AP-3 — ให้สิทธิ์ข้ามฟอร์มไม่ได้",
+  },
+  erpInterface: {
+    label: "Interface ERP",
+    adminOnly: "ตัดสินว่าเงินลงบัญชีไหน และไม่ได้จำกัดตามแบรนด์",
+  },
+  access: { label: "สิทธิ์เข้าถึง", adminOnly: "หน้านี้เอง — ให้สิทธิ์ตัวเองต่อได้" },
+};
+
+export const ALL_REIMBURSE_TABS: readonly {
+  key: ReimburseSettingsTabKey;
+  label: string;
+  /** Set when the tab can never be granted; the text says why. */
+  adminOnly?: string;
+}[] = REIMBURSE_SETTINGS_TAB_ORDER.map((key) => ({ key, ...REIMBURSE_ALL_TAB_META[key] }));
+
+/**
  * The label each grantable tab carries — the settings page's own, not a
  * prettified key name.
  *
@@ -158,7 +202,7 @@ export function filterGrantableReimburseTabKeys(keys: string[]): string[] {
  * AP-17 reached the same arrangement first; `booking-approver-tabs.ts` is the
  * shape being copied, including the storable-vs-grantable pair below.
  */
-export const REIMBURSE_MENU_KEYS = ["approvalQueue", "clearance"] as const;
+export const REIMBURSE_MENU_KEYS = ["approvalQueue"] as const;
 
 export type ReimburseMenuKey = (typeof REIMBURSE_MENU_KEYS)[number];
 
@@ -169,14 +213,21 @@ export type ReimburseMenuKey = (typeof REIMBURSE_MENU_KEYS)[number];
  */
 const REIMBURSE_MENU_LABELS: Record<ReimburseMenuKey, string> = {
   approvalQueue: "คิวอนุมัติ (บัญชี)",
-  // `clearance` is STORED and grants nothing: the screen it would open is a
-  // later stage (spec §6), so nothing anywhere reads the key. The suffix is on
-  // the LABEL rather than in the panel because the label is the single place
-  // this key's copy is defined — an admin ticking a box that renders
-  // identically to `approvalQueue` would otherwise believe they had handed
-  // somebody a page. Drop the suffix when the screen ships.
-  clearance: "เคลียร์เอกสารอนุมัติ (ยังไม่เปิดใช้งาน)",
 };
+
+/*
+ * `clearance` was here and is GONE (user, 2026-09-14). It named a screen that
+ * does not exist yet (spec §6), so nothing anywhere read it and ticking it
+ * granted nothing — a column on the สิทธิ์เข้าถึง grid that could only mislead.
+ * Bring the key back when the screen ships, not before.
+ *
+ * **Rows already holding it go inert rather than erroring.**
+ * `filterStorableReimburseKeys` drops any key this module does not know, so a
+ * stored `clearance` row is read as nothing and rewritten away on the next save
+ * of that person. No migration, and none is needed: the column has no CHECK,
+ * which is the same freedom that let the menu vocabulary share it in the first
+ * place.
+ */
 
 export const REIMBURSE_MENUS: readonly { key: ReimburseMenuKey; label: string }[] =
   REIMBURSE_MENU_KEYS.map((key) => ({ key, label: REIMBURSE_MENU_LABELS[key] }));

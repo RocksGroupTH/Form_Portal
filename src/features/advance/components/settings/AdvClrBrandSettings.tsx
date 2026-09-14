@@ -4,6 +4,7 @@ import { useState } from "react";
 import useSWR from "swr";
 import { Building2 } from "lucide-react";
 import { toast } from "sonner";
+import { BrandToggleCard, BrandToggleGrid } from "@/components/settings/BrandToggleCard";
 
 const LIST = "/api/request/advance/settings/erp-interface";
 const TOGGLE = "/api/request/advance/settings/brand-active";
@@ -37,6 +38,11 @@ interface BrandRow {
  * unions `AccFormBrand` with the brand master for exactly this reason: a brand
  * added to the master has no `AccFormBrand` row, and the only way to create one
  * is this toggle, so a list of granted brands alone could never grow.
+ *
+ * **The card is `BrandToggleCard`, shared with AP-1, AP-17 and AP-4** since
+ * 2026-09-14 — every form's brand tab renders the same tile. The ORDER stays
+ * each form's own: here it is the endpoint's, `AccFormBrand` rows first and
+ * then the brand master, and that was the user's condition on the change.
  */
 export function AdvClrBrandSettings() {
   const { data, isLoading, error, mutate } = useSWR<{ ok: boolean; data?: BrandRow[] }>(LIST, fetcher);
@@ -83,50 +89,20 @@ export function AdvClrBrandSettings() {
       ) : isLoading ? (
         <p className="text-[13px] py-8 text-center m-0" style={{ color: "var(--text-muted)" }}>กำลังโหลด...</p>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <BrandToggleGrid>
           {rows.map((row) => (
-            <div key={row.brandCode} className="rounded-xl p-3 flex items-center gap-3"
-              style={{
-                background: row.active ? "var(--bg-info-green)" : "var(--bg-card-alt)",
-                border: `1px solid ${row.active ? "var(--border-info-green)" : "var(--border-card)"}`,
-              }}>
-              <div className="flex items-center justify-center shrink-0 rounded-lg p-1.5"
-                style={{ background: "var(--bg-card)", border: "1px solid var(--border-light)" }}>
-                {row.brandLogo ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={row.brandLogo} alt="" className="h-6 w-auto object-contain"
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
-                ) : (
-                  <span className="text-[10px] font-mono px-1" style={{ color: "var(--text-faint)" }}>
-                    {row.brandCode.slice(0, 2)}
-                  </span>
-                )}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-[13px] font-bold m-0 truncate" style={{ color: "var(--text-heading)" }}>
-                  {row.brandName}
-                </p>
-                <p className="text-[10px] m-0 font-mono" style={{ color: "var(--text-muted)" }}>
-                  {row.brandCode} → {row.interfaceTarget || "—"}
-                </p>
-              </div>
-              <button type="button" role="switch" aria-checked={row.active}
-                aria-label={`${row.active ? "ปิด" : "เปิด"} ${row.brandName}`}
-                disabled={busy === row.brandCode}
-                onClick={() => void toggle(row, !row.active)}
-                className="relative rounded-full shrink-0 transition-colors"
-                style={{
-                  width: 38, height: 22,
-                  background: row.active ? "var(--color-action)" : "var(--border-input)",
-                  cursor: busy === row.brandCode ? "not-allowed" : "pointer",
-                  opacity: busy === row.brandCode ? 0.5 : 1,
-                }}>
-                <span className="absolute rounded-full transition-all"
-                  style={{ width: 16, height: 16, top: 3, left: row.active ? 19 : 3, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.35)" }} />
-              </button>
-            </div>
+            <BrandToggleCard
+              key={row.brandCode}
+              brandCode={row.brandCode}
+              brandName={row.brandName}
+              brandLogo={row.brandLogo}
+              sub={`${row.brandCode} → ${row.interfaceTarget || "—"}`}
+              checked={row.active}
+              disabled={busy === row.brandCode}
+              onChange={(next) => void toggle(row, next)}
+            />
           ))}
-        </div>
+        </BrandToggleGrid>
       )}
     </div>
   );

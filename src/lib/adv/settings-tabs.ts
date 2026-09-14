@@ -92,6 +92,49 @@ export const GRANTABLE_ADV_CLR_TABS: readonly { key: string; label: string }[] =
   { key: "locations", label: "Location / BU (AP-3)" },
 ];
 
+/**
+ * Every settings tab across BOTH strips, in order, with its label and whether
+ * it can be handed to an individual.
+ *
+ * **The สิทธิ์เข้าถึง grid renders all of them** (user, 2026-09-14), the four
+ * ungrantable ones as a disabled box carrying the reason — more honest than
+ * omitting them, since an admin looking for "who may open Interface ERP"
+ * should find the answer here rather than conclude the tab is missing. It
+ * changes nothing about what may be stored or opened:
+ * `filterStorableAdvClrKeys` still refuses to write them and
+ * `decideAdvClrTabAccess` still refuses to open them for a non-admin.
+ *
+ * `brands` appears once, because the tab edits one shared set of
+ * `AccFormBrand` rows — AP-2's screen and AP-3's screen write the same thing.
+ */
+export const ALL_ADV_CLR_TABS: readonly {
+  key: string;
+  label: string;
+  /** Set when the tab can never be granted; the text says why. */
+  adminOnly?: string;
+}[] = [
+  { key: "brands", label: "แบรนด์ที่เบิกได้ (AP-2 + AP-3)" },
+  { key: "matrix", label: "ขั้นตามเงิน (AP-2)" },
+  { key: "banks", label: "ธนาคาร Master (AP-2)" },
+  {
+    key: "glAccounts",
+    label: "หมวดบัญชี G/L (AP-3)",
+    adminOnly: "ใช้ร่วมกับ AP-4 — ให้สิทธิ์ข้ามฟอร์มไม่ได้",
+  },
+  {
+    key: "buGlMap",
+    label: "Fix G/L by BU or Branch (AP-3)",
+    adminOnly: "ใช้ร่วมกับ AP-4 — ให้สิทธิ์ข้ามฟอร์มไม่ได้",
+  },
+  { key: "locations", label: "Location / BU (AP-3)" },
+  {
+    key: "erpInterface",
+    label: "Interface ERP (AP-2 + AP-3)",
+    adminOnly: "ตัดสินว่าเงินลงบัญชีไหน และไม่ได้จำกัดตามแบรนด์",
+  },
+  { key: "access", label: "สิทธิ์เข้าถึง", adminOnly: "หน้านี้เอง — ให้สิทธิ์ตัวเองต่อได้" },
+];
+
 export function isGrantableAdvClrTabKey(key: string): boolean {
   const k = String(key).trim();
   for (const t of GRANTABLE_ADV_CLR_TABS) if (t.key === k) return true;
