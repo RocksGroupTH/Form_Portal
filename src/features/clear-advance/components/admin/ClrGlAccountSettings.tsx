@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Plus, Search, X } from "lucide-react";
+import { CheckCircle2, Circle, Search } from "lucide-react";
 import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
 import {
   dimensionChecks,
@@ -46,201 +46,21 @@ interface GlCompanyRow {
   sortOrder: number;
   dimensionType: DimensionType | null;
   isActive: boolean;
+  /** A rule on an account the sync no longer returns — live, and said so on the row. */
+  missingFromErp?: boolean;
 }
 
 const GL_URL = "/api/request/clear-advance/settings/gl-accounts";
 
-/** Add-account dialog (glAccountNo, nameTh, nameEn, dimensionType). */
-function AddGlDialog({
-  busy,
-  onClose,
-  onAdd,
-}: {
-  busy: boolean;
-  onClose: () => void;
-  onAdd: (input: {
-    glAccountNo: string;
-    nameTh: string;
-    nameEn: string;
-    dimensionType: DimensionType;
-  }) => void | Promise<void>;
-}) {
-  const [glAccountNo, setGlAccountNo] = useState("");
-  const [nameTh, setNameTh] = useState("");
-  const [nameEn, setNameEn] = useState("");
-  const [dimensionType, setDimensionType] = useState<DimensionType>("Employee");
-
-  // GL accounts pulled from Rocks_ERP_Data.dbo.ErpAccounts for the CURRENT brand
-  // (the header/env brand context) — no per-dialog brand picker needed.
-  const { brand } = useBrand();
-  const [glOptions, setGlOptions] = useState<ErpGlOption[]>([]);
-  const [glLoading, setGlLoading] = useState(false);
-
-  useEffect(() => {
-    if (!brand) { setGlOptions([]); return; }
-    let cancelled = false;
-    setGlLoading(true);
-    fetch(`/api/request/clear-advance/settings/erp-gl-accounts?brand=${encodeURIComponent(brand)}`)
-      .then((r) => r.json())
-      .then((j) => { if (!cancelled && j?.ok) setGlOptions(j.data ?? []); })
-      .catch(() => { if (!cancelled) setGlOptions([]); })
-      .finally(() => { if (!cancelled) setGlLoading(false); });
-    return () => { cancelled = true; };
-  }, [brand]);
-  const glSelectOptions = useMemo(
-    () => glOptions.map((o) => ({ value: o.accountNo, label: o.accountNo, subLabel: o.displayName ?? undefined })),
-    [glOptions],
-  );
-
-  const inputStyle = {
-    background: "var(--bg-input)",
-    color: "var(--text-primary)",
-    border: "1px solid var(--border-input)",
-  } as const;
-
-  async function submit() {
-    if (!glAccountNo.trim()) {
-      toast.error("กรุณากรอกเลขที่บัญชี G/L");
-      return;
-    }
-    await onAdd({
-      glAccountNo: glAccountNo.trim(),
-      nameTh: nameTh.trim(),
-      nameEn: nameEn.trim(),
-      dimensionType,
-    });
-  }
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: "var(--overlay-bg)" }}
-    >
-      <div
-        className="rounded-2xl w-[480px] max-w-[95vw] overflow-hidden"
-        style={{
-          background: "var(--bg-card)",
-          boxShadow: "var(--shadow-modal)",
-          border: "1px solid var(--border-card)",
-        }}
-      >
-        <div
-          className="px-5 py-4 flex items-center justify-between"
-          style={{ borderBottom: "1px solid var(--border-card)" }}
-        >
-          <div>
-            <h2 className="text-[15px] font-bold" style={{ color: "var(--text-heading)" }}>
-              เพิ่มหมวดบัญชี G/L
-            </h2>
-            <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-              AP-3.2 · หมวดบัญชีสำหรับเคลียร์เงินทดรอง
-            </p>
-          </div>
-          <button
-            onClick={onClose}
-            className="w-7 h-7 rounded-lg flex items-center justify-center cursor-pointer border-none"
-            style={{ background: "var(--bg-badge)", color: "var(--text-muted)" }}
-          >
-            <X size={14} />
-          </button>
-        </div>
-
-        <div className="p-5 flex flex-col gap-3">
-          <div className="flex flex-col gap-1">
-            <label className="text-[12px] font-semibold flex items-center gap-1.5" style={{ color: "var(--text-secondary)" }}>
-              เลขที่บัญชี G/L *
-              {brand && (
-                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-                  style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}>
-                  ผังบัญชี {brand}
-                </span>
-              )}
-            </label>
-            <SearchableSelect
-              value={glAccountNo}
-              onChange={(v) => {
-                setGlAccountNo(v);
-                const opt = glOptions.find((o) => o.accountNo === v);
-                if (opt?.displayName && !nameTh.trim()) setNameTh(opt.displayName);
-              }}
-              options={glSelectOptions}
-              disabled={!brand || glLoading}
-              placeholder={!brand ? "ยังไม่ได้เลือกแบรนด์ที่ header" : glLoading ? "กำลังโหลดบัญชี..." : "ค้นหา/เลือกเลขที่บัญชี G/L"}
-              emptyLabel="— เลือก —"
-            />
-            {brand && !glLoading && glOptions.length === 0 && (
-              <span className="text-[11px]" style={{ color: "var(--text-info-yellow)" }}>
-                ไม่พบผังบัญชีของแบรนด์ {brand} ใน ERP (sync ErpAccounts ก่อน)
-              </span>
-            )}
-          </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-[12px] font-semibold" style={{ color: "var(--text-secondary)" }}>
-              ชื่อบัญชี (ไทย)
-            </label>
-            <input
-              value={nameTh}
-              onChange={(e) => setNameTh(e.target.value)}
-              placeholder="ชื่อภาษาไทย"
-              className="text-[13px] px-3 py-2 rounded-lg outline-none"
-              style={inputStyle}
-            />
-          </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-[12px] font-semibold" style={{ color: "var(--text-secondary)" }}>
-              ชื่อบัญชี (อังกฤษ)
-            </label>
-            <input
-              value={nameEn}
-              onChange={(e) => setNameEn(e.target.value)}
-              placeholder="English name"
-              className="text-[13px] px-3 py-2 rounded-lg outline-none"
-              style={inputStyle}
-            />
-          </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-[12px] font-semibold" style={{ color: "var(--text-secondary)" }}>
-              ประเภท Dimension
-            </label>
-            <select
-              value={dimensionType}
-              onChange={(e) => setDimensionType(e.target.value as DimensionType)}
-              className="text-[13px] px-3 py-2 rounded-lg outline-none"
-              style={inputStyle}
-            >
-              {DIMENSIONS.map((d) => (
-                <option key={d} value={d}>
-                  {DIM_LABEL[d]}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        <div
-          className="px-5 py-4 flex items-center justify-end gap-2"
-          style={{ borderTop: "1px solid var(--border-card)" }}
-        >
-          <button
-            onClick={onClose}
-            className="text-[12px] font-medium px-4 py-2 rounded-lg cursor-pointer border-none"
-            style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}
-          >
-            ยกเลิก
-          </button>
-          <button
-            onClick={submit}
-            disabled={busy}
-            className="text-[12px] font-bold px-4 py-2 rounded-lg cursor-pointer border-none"
-            style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)" }}
-          >
-            บันทึก
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+/*
+ * `AddGlDialog` lived here and is deleted (2026-09-14).
+ *
+ * The screen lists the company's whole postable chart of accounts now, so
+ * there is nothing to add: ticking a Dimension on an account IS what makes it
+ * a category, and `setGlCompanyRule` creates the register row on that first
+ * tick. A dialog that typed an account number by hand could only ever name one
+ * of the rows already on screen — or one that does not exist.
+ */
 
 export function ClrGlAccountSettings() {
   // PCTH by default, as asked — it is the company nearly every AP-3 clearing
@@ -251,7 +71,8 @@ export function ClrGlAccountSettings() {
   const [forbidden, setForbidden] = useState(false);
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
-  const [dialogOpen, setDialogOpen] = useState(false);
+  /** Which rows to show. 584 accounts is too many to read without it. */
+  const [filter, setFilter] = useState<"all" | "on" | "off">("all");
 
   const load = useCallback(async () => {
     const { data, forbidden } = await fetchList<GlCompanyRow>(
@@ -282,6 +103,9 @@ export function ClrGlAccountSettings() {
         glAccountNo: row.glAccountNo,
         dimensionType,
         isActive,
+        // What the row is showing — Business Central's name, unless accounting
+        // has given this account one of its own. Used only on a first tick.
+        nameTh: row.nameTh,
       });
       await load();
     } catch (e) {
@@ -320,43 +144,19 @@ export function ClrGlAccountSettings() {
     void saveRule(row, row.dimensionType, isActive);
   }
 
-  async function add(input: {
-    glAccountNo: string;
-    nameTh: string;
-    nameEn: string;
-    dimensionType: DimensionType;
-  }) {
-    setBusy(true);
-    try {
-      await postJson(GL_URL, {
-        mode: "create",
-        glAccountNo: input.glAccountNo,
-        nameTh: input.nameTh || null,
-        nameEn: input.nameEn || null,
-        dimensionType: input.dimensionType,
-        // The category reaches every company; it starts SWITCHED ON only here.
-        company,
-      });
-      toast.success(`เพิ่มหมวดบัญชีแล้ว — เปิดใช้งานให้ ${company} บริษัทอื่นเปิดเองได้`);
-      setDialogOpen(false);
-      await load();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter(
-      (r) =>
+    return rows.filter((r) => {
+      if (filter === "on" && !r.isActive) return false;
+      if (filter === "off" && r.isActive) return false;
+      if (!q) return true;
+      return (
         r.glAccountNo.toLowerCase().includes(q) ||
         (r.nameTh ?? "").toLowerCase().includes(q) ||
-        (r.nameEn ?? "").toLowerCase().includes(q),
-    );
-  }, [rows, query]);
+        (r.nameEn ?? "").toLowerCase().includes(q)
+      );
+    });
+  }, [rows, query, filter]);
 
   const activeCount = useMemo(() => rows.filter((r) => r.isActive).length, [rows]);
 
@@ -422,14 +222,39 @@ export function ClrGlAccountSettings() {
             style={{ color: "var(--text-primary)" }}
           />
         </div>
-        <button
-          onClick={() => setDialogOpen(true)}
-          className="flex items-center gap-1.5 text-[12px] font-medium px-3 py-2 rounded-lg cursor-pointer border-none shrink-0"
-          style={{ background: "var(--color-action)", color: "#fff" }}
+        {/* Not a dropdown: three states, and which one is showing has to be
+            readable at a glance on a list this long. */}
+        <div
+          className="inline-flex rounded-lg overflow-hidden shrink-0"
+          style={{ border: "1px solid var(--border-input)" }}
         >
-          <Plus size={13} /> เพิ่มหมวดบัญชี
-        </button>
+          {([
+            ["all", "ทั้งหมด", rows.length],
+            ["on", "ใช้งานอยู่", activeCount],
+            ["off", "ยังไม่ใช้งาน", rows.length - activeCount],
+          ] as const).map(([key, label, n]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setFilter(key)}
+              className="px-3 py-2 text-[12px] font-semibold cursor-pointer border-none whitespace-nowrap"
+              style={{
+                background: filter === key ? "var(--nav-active-bg)" : "var(--bg-card)",
+                color: filter === key ? "var(--nav-active-text)" : "var(--text-muted)",
+              }}
+            >
+              {label} <span style={{ opacity: 0.7 }}>{n}</span>
+            </button>
+          ))}
+        </div>
       </div>
+
+      <p className="text-[11px] m-0" style={{ color: "var(--text-faint)" }}>
+        {/* Said once, where somebody wondering "where is 610xxxxx?" will read
+            it, rather than left to be discovered. */}
+        แสดงผังบัญชีของ {company} ที่ลงรายการได้จริง — หัวบัญชีและยอดรวมไม่อยู่ในรายการนี้ ·
+        ติ๊ก Dimension คือการเปิดบัญชีนั้นให้ AP-3 ใช้
+      </p>
 
       {/* Table */}
       <div
@@ -465,16 +290,25 @@ export function ClrGlAccountSettings() {
               filtered.map((r) => (
                 <tr
                   key={r.id}
-                  style={{
-                    borderTop: "1px solid var(--border-card)",
-                    opacity: r.isActive ? 1 : 0.55,
-                  }}
+                  // No fade on an inactive row any more: with the whole chart
+                  // of accounts listed, OFF is most rows rather than the
+                  // exception, and fading them would grey out the page.
+                  style={{ borderTop: "1px solid var(--border-card)" }}
                 >
                   <td
                     className="px-3 py-2.5 font-bold whitespace-nowrap"
                     style={{ color: "var(--text-heading)" }}
                   >
                     {r.glAccountNo}
+                    {r.missingFromErp && (
+                      <span
+                        className="block text-[10px] font-normal"
+                        style={{ color: "var(--text-warning)" }}
+                        title="มีกฎอยู่ แต่ไม่พบบัญชีนี้ในผังบัญชีที่ sync มา"
+                      >
+                        ไม่อยู่ในผังบัญชีแล้ว
+                      </span>
+                    )}
                   </td>
                   <td className="px-3 py-2.5" style={{ color: "var(--text-primary)" }}>
                     {r.nameTh ?? "—"}
@@ -506,15 +340,34 @@ export function ClrGlAccountSettings() {
                     </div>
                   </td>
                   <td className="px-3 py-2.5 text-center">
-                    <input
-                      type="checkbox"
-                      checked={r.isActive}
-                      // Not merely refused on click: a box that cannot be
-                      // ticked should not invite the click.
+                    {/* A button rather than a checkbox: on a list this long the
+                        eye needs to find the ON rows without reading, and a
+                        native checkbox is the same grey square either way.
+                        Disabled — not merely refused on click — while the row
+                        has no Dimension, because a control that cannot do
+                        anything should not invite the click. */}
+                    <button
+                      type="button"
                       disabled={busy || !r.dimensionType}
-                      title={r.dimensionType ? undefined : "เลือก Dimension อย่างน้อย 1 อย่างก่อน"}
-                      onChange={(e) => toggleActive(r, e.target.checked)}
-                    />
+                      onClick={() => toggleActive(r, !r.isActive)}
+                      aria-pressed={r.isActive}
+                      aria-label={`${r.isActive ? "ปิด" : "เปิด"}ใช้งาน ${r.glAccountNo}`}
+                      title={
+                        r.dimensionType
+                          ? r.isActive
+                            ? "ใช้งานอยู่ — กดเพื่อปิด"
+                            : "ปิดอยู่ — กดเพื่อเปิด"
+                          : "เลือก Dimension อย่างน้อย 1 อย่างก่อน"
+                      }
+                      className="inline-flex items-center justify-center rounded-full cursor-pointer border-none p-1 disabled:cursor-not-allowed disabled:opacity-40"
+                      style={{ background: "transparent" }}
+                    >
+                      {r.isActive ? (
+                        <CheckCircle2 size={18} style={{ color: "var(--color-success)" }} />
+                      ) : (
+                        <Circle size={18} style={{ color: "var(--text-faint)" }} />
+                      )}
+                    </button>
                   </td>
                 </tr>
               ))
@@ -523,9 +376,6 @@ export function ClrGlAccountSettings() {
         </table>
       </div>
 
-      {dialogOpen && (
-        <AddGlDialog busy={busy} onClose={() => setDialogOpen(false)} onAdd={add} />
-      )}
     </div>
   );
 }

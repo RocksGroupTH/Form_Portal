@@ -174,6 +174,13 @@ export interface GlCompanyRow {
   /** `null` = this company has no rule for the category yet. */
   dimensionType: DimensionType | null;
   isActive: boolean;
+  /**
+   * The account is not in this company's synced chart of accounts — removed,
+   * blocked, or made non-postable in Business Central since a rule was set on
+   * it. Listed anyway: the rule is still live, and one nobody can see is one
+   * nobody can turn off.
+   */
+  missingFromErp?: boolean;
 }
 
 
@@ -198,28 +205,87 @@ export interface GlCompanyRow {
 export async function listGlAccountsForCompany(company: string): Promise<GlCompanyRow[]> {
   const co = (company ?? "").trim().toUpperCase();
   if (!co) return [];
-  const pool = await getAccPool();
-  const res = await pool.request()
-    .input("co", sql.NVarChar, co)
-    .query(`
-      SELECT g.Id, g.GlAccountNo, g.NameTh, g.NameEn, g.SortOrder,
-             c.DimensionType, c.IsActive
-      FROM [dbo].[AccClearAdvanceGl] AS g
-      LEFT JOIN [dbo].[AccClearAdvanceGlCompany] AS c
-        ON c.GlAccountNo = g.GlAccountNo AND c.Company = @co
-      ORDER BY g.SortOrder, g.GlAccountNo
-    `);
-  return (res.recordset as Record<string, unknown>[]).map((r) => ({
-    id: r.Id as number,
-    glAccountNo: r.GlAccountNo as string,
-    nameTh: (r.NameTh as string) ?? null,
-    nameEn: (r.NameEn as string) ?? null,
-    sortOrder: (r.SortOrder as number) ?? 0,
-    // Null means this company has no rule yet — NOT a default of Employee.
-    // Defaulting here would show a tick nobody made and hide the gap.
-    dimensionType: isDimensionType(r.DimensionType) ? r.DimensionType : null,
-    isActive: r.IsActive === null || r.IsActive === undefined ? false : !!r.IsActive,
-  }));
+
+  // **Two reads, merged here, rather than one cross-database join.** The chart
+  // of accounts lives in Rocks_ERP_Data and the rules in the form database, and
+  // a three-part join would have to interpolate MSSQL_ERP_DATA_DATABASE into
+  // the SQL — the env-drift hazard CLAUDE.md records for that very variable.
+  const [erp, form] = await Promise.all([
+    (async () => {
+      const pool = await getAppPool(ERP_DATA_DB);
+      const r = await pool.request().input("co", sql.NVarChar, co).query(`
+        SELECT AccountNo, DisplayName
+        FROM [dbo].[ErpAccounts]
+        WHERE BrandCode = @co
+          AND AccountCategory = 'GL'
+          AND IsActive = 1
+          AND (IsBlocked = 0 OR IsBlocked IS NULL)
+          -- POSTABLE ONLY. Measured 2026-09-14: PCTH has 1,126 active G/L
+          -- accounts and only 584 can be posted to; the rest are headings and
+          -- totals. Offering one is offering a choice BC refuses every time.
+          AND JSON_VALUE(RawJson, '$.accountType') = 'Posting'
+          AND JSON_VALUE(RawJson, '$.directPosting') = 'true'
+        ORDER BY AccountNo
+      `);
+      return r.recordset as Record<string, unknown>[];
+    })(),
+    (async () => {
+      const pool = await getAccPool();
+      const r = await pool.request().input("co", sql.NVarChar, co).query(`
+        SELECT g.Id, g.GlAccountNo, g.NameTh, g.NameEn, g.SortOrder,
+               c.DimensionType, c.IsActive
+        FROM [dbo].[AccClearAdvanceGl] AS g
+        LEFT JOIN [dbo].[AccClearAdvanceGlCompany] AS c
+          ON c.GlAccountNo = g.GlAccountNo AND c.Company = @co
+      `);
+      return r.recordset as Record<string, unknown>[];
+    })(),
+  ]);
+
+  const configured = new Map(form.map((r) => [String(r.GlAccountNo ?? "").trim(), r]));
+
+  const rows: GlCompanyRow[] = erp.map((a) => {
+    const no = String(a.AccountNo ?? "").trim();
+    const cfg = configured.get(no);
+    return {
+      id: (cfg?.Id as number) ?? 0,
+      glAccountNo: no,
+      // A configured Thai name WINS over Business Central's. The forty-three
+      // were named by accounting for this screen; BC's DisplayName is the
+      // chart's own wording and is what everything else falls back to.
+      nameTh: ((cfg?.NameTh as string) ?? "").trim() || ((a.DisplayName as string) ?? null),
+      // BC carries ONE name and it is Thai (measured: 610301001 =
+      // "เงินเดือนและค่าจ้างพนักงาน"), so there is nothing to fall back to here.
+      nameEn: ((cfg?.NameEn as string) ?? "").trim() || null,
+      sortOrder: (cfg?.SortOrder as number) ?? 0,
+      dimensionType: isDimensionType(cfg?.DimensionType)
+        ? (cfg?.DimensionType as DimensionType)
+        : null,
+      isActive: cfg?.IsActive === null || cfg?.IsActive === undefined ? false : !!cfg.IsActive,
+    };
+  });
+
+  // A rule on an account the sync no longer returns still lists, at the end:
+  // it is live — the picker and the submit guard both still honour it — and a
+  // rule nobody can see is a rule nobody can turn off.
+  for (const entry of Array.from(configured.entries())) {
+    const [no, cfg] = entry;
+    if (rows.some((r) => r.glAccountNo === no)) continue;
+    rows.push({
+      id: (cfg.Id as number) ?? 0,
+      glAccountNo: no,
+      nameTh: (cfg.NameTh as string) ?? null,
+      nameEn: (cfg.NameEn as string) ?? null,
+      sortOrder: (cfg.SortOrder as number) ?? 0,
+      dimensionType: isDimensionType(cfg.DimensionType)
+        ? (cfg.DimensionType as DimensionType)
+        : null,
+      isActive: !!cfg.IsActive,
+      missingFromErp: true,
+    });
+  }
+
+  return rows;
 }
 
 /**
@@ -236,6 +302,8 @@ export async function setGlCompanyRule(input: {
   glAccountNo: string;
   dimensionType: DimensionType;
   isActive: boolean;
+  /** Business Central's name, used only if this account has no register row yet. */
+  nameTh?: string | null;
 }): Promise<void> {
   const co = (input.company ?? "").trim().toUpperCase();
   const glNo = (input.glAccountNo ?? "").trim();
@@ -246,7 +314,22 @@ export async function setGlCompanyRule(input: {
   const pool = await getAccPool();
   const exists = await pool.request().input("no", sql.NVarChar, glNo)
     .query(`SELECT TOP 1 Id FROM [dbo].[AccClearAdvanceGl] WHERE GlAccountNo=@no`);
-  if (exists.recordset.length === 0) throw new Error("ไม่พบหมวดบัญชีนี้");
+  if (exists.recordset.length === 0) {
+    // **The register row is created here, not refused.** The settings screen
+    // now lists the company's whole postable chart of accounts, so the first
+    // tick on an account is also the first time it has been a category — and
+    // the register is where the form's PICKER reads its names from, so a rule
+    // without one would be live and nameless. The name comes from the caller
+    // because it comes from Business Central, which this function does not read.
+    const name = (input.nameTh ?? "").trim() || glNo;
+    await pool.request()
+      .input("no", sql.NVarChar, glNo)
+      .input("th", sql.NVarChar, name)
+      .input("dim", sql.NVarChar, input.dimensionType)
+      .query(`INSERT INTO [dbo].[AccClearAdvanceGl]
+                (GlAccountNo, NameTh, NameEn, DimensionType, IsActive, SortOrder)
+              VALUES (@no, @th, NULL, @dim, 1, 0)`);
+  }
 
   await pool.request()
     .input("co", sql.NVarChar, co)

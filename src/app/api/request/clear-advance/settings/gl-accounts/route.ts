@@ -19,10 +19,10 @@ import { isDimensionType } from "@/lib/clr/gl-dimension";
  * GET  ?company=PCTH — every category, with that company's dimension and
  *                      on/off switch, and `dimensionType: null` where it has no
  *                      rule yet.
- * POST — two shapes, told apart by whether `glAccountNo` names a category that
- *        already exists:
- *          { company, glAccountNo, dimensionType, isActive }  set one rule
- *          { glAccountNo, nameTh, nameEn, dimensionType, company } create one
+ * POST { company, glAccountNo, dimensionType, isActive, nameTh } — set one
+ *        company's rule. `nameTh` is Business Central's name and is used only
+ *        when the account has no register row yet, which is what the first tick
+ *        on one of the company's own chart accounts creates.
  */
 export async function GET(req: NextRequest) {
   const session = await requireRole(["IT Admin", "System Admin"]);
@@ -69,6 +69,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Kept for the one caller that still edits a category's own names; there
+    // is no "add a category" path any more — every postable account is already
+    // on the screen, and ticking one is what makes it a category.
     if (body.mode === "create" || body.id) {
       // The category itself — its number and its two names, shared by every
       // company. `upsertGlAccount` fans a NEW one out to all four.
@@ -89,6 +92,10 @@ export async function POST(req: NextRequest) {
       glAccountNo: body.glAccountNo ?? "",
       dimensionType: body.dimensionType,
       isActive: body.isActive !== false,
+      // Only used when this account has no register row yet — the first tick on
+      // one of the company's own chart accounts. The screen has the name on
+      // screen already; the service does not read Business Central.
+      nameTh: body.nameTh ?? null,
     });
     return NextResponse.json({ ok: true });
   } catch (e) {
