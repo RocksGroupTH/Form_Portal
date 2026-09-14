@@ -7,11 +7,17 @@
  * fact in two shapes, so the mapping lives here once rather than inline in the
  * panel, and `gl-dimension.test.ts` pins the round trip in both directions.
  *
- * **There is deliberately no value for "neither".** A category nobody may
- * charge is `IsActive = 0`, not a row with an empty dimension — which is what
- * turns "at least one dimension" from a check somebody has to remember into a
- * property of the storage. `nextDimension` is therefore allowed to refuse, and
- * the one thing it refuses is unticking the last box.
+ * **There is deliberately no value for "neither", and unticking the last box
+ * is not refused — it CLEARS the company's rule.** The column has nothing to
+ * hold "no dimension", but the screen has always had a state for it: an account
+ * this company has no rule row for, which reads "ยังไม่ได้ตั้งค่า". So the last
+ * untick returns the account to exactly where it was before anybody touched it,
+ * and `nextDimension` answers `{ kind: "clear" }` rather than an error.
+ *
+ * It refused at first, on the reasoning that "at least one dimension" should be
+ * a property of the storage. That was true and it was still wrong: a row ticked
+ * by mistake had **no way back at all** — `ใช้งาน` only switches a rule off, it
+ * does not remove one — and the user said so (2026-09-14).
  *
  * Pure and import-free.
  */
@@ -27,9 +33,6 @@ export interface DimensionChecks {
   branch: boolean;
   employee: boolean;
 }
-
-export const DIMENSION_REQUIRED_ERROR =
-  "ต้องเลือก Dimension อย่างน้อย 1 อย่าง — ถ้าไม่ต้องการหมวดนี้แล้วให้ติ๊ก “ใช้งาน” ออกแทน";
 
 /** The stored value for a tick pair, or `null` when neither is ticked. */
 export function dimensionFromChecks(checks: DimensionChecks): DimensionType | null {
@@ -47,19 +50,17 @@ export function dimensionChecks(dimensionType: DimensionType): DimensionChecks {
   };
 }
 
-export interface DimensionChange {
-  /** The value to store, or `null` when the click is refused. */
-  dimensionType: DimensionType | null;
-  /** Why it was refused, or `null`. Never both null and a value. */
-  error: string | null;
-}
+/**
+ * What a click resolves to. A discriminated union rather than a nullable value,
+ * so "store this" and "remove the rule" cannot be confused for one another by a
+ * caller that only checks for null.
+ */
+export type DimensionChange =
+  | { kind: "set"; dimensionType: DimensionType }
+  | { kind: "clear" };
 
 /**
- * What one click on one box means.
- *
- * Returns the new stored value, or refuses — and the only refusal is unticking
- * the last box, because the column has nothing to hold that state and because
- * a category with no dimension is not a thing anybody wants: they want it off.
+ * What one click on one box means: the new stored value, or clear the rule.
  */
 export function nextDimension(
   /**
@@ -76,9 +77,7 @@ export function nextDimension(
   const base: DimensionChecks = current ? dimensionChecks(current) : { branch: false, employee: false };
   const next = { ...base, [kind]: checked } as DimensionChecks;
   const dimensionType = dimensionFromChecks(next);
-  return dimensionType === null
-    ? { dimensionType: null, error: DIMENSION_REQUIRED_ERROR }
-    : { dimensionType, error: null };
+  return dimensionType === null ? { kind: "clear" } : { kind: "set", dimensionType };
 }
 
 /** Narrow an untrusted string, for the write path. */

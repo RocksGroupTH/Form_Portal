@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole } from "@/lib/api-auth";
 import {
+  clearGlCompanyRule,
   listGlAccountsForCompany,
   setGlAccountNames,
   setGlCompanyRule,
@@ -20,6 +21,8 @@ import { isDimensionType } from "@/lib/clr/gl-dimension";
  * GET  ?company=PCTH — every category, with that company's dimension and
  *                      on/off switch, and `dimensionType: null` where it has no
  *                      rule yet.
+ * POST { mode: "clear", company, glAccountNo } — remove this company's rule,
+ *        which is what unticking the last Dimension box means.
  * POST { mode: "names", glAccountNo, nameTh, nameEn } — rename a category.
  *        The names are SHARED by every company; only the rules are per company.
  * POST { company, glAccountNo, dimensionType, isActive, nameTh } — set one
@@ -51,7 +54,7 @@ export async function POST(req: NextRequest) {
   if (session instanceof Response) return session;
   try {
     const body = (await req.json()) as {
-      mode?: "rule" | "create" | "names";
+      mode?: "rule" | "create" | "names" | "clear";
       company?: string;
       glAccountNo?: string;
       nameTh?: string | null;
@@ -61,6 +64,13 @@ export async function POST(req: NextRequest) {
       id?: number;
       sortOrder?: number;
     };
+
+    // Clearing carries no dimension either — it is the absence of one — so it
+    // is answered before the narrowing below, which would refuse it outright.
+    if (body.mode === "clear") {
+      await clearGlCompanyRule(body.company ?? "", body.glAccountNo ?? "");
+      return NextResponse.json({ ok: true });
+    }
 
     // Renaming carries no dimension, so it is answered before the narrowing
     // below — which exists for the rule write and would refuse this outright.

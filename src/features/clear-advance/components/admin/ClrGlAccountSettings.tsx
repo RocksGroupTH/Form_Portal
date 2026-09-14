@@ -200,9 +200,28 @@ export function ClrGlAccountSettings() {
   function toggleDimension(row: GlCompanyRow, kind: DimensionKind, checked: boolean) {
     // Passed straight through, null and all: a stand-in here turned one tick
     // into two — see `nextDimension`.
-    const { dimensionType, error } = nextDimension(row.dimensionType, kind, checked);
-    if (!dimensionType) return void toast.error(error ?? "");
-    void saveRule(row, dimensionType, row.isActive);
+    const change = nextDimension(row.dimensionType, kind, checked);
+    if (change.kind === "clear") return void clearRule(row);
+    void saveRule(row, change.dimensionType, row.isActive);
+  }
+
+  /**
+   * Unticking the last box removes this company's rule outright — the account
+   * goes back to "ยังไม่ได้ตั้งค่า", which is where it was before anybody ticked
+   * it. Said in a toast rather than behind a confirm: it is the way OUT of a
+   * mistaken tick, and a dialog in front of an undo is a dialog in the way.
+   */
+  async function clearRule(row: GlCompanyRow) {
+    setBusy(true);
+    try {
+      await postJson(GL_URL, { mode: "clear", company, glAccountNo: row.glAccountNo });
+      toast.success(`${row.glAccountNo} — ล้างการตั้งค่าของ ${company} แล้ว`);
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "ล้างการตั้งค่าไม่สำเร็จ");
+    } finally {
+      setBusy(false);
+    }
   }
 
   /**

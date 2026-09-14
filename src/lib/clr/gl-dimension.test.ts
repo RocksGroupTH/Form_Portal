@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  DIMENSION_REQUIRED_ERROR,
   dimensionFromChecks,
   dimensionChecks,
   nextDimension,
@@ -41,28 +40,27 @@ test("'Both' means both boxes, not a third box", () => {
 /* ── what one click does ── */
 
 test("ticking the second box widens the row to Both", () => {
-  assert.deepEqual(nextDimension("Employee", "branch", true), { dimensionType: "Both", error: null });
+  assert.deepEqual(nextDimension("Employee", "branch", true), { kind: "set", dimensionType: "Both" });
 });
 
 test("unticking one of two narrows it to the other", () => {
-  assert.deepEqual(nextDimension("Both", "branch", false), { dimensionType: "Employee", error: null });
-  assert.deepEqual(nextDimension("Both", "employee", false), { dimensionType: "Branch", error: null });
+  assert.deepEqual(nextDimension("Both", "branch", false), { kind: "set", dimensionType: "Employee" });
+  assert.deepEqual(nextDimension("Both", "employee", false), { kind: "set", dimensionType: "Branch" });
 });
 
-test("unticking the LAST box is refused, and says what to do instead", () => {
-  // Refused rather than stored, because the column cannot hold "neither" —
-  // so "at least one dimension" is a property of the storage rather than a
-  // check somebody has to remember to run. Turning the category off is what
-  // `ใช้งาน` is for, and the message says so.
-  const r = nextDimension("Employee", "employee", false);
-  assert.equal(r.dimensionType, null);
-  assert.equal(r.error, DIMENSION_REQUIRED_ERROR);
-  assert.match(r.error ?? "", /ใช้งาน/);
+test("unticking the LAST box CLEARS the company's rule", () => {
+  // Not a refusal. The column has no value for "neither", but the screen has
+  // always had a state for it — "ยังไม่ได้ตั้งค่าให้ PCTH", which is simply no
+  // row — so unticking the last box returns the account to exactly where it was
+  // before anybody touched it. Refusing instead left a row ticked by accident
+  // with no way back at all.
+  assert.deepEqual(nextDimension("Employee", "employee", false), { kind: "clear" });
+  assert.deepEqual(nextDimension("Branch", "branch", false), { kind: "clear" });
 });
 
 test("ticking a box that is already ticked changes nothing and is not an error", () => {
-  assert.deepEqual(nextDimension("Both", "branch", true), { dimensionType: "Both", error: null });
-  assert.deepEqual(nextDimension("Employee", "employee", true), { dimensionType: "Employee", error: null });
+  assert.deepEqual(nextDimension("Both", "branch", true), { kind: "set", dimensionType: "Both" });
+  assert.deepEqual(nextDimension("Employee", "employee", true), { kind: "set", dimensionType: "Employee" });
 });
 
 /* ── a row this company has no rule for yet ── */
@@ -72,14 +70,12 @@ test("ticking one box on an unruled row gives THAT box, not both", () => {
   // at all. Passing a pretend `Employee` in and ticking Branch answers `Both`
   // — one click silently ticking two boxes, on the setting that decides what a
   // line charging the account must carry. `null` has to reach the rule.
-  assert.deepEqual(nextDimension(null, "branch", true), { dimensionType: "Branch", error: null });
-  assert.deepEqual(nextDimension(null, "employee", true), { dimensionType: "Employee", error: null });
+  assert.deepEqual(nextDimension(null, "branch", true), { kind: "set", dimensionType: "Branch" });
+  assert.deepEqual(nextDimension(null, "employee", true), { kind: "set", dimensionType: "Employee" });
 });
 
-test("unticking on an unruled row is refused like any other last box", () => {
-  // Unreachable from the screen — there is nothing ticked to untick — but the
-  // answer has to be a refusal rather than a stored "neither".
-  const r = nextDimension(null, "branch", false);
-  assert.equal(r.dimensionType, null);
-  assert.equal(r.error, DIMENSION_REQUIRED_ERROR);
+test("unticking on an unruled row clears a rule that is already absent", () => {
+  // Unreachable from the screen — there is nothing ticked to untick — and
+  // harmless: the delete it asks for finds nothing to delete.
+  assert.deepEqual(nextDimension(null, "branch", false), { kind: "clear" });
 });

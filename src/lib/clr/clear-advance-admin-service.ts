@@ -1,9 +1,5 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
-import {
-  DIMENSION_REQUIRED_ERROR,
-  isDimensionType,
-  type DimensionType,
-} from "./gl-dimension";
+import { isDimensionType, type DimensionType } from "./gl-dimension";
 import { getAppPool } from "@/lib/db/mssql";
 import { loadErpJournalBuildContext } from "@/lib/acc/erp-journal-context";
 import { AP3_FORM_CODE } from "@/features/clear-advance/constants";
@@ -364,6 +360,30 @@ export async function setGlAccountNames(input: {
 }
 
 /**
+ * Remove one company's rule for one category, returning the account to
+ * "ยังไม่ได้ตั้งค่า" — exactly where it was before anybody ticked it.
+ *
+ * **The register row is left alone.** It carries the account's names, which are
+ * shared by every company, and another company may well still have a rule
+ * pointing at it. Only this company's rule goes.
+ *
+ * Deleting rather than storing an empty dimension is what lets the screen offer
+ * "untick everything": `DimensionType` has no value for "neither", and the
+ * absence of a row already means precisely that.
+ */
+export async function clearGlCompanyRule(company: string, glAccountNo: string): Promise<void> {
+  const co = (company ?? "").trim().toUpperCase();
+  const glNo = (glAccountNo ?? "").trim();
+  if (!co || !glNo) return;
+  const pool = await getAccPool();
+  await pool.request()
+    .input("co", sql.NVarChar, co)
+    .input("no", sql.NVarChar, glNo)
+    .query(`DELETE FROM [dbo].[AccClearAdvanceGlCompany]
+            WHERE Company=@co AND GlAccountNo=@no`);
+}
+
+/**
  * Set one company's rule for one category. Creates the row if this company has
  * none yet, which is how a category reaches a company it was not created from.
  *
@@ -384,7 +404,7 @@ export async function setGlCompanyRule(input: {
   const glNo = (input.glAccountNo ?? "").trim();
   if (!co) throw new Error("กรุณาเลือกบริษัท");
   if (!glNo) throw new Error("กรุณาระบุเลขที่บัญชี G/L");
-  if (!isDimensionType(input.dimensionType)) throw new Error(DIMENSION_REQUIRED_ERROR);
+  if (!isDimensionType(input.dimensionType)) throw new Error("ประเภท Dimension ไม่ถูกต้อง");
 
   const pool = await getAccPool();
   const exists = await pool.request().input("no", sql.NVarChar, glNo)
