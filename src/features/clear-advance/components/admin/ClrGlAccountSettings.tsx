@@ -10,6 +10,7 @@ import {
   type DimensionKind,
   type DimensionType,
 } from "@/lib/clr/gl-dimension";
+import { nameOverrideFor } from "@/lib/clr/gl-name";
 import {
   fetchList,
   postJson,
@@ -37,6 +38,8 @@ interface GlCompanyRow {
   isActive: boolean;
   /** The stored Thai override, or null where `nameTh` is Business Central's. */
   nameThCustom: string | null;
+  /** Business Central's own wording, which `nameTh` falls back to. */
+  nameErp: string | null;
   /** A rule on an account the sync no longer returns — live, and said so on the row. */
   missingFromErp?: boolean;
 }
@@ -174,13 +177,21 @@ export function ClrGlAccountSettings() {
    * into the register the first time somebody tabbed through the row.
    */
   async function saveNames(row: GlCompanyRow, nameTh: string, nameEn: string) {
-    if ((row.nameThCustom ?? "") === nameTh.trim() && (row.nameEn ?? "") === nameEn.trim()) return;
+    // **Typing Business Central's own wording back is not an override.** The box
+    // is filled with it, so tabbing through a row must store nothing — and
+    // clearing the box means the same thing, "follow BC", which is why both
+    // resolve to null. Without this the first tab through the column would
+    // freeze today's BC wording into the register on every row it touched.
+    const stored = nameOverrideFor(nameTh, row.nameErp);
+    if (stored === (row.nameThCustom ?? null) && (row.nameEn ?? "") === nameEn.trim()) return;
     setBusy(true);
     try {
       await postJson(GL_URL, {
         mode: "names",
         glAccountNo: row.glAccountNo,
-        nameTh,
+        // `stored`, not what was typed: the register holds an override or
+        // nothing, and "the same as BC" is nothing.
+        nameTh: stored ?? "",
         nameEn,
         // Only used if this account has no register row yet, so naming an
         // account nobody has ticked does not lose BC's own wording.
@@ -352,7 +363,7 @@ export function ClrGlAccountSettings() {
             it, rather than left to be discovered. */}
         แสดงผังบัญชีของ {company} ที่ลงรายการได้จริง — หัวบัญชีและยอดรวมไม่อยู่ในรายการนี้ ·
         ติ๊ก Dimension คือการเปิดบัญชีนั้นให้ AP-3 ใช้ · <b>ชื่อใช้ร่วมกันทุกบริษัท</b> —
-        แก้ที่นี่มีผลกับทุกบริษัท · ชื่อไทยที่เว้นว่างจะใช้ชื่อจาก Business Central
+        แก้ที่นี่มีผลกับทุกบริษัท · ชื่อไทยเริ่มต้นมาจาก Business Central — พิมพ์ทับได้ ลบให้ว่างคือกลับไปใช้ของ BC
       </p>
 
       {/* Table */}
@@ -411,11 +422,12 @@ export function ClrGlAccountSettings() {
                   </td>
                   <td className="px-3 py-2.5">
                     <NameInput
-                      defaultValue={r.nameThCustom ?? ""}
-                      // Business Central's own wording, shown rather than
-                      // stored: grey here means the register has no override
-                      // and the name follows BC.
-                      placeholder={r.nameTh ?? ""}
+                      // The name the row actually shows, override or Business
+                      // Central's. It held only the override before, so 541 of
+                      // 584 boxes rendered as grey placeholder text and read as
+                      // missing data rather than as "following BC".
+                      defaultValue={r.nameTh ?? ""}
+                      placeholder="—"
                       disabled={busy}
                       ariaLabel={`ชื่อไทยของ ${r.glAccountNo}`}
                       onCommit={(v) => void saveNames(r, v, r.nameEn ?? "")}
@@ -425,11 +437,12 @@ export function ClrGlAccountSettings() {
                     <NameInput
                       defaultValue={r.nameEn ?? ""}
                       // Nothing to fall back to: Business Central carries one
-                      // name and it is Thai.
-                      placeholder="—"
+                      // name and it is Thai. An empty box with a visible border
+                      // says "type here" better than a dash does.
+                      placeholder=""
                       disabled={busy}
                       ariaLabel={`ชื่ออังกฤษของ ${r.glAccountNo}`}
-                      onCommit={(v) => void saveNames(r, r.nameThCustom ?? "", v)}
+                      onCommit={(v) => void saveNames(r, r.nameTh ?? "", v)}
                     />
                   </td>
                   <td className="px-3 py-2.5 whitespace-nowrap">

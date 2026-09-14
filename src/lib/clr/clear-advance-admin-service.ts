@@ -169,6 +169,8 @@ export interface GlCompanyRow {
   sortOrder: number;
   /** The stored Thai override, or `null` where `nameTh` is Business Central's. */
   nameThCustom: string | null;
+  /** Business Central's own wording, which `nameTh` falls back to. */
+  nameErp: string | null;
   /** `null` = this company has no rule for the category yet. */
   dimensionType: DimensionType | null;
   isActive: boolean;
@@ -252,12 +254,14 @@ export async function listGlAccountsForCompany(company: string): Promise<GlCompa
       // were named by accounting for this screen; BC's DisplayName is the
       // chart's own wording and is what everything else falls back to.
       nameTh: ((cfg?.NameTh as string) ?? "").trim() || ((a.DisplayName as string) ?? null),
-      // What is actually STORED, as against what is shown. The screen's Thai
-      // input holds this and shows Business Central's name as its placeholder,
-      // so an empty box means "follow BC" and a filled one means "override" —
-      // a box pre-filled with BC's own name would freeze today's wording into
-      // the register the first time anybody tabbed through it.
+      // What is actually STORED, as against what is shown. The screen fills its
+      // Thai box with `nameTh` and decides against `nameErp` whether typing
+      // changed anything, so tabbing through a row saves nothing and today's
+      // Business Central wording is never frozen into the register by accident.
       nameThCustom: ((cfg?.NameTh as string) ?? "").trim() || null,
+      // Business Central's own wording for this account, or null for a rule on
+      // an account the sync no longer returns.
+      nameErp: ((a.DisplayName as string) ?? "").trim() || null,
       // BC carries ONE name and it is Thai (measured: 610301001 =
       // "เงินเดือนและค่าจ้างพนักงาน"), so there is nothing to fall back to here.
       nameEn: ((cfg?.NameEn as string) ?? "").trim() || null,
@@ -280,6 +284,8 @@ export async function listGlAccountsForCompany(company: string): Promise<GlCompa
       glAccountNo: no,
       nameTh: (cfg.NameTh as string) ?? null,
       nameThCustom: (cfg.NameTh as string) ?? null,
+      // Not in the synced chart at all — there is no BC wording to compare with.
+      nameErp: null,
       nameEn: (cfg.NameEn as string) ?? null,
       sortOrder: (cfg.SortOrder as number) ?? 0,
       dimensionType: isDimensionType(cfg.DimensionType)
