@@ -1,12 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import useSWR from "swr";
 import { Building2 } from "lucide-react";
 import { toast } from "sonner";
 import { BrandToggleCard, BrandToggleGrid } from "@/components/settings/BrandToggleCard";
 
 const LIST = "/api/request/advance/settings/erp-interface";
+/**
+ * The company brand master, for its ORDER.
+ *
+ * AP-1's path and deliberately so — it reads `Rocks_Codex.dbo.Brand`, not an
+ * AP-1 list, and AP-17 and AP-4's panels already share it for the same reason.
+ * It touches no form database, so the AP-1 classification on the prefix costs
+ * nothing here.
+ */
+const MASTER = "/api/request/accounting/options/all-brands";
 const TOGGLE = "/api/request/advance/settings/brand-active";
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -40,13 +49,50 @@ interface BrandRow {
  * is this toggle, so a list of granted brands alone could never grow.
  *
  * **The card is `BrandToggleCard`, shared with AP-1, AP-17 and AP-4** since
- * 2026-09-14 — every form's brand tab renders the same tile. The ORDER stays
- * each form's own: here it is the endpoint's, `AccFormBrand` rows first and
- * then the brand master, and that was the user's condition on the change.
+ * 2026-09-14 — every form's brand tab renders the same tile, in the brand
+ * master's order. Getting the order right took a second pass: this panel lists
+ * from the Interface ERP endpoint, which emits `AccFormBrand` rows before the
+ * master's leftovers, so it opened on PLM where every other form opens on
+ * ROCKS. See `rows` below.
  */
 export function AdvClrBrandSettings() {
   const { data, isLoading, error, mutate } = useSWR<{ ok: boolean; data?: BrandRow[] }>(LIST, fetcher);
-  const rows = data?.ok && data.data ? data.data : [];
+  const unordered = data?.ok && data.data ? data.data : [];
+  const { data: masterData } = useSWR<{ ok: boolean; data?: { brandCode: string }[] }>(
+    MASTER,
+    fetcher,
+  );
+
+  /**
+   * The brand master's order (user, 2026-09-14: "แบรนด์ที่เบิกได้ AP-2 & AP-3
+   * เรียงตามในรูป" — the picture being AP-17's tab).
+   *
+   * The list itself has to keep coming from the Interface ERP endpoint, which
+   * is the only one that unions `AccFormBrand` with the master — a brand with
+   * no row would otherwise be missing from the one screen that can create it.
+   * What that endpoint cannot give is a sequence anybody recognises: it emits
+   * AP-2's `AccFormBrand` rows in their own `SortOrder` first and the master's
+   * leftovers after, so PLM led the list while every other form led with ROCKS.
+   * Sorting here rather than changing the endpoint leaves the Interface ERP
+   * screen's own grouping alone.
+   *
+   * **A brand the master does not list keeps its place at the end**, in the
+   * order it arrived — dropping it would hide the row, and `ROCKS` on AP-4 is a
+   * live example of a code the master does not know.
+   */
+  const rows = useMemo(() => {
+    const order = masterData?.ok && masterData.data ? masterData.data : [];
+    if (order.length === 0) return unordered;
+    const rank = new Map(order.map((b, i) => [b.brandCode, i]));
+    return unordered
+      .map((row, i) => ({ row, i }))
+      .sort((a, b) => {
+        const ra = rank.get(a.row.brandCode) ?? order.length + a.i;
+        const rb = rank.get(b.row.brandCode) ?? order.length + b.i;
+        return ra - rb;
+      })
+      .map((x) => x.row);
+  }, [unordered, masterData]);
   const [busy, setBusy] = useState<string | null>(null);
 
   async function toggle(row: BrandRow, active: boolean) {
