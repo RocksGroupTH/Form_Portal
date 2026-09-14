@@ -116,10 +116,54 @@ export function belongsInErpQueue(formCode: string, status: string): boolean {
  * send, in `erp-queue-service.ts`, which already opens the pool this would
  * need.
  */
+/**
+ * The brand's Interface ERP settings, as far as readiness reads them.
+ *
+ * The same four values `ReimburseJournalConfig` carries — kept as a separate
+ * shape rather than imported, so this file stays reachable from a test: the
+ * payload module is pure, but importing it would tie this policy to a module
+ * that may not always be.
+ */
+export interface ErpConfigCheck {
+  bankAccountNo: string | null;
+  journalBatchName: string | null;
+  vatInputGlAccountNo: string | null;
+  whtPayableGlAccountNo: string | null;
+}
+
+/** One line, as far as readiness reads it. */
+export interface ErpReadinessItem {
+  category: string | null;
+  amount: number | null;
+  vatAmount?: number | null;
+  whtAmount?: number | null;
+}
+
+const filled = (v: string | null | undefined): boolean => (v ?? "").trim() !== "";
+
+/**
+ * Is this claim complete enough for a journal to be built from it?
+ *
+ * **Every check here mirrors something `buildReimburseJournalPayload` THROWS
+ * on**, and that correspondence is the point: the builder keeps all of its own
+ * refusals, so this is a screen rather than a gate, and a claim that reads
+ * "ready" here and then fails to build means the two have drifted.
+ *
+ * **`config` is required and nullable rather than optional.** Absent, a caller
+ * that forgot it would silently lose four checks and every row would read
+ * green; `null` says the brand's settings could not be resolved at all — an
+ * unmapped brand, or a failed load — and is reported as its own issue.
+ *
+ * The VAT and withholding accounts are demanded only by a claim that actually
+ * carries VAT or withholds, exactly as the builder demands them, so a brand
+ * that has never needed either is not held up by settings it will never use.
+ */
 export function erpReadiness(
-  items: readonly { category: string | null; amount: number | null }[],
+  items: readonly ErpReadinessItem[],
+  config: ErpConfigCheck | null,
 ): ErpReadiness {
-  // Empty array is not ready
+  // Refused rather than allowed: a claim with no lines reaching a journal
+  // builder is the AP-1 failure quoted above, in its purest form.
   if (items.length === 0) {
     return {
       ready: false,
@@ -130,14 +174,40 @@ export function erpReadiness(
   const issues: string[] = [];
 
   for (let i = 0; i < items.length; i++) {
-    const item = items[i];
-    const category = item.category;
-
-    // Check if category is null or blank (only whitespace)
-    if (category == null || (typeof category === "string" && category.trim() === "")) {
-      // Line number is 1-indexed (human counting)
+    const category = items[i].category;
+    // Line numbers as a human counts them, and EVERY bad line is named:
+    // reporting only the first means a second round trip to find the second.
+    if (!filled(category)) {
       issues.push(`บรรทัดที่ ${i + 1} ยังไม่ได้เลือกผังบัญชี`);
     }
+  }
+
+  const hasVat = items.some((it) => Number(it.vatAmount ?? 0) > 0);
+  const hasWht = items.some((it) => Number(it.whtAmount ?? 0) > 0);
+
+  if (!config) {
+    issues.push("ยังไม่ได้ตั้งค่า Interface ERP ของแบรนด์นี้");
+  } else {
+    if (!filled(config.bankAccountNo)) issues.push("ยังไม่ได้ตั้งค่า Bank Account ของแบรนด์นี้");
+    if (!filled(config.journalBatchName)) issues.push("ยังไม่ได้ตั้งค่า Journal Batch ของแบรนด์นี้");
+    if (hasVat && !filled(config.vatInputGlAccountNo)) {
+      issues.push("มี VAT แต่ยังไม่ได้ตั้งค่าบัญชีภาษีซื้อของแบรนด์นี้");
+    }
+    if (hasWht && !filled(config.whtPayableGlAccountNo)) {
+      issues.push("มีภาษีหัก ณ ที่จ่ายแต่ยังไม่ได้ตั้งค่าบัญชีภาษีหัก ณ ที่จ่ายค้างจ่าย");
+    }
+  }
+
+  // The builder refuses a claim whose bank line would be 0 or negative: a
+  // payment document that moves no money is one somebody has to find and
+  // reverse. `amount` is the line total INCLUDING VAT, which is what the net
+  // is taken from.
+  const net = items.reduce(
+    (sum, it) => sum + Number(it.amount ?? 0) - Number(it.whtAmount ?? 0),
+    0,
+  );
+  if (Math.round(net * 100) / 100 <= 0) {
+    issues.push("ยอดจ่ายสุทธิของใบนี้ไม่มากกว่า 0 — ตรวจยอดหัก ณ ที่จ่าย");
   }
 
   return {
@@ -207,7 +277,7 @@ interface AccumulatedRow {
   erpEnvironment: string | null;
   erpSentAt: string | null;
   erpError: string | null;
-  items: { category: string | null; amount: number | null }[];
+  items: ErpReadinessItem[];
 }
 
 /**
@@ -245,6 +315,14 @@ export function accumulateErpQueueRows(
   recordset: readonly Record<string, unknown>[],
   scope: readonly string[] | null,
   claimTargets: ReadonlyMap<string, string>,
+  /**
+   * Claim brand (upper-case) → that brand's Interface ERP settings.
+   *
+   * A brand absent from the map reads `null`, which `erpReadiness` reports as
+   * "not configured" rather than passing over — the fail-safe direction, since
+   * a green row on a claim that cannot be built is the expensive mistake.
+   */
+  configByBrand: ReadonlyMap<string, ErpConfigCheck>,
 ): ReimburseErpQueueRow[] {
   // Never convert `null` to `[]` here — see the docblock above.
   if (scope === null) return [];
@@ -294,6 +372,11 @@ export function accumulateErpQueueRows(
       acc.items.push({
         category: (x.ItemCategory as string | null) ?? null,
         amount: numOrNull(x.ItemAmount),
+        // Both read from the row, never assumed: whether the brand needs a
+        // VAT-input or a withholding account configured is a property of what
+        // is actually on the claim.
+        vatAmount: numOrNull(x.ItemVatAmount),
+        whtAmount: numOrNull(x.ItemWhtAmount),
       });
     }
   }
@@ -316,7 +399,10 @@ export function accumulateErpQueueRows(
       erpEnvironment: acc.erpEnvironment,
       erpSentAt: acc.erpSentAt,
       erpError: acc.erpError,
-      readiness: erpReadiness(acc.items),
+      readiness: erpReadiness(
+        acc.items,
+        configByBrand.get((acc.brandCode ?? "").trim().toUpperCase()) ?? null,
+      ),
     };
   });
 }

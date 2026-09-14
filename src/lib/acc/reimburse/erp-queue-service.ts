@@ -74,6 +74,7 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { AP4_FORM_CODE } from "@/features/reimburse/constants";
 import { accumulateErpQueueRows, countUnmappedErpBrandClaims } from "./erp-queue-policy";
+import { loadReimburseErpConfigByBrand } from "./reimburse-erp-context";
 import type { ReimburseErpQueueRow } from "./erp-queue-policy";
 import { loadApproverScopeByStaffId, loadClaimBrandTargets } from "./brand-scope-load";
 
@@ -118,7 +119,8 @@ export async function listReimburseErpQueue(
              req.SubmittedAt, req.PaymentDate, req.TotalAmount,
              req.ErpInterfaceStatus, req.ErpDocumentNo, req.ErpInterfaceEnvironment,
              req.ErpInterfaceSentAt, req.ErpInterfaceError,
-             i.Id AS ItemId, i.Category AS ItemCategory, i.Amount AS ItemAmount
+             i.Id AS ItemId, i.Category AS ItemCategory, i.Amount AS ItemAmount,
+             i.VatAmount AS ItemVatAmount, i.WhtAmount AS ItemWhtAmount
       FROM [dbo].[AccRequest] req
       LEFT JOIN [dbo].[AccReimburseItem] i ON i.RequestId = req.Id
       WHERE req.FormCode = @form AND req.Status = 'Approved'
@@ -126,7 +128,15 @@ export async function listReimburseErpQueue(
     `);
 
   const recordset = res.recordset as Record<string, unknown>[];
-  const rows = accumulateErpQueueRows(recordset, scope, claimTargets);
+  // One resolution per DISTINCT brand, not per claim: the settings are the
+  // brand's, and a queue of thirty claims from two brands would otherwise pay
+  // for thirty reads of the same four rows.
+  const configByBrand = await loadReimburseErpConfigByBrand(
+    Array.from(new Set(recordset.map((x) => String(x.BrandCode ?? "").trim().toUpperCase()))).filter(
+      (b) => b !== "",
+    ),
+  );
+  const rows = accumulateErpQueueRows(recordset, scope, claimTargets, configByBrand);
   const unmappedBrandCount = countUnmappedErpBrandClaims(recordset, claimTargets);
   return { rows, scope, unmappedBrandCount };
 }
