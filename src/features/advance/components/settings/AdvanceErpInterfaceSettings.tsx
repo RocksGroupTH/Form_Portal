@@ -168,36 +168,6 @@ function GroupFieldSummary({ label, state }: { label: string; state: GroupValue 
 }
 
 /**
- * A switch that fits beside a name.
- *
- * `Toggle` is a full-width row with a label and a description — right for a
- * settings block, wrong for the right-hand end of a member row, which is where
- * Active now lives.
- */
-function MiniSwitch({ checked, onChange, disabled, label }: {
-  checked: boolean;
-  onChange: (next: boolean) => void;
-  disabled?: boolean;
-  label: string;
-}) {
-  return (
-    <button type="button" role="switch" aria-checked={checked} aria-label={label} disabled={disabled}
-      onClick={() => !disabled && onChange(!checked)}
-      className="inline-flex items-center gap-1.5 shrink-0"
-      style={{ opacity: disabled ? 0.5 : 1, cursor: disabled ? "not-allowed" : "pointer" }}>
-      <span className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "var(--text-faint)" }}>
-        {label}
-      </span>
-      <span className="relative rounded-full transition-colors" aria-hidden
-        style={{ width: 34, height: 20, background: checked ? "var(--color-action)" : "var(--border-input)" }}>
-        <span className="absolute rounded-full transition-all"
-          style={{ width: 14, height: 14, top: 3, left: checked ? 17 : 3, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.35)" }} />
-      </span>
-    </button>
-  );
-}
-
-/**
  * One target Company: the claim brands posting into it, what they share, and
  * what each sets for itself.
  *
@@ -217,10 +187,12 @@ function MiniSwitch({ checked, onChange, disabled, label }: {
  * empty `interfaceBrandCode` outright, so a brand cannot be un-mapped from here
  * — only moved to another Company. The card says so.
  *
- * **The Active toggle moved onto the member row.** On a per-brand card it
- * belonged on the card, and the note here said so for one commit; on a per-GROUP
- * card there is no per-brand place left on the card, and a switch crammed into
- * each chip reads worse than one at the end of each row in the dialog.
+ * **The Active switch is GONE from this screen** (user, 2026-09-14). It lived on
+ * the card, then on the member row, and now on a tab of its own — แบรนด์ที่เบิก
+ * ได้ — because it is not posting configuration: it decides whether a brand may
+ * be claimed against at all, on BOTH AP-2 and AP-3, and every sibling form gives
+ * that its own tab. An inactive member still reads as ปิดใช้งาน here, since a
+ * group whose brands are switched off explains a queue that looks empty.
  */
 function GroupCard({ target, members, all, erpByCompany, onSaved }: {
   target: string;
@@ -283,25 +255,6 @@ function GroupCard({ target, members, all, erpByCompany, onSaved }: {
         })),
     [all, shown],
   );
-
-  const [activeBusy, setActiveBusy] = useState<string | null>(null);
-  async function toggleActive(row: ConfigRow, next: boolean) {
-    setActiveBusy(row.brandCode);
-    try {
-      const res = await fetch("/api/request/advance/settings/brand-active", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ brandCode: row.brandCode, active: next }),
-      });
-      const j = (await res.json()) as { ok: boolean; error?: string };
-      if (!j.ok) { toast.error(j.error ?? "อัปเดตสถานะไม่สำเร็จ"); return; }
-      toast.success(next ? `เปิดใช้งาน ${row.brandName}` : `ปิด ${row.brandName}`);
-      onSaved();
-    } catch {
-      toast.error("อัปเดตสถานะไม่สำเร็จ");
-    } finally {
-      setActiveBusy(null);
-    }
-  }
 
   /**
    * Write the group: one POST per member, in order, stopping at the first
@@ -487,9 +440,13 @@ function GroupCard({ target, members, all, erpByCompany, onSaved }: {
                         </span>
                         <span className="text-[10px] font-mono" style={{ color: "var(--text-faint)" }}>{m.brandCode}</span>
                       </div>
-                      <MiniSwitch checked={m.active} label="ใช้งาน"
-                        disabled={activeBusy === m.brandCode}
-                        onChange={(next) => void toggleActive(m, next)} />
+                      {!m.active && (
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0"
+                          style={{ background: "var(--bg-badge)", color: "var(--text-muted)" }}
+                          title="เปิด/ปิดแบรนด์ที่แท็บ แบรนด์ที่เบิกได้">
+                          ปิดใช้งาน
+                        </span>
+                      )}
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                       <div className="min-w-0">

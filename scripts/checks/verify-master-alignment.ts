@@ -106,6 +106,13 @@ const MASTER_TABLES = [
   // lockstep argument as the two rows above: absent from 061/064, no
   // identity floor.
   "AccReimburseApproverBrand",
+  // AP-2 and AP-3's SHARED access roster and its per-tab / per-menu grants
+  // (migration 152). One roster for two forms — the table carries no FormCode,
+  // which is why it is AccAdvClr* rather than AccAdvance*. Dual-written through
+  // src/lib/adv/access-service.ts; same lockstep argument as the rows above,
+  // so absent from 061/064 and carrying no identity floor.
+  "AccAdvClrAccess",
+  "AccAdvClrAccessTab",
 ];
 
 /**

@@ -52,21 +52,21 @@ test("AP-2's group save posts one body per member, keyed on the claim brand", ()
 });
 
 test("AP-3's save posts one body per brand, keyed on the claim brand", () => {
-  // `dirty`, not `members`: since 2026-09-14 all three of AP-3's fields are
-  // edited per brand, so the save writes only the brands somebody changed.
+  // `toWrite`, not `members`: a tax-account edit touches one brand, while a
+  // change to the group's Journal Batch has to reach all of them, so the list
+  // is derived rather than fixed — and either way each body names its brand.
   assert.ok(
-    /for \(const m of dirty\)[\s\S]{0,600}?brandCode: m\.brandCode/.test(AP3),
-    "AP-3's save no longer loops the changed brands posting brandCode",
+    /for \(const m of toWrite\)[\s\S]{0,600}?brandCode: m\.brandCode/.test(AP3),
+    "AP-3's save no longer loops the brands it must write, posting brandCode",
   );
 });
 
-test("AP-3 edits all three of its fields per brand, not once for the group", () => {
+test("AP-3 edits its two TAX ACCOUNTS per brand", () => {
   // The failure to guard against is a well-meaning simplification back to one
   // control per group: PCMY posts into PCTH beside PCTH and ROCKS and carries
-  // none of the three, so a group-level control makes "unset" and "deliberately
+  // neither account, so a group-level control makes "unset" and "deliberately
   // different" the same thing and resolves the difference by overwriting.
   for (const [field, setter] of [
-    ["Journal Batch", "batch"],
     ["VAT input", "vatGl"],
     ["WHT payable", "whtGl"],
   ] as const) {
@@ -75,6 +75,21 @@ test("AP-3 edits all three of its fields per brand, not once for the group", () 
       `AP-3's ${field} is no longer edited on the brand's own row`,
     );
   }
+});
+
+test("AP-3's Journal Batch is the GROUP's, and carries the clear guard", () => {
+  // The one field AP-3 deliberately does not put on the brand row — AP-2's
+  // layout, on the user's instruction (2026-09-14). Fanning a value out is what
+  // makes the guard necessary: a conflicted group starts the box empty, and
+  // saving it empty would null out every member's batch in one click.
+  assert.ok(
+    /journalBatchName: batch\.trim\(\)/.test(AP3),
+    "AP-3 no longer writes ONE batch to every member of the group",
+  );
+  assert.ok(
+    /batchWouldClear/.test(AP3),
+    "AP-3's group batch lost its would-clear guard — an empty box saved as-is nulls every member",
+  );
 });
 
 test("AP-3 renders no membership control", () => {

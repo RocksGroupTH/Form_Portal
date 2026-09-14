@@ -233,7 +233,7 @@ Since migration 066 that is a hard constraint, not a preference: `auth()` no lon
 - **Attachments** land under `{SHAREPOINT_ACC_FOLDER}/_UAT/{formCode}/...` — the `_UAT` segment sits between the base folder and the form code (`buildAccFolderPath`, `src/lib/acc/sharepoint-path.ts`).
 - **Every new route under `/api/request` needs a rule** in `ROUTE_RULES` (`classify-path.ts`, longest matching prefix → `AP-1 | AP-4 | AP-15 | AP-17 | "BOTH" | null`). Without one it silently falls through to Production. The coverage panel on the settings page lists any route no rule covers — `matchRule` is what tells "no rule at all" apart from "a rule that deliberately says Production".
   - **AP-4's settings routes classify `AP-4`, not `null`** — the opposite of `/api/request/accounting/settings`, deliberately. `/api/request/reimburse/settings/rules` with no query string is the **form's own** checklist source, and the ticks it produces become `AccReimburseRuleAck` rows with an FK into whichever database the form resolved to. Production treatment would have a UAT tester's form read production's rule ids while writing acknowledgements into UAT. The reason first recorded for this — that AP-4's rule and approver tables are not dual-written — is **false**; they are, and they are two of the six tables that have since taken the shared list from 19 to 25. The conclusion survives the premise, which is why the real reason is written down here and in `classify-path.ts`: the next person to notice the inconsistency will otherwise remove it.
-- **Shared configuration is dual-written**, not duplicated by hand: `src/lib/acc/dual-write.ts` runs each master-table mutation against both databases in a transaction, and `npm run check:alignment` asserts the **27** shared tables still match (`scripts/checks/verify-master-alignment.ts` holds the list — read `MASTER_TABLES.length` rather than trusting a number written here; AP-17 added `AccBookingApprover` and `AccBookingApproverTab`, AP-4 added `AccReimburseRule`, `AccReimburseApprover`, `AccReimburseAccess` and `AccReimburseAccessTab`, and AP-17's per-diem-by-country and brand-scoped access added `AccTravelPerDiemCountry` (133) and `AccBookingApproverBrand` (134), to the 19 that were there before. `BrandCurrency` is **not** among them — it is production-only, for the reason `currency-pool-guard.test.ts` pins). Those tables are deliberately absent from 061/064: they are not transactional, and their ids must be **identical** in both databases rather than disjoint — which neither 061's reseed nor 064's `CHECK` would allow, for the two different reasons in the third bullet below.
+- **Shared configuration is dual-written**, not duplicated by hand: `src/lib/acc/dual-write.ts` runs each master-table mutation against both databases in a transaction, and `npm run check:alignment` asserts the **30** shared tables still match (`scripts/checks/verify-master-alignment.ts` holds the list — read `MASTER_TABLES.length` rather than trusting a number written here; AP-17 added `AccBookingApprover` and `AccBookingApproverTab`, AP-4 added `AccReimburseRule`, `AccReimburseApprover`, `AccReimburseAccess` and `AccReimburseAccessTab`, and AP-17's per-diem-by-country and brand-scoped access added `AccTravelPerDiemCountry` (133) and `AccBookingApproverBrand` (134), to the 19 that were there before. `BrandCurrency` is **not** among them — it is production-only, for the reason `currency-pool-guard.test.ts` pins). Those tables are deliberately absent from 061/064: they are not transactional, and their ids must be **identical** in both databases rather than disjoint — which neither 061's reseed nor 064's `CHECK` would allow, for the two different reasons in the third bullet below.
   - **One path copies production's id into UAT explicitly, and it must not be deleted.** `upsertVehicle` (`src/lib/acc/travel-booking/settings-service.ts:280-346`) is the exception, and the only `SET IDENTITY_INSERT` in `src/`. `writeBothPools` runs its callback against production first, so the production pass takes the plain `INSERT … OUTPUT INSERTED.Id` and the UAT pass — `isUatPass`, true exactly when the caller supplied no id but the production pass has since set one — replays *that* id under `IDENTITY_INSERT`. Its own comment says why: `AccTravelVehiclePlace` has an FK to `AccTravelVehicleOption.Id` (migration 052), and the place rows are rewritten on both passes keyed on that id, so the two databases have to agree on the parent explicitly rather than each trusting its own counter. **A reader who believes this branch is dead code and removes it breaks a cross-database foreign key silently.** Note how narrow it is: even here only the *parent* id is copied — the `AccTravelVehiclePlace` rows themselves are inserted plainly and take their ids from each database's own counter.
   - **Everything else relies on the two identity counters staying in lockstep.** Every other dual-write runs the *same* statement against each database and reads no id back; `createRule` (`AccReimburseRule`, `src/lib/acc/reimburse/settings-service.ts`) is the plain case — both databases allocate from their own counter and the ids match only because those counters are in step. The `OUTPUT INSERTED.Id` in `brand-erp-interface-map-service.ts` is not a second copying path: it is the function's own return value, taken from the production pass and never replayed into UAT. The lockstep itself rests on the two databases having been seeded from the same source with identity preserved, and on every insert since arriving through here.
   - **So a 900000 floor breaks these tables two different ways, and only one of them is loud.** On `AccTravelVehicleOption`, 064's `CHECK (Id >= 900000)` rejects the replayed production id outright — an explicit low id fails the constraint — so saving a new vehicle would fail every time, visibly. On every lockstep table the failure is quiet and worse: 061's reseed would have UAT allocate 900001 where production allocated 42, the write would **succeed**, and the two copies would diverge on ids with no error at all. Both are why these tables are absent from 061/064; only the first is the "would reject every write" that this note used to claim for all of them.
@@ -932,6 +932,61 @@ summary.
   `src/lib/ocr.ts`, a tesseract worker. **This is why `tesseract.js` is still a
   dependency**: AP-1 and AP-17 stopped OCRing in the browser and the package
   looks unused from their side. Check `src/lib/ocr.ts` before concluding it is.
+- **Both settings pages gained แบรนด์ที่เบิกได้ and traded ผู้อนุมัติ for
+  สิทธิ์เข้าถึง (2026-09-14, migration 152).** The strips are now
+  `brands · matrix · banks · erpInterface · access` (AP-2) and
+  `brands · glAccounts · buGlMap · locations · erpInterface · access` (AP-3),
+  declared in `src/lib/adv/settings-tabs.ts` and mapped to labels on each page,
+  the shape AP-4 uses so the order and the grantable-key list cannot drift apart.
+  Both pages now **open on `access`**, for AP-4's reason: an empty approver pool
+  stops every claim and is the one thing that must be set first.
+  - **แบรนด์ที่เบิกได้ is ONE switch for BOTH forms**, because
+    `setBrandActiveShared` MERGEs `AccFormBrand` for `'AP-2'` and `'AP-3'` in
+    one transaction — a brand is claimable on both or neither. So one panel
+    (`AdvClrBrandSettings`) is rendered by both pages rather than two toggles
+    over one row, and the Active switch is **gone from Interface ERP**, where it
+    had been a per-brand control inside the posting configuration.
+  - **`AccAdvClrAccess` + `AccAdvClrAccessTab` are ONE roster for TWO forms**
+    (migration 152, both form databases, dual-written, `MASTER_TABLES` 28 → 30).
+    No `FormCode` column, deliberately — the user chose a single list — which is
+    why the tables are `AccAdvClr*` rather than `AccAdvance*`: a name saying
+    AP-2 over a table AP-3 also reads is the trap this repository keeps
+    documenting after the fact. The **keys** still name their form, so AP-2's
+    queue can be granted without AP-3's.
+  - **The approver rosters did not merge; only the screen did.**
+    `AccAdvanceApprover` and `AccClearAdvanceApprover` are the pools that take
+    real approval steps, and each keeps its own table and its own editor, now
+    rendered on the สิทธิ์เข้าถึง tab beside the grant grid. Ticking a settings
+    tab grants no approval and joining an approver pool grants no settings tab —
+    migration 120's split for AP-4, applied to the two forms that had none at
+    all: before this every AP-2 and AP-3 settings route was `requireRole` and
+    there was nothing an admin could hand to anybody.
+  - **Two vocabularies in one `TabKey` column**, as on AP-17 and AP-4: settings
+    tabs (`brands`, `matrix`, `banks`, `locations`) and menus
+    (`advanceQueue`, `advanceReport`, `clearQueue`, `clearReport`). Storage
+    takes the union (`filterStorableAdvClrKeys`); authorization keeps the narrow
+    filters. **`access` and `erpInterface` can never be granted** — the first
+    hands out power and also edits both approver pools, the second is gated but
+    not brand-scoped, so a grant would reach every brand's posting
+    configuration. **`glAccounts` and `buGlMap` cannot either**: those rows are
+    AP-3's own G/L rules, shared with AP-4 and carrying no `FormCode`, so a
+    grant would be a grant over another form's rules — AP-4's reason for the
+    same two keys.
+  - **The hub filter is roster OR grant, never grant alone.** 152 ships empty
+    with no backfill, so gating on the tick alone would take AP-2's queue and
+    AP-3's queue away from every existing approver on the day it shipped — the
+    measured mistake AP-17's booking hub was written to avoid.
+    `/api/request/advance/access` reports both, and **filtering a hub is not a
+    control**: every destination re-decides its own access server-side, which is
+    what `requireAdvClrSettingsTab` and `requireAdvClrMenu` are for, and
+    `settings-route-gates.test.ts` reads the route sources to pin which gate
+    each carries, that it is the handler's first `await`, and that its refusal
+    is returned.
+  - **One route serves both forms**: `/api/request/advance/settings/access`,
+    called by AP-3's page too. That is safe where the `bu-gl-map` pair is not,
+    and for a stated reason — these are shared master tables written through
+    `writeBothPools`, so the rows are identical in both form databases and it
+    cannot matter which one a request resolves.
 - **Both Interface ERP tabs group by the target Company (2026-09-14), and the
   group is a UI grouping over rows that stay keyed on the CLAIM brand.** One
   card per PCTH / KSI / PCMY / UNO holding the claim brands mapped into it, a
@@ -967,27 +1022,29 @@ summary.
     and is never resolved by a pick the screen makes. On **AP-3** the three
     states are read-only information on the card, because its fields are edited
     per brand — see the next bullet.
-  - **The conflict is not hypothetical, and it is why AP-3 no longer shares
-    anything.** Measured 2026-09-14: AP-2's PCTH group is
+  - **The conflict is not hypothetical, and it is why AP-3 splits its three
+    fields the way it does.** Measured 2026-09-14: AP-2's PCTH group is
     `PCTH=Q · ROCKS=Q · PCMY=TRANSFER` — PCMY posts into PCTH with its own batch
     and its own bank (`UOB-2726`). On **AP-2**, where the batch stays
     group-level, a conflict starts the box empty and **Save is blocked while it
     is empty** with the members it would clear named; whichever value is chosen,
     the dialog lists whose current value it replaces. Without that, one click on
     a group somebody opened to fix a bank account nulls three working batches.
-  - **AP-3 edits ALL THREE of its fields PER BRAND** (user, 2026-09-14:
-    "Interface ERP AP-3 ต้องแยกเป็นของแต่ละ brand เหมือนกับ AP-2"). It shipped
-    group-shared for one commit, fanning one value out to every member, and that
-    was wrong for the same measured reason: PCMY sits in the PCTH group carrying
-    none of the three, so one value for the group made "unset" and "deliberately
-    different" the same thing, and resolving the group meant overwriting whatever
-    a member already had. `AccClearAdvanceInterfaceConfig` has always held one
-    row per `BrandCode` with these three columns, so the dialog now matches the
-    storage exactly and the **save writes only the brands whose values changed**,
-    naming them on the button's line. The card keeps its group summary through
-    `groupValue` — that is now information, not a thing to resolve before
-    saving. There is no overwrite guard on AP-3 and none is needed: a value can
-    only be cleared in its own brand's box, by somebody looking at it.
+  - **AP-3's layout is AP-2's exactly, and it took two corrections in one
+    afternoon to get there.** The Journal Batch is ONE control at the TOP of the
+    dialog, shared by the group and fanned out on save; the two tax accounts sit
+    in each brand's own row. All three shipped group-shared, which was wrong for
+    the accounts — PCMY sits in the PCTH group carrying neither, so one value for
+    the group made "unset" and "deliberately different" the same thing. All three
+    then went per brand, which put the batch somewhere AP-2 does not have it
+    (user, 2026-09-14, both times). The split is the answer to both: a batch is a
+    property of the books being posted into, an input-tax account is not.
+    **So the batch keeps the fan-out's guard and the accounts need none** — a
+    conflicted group starts that box empty, Save is blocked while it is empty and
+    any member has one, and the dialog names whose value a save replaces; a tax
+    account can only be cleared in its own brand's box. The save writes the
+    brands whose accounts changed, or **every** member when the batch changed,
+    and says which on the button's line.
   - **Membership is AP-2's, and AP-3 has no say.** AP-2 owns
     `AccBrandErpInterface` with `FormCode='AP-2'`, so its cards carry
     `เพิ่มแบรนด์` — **adding IS moving**, the same upsert the per-brand Company
@@ -1726,6 +1783,7 @@ repo — it exists only on the server, and a rebuilt server loses it.
 - **145–150 are the AP-3 / AP-4 column batch, and the AP-4 ones all go to BOTH form databases before the code.** `ls migrations/` and each header remain the authority; what this bullet exists to say is which hazard they share. **147** (`AccReimburseItem.VendorNo`), **149** (`BranchCode` + `VendorBranchCode` — two DIFFERENT branches, ours and the seller's; read 149's header before touching either) and **150** (`VendorMatchStatus`) each add a nullable column to `AccReimburseItem`, and SQL Server binds column names at **compile** time: the column missing from either database is `Invalid object name` — the whole query fails rather than answering NULL — and AP-4 resolves either database depending on who is asking. All three are transactional, so `check:alignment` must still read **28** afterwards; **29 means the wrong table was altered**. **145** and **146** create AP-3's `AccClrBuGlMap` / `AccClrBranchGlMap`, which AP-4's Fix G/L by BU or Branch tab has edited since 2026-09-14 — same rows, no `FormCode` column, see AP-4's settings section. **148** is `Rocks_Portal_Form_UAT` only, realigning drifted brand-config identities.
   - **150's `NULL` is load-bearing and no backfill may stamp over it.** `NULL` means nobody has looked for this seller's vendor card; `'none'` means somebody looked and there is none, which is what releases the accounting queue's requirement that the line carry a vendor. Backfilling `'none'` onto existing rows would silently retire that requirement on every claim already in the queue.
 - **151 goes to BOTH form databases before the code, and its backfill is what keeps AP-3 working on the day it lands.** `151_clr_gl_company.sql` creates `AccClearAdvanceGlCompany` and copies today's single answer to each of the four companies — measured after applying, 2026-09-14: **43 categories × 4 = 172 rules in each database, none differing from the shared row**, so nothing about AP-3 changed until somebody edited one. The three readers name the new table unconditionally and SQL Server binds object names at compile time, so it missing from either side is `Invalid object name` on AP-3's account picker and on its submit guard. **Not dual-written and not in `MASTER_TABLES`**, exactly like the `AccClearAdvanceGl` it hangs off; `check:alignment` must still read **28** — 29 means the wrong table was created. The backfill is idempotent (`WHERE NOT EXISTS`), so re-running never overwrites an edit.
+- **152 goes to BOTH form databases before the code, and skipping it costs a capability rather than an outage.** `152_adv_clr_access.sql` creates `AccAdvClrAccess` and `AccAdvClrAccessTab` — AP-2 and AP-3's shared access roster. `MASTER_TABLES` goes **28 → 30**; both are dual-written, so their ids must match on both sides and `npm run check:alignment` covers them. Applied to both live databases on 2026-09-14, check PASS at 30 tables / 148 rows. **No seed, deliberately**: an empty table grants nothing and takes nothing away — every route keeps its admin arm, so an admin sees what they always saw and a non-admin sees what they always saw, which is nothing. The read degrades on a **missing table** to "no grants", never to "all", so the window before 152 lands costs a granted non-admin their tabs rather than handing anyone somebody else's; any other failure rethrows, because an admin's editing grid must show its error state rather than render an unreadable grant list as every box unticked — the next tick would POST a one-element set and revoke the rest.
 - **AP-17's accounting step needs no migration, but it does need a person.** After this deploy the Admin desk stops closing requests and hands them to `ACCOUNT`, so nothing reaches `Completed` until somebody on `AccBookingApprover` works `/request/accounting/travel-booking/approvals`. Membership is what permits the action; an `accountApproval` tick in `AccBookingApproverTab` only decides who is shown the menu, and the hub shows it to roster members regardless.
 - Liveness probe: `curl http://127.0.0.1:3081/api/health` → `{"ok":true,"data":{"service":"form-portal",…}}`.
 - **`/api/health/db` no longer publishes the topology.** `auth.config.ts` exempts every `/api/health*` path from authentication, and that endpoint was returning the MSSQL host, port, service-account username, database name and the raw driver error text to anyone who asked. It now answers `database: "reachable" | "unreachable"` plus a 200/503, and includes the detail only for a System Admin. The diagnostic line goes to the server log unconditionally, which is where an operator should read it.

@@ -96,7 +96,7 @@ function MemberChip({ row }: { row: ViewRow }) {
   return (
     <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-[12px]"
       style={{ background: "var(--bg-badge)", color: "var(--text-secondary)", opacity: row.active ? 1 : 0.55 }}
-      title={row.active ? undefined : "แบรนด์นี้ปิดใช้งานอยู่ (ตั้งที่ AP-2)"}>
+      title={row.active ? undefined : "แบรนด์นี้ปิดใช้งานอยู่ — เปิด/ปิดที่แท็บ แบรนด์ที่เบิกได้"}>
       {row.brandLogo && (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={row.brandLogo} alt="" className="h-3.5 w-auto object-contain" />
@@ -143,42 +143,50 @@ function GroupFieldSummary({ label, state }: { label: string; state: GroupValue 
   );
 }
 
-/** What one brand is set to, edited in the dialog and saved with the rest. */
-interface BrandDraft { batch: string; vatGl: string; whtGl: string }
+/**
+ * What one brand's own two accounts are set to.
+ *
+ * **The Journal Batch is not here**, and that is the one asymmetry on this
+ * screen: it is a group control at the top of the dialog, exactly where AP-2
+ * puts it (user, 2026-09-14: "Journal Batch * ของ AP-3 ต้องอยู่ด้านบนสุดของ
+ * group เหมือน AP-2"). The two tax accounts stay per brand.
+ */
+interface BrandDraft { vatGl: string; whtGl: string }
 
 const draftOf = (row: ViewRow): BrandDraft => ({
-  batch: row.journalBatchName ?? "",
   vatGl: row.vatInputGlAccountNo ?? "",
   whtGl: row.whtPayableGlAccountNo ?? "",
 });
 const sameDraft = (a: BrandDraft, b: BrandDraft) =>
-  a.batch.trim() === b.batch.trim() &&
-  a.vatGl.trim() === b.vatGl.trim() &&
-  a.whtGl.trim() === b.whtGl.trim();
+  a.vatGl.trim() === b.vatGl.trim() && a.whtGl.trim() === b.whtGl.trim();
 
 /**
  * One target Company: the claim brands posting into it, each carrying its own
  * three values.
  *
- * **The card groups; the DIALOG is per claim brand** (user, 2026-09-14:
- * "Interface ERP AP-3 ต้องแยกเป็นของแต่ละ brand เหมือนกับ AP-2"). All three
- * fields — Journal Batch, VAT input, WHT payable — sit in each brand's own row,
- * which is what `AccClearAdvanceInterfaceConfig` has always held: one row per
- * `BrandCode`, three columns. Saving writes only the brands whose values
- * actually changed.
+ * **AP-2's layout exactly** (user, 2026-09-14): the Journal Batch is one
+ * control at the TOP of the dialog, shared by the group and fanned out to every
+ * member on save; the two tax accounts sit in each brand's own row.
  *
- * **It shipped group-shared for one commit, with the three fanned out to every
- * member.** That was the shape the spec designed and it was wrong here for a
- * measured reason: PCMY posts into PCTH alongside PCTH and ROCKS and carries
- * none of the three, so "one value for the group" made an unset brand and a
- * deliberately different one the same thing, and resolving the group's conflict
- * meant overwriting whatever a member already had. Per brand, a value is only
- * ever cleared in its own box by somebody looking at it.
+ * Getting here took two corrections in one afternoon and both are worth
+ * keeping. All three fields shipped group-shared, which was wrong for the tax
+ * accounts for a measured reason — PCMY sits in the PCTH group carrying neither,
+ * so "one value for the group" made an unset brand and a deliberately different
+ * one the same thing. All three then went per brand, which put the Journal Batch
+ * somewhere AP-2 does not have it. The split is the answer to both: a batch is a
+ * property of the books being posted into, and an input-tax account, as it turns
+ * out, is not.
  *
- * **The card summary still speaks for the group**, through `groupValue`: three
- * brands agreeing reads as one value, a brand missing one reads as
- * "ยังไม่ได้ตั้ง", and two real values read as ไม่ตรงกัน — which is now
- * information rather than a thing to be resolved before saving.
+ * **The batch therefore keeps the fan-out's guard and the accounts need none.**
+ * A group whose members disagree on the batch starts that box EMPTY, and saving
+ * it empty would null out every member's working configuration in one click — so
+ * Save is blocked while it is empty and any member has one, and the dialog names
+ * whose value a save replaces. A tax account can only ever be cleared in its own
+ * brand's box, by somebody looking at it.
+ *
+ * **The card summary speaks for the group** through `groupValue` on all three:
+ * one value where everybody agrees, "ยังไม่มีค่า" naming the members missing it,
+ * ไม่ตรงกัน where two real values disagree.
  *
  * **No membership control, deliberately.** AP-3 inherits its target from AP-2;
  * a brand moves between these cards on AP-2's tab. A control that looked
@@ -211,7 +219,19 @@ function GroupCard({
   );
 
   /**
-   * Each brand's three values, keyed on its code.
+   * The group's Journal Batch.
+   *
+   * A conflict has no single value to put in the box, so it starts empty and
+   * whatever is chosen is written to every member — the admin resolving it
+   * deliberately, rather than the screen choosing for them. The dependency is
+   * the resolved string, not the state object, which is rebuilt every render.
+   */
+  const batchAgreed = batchState.kind === "conflict" ? "" : batchState.value;
+  const [batch, setBatch] = useState(batchAgreed);
+  useEffect(() => { setBatch(batchAgreed); }, [batchAgreed]);
+
+  /**
+   * Each brand's own two accounts, keyed on its code.
    *
    * Rebuilt whenever `members` changes — which is the refetch after a save, and
    * nothing else — so an edit is never clobbered mid-typing and a saved value is
@@ -226,7 +246,7 @@ function GroupCard({
   useEffect(() => { setDraft(saved); }, [saved]);
 
   const valueFor = (code: string): BrandDraft =>
-    draft[code] ?? saved[code] ?? { batch: "", vatGl: "", whtGl: "" };
+    draft[code] ?? saved[code] ?? { vatGl: "", whtGl: "" };
   const setFor = (code: string, patch: Partial<BrandDraft>) =>
     setDraft((p) => ({ ...p, [code]: { ...valueFor(code), ...patch } }));
 
@@ -245,7 +265,24 @@ function GroupCard({
   const noBatches = !isLoading && !batchErr && (liveBatch?.data?.length ?? 0) === 0;
 
   const ready = members.length > 0 && members.every((m) => m.ready);
+
+  /**
+   * Which members the group's batch would REPLACE, and whether it would CLEAR
+   * one. Measured 2026-09-14, PCMY carries no batch while PCTH and ROCKS carry
+   * `Q` — so this group opens as a fill, and an empty box saved as-is on a group
+   * that DID disagree would take three working batches out together.
+   */
+  const batchReplacing = members.filter((m) => {
+    const cur = (m.journalBatchName ?? "").trim();
+    return cur !== "" && cur !== batch.trim();
+  });
+  const batchWouldClear = !batch.trim() && batchReplacing.length > 0;
+  const batchDirty = members.some((m) => (m.journalBatchName ?? "").trim() !== batch.trim());
+
+  /** Brands whose own two accounts changed. The batch is the group's, above. */
   const dirty = members.filter((m) => !sameDraft(valueFor(m.brandCode), saved[m.brandCode]));
+  /* A batch change touches every member, so it makes the whole group dirty. */
+  const toWrite = batchDirty ? members : dirty;
 
   /**
    * Write only the brands whose values changed — one POST each, in order,
@@ -256,17 +293,21 @@ function GroupCard({
    * which brand it stopped on, or nobody can tell what state the group is in.
    */
   async function save() {
-    if (dirty.length === 0) { setOpen(false); return; }
+    if (batchWouldClear) {
+      toast.error(`กรุณาเลือก Journal Batch — ค้างว่างไว้จะลบของ ${batchReplacing.map((m) => m.brandCode).join(", ")}`);
+      return;
+    }
+    if (toWrite.length === 0) { setOpen(false); return; }
     setBusy(true);
     try {
-      for (const m of dirty) {
+      for (const m of toWrite) {
         const v = valueFor(m.brandCode);
         const res = await fetch("/api/request/clear-advance/settings/erp-interface", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             brandCode: m.brandCode,
-            journalBatchName: v.batch.trim(),
+            journalBatchName: batch.trim(),
             vatInputGlAccountNo: v.vatGl.trim() || null,
             whtPayableGlAccountNo: v.whtGl.trim() || null,
           }),
@@ -277,7 +318,7 @@ function GroupCard({
           return;
         }
       }
-      toast.success(`บันทึกการตั้งค่า ERP แล้ว (${dirty.map((m) => m.brandCode).join(", ")})`);
+      toast.success(`บันทึกการตั้งค่า ERP แล้ว (${toWrite.map((m) => m.brandCode).join(", ")})`);
       setOpen(false);
       onSaved();
     } catch (e) {
@@ -344,7 +385,7 @@ function GroupCard({
           open
           onOpenChange={(v) => { if (!v) setOpen(false); }}
           title={`ตั้งค่า Interface ERP — ${target}`}
-          description={`${members.length} แบรนด์เบิก · ตั้งค่าแยกของแต่ละแบรนด์`}
+          description={`${members.length} แบรนด์เบิก · Journal Batch ใช้ร่วมกันทั้งกลุ่ม · บัญชีภาษีแยกรายแบรนด์`}
         >
           <div className="flex flex-col gap-3">
             {batchErr && (
@@ -356,6 +397,39 @@ function GroupCard({
                 ไม่พบ Journal Batch ของ {target} ใน ERP (sync ErpGeneralJournalBatch ก่อน)
               </p>
             )}
+
+            {batchState.kind === "conflict" && (
+              <p className="text-[11px] m-0 px-3 py-2 rounded-lg"
+                style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
+                แบรนด์ในกลุ่มนี้ใช้ Journal Batch ไม่ตรงกัน — เลือกค่าที่ถูกต้องแล้วบันทึก จะเขียนให้ทุกแบรนด์ในกลุ่ม
+              </p>
+            )}
+
+            {/* At the TOP and shared, like AP-2's (user, 2026-09-14). */}
+            <div>
+              <FieldLabel>Journal Batch * (ใช้ร่วมกันทั้งกลุ่ม)</FieldLabel>
+              <SearchableSelect
+                value={batch} onChange={setBatch}
+                options={batchOptions(liveBatch?.data ?? [], batch)}
+                disabled={busy || isLoading}
+                placeholder={isLoading ? "กำลังโหลด batch..." : "เลือก Journal Batch"}
+                emptyLabel="— ไม่ระบุ —"
+                searchPlaceholder="ค้นหา Batch..."
+                triggerBackground="var(--bg-card)"
+              />
+              {batchState.kind === "fill" && (
+                <p className="text-[10px] m-0 mt-1" style={{ color: "var(--text-info-yellow)" }}>
+                  {batchState.blankMembers.join(", ")} ยังไม่มีค่า — บันทึกแล้วจะเติมให้
+                </p>
+              )}
+              {batchReplacing.length > 0 && (
+                <p className="text-[10px] m-0 mt-1" style={{ color: "var(--text-warning)" }}>
+                  จะเขียนทับของเดิม: {batchReplacing.map((m) => `${m.brandCode} (${(m.journalBatchName ?? "").trim() || "ว่าง"})`).join(" · ")}
+                </p>
+              )}
+            </div>
+
+            <FieldLabel>บัญชีภาษีของแต่ละแบรนด์เบิก</FieldLabel>
 
             {members.map((m) => {
               const v = valueFor(m.brandCode);
@@ -381,19 +455,6 @@ function GroupCard({
                     {changed && (
                       <span className="text-[10px] ml-auto" style={{ color: "var(--text-info-yellow)" }}>แก้ไขแล้ว</span>
                     )}
-                  </div>
-
-                  <div>
-                    <FieldLabel>Journal Batch *</FieldLabel>
-                    <SearchableSelect
-                      value={v.batch} onChange={(x) => setFor(m.brandCode, { batch: x })}
-                      options={batchOptions(liveBatch?.data ?? [], v.batch)}
-                      disabled={busy || isLoading}
-                      placeholder={isLoading ? "กำลังโหลด batch..." : "เลือก Journal Batch"}
-                      emptyLabel="— ไม่ระบุ —"
-                      searchPlaceholder="ค้นหา Batch..."
-                      triggerBackground="var(--bg-card-alt)"
-                    />
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -428,13 +489,17 @@ function GroupCard({
 
             <p className="text-[10px] m-0" style={{ color: "var(--text-faint)" }}>
               {/* Says what the save does, because it is no longer "all of them". */}
-              บันทึกเฉพาะแบรนด์ที่แก้ไข{dirty.length > 0 ? `: ${dirty.map((m) => m.brandCode).join(", ")}` : " — ยังไม่มีการแก้ไข"}
+              {batchDirty
+                ? `Journal Batch เปลี่ยน — จะเขียนให้ทุกแบรนด์ในกลุ่ม: ${members.map((m) => m.brandCode).join(", ")}`
+                : dirty.length > 0
+                  ? `บันทึกเฉพาะแบรนด์ที่แก้ไข: ${dirty.map((m) => m.brandCode).join(", ")}`
+                  : "ยังไม่มีการแก้ไข"}
             </p>
 
             <div className="flex justify-end gap-2">
               <Button variant="secondary" size="sm" onClick={() => setOpen(false)}>ปิด</Button>
               <Button variant="primary" size="sm" icon={<Save size={14} />}
-                onClick={save} loading={busy} disabled={busy || dirty.length === 0}>บันทึก</Button>
+                onClick={save} loading={busy} disabled={busy || toWrite.length === 0 || batchWouldClear}>บันทึก</Button>
             </div>
           </div>
         </Dialog>
@@ -487,8 +552,8 @@ export function ClrErpInterfaceSettings() {
     <div className="flex flex-col gap-4">
       <p className="text-[12px] m-0" style={{ color: "var(--text-muted)" }}>
         จัดกลุ่มตาม Company ปลายทาง — AP-3 กลับรายการจาก AP-2 · G/L · ธนาคาร · สาขา มาจากรายการที่เคลียร์เอง
-        ตั้งค่าที่นี่: <b>Journal Batch</b> · บัญชี<b>ภาษีซื้อ (VAT input)</b> · บัญชี<b>WHT payable</b> —
-        ตั้งแยกของแต่ละแบรนด์เบิก
+        ตั้งค่าที่นี่: <b>Journal Batch</b> (ใช้ร่วมกันทั้งกลุ่ม) · บัญชี<b>ภาษีซื้อ (VAT input)</b> ·
+        บัญชี<b>WHT payable</b> (แยกรายแบรนด์เบิก)
       </p>
 
       {isLoading ? (
