@@ -812,7 +812,7 @@ function BrandErpSummaryCard({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="w-full text-left rounded-xl px-4 py-4 transition-all"
+      className="w-full h-full text-left rounded-xl px-4 py-4 flex flex-col transition-all"
       style={{
         background: cardBg,
         border: `1px solid ${cardBorder}`,
@@ -1009,12 +1009,19 @@ function TargetErpSummaryCard({
 
   const journalLabel = journalDraft.trim() || "—";
 
+  /* AP-4's card shape (user, 2026-09-14: "ของ AP-1 ต้องเป็น cards เหมือน AP-4").
+     Was one full-width row per group, where the name, the status, แก้ไข and a
+     chevron shared a line and the summary sat underneath — legible, but nothing
+     like the tiles the other two forms present. The information is unchanged;
+     it is stacked instead of strung out, so four groups read as four cards side
+     by side rather than four bands down the page. The chevron goes with the
+     change: a tile is not a list row, and แก้ไข already says it opens. */
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="group w-full text-left rounded-xl px-4 py-3 transition-[box-shadow,border-color,transform] duration-200 hover:shadow-md active:scale-[0.998]"
+      className="group w-full h-full text-left rounded-xl p-4 flex flex-col transition-[box-shadow,border-color,transform] duration-200 hover:shadow-md active:scale-[0.998]"
       style={{
         background: cardBg,
         border: `1px solid ${cardBorder}`,
@@ -1023,53 +1030,62 @@ function TargetErpSummaryCard({
         opacity: disabled ? 0.7 : 1,
       }}
     >
-      <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2.5 min-w-0 flex-1">
-          <div
-            className="flex items-center justify-center shrink-0 rounded-lg p-1.5"
-            style={{ background: "var(--bg-card)", border: "1px solid var(--border-light)" }}
-          >
-            <img
-              src={group.targetBrandLogo}
-              alt=""
-              className="h-7 w-auto object-contain"
-              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-            />
-          </div>
-          <div className="min-w-0 flex items-center gap-2">
-            <p className="text-[14px] font-bold m-0 truncate" style={{ color: "var(--text-heading)" }}>
-              {group.targetBrandName}
-            </p>
-            <span
-              className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded shrink-0"
-              style={{ background: "var(--bg-badge)", color: "var(--text-muted)" }}
-            >
-              {group.targetBrandCode}
-            </span>
-          </div>
+      <div className="flex items-center gap-3 mb-3">
+        <div
+          className="flex items-center justify-center shrink-0 rounded-lg p-1.5"
+          style={{ background: "var(--bg-card)", border: "1px solid var(--border-light)" }}
+        >
+          <img
+            src={group.targetBrandLogo}
+            alt=""
+            className="h-7 w-auto object-contain"
+            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+          />
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <CardStatusBadge complete={rowComplete} dirty={isDirty} />
-          <span
-            className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-lg opacity-80 group-hover:opacity-100"
-            style={{ color: "var(--nav-active-text)", background: "var(--nav-active-bg)" }}
-          >
-            <Pencil size={12} />
-            แก้ไข
-          </span>
-          <ChevronRight size={16} style={{ color: "var(--text-muted)" }} />
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] font-bold m-0 truncate" style={{ color: "var(--text-heading)" }}>
+            {group.targetBrandName}
+          </p>
+          <p className="text-[10px] m-0 font-mono" style={{ color: "var(--text-muted)" }}>
+            {group.targetBrandCode}
+          </p>
         </div>
+        <CardStatusBadge complete={rowComplete} dirty={isDirty} />
       </div>
 
+      <div className="mb-3">
+        <ClaimBrandsSummary claims={group.claimRows} compact />
+      </div>
+
+      {/* mt-auto keeps the footer on the card's floor, so cards of unequal
+          member counts still line their Journal Batch and BC lines up. */}
       <div
-        className="mt-2.5 pt-2.5 flex flex-col gap-2"
+        className="mt-auto pt-3 flex flex-col gap-1.5"
         style={{ borderTop: "1px solid var(--border-light)" }}
       >
-        <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-x-5 gap-y-2 items-end">
-          <ClaimBrandsSummary claims={group.claimRows} compact />
-          <SummaryRow label="Journal Batch" value={journalLabel} align="right" />
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[10px] font-bold uppercase tracking-wide shrink-0" style={{ color: "var(--text-faint)" }}>
+            Journal Batch
+          </span>
+          <span
+            className="text-[11px] font-medium truncate"
+            style={{ color: journalLabel === "—" ? "var(--text-muted)" : "var(--text-primary)" }}
+            title={journalLabel}
+          >
+            {journalLabel}
+          </span>
         </div>
         <BcConnectionMeta preview={preview} />
+      </div>
+
+      <div className="flex justify-end mt-3">
+        <span
+          className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-lg opacity-80 group-hover:opacity-100"
+          style={{ color: "var(--nav-active-text)", background: "var(--nav-active-bg)" }}
+        >
+          <Pencil size={12} />
+          แก้ไข
+        </span>
       </div>
     </button>
   );
@@ -2746,7 +2762,11 @@ export function BrandErpInterfaceSettings({ isAdmin }: BrandErpInterfaceSettings
         </span>
       </div>
 
-      <div className="flex flex-col gap-3">
+      {/* A grid, not a stack — see TargetErpSummaryCard. Three across matches
+          AP-4's tab; the unassigned claim brands share the grid rather than
+          getting one of their own, because they are the same kind of thing
+          waiting to be put in a group. */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 items-stretch">
         {targetGroups.map((group) => {
           const targetKey = group.targetBrandCode;
           return (

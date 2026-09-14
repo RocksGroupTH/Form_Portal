@@ -13,6 +13,13 @@ with every field inline. This makes those two match.
 > against `BrandErpInterfaceSettings.tsx` from before this branch
 > (`WIP (pre-existing, not mine)`), so editing it now would collide with
 > somebody else's work.
+>
+> **Amended the same day: AP-1's CARD SHAPE was changed after all**, on the
+> user's direct instruction — *"ของ AP-1 ต้องเป็น cards เหมือน AP-4"*. Its
+> grouping, its edit form and every rule in that file are untouched; what
+> changed is that `TargetErpSummaryCard` renders AP-4's tile instead of a
+> full-width row, and the list is a three-across grid. The stash hazard is real
+> and the edit was kept to those two places because of it.
 
 ---
 
@@ -30,10 +37,20 @@ Identical to AP-4's tab, which is identical to AP-1's:
 | | Group level | Per member row |
 |---|---|---|
 | **AP-2** | Journal Batch · BC connection | Bank Account · Branch · Active |
-| **AP-3** | Journal Batch · VAT input · WHT payable · BC connection | — |
+| **AP-3** | BC connection | Journal Batch · VAT input · WHT payable |
 
-AP-3 has nothing left per brand, which is the point: every value it configures
-is a fact about the company whose books the clearing posts into.
+> **Amended at implementation, 2026-09-14 — AP-3's row was the other way round
+> in this table and shipped that way for one commit.** It read "Journal Batch ·
+> VAT input · WHT payable · BC connection" at group level with nothing per
+> brand, on the reasoning that every value AP-3 configures is a fact about the
+> company whose books the clearing posts into. The user reversed it the same day
+> — *"Interface ERP AP-3 ต้องแยกเป็นของแต่ละ brand เหมือนกับ AP-2"* — and the
+> measured data agrees: PCMY sits in the PCTH group carrying **none** of the
+> three, so one value for the group made "unset" and "deliberately different"
+> the same thing, and resolving the group meant overwriting whatever a member
+> already had. `AccClearAdvanceInterfaceConfig` has always been one row per
+> `BrandCode` with these three columns; the dialog now matches it, and the save
+> writes only the brands whose values actually changed.
 
 ---
 

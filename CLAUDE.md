@@ -939,8 +939,15 @@ summary.
   `ยังไม่ได้จัดกลุ่ม` bucket — AP-1's and AP-4's shape, which is what the user
   asked for. Spec:
   `docs/superpowers/specs/2026-09-14-ap2-ap3-erp-interface-groups-design.md`.
-  **AP-1 was deliberately not touched**: it is already grouped, and an
-  uncommitted stash sits against `BrandErpInterfaceSettings.tsx`.
+  **AP-1's grouping was not touched; its card SHAPE was** (user, 2026-09-14:
+  "ของ AP-1 ต้องเป็น cards เหมือน AP-4"). It had been grouped by target since
+  before this work, but rendered one full-width row per group with the name,
+  the status, แก้ไข and a chevron strung along a single line; it is now AP-4's
+  tile — logo, name, status, member chips, then Journal Batch and the BC line
+  on the card's floor — in a three-across grid, the unassigned claim brands
+  sharing that grid rather than getting one of their own. **No logic changed**,
+  and nothing else in that 3,109-line file was edited, because an uncommitted
+  stash (`WIP (pre-existing, not mine)`) sits against it.
   `src/lib/acc/erp-target-groups.ts` is the pure, form-agnostic half
   (`groupByTarget`, `groupByTargetIncludingEmpty`, `groupValue`), separate from
   AP-1's own `brand-erp-interface-groups.ts` for that reason. Five things about
@@ -954,19 +961,33 @@ summary.
     nothing. One POST per member, stopping at the first refusal and naming the
     member it stopped on, exactly as AP-4's group save does.
   - **`groupValue` answers three things, and the screens keep them apart**:
-    agreed, **fill** (some members blank — saving writes the value to them, and
-    the card says so) and **conflict** (two different non-blank values — refused,
-    never picked, because a pick overwrites one real decision with another on
-    configuration that decides where money posts).
-  - **The conflict is not hypothetical.** Measured 2026-09-14: AP-2's PCTH group
-    is `PCTH=Q · ROCKS=Q · PCMY=TRANSFER` — PCMY posts into PCTH with its own
-    batch and its own bank (`UOB-2726`). So a conflict starts the box empty, and
-    **Save is blocked while it is empty** with the members it would clear named;
-    whichever value is chosen, the dialog lists whose current value it replaces.
-    Without that, one click on a group somebody opened to fix a bank account
-    nulls three working batches. AP-3's same group is a **fill** instead —
-    PCMY has no batch, and neither PCMY nor PCTH has a VAT-input or WHT-payable
-    account — so saving it is a repair.
+    agreed, **fill** (some members blank) and **conflict** (two different
+    non-blank values). On **AP-2**, where the Journal Batch really is one
+    group-level control, that governs the save: a conflict starts the box empty
+    and is never resolved by a pick the screen makes. On **AP-3** the three
+    states are read-only information on the card, because its fields are edited
+    per brand — see the next bullet.
+  - **The conflict is not hypothetical, and it is why AP-3 no longer shares
+    anything.** Measured 2026-09-14: AP-2's PCTH group is
+    `PCTH=Q · ROCKS=Q · PCMY=TRANSFER` — PCMY posts into PCTH with its own batch
+    and its own bank (`UOB-2726`). On **AP-2**, where the batch stays
+    group-level, a conflict starts the box empty and **Save is blocked while it
+    is empty** with the members it would clear named; whichever value is chosen,
+    the dialog lists whose current value it replaces. Without that, one click on
+    a group somebody opened to fix a bank account nulls three working batches.
+  - **AP-3 edits ALL THREE of its fields PER BRAND** (user, 2026-09-14:
+    "Interface ERP AP-3 ต้องแยกเป็นของแต่ละ brand เหมือนกับ AP-2"). It shipped
+    group-shared for one commit, fanning one value out to every member, and that
+    was wrong for the same measured reason: PCMY sits in the PCTH group carrying
+    none of the three, so one value for the group made "unset" and "deliberately
+    different" the same thing, and resolving the group meant overwriting whatever
+    a member already had. `AccClearAdvanceInterfaceConfig` has always held one
+    row per `BrandCode` with these three columns, so the dialog now matches the
+    storage exactly and the **save writes only the brands whose values changed**,
+    naming them on the button's line. The card keeps its group summary through
+    `groupValue` — that is now information, not a thing to resolve before
+    saving. There is no overwrite guard on AP-3 and none is needed: a value can
+    only be cleared in its own brand's box, by somebody looking at it.
   - **Membership is AP-2's, and AP-3 has no say.** AP-2 owns
     `AccBrandErpInterface` with `FormCode='AP-2'`, so its cards carry
     `เพิ่มแบรนด์` — **adding IS moving**, the same upsert the per-brand Company

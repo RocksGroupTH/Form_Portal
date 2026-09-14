@@ -51,11 +51,30 @@ test("AP-2's group save posts one body per member, keyed on the claim brand", ()
   );
 });
 
-test("AP-3's group save posts one body per member, keyed on the claim brand", () => {
+test("AP-3's save posts one body per brand, keyed on the claim brand", () => {
+  // `dirty`, not `members`: since 2026-09-14 all three of AP-3's fields are
+  // edited per brand, so the save writes only the brands somebody changed.
   assert.ok(
-    /for \(const m of members\)[\s\S]{0,600}?brandCode: m\.brandCode/.test(AP3),
-    "AP-3's group save no longer loops its members posting brandCode",
+    /for \(const m of dirty\)[\s\S]{0,600}?brandCode: m\.brandCode/.test(AP3),
+    "AP-3's save no longer loops the changed brands posting brandCode",
   );
+});
+
+test("AP-3 edits all three of its fields per brand, not once for the group", () => {
+  // The failure to guard against is a well-meaning simplification back to one
+  // control per group: PCMY posts into PCTH beside PCTH and ROCKS and carries
+  // none of the three, so a group-level control makes "unset" and "deliberately
+  // different" the same thing and resolves the difference by overwriting.
+  for (const [field, setter] of [
+    ["Journal Batch", "batch"],
+    ["VAT input", "vatGl"],
+    ["WHT payable", "whtGl"],
+  ] as const) {
+    assert.ok(
+      new RegExp(`setFor\\(m\\.brandCode, \\{ ${setter}: x \\}\\)`).test(AP3),
+      `AP-3's ${field} is no longer edited on the brand's own row`,
+    );
+  }
 });
 
 test("AP-3 renders no membership control", () => {
