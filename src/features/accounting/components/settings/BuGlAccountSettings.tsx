@@ -15,7 +15,8 @@ import {
 } from "@/lib/acc/bu-gl-groups";
 
 /**
- * Which G/L account a shop's spend books to — **AP-3's screen and AP-4's**.
+ * **Fix G/L by BU or Branch** — which G/L account a shop's spend books to.
+ * **AP-3's screen and AP-4's**, under that one name on both strips.
  *
  * **Grouped by the ACCOUNT, not by the shop**, which is the question an
  * accountant actually has: *which shops book to this receivable?* The rows are

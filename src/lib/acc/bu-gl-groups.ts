@@ -1,5 +1,5 @@
 /**
- * The **G/L Account** settings screen, turned the right way round.
+ * The **Fix G/L by BU or Branch** settings screen, turned the right way round.
  *
  * Shared by AP-3 and AP-4 — one screen over one set of rows, since 2026-09-14.
  * It lives in `lib/acc` rather than under either feature for that reason, and

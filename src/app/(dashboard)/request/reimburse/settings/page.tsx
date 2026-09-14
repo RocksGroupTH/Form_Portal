@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Building2, FileCheck, Link2, ListTree, Settings, ShieldCheck } from "lucide-react";
+import { Building2, FileCheck, Link2, Pin, Settings, ShieldCheck } from "lucide-react";
 import { backTo } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
@@ -70,7 +70,12 @@ const TAB_META: Record<TabKey, { label: string; icon: React.ReactNode }> = {
   // The KEY stays `buGlMap` while the label changes, so bookmarked `?tab=`
   // links keep working — the same call AP-1's settings strip made when its
   // ผู้อนุมัติบัญชี tab was renamed.
-  buGlMap: { label: "G/L Account", icon: <ListTree size={15} /> },
+  // Word for word and icon for icon with AP-3's own tab: one screen over one
+  // set of rows, so the two strips must not teach two names for it. The KEY
+  // stays `buGlMap` through every rename, so bookmarked `?tab=` links keep
+  // working — the same call AP-1's settings strip made when its
+  // ผู้อนุมัติบัญชี tab was renamed.
+  buGlMap: { label: "Fix G/L by BU or Branch", icon: <Pin size={15} /> },
   access: { label: "สิทธิ์เข้าถึง", icon: <ShieldCheck size={15} /> },
 };
 
