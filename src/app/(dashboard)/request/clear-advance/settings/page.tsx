@@ -11,7 +11,7 @@ import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { ClrApproverSettings } from "@/features/clear-advance/components/admin/ClrApproverSettings";
 import { ClrErpInterfaceSettings } from "@/features/clear-advance/components/admin/ClrErpInterfaceSettings";
 import { ClrGlAccountSettings } from "@/features/clear-advance/components/admin/ClrGlAccountSettings";
-import { ClrBuGlMapSettings } from "@/features/clear-advance/components/admin/ClrBuGlMapSettings";
+import { BuGlAccountSettings } from "@/features/accounting/components/settings/BuGlAccountSettings";
 import { ClrLocationSyncPanel } from "@/features/clear-advance/components/admin/ClrLocationSyncPanel";
 
 type TabKey = "erpInterface" | "glAccounts" | "buGlMap" | "locations" | "approvers";
@@ -19,6 +19,11 @@ type TabKey = "erpInterface" | "glAccounts" | "buGlMap" | "locations" | "approve
 const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: "erpInterface", label: "Interface ERP", icon: <Link2 size={15} /> },
   { key: "glAccounts", label: "หมวดบัญชี G/L", icon: <ListTree size={15} /> },
+  // **The SCREEN is now AP-4's; the NAME deliberately is not.** AP-4 calls this
+  // tab "G/L Account", which reads fine on a strip that has nothing else like
+  // it — but this strip already carries "หมวดบัญชี G/L" one tab to the left,
+  // and two near-identical names side by side would be worse than the
+  // difference they describe.
   { key: "buGlMap", label: "บัญชีตาม BU", icon: <Building2 size={15} /> },
   { key: "locations", label: "Location / BU", icon: <MapPin size={15} /> },
   { key: "approvers", label: "ผู้อนุมัติ", icon: <Users size={15} /> },
@@ -112,7 +117,14 @@ function ClearAdvanceSettingsContent() {
 
         <div className="p-5">
           {activeTab === "erpInterface" && <ClrErpInterfaceSettings />}
-          {activeTab === "buGlMap" && <ClrBuGlMapSettings />}
+          {/* The same screen AP-4 shows, over the same rows — only the path
+              differs, and it has to. See BuGlAccountSettings' own docblock. */}
+          {activeTab === "buGlMap" && (
+            <BuGlAccountSettings
+              endpoint="/api/request/clear-advance/settings/bu-gl-map"
+              sharedNote="กฎนี้ใช้ร่วมกับ AP-4 (ขอเบิกเงินคืนพนักงาน) — เป็นข้อมูลชุดเดียวกัน แก้ที่นี่มีผลกับทั้งสองฟอร์ม"
+            />
+          )}
           {activeTab === "glAccounts" && <ClrGlAccountSettings />}
           {activeTab === "locations" && <ClrLocationSyncPanel />}
           {activeTab === "approvers" && <ClrApproverSettings />}

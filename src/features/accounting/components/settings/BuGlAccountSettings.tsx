@@ -12,17 +12,25 @@ import {
   type BuRow,
   type BuRuleRow,
   type MemberKind,
-} from "@/features/reimburse/lib/bu-gl-groups";
+} from "@/lib/acc/bu-gl-groups";
 
 /**
- * AP-4 — which G/L account a shop's spend books to.
+ * Which G/L account a shop's spend books to — **AP-3's screen and AP-4's**.
  *
  * **Grouped by the ACCOUNT, not by the shop**, which is the question an
- * accountant actually has: *which shops book to this receivable?* AP-3's own
- * screen is the other way round — a row per BU with a box to type an account
- * into — and it stays that way; this reads and writes the very same rows
- * (`AccClrBuGlMap`, `AccClrBranchGlMap`, no `FormCode` column) through AP-4's
- * own route, so a rule set here also applies to AP-3 and the banner says so.
+ * accountant actually has: *which shops book to this receivable?* The rows are
+ * `AccClrBuGlMap` and `AccClrBranchGlMap`, which carry **no `FormCode`
+ * column** — which account an expense books to is a fact about a shop, not
+ * about the form the expense arrived on — so both forms read and write the
+ * same rules and the banner says so.
+ *
+ * **One screen, two paths.** `endpoint` is per form and is not decoration:
+ * `ROUTE_RULES` classifies by path, and these rows are read through
+ * `getAccPool()`, so a tester with AP-4 in UAT and AP-3 in production must not
+ * edit production's rules from a UAT screen. AP-3's own `ClrBuGlMapSettings` —
+ * a row per BU with a box to type into — was replaced by this on 2026-09-14
+ * and deleted; it also put a `<p>` straight inside a `<tbody>`, which is what
+ * the dev overlay was reporting as a hydration error on that tab.
  *
  * Three things about the shape that are consequences of the schema rather than
  * choices, and are said out loud on screen for the same reason:
@@ -55,9 +63,15 @@ interface Payload {
 
 const EMPTY: Payload = { rules: [], bus: [], branchRules: [], branches: [], glAccounts: [] };
 
-const ENDPOINT = "/api/request/reimburse/settings/bu-gl-map";
-
-export function ReimburseBuGlSettings() {
+export function BuGlAccountSettings({
+  endpoint,
+  sharedNote,
+}: {
+  /** This form's own path onto the shared rows — see the component note. */
+  endpoint: string;
+  /** One line naming the other form these rules also apply to. */
+  sharedNote: string;
+}) {
   const [company, setCompany] = useState(ERP_INTERFACE_BRANDS[0]?.id ?? "PCTH");
   const [data, setData] = useState<Payload>(EMPTY);
   const [loading, setLoading] = useState(true);
@@ -79,7 +93,7 @@ export function ReimburseBuGlSettings() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${ENDPOINT}?company=${encodeURIComponent(company)}`);
+      const res = await fetch(`${endpoint}?company=${encodeURIComponent(company)}`);
       if (res.status === 401 || res.status === 403) {
         setForbidden(true);
         return;
@@ -97,7 +111,7 @@ export function ReimburseBuGlSettings() {
     } finally {
       setLoading(false);
     }
-  }, [company]);
+  }, [company, endpoint]);
 
   useEffect(() => {
     void load();
@@ -173,7 +187,7 @@ export function ReimburseBuGlSettings() {
       const key = `${kind}:${code}`;
       setSaving(key);
       try {
-        const res = await fetch(ENDPOINT, {
+        const res = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -197,7 +211,7 @@ export function ReimburseBuGlSettings() {
         setSaving(null);
       }
     },
-    [company, load],
+    [company, load, endpoint],
   );
 
   /**
@@ -228,7 +242,7 @@ export function ReimburseBuGlSettings() {
       setSaving(`group:${accountNo}`);
       try {
         for (const m of members) {
-          const res = await fetch(ENDPOINT, {
+          const res = await fetch(endpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -254,7 +268,7 @@ export function ReimburseBuGlSettings() {
         await load();
       }
     },
-    [company, load, adding],
+    [company, load, adding, endpoint],
   );
 
   if (forbidden) {
@@ -306,7 +320,7 @@ export function ReimburseBuGlSettings() {
           border: "1px solid var(--border-info-yellow)",
         }}
       >
-        กฎนี้ใช้ร่วมกับ AP-3 (เคลียร์เงินทดรองจ่าย) — เป็นข้อมูลชุดเดียวกัน แก้ที่นี่มีผลกับทั้งสองฟอร์ม
+        {sharedNote}
       </p>
 
       <p

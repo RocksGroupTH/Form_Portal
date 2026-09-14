@@ -12,7 +12,7 @@ import { ReimburseRuleSettings } from "@/features/reimburse/components/settings/
 import { ReimburseBrandSettings } from "@/features/reimburse/components/settings/ReimburseBrandSettings";
 import { ReimburseAccessSettings } from "@/features/reimburse/components/settings/ReimburseAccessSettings";
 import { ReimburseErpInterfaceSettings } from "@/features/reimburse/components/settings/ReimburseErpInterfaceSettings";
-import { ReimburseBuGlSettings } from "@/features/reimburse/components/settings/ReimburseBuGlSettings";
+import { BuGlAccountSettings } from "@/features/accounting/components/settings/BuGlAccountSettings";
 import { useReimburseAccess } from "@/features/reimburse/hooks/useReimburseAccess";
 import {
   REIMBURSE_SETTINGS_TAB_ORDER,
@@ -224,11 +224,15 @@ function ReimburseSettingsContent() {
           {shownTab === "rules" && <ReimburseRuleSettings />}
           {shownTab === "brands" && <ReimburseBrandSettings />}
           {shownTab === "erpInterface" && <ReimburseErpInterfaceSettings />}
-          {/* AP-4's own screen over AP-3's rows: grouped by the ACCOUNT rather
-              than by the shop. AP-3's own panel is untouched — see
-              ReimburseBuGlSettings' docblock for why one data set has two
-              screens, and the route's for why it has two paths. */}
-          {shownTab === "buGlMap" && <ReimburseBuGlSettings />}
+          {/* One screen, shared with AP-3, over one set of rows — and one path
+              per form, which is the part that is not decoration. See
+              BuGlAccountSettings' own docblock. */}
+          {shownTab === "buGlMap" && (
+            <BuGlAccountSettings
+              endpoint="/api/request/reimburse/settings/bu-gl-map"
+              sharedNote="กฎนี้ใช้ร่วมกับ AP-3 (เคลียร์เงินทดรองจ่าย) — เป็นข้อมูลชุดเดียวกัน แก้ที่นี่มีผลกับทั้งสองฟอร์ม"
+            />
+          )}
           {shownTab === "access" && <ReimburseAccessSettings />}
         </div>
       </div>

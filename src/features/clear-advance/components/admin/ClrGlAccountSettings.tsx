@@ -378,11 +378,9 @@ export function ClrGlAccountSettings() {
           </thead>
           <tbody>
             {filtered.length === 0 ? (
-              <tr>
-                <td colSpan={5}>
-                  <EmptyRow label="— ไม่พบหมวดบัญชี —" />
-                </td>
-              </tr>
+              // The helper builds its own row now — see `EmptyRow`'s note on
+              // why one that does NOT is a hydration error waiting to happen.
+              <EmptyRow label="— ไม่พบหมวดบัญชี —" colSpan={5} />
             ) : (
               filtered.map((r) => (
                 <tr

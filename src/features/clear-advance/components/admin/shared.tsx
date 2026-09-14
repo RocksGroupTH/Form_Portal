@@ -127,20 +127,42 @@ export function ForbiddenState({
 
 /* ── Loading / empty helpers ── */
 
-export function LoadingRow({ label = "กำลังโหลด..." }: { label?: string }) {
-  return (
-    <p className="text-[12px] py-8 text-center" style={{ color: "var(--text-muted)" }}>
+/**
+ * "Nothing here yet", in the two places it is said.
+ *
+ * **These are named `*Row` and render a `<p>`, which is a trap — pass
+ * `colSpan` whenever the parent is a `<tbody>`.** A `<p>` placed straight
+ * inside a `<tbody>` is invalid HTML, and React hydrates it outside the table,
+ * so the browser's own repair and the server's markup disagree: the dev overlay
+ * reports it as a hydration error (`In HTML, <p> cannot be a child of
+ * <tbody>`). Measured on AP-3's บัญชีตาม BU tab on 2026-09-14, where this had
+ * been live and reported as two issues on every visit — three call sites, all
+ * of them reading naturally because of the name.
+ *
+ * With `colSpan` the helper renders the row it claims to be. Without it — the
+ * standalone use, where the caller returns it in place of a whole table — it
+ * stays the paragraph it has always been.
+ */
+function Nothing({ label, colSpan }: { label: string; colSpan?: number }) {
+  const text = (
+    <p className="text-[12px] py-8 text-center m-0" style={{ color: "var(--text-muted)" }}>
       {label}
     </p>
+  );
+  if (colSpan == null) return text;
+  return (
+    <tr>
+      <td colSpan={colSpan}>{text}</td>
+    </tr>
   );
 }
 
-export function EmptyRow({ label = "— ไม่มีข้อมูล —" }: { label?: string }) {
-  return (
-    <p className="text-[12px] py-8 text-center" style={{ color: "var(--text-muted)" }}>
-      {label}
-    </p>
-  );
+export function LoadingRow({ label = "กำลังโหลด...", colSpan }: { label?: string; colSpan?: number }) {
+  return <Nothing label={label} colSpan={colSpan} />;
+}
+
+export function EmptyRow({ label = "— ไม่มีข้อมูล —", colSpan }: { label?: string; colSpan?: number }) {
+  return <Nothing label={label} colSpan={colSpan} />;
 }
 
 /**

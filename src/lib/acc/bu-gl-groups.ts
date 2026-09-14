@@ -1,5 +1,9 @@
 /**
- * AP-4's **G/L Account** screen, turned the right way round.
+ * The **G/L Account** settings screen, turned the right way round.
+ *
+ * Shared by AP-3 and AP-4 — one screen over one set of rows, since 2026-09-14.
+ * It lives in `lib/acc` rather than under either feature for that reason, and
+ * because it is pure: the regrouping is a rule about the data, not about a form.
  *
  * The database stores **one row per thing being redirected** — `AccClrBuGlMap`
  * is `(Company, BuCode) → G/L` and `AccClrBranchGlMap` is `(Company,
