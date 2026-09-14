@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireRole } from "@/lib/api-auth";
 import {
   listGlAccountsForCompany,
+  setGlAccountNames,
   setGlCompanyRule,
   upsertGlAccount,
 } from "@/lib/clr/clear-advance-admin-service";
@@ -19,6 +20,8 @@ import { isDimensionType } from "@/lib/clr/gl-dimension";
  * GET  ?company=PCTH — every category, with that company's dimension and
  *                      on/off switch, and `dimensionType: null` where it has no
  *                      rule yet.
+ * POST { mode: "names", glAccountNo, nameTh, nameEn } — rename a category.
+ *        The names are SHARED by every company; only the rules are per company.
  * POST { company, glAccountNo, dimensionType, isActive, nameTh } — set one
  *        company's rule. `nameTh` is Business Central's name and is used only
  *        when the account has no register row yet, which is what the first tick
@@ -48,7 +51,7 @@ export async function POST(req: NextRequest) {
   if (session instanceof Response) return session;
   try {
     const body = (await req.json()) as {
-      mode?: "rule" | "create";
+      mode?: "rule" | "create" | "names";
       company?: string;
       glAccountNo?: string;
       nameTh?: string | null;
@@ -58,6 +61,17 @@ export async function POST(req: NextRequest) {
       id?: number;
       sortOrder?: number;
     };
+
+    // Renaming carries no dimension, so it is answered before the narrowing
+    // below — which exists for the rule write and would refuse this outright.
+    if (body.mode === "names") {
+      await setGlAccountNames({
+        glAccountNo: body.glAccountNo ?? "",
+        nameTh: body.nameTh ?? null,
+        nameEn: body.nameEn ?? null,
+      });
+      return NextResponse.json({ ok: true });
+    }
 
     // Narrowed here rather than trusted: `DimensionType` has a CHECK, so a bad
     // value would otherwise reach the driver and come back as an untranslated

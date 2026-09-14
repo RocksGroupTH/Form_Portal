@@ -35,6 +35,8 @@ interface GlCompanyRow {
   sortOrder: number;
   dimensionType: DimensionType | null;
   isActive: boolean;
+  /** The stored Thai override, or null where `nameTh` is Business Central's. */
+  nameThCustom: string | null;
   /** A rule on an account the sync no longer returns — live, and said so on the row. */
   missingFromErp?: boolean;
 }
@@ -50,6 +52,61 @@ const GL_URL = "/api/request/clear-advance/settings/gl-accounts";
  * tick. A dialog that typed an account number by hand could only ever name one
  * of the rows already on screen — or one that does not exist.
  */
+
+/**
+ * One name box.
+ *
+ * **Uncontrolled, and committed on blur.** A controlled input would re-render
+ * all 584 rows on every keystroke, and a save per keystroke would be a write
+ * per letter. `key` is what makes a reload show the saved value: an
+ * uncontrolled input keeps whatever was typed unless React replaces the
+ * element, so the key carries the value the server last answered with.
+ */
+function NameInput({
+  defaultValue,
+  placeholder,
+  disabled,
+  ariaLabel,
+  onCommit,
+}: {
+  defaultValue: string;
+  placeholder: string;
+  disabled?: boolean;
+  ariaLabel: string;
+  onCommit: (value: string) => void;
+}) {
+  return (
+    <input
+      key={defaultValue}
+      defaultValue={defaultValue}
+      placeholder={placeholder}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      maxLength={200}
+      onBlur={(e) => {
+        // One handler: the style reset and the commit are the same event, and
+        // splitting them across onBlur/onBlurCapture only made the order a
+        // thing a reader has to work out.
+        e.currentTarget.style.background = "transparent";
+        e.currentTarget.style.borderColor = "transparent";
+        onCommit(e.target.value);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+      }}
+      className="w-full text-[12px] px-2 py-1 rounded-lg outline-none"
+      style={{
+        background: "transparent",
+        color: "var(--text-primary)",
+        border: "1px solid transparent",
+      }}
+      onFocus={(e) => {
+        e.currentTarget.style.background = "var(--bg-input)";
+        e.currentTarget.style.borderColor = "var(--border-input)";
+      }}
+    />
+  );
+}
 
 export function ClrGlAccountSettings() {
   // PCTH by default, as asked — it is the company nearly every AP-3 clearing
@@ -95,6 +152,35 @@ export function ClrGlAccountSettings() {
         // What the row is showing — Business Central's name, unless accounting
         // has given this account one of its own. Used only on a first tick.
         nameTh: row.nameTh,
+      });
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Rename one category — **on blur, not on every keystroke**, and shared by
+   * every company.
+   *
+   * The Thai box holds the stored OVERRIDE and shows Business Central's name as
+   * its placeholder, so an empty box means "follow BC" and clearing it removes
+   * an override. Pre-filling it with BC's name would freeze today's wording
+   * into the register the first time somebody tabbed through the row.
+   */
+  async function saveNames(row: GlCompanyRow, nameTh: string, nameEn: string) {
+    if ((row.nameThCustom ?? "") === nameTh.trim() && (row.nameEn ?? "") === nameEn.trim()) return;
+    setBusy(true);
+    try {
+      await postJson(GL_URL, {
+        mode: "names",
+        glAccountNo: row.glAccountNo,
+        nameTh,
+        nameEn,
+        // Only used if this account has no register row yet, so naming an
+        // account nobody has ticked does not lose BC's own wording.
       });
       await load();
     } catch (e) {
@@ -243,7 +329,8 @@ export function ClrGlAccountSettings() {
         {/* Said once, where somebody wondering "where is 610xxxxx?" will read
             it, rather than left to be discovered. */}
         แสดงผังบัญชีของ {company} ที่ลงรายการได้จริง — หัวบัญชีและยอดรวมไม่อยู่ในรายการนี้ ·
-        ติ๊ก Dimension คือการเปิดบัญชีนั้นให้ AP-3 ใช้
+        ติ๊ก Dimension คือการเปิดบัญชีนั้นให้ AP-3 ใช้ · <b>ชื่อใช้ร่วมกันทุกบริษัท</b> —
+        แก้ที่นี่มีผลกับทุกบริษัท · ชื่อไทยที่เว้นว่างจะใช้ชื่อจาก Business Central
       </p>
 
       {/* Table */}
@@ -300,11 +387,28 @@ export function ClrGlAccountSettings() {
                       </span>
                     )}
                   </td>
-                  <td className="px-3 py-2.5" style={{ color: "var(--text-primary)" }}>
-                    {r.nameTh ?? "—"}
+                  <td className="px-3 py-2.5">
+                    <NameInput
+                      defaultValue={r.nameThCustom ?? ""}
+                      // Business Central's own wording, shown rather than
+                      // stored: grey here means the register has no override
+                      // and the name follows BC.
+                      placeholder={r.nameTh ?? ""}
+                      disabled={busy}
+                      ariaLabel={`ชื่อไทยของ ${r.glAccountNo}`}
+                      onCommit={(v) => void saveNames(r, v, r.nameEn ?? "")}
+                    />
                   </td>
-                  <td className="px-3 py-2.5" style={{ color: "var(--text-muted)" }}>
-                    {r.nameEn ?? "—"}
+                  <td className="px-3 py-2.5">
+                    <NameInput
+                      defaultValue={r.nameEn ?? ""}
+                      // Nothing to fall back to: Business Central carries one
+                      // name and it is Thai.
+                      placeholder="—"
+                      disabled={busy}
+                      ariaLabel={`ชื่ออังกฤษของ ${r.glAccountNo}`}
+                      onCommit={(v) => void saveNames(r, r.nameThCustom ?? "", v)}
+                    />
                   </td>
                   <td className="px-3 py-2.5 whitespace-nowrap">
                     <div className="flex items-center gap-3">

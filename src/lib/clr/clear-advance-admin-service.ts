@@ -171,6 +171,8 @@ export interface GlCompanyRow {
   nameTh: string | null;
   nameEn: string | null;
   sortOrder: number;
+  /** The stored Thai override, or `null` where `nameTh` is Business Central's. */
+  nameThCustom: string | null;
   /** `null` = this company has no rule for the category yet. */
   dimensionType: DimensionType | null;
   isActive: boolean;
@@ -254,6 +256,12 @@ export async function listGlAccountsForCompany(company: string): Promise<GlCompa
       // were named by accounting for this screen; BC's DisplayName is the
       // chart's own wording and is what everything else falls back to.
       nameTh: ((cfg?.NameTh as string) ?? "").trim() || ((a.DisplayName as string) ?? null),
+      // What is actually STORED, as against what is shown. The screen's Thai
+      // input holds this and shows Business Central's name as its placeholder,
+      // so an empty box means "follow BC" and a filled one means "override" —
+      // a box pre-filled with BC's own name would freeze today's wording into
+      // the register the first time anybody tabbed through it.
+      nameThCustom: ((cfg?.NameTh as string) ?? "").trim() || null,
       // BC carries ONE name and it is Thai (measured: 610301001 =
       // "เงินเดือนและค่าจ้างพนักงาน"), so there is nothing to fall back to here.
       nameEn: ((cfg?.NameEn as string) ?? "").trim() || null,
@@ -275,6 +283,7 @@ export async function listGlAccountsForCompany(company: string): Promise<GlCompa
       id: (cfg.Id as number) ?? 0,
       glAccountNo: no,
       nameTh: (cfg.NameTh as string) ?? null,
+      nameThCustom: (cfg.NameTh as string) ?? null,
       nameEn: (cfg.NameEn as string) ?? null,
       sortOrder: (cfg.SortOrder as number) ?? 0,
       dimensionType: isDimensionType(cfg.DimensionType)
@@ -286,6 +295,72 @@ export async function listGlAccountsForCompany(company: string): Promise<GlCompa
   }
 
   return rows;
+}
+
+/** `AccClearAdvanceGl`'s two name columns, at the bound the columns have. */
+const NAME_MAX_LEN = 200;
+
+/**
+ * Rename one category.
+ *
+ * **The names are SHARED by every company** — one row in the register, which is
+ * the whole reason the rules were split into a second table (migration 151's
+ * header). An admin editing them from PCTH's screen is editing what KSI sees,
+ * and the screen says so.
+ *
+ * A blank Thai name is stored as NULL rather than as an empty string, so the
+ * list falls back to Business Central's own wording again; that is how an
+ * override is REMOVED, and it is why the screen's input is empty rather than
+ * pre-filled when there is no override.
+ *
+ * Bounded here rather than left to the column: `NVARCHAR(200)` truncates a
+ * long value silently on some paths and raises an untranslated driver error on
+ * others, and neither is a Thai message.
+ */
+export async function setGlAccountNames(input: {
+  glAccountNo: string;
+  nameTh?: string | null;
+  nameEn?: string | null;
+}): Promise<void> {
+  const glNo = (input.glAccountNo ?? "").trim();
+  if (!glNo) throw new Error("กรุณาระบุเลขที่บัญชี G/L");
+  const th = (input.nameTh ?? "").trim();
+  const en = (input.nameEn ?? "").trim();
+  if (th.length > NAME_MAX_LEN || en.length > NAME_MAX_LEN) {
+    throw new Error(`ชื่อยาวเกิน ${NAME_MAX_LEN} ตัวอักษร`);
+  }
+
+  const pool = await getAccPool();
+  const exists = await pool.request().input("no", sql.NVarChar, glNo)
+    .query(`SELECT TOP 1 Id FROM [dbo].[AccClearAdvanceGl] WHERE GlAccountNo=@no`);
+
+  if (exists.recordset.length === 0) {
+    // Naming an account nobody has ticked yet. The register row is created for
+    // the name alone — it carries no company rule, so the account is offered to
+    // nobody until somebody ticks a Dimension.
+    //
+    // **A blank Thai name is stored as NULL, not as Business Central's.** Typing
+    // only an English name must not freeze today's BC wording into the register
+    // as an override nobody asked for — measured doing exactly that before this
+    // line changed. `setGlCompanyRule` fills the name in if and when the account
+    // is ever ticked, which is the only moment the picker needs one.
+    await pool.request()
+      .input("no", sql.NVarChar, glNo)
+      .input("th", sql.NVarChar, th || null)
+      .input("en", sql.NVarChar, en || null)
+      .query(`INSERT INTO [dbo].[AccClearAdvanceGl]
+                (GlAccountNo, NameTh, NameEn, DimensionType, IsActive, SortOrder)
+              VALUES (@no, @th, @en, 'Employee', 1, 0)`);
+    return;
+  }
+
+  await pool.request()
+    .input("no", sql.NVarChar, glNo)
+    .input("th", sql.NVarChar, th || null)
+    .input("en", sql.NVarChar, en || null)
+    .query(`UPDATE [dbo].[AccClearAdvanceGl]
+            SET NameTh=@th, NameEn=@en, UpdatedAt=SYSDATETIME()
+            WHERE GlAccountNo=@no`);
 }
 
 /**
@@ -313,7 +388,23 @@ export async function setGlCompanyRule(input: {
 
   const pool = await getAccPool();
   const exists = await pool.request().input("no", sql.NVarChar, glNo)
-    .query(`SELECT TOP 1 Id FROM [dbo].[AccClearAdvanceGl] WHERE GlAccountNo=@no`);
+    .query(`SELECT TOP 1 Id, NameTh FROM [dbo].[AccClearAdvanceGl] WHERE GlAccountNo=@no`);
+
+  // A register row created by a RENAME carries no Thai name unless somebody
+  // typed one — see `setGlAccountNames`. This is the moment it needs one: from
+  // here the account is in the form's picker, and the picker reads its names
+  // from the register. Filled only when blank, so it never overwrites an
+  // override somebody typed.
+  const existingTh = String(exists.recordset[0]?.NameTh ?? "").trim();
+  if (exists.recordset.length > 0 && existingTh === "" && (input.nameTh ?? "").trim() !== "") {
+    await pool.request()
+      .input("no", sql.NVarChar, glNo)
+      .input("th", sql.NVarChar, (input.nameTh ?? "").trim())
+      .query(`UPDATE [dbo].[AccClearAdvanceGl]
+              SET NameTh=@th, UpdatedAt=SYSDATETIME()
+              WHERE GlAccountNo=@no AND (NameTh IS NULL OR LTRIM(RTRIM(NameTh)) = '')`);
+  }
+
   if (exists.recordset.length === 0) {
     // **The register row is created here, not refused.** The settings screen
     // now lists the company's whole postable chart of accounts, so the first
