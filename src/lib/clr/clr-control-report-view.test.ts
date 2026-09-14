@@ -28,6 +28,7 @@ function fixtureRow(overrides: Partial<ClrControlRow> & Pick<ClrControlRow, "id"
     extraToEmployee: null,
     refundTransferDate: null,
     pvDocNo: null,
+    erpDocumentNo: null,
     paymentDate: null,
     managerApprovedName: null,
     managerApprovedAt: null,

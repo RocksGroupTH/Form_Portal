@@ -37,6 +37,7 @@ import { ColumnToggleMenu, type ColumnToggleOption } from "@/features/travel-boo
 import type { ClrControlRow } from "@/lib/clr/clear-advance-report-service";
 import { DEFAULT_VISIBLE_KEYS, controlAdjustment, singleStackedValue } from "@/lib/clr/clr-control-report-view";
 import { QueueColumnFilter } from "@/features/advance/components/QueueColumnFilter";
+import { reportPv } from "@/lib/clr/clr-report-pv";
 import {
   FilterBar,
   ForbiddenState,
@@ -175,7 +176,7 @@ function cellText(r: ClrControlRow, key: string): string {
       return adj.direction === "none" ? "" : fmtMoney(adj.amount);
     }
     case "refundTransferDate": return fmtDateOnly(r.refundTransferDate);
-    case "pvDocNo": return r.pvDocNo ?? "";
+    case "pvDocNo": return reportPv(r).text ?? "";
     case "pendingOn": return r.pendingOn ?? "";
     // The badge shows the Thai label, so that is what the filter matches; an
     // unmapped status falls back to the raw value rather than showing blank.
@@ -258,7 +259,16 @@ const SCREEN_COLS: ScreenCol[] = [
     // detail of *when this PV was paid*, not a fact worth a whole column.
     render: (r) => (
       <div className="leading-tight">
-        <div style={{ color: "var(--text-secondary)" }}>{r.pvDocNo ?? "—"}</div>
+        {/* The number BC issued, or the one somebody typed when nothing was
+            sent — reportPv decides, and the dotted underline marks the
+            hand-typed case so a reader can tell a posting from a note. */}
+        <div style={{ color: "var(--text-secondary)" }}
+          title={reportPv(r).source === "manual" ? "กรอกด้วยมือในขั้นบัญชี — ยังไม่ได้ส่งเข้า ERP" : undefined}>
+          {reportPv(r).text ?? "—"}
+          {reportPv(r).source === "manual" && (
+            <span className="ml-1 text-[10px]" style={{ color: "var(--text-faint)" }}>·มือ</span>
+          )}
+        </div>
         {r.paymentDate && (
           <div className="text-[10px] tabular-nums mt-0.5" style={{ color: "var(--text-faint)" }}>
             {fmtDateOnly(r.paymentDate)}
