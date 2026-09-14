@@ -12,7 +12,7 @@ import { ReimburseRuleSettings } from "@/features/reimburse/components/settings/
 import { ReimburseBrandSettings } from "@/features/reimburse/components/settings/ReimburseBrandSettings";
 import { ReimburseAccessSettings } from "@/features/reimburse/components/settings/ReimburseAccessSettings";
 import { ReimburseErpInterfaceSettings } from "@/features/reimburse/components/settings/ReimburseErpInterfaceSettings";
-import { ClrBuGlMapSettings } from "@/features/clear-advance/components/admin/ClrBuGlMapSettings";
+import { ReimburseBuGlSettings } from "@/features/reimburse/components/settings/ReimburseBuGlSettings";
 import { useReimburseAccess } from "@/features/reimburse/hooks/useReimburseAccess";
 import {
   REIMBURSE_SETTINGS_TAB_ORDER,
@@ -221,14 +221,11 @@ function ReimburseSettingsContent() {
           {shownTab === "rules" && <ReimburseRuleSettings />}
           {shownTab === "brands" && <ReimburseBrandSettings />}
           {shownTab === "erpInterface" && <ReimburseErpInterfaceSettings />}
-          {/* AP-3's panel and AP-3's rows, on AP-4's own path — see the route's
-              docblock for why the path matters and the rows do not. */}
-          {shownTab === "buGlMap" && (
-            <ClrBuGlMapSettings
-              endpoint="/api/request/reimburse/settings/bu-gl-map"
-              sharedNote="กฎนี้ใช้ร่วมกับ AP-3 (เคลียร์เงินทดรองจ่าย) — เป็นข้อมูลชุดเดียวกัน แก้ที่นี่มีผลกับทั้งสองฟอร์ม"
-            />
-          )}
+          {/* AP-4's own screen over AP-3's rows: grouped by the ACCOUNT rather
+              than by the shop. AP-3's own panel is untouched — see
+              ReimburseBuGlSettings' docblock for why one data set has two
+              screens, and the route's for why it has two paths. */}
+          {shownTab === "buGlMap" && <ReimburseBuGlSettings />}
           {shownTab === "access" && <ReimburseAccessSettings />}
         </div>
       </div>

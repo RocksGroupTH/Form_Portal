@@ -13,17 +13,29 @@ export interface ErpGlOption { accountNo: string; displayName: string | null }
  * The brand resolves to its target Company via AP-1's interfaceByClaim map
  * (e.g. ROCKS → PCTH), since ErpAccounts is keyed by Company.
  */
-export async function listClrErpGlOptions(brandCode: string): Promise<ErpGlOption[]> {
-  const brand = brandCode.trim().toUpperCase();
-  if (!brand) return [];
-  const ctx = await loadErpJournalBuildContext("AP-3");
-  const company = (ctx.interfaceByClaim[brand] ?? brand).toUpperCase();
+/**
+ * G/L accounts for an already-resolved target Company (e.g. PCTH) — no brand
+ * resolution, and therefore no form pinned into it.
+ *
+ * The form-agnostic half of `listClrErpGlOptions` below, split out the same way
+ * `listClrErpBranchesForCompany` was: that one hard-codes `"AP-3"` when it
+ * resolves a claim brand, so calling it from another form would resolve that
+ * form's brand through AP-3's interface map.
+ *
+ * **No category filter, deliberately.** A BU → G/L rule points a franchised
+ * store's spend at a RECEIVABLE, not an expense account, so the expense-only
+ * list AP-4's line picker uses (`listExpenseAccounts`) would not contain
+ * `110721001` — the very account those rules already use today.
+ */
+export async function listClrErpGlOptionsForCompany(company: string): Promise<ErpGlOption[]> {
+  const c = company.trim().toUpperCase();
+  if (!c) return [];
   const pool = await getAppPool(ERP_DATA_DB);
   const r = await pool.request()
-    .input("brand", sql.NVarChar, company)
+    .input("company", sql.NVarChar, c)
     .query(`
       SELECT AccountNo, DisplayName FROM [dbo].[ErpAccounts]
-      WHERE AccountCategory = 'GL' AND BrandCode = @brand
+      WHERE AccountCategory = 'GL' AND BrandCode = @company
         AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
       ORDER BY AccountNo
     `);
@@ -31,6 +43,14 @@ export async function listClrErpGlOptions(brandCode: string): Promise<ErpGlOptio
     accountNo: x.AccountNo as string,
     displayName: (x.DisplayName as string) ?? null,
   }));
+}
+
+export async function listClrErpGlOptions(brandCode: string): Promise<ErpGlOption[]> {
+  const brand = brandCode.trim().toUpperCase();
+  if (!brand) return [];
+  const ctx = await loadErpJournalBuildContext("AP-3");
+  const company = (ctx.interfaceByClaim[brand] ?? brand).toUpperCase();
+  return listClrErpGlOptionsForCompany(company);
 }
 
 export interface ErpJournalBatchOption { batchName: string; displayName: string | null; templateName: string | null }

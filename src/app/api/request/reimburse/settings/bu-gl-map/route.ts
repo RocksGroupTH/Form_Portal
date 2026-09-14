@@ -7,6 +7,10 @@ import {
   upsertBranchGlMap,
   upsertBuGlMap,
 } from "@/lib/clr/clr-bu-gl-map-service";
+import {
+  listClrErpBranchesForCompany,
+  listClrErpGlOptionsForCompany,
+} from "@/lib/clr/clear-advance-admin-service";
 
 /**
  * AP-4's door onto the BU → G/L and BRANCH → G/L rules.
@@ -32,9 +36,15 @@ import {
  * in and is not brand-scoped, the same argument that keeps `erpInterface`
  * ungrantable.
  *
- * GET  ?company=PCTH — the rules for one BC company, plus every BU its
- *                      Locations actually carry, so the screen offers the ones
- *                      a rule could apply to instead of a free-text box.
+ * GET  ?company=PCTH — the rules for one BC company, plus the three lists the
+ *                      screen picks from: every BU its Locations carry, its
+ *                      BRANCH dimension values, and its G/L accounts. Every
+ *                      one of them is a real list rather than a free-text box,
+ *                      because a rule typed against a code that does not exist
+ *                      never fires and nothing says so.
+ *                      **The G/L list is NOT filtered to expense accounts**: a
+ *                      rule points a franchised store's spend at a RECEIVABLE,
+ *                      which is what every rule in use today does.
  * POST { company, buCode | branchCode, glAccountNo, note } — set one rule. A
  *      blank account deletes it, returning that BU to "บัญชีตาม คชจ" — the same
  *      state as never having had a rule.
@@ -48,12 +58,21 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "ต้องระบุ Company" }, { status: 400 });
   }
   try {
-    const [rules, bus, branchRules] = await Promise.all([
+    // Five reads, one round trip. AP-4's screen groups the rules by the
+    // account they point at and adds members from real lists, so it needs the
+    // Company's BRANCH dimension values and its G/L accounts as well — and a
+    // second and third fetch would each re-resolve the same Company.
+    const [rules, bus, branchRules, branches, glAccounts] = await Promise.all([
       listBuGlMap(company),
       listCompanyBus(company),
       listBranchGlMap(company),
+      listClrErpBranchesForCompany(company),
+      listClrErpGlOptionsForCompany(company),
     ]);
-    return NextResponse.json({ ok: true, data: { rules, bus, branchRules } });
+    return NextResponse.json({
+      ok: true,
+      data: { rules, bus, branchRules, branches, glAccounts },
+    });
   } catch (e) {
     return NextResponse.json(
       { ok: false, error: e instanceof Error ? e.message : "error" },
