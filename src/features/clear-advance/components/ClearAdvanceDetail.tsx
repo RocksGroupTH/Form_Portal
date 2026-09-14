@@ -11,6 +11,7 @@ import type { ClearAdvanceDetail as ClearDetail } from "@/features/clear-advance
 import { Dialog } from "@/components/ui/Dialog";
 import { PND_LABEL } from "@/lib/clr/wht-pnd-core";
 import { normalizeTaxIdInput, taxIdNotice } from "@/lib/clr/seller-tax-id";
+import { linesWithBadTaxId } from "@/lib/clr/tax-id-check-core";
 import { Avatar } from "@/components/ui/Avatar";
 import {
   AttachmentViewer,
@@ -235,6 +236,7 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
      approval stopped waiting on it on 2026-09-11, because the VAT line carries
      the seller by name, tax id and branch whether or not a card is linked. */
   const missingVendorLines = linesMissingTaxVendor(isAccountStep ? editItems : items);
+  const badTaxIdLines = linesWithBadTaxId(isAccountStep ? editItems : items);
   /* Same rows, same reason: the ภ.ง.ด. type the journal builder refuses without.
      The sentence comes from the same function the server uses, so the screen and
      the refusal cannot drift apart. */
@@ -636,6 +638,17 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
               <input type="checkbox" checked={accChecked} onChange={(e) => setAccChecked(e.target.checked)} />
               ตรวจสอบแล้ว
             </label>
+            {badTaxIdLines.length > 0 && (
+              /* Yellow, not grey, and above the vendor note: a tax id that
+                 cannot be one is filed against the wrong company, which the
+                 missing vendor card is not. Still not a block — see
+                 linesWithBadTaxId for why. */
+              <p className="text-[12px] m-0 px-3 py-2 rounded-lg"
+                style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
+                รายการที่ {badTaxIdLines.join(", ")} — เลขผู้เสียภาษีไม่ถูกต้องตามหลักตรวจสอบ
+                (มักเกิดจากอ่านสลับหลัก) กรุณาตรวจกับใบกำกับก่อนอนุมัติ
+              </p>
+            )}
             {missingVendorLines.length > 0 && (
               /* Grey, and it does not say "จึงจะอนุมัติได้" any more: it is worth
                  knowing which lines have no vendor card, and it is not worth
