@@ -8,6 +8,7 @@ import {
   ITEM_VENDOR_TOO_LONG_ERROR,
   VENDOR_NO_MAX_LEN,
   parseItemAccountEdits,
+  vendorStatusForEdit,
 } from "./item-account-edits";
 
 test("a normal edit list parses, trimmed", () => {
@@ -123,4 +124,48 @@ test("exactly the vendor column's length is accepted", () => {
 test("a vendorNo of the wrong type refuses the whole body", () => {
   const r = parseItemAccountEdits([{ id: 1, category: null, vendorNo: 42 }]);
   assert.deepEqual(r, { edits: null, error: ITEM_ACCOUNT_EDIT_INVALID_ERROR });
+});
+
+/* ── which verdict a vendor edit implies (migration 150) ── */
+
+test("picking a vendor by hand records that a person chose it", () => {
+  // 'manual' is what keeps an accountant's answer distinguishable from the
+  // matcher's, and it is what stops the re-match overwriting it.
+  assert.equal(vendorStatusForEdit({ id: 1, category: null, vendorNo: "V0001" }), "manual");
+});
+
+test("clearing a vendor returns the line to 'nobody has looked'", () => {
+  // Not 'none'. Clearing is how somebody asks the matcher to try again, and
+  // 'none' would make the line permanently exempt from the requirement.
+  assert.equal(vendorStatusForEdit({ id: 1, category: null, vendorNo: null }), null);
+});
+
+test("an edit that never mentions the vendor leaves the verdict alone", () => {
+  // `undefined`, distinct from `null`: correcting a G/L account must not erase
+  // the matcher's verdict on the same row.
+  assert.equal(vendorStatusForEdit({ id: 1, category: "510001010" }), undefined);
+});
+
+test("an explicit verdict from the matcher wins over the derivation", () => {
+  // The matcher is the only caller that sends one, and 'none' cannot be
+  // derived from a vendor number at all — there is none to derive it from.
+  assert.equal(
+    vendorStatusForEdit({ id: 1, category: null, vendorNo: null, vendorMatchStatus: "none" }),
+    "none",
+  );
+  assert.equal(
+    vendorStatusForEdit({ id: 1, category: null, vendorNo: "V0001", vendorMatchStatus: "auto" }),
+    "auto",
+  );
+});
+
+test("the wire parser never produces a verdict, so no client can forge one", () => {
+  // 'none' exempts a line from needing a vendor at all. It has to come from the
+  // matcher, not from a body somebody posted.
+  const parsed = parseItemAccountEdits([
+    { id: 1, category: "x", vendorNo: "V1", vendorMatchStatus: "none" },
+  ]);
+  assert.equal(parsed.error, null);
+  assert.equal("vendorMatchStatus" in (parsed.edits?.[0] ?? {}), false);
+  assert.equal(vendorStatusForEdit(parsed.edits![0]), "manual");
 });

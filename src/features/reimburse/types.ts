@@ -5,6 +5,7 @@
  * docs/superpowers/specs/2026-08-19-ap-4-staff-reimbursement-design.md §2, §5.
  */
 import type { ReimburseStatus, ReimburseStepCode } from "./constants";
+import type { VendorMatchStatus } from "@/lib/acc/reimburse/vendor-match-core";
 
 /** One line as printed inside an attached document (`AccReimburseItemDetail`). */
 export interface ReimburseItemDetail {
@@ -29,6 +30,26 @@ export interface ReimburseItem {
   category?: string | null;
   /** สาขา — the branch the expense belongs to. Migration 117. */
   branchName?: string | null;
+  /**
+   * สาขาที่ใช้จ่าย — OUR branch, as the code BC knows it (migration 149).
+   *
+   * Picked from the synced Locations rather than typed, which is what lets the
+   * accounting queue show the Business Unit: `loadBranchLookup` is keyed on the
+   * code, and a free-text branch joins to nothing. `branchName` above is the
+   * words rows written before this carry; both are kept, because rewriting one
+   * into the other would be a guess about where money was spent.
+   */
+  branchCode?: string | null;
+  /**
+   * สาขาผู้ขาย — THEIR branch, as the Revenue Department numbers it: 00000 is
+   * the head office (migration 149).
+   *
+   * Reaches Business Central as the vendor's Thai Branch Code on the tax line,
+   * so it is the seller's establishment and never ours. Putting one of these
+   * two branches in the other's field files tax against the wrong place, which
+   * is why they are separate fields rather than one "branch".
+   */
+  vendorBranchCode?: string | null;
   /**
    * เลขประจำตัวผู้เสียภาษี of the seller, digits only. Migration 118.
    *
@@ -55,6 +76,20 @@ export interface ReimburseItem {
    * ours, and every line written before migration 147.
    */
   vendorNo?: string | null;
+  /**
+   * Whether anybody has looked for that card yet, and what they found
+   * (`AccReimburseItem.VendorMatchStatus`, migration 150).
+   *
+   * `null` — nobody has looked — is a state of its own and **not** the same as
+   * `"none"`. The queue stops requiring a vendor on a VAT line marked
+   * `"none"`; reading a null the same way would release that requirement on
+   * every claim the moment it arrived, before anyone had checked anything.
+   *
+   * `"manual"` is an accountant's own pick and `"auto"` the matcher's, the
+   * distinction `AccAdvance.VendorConfirmedBy` makes for AP-2: the re-match
+   * must not overwrite a person's answer.
+   */
+  vendorMatchStatus?: VendorMatchStatus | null;
   /**
    * `AccRequestFile.Id` of the attachment this row was read from, or null for a
    * row typed by hand. Migration 119.

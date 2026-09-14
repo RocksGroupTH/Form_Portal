@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/api-auth";
+import { requireAdvClrSettingsTab } from "@/lib/adv/require-adv-clr-settings-tab";
 import { listTiers, upsertTier } from "@/lib/adv/advance-tier-service";
 import { isStepType, type StepType } from "@/lib/adv/approval-steps";
 
 /** GET — the amount → steps approval matrix. IT/System Admin only. */
 export async function GET() {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireAdvClrSettingsTab("matrix");
   if (session instanceof Response) return session;
   try {
     return NextResponse.json({ ok: true, data: await listTiers() });
@@ -17,7 +17,7 @@ export async function GET() {
 
 /** POST — upsert one tier. Body: { id?, minAmount, maxAmount, steps: StepType[], isActive?, sortOrder? }. */
 export async function POST(req: NextRequest) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireAdvClrSettingsTab("matrix");
   if (session instanceof Response) return session;
   try {
     const b = await req.json();

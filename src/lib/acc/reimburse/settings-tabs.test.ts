@@ -15,10 +15,12 @@ import {
 
 /* ── what the page shows ── */
 
-test("the strip runs brands, rules, erpInterface, access", () => {
+test("the strip runs brands, rules, glAccounts, buGlMap, erpInterface, access", () => {
   assert.deepEqual(REIMBURSE_SETTINGS_TAB_ORDER, [
     "brands",
     "rules",
+    "glAccounts",
+    "buGlMap",
     "erpInterface",
     "access",
   ]);
@@ -149,10 +151,14 @@ test("both vocabularies store, only the right one authorises", () => {
 
 test("an admin sees every menu; a non-admin sees only what is ticked", () => {
   assert.equal(decideReimburseMenuAccess(true, [], "approvalQueue"), true);
-  assert.equal(decideReimburseMenuAccess(true, [], "clearance"), true);
   assert.equal(decideReimburseMenuAccess(false, ["approvalQueue"], "approvalQueue"), true);
-  assert.equal(decideReimburseMenuAccess(false, ["approvalQueue"], "clearance"), false);
   assert.equal(decideReimburseMenuAccess(false, [], "approvalQueue"), false);
+  // `clearance` was a menu key until 2026-09-14 and is now unknown, so it is
+  // inert even for an admin and even where a stored row still names it — the
+  // same answer any other made-up key gets.
+  assert.equal(decideReimburseMenuAccess(true, [], "clearance"), false);
+  assert.equal(decideReimburseMenuAccess(false, ["clearance"], "clearance"), false);
+  assert.deepEqual(filterStorableReimburseKeys(["clearance", "approvalQueue"]), ["approvalQueue"]);
 });
 
 test("an unknown menu key is inert even for an admin", () => {

@@ -11,7 +11,7 @@ export interface ReimburseAccessRow {
   /**
    * Everything this person holds in `AccReimburseAccessTab` — **both
    * vocabularies**, despite the field's name: the grantable settings tabs
-   * (`rules`, `brands`) *and* the menu keys (`approvalQueue`, `clearance`),
+   * (`rules`, `brands`) *and* the menu key (`approvalQueue`),
    * because `loadReimburseTabsByAccessIds` narrows with the union filter
    * `filterStorableReimburseKeys`. The name predates the menu keys and is kept
    * because it is the wire field the settings grid POSTs back; the grid renders
@@ -34,7 +34,7 @@ export interface ReimburseAccessRow {
  * edit the payment rules" and "may approve a payment" the same tick.
  *
  * This list grants **sight only** — of a settings tab, or, since 2026-09-08, of
- * a working screen (the `approvalQueue` / `clearance` menu keys share the same
+ * a working screen (the `approvalQueue` menu key shares the same
  * `TabKey` column; see `./settings-tabs`). It never grants authority to act:
  * that is `AccReimburseApprover`, re-decided inside the approval service where
  * the money moves. Membership alone grants nothing either — the ticks do.

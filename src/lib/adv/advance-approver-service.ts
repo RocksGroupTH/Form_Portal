@@ -153,3 +153,26 @@ export async function deleteAdvanceApprover(id: number): Promise<void> {
       .query(`DELETE FROM [dbo].[AccAdvanceApprover] WHERE Id=@id`);
   });
 }
+
+/**
+ * On the AP-2 roster at all, in any role.
+ *
+ * The role-blind counterpart of `isAdvanceApprover`, for the hub filter: a
+ * card is shown to somebody who is an approver of ANY level, because which
+ * level they hold decides what is in their queue, not whether they have one.
+ *
+ * **This is why the hub filter is roster-OR-grant rather than grant-alone.**
+ * `AccAdvClrAccess` ships empty (migration 152, no backfill), so gating on the
+ * grant alone would take the queue away from every existing approver on the day
+ * it shipped — the same measured mistake AP-17's `AccBookingApproverTab` filter
+ * was written to avoid, and CLAUDE.md records.
+ */
+export async function isAnyAdvanceApprover(email: string | null | undefined): Promise<boolean> {
+  if (!email || !email.trim()) return false;
+  const pool = await getAccPool();
+  const r = await pool.request()
+    .input("email", sql.NVarChar, email.trim())
+    .query(`SELECT TOP 1 1 AS ok FROM [dbo].[AccAdvanceApprover]
+            WHERE IsActive = 1 AND LOWER(Email) = LOWER(@email)`);
+  return r.recordset.length > 0;
+}

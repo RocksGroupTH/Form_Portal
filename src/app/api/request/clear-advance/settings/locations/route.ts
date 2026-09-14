@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/api-auth";
+import { requireAdvClrSettingsTab } from "@/lib/adv/require-adv-clr-settings-tab";
 import { getLastLocationSync, listBrandLocations } from "@/lib/erp/location-admin";
 import { summarizeBuSpread } from "@/lib/erp/location-admin-core";
 
@@ -14,7 +14,7 @@ import { summarizeBuSpread } from "@/lib/erp/location-admin-core";
  * sync it sits next to.
  */
 export async function GET(req: NextRequest) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireAdvClrSettingsTab("locations");
   if (session instanceof Response) return session;
 
   try {

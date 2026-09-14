@@ -273,7 +273,12 @@ test("the return statement is the query call's very next statement — nothing i
 test("rows, unmappedBrandCount and the returned object all read off recordset/scope/claimTargets by name", () => {
   const src = code(SERVICE_FILE);
   assert.ok(
-    /const\s+rows\s*=\s*accumulateErpQueueRows\(\s*recordset\s*,\s*scope\s*,\s*claimTargets\s*\)\s*;/.test(src),
+    // The fourth argument must be the resolved variable, never an inline
+    // `new Map()`: that would type-check, look like a call reading real
+    // settings, and report every claim on the queue as unconfigured.
+    /const\s+rows\s*=\s*accumulateErpQueueRows\(\s*recordset\s*,\s*scope\s*,\s*claimTargets\s*,\s*configByBrand\s*,?\s*\)\s*;/.test(
+      src,
+    ),
     "erp-queue-service.ts's `const rows = …` no longer reads " +
       "`accumulateErpQueueRows(recordset, scope, claimTargets)` — a rebound argument here defeats " +
       "every guard on the accumulator itself",

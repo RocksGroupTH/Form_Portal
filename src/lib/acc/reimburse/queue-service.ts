@@ -62,6 +62,9 @@ import { AP4_FORM_CODE } from "@/features/reimburse/constants";
 import { accumulateAccountQueueRows, countUnmappedBrandRows } from "./queue-policy";
 import type { ReimburseQueueItem, ReimburseQueueRow } from "./queue-policy";
 import { loadApproverScopeByStaffId, loadClaimBrandTargets } from "./brand-scope-load";
+import { loadBranchLookup, type BranchLookup } from "@/lib/erp/location-lookup";
+import type { VendorMatchStatus } from "./vendor-match-core";
+import { getBrandErpInterfaceMap } from "@/lib/acc/brand-erp-interface-map-service";
 
 export type { ReimburseQueueItem, ReimburseQueueRow } from "./queue-policy";
 
@@ -172,8 +175,8 @@ async function attachQueueItems(
 
   const res = await req.query(`
     SELECT Id, RequestId, SortOrder, ExpenseDate, DocumentNo, Description,
-           BranchName, VendorTaxId, VendorName, Amount, VatAmount, WhtAmount,
-           Category, VendorNo
+           BranchName, BranchCode, VendorBranchCode, VendorTaxId, VendorName,
+           Amount, VatAmount, WhtAmount, Category, VendorNo, VendorMatchStatus
     FROM [dbo].[AccReimburseItem]
     WHERE RequestId IN (${names.join(", ")})
     ORDER BY RequestId, SortOrder, Id
@@ -190,6 +193,11 @@ async function attachQueueItems(
       documentNo: (x.DocumentNo as string | null) ?? null,
       description: (x.Description as string | null) ?? "",
       branchName: (x.BranchName as string | null) ?? null,
+      branchCode: (x.BranchCode as string | null) ?? null,
+      vendorBranchCode: (x.VendorBranchCode as string | null) ?? null,
+      // Filled below, once the brand's Location map has been loaded.
+      buCode: null,
+      branchBlocked: false,
       vendorTaxId: (x.VendorTaxId as string | null) ?? null,
       vendorName: (x.VendorName as string | null) ?? null,
       amount: Number(x.Amount) || 0,
@@ -197,11 +205,73 @@ async function attachQueueItems(
       whtAmount: x.WhtAmount === null || x.WhtAmount === undefined ? null : Number(x.WhtAmount),
       category: (x.Category as string | null) ?? null,
       vendorNo: (x.VendorNo as string | null) ?? null,
+      vendorMatchStatus: (x.VendorMatchStatus as VendorMatchStatus | null) ?? null,
     });
     byRequest.set(rid, list);
   }
 
   for (const row of rows) row.items = byRequest.get(row.id) ?? [];
+
+  await attachBusinessUnits(rows);
+}
+
+/**
+ * Fill each line's `buCode` / `branchBlocked` from the synced BC Locations.
+ *
+ * **One lookup per INTERFACE COMPANY, not per claim and not per line.**
+ * `loadBranchLookup` reads a brand's whole Location list, so asking it per line
+ * would read a few hundred rows per expense line; the queue's claims usually
+ * share a company, and several brands routinely map to one. Keyed on the
+ * resolved company rather than the claim brand because that is what the
+ * Locations are keyed on — the same resolution the branch, vendor and G/L
+ * lists all make, and the reason a ROCKS claim finds anything at all.
+ *
+ * **Failure is silent and per company.** A brand whose Locations have never
+ * been synced answers an empty map, and every line then reads "no BU", which is
+ * the honest answer and exactly what the screen said before this existed. A
+ * queue must not fail to load because a dimension sync has not been run.
+ */
+async function attachBusinessUnits(rows: ReimburseQueueRow[]): Promise<void> {
+  const brands = Array.from(
+    new Set(rows.map((r) => (r.brandCode ?? "").trim().toUpperCase()).filter((b) => b !== "")),
+  );
+  if (brands.length === 0) return;
+
+  /** claim brand -> its company's branch lookup, so two brands on one company share it. */
+  const byCompany = new Map<string, BranchLookup>();
+  const companyOf = new Map<string, string>();
+  for (const brand of brands) {
+    let company = brand;
+    try {
+      const map = await getBrandErpInterfaceMap(brand, AP4_FORM_CODE);
+      company = (map?.interfaceBrandCode?.trim() || brand).toUpperCase();
+    } catch {
+      // An unmapped or unreadable interface row leaves the claim brand in
+      // place, which is what every other caller falls back to.
+    }
+    companyOf.set(brand, company);
+    if (!byCompany.has(company)) {
+      try {
+        byCompany.set(company, await loadBranchLookup(company));
+      } catch {
+        byCompany.set(company, new Map());
+      }
+    }
+  }
+
+  for (const row of rows) {
+    const company = companyOf.get((row.brandCode ?? "").trim().toUpperCase());
+    const lookup = company ? byCompany.get(company) : undefined;
+    if (!lookup) continue;
+    for (const item of row.items) {
+      const code = (item.branchCode ?? "").trim().toUpperCase();
+      if (!code) continue;
+      const hit = lookup.get(code);
+      if (!hit) continue;
+      item.buCode = hit.buCode;
+      item.branchBlocked = hit.isBlocked;
+    }
+  }
 }
 
 /** Local getters — the server runs Thai wall time, `toISOString` would shift the day. */

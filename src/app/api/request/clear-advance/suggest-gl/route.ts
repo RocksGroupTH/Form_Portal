@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { suggestGlAccountWithAI } from "@/lib/clr/ai-receipt";
 import { listGlAccounts } from "@/lib/clr/clear-advance-request-service";
+import { resolveClrCompany } from "@/lib/clr/clear-advance-admin-service";
 
 /**
  * POST /api/request/clear-advance/suggest-gl — body: { description, branch }
@@ -15,11 +16,20 @@ export async function POST(req: Request) {
   const session = await requireAuth();
   if (session instanceof Response) return session;
   try {
-    const body = (await req.json()) as { description?: string; branch?: string | null };
+    const body = (await req.json()) as {
+      description?: string;
+      branch?: string | null;
+      brand?: string | null;
+    };
     const description = (body.description ?? "").trim();
     if (!description) return NextResponse.json({ ok: true, data: null });
 
-    const accounts = await listGlAccounts(body.branch ?? null);
+    // Same two inputs as the picker, and for the same reason: a suggestion
+    // that is not on the picker's list is a suggestion nobody can accept.
+    const accounts = await listGlAccounts({
+      company: await resolveClrCompany(body.brand ?? null),
+      branchCode: body.branch ?? null,
+    });
     const suggested = await suggestGlAccountWithAI(description, accounts);
     const hit = accounts.find((a) => a.glAccountNo === suggested) ?? null;
     return NextResponse.json({

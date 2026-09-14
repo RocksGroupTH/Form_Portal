@@ -21,7 +21,7 @@ import {
  *
  * `AccReimburseAccess` now answers two questions, not one. Settings tabs grant
  * sight of configuration (`settingsTabs`/`canSettings`, unchanged); menu keys
- * grant sight of a working screen (`approvalQueue`/`clearance`) — AP-4's
+ * grant sight of a working screen (`approvalQueue`) — AP-4's
  * counterpart to AP-17's `account` flag, kept as two separate booleans rather
  * than one because the two screens are unrelated pages. **Membership alone
  * grants none of them**: both `canSettings` and each menu boolean are false
@@ -83,7 +83,6 @@ export async function GET(_req: NextRequest) {
     // gets both menus without a row and a stray key gets nobody anything.
     const menus = filterReimburseMenuKeys(granted);
     const approvalQueue = decideReimburseMenuAccess(admin, granted, "approvalQueue");
-    const clearance = decideReimburseMenuAccess(admin, granted, "clearance");
     return NextResponse.json({
       ok: true,
       data: {
@@ -92,7 +91,6 @@ export async function GET(_req: NextRequest) {
         canSettings,
         menus,
         approvalQueue,
-        clearance,
       },
     });
   } catch (err) {

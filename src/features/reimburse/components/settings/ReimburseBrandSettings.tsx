@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { AlertTriangle, Save } from "lucide-react";
 import { toast } from "sonner";
-import { SettingOption, SettingOptionGroup } from "@/components/settings/SettingOption";
+import { SettingOptionGroup } from "@/components/settings/SettingOption";
+import { BrandToggleCard, BrandToggleGrid } from "@/components/settings/BrandToggleCard";
 import type { AccBrandOption } from "@/features/accounting/types";
 import { orderBrandCodesForSave } from "@/features/reimburse/lib/brand-order";
 
@@ -185,43 +186,32 @@ export function ReimburseBrandSettings() {
         title="แบรนด์ที่เบิกได้ (AP-4)"
         description="เลือกแบรนด์ที่พนักงานสามารถเลือกในฟอร์มขอเบิกเงินคืน AP-4 — ติ๊กเพื่อเปิด/ปิด แล้วกดบันทึก"
       >
-        {allBrands.map((brand) => {
-          const active = checked.has(brand.brandCode);
-          const wasSaved = savedChecked.has(brand.brandCode);
-          const isDirty = active !== wasSaved;
-          const rowStatus = isDirty ? "pending" : active ? "saved" : "default";
-          return (
-            <SettingOption
-              key={brand.brandCode}
-              variant="checkbox"
-              checked={active}
-              rowStatus={rowStatus}
-              onChange={() => toggle(brand.brandCode)}
-              label={brand.brandName}
-              description={`รหัส ${brand.brandCode} — ${
-                isDirty
-                  ? active
-                    ? "เลือกแล้ว — รอบันทึก"
-                    : "ยกเลิกแล้ว — รอบันทึก"
-                  : active
-                    ? "อนุญาตให้เบิก"
-                    : "ไม่อนุญาตให้เบิก"
-              }`}
-              leading={
-                brand.brandLogo ? (
-                  <img
-                    src={brand.brandLogo}
-                    alt=""
-                    className="h-6 w-auto object-contain"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = "none";
-                    }}
-                  />
-                ) : undefined
-              }
-            />
-          );
-        })}
+        {/* Cards, not full-width rows (user, 2026-09-14) — `allBrands` is
+            rendered in the order this component already had it, which was the
+            condition on the change. `sub` carries what the old row's
+            description said about state, since a card has no room for a
+            sentence. */}
+        <BrandToggleGrid>
+          {allBrands.map((brand) => {
+            const active = checked.has(brand.brandCode);
+            const wasSaved = savedChecked.has(brand.brandCode);
+            const isDirty = active !== wasSaved;
+            return (
+              <BrandToggleCard
+                key={brand.brandCode}
+                brandCode={brand.brandCode}
+                brandName={brand.brandName}
+                brandLogo={brand.brandLogo}
+                sub={`${brand.brandCode}${
+                  isDirty ? (active ? " · เลือกแล้ว รอบันทึก" : " · ยกเลิกแล้ว รอบันทึก") : ""
+                }`}
+                checked={active}
+                status={isDirty ? "pending" : active ? "saved" : "default"}
+                onChange={() => toggle(brand.brandCode)}
+              />
+            );
+          })}
+        </BrandToggleGrid>
       </SettingOptionGroup>
 
       {allBrands.length === 0 && (

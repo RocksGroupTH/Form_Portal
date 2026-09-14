@@ -5,10 +5,14 @@ import {
   type ReadinessClaim,
 } from "./queue-readiness";
 
+// A line WITH VAT by default, because that is the only kind that needs a
+// vendor at all — see "a line with no VAT" below.
 const line = (over: Partial<ReadinessClaim["items"][number]> = {}) => ({
   id: 1,
   category: "5310",
   vendorNo: "V00042",
+  vatAmount: 7,
+  vendorMatchStatus: "manual" as const,
   ...over,
 });
 
@@ -32,11 +36,38 @@ test("a line with no G/L is not ready, and the reason names the line", () => {
   assert.match(r.reason ?? "", /G\/L/);
 });
 
-test("a line with no vendor is not ready", () => {
-  const r = claimReadiness(claim({ items: [line({ vendorNo: null })] }));
+test("a VAT line nobody has looked at is not ready", () => {
+  const r = claimReadiness(claim({ items: [line({ vendorNo: null, vendorMatchStatus: null })] }));
   assert.equal(r.ready, false);
   assert.deepEqual(r.missing, ["vendor"]);
   assert.match(r.reason ?? "", /Vendor/);
+});
+
+test("a line with no VAT needs no vendor at all", () => {
+  // Tax Vendor No. travels on the VAT line and nowhere else, so a line with no
+  // VAT produces no VAT line and is complete without one. AP-3 has had exactly
+  // this rule since it shipped; AP-4 demanded a vendor on every line and so
+  // could never approve a claim containing one ร้านค้าริมทาง.
+  const r = claimReadiness(
+    claim({ items: [line({ vatAmount: 0, vendorNo: null, vendorMatchStatus: null })] }),
+  );
+  assert.equal(r.ready, true);
+  assert.deepEqual(r.missing, []);
+});
+
+test("a VAT line whose seller has no card in this company is ready without one", () => {
+  // 'none' is the matcher's answer, not an absence of one.
+  const r = claimReadiness(claim({ items: [line({ vendorNo: null, vendorMatchStatus: "none" })] }));
+  assert.equal(r.ready, true);
+});
+
+test("'nobody has looked' and 'there is no card' are not the same state", () => {
+  // The whole reason the verdict is stored. Were null read as 'none', every
+  // claim would unlock the moment it arrived.
+  const unlooked = claimReadiness(claim({ items: [line({ vendorNo: null, vendorMatchStatus: null })] }));
+  const answered = claimReadiness(claim({ items: [line({ vendorNo: null, vendorMatchStatus: "none" })] }));
+  assert.equal(unlooked.ready, false);
+  assert.equal(answered.ready, true);
 });
 
 test("no payment date is not ready", () => {
@@ -50,7 +81,9 @@ test("blank strings count as missing, not as filled", () => {
   // A cleared picker stores null, but a value trimmed to nothing has reached
   // this column before -- `parseItemAccountEdits` turns "  " into null on the
   // way in, and rows written before that did not.
-  const r = claimReadiness(claim({ items: [line({ category: "   ", vendorNo: "" })] }));
+  const r = claimReadiness(
+    claim({ items: [line({ category: "   ", vendorNo: "", vendorMatchStatus: null })] }),
+  );
   assert.equal(r.ready, false);
   assert.deepEqual(r.missing.sort(), ["gl", "vendor"]);
 });
@@ -59,7 +92,9 @@ test("one bad line among good ones still blocks the claim", () => {
   // Approval is per claim, so readiness is too: a claim half-filled cannot be
   // half-approved.
   const r = claimReadiness(
-    claim({ items: [line({ id: 1 }), line({ id: 2, vendorNo: null }), line({ id: 3 })] }),
+    claim({
+      items: [line({ id: 1 }), line({ id: 2, vendorNo: null, vendorMatchStatus: null }), line({ id: 3 })],
+    }),
   );
   assert.equal(r.ready, false);
   assert.deepEqual(r.missing, ["vendor"]);
@@ -68,7 +103,12 @@ test("one bad line among good ones still blocks the claim", () => {
 test("every missing kind is reported, not just the first", () => {
   // The tooltip tells an approver what to do next; naming one of three sends
   // them back twice more.
-  const r = claimReadiness(claim({ items: [line({ category: null, vendorNo: null })], paymentDate: "" }));
+  const r = claimReadiness(
+    claim({
+      items: [line({ category: null, vendorNo: null, vendorMatchStatus: null })],
+      paymentDate: "",
+    }),
+  );
   assert.deepEqual(r.missing.sort(), ["gl", "paymentDate", "vendor"]);
 });
 

@@ -13,14 +13,29 @@
  * list of what is missing and a Thai sentence naming all of it at once, because
  * naming one gap of three sends somebody back twice more.
  *
- * Pure and import-free, so it is unit-tested without a database or a DOM.
+ * **The vendor half of the rule lives in `vendor-match-core.ts`, not here.**
+ * It is the same predicate the matcher and the ERP payload read, and a second
+ * copy on the screen would drift from the one at the money — which is exactly
+ * how this file came to demand a vendor on lines that can never carry one.
+ *
+ * Pure, and import-free at runtime apart from that one rule.
  */
+import { vendorRequired } from "@/lib/acc/reimburse/vendor-match-core";
+import type { VendorMatchStatus } from "@/lib/acc/reimburse/vendor-match-core";
 
 /** What a claim can be missing. Ordered as the table reads, left to right. */
 export type ReadinessGap = "items" | "gl" | "vendor" | "paymentDate";
 
 export interface ReadinessClaim {
-  items: readonly { id: number; category: string | null; vendorNo: string | null }[];
+  items: readonly {
+    id: number;
+    category: string | null;
+    vendorNo: string | null;
+    /** Only a line carrying VAT produces a VAT line, which is the only line a vendor travels on. */
+    vatAmount: number | null;
+    /** `null` = nobody has looked. Not the same as `"none"` — see `vendorRequired`. */
+    vendorMatchStatus: VendorMatchStatus | null;
+  }[];
   /** The date on this claim's own row, which may be the shared field's value. */
   paymentDate: string;
 }
@@ -36,7 +51,11 @@ export interface ClaimReadiness {
 const GAP_TEXT: Record<ReadinessGap, string> = {
   items: "ยังไม่มีรายการค่าใช้จ่าย",
   gl: "ยังเลือก G/L ไม่ครบทุกรายการ",
-  vendor: "ยังเลือก Vendor ไม่ครบทุกรายการ",
+  // "ยังไม่ได้ตรวจ" rather than "ยังเลือกไม่ครบ": the remedy is the ตรวจ Vendor
+  // button, not a picker. A line whose seller genuinely has no card is
+  // released by that button, and telling somebody to "choose one" sends them
+  // to a list of a thousand cards looking for something that is not there.
+  vendor: "ยังไม่ได้ตรวจ Vendor ให้ครบทุกรายการที่มี VAT",
   paymentDate: "ยังไม่ได้เลือกวันจ่าย",
 };
 
@@ -55,7 +74,7 @@ export function claimReadiness(claim: ReadinessClaim): ClaimReadiness {
     missing.push("items");
   } else {
     if (!claim.items.every((i) => filled(i.category))) missing.push("gl");
-    if (!claim.items.every((i) => filled(i.vendorNo))) missing.push("vendor");
+    if (claim.items.some((i) => vendorRequired(i))) missing.push("vendor");
   }
 
   if (!filled(claim.paymentDate)) missing.push("paymentDate");

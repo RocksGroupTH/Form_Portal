@@ -267,9 +267,11 @@ const FLAT_COLUMNS: readonly {
   { label: "วันที่", width: "95px" },
   { label: "เลขที่เอกสาร", width: "150px" },
   { label: "รายละเอียด", width: "220px" },
-  { label: "สาขา", width: "110px" },
+  { label: "สาขาที่ใช้จ่าย", width: "150px" },
+  { label: "BU", width: "70px" },
   { label: "เลขผู้เสียภาษี", width: "125px" },
   { label: "ผู้ขาย", width: "180px" },
+  { label: "สาขาผู้ขาย", width: "90px" },
   { label: "ก่อน VAT", right: true, width: "95px" },
   { label: "VAT", right: true, width: "85px" },
   { label: "ค่าใช้จ่ายรวม", right: true, width: "105px" },
@@ -279,6 +281,16 @@ const FLAT_COLUMNS: readonly {
   { label: "Vendor", width: "210px" },
   { label: "วันจ่าย", width: "160px", claimLevel: true },
 ];
+
+/**
+ * How many of those columns belong to the LINE rather than to the claim.
+ *
+ * Derived rather than typed, because it is the `colSpan` of the row a claim
+ * with no lines renders — and a literal there silently misaligns the whole
+ * table the next time a column is added, which is exactly what adding
+ * สาขาที่ใช้จ่าย, BU and สาขาผู้ขาย would have done.
+ */
+const LINE_COLUMN_COUNT = FLAT_COLUMNS.filter((c) => !c.claimLevel).length;
 
 /** One table row: a claim and one of its lines, plus where it sits in the group. */
 interface FlatRow {
@@ -404,6 +416,15 @@ function LineAccountCells({
         {error && (
           <span className="block text-[10.5px] mt-0.5 leading-tight" style={{ color: "var(--color-danger)" }}>
             {error}
+          </span>
+        )}
+        {/* Not an error and not a gap: the matcher looked and this seller has
+            no card in this company, so the line is complete without one. Said
+            on the row because the checkbox going live with an empty Vendor box
+            is otherwise indistinguishable from a bug. */}
+        {!error && !vendorNo && item.vendorMatchStatus === "none" && (
+          <span className="block text-[10.5px] mt-0.5 leading-tight" style={{ color: "var(--text-muted)" }}>
+            ไม่พบใน ERP — ไม่ต้องใส่ Vendor
           </span>
         )}
       </td>
@@ -817,6 +838,7 @@ export function ReimburseApprovalQueue() {
   }
 
   const [suggestingId, setSuggestingId] = useState<number | null>(null);
+  const [matchingId, setMatchingId] = useState<number | null>(null);
 
   /**
    * Ask the model for a G/L account on every line of this claim that has none.
@@ -861,6 +883,51 @@ export function ReimburseApprovalQueue() {
     await next;
   }
 
+  /**
+   * Find each line's Business Central vendor from the seller printed on its
+   * receipt, and record which sellers have no card at all.
+   *
+   * Same shape as `suggestGl` above and for the same reasons — per claim, on a
+   * button, chained on the claim's own save promise because the route ends in
+   * `setReimburseItemAccounts` and therefore claims the row in a transaction.
+   *
+   * The reason the "none" count is reported separately is that it is the half
+   * that CHANGES what the accountant can do: those lines stop owing a vendor,
+   * and a message saying only "matched 2" leaves them wondering why the
+   * checkbox went live.
+   */
+  async function matchVendors(requestId: number): Promise<void> {
+    if (matchingId != null) return;
+    setMatchingId(requestId);
+    const previous = saveChains.current.get(requestId) ?? Promise.resolve();
+    const next = previous
+      .catch(() => {})
+      .then(async () => {
+        try {
+          const res = await fetch(`/api/request/reimburse/requests/${requestId}/match-vendors`, {
+            method: "POST",
+          });
+          const json = await res.json().catch(() => null);
+          if (json?.ok) {
+            const matched = Number(json?.data?.matched ?? 0);
+            const none = Number(json?.data?.none ?? 0);
+            const parts: string[] = [];
+            if (matched > 0) parts.push(`จับคู่ได้ ${matched} รายการ`);
+            if (none > 0) parts.push(`ไม่พบใน ERP ${none} รายการ (ไม่ต้องใส่ Vendor)`);
+            toast.success(parts.length > 0 ? parts.join(" · ") : "ไม่มีรายการที่ต้องตรวจ");
+          } else {
+            toast.error(json?.error ?? "ตรวจ Vendor ไม่สำเร็จ");
+          }
+        } catch {
+          toast.error("เครือข่ายขัดข้อง — ลองใหม่อีกครั้ง");
+        }
+        setMatchingId(null);
+        await mutate();
+      });
+    saveChains.current.set(requestId, next);
+    await next;
+  }
+
   /** Readiness per claim, for the checkbox and the reason beside the number. */
   const readinessById = useMemo(() => {
     const m = new Map<number, ReturnType<typeof claimReadiness>>();
@@ -872,6 +939,11 @@ export function ReimburseApprovalQueue() {
             id: it.id,
             category: categoryOf(it),
             vendorNo: vendorOf(it),
+            // Both straight off the row: a vendor is only owed on a line that
+            // carries VAT, and only while nobody has established there is no
+            // card for its seller.
+            vatAmount: it.vatAmount,
+            vendorMatchStatus: it.vendorMatchStatus,
           })),
           paymentDate: dateFor(r.id),
         }),
@@ -1248,6 +1320,27 @@ export function ReimburseApprovalQueue() {
                                       เดา G/L ด้วย AI
                                     </button>
                                   )}
+                                  {ready?.missing.includes("vendor") && (
+                                    <button
+                                      type="button"
+                                      disabled={matchingId != null}
+                                      onClick={() => void matchVendors(d.claim.id)}
+                                      title="ค้นบัตรผู้ขายใน BC จากเลขผู้เสียภาษีและชื่อผู้ขายของแต่ละรายการ"
+                                      className="mt-1 ml-1 inline-flex items-center gap-1 text-[10.5px] font-medium px-1.5 py-0.5 rounded cursor-pointer disabled:cursor-not-allowed disabled:opacity-55"
+                                      style={{
+                                        background: "var(--nav-active-bg)",
+                                        color: "var(--nav-active-text)",
+                                        border: "1px solid var(--border-card)",
+                                      }}
+                                    >
+                                      {matchingId === d.claim.id ? (
+                                        <Loader2 size={10} className="animate-spin" />
+                                      ) : (
+                                        <Sparkles size={10} />
+                                      )}
+                                      ตรวจ Vendor
+                                    </button>
+                                  )}
                                 </td>
                                 <td
                                   rowSpan={span}
@@ -1318,13 +1411,55 @@ export function ReimburseApprovalQueue() {
                                   {item.description || "—"}
                                 </td>
                                 <td className="text-[12px] py-2 px-2 break-words" style={{ color: "var(--text-secondary)" }}>
-                                  {item.branchName || "—"}
+                                  {/* The CODE first, because that is what the
+                                      BU beside it was joined on and what the
+                                      journal will carry; the free text under
+                                      it is all a row written before migration
+                                      149 has. A blocked branch is named as
+                                      such — BC refuses the posting outright,
+                                      and finding that out at send time is far
+                                      more expensive than reading it here. */}
+                                  {item.branchCode ? (
+                                    <>
+                                      <span
+                                        className="font-medium tabular-nums"
+                                        style={{ color: item.branchBlocked ? "var(--text-warning)" : "var(--text-primary)" }}
+                                        title={item.branchBlocked ? "สาขานี้ถูกบล็อกใน Business Central" : undefined}
+                                      >
+                                        {item.branchCode}
+                                        {item.branchBlocked ? " ⚠" : ""}
+                                      </span>
+                                      {item.branchName && (
+                                        <span className="block text-[10.5px] leading-tight" style={{ color: "var(--text-muted)" }}>
+                                          {item.branchName}
+                                        </span>
+                                      )}
+                                    </>
+                                  ) : (
+                                    item.branchName || "—"
+                                  )}
+                                </td>
+                                <td className="text-[12px] py-2 px-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>
+                                  {/* Joined from the synced BC Locations at
+                                      read time, never stored: the dimension is
+                                      theirs and moves on its own sync
+                                      schedule. A dash means the branch is not
+                                      in the Location map — an unsynced brand,
+                                      or a line with no branch picked. */}
+                                  {item.buCode || "—"}
                                 </td>
                                 <td className="text-[12px] py-2 px-2 whitespace-nowrap tabular-nums" style={{ color: "var(--text-secondary)" }}>
                                   {item.vendorTaxId || "—"}
                                 </td>
                                 <td className="text-[12px] py-2 px-2 break-words" style={{ color: "var(--text-primary)" }}>
                                   {item.vendorName || "—"}
+                                </td>
+                                <td className="text-[12px] py-2 px-2 whitespace-nowrap tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                                  {/* THEIRS, not ours — the RD's numbering of
+                                      the seller's establishment. 00000 is the
+                                      head office. Never the same column as
+                                      สาขาที่ใช้จ่าย above. */}
+                                  {item.vendorBranchCode || "—"}
                                 </td>
                                 <td className="text-[12px] py-2 px-2 text-right tabular-nums" style={{ color: "var(--text-secondary)" }}>
                                   {fmtBaht(beforeVat)}
@@ -1355,9 +1490,9 @@ export function ReimburseApprovalQueue() {
                             ) : (
                               // A claim with no lines. It cannot be approved
                               // (`claimReadiness` refuses it), and saying so in
-                              // the row beats fourteen empty cells.
+                              // the row beats a screenful of empty cells.
                               <td
-                                colSpan={14}
+                                colSpan={LINE_COLUMN_COUNT}
                                 className="text-[12px] py-3 px-2"
                                 style={{ color: "var(--text-faint)" }}
                               >

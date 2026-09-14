@@ -245,7 +245,7 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
     : pndBlockReason(items, whtItems);
   /* The account list for every branch the lines use. Fetched here rather than
      on the requester's form, which no longer shows the column. */
-  const glByBranch = useGlOptionsByBranch(editItems.map((it) => it.branchCode));
+  const glByBranch = useGlOptionsByBranch(request.brandCode, editItems.map((it) => it.branchCode));
   /* The branches this brand has, so the account step can set one. The G/L list
      is keyed by branch and the picker stays disabled without it, so a line the
      requester left unbranched could not be given an account at all — and the

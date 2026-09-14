@@ -57,11 +57,32 @@ function row(overrides: Partial<Record<string, unknown>> = {}): Record<string, u
 const ALL_SCOPE = ["PCTH", "KSI", "PCMY", "UNO"];
 const SELF_TARGETS = new Map(ALL_SCOPE.map((c) => [c, c]));
 
+/**
+ * Every brand these tests use, configured completely.
+ *
+ * The accumulator now asks whether the brand's Interface ERP settings are
+ * there, so a fixture that omitted them would make every row read "not
+ * configured" and every readiness assertion below would be about the wrong
+ * thing. `erp-queue-policy.test.ts` is where the unconfigured cases live.
+ */
+const CONFIGURED = new Map(
+  ["PCTH", "KSI", "PCMY", "UNO", "ROCKS"].map((b) => [
+    b,
+    {
+      bankAccountNo: "K-CA6999",
+      journalBatchName: "Q",
+      vatInputGlAccountNo: "115020001",
+      whtPayableGlAccountNo: "213040001",
+    },
+  ]),
+);
+
 test("an AP-1 claim at the identical Status='Approved' is dropped", () => {
   const out = accumulateErpQueueRows(
     [row({ Id: 1, FormCode: "AP-1", Status: "Approved" })],
     ALL_SCOPE,
     SELF_TARGETS,
+    CONFIGURED,
   );
   assert.deepEqual(out, []);
 });
@@ -75,6 +96,7 @@ test("an AP-4 claim not yet past ACCOUNT_FINAL — ManagerApproved — is droppe
     [row({ Id: 1, FormCode: "AP-4", Status: "ManagerApproved" })],
     ALL_SCOPE,
     SELF_TARGETS,
+    CONFIGURED,
   );
   assert.deepEqual(out, []);
 });
@@ -84,6 +106,7 @@ test("an AP-4 claim at Status='Approved' survives", () => {
     [row({ Id: 1, FormCode: "AP-4", Status: "Approved" })],
     ALL_SCOPE,
     SELF_TARGETS,
+    CONFIGURED,
   );
   assert.equal(out.length, 1);
   assert.equal(out[0].id, 1);
@@ -98,6 +121,7 @@ test("a claim with no lines gets itemCount 0 and erpReadiness([])'s message — 
     [row({ Id: 1, ItemId: null, ItemCategory: null, ItemAmount: null })],
     ALL_SCOPE,
     SELF_TARGETS,
+    CONFIGURED,
   );
   assert.equal(out.length, 1);
   assert.equal(out[0].itemCount, 0);
@@ -110,6 +134,7 @@ test("a claim with one item missing its category gets itemCount 1 and a line-1 i
     [row({ Id: 1, ItemId: 10, ItemCategory: null, ItemAmount: 500 })],
     ALL_SCOPE,
     SELF_TARGETS,
+    CONFIGURED,
   );
   assert.equal(out.length, 1);
   assert.equal(out[0].itemCount, 1);
@@ -122,6 +147,7 @@ test("a claim whose every line has a category is ready", () => {
     [row({ Id: 1, ItemId: 10, ItemCategory: "5100-01", ItemAmount: 500 })],
     ALL_SCOPE,
     SELF_TARGETS,
+    CONFIGURED,
   );
   assert.equal(out[0].readiness.ready, true);
   assert.deepEqual(out[0].readiness.issues, []);
@@ -136,6 +162,7 @@ test("a claim with several joined item rows fans back into one row with the righ
     ],
     ALL_SCOPE,
     SELF_TARGETS,
+    CONFIGURED,
   );
   assert.equal(out.length, 1);
   assert.equal(out[0].itemCount, 3);
@@ -155,6 +182,7 @@ test("req.Id DESC order survives the item-row fan-out flatten", () => {
     ],
     ALL_SCOPE,
     SELF_TARGETS,
+    CONFIGURED,
   );
   assert.deepEqual(
     out.map((r: ReimburseErpQueueRow) => r.id),
@@ -177,6 +205,7 @@ test("a leaked AP-3 row contributes no phantom item to a real AP-4 claim's count
     ],
     ALL_SCOPE,
     SELF_TARGETS,
+    CONFIGURED,
   );
   assert.equal(out.length, 1);
   assert.equal(out[0].itemCount, 1);
@@ -188,12 +217,12 @@ test("scope === null (no active roster row at all) answers zero rows, never ever
   // Pins the behaviour this whole feature keeps naming: `null` must not
   // collapse into `[]` on its way through — see `accumulateErpQueueRows`'s own
   // docblock (`./erp-queue-policy.ts`).
-  const out = accumulateErpQueueRows([row({ Id: 1 })], null, SELF_TARGETS);
+  const out = accumulateErpQueueRows([row({ Id: 1 })], null, SELF_TARGETS, CONFIGURED);
   assert.deepEqual(out, []);
 });
 
 test("a claim outside the caller's ticked targets is dropped", () => {
-  const out = accumulateErpQueueRows([row({ Id: 1, BrandCode: "PCTH" })], ["KSI"], SELF_TARGETS);
+  const out = accumulateErpQueueRows([row({ Id: 1, BrandCode: "PCTH" })], ["KSI"], SELF_TARGETS, CONFIGURED);
   assert.deepEqual(out, []);
 });
 
@@ -202,6 +231,7 @@ test("a claim inside the caller's ticked targets survives", () => {
     [row({ Id: 1, BrandCode: "KSI" })],
     ["KSI", "PCMY"],
     SELF_TARGETS,
+    CONFIGURED,
   );
   assert.equal(out.length, 1);
   assert.equal(out[0].id, 1);
@@ -210,7 +240,7 @@ test("a claim inside the caller's ticked targets survives", () => {
 test("a claim brand with no entry in claimTargets is out of every scope — the fail-safe direction", () => {
   // ROCKS, seeded by migration 092, is exactly this case: a brand
   // AccBrandErpInterface has no row for.
-  const out = accumulateErpQueueRows([row({ Id: 1, BrandCode: "ROCKS" })], ALL_SCOPE, SELF_TARGETS);
+  const out = accumulateErpQueueRows([row({ Id: 1, BrandCode: "ROCKS" })], ALL_SCOPE, SELF_TARGETS, CONFIGURED);
   assert.deepEqual(out, []);
 });
 
@@ -226,6 +256,7 @@ test("scope is checked once per claim id — an out-of-scope claim's later item 
     ],
     ["KSI"],
     SELF_TARGETS,
+    CONFIGURED,
   );
   assert.deepEqual(out, []);
 });
@@ -260,6 +291,7 @@ test("every passthrough field is read off the row, not invented", () => {
     ],
     ALL_SCOPE,
     SELF_TARGETS,
+    CONFIGURED,
   );
   const r = out[0];
   assert.equal(r.id, 42);

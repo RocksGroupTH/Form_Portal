@@ -163,3 +163,19 @@ export async function deleteClrApprover(id: number): Promise<void> {
   await pool.request().input("id", sql.Int, id)
     .query(`DELETE FROM [dbo].[AccClearAdvanceApprover] WHERE Id=@id`);
 }
+
+/**
+ * On the AP-3 roster at all, in any role — the role-blind counterpart of
+ * `isClrApprover`, for the hub filter. See `isAnyAdvanceApprover`'s docblock
+ * for why the filter is roster-OR-grant rather than grant-alone.
+ */
+export async function isAnyClrApprover(email: string | null | undefined): Promise<boolean> {
+  if (!email?.trim()) return false;
+  const pool = await getAccPool();
+  const res = await pool
+    .request()
+    .input("email", sql.NVarChar, email.trim())
+    .query(`SELECT TOP 1 Id FROM [dbo].[AccClearAdvanceApprover]
+            WHERE IsActive = 1 AND LOWER(Email) = LOWER(@email)`);
+  return res.recordset.length > 0;
+}

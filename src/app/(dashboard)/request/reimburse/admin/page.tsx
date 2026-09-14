@@ -24,7 +24,10 @@ const CARDS: HubCard[] = [
   },
   {
     title: "ตั้งค่า",
-    desc: "แบรนด์ที่เบิกได้ · ระเบียบการจ่าย · Interface ERP · สิทธิ์เข้าถึง (รวมผู้อนุมัติฝ่ายบัญชี)",
+    // Every tab REIMBURSE_SETTINGS_TAB_ORDER declares, in its order. It listed
+    // four of six until 2026-09-14 — หมวดบัญชี G/L and Fix G/L by BU or Branch
+    // shipped on 09-14 and this line was not re-read.
+    desc: "แบรนด์ที่เบิกได้ · ระเบียบการจ่าย · หมวดบัญชี G/L · Fix G/L by BU or Branch · Interface ERP · สิทธิ์เข้าถึง (รวมผู้อนุมัติฝ่ายบัญชี)",
     href: "/request/reimburse/settings",
     icon: <Settings size={20} />,
   },

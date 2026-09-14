@@ -5,9 +5,11 @@ import {
   GL_SUGGEST_SYSTEM,
   RECEIPT_SYSTEM,
   RECEIPT_USER_TEXT,
+  VENDOR_MATCH_SYSTEM,
   THAI_DATE_RULES,
   buildBranchSuggestUserText,
   buildGlSuggestUserText,
+  buildVendorMatchUserText,
   parseReceiptDocs,
   pickSuggestedBranch,
   pickSuggestedGl,
@@ -18,6 +20,7 @@ import {
   type BranchSuggestion,
   type GlCandidate,
   type ReceiptRead,
+  type VendorMatchCandidate,
 } from "./ai-receipt-core";
 import { needsStrongerRead } from "./receipt-escalation";
 
@@ -234,6 +237,45 @@ export async function suggestBranchWithAI(
     return pickSuggestedBranch(raw, candidates.map((c) => c.code));
   } catch {
     return none;
+  }
+}
+
+/**
+ * Which of these supplier cards is the seller on this receipt?
+ *
+ * **`candidates` is never the company's whole ledger.** AP-4's ladder
+ * (`vendor-match-core.ts`) reaches here only when an exact tax id matched
+ * several cards, or when the seller's distinctive words matched several — so
+ * the model is separating two or three near-identical names, which is the one
+ * thing it is better at than the filter. A single survivor never gets this far.
+ *
+ * Anything it answers that is not one of them is dropped by
+ * `pickMatchedVendor`, so an accountant is never offered a card they could not
+ * have picked by hand. A thrown call is `null`, not an exception: a model that
+ * cannot be reached leaves the line for a person, which is where it started.
+ */
+export async function matchVendorWithAI(
+  sellerName: string,
+  sellerTaxId: string | null,
+  candidates: VendorMatchCandidate[],
+): Promise<string> {
+  const name = sellerName.trim();
+  if (!name || candidates.length === 0) return "";
+  try {
+    const { value: apiKey } = await resolveApiKey("ANTHROPIC_API_KEY");
+    if (!apiKey) return "";
+    const { default: Anthropic } = await import("@anthropic-ai/sdk");
+    const client = new Anthropic({ apiKey });
+    const res = await client.messages.create({
+      model: MODEL,
+      max_tokens: 32,
+      system: VENDOR_MATCH_SYSTEM,
+      messages: [{ role: "user", content: buildVendorMatchUserText(name, sellerTaxId, candidates) }],
+    });
+    const textPart = res.content.find((c) => c.type === "text");
+    return textPart && "text" in textPart ? textPart.text : "";
+  } catch {
+    return "";
   }
 }
 

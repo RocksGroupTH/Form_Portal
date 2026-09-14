@@ -201,10 +201,11 @@ const ITEM_COLUMNS: readonly { label: string; right?: boolean }[] = [
   { label: "ลำดับที่" },
   { label: "วันที่" },
   { label: "เลขที่เอกสาร" },
+  { label: "สาขาที่ใช้จ่าย" },
   { label: "รายละเอียด" },
-  { label: "สาขา" },
   { label: "เลขผู้เสียภาษี" },
   { label: "ผู้ขาย" },
+  { label: "สาขาผู้ขาย" },
   { label: "ที่อยู่" },
   { label: "ก่อน VAT", right: true },
   { label: "VAT", right: true },
@@ -1204,17 +1205,41 @@ export function ReimburseDetail({
                       <td className="text-[13px] py-2 px-2 whitespace-nowrap" style={{ color: "var(--text-primary)" }}>
                         {it.documentNo || "—"}
                       </td>
+                      <td className="text-[13px] py-2 px-2 break-words" style={{ color: "var(--text-secondary)" }}>
+                        {/* OURS — which of the company's own branches the
+                            spend belongs to. The code is what the queue joins
+                            a BU on; `branchName` is the free text every line
+                            written before migration 149 carries, and is all
+                            such a row has. */}
+                        {it.branchCode ? (
+                          <>
+                            <span className="tabular-nums" style={{ color: "var(--text-primary)" }}>
+                              {it.branchCode}
+                            </span>
+                            {it.branchName && (
+                              <span className="block text-[11px] leading-tight" style={{ color: "var(--text-muted)" }}>
+                                {it.branchName}
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          it.branchName || "—"
+                        )}
+                      </td>
                       <td className="text-[13px] py-2 px-2 break-words" style={{ color: "var(--text-primary)" }}>
                         {it.description || "—"}
-                      </td>
-                      <td className="text-[13px] py-2 px-2 break-words" style={{ color: "var(--text-secondary)" }}>
-                        {it.branchName || "—"}
                       </td>
                       <td className="text-[13px] py-2 px-2 whitespace-nowrap tabular-nums" style={{ color: "var(--text-secondary)" }}>
                         {it.vendorTaxId || "—"}
                       </td>
                       <td className="text-[13px] py-2 px-2 break-words" style={{ color: "var(--text-primary)" }}>
                         {it.vendorName || "—"}
+                      </td>
+                      <td className="text-[13px] py-2 px-2 whitespace-nowrap tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                        {/* THEIRS — the RD's numbering of the seller's own
+                            establishment, 00000 being the head office. Never
+                            the same thing as สาขาที่ใช้จ่าย above. */}
+                        {it.vendorBranchCode || "—"}
                       </td>
                       <td className="text-[13px] py-2 px-2 break-words" style={{ color: "var(--text-secondary)" }}>
                         {it.vendorAddress || "—"}

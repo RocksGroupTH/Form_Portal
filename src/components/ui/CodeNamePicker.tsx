@@ -68,6 +68,7 @@ export function CodeNamePicker({
   loading,
   brandChosen,
   ariaLabel,
+  emphasis = "name",
 }: {
   /** The stored code, free text on an older row, or null. */
   value: string | null | undefined;
@@ -78,6 +79,19 @@ export function CodeNamePicker({
   /** False before a brand is picked — the list cannot be loaded at all yet. */
   brandChosen: boolean;
   ariaLabel: string;
+  /**
+   * Which of the two lines is the one to read first. Default `"name"`.
+   *
+   * For an account or a vendor card the NAME is what tells a reader whether the
+   * choice is right — a number alone says nothing — so it leads and the code
+   * sits above it in small type. For a list whose **code is its own name**, a
+   * Business Unit being the case this was added for, that is backwards: the
+   * code is the content and the second line is a note about it.
+   *
+   * Only the two lines' weight and order change; the value stored, the search
+   * and the not-in-the-list fallback are identical either way.
+   */
+  emphasis?: "name" | "code";
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -152,6 +166,17 @@ export function CodeNamePicker({
 
   const placeholder = !brandChosen ? labels.noBrand : loading ? labels.loading : labels.placeholder;
 
+  // The two lines, as classes and colours rather than as two copies of the
+  // markup: whichever is emphasised renders first, and the other underneath.
+  const lead =
+    emphasis === "code"
+      ? { className: "block text-[13px] leading-tight font-semibold tabular-nums truncate", style: { color: "var(--text-primary)" } }
+      : { className: "block text-[10.5px] leading-tight tabular-nums truncate", style: { color: "var(--text-muted)" } };
+  const follow =
+    emphasis === "code"
+      ? { className: "block text-[10.5px] leading-tight truncate", style: { color: "var(--text-muted)" } }
+      : { className: "block text-[13px] leading-tight truncate", style: { color: "var(--text-primary)" } };
+
   /** The `title` — one line, because a tooltip has no second one. */
   const tooltip = selected ? `${selected.code} — ${selected.name}` : value || placeholder;
 
@@ -206,15 +231,17 @@ export function CodeNamePicker({
               >
                 {/* The same two lines as the cell above, so what is picked here
                     looks like what appears there. */}
-                <span
-                  className="block text-[10.5px] leading-tight tabular-nums truncate"
-                  style={{ color: "var(--text-muted)" }}
-                >
+                <span className={lead.className} style={lead.style}>
                   {o.code}
                 </span>
-                <span className="block text-[13px] leading-tight truncate" style={{ color: "var(--text-primary)" }}>
-                  {o.name}
-                </span>
+                {/* Only where there is a name. Some lists are codes that are
+                    their own name — a Business Unit — and an empty second line
+                    renders as a blank row half the height of the option. */}
+                {o.name !== "" && (
+                  <span className={follow.className} style={follow.style}>
+                    {o.name}
+                  </span>
+                )}
               </button>
             ))
           )}
@@ -258,15 +285,14 @@ export function CodeNamePicker({
         <span className="min-w-0 flex-1 text-left">
           {selected ? (
             <>
-              <span
-                className="block text-[10.5px] leading-tight tabular-nums truncate"
-                style={{ color: "var(--text-muted)" }}
-              >
+              <span className={lead.className} style={lead.style}>
                 {selected.code}
               </span>
-              <span className="block text-[13px] leading-tight truncate" style={{ color: "var(--text-primary)" }}>
-                {selected.name}
-              </span>
+              {selected.name !== "" && (
+                <span className={follow.className} style={follow.style}>
+                  {selected.name}
+                </span>
+              )}
             </>
           ) : (
             // One line: either a raw value that is not in the list at all — an
