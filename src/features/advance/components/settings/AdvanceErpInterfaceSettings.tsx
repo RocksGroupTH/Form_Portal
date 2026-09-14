@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
-import { CheckCircle2, Circle, Link2, Save, RefreshCw, Download } from "lucide-react";
+import { Pencil, CheckCircle2, Circle, Link2, Save, RefreshCw, Download } from "lucide-react";
 import { Button, Toggle } from "@/components/ui";
 import { SearchableSelect } from "@/features/accounting/components/settings/SearchableSelect";
+import { Dialog } from "@/components/ui/Dialog";
 import { ErpAccountSyncPopup, type ErpSyncPopupState } from "@/features/accounting/components/settings/ErpAccountSyncPopup";
 import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
 
@@ -110,6 +111,19 @@ function StatusBadge({ ready }: { ready: boolean }) {
   );
 }
 
+/**
+ * One brand: what it is set to, and a way in.
+ *
+ * **Summary on the card, the form behind แก้ไข** (user, 2026-09-14), matching
+ * AP-4's Interface ERP tab so the forms are worked the same way. The fields,
+ * the values and the save are exactly what they were; only where they live
+ * moved.
+ *
+ * **The Active toggle stays ON THE CARD**, deliberately against that symmetry.
+ * It is a one-click switch rather than a form field, it takes the brand out of
+ * BOTH AP-2's and AP-3's pickers, and putting it two clicks away makes a
+ * routine action worse. AP-4 has nothing equivalent to compare with.
+ */
 function BrandCard({ row, erpByCompany, onSaved }: {
   row: ConfigRow;
   erpByCompany: Record<string, CompanyErp>;
@@ -197,8 +211,15 @@ function BrandCard({ row, erpByCompany, onSaved }: {
   }
 
   const noOpts = !erp;
+  const [open, setOpen] = useState(false);
   const bcLine = [decode(row.bcName), row.bcConnectionName?.trim()].filter((v) => v && v !== "—").join(" · ") || "—";
   const anyDirty = targetDirty || bankDirty || branchDirty || batchDirty;
+  // Closed by the save itself rather than by the button, so a failed save
+  // leaves the dialog open on the values that failed.
+  const saveAndClose = async () => {
+    await saveAll();
+    setOpen(false);
+  };
 
   return (
     <div className="rounded-xl p-4"
@@ -234,20 +255,14 @@ function BrandCard({ row, erpByCompany, onSaved }: {
         />
       </div>
 
-      {/* AP-2's own target Company (was inherited from AP-1) */}
-      <div className="mb-3 pb-3" style={{ borderBottom: "1px solid var(--border-light)" }}>
-        <FieldLabel>Company ปลายทาง (AP-2)</FieldLabel>
-        <SearchableSelect
-          value={targetSel}
-          onChange={onTargetChange}
-          options={companyOpts}
-          placeholder="— เลือก Company —"
-          emptyLabel="— เลือก Company —"
-          searchPlaceholder="ค้นหา Company..."
-          triggerBackground="var(--bg-card)"
-        />
-        <p className="text-[10px] m-0 mt-1" style={{ color: "var(--text-faint)" }}>BC: {bcLine}</p>
+      {/* What is set, as text — the fields themselves are behind แก้ไข. */}
+      <div className="grid grid-cols-2 gap-3 mb-3">
+        <ReadonlyLine label="Company ปลายทาง" value={target || "—"} hint={bcLine} />
+        <ReadonlyLine label="Bank Account" value={labelOf(bankOpts, row.bankAccountNo)} />
+        <ReadonlyLine label="Branch" value={labelOf(branchOpts, row.branchCode) || "— ใช้แผนกผู้ขอ —"} />
+        <ReadonlyLine label="Journal Batch" value={labelOf(batchOpts, row.journalBatchName)} />
       </div>
+
       {target && !row.bcProfileComplete && (
         <p className="text-[11px] m-0 mb-3 px-3 py-2 rounded-lg"
           style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
@@ -255,49 +270,102 @@ function BrandCard({ row, erpByCompany, onSaved }: {
         </p>
       )}
 
-      {/* editable: Bank + Branch + Journal Batch — one Save button per Company */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div className="min-w-0">
-          <FieldLabel>Bank Account (AP-2)</FieldLabel>
-          <SearchableSelect value={bank} onChange={setBank} options={bankOpts}
-            placeholder={noOpts ? "เลือกปลายทางก่อน" : "— เลือก Bank —"}
-            emptyLabel={noOpts ? "เลือกปลายทางก่อน" : "— เลือก Bank —"}
-            searchPlaceholder="ค้นหา Bank..." triggerBackground="var(--bg-card)" />
-        </div>
-        <div className="min-w-0">
-          <FieldLabel>Branch (AP-2) · ไม่บังคับ</FieldLabel>
-          <SearchableSelect value={branch} onChange={setBranch} options={branchOpts}
-            placeholder={noOpts ? "เลือกปลายทางก่อน" : "— ไม่ระบุ · ใช้แผนกผู้ขอ —"}
-            emptyLabel={noOpts ? "เลือกปลายทางก่อน" : "— ไม่ระบุ · ใช้แผนกผู้ขอ —"}
-            searchPlaceholder="ค้นหา Branch..." triggerBackground="var(--bg-card)" />
-          <p className="text-[10px] m-0 mt-0.5" style={{ color: "var(--text-faint)" }}>
-            เลือก “— ไม่ระบุ —” เพื่อใช้แผนกของผู้ขอ (map HR→ERP)
-          </p>
-        </div>
-        <div className="min-w-0">
-          <FieldLabel>Journal Batch (AP-2)</FieldLabel>
-          <SearchableSelect value={batch} onChange={setBatch} options={batchOpts}
-            placeholder={noOpts ? "เลือกปลายทางก่อน" : "— เลือก Batch —"}
-            emptyLabel={noOpts ? "เลือกปลายทางก่อน" : "— เลือก Batch —"}
-            searchPlaceholder="ค้นหา Batch..." triggerBackground="var(--bg-card)" />
-          {target && !noOpts && batchOpts.length === 0 && (
-            <p className="text-[10px] m-0 mt-0.5" style={{ color: "var(--text-muted)" }}>
-              ไม่พบ Journal Batch ของ {target} ใน ERP
-            </p>
-          )}
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between gap-3 mt-3 pt-3"
+      <div className="flex items-center justify-between gap-3 pt-3"
         style={{ borderTop: "1px solid var(--border-light)" }}>
         <p className="text-[10px] m-0" style={{ color: "var(--text-faint)" }}>
           AP-2 กำหนดเอง: Company ปลายทาง · Bank · Branch · Journal Batch
         </p>
-        <Button variant="primary" icon={<Save size={15} />} onClick={saveAll}
-          loading={busy === "all"} disabled={!anyDirty}>บันทึก</Button>
+        <Button variant="secondary" size="sm" icon={<Pencil size={14} />} onClick={() => setOpen(true)}>
+          แก้ไข
+        </Button>
       </div>
+
+      {open && (
+        <Dialog
+          open
+          onOpenChange={(v) => { if (!v) setOpen(false); }}
+          title={`ตั้งค่า Interface ERP — ${row.brandName}`}
+          description={`${row.brandCode} → ${target || "—"}`}
+        >
+          <div className="flex flex-col gap-3">
+            <div>
+              <FieldLabel>Company ปลายทาง (AP-2)</FieldLabel>
+              <SearchableSelect
+                value={targetSel}
+                onChange={onTargetChange}
+                options={companyOpts}
+                placeholder="— เลือก Company —"
+                emptyLabel="— เลือก Company —"
+                searchPlaceholder="ค้นหา Company..."
+                triggerBackground="var(--bg-card)"
+              />
+              <p className="text-[10px] m-0 mt-1" style={{ color: "var(--text-faint)" }}>BC: {bcLine}</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="min-w-0">
+                <FieldLabel>Bank Account (AP-2)</FieldLabel>
+                <SearchableSelect value={bank} onChange={setBank} options={bankOpts}
+                  placeholder={noOpts ? "เลือกปลายทางก่อน" : "— เลือก Bank —"}
+                  emptyLabel={noOpts ? "เลือกปลายทางก่อน" : "— เลือก Bank —"}
+                  searchPlaceholder="ค้นหา Bank..." triggerBackground="var(--bg-card)" />
+              </div>
+              <div className="min-w-0">
+                <FieldLabel>Branch (AP-2) · ไม่บังคับ</FieldLabel>
+                <SearchableSelect value={branch} onChange={setBranch} options={branchOpts}
+                  placeholder={noOpts ? "เลือกปลายทางก่อน" : "— ไม่ระบุ · ใช้แผนกผู้ขอ —"}
+                  emptyLabel={noOpts ? "เลือกปลายทางก่อน" : "— ไม่ระบุ · ใช้แผนกผู้ขอ —"}
+                  searchPlaceholder="ค้นหา Branch..." triggerBackground="var(--bg-card)" />
+                <p className="text-[10px] m-0 mt-0.5" style={{ color: "var(--text-faint)" }}>
+                  เลือก “— ไม่ระบุ —” เพื่อใช้แผนกของผู้ขอ (map HR→ERP)
+                </p>
+              </div>
+              <div className="min-w-0">
+                <FieldLabel>Journal Batch (AP-2)</FieldLabel>
+                <SearchableSelect value={batch} onChange={setBatch} options={batchOpts}
+                  placeholder={noOpts ? "เลือกปลายทางก่อน" : "— เลือก Batch —"}
+                  emptyLabel={noOpts ? "เลือกปลายทางก่อน" : "— เลือก Batch —"}
+                  searchPlaceholder="ค้นหา Batch..." triggerBackground="var(--bg-card)" />
+                {target && !noOpts && batchOpts.length === 0 && (
+                  <p className="text-[10px] m-0 mt-0.5" style={{ color: "var(--text-muted)" }}>
+                    ไม่พบ Journal Batch ของ {target} ใน ERP
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="secondary" size="sm" onClick={() => setOpen(false)}>ปิด</Button>
+              <Button variant="primary" icon={<Save size={15} />} onClick={saveAndClose}
+                loading={busy === "all"} disabled={!anyDirty}>บันทึก</Button>
+            </div>
+          </div>
+        </Dialog>
+      )}
     </div>
   );
+}
+
+/** One "label over value" line for the card's summary. */
+function ReadonlyLine({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  const empty = !value.trim() || value === "—";
+  return (
+    <div className="min-w-0">
+      <FieldLabel>{label}</FieldLabel>
+      <p className="text-[12px] m-0 truncate font-medium" title={value}
+        style={{ color: empty ? "var(--text-muted)" : "var(--text-primary)" }}>
+        {empty ? "—" : value}
+      </p>
+      {hint && <p className="text-[10px] m-0 truncate" style={{ color: "var(--text-faint)" }}>{hint}</p>}
+    </div>
+  );
+}
+
+/** The chosen option's label — a bare code says little on a summary. */
+function labelOf(options: { value: string; label: string }[], value: string | null | undefined): string {
+  const v = (value ?? "").trim();
+  if (!v) return "";
+  return options.find((o) => o.value === v)?.label ?? v;
 }
 
 export function AdvanceErpInterfaceSettings() {

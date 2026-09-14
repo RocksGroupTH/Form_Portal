@@ -3,9 +3,10 @@
 import { useMemo, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
-import { CheckCircle2, Circle, Save } from "lucide-react";
+import { CheckCircle2, Circle, Pencil, Save } from "lucide-react";
 import { Button } from "@/components/ui";
 import { SearchableSelect } from "@/features/accounting/components/settings/SearchableSelect";
+import { Dialog } from "@/components/ui/Dialog";
 
 interface ViewRow {
   brandCode: string;
@@ -80,7 +81,21 @@ function StatusBadge({ ready }: { ready: boolean }) {
   );
 }
 
+/**
+ * One brand: what it is set to, and a way in.
+ *
+ * **Summary on the card, the form behind แก้ไข** (user, 2026-09-14) — the same
+ * shape AP-4's Interface ERP tab uses, so the three forms are worked the same
+ * way. The fields, the values and the POST are exactly what they were; only
+ * where they live moved.
+ *
+ * The pickers and their two SWR reads stay MOUNTED with the card rather than
+ * living inside the dialog: they are what the summary renders a name from, and
+ * a list that only loads once the dialog opens makes every first open show
+ * codes for a second.
+ */
 function BrandCard({ row, onSaved }: { row: ViewRow; onSaved: () => void }) {
+  const [open, setOpen] = useState(false);
   const target = row.interfaceTarget ?? "";
   const [batch, setBatch] = useState(row.journalBatchName ?? "");
   const [vatGl, setVatGl] = useState(row.vatInputGlAccountNo ?? "");
@@ -123,6 +138,7 @@ function BrandCard({ row, onSaved }: { row: ViewRow; onSaved: () => void }) {
       const j = (await res.json()) as { ok: boolean; error?: string };
       if (!j.ok) throw new Error(j.error ?? "บันทึกไม่สำเร็จ");
       toast.success(`บันทึกการตั้งค่า ERP ของ ${row.brandName} แล้ว`);
+      setOpen(false);
       onSaved();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ");
@@ -161,54 +177,98 @@ function BrandCard({ row, onSaved }: { row: ViewRow; onSaved: () => void }) {
         <ReadonlyField label="Environment" value={batchEnv} />
       </div>
 
-      <div className="flex flex-col gap-1.5">
-        <p className="text-[10px] font-bold uppercase tracking-wide m-0" style={{ color: "var(--text-faint)" }}>Journal Batch *</p>
-        <SearchableSelect
-          value={batch}
-          onChange={setBatch}
-          options={opts}
-          disabled={busy || isLoading}
-          placeholder={isLoading ? "กำลังโหลด batch..." : "เลือก Journal Batch"}
-          emptyLabel="— ไม่ระบุ —"
-        />
-        {batchErr && <p className="text-[11px] m-0" style={{ color: "var(--color-danger)" }}>{batchErr}</p>}
-        {!isLoading && !batchErr && opts.length === 0 && (
+      {/* What is set, as text. The three fields themselves are behind แก้ไข. */}
+      <div className="grid grid-cols-3 gap-3">
+        <ReadonlyField label="Journal Batch" value={nameOf(opts, row.journalBatchName)} />
+        <ReadonlyField label="ภาษีซื้อ (VAT input)" value={nameOf(vatOpts, row.vatInputGlAccountNo)} />
+        <ReadonlyField label="WHT payable" value={nameOf(whtOpts, row.whtPayableGlAccountNo)} />
+      </div>
+
+      <div className="flex items-center justify-between gap-2">
+        {/* Said on the card, not only inside the dialog: it is the reason the
+            Journal Batch list can be empty, and somebody reading the card is
+            the one who can act on it. */}
+        {!isLoading && !batchErr && opts.length === 0 ? (
           <p className="text-[11px] m-0" style={{ color: "var(--text-info-yellow)" }}>
-            ไม่พบ Journal Batch ของแบรนด์นี้ใน ERP (sync ErpGeneralJournalBatch ก่อน)
+            ไม่พบ Journal Batch ของแบรนด์นี้ใน ERP
           </p>
+        ) : batchErr ? (
+          <p className="text-[11px] m-0" style={{ color: "var(--color-danger)" }}>{batchErr}</p>
+        ) : (
+          <span />
         )}
+        <Button variant="secondary" size="sm" icon={<Pencil size={14} />} onClick={() => setOpen(true)}>
+          แก้ไข
+        </Button>
       </div>
 
-      <div className="flex flex-col gap-1.5">
-        <p className="text-[10px] font-bold uppercase tracking-wide m-0" style={{ color: "var(--text-faint)" }}>ภาษีซื้อ (VAT input)</p>
-        <SearchableSelect
-          value={vatGl}
-          onChange={setVatGl}
-          options={vatOpts}
-          disabled={busy || glLoading}
-          placeholder={glLoading ? "กำลังโหลดบัญชี..." : "เลือกบัญชีภาษีซื้อ"}
-          emptyLabel="— ไม่ระบุ —"
-        />
-      </div>
+      {open && (
+        <Dialog
+          open
+          onOpenChange={(v) => { if (!v) setOpen(false); }}
+          title={`ตั้งค่า Interface ERP — ${row.brandName}`}
+          description={`${row.brandCode} → ${target || "—"}`}
+        >
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <p className="text-[10px] font-bold uppercase tracking-wide m-0" style={{ color: "var(--text-faint)" }}>Journal Batch *</p>
+              <SearchableSelect
+                value={batch}
+                onChange={setBatch}
+                options={opts}
+                disabled={busy || isLoading}
+                placeholder={isLoading ? "กำลังโหลด batch..." : "เลือก Journal Batch"}
+                emptyLabel="— ไม่ระบุ —"
+              />
+              {batchErr && <p className="text-[11px] m-0" style={{ color: "var(--color-danger)" }}>{batchErr}</p>}
+              {!isLoading && !batchErr && opts.length === 0 && (
+                <p className="text-[11px] m-0" style={{ color: "var(--text-info-yellow)" }}>
+                  ไม่พบ Journal Batch ของแบรนด์นี้ใน ERP (sync ErpGeneralJournalBatch ก่อน)
+                </p>
+              )}
+            </div>
 
-      <div className="flex flex-col gap-1.5">
-        <p className="text-[10px] font-bold uppercase tracking-wide m-0" style={{ color: "var(--text-faint)" }}>WHT payable</p>
-        <SearchableSelect
-          value={whtGl}
-          onChange={setWhtGl}
-          options={whtOpts}
-          disabled={busy || glLoading}
-          placeholder={glLoading ? "กำลังโหลดบัญชี..." : "เลือกบัญชี WHT payable"}
-          emptyLabel="— ไม่ระบุ —"
-        />
-      </div>
+            <div className="flex flex-col gap-1.5">
+              <p className="text-[10px] font-bold uppercase tracking-wide m-0" style={{ color: "var(--text-faint)" }}>ภาษีซื้อ (VAT input)</p>
+              <SearchableSelect
+                value={vatGl}
+                onChange={setVatGl}
+                options={vatOpts}
+                disabled={busy || glLoading}
+                placeholder={glLoading ? "กำลังโหลดบัญชี..." : "เลือกบัญชีภาษีซื้อ"}
+                emptyLabel="— ไม่ระบุ —"
+              />
+            </div>
 
-      <div className="flex justify-end">
-        <Button variant="primary" size="sm" icon={<Save size={14} />}
-          onClick={save} loading={busy} disabled={!dirty || busy}>บันทึก</Button>
-      </div>
+            <div className="flex flex-col gap-1.5">
+              <p className="text-[10px] font-bold uppercase tracking-wide m-0" style={{ color: "var(--text-faint)" }}>WHT payable</p>
+              <SearchableSelect
+                value={whtGl}
+                onChange={setWhtGl}
+                options={whtOpts}
+                disabled={busy || glLoading}
+                placeholder={glLoading ? "กำลังโหลดบัญชี..." : "เลือกบัญชี WHT payable"}
+                emptyLabel="— ไม่ระบุ —"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setOpen(false)}>ปิด</Button>
+              <Button variant="primary" size="sm" icon={<Save size={14} />}
+                onClick={save} loading={busy} disabled={!dirty || busy}>บันทึก</Button>
+            </div>
+          </div>
+        </Dialog>
+      )}
     </div>
   );
+}
+
+/** The chosen option's label, for the summary — the code alone says little. */
+function nameOf(options: { value: string; label: string }[], value: string | null | undefined): string {
+  const v = (value ?? "").trim();
+  if (!v) return "";
+  return options.find((o) => o.value === v)?.label ?? v;
 }
 
 /** AP-3 Interface ERP — per-brand Journal Batch for the clearing journal. Company /

@@ -84,9 +84,12 @@
 export const REIMBURSE_SETTINGS_TAB_ORDER = [
   "brands",
   "rules",
-  "erpInterface",
   "glAccounts",
   "buGlMap",
+  // Interface ERP sits directly ahead of สิทธิ์เข้าถึง (user, 2026-09-14) — the
+  // same relative position it holds on AP-1’s strip: the last of the
+  // configuration tabs, immediately before the one that hands out access.
+  "erpInterface",
   "access",
 ] as const;
 

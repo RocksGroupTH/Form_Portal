@@ -15,13 +15,13 @@ import {
 
 /* ── what the page shows ── */
 
-test("the strip runs brands, rules, erpInterface, glAccounts, buGlMap, access", () => {
+test("the strip runs brands, rules, glAccounts, buGlMap, erpInterface, access", () => {
   assert.deepEqual(REIMBURSE_SETTINGS_TAB_ORDER, [
     "brands",
     "rules",
-    "erpInterface",
     "glAccounts",
     "buGlMap",
+    "erpInterface",
     "access",
   ]);
   // สิทธิ์เข้าถึง last is the part that is not merely a preference: it is the
