@@ -3,12 +3,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
-import { Pencil, CheckCircle2, Circle, Link2, Save, RefreshCw, Download } from "lucide-react";
-import { Button, Toggle } from "@/components/ui";
+import { AlertTriangle, Pencil, CheckCircle2, Circle, Link2, Save, RefreshCw, Download, Plus } from "lucide-react";
+import { Button } from "@/components/ui";
 import { SearchableSelect } from "@/features/accounting/components/settings/SearchableSelect";
 import { Dialog } from "@/components/ui/Dialog";
 import { ErpAccountSyncPopup, type ErpSyncPopupState } from "@/features/accounting/components/settings/ErpAccountSyncPopup";
 import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import {
+  groupByTargetIncludingEmpty,
+  groupValue,
+  type GroupValue,
+} from "@/lib/acc/erp-target-groups";
 
 interface ConfigRow {
   brandCode: string;
@@ -111,62 +116,177 @@ function StatusBadge({ ready }: { ready: boolean }) {
   );
 }
 
+/** One claim brand as a chip on a group card. */
+function MemberChip({ row }: { row: ConfigRow }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-[12px]"
+      style={{ background: "var(--bg-badge)", color: "var(--text-secondary)", opacity: row.active ? 1 : 0.55 }}
+      title={row.active ? undefined : "แบรนด์นี้ปิดใช้งานอยู่"}>
+      {row.brandLogo && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={row.brandLogo} alt="" className="h-3.5 w-auto object-contain" />
+      )}
+      <span className="font-semibold">{row.brandName}</span>
+      <span style={{ color: "var(--text-faint)" }}>{row.brandCode}</span>
+    </span>
+  );
+}
+
 /**
- * One brand: what it is set to, and a way in.
+ * What a group's shared field is, said in one line.
  *
- * **Summary on the card, the form behind แก้ไข** (user, 2026-09-14), matching
- * AP-4's Interface ERP tab so the forms are worked the same way. The fields,
- * the values and the save are exactly what they were; only where they live
- * moved.
- *
- * **The Active toggle stays ON THE CARD**, deliberately against that symmetry.
- * It is a one-click switch rather than a form field, it takes the brand out of
- * BOTH AP-2's and AP-3's pickers, and putting it two clicks away makes a
- * routine action worse. AP-4 has nothing equivalent to compare with.
+ * The three states `groupValue` answers are three different things to a reader
+ * and the screen must not flatten them: a value everybody has, a value some
+ * members are missing and will be given on save, and two real values that
+ * disagree — which is refused rather than picked.
  */
-function BrandCard({ row, erpByCompany, onSaved }: {
-  row: ConfigRow;
+function GroupFieldSummary({ label, state }: { label: string; state: GroupValue }) {
+  if (state.kind === "conflict") {
+    return (
+      <div className="min-w-0">
+        <FieldLabel>{label}</FieldLabel>
+        <p className="text-[12px] m-0 inline-flex items-center gap-1" style={{ color: "var(--text-warning)" }}>
+          <AlertTriangle size={12} /> ไม่ตรงกัน — {state.values.map((v) => `${v.brandCode}: ${v.value}`).join(" · ")}
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="min-w-0">
+      <FieldLabel>{label}</FieldLabel>
+      <p className="text-[12px] m-0 truncate font-medium" title={state.value}
+        style={{ color: state.value ? "var(--text-primary)" : "var(--text-muted)" }}>
+        {state.value || "—"}
+      </p>
+      {state.kind === "fill" && (
+        <p className="text-[10px] m-0" style={{ color: "var(--text-info-yellow)" }}>
+          {state.blankMembers.join(", ")} ยังไม่มีค่า — บันทึกแล้วจะเติมให้
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A switch that fits beside a name.
+ *
+ * `Toggle` is a full-width row with a label and a description — right for a
+ * settings block, wrong for the right-hand end of a member row, which is where
+ * Active now lives.
+ */
+function MiniSwitch({ checked, onChange, disabled, label }: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  disabled?: boolean;
+  label: string;
+}) {
+  return (
+    <button type="button" role="switch" aria-checked={checked} aria-label={label} disabled={disabled}
+      onClick={() => !disabled && onChange(!checked)}
+      className="inline-flex items-center gap-1.5 shrink-0"
+      style={{ opacity: disabled ? 0.5 : 1, cursor: disabled ? "not-allowed" : "pointer" }}>
+      <span className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "var(--text-faint)" }}>
+        {label}
+      </span>
+      <span className="relative rounded-full transition-colors" aria-hidden
+        style={{ width: 34, height: 20, background: checked ? "var(--color-action)" : "var(--border-input)" }}>
+        <span className="absolute rounded-full transition-all"
+          style={{ width: 14, height: 14, top: 3, left: checked ? 17 : 3, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.35)" }} />
+      </span>
+    </button>
+  );
+}
+
+/**
+ * One target Company: the claim brands posting into it, what they share, and
+ * what each sets for itself.
+ *
+ * The shape AP-1 and AP-4's Interface ERP tabs already use — summary on the
+ * card, form behind แก้ไข — brought to AP-2 (user, 2026-09-14). Spec:
+ * `docs/superpowers/specs/2026-09-14-ap2-ap3-erp-interface-groups-design.md`.
+ *
+ * **Nothing is stored against the target.** Every value is written per claim
+ * brand, and the Journal Batch — the one field the group shares — is written to
+ * each member on save. `resolveJournalBatchName` reads a target-keyed row
+ * FIRST and would beat every per-brand row; this repository has shipped that bug
+ * once already, on this very form.
+ *
+ * **Adding a brand to a group is how its target is changed**, which is what the
+ * per-brand Company dropdown used to do. **There is no remove**, and that is the
+ * route rather than the screen: `POST .../settings/erp-interface` refuses an
+ * empty `interfaceBrandCode` outright, so a brand cannot be un-mapped from here
+ * — only moved to another Company. The card says so.
+ *
+ * **The Active toggle moved onto the member row.** On a per-brand card it
+ * belonged on the card, and the note here said so for one commit; on a per-GROUP
+ * card there is no per-brand place left on the card, and a switch crammed into
+ * each chip reads worse than one at the end of each row in the dialog.
+ */
+function GroupCard({ target, members, all, erpByCompany, onSaved }: {
+  target: string;
+  members: ConfigRow[];
+  /** Every claim brand, for the "add a brand" picker — including other groups'. */
+  all: ConfigRow[];
   erpByCompany: Record<string, CompanyErp>;
   onSaved: () => void;
 }) {
-  // AP-2 owns its target Company + Bank + Branch + Journal Batch. The Dr line
-  // posts to the matched Vendor, so no G/L account is configured here.
-  const [targetSel, setTargetSel] = useState(row.interfaceTarget ?? "");
-  const [bank, setBank] = useState(row.bankAccountNo ?? "");
-  const [branch, setBranch] = useState(row.branchCode ?? "");
-  const [batch, setBatch] = useState(row.journalBatchName ?? "");
-  const [busy, setBusy] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
 
-  // Target Company options = the ERP interface companies that have master data.
-  const companyOpts = useMemo(
-    () => Object.keys(erpByCompany).sort().map((c) => ({ value: c, label: c })),
-    [erpByCompany],
+  const batchState = useMemo(
+    () => groupValue(members.map((m) => ({ brandCode: m.brandCode, value: m.journalBatchName }))),
+    [members],
   );
+  // A conflict has no single value to put in the box, so the box starts empty
+  // and whatever is chosen is written to every member — the admin resolving it
+  // deliberately, rather than the screen choosing for them.
+  const batchAgreed = batchState.kind === "conflict" ? "" : batchState.value;
+  const [batch, setBatch] = useState(batchAgreed);
+  // Re-sync when the rows reload after a save. The dependency is the resolved
+  // string rather than the state object, which is rebuilt every render.
+  useEffect(() => { setBatch(batchAgreed); }, [batchAgreed]);
 
-  // Changing the target Company resets the picks — accounts are company-specific,
-  // so a Bank/Branch/Batch from the old Company must never be saved here.
-  function onTargetChange(v: string) {
-    if (v === targetSel) return;
-    setTargetSel(v);
-    setBank(""); setBranch(""); setBatch("");
-  }
+  /** Per-member Bank and Branch, edited in the dialog and saved together. */
+  const [draft, setDraft] = useState<Record<string, { bank: string; branch: string }>>({});
+  const [added, setAdded] = useState<string[]>([]);
+  const [addCode, setAddCode] = useState("");
 
-  // All three dropdowns read from Rocks_ERP_Data (via the erp-master endpoint),
-  // keyed by the selected target Company: Bank · Branch · Journal Batch.
-  const target = targetSel;
-  const erp = erpByCompany[targetSel];
-  const bankOpts = useMemo(() => acctOptions(erp?.bank ?? [], bank), [erp, bank]);
-  const branchOpts = useMemo(() => branchOptions(erp?.branch ?? [], branch), [erp, branch]);
+  const erp = erpByCompany[target];
+  const noOpts = !erp;
   const batchOpts = useMemo(() => batchOptions(erp?.journalBatch ?? [], batch), [erp, batch]);
 
-  const targetDirty = targetSel.trim() !== (row.interfaceTarget ?? "").trim();
-  const bankDirty = bank.trim() !== (row.bankAccountNo ?? "").trim();
-  const branchDirty = branch.trim() !== (row.branchCode ?? "").trim();
-  const batchDirty = batch.trim() !== (row.journalBatchName ?? "").trim();
+  const shown = useMemo(() => {
+    const extra = added
+      .map((c) => all.find((a) => a.brandCode === c))
+      .filter((r): r is ConfigRow => Boolean(r));
+    return members.concat(extra);
+  }, [members, added, all]);
 
-  const [activeBusy, setActiveBusy] = useState(false);
-  async function toggleActive(next: boolean) {
-    setActiveBusy(true);
+  const valueFor = (row: ConfigRow) =>
+    draft[row.brandCode] ?? { bank: row.bankAccountNo ?? "", branch: row.branchCode ?? "" };
+  const setFor = (code: string, patch: Partial<{ bank: string; branch: string }>) =>
+    setDraft((p) => ({ ...p, [code]: { ...(p[code] ?? { bank: "", branch: "" }), ...patch } }));
+
+  /**
+   * Every claim brand not already in this group, labelled with where it is now
+   * — adding one MOVES it, and that has to be readable before the click rather
+   * than discovered after.
+   */
+  const addOptions = useMemo(
+    () =>
+      all
+        .filter((a) => !shown.some((m) => m.brandCode === a.brandCode))
+        .map((a) => ({
+          value: a.brandCode,
+          label: `${a.brandName} (${a.brandCode})`,
+          subLabel: a.interfaceTarget?.trim() ? `ตอนนี้อยู่ ${a.interfaceTarget}` : "ยังไม่ได้จัดกลุ่ม",
+        })),
+    [all, shown],
+  );
+
+  const [activeBusy, setActiveBusy] = useState<string | null>(null);
+  async function toggleActive(row: ConfigRow, next: boolean) {
+    setActiveBusy(row.brandCode);
     try {
       const res = await fetch("/api/request/advance/settings/brand-active", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -179,99 +299,125 @@ function BrandCard({ row, erpByCompany, onSaved }: {
     } catch {
       toast.error("อัปเดตสถานะไม่สำเร็จ");
     } finally {
-      setActiveBusy(false);
+      setActiveBusy(null);
     }
   }
 
-  async function saveAll() {
-    if (!targetSel.trim()) return toast.error("กรุณาเลือก Company ปลายทาง");
-    if (!bank.trim()) return toast.error("กรุณาเลือก Bank Account");
-    setBusy("all");
+  /**
+   * Write the group: one POST per member, in order, stopping at the first
+   * refusal and naming the member it stopped on.
+   *
+   * Every guard on that route is per claim brand, so a bulk endpoint would have
+   * to re-implement them; and a half-applied group nobody can identify is worse
+   * than one that says where it stopped. The shape AP-3's group save uses.
+   */
+  async function save() {
+    if (batchWouldClear) {
+      toast.error(`กรุณาเลือก Journal Batch — ค้างว่างไว้จะลบของ ${batchReplacing.map((m) => m.brandCode).join(", ")}`);
+      return;
+    }
+    for (const m of shown) {
+      if (!valueFor(m).bank.trim()) {
+        toast.error(`${m.brandCode}: กรุณาเลือก Bank Account`);
+        return;
+      }
+    }
+    setBusy(true);
     try {
-      const res = await fetch("/api/request/advance/settings/erp-interface", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          brandCode: row.brandCode,
-          interfaceBrandCode: targetSel.trim(),
-          bankAccountNo: bank.trim(),
-          branchCode: branch.trim(),
-          journalBatchName: batch.trim(),
-        }),
-      });
-      const j = (await res.json()) as { ok: boolean; error?: string };
-      if (!j.ok) throw new Error(j.error ?? "บันทึกไม่สำเร็จ");
-      toast.success(`บันทึกการตั้งค่า ${row.brandName} แล้ว`);
+      for (const m of shown) {
+        const v = valueFor(m);
+        const res = await fetch("/api/request/advance/settings/erp-interface", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            brandCode: m.brandCode,
+            interfaceBrandCode: target,
+            bankAccountNo: v.bank.trim(),
+            branchCode: v.branch.trim(),
+            journalBatchName: batch.trim(),
+          }),
+        });
+        const j = (await res.json()) as { ok: boolean; error?: string };
+        if (!j.ok) { toast.error(`${m.brandCode}: ${j.error ?? "บันทึกไม่สำเร็จ"}`); return; }
+      }
+      toast.success(`บันทึกกลุ่ม ${target} แล้ว (${shown.length} แบรนด์)`);
+      setOpen(false);
+      setAdded([]);
+      setDraft({});
       onSaved();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ");
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   }
 
-  const noOpts = !erp;
-  const [open, setOpen] = useState(false);
-  const bcLine = [decode(row.bcName), row.bcConnectionName?.trim()].filter((v) => v && v !== "—").join(" · ") || "—";
-  const anyDirty = targetDirty || bankDirty || branchDirty || batchDirty;
-  // Closed by the save itself rather than by the button, so a failed save
-  // leaves the dialog open on the values that failed.
-  const saveAndClose = async () => {
-    await saveAll();
-    setOpen(false);
-  };
+  /**
+   * Which members' Journal Batch this save would REPLACE, and whether it would
+   * CLEAR one.
+   *
+   * Not defensive decoration — measured 2026-09-14, PCMY posts into PCTH with
+   * its own `TRANSFER` batch while PCTH and ROCKS use `Q`, so the live PCTH
+   * group is a real set-vs-set conflict. A group field written to every member
+   * is the shape the user asked for, but writing it must be an act somebody
+   * chose: the conflict box starts empty, and an empty box saved as-is would
+   * null out three working configurations in one click.
+   */
+  const batchReplacing = useMemo(
+    () => shown.filter((m) => {
+      const cur = (m.journalBatchName ?? "").trim();
+      return cur !== "" && cur !== batch.trim();
+    }),
+    [shown, batch],
+  );
+  const batchWouldClear = !batch.trim() && batchReplacing.length > 0;
+
+  const iface = ERP_INTERFACE_BRANDS.find((b) => b.id === target);
+  const first = members[0];
+  const bcLine = [decode(first?.bcName), first?.bcConnectionName?.trim(), first?.environment ?? undefined]
+    .filter((v) => v && v !== "—").join(" · ");
+  const ready = members.length > 0 && members.every((m) => m.ready);
+  const bcIncomplete = members.some((m) => !m.bcProfileComplete);
 
   return (
-    <div className="rounded-xl p-4"
+    <div className="rounded-xl p-4 flex flex-col gap-3"
       style={{
-        background: anyDirty ? "var(--bg-info-yellow)" : "var(--bg-card-alt)",
-        border: `1px solid ${anyDirty ? "var(--border-info-yellow)" : row.ready ? "var(--border-info-green)" : "var(--border-card)"}`,
-        opacity: row.active ? 1 : 0.6,
+        background: "var(--bg-card-alt)",
+        border: `1px solid ${ready ? "var(--border-info-green)" : "var(--border-card)"}`,
       }}>
-      {/* header */}
-      <div className="flex items-center gap-3 mb-3">
-        {row.brandLogo && (
-          <img src={row.brandLogo} alt="" className="h-8 w-auto object-contain shrink-0"
-            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
-        )}
-        <div className="min-w-0 flex-1">
-          <p className="text-[13px] font-bold m-0 truncate" style={{ color: "var(--text-heading)" }}>{row.brandName}</p>
-          <p className="text-[10px] m-0 font-mono" style={{ color: "var(--text-muted)" }}>
-            {row.brandCode} → {target || "—"} · {(row.targetFromAp2 || targetDirty) ? "(AP-2)" : "(จาก AP-1)"}
-            {row.environment ? ` · ${row.environment === "Sandbox" ? "UAT" : "PROD"}` : ""}
-          </p>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          {iface && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={iface.logo} alt="" className="h-6 w-auto object-contain" />
+          )}
+          <span className="text-[14px] font-bold truncate" style={{ color: "var(--text-heading)" }}>{target}</span>
+          <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{members.length} แบรนด์เบิก</span>
         </div>
-        <StatusBadge ready={row.ready} />
+        <StatusBadge ready={ready} />
       </div>
 
-      {/* shared Active toggle — turns the brand on/off in AP-2 + AP-3 pickers */}
-      <div className="mb-3">
-        <Toggle
-          checked={row.active}
-          onChange={toggleActive}
-          disabled={activeBusy}
-          label="เปิดใช้งานแบรนด์นี้ (Active)"
-          description="ปิดแล้วแบรนด์จะหายจากตัวเลือกในฟอร์มขอเบิก AP-2 และเคลียร์ AP-3"
-        />
+      <div className="flex flex-wrap gap-1.5">
+        {members.length === 0 ? (
+          <span className="text-[12px]" style={{ color: "var(--text-faint)" }}>ยังไม่มีแบรนด์เบิก</span>
+        ) : (
+          members.map((m) => <MemberChip key={m.brandCode} row={m} />)
+        )}
       </div>
 
-      {/* What is set, as text — the fields themselves are behind แก้ไข. */}
-      <div className="grid grid-cols-2 gap-3 mb-3">
-        <ReadonlyLine label="Company ปลายทาง" value={target || "—"} hint={bcLine} />
-        <ReadonlyLine label="Bank Account" value={labelOf(bankOpts, row.bankAccountNo)} />
-        <ReadonlyLine label="Branch" value={labelOf(branchOpts, row.branchCode) || "— ใช้แผนกผู้ขอ —"} />
-        <ReadonlyLine label="Journal Batch" value={labelOf(batchOpts, row.journalBatchName)} />
+      <div className="grid grid-cols-2 gap-3 pt-2" style={{ borderTop: "1px solid var(--border-light)" }}>
+        <GroupFieldSummary label="Journal Batch" state={batchState} />
+        <ReadonlyField label="การเชื่อมต่อ BC" value={bcLine} />
       </div>
 
-      {target && !row.bcProfileComplete && (
-        <p className="text-[11px] m-0 mb-3 px-3 py-2 rounded-lg"
+      {bcIncomplete && (
+        <p className="text-[11px] m-0 px-3 py-2 rounded-lg"
           style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
           ⚠️ การเชื่อมต่อ BC ของ Company นี้ยังไม่ครบ — ตั้งค่าที่ Accounting → Interface ERP ก่อน
         </p>
       )}
 
-      <div className="flex items-center justify-between gap-3 pt-3"
-        style={{ borderTop: "1px solid var(--border-light)" }}>
+      <div className="flex items-center justify-between gap-2">
         <p className="text-[10px] m-0" style={{ color: "var(--text-faint)" }}>
           AP-2 กำหนดเอง: Company ปลายทาง · Bank · Branch · Journal Batch
         </p>
@@ -284,88 +430,120 @@ function BrandCard({ row, erpByCompany, onSaved }: {
         <Dialog
           open
           onOpenChange={(v) => { if (!v) setOpen(false); }}
-          title={`ตั้งค่า Interface ERP — ${row.brandName}`}
-          description={`${row.brandCode} → ${target || "—"}`}
+          title={`ตั้งค่า Interface ERP — ${target}`}
+          description={`${shown.length} แบรนด์เบิก · Journal Batch ใช้ร่วมกันทั้งกลุ่ม`}
         >
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-4">
+            {batchState.kind === "conflict" && (
+              <p className="text-[11px] m-0 px-3 py-2 rounded-lg"
+                style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
+                แบรนด์ในกลุ่มนี้ใช้ Journal Batch ไม่ตรงกัน — เลือกค่าที่ถูกต้องแล้วบันทึก จะเขียนให้ทุกแบรนด์ในกลุ่ม
+              </p>
+            )}
+
             <div>
-              <FieldLabel>Company ปลายทาง (AP-2)</FieldLabel>
-              <SearchableSelect
-                value={targetSel}
-                onChange={onTargetChange}
-                options={companyOpts}
-                placeholder="— เลือก Company —"
-                emptyLabel="— เลือก Company —"
-                searchPlaceholder="ค้นหา Company..."
-                triggerBackground="var(--bg-card)"
-              />
-              <p className="text-[10px] m-0 mt-1" style={{ color: "var(--text-faint)" }}>BC: {bcLine}</p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div className="min-w-0">
-                <FieldLabel>Bank Account (AP-2)</FieldLabel>
-                <SearchableSelect value={bank} onChange={setBank} options={bankOpts}
-                  placeholder={noOpts ? "เลือกปลายทางก่อน" : "— เลือก Bank —"}
-                  emptyLabel={noOpts ? "เลือกปลายทางก่อน" : "— เลือก Bank —"}
-                  searchPlaceholder="ค้นหา Bank..." triggerBackground="var(--bg-card)" />
-              </div>
-              <div className="min-w-0">
-                <FieldLabel>Branch (AP-2) · ไม่บังคับ</FieldLabel>
-                <SearchableSelect value={branch} onChange={setBranch} options={branchOpts}
-                  placeholder={noOpts ? "เลือกปลายทางก่อน" : "— ไม่ระบุ · ใช้แผนกผู้ขอ —"}
-                  emptyLabel={noOpts ? "เลือกปลายทางก่อน" : "— ไม่ระบุ · ใช้แผนกผู้ขอ —"}
-                  searchPlaceholder="ค้นหา Branch..." triggerBackground="var(--bg-card)" />
-                <p className="text-[10px] m-0 mt-0.5" style={{ color: "var(--text-faint)" }}>
-                  เลือก “— ไม่ระบุ —” เพื่อใช้แผนกของผู้ขอ (map HR→ERP)
+              <FieldLabel>Journal Batch (ใช้ร่วมกันทั้งกลุ่ม)</FieldLabel>
+              <SearchableSelect value={batch} onChange={setBatch} options={batchOpts} disabled={busy}
+                placeholder={noOpts ? "ไม่มีข้อมูล ERP ของ Company นี้" : "— เลือก Batch —"}
+                emptyLabel={noOpts ? "ไม่มีข้อมูล ERP ของ Company นี้" : "— เลือก Batch —"}
+                searchPlaceholder="ค้นหา Batch..." triggerBackground="var(--bg-card)" />
+              {batchState.kind === "fill" && (
+                <p className="text-[10px] m-0 mt-1" style={{ color: "var(--text-info-yellow)" }}>
+                  {batchState.blankMembers.join(", ")} ยังไม่มีค่า — บันทึกแล้วจะเติมให้
                 </p>
-              </div>
-              <div className="min-w-0">
-                <FieldLabel>Journal Batch (AP-2)</FieldLabel>
-                <SearchableSelect value={batch} onChange={setBatch} options={batchOpts}
-                  placeholder={noOpts ? "เลือกปลายทางก่อน" : "— เลือก Batch —"}
-                  emptyLabel={noOpts ? "เลือกปลายทางก่อน" : "— เลือก Batch —"}
-                  searchPlaceholder="ค้นหา Batch..." triggerBackground="var(--bg-card)" />
-                {target && !noOpts && batchOpts.length === 0 && (
-                  <p className="text-[10px] m-0 mt-0.5" style={{ color: "var(--text-muted)" }}>
-                    ไม่พบ Journal Batch ของ {target} ใน ERP
-                  </p>
-                )}
-              </div>
+              )}
+              {batchReplacing.length > 0 && (
+                <p className="text-[10px] m-0 mt-1" style={{ color: "var(--text-warning)" }}>
+                  จะเขียนทับของเดิม: {batchReplacing.map((m) => `${m.brandCode} (${(m.journalBatchName ?? "").trim() || "ว่าง"})`).join(" · ")}
+                </p>
+              )}
+              {!noOpts && batchOpts.length === 0 && (
+                <p className="text-[10px] m-0 mt-1" style={{ color: "var(--text-muted)" }}>
+                  ไม่พบ Journal Batch ของ {target} ใน ERP
+                </p>
+              )}
             </div>
 
-            <div className="flex justify-end gap-2 pt-1">
+            <div className="flex flex-col gap-2">
+              <FieldLabel>แบรนด์เบิกในกลุ่มนี้</FieldLabel>
+              {shown.length === 0 && (
+                <p className="text-[11px] m-0" style={{ color: "var(--text-muted)" }}>
+                  ยังไม่มีแบรนด์ — เพิ่มด้านล่างก่อนบันทึก
+                </p>
+              )}
+              {shown.map((m) => {
+                const v = valueFor(m);
+                return (
+                  <div key={m.brandCode} className="rounded-xl p-3 flex flex-col gap-2"
+                    style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)" }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        {m.brandLogo && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={m.brandLogo} alt="" className="h-4 w-auto object-contain" />
+                        )}
+                        <span className="text-[12px] font-semibold truncate" style={{ color: "var(--text-primary)" }}>
+                          {m.brandName}
+                        </span>
+                        <span className="text-[10px] font-mono" style={{ color: "var(--text-faint)" }}>{m.brandCode}</span>
+                      </div>
+                      <MiniSwitch checked={m.active} label="ใช้งาน"
+                        disabled={activeBusy === m.brandCode}
+                        onChange={(next) => void toggleActive(m, next)} />
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <div className="min-w-0">
+                        <FieldLabel>Bank Account</FieldLabel>
+                        <SearchableSelect value={v.bank} onChange={(x) => setFor(m.brandCode, { bank: x })}
+                          options={acctOptions(erp?.bank ?? [], v.bank)} disabled={busy}
+                          placeholder={noOpts ? "ไม่มีข้อมูล ERP" : "— เลือก Bank —"}
+                          emptyLabel={noOpts ? "ไม่มีข้อมูล ERP" : "— เลือก Bank —"}
+                          searchPlaceholder="ค้นหา Bank..." triggerBackground="var(--bg-card-alt)" />
+                      </div>
+                      <div className="min-w-0">
+                        <FieldLabel>Branch · ไม่บังคับ</FieldLabel>
+                        <SearchableSelect value={v.branch} onChange={(x) => setFor(m.brandCode, { branch: x })}
+                          options={branchOptions(erp?.branch ?? [], v.branch)} disabled={busy}
+                          placeholder={noOpts ? "ไม่มีข้อมูล ERP" : "— ไม่ระบุ · ใช้แผนกผู้ขอ —"}
+                          emptyLabel={noOpts ? "ไม่มีข้อมูล ERP" : "— ไม่ระบุ · ใช้แผนกผู้ขอ —"}
+                          searchPlaceholder="ค้นหา Branch..." triggerBackground="var(--bg-card-alt)" />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div>
+              <FieldLabel>เพิ่มแบรนด์เข้ากลุ่มนี้</FieldLabel>
+              <div className="flex items-end gap-2">
+                <div className="flex-1 min-w-0">
+                  <SearchableSelect value={addCode} onChange={setAddCode} options={addOptions} disabled={busy}
+                    placeholder={addOptions.length === 0 ? "ไม่มีแบรนด์ให้เพิ่ม" : "เลือกแบรนด์เบิก..."}
+                    emptyLabel={addOptions.length === 0 ? "ไม่มีแบรนด์ให้เพิ่ม" : "เลือกแบรนด์เบิก..."}
+                    searchPlaceholder="ค้นหาแบรนด์..." triggerBackground="var(--bg-card)" />
+                </div>
+                <Button variant="secondary" size="sm" icon={<Plus size={14} />} disabled={!addCode || busy}
+                  onClick={() => { if (addCode) { setAdded((p) => p.concat([addCode])); setAddCode(""); } }}>
+                  เพิ่ม
+                </Button>
+              </div>
+              <p className="text-[10px] m-0 mt-1" style={{ color: "var(--text-faint)" }}>
+                {/* Not an omission: the route refuses an empty Company outright. */}
+                เพิ่มแล้วบันทึก = ย้ายแบรนด์นั้นมาลง {target} · เอาออกจากกลุ่มไม่ได้ ต้องย้ายไป Company อื่นแทน
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2">
               <Button variant="secondary" size="sm" onClick={() => setOpen(false)}>ปิด</Button>
-              <Button variant="primary" icon={<Save size={15} />} onClick={saveAndClose}
-                loading={busy === "all"} disabled={!anyDirty}>บันทึก</Button>
+              <Button variant="primary" size="sm" icon={<Save size={14} />} onClick={save}
+                loading={busy} disabled={busy || shown.length === 0 || batchWouldClear}>บันทึก</Button>
             </div>
           </div>
         </Dialog>
       )}
     </div>
   );
-}
-
-/** One "label over value" line for the card's summary. */
-function ReadonlyLine({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  const empty = !value.trim() || value === "—";
-  return (
-    <div className="min-w-0">
-      <FieldLabel>{label}</FieldLabel>
-      <p className="text-[12px] m-0 truncate font-medium" title={value}
-        style={{ color: empty ? "var(--text-muted)" : "var(--text-primary)" }}>
-        {empty ? "—" : value}
-      </p>
-      {hint && <p className="text-[10px] m-0 truncate" style={{ color: "var(--text-faint)" }}>{hint}</p>}
-    </div>
-  );
-}
-
-/** The chosen option's label — a bare code says little on a summary. */
-function labelOf(options: { value: string; label: string }[], value: string | null | undefined): string {
-  const v = (value ?? "").trim();
-  if (!v) return "";
-  return options.find((o) => o.value === v)?.label ?? v;
 }
 
 export function AdvanceErpInterfaceSettings() {
@@ -391,6 +569,34 @@ export function AdvanceErpInterfaceSettings() {
       fetcher,
     );
   const erpByCompany = erpData?.data ?? {};
+
+  /**
+   * Grouped by the Company the journal posts into, with every interface company
+   * shown — an empty card is the only place a company's first brand can be
+   * added.
+   *
+   * **`interfaceTarget` is never blank, so the leftovers have to be derived
+   * here.** `listAdvanceInterfaceConfigView` resolves it with a final `?? code`, so a brand with no
+   * `AccBrandErpInterface` row is reported as posting into ITSELF. Measured
+   * 2026-09-14: PLM is exactly that. Taken at face value it renders a card for a
+   * Company that is not an interface target at all, whose Save the route
+   * refuses outright (`isErpInterfaceBrandCode` → "Company ปลายทางไม่ถูกต้อง"), so
+   * the card would be a dead end rather than a configuration.
+   *
+   * A target outside the four that is NOT the brand's own code is a different
+   * thing — somebody mapped it somewhere unexpected — and keeps its group,
+   * because that is precisely what needs to be seen.
+   */
+  const { groups, unassigned } = useMemo(() => {
+    const known = new Set(ERP_INTERFACE_BRANDS.map((b) => b.id));
+    const targetByClaim: Record<string, string> = {};
+    for (const r of rows) {
+      const t = (r.interfaceTarget ?? "").trim().toUpperCase();
+      const unmapped = !known.has(t) && t === r.brandCode.trim().toUpperCase();
+      targetByClaim[r.brandCode] = unmapped ? "" : t;
+    }
+    return groupByTargetIncludingEmpty(rows, targetByClaim, ERP_INTERFACE_BRANDS.map((b) => b.id));
+  }, [rows]);
 
   const [refreshing, setRefreshing] = useState(false);
   async function refreshErp() {
@@ -483,7 +689,7 @@ export function AdvanceErpInterfaceSettings() {
             <Link2 size={15} style={{ color: "var(--nav-active-text)" }} /> Interface ERP (AP-2)
           </p>
           <p className="text-[11px] m-0 mt-1" style={{ color: "var(--text-muted)" }}>
-            Bank · Branch · Journal Batch ดึงจาก Rocks_ERP_Data (ตาม Company) — Dr ลง Vendor (G/L มาจาก Posting Group)
+            จัดกลุ่มตาม Company ปลายทาง · Journal Batch ใช้ร่วมกันทั้งกลุ่ม · Bank และ Branch ตั้งรายแบรนด์ — Dr ลง Vendor (G/L มาจาก Posting Group)
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -517,11 +723,30 @@ export function AdvanceErpInterfaceSettings() {
           ยังไม่มีแบรนด์ที่ map Company (ตั้งค่าที่ Accounting → Interface ERP)
         </p>
       ) : (
-        <div className="flex flex-col gap-3">
-          {rows.map((r) => (
-            <BrandCard key={r.brandCode} row={r} erpByCompany={erpByCompany} onSaved={load} />
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            {groups.map((g) => (
+              <GroupCard key={g.target} target={g.target} members={g.members} all={rows}
+                erpByCompany={erpByCompany} onSaved={load} />
+            ))}
+          </div>
+
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wide m-0 mb-2" style={{ color: "var(--text-faint)" }}>
+              ยังไม่ได้จัดกลุ่ม
+            </p>
+            {unassigned.length === 0 ? (
+              <p className="text-[11px] m-0" style={{ color: "var(--text-muted)" }}>ทุกแบรนด์เบิกถูกจัดกลุ่มแล้ว</p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {unassigned.map((r) => <MemberChip key={r.brandCode} row={r} />)}
+              </div>
+            )}
+            <p className="text-[10px] m-0 mt-2" style={{ color: "var(--text-faint)" }}>
+              เพิ่มแบรนด์เหล่านี้เข้ากลุ่มได้จากปุ่ม “แก้ไข” บนการ์ด Company ปลายทางที่ต้องการ
+            </p>
+          </div>
+        </>
       )}
     </div>
   );

@@ -932,6 +932,57 @@ summary.
   `src/lib/ocr.ts`, a tesseract worker. **This is why `tesseract.js` is still a
   dependency**: AP-1 and AP-17 stopped OCRing in the browser and the package
   looks unused from their side. Check `src/lib/ocr.ts` before concluding it is.
+- **Both Interface ERP tabs group by the target Company (2026-09-14), and the
+  group is a UI grouping over rows that stay keyed on the CLAIM brand.** One
+  card per PCTH / KSI / PCMY / UNO holding the claim brands mapped into it, a
+  summary on the card and the form behind **แก้ไข**, plus a
+  `ยังไม่ได้จัดกลุ่ม` bucket — AP-1's and AP-4's shape, which is what the user
+  asked for. Spec:
+  `docs/superpowers/specs/2026-09-14-ap2-ap3-erp-interface-groups-design.md`.
+  **AP-1 was deliberately not touched**: it is already grouped, and an
+  uncommitted stash sits against `BrandErpInterfaceSettings.tsx`.
+  `src/lib/acc/erp-target-groups.ts` is the pure, form-agnostic half
+  (`groupByTarget`, `groupByTargetIncludingEmpty`, `groupValue`), separate from
+  AP-1's own `brand-erp-interface-groups.ts` for that reason. Five things about
+  it are decisions rather than taste:
+  - **A group-level field is fanned out per member, never stored on the target.**
+    `resolveJournalBatchName` looks a claim brand's batch up by its *interface*
+    brand FIRST, so a target-keyed row beats every per-brand row — the AP-2
+    failure this repository has already shipped once ("the screen displayed
+    `TRAVELING` while the payload correctly sent `BEE`") — and AP-3's payload
+    reads `clrMap[claimBrand]`, so a target-keyed value would be read by
+    nothing. One POST per member, stopping at the first refusal and naming the
+    member it stopped on, exactly as AP-4's group save does.
+  - **`groupValue` answers three things, and the screens keep them apart**:
+    agreed, **fill** (some members blank — saving writes the value to them, and
+    the card says so) and **conflict** (two different non-blank values — refused,
+    never picked, because a pick overwrites one real decision with another on
+    configuration that decides where money posts).
+  - **The conflict is not hypothetical.** Measured 2026-09-14: AP-2's PCTH group
+    is `PCTH=Q · ROCKS=Q · PCMY=TRANSFER` — PCMY posts into PCTH with its own
+    batch and its own bank (`UOB-2726`). So a conflict starts the box empty, and
+    **Save is blocked while it is empty** with the members it would clear named;
+    whichever value is chosen, the dialog lists whose current value it replaces.
+    Without that, one click on a group somebody opened to fix a bank account
+    nulls three working batches. AP-3's same group is a **fill** instead —
+    PCMY has no batch, and neither PCMY nor PCTH has a VAT-input or WHT-payable
+    account — so saving it is a repair.
+  - **Membership is AP-2's, and AP-3 has no say.** AP-2 owns
+    `AccBrandErpInterface` with `FormCode='AP-2'`, so its cards carry
+    `เพิ่มแบรนด์` — **adding IS moving**, the same upsert the per-brand Company
+    dropdown used to perform — and **no remove**, because
+    `POST .../settings/erp-interface` refuses an empty `interfaceBrandCode`
+    outright. AP-3's cards carry neither and say where membership is set;
+    `erp-interface-group-screens-guard.test.ts` reads both sources, because the
+    failure to guard against is a control **appearing** on AP-3.
+  - **The leftovers are derived on the screen, because `interfaceTarget` is
+    never blank.** Both view builders resolve it with a final `?? code`, so a
+    brand with no `AccBrandErpInterface` row is reported as posting into
+    **itself** — measured 2026-09-14, PLM and SMR are exactly that. Taken at
+    face value that renders a card for a Company that is not an interface target
+    at all, whose Save AP-2's route refuses outright. A target outside the four
+    that is **not** the brand's own code keeps its group, because an unexpected
+    mapping is precisely what needs to be seen.
 
 #### Multi-currency — AP-1 and AP-17 (migrations 124–131, 136)
 

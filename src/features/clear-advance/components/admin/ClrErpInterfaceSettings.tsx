@@ -3,10 +3,16 @@
 import { useMemo, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
-import { CheckCircle2, Circle, Pencil, Save } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Circle, Pencil, Save } from "lucide-react";
 import { Button } from "@/components/ui";
 import { SearchableSelect } from "@/features/accounting/components/settings/SearchableSelect";
 import { Dialog } from "@/components/ui/Dialog";
+import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import {
+  groupByTargetIncludingEmpty,
+  groupValue,
+  type GroupValue,
+} from "@/lib/acc/erp-target-groups";
 
 interface ViewRow {
   brandCode: string;
@@ -81,63 +87,177 @@ function StatusBadge({ ready }: { ready: boolean }) {
   );
 }
 
+/** One claim brand as a chip on a group card. */
+function MemberChip({ row }: { row: ViewRow }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-[12px]"
+      style={{ background: "var(--bg-badge)", color: "var(--text-secondary)", opacity: row.active ? 1 : 0.55 }}
+      title={row.active ? undefined : "แบรนด์นี้ปิดใช้งานอยู่ (ตั้งที่ AP-2)"}>
+      {row.brandLogo && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={row.brandLogo} alt="" className="h-3.5 w-auto object-contain" />
+      )}
+      <span className="font-semibold">{row.brandName}</span>
+      <span style={{ color: "var(--text-faint)" }}>{row.brandCode}</span>
+    </span>
+  );
+}
+
 /**
- * One brand: what it is set to, and a way in.
+ * What a group's shared field is, said in one line.
  *
- * **Summary on the card, the form behind แก้ไข** (user, 2026-09-14) — the same
- * shape AP-4's Interface ERP tab uses, so the three forms are worked the same
- * way. The fields, the values and the POST are exactly what they were; only
- * where they live moved.
- *
- * The pickers and their two SWR reads stay MOUNTED with the card rather than
- * living inside the dialog: they are what the summary renders a name from, and
- * a list that only loads once the dialog opens makes every first open show
- * codes for a second.
+ * The three states `groupValue` answers are three different things to a reader
+ * and the screen must not flatten them: a value everybody has, a value some
+ * members are missing and will be given on save, and two real values that
+ * disagree — which is refused rather than picked, because picking overwrites
+ * somebody's decision about where money posts.
  */
-function BrandCard({ row, onSaved }: { row: ViewRow; onSaved: () => void }) {
+function GroupFieldSummary({ label, state }: { label: string; state: GroupValue }) {
+  if (state.kind === "conflict") {
+    return (
+      <div className="min-w-0">
+        <p className="text-[10px] font-bold uppercase tracking-wide m-0 mb-0.5" style={{ color: "var(--text-faint)" }}>{label}</p>
+        <p className="text-[12px] m-0 inline-flex items-center gap-1" style={{ color: "var(--text-warning)" }}>
+          <AlertTriangle size={12} /> ไม่ตรงกัน — {state.values.map((v) => `${v.brandCode}: ${v.value}`).join(" · ")}
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="min-w-0">
+      <p className="text-[10px] font-bold uppercase tracking-wide m-0 mb-0.5" style={{ color: "var(--text-faint)" }}>{label}</p>
+      <p className="text-[12px] m-0 truncate font-medium" title={state.value}
+        style={{ color: state.value ? "var(--text-primary)" : "var(--text-muted)" }}>
+        {state.value || "—"}
+      </p>
+      {state.kind === "fill" && (
+        <p className="text-[10px] m-0" style={{ color: "var(--text-info-yellow)" }}>
+          {state.blankMembers.join(", ")} ยังไม่มีค่า — บันทึกแล้วจะเติมให้
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One target Company: the claim brands posting into it, and the three values
+ * they share.
+ *
+ * **Everything here is stored per claim brand and written to every member on
+ * save.** The grouping is a presentation — see
+ * `docs/superpowers/specs/2026-09-14-ap2-ap3-erp-interface-groups-design.md`:
+ * `resolveJournalBatchName` reads a target-keyed row first and would beat every
+ * per-brand row, and AP-3's payload reads its config BY CLAIM BRAND and would
+ * never see a target-keyed one.
+ *
+ * **No membership control, deliberately.** AP-3 inherits its target from AP-2;
+ * a brand moves between these cards on AP-2's tab. A control that looked
+ * editable here and silently was not would be worse than not having one, so the
+ * card says where membership is set instead.
+ */
+function GroupCard({
+  target,
+  members,
+  onSaved,
+}: {
+  target: string;
+  members: ViewRow[];
+  onSaved: () => void;
+}) {
   const [open, setOpen] = useState(false);
-  const target = row.interfaceTarget ?? "";
-  const [batch, setBatch] = useState(row.journalBatchName ?? "");
-  const [vatGl, setVatGl] = useState(row.vatInputGlAccountNo ?? "");
-  const [whtGl, setWhtGl] = useState(row.whtPayableGlAccountNo ?? "");
   const [busy, setBusy] = useState(false);
 
-  // Journal batches for the target Company AP-3 inherits from AP-2 (interfaceTarget)
-  // — keyed by that Company so the list always matches the Company on the card.
+  const batchState = useMemo(
+    () => groupValue(members.map((m) => ({ brandCode: m.brandCode, value: m.journalBatchName }))),
+    [members],
+  );
+  const vatState = useMemo(
+    () => groupValue(members.map((m) => ({ brandCode: m.brandCode, value: m.vatInputGlAccountNo }))),
+    [members],
+  );
+  const whtState = useMemo(
+    () => groupValue(members.map((m) => ({ brandCode: m.brandCode, value: m.whtPayableGlAccountNo }))),
+    [members],
+  );
+
+  // A conflict has no single value to put in the box, so the box starts empty
+  // and whatever is chosen is written to every member — which is the admin
+  // resolving it, deliberately, rather than the screen choosing for them.
+  const [batch, setBatch] = useState(batchState.kind === "conflict" ? "" : batchState.value);
+  const [vatGl, setVatGl] = useState(vatState.kind === "conflict" ? "" : vatState.value);
+  const [whtGl, setWhtGl] = useState(whtState.kind === "conflict" ? "" : whtState.value);
+
+  const first = members[0];
   const { data: liveBatch, isLoading } = useSWR<{ ok: boolean; error?: string; data?: BatchOpt[] }>(
     target ? `/api/request/clear-advance/settings/erp-journal-batches?company=${encodeURIComponent(target)}` : null,
     fetcher,
   );
-  // GL accounts for the claim brand (brand drives the chart of accounts scope)
   const { data: liveGl, isLoading: glLoading } = useSWR<{ ok: boolean; data?: GlOpt[] }>(
-    row.brandCode ? `/api/request/clear-advance/settings/erp-gl-accounts?brand=${encodeURIComponent(row.brandCode)}` : null,
+    first ? `/api/request/clear-advance/settings/erp-gl-accounts?brand=${encodeURIComponent(first.brandCode)}` : null,
     fetcher,
   );
-  const batchEnv = row.environment;
   const batchErr = liveBatch && !liveBatch.ok ? (liveBatch.error ?? "ดึง batch ไม่สำเร็จ") : null;
   const opts = useMemo(() => batchOptions(liveBatch?.data ?? [], batch), [liveBatch, batch]);
   const vatOpts = useMemo(() => glOptions(liveGl?.data ?? [], vatGl), [liveGl, vatGl]);
   const whtOpts = useMemo(() => glOptions(liveGl?.data ?? [], whtGl), [liveGl, whtGl]);
-  const dirty =
-    batch.trim() !== (row.journalBatchName ?? "").trim() ||
-    vatGl.trim() !== (row.vatInputGlAccountNo ?? "").trim() ||
-    whtGl.trim() !== (row.whtPayableGlAccountNo ?? "").trim();
 
+  /**
+   * Which members each group field would REPLACE, and whether the batch would
+   * be CLEARED.
+   *
+   * A conflict starts the box empty, so an empty box saved as-is writes nothing
+   * over three working configurations in one click. Naming the members is what
+   * makes resolving a conflict a deliberate act rather than a side effect of
+   * opening the dialog — the same guard AP-2's card carries.
+   */
+  const replacing = (get: (m: ViewRow) => string | null, next: string) =>
+    members.filter((m) => {
+      const cur = (get(m) ?? "").trim();
+      return cur !== "" && cur !== next.trim();
+    });
+  const batchReplacing = replacing((m) => m.journalBatchName, batch);
+  const vatReplacing = replacing((m) => m.vatInputGlAccountNo, vatGl);
+  const whtReplacing = replacing((m) => m.whtPayableGlAccountNo, whtGl);
+  const batchWouldClear = !batch.trim() && batchReplacing.length > 0;
+
+  const ready = members.length > 0 && members.every((m) => m.ready);
+  const anyConflict =
+    batchState.kind === "conflict" || vatState.kind === "conflict" || whtState.kind === "conflict";
+
+  /**
+   * Write the group's three values to every member.
+   *
+   * **One POST per member, in order, stopping at the first refusal.** The route
+   * is per claim brand and every guard on it is too, so a bulk endpoint would
+   * have to re-implement them; and a half-applied group has to say which member
+   * it stopped on, or nobody can tell what state the group is in — the same
+   * shape the Fix G/L screen's group delete uses.
+   */
   async function save() {
+    if (batchWouldClear) {
+      toast.error(`กรุณาเลือก Journal Batch — ค้างว่างไว้จะลบของ ${batchReplacing.map((m) => m.brandCode).join(", ")}`);
+      return;
+    }
     setBusy(true);
     try {
-      const res = await fetch("/api/request/clear-advance/settings/erp-interface", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          brandCode: row.brandCode,
-          journalBatchName: batch.trim(),
-          vatInputGlAccountNo: vatGl.trim() || null,
-          whtPayableGlAccountNo: whtGl.trim() || null,
-        }),
-      });
-      const j = (await res.json()) as { ok: boolean; error?: string };
-      if (!j.ok) throw new Error(j.error ?? "บันทึกไม่สำเร็จ");
-      toast.success(`บันทึกการตั้งค่า ERP ของ ${row.brandName} แล้ว`);
+      for (const m of members) {
+        const res = await fetch("/api/request/clear-advance/settings/erp-interface", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            brandCode: m.brandCode,
+            journalBatchName: batch.trim(),
+            vatInputGlAccountNo: vatGl.trim() || null,
+            whtPayableGlAccountNo: whtGl.trim() || null,
+          }),
+        });
+        const j = (await res.json()) as { ok: boolean; error?: string };
+        if (!j.ok) {
+          toast.error(`${m.brandCode}: ${j.error ?? "บันทึกไม่สำเร็จ"}`);
+          return;
+        }
+      }
+      toast.success(`บันทึกการตั้งค่า ERP ของกลุ่ม ${target} แล้ว (${members.length} แบรนด์)`);
       setOpen(false);
       onSaved();
     } catch (e) {
@@ -147,57 +267,54 @@ function BrandCard({ row, onSaved }: { row: ViewRow; onSaved: () => void }) {
     }
   }
 
+  const iface = ERP_INTERFACE_BRANDS.find((b) => b.id === target);
+  const bcLine = [first?.bcName, first?.bcConnectionName, first?.environment]
+    .map((v) => v?.trim())
+    .filter(Boolean)
+    .join(" · ");
+
   return (
     <div className="rounded-xl p-4 flex flex-col gap-3"
-      style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}>
+      style={{
+        background: "var(--bg-card-alt)",
+        border: `1px solid ${ready ? "var(--border-info-green)" : "var(--border-card)"}`,
+      }}>
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          {row.brandLogo && (
+          {iface && (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={row.brandLogo} alt="" className="h-6 w-auto object-contain" />
+            <img src={iface.logo} alt="" className="h-6 w-auto object-contain" />
           )}
-          <span className="text-[14px] font-bold truncate" style={{ color: "var(--text-heading)" }}>{row.brandName}</span>
-          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-            style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}>{row.brandCode}</span>
-        </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-          <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full"
-            style={row.active
-              ? { background: "rgba(79,163,122,0.15)", color: "var(--text-info-green)" }
-              : { background: "var(--bg-badge)", color: "var(--text-muted)" }}>
-            {row.active ? "Active" : "Inactive"}
+          <span className="text-[14px] font-bold truncate" style={{ color: "var(--text-heading)" }}>{target}</span>
+          <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+            {members.length} แบรนด์เบิก
           </span>
-          <StatusBadge ready={row.ready} />
         </div>
+        <StatusBadge ready={ready} />
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
-        <ReadonlyField label="ส่งเข้าแบรนด์ (Company)" value={row.interfaceTarget} />
-        <ReadonlyField label="BC / Connection" value={row.bcName ?? row.bcConnectionName} />
-        <ReadonlyField label="Environment" value={batchEnv} />
+      <div className="flex flex-wrap gap-1.5">
+        {members.length === 0 ? (
+          <span className="text-[12px]" style={{ color: "var(--text-faint)" }}>ยังไม่มีแบรนด์เบิก</span>
+        ) : (
+          members.map((m) => <MemberChip key={m.brandCode} row={m} />)
+        )}
       </div>
 
-      {/* What is set, as text. The three fields themselves are behind แก้ไข. */}
-      <div className="grid grid-cols-3 gap-3">
-        <ReadonlyField label="Journal Batch" value={nameOf(opts, row.journalBatchName)} />
-        <ReadonlyField label="ภาษีซื้อ (VAT input)" value={nameOf(vatOpts, row.vatInputGlAccountNo)} />
-        <ReadonlyField label="WHT payable" value={nameOf(whtOpts, row.whtPayableGlAccountNo)} />
+      <div className="grid grid-cols-3 gap-3 pt-2" style={{ borderTop: "1px solid var(--border-light)" }}>
+        <GroupFieldSummary label="Journal Batch" state={batchState} />
+        <GroupFieldSummary label="ภาษีซื้อ (VAT input)" state={vatState} />
+        <GroupFieldSummary label="WHT payable" state={whtState} />
       </div>
+      <ReadonlyField label="การเชื่อมต่อ BC" value={bcLine} />
 
       <div className="flex items-center justify-between gap-2">
-        {/* Said on the card, not only inside the dialog: it is the reason the
-            Journal Batch list can be empty, and somebody reading the card is
-            the one who can act on it. */}
-        {!isLoading && !batchErr && opts.length === 0 ? (
-          <p className="text-[11px] m-0" style={{ color: "var(--text-info-yellow)" }}>
-            ไม่พบ Journal Batch ของแบรนด์นี้ใน ERP
-          </p>
-        ) : batchErr ? (
-          <p className="text-[11px] m-0" style={{ color: "var(--color-danger)" }}>{batchErr}</p>
-        ) : (
-          <span />
-        )}
-        <Button variant="secondary" size="sm" icon={<Pencil size={14} />} onClick={() => setOpen(true)}>
+        <p className="text-[10px] m-0" style={{ color: "var(--text-faint)" }}>
+          {/* Not a control: AP-3 inherits its target from AP-2. */}
+          แบรนด์ในกลุ่มตั้งที่ AP-2 → ตั้งค่า → Interface ERP
+        </p>
+        <Button variant="secondary" size="sm" icon={<Pencil size={14} />}
+          disabled={members.length === 0} onClick={() => setOpen(true)}>
           แก้ไข
         </Button>
       </div>
@@ -206,24 +323,28 @@ function BrandCard({ row, onSaved }: { row: ViewRow; onSaved: () => void }) {
         <Dialog
           open
           onOpenChange={(v) => { if (!v) setOpen(false); }}
-          title={`ตั้งค่า Interface ERP — ${row.brandName}`}
-          description={`${row.brandCode} → ${target || "—"}`}
+          title={`ตั้งค่า Interface ERP — ${target}`}
+          description={`${members.length} แบรนด์เบิก · ค่าทั้งหมดใช้ร่วมกันทั้งกลุ่ม`}
         >
           <div className="flex flex-col gap-4">
+            {anyConflict && (
+              <p className="text-[11px] m-0 px-3 py-2 rounded-lg"
+                style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
+                แบรนด์ในกลุ่มนี้ตั้งค่าไม่ตรงกัน — เลือกค่าที่ถูกต้องแล้วบันทึก จะเขียนให้ทุกแบรนด์ในกลุ่ม
+              </p>
+            )}
+
             <div className="flex flex-col gap-1.5">
               <p className="text-[10px] font-bold uppercase tracking-wide m-0" style={{ color: "var(--text-faint)" }}>Journal Batch *</p>
               <SearchableSelect
-                value={batch}
-                onChange={setBatch}
-                options={opts}
-                disabled={busy || isLoading}
+                value={batch} onChange={setBatch} options={opts} disabled={busy || isLoading}
                 placeholder={isLoading ? "กำลังโหลด batch..." : "เลือก Journal Batch"}
                 emptyLabel="— ไม่ระบุ —"
               />
               {batchErr && <p className="text-[11px] m-0" style={{ color: "var(--color-danger)" }}>{batchErr}</p>}
               {!isLoading && !batchErr && opts.length === 0 && (
                 <p className="text-[11px] m-0" style={{ color: "var(--text-info-yellow)" }}>
-                  ไม่พบ Journal Batch ของแบรนด์นี้ใน ERP (sync ErpGeneralJournalBatch ก่อน)
+                  ไม่พบ Journal Batch ของ {target} ใน ERP (sync ErpGeneralJournalBatch ก่อน)
                 </p>
               )}
             </div>
@@ -231,10 +352,7 @@ function BrandCard({ row, onSaved }: { row: ViewRow; onSaved: () => void }) {
             <div className="flex flex-col gap-1.5">
               <p className="text-[10px] font-bold uppercase tracking-wide m-0" style={{ color: "var(--text-faint)" }}>ภาษีซื้อ (VAT input)</p>
               <SearchableSelect
-                value={vatGl}
-                onChange={setVatGl}
-                options={vatOpts}
-                disabled={busy || glLoading}
+                value={vatGl} onChange={setVatGl} options={vatOpts} disabled={busy || glLoading}
                 placeholder={glLoading ? "กำลังโหลดบัญชี..." : "เลือกบัญชีภาษีซื้อ"}
                 emptyLabel="— ไม่ระบุ —"
               />
@@ -243,19 +361,34 @@ function BrandCard({ row, onSaved }: { row: ViewRow; onSaved: () => void }) {
             <div className="flex flex-col gap-1.5">
               <p className="text-[10px] font-bold uppercase tracking-wide m-0" style={{ color: "var(--text-faint)" }}>WHT payable</p>
               <SearchableSelect
-                value={whtGl}
-                onChange={setWhtGl}
-                options={whtOpts}
-                disabled={busy || glLoading}
+                value={whtGl} onChange={setWhtGl} options={whtOpts} disabled={busy || glLoading}
                 placeholder={glLoading ? "กำลังโหลดบัญชี..." : "เลือกบัญชี WHT payable"}
                 emptyLabel="— ไม่ระบุ —"
               />
             </div>
 
+            <p className="text-[11px] m-0" style={{ color: "var(--text-muted)" }}>
+              บันทึกแล้วจะเขียนให้ทุกแบรนด์ในกลุ่ม: {members.map((m) => m.brandCode).join(", ")}
+            </p>
+
+            {(batchReplacing.length > 0 || vatReplacing.length > 0 || whtReplacing.length > 0) && (
+              <div className="text-[11px] flex flex-col gap-0.5" style={{ color: "var(--text-warning)" }}>
+                {batchReplacing.length > 0 && (
+                  <span>จะเขียนทับ Journal Batch เดิมของ {batchReplacing.map((m) => `${m.brandCode} (${(m.journalBatchName ?? "").trim()})`).join(" · ")}</span>
+                )}
+                {vatReplacing.length > 0 && (
+                  <span>จะเขียนทับบัญชีภาษีซื้อเดิมของ {vatReplacing.map((m) => `${m.brandCode} (${(m.vatInputGlAccountNo ?? "").trim()})`).join(" · ")}</span>
+                )}
+                {whtReplacing.length > 0 && (
+                  <span>จะเขียนทับบัญชี WHT payable เดิมของ {whtReplacing.map((m) => `${m.brandCode} (${(m.whtPayableGlAccountNo ?? "").trim()})`).join(" · ")}</span>
+                )}
+              </div>
+            )}
+
             <div className="flex justify-end gap-2">
               <Button variant="secondary" size="sm" onClick={() => setOpen(false)}>ปิด</Button>
               <Button variant="primary" size="sm" icon={<Save size={14} />}
-                onClick={save} loading={busy} disabled={!dirty || busy}>บันทึก</Button>
+                onClick={save} loading={busy} disabled={busy || batchWouldClear}>บันทึก</Button>
             </div>
           </div>
         </Dialog>
@@ -264,40 +397,82 @@ function BrandCard({ row, onSaved }: { row: ViewRow; onSaved: () => void }) {
   );
 }
 
-/** The chosen option's label, for the summary — the code alone says little. */
-function nameOf(options: { value: string; label: string }[], value: string | null | undefined): string {
-  const v = (value ?? "").trim();
-  if (!v) return "";
-  return options.find((o) => o.value === v)?.label ?? v;
-}
-
-/** AP-3 Interface ERP — per-brand Journal Batch for the clearing journal. Company /
- *  G/L / bank / branch are inherited from the cleared AP-2 entries (read-only). */
+/**
+ * AP-3 Interface ERP — grouped by the target Company, like AP-1's and AP-4's.
+ *
+ * Company, G/L, bank and branch are inherited from the AP-2 entries being
+ * cleared; what AP-3 configures is the clearing journal's batch and its two tax
+ * accounts, and all three belong to the company whose books it posts into.
+ */
 export function ClrErpInterfaceSettings() {
   const { data, isLoading, mutate } = useSWR<{ ok: boolean; data?: ViewRow[] }>(
     "/api/request/clear-advance/settings/erp-interface", fetcher,
   );
-  const rows = data?.data ?? [];
+  const rows = useMemo(() => data?.data ?? [], [data]);
+
+  /**
+   * Grouped by the Company the journal posts into, with every interface company
+   * shown — an empty card is the only place a company's first brand can be
+   * added.
+   *
+   * **`interfaceTarget` is never blank, so the leftovers have to be derived
+   * here.** `listClrInterfaceConfigView` resolves it with a final `?? code`, so a brand with no
+   * `AccBrandErpInterface` row is reported as posting into ITSELF. Measured
+   * 2026-09-14: PLM is exactly that. Taken at face value it renders a card for a
+   * Company that is not an interface target at all — and AP-3 cannot fix it
+   * from here either, since membership is AP-2's.
+   *
+   * A target outside the four that is NOT the brand's own code is a different
+   * thing — somebody mapped it somewhere unexpected — and keeps its group,
+   * because that is precisely what needs to be seen.
+   */
+  const { groups, unassigned } = useMemo(() => {
+    const known = new Set(ERP_INTERFACE_BRANDS.map((b) => b.id));
+    const targetByClaim: Record<string, string> = {};
+    for (const r of rows) {
+      const t = (r.interfaceTarget ?? "").trim().toUpperCase();
+      const unmapped = !known.has(t) && t === r.brandCode.trim().toUpperCase();
+      targetByClaim[r.brandCode] = unmapped ? "" : t;
+    }
+    return groupByTargetIncludingEmpty(rows, targetByClaim, ERP_INTERFACE_BRANDS.map((b) => b.id));
+  }, [rows]);
 
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-[11px] m-0 mb-2" style={{ color: "var(--text-muted)" }}>
-        สถานะ Active จัดการที่หน้า AP-2 → ตั้งค่า → Interface ERP (ใช้ร่วมกัน)
-      </p>
       <p className="text-[12px] m-0" style={{ color: "var(--text-muted)" }}>
-        AP-3 กลับรายการจาก AP-2 → G/L · ธนาคาร · สาขา มาจากรายการที่เคลียร์เอง
-        ตั้งค่าที่นี่: <b>Journal Batch</b> · บัญชี<b>ภาษีซื้อ (VAT input)</b> · บัญชี<b>WHT payable</b> ที่รายการเคลียร์จะลง (Company สืบทอดจาก AP-2)
+        จัดกลุ่มตาม Company ปลายทาง — AP-3 กลับรายการจาก AP-2 · G/L · ธนาคาร · สาขา มาจากรายการที่เคลียร์เอง
+        ตั้งค่าที่นี่: <b>Journal Batch</b> · บัญชี<b>ภาษีซื้อ (VAT input)</b> · บัญชี<b>WHT payable</b> —
+        ทั้งสามใช้ร่วมกันทั้งกลุ่ม
       </p>
+
       {isLoading ? (
         <p className="text-[13px] py-8 text-center" style={{ color: "var(--text-muted)" }}>กำลังโหลด...</p>
-      ) : rows.length === 0 ? (
-        <p className="text-[13px] py-8 text-center" style={{ color: "var(--text-muted)" }}>
-          ยังไม่มีแบรนด์ที่ตั้งค่า target ERP (ตั้งที่ AP-1/AP-2 Interface ก่อน)
-        </p>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          {rows.map((r) => <BrandCard key={r.brandCode} row={r} onSaved={() => mutate()} />)}
-        </div>
+        <>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            {groups.map((g) => (
+              <GroupCard key={g.target} target={g.target} members={g.members} onSaved={() => mutate()} />
+            ))}
+          </div>
+
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wide m-0 mb-2" style={{ color: "var(--text-faint)" }}>
+              ยังไม่ได้จัดกลุ่ม
+            </p>
+            {unassigned.length === 0 ? (
+              <p className="text-[11px] m-0" style={{ color: "var(--text-muted)" }}>
+                ทุกแบรนด์เบิกถูกจัดกลุ่มแล้ว
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {unassigned.map((r) => <MemberChip key={r.brandCode} row={r} />)}
+              </div>
+            )}
+            <p className="text-[10px] m-0 mt-2" style={{ color: "var(--text-faint)" }}>
+              แบรนด์ที่ยังไม่มี Company ปลายทางตั้งค่าที่ AP-2 → ตั้งค่า → Interface ERP
+            </p>
+          </div>
+        </>
       )}
     </div>
   );

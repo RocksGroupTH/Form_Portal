@@ -66,9 +66,15 @@ tables, the routes or the payload builders changes.
 AP-2 owns `AccBrandErpInterface` with `FormCode='AP-2'`; AP-3 inherits whatever
 that resolves to. So:
 
-- **AP-2's cards carry `เพิ่มแบรนด์` and a trash control**, and moving a brand
-  between cards is what changing its target now means — the same upsert the
-  per-brand dropdown performed, addressed differently.
+- **AP-2's cards carry `เพิ่มแบรนด์`**, and moving a brand between cards is what
+  changing its target now means — the same upsert the per-brand dropdown
+  performed, addressed differently.
+  > **Amended at implementation, 2026-09-14: there is no trash control**, and
+  > that is the route rather than the screen. `POST .../settings/erp-interface`
+  > refuses an empty `interfaceBrandCode` outright
+  > (`กรุณาเลือก Company ปลายทาง`), so a brand cannot be un-mapped from AP-2 at
+  > all — only moved to another Company. A trash icon would have had nothing to
+  > call. The card says so instead.
 - **AP-3's cards carry neither**, and say on the card that membership is set on
   AP-2's tab. A control that looked editable and silently was not would be worse
   than not having one.
@@ -103,6 +109,23 @@ The rule, in two cases:
 A silent pick would overwrite a real decision with another real decision, on
 configuration that decides where money posts.
 
+> **Amended at implementation, 2026-09-14 — AP-2 has a real conflict, and
+> "an admin picks" needed one more guard.** Measured the same day:
+>
+> ```
+> AP-2, group PCTH:  PCTH batch=Q   ROCKS batch=Q   PCMY batch=TRANSFER
+>                    PCTH bank=K-CA6999             PCMY bank=UOB-2726
+> ```
+>
+> PCMY genuinely posts into PCTH with its own batch, so the group's box starts
+> empty — and an empty box saved as-is would null out three working
+> configurations in one click, on a dialog somebody may have opened only to fix
+> a bank account. So **Save is blocked while the box is empty and any member has
+> a batch**, naming them, and whichever value is chosen the dialog lists whose
+> current value it will replace. The same guard is on AP-3's card. AP-3's own
+> PCTH group is the §4 *fill* case rather than a conflict, and saving it repairs
+> PCMY's batch and both PCMY's and PCTH's tax accounts.
+
 ---
 
 ## 5. What is NOT changing
@@ -126,7 +149,19 @@ themselves are not behaviourally tested here, as in the rest of this repository.
 - `groupValue` — the three cases of §4: all members agree; some blank and one
   set; two different non-blank values (a conflict, never a pick).
 - A source guard that AP-3's screen renders no membership control, since the
-  failure is a control that appears to work.
+  failure is a control that appears to work —
+  `src/lib/acc/erp-interface-group-screens-guard.test.ts`, which also pins that
+  **both** saves post one body per member keyed on the claim brand, the property
+  §2 exists for.
+
+> **Amended at implementation, 2026-09-14:** a fourth thing had to be derived on
+> the screens rather than read off the view. Both view builders resolve
+> `interfaceTarget` with a final `?? code`, so a brand with **no**
+> `AccBrandErpInterface` row reports as posting into itself — PLM and SMR,
+> measured — which would render a card for a Company that is not an interface
+> target, whose Save AP-2's route refuses. Those are the `ยังไม่ได้จัดกลุ่ม`
+> bucket. A target outside the four that is *not* the brand's own code keeps its
+> group, because an unexpected mapping is what needs to be seen.
 
 `npm test`, `npx next build` and a live read of both forms' settings before the
 commit.
