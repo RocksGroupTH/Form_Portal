@@ -11,6 +11,7 @@ import {
   type DimensionType,
 } from "@/lib/clr/gl-dimension";
 import { nameOverrideFor } from "@/lib/clr/gl-name";
+import { ErpSyncButton } from "./ErpSyncButton";
 import {
   fetchList,
   postJson,
@@ -43,8 +44,6 @@ interface GlCompanyRow {
   /** A rule on an account the sync no longer returns — live, and said so on the row. */
   missingFromErp?: boolean;
 }
-
-const GL_URL = "/api/request/clear-advance/settings/gl-accounts";
 
 /*
  * `AddGlDialog` lived here and is deleted (2026-09-14).
@@ -114,7 +113,20 @@ function NameInput({
   );
 }
 
-export function ClrGlAccountSettings() {
+export function ClrGlAccountSettings({
+  endpoint = "/api/request/clear-advance/settings/gl-accounts",
+  syncEndpoint = "/api/request/clear-advance/settings/erp-sync",
+}: {
+  /**
+   * This form's own path onto the shared rows. AP-3 and AP-4 show the same
+   * screen over the same categories; only the path differs, because
+   * `ROUTE_RULES` classifies by path and these rows are read through
+   * `getAccPool()` — a tester with one form in UAT must not edit production's
+   * rows from a UAT screen.
+   */
+  endpoint?: string;
+  syncEndpoint?: string;
+} = {}) {
   // PCTH by default, as asked — it is the company nearly every AP-3 clearing
   // posts into, ROCKS claims included.
   const [company, setCompany] = useState(ERP_INTERFACE_BRANDS[0]?.id ?? "PCTH");
@@ -128,11 +140,11 @@ export function ClrGlAccountSettings() {
 
   const load = useCallback(async () => {
     const { data, forbidden } = await fetchList<GlCompanyRow>(
-      `${GL_URL}?company=${encodeURIComponent(company)}`,
+      `${endpoint}?company=${encodeURIComponent(company)}`,
     );
     setForbidden(forbidden);
     setRows(data);
-  }, [company]);
+  }, [company, endpoint]);
 
   useEffect(() => {
     setLoading(true);
@@ -149,7 +161,7 @@ export function ClrGlAccountSettings() {
   async function saveRule(row: GlCompanyRow, dimensionType: DimensionType, isActive: boolean) {
     setBusy(true);
     try {
-      await postJson(GL_URL, {
+      await postJson(endpoint, {
         mode: "rule",
         company,
         glAccountNo: row.glAccountNo,
@@ -186,7 +198,7 @@ export function ClrGlAccountSettings() {
     if (stored === (row.nameThCustom ?? null) && (row.nameEn ?? "") === nameEn.trim()) return;
     setBusy(true);
     try {
-      await postJson(GL_URL, {
+      await postJson(endpoint, {
         mode: "names",
         glAccountNo: row.glAccountNo,
         // `stored`, not what was typed: the register holds an override or
@@ -228,7 +240,7 @@ export function ClrGlAccountSettings() {
   async function clearRule(row: GlCompanyRow) {
     setBusy(true);
     try {
-      await postJson(GL_URL, { mode: "clear", company, glAccountNo: row.glAccountNo });
+      await postJson(endpoint, { mode: "clear", company, glAccountNo: row.glAccountNo });
       toast.success(`${row.glAccountNo} — ล้างการตั้งค่าของ ${company} แล้ว`);
       await load();
     } catch (e) {
@@ -318,6 +330,12 @@ export function ClrGlAccountSettings() {
 
       {/* Toolbar: search + add */}
       <div className="flex items-center gap-2">
+        <ErpSyncButton
+          endpoint={syncEndpoint}
+          company={company}
+          target="glAccounts"
+          onDone={load}
+        />
         <div
           className="flex items-center gap-2 flex-1 px-3 py-2 rounded-lg"
           style={{ background: "var(--bg-input)", border: "1px solid var(--border-input)" }}

@@ -15,11 +15,12 @@ import {
 
 /* ── what the page shows ── */
 
-test("the strip runs brands, rules, erpInterface, buGlMap, access", () => {
+test("the strip runs brands, rules, erpInterface, glAccounts, buGlMap, access", () => {
   assert.deepEqual(REIMBURSE_SETTINGS_TAB_ORDER, [
     "brands",
     "rules",
     "erpInterface",
+    "glAccounts",
     "buGlMap",
     "access",
   ]);

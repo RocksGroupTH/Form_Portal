@@ -122,6 +122,7 @@ function ClearAdvanceSettingsContent() {
           {activeTab === "buGlMap" && (
             <BuGlAccountSettings
               endpoint="/api/request/clear-advance/settings/bu-gl-map"
+              syncEndpoint="/api/request/clear-advance/settings/erp-sync"
               sharedNote="กฎนี้ใช้ร่วมกับ AP-4 (ขอเบิกเงินคืนพนักงาน) — เป็นข้อมูลชุดเดียวกัน แก้ที่นี่มีผลกับทั้งสองฟอร์ม"
             />
           )}

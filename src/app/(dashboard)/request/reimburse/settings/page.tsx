@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Building2, FileCheck, Link2, Pin, Settings, ShieldCheck } from "lucide-react";
+import { Building2, FileCheck, Link2, ListTree, Pin, Settings, ShieldCheck } from "lucide-react";
 import { backTo } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
@@ -13,6 +13,7 @@ import { ReimburseBrandSettings } from "@/features/reimburse/components/settings
 import { ReimburseAccessSettings } from "@/features/reimburse/components/settings/ReimburseAccessSettings";
 import { ReimburseErpInterfaceSettings } from "@/features/reimburse/components/settings/ReimburseErpInterfaceSettings";
 import { BuGlAccountSettings } from "@/features/accounting/components/settings/BuGlAccountSettings";
+import { ClrGlAccountSettings } from "@/features/clear-advance/components/admin/ClrGlAccountSettings";
 import { useReimburseAccess } from "@/features/reimburse/hooks/useReimburseAccess";
 import {
   REIMBURSE_SETTINGS_TAB_ORDER,
@@ -75,6 +76,10 @@ const TAB_META: Record<TabKey, { label: string; icon: React.ReactNode }> = {
   // stays `buGlMap` through every rename, so bookmarked `?tab=` links keep
   // working — the same call AP-1's settings strip made when its
   // ผู้อนุมัติบัญชี tab was renamed.
+  // AP-3's own screen over the same rows, on AP-4's path — see
+  // ClrGlAccountSettings' `endpoint` prop for why the path differs and the
+  // rows do not.
+  glAccounts: { label: "หมวดบัญชี G/L", icon: <ListTree size={15} /> },
   buGlMap: { label: "Fix G/L by BU or Branch", icon: <Pin size={15} /> },
   access: { label: "สิทธิ์เข้าถึง", icon: <ShieldCheck size={15} /> },
 };
@@ -232,9 +237,16 @@ function ReimburseSettingsContent() {
           {/* One screen, shared with AP-3, over one set of rows — and one path
               per form, which is the part that is not decoration. See
               BuGlAccountSettings' own docblock. */}
+          {shownTab === "glAccounts" && (
+            <ClrGlAccountSettings
+              endpoint="/api/request/reimburse/settings/gl-accounts"
+              syncEndpoint="/api/request/reimburse/settings/erp-sync"
+            />
+          )}
           {shownTab === "buGlMap" && (
             <BuGlAccountSettings
               endpoint="/api/request/reimburse/settings/bu-gl-map"
+              syncEndpoint="/api/request/reimburse/settings/erp-sync"
               sharedNote="กฎนี้ใช้ร่วมกับ AP-3 (เคลียร์เงินทดรองจ่าย) — เป็นข้อมูลชุดเดียวกัน แก้ที่นี่มีผลกับทั้งสองฟอร์ม"
             />
           )}

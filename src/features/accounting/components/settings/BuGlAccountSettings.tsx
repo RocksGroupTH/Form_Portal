@@ -6,6 +6,7 @@ import { Plus, RotateCcw, Trash2, X, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui";
 import { CodeNamePicker, type CodeNameOption } from "@/components/ui/CodeNamePicker";
 import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import { ErpSyncButton } from "@/features/clear-advance/components/admin/ErpSyncButton";
 import {
   groupRulesByAccount,
   type BranchRuleRow,
@@ -66,10 +67,13 @@ const EMPTY: Payload = { rules: [], bus: [], branchRules: [], branches: [], glAc
 
 export function BuGlAccountSettings({
   endpoint,
+  syncEndpoint,
   sharedNote,
 }: {
   /** This form's own path onto the shared rows — see the component note. */
   endpoint: string;
+  /** This form's own path for pulling the lists this screen picks from. */
+  syncEndpoint: string;
   /** One line naming the other form these rules also apply to. */
   sharedNote: string;
 }) {
@@ -310,6 +314,15 @@ export function BuGlAccountSettings({
           <Button variant="secondary" icon={<RotateCcw size={14} />} onClick={() => void load()}>
             โหลดใหม่
           </Button>
+          {/* The BUs, the branches and the accounts this screen picks from are
+              all a mirror of Business Central — โหลดใหม่ re-reads our copy, this
+              refreshes the copy. */}
+          <ErpSyncButton
+            endpoint={syncEndpoint}
+            company={company}
+            target="buGlMap"
+            onDone={load}
+          />
         </div>
       </div>
 

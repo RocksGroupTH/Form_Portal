@@ -46,6 +46,20 @@ const ROUTE_GATES: { route: string; gate: Gate; publicRead?: "GET" }[] = [
     },
   },
   {
+    route: "gl-accounts",
+    gate: {
+      kind: "role",
+      why: "edits AP-3's OWN rows (AccClearAdvanceGl / AccClearAdvanceGlCompany), so a grant here would be a grant over another form's configuration — bu-gl-map's reason exactly",
+    },
+  },
+  {
+    route: "erp-sync",
+    gate: {
+      kind: "role",
+      why: "writes Rocks_ERP_Data — the Business Central mirror Rocks Fast also writes and ACC Portal reads through Fast_Data's synonyms; the same rule AP-1's erp-accounts/sync and AP-3's locations/sync carry",
+    },
+  },
+  {
     route: "bu-gl-map",
     gate: {
       kind: "role",
@@ -164,9 +178,11 @@ test("every AP-4 settings handler opens with the gate its table entry names", as
   // why), which is +1, to 10. Then `bu-gl-map` (GET + POST) — AP-4's own door
   // onto AP-3's BU/branch account rules, admin-only because those rows carry
   // no FormCode and are therefore another form's posting rules too — +2, to 12.
+  // Then AP-4's own doors onto AP-3's G/L categories: `gl-accounts` (GET +
+  // POST) and `erp-sync` (POST), +3, to 15.
   assert.equal(
     handlerCount,
-    12,
+    15,
     "the AP-4 settings routes gained or lost a handler — check its gate, then update this number",
   );
 });
