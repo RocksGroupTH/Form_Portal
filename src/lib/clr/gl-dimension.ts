@@ -62,11 +62,19 @@ export interface DimensionChange {
  * a category with no dimension is not a thing anybody wants: they want it off.
  */
 export function nextDimension(
-  current: DimensionType,
+  /**
+   * What the row stores now, or `null` where this company has no rule for the
+   * account yet — most rows, since the screen lists the whole chart of
+   * accounts. It has to reach here as null: substituting a pretend value at
+   * the call site makes ONE tick answer `Both`, silently ticking the box
+   * nobody clicked on the setting that decides what a line must carry.
+   */
+  current: DimensionType | null,
   kind: DimensionKind,
   checked: boolean,
 ): DimensionChange {
-  const next = { ...dimensionChecks(current), [kind]: checked } as DimensionChecks;
+  const base: DimensionChecks = current ? dimensionChecks(current) : { branch: false, employee: false };
+  const next = { ...base, [kind]: checked } as DimensionChecks;
   const dimensionType = dimensionFromChecks(next);
   return dimensionType === null
     ? { dimensionType: null, error: DIMENSION_REQUIRED_ERROR }

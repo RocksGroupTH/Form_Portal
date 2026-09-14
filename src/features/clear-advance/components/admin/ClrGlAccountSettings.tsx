@@ -10,8 +10,6 @@ import {
   type DimensionKind,
   type DimensionType,
 } from "@/lib/clr/gl-dimension";
-import { SearchableSelect } from "@/features/accounting/components/settings/SearchableSelect";
-import { useBrand } from "@/components/BrandProvider";
 import {
   fetchList,
   postJson,
@@ -19,15 +17,6 @@ import {
   LoadingRow,
   EmptyRow,
 } from "./shared";
-
-interface ErpGlOption { accountNo: string; displayName: string | null }
-
-const DIMENSIONS: DimensionType[] = ["Employee", "Branch", "Both"];
-const DIM_LABEL: Record<DimensionType, string> = {
-  Employee: "พนักงาน (Employee)",
-  Branch: "สาขา (Branch)",
-  Both: "ทั้งสอง (Both)",
-};
 
 /**
  * One category as ONE company sees it.
@@ -123,8 +112,9 @@ export function ClrGlAccountSettings() {
    * ใช้งาน, which is what the message says.
    */
   function toggleDimension(row: GlCompanyRow, kind: DimensionKind, checked: boolean) {
-    const current = row.dimensionType ?? (kind === "branch" ? "Employee" : "Branch");
-    const { dimensionType, error } = nextDimension(current, kind, checked);
+    // Passed straight through, null and all: a stand-in here turned one tick
+    // into two — see `nextDimension`.
+    const { dimensionType, error } = nextDimension(row.dimensionType, kind, checked);
     if (!dimensionType) return void toast.error(error ?? "");
     void saveRule(row, dimensionType, row.isActive);
   }
@@ -289,7 +279,7 @@ export function ClrGlAccountSettings() {
             ) : (
               filtered.map((r) => (
                 <tr
-                  key={r.id}
+                  key={r.glAccountNo}
                   // No fade on an inactive row any more: with the whole chart
                   // of accounts listed, OFF is most rows rather than the
                   // exception, and fading them would grey out the page.

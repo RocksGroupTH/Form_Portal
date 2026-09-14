@@ -64,3 +64,22 @@ test("ticking a box that is already ticked changes nothing and is not an error",
   assert.deepEqual(nextDimension("Both", "branch", true), { dimensionType: "Both", error: null });
   assert.deepEqual(nextDimension("Employee", "employee", true), { dimensionType: "Employee", error: null });
 });
+
+/* ── a row this company has no rule for yet ── */
+
+test("ticking one box on an unruled row gives THAT box, not both", () => {
+  // The screen lists every postable account, so most rows start with no rule
+  // at all. Passing a pretend `Employee` in and ticking Branch answers `Both`
+  // — one click silently ticking two boxes, on the setting that decides what a
+  // line charging the account must carry. `null` has to reach the rule.
+  assert.deepEqual(nextDimension(null, "branch", true), { dimensionType: "Branch", error: null });
+  assert.deepEqual(nextDimension(null, "employee", true), { dimensionType: "Employee", error: null });
+});
+
+test("unticking on an unruled row is refused like any other last box", () => {
+  // Unreachable from the screen — there is nothing ticked to untick — but the
+  // answer has to be a refusal rather than a stored "neither".
+  const r = nextDimension(null, "branch", false);
+  assert.equal(r.dimensionType, null);
+  assert.equal(r.error, DIMENSION_REQUIRED_ERROR);
+});
