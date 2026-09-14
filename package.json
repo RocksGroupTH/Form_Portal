@@ -34,7 +34,7 @@
     "leaflet": "^1.9.4",
     "lucide-react": "^0.577.0",
     "mssql": "^12.2.1",
-    "next": "^16.3.4",
+    "next": "^16.3.5",
     "pdf-to-img": "^6.2.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
@@ -49,6 +49,7 @@
   "devDependencies": {
     "@types/leaflet": "^1.9.21",
     "@types/mssql": "^9.1.9",
+    "@types/node": "^22.20.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "next-auth": "^5.0.0-beta.32",
