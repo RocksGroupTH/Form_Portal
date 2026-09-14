@@ -90,6 +90,25 @@ export interface ReimburseQueueItem {
   documentNo: string | null;
   description: string;
   branchName: string | null;
+  /** สาขาที่ใช้จ่าย — OUR branch, as the code (migration 149). */
+  branchCode: string | null;
+  /** สาขาผู้ขาย — THEIR establishment, as the RD numbers it (migration 149). */
+  vendorBranchCode: string | null;
+  /**
+   * The Business Unit `branchCode` belongs to, joined at read time from the
+   * synced BC Locations.
+   *
+   * Null means one of two different things and the queue says which: the line
+   * has no branch yet, or its branch carries no BU. Neither is stored — a BU is
+   * a fact about the Location and changes on the Location sync's own schedule,
+   * so a copy here would be a second truth that goes stale.
+   */
+  buCode: string | null;
+  /**
+   * The branch is blocked in Business Central. Read from the BRANCH dimension
+   * value, never stored, for the same reason.
+   */
+  branchBlocked: boolean;
   vendorTaxId: string | null;
   vendorName: string | null;
   amount: number;

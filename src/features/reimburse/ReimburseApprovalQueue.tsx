@@ -267,9 +267,11 @@ const FLAT_COLUMNS: readonly {
   { label: "วันที่", width: "95px" },
   { label: "เลขที่เอกสาร", width: "150px" },
   { label: "รายละเอียด", width: "220px" },
-  { label: "สาขา", width: "110px" },
+  { label: "สาขาที่ใช้จ่าย", width: "150px" },
+  { label: "BU", width: "70px" },
   { label: "เลขผู้เสียภาษี", width: "125px" },
   { label: "ผู้ขาย", width: "180px" },
+  { label: "สาขาผู้ขาย", width: "90px" },
   { label: "ก่อน VAT", right: true, width: "95px" },
   { label: "VAT", right: true, width: "85px" },
   { label: "ค่าใช้จ่ายรวม", right: true, width: "105px" },
@@ -279,6 +281,16 @@ const FLAT_COLUMNS: readonly {
   { label: "Vendor", width: "210px" },
   { label: "วันจ่าย", width: "160px", claimLevel: true },
 ];
+
+/**
+ * How many of those columns belong to the LINE rather than to the claim.
+ *
+ * Derived rather than typed, because it is the `colSpan` of the row a claim
+ * with no lines renders — and a literal there silently misaligns the whole
+ * table the next time a column is added, which is exactly what adding
+ * สาขาที่ใช้จ่าย, BU and สาขาผู้ขาย would have done.
+ */
+const LINE_COLUMN_COUNT = FLAT_COLUMNS.filter((c) => !c.claimLevel).length;
 
 /** One table row: a claim and one of its lines, plus where it sits in the group. */
 interface FlatRow {
@@ -1318,13 +1330,55 @@ export function ReimburseApprovalQueue() {
                                   {item.description || "—"}
                                 </td>
                                 <td className="text-[12px] py-2 px-2 break-words" style={{ color: "var(--text-secondary)" }}>
-                                  {item.branchName || "—"}
+                                  {/* The CODE first, because that is what the
+                                      BU beside it was joined on and what the
+                                      journal will carry; the free text under
+                                      it is all a row written before migration
+                                      149 has. A blocked branch is named as
+                                      such — BC refuses the posting outright,
+                                      and finding that out at send time is far
+                                      more expensive than reading it here. */}
+                                  {item.branchCode ? (
+                                    <>
+                                      <span
+                                        className="font-medium tabular-nums"
+                                        style={{ color: item.branchBlocked ? "var(--text-warning)" : "var(--text-primary)" }}
+                                        title={item.branchBlocked ? "สาขานี้ถูกบล็อกใน Business Central" : undefined}
+                                      >
+                                        {item.branchCode}
+                                        {item.branchBlocked ? " ⚠" : ""}
+                                      </span>
+                                      {item.branchName && (
+                                        <span className="block text-[10.5px] leading-tight" style={{ color: "var(--text-muted)" }}>
+                                          {item.branchName}
+                                        </span>
+                                      )}
+                                    </>
+                                  ) : (
+                                    item.branchName || "—"
+                                  )}
+                                </td>
+                                <td className="text-[12px] py-2 px-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>
+                                  {/* Joined from the synced BC Locations at
+                                      read time, never stored: the dimension is
+                                      theirs and moves on its own sync
+                                      schedule. A dash means the branch is not
+                                      in the Location map — an unsynced brand,
+                                      or a line with no branch picked. */}
+                                  {item.buCode || "—"}
                                 </td>
                                 <td className="text-[12px] py-2 px-2 whitespace-nowrap tabular-nums" style={{ color: "var(--text-secondary)" }}>
                                   {item.vendorTaxId || "—"}
                                 </td>
                                 <td className="text-[12px] py-2 px-2 break-words" style={{ color: "var(--text-primary)" }}>
                                   {item.vendorName || "—"}
+                                </td>
+                                <td className="text-[12px] py-2 px-2 whitespace-nowrap tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                                  {/* THEIRS, not ours — the RD's numbering of
+                                      the seller's establishment. 00000 is the
+                                      head office. Never the same column as
+                                      สาขาที่ใช้จ่าย above. */}
+                                  {item.vendorBranchCode || "—"}
                                 </td>
                                 <td className="text-[12px] py-2 px-2 text-right tabular-nums" style={{ color: "var(--text-secondary)" }}>
                                   {fmtBaht(beforeVat)}
@@ -1355,9 +1409,9 @@ export function ReimburseApprovalQueue() {
                             ) : (
                               // A claim with no lines. It cannot be approved
                               // (`claimReadiness` refuses it), and saying so in
-                              // the row beats fourteen empty cells.
+                              // the row beats a screenful of empty cells.
                               <td
-                                colSpan={14}
+                                colSpan={LINE_COLUMN_COUNT}
                                 className="text-[12px] py-3 px-2"
                                 style={{ color: "var(--text-faint)" }}
                               >
