@@ -3,7 +3,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Plus, Search, X } from "lucide-react";
-import { Badge } from "@/components/ui/Badge";
+import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import {
+  dimensionChecks,
+  nextDimension,
+  type DimensionKind,
+  type DimensionType,
+} from "@/lib/clr/gl-dimension";
 import { SearchableSelect } from "@/features/accounting/components/settings/SearchableSelect";
 import { useBrand } from "@/components/BrandProvider";
 import {
@@ -16,27 +22,30 @@ import {
 
 interface ErpGlOption { accountNo: string; displayName: string | null }
 
-type DimensionType = "Employee" | "Branch" | "Both";
 const DIMENSIONS: DimensionType[] = ["Employee", "Branch", "Both"];
 const DIM_LABEL: Record<DimensionType, string> = {
   Employee: "พนักงาน (Employee)",
   Branch: "สาขา (Branch)",
   Both: "ทั้งสอง (Both)",
 };
-const DIM_COLOR: Record<DimensionType, string> = {
-  Employee: "#3b82f6",
-  Branch: "#8b5cf6",
-  Both: "#0ea5a4",
-};
 
-interface GlAccountRow {
+/**
+ * One category as ONE company sees it.
+ *
+ * `dimensionType: null` means this company has no rule for the category yet —
+ * the state a company added after migration 151's backfill is in, and the one
+ * every company but the creator is in for a new category. It is not a default
+ * of Employee: a tick nobody made would hide exactly the gap this screen
+ * exists to close.
+ */
+interface GlCompanyRow {
   id: number;
   glAccountNo: string;
   nameTh: string | null;
   nameEn: string | null;
-  dimensionType: DimensionType;
-  isActive: boolean;
   sortOrder: number;
+  dimensionType: DimensionType | null;
+  isActive: boolean;
 }
 
 const GL_URL = "/api/request/clear-advance/settings/gl-accounts";
@@ -234,7 +243,10 @@ function AddGlDialog({
 }
 
 export function ClrGlAccountSettings() {
-  const [rows, setRows] = useState<GlAccountRow[]>([]);
+  // PCTH by default, as asked — it is the company nearly every AP-3 clearing
+  // posts into, ROCKS claims included.
+  const [company, setCompany] = useState(ERP_INTERFACE_BRANDS[0]?.id ?? "PCTH");
+  const [rows, setRows] = useState<GlCompanyRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [forbidden, setForbidden] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -242,35 +254,70 @@ export function ClrGlAccountSettings() {
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const load = useCallback(async () => {
-    const { data, forbidden } = await fetchList<GlAccountRow>(GL_URL);
+    const { data, forbidden } = await fetchList<GlCompanyRow>(
+      `${GL_URL}?company=${encodeURIComponent(company)}`,
+    );
     setForbidden(forbidden);
     setRows(data);
-  }, []);
+  }, [company]);
 
   useEffect(() => {
     setLoading(true);
     load().finally(() => setLoading(false));
   }, [load]);
 
-  async function toggleActive(row: GlAccountRow, isActive: boolean) {
+  /**
+   * Write one company's rule for one category.
+   *
+   * Both halves always travel together — the dimension and the switch are one
+   * row, and sending only the one that changed would need the server to read
+   * the other back, which is a second answer to the same question.
+   */
+  async function saveRule(row: GlCompanyRow, dimensionType: DimensionType, isActive: boolean) {
     setBusy(true);
     try {
       await postJson(GL_URL, {
-        id: row.id,
+        mode: "rule",
+        company,
         glAccountNo: row.glAccountNo,
-        nameTh: row.nameTh,
-        nameEn: row.nameEn,
-        dimensionType: row.dimensionType,
+        dimensionType,
         isActive,
-        sortOrder: row.sortOrder,
       });
-      toast.success(isActive ? "เปิดใช้งานแล้ว" : "ปิดใช้งานแล้ว");
       await load();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ");
     } finally {
       setBusy(false);
     }
+  }
+
+  /**
+   * One click on one dimension box.
+   *
+   * **Unticking the last box is refused**, with the reason — see
+   * `nextDimension`. A category nobody should charge is switched off with
+   * ใช้งาน, which is what the message says.
+   */
+  function toggleDimension(row: GlCompanyRow, kind: DimensionKind, checked: boolean) {
+    const current = row.dimensionType ?? (kind === "branch" ? "Employee" : "Branch");
+    const { dimensionType, error } = nextDimension(current, kind, checked);
+    if (!dimensionType) return void toast.error(error ?? "");
+    void saveRule(row, dimensionType, row.isActive);
+  }
+
+  /**
+   * One click on ใช้งาน.
+   *
+   * **A category with no dimension cannot be switched on** — there would be
+   * nothing saying what a line charging it must carry. The box is disabled in
+   * that state as well, so this is the second of two layers rather than the
+   * only one.
+   */
+  function toggleActive(row: GlCompanyRow, isActive: boolean) {
+    if (!row.dimensionType) {
+      return void toast.error("เลือก Dimension อย่างน้อย 1 อย่างก่อนเปิดใช้งาน");
+    }
+    void saveRule(row, row.dimensionType, isActive);
   }
 
   async function add(input: {
@@ -282,12 +329,15 @@ export function ClrGlAccountSettings() {
     setBusy(true);
     try {
       await postJson(GL_URL, {
+        mode: "create",
         glAccountNo: input.glAccountNo,
         nameTh: input.nameTh || null,
         nameEn: input.nameEn || null,
         dimensionType: input.dimensionType,
+        // The category reaches every company; it starts SWITCHED ON only here.
+        company,
       });
-      toast.success("เพิ่มหมวดบัญชีแล้ว");
+      toast.success(`เพิ่มหมวดบัญชีแล้ว — เปิดใช้งานให้ ${company} บริษัทอื่นเปิดเองได้`);
       setDialogOpen(false);
       await load();
     } catch (e) {
@@ -320,10 +370,40 @@ export function ClrGlAccountSettings() {
           หมวดบัญชี G/L (AP-3.2)
         </h3>
         <p className="text-[12px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-          รายการบัญชีแยกประเภทที่เลือกได้ตอนเคลียร์เงินทดรอง · ปิด/เปิดใช้งานหรือเพิ่มหมวดใหม่ได้
+          รายการบัญชีแยกประเภทที่เลือกได้ตอนเคลียร์เงินทดรอง · Dimension และการใช้งาน{" "}
+          <b>แยกตามบริษัท</b> · เลขบัญชีและชื่อใช้ร่วมกันทุกบริษัท
         </p>
-        <p className="text-[11px] mt-1" style={{ color: "var(--text-faint)" }}>
-          {activeCount} หมวดที่ใช้งานอยู่ / {rows.length} หมวดทั้งหมด
+      </div>
+
+      {/* The BC company, not the claim brand: a ROCKS clearing posts into
+          PCTH's books and reads PCTH's rules. */}
+      <div className="flex flex-col gap-2">
+        <span className="text-[11px] font-semibold" style={{ color: "var(--text-muted)" }}>
+          Company (ปลายทางที่ลง Journal)
+        </span>
+        <div className="flex flex-wrap gap-2">
+          {ERP_INTERFACE_BRANDS.map((b) => {
+            const on = b.id === company;
+            return (
+              <button
+                key={b.id}
+                type="button"
+                onClick={() => setCompany(b.id)}
+                className="flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer transition-colors"
+                style={{
+                  background: on ? "var(--nav-active-bg)" : "var(--bg-card)",
+                  border: `1px solid ${on ? "var(--nav-active-text)" : "var(--border-card)"}`,
+                  color: on ? "var(--nav-active-text)" : "var(--text-secondary)",
+                }}
+              >
+                <img src={b.logo} alt="" className="h-5 w-auto object-contain" />
+                <span className="text-[13px] font-bold">{b.id}</span>
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-[11px] m-0" style={{ color: "var(--text-faint)" }}>
+          {company}: {activeCount} หมวดที่ใช้งานอยู่ / {rows.length} หมวดทั้งหมด
         </p>
       </div>
 
@@ -403,17 +483,36 @@ export function ClrGlAccountSettings() {
                     {r.nameEn ?? "—"}
                   </td>
                   <td className="px-3 py-2.5 whitespace-nowrap">
-                    <Badge
-                      label={DIM_LABEL[r.dimensionType]}
-                      color={DIM_COLOR[r.dimensionType]}
-                      small
-                    />
+                    <div className="flex items-center gap-3">
+                      {(["branch", "employee"] as const).map((kind) => (
+                        <label key={kind} className="inline-flex items-center gap-1.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={r.dimensionType ? dimensionChecks(r.dimensionType)[kind] : false}
+                            disabled={busy}
+                            onChange={(e) => toggleDimension(r, kind, e.target.checked)}
+                            aria-label={`${kind === "branch" ? "สาขา" : "พนักงาน"} — ${r.glAccountNo}`}
+                          />
+                          <span style={{ color: "var(--text-secondary)" }}>
+                            {kind === "branch" ? "Branch" : "Employee"}
+                          </span>
+                        </label>
+                      ))}
+                      {!r.dimensionType && (
+                        <span className="text-[11px]" style={{ color: "var(--text-warning)" }}>
+                          ยังไม่ได้ตั้งค่าให้ {company}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-3 py-2.5 text-center">
                     <input
                       type="checkbox"
                       checked={r.isActive}
-                      disabled={busy}
+                      // Not merely refused on click: a box that cannot be
+                      // ticked should not invite the click.
+                      disabled={busy || !r.dimensionType}
+                      title={r.dimensionType ? undefined : "เลือก Dimension อย่างน้อย 1 อย่างก่อน"}
                       onChange={(e) => toggleActive(r, e.target.checked)}
                     />
                   </td>

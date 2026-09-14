@@ -3,7 +3,7 @@ import { documentButton, documentUrl } from "@/lib/acc/mail-link";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { hrEmployeeTable } from "@/lib/hr/constants";
 import { allocateRequestNo } from "@/lib/acc/sequence";
-import { listClrErpBranchOptions } from "@/lib/clr/clear-advance-admin-service";
+import { listClrErpBranchOptions, resolveClrCompany } from "@/lib/clr/clear-advance-admin-service";
 import { allowedDimensionTypes } from "@/lib/clr/clear-advance-gl-filter";
 import { suggestPndType } from "@/lib/clr/wht-pnd-core";
 import {
@@ -344,18 +344,37 @@ export async function listPendingAdvances(
 /** AP-3.2 G/L expense-category master (active), narrowed to the line's branch.
  *  Filtering happens here rather than in the client so the browser is never handed
  *  accounts the user is not allowed to charge. */
-export async function listGlAccounts(branchCode?: string | null): Promise<GlAccountOption[]> {
+export async function listGlAccounts(
+  /**
+   * **An object, not two positional strings, and that is the whole reason it
+   * is one.** This function took `(branchCode)` alone until migration 151 gave
+   * the rules a company. Adding the company as a new FIRST parameter left every
+   * existing `listGlAccounts(branch)` call type-checking perfectly while
+   * passing a branch code where a company belongs — answering an empty list,
+   * silently, on the picker every AP-3 line uses. Named fields cannot do that.
+   */
+  args: { company: string | null | undefined; branchCode?: string | null },
+): Promise<GlAccountOption[]> {
+  const { company, branchCode } = args;
+  // **No company, no accounts.** Since migration 151 the dimension and the
+  // on/off switch belong to a company, so answering the shared table's old
+  // columns here would silently ignore every rule this screen exists to set.
+  const co = (company ?? "").trim().toUpperCase();
+  if (!co) return [];
   const pool = await getAccPool();
   // DimensionType is the real rule, not the "สาขา" in the name. The two agreed
   // exactly for Branch rows (all 11 of them), but the 6 "Both" rows carry no
   // "สาขา" in their name, so the name test hid them from every branch line.
   const types = allowedDimensionTypes(branchCode);
   const res = await pool.request()
-    .query(`SELECT GlAccountNo, NameTh, NameEn, DimensionType
-            FROM [dbo].[AccClearAdvanceGl]
-            WHERE IsActive = 1
-              AND DimensionType IN (${types.map((t) => `'${t}'`).join(",")})
-            ORDER BY SortOrder, GlAccountNo`);
+    .input("co", sql.NVarChar, co)
+    .query(`SELECT g.GlAccountNo, g.NameTh, g.NameEn, c.DimensionType
+            FROM [dbo].[AccClearAdvanceGl] AS g
+            JOIN [dbo].[AccClearAdvanceGlCompany] AS c
+              ON c.GlAccountNo = g.GlAccountNo AND c.Company = @co
+            WHERE c.IsActive = 1
+              AND c.DimensionType IN (${types.map((t) => `'${t}'`).join(",")})
+            ORDER BY g.SortOrder, g.GlAccountNo`);
   return (res.recordset as Record<string, unknown>[]).map((x) => ({
     glAccountNo: x.GlAccountNo as string,
     nameTh: (x.NameTh as string) ?? null,
@@ -381,10 +400,14 @@ export async function listBranches(brandCode: string | null): Promise<BranchOpti
  * still open must stay saveable and submittable — what is being checked here is
  * that the branch may charge the account, not that the picker still offers it.
  */
-async function loadGlDimensionTypes(): Promise<GlDimensionTypes> {
+async function loadGlDimensionTypes(company: string): Promise<GlDimensionTypes> {
+  const co = (company ?? "").trim().toUpperCase();
+  if (!co) return new Map();
   const pool = await getAccPool();
   const res = await pool.request()
-    .query(`SELECT GlAccountNo, DimensionType FROM [dbo].[AccClearAdvanceGl]`);
+    .input("co", sql.NVarChar, co)
+    .query(`SELECT GlAccountNo, DimensionType FROM [dbo].[AccClearAdvanceGlCompany]
+            WHERE Company = @co`);
   return new Map(
     (res.recordset as Record<string, unknown>[]).map((x) => [
       String(x.GlAccountNo ?? "").trim(),
@@ -404,7 +427,10 @@ async function assertLinesWritable(c: ClearAdvanceDetail, brandCode: string | nu
   // on the way in, so the account the client sent is never stored and checking
   // it would refuse a request over a value that gets thrown away.
   if (isRocksPcBrand(brandCode) && lines.some((it) => it.glAccountNo?.trim())) {
-    errs.push(...validateLineGlBranch(lines, await loadGlDimensionTypes()));
+    // The CLAIM brand resolved to the company whose books it posts into: a
+    // ROCKS clearing is checked against PCTH's rules, which is where its lines
+    // actually land.
+    errs.push(...validateLineGlBranch(lines, await loadGlDimensionTypes(await resolveClrCompany(brandCode))));
   }
   if (errs.length) throw new Error(errs.join("\n"));
 }

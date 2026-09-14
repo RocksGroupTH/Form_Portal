@@ -1068,7 +1068,13 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
               const res = await fetch("/api/request/clear-advance/suggest-gl", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ description: r.description, branch: r.branchCode }),
+                body: JSON.stringify({
+                  description: r.description,
+                  branch: r.branchCode,
+                  // Without it the server has no rules to read and answers
+                  // nothing — a suggestion that silently stopped happening.
+                  brand: brandCode,
+                }),
               });
               const j = (await res.json()) as { ok: boolean; data?: { glAccountNo: string; nameTh: string | null } | null };
               if (j.ok && j.data) { r.glAccountNo = j.data.glAccountNo; r.glAccountName = j.data.nameTh ?? ""; }

@@ -1,9 +1,25 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
+import {
+  DIMENSION_REQUIRED_ERROR,
+  isDimensionType,
+  type DimensionType,
+} from "./gl-dimension";
 import { getAppPool } from "@/lib/db/mssql";
 import { loadErpJournalBuildContext } from "@/lib/acc/erp-journal-context";
 import { AP3_FORM_CODE } from "@/features/clear-advance/constants";
 
 /** DB holding the synced BC chart of accounts (per Brand/Company). */
+/**
+ * The companies a G/L category rule can exist for.
+ *
+ * The four with a Business Central profile — `ERP_INTERFACE_BRANDS` says the
+ * same thing and is what the settings screen offers. Written out here rather
+ * than imported so this server module keeps no dependency on a constant that
+ * exists for the browser-side brand picker; `gl-company-guard.test.ts` asserts
+ * the two lists agree.
+ */
+export const GL_RULE_COMPANIES: readonly string[] = ["PCTH", "KSI", "PCMY", "UNO"];
+
 const ERP_DATA_DB = process.env.MSSQL_ERP_DATA_DATABASE || "Rocks_ERP_Data";
 
 export interface ErpGlOption { accountNo: string; displayName: string | null }
@@ -125,38 +141,140 @@ export async function listClrErpBranchOptions(brandCode: string): Promise<ErpBra
   return listClrErpBranchesForCompany(company);
 }
 
+/**
+ * Claim brand → the Business Central company whose books it posts into
+ * (ROCKS → PCTH), for AP-3.
+ *
+ * Exported because THREE separate readers of the G/L category rules need the
+ * same answer — the picker, the AI suggestion and the submit guard — and three
+ * inline copies of `ctx.interfaceByClaim[brand] ?? brand` is three places for
+ * one of them to be given the claim brand by mistake, which answers an empty
+ * list rather than an error.
+ */
+export async function resolveClrCompany(brandCode: string | null | undefined): Promise<string> {
+  const brand = (brandCode ?? "").trim().toUpperCase();
+  if (!brand) return "";
+  const ctx = await loadErpJournalBuildContext("AP-3");
+  return (ctx.interfaceByClaim[brand] ?? brand).toUpperCase();
+}
+
 function num(v: unknown): number | null {
   return v === null || v === undefined ? null : Number(v);
 }
 
 /* ─────────────────────────── AP-3.2 G/L master ─────────────────────────── */
 
-export interface GlAccountRow {
+/** One category as one company sees it — the shared half plus that company's rule. */
+export interface GlCompanyRow {
   id: number;
   glAccountNo: string;
   nameTh: string | null;
   nameEn: string | null;
-  dimensionType: "Employee" | "Branch" | "Both";
-  isActive: boolean;
   sortOrder: number;
+  /** `null` = this company has no rule for the category yet. */
+  dimensionType: DimensionType | null;
+  isActive: boolean;
 }
 
-/** All G/L accounts (incl. inactive) for the settings page. */
-export async function listGlAccountsAll(): Promise<GlAccountRow[]> {
+
+/**
+ * One company's whole AP-3.2 category list, for the settings screen.
+ *
+ * The **category** — its number and its two names — comes from
+ * `AccClearAdvanceGl` and is shared by every company; the **rule** — which
+ * dimension a line charging it must carry, and whether it is offered at all —
+ * comes from `AccClearAdvanceGlCompany` and is this company's alone.
+ * Migration 151's header says why the two are separate tables.
+ *
+ * **A LEFT JOIN, so a category with no rule for this company still lists.**
+ * That is the state a company added after the backfill is in, and the state
+ * every company is in for a category created from another company's screen.
+ * It reads as "not configured" rather than vanishing — an invisible category
+ * cannot be switched on.
+ *
+ * `company` is the BUSINESS CENTRAL company (PCTH/KSI/PCMY/UNO), never the
+ * claim brand: ROCKS claims post into PCTH's books and read PCTH's rules.
+ */
+export async function listGlAccountsForCompany(company: string): Promise<GlCompanyRow[]> {
+  const co = (company ?? "").trim().toUpperCase();
+  if (!co) return [];
   const pool = await getAccPool();
   const res = await pool.request()
-    .query(`SELECT Id, GlAccountNo, NameTh, NameEn, DimensionType, IsActive, SortOrder
-            FROM [dbo].[AccClearAdvanceGl] ORDER BY SortOrder, GlAccountNo`);
+    .input("co", sql.NVarChar, co)
+    .query(`
+      SELECT g.Id, g.GlAccountNo, g.NameTh, g.NameEn, g.SortOrder,
+             c.DimensionType, c.IsActive
+      FROM [dbo].[AccClearAdvanceGl] AS g
+      LEFT JOIN [dbo].[AccClearAdvanceGlCompany] AS c
+        ON c.GlAccountNo = g.GlAccountNo AND c.Company = @co
+      ORDER BY g.SortOrder, g.GlAccountNo
+    `);
   return (res.recordset as Record<string, unknown>[]).map((r) => ({
     id: r.Id as number,
     glAccountNo: r.GlAccountNo as string,
     nameTh: (r.NameTh as string) ?? null,
     nameEn: (r.NameEn as string) ?? null,
-    dimensionType: (r.DimensionType as GlAccountRow["dimensionType"]) ?? "Employee",
-    isActive: !!r.IsActive,
     sortOrder: (r.SortOrder as number) ?? 0,
+    // Null means this company has no rule yet — NOT a default of Employee.
+    // Defaulting here would show a tick nobody made and hide the gap.
+    dimensionType: isDimensionType(r.DimensionType) ? r.DimensionType : null,
+    isActive: r.IsActive === null || r.IsActive === undefined ? false : !!r.IsActive,
   }));
 }
+
+/**
+ * Set one company's rule for one category. Creates the row if this company has
+ * none yet, which is how a category reaches a company it was not created from.
+ *
+ * **`isActive` cannot be true without a dimension** — there is no state where
+ * a category is offered and nothing says what a line charging it must carry.
+ * The screen cannot produce it either (unticking the last box is refused), so
+ * this is the second of two layers rather than the only one.
+ */
+export async function setGlCompanyRule(input: {
+  company: string;
+  glAccountNo: string;
+  dimensionType: DimensionType;
+  isActive: boolean;
+}): Promise<void> {
+  const co = (input.company ?? "").trim().toUpperCase();
+  const glNo = (input.glAccountNo ?? "").trim();
+  if (!co) throw new Error("กรุณาเลือกบริษัท");
+  if (!glNo) throw new Error("กรุณาระบุเลขที่บัญชี G/L");
+  if (!isDimensionType(input.dimensionType)) throw new Error(DIMENSION_REQUIRED_ERROR);
+
+  const pool = await getAccPool();
+  const exists = await pool.request().input("no", sql.NVarChar, glNo)
+    .query(`SELECT TOP 1 Id FROM [dbo].[AccClearAdvanceGl] WHERE GlAccountNo=@no`);
+  if (exists.recordset.length === 0) throw new Error("ไม่พบหมวดบัญชีนี้");
+
+  await pool.request()
+    .input("co", sql.NVarChar, co)
+    .input("no", sql.NVarChar, glNo)
+    .input("dim", sql.NVarChar, input.dimensionType)
+    .input("active", sql.Bit, input.isActive ? 1 : 0)
+    .query(`
+      MERGE [dbo].[AccClearAdvanceGlCompany] AS t
+      USING (SELECT @co AS Company, @no AS GlAccountNo) AS s
+        ON t.Company = s.Company AND t.GlAccountNo = s.GlAccountNo
+      WHEN MATCHED THEN
+        UPDATE SET DimensionType=@dim, IsActive=@active, UpdatedAt=SYSDATETIME()
+      WHEN NOT MATCHED THEN
+        INSERT (Company, GlAccountNo, DimensionType, IsActive)
+        VALUES (@co, @no, @dim, @active);
+    `);
+}
+
+/*
+ * `listGlAccountsAll` lived here and is deleted (2026-09-14).
+ *
+ * It returned `AccClearAdvanceGl.DimensionType` and `.IsActive`, which stopped
+ * being the answer the moment migration 151 moved both onto the company. The
+ * columns still exist — dropping a column under a running build is its own
+ * outage — so a function that reads them would still compile, still run, and
+ * quietly hand back the pre-151 answer to whoever called it next.
+ * `listGlAccountsForCompany` above is the read.
+ */
 
 /** Create or update an AP-3.2 G/L account. */
 export async function upsertGlAccount(
@@ -168,6 +286,8 @@ export async function upsertGlAccount(
     dimensionType: "Employee" | "Branch" | "Both";
     isActive?: boolean;
     sortOrder?: number;
+    /** Which company's screen created it — the only one it starts switched on for. */
+    company?: string | null;
   },
 ): Promise<void> {
   const glNo = input.glAccountNo.trim();
@@ -204,6 +324,21 @@ export async function upsertGlAccount(
       .input("sort", sql.Int, input.sortOrder ?? 0)
       .query(`INSERT INTO [dbo].[AccClearAdvanceGl] (GlAccountNo, NameTh, NameEn, DimensionType, IsActive, SortOrder)
               VALUES (@no, @th, @en, @dim, @active, @sort)`);
+
+    // A new category reaches EVERY company, carrying the dimension it was
+    // created with — but **switched on only for the company it was created
+    // from**. Created active everywhere it would quietly widen what three
+    // other companies may charge; created for one company only it would be
+    // invisible to the rest, and an invisible category cannot be switched on.
+    const createdFor = (input.company ?? "").trim().toUpperCase();
+    for (const co of GL_RULE_COMPANIES) {
+      await setGlCompanyRule({
+        company: co,
+        glAccountNo: glNo,
+        dimensionType: input.dimensionType,
+        isActive: co === createdFor,
+      });
+    }
   }
 }
 

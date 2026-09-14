@@ -16,8 +16,16 @@ import type { GlAccountOption } from "@/features/clear-advance/types";
  * otherwise each carry a copy of the same cache.
  */
 export function useGlOptionsByBranch(
+  /**
+   * The claim's brand. **Required, and first, so it cannot be forgotten** —
+   * since migration 151 the answer depends on it, and a hook that took the
+   * branches alone would cache one brand's list under a branch code and hand
+   * it to the next brand.
+   */
+  brandCode: string | null | undefined,
   branchCodes: readonly (string | null | undefined)[],
 ): Record<string, GlAccountOption[]> {
+  const brand = (brandCode ?? "").trim();
   const [byBranch, setByBranch] = useState<Record<string, GlAccountOption[]>>({});
   const requested = useRef<Set<string>>(new Set());
 
@@ -28,9 +36,17 @@ export function useGlOptionsByBranch(
     [branchCodes],
   );
 
+  // Everything already fetched belongs to the brand it was fetched for. A
+  // brand change therefore empties the cache rather than merging into it —
+  // the same branch code means a different account list under another brand.
+  useEffect(() => {
+    requested.current = new Set();
+    setByBranch({});
+  }, [brand]);
+
   useEffect(() => {
     const missing = (key ? key.split("|") : []).filter((c) => !requested.current.has(c));
-    if (missing.length === 0) return;
+    if (!brand || missing.length === 0) return;
     missing.forEach((c) => requested.current.add(c));
     /* Deliberately not cancelled on cleanup.
        `requested` is marked before the fetch resolves, so a discarded answer is
@@ -45,7 +61,10 @@ export function useGlOptionsByBranch(
        applying it twice changes nothing. */
     Promise.all(
       missing.map((code) =>
-        fetch(`/api/request/clear-advance/options/gl-accounts?branch=${encodeURIComponent(code)}`)
+        fetch(
+          `/api/request/clear-advance/options/gl-accounts?brand=${encodeURIComponent(brand)}` +
+            `&branch=${encodeURIComponent(code)}`,
+        )
           .then((r) => r.json())
           .then((j: { ok: boolean; data?: GlAccountOption[] }) => [code, j.ok ? j.data ?? [] : []] as const)
           .catch(() => {
@@ -56,7 +75,7 @@ export function useGlOptionsByBranch(
     ).then((entries) => {
       setByBranch((prev) => ({ ...prev, ...Object.fromEntries(entries) }));
     });
-  }, [key]);
+  }, [key, brand]);
 
   return byBranch;
 }
