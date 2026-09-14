@@ -1,5 +1,5 @@
 /**
- * AP-4's **Fix G/L Account** screen, turned the right way round.
+ * AP-4's **G/L Account** screen, turned the right way round.
  *
  * The database stores **one row per thing being redirected** — `AccClrBuGlMap`
  * is `(Company, BuCode) → G/L` and `AccClrBranchGlMap` is `(Company,

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Plus, RotateCcw, X, Loader2 } from "lucide-react";
+import { Plus, RotateCcw, Trash2, X, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui";
 import { CodeNamePicker, type CodeNameOption } from "@/components/ui/CodeNamePicker";
 import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
@@ -200,6 +200,63 @@ export function ReimburseBuGlSettings() {
     [company, load],
   );
 
+  /**
+   * Remove every rule pointing at one account, so the group goes away.
+   *
+   * **N writes, not one**, because the storage is a rule per shop and there is
+   * no group row to delete — the same fact that makes an empty group
+   * unsaveable. Sequential rather than `Promise.all`: each POST is an upsert on
+   * one row, and a half-applied parallel batch would leave a group that is
+   * neither deleted nor whole with no way to tell which.
+   *
+   * A draft group has nothing stored, so it is simply dropped from the screen.
+   */
+  const removeGroup = useCallback(
+    async (accountNo: string, members: { kind: MemberKind; code: string }[]) => {
+      if (members.length === 0) {
+        setDraftAccounts((prev) => prev.filter((a) => a !== accountNo));
+        if (adding === accountNo) setAdding(null);
+        return;
+      }
+      if (
+        !window.confirm(
+          `ลบกลุ่ม ${accountNo}? ${members.length} รายการจะกลับไปใช้บัญชีตามค่าใช้จ่าย — และมีผลกับ AP-3 ด้วย`,
+        )
+      ) {
+        return;
+      }
+      setSaving(`group:${accountNo}`);
+      try {
+        for (const m of members) {
+          const res = await fetch(ENDPOINT, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              company,
+              ...(m.kind === "bu" ? { buCode: m.code } : { branchCode: m.code }),
+              glAccountNo: "",
+            }),
+          });
+          const j = (await res.json()) as { ok: boolean; error?: string };
+          if (!j.ok) {
+            // Stop at the first refusal and say which member it was: carrying
+            // on would leave a partly-deleted group and one message naming
+            // none of it.
+            toast.error(`${m.code}: ${j.error ?? "ลบไม่สำเร็จ"}`);
+            return;
+          }
+        }
+        toast.success(`ลบกลุ่ม ${accountNo} แล้ว`);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "ลบไม่สำเร็จ");
+      } finally {
+        setSaving(null);
+        await load();
+      }
+    },
+    [company, load, adding],
+  );
+
   if (forbidden) {
     return (
       <p className="text-[13px] m-0" style={{ color: "var(--text-muted)" }}>
@@ -340,6 +397,21 @@ export function ReimburseBuGlSettings() {
               <span className="ml-auto text-[11px] shrink-0" style={{ color: "var(--text-faint)" }}>
                 {g.members.length} รายการ
               </span>
+              <button
+                type="button"
+                aria-label={`ลบกลุ่ม ${g.accountNo}`}
+                title="ลบกลุ่มนี้ — ทุกรายการกลับไปใช้บัญชีตามค่าใช้จ่าย"
+                disabled={saving != null}
+                onClick={() => void removeGroup(g.accountNo, g.members)}
+                className="shrink-0 cursor-pointer border-none bg-transparent p-1 rounded-lg disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ color: "var(--text-muted)" }}
+              >
+                {saving === `group:${g.accountNo}` ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <Trash2 size={13} />
+                )}
+              </button>
             </div>
 
             <div className="flex flex-wrap items-center gap-1.5 px-3 py-3">
@@ -415,6 +487,11 @@ export function ReimburseBuGlSettings() {
                       value={addCode}
                       onChange={setAddCode}
                       options={memberOptions(addKind, g.accountNo)}
+                      // The code IS the name here — a BU has no other — and on a
+                      // branch it is still what is stored and what an admin
+                      // scans for. The second line is a note about the code
+                      // rather than the thing being chosen.
+                      emphasis="code"
                       brandChosen
                       ariaLabel={`เลือก${addKind === "bu" ? " BU" : "สาขา"}เข้ากลุ่ม ${g.accountNo}`}
                       labels={{
