@@ -4,6 +4,7 @@ import { requireAuth } from "@/lib/api-auth";
 import { canAccessAccountArea } from "@/lib/acc/access";
 import { listControlRows, type ClrReportFilters } from "@/lib/clr/clear-advance-report-service";
 import { STATUS_LABEL_TH } from "@/features/accounting/constants";
+import { reportPv } from "@/lib/clr/clr-report-pv";
 
 /** ISO datetime → "DD/MM/YYYY HH:mm" (local getters; strings are already the right instant). */
 function fmtDt(iso: string | null): string {
@@ -57,7 +58,7 @@ export async function GET(req: NextRequest) {
       fmtDt(r.submittedAt), r.requestNo ?? "", r.staffId ?? "", r.advanceRequestNo ?? "",
       r.requesterFullName ?? "", r.requesterDepartmentName ?? "",
       r.advanceAmount ?? 0, r.expenseOf ?? "", r.actualTotal ?? 0, r.refundToCompany ?? 0, r.extraToEmployee ?? 0,
-      r.pvDocNo ?? "", fmtD(r.paymentDate),
+      reportPv(r).text ?? "", fmtD(r.paymentDate),
       withDate(r.managerApprovedName, r.managerApprovedAt),
       withDate(r.accountActionedName, r.accountActionedAt),
       r.pendingOn ?? "",

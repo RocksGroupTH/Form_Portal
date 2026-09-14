@@ -37,6 +37,7 @@ export interface ClrControlRow {
   extraToEmployee: number | null;   // >0 company pays extra
   refundTransferDate: string | null;
   pvDocNo: string | null;
+  erpDocumentNo: string | null;
   paymentDate: string | null;
   managerApprovedName: string | null;
   managerApprovedAt: string | null;
@@ -82,6 +83,9 @@ export async function listControlRows(f: ClrReportFilters): Promise<ClrControlRo
            req.RequesterFullName, req.RequesterPosition, req.RequesterDepartmentName,
            c.AdvanceRequestNo, c.AdvanceAmount, c.ExpenseOf, c.ActualTotal, c.RefundToCompany,
            c.RefundTransferDate, c.PvDocNo, c.PaymentDate,
+           /* What BC returned when the journal was created. The report used to
+              read only the hand-typed PvDocNo beside it — see reportPv. */
+           req.ErpDocumentNo,
            ${stepSql("MANAGER", "name")} AS MgrName, ${stepSql("MANAGER", "at")} AS MgrAt,
            ${stepSql("ACCOUNT", "name")} AS AccName, ${stepSql("ACCOUNT", "at")} AS AccAt
     FROM [dbo].[AccRequest] req
@@ -112,6 +116,7 @@ export async function listControlRows(f: ClrReportFilters): Promise<ClrControlRo
       extraToEmployee: refund < 0 ? Math.abs(refund) : 0,
       refundTransferDate: x.RefundTransferDate ? toYmd(x.RefundTransferDate as Date) : null,
       pvDocNo: (x.PvDocNo as string) ?? null,
+      erpDocumentNo: (x.ErpDocumentNo as string) ?? null,
       paymentDate: x.PaymentDate ? toYmd(x.PaymentDate as Date) : null,
       managerApprovedName: (x.MgrName as string) ?? null,
       managerApprovedAt: x.MgrAt ? (x.MgrAt as Date).toISOString() : null,
