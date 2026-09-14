@@ -42,7 +42,27 @@ interface BranchRule {
   note: string | null;
 }
 
-export function ClrBuGlMapSettings() {
+/**
+ * **Shared with AP-4, which edits the SAME ROWS.** The rule is a fact about a
+ * shop — an owned store books its expense to the coded account, a franchised or
+ * managed one to a receivable — and that does not change with the form the
+ * expense arrived on, so `AccClrBuGlMap` has no `FormCode` column and there is
+ * one set of rules for both.
+ *
+ * `endpoint` exists only so each form talks to its OWN path: `ROUTE_RULES`
+ * classifies by path, so `/api/request/clear-advance/...` resolves AP-3's
+ * environment. A tester with AP-4 in UAT and AP-3 in production would otherwise
+ * edit production's rules from AP-4's settings page and see none of their own.
+ * Same rows, same screen, two doors.
+ */
+export function ClrBuGlMapSettings({
+  endpoint = "/api/request/clear-advance/settings/bu-gl-map",
+  sharedNote = null,
+}: {
+  endpoint?: string;
+  /** A line saying whose rules these also are, where the screen is not AP-3's. */
+  sharedNote?: string | null;
+} = {}) {
   const [company, setCompany] = useState(ERP_INTERFACE_BRANDS[0]?.id ?? "PCTH");
   const [rules, setRules] = useState<Rule[]>([]);
   const [bus, setBus] = useState<Bu[]>([]);
@@ -58,7 +78,7 @@ export function ClrBuGlMapSettings() {
     setLoading(true);
     try {
       const res = await fetch(
-        `/api/request/clear-advance/settings/bu-gl-map?company=${encodeURIComponent(company)}`,
+        `${endpoint}?company=${encodeURIComponent(company)}`,
       );
       if (isForbiddenStatus(res.status)) {
         setForbidden(true);
@@ -82,7 +102,7 @@ export function ClrBuGlMapSettings() {
     } finally {
       setLoading(false);
     }
-  }, [company]);
+  }, [company, endpoint]);
 
   useEffect(() => {
     void load();
@@ -99,7 +119,7 @@ export function ClrBuGlMapSettings() {
       const value = (draft[buCode] ?? stored[buCode] ?? "").trim();
       setSavingBu(buCode);
       try {
-        const res = await fetch("/api/request/clear-advance/settings/bu-gl-map", {
+        const res = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ company, buCode, glAccountNo: value }),
@@ -126,7 +146,7 @@ export function ClrBuGlMapSettings() {
       if (!code) return toast.error("ระบุรหัสสาขา");
       setSavingBu(`branch:${code}`);
       try {
-        const res = await fetch("/api/request/clear-advance/settings/bu-gl-map", {
+        const res = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ company, branchCode: code, glAccountNo: glAccountNo.trim() }),
@@ -168,6 +188,16 @@ export function ClrBuGlMapSettings() {
           โหลดใหม่
         </Button>
       </div>
+
+      {/* Said out loud wherever this screen is not AP-3's own: two doors, one
+          room. An admin who edits a rule here changes what AP-3 posts too, and
+          finding that out by accident is worse than reading it. */}
+      {sharedNote && (
+        <p className="text-[12px] m-0 px-3 py-2 rounded-lg"
+          style={{ background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" }}>
+          {sharedNote}
+        </p>
+      )}
 
       <p className="text-[12px] m-0 px-3 py-2 rounded-lg"
         style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}>

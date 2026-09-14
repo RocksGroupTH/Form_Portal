@@ -21,8 +21,8 @@
  * is what makes `AccReimburseApprover.IsActive` true; the two tables never
  * merge, only the screen does.
  *
- * **Two of the four tabs are not grantable.** AP-1 and AP-17 each exclude one
- * for the first reason below; AP-4 excludes a second tab for the reason
+ * **Three of the five tabs are not grantable.** AP-1 and AP-17 each exclude
+ * one for the first reason below; AP-4 excludes two more for the reason
  * CLAUDE.md gives for AP-1's own `erpInterface` grant ("Do not grant
  * `erpInterface` to a non-admin yet"):
  *
@@ -39,6 +39,11 @@
  *   `branch-codes` routes. Excluding it here is what keeps that gap from
  *   being handed to anyone at all until it is closed. Its route stays
  *   `requireRole` rather than `requireReimburseSettingsTab`.
+ * - `buGlMap` — which account an expense posts to, by BU and by branch. Not
+ *   brand-scoped either, and sharper still: **the rows are AP-3's**
+ *   (`AccClrBuGlMap` / `AccClrBranchGlMap`, no `FormCode` column), so a grant
+ *   here would be a grant over another form's posting rules. Its route is
+ *   `requireRole` for the same reason.
  *
  * Both exclusions are enforced in `decideReimburseTabAccess`, not by a
  * database constraint. `AccReimburseAccessTab` has no CHECK on `TabKey` and is
@@ -76,6 +81,7 @@ export const REIMBURSE_SETTINGS_TAB_ORDER = [
   "brands",
   "rules",
   "erpInterface",
+  "buGlMap",
   "access",
 ] as const;
 

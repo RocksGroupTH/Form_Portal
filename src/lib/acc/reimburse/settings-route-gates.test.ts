@@ -45,6 +45,13 @@ const ROUTE_GATES: { route: string; gate: Gate; publicRead?: "GET" }[] = [
       why: "not brand-scoped (see settings-tabs.ts) — a scoped grant holder could set another brand's posting configuration",
     },
   },
+  {
+    route: "bu-gl-map",
+    gate: {
+      kind: "role",
+      why: "edits AP-3's OWN rows (AccClrBuGlMap / AccClrBranchGlMap, no FormCode column), so a grant here would be a grant over another form's posting rules — and, like erp-interface, it is not brand-scoped",
+    },
+  },
 ];
 
 async function readRouteFile(route: string): Promise<string> {
@@ -154,10 +161,12 @@ test("every AP-4 settings handler opens with the gate its table entry names", as
   // so the count dropped by two handlers, to 9. SDD Task 7 then added
   // `erp-interface`'s `DELETE` (un-mapping a claim brand from its group,
   // standalone from the grouped `POST` — see that route's own docblock for
-  // why), which is +1, to 10.
+  // why), which is +1, to 10. Then `bu-gl-map` (GET + POST) — AP-4's own door
+  // onto AP-3's BU/branch account rules, admin-only because those rows carry
+  // no FormCode and are therefore another form's posting rules too — +2, to 12.
   assert.equal(
     handlerCount,
-    10,
+    12,
     "the AP-4 settings routes gained or lost a handler — check its gate, then update this number",
   );
 });

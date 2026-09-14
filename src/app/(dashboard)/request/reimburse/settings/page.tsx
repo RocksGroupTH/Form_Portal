@@ -12,6 +12,7 @@ import { ReimburseRuleSettings } from "@/features/reimburse/components/settings/
 import { ReimburseBrandSettings } from "@/features/reimburse/components/settings/ReimburseBrandSettings";
 import { ReimburseAccessSettings } from "@/features/reimburse/components/settings/ReimburseAccessSettings";
 import { ReimburseErpInterfaceSettings } from "@/features/reimburse/components/settings/ReimburseErpInterfaceSettings";
+import { ClrBuGlMapSettings } from "@/features/clear-advance/components/admin/ClrBuGlMapSettings";
 import { useReimburseAccess } from "@/features/reimburse/hooks/useReimburseAccess";
 import {
   REIMBURSE_SETTINGS_TAB_ORDER,
@@ -66,6 +67,7 @@ const TAB_META: Record<TabKey, { label: string; icon: React.ReactNode }> = {
   rules: { label: "ระเบียบการจ่าย", icon: <FileCheck size={15} /> },
   brands: { label: "แบรนด์ที่เบิกได้", icon: <Building2 size={15} /> },
   erpInterface: { label: "Interface ERP", icon: <Link2 size={15} /> },
+  buGlMap: { label: "บัญชีตาม BU", icon: <Building2 size={15} /> },
   access: { label: "สิทธิ์เข้าถึง", icon: <ShieldCheck size={15} /> },
 };
 
@@ -219,6 +221,14 @@ function ReimburseSettingsContent() {
           {shownTab === "rules" && <ReimburseRuleSettings />}
           {shownTab === "brands" && <ReimburseBrandSettings />}
           {shownTab === "erpInterface" && <ReimburseErpInterfaceSettings />}
+          {/* AP-3's panel and AP-3's rows, on AP-4's own path — see the route's
+              docblock for why the path matters and the rows do not. */}
+          {shownTab === "buGlMap" && (
+            <ClrBuGlMapSettings
+              endpoint="/api/request/reimburse/settings/bu-gl-map"
+              sharedNote="กฎนี้ใช้ร่วมกับ AP-3 (เคลียร์เงินทดรองจ่าย) — เป็นข้อมูลชุดเดียวกัน แก้ที่นี่มีผลกับทั้งสองฟอร์ม"
+            />
+          )}
           {shownTab === "access" && <ReimburseAccessSettings />}
         </div>
       </div>
