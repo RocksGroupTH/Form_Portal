@@ -30,6 +30,26 @@ export interface ReimburseItem {
   /** สาขา — the branch the expense belongs to. Migration 117. */
   branchName?: string | null;
   /**
+   * สาขาที่ใช้จ่าย — OUR branch, as the code BC knows it (migration 149).
+   *
+   * Picked from the synced Locations rather than typed, which is what lets the
+   * accounting queue show the Business Unit: `loadBranchLookup` is keyed on the
+   * code, and a free-text branch joins to nothing. `branchName` above is the
+   * words rows written before this carry; both are kept, because rewriting one
+   * into the other would be a guess about where money was spent.
+   */
+  branchCode?: string | null;
+  /**
+   * สาขาผู้ขาย — THEIR branch, as the Revenue Department numbers it: 00000 is
+   * the head office (migration 149).
+   *
+   * Reaches Business Central as the vendor's Thai Branch Code on the tax line,
+   * so it is the seller's establishment and never ours. Putting one of these
+   * two branches in the other's field files tax against the wrong place, which
+   * is why they are separate fields rather than one "branch".
+   */
+  vendorBranchCode?: string | null;
+  /**
    * เลขประจำตัวผู้เสียภาษี of the seller, digits only. Migration 118.
    *
    * A string, not a number: it leads with a zero, arithmetic on it is

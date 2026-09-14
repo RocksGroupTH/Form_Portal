@@ -1400,6 +1400,7 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
             accounts={expenseAccounts ?? []}
             accountsLoading={accountsLoading}
             brandChosen={!!brandCode}
+            brandCode={brandCode}
             documents={
               <ExpenseDocumentStrip
                 storedFiles={storedDocuments}

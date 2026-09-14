@@ -95,6 +95,8 @@ function mapItemRow(x: Record<string, unknown>): ReimburseItem {
     documentNo: (x.DocumentNo as string) ?? null,
     category: (x.Category as string) ?? null,
     branchName: (x.BranchName as string) ?? null,
+    branchCode: (x.BranchCode as string) ?? null,
+    vendorBranchCode: (x.VendorBranchCode as string) ?? null,
     vendorTaxId: (x.VendorTaxId as string) ?? null,
     vendorName: (x.VendorName as string) ?? null,
     vendorAddress: (x.VendorAddress as string) ?? null,
@@ -163,7 +165,8 @@ async function loadItems(pool: AccPool, requestId: number): Promise<ReimburseIte
     .request()
     .input("rid", sql.Int, requestId)
     .query(
-      `SELECT Id, SortOrder, ExpenseDate, DocumentNo, Category, BranchName, VendorTaxId, VendorName, VendorAddress,
+      `SELECT Id, SortOrder, ExpenseDate, DocumentNo, Category, BranchName, BranchCode, VendorBranchCode,
+              VendorTaxId, VendorName, VendorAddress,
               VendorNo, SourceFileId, Description, Amount, VatAmount, WhtAmount
        FROM [dbo].[AccReimburseItem] WHERE RequestId=@rid ORDER BY SortOrder, Id`,
     );
@@ -402,12 +405,17 @@ async function persistReimburseItems(tx: AccTx, requestId: number, items: Reimbu
       .input("amount", sql.Decimal(18, 2), it.amount)
       .input("vat", sql.Decimal(18, 2), it.vatAmount ?? null)
       .input("wht", sql.Decimal(18, 2), it.whtAmount ?? null)
+      .input("branchCode", sql.NVarChar(20), it.branchCode ?? null)
+      // Trimmed to the column, never truncated into it: a five-character limit
+      // silently cutting "000012" down to "00001" would name a different
+      // establishment on a tax line.
+      .input("vendorBranch", sql.NVarChar(5), it.vendorBranchCode ?? null)
       .query(
         `INSERT INTO [dbo].[AccReimburseItem]
-           (RequestId, SortOrder, ExpenseDate, DocumentNo, Category, BranchName,
+           (RequestId, SortOrder, ExpenseDate, DocumentNo, Category, BranchName, BranchCode, VendorBranchCode,
             VendorTaxId, VendorName, VendorAddress, SourceFileId, Description, Amount, VatAmount, WhtAmount)
          OUTPUT INSERTED.Id
-         VALUES (@rid, @sort, @date, @docNo, @category, @branch,
+         VALUES (@rid, @sort, @date, @docNo, @category, @branch, @branchCode, @vendorBranch,
                  @taxId, @vendorName, @vendorAddr, @srcFile, @desc, @amount, @vat, @wht)`,
       );
 

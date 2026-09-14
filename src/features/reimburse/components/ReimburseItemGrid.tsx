@@ -1,10 +1,13 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import useSWR from "swr";
 import { CircleAlert, Plus, Trash2 } from "lucide-react";
 import { SingleDatePicker } from "@/features/accounting/components/SingleDatePicker";
 import { SellerCheckCells } from "@/features/reimburse/components/SellerCheckCells";
 import { taxIdProblem } from "@/features/reimburse/lib/vendor-check";
+import { CodeNamePicker } from "@/components/ui/CodeNamePicker";
+import { DEFAULT_TAX_BRANCH_CODE, taxBranchCode } from "@/lib/clr/tax-branch-core";
 import type { ExpenseAccount } from "@/lib/acc/reimburse/expense-account-service";
 import { fmtBaht } from "@/features/travel-booking/components/shared";
 import { sumReimburseItems } from "@/lib/acc/reimburse/calc";
@@ -127,7 +130,7 @@ function MoneyCell({
 export interface ItemRowProblem {
   /** Index into the grid's own array — the row the user is looking at. */
   index: number;
-  kind: "date" | "amount" | "taxId";
+  kind: "date" | "amount" | "taxId" | "branch";
   label: string;
 }
 
@@ -168,6 +171,9 @@ export function findItemRowProblems(items: ReimburseItem[]): ItemRowProblem[] {
     // column is nullable, plenty of receipts carry no tax id at all, and the
     // rule asked for was "ไม่ครบ 13 หลัก" — a number that is being typed is not
     // yet a wrong one. `taxIdProblem` answers null for blank for that reason.
+    if (!it.branchCode || it.branchCode.trim() === "") {
+      problems.push({ index, kind: "branch", label: `${label}: ต้องเลือกสาขาที่ใช้จ่าย` });
+    }
     const taxProblem = taxIdProblem(it.vendorTaxId);
     if (taxProblem) {
       problems.push({ index, kind: "taxId", label: `${label}: ${taxProblem}` });
@@ -198,10 +204,15 @@ const COLUMNS: readonly { label: string; width: string; right?: boolean }[] = [
   { label: "ลำดับ", width: "44px" },
   { label: "วันที่", width: "148px" },
   { label: "เลขที่เอกสาร", width: "130px" },
+  // Before รายละเอียด, as on AP-3: the branch is the first thing an accountant
+  // reads to place the spend, and on AP-3 it also filters the account list.
+  { label: "สาขาที่ใช้จ่าย *", width: "170px" },
   { label: "รายละเอียด", width: "230px" },
-  { label: "สาขา", width: "130px" },
   { label: "เลขผู้เสียภาษี", width: "140px" },
   { label: "ผู้ขาย", width: "180px" },
+  // THEIR branch, not ours — see `ReimburseItem.vendorBranchCode`. Next to the
+  // seller's other fields so the two branches are never adjacent.
+  { label: "สาขาผู้ขาย", width: "110px" },
   { label: "ที่อยู่", width: "230px" },
   { label: "ก่อน VAT", width: "110px", right: true },
   { label: "VAT", width: "100px", right: true },
@@ -328,6 +339,7 @@ export function ReimburseItemGrid({
   showProblems,
   documents,
   readNote,
+  brandCode,
 }: {
   items: ReimburseItem[];
   onUpdate: (index: number, patch: Partial<ReimburseItem>) => void;
@@ -358,6 +370,15 @@ export function ReimburseItemGrid({
    * is what makes putting the column back a one-line change rather than a
    * re-plumbing.
    */
+  /**
+   * The claim's brand, for the สาขาที่ใช้จ่าย picker.
+   *
+   * What is passed is the CLAIM's brand, not the Business Central company. The
+   * branch list is keyed on the company and the route resolves one to the other,
+   * so that resolution stays in a single place — the same shape the vendor and
+   * G/L lists already use.
+   */
+  brandCode?: string | null;
   accounts?: ExpenseAccount[];
   accountsLoading?: boolean;
   brandChosen?: boolean;
@@ -393,6 +414,28 @@ export function ReimburseItemGrid({
   // The total the server will store: the blank trailing row contributes
   // nothing, and `sumReimburseItems` is the same function it totals with.
   const total = sumReimburseItems(items.filter((it) => !isBlankItemRow(it)));
+
+  /**
+   * The company's own branches for this claim's brand.
+   *
+   * Fetched here rather than passed in: this grid is the only thing that shows
+   * them, and SWR keys on the URL, so every row shares the one request.
+   */
+  const { data: branchRows, isLoading: branchesLoading } = useSWR<{ code: string; name: string | null }[]>(
+    brandCode ? `/api/request/reimburse/options/branches?brand=${encodeURIComponent(brandCode)}` : null,
+    async (url: string) => {
+      const res = await fetch(url);
+      const json = await res.json().catch(() => null);
+      if (!json?.ok) throw new Error("โหลดรายการสาขาไม่สำเร็จ");
+      return json.data as { code: string; name: string | null }[];
+    },
+  );
+  // A branch with no name shows its code rather than a blank second line — the
+  // same fallback the vendor picker makes for a card with no DisplayName.
+  const branches = useMemo(
+    () => (branchRows ?? []).map((b) => ({ code: b.code, name: b.name ?? b.code })),
+    [branchRows],
+  );
 
   const problemAt = (index: number, kind: ItemRowProblem["kind"]) =>
     showProblems && problems.some((p) => p.index === index && p.kind === kind);
@@ -465,7 +508,12 @@ export function ReimburseItemGrid({
               return (
                 <Fragment key={item.id ?? rowKey}>
                   <div
-                    className={`${ROW_GRID} ${ROW_INSET} border py-2 items-center`}
+                    // items-START, not center. A cell that carries a note
+                    // under its input is taller than its neighbours, and
+                    // centring made its input float upward out of line with
+                    // every other box on the row — which is what the seller
+                    // check's messages did the moment they appeared.
+                    className={`${ROW_GRID} ${ROW_INSET} border py-2 items-start`}
                     style={{
                       gridTemplateColumns: ROW_TEMPLATE,
                       borderColor: "var(--border-card)",
@@ -474,7 +522,10 @@ export function ReimburseItemGrid({
                     }}
                   >
                     <span
-                      className="text-[13px] tabular-nums font-semibold text-center"
+                      // py-2 matches the inputs' own padding, so the number sits
+                      // on the same line as the text in the boxes beside it now
+                      // that the row aligns to the top.
+                      className="text-[13px] tabular-nums font-semibold text-center py-2"
                       style={{ color: "var(--text-muted)" }}
                     >
                       {index + 1}
@@ -497,6 +548,40 @@ export function ReimburseItemGrid({
                       onChange={(v) => onUpdate(index, { documentNo: v })}
                     />
 
+                    {/* OUR branch, as the code BC knows it. A picker rather
+                        than free text because the accounting queue joins it to
+                        a Business Unit, and words join to nothing. `branchName`
+                        is left alone: it holds what rows written before this
+                        carry, and rewriting those into codes would be a guess
+                        about where money was spent. */}
+                    <div className="min-w-0">
+                      <CodeNamePicker
+                        value={item.branchCode}
+                        onChange={(next) => onUpdate(index, { branchCode: next })}
+                        options={branches}
+                        loading={branchesLoading}
+                        brandChosen={!!brandCode}
+                        ariaLabel={`สาขาที่ใช้จ่ายของรายการที่ ${index + 1}`}
+                        labels={{
+                          placeholder: "เลือกสาขา...",
+                          noBrand: "เลือกแบรนด์ก่อน",
+                          loading: "กำลังโหลด...",
+                          search: "ค้นหารหัสหรือชื่อสาขา...",
+                          empty: "ไม่มีสาขาให้เลือก",
+                          noMatch: "ไม่พบสาขาที่ค้นหา",
+                          clear: "ล้างค่า",
+                        }}
+                      />
+                      {problemAt(index, "branch") && (
+                        <span
+                          className="block text-[10.5px] mt-0.5 leading-tight"
+                          style={{ color: "var(--color-danger)" }}
+                        >
+                          ต้องเลือกสาขาที่ใช้จ่าย
+                        </span>
+                      )}
+                    </div>
+
                     <TextCell
                       ariaLabel={`รายละเอียดของรายการที่ ${index + 1}`}
                       placeholder="ค่าอะไร..."
@@ -507,14 +592,6 @@ export function ReimburseItemGrid({
                       onChange={(v) => onUpdate(index, { description: v ?? "" })}
                     />
 
-                    <TextCell
-                      ariaLabel={`สาขาของรายการที่ ${index + 1}`}
-                      placeholder="—"
-                      value={item.branchName}
-                      maxLength={200}
-                      onChange={(v) => onUpdate(index, { branchName: v })}
-                    />
-
                     {/* Two cells, one component: the number is looked up and
                         the name is what the answer is about. */}
                     <SellerCheckCells
@@ -522,6 +599,36 @@ export function ReimburseItemGrid({
                       taxId={item.vendorTaxId}
                       vendorName={item.vendorName}
                       onChange={(patch) => onUpdate(index, patch)}
+                    />
+
+                    {/* THEIR branch. Blank becomes 00000 on the way out, not
+                        on every keystroke: overwriting the box while somebody
+                        is typing "00012" would fight them at the first
+                        character. The placeholder says what blank will become,
+                        and `taxBranchCode` reads "สาขาที่ 3" and "Branch 3"
+                        as well as a bare number. */}
+                    <input
+                      type="text"
+                      aria-label={`สาขาผู้ขายของรายการที่ ${index + 1}`}
+                      placeholder={DEFAULT_TAX_BRANCH_CODE}
+                      maxLength={20}
+                      value={item.vendorBranchCode ?? ""}
+                      onChange={(e) =>
+                        onUpdate(index, { vendorBranchCode: e.target.value === "" ? null : e.target.value })
+                      }
+                      onBlur={(e) =>
+                        onUpdate(index, {
+                          vendorBranchCode: taxBranchCode(e.target.value) ?? DEFAULT_TAX_BRANCH_CODE,
+                        })
+                      }
+                      className="w-full rounded-lg px-3 py-2 text-[14px] outline-none tabular-nums"
+                      style={{
+                        background: "var(--bg-input)",
+                        color: "var(--text-primary)",
+                        borderWidth: 1,
+                        borderStyle: "solid",
+                        borderColor: "var(--border-input)",
+                      }}
                     />
 
                     <TextCell
@@ -567,7 +674,11 @@ export function ReimburseItemGrid({
 
                     <ReadOnlyMoney value={netPaid} />
 
-                    <span className="flex items-center gap-1 justify-self-end">
+                    {/* The boxes are ~38px and these buttons 32px, so a few
+                        pixels of top padding centres them against the first row
+                        of inputs rather than against a cell that may have grown
+                        a note underneath. */}
+                    <span className="flex items-center gap-1 justify-self-end pt-[3px]">
                       <button
                         type="button"
                         onClick={() => onRemove(index)}
