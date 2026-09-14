@@ -35,6 +35,7 @@ import { getHolidaySet, shiftPaymentDay, ymd } from "@/lib/acc/payment-calendar"
 import { queueEmail } from "@/lib/acc/email-queue";
 import { esc } from "@/lib/acc/email-templates";
 import { AccConflictError, AccForbiddenError } from "@/lib/acc/request-errors";
+import { vendorStatusForEdit } from "@/lib/acc/reimburse/item-account-edits";
 import type { ItemAccountEdit } from "@/lib/acc/reimburse/item-account-edits";
 import { env } from "@/env";
 import { AP4_FORM_CODE } from "@/features/reimburse/constants";
@@ -752,15 +753,22 @@ export async function setReimburseItemAccounts(
       // does not follow `Category`'s clear-on-absent rule, and what a client
       // that predates migration 147 would otherwise erase.
       const touchesVendor = "vendorNo" in edit;
+      // The verdict travels with the vendor and is derived rather than posted
+      // — see `vendorStatusForEdit`. `undefined` means the body never
+      // mentioned the vendor at all, so the column is left out of the SET
+      // clause entirely rather than written as NULL.
+      const status = vendorStatusForEdit(edit);
+      const touchesStatus = status !== undefined;
       const req = tx
         .request()
         .input("iid", sql.Int, edit.id)
         .input("rid", sql.Int, requestId)
         .input("category", sql.NVarChar(50), edit.category);
       if (touchesVendor) req.input("vendor", sql.NVarChar(20), edit.vendorNo ?? null);
+      if (touchesStatus) req.input("vstatus", sql.NVarChar(20), status ?? null);
       const res = await req.query(
         `UPDATE [dbo].[AccReimburseItem]
-         SET Category=@category${touchesVendor ? ", VendorNo=@vendor" : ""}
+         SET Category=@category${touchesVendor ? ", VendorNo=@vendor" : ""}${touchesStatus ? ", VendorMatchStatus=@vstatus" : ""}
          WHERE Id=@iid AND RequestId=@rid`,
       );
       if (res.rowsAffected[0] !== 1) throw new AccConflictError(NOT_AT_STEP_ERROR);
@@ -778,9 +786,13 @@ export async function setReimburseItemAccounts(
           const gl = `#${e.id}: ${was?.category ?? "-"}→${e.category ?? "-"}`;
           // Only when it was actually written, so the log does not record a
           // vendor change on a body that never mentioned one.
-          return "vendorNo" in e
-            ? `${gl} | vendor ${was?.vendorNo ?? "-"}→${e.vendorNo ?? "-"}`
-            : gl;
+          if (!("vendorNo" in e)) return gl;
+          // The verdict is named when the matcher sent one. Without it a line
+          // it marked "no card in this company" logs as vendor "-"→"-", which
+          // reads as nothing having happened on the one edit that changes
+          // whether the claim can be approved at all.
+          const verdict = "vendorMatchStatus" in e ? ` (${e.vendorMatchStatus ?? "ล้างผล"})` : "";
+          return `${gl} | vendor ${was?.vendorNo ?? "-"}→${e.vendorNo ?? "-"}${verdict}`;
         })
         .join(", ")
         .slice(0, 2000),

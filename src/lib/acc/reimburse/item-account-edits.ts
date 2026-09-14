@@ -4,8 +4,9 @@
  * the AI-proposed G/L account (`AccReimburseItem.Category`) on one or more
  * lines of a claim it currently owns.
  *
- * Pure and import-free, like `./item-money.ts` beside it and for the same
- * reason: `@/lib/acc/pool` reaches `@/env`, which validates the whole
+ * Pure, and import-free AT RUNTIME — its one import is an `import type`,
+ * which erases. That distinction is the whole point, for the same
+ * reason `./item-money.ts` beside it has none at all: `@/lib/acc/pool` reaches `@/env`, which validates the whole
  * environment at import time, so a test importing anything on that chain
  * fails before its first assertion outside a real Next.js request. The route
  * and the service are the two halves that need a pool.
@@ -19,6 +20,8 @@
  * column truncate it into a different account number than the one somebody
  * meant to save.
  */
+
+import type { VendorMatchStatus } from "./vendor-match-core";
 
 export const CATEGORY_MAX_LEN = 50;
 
@@ -52,6 +55,41 @@ export interface ItemAccountEdit {
    * from a seller who is not a vendor of ours.
    */
   vendorNo?: string | null;
+  /**
+   * The verdict recorded beside it (`AccReimburseItem.VendorMatchStatus`,
+   * migration 150).
+   *
+   * **Never parsed from the wire — `parseItemAccountEdits` does not read this
+   * key at all.** `"none"` exempts a line from needing a vendor before the
+   * claim can be approved, so it has to be the matcher's own answer rather
+   * than something a posted body can assert about itself.
+   *
+   * Absent is not `null` here either: absent leaves the stored verdict alone,
+   * `null` returns the line to "nobody has looked".
+   */
+  vendorMatchStatus?: VendorMatchStatus | null;
+}
+
+/**
+ * What an edit implies about the verdict column, or `undefined` for "do not
+ * touch it".
+ *
+ * Three rules, and the middle one is the one worth reading twice:
+ *
+ * - The matcher sends its verdict explicitly and that always wins. `"none"`
+ *   cannot be derived at all — there is no vendor number to derive it from.
+ * - **Clearing a vendor returns the line to `null`, not to `"none"`.** Clearing
+ *   is how somebody asks the matcher to look again; recording it as "no card
+ *   exists" would exempt the line from the requirement for good, on the
+ *   strength of somebody emptying a box.
+ * - An edit that never mentions the vendor leaves the verdict alone, so
+ *   correcting a G/L account does not erase what the matcher found on that
+ *   same row.
+ */
+export function vendorStatusForEdit(edit: ItemAccountEdit): VendorMatchStatus | null | undefined {
+  if ("vendorMatchStatus" in edit) return edit.vendorMatchStatus ?? null;
+  if (!("vendorNo" in edit)) return undefined;
+  return (edit.vendorNo ?? "").trim() === "" ? null : "manual";
 }
 
 export type ItemAccountEditsResult =

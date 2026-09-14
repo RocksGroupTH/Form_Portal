@@ -1,5 +1,6 @@
 import { AP4_FORM_CODE } from "@/features/reimburse/constants";
 import { canActOnTarget } from "./brand-scope";
+import type { VendorMatchStatus } from "./vendor-match-core";
 
 /**
  * Which claims the accounting queue shows.
@@ -118,6 +119,12 @@ export interface ReimburseQueueItem {
   category: string | null;
   /** The BC vendor card (migration 147). */
   vendorNo: string | null;
+  /**
+   * Whether the seller's vendor card has been looked for, and what was found
+   * (migration 150). `null` means nobody has looked; `"none"` means there is no
+   * card in this company, which is what lets the claim be approved without one.
+   */
+  vendorMatchStatus: VendorMatchStatus | null;
 }
 
 export interface ReimburseQueueRow {

@@ -63,6 +63,7 @@ import { accumulateAccountQueueRows, countUnmappedBrandRows } from "./queue-poli
 import type { ReimburseQueueItem, ReimburseQueueRow } from "./queue-policy";
 import { loadApproverScopeByStaffId, loadClaimBrandTargets } from "./brand-scope-load";
 import { loadBranchLookup, type BranchLookup } from "@/lib/erp/location-lookup";
+import type { VendorMatchStatus } from "./vendor-match-core";
 import { getBrandErpInterfaceMap } from "@/lib/acc/brand-erp-interface-map-service";
 
 export type { ReimburseQueueItem, ReimburseQueueRow } from "./queue-policy";
@@ -175,7 +176,7 @@ async function attachQueueItems(
   const res = await req.query(`
     SELECT Id, RequestId, SortOrder, ExpenseDate, DocumentNo, Description,
            BranchName, BranchCode, VendorBranchCode, VendorTaxId, VendorName,
-           Amount, VatAmount, WhtAmount, Category, VendorNo
+           Amount, VatAmount, WhtAmount, Category, VendorNo, VendorMatchStatus
     FROM [dbo].[AccReimburseItem]
     WHERE RequestId IN (${names.join(", ")})
     ORDER BY RequestId, SortOrder, Id
@@ -204,6 +205,7 @@ async function attachQueueItems(
       whtAmount: x.WhtAmount === null || x.WhtAmount === undefined ? null : Number(x.WhtAmount),
       category: (x.Category as string | null) ?? null,
       vendorNo: (x.VendorNo as string | null) ?? null,
+      vendorMatchStatus: (x.VendorMatchStatus as VendorMatchStatus | null) ?? null,
     });
     byRequest.set(rid, list);
   }

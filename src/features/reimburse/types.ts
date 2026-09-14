@@ -5,6 +5,7 @@
  * docs/superpowers/specs/2026-08-19-ap-4-staff-reimbursement-design.md §2, §5.
  */
 import type { ReimburseStatus, ReimburseStepCode } from "./constants";
+import type { VendorMatchStatus } from "@/lib/acc/reimburse/vendor-match-core";
 
 /** One line as printed inside an attached document (`AccReimburseItemDetail`). */
 export interface ReimburseItemDetail {
@@ -75,6 +76,20 @@ export interface ReimburseItem {
    * ours, and every line written before migration 147.
    */
   vendorNo?: string | null;
+  /**
+   * Whether anybody has looked for that card yet, and what they found
+   * (`AccReimburseItem.VendorMatchStatus`, migration 150).
+   *
+   * `null` — nobody has looked — is a state of its own and **not** the same as
+   * `"none"`. The queue stops requiring a vendor on a VAT line marked
+   * `"none"`; reading a null the same way would release that requirement on
+   * every claim the moment it arrived, before anyone had checked anything.
+   *
+   * `"manual"` is an accountant's own pick and `"auto"` the matcher's, the
+   * distinction `AccAdvance.VendorConfirmedBy` makes for AP-2: the re-match
+   * must not overwrite a person's answer.
+   */
+  vendorMatchStatus?: VendorMatchStatus | null;
   /**
    * `AccRequestFile.Id` of the attachment this row was read from, or null for a
    * row typed by hand. Migration 119.

@@ -291,6 +291,49 @@ export function pickSuggestedGl(raw: string, allowed: readonly string[]): string
   return "";
 }
 
+/**
+ * A Business Central vendor card the seller on a receipt might be.
+ *
+ * Used by AP-4, whose ladder hands the model only the cards that already
+ * survived an exact tax-id or a distinctive-word filter — never the company's
+ * whole ledger (`vendor-match-core.ts`).
+ */
+export interface VendorMatchCandidate {
+  vendorNo: string;
+  displayName: string | null;
+  taxRegistrationNumber: string | null;
+}
+
+export const VENDOR_MATCH_SYSTEM = [
+  "You decide which ONE supplier card is the seller printed on a Thai receipt.",
+  "Each list line is: VENDORNO = name (tax id).",
+  "The receipt's spelling and the card's rarely agree exactly: spacing moves, a trading name",
+  "in brackets appears on one and not the other, and the legal form (บริษัท / จำกัด / Co., Ltd.)",
+  "may be written, abbreviated or left out. Match on the company, not on the characters.",
+  "Answer with the vendor number alone — no prose, no punctuation, no explanation.",
+  "The number MUST be copied from that list.",
+  "If the receipt names a company that is not on the list, answer with nothing at all.",
+  "Answering with a near-miss is worse than answering with nothing: it posts money to the",
+  "wrong supplier's account.",
+].join("\n");
+
+export function buildVendorMatchUserText(
+  sellerName: string,
+  sellerTaxId: string | null,
+  candidates: VendorMatchCandidate[],
+): string {
+  const list = candidates
+    .map((c) => `${c.vendorNo} = ${c.displayName ?? ""}${c.taxRegistrationNumber ? ` (${c.taxRegistrationNumber})` : ""}`)
+    .join("\n");
+  const id = (sellerTaxId ?? "").trim();
+  const seller = id ? `${sellerName}\nTax id: ${id}` : sellerName;
+  return [
+    `Seller on the receipt:\n${seller}`,
+    `\nSupplier cards:\n${list}`,
+    "\nAnswer with one vendor number from the list, or nothing.",
+  ].join("\n");
+}
+
 /** A branch (BU) the request's brand may charge — ErpDimensionValue BRANCH rows. */
 export interface BranchCandidate {
   code: string;

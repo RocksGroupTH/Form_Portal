@@ -27,6 +27,7 @@
  *    See that file's header.
  */
 import { getAccPool, sql } from "@/lib/acc/pool";
+import type { VendorMatchStatus } from "./vendor-match-core";
 import { hrEmployeeTable } from "@/lib/hr/constants";
 import { findById } from "@/lib/team-member/service";
 import { allocateRequestNo } from "@/lib/acc/sequence";
@@ -101,6 +102,7 @@ function mapItemRow(x: Record<string, unknown>): ReimburseItem {
     vendorName: (x.VendorName as string) ?? null,
     vendorAddress: (x.VendorAddress as string) ?? null,
     vendorNo: (x.VendorNo as string) ?? null,
+    vendorMatchStatus: (x.VendorMatchStatus as VendorMatchStatus) ?? null,
     sourceFileId: (x.SourceFileId as number) ?? null,
     description: (x.Description as string) ?? "",
     amount: Number(x.Amount) || 0,
@@ -167,7 +169,7 @@ async function loadItems(pool: AccPool, requestId: number): Promise<ReimburseIte
     .query(
       `SELECT Id, SortOrder, ExpenseDate, DocumentNo, Category, BranchName, BranchCode, VendorBranchCode,
               VendorTaxId, VendorName, VendorAddress,
-              VendorNo, SourceFileId, Description, Amount, VatAmount, WhtAmount
+              VendorNo, VendorMatchStatus, SourceFileId, Description, Amount, VatAmount, WhtAmount
        FROM [dbo].[AccReimburseItem] WHERE RequestId=@rid ORDER BY SortOrder, Id`,
     );
   const items = (r.recordset as Record<string, unknown>[]).map(mapItemRow);

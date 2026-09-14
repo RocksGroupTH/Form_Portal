@@ -418,6 +418,15 @@ function LineAccountCells({
             {error}
           </span>
         )}
+        {/* Not an error and not a gap: the matcher looked and this seller has
+            no card in this company, so the line is complete without one. Said
+            on the row because the checkbox going live with an empty Vendor box
+            is otherwise indistinguishable from a bug. */}
+        {!error && !vendorNo && item.vendorMatchStatus === "none" && (
+          <span className="block text-[10.5px] mt-0.5 leading-tight" style={{ color: "var(--text-muted)" }}>
+            ไม่พบใน ERP — ไม่ต้องใส่ Vendor
+          </span>
+        )}
       </td>
     </>
   );
@@ -829,6 +838,7 @@ export function ReimburseApprovalQueue() {
   }
 
   const [suggestingId, setSuggestingId] = useState<number | null>(null);
+  const [matchingId, setMatchingId] = useState<number | null>(null);
 
   /**
    * Ask the model for a G/L account on every line of this claim that has none.
@@ -873,6 +883,51 @@ export function ReimburseApprovalQueue() {
     await next;
   }
 
+  /**
+   * Find each line's Business Central vendor from the seller printed on its
+   * receipt, and record which sellers have no card at all.
+   *
+   * Same shape as `suggestGl` above and for the same reasons — per claim, on a
+   * button, chained on the claim's own save promise because the route ends in
+   * `setReimburseItemAccounts` and therefore claims the row in a transaction.
+   *
+   * The reason the "none" count is reported separately is that it is the half
+   * that CHANGES what the accountant can do: those lines stop owing a vendor,
+   * and a message saying only "matched 2" leaves them wondering why the
+   * checkbox went live.
+   */
+  async function matchVendors(requestId: number): Promise<void> {
+    if (matchingId != null) return;
+    setMatchingId(requestId);
+    const previous = saveChains.current.get(requestId) ?? Promise.resolve();
+    const next = previous
+      .catch(() => {})
+      .then(async () => {
+        try {
+          const res = await fetch(`/api/request/reimburse/requests/${requestId}/match-vendors`, {
+            method: "POST",
+          });
+          const json = await res.json().catch(() => null);
+          if (json?.ok) {
+            const matched = Number(json?.data?.matched ?? 0);
+            const none = Number(json?.data?.none ?? 0);
+            const parts: string[] = [];
+            if (matched > 0) parts.push(`จับคู่ได้ ${matched} รายการ`);
+            if (none > 0) parts.push(`ไม่พบใน ERP ${none} รายการ (ไม่ต้องใส่ Vendor)`);
+            toast.success(parts.length > 0 ? parts.join(" · ") : "ไม่มีรายการที่ต้องตรวจ");
+          } else {
+            toast.error(json?.error ?? "ตรวจ Vendor ไม่สำเร็จ");
+          }
+        } catch {
+          toast.error("เครือข่ายขัดข้อง — ลองใหม่อีกครั้ง");
+        }
+        setMatchingId(null);
+        await mutate();
+      });
+    saveChains.current.set(requestId, next);
+    await next;
+  }
+
   /** Readiness per claim, for the checkbox and the reason beside the number. */
   const readinessById = useMemo(() => {
     const m = new Map<number, ReturnType<typeof claimReadiness>>();
@@ -884,6 +939,11 @@ export function ReimburseApprovalQueue() {
             id: it.id,
             category: categoryOf(it),
             vendorNo: vendorOf(it),
+            // Both straight off the row: a vendor is only owed on a line that
+            // carries VAT, and only while nobody has established there is no
+            // card for its seller.
+            vatAmount: it.vatAmount,
+            vendorMatchStatus: it.vendorMatchStatus,
           })),
           paymentDate: dateFor(r.id),
         }),
@@ -1258,6 +1318,27 @@ export function ReimburseApprovalQueue() {
                                         <Sparkles size={10} />
                                       )}
                                       เดา G/L ด้วย AI
+                                    </button>
+                                  )}
+                                  {ready?.missing.includes("vendor") && (
+                                    <button
+                                      type="button"
+                                      disabled={matchingId != null}
+                                      onClick={() => void matchVendors(d.claim.id)}
+                                      title="ค้นบัตรผู้ขายใน BC จากเลขผู้เสียภาษีและชื่อผู้ขายของแต่ละรายการ"
+                                      className="mt-1 ml-1 inline-flex items-center gap-1 text-[10.5px] font-medium px-1.5 py-0.5 rounded cursor-pointer disabled:cursor-not-allowed disabled:opacity-55"
+                                      style={{
+                                        background: "var(--nav-active-bg)",
+                                        color: "var(--nav-active-text)",
+                                        border: "1px solid var(--border-card)",
+                                      }}
+                                    >
+                                      {matchingId === d.claim.id ? (
+                                        <Loader2 size={10} className="animate-spin" />
+                                      ) : (
+                                        <Sparkles size={10} />
+                                      )}
+                                      ตรวจ Vendor
                                     </button>
                                   )}
                                 </td>
