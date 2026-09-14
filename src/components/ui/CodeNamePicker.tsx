@@ -212,9 +212,14 @@ export function CodeNamePicker({
                 >
                   {o.code}
                 </span>
-                <span className="block text-[13px] leading-tight truncate" style={{ color: "var(--text-primary)" }}>
-                  {o.name}
-                </span>
+                {/* Only where there is a name. Some lists are codes that are
+                    their own name — a Business Unit — and an empty second line
+                    renders as a blank row half the height of the option. */}
+                {o.name !== "" && (
+                  <span className="block text-[13px] leading-tight truncate" style={{ color: "var(--text-primary)" }}>
+                    {o.name}
+                  </span>
+                )}
               </button>
             ))
           )}

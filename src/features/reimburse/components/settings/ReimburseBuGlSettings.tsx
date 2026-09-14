@@ -142,16 +142,22 @@ export function ReimburseBuGlSettings() {
    */
   const memberOptions = useCallback(
     (kind: MemberKind, intoAccount: string): CodeNameOption[] => {
+      // A BU carries no second line: its code IS its name, and the Location
+      // count that used to sit there answered a question nobody asks while
+      // picking one. It still appears in ยังไม่ตั้งกฎ, where it is the thing
+      // that says whether a missing rule matters.
       const source =
         kind === "bu"
-          ? data.bus.map((b) => ({ code: b.buCode, name: `${b.locations} Location` }))
+          ? data.bus.map((b) => ({ code: b.buCode, name: "" }))
           : data.branches.map((b) => ({ code: b.code, name: b.displayName ?? "" }));
       return source
         .map((o) => {
           const at = assignedAccountByCode.get(`${kind}:${o.code}`);
           if (!at) return o;
           if (at === intoAccount) return null;
-          return { code: o.code, name: `${o.name} · ตอนนี้อยู่ ${at}` };
+          // Joined rather than concatenated, so a BU — which has no name of its
+          // own — does not read as " · ตอนนี้อยู่ …" with a leading separator.
+          return { code: o.code, name: [o.name, `ตอนนี้อยู่ ${at}`].filter(Boolean).join(" · ") };
         })
         .filter((o): o is CodeNameOption => o !== null);
     },
@@ -313,16 +319,25 @@ export function ReimburseBuGlSettings() {
             style={{ border: "1px solid var(--border-card)" }}
           >
             <div
-              className="flex items-baseline gap-2 px-3 py-2.5"
+              className="flex items-start gap-2 px-3 py-2.5"
               style={{ background: "var(--bg-card-alt)", borderBottom: "1px solid var(--border-light)" }}
             >
-              <span className="text-[13px] font-bold tabular-nums" style={{ color: "var(--text-primary)" }}>
-                {g.accountNo}
-              </span>
-              <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
-                {g.displayName ?? "— ไม่พบชื่อบัญชีในผังบัญชีปัจจุบัน —"}
-              </span>
-              <span className="ml-auto text-[11px]" style={{ color: "var(--text-faint)" }}>
+              {/* The NAME is what a reader recognises the group by; the account
+                  number is the value, and it reads underneath — the same two
+                  lines, in the same order, that CodeNamePicker uses for the
+                  account that created this group. */}
+              <div className="min-w-0">
+                <span className="block text-[13px] font-bold leading-tight" style={{ color: "var(--text-primary)" }}>
+                  {g.displayName ?? "— ไม่พบชื่อบัญชีในผังบัญชีปัจจุบัน —"}
+                </span>
+                <span
+                  className="block text-[10.5px] leading-tight tabular-nums"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  {g.accountNo}
+                </span>
+              </div>
+              <span className="ml-auto text-[11px] shrink-0" style={{ color: "var(--text-faint)" }}>
                 {g.members.length} รายการ
               </span>
             </div>
