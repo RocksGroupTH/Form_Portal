@@ -88,17 +88,20 @@ function NameInput({
         // splitting them across onBlur/onBlurCapture only made the order a
         // thing a reader has to work out.
         e.currentTarget.style.background = "transparent";
-        e.currentTarget.style.borderColor = "transparent";
+        e.currentTarget.style.borderColor = "var(--border-light)";
         onCommit(e.target.value);
       }}
       onKeyDown={(e) => {
         if (e.key === "Enter") (e.target as HTMLInputElement).blur();
       }}
+      // A faint border at rest, a real one on focus. Invisible until clicked,
+      // these read as plain text and nobody discovers the column can be
+      // edited at all — which is what happened.
       className="w-full text-[12px] px-2 py-1 rounded-lg outline-none"
       style={{
         background: "transparent",
         color: "var(--text-primary)",
-        border: "1px solid transparent",
+        border: "1px solid var(--border-light)",
       }}
       onFocus={(e) => {
         e.currentTarget.style.background = "var(--bg-input)";
