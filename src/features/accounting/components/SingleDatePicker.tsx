@@ -5,11 +5,11 @@ import { createPortal } from "react-dom";
 import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
 import {
   TH_DAYS,
-  TH_MONTHS,
+  EN_MONTHS,
   addMonths,
   buildMonthCells,
-  formatThaiYmd,
-  formatThaiYmdShort,
+  formatEnYmd,
+  formatEnYmdShort,
   parseYmd,
   displayYear,
   toYmd,
@@ -172,7 +172,7 @@ export function SingleDatePicker({
   // The panel's own heading always spells the month out (`TH_MONTHS` at the
   // month header), whatever this is set to: it has the room, and a month being
   // chosen deserves its full name.
-  const display = monthFormat === "short" ? formatThaiYmdShort(value) : formatThaiYmd(value);
+  const display = monthFormat === "short" ? formatEnYmdShort(value) : formatEnYmd(value);
 
   const panel = open && panelRect ? (
     <div
@@ -200,7 +200,7 @@ export function SingleDatePicker({
           <ChevronLeft size={16} />
         </button>
         <span className="text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>
-          {TH_MONTHS[viewMonth0]} {displayYear(viewYear)}
+          {EN_MONTHS[viewMonth0]} {displayYear(viewYear)}
         </span>
         <button
           type="button"

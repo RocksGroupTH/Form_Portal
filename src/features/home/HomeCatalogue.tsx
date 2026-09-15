@@ -13,6 +13,7 @@ import {
 import { useHomeData } from "@/features/home/useHomeData";
 import { useFormEnvironments } from "@/lib/hooks/useFormEnvironments";
 import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
+import { formNameEn } from "@/lib/form-names";
 import { sortByFormCode } from "@/lib/form-code-order";
 // The shared hover affordance — accent border, focus ring, a 3px lift. Home's
 // cards were plain <Link>s and the only card surface in the app without it, so
@@ -38,6 +39,13 @@ import { Search, Route, Luggage, Receipt, ReceiptText, ClipboardCheck, FilePen, 
  * whatever order is convenient, and `sortByFormCode` renders them by form
  * number.
  */
+/*
+ * The English name is NOT here: it comes from `formNameEn`, keyed on the code.
+ * AP-2's and AP-3's descriptions used to open with one ("Advance · …") and the
+ * other three had none, which is the drift a shared table prevents — the
+ * Request hub keeps its own copy of this list, so a name typed in both would
+ * only ever be corrected in one.
+ */
 const ACCOUNTING_FORMS = [
   {
     code: "AP-1",
@@ -49,14 +57,14 @@ const ACCOUNTING_FORMS = [
   {
     code: "AP-2",
     name: "เบิกเงินทดรองจ่าย",
-    desc: "Advance · เงินทดรองจ่าย",
+    desc: "ขอเงินล่วงหน้าก่อนไปใช้จ่าย",
     href: "/request/advance",
     Icon: FilePen,
   },
   {
     code: "AP-3",
     name: "เคลียร์คืนเงินทดรองจ่าย",
-    desc: "Clear Advance · เคลียร์เงินทดรอง",
+    desc: "ส่งคืนและสรุปเงินทดรองที่เบิกไป",
     href: "/request/clear-advance",
     Icon: ReceiptText,
   },
@@ -202,6 +210,7 @@ function AccountingFormCard({
   Icon: React.ComponentType<{ size?: number }>;
   comingSoon: boolean;
 }) {
+  const nameEn = formNameEn(code);
   const body = (
     <>
       <span
@@ -243,6 +252,18 @@ function AccountingFormCard({
         >
           {name}
         </span>
+        {/* The English name sits between the Thai one and the description, and
+            is styled as a name rather than as prose: it identifies the form,
+            the line under it says what the form is for. A code this table does
+            not know renders nothing rather than an empty line. */}
+        {nameEn !== "" && (
+          <span
+            className="block text-[11px] font-semibold mt-0.5"
+            style={{ color: comingSoon ? "var(--text-faint)" : "var(--text-secondary)" }}
+          >
+            {nameEn}
+          </span>
+        )}
         <span
           className="block text-[11px] mt-0.5"
           style={{ color: "var(--text-muted)" }}
@@ -367,7 +388,11 @@ export function HomeCatalogue() {
     ACCOUNTING_FORMS.filter((f) => isFormAvailable(f.code) || isFormComingSoon(f.code)),
     (f) => f.code,
   );
-  const accounting = shownAccounting.filter((f) => matches(f.code, f.name, f.desc));
+  // The English name is searchable as well, or adding it would put a word on
+  // screen that typing finds nothing for.
+  const accounting = shownAccounting.filter((f) =>
+    matches(f.code, f.name, f.desc, formNameEn(f.code)),
+  );
 
   const name = session?.user?.nickname || session?.user?.name || "";
 

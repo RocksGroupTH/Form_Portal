@@ -13,7 +13,7 @@ import { fmtTravelDatesList } from "@/features/accounting/lib/format-travel-date
 // silently rolled forward.
 import {
   TH_DAYS,
-  TH_MONTHS,
+  EN_MONTHS,
   buildMonthCells,
   parseYmd,
   toYmd,
@@ -183,7 +183,7 @@ export function FilterMultiDatePicker({
           <ChevronLeft size={16} />
         </button>
         <span className="text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>
-          {TH_MONTHS[viewMonth0]} {viewYear}
+          {EN_MONTHS[viewMonth0]} {viewYear}
         </span>
         <button
           type="button"

@@ -38,6 +38,30 @@ export const TH_MONTHS_SHORT = [
   "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค.",
 ] as const;
 
+/**
+ * The month names the FORM calendars draw with — English, on the user's
+ * instruction (2026-09-15), for AP-1, AP-4 and AP-17 alike.
+ *
+ * Beside the Thai tables rather than replacing them: `TH_MONTHS` still names
+ * the month on every report filter, the payment-date pickers and
+ * `format-travel-dates`, and none of those was asked about. Two tables in one
+ * file, so the arithmetic that indexes them cannot come to disagree — which is
+ * this file's whole reason for existing.
+ *
+ * The weekday row stays Thai: only the month was asked about, and "อา จ อ พ พฤ
+ * ศ ส" is one character per column, which is what makes the grid fit.
+ */
+export const EN_MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+] as const;
+
+/** The abbreviated forms, for a trigger too narrow to hold "September". */
+export const EN_MONTHS_SHORT = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+] as const;
+
 export interface YmdParts {
   year: number;
   month0: number;
@@ -124,6 +148,34 @@ export function formatThaiYmdShort(ymd: string): string {
   const p = parseYmd(ymd);
   if (!p) return "";
   return `${p.day} ${TH_MONTHS_SHORT[p.month0]} ${displayYear(p.year)}`;
+}
+
+/**
+ * `"2026-08-25"` → `"25 August 2026"`; `""` for anything unparseable.
+ *
+ * The English counterparts of the two above, added on the user's instruction
+ * (2026-09-15) for the three form pickers. They differ from the Thai pair in
+ * the month table and in nothing else — same empty-value rule, same day and
+ * year — so a caller swaps between them without acquiring a second set of edge
+ * cases. The Thai pair stays: it still formats every report filter and the
+ * payment-date pickers, none of which was asked about.
+ */
+export function formatEnYmd(ymd: string): string {
+  const p = parseYmd(ymd);
+  if (!p) return "";
+  return `${p.day} ${EN_MONTHS[p.month0]} ${displayYear(p.year)}`;
+}
+
+/**
+ * `"2026-08-25"` → `"25 Aug 2026"`; `""` for anything unparseable.
+ *
+ * For a control that has to hold a whole date in about 100px — AP-4's date
+ * column is 148px, which "25 September 2026" does not fit.
+ */
+export function formatEnYmdShort(ymd: string): string {
+  const p = parseYmd(ymd);
+  if (!p) return "";
+  return `${p.day} ${EN_MONTHS_SHORT[p.month0]} ${displayYear(p.year)}`;
 }
 
 /** Step the visible month, carrying across the year boundary in both directions. */

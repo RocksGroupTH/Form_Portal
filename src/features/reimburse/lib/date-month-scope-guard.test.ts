@@ -7,11 +7,18 @@ import path from "node:path";
  * AP-4 alone spells the month short, guarded at the source.
  *
  * `SingleDatePicker` renders the date cell of AP-4's expense grid, where the
- * column is 148px and "13 สิงหาคม 2026" clipped to "13 สิงหาคม 20…" — which
- * reads as a broken year rather than as a narrow box. Abbreviating fixes that
- * cell and must not travel: AP-1's and AP-17's dates have always been spelled
- * out, and the control is shared, so the moment either adopts it they would
- * inherit AP-4's abbreviation with no code change and nothing to notice.
+ * column is 148px and a spelled-out month clipped the year off the end — which
+ * reads as a broken date rather than as a narrow box. Abbreviating fixes that
+ * cell and must not travel: AP-1's and AP-17's dates are spelled out, and the
+ * control is shared, so the moment either adopts it they would inherit AP-4's
+ * abbreviation with no code change and nothing to notice.
+ *
+ * **The months are English since 2026-09-15** (user), on all three forms'
+ * pickers — so the formatters this pins are `formatEnYmd` and
+ * `formatEnYmdShort`. The Thai pair still formats every report filter and the
+ * payment-date pickers, none of which was asked about; the rule here is about
+ * ABBREVIATION, which is orthogonal to the language, and is why this file did
+ * not simply go away with the change.
  *
  * That is not reachable from a behavioural test — it is which formatter a
  * component calls and which caller opted in — so this reads the sources, the
@@ -44,11 +51,11 @@ test("the picker chooses its month table from a prop, not from a hardcoded call"
     "the rendered date must branch on monthFormat, or every caller gets one spelling",
   );
   assert.ok(
-    /formatThaiYmd\s*\(/.test(display),
+    /formatEnYmd\s*\(/.test(display),
     "the unabbreviated formatter must stay reachable from the display line",
   );
   assert.ok(
-    /formatThaiYmdShort\s*\(/.test(display),
+    /formatEnYmdShort\s*\(/.test(display),
     "the abbreviated formatter must stay reachable from the display line",
   );
 });
