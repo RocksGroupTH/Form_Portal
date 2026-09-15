@@ -574,6 +574,32 @@ export function ReimburseDetail({
     }
   }
 
+  /**
+   * An accounting step that has not happened yet is not shown (user,
+   * 2026-09-15).
+   *
+   * **What it removes is two lines that say nothing**: "บัญชี — รออนุมัติ"
+   * beside the accounting buttons the viewer is about to press, and
+   * "บัญชี (ขั้นสุดท้าย) — ยังไม่ถึงขั้นตอนนี้", which announces the
+   * two-person rule to a requester it does not concern and to an accountant
+   * who already knows.
+   *
+   * **What it keeps is the audit trail.** A step is hidden only while nobody
+   * has acted on it — no row at all, or a row still `Pending`. The moment
+   * accounting approves, returns or rejects, that entry appears with its actor,
+   * its timestamp and its comment, because who signed and when is the whole
+   * reason this section exists. That is the narrower of the two readings, and
+   * the one asked for when the question was put.
+   *
+   * **MANAGER is untouched** and is drawn from the first render — the chain a
+   * request has to walk still starts visibly, which is what the unopened-step
+   * rows were added for in the first place.
+   */
+  const visibleTimeline = timeline.filter((entry) => {
+    if (entry.stepCode === "MANAGER") return true;
+    return entry.approval != null && entry.approval.status !== "Pending";
+  });
+
   /* ── What this viewer may do, answered by the server ── */
 
   const [ctx, setCtx] = useState<ReimburseApprovalContext | null>(null);
@@ -930,8 +956,8 @@ export function ReimburseDetail({
           )}
 
           <div className="flex flex-col gap-0">
-            {timeline.map((entry, idx) => {
-              const isLast = idx === timeline.length - 1;
+            {visibleTimeline.map((entry, idx) => {
+              const isLast = idx === visibleTimeline.length - 1;
               const a = entry.approval;
               if (!a) {
                 return (

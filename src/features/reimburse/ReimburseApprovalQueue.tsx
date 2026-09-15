@@ -1669,7 +1669,13 @@ export function ReimburseApprovalQueue() {
       <SidePanel
         open={drawerId != null}
         onClose={() => setDrawerId(null)}
-        width={drawerWide ? "min(1680px, 100vw)" : "min(980px, 100vw)"}
+        /* Expanded is 85% of the viewport, not all of it (user, 2026-09-15).
+           "min(1680px, 100vw)" reached the full width on any ordinary laptop,
+           so the button read as a full-screen toggle and the list behind it
+           disappeared — the point of a side panel is that the row it came from
+           stays in view. The cap survives for a very wide monitor, where 85%
+           of 3440px is already more than the content needs. */
+        width={drawerWide ? "min(1680px, 85vw)" : "min(980px, 100vw)"}
         zIndex={60}
       >
         <div
