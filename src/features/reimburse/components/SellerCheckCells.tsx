@@ -46,16 +46,23 @@ type State =
  * the point:
  *
  * - **found and the name agrees** — a quiet tick. Nothing to do.
- * - **found and the name does not** — the registered name **replaces** what was
- *   typed, and a line says it did (user, 2026-09-15: "ถ้า เลขผู้เสียภาษี
- *   ค้นหาเจอ และ ผู้ขาย ข้อมูลไม่ตรงกับ ให้แทนที่ไปเลยไม่ต้องถามเตือน"). It
- *   used to offer the name on a yellow button instead, on the reasoning that a
- *   receipt can print a trading name the register has never heard of and a
- *   fuzzy comparison should not overwrite a person — the user overruled that,
- *   and the ledger wants the registered name in any case. **The replacement
- *   happens once, when the number resolves**: the box is an ordinary input
- *   afterwards, so somebody who really does want the trading name types it and
- *   nothing takes it back.
+ * - **found and the name does not** — two things, and they are not alternatives
+ *   (user, 2026-09-15, in two passes):
+ *
+ *   **The registered name replaces what was typed, once**, when a newly entered
+ *   number resolves, with a line saying it did. This used to be an offer on a
+ *   yellow button and nothing else, on the reasoning that a receipt can print a
+ *   trading name the register has never heard of and a fuzzy comparison should
+ *   not overwrite a person; the user overruled that, and the ledger wants the
+ *   registered name in any case.
+ *
+ *   **The offer stands whenever the box disagrees with the register** — a name
+ *   edited after the replacement, a saved row opened with a name that never
+ *   matched, or the row the auto-replace deliberately skips. One condition,
+ *   `offerAvailable`, because "does not match" and "was edited away from a
+ *   match" are the same thing to look at. So the box is an ordinary input after
+ *   the replacement, and the way back is one click rather than retyping a
+ *   company name.
  * - **not on the register** — a line saying so, and explicitly saying the value
  *   is still usable. Small sellers are not VAT registered; that is a fact about
  *   the receipt, not a fault in the row.
@@ -147,9 +154,21 @@ export function SellerCheckCells({
 
   const registrant = state.kind === "found" ? state.registrant : null;
   const verdict = registrant ? compareVendorName(vendorName, registrant) : null;
+  const offered = registrant ? registrantDisplayName(registrant) : "";
+  /**
+   * The registered name is on file and the box does not hold it.
+   *
+   * **Both halves the user asked for on 2026-09-15** — "ไม่ตรงหรือมีการแก้ไข
+   * หลังจากนั้น" — are this one condition, which is why there is no second
+   * flag for "edited". A name that never matched and a name edited away from a
+   * match are the same state to look at: what is in the box is not what the
+   * register says. It covers the case the auto-replace deliberately skips too,
+   * a saved row opened with a name that disagrees.
+   */
+  const offerAvailable = verdict === "mismatch" && offered !== "";
   /* Shown only while the box still holds what the lookup put there. Edit it
-     afterwards and the note goes, because it would then be describing
-     something that is no longer on screen. */
+     afterwards and the note goes — the button above replaces it, because the
+     note would then be describing something that is no longer on screen. */
   const replacedNote =
     state.kind === "found" &&
     state.replaced &&
@@ -214,9 +233,28 @@ export function SellerCheckCells({
             color: "var(--text-primary)",
             borderWidth: 1,
             borderStyle: "solid",
-            borderColor: "var(--border-input)",
+            // Yellow, not red: a name that disagrees with the register is
+            // something to look at, not something that is wrong. It marks which
+            // box the button below is about.
+            borderColor: offerAvailable ? "var(--border-info-yellow)" : "var(--border-input)",
+            boxShadow: offerAvailable ? "0 0 0 1px var(--border-info-yellow)" : undefined,
           }}
         />
+        {offerAvailable && (
+          <button
+            type="button"
+            onClick={() => onChange({ vendorName: offered })}
+            title={offered}
+            className="mt-0.5 inline-flex items-center gap-1 text-[10.5px] font-medium px-1.5 py-0.5 rounded cursor-pointer max-w-full"
+            style={{
+              background: "var(--bg-info-yellow)",
+              color: "var(--text-info-yellow)",
+              border: "1px solid var(--border-info-yellow)",
+            }}
+          >
+            <span className="truncate">ใช้ชื่อจากกรมสรรพากร: {offered}</span>
+          </button>
+        )}
         {replacedNote && (
           <span
             className="block text-[10.5px] mt-0.5 leading-tight"
