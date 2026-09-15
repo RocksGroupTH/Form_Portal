@@ -1,4 +1,5 @@
 "use client";
+import { formatEnDate, formatEnDateTime } from "@/features/accounting/lib/thai-calendar";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -177,16 +178,9 @@ async function accountsFetcher(url: string): Promise<ExpenseAccount[]> {
 }
 
 /** Local getters throughout — the server runs on Thai wall time, `toISOString` would shift the day. */
-function fmtDateTime(raw: string | null): string {
-  if (!raw) return "—";
-  const d = new Date(raw);
-  if (isNaN(d.getTime())) return raw;
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mi = String(d.getMinutes()).padStart(2, "0");
-  return `${dd}/${mm}/${d.getFullYear()} ${hh}:${mi}`;
-}
+// The shared English formatter — see thai-calendar.ts. Was a local dd/mm/yyyy,
+// one of about twenty identical copies across this app.
+const fmtDateTime = (raw: string | null) => formatEnDateTime(raw);
 
 /** `raw` is already `YYYY-MM-DD` local-calendar text; parsing through `Date` would reinterpret it as UTC midnight. */
 function fmtYmd(raw: string | null): string {
@@ -1675,7 +1669,13 @@ export function ReimburseApprovalQueue() {
       <SidePanel
         open={drawerId != null}
         onClose={() => setDrawerId(null)}
-        width={drawerWide ? "min(1680px, 100vw)" : "min(980px, 100vw)"}
+        /* Expanded is 85% of the viewport, not all of it (user, 2026-09-15).
+           "min(1680px, 100vw)" reached the full width on any ordinary laptop,
+           so the button read as a full-screen toggle and the list behind it
+           disappeared — the point of a side panel is that the row it came from
+           stays in view. The cap survives for a very wide monitor, where 85%
+           of 3440px is already more than the content needs. */
+        width={drawerWide ? "min(1680px, 85vw)" : "min(980px, 100vw)"}
         zIndex={60}
       >
         <div

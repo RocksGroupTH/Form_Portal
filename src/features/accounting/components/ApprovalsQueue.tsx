@@ -1,4 +1,5 @@
 "use client";
+import { formatEnDate, formatEnDateTime } from "@/features/accounting/lib/thai-calendar";
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { toast } from "sonner";
@@ -196,11 +197,9 @@ function displayDayWorkDetail(row: ReportRow, dayLine: ReportTravelDayLine | nul
   return row.workDetail?.trim() || null;
 }
 
-function fmtPaymentLabel(ymd: string): string {
-  const [y, m, d] = ymd.split("-").map(Number);
-  if (!y || !m || !d) return ymd;
-  return `${String(d).padStart(2, "0")}/${String(m).padStart(2, "0")}/${y}`;
-}
+// The shared English formatter — see thai-calendar.ts. Was a local dd/mm/yyyy,
+// one of about twenty identical copies across this app.
+const fmtPaymentLabel = (ymd: string) => formatEnDate(ymd, "");
 
 interface PaymentDatesResponse {
   ok: boolean;

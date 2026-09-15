@@ -1,4 +1,5 @@
 "use client";
+import { formatEnDate, formatEnDateTime } from "@/features/accounting/lib/thai-calendar";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -46,28 +47,22 @@ function money(n: number | null | undefined): string {
   return (n ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-/** Local-getter datetime formatter — never toISOString for display. */
-function fmtDate(raw: string | null | undefined): string {
-  if (!raw) return "";
-  const d = new Date(raw);
-  if (isNaN(d.getTime())) return raw;
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const yyyy = d.getFullYear();
-  const hh = String(d.getHours()).padStart(2, "0");
-  const min = String(d.getMinutes()).padStart(2, "0");
-  return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
-}
-
-/** Date-only display (expense dates come as YYYY-MM-DD). */
-function fmtDateOnly(raw: string | null | undefined): string {
-  if (!raw) return "—";
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
-  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
-  const d = new Date(raw);
-  if (isNaN(d.getTime())) return raw;
-  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
-}
+/*
+ * Dates read in English, from the two shared formatters (user, 2026-09-15).
+ *
+ * These were a local `dd/mm/yyyy` pair, as they were in every other detail
+ * panel, queue and picker in this app — which is exactly what
+ * `thai-calendar.ts`'s header says that file exists to prevent, arrived at one
+ * copy at a time. Wrappers rather than call-site edits so the names this file
+ * already uses stay put, and the shared pair keeps both behaviours the copies
+ * had: a bare YYYY-MM-DD is read without `new Date` (which would parse it as
+ * UTC midnight and print the day before), and unparseable input comes back
+ * unchanged.
+ */
+// "" rather than "—" for an empty timestamp, which is what this file's callers
+// expect — the shared default is the dash every other panel wanted.
+const fmtDate = (raw: string | null | undefined) => formatEnDateTime(raw, "");
+const fmtDateOnly = (raw: string | null | undefined) => formatEnDate(raw);
 
 const box = { background: "var(--bg-card)", border: "1px solid var(--border-card)", boxShadow: "var(--shadow-sm)" } as const;
 

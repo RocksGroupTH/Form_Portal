@@ -929,6 +929,25 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
    * could not be read is still what the requester attached, and AP-4 refuses to
    * submit without at least one file.
    */
+  /**
+   * Documents whose X was pressed while their read was still running.
+   *
+   * **The read outlives the thumbnail.** `handlePickDocuments` awaits one file
+   * at a time and appends rows when each lands; `handleRemovePendingDoc` drops
+   * the pending document and filters out the rows it produced — but a document
+   * cancelled mid-read has produced none yet, so there was nothing to filter and
+   * the rows arrived seconds later, belonging to a file that is no longer
+   * attached (user, 2026-09-15). A claim then carried lines with no evidence
+   * behind it, which is the exact thing the filter in that handler exists to
+   * prevent.
+   *
+   * A ref rather than state: the loop reads it after an await, and a state
+   * value captured when the loop started would still say the document is live.
+   * Ids are never reused — `nextDocumentId` only counts up — so nothing is
+   * removed from this set and it cannot grow beyond one form's attachments.
+   */
+  const cancelledDocsRef = useRef<Set<string>>(new Set());
+
   const handlePickDocuments = useCallback(
     async (files: File[]) => {
       if (files.length === 0) return;
@@ -947,6 +966,11 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
           read = { rows: [], failure: "error" };
         }
         if (!aliveRef.current) return;
+
+        // Cancelled while this read was in flight: no rows, no spinner to
+        // clear (the thumbnail is gone), and no failure note — a read nobody
+        // is waiting for has nothing to report.
+        if (cancelledDocsRef.current.has(doc.localId)) continue;
 
         // Cleared per file rather than at the end, so each thumbnail stops
         // spinning as its own read lands instead of all of them at once.
@@ -987,6 +1011,9 @@ export function ReimburseForm({ initial, onSaved, onSubmitted }: ReimburseFormPr
   /** Take a picked file back out before it is uploaded — it removes its evidence too. */
   const handleRemovePendingDoc = useCallback(
     (localId: string) => {
+      // Marked BEFORE anything else, so a read that lands during this very
+      // update is already looking at a cancelled id.
+      cancelledDocsRef.current.add(localId);
       setPendingDocs((prev) => {
         const doc = prev.find((p) => p.localId === localId);
         if (doc) {

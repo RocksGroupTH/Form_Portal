@@ -232,9 +232,35 @@ function TravelExpenseContent() {
   if (notFound) {
     return (
       <PageContainer className="acc-theme py-6 px-3 sm:px-0">
-        <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>
-          ไม่พบคำขอนี้
-        </p>
+        {/* A header and a way on, not a bare sentence. Reported as "cannot get
+            into AP-1" (user, 2026-09-15), and that is what it was: this
+            branch renders only when the URL carries an ?id= that does not
+            resolve for this viewer — a draft since deleted, one belonging to
+            somebody else, or an id from the other environment — and it drew a
+            page with no heading, no back arrow and no link, so the form was
+            unreachable from it without editing the address bar. AP-4's own
+            not-found already had the header; this is the rest of it. */}
+        <PageHeaderBar
+          icon={FileText}
+          title="ไม่พบคำขอ"
+          subtitle="รายการนี้อาจถูกลบ หรือคุณไม่มีสิทธิ์เข้าถึง"
+          onBack={handleBack}
+          backLabel="กลับ"
+        />
+        <div className="rounded-2xl py-14 px-6 text-center"
+          style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)" }}>
+          <p className="text-[13px] m-0" style={{ color: "var(--text-muted)" }}>
+            ไม่พบคำขอนี้ — อาจถูกลบไปแล้ว หรือเป็นของผู้อื่น
+          </p>
+          <button
+            type="button"
+            onClick={() => safeReplace(router, travelExpenseNewHref(returnPath))}
+            className="inline-block mt-4 text-[12px] px-4 py-2 rounded-lg font-medium border-none cursor-pointer"
+            style={{ background: "var(--color-action)", color: "#fff" }}
+          >
+            เริ่มคำขอใหม่
+          </button>
+        </div>
       </PageContainer>
     );
   }

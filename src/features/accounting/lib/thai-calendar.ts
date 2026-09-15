@@ -38,6 +38,41 @@ export const TH_MONTHS_SHORT = [
   "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค.",
 ] as const;
 
+/**
+ * The weekday abbreviations a FORM chip reads with — English, beside
+ * `TH_DAYS` for the same reason `EN_MONTHS` sits beside `TH_MONTHS`.
+ *
+ * **Not the calendar's own column headings.** Those stay Thai: "อา จ อ พ พฤ ศ
+ * ส" is one character per column, which is what makes a seven-column grid fit
+ * in the width a date field has. This list is for text beside a date — AP-1's
+ * day chips read "Sat 22 Aug".
+ */
+export const EN_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+/**
+ * The month names the FORM calendars draw with — English, on the user's
+ * instruction (2026-09-15), for AP-1, AP-4 and AP-17 alike.
+ *
+ * Beside the Thai tables rather than replacing them: `TH_MONTHS` still names
+ * the month on every report filter, the payment-date pickers and
+ * `format-travel-dates`, and none of those was asked about. Two tables in one
+ * file, so the arithmetic that indexes them cannot come to disagree — which is
+ * this file's whole reason for existing.
+ *
+ * The weekday row stays Thai: only the month was asked about, and "อา จ อ พ พฤ
+ * ศ ส" is one character per column, which is what makes the grid fit.
+ */
+export const EN_MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+] as const;
+
+/** The abbreviated forms, for a trigger too narrow to hold "September". */
+export const EN_MONTHS_SHORT = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+] as const;
+
 export interface YmdParts {
   year: number;
   month0: number;
@@ -124,6 +159,81 @@ export function formatThaiYmdShort(ymd: string): string {
   const p = parseYmd(ymd);
   if (!p) return "";
   return `${p.day} ${TH_MONTHS_SHORT[p.month0]} ${displayYear(p.year)}`;
+}
+
+/**
+ * `"2026-08-25"` → `"25 August 2026"`; `""` for anything unparseable.
+ *
+ * The English counterparts of the two above, added on the user's instruction
+ * (2026-09-15) for the three form pickers. They differ from the Thai pair in
+ * the month table and in nothing else — same empty-value rule, same day and
+ * year — so a caller swaps between them without acquiring a second set of edge
+ * cases. The Thai pair stays: it still formats every report filter and the
+ * payment-date pickers, none of which was asked about.
+ */
+export function formatEnYmd(ymd: string): string {
+  const p = parseYmd(ymd);
+  if (!p) return "";
+  return `${p.day} ${EN_MONTHS[p.month0]} ${displayYear(p.year)}`;
+}
+
+/**
+ * `"2026-08-25"` → `"25 Aug 2026"`; `""` for anything unparseable.
+ *
+ * For a control that has to hold a whole date in about 100px — AP-4's date
+ * column is 148px, which "25 September 2026" does not fit.
+ */
+export function formatEnYmdShort(ymd: string): string {
+  const p = parseYmd(ymd);
+  if (!p) return "";
+  return `${p.day} ${EN_MONTHS_SHORT[p.month0]} ${displayYear(p.year)}`;
+}
+
+/**
+ * What every screen in this app prints a date as — `"4 Sep 2026"`.
+ *
+ * **One function, because there were twenty.** Each detail panel, queue and
+ * draft picker carried its own five-line `dd/mm/yyyy` — the exact thing this
+ * file's header says it exists to prevent, arrived at one copy at a time. The
+ * user asked for English dates on every form's view (2026-09-15), and twenty
+ * edits with no shared definition is how half of them end up still in digits.
+ *
+ * **Three input shapes, and the first is not an accident.** A bare
+ * `YYYY-MM-DD` from the server is already local-calendar text and is read
+ * without `new Date`, which would parse it as UTC midnight and print the day
+ * before for anybody east of Greenwich — this app runs at UTC+7, so it would be
+ * every row. Anything else goes through `Date` and LOCAL getters, never
+ * `toISOString`, for the reason CLAUDE.md gives about `useUTC: false`.
+ *
+ * Unparseable input comes back unchanged rather than as "Invalid Date", and an
+ * empty one as `fallback` — both behaviours the copies had, kept so no caller
+ * changes what it renders for a row with no date.
+ */
+export function formatEnDate(raw: string | null | undefined, fallback = "—"): string {
+  if (!raw) return fallback;
+  const plain = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
+  if (plain) {
+    return `${Number(plain[3])} ${EN_MONTHS_SHORT[Number(plain[2]) - 1]} ${plain[1]}`;
+  }
+  const d = new Date(raw);
+  if (isNaN(d.getTime())) return raw;
+  return `${d.getDate()} ${EN_MONTHS_SHORT[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+/**
+ * `"4 Sep 2026 15:44"` — a timestamp, for a timeline or an audit line.
+ *
+ * A bare `YYYY-MM-DD` has no time to show and comes back as the date alone
+ * rather than with a made-up `00:00`.
+ */
+export function formatEnDateTime(raw: string | null | undefined, fallback = "—"): string {
+  if (!raw) return fallback;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return formatEnDate(raw, fallback);
+  const d = new Date(raw);
+  if (isNaN(d.getTime())) return raw;
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${formatEnDate(raw, fallback)} ${hh}:${mm}`;
 }
 
 /** Step the visible month, carrying across the year boundary in both directions. */

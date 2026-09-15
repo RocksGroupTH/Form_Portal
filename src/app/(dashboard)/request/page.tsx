@@ -13,6 +13,7 @@ import { useErpSandboxDevHost } from "@/features/accounting/hooks/useErpSandboxD
 import { useReimburseAccess } from "@/features/reimburse/hooks/useReimburseAccess";
 import { useFormEnvironments } from "@/lib/hooks/useFormEnvironments";
 import { FormEnvironmentChip } from "@/components/EnvironmentBadge";
+import { formNameEn } from "@/lib/form-names";
 import { withRequestReturn } from "@/lib/request-hub-nav";
 import { sortByFormCode } from "@/lib/form-code-order";
 import {
@@ -125,6 +126,18 @@ function RequestHubCard({
       >
         {item.label}
       </h3>
+      {/* The English name, from the one table Home reads too — a form is called
+          the same thing on both surfaces or it is not a name. Management cards
+          share their form's badge, so they carry it as well, which is right:
+          "Travel Booking · คิวจอง" says which form's queue this is. */}
+      {formNameEn(item.badge) !== "" && (
+        <p
+          className="text-[11px] font-semibold mb-1"
+          style={{ color: disabled ? "var(--text-faint)" : "var(--text-secondary)" }}
+        >
+          {formNameEn(item.badge)}
+        </p>
+      )}
       <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>
         {item.desc}
       </p>

@@ -1,6 +1,7 @@
 "use client";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
+import { EN_MONTHS, EN_MONTHS_SHORT } from "@/features/accounting/lib/thai-calendar";
 
 interface DateRangePickerProps {
   startDate: string;
@@ -11,7 +12,6 @@ interface DateRangePickerProps {
   disabled?: boolean;
 }
 
-const MONTHS_TH = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
 const DAY_HEADERS = ["อา", "จ", "อ", "พ", "พฤ", "ศ", "ส"];
 
 function addDays(ymd: string, n: number): string {
@@ -114,7 +114,7 @@ export function DateRangePicker({ startDate, endDate, onChange, minDate, maxDays
   function label() {
     const fmt = (s: string) => {
       const d = new Date(s + "T00:00:00");
-      return `${d.getDate()} ${MONTHS_TH[d.getMonth()]}`;
+      return `${d.getDate()} ${EN_MONTHS_SHORT[d.getMonth()]}`;
     };
     if (startDate && endDate) {
       const days = Math.round((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000);
@@ -156,7 +156,7 @@ export function DateRangePicker({ startDate, endDate, onChange, minDate, maxDays
             <span className="text-[12px] font-semibold" style={{ color: "var(--text-primary)" }}>
               {/* AD, not BE — AP-2 shows คริสต์ศักราช so the year matches ERP and
                   the ISO values the form actually stores. */}
-              {MONTHS_TH[month]} {year}
+              {EN_MONTHS[month]} {year}
             </span>
             <button type="button" onClick={next} className="p-1 rounded hover:opacity-70" style={{ color: "var(--text-muted)" }}>
               <ChevronRight size={14} />

@@ -16,7 +16,7 @@ import { ratedSegments, tripRateLead, unratedNote } from "./trip-rate-lead";
 test("one rate reads as itself, with the day it started", () => {
   assert.equal(
     tripRateLead([{ effectiveDate: "2026-09-01", amount: 1000, days: 3 }]),
-    "฿1,000.00 ต่อวัน (มีผล 01/09/2026)",
+    "฿1,000.00 ต่อวัน (มีผล 1 Sep 2026)",
   );
 });
 
@@ -52,7 +52,7 @@ test("unrated days leave the range and the count", () => {
     { effectiveDate: "2026-09-04", amount: 1500, days: 2 },
   ];
   assert.equal(ratedSegments(segs).length, 1);
-  assert.equal(tripRateLead(segs), "฿1,500.00 ต่อวัน (มีผล 04/09/2026)");
+  assert.equal(tripRateLead(segs), "฿1,500.00 ต่อวัน (มีผล 4 Sep 2026)");
 });
 
 test("they get their own sentence, with the day the rate starts", () => {
@@ -61,7 +61,7 @@ test("they get their own sentence, with the day the rate starts", () => {
       { effectiveDate: null, amount: 0, days: 2 },
       { effectiveDate: "2026-09-04", amount: 1500, days: 2 },
     ]),
-    "2 วันแรกยังไม่มีเรทที่มีผลครอบคลุม จึงคิดเป็น ฿0 — เรทเริ่มมีผล 04/09/2026",
+    "2 วันแรกยังไม่มีเรทที่มีผลครอบคลุม จึงคิดเป็น ฿0 — เรทเริ่มมีผล 4 Sep 2026",
   );
 });
 
@@ -76,7 +76,7 @@ test("a trip wholly before the rate has no lead figure", () => {
   assert.equal(tripRateLead(segs), null);
   assert.equal(
     unratedNote(segs, [{ effectiveDate: "2026-12-01", amount: 1500 }]),
-    "ทุกวันของทริปนี้ยังไม่มีเรทที่มีผลครอบคลุม จึงคิดเป็น ฿0 — เรทเริ่มมีผล 01/12/2026",
+    "ทุกวันของทริปนี้ยังไม่มีเรทที่มีผลครอบคลุม จึงคิดเป็น ฿0 — เรทเริ่มมีผล 1 Dec 2026",
   );
 });
 

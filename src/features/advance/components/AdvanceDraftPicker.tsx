@@ -1,20 +1,14 @@
 "use client";
+import { formatEnDate, formatEnDateTime } from "@/features/accounting/lib/thai-calendar";
 
 import { useState } from "react";
 import { FileText, Plus, ChevronRight, Trash2 } from "lucide-react";
 import { Dialog, Button } from "@/components/ui";
 import type { AdvanceDraftSummary } from "@/features/advance/types";
 
-function fmtUpdatedAt(iso: string): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "—";
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const hh = String(d.getHours()).padStart(2, "0");
-  const min = String(d.getMinutes()).padStart(2, "0");
-  return `${dd}/${mm}/${d.getFullYear()} ${hh}:${min}`;
-}
+// The shared English formatter — see thai-calendar.ts. Was a local dd/mm/yyyy,
+// one of about twenty identical copies across this app.
+const fmtUpdatedAt = (iso: string) => formatEnDateTime(iso);
 
 function fmtBaht(n: number | null): string {
   if (n == null || n === 0) return "—";

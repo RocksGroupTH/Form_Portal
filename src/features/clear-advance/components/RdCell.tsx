@@ -1,4 +1,5 @@
 "use client";
+import { formatEnDate, formatEnDateTime } from "@/features/accounting/lib/thai-calendar";
 
 import React, { useState } from "react";
 import type { ClearAdvanceItem } from "@/features/clear-advance/types";
@@ -9,11 +10,9 @@ import type { RdAnswer } from "@/features/clear-advance/hooks/useRdVatByTin";
 const money = (n: number) =>
   n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-const fmtDay = (iso: string | null) => {
-  if (!iso) return "";
-  const [y, m, d] = iso.slice(0, 10).split("-");
-  return y && m && d ? `${d}/${m}/${y}` : "";
-};
+// The shared English formatter — see thai-calendar.ts. Was a local dd/mm/yyyy,
+// one of about twenty identical copies across this app.
+const fmtDay = (iso: string | null) => formatEnDate(iso, "");
 
 /**
  * The "RD" cell — what the Revenue Department says about this line's seller.

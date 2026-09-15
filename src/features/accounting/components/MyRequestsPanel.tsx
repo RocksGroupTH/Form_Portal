@@ -1,4 +1,5 @@
 "use client";
+import { formatEnDate, formatEnDateTime } from "@/features/accounting/lib/thai-calendar";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Avatar } from "@/components/ui/Avatar";
@@ -56,12 +57,9 @@ function fmtMoney(n: number | null | undefined): string {
   if (n == null) return "—";
   return n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
-function fmtDate(raw: string | null | undefined): string {
-  if (!raw) return "—";
-  const d = new Date(raw);
-  if (isNaN(d.getTime())) return raw;
-  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
-}
+// The shared English formatter — see thai-calendar.ts. Was a local dd/mm/yyyy,
+// one of about twenty identical copies across this app.
+const fmtDate = (raw: string | null | undefined) => formatEnDate(raw);
 
 /** Status → chip colors (tokens). */
 function statusStyle(status: string): React.CSSProperties {
@@ -669,7 +667,13 @@ function RequestRowList({
       <SidePanel
         open={drawerId != null && drawerFormCode !== "AP-2" && drawerFormCode !== "AP-3"}
         onClose={() => setDrawerId(null)}
-        width={drawerWide ? "min(1680px, 100vw)" : "min(720px, 100vw)"}
+        /* Expanded is 85% of the viewport, not all of it (user, 2026-09-15).
+           "min(1680px, 100vw)" reached the full width on any ordinary laptop,
+           so the button read as a full-screen toggle and the list behind it
+           disappeared — the point of a side panel is that the row it came from
+           stays in view. The cap survives for a very wide monitor, where 85%
+           of 3440px is already more than the content needs. */
+        width={drawerWide ? "min(1680px, 85vw)" : "min(720px, 100vw)"}
         zIndex={50}
       >
         <div

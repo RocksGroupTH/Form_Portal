@@ -37,6 +37,7 @@ import {
   type AttachmentSource,
 } from "@/components/ui/AttachmentViewer";
 import { fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
+import { formatEnDate, formatEnDateTime } from "@/features/accounting/lib/thai-calendar";
 import { useBookingAccess } from "@/features/travel-booking/hooks/useBookingAccess";
 import { useErpSandboxDevHost } from "@/features/accounting/hooks/useErpSandboxDevHost";
 import { useTravelBookingOptionIcons } from "@/features/travel-booking/hooks/useOptionIcons";
@@ -75,17 +76,19 @@ const BOOKING_TYPE_ICON: Record<BookingType, React.ReactNode> = {
 
 /* ── format helpers ── */
 
-function fmtDateTime(raw: string | null | undefined): string {
-  if (!raw) return "—";
-  const d = new Date(raw);
-  if (isNaN(d.getTime())) return raw;
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const yyyy = d.getFullYear();
-  const hh = String(d.getHours()).padStart(2, "0");
-  const min = String(d.getMinutes()).padStart(2, "0");
-  return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
-}
+/*
+ * Dates read in English, from the two shared formatters (user, 2026-09-15).
+ *
+ * These were a local `dd/mm/yyyy` pair, as they were in every other detail
+ * panel, queue and picker in this app — which is exactly what
+ * `thai-calendar.ts`'s header says that file exists to prevent, arrived at one
+ * copy at a time. Wrappers rather than call-site edits so the names this file
+ * already uses stay put, and the shared pair keeps both behaviours the copies
+ * had: a bare YYYY-MM-DD is read without `new Date` (which would parse it as
+ * UTC midnight and print the day before), and unparseable input comes back
+ * unchanged.
+ */
+const fmtDateTime = (raw: string | null | undefined) => formatEnDateTime(raw);
 
 /* ── small layout primitives (mirrors AP-1 RequestDetail.tsx's look — its own Section/DetailRow/
    GridField are not exported, so kept local here rather than forking that whole file) ── */

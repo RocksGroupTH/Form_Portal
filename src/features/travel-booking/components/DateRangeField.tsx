@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
 import { errLabelStyle, labelClass, requiredStar } from "./shared";
+import { EN_MONTHS, EN_MONTHS_SHORT } from "@/features/accounting/lib/thai-calendar";
 
 /**
  * Depart/return range picker (ข้อ6, ข้อ16). Matches AP-1's FilterMultiDatePicker look —
@@ -12,11 +13,10 @@ import { errLabelStyle, labelClass, requiredStar } from "./shared";
  * in/out, built with local getters (no toISOString). Stays open until closed manually.
  */
 
+// The month names are imported, not a fourth copy of the same twelve strings —
+// see `thai-calendar.ts`'s own header. This component keeps its private date
+// arithmetic, which predates that module; only the labels are shared.
 const TH_DAYS = ["อา", "จ", "อ", "พ", "พฤ", "ศ", "ส"] as const;
-const TH_MONTHS = [
-  "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
-  "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม",
-] as const;
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const toYmd = (y: number, m0: number, d: number) => `${y}-${pad(m0 + 1)}-${pad(d)}`;
@@ -39,9 +39,18 @@ function todayYmd(): string {
   const now = new Date();
   return toYmd(now.getFullYear(), now.getMonth(), now.getDate());
 }
+/**
+ * `"2026-09-16"` → `"16 Sep 2026"` (user, 2026-09-15).
+ *
+ * It read `16/09/2026`, which is the form the reports use and which this
+ * control shares with nothing — the trigger is the one place this function is
+ * called. The month table is the shared one, so this cannot drift from the
+ * calendar it opens.
+ */
 const fmtDisplay = (iso: string) => {
-  const [y, m, d] = iso.split("-");
-  return `${d}/${m}/${y}`;
+  const [y, m, d] = iso.split("-").map(Number);
+  if (!y || !m || !d) return iso;
+  return `${d} ${EN_MONTHS_SHORT[m - 1]} ${y}`;
 };
 
 export function DateRangeField({
@@ -208,7 +217,7 @@ export function DateRangeField({
           <ChevronLeft size={16} />
         </button>
         <span className="text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>
-          {TH_MONTHS[viewMonth0]} {viewYear}
+          {EN_MONTHS[viewMonth0]} {viewYear}
         </span>
         <button type="button" onClick={() => shiftMonth(1)} className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer border-none" style={{ background: "var(--bg-card-alt)", color: "var(--text-muted)" }} aria-label="เดือนถัดไป">
           <ChevronRight size={16} />
