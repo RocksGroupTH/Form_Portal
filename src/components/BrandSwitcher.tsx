@@ -22,6 +22,54 @@ export function BrandSwitcher({ compact = false }: BrandSwitcherProps) {
   // brand it cannot name.
   if (!current) return null;
 
+  /**
+   * **Nothing to switch to, so this is a label rather than a control.**
+   *
+   * One brand on offer (measured 2026-09-15: only `ROCKS` is enabled at
+   * Settings → Brand Configuration) made "Switch Brand" a dialog whose single
+   * tile was already current — a click that could only close what it opened.
+   * The chevron goes with it, since it is the part that says "there is more
+   * behind this".
+   *
+   * Keyed on the list, not on the brand's code: re-enable a second brand and
+   * the control returns by itself. Same rule `BrandGate` uses, for the same
+   * reason.
+   */
+  const switchable = brands.length > 1;
+
+  if (!switchable) {
+    return (
+      <span
+        className={
+          compact
+            ? "flex items-center gap-1.5 px-2 py-1 rounded-lg shrink-0"
+            : "flex items-center gap-2 h-9 pl-2 pr-2.5 rounded-lg shrink-0"
+        }
+        style={
+          compact
+            ? { background: "var(--bg-badge)" }
+            : { background: "var(--bg-card)", border: "1px solid var(--border-card)" }
+        }
+        title={current.name}
+      >
+        <BrandMark src={current.logo} alt="" code={current.id} size={compact ? 16 : 20} rounded="rounded" />
+        {!compact && (
+          <span className="flex flex-col items-start leading-none gap-0.5">
+            <span
+              className="text-[9px] font-semibold uppercase tracking-wider"
+              style={{ color: "var(--text-faint)" }}
+            >
+              Brand
+            </span>
+            <span className="text-[12px] font-bold" style={{ color: "var(--text-heading)" }}>
+              {current.name}
+            </span>
+          </span>
+        )}
+      </span>
+    );
+  }
+
   return (
     <>
       <button

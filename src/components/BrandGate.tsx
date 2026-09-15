@@ -44,8 +44,41 @@ export function BrandGate({ children }: { children: React.ReactNode }) {
   const listUsable = !brandsLoading && brands.length > 0;
   const brandStillOffered = !listUsable || brands.some((b) => b.id === brand);
 
+  /**
+   * **A single brand is adopted silently — there is nothing to choose.**
+   *
+   * Measured 2026-09-15: `listSelectableBrands()` answers exactly one row,
+   * `ROCKS` (Rocks Group), because every other brand is switched off at
+   * Settings → Brand Configuration. The picker was therefore a modal with one
+   * tile, shown to anyone whose cookie still named a brand since disabled, and
+   * a "Switch Brand" dialog that could only switch to what was already picked.
+   * The user asked for Rocks Group to be selected always and for the switch to
+   * go away (2026-09-15).
+   *
+   * **Keyed on the LIST being one, not on the code `ROCKS`**, deliberately.
+   * Hardcoding the brand would keep forcing it the day somebody re-enables a
+   * second one, and would have to be found and undone; this reads the same
+   * answer off the same data the picker does, so the picker comes back by
+   * itself the moment there is a real choice to make — which the user's
+   * "ยังไม่ต้อง" says is the expected direction of travel.
+   *
+   * It writes the cookie rather than only the context: the SERVER reads
+   * `rocks-fast-brand` to resolve ERP and Business Central context, so a
+   * context-only change would leave the navbar saying Rocks Group while the
+   * journal built for that request still resolved the disabled brand the cookie
+   * names.
+   */
+  const soleBrand = listUsable && brands.length === 1 ? brands[0].id : null;
+  useEffect(() => {
+    if (!soleBrand || brand === soleBrand) return;
+    void setBrand(soleBrand, { syncUrl: false, refresh: true });
+  }, [soleBrand, brand, setBrand]);
+
   if (brand && brandStillOffered) return <>{children}</>;
   if (isSyncing) return null;
+  // The effect above is adopting it; a modal for the one tile it is about to
+  // pick would flash on screen for exactly one round trip.
+  if (soleBrand) return null;
   // Nothing to choose from yet — show the dimmed shell rather than an empty
   // grid that looks like a broken page.
   if (brandsLoading) return null;
