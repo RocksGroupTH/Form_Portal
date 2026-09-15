@@ -39,6 +39,17 @@ export const TH_MONTHS_SHORT = [
 ] as const;
 
 /**
+ * The weekday abbreviations a FORM chip reads with — English, beside
+ * `TH_DAYS` for the same reason `EN_MONTHS` sits beside `TH_MONTHS`.
+ *
+ * **Not the calendar's own column headings.** Those stay Thai: "อา จ อ พ พฤ ศ
+ * ส" is one character per column, which is what makes a seven-column grid fit
+ * in the width a date field has. This list is for text beside a date — AP-1's
+ * day chips read "Sat 22 Aug".
+ */
+export const EN_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+/**
  * The month names the FORM calendars draw with — English, on the user's
  * instruction (2026-09-15), for AP-1, AP-4 and AP-17 alike.
  *

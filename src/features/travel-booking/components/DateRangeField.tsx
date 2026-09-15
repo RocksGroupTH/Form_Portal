@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
 import { errLabelStyle, labelClass, requiredStar } from "./shared";
-import { EN_MONTHS } from "@/features/accounting/lib/thai-calendar";
+import { EN_MONTHS, EN_MONTHS_SHORT } from "@/features/accounting/lib/thai-calendar";
 
 /**
  * Depart/return range picker (ข้อ6, ข้อ16). Matches AP-1's FilterMultiDatePicker look —
@@ -39,9 +39,18 @@ function todayYmd(): string {
   const now = new Date();
   return toYmd(now.getFullYear(), now.getMonth(), now.getDate());
 }
+/**
+ * `"2026-09-16"` → `"16 Sep 2026"` (user, 2026-09-15).
+ *
+ * It read `16/09/2026`, which is the form the reports use and which this
+ * control shares with nothing — the trigger is the one place this function is
+ * called. The month table is the shared one, so this cannot drift from the
+ * calendar it opens.
+ */
 const fmtDisplay = (iso: string) => {
-  const [y, m, d] = iso.split("-");
-  return `${d}/${m}/${y}`;
+  const [y, m, d] = iso.split("-").map(Number);
+  if (!y || !m || !d) return iso;
+  return `${d} ${EN_MONTHS_SHORT[m - 1]} ${y}`;
 };
 
 export function DateRangeField({
