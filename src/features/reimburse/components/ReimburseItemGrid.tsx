@@ -561,6 +561,15 @@ export function ReimburseItemGrid({
                         options={branches}
                         loading={branchesLoading}
                         brandChosen={!!brandCode}
+                        /* Red while EMPTY, not only after a failed submit
+                           (user, 2026-09-15). It is the one required cell on
+                           this row that cannot be typed into, so it is also the
+                           one most easily skipped — and the row scrolls
+                           sideways, so an error that only appears on submit
+                           appears off screen. The message below still waits for
+                           validation: an empty cell somebody has not reached
+                           yet needs a mark, not a complaint. */
+                        hasError={!item.branchCode || item.branchCode.trim() === ""}
                         ariaLabel={`สาขาที่ใช้จ่ายของรายการที่ ${index + 1}`}
                         labels={{
                           placeholder: "เลือกสาขา...",

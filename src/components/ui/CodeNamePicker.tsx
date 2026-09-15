@@ -69,6 +69,7 @@ export function CodeNamePicker({
   brandChosen,
   ariaLabel,
   emphasis = "name",
+  hasError,
 }: {
   /** The stored code, free text on an older row, or null. */
   value: string | null | undefined;
@@ -92,6 +93,15 @@ export function CodeNamePicker({
    * and the not-in-the-list fallback are identical either way.
    */
   emphasis?: "name" | "code";
+  /**
+   * Red border, for a required cell nobody has filled in yet.
+   *
+   * The caller decides WHEN — this component knows nothing about whether it is
+   * required — and it is deliberately only the border: the message belongs
+   * beside the cell, where the caller already puts it, and a control that both
+   * turned red and grew its own text would say it twice.
+   */
+  hasError?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -271,12 +281,17 @@ export function CodeNamePicker({
         aria-label={ariaLabel}
         disabled={!brandChosen}
         onClick={() => setOpen((v) => !v)}
-        className="w-full rounded-lg px-3 py-1.5 outline-none flex items-center gap-1.5 disabled:cursor-not-allowed"
+        /* `min-h-[38px]` is what makes this sit level with the plain text
+           inputs it shares a grid row with — those are `px-3 py-2` at 14px,
+           which renders 38px tall, and this button was 42 with its own
+           padding. Centring rather than padding, so a one-line value and a
+           two-line code-over-name come out the same height. */
+        className="w-full min-h-[38px] rounded-lg px-3 py-1 outline-none flex items-center gap-1.5 disabled:cursor-not-allowed"
         style={{
           background: "var(--bg-input)",
           borderWidth: 1,
           borderStyle: "solid",
-          borderColor: "var(--border-input)",
+          borderColor: hasError ? "var(--color-danger)" : "var(--border-input)",
           cursor: brandChosen ? "pointer" : "not-allowed",
           opacity: brandChosen ? 1 : 0.7,
         }}
@@ -299,7 +314,7 @@ export function CodeNamePicker({
             // older free-text entry, or an option since blocked in BC — or the
             // placeholder. Neither has a code and a name to separate.
             <span
-              className="block text-[13px] leading-tight truncate py-[7px]"
+              className="block text-[13px] leading-tight truncate"
               style={{ color: value ? "var(--text-primary)" : "var(--text-muted)" }}
             >
               {value || placeholder}
