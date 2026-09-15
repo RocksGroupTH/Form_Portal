@@ -4,17 +4,23 @@ import fs from "node:fs";
 import path from "node:path";
 
 /**
- * Three rules about the seller cells that no unit test can reach — the logic
+ * Four rules about the seller cells that no unit test can reach — the logic
  * sits inside a React component and this repository has no DOM harness — and
  * that a reasonable edit undoes silently.
  *
- * The first two look like alternatives and are not. Asked on 2026-09-15 in two
- * passes, they compose: a newly entered tax id **replaces** the seller name,
- * and the registered name stays **on offer** for as long as the box disagrees
- * with it. Removing either because the other exists is precisely the edit these
- * assertions are here to stop — the file's own docblock says so, and the first
- * version of this test pinned "the offer button is gone and stays gone", which
- * is now the wrong answer.
+ * The first two look like alternatives and are not. Asked over three passes on
+ * 2026-09-15, they compose into one behaviour:
+ *
+ * - the **first** find on a row replaces the seller name outright, which is the
+ *   receipt-read case — attaching the file fills the tax id and a transcribed
+ *   name together, and the register's name is the one the ledger wants;
+ * - **every disagreement after that** is an offer on a button — a tax id edited
+ *   later, a name edited later, or a saved row opened with a name that never
+ *   matched.
+ *
+ * Removing either because the other exists is precisely the edit these
+ * assertions are here to stop. The first version of this file pinned "the offer
+ * button is gone and stays gone", which one pass later was the wrong answer.
  */
 
 const SRC = fs
@@ -27,10 +33,30 @@ const SRC = fs
   .replace(/\/\*[\s\S]*?\*\//g, "")
   .replace(/^\s*\/\/.*$/gm, "");
 
-test("a newly entered tax id writes the registered name into the row", () => {
+test("the FIRST find writes the registered name into the row", () => {
   assert.ok(
     /onChangeRef\.current\(\{ vendorName: name \}\)/.test(SRC),
     "the lookup no longer writes the registered name — it is back to only asking",
+  );
+  assert.ok(
+    /const firstFind = !foundOnceRef\.current;/.test(SRC),
+    "the first-find gate is gone",
+  );
+  assert.ok(
+    /shouldWrite =\s*!arrivedWithTaxIdRef\.current && firstFind/.test(SRC),
+    "the write is no longer gated on BOTH a fresh row and its first find",
+  );
+});
+
+test("a tax id changed afterwards offers rather than overwrites", () => {
+  // The receipt read fills the tax id and a name together, and that one event
+  // is what the replacement is for. A number edited later is somebody working
+  // the row deliberately — overwriting then would fight them thirteen digits at
+  // a time — so the one replacement is spent on the first find and never
+  // refunded.
+  assert.ok(
+    /if \(name !== ""\) foundOnceRef\.current = true;/.test(SRC),
+    "the first find no longer spends the one replacement this row gets",
   );
 });
 
@@ -45,21 +71,17 @@ test("the registered name stays on offer while the box disagrees", () => {
   );
 });
 
-test("a row loaded with its tax id already set is not overwritten", () => {
+test("a row that arrived with a tax id is never overwritten", () => {
   // The lookup fires on mount for any 13-digit number, so without this gate
   // reopening a draft rewrites a seller name somebody deliberately corrected,
-  // on a row nobody touched. The offer button is what that row gets instead.
+  // on a row nobody touched. That row gets the offer button instead.
   assert.ok(
-    /mountDigitsRef/.test(SRC),
-    "the mount-digits gate is gone — reopening a draft now rewrites its seller name",
+    /const arrivedWithTaxIdRef = useRef\(digits !== ""\);/.test(SRC),
+    "the arrived-with-a-tax-id gate is gone — reopening a draft now rewrites its seller name",
   );
   assert.ok(
-    /const isLoadedRow = digits === mountDigitsRef\.current;/.test(SRC),
-    "the gate no longer compares the current tax id with the one the row loaded with",
-  );
-  assert.ok(
-    /shouldWrite = !isLoadedRow/.test(SRC),
-    "the write is no longer gated on the tax id having changed since load",
+    /!arrivedWithTaxIdRef\.current/.test(SRC),
+    "the write no longer checks whether the row arrived with a tax id",
   );
 });
 

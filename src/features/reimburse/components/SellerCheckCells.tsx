@@ -49,12 +49,15 @@ type State =
  * - **found and the name does not** — two things, and they are not alternatives
  *   (user, 2026-09-15, in two passes):
  *
- *   **The registered name replaces what was typed, once**, when a newly entered
- *   number resolves, with a line saying it did. This used to be an offer on a
- *   yellow button and nothing else, on the reasoning that a receipt can print a
- *   trading name the register has never heard of and a fuzzy comparison should
- *   not overwrite a person; the user overruled that, and the ledger wants the
- *   registered name in any case.
+ *   **The registered name replaces what was typed on the FIRST find**, with a
+ *   line saying it did. That is the receipt-read case: attaching the file fills
+ *   the tax id and a seller name together, the read's name is a transcription
+ *   of a photograph and the register's is the one the ledger wants. This used
+ *   to be an offer on a yellow button and nothing else, on the reasoning that a
+ *   receipt can print a trading name the register has never heard of and a
+ *   fuzzy comparison should not overwrite a person; the user overruled that.
+ *   **Changing the tax id afterwards does not replace anything** — by then the
+ *   row is being worked on deliberately, and the button is the whole answer.
  *
  *   **The offer stands whenever the box disagrees with the register** — a name
  *   edited after the replacement, a saved row opened with a name that never
@@ -95,21 +98,38 @@ export function SellerCheckCells({
   onChangeRef.current = onChange;
   const digits = taxIdDigits(taxId);
   /**
-   * The tax id this row already had when the form opened.
+   * Did this row arrive with a tax id already on it?
    *
-   * **A saved row is looked up but never overwritten**, and that is the whole
-   * job of this ref. The lookup fires whenever the number is 13 digits long,
-   * mount included, so without it reopening a draft would silently rewrite a
-   * seller name somebody had deliberately corrected to the trading name on the
-   * receipt — replacing a decision nobody was making at the time. Replacement
-   * follows the ACT of entering a number, so it is gated on the number having
-   * changed since the row was loaded. Editing the id back to its original value
-   * skips too, which errs toward leaving a typed name alone.
+   * **A saved row is looked up but never overwritten.** The lookup fires
+   * whenever the number is 13 digits long, mount included, so without this
+   * reopening a draft would silently rewrite a seller name somebody had
+   * deliberately corrected to the trading name on the receipt — replacing a
+   * decision nobody was making at the time. Such a row gets the offer button
+   * instead, which is the same answer every other disagreement gets.
    *
-   * Stable under `reactStrictMode`'s mount → cleanup → mount, unlike a "first
-   * run" flag: it compares values rather than counting effect runs.
+   * A value rather than a "first run" flag, so it is stable under
+   * `reactStrictMode`'s mount → cleanup → mount.
    */
-  const mountDigitsRef = useRef(digits);
+  const arrivedWithTaxIdRef = useRef(digits !== "");
+  /**
+   * Has a lookup on this row ever found a registrant?
+   *
+   * **The replacement happens on the FIRST find and never again** (user,
+   * 2026-09-15). The case it is for is the receipt read: attaching the file
+   * fills the tax id and a seller name in the same breath, the read's name is a
+   * transcription of a photograph, and the register's is the one the ledger
+   * wants — so it is taken outright rather than offered.
+   *
+   * **Changing the number afterwards is a different act**, and it gets the
+   * button. By then somebody is working on the row deliberately, and a name
+   * they typed is a decision; overwriting it on a number they are still editing
+   * would fight them keystroke by keystroke, thirteen digits at a time.
+   *
+   * Set on the first find whether or not anything was written — a find whose
+   * name already agreed still spends it. The event is "this row has been
+   * identified", not "this row was corrected".
+   */
+  const foundOnceRef = useRef(false);
   const problem = taxIdProblem(taxId);
 
   useEffect(() => {
@@ -133,8 +153,10 @@ export function SellerCheckCells({
           // report "replaced" for a row it did not touch, or stay quiet on one
           // it did.
           const had = (nameRef.current ?? "").trim();
-          const isLoadedRow = digits === mountDigitsRef.current;
-          const shouldWrite = !isLoadedRow && name !== "" && had !== name;
+          const firstFind = !foundOnceRef.current;
+          if (name !== "") foundOnceRef.current = true;
+          const shouldWrite =
+            !arrivedWithTaxIdRef.current && firstFind && name !== "" && had !== name;
           if (shouldWrite) onChangeRef.current({ vendorName: name });
           setState({ kind: "found", registrant: found, replaced: shouldWrite && had !== "" });
         }
