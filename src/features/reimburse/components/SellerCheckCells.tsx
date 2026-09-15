@@ -20,10 +20,8 @@ interface Registrant extends RegistrantName {
 type State =
   | { kind: "idle" }
   | { kind: "checking" }
-  /** On the register. `replaced` is true when the lookup overwrote a name
-   *  somebody had already typed, which is the only case worth a line on
-   *  screen — an empty box being filled speaks for itself. */
-  | { kind: "found"; registrant: Registrant; replaced: boolean }
+  /** On the register. `verdict` says whether the box agrees. */
+  | { kind: "found"; registrant: Registrant }
   /** A valid number the register does not hold — an ordinary fact about a small seller. */
   | { kind: "absent" }
   /** The RD could not be reached. Never rendered as "not registered". */
@@ -49,15 +47,23 @@ type State =
  * - **found and the name does not** — two things, and they are not alternatives
  *   (user, 2026-09-15, in two passes):
  *
- *   **The registered name replaces what was typed on the FIRST find**, with a
- *   line saying it did. That is the receipt-read case: attaching the file fills
- *   the tax id and a seller name together, the read's name is a transcription
- *   of a photograph and the register's is the one the ledger wants. This used
- *   to be an offer on a yellow button and nothing else, on the reasoning that a
- *   receipt can print a trading name the register has never heard of and a
- *   fuzzy comparison should not overwrite a person; the user overruled that.
- *   **Changing the tax id afterwards does not replace anything** — by then the
- *   row is being worked on deliberately, and the button is the whole answer.
+ *   **Every find replaces the seller name** (user, 2026-09-15, after asking
+ *   for it narrower twice and then for it plainly). A lookup runs only when the
+ *   tax id reaches thirteen digits, so "a find" is always an act on the number:
+ *   the receipt read filling a new row, or somebody typing or correcting one.
+ *   The register's name is the one the ledger wants, and it is taken rather
+ *   than offered.
+ *
+ *   **Editing the NAME is not a find** — the effect keys on the tax id alone —
+ *   so a trading name typed over the registered one survives, and the button
+ *   below is how it gets back. That is the whole reason the two coexist.
+ *
+ *   **A saved draft reopened is a find too**, because the lookup fires on
+ *   mount for any thirteen-digit number: a seller name corrected by hand and
+ *   saved is overwritten the next time that request is opened. Raised, and the
+ *   plain rule was asked for anyway — the gates that used to prevent it
+ *   (`fromDocumentRead`, `foundOnceRef`) are gone rather than left in to
+ *   contradict it quietly.
  *
  *   **The offer stands whenever the box disagrees with the register** — a name
  *   edited after the replacement, a saved row opened with a name that never
@@ -80,25 +86,11 @@ export function SellerCheckCells({
   index,
   taxId,
   vendorName,
-  fromDocumentRead,
   onChange,
 }: {
   index: number;
   taxId: string | null | undefined;
   vendorName: string | null | undefined;
-  /**
-   * True while this row came from a document read in this session and has not
-   * been saved yet — the grid passes `!!item.sourceDocId`.
-   *
-   * **This is the only row the replacement is for.** A read CREATES a row
-   * carrying both the tax id and a transcribed seller name, so the cells' very
-   * first render already has 13 digits in hand; a gate that asked "did this row
-   * arrive with a tax id?" therefore caught the one case it was meant to serve
-   * and skipped it (user, 2026-09-15). A saved row has `sourceFileId` instead
-   * and never qualifies, which is the behaviour that gate was actually written
-   * for.
-   */
-  fromDocumentRead?: boolean;
   onChange: (patch: { vendorTaxId?: string | null; vendorName?: string | null }) => void;
 }) {
   const [state, setState] = useState<State>({ kind: "idle" });
@@ -111,30 +103,6 @@ export function SellerCheckCells({
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const digits = taxIdDigits(taxId);
-  /* A saved row is looked up and never overwritten — it has no
-     `sourceDocId`, so `fromDocumentRead` is false. Reopening a draft must not
-     rewrite a seller name somebody deliberately corrected, on a row nobody
-     touched; that row gets the offer button, the same answer every other
-     disagreement gets. */
-  /**
-   * Has a lookup on this row ever found a registrant?
-   *
-   * **The replacement happens on the FIRST find and never again** (user,
-   * 2026-09-15). The case it is for is the receipt read: attaching the file
-   * fills the tax id and a seller name in the same breath, the read's name is a
-   * transcription of a photograph, and the register's is the one the ledger
-   * wants — so it is taken outright rather than offered.
-   *
-   * **Changing the number afterwards is a different act**, and it gets the
-   * button. By then somebody is working on the row deliberately, and a name
-   * they typed is a decision; overwriting it on a number they are still editing
-   * would fight them keystroke by keystroke, thirteen digits at a time.
-   *
-   * Set on the first find whether or not anything was written — a find whose
-   * name already agreed still spends it. The event is "this row has been
-   * identified", not "this row was corrected".
-   */
-  const foundOnceRef = useRef(false);
   const problem = taxIdProblem(taxId);
 
   useEffect(() => {
@@ -154,15 +122,13 @@ export function SellerCheckCells({
           const name = registrantDisplayName(found);
           // `nameRef`, not the `vendorName` this closure captured: the effect
           // keys on the tax id alone, so by the time the lookup lands the name
-          // may have been typed or changed. Comparing the stale copy would
-          // report "replaced" for a row it did not touch, or stay quiet on one
-          // it did.
+          // may have been typed or changed. The stale copy would make this an
+          // UPDATE of a value that is no longer there — writing the register's
+          // name over a keystroke somebody made while the fetch was in flight,
+          // or skipping the write on a comparison that is no longer true.
           const had = (nameRef.current ?? "").trim();
-          const firstFind = !foundOnceRef.current;
-          if (name !== "") foundOnceRef.current = true;
-          const shouldWrite = !!fromDocumentRead && firstFind && name !== "" && had !== name;
-          if (shouldWrite) onChangeRef.current({ vendorName: name });
-          setState({ kind: "found", registrant: found, replaced: shouldWrite && had !== "" });
+          if (name !== "" && had !== name) onChangeRef.current({ vendorName: name });
+          setState({ kind: "found", registrant: found });
         }
         else setState({ kind: "absent" });
       })
@@ -192,13 +158,6 @@ export function SellerCheckCells({
    * a saved row opened with a name that disagrees.
    */
   const offerAvailable = verdict === "mismatch" && offered !== "";
-  /* Shown only while the box still holds what the lookup put there. Edit it
-     afterwards and the note goes — the button above replaces it, because the
-     note would then be describing something that is no longer on screen. */
-  const replacedNote =
-    state.kind === "found" &&
-    state.replaced &&
-    (vendorName ?? "").trim() === registrantDisplayName(state.registrant);
 
   return (
     <>
@@ -298,19 +257,7 @@ export function SellerCheckCells({
             <span className="truncate">ใช้ชื่อจากกรมสรรพากร: {offered}</span>
           </button>
         )}
-        {replacedNote && (
-          <span
-            className="block text-[10.5px] mt-0.5 leading-tight"
-            style={{ color: "var(--text-muted)" }}
-          >
-            แทนที่ด้วยชื่อจากกรมสรรพากรแล้ว — แก้ไขได้
-          </span>
-        )}
-        {/* Exclusive with the note above: after a replacement the name agrees
-            with the register BY CONSTRUCTION, so showing both would be the
-            same fact twice — and the interesting half is that the box was
-            changed, not that it now matches. */}
-        {verdict === "match" && !replacedNote && (
+        {verdict === "match" && (
           <span
             className="inline-flex items-center gap-1 text-[10.5px] mt-0.5"
             style={{ color: "var(--color-success)" }}

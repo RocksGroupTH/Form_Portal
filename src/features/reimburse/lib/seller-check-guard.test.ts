@@ -8,20 +8,21 @@ import path from "node:path";
  * inside a React component and this repository has no DOM harness — and that a
  * reasonable edit undoes silently.
  *
- * The first two look like alternatives and are not. Asked over four passes on
- * 2026-09-15, they compose into one behaviour:
+ * The two behaviours look like alternatives and are not:
  *
- * - the **first find on a row a document read created** replaces the seller
- *   name outright: attaching the file fills the tax id and a transcribed name
- *   together, and the register's name is the one the ledger wants;
- * - **every disagreement after that** is an offer on a button — a tax id edited
- *   later, a name edited later, or a saved row opened with a name that never
- *   matched.
+ * - **a find replaces the seller name**, every time, because a lookup only runs
+ *   when the tax id reaches thirteen digits and is therefore always an act on
+ *   the number — the receipt read filling a new row, or somebody typing or
+ *   correcting one;
+ * - **the registered name stays on offer** while the box disagrees, which is
+ *   how a name edited afterwards gets back. Editing the NAME starts no lookup,
+ *   so the two never fight.
  *
  * Removing either because the other exists is precisely the edit these
- * assertions are here to stop. An earlier version of this file pinned "the
- * offer button is gone and stays gone", which one pass later was the wrong
- * answer.
+ * assertions are here to stop. It has been asked for four ways over one day —
+ * an earlier version of this file pinned "the offer button is gone and stays
+ * gone", and a later one pinned two gates on the replacement that have since
+ * been removed by request.
  */
 
 const read = (rel: string) =>
@@ -33,32 +34,23 @@ const read = (rel: string) =>
     .replace(/^\s*\/\/.*$/gm, "");
 
 const SRC = read("src/features/reimburse/components/SellerCheckCells.tsx");
-const GRID = read("src/features/reimburse/components/ReimburseItemGrid.tsx");
 
-test("the FIRST find on a read's row writes the registered name", () => {
+test("a find writes the registered name into the row", () => {
   assert.ok(
-    /onChangeRef\.current\(\{ vendorName: name \}\)/.test(SRC),
+    /if \(name !== "" && had !== name\) onChangeRef\.current\(\{ vendorName: name \}\);/.test(SRC),
     "the lookup no longer writes the registered name — it is back to only asking",
-  );
-  assert.ok(
-    /const firstFind = !foundOnceRef\.current;/.test(SRC),
-    "the first-find gate is gone",
-  );
-  assert.ok(
-    /shouldWrite = !!fromDocumentRead && firstFind/.test(SRC),
-    "the write is no longer gated on BOTH a read's own row and its first find",
   );
 });
 
-test("a tax id changed afterwards offers rather than overwrites", () => {
-  // The receipt read fills the tax id and a name together, and that one event
-  // is what the replacement is for. A number edited later is somebody working
-  // the row deliberately — overwriting then would fight them thirteen digits at
-  // a time — so the one replacement is spent on the first find and never
-  // refunded.
+test("nothing gates the replacement any more", () => {
+  // Both gates were asked for and then asked away again (2026-09-15). They are
+  // gone rather than left in to contradict the plain rule quietly: a "first
+  // find only" flag, and a "this row came from a document read" prop.
+  assert.ok(!/foundOnceRef/.test(SRC), "a first-find gate is back on the replacement");
+  assert.ok(!/fromDocumentRead/.test(SRC), "a came-from-a-read gate is back on the replacement");
   assert.ok(
-    /if \(name !== ""\) foundOnceRef\.current = true;/.test(SRC),
-    "the first find no longer spends the one replacement this row gets",
+    !/arrivedWithTaxIdRef/.test(SRC),
+    "an arrived-with-a-tax-id gate is back on the replacement",
   );
 });
 
@@ -73,33 +65,11 @@ test("the registered name stays on offer while the box disagrees", () => {
   );
 });
 
-test("only a document read's own unsaved row is ever overwritten", () => {
-  // The lookup fires on mount for any 13-digit number, so a saved row would
-  // otherwise have its seller name rewritten on open — a row nobody touched,
-  // carrying a name somebody deliberately corrected. It gets the offer button.
-  //
-  // `fromDocumentRead` and NOT "did this row arrive with a tax id": a read
-  // CREATES the row carrying both the tax id and a transcribed name, so its
-  // cells' first render already holds 13 digits, and the arrival test caught
-  // the one case the replacement exists for. That was the bug reported on
-  // 2026-09-15 — a new attachment found the tax id and left the name alone.
-  assert.ok(
-    /fromDocumentRead\?: boolean;/.test(SRC),
-    "the from-a-read flag is gone — every row is now a candidate for overwriting",
-  );
-  assert.ok(
-    !/arrivedWithTaxIdRef/.test(SRC),
-    "the arrival test is back; it skips the read's own row, the only one to write",
-  );
-});
-
-test("the grid marks a read's row with its unsaved source id", () => {
-  // `sourceDocId` is swapped for `sourceFileId` by `handleSaveDraft`, so it is
-  // true exactly while the row came from a read and has not been saved.
-  assert.ok(
-    /fromDocumentRead=\{!!item\.sourceDocId\}/.test(GRID),
-    "the grid no longer tells the cells which rows came from a document read",
-  );
+test("the replacement runs on the tax id alone, so a name edit survives", () => {
+  // `[digits]`, not `[digits, vendorName]`. Re-running the lookup when the name
+  // changed would overwrite the edit the offer button exists to let somebody
+  // make, the moment they made it.
+  assert.ok(/\}, \[digits\]\);/.test(SRC), "the lookup effect no longer keys on the tax id alone");
 });
 
 test("the tax id box takes digits only, and no more than thirteen", () => {
@@ -118,8 +88,8 @@ test("the tax id box takes digits only, and no more than thirteen", () => {
 
 test("the lookup reads the name through a ref, not the effect's closure", () => {
   // The effect keys on the tax id alone, so a `vendorName` captured when it ran
-  // can be stale by the time the fetch lands — it would report "replaced" for a
-  // row it did not touch, or stay quiet on one it did.
+  // can be a keystroke stale by the time the fetch lands — the write would then
+  // be judged against a value that is no longer in the box.
   assert.ok(
     /const had = \(nameRef\.current \?\? ""\)\.trim\(\);/.test(SRC),
     "the lookup compares against a captured vendorName again",
