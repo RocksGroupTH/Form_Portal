@@ -80,11 +80,25 @@ export function SellerCheckCells({
   index,
   taxId,
   vendorName,
+  fromDocumentRead,
   onChange,
 }: {
   index: number;
   taxId: string | null | undefined;
   vendorName: string | null | undefined;
+  /**
+   * True while this row came from a document read in this session and has not
+   * been saved yet — the grid passes `!!item.sourceDocId`.
+   *
+   * **This is the only row the replacement is for.** A read CREATES a row
+   * carrying both the tax id and a transcribed seller name, so the cells' very
+   * first render already has 13 digits in hand; a gate that asked "did this row
+   * arrive with a tax id?" therefore caught the one case it was meant to serve
+   * and skipped it (user, 2026-09-15). A saved row has `sourceFileId` instead
+   * and never qualifies, which is the behaviour that gate was actually written
+   * for.
+   */
+  fromDocumentRead?: boolean;
   onChange: (patch: { vendorTaxId?: string | null; vendorName?: string | null }) => void;
 }) {
   const [state, setState] = useState<State>({ kind: "idle" });
@@ -97,20 +111,11 @@ export function SellerCheckCells({
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const digits = taxIdDigits(taxId);
-  /**
-   * Did this row arrive with a tax id already on it?
-   *
-   * **A saved row is looked up but never overwritten.** The lookup fires
-   * whenever the number is 13 digits long, mount included, so without this
-   * reopening a draft would silently rewrite a seller name somebody had
-   * deliberately corrected to the trading name on the receipt — replacing a
-   * decision nobody was making at the time. Such a row gets the offer button
-   * instead, which is the same answer every other disagreement gets.
-   *
-   * A value rather than a "first run" flag, so it is stable under
-   * `reactStrictMode`'s mount → cleanup → mount.
-   */
-  const arrivedWithTaxIdRef = useRef(digits !== "");
+  /* A saved row is looked up and never overwritten — it has no
+     `sourceDocId`, so `fromDocumentRead` is false. Reopening a draft must not
+     rewrite a seller name somebody deliberately corrected, on a row nobody
+     touched; that row gets the offer button, the same answer every other
+     disagreement gets. */
   /**
    * Has a lookup on this row ever found a registrant?
    *
@@ -155,8 +160,7 @@ export function SellerCheckCells({
           const had = (nameRef.current ?? "").trim();
           const firstFind = !foundOnceRef.current;
           if (name !== "") foundOnceRef.current = true;
-          const shouldWrite =
-            !arrivedWithTaxIdRef.current && firstFind && name !== "" && had !== name;
+          const shouldWrite = !!fromDocumentRead && firstFind && name !== "" && had !== name;
           if (shouldWrite) onChangeRef.current({ vendorName: name });
           setState({ kind: "found", registrant: found, replaced: shouldWrite && had !== "" });
         }
@@ -203,9 +207,26 @@ export function SellerCheckCells({
           type="text"
           aria-label={`เลขประจำตัวผู้เสียภาษีของรายการที่ ${index + 1}`}
           placeholder="0105547161674"
-          maxLength={20}
+          /* Digits only, thirteen of them (user, 2026-09-15). It accepted any
+             twenty characters before, because `taxIdDigits` strips the grouping
+             receipts print and the field was left permissive to match. That is
+             the right rule for a value being READ off a document and the wrong
+             one for a box somebody types into: a letter or a fourteenth digit
+             could be entered and then only reported as an error underneath.
+             Filtering on the way in means the box cannot hold something the
+             column will not take.
+
+             `inputMode` rather than `type="number"`: a tax id is a string of
+             digits, not a quantity — a number input brings a spinner, accepts
+             `1e5`, and drops leading zeros, and every Thai tax id starts with
+             one. */
+          inputMode="numeric"
+          maxLength={TAX_ID_LENGTH}
           value={taxId ?? ""}
-          onChange={(e) => onChange({ vendorTaxId: e.target.value === "" ? null : e.target.value })}
+          onChange={(e) => {
+            const digitsOnly = e.target.value.replace(/[^0-9]/g, "").slice(0, TAX_ID_LENGTH);
+            onChange({ vendorTaxId: digitsOnly === "" ? null : digitsOnly });
+          }}
           className="w-full rounded-lg px-3 py-2 text-[14px] outline-none"
           style={{
             background: "var(--bg-input)",

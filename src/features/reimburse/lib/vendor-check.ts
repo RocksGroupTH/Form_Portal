@@ -15,10 +15,12 @@
  * after the registered one and no two of the three are ever string-equal.
  *
  * So the comparison normalises away everything that is not the identity —
- * whitespace, bracketed qualifiers, case — and then asks whether either side
- * contains the other. Containment rather than equality because the receipt's
- * version is usually the longer one, carrying a branch or a trading name the
- * register does not.
+ * whitespace, bracketed qualifiers, case — and then asks whether the TYPED name
+ * contains one of the register's two forms. Containment rather than equality
+ * because the receipt's version is usually the longer one, carrying a branch or
+ * a trading name the register does not; **one-directional** because the reverse
+ * makes every truncation a match, and an edited-down name is exactly when the
+ * offer is wanted.
  *
  * **A mismatch is never an error.** It means "these two disagree, look at it" —
  * the screen offers the registered name and the requester decides. A receipt
@@ -101,5 +103,14 @@ export function compareVendorName(typed: string | null | undefined, r: Registran
   const candidates = [full, bare].filter((c) => c !== "");
   if (candidates.length === 0) return "mismatch";
 
-  return candidates.some((c) => c.includes(a) || a.includes(c)) ? "match" : "mismatch";
+  // **The typed name may carry MORE than the register holds, never less.**
+  // `c.includes(a)` was here too, and it made every truncation a match: edit
+  // "บริษัท ข้าว โซ อิ กรุ๊ป จำกัด" down to "บริษัท ข้าว โซ อิ" and the shorter
+  // string is still contained in the registered one, so the screen went on
+  // saying ตรงกับกรมสรรพากร and never offered the name back (user, 2026-09-15).
+  // The other direction is the one the containment exists for — a receipt
+  // printing a branch or a trading name after the registered name — and it
+  // stays. A name written shorter than the register's now reads as a mismatch,
+  // which costs a button nobody has to press.
+  return candidates.some((c) => a.includes(c)) ? "match" : "mismatch";
 }

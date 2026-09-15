@@ -4,36 +4,38 @@ import fs from "node:fs";
 import path from "node:path";
 
 /**
- * Four rules about the seller cells that no unit test can reach — the logic
- * sits inside a React component and this repository has no DOM harness — and
- * that a reasonable edit undoes silently.
+ * Rules about the seller cells that no unit test can reach — the logic sits
+ * inside a React component and this repository has no DOM harness — and that a
+ * reasonable edit undoes silently.
  *
- * The first two look like alternatives and are not. Asked over three passes on
+ * The first two look like alternatives and are not. Asked over four passes on
  * 2026-09-15, they compose into one behaviour:
  *
- * - the **first** find on a row replaces the seller name outright, which is the
- *   receipt-read case — attaching the file fills the tax id and a transcribed
- *   name together, and the register's name is the one the ledger wants;
+ * - the **first find on a row a document read created** replaces the seller
+ *   name outright: attaching the file fills the tax id and a transcribed name
+ *   together, and the register's name is the one the ledger wants;
  * - **every disagreement after that** is an offer on a button — a tax id edited
  *   later, a name edited later, or a saved row opened with a name that never
  *   matched.
  *
  * Removing either because the other exists is precisely the edit these
- * assertions are here to stop. The first version of this file pinned "the offer
- * button is gone and stays gone", which one pass later was the wrong answer.
+ * assertions are here to stop. An earlier version of this file pinned "the
+ * offer button is gone and stays gone", which one pass later was the wrong
+ * answer.
  */
 
-const SRC = fs
-  .readFileSync(
-    path.resolve(process.cwd(), "src/features/reimburse/components/SellerCheckCells.tsx"),
-    "utf8",
-  )
-  // Comments stripped: the component explains the behaviour it replaced, in
-  // the words this test searches for.
-  .replace(/\/\*[\s\S]*?\*\//g, "")
-  .replace(/^\s*\/\/.*$/gm, "");
+const read = (rel: string) =>
+  fs
+    .readFileSync(path.resolve(process.cwd(), rel), "utf8")
+    // Comments stripped: the component explains the behaviour it replaced, in
+    // the words these tests search for.
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
 
-test("the FIRST find writes the registered name into the row", () => {
+const SRC = read("src/features/reimburse/components/SellerCheckCells.tsx");
+const GRID = read("src/features/reimburse/components/ReimburseItemGrid.tsx");
+
+test("the FIRST find on a read's row writes the registered name", () => {
   assert.ok(
     /onChangeRef\.current\(\{ vendorName: name \}\)/.test(SRC),
     "the lookup no longer writes the registered name — it is back to only asking",
@@ -43,8 +45,8 @@ test("the FIRST find writes the registered name into the row", () => {
     "the first-find gate is gone",
   );
   assert.ok(
-    /shouldWrite =\s*!arrivedWithTaxIdRef\.current && firstFind/.test(SRC),
-    "the write is no longer gated on BOTH a fresh row and its first find",
+    /shouldWrite = !!fromDocumentRead && firstFind/.test(SRC),
+    "the write is no longer gated on BOTH a read's own row and its first find",
   );
 });
 
@@ -71,17 +73,46 @@ test("the registered name stays on offer while the box disagrees", () => {
   );
 });
 
-test("a row that arrived with a tax id is never overwritten", () => {
-  // The lookup fires on mount for any 13-digit number, so without this gate
-  // reopening a draft rewrites a seller name somebody deliberately corrected,
-  // on a row nobody touched. That row gets the offer button instead.
+test("only a document read's own unsaved row is ever overwritten", () => {
+  // The lookup fires on mount for any 13-digit number, so a saved row would
+  // otherwise have its seller name rewritten on open — a row nobody touched,
+  // carrying a name somebody deliberately corrected. It gets the offer button.
+  //
+  // `fromDocumentRead` and NOT "did this row arrive with a tax id": a read
+  // CREATES the row carrying both the tax id and a transcribed name, so its
+  // cells' first render already holds 13 digits, and the arrival test caught
+  // the one case the replacement exists for. That was the bug reported on
+  // 2026-09-15 — a new attachment found the tax id and left the name alone.
   assert.ok(
-    /const arrivedWithTaxIdRef = useRef\(digits !== ""\);/.test(SRC),
-    "the arrived-with-a-tax-id gate is gone — reopening a draft now rewrites its seller name",
+    /fromDocumentRead\?: boolean;/.test(SRC),
+    "the from-a-read flag is gone — every row is now a candidate for overwriting",
   );
   assert.ok(
-    /!arrivedWithTaxIdRef\.current/.test(SRC),
-    "the write no longer checks whether the row arrived with a tax id",
+    !/arrivedWithTaxIdRef/.test(SRC),
+    "the arrival test is back; it skips the read's own row, the only one to write",
+  );
+});
+
+test("the grid marks a read's row with its unsaved source id", () => {
+  // `sourceDocId` is swapped for `sourceFileId` by `handleSaveDraft`, so it is
+  // true exactly while the row came from a read and has not been saved.
+  assert.ok(
+    /fromDocumentRead=\{!!item\.sourceDocId\}/.test(GRID),
+    "the grid no longer tells the cells which rows came from a document read",
+  );
+});
+
+test("the tax id box takes digits only, and no more than thirteen", () => {
+  // The column is a 13-digit string. Filtering on the way in means the box
+  // cannot hold something the column will not take, rather than accepting it
+  // and reporting an error underneath.
+  assert.ok(
+    /maxLength=\{TAX_ID_LENGTH\}/.test(SRC),
+    "the tax id box no longer caps at the real length",
+  );
+  assert.ok(
+    /replace\(\/\[\^0-9\]\/g, ""\)\.slice\(0, TAX_ID_LENGTH\)/.test(SRC),
+    "the tax id box no longer strips non-digits on the way in",
   );
 });
 

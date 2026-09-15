@@ -606,6 +606,10 @@ export function ReimburseItemGrid({
                     <SellerCheckCells
                       index={index}
                       taxId={item.vendorTaxId}
+                      // Set only while the row came from a read this session
+                      // and is unsaved — `handleSaveDraft` swaps it for
+                      // `sourceFileId`. See SellerCheckCells' own prop doc.
+                      fromDocumentRead={!!item.sourceDocId}
                       vendorName={item.vendorName}
                       onChange={(patch) => onUpdate(index, patch)}
                     />

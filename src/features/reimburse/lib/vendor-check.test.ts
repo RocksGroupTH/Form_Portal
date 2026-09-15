@@ -64,6 +64,21 @@ test("the title may be missing from what was typed", () => {
   assert.equal(compareVendorName("ข้าว โซ อิ กรุ๊ป จำกัด", RD), "match");
 });
 
+test("a name edited SHORTER than the register's is a mismatch", () => {
+  // The containment is one-directional, and this is why. It used to run both
+  // ways, so deleting the tail of a matching name left the shorter string still
+  // contained in the registered one: the screen went on saying ตรงกับกรมสรรพากร
+  // and never offered the name back, which is the bug reported on 2026-09-15.
+  assert.equal(compareVendorName("บริษัท ข้าว โซ อิ", RD), "mismatch");
+  assert.equal(compareVendorName("ข้าว โซ", RD), "mismatch");
+});
+
+test("one character is not a match for every company on the register", () => {
+  // The sharp end of the same rule: under two-way containment any single
+  // character occurring in the name matched it.
+  assert.equal(compareVendorName("ข", RD), "mismatch");
+});
+
 test("a genuinely different company is a mismatch", () => {
   assert.equal(compareVendorName("บริษัท เดอะ 101 จำกัด", RD), "mismatch");
 });
