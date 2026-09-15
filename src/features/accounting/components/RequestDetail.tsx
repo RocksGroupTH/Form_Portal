@@ -88,6 +88,7 @@ import {
 import type { AccRequest, AccApproval, AccFileMeta, AccVehicle, TravelExpenseDetail, TravelExpenseItem, RouteWaypoint } from "@/features/accounting/types";
 import { extraDestinationLabel, ROUTE_FIRST_DEST_LABEL, ROUTE_ORIGIN_LABEL } from "@/features/accounting/lib/route-waypoints";
 import { fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
+import { formatEnDate, formatEnDateTime } from "@/features/accounting/lib/thai-calendar";
 
 /* Read-only route map (Leaflet touches window → client-only). */
 const RouteMapView = dynamic(() => import("./RouteMapView"), {
@@ -112,29 +113,19 @@ function fmtMoney(n: number | null | undefined): string {
   return n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-/** Format a date string with local getters (no toISOString) */
-function fmtDate(raw: string | null | undefined): string {
-  if (!raw) return "—";
-  const d = new Date(raw);
-  if (isNaN(d.getTime())) return raw;
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const yyyy = d.getFullYear();
-  const hh = String(d.getHours()).padStart(2, "0");
-  const min = String(d.getMinutes()).padStart(2, "0");
-  return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
-}
-
-/** Format a date-only string (no time) */
-function fmtDateOnly(raw: string | null | undefined): string {
-  if (!raw) return "—";
-  const d = new Date(raw);
-  if (isNaN(d.getTime())) return raw;
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const yyyy = d.getFullYear();
-  return `${dd}/${mm}/${yyyy}`;
-}
+/*
+ * Dates read in English, from the two shared formatters (user, 2026-09-15).
+ *
+ * These were a local `dd/mm/yyyy` pair, as they were in every other detail
+ * panel, queue and picker in this app — which is exactly what
+ * `thai-calendar.ts`'s header says that file exists to prevent, arrived at one
+ * copy at a time. Wrappers rather than call-site edits so the names this file
+ * already uses stay put; `formatEnDate` keeps both behaviours the copies had,
+ * returning the input unchanged when it cannot be parsed and "—" when it is
+ * empty.
+ */
+const fmtDate = (raw: string | null | undefined) => formatEnDateTime(raw);
+const fmtDateOnly = (raw: string | null | undefined) => formatEnDate(raw);
 
 const STEP_LABEL: Record<StepCode, string> = {
   MANAGER: "ผู้จัดการ",

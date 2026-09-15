@@ -1,4 +1,5 @@
 "use client";
+import { formatEnDate, formatEnDateTime } from "@/features/accounting/lib/thai-calendar";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Avatar } from "@/components/ui/Avatar";
@@ -56,12 +57,9 @@ function fmtMoney(n: number | null | undefined): string {
   if (n == null) return "—";
   return n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
-function fmtDate(raw: string | null | undefined): string {
-  if (!raw) return "—";
-  const d = new Date(raw);
-  if (isNaN(d.getTime())) return raw;
-  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
-}
+// The shared English formatter — see thai-calendar.ts. Was a local dd/mm/yyyy,
+// one of about twenty identical copies across this app.
+const fmtDate = (raw: string | null | undefined) => formatEnDate(raw);
 
 /** Status → chip colors (tokens). */
 function statusStyle(status: string): React.CSSProperties {

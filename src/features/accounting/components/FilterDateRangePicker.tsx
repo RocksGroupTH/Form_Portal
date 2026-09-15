@@ -3,17 +3,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
+import { EN_MONTHS, EN_MONTHS_SHORT } from "@/features/accounting/lib/thai-calendar";
 
 const TH_DAYS = ["อา", "จ", "อ", "พ", "พฤ", "ศ", "ส"] as const;
-const TH_MONTHS = [
-  "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
-  "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม",
-] as const;
-
 function fmtDisplay(ymd: string): string {
   const [y, m, d] = ymd.split("-").map(Number);
   if (!y || !m || !d) return ymd;
-  return `${String(d).padStart(2, "0")}/${String(m).padStart(2, "0")}/${y}`;
+  return `${d} ${EN_MONTHS_SHORT[m - 1]} ${y}`;
 }
 
 function toYmd(year: number, month0: number, day: number): string {
@@ -266,7 +262,7 @@ export function FilterDateRangePicker({
             <ChevronLeft size={16} />
           </button>
           <span className="text-[12px] font-bold" style={{ color: "var(--text-heading)" }}>
-            {TH_MONTHS[viewMonth0]} {viewYear}
+            {EN_MONTHS[viewMonth0]} {viewYear}
           </span>
           <button
             type="button"

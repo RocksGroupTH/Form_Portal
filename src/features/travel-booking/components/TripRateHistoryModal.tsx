@@ -1,4 +1,5 @@
 "use client";
+import { formatEnDate, formatEnDateTime } from "@/features/accounting/lib/thai-calendar";
 
 import { History } from "lucide-react";
 import { Dialog } from "@/components/ui/Dialog";
@@ -20,10 +21,9 @@ import type { TripRateSegment } from "@/features/travel-booking/lib/trip-rate-se
  * for nothing.
  */
 
-function fmtDate(iso: string): string {
-  const [y, m, d] = iso.split("-");
-  return `${d}/${m}/${y}`;
-}
+// The shared English formatter — see thai-calendar.ts. Was a local dd/mm/yyyy,
+// one of about twenty identical copies across this app.
+const fmtDate = (iso: string) => formatEnDate(iso, "");
 
 export function TripRateHistoryModal({
   open,

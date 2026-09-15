@@ -33,7 +33,7 @@ import { useUserPhoto } from "@/lib/hooks/useUserPhoto";
 import { useGoogleMapsApiKey } from "@/lib/hooks/useGoogleMapsApiKey";
 import { useTravelExpenseForm } from "@/features/accounting/hooks/useTravelExpenseForm";
 import { FilterMultiDatePicker } from "@/features/accounting/components/FilterMultiDatePicker";
-import { fmtTravelDatesListEn } from "@/features/accounting/lib/format-travel-dates";
+import { fmtTravelDatesList } from "@/features/accounting/lib/format-travel-dates";
 import { DistanceMapField } from "./DistanceMapField";
 import { ExpenseRows } from "./ExpenseRows";
 import { computeTotalAmount, computeTotalDistance, dayCostBreakdown } from "@/lib/acc/calc";
@@ -1215,7 +1215,7 @@ export function TravelExpenseForm({
               className="text-[12px] mt-1.5 m-0 break-words"
               style={{ color: "var(--text-muted)" }}
             >
-              {selectedTravelDates.length} วัน · {fmtTravelDatesListEn(selectedTravelDates)}
+              {selectedTravelDates.length} วัน · {fmtTravelDatesList(selectedTravelDates)}
               {selectedTravelDates.length > 1
                 ? " · กรอกรายละเอียดแยกตามแท็บด้านล่าง"
                 : ""}

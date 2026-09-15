@@ -1,4 +1,5 @@
 "use client";
+import { formatEnDate, formatEnDateTime } from "@/features/accounting/lib/thai-calendar";
 
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -72,27 +73,11 @@ export function fmtMoney(n: number | null | undefined): string {
   return n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-export function fmtDateTime(raw: string | null | undefined): string {
-  if (!raw) return "—";
-  const d = new Date(raw);
-  if (isNaN(d.getTime())) return raw;
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const yyyy = d.getFullYear();
-  const hh = String(d.getHours()).padStart(2, "0");
-  const min = String(d.getMinutes()).padStart(2, "0");
-  return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
-}
+// The shared English formatter — see thai-calendar.ts. Was a local dd/mm/yyyy,
+// one of about twenty identical copies across this app.
+export const fmtDateTime = (raw: string | null | undefined) => formatEnDateTime(raw);
 
-export function fmtDateOnly(raw: string | null | undefined): string {
-  if (!raw) return "—";
-  const d = new Date(raw);
-  if (isNaN(d.getTime())) return raw;
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const yyyy = d.getFullYear();
-  return `${dd}/${mm}/${yyyy}`;
-}
+export const fmtDateOnly = (raw: string | null | undefined) => formatEnDate(raw);
 
 /** YYYY-MM from ERP interface sent timestamp (local calendar month). */
 export function sentMonthKey(sentAt: string | null | undefined): string | null {

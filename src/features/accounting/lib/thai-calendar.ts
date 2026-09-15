@@ -189,6 +189,53 @@ export function formatEnYmdShort(ymd: string): string {
   return `${p.day} ${EN_MONTHS_SHORT[p.month0]} ${displayYear(p.year)}`;
 }
 
+/**
+ * What every screen in this app prints a date as — `"4 Sep 2026"`.
+ *
+ * **One function, because there were twenty.** Each detail panel, queue and
+ * draft picker carried its own five-line `dd/mm/yyyy` — the exact thing this
+ * file's header says it exists to prevent, arrived at one copy at a time. The
+ * user asked for English dates on every form's view (2026-09-15), and twenty
+ * edits with no shared definition is how half of them end up still in digits.
+ *
+ * **Three input shapes, and the first is not an accident.** A bare
+ * `YYYY-MM-DD` from the server is already local-calendar text and is read
+ * without `new Date`, which would parse it as UTC midnight and print the day
+ * before for anybody east of Greenwich — this app runs at UTC+7, so it would be
+ * every row. Anything else goes through `Date` and LOCAL getters, never
+ * `toISOString`, for the reason CLAUDE.md gives about `useUTC: false`.
+ *
+ * Unparseable input comes back unchanged rather than as "Invalid Date", and an
+ * empty one as `fallback` — both behaviours the copies had, kept so no caller
+ * changes what it renders for a row with no date.
+ */
+export function formatEnDate(raw: string | null | undefined, fallback = "—"): string {
+  if (!raw) return fallback;
+  const plain = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
+  if (plain) {
+    return `${Number(plain[3])} ${EN_MONTHS_SHORT[Number(plain[2]) - 1]} ${plain[1]}`;
+  }
+  const d = new Date(raw);
+  if (isNaN(d.getTime())) return raw;
+  return `${d.getDate()} ${EN_MONTHS_SHORT[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+/**
+ * `"4 Sep 2026 15:44"` — a timestamp, for a timeline or an audit line.
+ *
+ * A bare `YYYY-MM-DD` has no time to show and comes back as the date alone
+ * rather than with a made-up `00:00`.
+ */
+export function formatEnDateTime(raw: string | null | undefined, fallback = "—"): string {
+  if (!raw) return fallback;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return formatEnDate(raw, fallback);
+  const d = new Date(raw);
+  if (isNaN(d.getTime())) return raw;
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${formatEnDate(raw, fallback)} ${hh}:${mm}`;
+}
+
 /** Step the visible month, carrying across the year boundary in both directions. */
 export function addMonths(year: number, month0: number, delta: number): { year: number; month0: number } {
   const total = year * 12 + month0 + delta;

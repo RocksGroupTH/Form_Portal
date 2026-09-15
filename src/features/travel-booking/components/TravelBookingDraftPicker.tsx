@@ -1,31 +1,20 @@
 "use client";
+import { formatEnDate, formatEnDateTime } from "@/features/accounting/lib/thai-calendar";
 
 import { useState } from "react";
 import { FileText, Plus, ChevronRight, Trash2, Loader2 } from "lucide-react";
 import { Dialog, Button } from "@/components/ui";
 import type { TravelBookingDraftSummary } from "@/features/travel-booking/types";
 
+// The shared English formatter — see thai-calendar.ts. Was a local dd/mm/yyyy,
+// one of about twenty identical copies across this app.
 function fmtSpan(from: string | null, to: string | null): string {
   if (!from && !to) return "ยังไม่ระบุวันเดินทาง";
-  const fmt = (ymd: string) => {
-    const [y, m, d] = ymd.split("-");
-    return `${d}/${m}/${y}`;
-  };
-  if (from && to && from !== to) return `${fmt(from)} – ${fmt(to)}`;
-  return fmt(from ?? to ?? "");
+  if (from && to && from !== to) return `${formatEnDate(from)} – ${formatEnDate(to)}`;
+  return formatEnDate(from ?? to ?? "", "");
 }
 
-function fmtUpdatedAt(iso: string): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "—";
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const yyyy = d.getFullYear();
-  const hh = String(d.getHours()).padStart(2, "0");
-  const min = String(d.getMinutes()).padStart(2, "0");
-  return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
-}
+const fmtUpdatedAt = (iso: string) => formatEnDateTime(iso);
 
 interface Props {
   open: boolean;

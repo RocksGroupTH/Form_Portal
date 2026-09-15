@@ -1,4 +1,5 @@
 "use client";
+import { formatEnDate, formatEnDateTime } from "@/features/accounting/lib/thai-calendar";
 
 import React, { useCallback, useEffect, useState } from "react";
 import useSWR from "swr";
@@ -70,28 +71,20 @@ import type {
 
 /* ─────────────────────────── helpers ─────────────────────────── */
 
-/** Local getters throughout — the server runs on Thai time and `toISOString` would shift the day. */
-function fmtDateTime(raw: string | null | undefined): string {
-  if (!raw) return "—";
-  const d = new Date(raw);
-  if (isNaN(d.getTime())) return raw;
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mi = String(d.getMinutes()).padStart(2, "0");
-  return `${dd}/${mm}/${d.getFullYear()} ${hh}:${mi}`;
-}
-
-function fmtDateOnly(raw: string | null | undefined): string {
-  if (!raw) return "—";
-  // A YYYY-MM-DD from the server is already local-calendar text; parsing it
-  // through Date would reinterpret it as UTC midnight.
-  const ymd = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
-  if (ymd) return `${ymd[3]}/${ymd[2]}/${ymd[1]}`;
-  const d = new Date(raw);
-  if (isNaN(d.getTime())) return raw;
-  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
-}
+/*
+ * Dates read in English, from the two shared formatters (user, 2026-09-15).
+ *
+ * These were a local `dd/mm/yyyy` pair, as they were in every other detail
+ * panel, queue and picker in this app — which is exactly what
+ * `thai-calendar.ts`'s header says that file exists to prevent, arrived at one
+ * copy at a time. Wrappers rather than call-site edits so the names this file
+ * already uses stay put, and the shared pair keeps both behaviours the copies
+ * had: a bare YYYY-MM-DD is read without `new Date` (which would parse it as
+ * UTC midnight and print the day before), and unparseable input comes back
+ * unchanged.
+ */
+const fmtDateTime = (raw: string | null | undefined) => formatEnDateTime(raw);
+const fmtDateOnly = (raw: string | null | undefined) => formatEnDate(raw);
 
 /** The shared `fmtBaht`, plus the em-dash this page wants for an absent figure. */
 function fmtMoney(n: number | null | undefined): string {

@@ -1,4 +1,5 @@
 "use client";
+import { formatEnDate, formatEnDateTime } from "@/features/accounting/lib/thai-calendar";
 
 /**
  * Shared building blocks for the two AP-3 (Clear Advance) report pages.
@@ -19,31 +20,10 @@ export function fmtMoney(n: number | null | undefined): string {
   return n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-/** Format an ISO/date string with local getters (server is Thai time). */
-export function fmtDateTime(raw: string | null | undefined): string {
-  if (!raw) return "—";
-  const d = new Date(raw);
-  if (isNaN(d.getTime())) return raw;
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const yyyy = d.getFullYear();
-  const hh = String(d.getHours()).padStart(2, "0");
-  const min = String(d.getMinutes()).padStart(2, "0");
-  return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
-}
-
-/** Format a date-only value (ISO or "YYYY-MM-DD") with local getters. */
-export function fmtDateOnly(raw: string | null | undefined): string {
-  if (!raw) return "—";
-  // "YYYY-MM-DD" from the service — render directly to avoid TZ drift.
-  const ymd = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
-  if (ymd) return `${ymd[3]}/${ymd[2]}/${ymd[1]}`;
-  const d = new Date(raw);
-  if (isNaN(d.getTime())) return raw;
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  return `${dd}/${mm}/${d.getFullYear()}`;
-}
+// The shared English formatter — see thai-calendar.ts. Was a local dd/mm/yyyy,
+// one of about twenty identical copies across this app.
+export const fmtDateTime = (raw: string | null | undefined) => formatEnDateTime(raw);
+export const fmtDateOnly = (raw: string | null | undefined) => formatEnDate(raw);
 
 /* ─────────────── filter input styles (mirror ApprovalQueueFilters) ─────────────── */
 

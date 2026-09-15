@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
+import { EN_MONTHS, EN_MONTHS_SHORT } from "@/features/accounting/lib/thai-calendar";
 
 interface PaymentDatePickerProps {
   value: string;
@@ -10,7 +11,6 @@ interface PaymentDatePickerProps {
 }
 
 const DAY_HEADERS = ["อา", "จ", "อ", "พ", "พฤ", "ศ", "ส"];
-const MONTHS_TH = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
 
 export function PaymentDatePicker({ value, onChange, allowedDates }: PaymentDatePickerProps) {
   const [open, setOpen] = useState(false);
@@ -83,7 +83,7 @@ export function PaymentDatePicker({ value, onChange, allowedDates }: PaymentDate
     const d = new Date(value + "T00:00:00");
     // AD, not BE — AP-2 shows คริสต์ศักราช so the year matches ERP and the ISO
     // values the form actually stores.
-    return `${d.getDate()} ${MONTHS_TH[d.getMonth()]} ${d.getFullYear()}`;
+    return `${d.getDate()} ${EN_MONTHS_SHORT[d.getMonth()]} ${d.getFullYear()}`;
   }
 
   return (
@@ -123,7 +123,7 @@ export function PaymentDatePicker({ value, onChange, allowedDates }: PaymentDate
               <ChevronLeft size={14} />
             </button>
             <span className="text-[12px] font-semibold" style={{ color: "var(--text-primary)" }}>
-              {MONTHS_TH[month]} {year}
+              {EN_MONTHS[month]} {year}
             </span>
             <button type="button" onClick={next} className="p-1 rounded hover:opacity-70" style={{ color: "var(--text-muted)" }}>
               <ChevronRight size={14} />

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
-import { fmtTravelDatesListEn } from "@/features/accounting/lib/format-travel-dates";
+import { fmtTravelDatesList } from "@/features/accounting/lib/format-travel-dates";
 
 // The month arithmetic and Thai labels are shared with `SingleDatePicker`
 // (AP-4's per-row expense date) rather than kept as a second copy here — see
@@ -105,7 +105,7 @@ export function FilterMultiDatePicker({
   }, [open]);
 
   const cells = useMemo(() => buildMonthCells(viewYear, viewMonth0), [viewYear, viewMonth0]);
-  const display = fmtTravelDatesListEn(selected);
+  const display = fmtTravelDatesList(selected);
   const today = todayYmd();
   const now = new Date();
   const canGoNext =

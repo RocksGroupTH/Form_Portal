@@ -4,11 +4,11 @@
 // one: AP-1's form reads its dates in English since 2026-09-15, and the Thai
 // tables left with the last function here that used them.
 //
-// **The NUMERIC formatters below are untouched**, and that is the line to hold:
-// `fmtYmdDisplay`, `fmtYmdShort`, `fmtTravelSpanLabel` and `fmtReportTravelDate`
-// print every AP-1 and AP-17 report column, both Excel exports and both detail
-// pages. Only the two FORM surfaces were asked to change, so the English
-// versions sit beside them rather than replacing them.
+// **Everything here reads in English since 2026-09-15**, form and report
+// alike. The first cut added English twins beside the numeric originals and
+// left the reports alone; the user then asked for the views too, and a twin
+// would have meant the same date reading `04/09/2026` in a report and
+// `4 Sep 2026` on the panel that report links to. One spelling, one function.
 import { EN_DAYS, EN_MONTHS_SHORT } from "./thai-calendar";
 
 /**
@@ -36,18 +36,26 @@ export function fmtDayPanelTitle(ymd: string | null, fallbackIndex?: number): st
   return "ข้อมูลการเดินทาง";
 }
 
-/** DD/MM/YYYY display from YYYY-MM-DD */
+/**
+ * `"2026-09-04"` → `"4 Sep 2026"`.
+ *
+ * **English since 2026-09-15**, and changed in place rather than beside the
+ * DD/MM/YYYY it replaced. The alternative was briefly tried and is worse: this
+ * function prints both detail panels, three queues and the report columns, so a
+ * twin would have left the same date reading `04/09/2026` in a report and
+ * `4 Sep 2026` on the panel the report links to.
+ */
 export function fmtYmdDisplay(ymd: string): string {
   const [y, m, d] = ymd.split("-").map(Number);
   if (!y || !m || !d) return ymd;
-  return `${String(d).padStart(2, "0")}/${String(m).padStart(2, "0")}/${y}`;
+  return `${d} ${EN_MONTHS_SHORT[m - 1]} ${y}`;
 }
 
-/** DD/MM from YYYY-MM-DD */
+/** `"2026-09-04"` → `"4 Sep"` — for a list where the line carries the year. */
 export function fmtYmdShort(ymd: string): string {
-  const [, m, d] = ymd.split("-");
+  const [, m, d] = ymd.split("-").map(Number);
   if (!m || !d) return ymd;
-  return `${d}/${m}`;
+  return `${d} ${EN_MONTHS_SHORT[m - 1]}`;
 }
 
 /** Inclusive list of YYYY-MM-DD from lo to hi. */
@@ -73,39 +81,6 @@ export function fmtTravelDatesList(dates: string[]): string {
   if (dates.length === 0) return "";
   if (dates.length === 1) return fmtYmdDisplay(dates[0]);
   return dates.map(fmtYmdShort).join(", ");
-}
-
-/**
- * `"2026-08-22"` → `"22 Aug 2026"`; the English counterpart of `fmtYmdDisplay`.
- *
- * Added rather than replacing it: `fmtYmdDisplay` is the DD/MM/YYYY every AP-1
- * and AP-17 report column, the Excel exports and both detail pages print, and
- * none of those was asked about. This one is for the two FORM surfaces.
- */
-export function fmtYmdDisplayEn(ymd: string): string {
-  const [y, m, d] = ymd.split("-").map(Number);
-  if (!y || !m || !d) return ymd;
-  return `${d} ${EN_MONTHS_SHORT[m - 1]} ${y}`;
-}
-
-/** `"2026-08-22"` → `"22 Aug"` — the year is carried by the line, not each date. */
-export function fmtYmdShortEn(ymd: string): string {
-  const [, m, d] = ymd.split("-").map(Number);
-  if (!m || !d) return ymd;
-  return `${d} ${EN_MONTHS_SHORT[m - 1]}`;
-}
-
-/**
- * The selected travel dates as one line, in English — what AP-1's picker shows
- * on its trigger and what the form repeats under it.
- *
- * `fmtTravelDatesList` keeps its numeric "22/08, 01/09" form and is untouched:
- * `report-service.ts` builds a report column out of it.
- */
-export function fmtTravelDatesListEn(dates: string[]): string {
-  if (dates.length === 0) return "";
-  if (dates.length === 1) return fmtYmdDisplayEn(dates[0]);
-  return dates.map(fmtYmdShortEn).join(", ");
 }
 
 /** True when every calendar day between min and max is included. */
