@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { requireAuth } from "@/lib/api-auth";
-import { guardVisionRequest, visionImageBlock } from "@/lib/acc/vision-guard";
+import { guardVisionRequest, visionImageBlock, VISION_MODEL } from "@/lib/acc/vision-guard";
 import { statusForVisionError } from "@/lib/acc/vision-error";
 import { admitModelCurrency, isBaht, THB } from "@/lib/acc/currency";
 import { admitReadAmount } from "@/lib/acc/vision-amount";
@@ -268,7 +268,7 @@ export async function POST(req: NextRequest) {
     }
 
     const response = await guard.client.messages.parse({
-      model: "claude-sonnet-5",
+      model: VISION_MODEL,
       max_tokens: 2048,
       messages: [{ role: "user", content: content as never }],
       output_config: {
