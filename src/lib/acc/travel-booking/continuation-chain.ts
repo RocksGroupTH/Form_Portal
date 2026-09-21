@@ -16,7 +16,14 @@
 
 export interface ChainTrip {
   requestId: number;
-  /** `AccTravelBooking.SortOrder` — the order the group was filled in. */
+  /**
+   * `AccTravelBooking.SortOrder` — the order the group was filled in.
+   * **Tiebreak only, since 2026-09-21**: the chain now orders by depart date,
+   * because it spans a person's whole calendar rather than one booking group,
+   * and SortOrder means nothing between groups filed weeks apart. This stays
+   * only so two trips departing the same day keep a stable, reproducible
+   * order instead of depending on row order.
+   */
   sortOrder: number;
   departDate: string | null;
   returnDate: string | null;
@@ -25,7 +32,17 @@ export interface ChainTrip {
 }
 
 export function continuationFlags(trips: readonly ChainTrip[]): Map<number, boolean> {
-  const ordered = trips.slice().sort((a, b) => a.sortOrder - b.sortOrder);
+  // **Ordered by depart date, not by SortOrder** (2026-09-21). SortOrder orders
+  // trips within ONE booking group and means nothing between groups filed weeks
+  // apart — and this chain now spans a person's whole calendar, not one group.
+  // SortOrder stays the tiebreak so two trips departing the same day keep a
+  // stable, reproducible order instead of depending on row order.
+  const ordered = trips.slice().sort((a, b) => {
+    const ad = a.departDate ?? "";
+    const bd = b.departDate ?? "";
+    if (ad !== bd) return ad < bd ? -1 : 1;
+    return a.sortOrder - b.sortOrder;
+  });
   const flags = new Map<number, boolean>();
 
   for (let i = 0; i < ordered.length; i++) {
