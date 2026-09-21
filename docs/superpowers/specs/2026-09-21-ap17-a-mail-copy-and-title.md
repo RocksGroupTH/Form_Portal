@@ -8,6 +8,39 @@ other four AP-17 packages touch.
 
 ---
 
+## Amendment — 2026-09-21 (same-day correction, found in the fix-wave review)
+
+**§2's claim that "the `claude-sonnet-5` verification behind it are all
+unchanged" is true and, left on its own, misleading.** The field now invites a
+passport (`แนบรูปบัตรประชาชน หรือ Passport`), but the verification it is
+unchanged from still refuses one, four ways over, in
+`src/app/api/request/travel-booking/id-card-check/route.ts`:
+
+- `:45` — the prompt instructs the model to answer `true` only for a genuine
+  Thai national ID card;
+- `:46` — the prompt's own reject list names `พาสปอร์ต` (passport) explicitly;
+- `:34` — `AnswerSchema.isIdCard`'s own description reads "True only if the
+  image shows a Thai national ID card";
+- `:54` — `FALLBACK_REASON = "รูปนี้ไม่ใช่บัตรประจำตัวประชาชน"`.
+
+The check fails closed and the card is required to submit ("It fails closed,
+and that is a decision with a stated cost," CLAUDE.md's AP-17 ID-card
+section), so **a passport holder cannot file AP-17 at all** — the exact
+population this package's new wording invites.
+
+This is known and deliberately not fixed in this pass. Widening what counts
+as identity proof is a policy decision for the user, not a copy fix, and it
+spans four places that must move together: the prompt's reject list, the
+schema description, `FALLBACK_REASON`, and the refusal dialog's title
+(currently "ไม่ใช่บัตรประชาชน" — see `IdCardUpload` and
+`features/travel-booking/lib/idcard-check.ts`). Recorded here because the
+workspace holding the original review notes is gitignored and does not
+survive, and because leaving §2's sentence uncorrected would make the next
+reader conclude there is nothing to check. See CLAUDE.md's AP-17 ID-card
+section for the same note in that section's own house style.
+
+---
+
 ## 1. The three manager mails already send. Their copy is written for the wrong reader
 
 **Measured before designing.** `approveByManager`, `rejectRequest` and
