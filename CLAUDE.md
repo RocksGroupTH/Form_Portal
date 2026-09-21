@@ -482,8 +482,11 @@ Accommodation/ticket booking requests for provincial work travel — supports mu
 - **Workflow, since 2026-08-27: ผู้จัดการ → Admin จอง → บัญชี (`ACCOUNT`), ending at `Completed`.** The Admin desk used to close the request itself; `completeRequest` now only hands off — `Status` stays `ManagerApproved` and `CurrentStepCode` moves to `ACCOUNT` — and `approveByAccount` (`travel-booking/approval.ts`) is the terminal transition. Accounting works the new queue at `/request/accounting/travel-booking/approvals`, picks a **payout date** (re-derived server-side by `POST .../requests/[id]/payment-date` rather than trusted from the client; it was a *month* until 2026-09-04, which stopped naming one day once a foreign trip could pay on the 10th — see the payout rule below), and signs. From there the amount is read-only — on the page *and* in the route, because a control removed from a page is not a rule. **The step needed no migration**: `CK_AccApproval_Step` has permitted `ACCOUNT` since 091, `CurrentStepCode` is `NVARCHAR(20) NULL` with no CHECK, and `AccActivityLog.Action` has none either.
   - **The payout date is computed by `payout-rule.ts`, and it takes TWO dates
     and the country** (2026-09-04). The determining date **D is the later of the
-    manager's approval and the trip's return date**; domestic pays at a month
-    end, foreign twice a month:
+    manager's approval and the trip's return date — for ในประเทศ only.** **For
+    ต่างประเทศ, since 2026-09-21, D is the manager's approval date alone** — the
+    return date is not read at all (user decision: "นับจากวันที่ผู้จัดการอนุมัติ
+    อย่างเดียว ไม่เอาวันกลับ"). Domestic pays at a month end, foreign twice a
+    month:
 
     | | D.day | pays |
     |---|---|---|
@@ -493,13 +496,19 @@ Accommodation/ticket booking requests for provincial work travel — supports mu
     | | 6–20 | last day of D's month |
     | | 21–end | the **10th** of the next month |
 
-    - **Neither date alone reproduces the rule**, which is why it takes both:
-      approval-alone — the old `computePayoutDate`, now deleted — pays a trip
-      returning on the 21st at the end of the approval month, and return-alone
-      pays a trip approved on the 21st at the end of the return month. Both are
-      wrong by a month, in opposite directions. Taking the later date and then
-      applying the rule equals applying it to each and taking the later result,
-      since both arms are monotone in D, so there is no third reading.
+    - **Neither date alone reproduces the rule — for ในประเทศ**, which is why
+      that branch still takes both: approval-alone — the old `computePayoutDate`,
+      now deleted — pays a trip returning on the 21st at the end of the approval
+      month, and return-alone pays a trip approved on the 21st at the end of the
+      return month. Both are wrong by a month, in opposite directions. Taking the
+      later date and then applying the rule equals applying it to each and taking
+      the later result, since both arms are monotone in D, so there is no third
+      reading. **ต่างประเทศ deliberately gave this up on 2026-09-21.** Worked
+      case: approved 18 Sep, returns 25 Sep — under the later-of-two rule that
+      paid 10 Oct; under approval-alone it now pays 30 Sep, so **the money
+      arrives before the traveller does.** That is the cost of the trade, stated
+      and accepted, not a defect — see `payout-rule.ts`'s own header for the full
+      history and reasoning.
     - **The foreign 21–5 band wraps across the month boundary and both halves
       resolve to the same day**: 21 Sep and 3 Oct each pay 10 Oct. That is what
       makes the calendar tile — 6–20 Sep → 30 Sep, 21 Sep–5 Oct → 10 Oct, 6–20

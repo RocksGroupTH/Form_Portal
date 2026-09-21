@@ -14,29 +14,45 @@
  *
  * ── The rule ──
  *
- * One determining date, two country arms:
+ * One determining date, two country arms — but the two arms no longer agree
+ * about what "the determining date" is. See the next section.
  *
- *   **D = the later of (manager approval date, travel return date)**
- *
- *   domestic  D.day <= 20         -> last day of D's month
+ *   domestic  D = the later of (manager approval date, travel return date)
+ *             D.day <= 20         -> last day of D's month
  *             D.day >  20         -> last day of the NEXT month
  *
- *   foreign   D.day in 1..5       -> the 10th of D's OWN month
+ *   foreign   D = the manager approval date ALONE — the return date is not
+ *             read. See "Why foreign reads one date and domestic reads two"
+ *             below.
+ *             D.day in 1..5       -> the 10th of D's OWN month
  *             D.day in 6..20      -> last day of D's month
  *             D.day in 21..end    -> the 10th of the NEXT month
  *
- * ── Why the determining date takes two inputs ──
+ * ── Why foreign reads one date and domestic reads two ──
  *
- * It replaces `computePayoutDate`, which read the approval date alone. Neither
- * single input reproduces the cases this was specified with: approval-alone
- * (i.e. the old behaviour) pays a trip returning on the 21st at the end of the
- * approval month, and return-alone pays a trip approved on the 21st at the end
- * of the return month. Both are wrong by a month, in opposite directions.
+ * Until 2026-09-04 this rule read the approval date alone for every trip —
+ * `computePayoutDate`, now deleted. It was replaced because neither single
+ * input reproduced the cases it was specified with: approval-alone paid a trip
+ * returning on the 21st at the end of the approval month, and return-alone
+ * paid a trip approved on the 21st at the end of the return month, both wrong
+ * by a month in opposite directions. Taking the later of the two dates fixed
+ * both, and `payoutDeterminingDate` is that fix — it still applies, unchanged,
+ * to the domestic branch below.
  *
- * Taking the later date and then applying the rule is the same answer as
- * applying the rule to each date and taking the later result — both arms are
- * monotone non-decreasing in D — so there is no third reading to choose
- * between.
+ * On 2026-09-21 the user restored approval-alone, but **only for foreign
+ * trips**: "นับจากวันที่ผู้จัดการอนุมัติอย่างเดียว ไม่เอาวันกลับ". This is not a
+ * reversal of the paragraph above — the argument that a single input loses
+ * information is still correct, and is still why domestic keeps reading both
+ * dates. It is a deliberate trade specific to the foreign path, made with the
+ * cost known: approved 18 Sep, returns 25 Sep now pays 30 Sep instead of the
+ * 10 Oct it would have paid under the later-of-two rule — **the money arrives
+ * before the traveller does.** That is inherent to the rule as chosen, not a
+ * bug in this file.
+ *
+ * A maintainer who notices `foreign` ignoring `travelReturnYmd` in
+ * `payoutDateFor` below will read it as the same mistake this section used to
+ * warn about and "fix" it to match domestic. It is not a mistake; see the
+ * comment at that branch before changing it.
  *
  * ── The two asymmetries a later editor will try to "fix" ──
  *
@@ -162,7 +178,18 @@ export function payoutDateFor(
   approvalYmd: string | null | undefined,
   travelReturnYmd: string | null | undefined,
 ): string | null {
-  return payoutDateForDetermining(kind, payoutDeterminingDate(approvalYmd, travelReturnYmd));
+  // **The two kinds disagree about D, not only about how D maps to a payout
+  // day, and that asymmetry is deliberate** (user, 2026-09-21).
+  //
+  // foreign  D = the manager's approval date. The return date is not read.
+  // domestic D = the later of approval and return, unchanged.
+  //
+  // This reads exactly like a bug — a maintainer who notices `foreign`
+  // ignoring `travelReturnYmd` will "fix" it to match `domestic`. It is not.
+  // See the header for what was given up.
+  const determining =
+    kind === "foreign" ? approvalYmd : payoutDeterminingDate(approvalYmd, travelReturnYmd);
+  return payoutDateForDetermining(kind, determining);
 }
 
 /** Which round a date is, judged by its day alone. */
