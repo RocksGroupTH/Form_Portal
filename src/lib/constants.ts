@@ -13,6 +13,14 @@ export type NavItem = {
   devHostOnly?: boolean;
   /** Settings hub — visible only to System Admin */
   systemAdminOnly?: boolean;
+  /**
+   * Settings hub — visible only while the viewer is in UAT mode. Neither a
+   * role nor a host: `devHostOnly` above answers "am I on a developer's
+   * machine", this one answers "is this viewer writing to the test database
+   * right now", which `/api/form-environment` decides from a live active
+   * `UatTester` row beside the cookie. Hides a link, never data.
+   */
+  uatOnly?: boolean;
   /** Request hub — office/management variant: render the form icon with a small settings badge */
   manage?: boolean;
 };
@@ -281,5 +289,15 @@ export const SETTINGS_CARDS: NavItem[] = [
     // The Request hub narrowed to its management cards. /request/accounting is
     // AP-1's own hub and would leave out AP-17, which this card promises.
     href: "/request?group=Settings",
+    // UAT only, by the user's rule (2026-09-21): in PRO this card is gone from
+    // Settings everywhere, localhost included.
+    //
+    // It costs a shortcut and nothing else. Home's บัญชี section links
+    // "ดูทั้งหมด" to the same hub unfiltered (`HomeCatalogue.tsx`), so AP-17's
+    // accounting sign-off queue and AP-4's commissioning page stay reachable
+    // on the live host in PRO — which is the property the "deliberately not
+    // devHostOnly" comments on both of those REQUEST_CARDS entries exist to
+    // keep, and which this flag must not quietly take back.
+    uatOnly: true,
   },
 ];
