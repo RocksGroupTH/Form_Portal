@@ -45,9 +45,11 @@
  * information is still correct, and is still why domestic keeps reading both
  * dates. It is a deliberate trade specific to the foreign path, made with the
  * cost known: approved 18 Sep, returns 25 Sep now pays 30 Sep instead of the
- * 10 Oct it would have paid under the later-of-two rule — **the money arrives
- * before the traveller does.** That is inherent to the rule as chosen, not a
- * bug in this file.
+ * 10 Oct it would have paid under the later-of-two rule — a month earlier,
+ * not "before the traveller": 30 Sep is after 25 Sep. The case that
+ * genuinely pays ahead of travel is the 1..5 band: approved 2 Oct, trip
+ * 20-28 Oct pays 10 Oct, ten days before the traveller leaves. That is
+ * inherent to the rule as chosen, not a bug in this file.
  *
  * A maintainer who notices `foreign` ignoring `travelReturnYmd` in
  * `payoutDateFor` below will read it as the same mistake this section used to
@@ -140,6 +142,12 @@ export function payoutTripKind(countryCode: string | null | undefined): PayoutTr
  * Null is a refusal, not a fallback to whichever date is present. Falling back
  * to the approval date alone would silently restore the old behaviour for
  * exactly the row whose data is broken, and the difference is a whole month.
+ *
+ * This warning is scoped to the domestic branch — the only caller of this
+ * function. `payoutDateFor` routes ต่างประเทศ around it entirely and reads the
+ * approval date alone on purpose, since 2026-09-21 (see the module header).
+ * That is a deliberate rule for foreign trips, not the silent fallback this
+ * function refuses to perform for ในประเทศ.
  */
 export function payoutDeterminingDate(
   approvalYmd: string | null | undefined,

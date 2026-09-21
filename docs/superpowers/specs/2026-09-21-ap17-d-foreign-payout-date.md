@@ -9,6 +9,29 @@ one was.
 
 ---
 
+## Amendment — 2026-09-21 (same-day correction, found in the fix-wave review)
+
+**§3's worked example proves the opposite of what it claims.** "Approved 18
+Sep, returns 25 Sep … pays 30 Sep … the money arrives before the traveller
+does" is false as written: **30 Sep is after 25 Sep**, so the money does not
+arrive before the traveller. The claim about the *class* of change — foreign
+now pays roughly a month earlier than the later-of-two rule would have — is
+correct; the specific worked case cited does not demonstrate "before the
+traveller," and a maintainer who checks the arithmetic discounts the whole
+paragraph, including the part that is true.
+
+**The case that genuinely does is the foreign 1–5 band**, which §1 already
+flags as the band no worked case covered: approved 2 Oct, trip 20–28 Oct →
+pays 10 Oct, ten days before the traveller leaves on the 20th.
+
+18 Sep / 25 Sep is kept as a plain illustration that the payout moves a month
+earlier; the "before the traveller" language now attaches only to the 1–5
+case. Corrected in the same commit, in `payout-rule.ts`'s own header and in
+CLAUDE.md's AP-17 payout section — both carried the same wrong example and
+must not drift apart from this note or from each other.
+
+---
+
 ## 1. The bands the user asked for are already live
 
 The request read: *"ต่างประเทศ: อนุมัติ/กลับ วันที่ 6–20 จ่ายสิ้นเดือน ·
