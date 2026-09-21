@@ -5,9 +5,11 @@ import useSWR from "swr";
 import { toast } from "sonner";
 import { computePerDiem, rateForDay, type AllowanceLogEntry } from "@/lib/acc/travel-booking/perdiem";
 import { findDateOverlap, type OtherTrip } from "@/lib/acc/travel-booking/date-overlap";
+import { continuationFlags as deriveContinuationFlags } from "@/lib/acc/travel-booking/continuation-chain";
 import { effectiveClaimCountry } from "@/features/accounting/lib/claim-currency";
 import type { PerDiemAttribution } from "@/features/travel-booking/lib/perdiem-note";
 import { destinationKeyFor } from "@/features/travel-booking/lib/destination-key";
+import { buildEstimateChainTrips, moneyWithheldForRoom } from "@/features/travel-booking/lib/perdiem-estimate-inputs";
 import { NO_RENT_VEHICLE_NAME } from "@/features/travel-booking/constants";
 import { workLocationIssue } from "@/lib/acc/travel-booking/work-location-pin";
 import {
@@ -631,10 +633,30 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
     [reasons, accommodations, vehicles, rentVehicles],
   );
 
-  /* ── Continuation + live per-diem estimate (spec §5), mirroring the server's
-     computePerDiem exactly for day-count/continuation, but using the requester's
-     CURRENT allowance rate as a flat estimate (the authoritative amount uses the
-     effective-dated EmployeeAllowanceLog and is computed at submit). ── */
+  /* ── Continuation + live per-diem estimate (spec §5, extended by package B's
+     two new rules — Task 8).
+     Continuation is no longer mirrored, it is SHARED: `continuationFlags`
+     below is the one function `submitTravelBookingGroup` (request-service.ts)
+     also calls, fed this group's own tabs concatenated with the requester's
+     OTHER already-saved trips (`otherTrips`) exactly as the submit
+     concatenates its own `chainTrips` — so a trip filed last week whose
+     return date meets this tab's depart date is picked up here too, not only
+     at submit. See `perdiem-estimate-inputs.ts` for how the two lists become
+     the `ChainTrip[]` the shared function reads, and for the one place that
+     module still approximates the server (its `sortOrder` tiebreak for the
+     requester's OTHER trips, which the endpoint this hook reads does not
+     carry).
+     Room booking is honoured too: the money below is withheld exactly when
+     the submit would store none (`moneyWithheldForRoom` — no accommodation
+     chosen yet, or a chosen one that books no room), while the day count
+     stays honest regardless, the same split already used for an unresolved
+     foreign rate.
+     What still legitimately differs from the submit is staleness, not logic:
+     this prices from whatever allowance log and country rates have already
+     landed on the form (`estimateLog`/`countryRates` below) — the same
+     effective-dated log the submit reads — while the authoritative amount is
+     priced from the server's own FRESH read at the moment of submit, which
+     can differ if a rate changed in between (see `refreshRates` below). ── */
   /**
    * The stand-in used only while `/api/request/travel-booking/allowance-log`
    * has not yet answered — including a fetch that FAILS and never answers at
@@ -717,13 +739,25 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
     return requesterEnvironment === "UAT" ? null : (employee?.allowance ?? null);
   }, [estimateLog, employee?.allowance, requesterEnvironment]);
 
+  /* The requester's WHOLE calendar, not just this group's own tabs — the same
+     two halves `submitTravelBookingGroup` concatenates into its own
+     `chainTrips` (request-service.ts): this group's tabs plus `otherTrips`
+     (the requester's other, already-saved requests, Drafts already excluded
+     above). Fed through the SAME `continuationFlags` the submit and the
+     cancellation recompute call, so this estimate cannot disagree with what
+     actually gets stored. See `perdiem-estimate-inputs.ts` for how the two
+     lists are turned into the shared function's `ChainTrip[]`. */
+  const chainTripsForEstimate = useMemo(
+    () => buildEstimateChainTrips(tabs, otherTrips),
+    [tabs, otherTrips],
+  );
+  const chainFlagsByRequestId = useMemo(
+    () => deriveContinuationFlags(chainTripsForEstimate),
+    [chainTripsForEstimate],
+  );
   const continuationFlags = useMemo(
-    () =>
-      tabs.map((t, i) => {
-        const prev = i > 0 ? tabs[i - 1] : null;
-        return !!(prev && t.departDate && prev.returnDate && t.departDate === prev.returnDate);
-      }),
-    [tabs],
+    () => tabs.map((t, i) => chainFlagsByRequestId.get(t.id ?? -(i + 1)) ?? false),
+    [tabs, chainFlagsByRequestId],
   );
 
   /* The attribution and the country's own log travel with the figure rather
@@ -773,11 +807,17 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
           return { days: 0, total: 0, groups: [], attribution, countryLog };
         }
         // Days are always honest — they come from the dates alone. The money is
-        // withheld for a foreign trip until the rates have arrived, because
-        // pricing it from the domestic stand-in would show a figure that is
-        // wrong and then silently changes.
+        // withheld for a foreign trip until the rates have arrived (unresolved
+        // country rate), and separately, for the SAME reason, whenever the
+        // room-booking rule (package B, 2026-09-21) would store nothing: no
+        // accommodation chosen yet, or a chosen one that books no room. Either
+        // way, pricing it and showing a figure that then silently changes to
+        // ฿0 is the exact "lying screen" this shaping exists to avoid.
         const computed = computePerDiem(t.departDate, t.returnDate, continuationFlags[i], resolved.log);
-        const shaped = attribution.kind === "pending" ? { ...computed, total: 0, groups: [] } : computed;
+        const shaped =
+          attribution.kind === "pending" || moneyWithheldForRoom(t.accommodationId, t.needsRoomBooking)
+            ? { ...computed, total: 0, groups: [] }
+            : computed;
         return { ...shaped, attribution, countryLog };
       }),
     [tabs, brands, continuationFlags, estimateLog, countryRates, ratesKnown],
