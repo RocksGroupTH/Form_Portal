@@ -278,6 +278,47 @@ test("a frozen row rewrites neither figure — TotalAmount follows the same writ
   assert.equal(callsFor(calls, "INSERT", 2).length, 1, "but the locked audit row still goes in");
 });
 
+test("a flag flip on a trip with no room booked writes zero, not the full span", async () => {
+  const { recomputeGroupPerDiem } = await loadRecompute();
+
+  // Same shape as the very first test — request 2 stops being a continuation
+  // — except this trip's accommodation option never books a room
+  // (NeedsRoomBooking: 0). Without this test, dropping the `{ roomBooked }`
+  // argument to computePerDiem entirely is invisible: every OTHER fixture in
+  // this file sets NeedsRoomBooking: 1, and passing `{ roomBooked: true }` is
+  // indistinguishable from passing no options at all, since computePerDiem
+  // defaults `roomBooked` to true when the option is absent. This is the one
+  // case that can only pass if the flag is actually read and actually wired
+  // through.
+  const rows = [
+    {
+      RequestId: 1, SortOrder: 0, DepartDate: d("2026-01-01"), ReturnDate: d("2026-01-03"),
+      IsContinuation: false, PerDiemDays: 2, PerDiemTotal: 0, NeedsRoomBooking: 1, Status: "Cancelled", EmployeeId: null,
+    },
+    {
+      RequestId: 2, SortOrder: 1, DepartDate: d("2026-01-03"), ReturnDate: d("2026-01-04"),
+      IsContinuation: true, PerDiemDays: 1, PerDiemTotal: 100, NeedsRoomBooking: 0, Status: "Submitted", EmployeeId: null,
+    },
+  ];
+  const { tx, calls } = makeFakeTx({ group: rows });
+
+  await recomputeGroupPerDiem(tx, "grp-1", { requestId: 1, requestNo: "TRL26-00001", kind: "cancelled" });
+
+  const updates = callsFor(calls, "UPDATE", 2);
+  assert.equal(updates.length, 1, "the flag still flips and is still written");
+  assert.equal(updates[0].inputs.cont, 0);
+  // The rule pays nothing for a trip with no room booked, however many days it
+  // spans — not the full 2-day span the flag flip alone would otherwise give.
+  assert.equal(updates[0].inputs.days, 0, "no room booked — the rule pays nothing, not the full span");
+  assert.equal(updates[0].inputs.total, 0);
+
+  const inserts = callsFor(calls, "INSERT", 2);
+  assert.equal(inserts.length, 1);
+  const meta = JSON.parse(inserts[0].inputs.meta as string);
+  assert.equal(meta.after.days, 0);
+  assert.equal(meta.after.total, 0);
+});
+
 /* ── the chain widened past the group (2026-09-21) ──────────────────────── */
 
 test("cancelling a trip gives its boundary day back to a trip in ANOTHER group", async () => {

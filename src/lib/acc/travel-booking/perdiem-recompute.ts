@@ -28,14 +28,51 @@ function toYmd(d: Date): string {
 }
 
 /**
+ * The columns every per-diem read needs — the group's own `GroupKey` SELECT
+ * below and `loadOutsideDetailRows`'s outside-row SELECT both build off this,
+ * rather than each spelling the list out separately.
+ *
+ * **This constant is the whole guard, and that is the point of it existing.**
+ * `perdiem-source-guard.test.ts` reads this file's source for `r.CountryCode` /
+ * `r.StaffId` / `t.NeedsRoomBooking` ANYWHERE in the file, not inside one named
+ * query — so with the two SELECTs spelled out separately, "tidying" a column
+ * out of only one of them left the guard green while that column's failure
+ * mode stayed live on whichever read kept it. One shared list means there is
+ * exactly one place to delete a column from, so the guard actually covers both
+ * readers rather than only whichever one somebody happened to leave alone.
+ *
+ * - **`r.CountryCode`** — deleted, `perDiemLogFor` is handed `undefined`,
+ *   answers `"employee"`, and every trip this touches whose country is not
+ *   Thailand is silently re-priced at the domestic rate — `PerDiemTotal` AND
+ *   `AccRequest.TotalAmount`, inside the transaction that is cancelling a
+ *   sibling.
+ * - **`r.StaffId`** — deleted, the UAT override lookup is handed `undefined`,
+ *   finds nothing, and every UAT trip this touches is re-priced at the
+ *   tester's REAL HR allowance — same two columns, same transaction.
+ * - **`t.NeedsRoomBooking`** — deleted, `!!x.NeedsRoomBooking` reads `false`
+ *   for a row that never had the column at all (`!!undefined === false`), so
+ *   `computePerDiem` returns `{ days: 0, total: 0 }` for **every** row this
+ *   touches — not one class of trip mispriced, every recomputed trip this
+ *   transaction writes, group or outside, written at **฿0**. Worse than either
+ *   column above, and until this fix it carried neither a comment nor a guard.
+ *
+ * None of the three fails a typecheck, and none fails any test but the guard.
+ */
+const PERDIEM_ROW_COLUMNS =
+  "t.RequestId, t.DepartDate, t.ReturnDate, t.IsContinuation, t.PerDiemDays, " +
+  "t.PerDiemTotal, t.NeedsRoomBooking, r.Status, r.EmployeeId, r.CountryCode, r.StaffId";
+
+/**
  * Rewrite one trip's per diem for one continuation-flag change — the body
  * shared by the group's own rows and the outside rows the chain now reaches
  * (`recomputeGroupPerDiem` below), so the two paths can never drift apart.
  *
- * `x` carries the same column shape either way: `RequestId`, `Status`,
- * `EmployeeId`, `CountryCode`, `StaffId`, `DepartDate`, `ReturnDate`,
- * `IsContinuation`, `PerDiemDays`, `PerDiemTotal`, `NeedsRoomBooking` — one
- * from the `GroupKey` SELECT, the other from `loadOutsideDetailRows` below.
+ * `x` carries the same column shape either way — `RequestId`, `Status`,
+ * `DepartDate`, `ReturnDate`, `IsContinuation`, `PerDiemDays`, `PerDiemTotal`
+ * plus `PERDIEM_ROW_COLUMNS`'s own `EmployeeId`/`CountryCode`/`StaffId`/
+ * `NeedsRoomBooking` — because both readers, the `GroupKey` SELECT below and
+ * `loadOutsideDetailRows`, build their column list off that one constant
+ * rather than each naming it separately; the two cannot diverge in shape.
  *
  * No-op (no UPDATE, no audit row) when the flag has not changed — that row was
  * never touched by this cancellation and must not appear in the trail at all.
@@ -209,9 +246,7 @@ async function loadOutsideDetailRows(
     params.push(`@oid${i}`);
   });
 
-  const res = await req.query(`SELECT t.RequestId, t.DepartDate, t.ReturnDate,
-                 t.IsContinuation, t.PerDiemDays, t.PerDiemTotal, t.NeedsRoomBooking,
-                 r.Status, r.EmployeeId, r.CountryCode, r.StaffId
+  const res = await req.query(`SELECT ${PERDIEM_ROW_COLUMNS}
             FROM [dbo].[AccTravelBooking] t
             INNER JOIN [dbo].[AccRequest] r ON r.Id = t.RequestId
            WHERE t.RequestId IN (${params.join(", ")})`);
@@ -249,22 +284,11 @@ export async function recomputeGroupPerDiem(
 ): Promise<void> {
   const rows = await tx.request()
     .input("gk", sql.NVarChar(40), groupKey)
-    // r.CountryCode is load-bearing. Without it perDiemLogFor is handed null,
-    // and cancelling any trip in a group re-prices its surviving siblings at the
-    // employee's Thai allowance — writing that to AccTravelBooking.PerDiemTotal
-    // AND AccRequest.TotalAmount inside the cancelling transaction, with an
-    // activity row that records the figure moved and not why. A London trip
-    // would silently revert to a domestic rate and nothing on any screen would
-    // contradict it. Deleting this column from the SELECT fails no typecheck:
-    // the value simply arrives undefined.
-    //
-    // r.StaffId is load-bearing for exactly the same reason and in exactly the
-    // same way. It is how a UAT tester's own per-diem rate is found; without it
-    // the lookup finds nothing and every UAT trip in the group is re-priced at
-    // the tester's REAL HR allowance, here, inside the same transaction.
-    .query(`SELECT t.RequestId, t.SortOrder, t.DepartDate, t.ReturnDate,
-                   t.IsContinuation, t.PerDiemDays, t.PerDiemTotal, t.NeedsRoomBooking,
-                   r.Status, r.EmployeeId, r.CountryCode, r.StaffId
+    // See `PERDIEM_ROW_COLUMNS`'s own doc comment above for what each of
+    // r.CountryCode / r.StaffId / t.NeedsRoomBooking costs if it is dropped —
+    // this query and `loadOutsideDetailRows`'s both build off that one list so
+    // there is exactly one place either could be dropped from.
+    .query(`SELECT t.SortOrder, ${PERDIEM_ROW_COLUMNS}
               FROM [dbo].[AccTravelBooking] t
               INNER JOIN [dbo].[AccRequest] r ON r.Id = t.RequestId
              WHERE t.GroupKey = @gk`);
