@@ -287,9 +287,20 @@ export const PAYOUT_RULE_LINES: Record<PayoutTripKind, string[]> = {
   ],
 };
 
-/** The sentence that says which date the bands above are measured against. */
+/**
+ * The sentence that says which date the bands above are measured against.
+ *
+ * Renders once on the queue page, above both kinds' bands, so it has to state
+ * both rules rather than one shared one — since 2026-09-21 the two kinds
+ * genuinely disagree about which date counts (see the `kind === "foreign"`
+ * branch in `payoutDateFor`, and the module header above it). This is not
+ * wording to tidy back into one sentence; a maintainer who merges these two
+ * clauses back into "the later of the two" would be restating the rule
+ * `payoutDateFor` no longer applies to ต่างประเทศ.
+ */
 export const PAYOUT_DETERMINING_NOTE =
-  "นับจากวันที่ช้ากว่า ระหว่างวันที่ผู้จัดการอนุมัติ กับวันที่เดินทางกลับ";
+  "ในประเทศ: นับจากวันที่ช้ากว่า ระหว่างวันที่ผู้จัดการอนุมัติ กับวันที่เดินทางกลับ · " +
+  "ต่างประเทศ: นับจากวันที่ผู้จัดการอนุมัติเท่านั้น";
 
 export const PAYOUT_KIND_LABEL: Record<PayoutTripKind, string> = {
   domestic: "ในประเทศ",
