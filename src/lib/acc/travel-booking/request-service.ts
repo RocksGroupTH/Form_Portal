@@ -37,8 +37,9 @@ import { workLocationIssue } from "@/lib/acc/travel-booking/work-location-pin";
 import { perDiemLogFor } from "@/lib/acc/travel-booking/perdiem-country";
 import { listPerDiemCountryRates } from "@/lib/acc/travel-booking/perdiem-source";
 import { findDateOverlap, type OtherTrip } from "@/lib/acc/travel-booking/date-overlap";
-import { continuationFlags, type ChainTrip } from "@/lib/acc/travel-booking/continuation-chain";
+import { continuationFlags, continuationPredecessors, type ChainTrip } from "@/lib/acc/travel-booking/continuation-chain";
 import { loadRequesterTrips } from "@/lib/acc/travel-booking/requester-trips";
+import { rewriteSubmitAffectedTrips } from "@/lib/acc/travel-booking/perdiem-recompute";
 import type {
   Accommodation,
   BookingDetail,
@@ -1288,10 +1289,15 @@ export async function listTravelBookingDateRanges(
 
 /**
  * Submit every tab (Draft/Returned) of a multi-request draft group as N independent
- * documents: validate every tab, detect continuation (SortOrder order), compute per-diem,
- * allocate one running number per tab, transition each Draft/Returned → Submitted, create
- * the MANAGER approval step, log, and queue one "Submitted" email per request to the
- * shared manager. Returns the N submitted requests (re-read after commit).
+ * documents: validate every tab, detect continuation across the requester's whole
+ * calendar (depart date order, `SortOrder` a tiebreak only — not the SortOrder order
+ * this comment described before 2026-09-21), compute per-diem, allocate one running
+ * number per tab, transition each Draft/Returned → Submitted, create the MANAGER
+ * approval step, log, and queue one "Submitted" email per request to the shared
+ * manager. **Since 2026-09-22 (I1) it also rewrites any of the requester's OTHER
+ * live trips whose continuation flag this submission changes** — see
+ * `rewriteSubmitAffectedTrips` below, after the main per-tab loop. Returns the N
+ * submitted requests (re-read after commit).
  */
 export async function submitTravelBookingGroup(
   groupKey: string,
@@ -1455,6 +1461,12 @@ export async function submitTravelBookingGroup(
       })),
     );
   const flagsByRequest = continuationFlags(chainTrips);
+  // Who each trip's own nearest predecessor is — needed only to name the
+  // right cause when an EXISTING trip (a `liveOthers` row) gets rewritten
+  // below, never for the tabs' own IsContinuation, which flagsByRequest
+  // already answers. See the rewrite step after the main per-tab loop.
+  const predecessors = continuationPredecessors(chainTrips);
+  const tabIds = new Set(tabs.map((t) => t.id as number));
 
   const continuationFlagList: boolean[] = [];
   const perDiems: { days: number; total: number }[] = [];
@@ -1479,6 +1491,13 @@ export async function submitTravelBookingGroup(
       ),
     );
   }
+
+  // Each tab's own running number, collected as the loop below allocates it —
+  // needed only after the loop, to name a newly filed tab as the CAUSE when an
+  // existing trip (`liveOthers`) gets rewritten. A tab's number does not exist
+  // yet before its own claim/allocate step runs, which is why the rewrite
+  // happens after this loop rather than interleaved with it.
+  const tabRequestNoById = new Map<number, string>();
 
   const tx = pool.transaction();
   await tx.begin();
@@ -1528,6 +1547,7 @@ export async function submitTravelBookingGroup(
           .input("no", sql.NVarChar, requestNo)
           .query(`UPDATE [dbo].[AccRequest] SET RequestNo=@no WHERE Id=@id`);
       }
+      tabRequestNoById.set(requestId, requestNo);
 
       // AllowanceSnapshot is otherwise written only by upsertTravelBooking, at
       // save. A draft saved before a rate changed — a UAT rate being set, or an
@@ -1560,6 +1580,45 @@ export async function submitTravelBookingGroup(
         .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note)
                 VALUES (@id, @by, 'submitted', @no)`);
     }
+
+    // I1 (2026-09-22): `flagsByRequest` was computed over the requester's WHOLE
+    // calendar — this submission's own tabs AND `liveOthers` — but until this,
+    // only the tabs were ever written back. `liveOthers` were inputs and never
+    // outputs, so filing a trip that makes an ALREADY-STORED trip a
+    // continuation never rewrote that stored trip: file B (24–26) first, then A
+    // (20–24) — allowed, B correctly becomes a continuation, but B kept its
+    // original figure, and the 24th was paid on both. This is the symmetric
+    // counterpart of what `recomputeGroupPerDiem` already does for a
+    // cancellation, reusing the same `rewritePerDiemRow` body and
+    // `perDiemWritable` gate rather than a second recompute.
+    //
+    // Every id here comes from `liveOthers`, which is already alive-filtered
+    // (see its own definition above) — never a dead trip, so
+    // `rewriteSubmitAffectedTrips` never has to name a dead cause.
+    await rewriteSubmitAffectedTrips(
+      tx,
+      liveOthers.map((o) => o.requestId),
+      flagsByRequest,
+      (requestId) => {
+        // The trip immediately before this one in the SAME chain that decided
+        // flagsByRequest. Since nothing about `liveOthers`' own dates or
+        // relative order changed by this submission, a `liveOthers` row whose
+        // flag actually differs from what is stored can only have gotten there
+        // because a newly filed tab is now standing where its predecessor used
+        // to be (or is a predecessor for the first time) — so this predecessor,
+        // when the flag has changed, is always one of `tabs`.
+        const predecessor = predecessors.get(requestId);
+        const causeId = predecessor && tabIds.has(predecessor.requestId)
+          ? predecessor.requestId
+          // Defensive fallback, not the expected path: if the identity above
+          // ever fails to resolve to one of this submission's own tabs, still
+          // name THIS submission — via its first tab — rather than silently
+          // skip the rewrite and reopen I1 for that one row.
+          : (tabs[0].id as number);
+        return { requestId: causeId, requestNo: tabRequestNoById.get(causeId) ?? null, kind: "submitted" };
+      },
+    );
+
     await tx.commit();
   } catch (e) {
     await tx.rollback().catch(() => {});

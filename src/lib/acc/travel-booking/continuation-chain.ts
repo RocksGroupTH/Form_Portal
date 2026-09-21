@@ -31,7 +31,24 @@ export interface ChainTrip {
   alive: boolean;
 }
 
-export function continuationFlags(trips: readonly ChainTrip[]): Map<number, boolean> {
+/**
+ * Each trip's own nearest live predecessor — the same walk `continuationFlags`
+ * below has always done, exposed by identity rather than collapsed straight to
+ * a boolean.
+ *
+ * **Added 2026-09-22, for I1**: naming *who* changed a trip's flag needs the
+ * predecessor's identity, not only whether one touches. `submitTravelBookingGroup`
+ * rewrites an existing trip when a newly filed one changes its continuation
+ * status, and the activity log has to name that newly filed trip as the cause
+ * — which needs this, not `continuationFlags`' boolean.
+ *
+ * `continuationFlags` is now a thin wrapper over this, so the two can never
+ * disagree about who or what "the predecessor" is — the risk a hand-written
+ * second walk would carry.
+ */
+export function continuationPredecessors(
+  trips: readonly ChainTrip[],
+): Map<number, ChainTrip | null> {
   // **Ordered by depart date, not by SortOrder** (2026-09-21). SortOrder orders
   // trips within ONE booking group and means nothing between groups filed weeks
   // apart — and this chain now spans a person's whole calendar, not one group.
@@ -43,20 +60,26 @@ export function continuationFlags(trips: readonly ChainTrip[]): Map<number, bool
     if (ad !== bd) return ad < bd ? -1 : 1;
     return a.sortOrder - b.sortOrder;
   });
-  const flags = new Map<number, boolean>();
+  const predecessors = new Map<number, ChainTrip | null>();
 
   for (let i = 0; i < ordered.length; i++) {
     const trip = ordered[i];
-    // A dead trip's own flag is meaningless — nothing will be computed from it —
-    // but it is reported false rather than left absent so a caller iterating the
-    // map does not have to special-case it.
+    // A dead trip, or one with no depart date, has no predecessor worth
+    // finding — nothing will be computed from it either way (see
+    // `continuationFlags` below), but every trip still gets an entry so a
+    // caller iterating the map does not have to special-case it.
     if (!trip.alive || !trip.departDate) {
-      flags.set(trip.requestId, false);
+      predecessors.set(trip.requestId, null);
       continue;
     }
 
     // The nearest live predecessor, and only that one. Looking further back
-    // would let a trip continue a journey it is not adjacent to.
+    // would let a trip continue a journey it is not adjacent to. Deliberately
+    // NOT also requiring a depart date here — a live, undated trip can still
+    // sort immediately before another and stand as its "previous", exactly as
+    // this walk has always allowed; `continuationFlags`' own boolean below
+    // then reads false regardless, since a predecessor with no returnDate
+    // never touches anything.
     let previous: ChainTrip | null = null;
     for (let j = i - 1; j >= 0; j--) {
       if (ordered[j].alive) {
@@ -64,12 +87,21 @@ export function continuationFlags(trips: readonly ChainTrip[]): Map<number, bool
         break;
       }
     }
-
-    flags.set(
-      trip.requestId,
-      !!(previous && previous.returnDate && previous.returnDate === trip.departDate),
-    );
+    predecessors.set(trip.requestId, previous);
   }
 
+  return predecessors;
+}
+
+export function continuationFlags(trips: readonly ChainTrip[]): Map<number, boolean> {
+  const predecessors = continuationPredecessors(trips);
+  const flags = new Map<number, boolean>();
+  for (const trip of trips) {
+    const previous = predecessors.get(trip.requestId) ?? null;
+    flags.set(
+      trip.requestId,
+      !!(previous && previous.returnDate && trip.departDate && previous.returnDate === trip.departDate),
+    );
+  }
   return flags;
 }

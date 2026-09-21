@@ -19,8 +19,19 @@ type AccPool = Awaited<ReturnType<typeof getAccPool>>;
  */
 type AccTx = { request: () => ReturnType<AccPool["request"]> };
 
-/** Which cancellation/rejection caused a recompute, and its running number for the note. */
-type RecomputeCause = { requestId: number; requestNo: string | null; kind: "cancelled" | "rejected" };
+/**
+ * Which submission, cancellation or rejection caused a recompute, and its
+ * running number for the note. **Exported since 2026-09-22 (I1)**:
+ * `submitTravelBookingGroup` (`request-service.ts`) constructs one of these
+ * itself, naming the newly filed trip responsible, and needs the type to do
+ * it — `"submitted"` is that third case, added the same day. Its own
+ * `causeLabel` sits beside the other two below.
+ */
+export type RecomputeCause = {
+  requestId: number;
+  requestNo: string | null;
+  kind: "cancelled" | "rejected" | "submitted";
+};
 
 /** Date column → 'YYYY-MM-DD' using local getters (server is Thai time, never toISOString). */
 function toYmd(d: Date): string {
@@ -40,6 +51,20 @@ function toYmd(d: Date): string {
  * mode stayed live on whichever read kept it. One shared list means there is
  * exactly one place to delete a column from, so the guard actually covers both
  * readers rather than only whichever one somebody happened to leave alone.
+ *
+ * **That guarantee holds only as long as every per-diem SELECT in this file
+ * keeps interpolating this constant — nothing enforces that a new one must.**
+ * Mutation-verified (whole-branch review, 2026-09-22): a third reader added
+ * with its own hand-spelled column list, omitting all three columns above,
+ * left `perdiem-source-guard.test.ts` green (11 pass / 0 fail) — the guard
+ * reads for the COLUMN NAME anywhere in the file, and the constant's own
+ * definition line still contains all three names, which is what it actually
+ * matched. So the true invariant is "every SELECT that reads an
+ * `AccTravelBooking` row for pricing purposes interpolates
+ * `PERDIEM_ROW_COLUMNS`", which is convention, not something this file or its
+ * guard can check. A tighter guard would assert that every `.query(` in this
+ * file naming `[dbo].[AccTravelBooking]` also names `${PERDIEM_ROW_COLUMNS}`
+ * — not yet written.
  *
  * - **`r.CountryCode`** — deleted, `perDiemLogFor` is handed `undefined`,
  *   answers `"employee"`, and every trip this touches whose country is not
@@ -167,7 +192,15 @@ async function rewritePerDiemRow(
               WHERE Id=@rid`);
   }
 
-  const causeLabel = cause.kind === "cancelled" ? "ถูกยกเลิก" : "ไม่ได้รับอนุมัติ";
+  const causeLabel =
+    cause.kind === "cancelled" ? "ถูกยกเลิก"
+    : cause.kind === "rejected" ? "ไม่ได้รับอนุมัติ"
+    // "submitted": the cause here is never dead (see rewriteSubmitAffectedTrips'
+    // own doc comment for why), so the "dead itself" branch below — which reads
+    // as if `cause` itself died — is unreachable for this kind; this label only
+    // ever appears in the writable/Completed/no-dates branches, all of which
+    // read correctly with "a new request was filed" as the reason.
+    : "ถูกยื่นคำขอเพิ่ม";
   const causeNo = cause.requestNo ?? `#${cause.requestId}`;
   const figures = `(${beforeDays} วัน / ${beforeTotal.toFixed(2)})`;
 
@@ -252,6 +285,77 @@ async function loadOutsideDetailRows(
            WHERE t.RequestId IN (${params.join(", ")})`);
 
   return res.recordset as Record<string, unknown>[];
+}
+
+/**
+ * Rewrites every trip in `candidateIds` whose freshly computed continuation
+ * flag disagrees with what is stored — the **submit-time** counterpart to
+ * `recomputeGroupPerDiem` below, added 2026-09-22 (I1).
+ *
+ * `submitTravelBookingGroup` feeds `continuationFlags` the requester's WHOLE
+ * calendar — its own tabs plus every other live trip — but until this existed
+ * it only ever wrote its own tabs back. An existing trip whose predecessor
+ * changed because of a newly filed one was never rewritten, so a shared
+ * boundary day could be paid on both: file B (24–26) first, then A (20–24) —
+ * `findDateOverlap` allows it, the chain correctly says B is now a
+ * continuation, and without this, B keeps its original, now-wrong figure.
+ * Filed in the other order the same pair paid correctly, so the bug was
+ * order-dependent — unacceptable once CLAUDE.md states the calendar-wide rule
+ * unqualified.
+ *
+ * Reuses `rewritePerDiemRow` and its `perDiemWritable` gate rather than a
+ * second recompute: a candidate whose flag did not actually change costs
+ * nothing (its own early return), and one already past accounting still gets
+ * its `locked: true` audit row instead of being silently rewritten or
+ * silently skipped — exactly `recomputeGroupPerDiem`'s own guarantee.
+ *
+ * **Every candidate here must already be alive** (Cancelled/Rejected trips
+ * are not eligible predecessors and must not have been included by the
+ * caller) — which is also why `rewritePerDiemRow`'s "dead itself" branch,
+ * written for a *cancelled or rejected* cause, is unreachable through this
+ * path: nothing this function is ever asked to touch is itself dead.
+ *
+ * `causeFor(requestId)` resolves, for each row that actually needs rewriting,
+ * which newly filed trip is responsible — computed by the caller from the
+ * same chain it already built (`continuationPredecessors`), because that
+ * identity depends on data (the submission's own tabs) only the caller has.
+ * Returning `null` skips that one row's rewrite entirely, so a caller must
+ * only omit a cause it is certain does not apply — a fallback to "this
+ * submission" in general, rather than the true specific predecessor, is the
+ * caller's call to make, not this function's.
+ */
+export async function rewriteSubmitAffectedTrips(
+  tx: AccTx,
+  candidateIds: readonly number[],
+  nowFlags: ReadonlyMap<number, boolean>,
+  causeFor: (requestId: number) => RecomputeCause | null,
+): Promise<void> {
+  if (candidateIds.length === 0) return;
+
+  const rows = await loadOutsideDetailRows(tx, candidateIds);
+
+  // Loaded once, only if some rewritten row turns out foreign — same
+  // closure-cached shape `recomputeGroupPerDiem` uses below, for the same
+  // reason: most submissions touch no foreign trip at all, and this module's
+  // own test file runs with no database.
+  let countryRates: PerDiemCountryRate[] | null = null;
+  const loadRates = async (): Promise<PerDiemCountryRate[]> => {
+    if (countryRates === null) countryRates = await listPerDiemCountryRates();
+    return countryRates;
+  };
+
+  for (const x of rows) {
+    const requestId = x.RequestId as number;
+    const nowContinuation = nowFlags.get(requestId) ?? false;
+    // Cheapest check first, and it also means a row whose flag genuinely did
+    // not change never asks the caller to resolve a cause for it at all —
+    // `rewritePerDiemRow` would no-op on this same comparison regardless, but
+    // skipping it here avoids a pointless `causeFor` call.
+    if (!!x.IsContinuation === nowContinuation) continue;
+    const cause = causeFor(requestId);
+    if (!cause) continue;
+    await rewritePerDiemRow(tx, x, nowContinuation, cause, loadRates);
+  }
 }
 
 /**

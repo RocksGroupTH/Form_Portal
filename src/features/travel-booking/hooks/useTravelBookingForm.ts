@@ -319,8 +319,14 @@ export function validateTab(
     // when it was saved and are not now. This only checks against the
     // requester's OTHER already-saved requests (`otherTrips`, from
     // `/api/request/travel-booking/date-ranges`) — not against this group's
-    // own sibling tabs, which the date picker's `disabledDates` already keeps
-    // a requester from picking in the first place (see `lockedTravelDates`).
+    // own sibling tabs. That is a real, PARKED gap, not a guaranteed-safe one:
+    // the date picker's `disabledDates` (`lockedTravelDates`) does NOT keep a
+    // requester from picking every sibling overlap in the first place —
+    // measured 2026-09-22 against a two-day other trip, it locks nothing at
+    // all (see `TravelBookingTab.tsx`'s own comment for the count), so the
+    // ordinary overnight trip is exactly the shape this earliness check still
+    // misses for a sibling tab. `validateTravelBookingTab` and the server
+    // catch it regardless; this file's own ledger records the parking.
     const clash = findDateOverlap(
       { departDate: tab.departDate, returnDate: tab.returnDate },
       otherTrips,
@@ -600,17 +606,35 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
   const existingRanges = dateRangesData ?? [];
 
   /**
-   * The requester's other saved requests, shaped for `findDateOverlap` — the
-   * one rule the server's submit refuses on (`date-overlap.ts`). **Drafts are
-   * excluded here**, even though `existingRanges` above (the picker's
-   * day-lock) keeps them: the submit's own refusal set is
-   * `loadRequesterTrips` (`requester-trips.ts`), which pins `r.Status <>
+   * `existingRanges`, narrowed to what counts as a LIVE other trip — the one
+   * rule `otherTrips` and `otherTripsForChain` below both need and, until
+   * 2026-09-22 (M3), each re-expressed as its own `.filter()` rather than
+   * sharing it. **Drafts are excluded here**, even though `existingRanges`
+   * itself (the picker's day-lock) keeps them: the submit's own refusal set
+   * is `loadRequesterTrips` (`requester-trips.ts`), which pins `r.Status <>
    * 'Draft'`, so a Draft the server would let a submit proceed past must not
    * block one here either — an abandoned two-day draft in another group must
    * not hard-refuse an unrelated submission with a message that then can't
-   * even be read. Cancelled/Rejected never reach this array at all — the
-   * endpoint's own query excludes them — so every surviving, non-Draft row is
-   * `alive` by construction.
+   * even be read. Cancelled/Rejected never reach `existingRanges` at all —
+   * the endpoint's own query excludes them — so every row that survives this
+   * filter is `alive` by construction.
+   *
+   * This is the RULE that was duplicated, not the type each caller maps it
+   * into: `otherTrips` is `OtherTrip[]` (`date-overlap.ts`) and
+   * `otherTripsForChain` is `EstimateOtherTrip[]` (`perdiem-estimate-inputs.ts`),
+   * and `date-overlap.ts`'s own docblock is explicit that the overlap rule and
+   * the continuation rule must not share one type — `sortOrder` (meaningless
+   * to `findDateOverlap`) has no business on `OtherTrip`. So this stays one
+   * filtered list, mapped twice, rather than one widened type.
+   */
+  const liveOtherRanges = useMemo(
+    () => existingRanges.filter((r) => r.status !== "Draft"),
+    [existingRanges],
+  );
+
+  /**
+   * `liveOtherRanges`, shaped for `findDateOverlap` — the one rule the
+   * server's submit refuses on (`date-overlap.ts`).
    *
    * This is an EARLINESS nicety only, exactly like `existingRanges`'
    * day-locking — the server re-checks at submit against a fresh read and is
@@ -620,26 +644,20 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
    */
   const otherTrips: OtherTrip[] = useMemo(
     () =>
-      existingRanges
-        .filter((r) => r.status !== "Draft")
-        .map((r) => ({
-          requestId: r.requestId,
-          requestNo: r.requestNo,
-          departDate: r.departDate,
-          returnDate: r.returnDate,
-          alive: true,
-        })),
-    [existingRanges],
+      liveOtherRanges.map((r) => ({
+        requestId: r.requestId,
+        requestNo: r.requestNo,
+        departDate: r.departDate,
+        returnDate: r.returnDate,
+        alive: true,
+      })),
+    [liveOtherRanges],
   );
 
   /**
-   * The same rows as `otherTrips` above, shaped for the continuation chain
-   * instead of the overlap refusal. **A second small mapping, not a widened
-   * `OtherTrip`** — `date-overlap.ts`'s own docblock is explicit that the
-   * overlap rule and the continuation rule are deliberately not folded into
-   * one type, so `sortOrder` (meaningless to `findDateOverlap`) does not
-   * belong on `OtherTrip` either. Same Draft-exclusion as `otherTrips`, for
-   * the same reason (see its own comment above).
+   * `liveOtherRanges` again, shaped for the continuation chain instead of the
+   * overlap refusal — see `liveOtherRanges`' own comment for why this is a
+   * second mapping rather than a widened `OtherTrip`.
    *
    * `sortOrder` is `AccTravelBooking.SortOrder` (Task 8 fix round 1) — the
    * same column `submitTravelBookingGroup`'s own `chainTrips` reads via
@@ -651,15 +669,13 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
    */
   const otherTripsForChain = useMemo(
     () =>
-      existingRanges
-        .filter((r) => r.status !== "Draft")
-        .map((r) => ({
-          requestId: r.requestId,
-          departDate: r.departDate,
-          returnDate: r.returnDate,
-          sortOrder: r.sortOrder,
-        })),
-    [existingRanges],
+      liveOtherRanges.map((r) => ({
+        requestId: r.requestId,
+        departDate: r.departDate,
+        returnDate: r.returnDate,
+        sortOrder: r.sortOrder,
+      })),
+    [liveOtherRanges],
   );
 
   const settingsMaps = useMemo<TabSettingsMaps>(
@@ -848,14 +864,35 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
              came from HR while the chosen country's rate sat unread. */
           return { days: 0, total: 0, groups: [], attribution, countryLog };
         }
-        // Days are always honest — they come from the dates alone. The money is
-        // withheld for a foreign trip until the rates have arrived (unresolved
-        // country rate), and separately, for the SAME reason, whenever the
-        // room-booking rule (package B, 2026-09-21) would store nothing: no
-        // accommodation chosen yet, or a chosen one that books no room. Either
-        // way, pricing it and showing a figure that then silently changes to
-        // ฿0 is the exact "lying screen" this shaping exists to avoid.
-        const computed = computePerDiem(t.departDate, t.returnDate, continuationFlags[i], resolved.log);
+        // Days are honest EXCEPT in the one case the submit has already
+        // settled: an accommodation that books no room stores 0 days, not
+        // only ฿0, so `roomBooked` is passed once an accommodation is
+        // actually CHOSEN — `computePerDiem` then returns { days: 0, total: 0
+        // } itself for a no-room choice, matching the submit exactly, with no
+        // post-shaping needed for that case (fixed 2026-09-22, I3 — this
+        // comment used to say "always honest", which stopped being true the
+        // moment package B's room rule shipped and nobody updated it).
+        //
+        // While NO accommodation is chosen yet, the room state is genuinely
+        // unknown, not settled-to-zero — `roomBooked` is withheld from
+        // `computePerDiem` so the day count stays honest (the real span;
+        // nobody has said whether it needs a room), and only the MONEY is
+        // withheld by the post-shaping below, via the same `moneyWithheldForRoom`
+        // predicate this shaping has used since package B — it already answers
+        // both "unknown" and "settled, no room" correctly for money; only the
+        // day count needed `roomBooked` added here to also answer "settled, no
+        // room" correctly. A foreign trip with an unresolved rate
+        // (`attribution.kind === "pending"`) withholds money the same way, for
+        // the unrelated reason that a figure that would silently change to a
+        // different non-zero number is its own "lying screen".
+        const roomKnown = t.accommodationId != null;
+        const computed = computePerDiem(
+          t.departDate,
+          t.returnDate,
+          continuationFlags[i],
+          resolved.log,
+          roomKnown ? { roomBooked: t.needsRoomBooking } : undefined,
+        );
         const shaped =
           attribution.kind === "pending" || moneyWithheldForRoom(t.accommodationId, t.needsRoomBooking)
             ? { ...computed, total: 0, groups: [] }

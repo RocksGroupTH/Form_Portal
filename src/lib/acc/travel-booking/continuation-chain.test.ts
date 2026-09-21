@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { continuationFlags, type ChainTrip } from "./continuation-chain";
+import { continuationFlags, continuationPredecessors, type ChainTrip } from "./continuation-chain";
 
 const trip = (
   requestId: number,
@@ -120,4 +120,66 @@ test("a dead predecessor is skipped to the live one behind it, ordered by date",
   // 3's immediate predecessor by date is 2, which is dead; the nearest live one
   // is 1, which returns on the 24th and does not touch the 26th.
   assert.equal(flags.get(3), false, "3 must not continue a dead trip");
+});
+
+/**
+ * `continuationPredecessors` — added 2026-09-22 for I1, to name a trip's
+ * predecessor by identity rather than collapse it straight to a boolean.
+ * `continuationFlags` above is now a thin wrapper over this, so every case
+ * above already exercises the shared walk; these cases are specifically about
+ * the IDENTITY this exposes that the boolean throws away.
+ */
+
+test("continuationPredecessors names the touching predecessor's identity", () => {
+  const preds = continuationPredecessors([
+    trip(1, 0, "2026-08-04", "2026-08-06"),
+    trip(2, 1, "2026-08-06", "2026-08-06"),
+  ]);
+  assert.equal(preds.get(1), null, "the first trip has no predecessor");
+  assert.equal(preds.get(2)?.requestId, 1);
+});
+
+test("continuationFlags derives false from continuationPredecessors exactly when the identity is there but does not touch", () => {
+  // 2's nearest live predecessor is 1 (by adjacency), but 1 returns on the 5th
+  // and 2 departs on the 6th — adjacent, not touching. The identity is still
+  // reported; only the boolean is false.
+  const trips: ChainTrip[] = [
+    trip(1, 0, "2026-08-04", "2026-08-05"),
+    trip(2, 1, "2026-08-06", "2026-08-08"),
+  ];
+  const preds = continuationPredecessors(trips);
+  assert.equal(preds.get(2)?.requestId, 1, "adjacency alone still names an identity");
+  assert.equal(continuationFlags(trips).get(2), false, "but it does not touch, so the flag is false");
+});
+
+test("continuationPredecessors skips a dead trip to the nearest live one, by identity", () => {
+  const preds = continuationPredecessors([
+    trip(1, 0, "2026-08-01", "2026-08-02"),
+    trip(2, 1, "2026-08-04", "2026-08-06", false),
+    trip(3, 2, "2026-08-06", "2026-08-08"),
+  ]);
+  assert.equal(preds.get(3)?.requestId, 1, "the dead trip 2 must not be named as 3's predecessor");
+});
+
+test("continuationPredecessors reports null for a trip with no depart date, and never names it as anyone else's predecessor", () => {
+  const preds = continuationPredecessors([
+    { requestId: 1, sortOrder: 0, departDate: null, returnDate: "2026-08-06", alive: true },
+    { requestId: 2, sortOrder: 1, departDate: "2026-08-07", returnDate: "2026-08-09", alive: true },
+  ]);
+  assert.equal(preds.get(1), null, "a trip with no depart date has no predecessor of its own");
+  // Sorted with the undated trip first (`ad ?? ""` sorts it to the front), so
+  // it IS eligible to stand as trip 2's predecessor by adjacency — matching
+  // the pre-existing behaviour this refactor must not change (see the walk's
+  // own comment). It just never satisfies the touching check, since its
+  // returnDate ("2026-08-06") happens not to equal 2's departDate here.
+  assert.equal(preds.get(2)?.requestId, 1);
+});
+
+test("continuationPredecessors orders by depart date across different SortOrder groups, same as continuationFlags", () => {
+  const preds = continuationPredecessors([
+    { requestId: 10, sortOrder: 0, departDate: "2026-09-20", returnDate: "2026-09-24", alive: true },
+    { requestId: 20, sortOrder: 0, departDate: "2026-09-24", returnDate: "2026-09-26", alive: true },
+  ]);
+  assert.equal(preds.get(10), null);
+  assert.equal(preds.get(20)?.requestId, 10);
 });

@@ -231,6 +231,38 @@ test("the recompute reads whether a room is booked", () => {
   );
 });
 
+/**
+ * The three tests above only prove the three column NAMES appear somewhere in
+ * the file — `PERDIEM_ROW_COLUMNS`'s own definition line satisfies all three
+ * by itself. Mutation-verified (whole-branch review, 2026-09-22): a THIRD
+ * reader added with its own hand-spelled column list, naming none of the
+ * three, left the three tests above green — 11 pass / 0 fail. This is the
+ * tighter check `PERDIEM_ROW_COLUMNS`'s own doc comment names as not yet
+ * written: every SELECT that reads `AccTravelBooking` for pricing must
+ * actually interpolate the shared constant, not merely share a file with a
+ * comment that names the same three columns.
+ */
+test("every SELECT reading AccTravelBooking in perdiem-recompute.ts interpolates PERDIEM_ROW_COLUMNS", () => {
+  const src = code("lib/acc/travel-booking/perdiem-recompute.ts");
+  const queryBlocks = src.match(/\.query\(`[\s\S]*?`\)/g) ?? [];
+  const pricingSelects = queryBlocks.filter(
+    (b) => /SELECT/.test(b) && /\[dbo\]\.\[AccTravelBooking\]/.test(b),
+  );
+  assert.ok(
+    pricingSelects.length >= 2,
+    `expected at least the group SELECT and loadOutsideDetailRows' SELECT (found ${pricingSelects.length}) ` +
+      "— has a reader been removed, or restructured so this pattern no longer finds it?",
+  );
+  for (const block of pricingSelects) {
+    assert.ok(
+      /PERDIEM_ROW_COLUMNS/.test(block),
+      "a SELECT reads AccTravelBooking for pricing without interpolating PERDIEM_ROW_COLUMNS, so " +
+        "the three guards above cannot see anything this one query alone drops: " +
+        block.slice(0, 160).replace(/\s+/g, " "),
+    );
+  }
+});
+
 test("the report's CTE reads the request's country", () => {
   const src = code("lib/acc/travel-booking/report-service.ts");
   assert.ok(
