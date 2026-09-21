@@ -57,6 +57,14 @@ function perDiemLabel(req: TravelBookingRequest): string {
   return `${req.perDiemDays} วัน · ${req.perDiemTotal.toFixed(2)} บาท`;
 }
 
+/**
+ * Approved's "what happens next" line, and Returned's "what to do" line —
+ * named exports so a test can assert against the constant rather than a
+ * prose fragment, and a reword does not red the suite for no reason.
+ */
+export const APPROVED_NEXT_STEP_TEXT = "รอ Admin ดำเนินการจองให้ แล้วจึงส่งให้บัญชีตรวจสอบ";
+export const RETURNED_ACTION_TEXT = "เปิดคำขอนี้ แก้ไขตามหมายเหตุ แล้วกดส่งใหม่ (เลขที่เดิม)";
+
 /** Which admin-fill-in items this tab still needs (spec §2.x needs* flags). */
 function needsBookingLabel(req: TravelBookingRequest): string {
   const needs: string[] = [];
@@ -78,12 +86,16 @@ export function buildTravelBookingEmail(
   /**
    * Who performed the action, for the three manager triggers.
    *
-   * It is an **email address**, not a display name: `Actor`
-   * (`approval-engine.ts:10`) carries no name, and resolving one would add a
-   * lookup inside `notify()` — a best-effort path whose failures are swallowed,
-   * so a failed name lookup would silently cost the whole mail.
+   * Passed as the acting manager's email; `notify()` (`approval.ts`) upgrades
+   * it to their HR display name when one is on file — the MANAGER
+   * `AccApproval` row's `actionedByHrName`, already loaded by the time
+   * `notify()` runs because all three callers write `ActionedByStaffId`
+   * inside their own committed transaction before calling it, so this costs
+   * no extra lookup. Falls back to the email when there is no HR row.
    *
-   * Optional because the other three triggers have no single actor to name.
+   * Optional because the other three triggers (`Submitted`, `ReadyForAdmin`,
+   * `Completed`) have no single actor to name, and the Admin/account
+   * rejections that reuse the `Rejected`/`Returned` cases pass none either.
    */
   actorName?: string | null,
 ): { subject: string; html: string } {
@@ -118,7 +130,7 @@ export function buildTravelBookingEmail(
         // The subject reads as finished. It is not — the request goes to the
         // booking desk next, and a requester who thinks it is done does not
         // chase a booking that never happened.
-        row("ขั้นถัดไป", "รอ Admin ดำเนินการจองให้ แล้วจึงส่งให้บัญชีตรวจสอบ"),
+        row("ขั้นถัดไป", APPROVED_NEXT_STEP_TEXT),
       ].join("");
       return { subject, html: shell(subject, rows, url) };
     }
@@ -157,7 +169,7 @@ export function buildTravelBookingEmail(
         note ? row("หมายเหตุ", note) : "",
         // "ส่งกลับแก้ไข" states a status. This states the instruction — and
         // that the running number survives, so nobody files a second request.
-        row("สิ่งที่ต้องทำ", "เปิดคำขอนี้ แก้ไขตามหมายเหตุ แล้วกดส่งใหม่ (เลขที่เดิม)"),
+        row("สิ่งที่ต้องทำ", RETURNED_ACTION_TEXT),
       ].join("");
       return { subject, html: shell(subject, rows, url) };
     }

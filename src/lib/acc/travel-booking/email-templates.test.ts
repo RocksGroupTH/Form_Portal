@@ -63,31 +63,47 @@ test("every manager mail says which trip it is about", async () => {
   }
 });
 
-test("who acted is shown when supplied, and omitted cleanly when not", async () => {
-  const { buildTravelBookingEmail } = await load();
-  const withActor = buildTravelBookingEmail("Approved", req(), undefined, "boss@rocksgroup.com");
-  assert.ok(withActor.html.includes("boss@rocksgroup.com"));
+const ACTOR_ROW_LABEL: Record<(typeof MANAGER_TRIGGERS)[number], string> = {
+  Approved: "อนุมัติโดย",
+  Rejected: "ไม่อนุมัติโดย",
+  Returned: "ส่งกลับโดย",
+};
 
-  const withoutActor = buildTravelBookingEmail("Approved", req());
-  assert.ok(!withoutActor.html.includes("undefined"));
-  assert.ok(!withoutActor.html.includes("null"));
-  assert.ok(withoutActor.html.includes("TRL26-00123"));
+test("who acted is shown when supplied, and omitted cleanly when not — all three manager triggers", async () => {
+  const { buildTravelBookingEmail } = await load();
+  // Pinned per trigger: deleting the ไม่อนุมัติโดย or ส่งกลับโดย row must red
+  // this the same way removing อนุมัติโดย would.
+  for (const trigger of MANAGER_TRIGGERS) {
+    const withActor = buildTravelBookingEmail(trigger, req(), "note", "boss@rocksgroup.com");
+    assert.ok(withActor.html.includes("boss@rocksgroup.com"), `${trigger} does not render the actor`);
+    assert.ok(
+      withActor.html.includes(ACTOR_ROW_LABEL[trigger]),
+      `${trigger} does not render its "${ACTOR_ROW_LABEL[trigger]}" row`,
+    );
+
+    const withoutActor = buildTravelBookingEmail(trigger, req(), "note");
+    assert.ok(!withoutActor.html.includes("undefined"), `${trigger} renders "undefined" with no actor`);
+    assert.ok(!withoutActor.html.includes("null"), `${trigger} renders "null" with no actor`);
+    assert.ok(withoutActor.html.includes("TRL26-00123"), `${trigger} fails to render with no actor`);
+  }
 });
 
 test("Approved names the next step, because its subject reads as finished", async () => {
-  const { buildTravelBookingEmail } = await load();
+  const { buildTravelBookingEmail, APPROVED_NEXT_STEP_TEXT } = await load();
   const { subject, html } = buildTravelBookingEmail("Approved", req());
   assert.ok(subject.includes("อนุมัติแล้ว"));
   // A requester who thinks it is done does not chase a booking nobody made.
-  assert.ok(html.includes("Admin"), "Approved does not say the booking desk is next");
+  // Asserted on the copy constant, not a prose fragment, so rewording the
+  // sentence does not red this test for no reason.
+  assert.ok(html.includes(APPROVED_NEXT_STEP_TEXT), "Approved does not say the booking desk is next");
 });
 
 test("Returned tells the requester what to do, not just what happened", async () => {
-  const { buildTravelBookingEmail } = await load();
+  const { buildTravelBookingEmail, RETURNED_ACTION_TEXT } = await load();
   const { subject, html } = buildTravelBookingEmail("Returned", req(), "แก้วันเดินทาง");
   assert.ok(subject.includes("ส่งกลับแก้ไข"));
   assert.ok(html.includes("แก้วันเดินทาง"), "the note is missing");
-  assert.ok(html.includes("ส่งใหม่"), "Returned does not say to submit again");
+  assert.ok(html.includes(RETURNED_ACTION_TEXT), "Returned does not say to submit again");
 });
 
 test("Rejected still carries its reason", async () => {
