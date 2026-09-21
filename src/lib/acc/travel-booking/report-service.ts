@@ -191,23 +191,39 @@ const BASE_CTE = `
       (SELECT SUM(bd.TotalAmountBaht)
          FROM [dbo].[AccTravelBookingDetail] bd
         WHERE bd.TravelBookingId = t.Id) AS BookingTotalBaht,
-      -- Matched the same way isContinuation was decided at save time: same
-      -- group, an earlier SortOrder, a ReturnDate touching this DepartDate.
-      -- Nearest earlier sibling wins.
+      -- Requester-scoped since 2026-09-22, not GroupKey-scoped — the
+      -- identical change made to the same pair of subqueries in
+      -- getTravelBookingRequest (request-service.ts), which carries the
+      -- full reasoning (why GroupKey stopped matching once the continuation
+      -- chain widened to a requester's whole calendar, why Cancelled/
+      -- Rejected are excluded, why pt.RequestId <> r.Id is now needed, and
+      -- why the ORDER BY tiebreak only ever fires on legacy rows). Both
+      -- copies must move together, or the report and the detail page can
+      -- name a different predecessor for the same request.
       (SELECT TOP 1 pr.RequestNo
          FROM [dbo].[AccTravelBooking] pt
          INNER JOIN [dbo].[AccRequest] pr ON pr.Id = pt.RequestId
-        WHERE pt.GroupKey = t.GroupKey
-          AND pt.SortOrder < t.SortOrder
+        WHERE pr.FormCode = 'AP-17'
+          AND pr.Status NOT IN ('Draft', 'Cancelled', 'Rejected')
+          AND (
+            (r.StaffId IS NOT NULL AND pr.StaffId = r.StaffId)
+            OR (r.EmployeeId IS NOT NULL AND pr.EmployeeId = r.EmployeeId)
+          )
+          AND pt.RequestId <> r.Id
           AND pt.ReturnDate = t.DepartDate
-        ORDER BY pt.SortOrder DESC, pt.Id DESC) AS ContinuationFromRequestNo,
+        ORDER BY pt.DepartDate DESC, pt.SortOrder DESC, pt.Id DESC) AS ContinuationFromRequestNo,
       (SELECT TOP 1 pr.Id
          FROM [dbo].[AccTravelBooking] pt
          INNER JOIN [dbo].[AccRequest] pr ON pr.Id = pt.RequestId
-        WHERE pt.GroupKey = t.GroupKey
-          AND pt.SortOrder < t.SortOrder
+        WHERE pr.FormCode = 'AP-17'
+          AND pr.Status NOT IN ('Draft', 'Cancelled', 'Rejected')
+          AND (
+            (r.StaffId IS NOT NULL AND pr.StaffId = r.StaffId)
+            OR (r.EmployeeId IS NOT NULL AND pr.EmployeeId = r.EmployeeId)
+          )
+          AND pt.RequestId <> r.Id
           AND pt.ReturnDate = t.DepartDate
-        ORDER BY pt.SortOrder DESC, pt.Id DESC) AS ContinuationFromRequestId,
+        ORDER BY pt.DepartDate DESC, pt.SortOrder DESC, pt.Id DESC) AS ContinuationFromRequestId,
       (SELECT STRING_AGG(wl.Name, N', ') WITHIN GROUP (ORDER BY wl.SortOrder, wl.Id)
        FROM [dbo].[AccTravelWorkLocation] wl
        WHERE wl.TravelBookingId = t.Id) AS WorkLocationsCsv,

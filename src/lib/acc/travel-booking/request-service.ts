@@ -322,27 +322,74 @@ export async function getTravelBookingRequest(id: number): Promise<TravelBooking
     .input("form", sql.NVarChar, AP17_FORM_CODE)
     .query(`SELECT r.*, e.PhotoUrl AS HrRequesterPhotoUrl, e.PhotoOverrideUrl AS HrRequesterPhotoOverrideUrl,
               -- The trip whose per diem already covers this one's first day.
-              -- Matched the same way isContinuation was decided at save time:
-              -- the same group, an earlier SortOrder, and a ReturnDate that
-              -- touches this DepartDate. Nearest earlier sibling wins, so a
-              -- group of three trips meeting on one day names the immediate
-              -- predecessor rather than the first of them.
+              --
+              -- Requester-scoped since 2026-09-22, not GroupKey-scoped. Until
+              -- then this read "the same group, an earlier SortOrder, and a
+              -- ReturnDate that touches this DepartDate" — which matched how
+              -- IsContinuation itself was decided at save time when this
+              -- subquery was written, and stopped matching once the
+              -- continuation chain widened to a requester's WHOLE calendar
+              -- (Tasks 3-5b, then the draft-save path too): IsContinuation
+              -- could read true for a predecessor filed in a different
+              -- booking group while this subquery, still GroupKey-scoped,
+              -- found nothing and named no one — the exact "20-24, 24-26
+              -- submitted คนละรอบ" case this feature exists for.
+              --
+              -- The predicate below is requester-trips.ts's / perdiem-
+              -- dependency-load.ts's own: same requester (StaffId OR
+              -- EmployeeId, each arm IS NOT NULL-guarded so a null on one
+              -- side cannot match a null row), FormCode = 'AP-17', Draft
+              -- excluded — and, because this names ONE predecessor rather
+              -- than listing candidates for a caller to filter, Cancelled and
+              -- Rejected are excluded too: the same "alive" notion
+              -- perdiem-recompute.ts's own alive test and date-overlap.ts's
+              -- alive field both use. A dead trip cannot own a day, so it
+              -- must not be named as the reason one was dropped.
+              -- pt.RequestId <> r.Id keeps a request from matching itself —
+              -- the old SortOrder < comparison provided that for free by
+              -- comparing two different rows; without it, a single-day
+              -- trip's own ReturnDate = DepartDate would otherwise
+              -- self-match.
+              --
+              -- Ordered nearest-first the way continuationFlags orders
+              -- (depart date, then SortOrder, then Id as tiebreak) — the
+              -- gate, the recompute and this label must agree on which trip
+              -- is "the predecessor", or a requester can be told a day was
+              -- dropped by a trip that did not drop it. The tiebreak can only
+              -- ever fire on an EQUAL depart date, because pt.ReturnDate =
+              -- mt.DepartDate and a trip's return is never before its
+              -- depart, so pt.DepartDate <= mt.DepartDate holds
+              -- automatically — an equal depart date is a single-day
+              -- predecessor sitting on the successor's own depart day, a pair
+              -- findDateOverlap now refuses outright (containment, not a
+              -- touch) for anything submitted after Task 4. The tiebreak
+              -- therefore serves legacy rows only.
               (SELECT TOP 1 pr.RequestNo
                  FROM [dbo].[AccTravelBooking] pt
                  INNER JOIN [dbo].[AccRequest] pr ON pr.Id = pt.RequestId
                  INNER JOIN [dbo].[AccTravelBooking] mt ON mt.RequestId = r.Id
-                WHERE pt.GroupKey = mt.GroupKey
-                  AND pt.SortOrder < mt.SortOrder
+                WHERE pr.FormCode = 'AP-17'
+                  AND pr.Status NOT IN ('Draft', 'Cancelled', 'Rejected')
+                  AND (
+                    (r.StaffId IS NOT NULL AND pr.StaffId = r.StaffId)
+                    OR (r.EmployeeId IS NOT NULL AND pr.EmployeeId = r.EmployeeId)
+                  )
+                  AND pt.RequestId <> r.Id
                   AND pt.ReturnDate = mt.DepartDate
-                ORDER BY pt.SortOrder DESC, pt.Id DESC) AS ContinuationFromRequestNo,
+                ORDER BY pt.DepartDate DESC, pt.SortOrder DESC, pt.Id DESC) AS ContinuationFromRequestNo,
               (SELECT TOP 1 pr.Id
                  FROM [dbo].[AccTravelBooking] pt
                  INNER JOIN [dbo].[AccRequest] pr ON pr.Id = pt.RequestId
                  INNER JOIN [dbo].[AccTravelBooking] mt ON mt.RequestId = r.Id
-                WHERE pt.GroupKey = mt.GroupKey
-                  AND pt.SortOrder < mt.SortOrder
+                WHERE pr.FormCode = 'AP-17'
+                  AND pr.Status NOT IN ('Draft', 'Cancelled', 'Rejected')
+                  AND (
+                    (r.StaffId IS NOT NULL AND pr.StaffId = r.StaffId)
+                    OR (r.EmployeeId IS NOT NULL AND pr.EmployeeId = r.EmployeeId)
+                  )
+                  AND pt.RequestId <> r.Id
                   AND pt.ReturnDate = mt.DepartDate
-                ORDER BY pt.SortOrder DESC, pt.Id DESC) AS ContinuationFromRequestId
+                ORDER BY pt.DepartDate DESC, pt.SortOrder DESC, pt.Id DESC) AS ContinuationFromRequestId
             FROM [dbo].[AccRequest] r
             LEFT JOIN ${hrEmployeeTable()} e ON e.StaffId = r.StaffId AND e.Status = N'Active'
             WHERE r.Id = @id AND r.FormCode = @form`);
