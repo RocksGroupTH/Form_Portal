@@ -1211,33 +1211,27 @@ export async function submitTravelBookingGroup(
     }
   }
 
-  // No overlapping travel dates WITHIN this submission's own group (rejected/cancelled requests
-  // don't enter into it — these are the tabs being filed right now). Two trips may still share a
-  // single boundary day — continuation.
-  for (let i = 0; i < tabs.length; i++) {
-    const d1 = tabs[i].departDate;
-    const r1 = tabs[i].returnDate;
-    if (!d1 || !r1) continue;
-    for (let j = i + 1; j < tabs.length; j++) {
-      const d2 = tabs[j].departDate;
-      const r2 = tabs[j].returnDate;
-      if (d2 && r2 && travelRangesConflict(d1, r1, d2, r2)) {
-        throw new Error(`ช่วงวันเดินทางของทริปที่ ${i + 1} ซ้อนทับกับทริปที่ ${j + 1} — เลือกช่วงวันที่ไม่ให้ซ้อนกัน`);
-      }
-    }
-  }
-
-  // No overlapping travel dates against this requester's OTHER live AP-17
-  // requests — matched on StaffId OR EmployeeId (`loadRequesterTrips`), so a
-  // requester with no active HR row is still checked. **Refused before the
-  // transaction opens**: an overlap is a property of the request as filed, so
-  // nothing should be claimed, numbered or written before it is checked, and
-  // the requester gets the same answer whether they are first or tenth in the
-  // queue today. One shared boundary day is allowed — the previous trip's
-  // return date may equal this one's depart date, or the reverse —
-  // `findDateOverlap` owns that rule and is tested on it; only the aliveness
-  // of the DATES is filtered here, `findDateOverlap` owns the live/dead rule
-  // itself.
+  // No overlapping travel dates — checked against every other live AP-17
+  // request of this person, whether it is this submission's own sibling tab
+  // or one already sitting in the database. **One rule governs both, via
+  // `findDateOverlap`.** Before this fix, the intra-group half ran on
+  // `travelRangesConflict` — strict on both sides (`a1 < b2 && b1 < a2`), so a
+  // same-day trip sitting exactly on a sibling's RETURN date passed
+  // ("20–24" + "24–24" → `20<24 && 24<24` → false, allowed) while the
+  // identical collision against an already-submitted request was refused by
+  // the new rule below. That let a requester get a free duplicate day simply
+  // by putting both trips in one submission instead of filing them
+  // separately — a hole in the rule, not a difference of scope, so both
+  // halves now go through the same check.
+  //
+  // **Refused before the transaction opens**: an overlap is a property of the
+  // request as filed, so nothing should be claimed, numbered or written
+  // before it is checked, and the requester gets the same answer whether they
+  // are first or tenth in the queue today. One shared boundary day is allowed
+  // — the previous trip's return date may equal this one's depart date, or
+  // the reverse — `findDateOverlap` owns that rule and is tested on it; only
+  // the aliveness of the DATES is filtered here, `findDateOverlap` owns the
+  // live/dead rule itself.
   const others = await loadRequesterTrips(pool, {
     staffId: emp.staffId ?? null,
     employeeId: emp.id ?? null,
@@ -1252,9 +1246,25 @@ export async function submitTravelBookingGroup(
     alive: o.alive,
   }));
   for (let i = 0; i < tabs.length; i++) {
+    if (!tabs[i].departDate || !tabs[i].returnDate) continue;
+    // Every OTHER tab of this same submission — always "alive" for this
+    // purpose, since none of them is Cancelled/Rejected while being filed.
+    // `requestNo` is null for a tab not yet submitted; `findDateOverlap`
+    // already renders that as "คำขอฉบับร่าง", which is the correct label for
+    // a sibling that has not been numbered yet.
+    const siblings: OtherTrip[] = tabs
+      .filter((_, j) => j !== i)
+      .filter((t) => t.departDate && t.returnDate)
+      .map((t) => ({
+        requestId: t.id ?? 0,
+        requestNo: t.requestNo ?? null,
+        departDate: t.departDate as string,
+        returnDate: t.returnDate as string,
+        alive: true,
+      }));
     const clash = findDateOverlap(
       { departDate: tabs[i].departDate as string, returnDate: tabs[i].returnDate as string },
-      overlapInput,
+      siblings.concat(overlapInput),
     );
     if (clash) {
       throw new Error(tabs.length > 1 ? `(คำขอที่ ${i + 1}) ${clash.message}` : clash.message);
