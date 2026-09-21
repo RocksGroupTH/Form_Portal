@@ -1601,20 +1601,42 @@ export async function submitTravelBookingGroup(
       flagsByRequest,
       (requestId) => {
         // The trip immediately before this one in the SAME chain that decided
-        // flagsByRequest. Since nothing about `liveOthers`' own dates or
-        // relative order changed by this submission, a `liveOthers` row whose
-        // flag actually differs from what is stored can only have gotten there
-        // because a newly filed tab is now standing where its predecessor used
-        // to be (or is a predecessor for the first time) — so this predecessor,
-        // when the flag has changed, is always one of `tabs`.
+        // flagsByRequest.
+        //
+        // **RULING (fix round 2, 2026-09-22, N1): when that predecessor is NOT
+        // one of this submission's own tabs, return null — SKIP the row. Do
+        // not rewrite it and do not name a cause.** An earlier version of this
+        // comment claimed that case was unreachable ("a liveOthers row whose
+        // flag actually differs from what is stored can only have gotten
+        // there because a newly filed tab is now standing where its
+        // predecessor used to be … so this predecessor … is always one of
+        // tabs") and named `tabs[0]` as a "defensive fallback". That claim was
+        // false, measured false by execution: cross-group pairs always
+        // double-paid in BOTH orders before this branch, which means a stored
+        // `IsContinuation` can already disagree with the calendar-wide chain
+        // with NO new tab involved at all — two trips A and B filed pre-branch
+        // in different groups, both stored `false`; file any THIRD, unrelated
+        // trip anywhere on the calendar and B's freshly computed flag now
+        // reads `true` against predecessor A, which is not a tab. The old
+        // fallback fired there, named the unrelated new tab as the cause, and
+        // silently re-priced B — `Submitted` or `ManagerApproved` included —
+        // as a side effect of a filing that had nothing to do with B. That is
+        // exactly the backfill CLAUDE.md's "Nothing backfills" refuses to do,
+        // and it takes back a day someone had already been granted.
+        //
+        // **Skipping here cannot reopen I1.** I1's own case is *precisely* the
+        // one where the predecessor IS a newly filed tab — the two cases are
+        // disjoint (predecessor ∈ tabs, or not), so the branch that used to
+        // read "so as not to reopen I1" could never actually have reopened it
+        // by being skipped instead: I1 is answered entirely by the `if`
+        // branch below. A pre-existing wrong figure like A/B above is a
+        // RECONCILIATION, not a side effect of an unrelated filing — fixing it
+        // belongs to a deliberate, visible pass (see
+        // `scripts/checks/verify-ap17-continuation.ts`), not to whichever
+        // unrelated trip happens to be filed next.
         const predecessor = predecessors.get(requestId);
-        const causeId = predecessor && tabIds.has(predecessor.requestId)
-          ? predecessor.requestId
-          // Defensive fallback, not the expected path: if the identity above
-          // ever fails to resolve to one of this submission's own tabs, still
-          // name THIS submission — via its first tab — rather than silently
-          // skip the rewrite and reopen I1 for that one row.
-          : (tabs[0].id as number);
+        if (!predecessor || !tabIds.has(predecessor.requestId)) return null;
+        const causeId = predecessor.requestId;
         return { requestId: causeId, requestNo: tabRequestNoById.get(causeId) ?? null, kind: "submitted" };
       },
     );

@@ -237,16 +237,28 @@ test("the recompute reads whether a room is booked", () => {
  * by itself. Mutation-verified (whole-branch review, 2026-09-22): a THIRD
  * reader added with its own hand-spelled column list, naming none of the
  * three, left the three tests above green — 11 pass / 0 fail. This is the
- * tighter check `PERDIEM_ROW_COLUMNS`'s own doc comment names as not yet
- * written: every SELECT that reads `AccTravelBooking` for pricing must
- * actually interpolate the shared constant, not merely share a file with a
- * comment that names the same three columns.
+ * tighter check `PERDIEM_ROW_COLUMNS`'s own doc comment now names as written
+ * here.
+ *
+ * **Fix round 2 (2026-09-22, N6): the first version of this test was itself
+ * measured to have two bypasses, both ordinary code a hand-written reader
+ * could use without trying to evade anything** — matched against
+ * `\.query\(\`[\s\S]*?\`\)`, so it missed (a) the same SQL with its
+ * `[dbo].[AccTravelBooking]` brackets dropped to `dbo.AccTravelBooking`
+ * (valid SQL Server either way), and (b) the SQL hoisted to a `const q =
+ * \`...\`` and called as `.query(q)` instead of inline. Both left this file
+ * at 12 pass / 0 fail with the rogue reader still in place. Fixed by no
+ * longer anchoring on `.query(` at all: every backtick-delimited string
+ * literal in the file is a candidate, found first and filtered to the ones
+ * that look like a SELECT from the table, in either bracketed or unbracketed
+ * form — so a hoisted `const` is just as visible as an inline call, because
+ * the literal itself is what is being read, not its call site.
  */
 test("every SELECT reading AccTravelBooking in perdiem-recompute.ts interpolates PERDIEM_ROW_COLUMNS", () => {
   const src = code("lib/acc/travel-booking/perdiem-recompute.ts");
-  const queryBlocks = src.match(/\.query\(`[\s\S]*?`\)/g) ?? [];
-  const pricingSelects = queryBlocks.filter(
-    (b) => /SELECT/.test(b) && /\[dbo\]\.\[AccTravelBooking\]/.test(b),
+  const stringLiterals = src.match(/`[^`]*`/g) ?? [];
+  const pricingSelects = stringLiterals.filter(
+    (b) => /SELECT/.test(b) && /\[dbo\]\.\[AccTravelBooking\]|dbo\.AccTravelBooking\b/.test(b),
   );
   assert.ok(
     pricingSelects.length >= 2,

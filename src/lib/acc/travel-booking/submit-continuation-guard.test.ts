@@ -14,13 +14,27 @@ import path from "node:path";
  * worth 7). Nothing else recomputes at submit —
  * `recomputeGroupPerDiem` has exactly one caller, the cancel/reject path.
  *
- * Neither `request-service.ts` nor `perdiem-recompute.ts` can be imported
- * into a test — both reach `@/env` through their pool — which is exactly why
- * this repo reads source for checks like this one (see
- * `continuation-predecessor-guard.test.ts`, `perdiem-source-guard.test.ts`).
- * The pure chain logic this fix depends on (`continuationPredecessors`) has
- * its own behavioural tests in `continuation-chain.test.ts`; this file is the
- * source-reading half that pins the write path those tests cannot reach.
+ * `request-service.ts` cannot be imported into a test — it reaches `@/env`
+ * through its pool at module load. **`perdiem-recompute.ts` genuinely CAN**
+ * (corrected, fix round 2, 2026-09-22, N2 — this docblock previously claimed
+ * otherwise, which was false and is exactly the kind of claim this branch
+ * exists to stop making): `perdiem-recompute.test.ts`, in this same
+ * directory, already imports it dynamically after setting four dummy env
+ * vars, and drives it through a `makeFakeTx` whose SQL-text routing already
+ * covers `loadOutsideDetailRows`' `WHERE t.RequestId IN` query —
+ * `rewriteSubmitAffectedTrips`' own only query. So the behavioural properties
+ * that matter (`perDiemWritable`'s gate, the `locked: true` row for a
+ * `Completed` trip, the no-op on an unchanged flag, the room rule, and — for
+ * N1 — a row skipped when `causeFor` returns `null`) are pinned there as real
+ * tests, not reasoned about here.
+ *
+ * **What THIS file still covers that a behavioural test cannot**: the CALL
+ * SITE inside `submitTravelBookingGroup` — that `rewriteSubmitAffectedTrips`
+ * is actually called, with the right arguments, in the right place relative
+ * to `tx.commit()`, tagged with the right `cause.kind`. `request-service.ts`
+ * is what cannot be imported, and that is what this file exists for; the pure
+ * chain logic the fix depends on (`continuationPredecessors`) has its own
+ * behavioural tests in `continuation-chain.test.ts` too.
  */
 
 function read(relative: string): string {
@@ -86,6 +100,28 @@ test("the rewrite is scoped to liveOthers, not to every trip on the requester's 
     "rewriteSubmitAffectedTrips must be called with liveOthers' ids — passing something wider " +
       "(e.g. every trip in chainTrips, which also includes this submission's own tabs) would ask " +
       "it to rewrite a tab this same transaction is already writing directly",
+  );
+});
+
+/**
+ * Fix round 2, N6. The test above pins the FIRST argument (the id list) and,
+ * until this one, nothing pinned the THIRD (the flags map) at all — `new
+ * Map()` passes every other assertion in this file, typechecks, and — proven
+ * by execution, not reasoned about — causes REAL rewrites: with no stored
+ * flag to compare against, `nowFlags.get(requestId) ?? false` answers `false`
+ * for every row, so any row currently stored as a continuation reads as
+ * "changed" and is rewritten back to its full, un-dropped span. Silent
+ * overpayment, and it is the single most load-bearing argument of the call —
+ * it is the one thing that tells the function what changed.
+ */
+test("the rewrite is fed the real flagsByRequest map, not an empty or ad-hoc one", () => {
+  const body = submitBody();
+  assert.ok(
+    /rewriteSubmitAffectedTrips\(\s*tx,\s*liveOthers\.map\([\s\S]*?\),\s*flagsByRequest,/.test(body),
+    "rewriteSubmitAffectedTrips's third argument must be exactly flagsByRequest — the same " +
+      "map used to write this submission's own tabs' IsContinuation. Anything else (an empty " +
+      "Map, a freshly-computed one that does not match what was actually stored/decided) would " +
+      "make every stored continuation read as changed and re-pay its dropped day",
   );
 });
 

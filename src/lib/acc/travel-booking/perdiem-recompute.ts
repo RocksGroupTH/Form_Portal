@@ -62,9 +62,14 @@ function toYmd(d: Date): string {
  * matched. So the true invariant is "every SELECT that reads an
  * `AccTravelBooking` row for pricing purposes interpolates
  * `PERDIEM_ROW_COLUMNS`", which is convention, not something this file or its
- * guard can check. A tighter guard would assert that every `.query(` in this
- * file naming `[dbo].[AccTravelBooking]` also names `${PERDIEM_ROW_COLUMNS}`
- * — not yet written.
+ * guard can check on its own. A tighter guard asserting that every SELECT
+ * naming `AccTravelBooking` also names `${PERDIEM_ROW_COLUMNS}` is written —
+ * `perdiem-source-guard.test.ts`'s "every SELECT reading AccTravelBooking …"
+ * test — but it is narrower than that sentence promises: it was itself
+ * measured (fix round 2, 2026-09-22, N6) to miss the same rogue reader when
+ * written with the table's brackets dropped or with its SQL hoisted to a
+ * `const` first, before being widened to catch both. Read that test's own
+ * docblock before assuming it is airtight.
  *
  * - **`r.CountryCode`** — deleted, `perDiemLogFor` is handed `undefined`,
  *   answers `"employee"`, and every trip this touches whose country is not
@@ -308,6 +313,21 @@ async function loadOutsideDetailRows(
  * nothing (its own early return), and one already past accounting still gets
  * its `locked: true` audit row instead of being silently rewritten or
  * silently skipped — exactly `recomputeGroupPerDiem`'s own guarantee.
+ *
+ * **`candidateIds` is deliberately UNNARROWED, unlike `recomputeGroupPerDiem`'s
+ * own `alsoAffected` below — do not "fix" this to match it (N9).**
+ * `recomputeGroupPerDiem` only considers outside trips departing on or after
+ * the CAUSE's own depart date, because a cancellation can only give a day
+ * back to something that comes AFTER it in the chain. A newly filed tab has
+ * no such direction: it can land BEFORE an existing trip on the calendar just
+ * as easily as after it — that is I1's own headline case (B 24–26 already
+ * stored, A 20–24 filed later, sitting chronologically BEFORE B). Narrowing
+ * this call by date the same way would silently drop exactly the case I1
+ * exists to fix. The caller (`submitTravelBookingGroup`) already hands this
+ * the requester's whole live calendar via `liveOthers`, so there is nothing
+ * further to narrow here — the cost is one extra `SELECT` per submit over the
+ * requester's live-trip count, not a lock held any longer than a genuinely
+ * changed row's own write.
  *
  * **Every candidate here must already be alive** (Cancelled/Rejected trips
  * are not eligible predecessors and must not have been included by the

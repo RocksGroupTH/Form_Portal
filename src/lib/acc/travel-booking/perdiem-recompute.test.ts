@@ -464,3 +464,159 @@ test("an outside trip past accounting is reported but not rewritten", async () =
   const note = inserts[0].inputs.note as string;
   assert.match(note, /ผ่านบัญชีแล้ว/);
 });
+
+/* ── rewriteSubmitAffectedTrips (added 2026-09-22, I1; N1 skip arm added the
+   same day) ──────────────────────────────────────────────────────────────
+   The submit-time counterpart to `recomputeGroupPerDiem` above, exercised
+   directly rather than only through `submit-continuation-guard.test.ts`'s
+   source-reading assertions (fix round 2, N2) — that guard's own docblock
+   used to claim this module "cannot be imported into a test", which every
+   test above it in this same file already disproves. `makeFakeTx`'s existing
+   `WHERE t.RequestId IN` routing is `loadOutsideDetailRows`' own SQL, so no
+   new fixture shape is needed — only `detail` rows, `group`/`outside` left
+   empty since this function never queries either. */
+
+test("rewriteSubmitAffectedTrips: a writable flipped trip gets one UPDATE and an audit row with locked: false", async () => {
+  const { rewriteSubmitAffectedTrips } = await loadRecompute();
+
+  const detail = [
+    {
+      RequestId: 2, DepartDate: d("2026-01-24"), ReturnDate: d("2026-01-26"),
+      IsContinuation: false, PerDiemDays: 3, PerDiemTotal: 1500, NeedsRoomBooking: 1,
+      Status: "Submitted", EmployeeId: null, CountryCode: null, StaffId: null,
+    },
+  ];
+  const { tx, calls } = makeFakeTx({ group: [], detail });
+  const nowFlags = new Map([[2, true]]);
+
+  await rewriteSubmitAffectedTrips(tx, [2], nowFlags, () => ({
+    requestId: 99, requestNo: "TOF26-00099", kind: "submitted",
+  }));
+
+  const updates = callsFor(calls, "UPDATE", 2);
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].inputs.cont, 1);
+  // 24-26 is a 3-day span; now a continuation, so the first day drops to 2.
+  assert.equal(updates[0].inputs.days, 2);
+
+  const inserts = callsFor(calls, "INSERT", 2);
+  assert.equal(inserts.length, 1);
+  const meta = JSON.parse(inserts[0].inputs.meta as string);
+  assert.equal(meta.locked, false);
+  assert.equal(meta.cause, "submitted");
+  assert.equal(meta.causedByRequestId, 99);
+  assert.equal(meta.causedByRequestNo, "TOF26-00099");
+  const note = inserts[0].inputs.note as string;
+  assert.match(note, /ถูกยื่นคำขอเพิ่ม/, "the note must use the submitted-kind label, not cancelled/rejected");
+});
+
+test("rewriteSubmitAffectedTrips: a Completed trip gets zero UPDATEs and a locked audit row with after == before — I1's stated safety property", async () => {
+  const { rewriteSubmitAffectedTrips } = await loadRecompute();
+
+  const detail = [
+    {
+      RequestId: 2, DepartDate: d("2026-01-24"), ReturnDate: d("2026-01-26"),
+      IsContinuation: false, PerDiemDays: 3, PerDiemTotal: 1500, NeedsRoomBooking: 1,
+      Status: "Completed", EmployeeId: null, CountryCode: null, StaffId: null,
+    },
+  ];
+  const { tx, calls } = makeFakeTx({ group: [], detail });
+  const nowFlags = new Map([[2, true]]);
+
+  await rewriteSubmitAffectedTrips(tx, [2], nowFlags, () => ({
+    requestId: 99, requestNo: "TOF26-00099", kind: "submitted",
+  }));
+
+  assert.equal(callsFor(calls, "UPDATE", 2).length, 0, "a signed figure is never rewritten");
+
+  const inserts = callsFor(calls, "INSERT", 2);
+  assert.equal(inserts.length, 1, "the frozen row still gets an audit row");
+  const meta = JSON.parse(inserts[0].inputs.meta as string);
+  assert.equal(meta.locked, true);
+  assert.equal(meta.before.days, meta.after.days);
+  assert.equal(meta.before.total, meta.after.total);
+  const note = inserts[0].inputs.note as string;
+  assert.match(note, /ผ่านบัญชีแล้ว/);
+});
+
+test("rewriteSubmitAffectedTrips: an unchanged flag writes nothing and never calls causeFor", async () => {
+  const { rewriteSubmitAffectedTrips } = await loadRecompute();
+
+  const detail = [
+    {
+      RequestId: 2, DepartDate: d("2026-01-24"), ReturnDate: d("2026-01-26"),
+      IsContinuation: true, PerDiemDays: 2, PerDiemTotal: 1000, NeedsRoomBooking: 1,
+      Status: "Submitted", EmployeeId: null, CountryCode: null, StaffId: null,
+    },
+  ];
+  const { tx, calls } = makeFakeTx({ group: [], detail });
+  const nowFlags = new Map([[2, true]]); // matches the stored IsContinuation: true
+
+  let causeForCalled = false;
+  await rewriteSubmitAffectedTrips(tx, [2], nowFlags, () => {
+    causeForCalled = true;
+    return { requestId: 99, requestNo: null, kind: "submitted" };
+  });
+
+  assert.equal(callsFor(calls, "UPDATE", 2).length, 0);
+  assert.equal(callsFor(calls, "INSERT", 2).length, 0);
+  assert.equal(causeForCalled, false, "causeFor must not be called for a row whose flag did not actually change");
+});
+
+test("rewriteSubmitAffectedTrips: a no-room trip reprices to 0 days, not its full span", async () => {
+  const { rewriteSubmitAffectedTrips } = await loadRecompute();
+
+  const detail = [
+    {
+      RequestId: 2, DepartDate: d("2026-01-24"), ReturnDate: d("2026-01-26"),
+      IsContinuation: false, PerDiemDays: 3, PerDiemTotal: 1500, NeedsRoomBooking: 0,
+      Status: "Submitted", EmployeeId: null, CountryCode: null, StaffId: null,
+    },
+  ];
+  const { tx, calls } = makeFakeTx({ group: [], detail });
+  const nowFlags = new Map([[2, true]]);
+
+  await rewriteSubmitAffectedTrips(tx, [2], nowFlags, () => ({
+    requestId: 99, requestNo: "TOF26-00099", kind: "submitted",
+  }));
+
+  const updates = callsFor(calls, "UPDATE", 2);
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].inputs.days, 0, "no room booked — the rule pays nothing, not the full span");
+  assert.equal(updates[0].inputs.total, 0);
+});
+
+/**
+ * N1's ruling: when `causeFor` cannot resolve a genuine cause (the changed
+ * trip's predecessor is not one of the submission's own tabs — the case that
+ * used to fall back to naming `tabs[0]` and silently re-price a historical
+ * trip), the row must be SKIPPED entirely, not rewritten under an
+ * approximate cause. `causeFor` returning `null` is how the caller expresses
+ * that; this pins the callee's side of the contract.
+ */
+test("rewriteSubmitAffectedTrips: causeFor returning null skips the row entirely — no UPDATE, no audit row", async () => {
+  const { rewriteSubmitAffectedTrips } = await loadRecompute();
+
+  const detail = [
+    {
+      RequestId: 2, DepartDate: d("2026-01-24"), ReturnDate: d("2026-01-26"),
+      IsContinuation: false, PerDiemDays: 3, PerDiemTotal: 1500, NeedsRoomBooking: 1,
+      Status: "Submitted", EmployeeId: null, CountryCode: null, StaffId: null,
+    },
+  ];
+  const { tx, calls } = makeFakeTx({ group: [], detail });
+  const nowFlags = new Map([[2, true]]); // differs from stored (false) — a real candidate
+
+  let causeForCalled = false;
+  await rewriteSubmitAffectedTrips(tx, [2], nowFlags, () => {
+    causeForCalled = true;
+    return null;
+  });
+
+  // causeFor IS called — the flag-change check runs first and this row
+  // passes it — it is the null RETURN VALUE that skips the write, not an
+  // early exit before causeFor is even asked.
+  assert.equal(causeForCalled, true);
+  assert.equal(callsFor(calls, "UPDATE", 2).length, 0);
+  assert.equal(callsFor(calls, "INSERT", 2).length, 0);
+});

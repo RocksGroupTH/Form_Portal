@@ -86,10 +86,23 @@ export function buildEstimateChainTrips(
 
 /**
  * Whether a tab's room-booking state should withhold the live per-diem
- * estimate's MONEY. Never its day count — see `useTravelBookingForm.ts`,
- * which keeps `computePerDiem`'s `days` and only zeroes `total`/`groups` when
- * this answers true, the same shaping already used for an unresolved foreign
- * rate (`attribution.kind === "pending"`).
+ * estimate's MONEY. This predicate itself governs money only, and still does
+ * — but its CALLER's day count does not always stay untouched, which the
+ * sentence here used to claim outright.
+ *
+ * **Corrected (fix round 2, 2026-09-22, N5): "keeps `computePerDiem`'s `days`
+ * and only zeroes `total`/`groups`" is true for exactly ONE of this
+ * predicate's two `true` states and false for the other.** Since I3
+ * (2026-09-22), `useTravelBookingForm.ts` passes `{ roomBooked:
+ * tab.needsRoomBooking }` to `computePerDiem` once an accommodation is
+ * CHOSEN — so in the "chosen, books no room" state, `computePerDiem` itself
+ * returns `{ days: 0, total: 0 }` before this predicate's answer is even
+ * consulted for shaping; there is no day count left to "keep". Only in the
+ * "no accommodation chosen yet" state does `roomBooked` stay withheld, `days`
+ * stay the real span, and THIS predicate's `true` answer do the zeroing —
+ * the same shaping already used for an unresolved foreign rate
+ * (`attribution.kind === "pending"`). See `useTravelBookingForm.ts`'s own
+ * estimate block for the exact split.
  *
  * **The chosen-accommodation case mirrors the server exactly, not merely by
  * name.** `TravelBookingTab.tsx` sets `tab.needsRoomBooking` straight from

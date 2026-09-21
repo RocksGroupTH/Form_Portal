@@ -161,7 +161,7 @@ test("continuationPredecessors skips a dead trip to the nearest live one, by ide
   assert.equal(preds.get(3)?.requestId, 1, "the dead trip 2 must not be named as 3's predecessor");
 });
 
-test("continuationPredecessors reports null for a trip with no depart date, and never names it as anyone else's predecessor", () => {
+test("continuationPredecessors reports null for a trip with no depart date, but a live undated trip can still be named as ANOTHER trip's predecessor by adjacency", () => {
   const preds = continuationPredecessors([
     { requestId: 1, sortOrder: 0, departDate: null, returnDate: "2026-08-06", alive: true },
     { requestId: 2, sortOrder: 1, departDate: "2026-08-07", returnDate: "2026-08-09", alive: true },

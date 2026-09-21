@@ -703,17 +703,28 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
      (`/api/request/travel-booking/date-ranges`, widened for exactly this),
      so the shared function's depart-date tiebreak matches the server's own
      rather than standing in for it.
-     Room booking is honoured too: the money below is withheld exactly when
-     the submit would store none (`moneyWithheldForRoom` — no accommodation
-     chosen yet, or a chosen one that books no room), while the day count
-     stays honest regardless, the same split already used for an unresolved
-     foreign rate.
-     What still legitimately differs from the submit is staleness, not logic:
-     this prices from whatever allowance log and country rates have already
-     landed on the form (`estimateLog`/`countryRates` below) — the same
-     effective-dated log the submit reads — while the authoritative amount is
-     priced from the server's own FRESH read at the moment of submit, which
-     can differ if a rate changed in between (see `refreshRates` below). ── */
+     Room booking is honoured too (package B, then corrected for the day count
+     specifically by I3, 2026-09-22): once an accommodation is CHOSEN,
+     `roomBooked` is passed to `computePerDiem`, so a no-room choice now zeroes
+     BOTH the day count and the money — the day count does NOT "stay honest
+     regardless" of the room rule, only regardless of an UNRESOLVED rate.
+     While no accommodation is chosen yet, the room state is genuinely
+     unknown, and only THEN does the day count stay honest (the real span)
+     while the money is withheld — see the estimate block itself, a few
+     hundred lines below, for the exact split and why.
+     What still legitimately differs from the submit is staleness, and —
+     separately — scope, not only logic. Staleness: this prices from whatever
+     allowance log and country rates have already landed on the form
+     (`estimateLog`/`countryRates` below) — the same effective-dated log the
+     submit reads — while the authoritative amount is priced from the
+     server's own FRESH read at the moment of submit, which can differ if a
+     rate changed in between (see `refreshRates` below). Scope: `otherTrips`/
+     `otherTripsForChain` come from `/api/request/travel-booking/date-ranges`,
+     which matches `r.StaffId = @staff` ALONE and returns `[]` outright for a
+     falsy `staffId` — the submit's own `loadRequesterTrips` matches `StaffId
+     OR EmployeeId`. A requester with no active HR row therefore gets an
+     estimate whose chain is genuinely narrower than the submit's, not merely
+     staler (recorded, not fixed here). ── */
   /**
    * The stand-in used only while `/api/request/travel-booking/allowance-log`
    * has not yet answered — including a fetch that FAILS and never answers at
