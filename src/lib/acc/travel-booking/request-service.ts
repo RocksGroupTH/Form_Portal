@@ -36,6 +36,9 @@ import { listBrandRegistry } from "@/lib/brand-registry";
 import { workLocationIssue } from "@/lib/acc/travel-booking/work-location-pin";
 import { perDiemLogFor } from "@/lib/acc/travel-booking/perdiem-country";
 import { listPerDiemCountryRates } from "@/lib/acc/travel-booking/perdiem-source";
+import { findDateOverlap, type OtherTrip } from "@/lib/acc/travel-booking/date-overlap";
+import { continuationFlags, type ChainTrip } from "@/lib/acc/travel-booking/continuation-chain";
+import { loadRequesterTrips } from "@/lib/acc/travel-booking/requester-trips";
 import type {
   Accommodation,
   BookingDetail,
@@ -1208,9 +1211,9 @@ export async function submitTravelBookingGroup(
     }
   }
 
-  // No overlapping travel dates for this requester (rejected/cancelled excluded; two trips may
-  // still share a single boundary day — continuation).
-  const existingRanges = await listTravelBookingDateRanges(emp.staffId, groupKey);
+  // No overlapping travel dates WITHIN this submission's own group (rejected/cancelled requests
+  // don't enter into it — these are the tabs being filed right now). Two trips may still share a
+  // single boundary day — continuation.
   for (let i = 0; i < tabs.length; i++) {
     const d1 = tabs[i].departDate;
     const r1 = tabs[i].returnDate;
@@ -1222,14 +1225,50 @@ export async function submitTravelBookingGroup(
         throw new Error(`ช่วงวันเดินทางของทริปที่ ${i + 1} ซ้อนทับกับทริปที่ ${j + 1} — เลือกช่วงวันที่ไม่ให้ซ้อนกัน`);
       }
     }
-    for (const ex of existingRanges) {
-      if (travelRangesConflict(d1, r1, ex.departDate, ex.returnDate)) {
-        throw new Error(`ช่วงวันเดินทางของทริปที่ ${i + 1} (${d1} – ${r1}) ซ้อนทับกับคำขออื่นของผู้ขอเบิกที่มีอยู่แล้ว`);
-      }
-    }
   }
 
-  // Continuation detection + per-diem, over the SortOrder-ordered tabs.
+  // No overlapping travel dates against this requester's OTHER live AP-17
+  // requests — matched on StaffId OR EmployeeId (`loadRequesterTrips`), so a
+  // requester with no active HR row is still checked. **Refused before the
+  // transaction opens**: an overlap is a property of the request as filed, so
+  // nothing should be claimed, numbered or written before it is checked, and
+  // the requester gets the same answer whether they are first or tenth in the
+  // queue today. One shared boundary day is allowed — the previous trip's
+  // return date may equal this one's depart date, or the reverse —
+  // `findDateOverlap` owns that rule and is tested on it; only the aliveness
+  // of the DATES is filtered here, `findDateOverlap` owns the live/dead rule
+  // itself.
+  const others = await loadRequesterTrips(pool, {
+    staffId: emp.staffId ?? null,
+    employeeId: emp.id ?? null,
+    excludeRequestIds: tabs.map((t) => t.id as number),
+  });
+  const datedOthers = others.filter((o) => o.departDate && o.returnDate);
+  const overlapInput: OtherTrip[] = datedOthers.map((o) => ({
+    requestId: o.requestId,
+    requestNo: o.requestNo,
+    departDate: o.departDate as string,
+    returnDate: o.returnDate as string,
+    alive: o.alive,
+  }));
+  for (let i = 0; i < tabs.length; i++) {
+    const clash = findDateOverlap(
+      { departDate: tabs[i].departDate as string, returnDate: tabs[i].returnDate as string },
+      overlapInput,
+    );
+    if (clash) {
+      throw new Error(tabs.length > 1 ? `(คำขอที่ ${i + 1}) ${clash.message}` : clash.message);
+    }
+  }
+  // Live only, from here on — this feeds the continuation chain below, which
+  // (like `continuation-chain.ts` everywhere else) must never let a dead trip
+  // go on absorbing a day nobody will be paid for.
+  const liveOthers = datedOthers.filter((o) => o.alive);
+
+  // Continuation detection + per-diem. The chain now spans this person's
+  // WHOLE calendar, not just this submission's own group — a trip filed last
+  // week whose return date meets this one's depart date still owns that day.
+  // `continuationFlags` orders by depart date for exactly this reason.
   //
   // TWO queries, not two per tab. The employee's HR log is one per person and
   // the country rates are one list; the country itself is per TAB, because a
@@ -1243,19 +1282,54 @@ export async function submitTravelBookingGroup(
     getPerDiemEmployeeLog(emp.id, emp.staffId ?? null, uat),
     listPerDiemCountryRates(),
   ]);
-  const continuationFlags: boolean[] = [];
+
+  // Every trip with a null depart/return date is excluded before it can reach
+  // this array: `tabs` was already required to carry both dates by
+  // `validateTravelBookingTab` above, and `liveOthers` descends from
+  // `datedOthers`, which dropped anything with either date missing. A
+  // live-but-undated row can therefore never sort to the front of
+  // `continuationFlags`' chronological walk and be picked up as a false
+  // predecessor.
+  const chainTrips: ChainTrip[] = tabs
+    .map((t, i) => ({
+      requestId: t.id as number,
+      sortOrder: i,
+      departDate: t.departDate as string,
+      returnDate: t.returnDate as string,
+      alive: true,
+    }))
+    .concat(
+      liveOthers.map((o) => ({
+        requestId: o.requestId,
+        sortOrder: o.sortOrder,
+        departDate: o.departDate as string,
+        returnDate: o.returnDate as string,
+        alive: true,
+      })),
+    );
+  const flagsByRequest = continuationFlags(chainTrips);
+
+  const continuationFlagList: boolean[] = [];
   const perDiems: { days: number; total: number }[] = [];
   for (let i = 0; i < tabs.length; i++) {
-    const prev = i > 0 ? tabs[i - 1] : null;
-    const isContinuation = !!(prev && tabs[i].departDate === prev.returnDate);
-    continuationFlags.push(isContinuation);
+    const isContinuation = flagsByRequest.get(tabs[i].id as number) ?? false;
+    continuationFlagList.push(isContinuation);
     // perDiemLogFor is the single decision — the estimate on the form, this
     // write, the recompute after a cancellation and the report's rate column all
     // go through it, so none of them can price a trip differently from the
     // figure actually stored here.
     const resolved = perDiemLogFor(tabs[i].countryCode, log, countryRates);
     perDiems.push(
-      computePerDiem(tabs[i].departDate as string, tabs[i].returnDate as string, isContinuation, resolved.log),
+      computePerDiem(
+        tabs[i].departDate as string,
+        tabs[i].returnDate as string,
+        isContinuation,
+        resolved.log,
+        // No room booked, no per diem (2026-09-21). Read from the persisted
+        // flag, never from the posted DTO — `derive-flags.ts` makes the same
+        // point for every other booking flag.
+        { roomBooked: tabs[i].needsRoomBooking },
+      ),
     );
   }
 
@@ -1315,7 +1389,7 @@ export async function submitTravelBookingGroup(
       // so the snapshot is fixed with it.
       await tx.request()
         .input("id", sql.Int, requestId)
-        .input("cont", sql.Bit, continuationFlags[i] ? 1 : 0)
+        .input("cont", sql.Bit, continuationFlagList[i] ? 1 : 0)
         .input("days", sql.Int, perDiems[i].days)
         .input("total", sql.Decimal(18, 2), perDiems[i].total)
         .input("allowance", sql.Decimal(18, 2), emp.allowance ?? null)
