@@ -75,6 +75,17 @@ export function buildTravelBookingEmail(
   trigger: TravelBookingTrigger,
   req: TravelBookingRequest,
   note?: string,
+  /**
+   * Who performed the action, for the three manager triggers.
+   *
+   * It is an **email address**, not a display name: `Actor`
+   * (`approval-engine.ts:10`) carries no name, and resolving one would add a
+   * lookup inside `notify()` — a best-effort path whose failures are swallowed,
+   * so a failed name lookup would silently cost the whole mail.
+   *
+   * Optional because the other three triggers have no single actor to name.
+   */
+  actorName?: string | null,
 ): { subject: string; html: string } {
   const url = `${env.NEXT_PUBLIC_APP_URL ?? ""}/request/travel-booking/${req.id ?? ""}`;
   const no = req.requestNo ?? "-";
@@ -94,13 +105,18 @@ export function buildTravelBookingEmail(
 
     case "Approved": {
       const subject = `อนุมัติแล้ว ${no}`;
-      // The DAY, not the month: a foreign trip pays on the 10th, so "ตุลาคม"
-      // alone stopped naming when the money arrives.
       const payoutMonth = req.paymentDate ? payoutDateLabel(req.paymentDate) ?? "-" : "-";
       const rows = [
         row("เลขที่", no),
+        row("วันเดินทาง", dateRangeLabel(req)),
+        row("สถานที่ปฏิบัติงาน", workLocationLine(req)),
+        actorName ? row("อนุมัติโดย", actorName) : "",
         row("กำหนดจ่าย", payoutMonth),
         row("เบี้ยเลี้ยงรวม (บาท)", req.perDiemTotal.toFixed(2)),
+        // The subject reads as finished. It is not — the request goes to the
+        // booking desk next, and a requester who thinks it is done does not
+        // chase a booking that never happened.
+        row("ขั้นถัดไป", "รอ Admin ดำเนินการจองให้ แล้วจึงส่งให้บัญชีตรวจสอบ"),
       ].join("");
       return { subject, html: shell(subject, rows, url) };
     }
@@ -121,7 +137,9 @@ export function buildTravelBookingEmail(
       const subject = `ไม่อนุมัติ ${no}`;
       const rows = [
         row("เลขที่", no),
-        row("ผู้ขอ", req.requesterFullName ?? "-"),
+        row("วันเดินทาง", dateRangeLabel(req)),
+        row("สถานที่ปฏิบัติงาน", workLocationLine(req)),
+        actorName ? row("ไม่อนุมัติโดย", actorName) : "",
         note ? row("เหตุผล", note) : "",
       ].join("");
       return { subject, html: shell(subject, rows, url) };
@@ -131,8 +149,13 @@ export function buildTravelBookingEmail(
       const subject = `ส่งกลับแก้ไข ${no}`;
       const rows = [
         row("เลขที่", no),
-        row("ผู้ขอ", req.requesterFullName ?? "-"),
+        row("วันเดินทาง", dateRangeLabel(req)),
+        row("สถานที่ปฏิบัติงาน", workLocationLine(req)),
+        actorName ? row("ส่งกลับโดย", actorName) : "",
         note ? row("หมายเหตุ", note) : "",
+        // "ส่งกลับแก้ไข" states a status. This states the instruction — and
+        // that the running number survives, so nobody files a second request.
+        row("สิ่งที่ต้องทำ", "เปิดคำขอนี้ แก้ไขตามหมายเหตุ แล้วกดส่งใหม่ (เลขที่เดิม)"),
       ].join("");
       return { subject, html: shell(subject, rows, url) };
     }
