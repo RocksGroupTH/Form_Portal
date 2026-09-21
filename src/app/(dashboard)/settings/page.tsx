@@ -20,6 +20,8 @@ import {
   ClipboardList,
 } from "lucide-react";
 import { isSystemAdminRole } from "@/lib/roles";
+import { visibleSettingsCards } from "@/lib/settings-card-visibility";
+import { useViewerUat } from "@/lib/hooks/useFormEnvironments";
 
 const ICON_MAP: Record<string, React.ComponentType<{ size?: number; style?: React.CSSProperties }>> = {
   Server,
@@ -39,10 +41,23 @@ export default function SettingsHubPage() {
   const isAdmin =
     session?.user?.role === "IT Admin" || session?.user?.role === "System Admin";
   const isSystemAdmin = isSystemAdminRole(session?.user?.role);
+  /**
+   * `/api/form-environment`'s own answer, not the cookie: it re-checks an
+   * active `UatTester` row, the same rule `viewerIsTesting()` applies inside
+   * the resolver. One shared SWR key, and the navbar's PRO/UAT switch has
+   * already asked for it, so this costs no extra request.
+   *
+   * Undefined while it loads, and undefined if the fetch failed — both read
+   * as PRO here, so a `uatOnly` card appears once the payload lands rather
+   * than flashing in and being taken away. That is the safe direction for
+   * this rule and it hides a link, never data.
+   */
+  const isUatViewer = !!useViewerUat()?.uatMode;
 
-  const visibleCards = SETTINGS_CARDS.filter(
-    (item) => !item.systemAdminOnly || isSystemAdmin,
-  );
+  const visibleCards = visibleSettingsCards(SETTINGS_CARDS, {
+    isSystemAdmin,
+    isUatViewer,
+  });
 
   useEffect(() => {
     if (status === "authenticated" && !isAdmin) router.replace("/");
