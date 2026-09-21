@@ -43,12 +43,18 @@ function toYmd(d: Date): string {
 }
 
 /** Queue an email built from the current request state to one recipient. Best-effort — never throws. */
-async function notify(requestId: number, trigger: TravelBookingTrigger, toEmail: string | null, note?: string): Promise<void> {
+async function notify(
+  requestId: number,
+  trigger: TravelBookingTrigger,
+  toEmail: string | null,
+  note?: string,
+  actorName?: string | null,
+): Promise<void> {
   if (!toEmail) return;
   try {
     const req = await getTravelBookingRequest(requestId);
     if (!req) return;
-    const mail = buildTravelBookingEmail(trigger, req, note);
+    const mail = buildTravelBookingEmail(trigger, req, note, actorName);
     await queueEmail({ requestId, toEmail, subject: mail.subject, bodyHtml: mail.html, triggerType: trigger });
   } catch {
     // Notification failures must never fail the approval action itself.
@@ -240,7 +246,7 @@ export async function approveByManager(requestId: number, actor: Actor): Promise
   // never mailed anybody, and the hand-off from Admin (`completeRequest`) never
   // did either.
   const requesterEmail = await getRequesterEmail(requestId);
-  await notify(requestId, "Approved", requesterEmail);
+  await notify(requestId, "Approved", requesterEmail, undefined, actor.email);
   void processQueue().catch(() => {});
 
   return requireTravelBookingRequest(requestId);
@@ -282,7 +288,7 @@ export async function rejectRequest(requestId: number, actor: Actor, comment: st
   }
 
   const requesterEmail = await getRequesterEmail(requestId);
-  await notify(requestId, "Rejected", requesterEmail, comment);
+  await notify(requestId, "Rejected", requesterEmail, comment, actor.email);
   void processQueue().catch(() => {});
 
   return requireTravelBookingRequest(requestId);
@@ -323,7 +329,7 @@ export async function returnRequest(requestId: number, actor: Actor, comment: st
   }
 
   const requesterEmail = await getRequesterEmail(requestId);
-  await notify(requestId, "Returned", requesterEmail, comment);
+  await notify(requestId, "Returned", requesterEmail, comment, actor.email);
   void processQueue().catch(() => {});
 
   return requireTravelBookingRequest(requestId);
