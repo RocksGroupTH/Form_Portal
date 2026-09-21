@@ -161,6 +161,48 @@ for (const file of [REQUEST_SERVICE, REPORT_SERVICE]) {
     );
   });
 
+  /**
+   * Fix round 2. The re-review defeated three siblings of the anchored
+   * StaffId/EmployeeId check above by wrapping EACH of them in
+   * `(<condition> OR 1=1)` — `pr.FormCode = @form`, `pr.Status NOT IN
+   * (…)`, and `pt.RequestId <> r.Id` all still matched their own bare
+   * `regex.test(block)` afterward, because appending beside a condition
+   * leaves its original text completely intact; only the ENCLOSING
+   * predicate becomes vacuously true. Anchoring those three the same
+   * per-condition way the StaffId/EmployeeId check was anchored (a
+   * negative lookahead per regex) would only move the same hole onto the
+   * next assertion someone writes — it treats the symptom at each of
+   * today's sites rather than the mechanism.
+   *
+   * The mechanism: SQL has exactly one way to admit rows a condition would
+   * otherwise exclude — introduce an `OR`. This block's design has exactly
+   * ONE legitimate disjunction (the StaffId/EmployeeId requester-match
+   * arm); every other condition here (FormCode, the alive/status filter,
+   * the self-match exclusion, both JOIN conditions, the correlation) is a
+   * plain AND-term. So instead of anchoring each condition individually,
+   * this counts `OR` keywords in the whole block and requires exactly one
+   * — closing the class for every condition above AT ONCE, including any
+   * added later with a plain `regex.test()` and no anchoring of its own.
+   * `\bOR\b` (word-boundary both sides) is required so "ORDER BY" is never
+   * counted: `\b` needs a non-word character immediately after the match,
+   * and "D" (of "ORDER") is a word character, so `OR` inside "ORDER" has
+   * no boundary on its right and is skipped.
+   */
+  test(`the predecessor APPLY block in ${file} has no OR beyond the one legitimate requester alternation`, () => {
+    const block = predecessorApplyBlock(file);
+    const orCount = (block.match(/\bOR\b/g) ?? []).length;
+    assert.equal(
+      orCount,
+      1,
+      `${file}'s predecessor block has ${orCount} OR keyword(s), expected exactly 1 ` +
+        "(the StaffId/EmployeeId requester-match alternation) — a second OR anywhere " +
+        "means some condition (FormCode, the alive filter, the self-match exclusion, " +
+        "the correlation, or one not yet written) has been widened by appending " +
+        "`OR ...` beside it rather than replacing it, which a presence-only check " +
+        "cannot see because the original text is still there",
+    );
+  });
+
   test(`the predecessor APPLY block in ${file} correlates on ReturnDate = this request's own DepartDate`, () => {
     const block = predecessorApplyBlock(file);
     // request-service.ts joins its own row's booking via `mt`; report-service.ts
