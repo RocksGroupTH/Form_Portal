@@ -105,6 +105,8 @@ export function buildTravelBookingEmail(
 
     case "Approved": {
       const subject = `อนุมัติแล้ว ${no}`;
+      // The DAY, not the month: a foreign trip pays on the 10th, so "ตุลาคม"
+      // alone stopped naming when the money arrives.
       const payoutMonth = req.paymentDate ? payoutDateLabel(req.paymentDate) ?? "-" : "-";
       const rows = [
         row("เลขที่", no),
