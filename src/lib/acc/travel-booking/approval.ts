@@ -534,11 +534,13 @@ export async function approveByAccount(requestId: number, actor: Actor): Promise
 
     // The rule, not the button. The queue disables this row's controls, but a
     // control removed from a page is not a control the server has: this reads
-    // the group from the database at the moment of the call, inside the
-    // transaction that has just claimed the row, so a predecessor decided a
-    // moment ago is seen and one still undecided cannot be signed off by a
-    // stale page, a replayed request or the multi-select loop. Throwing rolls
-    // the claim back, leaving the request exactly where it was.
+    // the requester's whole calendar from the database at the moment of the
+    // call — not only this request's own `GroupKey` group, since a
+    // predecessor may sit in a different one — inside the transaction that
+    // has just claimed the row, so a predecessor decided a moment ago is seen
+    // and one still undecided cannot be signed off by a stale page, a
+    // replayed request or the multi-select loop. Throwing rolls the claim
+    // back, leaving the request exactly where it was.
     const dependency = await loadPerDiemDependency(tx, requestId);
     if (dependency && !dependency.settled) {
       throw new Error(dependencyRefusalText(dependency));
