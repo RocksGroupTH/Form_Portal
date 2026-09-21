@@ -11,6 +11,7 @@ import {
   perDiemAttributionFootnote,
   perDiemAttributionNote,
   PER_DIEM_UNRATED_NOTE,
+  roomBookingNote,
   type PerDiemAttribution,
 } from "@/features/travel-booking/lib/perdiem-note";
 import { ratedSegments, tripRateLead, unratedNote } from "@/features/travel-booking/lib/trip-rate-lead";
@@ -212,6 +213,10 @@ export function TravelBookingTab({
   const selectedGoVehicle = vehicles.find((v) => v.id === tab.goVehicleId);
   const selectedReturnVehicle = vehicles.find((v) => v.id === tab.returnVehicleId);
   const selectedRentVehicle = rentVehicles.find((v) => v.id === tab.rentVehicleId);
+  // Task 8 fix round 1: which of the two different ฿0s the per-diem summary
+  // below might be showing — a settled "no room, no per diem" or a pending
+  // "no accommodation chosen yet" — or null when the figure is not withheld.
+  const roomNote = roomBookingNote(tab.accommodationId, tab.needsRoomBooking);
 
   const showRentBlock = tab.goNeedsVehicleRent || tab.returnNeedsVehicleRent;
   const showRentDates = showRentBlock && !!selectedRentVehicle && selectedRentVehicle.name !== NO_RENT_VEHICLE_NAME;
@@ -727,6 +732,21 @@ export function TravelBookingTab({
               : countryNameBoth(perDiemEstimate.attribution.countryCode),
           )}
         </p>
+        {/* Which of two different ฿0s the summary above might be showing
+            (Task 8 fix round 1). Before this, "chosen, books no room" and
+            "no accommodation chosen yet" both rendered an identical bare ฿0
+            with nothing saying why — "why is my per diem zero" is exactly
+            the question this package exists to answer on screen. The
+            no-room case is settled (text-warning, like the unrated-day note
+            below); the not-yet-chosen case is only pending (text-muted). */}
+        {roomNote && (
+          <p
+            className="text-[11.5px] m-0"
+            style={{ color: tab.accommodationId == null ? "var(--text-muted)" : "var(--text-warning)" }}
+          >
+            {roomNote}
+          </p>
+        )}
         {/* The dated rates THIS TRIP falls under — and only once there is a trip
             to describe. Until both dates are typed `tripRateSegments` answers
             [], and the card says nothing about rates rather than describing a

@@ -1233,12 +1233,26 @@ export function validateTravelBookingTab(
  * Draft in its own WHERE clause without also removing it from the picker's
  * day-lock above, which needs it; the two uses read the same rows and decide
  * "alive, for this purpose" differently from `status`.
+ *
+ * **`sortOrder` travels too (Task 8 fix round 1)**, the same
+ * `AccTravelBooking.SortOrder` column `loadRequesterTrips` selects for the
+ * server's own continuation chain. Without it, the client's live per-diem
+ * estimate had no real depart-date tiebreak for the requester's OTHER trips
+ * to feed `continuationFlags` (`continuation-chain.ts`) — see
+ * `perdiem-estimate-inputs.ts`'s `buildEstimateChainTrips`, its only reader.
  */
 export async function listTravelBookingDateRanges(
   staffId: number,
   excludeGroupKey: string | null,
 ): Promise<
-  { departDate: string; returnDate: string; requestId: number; requestNo: string | null; status: string }[]
+  {
+    departDate: string;
+    returnDate: string;
+    requestId: number;
+    requestNo: string | null;
+    status: string;
+    sortOrder: number;
+  }[]
 > {
   if (!staffId) return [];
   const pool = await getAccPool();
@@ -1246,7 +1260,7 @@ export async function listTravelBookingDateRanges(
     .input("staff", sql.Int, staffId)
     .input("form", sql.NVarChar, AP17_FORM_CODE)
     .input("gk", sql.NVarChar(40), excludeGroupKey)
-    .query(`SELECT t.DepartDate, t.ReturnDate, r.Id AS RequestId, r.RequestNo, r.Status
+    .query(`SELECT t.DepartDate, t.ReturnDate, t.SortOrder, r.Id AS RequestId, r.RequestNo, r.Status
             FROM [dbo].[AccTravelBooking] t
             INNER JOIN [dbo].[AccRequest] r ON r.Id = t.RequestId
             WHERE r.FormCode = @form AND r.StaffId = @staff
@@ -1254,13 +1268,21 @@ export async function listTravelBookingDateRanges(
               AND t.DepartDate IS NOT NULL AND t.ReturnDate IS NOT NULL
               AND (@gk IS NULL OR t.GroupKey <> @gk)`);
   return (
-    res.recordset as { DepartDate: Date; ReturnDate: Date; RequestId: number; RequestNo: string | null; Status: string }[]
+    res.recordset as {
+      DepartDate: Date;
+      ReturnDate: Date;
+      RequestId: number;
+      RequestNo: string | null;
+      Status: string;
+      SortOrder: number | null;
+    }[]
   ).map((row) => ({
     departDate: toYmd(row.DepartDate),
     returnDate: toYmd(row.ReturnDate),
     requestId: row.RequestId,
     requestNo: row.RequestNo ?? null,
     status: row.Status,
+    sortOrder: row.SortOrder ?? 0,
   }));
 }
 

@@ -579,9 +579,18 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
   // Drafts included (see the endpoint's own doc comment for why).
   // `requestId`/`requestNo`/`status` ride along so `otherTrips` below can name
   // which request a clash belongs to and can tell a Draft apart from a
-  // submitted one — not only that a row exists.
+  // submitted one — not only that a row exists. `sortOrder` (Task 8 fix round
+  // 1) is `AccTravelBooking.SortOrder`, the real depart-date tiebreak
+  // `otherTripsForChain` below feeds the shared `continuationFlags`.
   const { data: dateRangesData } = useSWR<
-    { departDate: string; returnDate: string; requestId: number; requestNo: string | null; status: string }[]
+    {
+      departDate: string;
+      returnDate: string;
+      requestId: number;
+      requestNo: string | null;
+      status: string;
+      sortOrder: number;
+    }[]
   >(
     ["/api/request/travel-booking/date-ranges", requesterStaffId ?? 0, groupKey ?? ""],
     ([url, sid, gk]: [string, number, string]) =>
@@ -623,6 +632,36 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
     [existingRanges],
   );
 
+  /**
+   * The same rows as `otherTrips` above, shaped for the continuation chain
+   * instead of the overlap refusal. **A second small mapping, not a widened
+   * `OtherTrip`** — `date-overlap.ts`'s own docblock is explicit that the
+   * overlap rule and the continuation rule are deliberately not folded into
+   * one type, so `sortOrder` (meaningless to `findDateOverlap`) does not
+   * belong on `OtherTrip` either. Same Draft-exclusion as `otherTrips`, for
+   * the same reason (see its own comment above).
+   *
+   * `sortOrder` is `AccTravelBooking.SortOrder` (Task 8 fix round 1) — the
+   * same column `submitTravelBookingGroup`'s own `chainTrips` reads via
+   * `loadRequesterTrips` for the requester's OTHER trips
+   * (request-service.ts). Feeding the shared `continuationFlags`
+   * (continuation-chain.ts) this value, rather than a stand-in, is what makes
+   * its depart-date tiebreak match the server's exactly instead of merely
+   * being inert for it.
+   */
+  const otherTripsForChain = useMemo(
+    () =>
+      existingRanges
+        .filter((r) => r.status !== "Draft")
+        .map((r) => ({
+          requestId: r.requestId,
+          departDate: r.departDate,
+          returnDate: r.returnDate,
+          sortOrder: r.sortOrder,
+        })),
+    [existingRanges],
+  );
+
   const settingsMaps = useMemo<TabSettingsMaps>(
     () => ({
       reasonById: new Map(reasons.map((r) => [r.id, r])),
@@ -638,14 +677,16 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
      Continuation is no longer mirrored, it is SHARED: `continuationFlags`
      below is the one function `submitTravelBookingGroup` (request-service.ts)
      also calls, fed this group's own tabs concatenated with the requester's
-     OTHER already-saved trips (`otherTrips`) exactly as the submit
+     OTHER already-saved trips (`otherTripsForChain`) exactly as the submit
      concatenates its own `chainTrips` — so a trip filed last week whose
      return date meets this tab's depart date is picked up here too, not only
      at submit. See `perdiem-estimate-inputs.ts` for how the two lists become
-     the `ChainTrip[]` the shared function reads, and for the one place that
-     module still approximates the server (its `sortOrder` tiebreak for the
-     requester's OTHER trips, which the endpoint this hook reads does not
-     carry).
+     the `ChainTrip[]` the shared function reads. **No approximation left in
+     that mapping (Task 8 fix round 1)**: the requester's OTHER trips now
+     carry their real `AccTravelBooking.SortOrder`
+     (`/api/request/travel-booking/date-ranges`, widened for exactly this),
+     so the shared function's depart-date tiebreak matches the server's own
+     rather than standing in for it.
      Room booking is honoured too: the money below is withheld exactly when
      the submit would store none (`moneyWithheldForRoom` — no accommodation
      chosen yet, or a chosen one that books no room), while the day count
@@ -741,15 +782,16 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
 
   /* The requester's WHOLE calendar, not just this group's own tabs — the same
      two halves `submitTravelBookingGroup` concatenates into its own
-     `chainTrips` (request-service.ts): this group's tabs plus `otherTrips`
-     (the requester's other, already-saved requests, Drafts already excluded
-     above). Fed through the SAME `continuationFlags` the submit and the
-     cancellation recompute call, so this estimate cannot disagree with what
-     actually gets stored. See `perdiem-estimate-inputs.ts` for how the two
-     lists are turned into the shared function's `ChainTrip[]`. */
+     `chainTrips` (request-service.ts): this group's tabs plus
+     `otherTripsForChain` (the requester's other, already-saved requests,
+     Drafts already excluded, with their real `SortOrder`). Fed through the
+     SAME `continuationFlags` the submit and the cancellation recompute call,
+     so this estimate cannot disagree with what actually gets stored. See
+     `perdiem-estimate-inputs.ts` for how the two lists are turned into the
+     shared function's `ChainTrip[]`. */
   const chainTripsForEstimate = useMemo(
-    () => buildEstimateChainTrips(tabs, otherTrips),
-    [tabs, otherTrips],
+    () => buildEstimateChainTrips(tabs, otherTripsForChain),
+    [tabs, otherTripsForChain],
   );
   const chainFlagsByRequestId = useMemo(
     () => deriveContinuationFlags(chainTripsForEstimate),

@@ -37,9 +37,26 @@ test("own tabs get their array index as sortOrder — parity with request-servic
 test("every trip in the chain is marked alive — otherTrips is already alive-filtered upstream", () => {
   const chain = buildEstimateChainTrips(
     [{ departDate: "2026-09-01", returnDate: "2026-09-02" }],
-    [{ requestId: 900001, departDate: "2026-08-01", returnDate: "2026-08-03" }],
+    [{ requestId: 900001, departDate: "2026-08-01", returnDate: "2026-08-03", sortOrder: 0 }],
   );
   assert.ok(chain.every((t) => t.alive));
+});
+
+/**
+ * Task 8 fix round 1: the requester's OTHER trips now carry their real
+ * `AccTravelBooking.SortOrder` (from the widened
+ * `/api/request/travel-booking/date-ranges`), not a `requestId` stand-in —
+ * so the value on the chain must be the real column, and must NOT equal the
+ * request id it came with (a coincidence that would hide a regression back
+ * to the old stand-in).
+ */
+test("an other trip's real SortOrder lands on the chain, not its requestId", () => {
+  const chain = buildEstimateChainTrips(
+    [],
+    [{ requestId: 900050, departDate: "2026-09-01", returnDate: "2026-09-03", sortOrder: 4 }],
+  );
+  assert.equal(chain[0].sortOrder, 4);
+  assert.notEqual(chain[0].sortOrder, chain[0].requestId);
 });
 
 /**
@@ -52,7 +69,7 @@ test("every trip in the chain is marked alive — otherTrips is already alive-fi
 test("an other (already-saved) trip's return date feeding this tab's depart date is a continuation", () => {
   const chain = buildEstimateChainTrips(
     [{ departDate: "2026-09-06", returnDate: "2026-09-08" }],
-    [{ requestId: 900001, departDate: "2026-09-01", returnDate: "2026-09-06" }],
+    [{ requestId: 900001, departDate: "2026-09-01", returnDate: "2026-09-06", sortOrder: 0 }],
   );
   const flags = continuationFlags(chain);
   const ownTripId = chain.find((t) => t.requestId < 0)!.requestId;

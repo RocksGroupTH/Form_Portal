@@ -20,11 +20,13 @@ export interface EstimateTab {
   returnDate: string | null;
 }
 
-/** The other-trip fields this module needs — a subset of `OtherTrip`. */
+/** The other-trip fields this module needs — a subset of `OtherTrip`, widened
+ *  with the real `AccTravelBooking.SortOrder` column (Task 8 fix round 1). */
 export interface EstimateOtherTrip {
   requestId: number;
   departDate: string;
   returnDate: string;
+  sortOrder: number;
 }
 
 /**
@@ -49,21 +51,17 @@ export interface EstimateOtherTrip {
  * their array index — exactly what `request-service.ts`'s own `chainTrips`
  * gives an unsaved tab (`sortOrder: i`), so an unsaved tab's estimate orders
  * identically to how that same tab would order at submit; this is not
- * invented, it is parity with the server. The requester's OTHER trips have no
- * such column available here: `/api/request/travel-booking/date-ranges`
- * (`listTravelBookingDateRanges`, request-service.ts) does not select
- * `AccTravelBooking.SortOrder` — only `loadRequesterTrips`, the server's own
- * continuation source, does — and adding it would be a server-path change
- * this task is scoped not to make. Each other trip is given its own
- * `requestId` instead: real data this module already holds, not fabricated,
- * and stable and unique per request, unlike a constant. It is a genuine
- * approximation of the real column and is called out as one in the Task 8
- * report — it can only matter when two ALIVE trips share a depart date, which
- * `findDateOverlap` (date-overlap.ts) refuses at submit for every trip filed
- * since that refusal shipped; `continuation-chain.test.ts` itself records
- * that older, pre-refusal rows can still collide, so this is a real residual
- * imprecision (display-only, for a session mixing such a row with a live
- * edit) rather than a provably-unreachable case.
+ * invented, it is parity with the server. **The requester's OTHER trips now
+ * carry their own real `SortOrder` too (Task 8 fix round 1)** —
+ * `/api/request/travel-booking/date-ranges`
+ * (`listTravelBookingDateRanges`, request-service.ts) was widened to select
+ * `AccTravelBooking.SortOrder`, the same column `loadRequesterTrips` (the
+ * server's own continuation source) already read — so this is no longer an
+ * approximation on either half: both arms hand `continuationFlags` the exact
+ * value the submit itself would. (An earlier version of this module used
+ * each other trip's `requestId` as a stand-in tiebreak, real data but not the
+ * real column; that stand-in and the report section explaining why it was
+ * safe are both gone, superseded by the real value.)
  */
 export function buildEstimateChainTrips(
   tabs: readonly EstimateTab[],
@@ -78,7 +76,7 @@ export function buildEstimateChainTrips(
   }));
   const others: ChainTrip[] = otherTrips.map((o) => ({
     requestId: o.requestId,
-    sortOrder: o.requestId,
+    sortOrder: o.sortOrder,
     departDate: o.departDate,
     returnDate: o.returnDate,
     alive: true,
