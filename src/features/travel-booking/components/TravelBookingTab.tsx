@@ -1,7 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { Briefcase, Calendar, Car, FileCheck, History, Hotel, Landmark, MapPin, StickyNote } from "lucide-react";
+import { findDateOverlap, type OtherTrip } from "@/lib/acc/travel-booking/date-overlap";
 import type { AccBrandOption } from "@/features/accounting/types";
 import { NO_RENT_VEHICLE_NAME } from "@/features/travel-booking/constants";
 import {
@@ -81,6 +83,17 @@ interface TravelBookingTabProps {
   rentVehicles: RentVehicle[];
   /** Days locked in the วันเดินทาง picker (already booked by other trips). */
   disabledTravelDates?: string[];
+  /**
+   * The requester's other saved AP-17 requests, shaped for `findDateOverlap`.
+   *
+   * `disabledTravelDates` (from `lockedTravelDates`) deliberately leaves a
+   * boundary day open so a MULTI-day trip may continue from it — but a
+   * SINGLE-day trip landing on that same day never gets that exemption
+   * (`findDateOverlap`'s `touchesOnlyAtBoundary` refuses a same-day
+   * candidate outright), so the picker's disabled-day set alone cannot catch
+   * it. This is what closes that gap at the moment a single day is committed.
+   */
+  otherTrips?: readonly OtherTrip[];
   issues: FieldIssue[];
   triedSubmit: boolean;
   /** ผู้ขอเบิก (self = null) — keys the ID-card reuse/consent lookup. */
@@ -99,6 +112,7 @@ export function TravelBookingTab({
   vehicles,
   rentVehicles,
   disabledTravelDates,
+  otherTrips,
   issues,
   triedSubmit,
   requesterStaffId,
@@ -140,6 +154,37 @@ export function TravelBookingTab({
   /* Closed on every mount, and the tab remounts when the active trip changes, so
      opening the history on one trip does not open it on the next. */
   const [historyOpen, setHistoryOpen] = useState(false);
+
+  /**
+   * Wraps the date picker's own `onChange` to refuse a SINGLE-day pick that
+   * lands exactly on another request's day — the one case
+   * `disabledTravelDates` deliberately leaves open (see `otherTrips`' doc
+   * comment above). A multi-day range is never touched here: `findDateOverlap`
+   * only refuses it when it is genuinely covered by this instead, which is
+   * disallowed already.
+   *
+   * Reverting to `{ departDate, returnDate: null }` rather than dropping the
+   * change leaves the field exactly where a half-filled range already leaves
+   * it — "แตะเลือกวันสิ้นสุด" if reopened, and the ordinary required-field
+   * check catches it if the requester never returns to it.
+   */
+  const handleDateRangeChange = useCallback(
+    (next: { departDate: string | null; returnDate: string | null }) => {
+      if (next.departDate && next.returnDate && next.departDate === next.returnDate) {
+        const clash = findDateOverlap(
+          { departDate: next.departDate, returnDate: next.returnDate },
+          otherTrips ?? [],
+        );
+        if (clash) {
+          toast.error(`เลือกเป็นทริปวันเดียวไม่ได้ — ${clash.message}`);
+          onChange({ departDate: next.departDate, returnDate: null });
+          return;
+        }
+      }
+      onChange(next);
+    },
+    [onChange, otherTrips],
+  );
 
 
   const selectedReason = reasons.find((r) => r.id === tab.reasonId);
@@ -454,7 +499,7 @@ export function TravelBookingTab({
             label="วันเดินทาง (ไป–กลับ)"
             departDate={tab.departDate}
             returnDate={tab.returnDate}
-            onChange={({ departDate, returnDate }) => onChange({ departDate, returnDate })}
+            onChange={handleDateRangeChange}
             hasError={hasErr("dateRange")}
             minDate={earliestTravelDate(new Date())}
             disabledDates={disabledTravelDates}

@@ -55,7 +55,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
     reasons, accommodations, vehicles, rentVehicles,
     employee, employeeHint, employeeEmail, employeeLoading, manager, managerReason, displayRate,
     colleagues, colleaguesLoading, requesterEnvironment,
-    existingRanges, requesterStaffId, setRequesterStaffId, selectedRequester,
+    existingRanges, otherTrips, requesterStaffId, setRequesterStaffId, selectedRequester,
     brands,
     continuationFlags, perDiemEstimates, totalPerDiemEstimate,
     tabIssues, canSubmit,
@@ -433,6 +433,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
           vehicles={vehicles}
           rentVehicles={rentVehicles}
           disabledTravelDates={lockedDates}
+          otherTrips={otherTrips}
           issues={tabIssues[activeTabIndex] ?? []}
           triedSubmit={triedSubmit}
           requesterStaffId={requesterStaffId}

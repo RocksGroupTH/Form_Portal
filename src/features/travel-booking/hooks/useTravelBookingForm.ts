@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
 import { computePerDiem, rateForDay, type AllowanceLogEntry } from "@/lib/acc/travel-booking/perdiem";
+import { findDateOverlap, type OtherTrip } from "@/lib/acc/travel-booking/date-overlap";
 import { effectiveClaimCountry } from "@/features/accounting/lib/claim-currency";
 import type { PerDiemAttribution } from "@/features/travel-booking/lib/perdiem-note";
 import { destinationKeyFor } from "@/features/travel-booking/lib/destination-key";
@@ -263,7 +264,11 @@ export interface FieldIssue {
   label: string;
 }
 
-export function validateTab(tab: TabFormState, settings: TabSettingsMaps): FieldIssue[] {
+export function validateTab(
+  tab: TabFormState,
+  settings: TabSettingsMaps,
+  otherTrips: readonly OtherTrip[] = [],
+): FieldIssue[] {
   const issues: FieldIssue[] = [];
 
   // A plain per-tab issue, which is what it should have been: the brand belongs
@@ -303,6 +308,22 @@ export function validateTab(tab: TabFormState, settings: TabSettingsMaps): Field
     // The picker will not offer a past day, but a resumed draft still holds
     // whatever it was saved with — including a date that has since gone by.
     issues.push({ key: "dateRange", label: "วันเดินทางต้องเป็นวันพรุ่งนี้เป็นต้นไป" });
+  } else {
+    // The same pure rule the submit enforces — one module, two callers, so the
+    // client cannot refuse something the server allows or vice versa.
+    //
+    // **The server check stays** and is the real one: a client-enforced
+    // invariant is not one, and a resumed draft can hold dates that were free
+    // when it was saved and are not now. This only checks against the
+    // requester's OTHER already-saved requests (`otherTrips`, from
+    // `/api/request/travel-booking/date-ranges`) — not against this group's
+    // own sibling tabs, which the date picker's `disabledDates` already keeps
+    // a requester from picking in the first place (see `lockedTravelDates`).
+    const clash = findDateOverlap(
+      { departDate: tab.departDate, returnDate: tab.returnDate },
+      otherTrips,
+    );
+    if (clash) issues.push({ key: "dateRange", label: clash.message });
   }
 
   if (tab.goNeedsDepartTime && !tab.departTime) issues.push({ key: "departTime", label: "เวลาออกเดินทางขาไป" });
@@ -553,13 +574,41 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
     : null;
 
   // The requester's other (non-rejected) travel-date ranges — used to lock overlapping days.
-  const { data: dateRangesData } = useSWR<{ departDate: string; returnDate: string }[]>(
+  // `requestId`/`requestNo` ride along so `otherTrips` below can name which
+  // request a clash belongs to, not only that one exists.
+  const { data: dateRangesData } = useSWR<
+    { departDate: string; returnDate: string; requestId: number; requestNo: string | null }[]
+  >(
     ["/api/request/travel-booking/date-ranges", requesterStaffId ?? 0, groupKey ?? ""],
     ([url, sid, gk]: [string, number, string]) =>
       jsonFetcher(`${url}?requesterStaffId=${sid || ""}&excludeGroupKey=${gk || ""}`),
     { revalidateOnFocus: false },
   );
   const existingRanges = dateRangesData ?? [];
+
+  /**
+   * The same rows as `existingRanges`, shaped for `findDateOverlap` — the one
+   * rule the server's submit refuses on (`date-overlap.ts`). Every row here is
+   * already `alive` by construction: the endpoint's query excludes Rejected
+   * and Cancelled requests, so nothing further is filtered here.
+   *
+   * This is an EARLINESS nicety only, exactly like `existingRanges`'
+   * day-locking — the server re-checks at submit against a fresh read and is
+   * what actually enforces the rule. It does not include this group's own
+   * sibling tabs (the date picker's `disabledDates` already keeps those from
+   * being picked in the first place; see `TravelBookingForm.tsx`).
+   */
+  const otherTrips: OtherTrip[] = useMemo(
+    () =>
+      existingRanges.map((r) => ({
+        requestId: r.requestId,
+        requestNo: r.requestNo,
+        departDate: r.departDate,
+        returnDate: r.returnDate,
+        alive: true,
+      })),
+    [existingRanges],
+  );
 
   const settingsMaps = useMemo<TabSettingsMaps>(
     () => ({
@@ -775,7 +824,10 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
   );
 
   /* ── Validation across all tabs ── */
-  const tabIssues = useMemo(() => tabs.map((t) => validateTab(t, settingsMaps)), [tabs, settingsMaps]);
+  const tabIssues = useMemo(
+    () => tabs.map((t) => validateTab(t, settingsMaps, otherTrips)),
+    [tabs, settingsMaps, otherTrips],
+  );
   const canSubmit = tabs.length > 0 && tabIssues.every((issues) => issues.length === 0);
 
   /* ── Tab CRUD ── */
@@ -1021,6 +1073,7 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
     colleaguesLoading,
     requesterEnvironment,
     existingRanges,
+    otherTrips,
     requesterStaffId,
     setRequesterStaffId,
     brands,

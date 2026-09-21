@@ -1194,7 +1194,9 @@ export function TravelBookingDetail({
                     )}
                   </span>
                   <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                    ต่อเนื่องจากทริปก่อนหน้า จึงไม่นับซ้ำที่นี่ (−1 วัน)
+                    ต่อเนื่องจาก {request.continuationFromRequestNo ?? "ทริปก่อนหน้า"}
+                    {request.departDate ? ` (วันที่ ${fmtYmdDisplay(request.departDate)})` : ""} จึงไม่นับซ้ำที่นี่
+                    (−1 วัน)
                   </span>
                 </span>
               }

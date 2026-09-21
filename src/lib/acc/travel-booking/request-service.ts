@@ -752,6 +752,52 @@ export async function saveTravelBookingDraft(
 
   const pool = await getAccPool();
 
+  // The requester's other LIVE AP-17 trips, across their WHOLE calendar — the
+  // same `loadRequesterTrips` + `continuationFlags` walk `submitTravelBookingGroup`
+  // uses below. Before this, IsContinuation was estimated here from only
+  // `input.tabs[i - 1]` — the previous tab in THIS save, never a trip filed
+  // last week or in a different group — so a resumed draft's on-screen figure
+  // could disagree with what submit actually computes and stores. Tabs already
+  // persisted under THIS group are excluded via `knownIds`, or a resumed draft
+  // would be compared against its own earlier self.
+  //
+  // Read before the transaction, exactly where submit reads it: a small race
+  // against a concurrent save is accepted here as it is there, and this value
+  // is only ever an estimate — submit re-derives and re-stores it
+  // authoritatively regardless of what was saved as a draft.
+  const knownIds = input.tabs.map((t) => t.id).filter((id): id is number => id != null);
+  const otherTripsForDraft = await loadRequesterTrips(pool, {
+    staffId: emp.staffId,
+    employeeId: emp.id,
+    excludeRequestIds: knownIds,
+  });
+  const liveOtherTripsForDraft = otherTripsForDraft.filter(
+    (o) => o.alive && o.departDate && o.returnDate,
+  );
+  // A tab not yet saved has no id to key the chain on — a negative placeholder
+  // stands in, one per tab index. Real AccRequest ids are always positive
+  // (identity starts at 1 in production, 900000 in UAT), so this can never
+  // collide with a real id drawn from `liveOtherTripsForDraft`.
+  const draftChainKey = (i: number): number => input.tabs[i].id ?? -(i + 1);
+  const draftChainTrips: ChainTrip[] = input.tabs
+    .map((t, i) => ({
+      requestId: draftChainKey(i),
+      sortOrder: i,
+      departDate: t.departDate,
+      returnDate: t.returnDate,
+      alive: true,
+    }))
+    .concat(
+      liveOtherTripsForDraft.map((o) => ({
+        requestId: o.requestId,
+        sortOrder: o.sortOrder,
+        departDate: o.departDate,
+        returnDate: o.returnDate,
+        alive: true,
+      })),
+    );
+  const draftContinuationFlags = continuationFlags(draftChainTrips);
+
   // Resolve *Name fields + IsContinuation for every tab up front (small in-run cache
   // to dedupe repeated lookups when multiple tabs share the same reason/province/etc.).
   const settingOptionCache = new Map<string, SettingOptionRow | null>();
@@ -793,8 +839,10 @@ export async function saveTravelBookingDraft(
     ]);
     if (invalid) throw new Error(invalidOptionMessage(invalid));
 
-    const prev = i > 0 ? input.tabs[i - 1] : null;
-    const isContinuation = !!(prev && tab.departDate && prev.returnDate && tab.departDate === prev.returnDate);
+    // Requester-wide, not just this save's previous tab — see `draftContinuationFlags`
+    // above. A trip filed last week (or in a different group) whose return date
+    // meets this one's depart date still owns the day, exactly as it does at submit.
+    const isContinuation = draftContinuationFlags.get(draftChainKey(i)) ?? false;
     resolvedTabs.push({
       tab,
       names: {
@@ -1120,28 +1168,38 @@ export function validateTravelBookingTab(
 /**
  * The requester's other travel-date ranges — excludes a given group and any rejected/cancelled
  * requests — used to block overlapping trips. Returns YYYY-MM-DD [depart, return] pairs.
+ *
+ * **`requestId`/`requestNo` travel with the dates** so the client can run the
+ * same `findDateOverlap` the server's submit does, and name which request a
+ * clash belongs to — not only that one exists. Every row here is already
+ * `alive` by construction (the query excludes Rejected/Cancelled), so a caller
+ * building `OtherTrip[]` from this may set `alive: true` unconditionally.
  */
 export async function listTravelBookingDateRanges(
   staffId: number,
   excludeGroupKey: string | null,
-): Promise<{ departDate: string; returnDate: string }[]> {
+): Promise<{ departDate: string; returnDate: string; requestId: number; requestNo: string | null }[]> {
   if (!staffId) return [];
   const pool = await getAccPool();
   const res = await pool.request()
     .input("staff", sql.Int, staffId)
     .input("form", sql.NVarChar, AP17_FORM_CODE)
     .input("gk", sql.NVarChar(40), excludeGroupKey)
-    .query(`SELECT t.DepartDate, t.ReturnDate
+    .query(`SELECT t.DepartDate, t.ReturnDate, r.Id AS RequestId, r.RequestNo
             FROM [dbo].[AccTravelBooking] t
             INNER JOIN [dbo].[AccRequest] r ON r.Id = t.RequestId
             WHERE r.FormCode = @form AND r.StaffId = @staff
               AND r.Status NOT IN ('Rejected', 'Cancelled')
               AND t.DepartDate IS NOT NULL AND t.ReturnDate IS NOT NULL
               AND (@gk IS NULL OR t.GroupKey <> @gk)`);
-  return (res.recordset as { DepartDate: Date; ReturnDate: Date }[]).map((row) => ({
-    departDate: toYmd(row.DepartDate),
-    returnDate: toYmd(row.ReturnDate),
-  }));
+  return (res.recordset as { DepartDate: Date; ReturnDate: Date; RequestId: number; RequestNo: string | null }[]).map(
+    (row) => ({
+      departDate: toYmd(row.DepartDate),
+      returnDate: toYmd(row.ReturnDate),
+      requestId: row.RequestId,
+      requestNo: row.RequestNo ?? null,
+    }),
+  );
 }
 
 /**
