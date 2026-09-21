@@ -1144,11 +1144,6 @@ export async function listTravelBookingDateRanges(
   }));
 }
 
-/** Two closed date ranges overlap by ≥2 days. Touching at a single boundary day is allowed. */
-export function travelRangesConflict(a1: string, a2: string, b1: string, b2: string): boolean {
-  return a1 < b2 && b1 < a2;
-}
-
 /**
  * Submit every tab (Draft/Returned) of a multi-request draft group as N independent
  * documents: validate every tab, detect continuation (SortOrder order), compute per-diem,
