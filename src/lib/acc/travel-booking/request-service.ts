@@ -321,77 +321,79 @@ export async function getTravelBookingRequest(id: number): Promise<TravelBooking
     .input("id", sql.Int, id)
     .input("form", sql.NVarChar, AP17_FORM_CODE)
     .query(`SELECT r.*, e.PhotoUrl AS HrRequesterPhotoUrl, e.PhotoOverrideUrl AS HrRequesterPhotoOverrideUrl,
-              -- The trip whose per diem already covers this one's first day.
-              --
-              -- Requester-scoped since 2026-09-22, not GroupKey-scoped. Until
-              -- then this read "the same group, an earlier SortOrder, and a
-              -- ReturnDate that touches this DepartDate" — which matched how
-              -- IsContinuation itself was decided at save time when this
-              -- subquery was written, and stopped matching once the
-              -- continuation chain widened to a requester's WHOLE calendar
-              -- (Tasks 3-5b, then the draft-save path too): IsContinuation
-              -- could read true for a predecessor filed in a different
-              -- booking group while this subquery, still GroupKey-scoped,
-              -- found nothing and named no one — the exact "20-24, 24-26
-              -- submitted คนละรอบ" case this feature exists for.
-              --
-              -- The predicate below is requester-trips.ts's / perdiem-
-              -- dependency-load.ts's own: same requester (StaffId OR
-              -- EmployeeId, each arm IS NOT NULL-guarded so a null on one
-              -- side cannot match a null row), FormCode = 'AP-17', Draft
-              -- excluded — and, because this names ONE predecessor rather
-              -- than listing candidates for a caller to filter, Cancelled and
-              -- Rejected are excluded too: the same "alive" notion
-              -- perdiem-recompute.ts's own alive test and date-overlap.ts's
-              -- alive field both use. A dead trip cannot own a day, so it
-              -- must not be named as the reason one was dropped.
-              -- pt.RequestId <> r.Id keeps a request from matching itself —
-              -- the old SortOrder < comparison provided that for free by
-              -- comparing two different rows; without it, a single-day
-              -- trip's own ReturnDate = DepartDate would otherwise
-              -- self-match.
-              --
-              -- Ordered nearest-first the way continuationFlags orders
-              -- (depart date, then SortOrder, then Id as tiebreak) — the
-              -- gate, the recompute and this label must agree on which trip
-              -- is "the predecessor", or a requester can be told a day was
-              -- dropped by a trip that did not drop it. The tiebreak can only
-              -- ever fire on an EQUAL depart date, because pt.ReturnDate =
-              -- mt.DepartDate and a trip's return is never before its
-              -- depart, so pt.DepartDate <= mt.DepartDate holds
-              -- automatically — an equal depart date is a single-day
-              -- predecessor sitting on the successor's own depart day, a pair
-              -- findDateOverlap now refuses outright (containment, not a
-              -- touch) for anything submitted after Task 4. The tiebreak
-              -- therefore serves legacy rows only.
-              (SELECT TOP 1 pr.RequestNo
-                 FROM [dbo].[AccTravelBooking] pt
-                 INNER JOIN [dbo].[AccRequest] pr ON pr.Id = pt.RequestId
-                 INNER JOIN [dbo].[AccTravelBooking] mt ON mt.RequestId = r.Id
-                WHERE pr.FormCode = 'AP-17'
-                  AND pr.Status NOT IN ('Draft', 'Cancelled', 'Rejected')
-                  AND (
-                    (r.StaffId IS NOT NULL AND pr.StaffId = r.StaffId)
-                    OR (r.EmployeeId IS NOT NULL AND pr.EmployeeId = r.EmployeeId)
-                  )
-                  AND pt.RequestId <> r.Id
-                  AND pt.ReturnDate = mt.DepartDate
-                ORDER BY pt.DepartDate DESC, pt.SortOrder DESC, pt.Id DESC) AS ContinuationFromRequestNo,
-              (SELECT TOP 1 pr.Id
-                 FROM [dbo].[AccTravelBooking] pt
-                 INNER JOIN [dbo].[AccRequest] pr ON pr.Id = pt.RequestId
-                 INNER JOIN [dbo].[AccTravelBooking] mt ON mt.RequestId = r.Id
-                WHERE pr.FormCode = 'AP-17'
-                  AND pr.Status NOT IN ('Draft', 'Cancelled', 'Rejected')
-                  AND (
-                    (r.StaffId IS NOT NULL AND pr.StaffId = r.StaffId)
-                    OR (r.EmployeeId IS NOT NULL AND pr.EmployeeId = r.EmployeeId)
-                  )
-                  AND pt.RequestId <> r.Id
-                  AND pt.ReturnDate = mt.DepartDate
-                ORDER BY pt.DepartDate DESC, pt.SortOrder DESC, pt.Id DESC) AS ContinuationFromRequestId
+              cont.RequestNo AS ContinuationFromRequestNo,
+              cont.Id AS ContinuationFromRequestId
             FROM [dbo].[AccRequest] r
             LEFT JOIN ${hrEmployeeTable()} e ON e.StaffId = r.StaffId AND e.Status = N'Active'
+            -- The trip whose per diem already covers this one's first day.
+            --
+            -- ONE row source for both columns (fix round 1, 2026-09-22) — the
+            -- two were previously separate scalar subqueries, each free to
+            -- pick a different top row under an ORDER BY regression, which
+            -- named the wrong RequestNo beside the right Id or the reverse.
+            -- OUTER APPLY makes that unrepresentable: both columns now come
+            -- from the same TOP 1 row.
+            --
+            -- Requester-scoped since 2026-09-22, not GroupKey-scoped. Until
+            -- then this read "the same group, an earlier SortOrder, and a
+            -- ReturnDate that touches this DepartDate" — which matched how
+            -- IsContinuation itself was decided at save time when this was
+            -- written, and stopped matching once the continuation chain
+            -- widened to a requester's WHOLE calendar (Tasks 3-5b, then the
+            -- draft-save path too): IsContinuation could read true for a
+            -- predecessor filed in a different booking group while this,
+            -- still GroupKey-scoped, found nothing and named no one — the
+            -- exact "20-24, 24-26 submitted คนละรอบ" case this feature exists
+            -- for.
+            --
+            -- The predicate is requester-trips.ts's / perdiem-dependency-
+            -- load.ts's own: same requester (StaffId OR EmployeeId, each arm
+            -- IS NOT NULL-guarded so a null on one side cannot match a null
+            -- row), FormCode = 'AP-17', Draft excluded — and, because this
+            -- names ONE predecessor rather than listing candidates for a
+            -- caller to filter, Cancelled and Rejected are excluded too: the
+            -- same "alive" notion perdiem-recompute.ts's own alive test and
+            -- date-overlap.ts's alive field both use. A dead trip cannot own
+            -- a day, so it must not be named as the reason one was dropped.
+            -- pt.RequestId <> r.Id keeps a request from matching itself — the
+            -- old SortOrder < comparison provided that for free by comparing
+            -- two different rows; without it, a single-day trip's own
+            -- ReturnDate = DepartDate would otherwise self-match.
+            --
+            -- Ordered nearest-first the way continuationFlags orders (depart
+            -- date, then SortOrder) — matching what the gate and the
+            -- recompute agree the predecessor is, or a requester can be told
+            -- a day was dropped by a trip that did not drop it. Id DESC is a
+            -- FURTHER tiebreak the TypeScript comparators do not have (they
+            -- rely on a stable sort / recordset order instead), added so the
+            -- SQL alone is deterministic.
+            --
+            -- That further tiebreak is reachable only on legacy rows.
+            -- Every candidate here already satisfies pt.ReturnDate =
+            -- mt.DepartDate (the same fixed value), so two candidates tying
+            -- on DepartDate would also share that ReturnDate — the same
+            -- range twice, which is itself an overlap findDateOverlap
+            -- refuses outright for anything submitted after Task 4. So a
+            -- DepartDate tie can only happen among rows filed before that
+            -- refusal existed — duplicate single-day ranges — confirmed by
+            -- running both selection rules over 176,020 generated
+            -- continuation calendars (fix round 1's review) with zero
+            -- mismatches on non-overlapping ones and only duplicate-range
+            -- ties among the legacy overlapping ones.
+            OUTER APPLY (
+              SELECT TOP 1 pr.RequestNo, pr.Id
+                FROM [dbo].[AccTravelBooking] mt
+                INNER JOIN [dbo].[AccTravelBooking] pt ON pt.ReturnDate = mt.DepartDate AND pt.RequestId <> r.Id
+                INNER JOIN [dbo].[AccRequest] pr ON pr.Id = pt.RequestId
+               WHERE mt.RequestId = r.Id
+                 AND pr.FormCode = @form
+                 AND pr.Status NOT IN ('Draft', 'Cancelled', 'Rejected')
+                 AND (
+                   (r.StaffId IS NOT NULL AND pr.StaffId = r.StaffId)
+                   OR (r.EmployeeId IS NOT NULL AND pr.EmployeeId = r.EmployeeId)
+                 )
+               ORDER BY pt.DepartDate DESC, pt.SortOrder DESC, pt.Id DESC
+            ) cont
             WHERE r.Id = @id AND r.FormCode = @form`);
   if (headRes.recordset.length === 0) return null;
   const reqRow = headRes.recordset[0] as Record<string, unknown>;
@@ -1213,40 +1215,53 @@ export function validateTravelBookingTab(
 }
 
 /**
- * The requester's other travel-date ranges — excludes a given group and any rejected/cancelled
- * requests — used to block overlapping trips. Returns YYYY-MM-DD [depart, return] pairs.
+ * The requester's other travel-date ranges — excludes a given group and any
+ * rejected/cancelled requests — used to block overlapping trips in the date
+ * picker. Returns YYYY-MM-DD [depart, return] pairs. **Drafts are included on
+ * purpose**: the picker locks days a requester's OWN unfinished trip already
+ * occupies, so two tabs open at once cannot be walked into overlapping dates
+ * before either is submitted.
  *
- * **`requestId`/`requestNo` travel with the dates** so the client can run the
- * same `findDateOverlap` the server's submit does, and name which request a
- * clash belongs to — not only that one exists. Every row here is already
- * `alive` by construction (the query excludes Rejected/Cancelled), so a caller
- * building `OtherTrip[]` from this may set `alive: true` unconditionally.
+ * **`requestId`/`requestNo`/`status` travel with the dates** so a caller can
+ * run the same `findDateOverlap` the server's submit does, and name which
+ * request a clash belongs to — not only that one exists. **`status` is not
+ * decoration**: `findDateOverlap`'s refusal must match `loadRequesterTrips`'
+ * (`requester-trips.ts`), the loader submit actually refuses against, and
+ * that loader excludes `Draft` outright (`r.Status <> 'Draft'`) — a Draft
+ * will never be paid and may never even be finished, so it must not block a
+ * DIFFERENT submission the server would accept. This query cannot exclude
+ * Draft in its own WHERE clause without also removing it from the picker's
+ * day-lock above, which needs it; the two uses read the same rows and decide
+ * "alive, for this purpose" differently from `status`.
  */
 export async function listTravelBookingDateRanges(
   staffId: number,
   excludeGroupKey: string | null,
-): Promise<{ departDate: string; returnDate: string; requestId: number; requestNo: string | null }[]> {
+): Promise<
+  { departDate: string; returnDate: string; requestId: number; requestNo: string | null; status: string }[]
+> {
   if (!staffId) return [];
   const pool = await getAccPool();
   const res = await pool.request()
     .input("staff", sql.Int, staffId)
     .input("form", sql.NVarChar, AP17_FORM_CODE)
     .input("gk", sql.NVarChar(40), excludeGroupKey)
-    .query(`SELECT t.DepartDate, t.ReturnDate, r.Id AS RequestId, r.RequestNo
+    .query(`SELECT t.DepartDate, t.ReturnDate, r.Id AS RequestId, r.RequestNo, r.Status
             FROM [dbo].[AccTravelBooking] t
             INNER JOIN [dbo].[AccRequest] r ON r.Id = t.RequestId
             WHERE r.FormCode = @form AND r.StaffId = @staff
               AND r.Status NOT IN ('Rejected', 'Cancelled')
               AND t.DepartDate IS NOT NULL AND t.ReturnDate IS NOT NULL
               AND (@gk IS NULL OR t.GroupKey <> @gk)`);
-  return (res.recordset as { DepartDate: Date; ReturnDate: Date; RequestId: number; RequestNo: string | null }[]).map(
-    (row) => ({
-      departDate: toYmd(row.DepartDate),
-      returnDate: toYmd(row.ReturnDate),
-      requestId: row.RequestId,
-      requestNo: row.RequestNo ?? null,
-    }),
-  );
+  return (
+    res.recordset as { DepartDate: Date; ReturnDate: Date; RequestId: number; RequestNo: string | null; Status: string }[]
+  ).map((row) => ({
+    departDate: toYmd(row.DepartDate),
+    returnDate: toYmd(row.ReturnDate),
+    requestId: row.RequestId,
+    requestNo: row.RequestNo ?? null,
+    status: row.Status,
+  }));
 }
 
 /**

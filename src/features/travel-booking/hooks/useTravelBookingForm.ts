@@ -573,11 +573,13 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
     ? (colleagues.find((c) => c.staffId === requesterStaffId) ?? fetchedRequester)
     : null;
 
-  // The requester's other (non-rejected) travel-date ranges — used to lock overlapping days.
-  // `requestId`/`requestNo` ride along so `otherTrips` below can name which
-  // request a clash belongs to, not only that one exists.
+  // The requester's other (non-rejected) travel-date ranges — used to lock overlapping days,
+  // Drafts included (see the endpoint's own doc comment for why).
+  // `requestId`/`requestNo`/`status` ride along so `otherTrips` below can name
+  // which request a clash belongs to and can tell a Draft apart from a
+  // submitted one — not only that a row exists.
   const { data: dateRangesData } = useSWR<
-    { departDate: string; returnDate: string; requestId: number; requestNo: string | null }[]
+    { departDate: string; returnDate: string; requestId: number; requestNo: string | null; status: string }[]
   >(
     ["/api/request/travel-booking/date-ranges", requesterStaffId ?? 0, groupKey ?? ""],
     ([url, sid, gk]: [string, number, string]) =>
@@ -587,10 +589,17 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
   const existingRanges = dateRangesData ?? [];
 
   /**
-   * The same rows as `existingRanges`, shaped for `findDateOverlap` — the one
-   * rule the server's submit refuses on (`date-overlap.ts`). Every row here is
-   * already `alive` by construction: the endpoint's query excludes Rejected
-   * and Cancelled requests, so nothing further is filtered here.
+   * The requester's other saved requests, shaped for `findDateOverlap` — the
+   * one rule the server's submit refuses on (`date-overlap.ts`). **Drafts are
+   * excluded here**, even though `existingRanges` above (the picker's
+   * day-lock) keeps them: the submit's own refusal set is
+   * `loadRequesterTrips` (`requester-trips.ts`), which pins `r.Status <>
+   * 'Draft'`, so a Draft the server would let a submit proceed past must not
+   * block one here either — an abandoned two-day draft in another group must
+   * not hard-refuse an unrelated submission with a message that then can't
+   * even be read. Cancelled/Rejected never reach this array at all — the
+   * endpoint's own query excludes them — so every surviving, non-Draft row is
+   * `alive` by construction.
    *
    * This is an EARLINESS nicety only, exactly like `existingRanges`'
    * day-locking — the server re-checks at submit against a fresh read and is
@@ -600,13 +609,15 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
    */
   const otherTrips: OtherTrip[] = useMemo(
     () =>
-      existingRanges.map((r) => ({
-        requestId: r.requestId,
-        requestNo: r.requestNo,
-        departDate: r.departDate,
-        returnDate: r.returnDate,
-        alive: true,
-      })),
+      existingRanges
+        .filter((r) => r.status !== "Draft")
+        .map((r) => ({
+          requestId: r.requestId,
+          requestNo: r.requestNo,
+          departDate: r.departDate,
+          returnDate: r.returnDate,
+          alive: true,
+        })),
     [existingRanges],
   );
 

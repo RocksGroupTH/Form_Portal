@@ -191,39 +191,8 @@ const BASE_CTE = `
       (SELECT SUM(bd.TotalAmountBaht)
          FROM [dbo].[AccTravelBookingDetail] bd
         WHERE bd.TravelBookingId = t.Id) AS BookingTotalBaht,
-      -- Requester-scoped since 2026-09-22, not GroupKey-scoped — the
-      -- identical change made to the same pair of subqueries in
-      -- getTravelBookingRequest (request-service.ts), which carries the
-      -- full reasoning (why GroupKey stopped matching once the continuation
-      -- chain widened to a requester's whole calendar, why Cancelled/
-      -- Rejected are excluded, why pt.RequestId <> r.Id is now needed, and
-      -- why the ORDER BY tiebreak only ever fires on legacy rows). Both
-      -- copies must move together, or the report and the detail page can
-      -- name a different predecessor for the same request.
-      (SELECT TOP 1 pr.RequestNo
-         FROM [dbo].[AccTravelBooking] pt
-         INNER JOIN [dbo].[AccRequest] pr ON pr.Id = pt.RequestId
-        WHERE pr.FormCode = 'AP-17'
-          AND pr.Status NOT IN ('Draft', 'Cancelled', 'Rejected')
-          AND (
-            (r.StaffId IS NOT NULL AND pr.StaffId = r.StaffId)
-            OR (r.EmployeeId IS NOT NULL AND pr.EmployeeId = r.EmployeeId)
-          )
-          AND pt.RequestId <> r.Id
-          AND pt.ReturnDate = t.DepartDate
-        ORDER BY pt.DepartDate DESC, pt.SortOrder DESC, pt.Id DESC) AS ContinuationFromRequestNo,
-      (SELECT TOP 1 pr.Id
-         FROM [dbo].[AccTravelBooking] pt
-         INNER JOIN [dbo].[AccRequest] pr ON pr.Id = pt.RequestId
-        WHERE pr.FormCode = 'AP-17'
-          AND pr.Status NOT IN ('Draft', 'Cancelled', 'Rejected')
-          AND (
-            (r.StaffId IS NOT NULL AND pr.StaffId = r.StaffId)
-            OR (r.EmployeeId IS NOT NULL AND pr.EmployeeId = r.EmployeeId)
-          )
-          AND pt.RequestId <> r.Id
-          AND pt.ReturnDate = t.DepartDate
-        ORDER BY pt.DepartDate DESC, pt.SortOrder DESC, pt.Id DESC) AS ContinuationFromRequestId,
+      cont.RequestNo AS ContinuationFromRequestNo,
+      cont.Id AS ContinuationFromRequestId,
       (SELECT STRING_AGG(wl.Name, N', ') WITHIN GROUP (ORDER BY wl.SortOrder, wl.Id)
        FROM [dbo].[AccTravelWorkLocation] wl
        WHERE wl.TravelBookingId = t.Id) AS WorkLocationsCsv,
@@ -233,6 +202,32 @@ const BASE_CTE = `
        ORDER BY a.ActionedAt DESC) AS ApprovedDate
     FROM [dbo].[AccRequest] r
     INNER JOIN [dbo].[AccTravelBooking] t ON t.RequestId = r.Id
+    -- ONE row source for both continuation columns (fix round 1, 2026-09-22) —
+    -- the identical change made to the same pair of subqueries in
+    -- getTravelBookingRequest (request-service.ts), which carries the full
+    -- reasoning (why GroupKey stopped matching once the continuation chain
+    -- widened to a requester's whole calendar, why Cancelled/Rejected are
+    -- excluded, why pt.RequestId <> r.Id is now needed, why the ORDER BY
+    -- tiebreak only ever fires on legacy rows, and why OUTER APPLY rather
+    -- than two scalar subqueries — the previous shape let an ORDER BY
+    -- regression on only one of the pair name a DIFFERENT trip's RequestNo
+    -- beside this trip's Id). Both copies must move together, or the report
+    -- and the detail page can name a different predecessor for the same
+    -- request.
+    OUTER APPLY (
+      SELECT TOP 1 pr.RequestNo, pr.Id
+        FROM [dbo].[AccTravelBooking] pt
+        INNER JOIN [dbo].[AccRequest] pr ON pr.Id = pt.RequestId
+       WHERE pr.FormCode = N'AP-17'
+         AND pr.Status NOT IN ('Draft', 'Cancelled', 'Rejected')
+         AND (
+           (r.StaffId IS NOT NULL AND pr.StaffId = r.StaffId)
+           OR (r.EmployeeId IS NOT NULL AND pr.EmployeeId = r.EmployeeId)
+         )
+         AND pt.RequestId <> r.Id
+         AND pt.ReturnDate = t.DepartDate
+       ORDER BY pt.DepartDate DESC, pt.SortOrder DESC, pt.Id DESC
+    ) cont
     WHERE r.FormCode = N'AP-17' AND r.Status <> N'Draft'
   )
 `;

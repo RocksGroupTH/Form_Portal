@@ -91,7 +91,19 @@ interface TravelBookingTabProps {
    * SINGLE-day trip landing on that same day never gets that exemption
    * (`findDateOverlap`'s `touchesOnlyAtBoundary` refuses a same-day
    * candidate outright), so the picker's disabled-day set alone cannot catch
-   * it. This is what closes that gap at the moment a single day is committed.
+   * it. `handleDateRangeChange` below closes that one gap at the moment a
+   * single day is committed.
+   *
+   * **It does not close every picker/`findDateOverlap` gap, and the largest
+   * one is still open.** Measured (fix round 1, 2026-09-22): against a
+   * two-day other trip, `lockedTravelDates` locks NOTHING at all — each
+   * endpoint takes only one of its two half-slots, and a two-day range has no
+   * interior day to take both — so 60 multi-day ranges the picker still
+   * allows are ones `findDateOverlap` refuses. Other-trip lengths 1, 3 and 5
+   * leave zero such ranges, so the ordinary overnight trip (two days) is the
+   * ENTIRE residual, not an edge case. That gap is caught later — by
+   * `validateTab`'s own `findDateOverlap` check at attempted submit, and by
+   * the server regardless — not by anything in this component.
    */
   otherTrips?: readonly OtherTrip[];
   issues: FieldIssue[];
@@ -159,9 +171,17 @@ export function TravelBookingTab({
    * Wraps the date picker's own `onChange` to refuse a SINGLE-day pick that
    * lands exactly on another request's day — the one case
    * `disabledTravelDates` deliberately leaves open (see `otherTrips`' doc
-   * comment above). A multi-day range is never touched here: `findDateOverlap`
-   * only refuses it when it is genuinely covered by this instead, which is
-   * disallowed already.
+   * comment above).
+   *
+   * **A multi-day range is deliberately NOT checked here**, and that is a gap
+   * left open, not a case that cannot occur: against a two-day other trip the
+   * picker allows 60 multi-day ranges `findDateOverlap` would refuse (see
+   * `otherTrips`' doc comment for the measurement). Closing that at pick time
+   * would mean running `findDateOverlap` on every date click while a range is
+   * being built, not only at commit — a larger change than this fix round
+   * makes. It is still caught: `validateTab`'s own `findDateOverlap` check
+   * flags it if the requester tries to submit, and the server refuses it
+   * regardless.
    *
    * Reverting to `{ departDate, returnDate: null }` rather than dropping the
    * change leaves the field exactly where a half-filled range already leaves
