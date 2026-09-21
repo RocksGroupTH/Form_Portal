@@ -1273,7 +1273,7 @@ export function TravelBookingDetail({
       {/* ── Attachments (บัตรประชาชน) — before the summary, like the form ── */}
       <Section title="เอกสารแนบ" icon={<Paperclip size={15} />}>
         <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1.5" style={{ color: "var(--text-muted)" }}>
-          บัตรประชาชน
+          บัตรประชาชน หรือ Passport
         </label>
         {request.idCardFiles.length > 0 ? (
           <div className="flex flex-wrap gap-2">

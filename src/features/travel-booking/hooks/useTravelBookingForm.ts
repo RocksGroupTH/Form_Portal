@@ -353,7 +353,7 @@ export function validateTab(tab: TabFormState, settings: TabSettingsMaps): Field
   }
 
   if ((!tab.idCardFiles || tab.idCardFiles.length === 0) && !tab.pendingIdCard) {
-    issues.push({ key: "idCard", label: "รูปบัตรประชาชน (อย่างน้อย 1 ไฟล์)" });
+    issues.push({ key: "idCard", label: "รูปบัตรประชาชน หรือ Passport (อย่างน้อย 1 ไฟล์)" });
   }
 
   return issues;

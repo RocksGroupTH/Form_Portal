@@ -158,7 +158,7 @@ export function IdCardUpload({
     if (!file) return;
     const reset = () => { if (inputRef.current) inputRef.current.value = ""; };
     if (!file.type.startsWith("image/")) {
-      toast.error("กรุณาแนบเป็นรูปภาพบัตรประชาชน");
+      toast.error("กรุณาแนบเป็นรูปภาพบัตรประชาชน หรือ Passport");
       reset();
       return;
     }
@@ -182,7 +182,7 @@ export function IdCardUpload({
     // or attach a different photo.
     if (!result.ok) {
       setRefusal({
-        message: result.reason ?? "กรุณาอัปโหลดรูปบัตรประชาชนที่ชัดเจน",
+        message: result.reason ?? "กรุณาอัปโหลดรูปบัตรประชาชน หรือ Passport ที่ชัดเจน",
         unavailable: !!result.unavailable,
       });
       reset();
@@ -206,7 +206,7 @@ export function IdCardUpload({
   return (
     <div>
       <label className={labelClass} style={errLabelStyle(!!hasError)}>
-        แนบรูปบัตรประชาชน (1 รูป){requiredStar}
+        แนบรูปบัตรประชาชน หรือ Passport{requiredStar}
       </label>
 
       <>
@@ -372,7 +372,7 @@ export function IdCardUpload({
 
                   <div className="text-center">
                     <div className="text-[13.5px] font-bold" style={{ color: "var(--text-heading)" }}>
-                      {dragging ? "วางรูปที่นี่" : "แนบรูปบัตรประชาชน"}
+                      {dragging ? "วางรูปที่นี่" : "แนบรูปบัตรประชาชน หรือ Passport"}
                     </div>
                     <div className="text-[11.5px] mt-1 leading-relaxed" style={{ color: "var(--text-muted)" }}>
                       ลากรูปมาวาง หรือกดเลือกรูป — เห็นเลข 13 หลักและตัวอักษรครบ ไม่เบลอ ไม่มีแสงสะท้อน

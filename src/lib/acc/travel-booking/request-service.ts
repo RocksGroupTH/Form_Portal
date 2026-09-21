@@ -1108,7 +1108,7 @@ export function validateTravelBookingTab(
 
   // ข้อ17 — แนบบัตรประชาชน (>=1)
   if (!tab.idCardFiles || tab.idCardFiles.length === 0) {
-    return fail("กรุณาแนบรูปบัตรประชาชนอย่างน้อย 1 ไฟล์");
+    return fail("กรุณาแนบรูปบัตรประชาชน หรือ Passport อย่างน้อย 1 ไฟล์");
   }
 
   return { ok: true };
