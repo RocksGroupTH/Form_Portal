@@ -179,6 +179,9 @@ import path from "node:path";
  * 41. `openPicker` and `switchMode` renamed → **red** ("not found — has it
  *     been renamed or removed?"). `balancedAfter` still fails closed rather
  *     than handing the assertions an empty region.
+ * 42. `← เปลี่ยนคน` clearing the person without reopening step 1 — the exact
+ *     `2972e26` bug — → **red**; so is reopening without clearing (43), and so
+ *     is closing the whole picker instead (44).
  *
  * Applied as literal replacements by a harness that restores from a `cp`
  * backup and verifies the restore by hash; identical each time.
@@ -610,6 +613,42 @@ test("the fetched list is filterable by running number", () => {
     "the list filter no longer narrows what is RENDERED. Filtering client-side over what was " +
       "already fetched is the deliberate choice — re-querying per keystroke would run a " +
       "person-and-date scan behind a database round trip for every character",
+  );
+});
+
+/**
+ * **`← เปลี่ยนคน` goes BACK a step, it does not close the picker** (fixed in
+ * `2972e26`, and re-checked here because the rework moved every piece of state
+ * it touches).
+ *
+ * The bug it fixes is subtle enough to come back by accident:
+ * `RequesterPickerModal` calls its `onClose()` immediately after `onSelect()`,
+ * so `personOpen` is **already false** by the time step 2 is on screen.
+ * Clearing `person` alone therefore leaves step 1's own `open` condition false
+ * as well, and the control closes the whole picker instead of reopening the
+ * person list. Both setters, or neither.
+ */
+test("← เปลี่ยนคน reopens the person list rather than closing the picker", () => {
+  const src = code(CONTROL);
+  // The label sits at the END of its <Button>, so the handler is read
+  // backwards from it rather than forwards through a balanced region.
+  const labelAt = src.indexOf("← เปลี่ยนคน");
+  assert.notEqual(labelAt, -1, "the ← เปลี่ยนคน control has gone");
+  const onClickAt = src.lastIndexOf("onClick={", labelAt);
+  assert.notEqual(onClickAt, -1, "the ← เปลี่ยนคน button has no onClick above its label");
+  const handler = src.slice(onClickAt, labelAt);
+  assert.match(
+    handler,
+    /setPerson\(null\)/,
+    "← เปลี่ยนคน no longer clears the chosen colleague, so it goes nowhere",
+  );
+  assert.match(
+    handler,
+    /setPersonOpen\(true\)/,
+    "← เปลี่ยนคน clears the person WITHOUT reopening the person list. " +
+      "RequesterPickerModal calls onClose() straight after onSelect(), so personOpen is already " +
+      "false by then — clearing `person` alone closes the whole picker instead of going back a " +
+      "step, which is the exact bug 2972e26 fixed",
   );
 });
 
