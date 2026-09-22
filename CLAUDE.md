@@ -1092,6 +1092,46 @@ summary.
     migration 120's split for AP-4, applied to the two forms that had none at
     all: before this every AP-2 and AP-3 settings route was `requireRole` and
     there was nothing an admin could hand to anybody.
+  - **The grid is AP-4's table since 2026-09-22, and AP-2's approver group is
+    THREE columns because a single tick could not have been honest** (user, with
+    screenshots: *"สิทธิ์เข้าถึง AP-2 ยังเหมือนเดิม จะต้องเป็นรูปแบบเหมือน
+    AP-4"*). One row per person, one column per right, three groups —
+    **ผู้อนุมัติ · แท็บตั้งค่า · หน้าใช้งาน** — and an ungrantable tab renders
+    `—` rather than an unticked box, all of it AP-4's shape. What did **not**
+    transfer is the count of approver columns. AP-4 carries four because its
+    brand ticks *are* its approver switch; the obvious reading — "so these two
+    have one tick each" — is right for AP-3 and **wrong for AP-2**:
+    `AccAdvanceApprover` is unique on **(Email, ApproverRole)** over three roles
+    (migrations 082/083/086, and 083's own header says *"One person may serve at
+    both levels"*), with the amount matrix deciding which levels a request
+    visits. One tick would have had to guess a level, on the roster that decides
+    who approves money. `AccClearAdvanceApprover` has one live role (`ACCOUNT`;
+    the `HEAD` rows are kept as history and read by nothing), so AP-3 genuinely
+    is one tick. `src/lib/adv/approver-columns.ts` owns both lists.
+    - **An approver with no `AccAdvClrAccess` row is unioned into the grid,
+      inactive ones included** (`access-grid-rows.ts`) — these are different
+      tables, so somebody can be an AP-2 approver and be on no access row at
+      all. `IsActive` is read, never filtered on, for the reason AP-4's grid had
+      to be fixed out of twice: *a filter whose predicate is the value a button
+      on that row changes will always do this.* The join is on the **lowercased
+      email**, not the StaffId AP-4 keys on, because both approver tables'
+      `StaffId` is nullable.
+    - **Ticking creates, unticking deactivates, nothing here deletes.** The
+      hard delete and the restricted add stay in the approver panel below —
+      AP-2's new approvers must still come from the บัญชี · ผู้บริหาร · IT
+      candidate list, a rule that lives in its route and is not weakened by the
+      grid; ticking a non-candidate is refused there, with its own message.
+    - **The grid and the panel below it share one SWR cache entry**
+      (`approver-roster.ts`): same key **and** same fetcher. They are two
+      controls over one `IsActive` flag on one tab, and with their own state a
+      tick on either left the other lying until a reload. Sharing a key with two
+      different fetchers would be worse than the staleness — each overwrites the
+      other's cached shape — which is why the normalised row is a superset of
+      what all three screens need.
+    - **สถานะ still does not touch either approver pool**, unlike AP-4's — see
+      `setAdvClrAccessActive`'s own docblock. Its confirm dialog now says both
+      things that are true of it: the ticks survive, and it revokes the *other*
+      form too, because `IsActive` is a property of the person.
   - **Two vocabularies in one `TabKey` column**, as on AP-17 and AP-4: settings
     tabs (`brands`, `matrix`, `banks`, `locations`) and menus
     (`advanceQueue`, `advanceReport`, `clearQueue`, `clearReport`). Storage

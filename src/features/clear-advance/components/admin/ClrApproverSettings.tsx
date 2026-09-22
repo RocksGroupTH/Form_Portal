@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import useSWR from "swr";
 import { toast } from "sonner";
 import { Plus, Trash2, Search } from "lucide-react";
 import { Avatar } from "@/components/ui/Avatar";
+import { approverRosterKey, fetchApproverRoster } from "@/lib/adv/approver-roster";
 import {
-  fetchList,
   postJson,
   deleteJson,
   ForbiddenState,
@@ -169,21 +170,34 @@ function AddApproverForm({
 }
 
 export function ClrApproverSettings() {
-  const [rows, setRows] = useState<ClrApprover[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [forbidden, setForbidden] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async () => {
-    const { data, forbidden } = await fetchList<ClrApprover>(APPROVERS_URL);
-    setForbidden(forbidden);
-    setRows(data);
-  }, []);
-
-  useEffect(() => {
-    setLoading(true);
-    load().finally(() => setLoading(false));
-  }, [load]);
+  /* Read through SWR on the key `approverRosterKey("AP-3")`, with the SAME
+     fetcher the สิทธิ์เข้าถึง grid above this panel uses — since 2026-09-22
+     that grid carries an approver column group, so the two are two controls
+     over one `IsActive` flag on the same tab. One cache entry is what keeps
+     them from showing different answers until somebody reloads; see
+     `approver-roster.ts` for why the fetcher has to be shared and not just the
+     key. `fetchApproverRoster` reports a 403 the same way `fetchList` did, so
+     the friendly state below is unchanged. */
+  const { data, isLoading: loading, mutate: load } = useSWR(
+    approverRosterKey("AP-3"),
+    fetchApproverRoster,
+  );
+  const forbidden = !!data?.forbidden;
+  const rows: ClrApprover[] = useMemo(
+    () =>
+      (data?.rows ?? []).map((r) => ({
+        id: r.id,
+        role: r.role as Role,
+        email: r.email,
+        staffId: r.staffId,
+        displayName: r.displayName,
+        isActive: r.isActive,
+        photoUrl: r.photoUrl,
+      })),
+    [data],
+  );
 
   async function add(role: Role, email: string) {
     setBusy(true);
