@@ -103,10 +103,26 @@
 -- transaction that inserts (a later task on this branch). The unique index
 -- above is the one rule this migration can and does enforce unassisted.
 --
--- No ON DELETE CASCADE on either FK. AccRequest rows are never hard-deleted in
--- this application — every "removal" is a status transition, not a DELETE —
--- so there is no delete for a cascade to react to, and adding one would be an
--- untested branch with no code path that would ever exercise it.
+-- No ON DELETE CASCADE on either FK, and the reason first written here was
+-- WRONG. It said "AccRequest rows are never hard-deleted in this application --
+-- every removal is a status transition, not a DELETE". They are:
+-- `collectAndDeleteRequestArtifacts` (request-service.ts:791) runs
+-- `DELETE FROM [dbo].[AccRequest] WHERE Id=@rid` for a Draft or Returned AP-17
+-- request that its owner discards. Corrected 2026-09-22, before this migration
+-- was applied anywhere.
+--
+-- The FKs stay NO ACTION deliberately, but that is now a decision with a
+-- consequence rather than a free one: the delete path must clear
+-- AccTravelRoomShare rows itself FIRST, which it does, or the discard raises a
+-- raw FK error. ON DELETE CASCADE was rejected because a silent row
+-- disappearance is exactly what this feature must not do -- a guest losing its
+-- host has to be something code decided and logged, not something the database
+-- did on the way past.
+--
+-- **Deployment consequence, and it is not confined to this feature**: the code
+-- that clears those rows ships with package E. Deploy it before this migration
+-- and AP-17 DRAFT DELETION breaks for everyone, because the DELETE names a
+-- table that does not exist. 156 goes to both form databases before the code.
 
 SET XACT_ABORT ON;
 GO
