@@ -1866,7 +1866,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 <!-- END:nextjs-agent-rules -->
 
-### `npm run check:alignment` — red 2026-08-20, closed 2026-08-21 by migration 103
+### `npm run check:alignment` — red 2026-08-20 (closed by 103), red again 2026-09-22
 
 **Current state: passing.** Run fresh while writing this note (2026-08-21):
 
@@ -1941,3 +1941,51 @@ the verifier it exists to satisfy.
 
 **When the verifier is red, read past the first row.** It prints one pair and
 stops.
+
+#### Red again 2026-09-22 — `AccTravelPerDiemCountry`, and migration 155
+
+**Measured 2026-09-22**, and found only because a package-C task ran the checker
+in passing — nobody was looking for it. All 30 tables were compared (the `break`
+above is inside the *row* loop; the table loop `continue`s), and exactly one
+differs:
+
+```
+AccTravelPerDiemCountry: 3 row(s) each side, business data identical
+  Rocks_Portal_Form:     MY 500 -> Id 3       IDENT_CURRENT = 3
+  Rocks_Portal_Form_UAT: MY 500 -> Id 1002    IDENT_CURRENT = 1002
+```
+
+**Nothing in `migrations/` caused it.** 133 creates the table with a plain
+`IDENTITY(1,1)` and no reseed; 148 does not name it. A hand reseed to 1000 is
+the likeliest cause — the 900000 / `UAT_SEQUENCE_FLOOR` instinct applied to the
+wrong kind of table. These tables are absent from 061/064 **because** their ids
+must be *identical* rather than disjoint; see "Shared configuration is
+dual-written" above.
+
+**What it costs, and why only half the table's writers care.**
+`upsertPerDiemCountryRate` MERGEs on `(CountryCode, EffectiveDate)`
+(`perdiem-source.ts:122`) and is id-independent, so adding and editing rates was
+never affected. `setPerDiemCountryRateActive` is `UPDATE … WHERE Id = @id`
+inside `writeBothPools` (`:146`) and is broken by it: **switching a rate off
+applies to one database and silently not the other, and which one depends on who
+is looking** — the settings page reads through `getAccPool()`, so an admin in PRO
+sends `Id 3` (production retires MY, UAT matches nothing) while a tester in UAT
+mode sends `Id 1002` (the reverse). Neither path errors. Every rate added widens
+the gap: production would take `Id 4`, UAT `Id 1003`.
+
+**`155_uat_perdiem_country_id_realign.sql`** is the fix, modelled on 103 and
+guarded the same way — it refuses unless both tables hold the same
+`(CountryCode, EffectiveDate)` set in both directions and every pair already
+agrees on `Amount`, `Note`, `IsActive`, `CreatedBy` and `UpdatedBy`, so real
+drift still reports instead of being overwritten. `CreatedAt`/`UpdatedAt` are
+copied but not compared, matching the verifier's own exclusion of datetime
+columns. **Its reseed goes DOWN**, unlike 103's: UAT's counter ran *ahead*, so
+103's `IF IDENT_CURRENT < @prodIdent` guard copied verbatim would have silently
+done nothing. Safe only because **zero foreign keys reference this table**
+(measured) — do not copy that direction to a table that has them.
+
+**Two lessons worth more than the fix.** The verifier is only as good as the
+last person who ran it, and this sat red for an unknown period between 103 and
+2026-09-22 with nothing reporting it. And a divergent id on a dual-written table
+stays invisible until something addresses a row *by* id — here, one of the two
+writers, added long after the drift.
