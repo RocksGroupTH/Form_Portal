@@ -17,9 +17,15 @@ import assert from "node:assert/strict";
  * a connection: no fixture row below carries an `EmployeeId`, so
  * `getAllowanceLog`'s HR read is never reached, and no fixture `RequestId`
  * reaches 900000, so `getPerDiemEmployeeLog`'s UAT per-diem read
- * (`uatByRecordId`) is never issued either. A dynamic import, not a static
- * one, because static imports are hoisted ahead of this assignment
- * regardless of where they sit in the file.
+ * (`uatByRecordId`) is never issued either. Since 2026-09-21 the recompute also
+ * calls the real `loadRequesterTrips` (not a mock of that function) to widen
+ * the chain past the group — it is stubbed the same way everything else here
+ * is, by intercepting the SQL text `makeFakeTx`'s fake `tx` receives, so it
+ * never opens a connection either; a test that wants it to return rows sets
+ * `outside`, and one that wants the follow-up detail read to return rows sets
+ * `detail` — see `makeFakeTx` below. A dynamic import, not a static one,
+ * because static imports are hoisted ahead of this assignment regardless of
+ * where they sit in the file.
  */
 process.env.AUTH_SECRET ??= "test-secret";
 process.env.MSSQL_DATABASE ??= "test-db";
@@ -40,10 +46,27 @@ function loadRecompute() {
  * `.batch`, `.bulk`, `.pipe`, … beyond `.input`/`.query`), so satisfying it
  * structurally would mean stubbing all of that. This fake implements only
  * what `recomputeGroupPerDiem` actually calls and is cast past the rest.
+ *
+ * Three query shapes now run on this one fake `tx`, and each is routed by a
+ * distinct, stable substring of its own SQL text — never by call order, since
+ * the outside/detail reads are conditional on fixture data:
+ *   - the group's own `WHERE t.GroupKey = @gk` SELECT
+ *   - `loadRequesterTrips`'s `WHERE r.FormCode = 'AP-17'` SELECT (the REAL
+ *     function runs — only the SQL layer underneath it is faked)
+ *   - `loadOutsideDetailRows`'s `WHERE t.RequestId IN (...)` SELECT
+ * Anything else (every UPDATE and INSERT) falls through to an empty recordset,
+ * exactly as before.
  */
 type Call = { sql: string; inputs: Record<string, unknown> };
 
-function makeFakeTx(selectRows: Record<string, unknown>[]) {
+function makeFakeTx(fixtures: {
+  group: Record<string, unknown>[];
+  /** Rows for `loadRequesterTrips`'s own query — the chain-widening read. */
+  outside?: Record<string, unknown>[];
+  /** Rows for `loadOutsideDetailRows` — the full-detail read for whichever
+   *  outside trips could have moved. */
+  detail?: Record<string, unknown>[];
+}) {
   const calls: Call[] = [];
   const request = () => {
     const inputs: Record<string, unknown> = {};
@@ -54,10 +77,16 @@ function makeFakeTx(selectRows: Record<string, unknown>[]) {
       },
       async query(sqlText: string) {
         calls.push({ sql: sqlText, inputs: { ...inputs } });
-        const isMainSelect =
-          sqlText.includes("FROM [dbo].[AccTravelBooking] t") &&
-          sqlText.includes("INNER JOIN [dbo].[AccRequest] r");
-        return { recordset: isMainSelect ? selectRows : [] };
+        if (sqlText.includes("WHERE t.GroupKey = @gk")) {
+          return { recordset: fixtures.group };
+        }
+        if (sqlText.includes("r.FormCode = 'AP-17'")) {
+          return { recordset: fixtures.outside ?? [] };
+        }
+        if (sqlText.includes("WHERE t.RequestId IN")) {
+          return { recordset: fixtures.detail ?? [] };
+        }
+        return { recordset: [] };
       },
     };
     return req;
@@ -78,14 +107,14 @@ test("a live predecessor dying flips the successor's flag and gives its day back
   const rows = [
     {
       RequestId: 1, SortOrder: 0, DepartDate: d("2026-01-01"), ReturnDate: d("2026-01-03"),
-      IsContinuation: false, PerDiemDays: 2, PerDiemTotal: 0, Status: "Cancelled", EmployeeId: null,
+      IsContinuation: false, PerDiemDays: 2, PerDiemTotal: 0, NeedsRoomBooking: 1, Status: "Cancelled", EmployeeId: null,
     },
     {
       RequestId: 2, SortOrder: 1, DepartDate: d("2026-01-03"), ReturnDate: d("2026-01-04"),
-      IsContinuation: true, PerDiemDays: 1, PerDiemTotal: 0, Status: "Submitted", EmployeeId: null,
+      IsContinuation: true, PerDiemDays: 1, PerDiemTotal: 0, NeedsRoomBooking: 1, Status: "Submitted", EmployeeId: null,
     },
   ];
-  const { tx, calls } = makeFakeTx(rows);
+  const { tx, calls } = makeFakeTx({ group: rows });
 
   await recomputeGroupPerDiem(tx, "grp-1", { requestId: 1, requestNo: "TRL26-00001", kind: "cancelled" });
 
@@ -114,20 +143,20 @@ test("a trip whose flag does not change gets no UPDATE and no log row", async ()
   const rows = [
     {
       RequestId: 1, SortOrder: 0, DepartDate: d("2026-01-01"), ReturnDate: d("2026-01-03"),
-      IsContinuation: false, PerDiemDays: 2, PerDiemTotal: 0, Status: "Cancelled", EmployeeId: null,
+      IsContinuation: false, PerDiemDays: 2, PerDiemTotal: 0, NeedsRoomBooking: 1, Status: "Cancelled", EmployeeId: null,
     },
     {
       RequestId: 2, SortOrder: 1, DepartDate: d("2026-01-03"), ReturnDate: d("2026-01-04"),
-      IsContinuation: true, PerDiemDays: 1, PerDiemTotal: 0, Status: "Submitted", EmployeeId: null,
+      IsContinuation: true, PerDiemDays: 1, PerDiemTotal: 0, NeedsRoomBooking: 1, Status: "Submitted", EmployeeId: null,
     },
     // Not adjacent to request 2's return date, so it was never a continuation
     // and stays that way regardless of what happens to request 1.
     {
       RequestId: 3, SortOrder: 2, DepartDate: d("2026-02-01"), ReturnDate: d("2026-02-02"),
-      IsContinuation: false, PerDiemDays: 2, PerDiemTotal: 400, Status: "Submitted", EmployeeId: null,
+      IsContinuation: false, PerDiemDays: 2, PerDiemTotal: 400, NeedsRoomBooking: 1, Status: "Submitted", EmployeeId: null,
     },
   ];
-  const { tx, calls } = makeFakeTx(rows);
+  const { tx, calls } = makeFakeTx({ group: rows });
 
   await recomputeGroupPerDiem(tx, "grp-1", { requestId: 1, requestNo: "TRL26-00001", kind: "cancelled" });
 
@@ -141,14 +170,14 @@ test("a Completed trip whose flag would have flipped is not updated but still ge
   const rows = [
     {
       RequestId: 1, SortOrder: 0, DepartDate: d("2026-01-01"), ReturnDate: d("2026-01-03"),
-      IsContinuation: false, PerDiemDays: 2, PerDiemTotal: 0, Status: "Cancelled", EmployeeId: null,
+      IsContinuation: false, PerDiemDays: 2, PerDiemTotal: 0, NeedsRoomBooking: 1, Status: "Cancelled", EmployeeId: null,
     },
     {
       RequestId: 2, SortOrder: 1, DepartDate: d("2026-01-03"), ReturnDate: d("2026-01-04"),
-      IsContinuation: true, PerDiemDays: 1, PerDiemTotal: 300, Status: "Completed", EmployeeId: null,
+      IsContinuation: true, PerDiemDays: 1, PerDiemTotal: 300, NeedsRoomBooking: 1, Status: "Completed", EmployeeId: null,
     },
   ];
-  const { tx, calls } = makeFakeTx(rows);
+  const { tx, calls } = makeFakeTx({ group: rows });
 
   await recomputeGroupPerDiem(tx, "grp-1", { requestId: 1, requestNo: "TRL26-00001", kind: "cancelled" });
 
@@ -179,10 +208,10 @@ test("the cause's own row, if its flag flips too, gets a truthful note about its
   const rows = [
     {
       RequestId: 9, SortOrder: 0, DepartDate: d("2026-03-05"), ReturnDate: d("2026-03-06"),
-      IsContinuation: true, PerDiemDays: 1, PerDiemTotal: 100, Status: "Cancelled", EmployeeId: null,
+      IsContinuation: true, PerDiemDays: 1, PerDiemTotal: 100, NeedsRoomBooking: 1, Status: "Cancelled", EmployeeId: null,
     },
   ];
-  const { tx, calls } = makeFakeTx(rows);
+  const { tx, calls } = makeFakeTx({ group: rows });
 
   await recomputeGroupPerDiem(tx, "grp-2", { requestId: 9, requestNo: "TRL26-00009", kind: "cancelled" });
 
@@ -209,14 +238,14 @@ test("a rewritten per diem also rewrites AccRequest.TotalAmount, in the same sta
   const rows = [
     {
       RequestId: 1, SortOrder: 0, DepartDate: d("2026-01-01"), ReturnDate: d("2026-01-03"),
-      IsContinuation: false, PerDiemDays: 2, PerDiemTotal: 0, Status: "Cancelled", EmployeeId: null,
+      IsContinuation: false, PerDiemDays: 2, PerDiemTotal: 0, NeedsRoomBooking: 1, Status: "Cancelled", EmployeeId: null,
     },
     {
       RequestId: 2, SortOrder: 1, DepartDate: d("2026-01-03"), ReturnDate: d("2026-01-04"),
-      IsContinuation: true, PerDiemDays: 1, PerDiemTotal: 0, Status: "Submitted", EmployeeId: null,
+      IsContinuation: true, PerDiemDays: 1, PerDiemTotal: 0, NeedsRoomBooking: 1, Status: "Submitted", EmployeeId: null,
     },
   ];
-  const { tx, calls } = makeFakeTx(rows);
+  const { tx, calls } = makeFakeTx({ group: rows });
 
   await recomputeGroupPerDiem(tx, "grp-1", { requestId: 1, requestNo: "TRL26-00001", kind: "cancelled" });
 
@@ -234,17 +263,360 @@ test("a frozen row rewrites neither figure — TotalAmount follows the same writ
   const rows = [
     {
       RequestId: 1, SortOrder: 0, DepartDate: d("2026-01-01"), ReturnDate: d("2026-01-03"),
-      IsContinuation: false, PerDiemDays: 2, PerDiemTotal: 0, Status: "Cancelled", EmployeeId: null,
+      IsContinuation: false, PerDiemDays: 2, PerDiemTotal: 0, NeedsRoomBooking: 1, Status: "Cancelled", EmployeeId: null,
     },
     {
       RequestId: 2, SortOrder: 1, DepartDate: d("2026-01-03"), ReturnDate: d("2026-01-04"),
-      IsContinuation: true, PerDiemDays: 1, PerDiemTotal: 200, Status: "Completed", EmployeeId: null,
+      IsContinuation: true, PerDiemDays: 1, PerDiemTotal: 200, NeedsRoomBooking: 1, Status: "Completed", EmployeeId: null,
     },
   ];
-  const { tx, calls } = makeFakeTx(rows);
+  const { tx, calls } = makeFakeTx({ group: rows });
 
   await recomputeGroupPerDiem(tx, "grp-1", { requestId: 1, requestNo: "TRL26-00001", kind: "cancelled" });
 
   assert.equal(callsFor(calls, "UPDATE", 2).length, 0, "accounting signed it — neither table is touched");
   assert.equal(callsFor(calls, "INSERT", 2).length, 1, "but the locked audit row still goes in");
+});
+
+test("a flag flip on a trip with no room booked writes zero, not the full span", async () => {
+  const { recomputeGroupPerDiem } = await loadRecompute();
+
+  // Same shape as the very first test — request 2 stops being a continuation
+  // — except this trip's accommodation option never books a room
+  // (NeedsRoomBooking: 0). Without this test, dropping the `{ roomBooked }`
+  // argument to computePerDiem entirely is invisible: every OTHER fixture in
+  // this file sets NeedsRoomBooking: 1, and passing `{ roomBooked: true }` is
+  // indistinguishable from passing no options at all, since computePerDiem
+  // defaults `roomBooked` to true when the option is absent. This is the one
+  // case that can only pass if the flag is actually read and actually wired
+  // through.
+  const rows = [
+    {
+      RequestId: 1, SortOrder: 0, DepartDate: d("2026-01-01"), ReturnDate: d("2026-01-03"),
+      IsContinuation: false, PerDiemDays: 2, PerDiemTotal: 0, NeedsRoomBooking: 1, Status: "Cancelled", EmployeeId: null,
+    },
+    {
+      RequestId: 2, SortOrder: 1, DepartDate: d("2026-01-03"), ReturnDate: d("2026-01-04"),
+      IsContinuation: true, PerDiemDays: 1, PerDiemTotal: 100, NeedsRoomBooking: 0, Status: "Submitted", EmployeeId: null,
+    },
+  ];
+  const { tx, calls } = makeFakeTx({ group: rows });
+
+  await recomputeGroupPerDiem(tx, "grp-1", { requestId: 1, requestNo: "TRL26-00001", kind: "cancelled" });
+
+  const updates = callsFor(calls, "UPDATE", 2);
+  assert.equal(updates.length, 1, "the flag still flips and is still written");
+  assert.equal(updates[0].inputs.cont, 0);
+  // The rule pays nothing for a trip with no room booked, however many days it
+  // spans — not the full 2-day span the flag flip alone would otherwise give.
+  assert.equal(updates[0].inputs.days, 0, "no room booked — the rule pays nothing, not the full span");
+  assert.equal(updates[0].inputs.total, 0);
+
+  const inserts = callsFor(calls, "INSERT", 2);
+  assert.equal(inserts.length, 1);
+  const meta = JSON.parse(inserts[0].inputs.meta as string);
+  assert.equal(meta.after.days, 0);
+  assert.equal(meta.after.total, 0);
+});
+
+/* ── the chain widened past the group (2026-09-21) ──────────────────────── */
+
+test("cancelling a trip gives its boundary day back to a trip in ANOTHER group", async () => {
+  const { recomputeGroupPerDiem } = await loadRecompute();
+
+  // Group 1: a single trip, 20–24, about to be cancelled. StaffId is set (and
+  // EmployeeId left null) purely so `loadRequesterTrips`'s own early-return
+  // guard (`staffId == null && !employeeId`) does not short-circuit before it
+  // issues its query — the fake below answers that query regardless of which
+  // one of the two is set.
+  const group = [
+    {
+      RequestId: 1, SortOrder: 0, DepartDate: d("2026-01-20"), ReturnDate: d("2026-01-24"),
+      IsContinuation: false, PerDiemDays: 4, PerDiemTotal: 0, NeedsRoomBooking: 1,
+      Status: "Cancelled", EmployeeId: null, StaffId: 555,
+    },
+  ];
+
+  // Group 2 (filed separately, weeks later in practice): 24–26, which dropped
+  // the 24th as a continuation of group 1's return. `loadRequesterTrips`'s own
+  // query shape (RequestNo/Status, no per-diem columns) — this is the fixture
+  // the REAL `loadRequesterTrips` maps into a `RequesterTrip`.
+  const outside = [
+    {
+      RequestId: 2, SortOrder: 0, DepartDate: d("2026-01-24"), ReturnDate: d("2026-01-26"),
+      RequestNo: "TRL26-00002", Status: "Submitted",
+    },
+  ];
+
+  // The full row `loadOutsideDetailRows` fetches for request 2, once it is
+  // found to be a candidate (alive, departing on/after the cancelled trip's
+  // own depart date).
+  const detail = [
+    {
+      RequestId: 2, DepartDate: d("2026-01-24"), ReturnDate: d("2026-01-26"),
+      IsContinuation: true, PerDiemDays: 2, PerDiemTotal: 400, NeedsRoomBooking: 1,
+      Status: "Submitted", EmployeeId: null, CountryCode: null, StaffId: null,
+    },
+  ];
+
+  const { tx, calls } = makeFakeTx({ group, outside, detail });
+
+  await recomputeGroupPerDiem(tx, "grp-1", { requestId: 1, requestNo: "TRL26-00001", kind: "cancelled" });
+
+  // Group 1's own (cancelled, cause) row never changed flag, so no write for it.
+  assert.equal(callsFor(calls, "UPDATE", 1).length, 0);
+
+  const updates = callsFor(calls, "UPDATE", 2);
+  assert.equal(updates.length, 1, "the outside trip in group 2 should be rewritten");
+  assert.equal(updates[0].inputs.cont, 0, "24th's predecessor died — no longer a continuation");
+  // 24–26 is a 3-day span; 2 days stored (dropped the 24th) rises to 3 — the
+  // boundary day nobody else claims is given back.
+  assert.equal(updates[0].inputs.days, 3);
+
+  const inserts = callsFor(calls, "INSERT", 2);
+  assert.equal(inserts.length, 1);
+  const meta = JSON.parse(inserts[0].inputs.meta as string);
+  assert.equal(meta.before.days, 2);
+  assert.equal(meta.after.days, 3);
+  assert.equal(meta.causedByRequestId, 1);
+  assert.equal(meta.causedByRequestNo, "TRL26-00001");
+  assert.equal(meta.locked, false);
+});
+
+test("a trip departing BEFORE the cancelled one is not rewritten", async () => {
+  const { recomputeGroupPerDiem } = await loadRecompute();
+
+  const group = [
+    {
+      RequestId: 1, SortOrder: 0, DepartDate: d("2026-01-20"), ReturnDate: d("2026-01-24"),
+      IsContinuation: false, PerDiemDays: 4, PerDiemTotal: 0, NeedsRoomBooking: 1,
+      Status: "Cancelled", EmployeeId: null, StaffId: 555,
+    },
+  ];
+
+  // An earlier, unrelated trip on the same requester's calendar. Its chain
+  // position cannot have moved — nothing before the cancelled trip's depart
+  // date can gain or lose a predecessor because of it.
+  const outside = [
+    {
+      RequestId: 3, SortOrder: 0, DepartDate: d("2026-01-10"), ReturnDate: d("2026-01-12"),
+      RequestNo: "TRL26-00003", Status: "Submitted",
+    },
+  ];
+
+  const { tx, calls } = makeFakeTx({ group, outside });
+
+  await recomputeGroupPerDiem(tx, "grp-1", { requestId: 1, requestNo: "TRL26-00001", kind: "cancelled" });
+
+  // Not merely unwritten — never even loaded. Every extra row loaded is a row
+  // inside the cancelling transaction's lock, so a trip outside the affected
+  // window must not reach the detail query at all.
+  assert.equal(
+    calls.filter((c) => c.sql.includes("WHERE t.RequestId IN")).length,
+    0,
+    "the detail query must not be issued for a trip that could not have moved",
+  );
+  assert.equal(callsFor(calls, "UPDATE", 3).length, 0);
+  assert.equal(callsFor(calls, "INSERT", 3).length, 0);
+});
+
+test("an outside trip past accounting is reported but not rewritten", async () => {
+  const { recomputeGroupPerDiem } = await loadRecompute();
+
+  const group = [
+    {
+      RequestId: 1, SortOrder: 0, DepartDate: d("2026-01-20"), ReturnDate: d("2026-01-24"),
+      IsContinuation: false, PerDiemDays: 4, PerDiemTotal: 0, NeedsRoomBooking: 1,
+      Status: "Cancelled", EmployeeId: null, StaffId: 555,
+    },
+  ];
+
+  const outside = [
+    {
+      RequestId: 4, SortOrder: 0, DepartDate: d("2026-01-24"), ReturnDate: d("2026-01-26"),
+      RequestNo: "TRL26-00004", Status: "Completed",
+    },
+  ];
+
+  const detail = [
+    {
+      RequestId: 4, DepartDate: d("2026-01-24"), ReturnDate: d("2026-01-26"),
+      IsContinuation: true, PerDiemDays: 2, PerDiemTotal: 300, NeedsRoomBooking: 1,
+      Status: "Completed", EmployeeId: null, CountryCode: null, StaffId: null,
+    },
+  ];
+
+  const { tx, calls } = makeFakeTx({ group, outside, detail });
+
+  await recomputeGroupPerDiem(tx, "grp-1", { requestId: 1, requestNo: "TRL26-00001", kind: "cancelled" });
+
+  // `perDiemWritable`'s allow-list still governs an outside row exactly as it
+  // governs a group row: accounting has signed this one, so it is reported,
+  // not rewritten.
+  assert.equal(callsFor(calls, "UPDATE", 4).length, 0, "accounting signed it — not rewritten");
+
+  const inserts = callsFor(calls, "INSERT", 4);
+  assert.equal(inserts.length, 1, "but the gap is still reported");
+  const meta = JSON.parse(inserts[0].inputs.meta as string);
+  assert.equal(meta.before.days, meta.after.days);
+  assert.equal(meta.locked, true);
+
+  const note = inserts[0].inputs.note as string;
+  assert.match(note, /ผ่านบัญชีแล้ว/);
+});
+
+/* ── rewriteSubmitAffectedTrips (added 2026-09-22, I1; N1 skip arm added the
+   same day) ──────────────────────────────────────────────────────────────
+   The submit-time counterpart to `recomputeGroupPerDiem` above, exercised
+   directly rather than only through `submit-continuation-guard.test.ts`'s
+   source-reading assertions (fix round 2, N2) — that guard's own docblock
+   used to claim this module "cannot be imported into a test", which every
+   test above it in this same file already disproves. `makeFakeTx`'s existing
+   `WHERE t.RequestId IN` routing is `loadOutsideDetailRows`' own SQL, so no
+   new fixture shape is needed — only `detail` rows, `group`/`outside` left
+   empty since this function never queries either. */
+
+test("rewriteSubmitAffectedTrips: a writable flipped trip gets one UPDATE and an audit row with locked: false", async () => {
+  const { rewriteSubmitAffectedTrips } = await loadRecompute();
+
+  const detail = [
+    {
+      RequestId: 2, DepartDate: d("2026-01-24"), ReturnDate: d("2026-01-26"),
+      IsContinuation: false, PerDiemDays: 3, PerDiemTotal: 1500, NeedsRoomBooking: 1,
+      Status: "Submitted", EmployeeId: null, CountryCode: null, StaffId: null,
+    },
+  ];
+  const { tx, calls } = makeFakeTx({ group: [], detail });
+  const nowFlags = new Map([[2, true]]);
+
+  await rewriteSubmitAffectedTrips(tx, [2], nowFlags, () => ({
+    requestId: 99, requestNo: "TOF26-00099", kind: "submitted",
+  }));
+
+  const updates = callsFor(calls, "UPDATE", 2);
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].inputs.cont, 1);
+  // 24-26 is a 3-day span; now a continuation, so the first day drops to 2.
+  assert.equal(updates[0].inputs.days, 2);
+
+  const inserts = callsFor(calls, "INSERT", 2);
+  assert.equal(inserts.length, 1);
+  const meta = JSON.parse(inserts[0].inputs.meta as string);
+  assert.equal(meta.locked, false);
+  assert.equal(meta.cause, "submitted");
+  assert.equal(meta.causedByRequestId, 99);
+  assert.equal(meta.causedByRequestNo, "TOF26-00099");
+  const note = inserts[0].inputs.note as string;
+  assert.match(note, /ถูกยื่นคำขอเพิ่ม/, "the note must use the submitted-kind label, not cancelled/rejected");
+});
+
+test("rewriteSubmitAffectedTrips: a Completed trip gets zero UPDATEs and a locked audit row with after == before — I1's stated safety property", async () => {
+  const { rewriteSubmitAffectedTrips } = await loadRecompute();
+
+  const detail = [
+    {
+      RequestId: 2, DepartDate: d("2026-01-24"), ReturnDate: d("2026-01-26"),
+      IsContinuation: false, PerDiemDays: 3, PerDiemTotal: 1500, NeedsRoomBooking: 1,
+      Status: "Completed", EmployeeId: null, CountryCode: null, StaffId: null,
+    },
+  ];
+  const { tx, calls } = makeFakeTx({ group: [], detail });
+  const nowFlags = new Map([[2, true]]);
+
+  await rewriteSubmitAffectedTrips(tx, [2], nowFlags, () => ({
+    requestId: 99, requestNo: "TOF26-00099", kind: "submitted",
+  }));
+
+  assert.equal(callsFor(calls, "UPDATE", 2).length, 0, "a signed figure is never rewritten");
+
+  const inserts = callsFor(calls, "INSERT", 2);
+  assert.equal(inserts.length, 1, "the frozen row still gets an audit row");
+  const meta = JSON.parse(inserts[0].inputs.meta as string);
+  assert.equal(meta.locked, true);
+  assert.equal(meta.before.days, meta.after.days);
+  assert.equal(meta.before.total, meta.after.total);
+  const note = inserts[0].inputs.note as string;
+  assert.match(note, /ผ่านบัญชีแล้ว/);
+});
+
+test("rewriteSubmitAffectedTrips: an unchanged flag writes nothing and never calls causeFor", async () => {
+  const { rewriteSubmitAffectedTrips } = await loadRecompute();
+
+  const detail = [
+    {
+      RequestId: 2, DepartDate: d("2026-01-24"), ReturnDate: d("2026-01-26"),
+      IsContinuation: true, PerDiemDays: 2, PerDiemTotal: 1000, NeedsRoomBooking: 1,
+      Status: "Submitted", EmployeeId: null, CountryCode: null, StaffId: null,
+    },
+  ];
+  const { tx, calls } = makeFakeTx({ group: [], detail });
+  const nowFlags = new Map([[2, true]]); // matches the stored IsContinuation: true
+
+  let causeForCalled = false;
+  await rewriteSubmitAffectedTrips(tx, [2], nowFlags, () => {
+    causeForCalled = true;
+    return { requestId: 99, requestNo: null, kind: "submitted" };
+  });
+
+  assert.equal(callsFor(calls, "UPDATE", 2).length, 0);
+  assert.equal(callsFor(calls, "INSERT", 2).length, 0);
+  assert.equal(causeForCalled, false, "causeFor must not be called for a row whose flag did not actually change");
+});
+
+test("rewriteSubmitAffectedTrips: a no-room trip reprices to 0 days, not its full span", async () => {
+  const { rewriteSubmitAffectedTrips } = await loadRecompute();
+
+  const detail = [
+    {
+      RequestId: 2, DepartDate: d("2026-01-24"), ReturnDate: d("2026-01-26"),
+      IsContinuation: false, PerDiemDays: 3, PerDiemTotal: 1500, NeedsRoomBooking: 0,
+      Status: "Submitted", EmployeeId: null, CountryCode: null, StaffId: null,
+    },
+  ];
+  const { tx, calls } = makeFakeTx({ group: [], detail });
+  const nowFlags = new Map([[2, true]]);
+
+  await rewriteSubmitAffectedTrips(tx, [2], nowFlags, () => ({
+    requestId: 99, requestNo: "TOF26-00099", kind: "submitted",
+  }));
+
+  const updates = callsFor(calls, "UPDATE", 2);
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].inputs.days, 0, "no room booked — the rule pays nothing, not the full span");
+  assert.equal(updates[0].inputs.total, 0);
+});
+
+/**
+ * N1's ruling: when `causeFor` cannot resolve a genuine cause (the changed
+ * trip's predecessor is not one of the submission's own tabs — the case that
+ * used to fall back to naming `tabs[0]` and silently re-price a historical
+ * trip), the row must be SKIPPED entirely, not rewritten under an
+ * approximate cause. `causeFor` returning `null` is how the caller expresses
+ * that; this pins the callee's side of the contract.
+ */
+test("rewriteSubmitAffectedTrips: causeFor returning null skips the row entirely — no UPDATE, no audit row", async () => {
+  const { rewriteSubmitAffectedTrips } = await loadRecompute();
+
+  const detail = [
+    {
+      RequestId: 2, DepartDate: d("2026-01-24"), ReturnDate: d("2026-01-26"),
+      IsContinuation: false, PerDiemDays: 3, PerDiemTotal: 1500, NeedsRoomBooking: 1,
+      Status: "Submitted", EmployeeId: null, CountryCode: null, StaffId: null,
+    },
+  ];
+  const { tx, calls } = makeFakeTx({ group: [], detail });
+  const nowFlags = new Map([[2, true]]); // differs from stored (false) — a real candidate
+
+  let causeForCalled = false;
+  await rewriteSubmitAffectedTrips(tx, [2], nowFlags, () => {
+    causeForCalled = true;
+    return null;
+  });
+
+  // causeFor IS called — the flag-change check runs first and this row
+  // passes it — it is the null RETURN VALUE that skips the write, not an
+  // early exit before causeFor is even asked.
+  assert.equal(causeForCalled, true);
+  assert.equal(callsFor(calls, "UPDATE", 2).length, 0);
+  assert.equal(callsFor(calls, "INSERT", 2).length, 0);
 });

@@ -54,12 +54,17 @@ import {
  *
  * **Who reaches this page** is no longer role alone. An IT Admin or System Admin
  * sees every tab, as before. A non-admin holding at least one grant sees only
- * the tabs they hold — never `erpInterface` or `access`, neither of which is
- * grantable — and every route behind those tabs re-resolves the grant
- * server-side on each call (`requireReimburseSettingsTab`). The gate here is
- * presentational. `erpInterface`'s own route stays `requireRole` outright —
- * see `settings-tabs.ts` for why it is not brand-scoped and therefore not safe
- * to hand to a scoped approver yet.
+ * the tabs they hold — never `access`, which is not grantable — and every route
+ * behind those tabs re-resolves the grant server-side on each call
+ * (`requireReimburseSettingsTab`). The gate here is presentational.
+ *
+ * **`erpInterface`, `glAccounts` and `buGlMap` joined the grantable set on
+ * 2026-09-22**, on the user's instruction and with the reach put to them
+ * first: Interface ERP is gated but not brand-scoped, and the two G/L tabs
+ * edit rows AP-3 shares. `settings-tabs.ts` records both in full and the
+ * สิทธิ์เข้าถึง grid prints them in Thai beside each tick. Nothing here needed
+ * changing for it — `visibleTabs` filters on `settingsTabs`, which the access
+ * route derives from `GRANTABLE_REIMBURSE_TABS`.
  */
 
 type TabKey = ReimburseSettingsTabKey;

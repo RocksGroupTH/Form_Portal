@@ -93,6 +93,34 @@ export const AP17_HEADER_MESSAGE_LINES: string[] = [
 ];
 
 /**
+ * พักห้องเดียวกับ — what the requester is agreeing to, in one line.
+ *
+ * **It is the only warning anybody gets, and it reaches only the guest.** The
+ * host does not consent to a room share; they are told afterwards (spec §2,
+ * user 2026-09-21: *"no — but they are told"*). So the person pressing this
+ * button is the single party who can be warned in advance, and what they need
+ * to know before pressing it is not that they save a booking step — it is that
+ * **their request stops being theirs alone**: it is cancelled when the host's
+ * is, and re-dated when the host's dates move, with nobody acting on theirs
+ * and no approval re-taken (spec §4).
+ *
+ * The per-diem half is stated in the same breath deliberately. It is the whole
+ * reason anybody would use the control (spec §1, the user's own
+ * *"(ถ้าเลือกอันนี้จะได้เบี้ยเลี้ยง)"*), and a warning with the benefit left
+ * out reads as a reason not to press the button rather than as the terms of
+ * pressing it.
+ *
+ * **One constant because it is rendered twice** — in the picker, *before* the
+ * choice, and on the attached card, so the state stays self-describing
+ * afterwards. Two copies is how the warning shown before a decision drifts
+ * from the one shown after it.
+ */
+export const ROOM_SHARE_AGREEMENT_LINE =
+  "เมื่อพักห้องเดียวกับเพื่อนร่วมงาน คุณไม่ต้องจองห้องพักเอง และยังได้รับเบี้ยเลี้ยงตามปกติ " +
+  "แต่คำขอของคุณจะผูกกับคำขอของเจ้าของห้อง — ถ้าเขายกเลิกคำขอ คำขอของคุณจะถูกยกเลิกตามโดยอัตโนมัติ " +
+  "และถ้าเขาเปลี่ยนวันเดินทาง วันเดินทางของคุณจะเปลี่ยนตามด้วย";
+
+/**
  * The `AccTravelRentVehicle` row whose whole meaning is "no rental" (spec §2.4),
  * seeded by migration 048 and excluded from 054's backfill so it alone carries
  * `NeedsRentBooking = 0`.

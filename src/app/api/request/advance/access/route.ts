@@ -7,8 +7,10 @@ import { isAnyClrApprover } from "@/lib/clr/clear-advance-approver-service";
 import {
   ADV_CLR_MENUS,
   GRANTABLE_ADV_CLR_TABS,
+  advClrTabsForForm,
   decideAdvClrMenuAccess,
   decideAdvClrTabAccess,
+  type AdvClrForm,
 } from "@/lib/adv/settings-tabs";
 
 /**
@@ -52,6 +54,18 @@ export async function GET() {
     settingsTabs[t.key] = decideAdvClrTabAccess(isAdmin, granted, t.key);
   }
   /**
+   * Whether that form's settings page has a single tab this viewer may open.
+   *
+   * Read off the form's own strip rather than a hand-kept list, so `brands`
+   * moving to AP-2 alone moved this answer with it and nothing had to be
+   * remembered — and so did `erpInterface`, `glAccounts` and `buGlMap`
+   * becoming grantable on 2026-09-22, which needed no edit here at all. The
+   * ungrantable tabs are still skipped: `access` is on both strips but open to
+   * admins only, and the admin arm is already ahead of it.
+   */
+  const canSettingsFor = (form: AdvClrForm) =>
+    isAdmin || advClrTabsForForm(form).some((t) => !t.adminOnly && settingsTabs[t.key]);
+  /**
    * **Roster OR grant, never grant alone.** `AccAdvClrAccess` ships empty with
    * no backfill, so gating the hubs on the tick alone would take AP-2's queue
    * and AP-3's queue away from every existing approver on the day this shipped.
@@ -91,11 +105,25 @@ export async function GET() {
       // leaving somebody to discover it: sight and authority are separate here.
       isAdvanceApprover: advApprover,
       isClearApprover: clrApprover,
-      // True when ANY settings tab is open to this viewer — what the hubs'
-      // ตั้งค่า card is drawn on. An admin always passes; a non-admin passes
-      // only on a real grant, so an empty roster hides nothing that was
-      // previously visible (the page was `requireRole` before this shipped).
-      canSettings: isAdmin || Object.keys(settingsTabs).some((k) => settingsTabs[k]),
+      /**
+       * True when a settings tab **of that form** is open to this viewer —
+       * what each hub's ตั้งค่า card is drawn on. An admin always passes; a
+       * non-admin passes only on a real grant, so an empty roster hides nothing
+       * that was previously visible (the page was `requireRole` before grants
+       * shipped).
+       *
+       * **Per form since 2026-09-22, and that is a fix rather than tidying.**
+       * One union flag served both hubs, so a grant of AP-2's `banks` drew the
+       * ตั้งค่า card on AP-3's hub, where the page then has no tab this viewer
+       * may open and answers ไม่มีสิทธิ์เข้าถึง — a card that leads only to a
+       * refusal. Splitting สิทธิ์เข้าถึง made it worse rather than introducing
+       * it: `brands` used to sit on both strips, so a `brands` holder really did
+       * have a tab on both pages, and moving it to AP-2 alone turned their AP-3
+       * card into that dead end. Derived from each form's own strip, so a tab
+       * moving between the two pages moves this with it.
+       */
+      canAdvanceSettings: canSettingsFor("AP-2"),
+      canClearSettings: canSettingsFor("AP-3"),
       settingsTabs,
       menus,
     },

@@ -38,6 +38,33 @@
  * did this"). What identifies the event instead is the action string,
  * `auto_cancelled_stale`, and the Thai comment written onto the closed
  * approval row, which is the part the AP-1 timeline actually renders.
+ *
+ * ## ⚠ THIS SWEEP IS AP-1 ONLY, AND WIDENING IT TO AP-17 IS A FOUR-CHARACTER
+ * ## CHANGE THAT WOULD CANCEL ROOM-SHARE HOSTS WITH NO CASCADE
+ *
+ * Noted 2026-09-22 by the package E whole-branch review, which swept every
+ * writer of `AccRequest.Status` looking for a sixth cascade trigger and found
+ * this one — a background job that writes `Status='Cancelled'` with **no**
+ * cascade hook and a commit per request.
+ *
+ * It is **not** a trigger today: `AP1_FORM_CODE` is pinned in both the
+ * candidate `SELECT` and the claiming `UPDATE`, and an AP-1 request cannot be
+ * an AP-17 room-share host. It is the highest-probability *future* one. AP-17
+ * has a manager step of its own and the same "left for a month" problem, so
+ * somebody will eventually point this at it — and a `Returned`/`Submitted`
+ * AP-17 host cancelled here would leave every guest un-cancelled,
+ * un-detached and untold, drawing per diem on a room that no longer exists.
+ * That is precisely the state package E exists to prevent, and **neither the
+ * cascade's own guards nor any other test would notice**, because they all
+ * assert that the five *known* trigger paths call the cascade and none of
+ * them can know about a sixth.
+ *
+ * So: if this is ever widened past AP-1, `applyRoomShareDeath(tx, id)` must
+ * be called inside the claiming transaction, before its commit — see
+ * `room-share-cascade-apply.ts` for why "inside" is the whole property, and
+ * `room-share-cascade-guard.test.ts` for the shape of the assertion the new
+ * site would need. `stale-sweep-form-scope-guard.test.ts` is what will make
+ * you read this paragraph.
  */
 
 import type { ConnectionPool } from "mssql";

@@ -329,7 +329,7 @@ function KeyDialog({
             value={draft.name}
             onChange={(e) => set({ name: e.target.value })}
             maxLength={API_KEY_NAME_MAX}
-            placeholder="Anthropic — อ่านใบเสร็จและตรวจบัตร"
+            placeholder="Anthropic — อ่านใบเสร็จและตรวจเอกสารยืนยันตัวตน"
             className={inputClass}
             style={inputStyle}
           />

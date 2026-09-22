@@ -30,9 +30,11 @@ assert.strictEqual(r2.total, 2000);
 assert.strictEqual(rateForDay("2026-01-02", log), 500);
 assert.strictEqual(rateForDay("2026-01-03", log), 1000);
 
-// payout: the determining date is the LATER of approval and travel return.
+// payout: for ในประเทศ the determining date is the LATER of approval and
+// travel return; for ต่างประเทศ, since 2026-09-21, it is the approval date
+// ALONE — travel return is not read at all (see payout-rule.ts's header).
 // Domestic splits at the 20th; foreign pays twice a month. The exhaustive
-// coverage is payout-rule.test.ts — these two lines are the smoke test.
+// coverage is payout-rule.test.ts — these lines are the smoke test.
 assert.strictEqual(payoutDateFor("domestic", "2026-07-20", "2026-07-20"), "2026-07-31");
 assert.strictEqual(payoutDateFor("domestic", "2026-07-21", "2026-07-20"), "2026-08-31");
 assert.strictEqual(payoutDateFor("foreign", "2026-07-21", "2026-07-20"), "2026-08-10");

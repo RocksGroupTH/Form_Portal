@@ -7,7 +7,7 @@ import {
   setAdvClrAccessTabs,
   upsertAdvClrAccess,
 } from "@/lib/adv/access-service";
-import { filterStorableAdvClrKeys } from "@/lib/adv/settings-tabs";
+import { ADV_CLR_FORMS, filterStorableAdvClrKeys, type AdvClrForm } from "@/lib/adv/settings-tabs";
 import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
 
 /*
@@ -41,6 +41,24 @@ const HR_NOT_FOUND =
   "ไม่พบพนักงานที่ยังทำงานอยู่ในระบบ HR สำหรับอีเมลนี้ — เพิ่มผู้มีสิทธิ์เข้าถึงไม่ได้";
 const HR_UNAVAILABLE =
   "ตรวจสอบข้อมูลพนักงานจากระบบ HR ไม่สำเร็จ — กรุณาลองใหม่อีกครั้ง";
+const FORM_REQUIRED =
+  "ไม่ทราบว่ากำลังบันทึกสิทธิ์ของฟอร์มใด — กรุณารีเฟรชหน้านี้แล้วลองใหม่";
+
+/**
+ * Which form's grants this POST is replacing.
+ *
+ * **Absent or unrecognised is refused, never defaulted.** The write replaces
+ * exactly the named form's keys, so guessing would hand one form's screen the
+ * power to clear the other's — the failure this whole split exists to close. A
+ * browser left open on the previous bundle posts no `form` and gets a 400 with
+ * copy telling the admin to reload: a visible refusal, rather than a silent
+ * deletion of grants nobody will notice until somebody loses a menu.
+ */
+function readForm(raw: unknown): AdvClrForm | null {
+  const v = typeof raw === "string" ? raw.trim() : "";
+  for (const f of ADV_CLR_FORMS) if (f === v) return f;
+  return null;
+}
 
 /**
  * GET — the full roster, **inactive rows included**, for the admin grid.
@@ -63,7 +81,7 @@ export async function GET() {
 
 /**
  * POST — add or update one person.
- * Body: `{ email, displayName?, isActive?, settingsTabs? }`
+ * Body: `{ email, displayName?, isActive?, settingsTabs?, form? }`
  *
  * `StaffId` is the natural key and is resolved **here**, from HR, by email —
  * the client never supplies one. AD search returns an Entra identity, which
@@ -73,14 +91,21 @@ export async function GET() {
  * database must not read as "no such employee".
  *
  * `settingsTabs`: **omitted leaves the grants alone**; an array is the whole
- * granted set, so an empty array revokes everything. The distinction is the
+ * granted set **of the named form**, so an empty array revokes that form's
+ * grants and leaves the other form's untouched. The distinction is the
  * point — the Add call sends no tabs, and treating that as an empty set would
  * silently revoke every grant the person held, in both databases, since
  * `setAdvClrAccessTabs` replaces rather than merges. The field's name predates
  * the menu vocabulary it now also carries, and the pre-filter here is
  * deliberately the WIDE one: narrowing it to the grantable tabs alone would
  * strip a menu key before the (also wide) filter downstream ever saw it, which
- * is exactly how AP-17's equivalent tick once saved nothing.
+ * is exactly how AP-17's equivalent tick once saved nothing. Narrowing it to
+ * one *form* here would be just as wrong for the opposite reason — that is
+ * `setAdvClrAccessTabs`' own job, done against the same partition its bounded
+ * `DELETE` uses, so the two can never disagree about what the save owns.
+ *
+ * `form`: **required whenever `settingsTabs` is present**, because that is the
+ * half of the roster being replaced. See `readForm`.
  */
 export async function POST(req: NextRequest) {
   const session = await requireRole(["IT Admin", "System Admin"]);
@@ -91,6 +116,15 @@ export async function POST(req: NextRequest) {
     const email = typeof body?.email === "string" ? body.email.trim() : "";
     if (!email) {
       return NextResponse.json({ ok: false, error: "กรุณาระบุอีเมล" }, { status: 400 });
+    }
+
+    // Validated BEFORE the upsert, not beside the write it guards: a 400 raised
+    // after `upsertAdvClrAccess` has run would have already created the roster
+    // row, or rewritten a name, for a request this route is about to refuse.
+    const savingTabs = Array.isArray(body?.settingsTabs);
+    const form = savingTabs ? readForm(body?.form) : null;
+    if (savingTabs && !form) {
+      return NextResponse.json({ ok: false, error: FORM_REQUIRED }, { status: 400 });
     }
 
     let employee;
@@ -119,8 +153,9 @@ export async function POST(req: NextRequest) {
       createdBy: Number(session.user.id),
     });
 
-    // `Array.isArray` is what makes omitted different from empty.
-    if (Array.isArray(body.settingsTabs)) {
+    // `savingTabs` is `Array.isArray`, which is what makes omitted different
+    // from empty; `form` is non-null exactly when it is true.
+    if (savingTabs && form) {
       // Resolved from the StaffId this route derived from HR, never from a
       // posted id: letting the client name the row would let one caller rewrite
       // somebody else's grants. The upsert above has just run, so it exists.
@@ -129,6 +164,7 @@ export async function POST(req: NextRequest) {
         await setAdvClrAccessTabs(
           accessId,
           filterStorableAdvClrKeys((body.settingsTabs as unknown[]).map((k) => String(k))),
+          form,
         );
       }
     }

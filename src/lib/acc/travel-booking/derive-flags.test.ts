@@ -14,9 +14,9 @@ import {
 /* ── Fixtures ── */
 
 /** A hotel: the Admin has to book the room. */
-const hotel: AccommodationOption = { id: 1, isActive: true, needsRoomBooking: true };
+const hotel: AccommodationOption = { id: 1, isActive: true, needsRoomBooking: true, requiresIdCard: false };
 /** Staying with family: nothing to book. */
-const ownArrangement: AccommodationOption = { id: 2, isActive: true, needsRoomBooking: false };
+const ownArrangement: AccommodationOption = { id: 2, isActive: true, needsRoomBooking: false, requiresIdCard: false };
 
 /** A flight: ticket to book, departure locations and a time to record. */
 const flight: VehicleFlagOption = {
@@ -26,6 +26,7 @@ const flight: VehicleFlagOption = {
   needsTicketBooking: true,
   needsDepartTime: true,
   needsVehicleRent: false,
+  requiresIdCard: false,
 };
 /** Own car: nothing for anyone else to do. */
 const ownCar: VehicleFlagOption = {
@@ -35,6 +36,7 @@ const ownCar: VehicleFlagOption = {
   needsTicketBooking: false,
   needsDepartTime: false,
   needsVehicleRent: false,
+  requiresIdCard: false,
 };
 /** A hired vehicle chosen as the travel method. */
 const hiredVehicle: VehicleFlagOption = {
@@ -44,9 +46,10 @@ const hiredVehicle: VehicleFlagOption = {
   needsTicketBooking: false,
   needsDepartTime: false,
   needsVehicleRent: true,
+  requiresIdCard: false,
 };
 
-const rentVan: RentVehicleOption = { id: 20, isActive: true, needsRentBooking: true };
+const rentVan: RentVehicleOption = { id: 20, isActive: true, needsRentBooking: true, requiresIdCard: false };
 
 /* ── Derivation ── */
 
@@ -193,7 +196,7 @@ test("an unknown field name still produces a usable message", () => {
 });
 
 /** The "ไม่เช่า" row: a real, active option whose whole meaning is "no rental". */
-const noRent: RentVehicleOption = { id: 4, isActive: true, needsRentBooking: false };
+const noRent: RentVehicleOption = { id: 4, isActive: true, needsRentBooking: false, requiresIdCard: false };
 
 /**
  * **An explicit "ไม่เช่า" beats a leg vehicle that merely implies a rental.**
@@ -247,4 +250,115 @@ test("an explicit rent option implies a booking even with own-car legs", () => {
     rentVehicle: rentVan,
   });
   assert.equal(flags.needsRentBooking, true);
+});
+
+/* ── ID card requirement ── */
+
+test("needsIdCard is true when only the accommodation requires one", () => {
+  const flags = deriveBookingFlags({
+    accommodation: { id: 1, isActive: true, needsRoomBooking: true, requiresIdCard: true },
+    goVehicle: null,
+    returnVehicle: null,
+    rentVehicle: null,
+  });
+  assert.equal(flags.needsIdCard, true);
+});
+
+test("needsIdCard is true when only the go vehicle requires one", () => {
+  const flags = deriveBookingFlags({
+    accommodation: null,
+    goVehicle: { ...flight, requiresIdCard: true },
+    returnVehicle: null,
+    rentVehicle: null,
+  });
+  assert.equal(flags.needsIdCard, true);
+});
+
+test("needsIdCard is true when only the return vehicle requires one", () => {
+  const flags = deriveBookingFlags({
+    accommodation: null,
+    goVehicle: null,
+    returnVehicle: { ...flight, requiresIdCard: true },
+    rentVehicle: null,
+  });
+  assert.equal(flags.needsIdCard, true);
+});
+
+test("needsIdCard is true when only the rent vehicle requires one", () => {
+  const flags = deriveBookingFlags({
+    accommodation: null,
+    goVehicle: null,
+    returnVehicle: null,
+    rentVehicle: { ...rentVan, requiresIdCard: true },
+  });
+  assert.equal(flags.needsIdCard, true);
+});
+
+test("needsIdCard is true when several options require one", () => {
+  const flags = deriveBookingFlags({
+    accommodation: { ...hotel, requiresIdCard: true },
+    goVehicle: { ...flight, requiresIdCard: true },
+    returnVehicle: null,
+    rentVehicle: { ...rentVan, requiresIdCard: true },
+  });
+  assert.equal(flags.needsIdCard, true);
+});
+
+test("needsIdCard is false when no option requires one — the fresh-database state", () => {
+  // The state every database is in the moment migration 154 lands: existing
+  // rows default to RequiresIdCard = 0, so nothing asks for a card at all.
+  const flags = deriveBookingFlags({
+    accommodation: { id: 1, isActive: true, needsRoomBooking: true, requiresIdCard: false },
+    goVehicle: null,
+    returnVehicle: null,
+    rentVehicle: null,
+  });
+  assert.equal(flags.needsIdCard, false);
+});
+
+/**
+ * **The discriminating case for `needsIdCard`'s plain OR, and the one the six
+ * tests above could not tell apart from its opposite.**
+ *
+ * Every other `needsIdCard` case passes either `rentVehicle: null` or a rent
+ * option that itself requires a card, so all of them pass unchanged if somebody
+ * "restores the symmetry" with `needsRentBooking` twelve lines above and
+ * rewrites the OR into the answer-wins shape:
+ *
+ * ```ts
+ * options.rentVehicle !== null
+ *   ? options.rentVehicle.requiresIdCard
+ *   : (accommodation ?? false) || (go ?? false) || (back ?? false)
+ * ```
+ *
+ * Measured by the final review on 2026-09-22: that rewrite left the whole suite
+ * at 2088/2088 and `tsc --noEmit` clean. This test is what reds it.
+ *
+ * The case is the ordinary one, not an exotic one. A leg vehicle with
+ * `NeedsVehicleRent = 1` is what makes the form ask the rental question at all,
+ * and `ไม่เช่า` — a real row, carrying `RequiresIdCard = 0` like every row does
+ * by default — is how a requester declines it. Under the answer-wins shape that
+ * decline would cancel the *card* requirement the leg vehicle itself carries,
+ * on both client and server, silently: no card asked for, no refusal at submit.
+ *
+ * The asymmetry is deliberate and this test pins both halves of it at once.
+ * `ไม่เช่า` means "no" to a rental because a rental is a thing one can decline;
+ * there is no option meaning "and no identification", so nothing can answer the
+ * card question in the negative and the OR has nothing to defer to.
+ */
+test("a selected ไม่เช่า does not cancel another option's card requirement", () => {
+  const flags = deriveBookingFlags({
+    accommodation: null,
+    goVehicle: { ...hiredVehicle, requiresIdCard: true },
+    returnVehicle: { ...hiredVehicle, requiresIdCard: true },
+    rentVehicle: noRent,
+  });
+  // The decline still wins the question it answers…
+  assert.equal(flags.needsRentBooking, false);
+  // …and does not reach the one it does not.
+  assert.equal(flags.needsIdCard, true);
+});
+
+test("NO_BOOKING_FLAGS carries needsIdCard false", () => {
+  assert.equal(NO_BOOKING_FLAGS.needsIdCard, false);
 });

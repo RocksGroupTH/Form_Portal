@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/api-auth";
+import { requireReimburseSettingsTab } from "@/lib/acc/reimburse/require-reimburse-settings-tab";
 import {
   clearGlCompanyRule,
   listGlAccountsForCompany,
@@ -11,6 +11,14 @@ import { isDimensionType } from "@/lib/clr/gl-dimension";
 
 /**
  * AP-3.2's G/L categories, as one company sees them — AP-4's door onto them.
+ *
+ * **Gated on the `glAccounts` grant since 2026-09-22, matching AP-3's twin.**
+ * Both handlers were `requireRole` until that day, because these rows are
+ * **AP-3's as much as AP-4's** — one register, no `FormCode` — so a grant here
+ * is a grant over another form's configuration. The user was told that and
+ * opened it anyway; the สิทธิ์เข้าถึง grid prints a Thai line under the tick
+ * saying the data is shared. The admin arm is unchanged, so nobody lost
+ * access.
  *
  * **The same rows AP-3's own route serves**, and the same service: the
  * categories are a fact about a company's books, not about a form. The path is
@@ -38,7 +46,7 @@ import { isDimensionType } from "@/lib/clr/gl-dimension";
  *        on one of the company's own chart accounts creates.
  */
 export async function GET(req: NextRequest) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireReimburseSettingsTab("glAccounts");
   if (session instanceof Response) return session;
 
   const company = req.nextUrl.searchParams.get("company") ?? "";
@@ -57,7 +65,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireReimburseSettingsTab("glAccounts");
   if (session instanceof Response) return session;
   try {
     const body = (await req.json()) as {

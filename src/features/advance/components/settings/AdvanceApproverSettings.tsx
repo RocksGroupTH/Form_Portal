@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import useSWR from "swr";
 import { toast } from "sonner";
 import { Plus, Search, Trash2 } from "lucide-react";
 import { Avatar } from "@/components/ui/Avatar";
+import { approverRosterKey, fetchApproverRoster } from "@/lib/adv/approver-roster";
 
 type Role = "HEAD_ACC" | "DIRECTOR" | "ACC_OFFICER";
 
@@ -131,34 +133,43 @@ function CandidateModal({
 
 /* ── Main ── */
 export function AdvanceApproverSettings() {
-  const [rows, setRows] = useState<Approver[]>([]);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [candidatesLoading, setCandidatesLoading] = useState(true);
-  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [modalRole, setModalRole] = useState<Role>("HEAD_ACC");
 
-  // Reload just the approver list — used after add / remove. The candidate list
-  // (an HR query) is static for the session, so it is fetched once on mount and
-  // never re-queried on every mutation (that was the slow part).
-  const loadApprovers = useCallback(() => {
-    return fetch("/api/request/advance/settings/approvers")
-      .then((r) => r.json())
-      .then((ap: { ok: boolean; data?: Approver[] }) => setRows(ap.ok && ap.data ? ap.data : []))
-      .catch(() => {});
-  }, []);
+  /* The approver list is what the page shows. It is read through SWR on the
+     key `approverRosterKey("AP-2")`, with the SAME fetcher the สิทธิ์เข้าถึง
+     grid above this panel uses — since 2026-09-22 that grid carries an
+     approver column group, so the two are two controls over one `IsActive`
+     flag on the same tab. One cache entry is what keeps them from showing
+     different answers until somebody reloads; see `approver-roster.ts` for
+     why the fetcher has to be shared and not just the key. */
+  const { data, isLoading: loading, mutate: loadApprovers } = useSWR(
+    approverRosterKey("AP-2"),
+    fetchApproverRoster,
+  );
+  // Memoised on the SWR payload so `existingAtModalRole` below keeps its own
+  // memo — a fresh array each render would defeat it.
+  const rows: Approver[] = useMemo(
+    () =>
+      (data?.rows ?? []).map((r) => ({
+        id: r.id,
+        email: r.email,
+        displayName: r.displayName,
+        approverRole: r.role as Role,
+        isActive: r.isActive,
+        photoUrl: r.photoUrl,
+      })),
+    [data],
+  );
 
   useEffect(() => {
-    // The approver list is what the page shows — render it as soon as it lands.
-    setLoading(true);
-    fetch("/api/request/advance/settings/approvers")
-      .then((r) => r.json())
-      .then((ap: { ok: boolean; data?: Approver[] }) => setRows(ap.ok && ap.data ? ap.data : []))
-      .catch(() => {})
-      .finally(() => setLoading(false));
     // Candidate picker (HR query) is only needed when the "add" modal opens —
-    // load it in the background so it never blocks the list.
+    // load it in the background so it never blocks the list. Deliberately not
+    // SWR: it is static for the session, which is why it was pulled out of
+    // every mutation in the first place (that was the slow part).
     setCandidatesLoading(true);
     fetch("/api/request/advance/settings/approvers/candidates")
       .then((r) => r.json())
