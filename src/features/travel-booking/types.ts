@@ -193,6 +193,31 @@ export interface BookingDetail {
 }
 
 /** One approval step instance against the shared AccApproval table (AP-17 only ever uses the MANAGER step). */
+/**
+ * One thing a room-share cascade did to **this** request, as the detail page
+ * renders it (AP-17 package E; added by final review I3, 2026-09-22).
+ *
+ * It is an `AccActivityLog` row narrowed to the three cascade actions, and it
+ * exists because until then **nothing in the application rendered them at
+ * all**. AP-17's only other reader of that table filters to
+ * `perdiem_recalculated` for the accounting queue, so a guest's trip could be
+ * cancelled, detached or moved by somebody else's action with no trace on any
+ * screen — while CLAUDE.md claimed "the manager who approved the first range
+ * can see what it became".
+ *
+ * Deliberately narrow: three known actions, their note and their time. It is
+ * **not** a general activity feed for AP-17 — that is a bigger decision than
+ * a fix round should take, and a feed would surface rows whose audiences
+ * nobody has thought about.
+ */
+export interface RoomShareEvent {
+  /** One of `room-share-cascade-apply.ts`'s three `CASCADE_*_ACTION` constants. */
+  action: string;
+  /** The Thai sentence the cascade wrote, already carrying both dates or the previous status. */
+  note: string | null;
+  createdAt: string;
+}
+
 export interface TravelBookingApproval {
   id: number;
   requestId: number;
@@ -350,6 +375,25 @@ export interface TravelBookingRequest {
    * `needsRoomBooking` beside it follows (`derive-flags.ts`).
    */
   isRoomShareGuest: boolean;
+  /**
+   * The host's running number, for a guest — `null` on every other request,
+   * and `null` on a guest whose host has no number yet, which cannot happen
+   * (`hostHasBeenFiled` refuses a `Draft` host).
+   *
+   * **Only ever present on the single-request load**, exactly like
+   * `continuationFromRequestNo` above and for the same reason: the list
+   * queries do not pay for the subquery. It is display only — the identity of
+   * the host is `roomShareHostRequestId`, and nothing prices or decides
+   * anything from either.
+   */
+  roomShareHostRequestNo: string | null;
+  roomShareHostRequestId: number | null;
+  /**
+   * What a room-share cascade has done to this request, oldest first. Empty
+   * on every request nothing has cascaded onto, and on the list loads, which
+   * do not read it. See `RoomShareEvent`.
+   */
+  roomShareEvents: RoomShareEvent[];
 
   // ข้อ6 — วันเดินทาง (range)
   departDate: string | null;

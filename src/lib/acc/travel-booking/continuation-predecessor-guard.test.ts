@@ -80,29 +80,61 @@ const REPORT_SERVICE = "lib/acc/travel-booking/report-service.ts";
 /**
  * Slices the ONE `OUTER APPLY ( … ) cont` block out of a file's (comment-
  * stripped) source, asserting there is exactly one — not zero (reverted to
- * scalar subqueries, or renamed) and not two or more (a second block added
- * for some other purpose, which every assertion below would then run against
+ * scalar subqueries, or renamed) and not two or more (a second block under
+ * the SAME alias, which every assertion below would then run against
  * ambiguously). Matched on `OUTER APPLY (` specifically, with the open paren,
  * so a stripped comment merely mentioning the words "OUTER APPLY" (both files
  * have one, explaining why) cannot be mistaken for the real clause.
+ *
+ * **Identified by its ALIAS rather than by being the file's only APPLY
+ * block** (2026-09-22). It was a whole-file count until `getTravelBookingRequest`
+ * grew a second, unrelated block — `share`, the room-share host's running
+ * number for the detail page (final review I3) — at which point the count
+ * went red on five tests at once while every property this file actually
+ * cares about still held. The alias is what the closing marker already
+ * matched on, so keying the whole slice on it is the honest version of the
+ * same intent, and it is strictly stronger: a third block aliased `cont`
+ * still trips it, and so does a revert to scalar subqueries, while a
+ * legitimate neighbour no longer does.
+ *
+ * Parenthesis-matched rather than "up to the next `) cont`", because a
+ * nested subquery between the two would otherwise cut the block short. The
+ * scan is naive about parens inside SQL string literals; neither file has
+ * one, and an assertion here failing loudly is a better outcome than this
+ * file silently checking a fragment.
  */
 function predecessorApplyBlock(file: string): string {
   const src = code(file);
   const marker = /OUTER APPLY \(/g;
-  const starts: number[] = [];
+  const blocks: string[] = [];
   let m: RegExpExecArray | null;
-  while ((m = marker.exec(src))) starts.push(m.index);
+  while ((m = marker.exec(src))) {
+    const open = src.indexOf("(", m.index);
+    let depth = 0;
+    let close = -1;
+    for (let i = open; i < src.length; i++) {
+      if (src[i] === "(") depth++;
+      else if (src[i] === ")") {
+        depth--;
+        if (depth === 0) {
+          close = i;
+          break;
+        }
+      }
+    }
+    assert.notEqual(close, -1, `${file}: an "OUTER APPLY (" is never closed — is the SQL truncated?`);
+    const alias = /^\s*([A-Za-z_][A-Za-z0-9_]*)/.exec(src.slice(close + 1));
+    if (alias && alias[1] === "cont") blocks.push(src.slice(m.index, close + 1 + alias[0].length));
+  }
   assert.equal(
-    starts.length,
+    blocks.length,
     1,
-    `${file} must have exactly one "OUTER APPLY (" for the predecessor lookup, found ${starts.length} — ` +
-      "either it reverted to two scalar subqueries (0) or a second APPLY block was added (2+), " +
-      "either of which this file's per-block assertions can no longer usefully cover",
+    `${file} must have exactly one "OUTER APPLY ( … ) cont" for the predecessor lookup, found ` +
+      `${blocks.length} — either it reverted to two scalar subqueries (0), was aliased something ` +
+      "else (0), or a second block took the same alias (2+), and this file's per-block assertions " +
+      "can no longer usefully cover any of those",
   );
-  const start = starts[0];
-  const end = src.indexOf(") cont", start);
-  assert.notEqual(end, -1, `${file}: no closing ") cont" found after "OUTER APPLY (" — has the alias been renamed?`);
-  return src.slice(start, end + ") cont".length);
+  return blocks[0];
 }
 
 for (const file of [REQUEST_SERVICE, REPORT_SERVICE]) {

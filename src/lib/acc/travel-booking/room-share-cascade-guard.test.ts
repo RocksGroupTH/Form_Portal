@@ -73,6 +73,7 @@ function code(relative: string): string {
 const APPROVAL = "lib/acc/travel-booking/approval.ts";
 const REQUEST_SERVICE = "lib/acc/travel-booking/request-service.ts";
 const APPLY = "lib/acc/travel-booking/room-share-cascade-apply.ts";
+const SERVICE = "lib/acc/travel-booking/room-share-service.ts";
 
 /**
  * One function's body, sliced from its signature to the next top-level
@@ -305,15 +306,34 @@ test("collectAndDeleteRequestArtifacts cascades before it deletes the bindings",
 
 /* ───────────────────── what the cascade actually writes ───────────────────── */
 
-test("the applied cascade writes both activity actions spec §4 names", () => {
+test("the applied cascade writes every activity action spec §4 names", () => {
   const src = code(APPLY);
-  for (const action of ["cancelled_by_room_share_host", "dates_followed_room_share_host"]) {
+  /* THE LITERALS MOVED on 2026-09-22 (final review I3) into
+     `room-share-actions.ts`, which imports nothing, so the detail page's
+     renderer could share them without dragging `@/env` into the client
+     bundle. So this test now checks two things instead of one: that the
+     literals still exist, in that module, and that the apply layer still
+     reaches for each of them BY NAME. Keeping only the first would let the
+     apply layer stop writing a row while the constant sat unused; keeping
+     only the second would let a literal be renamed out from under the
+     reader. */
+  const actions = code("lib/acc/travel-booking/room-share-actions.ts");
+  for (const [name, literal] of [
+    ["CASCADE_CANCEL_ACTION", "cancelled_by_room_share_host"],
+    ["CASCADE_DETACH_ACTION", "detached_by_room_share_host"],
+    ["CASCADE_REDATE_ACTION", "dates_followed_room_share_host"],
+  ]) {
     assert.ok(
-      src.includes(action),
-      `${action} is gone from room-share-cascade-apply.ts — spec §4 requires an activity row ` +
-        "for every cascaded guest. Without it a requester finds their trip cancelled or " +
-        "re-dated with nothing in the timeline saying why, and accounting has nothing to " +
-        "reconcile a paid-then-cancelled claim against",
+      actions.includes(`"${literal}"`),
+      `${literal} is gone from room-share-actions.ts. Spec §4 requires an activity row for ` +
+        "every cascaded guest, and the detail page reads these exact values back — a requester " +
+        "would find their trip cancelled, detached or re-dated with nothing in the timeline " +
+        "saying why, and accounting nothing to reconcile a paid-then-cancelled claim against",
+    );
+    assert.ok(
+      src.includes(name),
+      `${name} is no longer named in room-share-cascade-apply.ts — the constant exists and ` +
+        "nothing writes it, so that arm of the cascade leaves no audit row at all",
     );
   }
   assert.ok(
@@ -460,5 +480,240 @@ test("the cascade never swallows its own failure", () => {
       "transaction so that a failure rolls the host's own cancellation back. A swallowed " +
       "failure leaves the host cancelled and its guests alive — the precise state this " +
       "feature exists to prevent",
+  );
+});
+
+/* ═════════════ mutation M1 — the same rule, at the CALL SITES ═════════════
+ *
+ * **Measured GREEN on 2026-09-22 and closed here.** The ban above covers
+ * room-share-cascade-apply.ts and nothing else, while the calls live in
+ * approval.ts and request-service.ts. Wrapping one of them —
+ *
+ *     try { await applyRoomShareDeath(tx, requestId); } catch { }
+ *
+ * — passed the entire suite, 2211 of 2211, and converted this branch's whole
+ * safety story from "if it fails, the host's own cancellation rolls back"
+ * into "the host is cancelled and its guests silently survive": the one state
+ * spec §4 says the feature exists to prevent. A file-wide catch ban is not
+ * available in either file, because both legitimately contain
+ * transaction-owner try/catch pairs.
+ *
+ * So the property is expressed exactly: the cascade call MAY sit inside a
+ * try, but only one whose catch RETHROWS. That admits the transaction owner
+ * in saveTravelBookingDraft (catch (e) { await tx.rollback(); throw e; }),
+ * which is the shape that makes the guarantee rather than breaking it, and
+ * refuses a catch that degrades gracefully — which is the whole mutation.
+ */
+
+/**
+ * The try blocks open at `index`, outermost first.
+ *
+ * Brace-depth scan over already-comment-stripped source, so the word try in a
+ * docblock — and both files have several — cannot register. A brace counts as
+ * a try body when the non-space text immediately before it ends in the
+ * keyword try, so `.catch(() => {})` and an identifier ending in "try" are
+ * both ignored.
+ */
+function enclosingTryBlocks(body: string, index: number): number[] {
+  const stack: { open: number; isTry: boolean }[] = [];
+  for (let i = 0; i < index; i++) {
+    const ch = body[i];
+    if (ch === "{") {
+      const before = body.slice(Math.max(0, i - 8), i).replace(/\s+$/, "");
+      stack.push({ open: i, isTry: /(^|[^A-Za-z0-9_$])try$/.test(before) });
+    } else if (ch === "}") {
+      stack.pop();
+    }
+  }
+  const out: number[] = [];
+  for (const frame of stack) if (frame.isTry) out.push(frame.open);
+  return out;
+}
+
+/** The catch clause belonging to the try block whose body opens at `open`, or null for try/finally. */
+function catchClauseFor(body: string, open: number): string | null {
+  let depth = 0;
+  for (let i = open; i < body.length; i++) {
+    if (body[i] === "{") depth++;
+    else if (body[i] === "}") {
+      depth--;
+      if (depth === 0) {
+        const m = /^\s*catch\s*(\([^)]*\))?\s*\{/.exec(body.slice(i + 1));
+        if (!m) return null;
+        const start = i + m[0].length;
+        let d = 0;
+        for (let j = start; j < body.length; j++) {
+          if (body[j] === "{") d++;
+          else if (body[j] === "}") {
+            d--;
+            if (d === 0) return body.slice(start, j + 1);
+          }
+        }
+        return body.slice(start);
+      }
+    }
+  }
+  return null;
+}
+
+const CASCADE_CALL_SITES: { file: string; name: string; signature: string; call: string; why: string }[] = [
+  {
+    file: APPROVAL,
+    name: "recomputeAfterDeath",
+    signature: "async function recomputeAfterDeath",
+    call: "applyRoomShareDeath(tx",
+    why: "this ONE call serves all four public cancel/reject paths — rejectRequest, " +
+      "cancelByRequester, and transitionFromStage for both rejectByAdmin and rejectByAccount",
+  },
+  {
+    file: REQUEST_SERVICE,
+    name: "collectAndDeleteRequestArtifacts",
+    signature: "async function collectAndDeleteRequestArtifacts",
+    call: "applyRoomShareDeath(tx",
+    why: "the fifth trigger — a Returned host hard-deleted by its owner, whose guests point " +
+      "at a request that is about to stop existing",
+  },
+  {
+    file: REQUEST_SERVICE,
+    name: "saveTravelBookingDraft",
+    signature: "export async function saveTravelBookingDraft",
+    call: "applyRoomShareDates(tx",
+    why: "BOOKING_SET is the only writer of DepartDate/ReturnDate in src/, so this is the " +
+      "only place a host's dates can move",
+  },
+];
+
+for (const site of CASCADE_CALL_SITES) {
+  test(`the cascade call in ${site.name} is never swallowed`, () => {
+    const body = bodyOf(site.file, site.signature);
+    const at = body.indexOf(site.call);
+    assert.notEqual(at, -1, `${site.call} not found in ${site.name} — ${site.why}`);
+    for (const open of enclosingTryBlocks(body, at)) {
+      const clause = catchClauseFor(body, open);
+      if (clause === null) continue; // try/finally with no catch swallows nothing
+      assert.ok(
+        /\bthrow\b/.test(clause),
+        `${site.call} in ${site.name} sits inside a try whose catch does not rethrow. That ` +
+          "converts the cascade's whole guarantee — if it fails, the host's own cancellation " +
+          "rolls back — into the host dying while its guests silently survive, the state spec " +
+          "§4 names as the one this feature exists to prevent. Measured: exactly this edit " +
+          "passed 2211/2211 before this test existed. " +
+          site.why,
+      );
+    }
+  });
+}
+
+/* ═════════ mutation M2 — the death UPDATE's own predicate ═════════
+ *
+ * **Measured GREEN.** Widening it to NOT IN ('Cancelled','Rejected','Completed')
+ * passed the whole suite while quietly retiring the single most contested
+ * decision in the spec: §2's "a guest is cancelled even after it has been
+ * paid". A Completed guest is then downgraded to a skip — no activity row,
+ * and no mail to accounting, which is the entire mitigation the decision was
+ * accepted on.
+ *
+ * It looked covered and was not: room-share-cascade.test.ts asserts the
+ * DECISION layer emits cancel for a Completed guest, and nothing read the
+ * APPLY layer's SQL at all. Both halves are pinned now, and loadGuestsOf's
+ * WHERE with them — narrowing there removes the guest from the cascade
+ * entirely, which is the same defect one query earlier and quieter still.
+ */
+test("the death UPDATE spares only what is ALREADY dead — never what is merely paid", () => {
+  const body = bodyOf(APPLY, "export async function applyRoomShareDeath");
+  assert.ok(
+    /WHERE Id=@gid AND Status NOT IN \('Cancelled','Rejected'\);/.test(body),
+    "applyRoomShareDeath's claiming UPDATE no longer reads exactly " +
+      "WHERE Id=@gid AND Status NOT IN ('Cancelled','Rejected'); — that predicate IS spec §2's " +
+      "most contested decision, a guest cancelled even after its per diem has been paid, and " +
+      "the only other expression of it is the decision layer, which this statement silently " +
+      "overrules. Adding 'Completed' downgrades such a guest to a skip: no activity row, and " +
+      "no mail to accounting",
+  );
+  // The STATUS VALUE, not the word: `action.wasCompleted` is read a few lines
+  // on and is the thing that tells Task 8 to mail accounting, so a bare
+  // /Completed/ would forbid the arm this rule exists to protect.
+  assert.ok(
+    !/['"]Completed['"]/.test(body),
+    "applyRoomShareDeath now names the status value 'Completed'. The apply layer must hold no " +
+      "opinion about it — cascadeForHostDeath decides, and it decides cancel; sparing a paid " +
+      "guest here reverses the user's ruling in the one place no test was reading",
+  );
+});
+
+test("loadGuestsOf hands the cascade every guest, alive or dead, paid or not", () => {
+  const body = bodyOf(SERVICE, "export async function loadGuestsOf");
+  assert.ok(
+    !/r\.Status\s*(<>|!=|=|NOT IN|IN)/.test(body),
+    "loadGuestsOf's query now filters on r.Status. A guest dropped HERE never reaches " +
+      "cascadeForHostDeath at all, so it is neither cancelled nor detached nor skipped nor " +
+      "logged nor mailed — the same defect as sparing it in the UPDATE, one query earlier. " +
+      "Which statuses are acted on is room-share-cascade.ts's decision, and it cannot make it " +
+      "for rows it is never shown",
+  );
+});
+
+/* ═════ mutation M6 — forceReprice must not reach `writable` ═════
+ *
+ * **Measured GREEN.** The assertion in the test above used to be
+ * /perDiemWritable\(status\)/, so changing rewritePerDiemRow to
+ *
+ *     const writable = (perDiemWritable(status) || forceReprice) && …
+ *
+ * kept the string present, kept the guard green, and let a cascade rewrite
+ * PerDiemTotal and AccRequest.TotalAmount on a Completed request — the exact
+ * rule the old assertion's own message said it existed to hold.
+ *
+ * Pinned as the whole expression now, plus the mirror: forceReprice appears
+ * exactly twice in the comment-stripped source, its parameter and the early
+ * return it overrides, so a third occurrence is a new reach that has to be
+ * argued for here.
+ */
+test("forceReprice overrides the flag comparison and NOTHING else", () => {
+  const src = code("lib/acc/travel-booking/perdiem-recompute.ts");
+  assert.ok(
+    /const writable = perDiemWritable\(status\) && !!departDate && !!returnDate;/.test(src),
+    "rewritePerDiemRow's `writable` is no longer exactly " +
+      "perDiemWritable(status) && !!departDate && !!returnDate. That line is the only thing " +
+      "standing between a room-share cascade and a figure accounting has already signed — " +
+      "ORing forceReprice into it keeps every string the previous version of this guard looked " +
+      "for while removing the rule, which is how it was measured GREEN on 2026-09-22",
+  );
+  const uses = src.match(/forceReprice/g) ?? [];
+  assert.equal(
+    uses.length,
+    2,
+    `forceReprice appears ${uses.length} times in perdiem-recompute.ts, not twice. It must be ` +
+      "exactly its parameter and the `wasContinuation === nowContinuation && !forceReprice` " +
+      "early return: a third use is a second thing a cascade can force, and the one worth " +
+      "forcing was the flag comparison alone",
+  );
+});
+
+/* ═════ C1 — the detach set and the group guards must agree ═════
+ *
+ * cascadeForHostDeath detaches exactly EDITABLE_STATUSES and cancels
+ * everything else alive, and room-share-cascade.test.ts pins that against the
+ * constant. This is the OTHER half: the three AP-17 group operations are the
+ * hardcoded expression of the same pair, and the brick lives exactly where
+ * the two disagree — a status those guards admit but the cascade cancels
+ * makes the guest's whole group unsavable, unsubmittable AND undeletable,
+ * with no in-app remedy at all.
+ *
+ * Source-reading because there is nothing else to read: the three guards are
+ * inline `if`s inside functions that cannot be imported (@/env).
+ */
+test("all three AP-17 group guards still admit exactly Draft and Returned", () => {
+  const src = code(REQUEST_SERVICE);
+  const guards = src.match(/row\.Status !== "Draft" && row\.Status !== "Returned"/g) ?? [];
+  assert.equal(
+    guards.length,
+    3,
+    "expected the Draft/Returned group guard in all three of saveTravelBookingDraft, " +
+      `deleteTravelBookingDraft and submitTravelBookingGroup, found ${guards.length}. If one ` +
+      "gained a status, cascadeForHostDeath must gain it too — it detaches EDITABLE_STATUSES " +
+      "and cancels everything else alive, so otherwise a cascade-cancelled tab bricks the " +
+      "whole group again, which is final review C1. If one LOST its guard, that is a " +
+      "different and larger problem",
   );
 });

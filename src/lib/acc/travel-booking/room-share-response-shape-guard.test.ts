@@ -502,6 +502,63 @@ test("the attach clears the guest's own accommodation, inside its own transactio
   );
 });
 
+/* ═════ mutation M13 — the lock IS the one-hop invariant ═════
+ *
+ * **Measured GREEN on 2026-09-22.** Changing `{ lock: true }` to
+ * `{ lock: false }` on the attach's candidate re-read left the suite at
+ * 2211/2211, and nothing else in the repository asserts it.
+ *
+ * That hint is the ONLY thing serialising two concurrent attaches, and
+ * therefore the only thing making "one hop" hold under a race rather than
+ * merely under a sequence. Tx1 attaching B→A while Tx2 attaches C→B contend
+ * on B's `AccRequest` row: whichever loses blocks until the winner commits,
+ * then re-reads the share rows and sees the new binding, so `canHost`
+ * refuses with `host_is_guest`. Without the hint both read the pre-attach
+ * state, both pass `canAttach`, and a two-hop chain exists — which the
+ * cascade is not sound for, because depth one is what makes cancellation
+ * terminate.
+ *
+ * `UQ_AccTravelRoomShare_Guest` does NOT cover this. It stops one guest
+ * having two hosts; it says nothing about a guest that is also a host, which
+ * is the other direction of the same invariant and the one the chain is
+ * built from.
+ *
+ * Asserted three ways because each fails differently: the lock is requested
+ * at the attach, it is requested NOWHERE else (a pool-level `UPDLOCK` is
+ * pointless contention, which is why the picker does not ask), and the hint
+ * itself still spells both parts — `UPDLOCK` alone releases at statement end
+ * and would leave exactly the window this closes.
+ */
+test("the attach re-reads its candidates under UPDLOCK, HOLDLOCK", () => {
+  const src = code(SERVICE);
+  const body = bodyOf(src, "export async function attachRoomShare");
+  assert.match(
+    body,
+    /loadShareCandidates\([\s\S]*?\{\s*lock:\s*true\s*\}/,
+    "attachRoomShare's candidate re-read no longer passes { lock: true }. That UPDLOCK, " +
+      "HOLDLOCK is the ONLY thing serialising two concurrent attaches, so without it the " +
+      "one-hop invariant is a plain read-then-write: two transactions both see the " +
+      "pre-attach state, both pass canAttach, and a two-hop chain exists — which the cascade " +
+      "is only sound at depth one for. The unique index does not help; it stops a guest " +
+      "having two hosts, not a guest that is also a host",
+  );
+  assert.ok(
+    /const lockHint = opts\?\.lock \? " WITH \(UPDLOCK, HOLDLOCK\)" : "";/.test(src),
+    "loadShareCandidates' lock hint is no longer exactly ` WITH (UPDLOCK, HOLDLOCK)`. UPDLOCK " +
+      "alone releases at statement end under READ COMMITTED, which reopens the very window " +
+      "the hint exists to close, and a hint that is merely PRESENT is not a hint that holds",
+  );
+  const asked = src.match(/\{\s*lock:\s*true\s*\}/g) ?? [];
+  assert.equal(
+    asked.length,
+    1,
+    `{ lock: true } is passed ${asked.length} times in room-share-service.ts, not once. The ` +
+      "picker deliberately does not ask for it — on a pool the hint is pointless contention " +
+      "on other people's requests — so a second caller is either the picker having acquired " +
+      "it by accident or a new write that should say why it needs it here",
+  );
+});
+
 /**
  * The same three conditions in two places is how a list and an action drift
  * apart. Spec §6's "alive, not already a guest, needsRoomBooking = true" is

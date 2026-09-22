@@ -43,6 +43,11 @@
 
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { EDITABLE_STATUSES } from "@/lib/acc/request-acl-policy";
+import {
+  CASCADE_CANCEL_ACTION,
+  CASCADE_DETACH_ACTION,
+  CASCADE_REDATE_ACTION,
+} from "@/lib/acc/travel-booking/room-share-actions";
 import { loadGuestsOf } from "@/lib/acc/travel-booking/room-share-service";
 import {
   cascadeForHostDates,
@@ -61,15 +66,20 @@ type AccPool = Awaited<ReturnType<typeof getAccPool>>;
  */
 type SqlRunner = { request: () => ReturnType<AccPool["request"]> };
 
-/** The three activity actions this cascade writes. `AccActivityLog.Action` is `nvarchar(50)`; all three fit, and it carries no CHECK. */
-export const CASCADE_CANCEL_ACTION = "cancelled_by_room_share_host";
-export const CASCADE_REDATE_ACTION = "dates_followed_room_share_host";
 /**
- * The third, added by final review C1 (2026-09-22): a guest whose own request
- * is still editable is **detached** from a dying host rather than cancelled —
- * see `cascadeForHostDeath` for the whole argument. 30 characters.
+ * The three activity actions this cascade writes.
+ *
+ * **The literals live in `room-share-actions.ts`**, which imports nothing, so
+ * the detail page's renderer can share them without dragging `@/env` through
+ * `@/lib/acc/pool` into the client bundle — the build break CLAUDE.md records
+ * for `src/lib/api-keys/codes.ts`. Re-exported here because this is where
+ * every server-side caller already looks for them.
  */
-export const CASCADE_DETACH_ACTION = "detached_by_room_share_host";
+export {
+  CASCADE_CANCEL_ACTION,
+  CASCADE_DETACH_ACTION,
+  CASCADE_REDATE_ACTION,
+} from "@/lib/acc/travel-booking/room-share-actions";
 
 /** Date column → 'YYYY-MM-DD' using local getters (server is Thai time, never toISOString). */
 function toYmd(d: Date): string {

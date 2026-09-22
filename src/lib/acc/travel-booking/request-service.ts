@@ -48,12 +48,14 @@ import {
   applyRoomShareDates,
   applyRoomShareDeath,
 } from "@/lib/acc/travel-booking/room-share-cascade-apply";
+import { ROOM_SHARE_CASCADE_ACTIONS } from "@/lib/acc/travel-booking/room-share-actions";
 import type {
   Accommodation,
   BookingDetail,
   BookingType,
   DepartureLocation,
   RentVehicle,
+  RoomShareEvent,
   SaveTravelBookingGroupInput,
   SaveTravelBookingInput,
   TravelBookingApproval,
@@ -164,6 +166,16 @@ function mapTravelBookingRow(
     // anywhere, the same failure mode `perdiem-recompute.ts`'s
     // `PERDIEM_ROW_COLUMNS` doc comment records for `t.NeedsRoomBooking`.
     isRoomShareGuest: !!r.IsRoomShareGuest,
+    // Display only, and only ever filled by the single-request load — the
+    // same arrangement `continuationFromRequestNo` above has, with the same
+    // reason: the list reads do not pay for the subquery. Nothing prices or
+    // decides anything from either field; `isRoomShareGuest` above is the one
+    // the pricing path reads, and it is a different expression entirely.
+    roomShareHostRequestNo: (r.RoomShareHostRequestNo as string) ?? null,
+    roomShareHostRequestId: (r.RoomShareHostRequestId as number) ?? null,
+    // Filled by `getTravelBookingRequest` after this mapper runs, exactly as
+    // `approvals` and `workLocations` are.
+    roomShareEvents: [],
 
     departDate: t.DepartDate ? toYmd(t.DepartDate as Date) : null,
     returnDate: t.ReturnDate ? toYmd(t.ReturnDate as Date) : null,
@@ -324,6 +336,39 @@ async function loadApprovals(pool: AccPool, requestId: number): Promise<TravelBo
   }));
 }
 
+/**
+ * What a room-share cascade has done to this request (final review I3).
+ *
+ * **Filtered to the three cascade actions by bound parameters**, never a
+ * `LIKE` and never unfiltered: `AccActivityLog` holds every action AP-17 and
+ * the shared engine write, and this list is a deliberately narrow read on the
+ * detail page rather than the beginnings of an activity feed. An unfiltered
+ * read here would put rows on screen whose audience nobody has thought about.
+ *
+ * Oldest first, matching the approval timeline it renders beneath.
+ */
+async function loadRoomShareEvents(pool: AccPool, requestId: number): Promise<RoomShareEvent[]> {
+  const req = pool.request().input("id", sql.Int, requestId);
+  const params: string[] = [];
+  // The SET, from the module that owns it — not three constants listed here,
+  // where a fourth action could be added to the writer and missed.
+  ROOM_SHARE_CASCADE_ACTIONS.forEach((action, i) => {
+    req.input(`rsa${i}`, sql.NVarChar(50), action);
+    params.push(`@rsa${i}`);
+  });
+  const res = await req.query(`SELECT Action, Note, CreatedAt
+                                 FROM [dbo].[AccActivityLog]
+                                WHERE RequestId = @id AND Action IN (${params.join(", ")})
+                                ORDER BY CreatedAt ASC, Id ASC`);
+  return (res.recordset as { Action: string; Note: string | null; CreatedAt: Date | null }[]).map(
+    (x) => ({
+      action: String(x.Action ?? ""),
+      note: x.Note ?? null,
+      createdAt: x.CreatedAt ? x.CreatedAt.toISOString() : "",
+    }),
+  );
+}
+
 /* ─────────────────────────── reads ─────────────────────────── */
 
 /**
@@ -338,6 +383,19 @@ export async function getTravelBookingRequest(id: number): Promise<TravelBooking
     .query(`SELECT r.*, e.PhotoUrl AS HrRequesterPhotoUrl, e.PhotoOverrideUrl AS HrRequesterPhotoOverrideUrl,
               cont.RequestNo AS ContinuationFromRequestNo,
               cont.Id AS ContinuationFromRequestId,
+              -- The host this request shares a room with, for the detail page
+              -- (package E; final review I3). OUTER APPLY rather than two
+              -- scalar subqueries or a JOIN, for the two reasons already
+              -- argued a few lines down and in IS_ROOM_SHARE_GUEST_COLUMN's
+              -- own comment: one row source means the number and the id
+              -- cannot come from different rows, and TOP 1 cannot fan the
+              -- outer row out even if a later edit points the predicate at
+              -- HostRequestId. Display only — nothing prices anything from
+              -- it, and IS_ROOM_SHARE_GUEST_COLUMN below is still what the
+              -- per-diem path reads.
+              -- (No backticks in here: this is inside a template literal.)
+              share.RequestNo AS RoomShareHostRequestNo,
+              share.Id AS RoomShareHostRequestId,
               ${IS_ROOM_SHARE_GUEST_COLUMN}
             FROM [dbo].[AccRequest] r
             LEFT JOIN ${hrEmployeeTable()} e ON e.StaffId = r.StaffId AND e.Status = N'Active'
@@ -410,6 +468,12 @@ export async function getTravelBookingRequest(id: number): Promise<TravelBooking
                  )
                ORDER BY pt.DepartDate DESC, pt.SortOrder DESC, pt.Id DESC
             ) cont
+            OUTER APPLY (
+              SELECT TOP 1 hr2.RequestNo, hr2.Id
+                FROM [dbo].[AccTravelRoomShare] rs
+                INNER JOIN [dbo].[AccRequest] hr2 ON hr2.Id = rs.HostRequestId
+               WHERE rs.GuestRequestId = r.Id
+            ) share
             WHERE r.Id = @id AND r.FormCode = @form`);
   if (headRes.recordset.length === 0) return null;
   const reqRow = headRes.recordset[0] as Record<string, unknown>;
@@ -422,15 +486,25 @@ export async function getTravelBookingRequest(id: number): Promise<TravelBooking
 
   const base = mapTravelBookingRow(reqRow, tbRow);
 
-  const [workLocations, departureLocations, idCardFiles, bookingDetails, approvals] = await Promise.all([
-    loadWorkLocations(pool, travelBookingId),
-    loadDepartureLocations(pool, travelBookingId),
-    loadIdCardFiles(pool, id),
-    loadBookingDetails(pool, travelBookingId, id),
-    loadApprovals(pool, id),
-  ]);
+  const [workLocations, departureLocations, idCardFiles, bookingDetails, approvals, roomShareEvents] =
+    await Promise.all([
+      loadWorkLocations(pool, travelBookingId),
+      loadDepartureLocations(pool, travelBookingId),
+      loadIdCardFiles(pool, id),
+      loadBookingDetails(pool, travelBookingId, id),
+      loadApprovals(pool, id),
+      loadRoomShareEvents(pool, id),
+    ]);
 
-  return { ...base, workLocations, departureLocations, idCardFiles, bookingDetails, approvals };
+  return {
+    ...base,
+    workLocations,
+    departureLocations,
+    idCardFiles,
+    bookingDetails,
+    approvals,
+    roomShareEvents,
+  };
 }
 
 /** All tabs sharing one multi-request submission's GroupKey, ordered by SortOrder. */
@@ -474,6 +548,10 @@ export async function listMyTravelBookings(userId: number): Promise<TravelBookin
   return (res.recordset as Record<string, unknown>[]).map((row) => ({
     ...mapTravelBookingRow(row, row),
     workLocations: [], departureLocations: [], idCardFiles: [], bookingDetails: [], approvals: [],
+    // Empty for the same reason the five beside it are: this is the list
+    // read, and it pays for no child collection. `roomShareHostRequestNo` is
+    // null here too, from the mapper — see its own comment.
+    roomShareEvents: [],
   }));
 }
 

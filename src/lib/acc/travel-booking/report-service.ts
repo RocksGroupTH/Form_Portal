@@ -196,6 +196,24 @@ const BASE_CTE = `
       (SELECT STRING_AGG(wl.Name, N', ') WITHIN GROUP (ORDER BY wl.SortOrder, wl.Id)
        FROM [dbo].[AccTravelWorkLocation] wl
        WHERE wl.TravelBookingId = t.Id) AS WorkLocationsCsv,
+      -- The room-share host's running number, for a guest (package E; final
+      -- review I3). A guest has no accommodation of its own, so both the
+      -- report table and its Excel export printed an EMPTY accommodation cell
+      -- beside a full per-diem figure -- and since package B "no
+      -- accommodation" means "no per diem", so every reader saw a row that
+      -- appears to break that rule and pay anyway. This is what the cell says
+      -- instead. Display only: nothing here re-answers the room question,
+      -- which is the report's documented position as the fourth,
+      -- non-consuming reader of that fact.
+      --
+      -- TOP 1 rather than a JOIN, for IS_ROOM_SHARE_GUEST_COLUMN's reason:
+      -- UQ_AccTravelRoomShare_Guest already makes at most one row match, and
+      -- a JOIN a later edit points at HostRequestId would fan the outer row
+      -- out silently while this cannot.
+      (SELECT TOP 1 hrq.RequestNo
+         FROM [dbo].[AccTravelRoomShare] rs
+         INNER JOIN [dbo].[AccRequest] hrq ON hrq.Id = rs.HostRequestId
+        WHERE rs.GuestRequestId = r.Id) AS RoomShareHostRequestNo,
       (SELECT TOP 1 a.ActionedAt
        FROM [dbo].[AccApproval] a
        WHERE a.RequestId = r.Id AND a.StepCode = N'MANAGER' AND a.Status = N'Approved'
@@ -363,7 +381,13 @@ export async function queryTravelBookingReport(
       departDate,
       returnDate,
       provinceName: (x.ProvinceName as string) ?? null,
-      accommodationName: combineNameCustom(x.AccommodationName as string, x.AccommodationCustomText as string),
+      // A room-share guest's cell names the host instead of being blank —
+      // see the column's own comment in BASE_CTE. The Excel export reads this
+      // same field, so both surfaces are fixed by the one expression rather
+      // than by two that could drift.
+      accommodationName: (x.RoomShareHostRequestNo as string | null)
+        ? `พักห้องร่วมกับ ${x.RoomShareHostRequestNo as string}`
+        : combineNameCustom(x.AccommodationName as string, x.AccommodationCustomText as string),
       workLocationsCsv: (x.WorkLocationsCsv as string) ?? null,
       approvedDate: x.ApprovedDate ? ymd(x.ApprovedDate as Date) : null,
       status: x.Status as TravelBookingStatus,
