@@ -2,7 +2,7 @@
  * "A guest books nothing themselves" — enforced in the database, AP-17
  * package E, spec §1.
  *
- * ## Why this is its own module rather than three lines inside `attachRoomShare`
+ * ## Why this is its own module rather than three lines inside the attach
  *
  * Two reasons, and the second is the one that matters.
  *
@@ -19,7 +19,7 @@
  * And it deserves a name. Until 2026-09-22 the invariant existed **only as a
  * React state patch**: `TravelBookingTab.tsx`'s `onAttached` cleared
  * `accommodationId` / `needsRoomBooking` in local state while
- * `attachRoomShare` had already committed the binding server-side and touched
+ * the attach had already committed the binding server-side and touched
  * `AccTravelBooking` not at all. Reload between the attach and the next save
  * and the cleared values came straight back from the server — into a grid
  * that `isRoomShareGuest` now hides, so the requester could neither see nor
@@ -61,11 +61,19 @@ type SqlRunner = { request: () => ReturnType<AccPool["request"]> };
 /**
  * Drop the guest's own accommodation, on `runner`.
  *
- * **Called inside `attachRoomShare`'s transaction**, so the binding and the
- * withdrawal of the room it replaces commit or roll back together. That is
- * not decoration: a commit that recorded the share while leaving the
- * accommodation live is exactly the half-state described above, and it is
- * reachable in one statement rather than through a race.
+ * **Called inside the transaction that records the binding** — since
+ * 2026-09-22 that is `applyRoomShareSelection` running on the tab save's own
+ * transaction (`saveTravelBookingDraft`), rather than an `attachRoomShare`
+ * that opened one of its own. Either way the binding and the withdrawal of
+ * the room it replaces commit or roll back together, which is not decoration:
+ * a commit that recorded the share while leaving the accommodation live is
+ * exactly the half-state described above, and it is reachable in one
+ * statement rather than through a race.
+ *
+ * **Order against the tab's own write matters now, and it is the caller's
+ * job.** The save writes this request's `AccTravelBooking` row from the posted
+ * tab, so this clear has to run *after* that or the four columns come straight
+ * back; `request-service.ts`'s own note at the call site says so.
  *
  * No state predicate of its own, and it needs none: every caller has already
  * passed `requireEditableGuest`, which takes `UPDLOCK, HOLDLOCK` on this

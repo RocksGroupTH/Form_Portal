@@ -49,6 +49,7 @@ import {
   applyRoomShareDeath,
 } from "@/lib/acc/travel-booking/room-share-cascade-apply";
 import { ROOM_SHARE_CASCADE_ACTIONS } from "@/lib/acc/travel-booking/room-share-actions";
+import { applyRoomShareSelection } from "@/lib/acc/travel-booking/room-share-service";
 import type {
   Accommodation,
   BookingDetail,
@@ -1188,6 +1189,46 @@ export async function saveTravelBookingDraft(
 
       await persistWorkLocations(tx, travelBookingId, tab.workLocations ?? []);
       await persistDepartureLocations(tx, travelBookingId, tab.departureLocations ?? []);
+
+      /* THE ROOM-SHARE BINDING (AP-17 package E, reworked 2026-09-22).
+         พักห้องเดียวกับ is tab state now, so this is where it is persisted —
+         there is no attach endpoint any more, and `applyRoomShareSelection`'s
+         own docblock carries the whole argument for that move.
+
+         **ABSENT means "leave the stored row alone", and only an explicit
+         null clears it.** `roomShareHostFieldFor` on the client is the one
+         place that decides which a tab posts; here the test is `!== undefined`
+         rather than a truthiness check, because `null` and absent must not
+         collapse — the same distinction the API-key PATCH draws for
+         `expiresAt`, and with more at stake: collapsing them would delete a
+         binding on an ordinary save of a tab nobody had touched.
+
+         **AFTER `upsertTravelBooking`, and that ordering is load-bearing.**
+         A guest books nothing themselves (spec §1), which
+         `clearGuestOwnAccommodation` enforces inside this same transaction —
+         run before the upsert, the four columns it clears would simply be
+         written back from the posted tab a statement later.
+
+         **Order against the date cascade below does not matter**, which is
+         worth saying because it looks as though it should: the cascade acts on
+         THIS request's guests, and a request that is a guest can have none —
+         `canAttach` refuses `guest_already_hosts` — so for a tab that attaches
+         here the cascade is a no-op either way.
+
+         A refusal throws, rolling the whole save back. That is deliberate and
+         is the same treatment a retired accommodation or vehicle option gets
+         (`invalidOptionMessage` a few dozen lines up): the requester is told
+         the policy's own Thai sentence — the host was cancelled, it is
+         somebody else's guest, it books no room — and clears the choice. The
+         alternative, dropping the binding quietly and saving the rest, is the
+         silent-wrong-state this feature exists to prevent. */
+      if (tab.roomShareHostRequestId !== undefined) {
+        await applyRoomShareSelection(tx, {
+          guestRequestId: finalRequestId,
+          hostRequestId: tab.roomShareHostRequestId,
+          userId,
+        });
+      }
 
       /* THE ROOM-SHARE DATE CASCADE (AP-17 package E, spec §4). `BOOKING_SET`
          above is the only writer of DepartDate/ReturnDate in `src/`, so this

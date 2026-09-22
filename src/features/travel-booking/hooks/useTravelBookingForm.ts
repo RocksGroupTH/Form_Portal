@@ -38,6 +38,7 @@ import type {
 import type { EmployeeContext } from "@/lib/hr/types";
 import type { AccBrandOption } from "@/features/accounting/types";
 import { isTravelDateTooSoon } from "@/features/travel-booking/lib/earliest-travel-date";
+import { roomShareHostFieldFor } from "@/features/travel-booking/lib/room-share-choice";
 
 /* ── Client-side editable tab state ──
    Writable subset of TravelBookingRequest (mirrors SaveTravelBookingInput) plus
@@ -96,8 +97,25 @@ export interface TabFormState {
    * the live estimate must ask `roomBookedOrShared` with this alongside
    * `needsRoomBooking` — exactly as the submit does. A tab that carried the
    * flag nowhere would show ฿0 while the submit stored real money.
+   *
+   * **Since 2026-09-22 it is an unsaved edit as well as a server fact.**
+   * Picking a host no longer POSTs; it patches this tab and the save persists
+   * it. So this is true the moment the requester picks, before any row exists
+   * — which is what hides the ที่พักค้างคืน grid and pays the per diem on
+   * screen straight away. It is written **only** beside
+   * `roomShareHostRequestId`, by `room-share-choice.ts`'s two patches; see
+   * that module for why one place.
    */
   isRoomShareGuest: boolean;
+  /**
+   * The chosen host's `AccRequest.Id`, or null.
+   *
+   * The thing `isRoomShareGuest` above is a flag *about*. Seeded from the
+   * server read on resume, set by the picker, cleared by ยกเลิกการพักห้องร่วม,
+   * and posted by `buildSaveInput` through `roomShareHostFieldFor` — which is
+   * where the "a guest that cannot name its host posts nothing" rule lives.
+   */
+  roomShareHostRequestId: number | null;
 
   departDate: string | null;
   returnDate: string | null;
@@ -144,8 +162,9 @@ export function emptyTab(): TabFormState {
     accommodationId: null,
     accommodationCustomText: null,
     needsRoomBooking: false,
-    // A brand-new tab is nobody's guest until it has been saved and attached.
+    // A brand-new tab is nobody's guest until a host has been picked.
     isRoomShareGuest: false,
+    roomShareHostRequestId: null,
     departDate: null,
     returnDate: null,
     departTime: null,
@@ -202,6 +221,12 @@ function tabFromRequest(r: TravelBookingRequest): TabFormState {
     // the per-diem room question's two inputs and must be resumed from the
     // same load, or a resumed guest's estimate and the submit disagree.
     isRoomShareGuest: r.isRoomShareGuest,
+    // Resumed from the SAME read, so a guest that reloads can re-save without
+    // its binding being re-posted as a clear. `getTravelBookingGroup` loads
+    // each tab through `getTravelBookingRequest`, which fills this; the list
+    // reads deliberately do not, and `roomShareHostFieldFor` is what makes
+    // that difference harmless rather than destructive.
+    roomShareHostRequestId: r.roomShareHostRequestId,
     departDate: r.departDate,
     returnDate: r.returnDate,
     departTime: r.departTime,
@@ -246,6 +271,10 @@ function buildSaveInput(tab: TabFormState, sortOrder: number): SaveTravelBooking
     accommodationId: tab.accommodationId,
     accommodationCustomText: tab.accommodationCustomText,
     needsRoomBooking: tab.needsRoomBooking,
+    // Three-valued on purpose — an id sets it, `null` clears it, and
+    // `undefined` leaves the stored row alone. `roomShareHostFieldFor` owns
+    // that decision and its own file says why the third case exists.
+    roomShareHostRequestId: roomShareHostFieldFor(tab),
     departDate: tab.departDate,
     returnDate: tab.returnDate,
     departTime: tab.departTime,

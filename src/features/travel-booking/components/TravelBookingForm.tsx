@@ -128,50 +128,6 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
     return saved;
   }, [saveDraft, onSaved]);
 
-  /**
-   * The active tab's `AccRequest.Id`, saving the group first if it has none.
-   *
-   * พักห้องเดียวกับ needs one: the hosts endpoint takes the caller's *own*
-   * request id in its path and is authorized `authorizeAccRequest(…,
-   * "mutate")` against it, which is the whole reason one person may list
-   * another's AP-17 requests at all. That gate is deliberate and is **not**
-   * relaxed here — the requester simply no longer has to press บันทึกร่าง by
-   * hand first.
-   *
-   * Three things it must get right, all of them failure modes rather than
-   * niceties:
-   *
-   * - **It reuses `handleSaveDraft`, not `saveDraft`.** The success toast is
-   *   the smaller half; `onSaved` is the load-bearing one, since that is what
-   *   rewrites the URL to this group's key. A save that skipped it would leave
-   *   a freshly created draft that a reload could not find, and the *next*
-   *   save would POST a second group.
-   * - **A failure returns null and says nothing extra.** `saveDraft` has
-   *   already surfaced the server's own refusal — a closed form
-   *   (`assertFormWritable`), a validation message, a network error — and the
-   *   caller renders its own line about the picker not opening. A second
-   *   sentence invented here would be a second vocabulary for one failure.
-   * - **It refuses while another save or a submit is in flight.** With no
-   *   anchor id yet, two concurrent saves both POST and create two separate
-   *   groups; the footer button guards itself with `disabled`, and this is the
-   *   same guard for the second entry point.
-   *
-   * The id is read back from the save's own `requestIds`, index-aligned with
-   * the tabs exactly as `saveDraft`'s own `setTabs` maps them, so the value
-   * handed to the picker and the value stored on the tab cannot disagree.
-   */
-  const ensureActiveTabSaved = useCallback(async (): Promise<number | null> => {
-    const existing = tabs[activeTabIndex]?.id;
-    if (existing != null) return existing;
-    if (saving || submitting) {
-      toast.error("กำลังบันทึกอยู่ กรุณารอสักครู่");
-      return null;
-    }
-    const saved = await handleSaveDraft();
-    if (!saved) return null;
-    return saved.requestIds[activeTabIndex] ?? null;
-  }, [tabs, activeTabIndex, saving, submitting, handleSaveDraft]);
-
   const handleSubmit = useCallback(async () => {
     setTriedSubmit(true);
     if (!overallCanSubmit) {
@@ -513,7 +469,6 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
           onChange={(patch) => updateTab(activeTabIndex, patch)}
           onSelectPendingIdCard={(file) => updateTab(activeTabIndex, { pendingIdCard: file })}
           onRemoveIdCardFile={(fileId) => removeIdCardFile(activeTabIndex, fileId)}
-          onRequireSave={ensureActiveTabSaved}
         />
       )}
 

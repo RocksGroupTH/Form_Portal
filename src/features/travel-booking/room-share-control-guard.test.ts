@@ -219,37 +219,61 @@ test("the room-share control is mounted in both states, outside that conditional
 
 /* ─────────────────── attaching clears what the grid had set ─────────────────── */
 
-test("attaching sets the flag and clears the accommodation in one patch", () => {
-  const patch = balancedAfter(code(TAB), "onAttached=", "{");
+/**
+ * **The patches moved into `room-share-choice.ts` on 2026-09-22, and that is
+ * why these two arms now assert a CALL rather than the fields.**
+ *
+ * `roomShareHostRequestId` joined `isRoomShareGuest` when picking stopped
+ * being a POST and became tab state, and two fields holding one fact must be
+ * written in one place — the module's own docblock carries that argument. The
+ * fields themselves are asserted for real, by value, in
+ * `room-share-choice.test.ts`, which can import the module because it is pure.
+ * What cannot be asserted there and has to be asserted here is that
+ * `TravelBookingTab` still routes through it: an inline object literal in the
+ * tab would type-check, look right, and be the second copy.
+ */
+test("attaching goes through the shared patch, not a literal in the tab", () => {
+  const patch = balancedAfter(code(TAB), "onChoose=", "{");
   assert.match(
     patch,
-    /isRoomShareGuest:\s*true/,
-    "onAttached no longer marks the tab as a guest, so the per-diem estimate goes on " +
-      "withholding money the submit will store",
+    /roomShareChoicePatch\(host\)/,
+    "onChoose no longer applies roomShareChoicePatch. Written out here instead, the tab's " +
+      "`isRoomShareGuest` and `roomShareHostRequestId` become two places for one fact — and " +
+      "the host's dates stop travelling with the choice, which is final review I4 back again: " +
+      "a guest attached on OVERLAP has its whole span replaced by the first cascade",
   );
-  assert.match(
-    patch,
-    /accommodationId:\s*null/,
-    "onAttached no longer clears accommodationId. The grid is hidden for a guest, so the " +
-      "requester can neither see nor change the stale value — and buildSaveInput posts it on " +
-      "the next save, where deriveBookingFlags reads it as a live answer and books a room",
-  );
-  assert.match(
-    patch,
-    /needsRoomBooking:\s*false/,
-    "onAttached no longer clears needsRoomBooking, so a guest who had chosen a room-booking " +
-      "accommodation still reaches the Admin queue with a room to book",
+  assert.ok(
+    !/isRoomShareGuest:/.test(patch) && !/accommodationId:/.test(patch),
+    "the tab spells the patch out beside the call. Two copies is exactly what the shared module " +
+      "exists to prevent, and the copy here is the one no unit test covers",
   );
 });
 
-test("detaching clears only the flag", () => {
-  const patch = balancedAfter(code(TAB), "onDetached=", "{");
-  assert.match(patch, /isRoomShareGuest:\s*false/, "onDetached no longer clears the guest flag");
+test("clearing goes through the shared patch, and restores nothing", () => {
+  const patch = balancedAfter(code(TAB), "onClear=", "{");
+  assert.match(
+    patch,
+    /roomShareClearPatch\(\)/,
+    "onClear no longer applies roomShareClearPatch",
+  );
   assert.ok(
     !/accommodationId:/.test(patch),
-    "onDetached restores an accommodation. Detaching must leave the required field unanswered: " +
+    "onClear restores an accommodation. Detaching must leave the required field unanswered: " +
       "resurrecting the choice the attach replaced re-books a room the requester had decided " +
       "against, and does it without them touching the control",
+  );
+});
+
+/**
+ * The patch module is pure and imported by name, so the tab cannot get a
+ * *different* `roomShareChoicePatch`. Asserted because the two arms above
+ * match on the identifier alone.
+ */
+test("the tab imports the patches from the shared module", () => {
+  assert.match(
+    code(TAB),
+    /import\s*\{[^}]*\broomShareChoicePatch\b[^}]*\broomShareClearPatch\b[^}]*\}\s*from\s*["']@\/features\/travel-booking\/lib\/room-share-choice["']/,
+    "TravelBookingTab no longer imports both patches from room-share-choice.ts",
   );
 });
 
@@ -389,46 +413,43 @@ test("the warning names all three consequences the requester is accepting", () =
 
 /* ─────────────────── the press saves, and the copy agrees ─────────────────── */
 
-test("pressing the button saves the draft first, and opens only once it has an id", () => {
+/**
+ * **The press opens the picker and does nothing else** (the user, 2026-09-22,
+ * point 1: search straight away). The draft save that used to sit in front of
+ * it — and, before that, the disabled button telling the requester to press
+ * บันทึกร่าง themselves — are both gone with the endpoint that needed them.
+ *
+ * Three ways that gets quietly put back, one arm each:
+ *
+ * - the control asks the parent to save again (`onRequireSave`, or any
+ *   `await` at all in `openPicker`, which is now synchronous);
+ * - the button is re-gated on `requestId`;
+ * - either of the two old copy lines returns, which is the half that fails
+ *   *silently* — a live button beside a note telling the requester to go and
+ *   save first reads as a bug in the button.
+ */
+test("pressing the button opens the picker, with no save in front of it", () => {
   const src = code(CONTROL);
   const open = balancedAfter(src, "const openPicker = useCallback", "(");
 
-  // The RESULT is what is asserted, not the call. `await onRequireSave()` with
-  // the id thrown away leaves `rid` null on exactly the tab this exists for,
-  // so the refusal branch fires and the picker never opens at all — a call
-  // present, a feature gone, and a bare indexOf on the call would pass.
-  const saveMatch = /rid\s*=\s*await\s+onRequireSave\(\)/.exec(open);
-  if (!saveMatch) {
-    assert.fail(
-      "openPicker no longer takes its request id from the draft save. The hosts endpoint takes " +
-        "an OWNED request id in its path and authorizes `mutate` against it, so a tab that is " +
-        "not a row yet has nothing to authorize — this save is the only reason the picker can " +
-        "open from an unsaved tab without the endpoint being relaxed, and relaxing it would let " +
-        "any authenticated employee enumerate any colleague's AP-17 running numbers, dates and " +
-        "work locations",
-    );
-  }
-  const saveAt = saveMatch.index;
-
-  const openAt = open.indexOf("setPersonOpen(true)");
+  const openAt = open.indexOf("setPickerOpen(true)");
   assert.notEqual(openAt, -1, "openPicker no longer opens the picker at all");
-  assert.ok(
-    saveAt < openAt,
-    "the picker is opened before the save has been awaited, so the host list fetches against a " +
-      "request id the tab does not have yet — the requester gets โหลดรายการคำขอไม่สำเร็จ on a " +
-      "press that did nothing wrong",
-  );
 
-  assert.match(
-    open,
-    /if\s*\(\s*rid\s*==\s*null\s*\)\s*\{[^}]*\breturn;[^}]*\}/,
-    "a refused save no longer abandons the press. `saveDraft` fails for real reasons — a form " +
-      "closed by assertFormWritable, a validation message, a dropped connection — and every one " +
-      "of them must leave the picker shut rather than open on an id that was never allocated",
+  assert.ok(
+    open.indexOf("await") === -1,
+    "openPicker awaits something. Browsing is `requireAuth` with no request id — there is " +
+      "nothing to wait for before the picker can open, and anything awaited here is the draft " +
+      "save coming back in a different shape",
+  );
+  assert.ok(
+    src.indexOf("onRequireSave") === -1,
+    "the control asks its parent to save the draft again. The hosts endpoint no longer takes " +
+      "an owned request id, so there is nothing for that save to satisfy — and the requester " +
+      "asked twice for it to stop happening",
   );
 });
 
-test("the button is not gated on an unsaved tab, and the copy no longer tells anyone to save", () => {
+test("the button is never gated on an unsaved tab, and no copy tells anyone to save", () => {
   const src = code(CONTROL);
 
   const labelAt = src.indexOf("พักห้องเดียวกับเพื่อนร่วมงาน");
@@ -439,21 +460,121 @@ test("the button is not gated on an unsaved tab, and the copy no longer tells an
   const btn = src.slice(btnAt, labelAt);
 
   assert.ok(
-    !/disabled=\{[^}]*requestId/.test(btn),
-    "the button is disabled on an unsaved tab again (user, 2026-09-22: เลือกได้ โดยยังไม่ต้อง" +
-      "บันทึกร่างก่อน). Pressing it saves the draft itself — re-gating it on requestId puts the " +
-      "manual step back without removing the save that replaced it",
-  );
-  assert.ok(
-    /loading=\{/.test(btn),
-    "the button shows nothing while the save is in flight, and `Button` disables itself only " +
-      "when `loading` is set — so a second press during a save posts a SECOND draft group, the " +
-      "group having no anchor id to update yet",
+    !/disabled=\{/.test(btn),
+    "the button is disabled again (user, 2026-09-22: เลือกได้ โดยยังไม่ต้องบันทึกร่างก่อน). " +
+      "Nothing has to happen before the picker can open, so there is no state in which this " +
+      "control should refuse a press",
   );
 
+  for (const stale of [
+    "กรุณาบันทึกร่างก่อนจึงจะเลือกห้องพักร่วมได้",
+    "ระบบจะบันทึกร่างให้ก่อนเปิดรายการ",
+    "กำลังบันทึกร่าง...",
+  ]) {
+    assert.ok(
+      src.indexOf(stale) === -1,
+      `the copy "${stale}" is back beside a button that saves nothing. Both of the arrangements ` +
+        "it belonged to are gone; a note promising a save that never happens is worse than the " +
+        "step it described",
+    );
+  }
+});
+
+/**
+ * **The picker's two ways in, and the one range control** — the user's points
+ * 2 and 3, 2026-09-22.
+ *
+ * Each arm pins a thing that reverts by deletion rather than by breaking:
+ * drop the `requestNo` parameter and the number tab silently searches nothing;
+ * put two `<input type="date">` back and the "one range control like
+ * วันเดินทาง" is gone with no test noticing; lose `defaultHostFilterRange` and
+ * the filter opens empty or on the guest's own dates again, which is what
+ * point 4 made circular.
+ */
+test("the picker offers both ways in — a person, or a running number", () => {
+  const src = code(CONTROL);
   assert.ok(
-    src.indexOf("กรุณาบันทึกร่างก่อนจึงจะเลือกห้องพักร่วมได้") === -1,
-    "the copy telling the requester to save the draft first is back, beside a button that now " +
-      "does it for them — one of the two has been reverted without the other",
+    src.indexOf('params.set("requestNo"') !== -1,
+    "the picker no longer asks the hosts endpoint for a request by running number, so the " +
+      "second tab searches nothing at all (user, 2026-09-22, point 2)",
+  );
+  assert.ok(
+    src.indexOf('params.set("staffId"') !== -1,
+    "the picker no longer asks for a colleague's requests by staffId",
+  );
+  assert.ok(
+    src.indexOf('params.set("excludeRequestId"') !== -1,
+    "the picker stops excluding this tab's own request, so a requester is offered their own " +
+      "trip and the save refuses it with `self_attach` after the fact",
+  );
+});
+
+test("the date filter is ONE range control, opened on the default window", () => {
+  const src = code(CONTROL);
+  assert.ok(
+    src.indexOf("<DateRangeField") !== -1,
+    "the host filter no longer uses DateRangeField. Two dd/mm/yyyy boxes is what it replaced " +
+      "(user, 2026-09-22, point 3: one range control like วันเดินทาง)",
+  );
+  assert.ok(
+    !/type="date"/.test(src),
+    "a raw <input type=\"date\"> is back in the picker — that is the pair of boxes the single " +
+      "range control replaced",
+  );
+  assert.match(
+    src,
+    /inline\s*\/?>/,
+    "DateRangeField is rendered without `inline`. Radix puts pointer-events: none on <body> " +
+      "while a modal is open and treats a body-level portal as OUTSIDE its content, so the " +
+      "calendar would be both unclickable and a dismiss trigger — measured in this repository " +
+      "already, see LinePickers.tsx",
+  );
+  assert.ok(
+    src.indexOf("defaultHostFilterRange(new Date())") !== -1,
+    "the filter no longer opens on today … today + 30. It must not go back to the guest's own " +
+      "dates: since final review I4 the picker WRITES the host's dates into the tab, so seeding " +
+      "the search from a value it is about to overwrite is circular — and the tab may have no " +
+      "dates at all by then, the picker no longer requiring a saved draft",
+  );
+});
+
+test("the fetched list is filterable by running number", () => {
+  const src = code(CONTROL);
+  assert.ok(
+    src.indexOf("listQuery") !== -1,
+    "the request list is no longer typeable (user, 2026-09-22, point 3)",
+  );
+  assert.match(
+    src,
+    /const shownHosts = useMemo/,
+    "the list filter no longer narrows what is RENDERED. Filtering client-side over what was " +
+      "already fetched is the deliberate choice — re-querying per keystroke would run a " +
+      "person-and-date scan behind a database round trip for every character",
+  );
+});
+
+/**
+ * **The choice is an unsaved edit, and the card has to say so.**
+ *
+ * This is the one thing the rework takes away from the requester that the old
+ * immediate POST gave them for free: attaching used to be durable the instant
+ * they clicked. Now it lands with บันทึกร่าง / ส่งคำขอ like every other field
+ * on this form — which is the point — but a card that looked identical
+ * before and after a save would leave somebody believing their room share was
+ * recorded when closing the tab would lose it.
+ */
+test("an unsaved choice says it is unsaved", () => {
+  const src = code(CONTROL);
+  assert.ok(
+    src.indexOf("ยังไม่ได้บันทึก") !== -1,
+    "the attached card no longer distinguishes a saved binding from an unsaved choice. The " +
+      "picker writes tab state now, so a requester who closes the page before saving loses it " +
+      "— silently, from a card that looked exactly like a persisted one",
+  );
+  assert.match(
+    src,
+    /savedView === null &&/,
+    "the unsaved note is no longer conditional on there being no STORED binding — shown always " +
+      "it is a lie after every save, and shown never it is the silent loss above",
   );
 });

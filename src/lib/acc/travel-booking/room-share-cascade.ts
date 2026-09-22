@@ -97,8 +97,14 @@ function isAlive(status: string): boolean {
  * throw on any whose status is not `Draft` or `Returned`. One
  * cascade-cancelled tab therefore made the group unsavable, unsubmittable
  * **and undeletable**, with no in-app remedy at all. And it was the ordinary
- * path rather than an edge: `RoomShareControl` refuses to open until the
- * draft is saved, so a guest is normally `Draft` at the moment it attaches.
+ * path rather than an edge: a guest is normally `Draft` at the moment it
+ * attaches. *(The reason given here until 2026-09-22 was that
+ * `RoomShareControl` refused to open until the draft was saved. That gate is
+ * gone — the picker opens on an unsaved tab now — and the conclusion is
+ * **stronger** without it, not weaker: the binding is written by
+ * `saveTravelBookingDraft` itself, which admits `Draft` and `Returned` and
+ * nothing else, so a guest is `Draft` or `Returned` at the moment it attaches
+ * by construction rather than by habit.)*
  *
  * Spec §2's "cancelled too, in every case" was written to protect a **filed,
  * and possibly paid, position**: a guest who is travelling, or approved, or
@@ -108,8 +114,9 @@ function isAlive(status: string): boolean {
  * change it. Detaching costs neither of them anything that rule was
  * defending, and it leaves the person able to act: the binding goes, the
  * request keeps its status and its running number, and the accommodation
- * field it must now answer is empty (`attachRoomShare` cleared it), so
- * `validateTravelBookingTab` refuses the submit until they pick one.
+ * field it must now answer is empty (`applyRoomShareSelection` cleared it when
+ * the share was saved), so `validateTravelBookingTab` refuses the submit until
+ * they pick one.
  *
  * **The line is `EDITABLE_STATUSES`, imported rather than re-spelled, and
  * that is the load-bearing part.** The brick lives exactly where the two sets
@@ -123,7 +130,9 @@ function isAlive(status: string): boolean {
  * three group guards still spell that same pair.
  *
  * **Nothing is repriced on a detach**, deliberately, and it is exactly what
- * the guest's own `detachRoomShare` already does: the stale figure cannot be
+ * the guest clearing the choice themselves already does — that path is now
+ * `applyRoomShareSelection` with a null host, inside the tab's own save: the
+ * stale figure cannot be
  * paid without passing back through `submitTravelBookingGroup`, which
  * recomputes per diem from scratch, so inventing a money write nobody asked
  * for — on a request that is by definition still being edited — is the more

@@ -51,8 +51,10 @@ const SHARE_ROUTE = path.resolve(
 );
 const HOSTS_ROUTE = path.resolve(
   ROOT,
-  "src/app/api/request/travel-booking/room-share/[guestRequestId]/hosts/route.ts",
+  "src/app/api/request/travel-booking/room-share/hosts/route.ts",
 );
+/** Where the binding is actually written, since there is no attach endpoint. */
+const SAVE_SERVICE = path.resolve(ROOT, "src/lib/acc/travel-booking/request-service.ts");
 
 /** Source with comments removed — this guard's own prose must never satisfy it. */
 function code(file: string): string {
@@ -283,62 +285,116 @@ test("the service never names a column the picker must not carry", () => {
 /* ─────────────────────────── the endpoint's gate ─────────────────────────── */
 
 /**
- * The reach this endpoint grants is bounded by the caller already holding an
- * editable AP-17 request of their own. Deleting the gate leaves a working
- * endpoint that answers every authenticated session — which is exactly the
- * shape of regression this project has measured a green suite against before
- * (`approvals-route-authz-guard.test.ts`, `erp-queue-route-authz-guard.test.ts`).
+ * **Browsing lost its object gate on 2026-09-22, and that was the user's call,
+ * made twice.** The endpoint used to take the caller's own request id in its
+ * path and authorize `authorizeAccRequest(…, "mutate", AP-17)` against it,
+ * which forced the requester to save a draft before they could so much as
+ * look. It is now `requireAuth`, so any authenticated employee can list a
+ * colleague's hostable requests and look one up by running number.
+ *
+ * What survives is the floor under it: **it is not anonymous, and the refusal
+ * is RETURNED rather than merely computed.** A `requireAuth` whose result is
+ * dropped compiles, type-checks and reads almost identically — the exact shape
+ * of regression `approvals-route-authz-guard.test.ts` and
+ * `erp-queue-route-authz-guard.test.ts` were both written after measuring a
+ * green suite against.
  */
-test("the hosts endpoint gates on an editable request of the caller's own, before it reads", () => {
+test("the hosts endpoint authenticates, and returns the refusal, before it reads", () => {
   const src = code(HOSTS_ROUTE);
-  const gate = src.indexOf("await authorizeAccRequest(");
+  const gate = src.indexOf("await requireAuth()");
   assert.notEqual(
     gate,
     -1,
-    "the hosts endpoint no longer calls authorizeAccRequest — one person listing another " +
-      "person's requests is open to every authenticated session without it",
+    "the hosts endpoint no longer calls requireAuth — browsing colleagues' AP-17 running " +
+      "numbers, dates and work locations would be open to anybody at all, which is a long way " +
+      "past the widening that was actually decided",
   );
   assert.match(
     src.slice(gate),
-    /^await authorizeAccRequest\(\s*session,\s*guestRequestId,\s*"mutate",\s*AP17_FORM_CODE\s*\)/,
-    'the gate must be ("mutate", AP17_FORM_CODE) on the caller\'s OWN request',
-  );
-  assert.match(
-    src.slice(gate),
-    /if \(gate instanceof Response\) return gate;/,
-    "the gate's refusal must be returned, not merely computed",
+    /^await requireAuth\(\);\s*if \(session instanceof Response\) return session;/,
+    "requireAuth's refusal must be returned immediately, not computed and dropped",
   );
 
-  const read = src.indexOf("await loadHostableRequests(");
-  assert.notEqual(read, -1, "loadHostableRequests is no longer called — has it been renamed?");
+  for (const reader of ["await loadHostableRequests(", "await loadHostByRequestNo("]) {
+    const read = src.indexOf(reader);
+    assert.notEqual(read, -1, `${reader} is no longer called — has it been renamed?`);
+    assert.ok(gate < read, `requireAuth must run BEFORE ${reader}`);
+  }
+});
+
+/**
+ * **The write kept the gate the read gave up, and this is where that is
+ * pinned.** Browsing and attaching were split deliberately: listing five
+ * fields about a colleague's trip is one thing, binding two people's documents
+ * together is another, and only the second still demands an owned, editable
+ * request.
+ *
+ * There is no attach endpoint any more, so the assertion has to follow the
+ * write to where it went — `saveTravelBookingDraft`, whose own route is
+ * `authorizeAccRequest(…, "mutate", AP-17)` and which re-asserts
+ * creator-and-`Draft`/`Returned` per tab before this runs.
+ */
+test("the binding is written from the group save, and nowhere else", () => {
+  const save = code(SAVE_SERVICE);
   assert.ok(
-    gate < read,
-    "authorizeAccRequest must run BEFORE a single colleague's row is read",
+    save.indexOf("await applyRoomShareSelection(tx, {") !== -1,
+    "saveTravelBookingDraft no longer applies the room-share selection on its own transaction. " +
+      "Picking a host is tab state now; if the save stops persisting it, the choice silently " +
+      "never happens — and if it is moved off `tx`, the binding can commit while the trip it " +
+      "belongs to does not",
+  );
+  for (const routeFile of [SHARE_ROUTE, HOSTS_ROUTE]) {
+    assert.ok(
+      code(routeFile).indexOf("applyRoomShareSelection") === -1,
+      `${path.basename(path.dirname(routeFile))}/route.ts writes the binding directly. Two paths ` +
+        "that both bind two people's documents are two places for the one-hop invariant to be " +
+        "got wrong — and this one has no group transaction around it",
+    );
+  }
+});
+
+/**
+ * **`undefined` and `null` must not collapse**, and the cost of collapsing them
+ * is a binding deleted on an ordinary save of a tab nobody touched.
+ * `roomShareHostFieldFor` answers `undefined` for a tab that believes it is a
+ * guest but cannot name its host; a truthiness test here would read that as
+ * "clear it".
+ */
+test("an absent host field leaves the stored binding alone", () => {
+  const save = code(SAVE_SERVICE);
+  assert.match(
+    save,
+    /if \(tab\.roomShareHostRequestId !== undefined\) \{/,
+    "the save no longer distinguishes an ABSENT roomShareHostRequestId from an explicit null. " +
+      "Absent means leave the stored row alone; null means delete it. Collapsing them deletes a " +
+      "binding the requester never touched, on a save that changed something else entirely",
   );
 });
 
-test("all three binding handlers gate before they touch the service", () => {
+test("the binding route reads only — there is no attach or detach endpoint", () => {
   const src = code(SHARE_ROUTE);
-  const calls: [string, string][] = [
-    ["loadRoomShare(", '"read"'],
-    ["attachRoomShare(", '"mutate"'],
-    ["detachRoomShare(", '"mutate"'],
-  ];
-  for (const [fn, mode] of calls) {
-    const use = src.indexOf(`await ${fn}`);
-    assert.notEqual(use, -1, `${fn} is no longer called from the route`);
-    const before = src.slice(0, use);
-    const gate = before.lastIndexOf("await authorizeAccRequest(");
-    assert.notEqual(gate, -1, `${fn} is reached without authorizeAccRequest above it`);
-    assert.match(
-      src.slice(gate, use),
-      new RegExp(`authorizeAccRequest\\(\\s*session,\\s*guestRequestId,\\s*${mode}`),
-      `${fn} must be gated with authorizeAccRequest(..., ${mode}, AP17_FORM_CODE)`,
-    );
-    assert.match(
-      src.slice(gate, use),
-      /if \(gate instanceof Response\) return gate;/,
-      `${fn}'s gate refusal must be returned`,
+  const use = src.indexOf("await loadRoomShare(");
+  assert.notEqual(use, -1, "loadRoomShare is no longer called from the route");
+  const gate = src.slice(0, use).lastIndexOf("await authorizeAccRequest(");
+  assert.notEqual(gate, -1, "loadRoomShare is reached without authorizeAccRequest above it");
+  assert.match(
+    src.slice(gate, use),
+    /authorizeAccRequest\(\s*session,\s*guestRequestId,\s*"read"/,
+    'loadRoomShare must be gated with authorizeAccRequest(..., "read", AP17_FORM_CODE)',
+  );
+  assert.match(
+    src.slice(gate, use),
+    /if \(gate instanceof Response\) return gate;/,
+    "loadRoomShare's gate refusal must be returned",
+  );
+
+  for (const verb of ["POST", "DELETE", "PUT", "PATCH"]) {
+    assert.ok(
+      !new RegExp(`export async function ${verb}\\b`).test(src),
+      `a ${verb} handler is back on the room-share route. The binding is written by the tab's ` +
+        "own save, inside the transaction that writes the rest of the trip — a second writer " +
+        "here would re-open the shape that forced the picker to demand a saved draft, and would " +
+        "have to re-implement the one-hop check, the lock and the host's notice",
     );
   }
 });
@@ -400,14 +456,18 @@ test("the service exports exactly the surface Task 4 defines", () => {
   let m: RegExpExecArray | null;
   while ((m = re.exec(src)) !== null) found.push(m[1]);
   found.sort();
+  // `attachRoomShare` and `detachRoomShare` are gone, replaced by the one
+  // `applyRoomShareSelection` the tab save calls; `loadHostByRequestNo` and
+  // its `HostLookupResult` are the picker's second tab (2026-09-22).
   assert.deepEqual(found, [
     "HOST_NOT_FILED_MESSAGE",
     "HostCandidateRow",
+    "HostLookupResult",
     "HostSearchFilters",
     "RoomShareView",
-    "attachRoomShare",
-    "detachRoomShare",
+    "applyRoomShareSelection",
     "loadGuestsOf",
+    "loadHostByRequestNo",
     "loadHostableRequests",
     "loadRoomShare",
   ]);
@@ -450,11 +510,17 @@ test("the filed-host rule and the guest editability rule are applied at every si
   const src = code(SERVICE);
   const sites: [string, string[]][] = [
     ["export async function loadHostableRequests", ["hostHasBeenFiled(", "canHost("]],
+    // The picker's second tab reaches ONE request by the number somebody
+    // typed, so it must apply the same two admission rules the list applies —
+    // or a running number becomes a way to a request the list would have
+    // hidden.
+    ["export async function loadHostByRequestNo", ["hostHasBeenFiled(", "canHost("]],
+    // `applyRoomShareSelection` covers both of what used to be two functions:
+    // it clears as well as sets, and the editability rule applies to both.
     [
-      "export async function attachRoomShare",
+      "export async function applyRoomShareSelection",
       ["requireEditableGuest(", "hostHasBeenFiled(", "canAttach("],
     ],
-    ["export async function detachRoomShare", ["requireEditableGuest("]],
   ];
   for (const [decl, calls] of sites) {
     const body = bodyOf(src, decl);
@@ -482,23 +548,35 @@ test("the filed-host rule and the guest editability rule are applied at every si
  * the binding surviving a failed clear — the same half-state, reached by a
  * crash instead of by a reload.
  */
-test("the attach clears the guest's own accommodation, inside its own transaction", () => {
-  const body = bodyOf(code(SERVICE), "export async function attachRoomShare");
+test("the attach clears the guest's own accommodation, on the caller's transaction", () => {
+  const src = code(SERVICE);
+  const body = bodyOf(src, "export async function applyRoomShareSelection");
   const clear = body.indexOf("clearGuestOwnAccommodation(tx");
   assert.notEqual(
     clear,
     -1,
-    "attachRoomShare no longer calls clearGuestOwnAccommodation(tx, …). The guest's own " +
+    "applyRoomShareSelection no longer calls clearGuestOwnAccommodation(tx, …). The guest's own " +
       "AccommodationId/NeedsRoomBooking survive the attach, the grid that would show them is " +
       "hidden, and the next save hands the Admin desk a hotel room to book for somebody who " +
       "is sharing one — a client-side state patch is not an invariant",
   );
-  const commit = body.indexOf("tx.commit()");
-  assert.notEqual(commit, -1, "attachRoomShare no longer commits — has it been restructured?");
+  const insert = body.indexOf("INSERT INTO [dbo].[AccTravelRoomShare]");
+  assert.notEqual(insert, -1, "the binding is no longer inserted — has it been restructured?");
   assert.ok(
-    clear < commit,
-    "clearGuestOwnAccommodation runs after the commit, so a failure leaves the binding " +
-      "recorded and the accommodation live. They must stand or fall together",
+    insert < clear,
+    "the clear runs before the insert, so a refusal after it would leave the guest's own " +
+      "accommodation withdrawn with no share to replace it",
+  );
+  /* **It does not commit, and must not.** The commit belongs to
+     `saveTravelBookingDraft`, which is what makes the binding, the withdrawal
+     of the room it replaces, the trip's own columns and the host's notice one
+     atomic thing. A transaction opened here would commit the share while the
+     tab that owns it might still roll back. */
+  assert.ok(
+    body.indexOf("getAccPool(") === -1 && body.indexOf("tx.commit()") === -1,
+    "applyRoomShareSelection opens a pool or commits. It takes the CALLER's open transaction — " +
+      "the binding and the trip it belongs to must commit or roll back together, which is the " +
+      "whole reason there is no attach endpoint any more",
   );
 });
 
@@ -531,11 +609,11 @@ test("the attach clears the guest's own accommodation, inside its own transactio
  */
 test("the attach re-reads its candidates under UPDLOCK, HOLDLOCK", () => {
   const src = code(SERVICE);
-  const body = bodyOf(src, "export async function attachRoomShare");
+  const body = bodyOf(src, "export async function applyRoomShareSelection");
   assert.match(
     body,
     /loadShareCandidates\([\s\S]*?\{\s*lock:\s*true\s*\}/,
-    "attachRoomShare's candidate re-read no longer passes { lock: true }. That UPDLOCK, " +
+    "applyRoomShareSelection's candidate re-read no longer passes { lock: true }. That UPDLOCK, " +
       "HOLDLOCK is the ONLY thing serialising two concurrent attaches, so without it the " +
       "one-hop invariant is a plain read-then-write: two transactions both see the " +
       "pre-attach state, both pass canAttach, and a two-hop chain exists — which the cascade " +
@@ -568,7 +646,25 @@ test("the attach re-reads its candidates under UPDLOCK, HOLDLOCK", () => {
 test("hostability is decided by canHost, not re-expressed as SQL", () => {
   const src = code(SERVICE);
   assert.match(src, /canHost\(candidate\)\s*!==\s*null/, "the listing no longer filters on canHost");
-  assert.match(src, /canAttach\(guest,\s*host\)/, "the attach no longer re-checks canAttach");
+  /* `guestAfterClear`, not `guest`: a REPLACEMENT deletes the old row in the
+     same transaction, so the question `canAttach` must answer is about the
+     guest as it will be once that delete lands. Asserted by name because the
+     difference between the two identifiers is the difference between
+     "changing your mind is allowed" and "changing your mind is refused with
+     `guest_has_host` every time". */
+  assert.match(
+    src,
+    /canAttach\(guestAfterClear,\s*host\)/,
+    "the save no longer re-checks canAttach against the guest as the delete will leave it",
+  );
+  assert.match(
+    src,
+    /const guestAfterClear: ShareCandidate =\s*\n?\s*currentHostId === null \? guest : \{ \.\.\.guest, isGuest: false \}/,
+    "the replacement candidate is no longer derived from the locked read by flipping exactly " +
+      "`isGuest`. Anything wider is a candidate built on something other than what the " +
+      "transaction is about to commit — and `hostsFor`, the one-hop check's input, must NOT be " +
+      "cleared: deleting the guest's own guest-row cannot change who is attached TO it",
+  );
   for (const sqlish of ["NeedsRoomBooking = 1", "Status NOT IN", "Status <> 'Cancelled'"]) {
     assert.ok(
       src.indexOf(sqlish) === -1,

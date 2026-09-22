@@ -1,15 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   CalendarRange,
+  Hash,
   Hotel,
   Link2Off,
   Loader2,
   MapPin,
   RotateCw,
+  Search,
   Users,
 } from "lucide-react";
 import { Avatar } from "@/components/ui/Avatar";
@@ -18,7 +19,9 @@ import { Dialog } from "@/components/ui/Dialog";
 import { RequesterPickerModal, type RequesterOption } from "@/components/RequesterPickerModal";
 import { fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
 import { ROOM_SHARE_AGREEMENT_LINE } from "@/features/travel-booking/constants";
-import { inputClass, inputStyle, labelClass, labelStyle } from "./shared";
+import { defaultHostFilterRange } from "@/features/travel-booking/lib/host-filter-range";
+import { DateRangeField } from "./DateRangeField";
+import { inputStyle, labelClass, labelStyle } from "./shared";
 import type {
   HostCandidateRow,
   RoomShareView,
@@ -47,6 +50,40 @@ import type {
  * therefore shown *before* the choice, inside the picker, and again on the
  * attached card — not tucked under a "read more". See its own docblock.
  *
+ * ## Picking is an EDIT, not a POST (reworked 2026-09-22)
+ *
+ * This is the change that makes the rest of the file read differently from
+ * package E's original. It used to attach on the spot, which is why it needed
+ * a saved draft at all: the attach POSTed to `/room-share/{guestRequestId}`
+ * and an unsaved tab has no `AccRequest.Id`. First the button was made to save
+ * the draft itself; the user then asked for the whole arrangement to go.
+ *
+ * So picking a host now **sets tab state** — `roomShareHostRequestId`, through
+ * `room-share-choice.ts`'s one patch — and the binding is written by the tab's
+ * own save, inside the transaction that writes everything else about the trip
+ * (`applyRoomShareSelection`). Clearing the choice clears the row on the same
+ * save. There is no attach endpoint, no auto-save and no `onRequireSave`.
+ *
+ * **The picker therefore opens against nothing at all**, which is exactly what
+ * the user asked for in point 1 — press it and search.
+ *
+ * ## What that changed about authorization, stated rather than implied
+ *
+ * The hosts endpoint used to take the caller's own request id in its path and
+ * authorize `authorizeAccRequest(…, "mutate", AP-17)` against it. That gate is
+ * **gone**: browsing is `requireAuth` at
+ * `/api/request/travel-booking/room-share/hosts`, so any authenticated
+ * employee can list a colleague's hostable AP-17 requests — their running
+ * numbers, travel dates and work locations — and look one up by number. The
+ * user asked twice for the friction; the route's own docblock records the
+ * residual in full.
+ *
+ * **The write kept its gate.** The save route is `authorizeAccRequest(…,
+ * "mutate", AP-17)`, the group save re-asserts creator-and-`Draft`/`Returned`
+ * for every tab, and `applyRoomShareSelection` re-asserts it a third time
+ * in-transaction under `UPDLOCK, HOLDLOCK`. Binding two people's documents is
+ * the act that needed the gate and it still has it.
+ *
  * ## Two fetch surfaces, both pre-existing, neither widened
  *
  * The person search is `/api/request/travel-booking/requesters`, the HR-backed
@@ -58,29 +95,11 @@ import type {
  * everybody. This one is `requireAuth` and answers a `staffId`, which is
  * exactly what the hosts endpoint takes.
  *
- * The request list is `room-share/{guestRequestId}/hosts`, which returns the
- * running number, the travel dates and the work location and deliberately
- * nothing else (spec §6 — not the amount, not the attachments, not the ID
- * card). `HostCandidateRow` is imported as a **type** from the service so this
- * component cannot invent a field the endpoint does not send;
- * `room-share-response-shape-guard.test.ts` pins the other end.
- *
- * ## The button saves the draft, rather than asking the requester to (2026-09-22)
- *
- * It used to be disabled on an unsaved tab, beside "กรุณาบันทึกร่างก่อนจึงจะ
- * เลือกห้องพักร่วมได้". The user asked for the choice without that step.
- *
- * **What was NOT done is the important half.** The hosts endpoint still takes
- * the caller's own request id in its path and is still authorized
- * `authorizeAccRequest(…, "mutate", AP-17)` against it — creator only,
- * `Draft`/`Returned` only, plus the UAT tester barrier. Without that gate any
- * authenticated employee could enumerate any colleague's AP-17 running
- * numbers, travel dates and work locations, and one person listing another's
- * requests is the only new authorization reach this feature added. The
- * complaint was the *friction*, not the gate, so the gate stands and the press
- * satisfies it: `onRequireSave` saves the group, hands back this tab's new
- * `AccRequest.Id`, and only then does the picker open. A refused save opens
- * nothing and says so.
+ * The request list returns the running number, the travel dates and the work
+ * location and deliberately nothing else (spec §6 — not the amount, not the
+ * attachments, not the ID card). `HostCandidateRow` is imported as a **type**
+ * from the service so this component cannot invent a field the endpoint does
+ * not send; `room-share-response-shape-guard.test.ts` pins the other end.
  */
 
 /* ─────────────────────────── display helpers ─────────────────────────── */
@@ -163,144 +182,108 @@ function AgreementLine() {
 /* ─────────────────────────── loaded-binding state ─────────────────────────── */
 
 /**
- * What this component knows about the tab's own binding.
+ * What this component knows about the **stored** binding — which is no longer
+ * the same question as "is this tab a guest".
  *
- * A closed union rather than a row plus two booleans, because "we are a guest
- * and the host has not arrived yet" and "we are a guest and the binding could
- * not be read" have to render differently and are trivially conflated by a
- * `loading` flag beside a nullable row.
+ * Since picking is an edit, the tab can hold a host that no row records yet,
+ * and `absent` is the ordinary state for exactly that. A closed union rather
+ * than a row plus two booleans, because "not saved yet", "still loading" and
+ * "could not be read" have to render differently and are trivially conflated
+ * by a `loading` flag beside a nullable row.
  */
 type ShareState =
-  | { kind: "none" }
+  | { kind: "idle" }
   | { kind: "loading" }
   | { kind: "ready"; view: RoomShareView }
+  | { kind: "absent" }
   | { kind: "error" };
+
+/** Which half of the picker is in front. */
+type PickMode = "person" | "number";
 
 export interface RoomShareControlProps {
   /** `AccRequest.Id` for this tab — null until the draft has been saved once. */
   requestId: number | null;
-  /** `TabFormState.isRoomShareGuest`, server-derived; this component never guesses it. */
-  isGuest: boolean;
-  /** The guest's own dates, which is what the request filter opens on (spec §6). */
-  travelFrom: string | null;
-  travelTo: string | null;
+  /**
+   * `TabFormState.roomShareHostRequestId` — the tab's current choice, saved or
+   * not. This component never guesses it and never writes it directly; it
+   * hands a host to `onChoose` and the parent applies
+   * `room-share-choice.ts`'s patch.
+   */
+  hostRequestId: number | null;
   /** The actor's department, already loaded by the form — the picker's starting list. */
   colleagues: RequesterOption[];
-  /**
-   * Hand back this tab's `AccRequest.Id`, saving the draft group first if it
-   * has none — null when that save was refused.
-   *
-   * **This is how the picker opens from an unsaved tab, and it is not a way
-   * round the gate.** The hosts endpoint still takes an owned request id in
-   * its path and still authorizes `"mutate"` against it (see this file's
-   * header and the route's own docblock): one person listing another's AP-17
-   * requests is the only new authorization reach this feature has, and it is
-   * granted to somebody who could legitimately attach rather than to every
-   * authenticated session. What the auto-save removes is the *manual step*
-   * that reach was costing the requester, not the requirement behind it.
-   */
-  onRequireSave: () => Promise<number | null>;
-  /**
-   * The attach succeeded server-side. The parent sets `isRoomShareGuest` and
-   * **clears the accommodation choice** — see this file's header for why both.
-   */
-  onAttached: () => void;
-  /** The binding is gone. The parent clears the flag; the accommodation stays unchosen. */
-  onDetached: () => void;
+  /** A host was picked. The parent records it, clears the accommodation, and takes the host's dates. */
+  onChoose: (host: HostCandidateRow) => void;
+  /** The choice is withdrawn. The parent clears the flag; the accommodation stays unchosen. */
+  onClear: () => void;
 }
 
 export function RoomShareControl({
   requestId,
-  isGuest,
-  travelFrom,
-  travelTo,
+  hostRequestId,
   colleagues,
-  onRequireSave,
-  onAttached,
-  onDetached,
+  onChoose,
+  onClear,
 }: RoomShareControlProps) {
-  const [share, setShare] = useState<ShareState>({ kind: "none" });
-  const [hostPerson, setHostPerson] = useState<RequesterOption | null>(null);
-  const [detaching, setDetaching] = useState(false);
+  const [share, setShare] = useState<ShareState>({ kind: "idle" });
+  const [savedPerson, setSavedPerson] = useState<RequesterOption | null>(null);
+  /**
+   * The row the picker handed over, kept so the card can render **before any
+   * save**.
+   *
+   * Keyed by the host's own id and used only while it matches the tab's
+   * current choice. That is what stops it leaking across tabs: this component
+   * is not remounted when the form switches tab — same element type, same
+   * position — so a cache that trusted itself would show tab 1 the host tab 0
+   * picked.
+   */
+  const [chosen, setChosen] = useState<{ host: HostCandidateRow; person: RequesterOption | null } | null>(null);
 
-  /* The picker, in two steps: a person, then one of that person's requests. */
-  /**
-   * The request id this picker *session* is bound to, captured when it opened.
-   *
-   * Deliberately not the `requestId` prop, for two reasons that are both about
-   * the auto-save opening path:
-   *
-   * - **The prop may still be null at the instant the picker opens.** The save
-   *   hands the id back through the parent's own state, so the new value
-   *   arrives on the next render, while `openPicker`'s continuation runs
-   *   before it. Capturing the id the save returned means the picker cannot
-   *   open against nothing — and because the parent writes the very same id
-   *   onto the tab, the two cannot disagree either.
-   * - **The attach POSTs to `/room-share/{id}`, and it must be the tab that
-   *   opened the picker.** A captured id can never be re-pointed mid-session
-   *   by a later group save.
-   *
-   * Cleared by `closeHostPicker`, and **the one path that leaves it set is
-   * inert**: `RequesterPickerModal` calls its `onClose` as part of *selecting*
-   * a person, so clearing it there would blank the id between step 1 and step
-   * 2 and the host list would never load. Dismissing step 1 without picking
-   * therefore leaves a value behind — which nothing reads, since the list
-   * effect needs `picked` and the attach needs a row, and the next press
-   * overwrites it before either exists.
-   */
-  const [pickerRequestId, setPickerRequestId] = useState<number | null>(null);
-  /** The auto-save is in flight. Spins the button, which `Button` also disables. */
-  const [opening, setOpening] = useState(false);
-  /**
-   * A press whose save was refused.
-   *
-   * `saveDraft` has already shown the server's own reason as a toast; this
-   * says the thing the toast cannot — that the picker is the action that did
-   * not happen because of it. Cleared on the next press.
-   */
-  const [openFailed, setOpenFailed] = useState(false);
+  /* ── the picker ── */
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickMode, setPickMode] = useState<PickMode>("person");
   const [personOpen, setPersonOpen] = useState(false);
-  const [picked, setPicked] = useState<RequesterOption | null>(null);
+  const [person, setPerson] = useState<RequesterOption | null>(null);
   const [hosts, setHosts] = useState<HostCandidateRow[] | null>(null);
   const [hostsLoading, setHostsLoading] = useState(false);
   const [hostsError, setHostsError] = useState<string | null>(null);
-  const [attaching, setAttaching] = useState<number | null>(null);
   /**
-   * The server's refusal, verbatim.
+   * The server's refusal or its "no such number", verbatim.
    *
    * `room-share-policy.ts` answers every refusal with a Thai sentence naming
    * the specific reason — the colleague booked no room, that request is
    * already somebody's guest, it is cancelled — and the service adds one more
    * for a host that has never been filed. Those sentences arrive here as the
-   * `error` body of the attach POST and are rendered as they came. **Nothing
-   * is re-worded or re-derived on this side**: a second vocabulary for the
-   * same closed set of reasons is how the picker starts telling a requester
-   * something the server did not say.
-   *
-   * Shown in place and kept until the next attempt, rather than as a toast: it
-   * is the answer to the row the requester just clicked, and the list is still
-   * on screen for them to pick a different one.
+   * `notice` field of the hosts response and are rendered as they came.
+   * **Nothing is re-worded or re-derived on this side**: a second vocabulary
+   * for the same closed set of reasons is how the picker starts telling a
+   * requester something the server did not say.
    */
-  const [refusal, setRefusal] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   /** `travel` is the default; `requested` is the fallback filter (spec §6). */
   const [mode, setMode] = useState<"travel" | "requested">("travel");
   const [from, setFrom] = useState<string>("");
   const [to, setTo] = useState<string>("");
+  /** Point 3 — the fetched list is filtered by running number as the requester types. */
+  const [listQuery, setListQuery] = useState("");
+  /** Point 2 — the running number typed on the second tab. */
+  const [numberQuery, setNumberQuery] = useState("");
   /**
-   * Bumped to re-run the list fetch with the filters unchanged — what "ลองใหม่"
+   * Bumped to re-run the fetch with the inputs unchanged — what "ลองใหม่"
    * needs and what re-setting a state value to itself cannot give: React bails
    * out of an identical `useState` write, so no render happens, no dependency
    * changes, and the retry button does nothing at all.
    */
   const [reload, setReload] = useState(0);
 
-  /* ── the tab's own binding ── */
+  /* ── the tab's own STORED binding ── */
 
   useEffect(() => {
-    if (!isGuest || requestId == null) {
-      setShare({ kind: "none" });
-      setHostPerson(null);
+    if (requestId == null || hostRequestId == null) {
+      setShare({ kind: "idle" });
+      setSavedPerson(null);
       return;
     }
     let cancelled = false;
@@ -309,12 +292,14 @@ export function RoomShareControl({
       .then((r) => r.json())
       .then((json) => {
         if (cancelled) return;
-        // `data: null` while the tab says guest means the binding went away
-        // under us — a host deleted, or another tab of this form detached it.
-        // Reported as an error rather than silently rendering "not a guest",
-        // because the per-diem figure beside it is still being computed as a
-        // guest's until the page is reloaded.
-        if (!json?.ok || !json.data) setShare({ kind: "error" });
+        if (!json?.ok) setShare({ kind: "error" });
+        // `data: null` is no longer an error. The tab holds an unsaved choice
+        // far more often than it holds a binding that went away under it, and
+        // the two look identical from here — so the card says "not saved yet",
+        // which is true of both and is the one a requester can act on. (If a
+        // cascade really did detach it, the next save simply re-creates the
+        // binding, or refuses with the policy's own reason.)
+        else if (!json.data) setShare({ kind: "absent" });
         else setShare({ kind: "ready", view: json.data as RoomShareView });
       })
       .catch(() => {
@@ -323,9 +308,24 @@ export function RoomShareControl({
     return () => {
       cancelled = true;
     };
-  }, [isGuest, requestId]);
+  }, [requestId, hostRequestId]);
 
-  /* ── the host's name, once the binding is known ── */
+  /**
+   * The stored binding, but only while it is the host the tab currently
+   * chooses.
+   *
+   * After a change of mind the server still answers the *previous* host until
+   * the next save; rendering that would show the requester a card naming
+   * somebody they have just replaced.
+   */
+  const savedView =
+    share.kind === "ready" && hostRequestId != null && share.view.host.requestId === hostRequestId
+      ? share.view
+      : null;
+  const localChoice = chosen && chosen.host.requestId === hostRequestId ? chosen : null;
+  const hostRow = savedView?.host ?? localChoice?.host ?? null;
+
+  /* ── the host's name, once the stored binding is known ── */
 
   /**
    * **`colleagues` must not be a dependency of the effect below**, and this ref
@@ -334,7 +334,7 @@ export function RoomShareControl({
    * The form builds it as `requesterOptsData?.colleagues ?? []`, so while that
    * SWR read is in flight it is **a new empty array on every render**. An
    * effect depending on its identity would therefore fire, `resolvePerson`
-   * would miss the empty list and fetch, `setHostPerson` would re-render, and
+   * would miss the empty list and fetch, `setSavedPerson` would re-render, and
    * the whole thing would go round again — a fetch loop for as long as the
    * roster takes to arrive. The list is only a cache-hit shortcut here, so
    * reading whatever the last render had is exactly as correct and cannot
@@ -343,41 +343,66 @@ export function RoomShareControl({
   const colleaguesRef = useRef(colleagues);
   colleaguesRef.current = colleagues;
 
-  const hostStaffId = share.kind === "ready" ? share.view.hostStaffId : null;
+  const savedStaffId = savedView?.hostStaffId ?? null;
   useEffect(() => {
-    if (hostStaffId == null) {
-      setHostPerson(null);
+    if (savedStaffId == null) {
+      setSavedPerson(null);
       return;
     }
     let cancelled = false;
-    resolvePerson(hostStaffId, colleaguesRef.current).then((p) => {
-      if (!cancelled) setHostPerson(p);
+    resolvePerson(savedStaffId, colleaguesRef.current).then((p) => {
+      if (!cancelled) setSavedPerson(p);
     });
     return () => {
       cancelled = true;
     };
-  }, [hostStaffId]);
+  }, [savedStaffId]);
+
+  const hostPerson = savedPerson ?? localChoice?.person ?? null;
 
   /* ── the picker's list ── */
 
   useEffect(() => {
-    if (!picked || pickerRequestId == null) return;
+    if (!pickerOpen) return;
+    const byNumber = pickMode === "number";
+    const trimmedNo = numberQuery.trim();
+    // Three characters before the first lookup: one or two match nothing and
+    // would be a round trip per keystroke while somebody types "TRL".
+    if (byNumber && trimmedNo.length < 3) {
+      setHosts(null);
+      setNotice(null);
+      setHostsError(null);
+      setHostsLoading(false);
+      return;
+    }
+    if (!byNumber && !person) return;
+
     let cancelled = false;
     setHostsLoading(true);
     setHostsError(null);
+    setNotice(null);
     const params = new URLSearchParams();
-    params.set("staffId", String(picked.staffId));
-    if (mode === "travel") {
-      if (from) params.set("travelFrom", from);
-      if (to) params.set("travelTo", to);
+    if (byNumber) {
+      params.set("requestNo", trimmedNo);
     } else {
-      if (from) params.set("requestedFrom", from);
-      if (to) params.set("requestedTo", to);
+      params.set("staffId", String(person!.staffId));
+      if (mode === "travel") {
+        if (from) params.set("travelFrom", from);
+        if (to) params.set("travelTo", to);
+      } else {
+        if (from) params.set("requestedFrom", from);
+        if (to) params.set("requestedTo", to);
+      }
     }
-    // Debounced: a date input fires per keystroke in some browsers, and this
-    // endpoint scans a colleague's whole AP-17 history behind an ACL check.
+    // Only ever narrows — it drops this tab's own request out of the list, and
+    // answers the policy's own self-attach sentence on the number tab. Absent
+    // while the tab has not been saved, which is now the ordinary state.
+    if (requestId != null) params.set("excludeRequestId", String(requestId));
+
+    // Debounced: a date input fires per keystroke in some browsers, and both
+    // modes scan behind a database round trip.
     const timer = setTimeout(() => {
-      fetch(`/api/request/travel-booking/room-share/${pickerRequestId}/hosts?${params.toString()}`)
+      fetch(`/api/request/travel-booking/room-share/hosts?${params.toString()}`)
         .then((r) => r.json())
         .then((json) => {
           if (cancelled) return;
@@ -386,7 +411,9 @@ export function RoomShareControl({
             setHostsError(json?.error ?? "โหลดรายการคำขอไม่สำเร็จ");
             return;
           }
-          setHosts((json.data ?? []) as HostCandidateRow[]);
+          const data = json.data as { hosts?: HostCandidateRow[]; notice?: string | null };
+          setHosts(data?.hosts ?? []);
+          setNotice(data?.notice ?? null);
         })
         .catch(() => {
           if (cancelled) return;
@@ -396,155 +423,123 @@ export function RoomShareControl({
         .finally(() => {
           if (!cancelled) setHostsLoading(false);
         });
-    }, 250);
+    }, 300);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [picked, pickerRequestId, mode, from, to, reload]);
+  }, [pickerOpen, pickMode, person, mode, from, to, numberQuery, requestId, reload]);
+
+  /** Point 3 — filtered in the browser over what was already fetched. */
+  const shownHosts = useMemo(() => {
+    const rows = hosts ?? [];
+    const q = listQuery.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((h) => (h.requestNo ?? "").toLowerCase().indexOf(q) !== -1);
+  }, [hosts, listQuery]);
 
   /* ── opening and closing ── */
 
   /**
-   * Re-entrancy guard for the press.
+   * Press → the picker, with nothing in between.
    *
-   * A ref rather than the `opening` state because the state a callback closes
-   * over is the one from its own render: two presses landing in the same tick
-   * would both read `false` and both save, and with no anchor id yet that is
-   * two POSTs and two separate draft groups. `Button` disables itself while
-   * `loading`, which handles the ordinary double-click; this handles the rest.
+   * No save, no id, no gate to satisfy: browsing is `requireAuth` and the
+   * binding is written by the tab's own save later. The whole of the previous
+   * arrangement — `onRequireSave`, the `opening` spinner, the `openFailed`
+   * banner and the "ระบบจะบันทึกร่างให้ก่อน" note — went with it.
    */
-  const openingRef = useRef(false);
-
-  /**
-   * Press → save (only if needed) → picker.
-   *
-   * The requester asked not to have to press บันทึกร่าง first (2026-09-22).
-   * They are not asking to browse a colleague's requests from an unsaved form,
-   * and this does not let them: the save is what produces the owned, editable
-   * request id the hosts endpoint authorizes `"mutate"` against, so the gate
-   * is satisfied rather than skipped.
-   *
-   * **A refused save does not open the picker.** `saveDraft` has already
-   * toasted whatever the server said — a closed form, a validation message, a
-   * network error — and `openFailed` adds the one thing the toast cannot say.
-   */
-  const openPicker = useCallback(async () => {
-    if (openingRef.current) return;
-    setOpenFailed(false);
-    let rid = requestId;
-    if (rid == null) {
-      openingRef.current = true;
-      setOpening(true);
-      try {
-        rid = await onRequireSave();
-      } finally {
-        openingRef.current = false;
-        setOpening(false);
-      }
-      if (rid == null) {
-        setOpenFailed(true);
-        return;
-      }
-    }
-    setPickerRequestId(rid);
-    setRefusal(null);
-    setHosts(null);
-    setHostsError(null);
-    setPicked(null);
-    // Opens on the guest's own dates — "the overwhelmingly common case is two
-    // people on the same trip" (spec §6). A tab with no dates yet opens
-    // unfiltered rather than on today, which would hide the colleague's trip
-    // for no reason the requester could see.
-    setMode("travel");
-    setFrom(travelFrom ?? "");
-    setTo(travelTo ?? "");
+  const openPicker = useCallback(() => {
+    setPickerOpen(true);
+    setPickMode("person");
+    setPerson(null);
     setPersonOpen(true);
-  }, [requestId, onRequireSave, travelFrom, travelTo]);
-
-  const closeHostPicker = useCallback(() => {
-    setPicked(null);
     setHosts(null);
     setHostsError(null);
-    setRefusal(null);
-    // The session's id goes with the session. This component is not remounted
-    // when the form switches tabs, so a surviving id could be read on behalf
-    // of whichever tab is active next.
-    setPickerRequestId(null);
+    setNotice(null);
+    setListQuery("");
+    setNumberQuery("");
+    // Today … today + 30. It no longer opens on the guest's own dates: the
+    // picker now WRITES the host's dates into the tab (final review I4), so
+    // seeding the search from a value it is about to overwrite is circular —
+    // and the tab may legitimately have no dates at all by this point.
+    setMode("travel");
+    const range = defaultHostFilterRange(new Date());
+    setFrom(range.from);
+    setTo(range.to);
+  }, []);
+
+  const closePicker = useCallback(() => {
+    setPickerOpen(false);
+    setPersonOpen(false);
+    setPerson(null);
+    setHosts(null);
+    setHostsError(null);
+    setNotice(null);
+    setListQuery("");
+    setNumberQuery("");
   }, []);
 
   /** Switching filter mode re-seeds the dates, since the two mean different things. */
-  const switchMode = useCallback(
-    (next: "travel" | "requested") => {
-      if (next === mode) return;
-      setMode(next);
-      setFrom(next === "travel" ? travelFrom ?? "" : "");
-      setTo(next === "travel" ? travelTo ?? "" : "");
+  const switchMode = useCallback((next: "travel" | "requested") => {
+    setMode((current) => {
+      if (next === current) return current;
+      if (next === "travel") {
+        const range = defaultHostFilterRange(new Date());
+        setFrom(range.from);
+        setTo(range.to);
+      } else {
+        // "filed on" is a window in the PAST — a default reaching thirty days
+        // forward would be a range nothing can fall in. Cleared rather than
+        // guessed: inventing a backwards window here would be policy nobody
+        // asked for.
+        setFrom("");
+        setTo("");
+      }
+      return next;
+    });
+  }, []);
+
+  const switchPickMode = useCallback((next: PickMode) => {
+    setPickMode((current) => {
+      if (current === next) return current;
+      setHosts(null);
+      setHostsError(null);
+      setNotice(null);
+      setListQuery("");
+      // Step 1's modal opens itself when the person tab is selected with
+      // nobody chosen — otherwise that tab is an empty panel with a button.
+      if (next === "person" && !person) setPersonOpen(true);
+      return next;
+    });
+  }, [person]);
+
+  /* ── choosing and clearing ── */
+
+  const choose = useCallback(
+    (host: HostCandidateRow) => {
+      setChosen({ host, person: pickMode === "number" ? null : person });
+      onChoose(host);
+      closePicker();
     },
-    [mode, travelFrom, travelTo],
+    [onChoose, closePicker, person, pickMode],
   );
 
-  /* ── attach / detach ── */
+  const clear = useCallback(() => {
+    setChosen(null);
+    setShare({ kind: "idle" });
+    setSavedPerson(null);
+    onClear();
+  }, [onClear]);
 
-  const attach = useCallback(
-    async (host: HostCandidateRow) => {
-      // The session's own id, not the prop — see `pickerRequestId`. The attach
-      // must land on the tab whose picker this is.
-      if (pickerRequestId == null) return;
-      setAttaching(host.requestId);
-      setRefusal(null);
-      try {
-        const res = await fetch(`/api/request/travel-booking/room-share/${pickerRequestId}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ hostRequestId: host.requestId }),
-        });
-        const json = await res.json();
-        if (!json?.ok) {
-          setRefusal(json?.error ?? "แนบห้องพักร่วมไม่สำเร็จ");
-          return;
-        }
-        setShare({ kind: "ready", view: json.data as RoomShareView });
-        setHostPerson(picked);
-        closeHostPicker();
-        setPersonOpen(false);
-        onAttached();
-        toast.success("แนบห้องพักร่วมแล้ว");
-      } catch {
-        setRefusal("แนบห้องพักร่วมไม่สำเร็จ");
-      } finally {
-        setAttaching(null);
-      }
-    },
-    [pickerRequestId, picked, closeHostPicker, onAttached],
-  );
-
-  const detach = useCallback(async () => {
-    if (requestId == null) return;
-    setDetaching(true);
-    try {
-      const res = await fetch(`/api/request/travel-booking/room-share/${requestId}`, {
-        method: "DELETE",
-      });
-      const json = await res.json();
-      if (!json?.ok) {
-        toast.error(json?.error ?? "ยกเลิกการพักห้องร่วมไม่สำเร็จ");
-        return;
-      }
-      setShare({ kind: "none" });
-      setHostPerson(null);
-      onDetached();
-      toast.success("ยกเลิกการพักห้องร่วมแล้ว");
-    } catch {
-      toast.error("ยกเลิกการพักห้องร่วมไม่สำเร็จ");
-    } finally {
-      setDetaching(false);
-    }
-  }, [requestId, onDetached]);
+  /* Step 1 is in front whenever the person tab is selected and nobody has been
+     chosen yet. The host dialog and the person modal are never open together —
+     the same mutual exclusion package E shipped with, which is what makes
+     "← เปลี่ยนคน" a step back rather than a second layer. */
+  const personModalUp = pickerOpen && pickMode === "person" && personOpen && person === null;
 
   /* ─────────────────────────── attached ─────────────────────────── */
 
-  if (isGuest) {
+  if (hostRequestId != null) {
     return (
       <div data-field="roomShare" className="flex flex-col gap-2.5">
         <label className={labelClass} style={labelStyle}>
@@ -552,23 +547,23 @@ export function RoomShareControl({
           พักห้องเดียวกับ
         </label>
 
-        {/* `none` reads as loading here on purpose: the fetch starts in an
-            effect, so the first paint after a resumed draft arrives has the
-            flag set and the binding not yet asked for. Rendering nothing for
-            that frame leaves a bare label with no explanation under it. */}
-        {(share.kind === "loading" || share.kind === "none") && (
+        {/* Only while there is genuinely nothing to draw. A tab that has just
+            picked has `chosen` and renders the card straight away, with no
+            round trip at all — the fetch below is for a RESUMED guest, whose
+            host row this component has never seen. */}
+        {hostRow === null && share.kind !== "error" && (
           <p className="text-[12.5px] m-0 flex items-center gap-1.5" style={{ color: "var(--text-muted)" }}>
             <Loader2 size={13} className="animate-spin" /> กำลังโหลดข้อมูลห้องพักร่วม...
           </p>
         )}
 
-        {share.kind === "error" && (
+        {hostRow === null && share.kind === "error" && (
           <p className="text-[12.5px] m-0" style={{ color: "var(--text-warning)" }}>
             โหลดข้อมูลห้องพักร่วมไม่สำเร็จ — กรุณาโหลดหน้านี้ใหม่
           </p>
         )}
 
-        {share.kind === "ready" && (
+        {hostRow !== null && (
           <div
             className="rounded-xl px-4 py-3 flex flex-col gap-2.5"
             style={{ background: "var(--bg-card-alt)", border: "1px solid var(--nav-active-text)" }}
@@ -584,19 +579,19 @@ export function RoomShareControl({
               </div>
               <div className="min-w-0 flex-1 flex flex-col gap-0.5">
                 <p className="text-[13.5px] font-bold m-0 truncate" style={{ color: "var(--text-heading)" }}>
-                  {personLabel(hostPerson, share.view.hostStaffId)}
+                  {personLabel(hostPerson, savedView?.hostStaffId ?? null)}
                 </p>
                 <p className="text-[12px] m-0 flex items-center gap-1.5 flex-wrap" style={{ color: "var(--text-secondary)" }}>
                   <Hotel size={12} className="shrink-0" />
-                  <span className="font-semibold">{share.view.host.requestNo ?? "—"}</span>
+                  <span className="font-semibold">{hostRow.requestNo ?? "—"}</span>
                   <span style={{ color: "var(--text-faint)" }}>·</span>
                   <CalendarRange size={12} className="shrink-0" />
-                  {fmtTripRange(share.view.host.departDate, share.view.host.returnDate)}
+                  {fmtTripRange(hostRow.departDate, hostRow.returnDate)}
                 </p>
-                {share.view.host.workLocations.length > 0 && (
+                {hostRow.workLocations.length > 0 && (
                   <p className="text-[11.5px] m-0 flex items-start gap-1.5" style={{ color: "var(--text-muted)" }}>
                     <MapPin size={11} className="shrink-0 mt-[2px]" />
-                    <span className="min-w-0">{share.view.host.workLocations.join(" · ")}</span>
+                    <span className="min-w-0">{hostRow.workLocations.join(" · ")}</span>
                   </p>
                 )}
               </div>
@@ -609,19 +604,29 @@ export function RoomShareControl({
               คุณจะพักห้องเดียวกับคำขอนี้ จึงไม่ต้องเลือกที่พักค้างคืนของตัวเอง
             </p>
 
+            {/* Said rather than hidden: the choice is an unsaved edit like
+                every other field on this form, and a requester who closes the
+                tab now loses it. The form's own บันทึกร่าง / ส่งคำขอ is what
+                writes it — there is no longer an attach that fires on click. */}
+            {savedView === null && (
+              <p className="text-[11.5px] m-0 flex items-start gap-1.5" style={{ color: "var(--text-muted)" }}>
+                <AlertTriangle size={11} className="shrink-0 mt-[2px]" />
+                <span>ยังไม่ได้บันทึก — ระบบจะบันทึกการพักห้องร่วมเมื่อคุณกดบันทึกร่างหรือส่งคำขอ</span>
+              </p>
+            )}
+
             <AgreementLine />
 
-            {/* Detaching is the existing Draft/Returned editability rule — the
-                route runs `authorizeAccRequest(…, "mutate")` and the service
-                re-asserts it inside the transaction. Nothing is re-decided
-                here; a request past Returned simply never renders this form. */}
+            {/* Clearing is an edit too — the row goes on the next save, and the
+                same Draft/Returned rule the save already enforces is what
+                decides whether that is allowed. A request past Returned never
+                renders this form at all. */}
             <div>
               <Button
                 type="button"
                 variant="secondary"
                 size="sm"
-                onClick={detach}
-                loading={detaching}
+                onClick={clear}
                 icon={<Link2Off size={13} />}
               >
                 ยกเลิกการพักห้องร่วม
@@ -645,37 +650,20 @@ export function RoomShareControl({
         <span className="h-px flex-1" style={{ background: "var(--border-card)" }} />
       </div>
 
-      {/* No longer disabled on an unsaved tab: the press saves the draft
-          itself and then opens (`openPicker`). The note beside it says that
-          will happen rather than telling the requester to go and do it — and
-          it promises exactly what the button does, no more: a save, then the
-          list. */}
+      {/* Never disabled, and nothing happens first: the press opens the picker.
+          The draft-save that used to sit in front of it is gone with the
+          endpoint that needed it (see this file's header). */}
       <div className="flex items-center gap-2 flex-wrap">
         <Button
           type="button"
           variant="secondary"
           size="md"
           onClick={openPicker}
-          loading={opening}
           icon={<Users size={14} />}
         >
-          {opening ? "กำลังบันทึกร่าง..." : "พักห้องเดียวกับเพื่อนร่วมงาน"}
+          พักห้องเดียวกับเพื่อนร่วมงาน
         </Button>
-        {requestId == null && !opening && (
-          <span className="text-[11.5px]" style={{ color: "var(--text-muted)" }}>
-            ระบบจะบันทึกร่างให้ก่อนเปิดรายการ
-          </span>
-        )}
       </div>
-      {openFailed && (
-        <div
-          className="flex items-start gap-2 text-[12px] font-medium rounded-lg px-3 py-2"
-          style={{ background: "var(--bg-card-alt)", color: "var(--text-warning)" }}
-        >
-          <AlertTriangle size={14} className="shrink-0 mt-[1px]" />
-          <span>บันทึกร่างไม่สำเร็จ จึงยังเปิดรายการห้องพักร่วมไม่ได้ — กรุณาลองใหม่อีกครั้ง</span>
-        </div>
-      )}
       <p className="text-[11.5px] m-0" style={{ color: "var(--text-muted)" }}>
         เลือกแทนการจองห้องพักเอง — ใช้ห้องของเพื่อนร่วมงานที่จองไว้แล้ว และยังได้รับเบี้ยเลี้ยง
       </p>
@@ -684,7 +672,10 @@ export function RoomShareControl({
           same debounce/staleness guard the on-behalf picker uses; only the
           heading differs. */}
       <RequesterPickerModal
-        open={personOpen && picked === null}
+        open={personModalUp}
+        // Dismissing without choosing drops back to the host dialog's person
+        // tab rather than closing everything, so the number tab is still one
+        // click away. It used to close the whole picker.
         onClose={() => setPersonOpen(false)}
         colleagues={colleagues}
         // No "ตัวฉันเอง" row: this asks whose room, and your own is not one.
@@ -692,105 +683,196 @@ export function RoomShareControl({
         value={null}
         onSelect={(staffId) => {
           if (staffId == null) return;
-          resolvePerson(staffId, colleagues).then(setPicked);
+          resolvePerson(staffId, colleagues).then(setPerson);
         }}
         searchEndpoint="/api/request/travel-booking/requesters"
         title="พักห้องเดียวกับใคร"
         subtitle="เลือกเพื่อนร่วมงานที่จองห้องพักไว้แล้ว"
       />
 
-      {/* Step 2 — which of that person's requests. */}
+      {/* Step 2 — which request. Two tabs: that person's list, or a running
+          number typed straight in (the user's point 2). */}
       <Dialog
-        open={picked !== null}
+        open={pickerOpen && !personModalUp}
         onOpenChange={(next) => {
           // Escape or a click outside closes the WHOLE picker, both steps.
           // Reopening the person list instead would make Escape read as "go
           // back", which no other dialog in this app does — "← เปลี่ยนคน" is
           // the control for that.
-          if (!next) {
-            closeHostPicker();
-            setPersonOpen(false);
+          if (!next) closePicker();
+        }}
+        // While the range calendar is open the first Escape belongs to IT, not
+        // to this dialog — `DateRangeField` marks itself in the DOM for
+        // exactly this, and closes itself on the same keypress, so a second
+        // Escape reaches the dialog as usual. Radix registers its handler when
+        // the dialog mounts, before any panel exists, so refusing it here is
+        // the only order-independent way.
+        onEscapeKeyDown={(e) => {
+          if (typeof document !== "undefined" && document.querySelector("[data-daterange-panel]")) {
+            e.preventDefault();
           }
         }}
-        title={`เลือกคำขอของ ${personLabel(picked, picked?.staffId ?? null)}`}
+        title={
+          pickMode === "number"
+            ? "ระบุเลขที่คำขอ"
+            : person
+              ? `เลือกคำขอของ ${personLabel(person, person.staffId)}`
+              : "เลือกคำขอที่จะพักห้องร่วม"
+        }
         contentClassName="max-w-xl"
         scrollable={false}
       >
         <div className="px-5 py-4 flex flex-col gap-3 flex-1 min-h-0 overflow-y-auto">
           <AgreementLine />
 
-          {/* Travel date first, request date as the fallback — spec §6. */}
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center gap-1.5">
-              {(["travel", "requested"] as const).map((m) => {
-                const active = mode === m;
-                return (
-                  <button
-                    key={m}
-                    type="button"
-                    onClick={() => switchMode(m)}
-                    className="px-2.5 py-1 rounded-lg text-[12px] font-semibold cursor-pointer transition-all"
-                    style={{
-                      borderWidth: 1,
-                      borderStyle: "solid",
-                      borderColor: active ? "var(--nav-active-text)" : "var(--border-card)",
-                      background: active ? "var(--nav-active-bg)" : "var(--bg-card-alt)",
-                      color: active ? "var(--nav-active-text)" : "var(--text-secondary)",
-                    }}
-                  >
-                    {m === "travel" ? "ตามวันเดินทาง" : "ตามวันที่ยื่นคำขอ"}
-                  </button>
-                );
-              })}
-              {(from !== "" || to !== "") && (
+          {/* The two ways in. A requester who knows the number does not have
+              to find the person first (point 2). */}
+          <div className="flex items-center gap-1.5">
+            {(["person", "number"] as const).map((m) => {
+              const active = pickMode === m;
+              return (
                 <button
+                  key={m}
                   type="button"
-                  onClick={() => {
-                    setFrom("");
-                    setTo("");
+                  onClick={() => switchPickMode(m)}
+                  className="px-2.5 py-1.5 rounded-lg text-[12px] font-semibold cursor-pointer transition-all inline-flex items-center gap-1.5"
+                  style={{
+                    borderWidth: 1,
+                    borderStyle: "solid",
+                    borderColor: active ? "var(--nav-active-text)" : "var(--border-card)",
+                    background: active ? "var(--nav-active-bg)" : "var(--bg-card-alt)",
+                    color: active ? "var(--nav-active-text)" : "var(--text-secondary)",
                   }}
-                  className="ml-auto text-[11.5px] font-semibold cursor-pointer bg-transparent border-none"
-                  style={{ color: "var(--nav-active-text)" }}
                 >
-                  ล้างตัวกรองวันที่
+                  {m === "person" ? <Users size={12} /> : <Hash size={12} />}
+                  {m === "person" ? "เลือกเพื่อนร่วมงาน" : "ระบุเลขที่คำขอ"}
                 </button>
-              )}
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className={labelClass} style={labelStyle}>
-                  ตั้งแต่
-                </label>
-                <input
-                  type="date"
-                  value={from}
-                  onChange={(e) => setFrom(e.target.value)}
-                  className={inputClass}
-                  style={inputStyle}
-                />
-              </div>
-              <div>
-                <label className={labelClass} style={labelStyle}>
-                  ถึง
-                </label>
-                <input
-                  type="date"
-                  value={to}
-                  onChange={(e) => setTo(e.target.value)}
-                  className={inputClass}
-                  style={inputStyle}
-                />
-              </div>
-            </div>
+              );
+            })}
           </div>
 
-          {refusal && (
+          {pickMode === "number" ? (
+            <div>
+              <label className={labelClass} style={labelStyle}>
+                เลขที่คำขอของเพื่อนร่วมงาน
+              </label>
+              <div
+                className="flex items-center gap-2 rounded-lg px-3"
+                style={{ ...inputStyle, paddingTop: 2, paddingBottom: 2 }}
+              >
+                <Search size={14} className="shrink-0" style={{ color: "var(--text-muted)" }} />
+                <input
+                  type="text"
+                  value={numberQuery}
+                  onChange={(e) => setNumberQuery(e.target.value)}
+                  placeholder="เช่น TRL26-00100"
+                  className="flex-1 text-[14px] outline-none bg-transparent py-2"
+                  style={{ color: "var(--text-primary)" }}
+                />
+              </div>
+              <p className="text-[11px] mt-1.5 m-0" style={{ color: "var(--text-faint)" }}>
+                พิมพ์อย่างน้อย 3 ตัวอักษร — ระบบจะค้นหาคำขอที่พักห้องร่วมได้ให้อัตโนมัติ
+              </p>
+            </div>
+          ) : (
+            <>
+              {person === null ? (
+                <div className="py-6 flex flex-col items-center gap-2.5">
+                  <p className="text-[12.5px] m-0 text-center" style={{ color: "var(--text-muted)" }}>
+                    เลือกเพื่อนร่วมงานก่อน เพื่อดูรายการคำขอที่พักห้องร่วมได้
+                  </p>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    icon={<Users size={13} />}
+                    onClick={() => setPersonOpen(true)}
+                  >
+                    เลือกเพื่อนร่วมงาน
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {/* Travel date first, request date as the fallback — spec §6. */}
+                  <div className="flex items-center gap-1.5">
+                    {(["travel", "requested"] as const).map((m) => {
+                      const active = mode === m;
+                      return (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => switchMode(m)}
+                          className="px-2.5 py-1 rounded-lg text-[12px] font-semibold cursor-pointer transition-all"
+                          style={{
+                            borderWidth: 1,
+                            borderStyle: "solid",
+                            borderColor: active ? "var(--nav-active-text)" : "var(--border-card)",
+                            background: active ? "var(--nav-active-bg)" : "var(--bg-card-alt)",
+                            color: active ? "var(--nav-active-text)" : "var(--text-secondary)",
+                          }}
+                        >
+                          {m === "travel" ? "ตามวันเดินทาง" : "ตามวันที่ยื่นคำขอ"}
+                        </button>
+                      );
+                    })}
+                    {(from !== "" || to !== "") && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFrom("");
+                          setTo("");
+                        }}
+                        className="ml-auto text-[11.5px] font-semibold cursor-pointer bg-transparent border-none"
+                        style={{ color: "var(--nav-active-text)" }}
+                      >
+                        ล้างตัวกรองวันที่
+                      </button>
+                    )}
+                  </div>
+
+                  {/* ONE range control, the same one วันเดินทาง uses (point 3)
+                      — two `dd/mm/yyyy` boxes were what it replaced.
+                      `inline` because Radix makes a body-level portal
+                      unclickable inside a modal; `required={false}` because
+                      this is a filter and refuses nothing. */}
+                  <DateRangeField
+                    label={mode === "travel" ? "ช่วงวันเดินทาง" : "ช่วงวันที่ยื่นคำขอ"}
+                    departDate={from || null}
+                    returnDate={to || null}
+                    onChange={(next) => {
+                      setFrom(next.departDate ?? "");
+                      setTo(next.returnDate ?? "");
+                    }}
+                    required={false}
+                    inline
+                  />
+
+                  <div
+                    className="flex items-center gap-2 rounded-lg px-3 mt-0.5"
+                    style={{ ...inputStyle, paddingTop: 2, paddingBottom: 2 }}
+                  >
+                    <Search size={14} className="shrink-0" style={{ color: "var(--text-muted)" }} />
+                    <input
+                      type="text"
+                      value={listQuery}
+                      onChange={(e) => setListQuery(e.target.value)}
+                      placeholder="ค้นหาเลขที่คำขอในรายการ..."
+                      className="flex-1 text-[13px] outline-none bg-transparent py-2"
+                      style={{ color: "var(--text-primary)" }}
+                    />
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {notice && (
             <div
               className="flex items-start gap-2 text-[12px] font-medium rounded-lg px-3 py-2"
               style={{ background: "var(--bg-card-alt)", color: "var(--color-danger)" }}
             >
               <AlertTriangle size={14} className="shrink-0 mt-[1px]" />
-              <span>{refusal}</span>
+              <span>{notice}</span>
             </div>
           )}
 
@@ -816,13 +898,12 @@ export function RoomShareControl({
               </p>
             )}
             {!hostsLoading &&
-              (hosts ?? []).map((h) => (
+              shownHosts.map((h) => (
                 <button
                   key={h.requestId}
                   type="button"
-                  disabled={attaching !== null}
-                  onClick={() => attach(h)}
-                  className="flex items-start gap-3 px-3 py-2.5 rounded-xl cursor-pointer text-left w-full transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                  onClick={() => choose(h)}
+                  className="flex items-start gap-3 px-3 py-2.5 rounded-xl cursor-pointer text-left w-full transition-colors"
                   style={{
                     borderWidth: 1,
                     borderStyle: "solid",
@@ -834,11 +915,7 @@ export function RoomShareControl({
                     className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center"
                     style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}
                   >
-                    {attaching === h.requestId ? (
-                      <Loader2 size={15} className="animate-spin" />
-                    ) : (
-                      <Hotel size={15} />
-                    )}
+                    <Hotel size={15} />
                   </span>
                   <span className="min-w-0 flex-1 flex flex-col gap-0.5">
                     {/* The three fields the endpoint returns, and nothing
@@ -860,13 +937,13 @@ export function RoomShareControl({
                   </span>
                 </button>
               ))}
-            {!hostsLoading && hosts !== null && hosts.length === 0 && !hostsError && (
+            {!hostsLoading && hosts !== null && shownHosts.length === 0 && !hostsError && !notice && (
               // Every condition named, because "no results" here is almost
               // always one of them rather than "this person never travels":
               // the endpoint offers only requests that are alive, filed, carry
               // a room booking and are not already somebody else's guest.
               <p className="py-8 text-center text-[12px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                ไม่พบคำขอที่พักห้องร่วมได้ในช่วงวันที่นี้
+                {listQuery.trim() ? "ไม่พบเลขที่คำขอนี้ในรายการ" : "ไม่พบคำขอที่พักห้องร่วมได้ในช่วงวันที่นี้"}
                 <br />
                 <span className="text-[11.5px]" style={{ color: "var(--text-faint)" }}>
                   ระบบจะแสดงเฉพาะคำขอที่ส่งแล้ว ยังไม่ถูกยกเลิก มีการจองห้องพัก
@@ -881,34 +958,29 @@ export function RoomShareControl({
           className="px-5 py-3 flex items-center justify-between gap-2 shrink-0"
           style={{ borderTop: "1px solid var(--border-card)" }}
         >
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            /* BOTH, and clearing `picked` alone is not enough — the bug this
-               fixes. `RequesterPickerModal` calls `onClose()` immediately after
-               `onSelect()` (RequesterPickerModal.tsx:235), so `personOpen` is
-               already false by the time step 2 renders. Step 1's own
-               `open={personOpen && picked === null}` therefore stays false when
-               only `picked` is cleared, and "เปลี่ยนคน" closes the whole picker
-               instead of going back a step. Shipped with package E; found
-               2026-09-22 while wiring the auto-save. */
-            onClick={() => {
-              setPicked(null);
-              setPersonOpen(true);
-            }}
-          >
-            ← เปลี่ยนคน
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={() => {
-              closeHostPicker();
-              setPersonOpen(false);
-            }}
-          >
+          {pickMode === "person" && person !== null ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              /* BOTH, and clearing `person` alone is not enough — the bug this
+                 fixes. `RequesterPickerModal` calls `onClose()` immediately after
+                 `onSelect()` (RequesterPickerModal.tsx:235), so `personOpen` is
+                 already false by the time step 2 renders. Step 1's own
+                 `open={personModalUp}` therefore stays false when only `person`
+                 is cleared, and "เปลี่ยนคน" closes the whole picker instead of
+                 going back a step. Shipped with package E; found 2026-09-22. */
+              onClick={() => {
+                setPerson(null);
+                setPersonOpen(true);
+              }}
+            >
+              ← เปลี่ยนคน
+            </Button>
+          ) : (
+            <span />
+          )}
+          <Button type="button" variant="secondary" size="sm" onClick={closePicker}>
             ปิด
           </Button>
         </div>

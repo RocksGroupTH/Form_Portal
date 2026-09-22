@@ -265,8 +265,9 @@ async function queueOne(
  * nothing else to do with it, and failing the attach over a missing HR email
  * would punish the guest for the host's record.
  *
- * Called inside `attachRoomShare`'s own transaction, so the binding and the
- * notice about it commit together.
+ * Called inside the transaction that records the binding — the tab save's own,
+ * through `applyRoomShareSelection` — so the binding and the notice about it
+ * commit together.
  */
 export async function queueRoomShareAttachedMail(
   runner: SqlRunner,

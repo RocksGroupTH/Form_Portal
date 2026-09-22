@@ -30,6 +30,10 @@ import {
 } from "@/features/accounting/lib/claim-currency";
 import { IdCardUpload } from "./IdCardUpload";
 import { RoomShareControl } from "./RoomShareControl";
+import {
+  roomShareChoicePatch,
+  roomShareClearPatch,
+} from "@/features/travel-booking/lib/room-share-choice";
 import type { RequesterOption } from "@/components/RequesterPickerModal";
 import {
   OptionCardSelect,
@@ -167,22 +171,6 @@ interface TravelBookingTabProps {
   onChange: (patch: Partial<TabFormState>) => void;
   onSelectPendingIdCard: (file: File | null) => void;
   onRemoveIdCardFile: (fileId: number) => Promise<boolean>;
-  /**
-   * This tab's `AccRequest.Id`, saving the group first if it has none yet —
-   * null when that save was refused.
-   *
-   * Only พักห้องเดียวกับ needs it. Its hosts endpoint takes the caller's own
-   * request id in the path and authorizes `"mutate"` against it, so the picker
-   * cannot open on a tab that is not a row yet. Rather than make the requester
-   * press บันทึกร่าง first, the control calls this; the endpoint's gate is
-   * untouched.
-   *
-   * **Passed in rather than saving from here.** The save is a whole-group
-   * operation that also rewrites the page URL to the new group key, so it
-   * belongs to the form that owns the group, not to the tab rendering one
-   * member of it — the same reason `onRemoveIdCardFile` is a prop.
-   */
-  onRequireSave: () => Promise<number | null>;
 }
 
 export function TravelBookingTab({
@@ -205,7 +193,6 @@ export function TravelBookingTab({
   onChange,
   onSelectPendingIdCard,
   onRemoveIdCardFile,
-  onRequireSave,
 }: TravelBookingTabProps) {
   const errorKeys = useMemo(() => new Set(issues.map((i) => i.key)), [issues]);
   const hasErr = (key: string) => triedSubmit && errorKeys.has(key);
@@ -671,41 +658,36 @@ export function TravelBookingTab({
             to avoid, one section down.
 
             **And since final review I1 this patch is a MIRROR of the
-            database, not the only copy of the rule.** `attachRoomShare` now
+            database, not the only copy of the rule.** `applyRoomShareSelection`
             clears the same four columns on the guest's own `AccTravelBooking`
-            row inside the transaction that inserts the binding
+            row inside the transaction that records the binding
             (`room-share-guest-room.ts`), which is what makes the invariant
             survive a reload — the case this comment described and did not
-            cover. The patch stays because it keeps the screen honest in the
-            moment, without a refetch. */}
+            cover. Since 2026-09-22 that transaction is the tab's own SAVE
+            rather than a separate attach endpoint, which makes the patch below
+            the more load-bearing of the two: between the pick and the save
+            there is no stored row at all, so this is the only thing keeping the
+            screen honest in the interval. */}
         <RoomShareControl
           requestId={tab.id ?? null}
-          isGuest={tab.isRoomShareGuest}
-          travelFrom={tab.departDate}
-          travelTo={tab.returnDate}
+          hostRequestId={tab.roomShareHostRequestId}
           colleagues={colleagues}
-          // The picker needs a saved request id and this is how it gets one —
-          // pressing the button saves the draft first. **The hosts endpoint's
-          // `authorizeAccRequest(…, "mutate")` gate is NOT relaxed by this**;
-          // it is still an owned, editable request that the listing is
-          // authorized against. What changed is only who presses บันทึกร่าง.
-          onRequireSave={onRequireSave}
-          onAttached={() =>
-            onChange({
-              isRoomShareGuest: true,
-              accommodationId: null,
-              accommodationCustomText: null,
-              needsRoomBooking: false,
-            })
-          }
-          // Only the flag. The accommodation is deliberately NOT restored to
-          // whatever it was before the attach: the requester is back at an
-          // unanswered required field, which is the honest state, and
-          // resurrecting a choice they replaced would re-book a room they had
-          // decided against. Since I1 that is true of the stored row too —
-          // the attach really cleared it — so this is no longer a screen
-          // state a reload would contradict.
-          onDetached={() => onChange({ isRoomShareGuest: false })}
+          // **Both patches come from `room-share-choice.ts` and neither is
+          // typed out here.** `roomShareHostRequestId` and `isRoomShareGuest`
+          // are two fields holding one fact, and the module's own docblock is
+          // where the argument for keeping them in one place lives — along
+          // with the reason the host's DATES travel with the choice (final
+          // review I4: the picker matches on overlap, so a guest and its host
+          // could disagree from the start, and the first cascade would then
+          // replace the guest's whole span without warning).
+          onChoose={(host) => onChange(roomShareChoicePatch(host))}
+          // The accommodation is deliberately NOT restored to whatever it was
+          // before: the requester is back at an unanswered required field,
+          // which is the honest state, and resurrecting a choice they replaced
+          // would re-book a room they had decided against. Since I1 that is
+          // true of the stored row too — the attach really cleared it — so
+          // this is no longer a screen state a reload would contradict.
+          onClear={() => onChange(roomShareClearPatch())}
         />
       </SectionCard>
 

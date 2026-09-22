@@ -372,7 +372,10 @@ export interface TravelBookingRequest {
    * to it.
    *
    * Server-derived from the share table, never posted: the same rule
-   * `needsRoomBooking` beside it follows (`derive-flags.ts`).
+   * `needsRoomBooking` beside it follows (`derive-flags.ts`). What a client
+   * *may* post is the host id itself — `SaveTravelBookingInput
+   * .roomShareHostRequestId`, since 2026-09-22 — and this flag is then
+   * re-derived from the row that write produced, never taken from it.
    */
   isRoomShareGuest: boolean;
   /**
@@ -519,6 +522,30 @@ export interface SaveTravelBookingInput {
   accommodationId: number | null;
   accommodationCustomText: string | null;
   needsRoomBooking: boolean;
+
+  /**
+   * พักห้องเดียวกับ — the `AccRequest.Id` of the colleague's request this tab
+   * shares a room with, `null` to clear the binding, and **absent to leave the
+   * stored one exactly as it is** (AP-17 package E, reworked 2026-09-22).
+   *
+   * Picking a host is tab state now, like the ที่พักค้างคืน it replaces, and
+   * `saveTravelBookingDraft` persists it through `applyRoomShareSelection`
+   * inside the transaction that writes the rest of the tab. There is no
+   * attach endpoint any more.
+   *
+   * **The three-valued field is the fail-safe half and is deliberate.** A tab
+   * that believes it is a guest but cannot name its host must say *nothing*
+   * rather than `null`, or an ordinary save would delete a binding the
+   * requester never touched. `roomShareHostFieldFor`
+   * (`features/travel-booking/lib/room-share-choice.ts`) is the one place that
+   * decides which of the three a tab posts; the same absent-versus-`null`
+   * distinction the API-key PATCH draws for `expiresAt`.
+   *
+   * **It is the only room-share field a client may post.** `isRoomShareGuest`
+   * on the read shape stays server-derived (`IS_ROOM_SHARE_GUEST_COLUMN`), for
+   * the reason `needsRoomBooking` beside it is.
+   */
+  roomShareHostRequestId?: number | null;
 
   departDate: string | null;
   returnDate: string | null;
