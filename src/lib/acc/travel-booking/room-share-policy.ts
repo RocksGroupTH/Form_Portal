@@ -40,7 +40,25 @@ export interface ShareCandidate {
   hostsFor: number[];
 }
 
-export type ShareRefusal = { code: string; message: string };
+/**
+ * Every reason this module refuses, as a closed union rather than a bare
+ * `string`.
+ *
+ * Task 4's service and Task 7's picker both branch on these, and a plain
+ * `string` gives neither a compiler backstop — a typo or a retired code reads
+ * as an unreachable arm that silently never fires, on a control whose whole
+ * job is telling a requester WHY they were refused. Adding a reason without
+ * handling it is now a type error at every exhaustive consumer.
+ */
+export type ShareRefusalCode =
+  | "host_not_alive"
+  | "host_no_room"
+  | "host_is_guest"
+  | "self_attach"
+  | "guest_already_hosts"
+  | "guest_has_host";
+
+export type ShareRefusal = { code: ShareRefusalCode; message: string };
 
 /**
  * Dead, and so unusable as a host — the exact exclusion `continuation-chain.ts`,
