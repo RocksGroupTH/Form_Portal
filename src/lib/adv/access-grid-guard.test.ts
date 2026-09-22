@@ -185,6 +185,36 @@ test("an approver-only row OMITS isActive instead of echoing false", () => {
   );
 });
 
+/* ── which tabs get a column ── */
+
+test("only GRANTABLE tabs get a checkbox column, and the rest are named below", () => {
+  // The user's instruction, 2026-09-22: *"ตัดช่อง สิทธิ์เข้าถึง ในตารางออก"*.
+  // Measured by mutation on the day this assertion was written: reverting the
+  // filter to `advClrTabsForForm(form)` put สิทธิ์เข้าถึง back as a dead column
+  // and the whole suite stayed GREEN — nothing pinned it at all.
+  //
+  // Filtering on `adminOnly` rather than naming keys is itself load-bearing:
+  // it is what let Interface ERP reappear as a real column, with no edit to
+  // this component, the moment it became grantable.
+  const fn = topLevelFunction("AdvClrAccessSettings");
+  assert.match(
+    fn,
+    /const tabs = advClrTabsForForm\(form\)\.filter\(\(t\) => !t\.adminOnly\);/,
+    "the grid's columns are no longer filtered to the grantable tabs",
+  );
+  // …and the ones that lost their column must still be findable, or an admin
+  // asking "who may open สิทธิ์เข้าถึง?" gets no row, no column and no answer
+  // and reasonably concludes the tab is gone.
+  assert.match(
+    fn,
+    /const adminOnlyTabs = advClrTabsForForm\(form\)\.filter\(\(t\) => t\.adminOnly\);/,
+    "the ungrantable tabs are no longer collected for the line under the table",
+  );
+  assert.match(SRC, /\{adminOnlyTabs\.length > 0 && \(/, "that line is no longer rendered");
+  // The reach warnings are printed, not left to a `title` nobody hovers.
+  assert.match(SRC, /\{notes\.length > 0 && \(/, "the `note` lines are no longer rendered");
+});
+
 /* ── the approver column ── */
 
 test("the approver write goes through advClrApproverWriteBody", () => {
