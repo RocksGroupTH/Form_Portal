@@ -1,6 +1,5 @@
-/** Which half of the refund evidence is absent, or null when nothing is owed
- *  or everything is there. */
-export type RefundEvidenceGap = "date" | "proof" | "both";
+/** A piece of refund evidence that is absent. */
+export type RefundEvidenceGap = "date" | "amount" | "proof";
 
 /**
  * Whether a clearing says the employee owes the company money without any
@@ -23,27 +22,41 @@ export type RefundEvidenceGap = "date" | "proof" | "both";
  * can also change what is owed after a slip was attached, and the detail card
  * already prints the expected figure beside the transferred one. Blocking on
  * that was considered and left alone (user, 2026-09-10).
+ *
+ * ## Why a list and not a union of combinations
+ *
+ * The transfer date, the transferred amount and the slip can each be absent on
+ * their own. As a union of shapes that is seven members, and the message builder
+ * then has seven branches to get right — which is how it ends up naming the
+ * wrong thing. Reporting which pieces are missing keeps the message a join.
+ *
+ * The amount joined the list on 2026-09-23, when the ERP journal started posting
+ * it (`clear-advance-erp-payload.ts`). Before that it was asked for at submit and
+ * never re-asked, so a clearing that turned into a refund after accounting
+ * disallowed an expense could reach the send with no figure at all.
  */
 export function refundEvidenceMissing(clear: {
   refundToCompany: number | null | undefined;
   refundTransferDate: string | null | undefined;
+  refundTransferAmount: number | null | undefined;
   proofCount: number;
-}): RefundEvidenceGap | null {
+}): RefundEvidenceGap[] | null {
   if (!(Number(clear.refundToCompany ?? 0) > 0)) return null;
-  const noDate = !(clear.refundTransferDate ?? "").trim();
-  const noProof = !(clear.proofCount > 0);
-  if (noDate && noProof) return "both";
-  if (noDate) return "date";
-  if (noProof) return "proof";
-  return null;
+  const gaps: RefundEvidenceGap[] = [];
+  if (!(clear.refundTransferDate ?? "").trim()) gaps.push("date");
+  if (!(Number(clear.refundTransferAmount ?? 0) > 0)) gaps.push("amount");
+  if (!(clear.proofCount > 0)) gaps.push("proof");
+  return gaps.length ? gaps : null;
 }
 
 /** What to tell the account officer, who cannot fix this from their own screen. */
-export function refundEvidenceMessage(gap: RefundEvidenceGap): string {
-  const what =
-    gap === "both" ? "วันที่โอนเงินคืนและหลักฐานการโอน"
-    : gap === "date" ? "วันที่โอนเงินคืน"
-    : "หลักฐานการโอนเงินคืน";
+export function refundEvidenceMessage(gaps: RefundEvidenceGap[]): string {
+  const name: Record<RefundEvidenceGap, string> = {
+    date: "วันที่โอนเงินคืน",
+    amount: "ยอดเงินที่โอนคืน",
+    proof: "หลักฐานการโอนเงินคืน",
+  };
+  const what = gaps.map((g) => name[g]).join(" · ");
   return (
     `ยอดที่แก้ไขทำให้ใบนี้กลายเป็น “พนักงานต้องโอนเงินคืนบริษัท” แต่ยังไม่มี${what} — ` +
     `กด “ส่งกลับแก้ไข” เพื่อให้ผู้ขอโอนเงินคืนแล้วแนบหลักฐาน จึงจะอนุมัติได้`

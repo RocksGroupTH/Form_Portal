@@ -15,6 +15,8 @@ export interface ClrErpQueueRow {
   advanceRequestNo: string | null;
   actualTotal: number | null;
   refundToCompany: number | null;
+  /** What the employee transferred back, off the slip. Null when nothing was owed. */
+  refundTransferAmount: number | null;
   requesterFullName: string | null;
   paymentDate: string | null;
   /** 'Approved' or 'Cancelled' — the queue shows both, in different tabs. */
@@ -51,7 +53,7 @@ export async function listErpQueueRows(): Promise<ClrErpQueueRow[]> {
            req.ErpInterfaceEnvironment, req.ErpInterfaceSentAt, req.ErpInterfaceError,
            req.ErpInterfaceResponse,
            req.RequesterFullName, req.Status, req.CancelledAt,
-           c.AdvanceRequestNo, c.ActualTotal, c.RefundToCompany, c.PaymentDate,
+           c.AdvanceRequestNo, c.ActualTotal, c.RefundToCompany, c.RefundTransferAmount, c.PaymentDate,
            (SELECT TOP 1 log.Note FROM [dbo].[AccActivityLog] log
              WHERE log.RequestId = req.Id AND log.Action = 'cancelled_after_approval'
              ORDER BY log.Id DESC) AS CancelNote
@@ -84,6 +86,7 @@ export async function listErpQueueRows(): Promise<ClrErpQueueRow[]> {
     advanceRequestNo: (x.AdvanceRequestNo as string) ?? null,
     actualTotal: num(x.ActualTotal),
     refundToCompany: num(x.RefundToCompany),
+    refundTransferAmount: num(x.RefundTransferAmount),
     requesterFullName: (x.RequesterFullName as string) ?? null,
     paymentDate: x.PaymentDate instanceof Date ? toYmd(x.PaymentDate) : ((x.PaymentDate as string) ?? null),
     status: (x.Status as string) ?? null,

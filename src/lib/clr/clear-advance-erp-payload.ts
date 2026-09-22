@@ -33,6 +33,13 @@ export interface ClrJournalInput {
   requestNo: string;
   postingDate: string;
   advanceAmount: number;
+  /**
+   * What the employee actually transferred back, off the slip
+   * (`AccClearAdvance.RefundTransferAmount`), or null when nothing was owed.
+   *
+   * On a refund this is what the bank line posts — see the substitution below.
+   */
+  refundTransferAmount: number | null;
   items: ClrJournalItem[];
   config: ClrJournalConfig;
   /**
@@ -227,6 +234,7 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
   const actualNet = r2(items.reduce((s, it) => s + it.amountBeforeVat + (it.vatAmount || 0) - (it.whtAmount || 0), 0));
   const bankAmount = r2(input.advanceAmount - actualNet);
   const documentType = journalDocumentType(bankAmount);
+  let bankLineAmount = bankAmount;
 
   const glLine = (
     accountNo: string,
@@ -373,11 +381,35 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
     ...(resolveBu(null) ? { buCode: resolveBu(null) } : null),
   });
 
+  // The books say what is owed; the slip says what arrived. The bank line
+  // carries what arrived, so the account reconciles against the statement —
+  // and the difference rides on the vendor/advance account, which is where an
+  // employee's remaining debt belongs.
+  //
+  // The direction is decided above, from the computed figure, so a mistyped
+  // slip cannot turn a Refund into a Payment.
+  //
+  // Keyed on the sign rather than on the name: a positive `bankAmount` IS the
+  // refund direction, while `documentType` is only a label derived from it. If
+  // that label is ever pinned to "Refund" for both directions — the preview
+  // already assumes it was — this guard would otherwise start refusing on, and
+  // substituting a slip amount onto, money leaving the company.
+  if (bankAmount > 0) {
+    const transferred = Number(input.refundTransferAmount ?? 0);
+    if (!(transferred > 0)) {
+      throw new Error(
+        "ใบนี้ต้องคืนเงินให้บริษัท แต่ยังไม่มียอดเงินที่โอนคืนจริง — " +
+          "ให้ผู้ขอแนบสลิปและระบุยอดที่โอน ก่อนส่งเข้า ERP",
+      );
+    }
+    bankLineAmount = r2(transferred);
+  }
+
   if (bankAmount !== 0) {
     lines.push({
       groupNo: "G1", postingDate, documentType, accountType: "Bank Account",
       accountNo: c.bankAccountNo, description: describe(),
-      paymentMethodCode: "BANK", amount: bankAmount,
+      paymentMethodCode: "BANK", amount: bankLineAmount,
       employeeCode, branchCode: defaultBranch, departmentCode,
       ...(resolveBu(null) ? { buCode: resolveBu(null) } : null),
     });

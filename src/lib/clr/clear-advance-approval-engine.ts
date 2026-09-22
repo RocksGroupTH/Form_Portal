@@ -111,6 +111,7 @@ export async function approveCurrentStep(
     const refundGap = refundEvidenceMissing({
       refundToCompany: refund,
       refundTransferDate: before.clear?.refundTransferDate,
+      refundTransferAmount: before.clear?.refundTransferAmount,
       proofCount: before.clear?.refundProofFiles?.length ?? 0,
     });
     if (refundGap) throw new Error(refundEvidenceMessage(refundGap));

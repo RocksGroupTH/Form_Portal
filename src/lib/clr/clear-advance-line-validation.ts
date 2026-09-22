@@ -44,6 +44,15 @@ function amount(v: unknown): string {
  * checked, so `beforeVat 10 / vat 0 / wht 200` gave a net of −190: the clearing
  * total shrank, `bankAmount = advance − net` grew, and a typo turned into a
  * 290-baht return-to-company transfer.
+ *
+ * VAT with no expense under it is the other shape. `toJournalItems` drops a
+ * line whose `amountBeforeVat` is 0; `computeActualTotal` keeps it. So that
+ * VAT counts toward the stored `RefundToCompany`, which the account step asks
+ * for a slip against, and never reaches the bank line, which the send refuses
+ * over — a clearing could be approved with no slip asked for and then die at
+ * the send. Refusing the line is what keeps the two one number. It has to be a
+ * write guard rather than a submit-time check: the ACCOUNT step can still
+ * clear a line’s amount long after submit.
  */
 export function validateLineMoney(items: readonly ClearAdvanceItem[]): string[] {
   const errs: string[] = [];
@@ -61,6 +70,11 @@ export function validateLineMoney(items: readonly ClearAdvanceItem[]): string[] 
     if (wht >= 0 && before >= 0 && vat >= 0 && wht > before + vat) {
       errs.push(
         `${label(it, i)}: ภาษีหัก ณ ที่จ่าย (${amount(wht)}) มากกว่ายอดค่าใช้จ่ายรวม VAT (${amount(before + vat)})`,
+      );
+    }
+    if (before === 0 && vat > 0) {
+      errs.push(
+        `${label(it, i)}: มีภาษีมูลค่าเพิ่ม (VAT) ${amount(vat)} แต่ยอดค่าใช้จ่ายก่อน VAT เป็น 0 — กรุณาระบุยอดค่าใช้จ่าย หรือลบ VAT ออก`,
       );
     }
   });

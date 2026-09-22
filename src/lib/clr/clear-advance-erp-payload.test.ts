@@ -15,6 +15,7 @@ const cfg = {
 };
 const base = (over: Partial<ClrJournalInput>): ClrJournalInput => ({
   requestNo: "ADC26-09005", staffId: 10177, postingDate: "2026-08-20", advanceAmount: 2000,
+  refundTransferAmount: null,
   departmentCode: "DEPT01", config: cfg,
   items: [{ glAccountNo: "610322005", amountBeforeVat: 2000, vatAmount: 0, whtAmount: 0, branchCode: "HQ01" }],
   ...over,
@@ -40,6 +41,7 @@ test("refund=0, no VAT/WHT -> expense + zeroed vendor line", () => {
 test("refund>0 -> Dr Bank for the returned amount", () => {
   const p = buildClearAdvanceJournalPayload(base({
     items: [{ glAccountNo: "610322005", amountBeforeVat: 1500, vatAmount: 0, whtAmount: 0, branchCode: null }],
+    refundTransferAmount: 500,
   }));
   const bank = p.lines.find((l) => l.accountType === "Bank Account")!;
   assert.equal(bank.amount, 500);
@@ -120,6 +122,7 @@ test("description falls back to the AP-3 no when there is no ADV no", () => {
 test("money returned to the company -> Refund on every line", () => {
   const p = buildClearAdvanceJournalPayload(base({
     items: [{ glAccountNo: "610322005", amountBeforeVat: 1500, vatAmount: 0, whtAmount: 0, branchCode: null }],
+    refundTransferAmount: 500,
   }));
   assert.ok(p.lines.every((l) => l.documentType === "Refund"));
 });
@@ -237,6 +240,7 @@ test("the marker reaches a receipt's own lines and no others", () => {
     advanceAmount: 5000,
     items: [{ glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 30, branchCode: "HQ01", expenseDate: "2026-07-15" }],
     whtPayees: [{ pndType: "PND3" }],
+    refundTransferAmount: 3960,
   }));
   for (const l of p.lines) {
     const belongsToTheReceipt = l.accountNo === "610322005" || l.accountNo === "115030";
@@ -266,6 +270,7 @@ test("every line carries it, not just the expense line", () => {
     advanceAmount: 5000,
     items: [{ glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 30, branchCode: "HQ01" }],
     whtPayees: [{ pndType: "PND3" }],
+    refundTransferAmount: 3960,
   }));
   assert.ok(p.lines.length >= 4, "expected expense, VAT, WHT, vendor and bank lines");
   assert.deepEqual(new Set(p.lines.map((l) => l.employeeCode)), new Set(["10177"]));
@@ -349,6 +354,7 @@ test("the lines with no branch of their own follow the default branch", () => {
     branchBu: bu({ HQ01: "COCO", PC1057: "DODO-M" }),
     items: [{ glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 30, branchCode: "HQ01" }],
     whtPayees: [{ pndType: "PND3" }],
+    refundTransferAmount: 3960,
   }));
   // Not the VAT line: since spec §5.4 it belongs to its own invoice and follows
   // that item's branch (HQ01 → COCO), so it is no longer one of the lines with
@@ -373,7 +379,7 @@ const withWht = (over: Partial<ClrJournalInput> = {}) => base({
 });
 
 test("WHT goes out as a Vendor line at the type's vendor", () => {
-  const p = buildClearAdvanceJournalPayload(withWht({ whtPayees: [{ pndType: "PND53" }] }));
+  const p = buildClearAdvanceJournalPayload(withWht({ whtPayees: [{ pndType: "PND53" }], refundTransferAmount: 1030 }));
   const wht = p.lines.find((l) => l.accountNo === "WHT-PND.53")!;
   assert.equal(wht.accountType, "Vendor");
   // Spec §3.2: sent as 0 — accounting posts the real amount by hand.
@@ -383,14 +389,14 @@ test("WHT goes out as a Vendor line at the type's vendor", () => {
 });
 
 test("an individual payee clears against WHT-PND.3", () => {
-  const p = buildClearAdvanceJournalPayload(withWht({ whtPayees: [{ pndType: "PND3" }] }));
+  const p = buildClearAdvanceJournalPayload(withWht({ whtPayees: [{ pndType: "PND3" }], refundTransferAmount: 1030 }));
   assert.ok(p.lines.some((l) => l.accountType === "Vendor" && l.accountNo === "WHT-PND.3"));
 });
 
 /* A vendor line carries no balAccountType — the two-explicit-lines shape BC
  * accepted for AP-2, and what the advance vendor line already uses. */
 test("the WHT vendor line has no balancing account", () => {
-  const p = buildClearAdvanceJournalPayload(withWht({ whtPayees: [{ pndType: "PND3" }] }));
+  const p = buildClearAdvanceJournalPayload(withWht({ whtPayees: [{ pndType: "PND3" }], refundTransferAmount: 1030 }));
   assert.equal(p.lines.find((l) => l.accountNo === "WHT-PND.3")!.balAccountType, undefined);
 });
 
@@ -399,6 +405,7 @@ test("the WHT vendor line has no balancing account", () => {
 test("two payees of one type make one line", () => {
   const p = buildClearAdvanceJournalPayload(withWht({
     whtPayees: [{ pndType: "PND3" }, { pndType: "PND3" }],
+    refundTransferAmount: 1030,
   }));
   assert.equal(p.lines.filter((l) => l.accountNo === "WHT-PND.3").length, 1);
 });
@@ -406,6 +413,7 @@ test("two payees of one type make one line", () => {
 test("two types make one line each", () => {
   const p = buildClearAdvanceJournalPayload(withWht({
     whtPayees: [{ pndType: "PND3" }, { pndType: "PND53" }],
+    refundTransferAmount: 1030,
   }));
   assert.equal(
     p.lines.filter((l) => l.accountType === "Vendor" && l.accountNo.startsWith("WHT-")).length,
@@ -439,6 +447,7 @@ test("the WHT vendor line follows the default branch and its BU", () => {
   const p = buildClearAdvanceJournalPayload(withWht({
     defaultBranchCode: "PCCT01",
     branchBu: new Map([["PCCT01", { buCode: "CTPS", isBlocked: false }]]),
+    refundTransferAmount: 1030,
     whtPayees: [{ pndType: "PND53" }],
   }));
   const wht = p.lines.find((l) => l.accountNo === "WHT-PND.53")!;
@@ -461,6 +470,7 @@ test("two receipts with VAT make two VAT lines", () => {
       { glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 0, branchCode: "HQ01", docNo: "INV-A" },
       { glAccountNo: "610319001", amountBeforeVat: 2000, vatAmount: 140, whtAmount: 0, branchCode: "HQ01", docNo: "INV-B" },
     ],
+    refundTransferAmount: 1790,
   }));
   const vat = p.lines.filter((l) => l.accountNo === "115030");
   assert.equal(vat.length, 2);
@@ -474,6 +484,7 @@ test("an item with no VAT makes no VAT line", () => {
       { glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 0, branchCode: "HQ01" },
       { glAccountNo: "610319001", amountBeforeVat: 2000, vatAmount: 0, whtAmount: 0, branchCode: "HQ01" },
     ],
+    refundTransferAmount: 1930,
   }));
   assert.equal(p.lines.filter((l) => l.accountNo === "115030").length, 1);
 });
@@ -488,6 +499,7 @@ test("a VAT line follows its own item's branch and BU", () => {
       { glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 0, branchCode: "PCCT01" },
       { glAccountNo: "610319001", amountBeforeVat: 2000, vatAmount: 140, whtAmount: 0, branchCode: "HQ01" },
     ],
+    refundTransferAmount: 1790,
   }));
   const vat = p.lines.filter((l) => l.accountNo === "115030");
   assert.deepEqual(vat.map((l) => l.branchCode), ["PCCT01", "HQ01"]);
@@ -499,6 +511,7 @@ test("a VAT line inherits its item's Z-ADJ marker", () => {
   const p = buildClearAdvanceJournalPayload(base({
     postingDate: "2026-09-08",
     items: [{ glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 0, branchCode: "HQ01", expenseDate: "2026-07-15" }],
+    refundTransferAmount: 930,
   }));
   assert.equal(p.lines.find((l) => l.accountNo === "115030")!.adjCode, "M-ADJ");
 });
@@ -510,6 +523,7 @@ test("the VAT total is unchanged by the split", () => {
       { glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 0, branchCode: "HQ01" },
       { glAccountNo: "610319001", amountBeforeVat: 2000, vatAmount: 140, whtAmount: 0, branchCode: "HQ01" },
     ],
+    refundTransferAmount: 1790,
   }));
   assert.equal(
     p.lines.filter((l) => l.accountNo === "115030").reduce((s, l) => s + l.amount, 0),
@@ -527,6 +541,7 @@ test("each VAT line follows its own expense line", () => {
       { glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 0, branchCode: "HQ01" },
       { glAccountNo: "610319001", amountBeforeVat: 2000, vatAmount: 140, whtAmount: 0, branchCode: "HQ01" },
     ],
+    refundTransferAmount: 1790,
   }));
   assert.deepEqual(
     p.lines.slice(0, 4).map((l) => l.accountNo),
@@ -551,7 +566,7 @@ const vatItem = (over: Record<string, unknown> = {}) => ({
 });
 
 test("a VAT line carries the posting-group trio", () => {
-  const p = buildClearAdvanceJournalPayload(base({ items: [vatItem()] }));
+  const p = buildClearAdvanceJournalPayload(base({ items: [vatItem()], refundTransferAmount: 930 }));
   const vat = p.lines.find((l) => l.accountNo === "115030")!;
   assert.equal(vat.genPostingType, "Purchase");
   assert.equal(vat.vatBusPostingGroup, "VATHO");
@@ -563,6 +578,7 @@ test("a VAT line carries the posting-group trio", () => {
 test("no other line carries the tax block", () => {
   const p = buildClearAdvanceJournalPayload(base({
     items: [vatItem({ docNo: "INV-A", taxId: "0105500000001", payeeName: "ผู้ขาย" })],
+    refundTransferAmount: 930,
   }));
   for (const l of p.lines.filter((x) => x.accountNo !== "115030")) {
     const where = `${l.accountType} ${l.accountNo}`;
@@ -581,6 +597,7 @@ test("a VAT line carries its invoice's number, date, base and seller", () => {
       docNo: "INV-A", expenseDate: "2026-09-02",
       taxId: "0105500000001", payeeName: "บริษัท ทดสอบ จำกัด",
     })],
+    refundTransferAmount: 930,
   }));
   const vat = p.lines.find((l) => l.accountNo === "115030")!;
   assert.equal(vat.taxInvoiceNo, "INV-A");
@@ -595,7 +612,7 @@ test("a VAT line carries its invoice's number, date, base and seller", () => {
  * seller nobody has filled in sends no seller keys, so BC leaves those fields
  * alone instead of having them overwritten with nothing. */
 test("a receipt with no seller sends no seller keys", () => {
-  const p = buildClearAdvanceJournalPayload(base({ items: [vatItem({ docNo: "INV-A" })] }));
+  const p = buildClearAdvanceJournalPayload(base({ items: [vatItem({ docNo: "INV-A" })], refundTransferAmount: 930 }));
   const vat = p.lines.find((l) => l.accountNo === "115030")!;
   assert.equal("taxInvoiceName" in vat, false);
   assert.equal("taxVatRegistrationNo" in vat, false);
@@ -606,7 +623,7 @@ test("a receipt with no seller sends no seller keys", () => {
 /* The tax invoice's date is the receipt's own, and differs from the journal's
  * exactly when the receipt is from another month — the case Step 1 marks. */
 test("no expense date leaves the tax invoice date out", () => {
-  const p = buildClearAdvanceJournalPayload(base({ items: [vatItem({ docNo: "INV-A" })] }));
+  const p = buildClearAdvanceJournalPayload(base({ items: [vatItem({ docNo: "INV-A" })], refundTransferAmount: 930 }));
   assert.equal("taxInvoiceDate" in p.lines.find((l) => l.accountNo === "115030")!, false);
 });
 
@@ -617,6 +634,7 @@ test("two invoices each carry their own number and seller", () => {
       vatItem({ docNo: "INV-A", payeeName: "ผู้ขาย ก" }),
       vatItem({ glAccountNo: "610319001", amountBeforeVat: 2000, vatAmount: 140, docNo: "INV-B", payeeName: "ผู้ขาย ข" }),
     ],
+    refundTransferAmount: 1790,
   }));
   const vat = p.lines.filter((l) => l.accountNo === "115030");
   assert.deepEqual(vat.map((l) => l.taxInvoiceNo), ["INV-A", "INV-B"]);
@@ -629,6 +647,7 @@ test("two invoices each carry their own number and seller", () => {
 test("values too long for their BC fields are cut, not sent whole", () => {
   const p = buildClearAdvanceJournalPayload(base({
     items: [vatItem({ docNo: "X".repeat(50), payeeName: "ก".repeat(300) })],
+    refundTransferAmount: 930,
   }));
   const vat = p.lines.find((l) => l.accountNo === "115030")!;
   assert.equal(vat.taxInvoiceNo!.length, 35);
@@ -640,6 +659,7 @@ test("values too long for their BC fields are cut, not sent whole", () => {
 test("a VAT line carries the seller's branch when it is known", () => {
   const p = buildClearAdvanceJournalPayload(base({
     items: [vatItem({ docNo: "INV-A", taxBranchCode: "00001" })],
+    refundTransferAmount: 930,
   }));
   assert.equal(p.lines.find((l) => l.accountNo === "115030")!.taxBranchCode, "00001");
 });
@@ -647,13 +667,14 @@ test("a VAT line carries the seller's branch when it is known", () => {
 /* Left out when unknown, so BC keeps the vendor card's own branch rather than
  * being handed a blank that would go onto a tax filing. */
 test("an unknown seller branch sends no key", () => {
-  const p = buildClearAdvanceJournalPayload(base({ items: [vatItem({ docNo: "INV-A" })] }));
+  const p = buildClearAdvanceJournalPayload(base({ items: [vatItem({ docNo: "INV-A" })], refundTransferAmount: 930 }));
   assert.equal("taxBranchCode" in p.lines.find((l) => l.accountNo === "115030")!, false);
 });
 
 test("no other line carries the seller's branch", () => {
   const p = buildClearAdvanceJournalPayload(base({
     items: [vatItem({ docNo: "INV-A", taxBranchCode: "00001" })],
+    refundTransferAmount: 930,
   }));
   for (const l of p.lines.filter((x) => x.accountNo !== "115030")) {
     assert.equal(l.taxBranchCode, undefined, `${l.accountType} ${l.accountNo}`);
@@ -666,6 +687,7 @@ test("no other line carries the seller's branch", () => {
 test("a chosen vendor reaches the VAT line", () => {
   const p = buildClearAdvanceJournalPayload(base({
     items: [vatItem({ docNo: "INV-A", taxVendorNo: "VTD0030" })],
+    refundTransferAmount: 930,
   }));
   assert.equal(p.lines.find((l) => l.accountNo === "115030")!.taxVendorNo, "VTD0030");
 });
@@ -673,13 +695,14 @@ test("a chosen vendor reaches the VAT line", () => {
 /* Blank is the ordinary case: a one-off seller is not a vendor of ours, and no
  * key is sent rather than an empty one. */
 test("no chosen vendor sends no key", () => {
-  const p = buildClearAdvanceJournalPayload(base({ items: [vatItem({ docNo: "INV-A" })] }));
+  const p = buildClearAdvanceJournalPayload(base({ items: [vatItem({ docNo: "INV-A" })], refundTransferAmount: 930 }));
   assert.equal("taxVendorNo" in p.lines.find((l) => l.accountNo === "115030")!, false);
 });
 
 test("no other line carries the vendor key", () => {
   const p = buildClearAdvanceJournalPayload(base({
     items: [vatItem({ docNo: "INV-A", taxVendorNo: "VTD0030" })],
+    refundTransferAmount: 930,
   }));
   for (const l of p.lines.filter((x) => x.accountNo !== "115030")) {
     assert.equal(l.taxVendorNo, undefined, `${l.accountType} ${l.accountNo}`);
@@ -694,6 +717,9 @@ const buBase = (buGlAccounts: Record<string, string>, branch: string | null) =>
                        ["PC0001", { buCode: "COCO", isBlocked: false }]]),
     buGlAccounts,
     items: [{ glAccountNo: "610322005", amountBeforeVat: 1000, vatAmount: 70, whtAmount: 0, branchCode: branch }],
+    // advanceAmount 2000 − actualNet 1070 = 930: a refund, so it needs a
+    // transferred amount to reach the assertion each of these tests is about.
+    refundTransferAmount: 930,
   });
 
 test("a mapped BU redirects the expense line", () => {
@@ -731,6 +757,7 @@ test("a branch rule redirects the expense line", () => {
   const p = buildClearAdvanceJournalPayload(base({
     branchGlAccounts: { RFM: "110723001" },
     items: [{ glAccountNo: "610322005", amountBeforeVat: 500, vatAmount: 0, whtAmount: 0, branchCode: "RFM" }],
+    refundTransferAmount: 1500,
   }));
   assert.equal(p.lines[0].accountNo, "110723001");
 });
@@ -742,6 +769,7 @@ test("a branch with no BU is still redirected", () => {
     buGlAccounts: { DOCO: "110721001" },
     branchBu: new Map(),
     items: [{ glAccountNo: "610322005", amountBeforeVat: 500, vatAmount: 0, whtAmount: 0, branchCode: "RFM" }],
+    refundTransferAmount: 1500,
   }));
   assert.equal(p.lines[0].accountNo, "110723001");
 });
@@ -752,6 +780,7 @@ test("branch beats BU where both answer", () => {
     buGlAccounts: { DOCO: "110721001" },
     branchBu: new Map([["PC2002", { buCode: "DOCO", isBlocked: false }]]),
     items: [{ glAccountNo: "610322005", amountBeforeVat: 500, vatAmount: 0, whtAmount: 0, branchCode: "PC2002" }],
+    refundTransferAmount: 1500,
   }));
   assert.equal(p.lines[0].accountNo, "110723001");
 });
@@ -762,6 +791,7 @@ test("a branch with no rule still falls through to its BU", () => {
     buGlAccounts: { DOCO: "110721001" },
     branchBu: new Map([["PC2002", { buCode: "DOCO", isBlocked: false }]]),
     items: [{ glAccountNo: "610322005", amountBeforeVat: 500, vatAmount: 0, whtAmount: 0, branchCode: "PC2002" }],
+    refundTransferAmount: 1500,
   }));
   assert.equal(p.lines[0].accountNo, "110721001");
 });
@@ -793,4 +823,84 @@ test("the other date is better than today", () => {
 /* Balanced to the baht: no money moved, so neither date exists to be right. */
 test("an exactly-even clearing posts today", () => {
   assert.equal(journalPostingDate(0, null, null, "2026-09-30"), "2026-09-30");
+});
+
+/* ── the bank line carries what the slip says ──────────────────────────────
+ *
+ * The books say what is owed; the slip says what arrived. On a refund the
+ * bank line has to carry the transferred amount, not the computed one, so the
+ * account reconciles against the statement — and a refund with no transferred
+ * amount refuses rather than posting a fiction.
+ */
+
+test("a refund posts the transferred amount, not the computed one", () => {
+  // advance 3,000 against 2,000 spent -> the books say 1,000 is owed. The
+  // employee transferred 990, and 990 is what the bank statement will show.
+  const p = buildClearAdvanceJournalPayload(base({
+    advanceAmount: 3000,
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 2000, vatAmount: 0, whtAmount: 0, branchCode: "HQ01" }],
+    refundTransferAmount: 990,
+  }));
+  const bank = p.lines.find((l) => l.accountType === "Bank Account");
+  assert.equal(bank?.amount, 990);
+  assert.equal(bank?.documentType, "Refund");
+});
+
+test("a refund whose slip equals what is owed is unchanged", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    advanceAmount: 3000,
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 2000, vatAmount: 0, whtAmount: 0, branchCode: "HQ01" }],
+    refundTransferAmount: 1000,
+  }));
+  assert.equal(p.lines.find((l) => l.accountType === "Bank Account")?.amount, 1000);
+});
+
+test("a Payment ignores a slip amount entirely — the company is paying out, there is no slip", () => {
+  // advance 1,000 against 2,000 spent -> the company owes 1,000 more.
+  const p = buildClearAdvanceJournalPayload(base({
+    advanceAmount: 1000,
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 2000, vatAmount: 0, whtAmount: 0, branchCode: "HQ01" }],
+    refundTransferAmount: 500,
+  }));
+  const bank = p.lines.find((l) => l.accountType === "Bank Account");
+  assert.equal(bank?.documentType, "Payment");
+  assert.equal(bank?.amount, -1000);
+});
+
+test("an exactly-even clearing still emits no bank line, even with a slip amount present", () => {
+  const p = buildClearAdvanceJournalPayload(base({ refundTransferAmount: 990 }));
+  assert.equal(p.lines.some((l) => l.accountType === "Bank Account"), false);
+});
+
+test("a refund with no transferred amount refuses the send", () => {
+  assert.throws(() => buildClearAdvanceJournalPayload(base({
+    advanceAmount: 3000,
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 2000, vatAmount: 0, whtAmount: 0, branchCode: "HQ01" }],
+    refundTransferAmount: null,
+  })), /ยอดเงินที่โอนคืน/);
+});
+
+test("a refund with a zero transferred amount refuses the send", () => {
+  assert.throws(() => buildClearAdvanceJournalPayload(base({
+    advanceAmount: 3000,
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 2000, vatAmount: 0, whtAmount: 0, branchCode: "HQ01" }],
+    refundTransferAmount: 0,
+  })), /ยอดเงินที่โอนคืน/);
+});
+
+test("a slip amount rounds to satang, like every other figure in the journal", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    advanceAmount: 3000,
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 2000, vatAmount: 0, whtAmount: 0, branchCode: "HQ01" }],
+    refundTransferAmount: 990.006,
+  }));
+  assert.equal(p.lines.find((l) => l.accountType === "Bank Account")?.amount, 990.01);
+});
+
+test("a negative slip amount refuses the send — money cannot arrive backwards", () => {
+  assert.throws(() => buildClearAdvanceJournalPayload(base({
+    advanceAmount: 3000,
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 2000, vatAmount: 0, whtAmount: 0, branchCode: "HQ01" }],
+    refundTransferAmount: -990,
+  })), /ยอดเงินที่โอนคืน/);
 });

@@ -66,6 +66,59 @@ function EnvBadge({ env }: { env: string | null }) {
 }
 
 /**
+ * ได้รับจริง — what the employee actually transferred back, off the slip,
+ * beside what the books say is owed (`refundToCompany`).
+ *
+ * Only a refund (`refundToCompany > 0`) ever expects a slip: a
+ * company-pays-extra or exactly-even clearing has nothing to reconcile
+ * against, so it renders a plain dash with no marker.
+ *
+ * Half-satang tolerance on the comparison — both figures are `decimal(18,2)`
+ * carried through `Number`, and an exact `!==` would mark identical amounts
+ * as different.
+ */
+function RefundTransferCell({ row }: { row: ClrErpQueueRow }) {
+  const owed = row.refundToCompany ?? 0;
+  if (!(owed > 0)) {
+    return (
+      <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap" style={{ color: "var(--text-faint)" }}>
+        —
+      </td>
+    );
+  }
+  const amount = row.refundTransferAmount;
+  const marker = (
+    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
+      style={{ background: "var(--bg-badge)", color: "var(--text-warning)" }}>
+      !
+    </span>
+  );
+  if (amount == null || !(Number(amount) > 0)) {
+    return (
+      <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap"
+        style={{ color: "var(--text-warning)" }}
+        title="ยังไม่มียอดที่โอนคืนจริง — ส่งเข้า ERP ไม่ได้จนกว่าจะมี">
+        <span className="inline-flex items-center gap-1 justify-end">{marker}—</span>
+      </td>
+    );
+  }
+  if (Math.abs(amount - owed) > 0.005) {
+    return (
+      <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap"
+        style={{ color: "var(--text-warning)" }}
+        title={`ยอดตามบัญชี: ${fmtMoney(owed)}`}>
+        <span className="inline-flex items-center gap-1 justify-end">{marker}{fmtMoney(amount)}</span>
+      </td>
+    );
+  }
+  return (
+    <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap" style={{ color: "var(--text-primary)" }}>
+      {fmtMoney(amount)}
+    </td>
+  );
+}
+
+/**
  * The answer as something a person can read.
  *
  * The codeunit replies with JSON wrapped in an OData `value` string, so the
@@ -266,11 +319,12 @@ function ClrErpPreviewModal({ items, onClose }: { items: ClrPreviewItem[]; onClo
                   )}
                   {item.journalBatchName && <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Batch: {item.journalBatchName}</span>}
                   {/* Which way the money actually moves, while it can still be
-                      stopped. Read off the bank line's sign rather than the
-                      Document Type: since 2026-09-08 that is always "Refund" by
-                      decision, so it no longer tells the two apart — and a badge
-                      reading "คืนบริษัท" over a clearing that pays the employee
-                      would be worse than no badge at all. */}
+                      stopped. Read off the bank line's sign, not the Document
+                      Type: the type is derived from that very sign
+                      (`journalDocumentType` returns "Payment" when it is
+                      negative), so it says nothing the sign has not already
+                      said — and a badge reading "คืนบริษัท" over a clearing that
+                      pays the employee would be worse than no badge at all. */}
                   {(() => {
                     const bank = item.lines?.find((l) => l.accountType === "Bank Account");
                     if (!bank) return null;
@@ -795,7 +849,7 @@ export function ClrErpInterfaceQueue() {
                         <input type="checkbox" checked={allSelected} onChange={toggleAll}
                           disabled={selectableIds.length === 0} className="cursor-pointer" />
                       </th>
-                      {["เลขที่", "แบรนด์", "ผู้ยื่น", "Advance", "ใช้จริง", "คืน/จ่ายเพิ่ม", "วันจ่าย", "สถานะ ERP", "Doc No", ""].map((h) => (
+                      {["เลขที่", "แบรนด์", "ผู้ยื่น", "Advance", "ใช้จริง", "คืน/จ่ายเพิ่ม", "ได้รับจริง", "วันจ่าย", "สถานะ ERP", "Doc No", ""].map((h) => (
                         <th key={h} className="px-3 py-2.5 font-semibold whitespace-nowrap text-left"
                           style={{ color: "var(--text-secondary)" }}>{h}</th>
                       ))}
@@ -834,6 +888,7 @@ export function ClrErpInterfaceQueue() {
                             style={{ color: (row.refundToCompany ?? 0) > 0 ? "var(--text-info-green)" : (row.refundToCompany ?? 0) < 0 ? "var(--text-info-yellow)" : "var(--text-faint)" }}>
                             {row.refundToCompany != null && row.refundToCompany !== 0 ? fmtMoney(row.refundToCompany) : "—"}
                           </td>
+                          <RefundTransferCell row={row} />
                           <td className="px-3 py-2 whitespace-nowrap">
                             {paymentDateOpts.length > 0 ? (
                               <PaymentDatePicker
@@ -866,7 +921,7 @@ export function ClrErpInterfaceQueue() {
                   </tbody>
                   <tfoot className="sticky bottom-0 z-10">
                     <tr style={{ borderTop: "2px solid var(--border-card)", background: "color-mix(in srgb, var(--bg-card) 80%, var(--bg-page))", boxShadow: "0 -1px 0 var(--border-card), 0 -8px 16px -10px rgba(0,0,0,0.25)" }}>
-                      <td colSpan={11} className="px-3 py-2.5 font-bold" style={{ color: "var(--text-heading)" }}>
+                      <td colSpan={12} className="px-3 py-2.5 font-bold" style={{ color: "var(--text-heading)" }}>
                         รอส่ง {sendableRows.length} รายการ
                       </td>
                     </tr>
@@ -925,7 +980,7 @@ export function ClrErpInterfaceQueue() {
                   <thead className="sticky top-0 z-10"
                     style={{ background: "var(--bg-card-alt)", boxShadow: "0 1px 0 var(--border-light)" }}>
                     <tr style={{ borderBottom: "1px solid var(--border-light)" }}>
-                      {["เลขที่", "แบรนด์", "ผู้ยื่น", "Advance", "ใช้จริง", "คืน/จ่ายเพิ่ม", "วันจ่าย", "Doc No (ERP)", "วันที่ส่ง", "สถานะ"].map((h) => (
+                      {["เลขที่", "แบรนด์", "ผู้ยื่น", "Advance", "ใช้จริง", "คืน/จ่ายเพิ่ม", "ได้รับจริง", "วันจ่าย", "Doc No (ERP)", "วันที่ส่ง", "สถานะ"].map((h) => (
                         <th key={h} className="px-3 py-2.5 font-semibold whitespace-nowrap text-left"
                           style={{ color: "var(--text-secondary)" }}>{h}</th>
                       ))}
@@ -957,6 +1012,7 @@ export function ClrErpInterfaceQueue() {
                             style={{ color: (row.refundToCompany ?? 0) > 0 ? "var(--text-info-green)" : (row.refundToCompany ?? 0) < 0 ? "var(--text-info-yellow)" : "var(--text-faint)" }}>
                             {row.refundToCompany != null && row.refundToCompany !== 0 ? fmtMoney(row.refundToCompany) : "—"}
                           </td>
+                          <RefundTransferCell row={row} />
                           <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-muted)" }}>
                             {row.paymentDate ?? "—"}
                           </td>
@@ -974,7 +1030,7 @@ export function ClrErpInterfaceQueue() {
                   </tbody>
                   <tfoot className="sticky bottom-0 z-10">
                     <tr style={{ borderTop: "2px solid var(--border-card)", background: "color-mix(in srgb, var(--bg-card) 80%, var(--bg-page))", boxShadow: "0 -1px 0 var(--border-card), 0 -8px 16px -10px rgba(0,0,0,0.25)" }}>
-                      <td colSpan={10} className="px-3 py-2.5 font-bold" style={{ color: "var(--text-heading)" }}>
+                      <td colSpan={11} className="px-3 py-2.5 font-bold" style={{ color: "var(--text-heading)" }}>
                         ทั้งหมด {sentFiltered.length} รายการ · ส่งแล้ว {sentFiltered.filter(isSent).length}
                       </td>
                     </tr>
