@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - **This is the first place in this application where one person's request is bound to another's, and where one request's fate moves another's with nobody acting on the second.** Nothing here is routine CRUD. Every task that touches the cascade is touching money that may already have been paid.
-- **The migration number is `155`.** `ls migrations/` stops at 152 on this branch; 153 is taken on the unmerged `feat/all-requests-report` branch and 154 by package C. CLAUDE.md records eleven already-duplicated numbers — do not add more.
+- **The migration number is `156`.** `ls migrations/` stops at 152 on this branch; 153 is taken on the unmerged `feat/all-requests-report` branch, 154 by package C, and 155 by the AccTravelPerDiemCountry id realign. CLAUDE.md records eleven already-duplicated numbers — do not add more.
 - **`AccTravelRoomShare` is transactional**, so it follows migration 061/064's rule: an identity floor of 900000 in `Rocks_Portal_Form_UAT` and the matching `CHECK`. Its two FKs point at `AccRequest.Id`, which is exactly the id space those migrations protect.
 - **It is NOT dual-written and NOT in `MASTER_TABLES`.** `npm run check:alignment` must still read **30**; 31 means it was wrongly added to the shared list.
 - **The migration goes to BOTH form databases before the code deploys** — compile-time name binding means a missing table is `Invalid object name`, not an empty result.
@@ -43,8 +43,8 @@
 
 | file | responsibility |
 |---|---|
-| `migrations/155_acc_travel_room_share.sql` | the table, both form databases |
-| `migrations/156_uat_room_share_identity.sql` | UAT identity floor + `CHECK` (see Task 1 on why it may be one file or two) |
+| `migrations/156_acc_travel_room_share.sql` | the table, both form databases |
+| `migrations/157_uat_room_share_identity.sql` | UAT identity floor + `CHECK` (see Task 1 on why it may be one file or two) |
 | `src/lib/acc/travel-booking/room-share-policy.ts` | may this request host? may this one be a guest? chain or cycle? |
 | `src/lib/acc/travel-booking/room-share-cascade.ts` | given a host's change and its guests' states, what happens to each |
 | `src/lib/acc/travel-booking/room-share-service.ts` | the pool half — attach, detach, load guests, load hostable requests |
@@ -59,8 +59,8 @@
 ### Task 1: the table
 
 **Files:**
-- Create: `migrations/155_acc_travel_room_share.sql`
-- Create (or fold into 155 — see Step 2): `migrations/156_uat_room_share_identity.sql`
+- Create: `migrations/156_acc_travel_room_share.sql`
+- Create (or fold into 156 — see Step 2): `migrations/157_uat_room_share_identity.sql`
 
 **Interfaces:**
 - Produces: `AccTravelRoomShare(Id, GuestRequestId, HostRequestId, HostStaffId, CreatedAt, CreatedBy)`.
@@ -71,7 +71,7 @@
 
 - [ ] **Step 2: Decide one file or two, and say why**
 
-061 and 064 are `_UAT`-only and refuse a database whose name does not end in `_UAT`; 155 must run against **both**. A single file cannot carry both guards honestly. **Split them** unless you find a cleaner precedent in the repo — and if you do split, 156's header must say it is `_UAT` only and runs after 155. Report which you chose.
+061 and 064 are `_UAT`-only and refuse a database whose name does not end in `_UAT`; 156 must run against **both**. A single file cannot carry both guards honestly. **Split them** unless you find a cleaner precedent in the repo — and if you do split, 157's header must say it is `_UAT` only and runs after 156. Report which you chose.
 
 - [ ] **Step 3: The table**
 
@@ -99,7 +99,7 @@ Three things the header must explain rather than leave to be inferred:
 - [ ] **Step 5: Commit**
 
 ```bash
-git add migrations/155_acc_travel_room_share.sql migrations/156_uat_room_share_identity.sql
+git add migrations/156_acc_travel_room_share.sql migrations/157_uat_room_share_identity.sql
 git commit -m "feat(ap-17): AccTravelRoomShare, the guest-to-host binding"
 ```
 
@@ -423,7 +423,7 @@ This is the part that must not be softened into feature description. Each was ch
 
 - [ ] **Step 4: The deployment checklist**
 
-155 (and 156) to both form databases before the code; `check:alignment` still **30**; the UAT identity floor must be in place before any UAT write, the same rule 061 carries.
+156 (and 157) to both form databases before the code; `check:alignment` still **30**; the UAT identity floor must be in place before any UAT write, the same rule 061 carries.
 
 - [ ] **Step 5: Verify and commit**
 
