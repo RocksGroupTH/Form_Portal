@@ -9,7 +9,6 @@ import { Users, Landmark, Wallet, SlidersHorizontal, Link2, Building2, ShieldChe
 import { backTo } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
-import { AdvanceApproverSettings } from "@/features/advance/components/settings/AdvanceApproverSettings";
 import { AdvanceApprovalMatrixSettings } from "@/features/advance/components/settings/AdvanceApprovalMatrixSettings";
 import { AdvanceBankMasterSettings } from "@/features/advance/components/settings/AdvanceBankMasterSettings";
 import { AdvanceErpInterfaceSettings } from "@/features/advance/components/settings/AdvanceErpInterfaceSettings";
@@ -27,10 +26,18 @@ type TabKey = (typeof ADVANCE_SETTINGS_TAB_ORDER)[number];
  * - **แบรนด์ที่เบิกได้ is its own tab**, split out of Interface ERP where it had
  *   been a per-brand switch inside the posting configuration. AP-1, AP-17 and
  *   AP-4 all give it a tab.
- * - **ผู้อนุมัติ became สิทธิ์เข้าถึง**, and last. The approver roster is still
- *   there and still its own table — what the tab gained is the grid that hands
- *   out sight of a menu or a settings tab, which is a different question from
- *   who may approve. Both are rendered on it; neither table merged.
+ * - **ผู้อนุมัติ became สิทธิ์เข้าถึง**, and last.
+ *
+ * **The standalone approver panel came off on 2026-09-22** (the user's
+ * instruction), and with it the sentence that used to sit here — that the
+ * roster "is still its own table … Both are rendered on it; neither table
+ * merged." The *tables* are still separate, and that part of the argument
+ * stands: being on `AccAdvanceApprover` approves money, being on
+ * `AccAdvClrAccess` grants sight, and neither implies the other. What merged is
+ * the **editor**: the three approver roles are columns in the one grid, where
+ * ticking creates the row and unticking deactivates it. Two editors over one
+ * `IsActive` flag on one screen is how each comes to lie about the other, which
+ * is what this removed.
  *
  * **สิทธิ์เข้าถึง shows AP-2's keys only, since 2026-09-22** (the user's
  * instruction). `AdvClrAccessSettings` takes the form and derives what to
@@ -200,17 +207,20 @@ function AdvanceSettingsContent() {
 
         <div className="p-5">
           {openTab === "brands" && <AdvClrBrandSettings />}
-          {openTab === "access" && (
-            <div className="flex flex-col gap-6">
-              <AdvClrAccessSettings form="AP-2" />
-              {/* The approver roster keeps its own table and its own editor —
-                  only the tab merged. Sight and authority are different
-                  questions; see AdvClrAccessSettings' docblock. */}
-              <div className="pt-5" style={{ borderTop: "1px solid var(--border-card)" }}>
-                <AdvanceApproverSettings />
-              </div>
-            </div>
-          )}
+          {/* The standalone approver panel is GONE (user, 2026-09-22: "ของ AP-2
+              ก็เหมือนกันตัดออกได้เลยอยู่ด้านบนแล้ว"). Its three roles are columns
+              in the grid above — ticking creates the approver row, unticking
+              deactivates it — so the panel had become a second editor over the
+              same rows, and two controls over one flag on one screen is how
+              each comes to lie about the other.
+
+              What is genuinely lost is the panel's HARD DELETE. That is the
+              established direction here rather than a regression: every other
+              roster in this app soft-deletes and says so ("A row is never
+              deleted, only switched off"), and the approver panels were the
+              outlier. Adding is unaffected — `+ เพิ่มผู้มีสิทธิ์` opens the same
+              AD search and the role tick does the rest. */}
+          {openTab === "access" && <AdvClrAccessSettings form="AP-2" />}
           {openTab === "matrix" && <AdvanceApprovalMatrixSettings />}
           {openTab === "banks" && <AdvanceBankMasterSettings />}
           {openTab === "advanceErpInterface" && <AdvanceErpInterfaceSettings />}

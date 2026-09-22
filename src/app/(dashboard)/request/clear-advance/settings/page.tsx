@@ -11,7 +11,6 @@ import { Link2, ReceiptText, ListTree, MapPin, Pin, Building2, ShieldCheck } fro
 import { backTo } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
-import { ClrApproverSettings } from "@/features/clear-advance/components/admin/ClrApproverSettings";
 import { ClrErpInterfaceSettings } from "@/features/clear-advance/components/admin/ClrErpInterfaceSettings";
 import { ClrGlAccountSettings } from "@/features/clear-advance/components/admin/ClrGlAccountSettings";
 import { BuGlAccountSettings } from "@/features/accounting/components/settings/BuGlAccountSettings";
@@ -26,9 +25,14 @@ type TabKey = (typeof CLEAR_SETTINGS_TAB_ORDER)[number];
  * AP-4's shape, so the tab order and the grantable-key list cannot drift apart.
  * Two changes on 2026-09-14, both the user's and both matching AP-2: แบรนด์ที่
  * เบิกได้ is its own tab rather than a switch inside Interface ERP, and
- * ผู้อนุมัติ became สิทธิ์เข้าถึง and moved last — the approver roster is still
- * its own table and still edited on that tab, beside the grid that hands out
- * sight of a menu or a settings tab.
+ * ผู้อนุมัติ became สิทธิ์เข้าถึง and moved last.
+ *
+ * **The standalone approver panel came off on 2026-09-22** (the user's
+ * instruction), so it is no longer "edited on that tab, beside the grid" as
+ * this said. The two TABLES are still separate and that distinction still
+ * matters — `AccClearAdvanceApprover` approves money, `AccAdvClrAccess` grants
+ * sight — but AP-3's one live role is now a column in the grid itself, ticked
+ * to create and unticked to deactivate.
  *
  * "Fix G/L by BU or Branch" is deliberately not called "G/L Account": that
  * would sit one tab to the right of "หมวดบัญชี G/L" — two near-identical names
@@ -241,17 +245,16 @@ function ClearAdvanceSettingsContent() {
           )}
           {openTab === "glAccounts" && <ClrGlAccountSettings />}
           {openTab === "locations" && <ClrLocationSyncPanel />}
-          {openTab === "access" && (
-            <div className="flex flex-col gap-6">
-              <AdvClrAccessSettings form="AP-3" />
-              {/* The approver roster keeps its own table and its own editor —
-                  only the tab merged. Sight and authority are different
-                  questions; see AdvClrAccessSettings' docblock. */}
-              <div className="pt-5" style={{ borderTop: "1px solid var(--border-card)" }}>
-                <ClrApproverSettings />
-              </div>
-            </div>
-          )}
+          {/* The standalone approver panel is GONE (user, 2026-09-22: "ส่วนนี้
+              ตัดออกได้เลยเพราะ มีอยู่ที่ตารางด้านบนแล้ว"). AP-3's one live role is
+              a column in the grid above — ticking creates the approver row,
+              unticking deactivates it — so the panel had become a second editor
+              over the same rows.
+
+              The panel's HARD DELETE goes with it, which is the established
+              direction here rather than a regression: every other roster in
+              this app soft-deletes and says so. Adding is unaffected. */}
+          {openTab === "access" && <AdvClrAccessSettings form="AP-3" />}
         </div>
       </div>
     </PageContainer>
