@@ -21,7 +21,7 @@ test("a clearing the employee really did refund is complete", () => {
   assert.equal(refundEvidenceMissing(ok), null);
 });
 
-test("a sign flip is caught: money is owed and nothing was ever transferred", () => {
+test("a sign flip is caught: the date and the slip were never asked for", () => {
   assert.deepEqual(
     refundEvidenceMissing({
       refundToCompany: 250,

@@ -319,11 +319,12 @@ function ClrErpPreviewModal({ items, onClose }: { items: ClrPreviewItem[]; onClo
                   )}
                   {item.journalBatchName && <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Batch: {item.journalBatchName}</span>}
                   {/* Which way the money actually moves, while it can still be
-                      stopped. Read off the bank line's sign rather than the
-                      Document Type: since 2026-09-08 that is always "Refund" by
-                      decision, so it no longer tells the two apart — and a badge
-                      reading "คืนบริษัท" over a clearing that pays the employee
-                      would be worse than no badge at all. */}
+                      stopped. Read off the bank line's sign, not the Document
+                      Type: the type is derived from that very sign
+                      (`journalDocumentType` returns "Payment" when it is
+                      negative), so it says nothing the sign has not already
+                      said — and a badge reading "คืนบริษัท" over a clearing that
+                      pays the employee would be worse than no badge at all. */}
                   {(() => {
                     const bank = item.lines?.find((l) => l.accountType === "Bank Account");
                     if (!bank) return null;

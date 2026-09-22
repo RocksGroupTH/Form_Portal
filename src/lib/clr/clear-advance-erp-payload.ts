@@ -388,7 +388,13 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
   //
   // The direction is decided above, from the computed figure, so a mistyped
   // slip cannot turn a Refund into a Payment.
-  if (documentType === "Refund" && bankAmount !== 0) {
+  //
+  // Keyed on the sign rather than on the name: a positive `bankAmount` IS the
+  // refund direction, while `documentType` is only a label derived from it. If
+  // that label is ever pinned to "Refund" for both directions — the preview
+  // already assumes it was — this guard would otherwise start refusing on, and
+  // substituting a slip amount onto, money leaving the company.
+  if (bankAmount > 0) {
     const transferred = Number(input.refundTransferAmount ?? 0);
     if (!(transferred > 0)) {
       throw new Error(

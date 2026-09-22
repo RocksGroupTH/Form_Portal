@@ -892,7 +892,7 @@ test("a slip amount rounds to satang, like every other figure in the journal", (
   const p = buildClearAdvanceJournalPayload(base({
     advanceAmount: 3000,
     items: [{ glAccountNo: "610322005", amountBeforeVat: 2000, vatAmount: 0, whtAmount: 0, branchCode: "HQ01" }],
-    refundTransferAmount: 990.005,
+    refundTransferAmount: 990.006,
   }));
   assert.equal(p.lines.find((l) => l.accountType === "Bank Account")?.amount, 990.01);
 });
