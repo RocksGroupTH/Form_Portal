@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { AP3_FORM_CODE } from "@/features/clear-advance/constants";
 import type { BrandAccountRow } from "@/lib/acc/brand-account-service";
 import {
@@ -140,4 +142,56 @@ test("saveClrBankAccount merges AP-3's own bank row", async () => {
   await saveClrBankAccount("PCMY", "UOB-2726", 42, merge);
 
   assert.deepEqual(calls[0], ["bank", "PCMY", AP3_FORM_CODE, "UOB-2726", null, 42]);
+});
+
+/**
+ * Source-level guard on `fetchRealBrandAccounts` and `mergeRealFormBrandAccount`
+ * — the only two functions in this file that run in production. Every test
+ * above hands `clrBankAccountNo`/`saveClrBankAccount` its own fake `fetchRows`/
+ * `merge`, so neither real forwarder is ever called or asserted against.
+ *
+ * Both `listBrandAccounts` and `mergeFormBrandAccount` take several `string`
+ * parameters back to back, so a positional swap inside either forwarder —
+ * e.g. `mergeFormBrandAccount(kind, brandCode, accountNo, formCode, ...)` —
+ * type-checks and stays green at every behavioural test here, while in
+ * production it writes `AccountNo='AP-3'`, `FormCode=<the real account
+ * number>` to both live databases. Behavioural coverage is blocked by the
+ * env-at-import wall (see the docblocks on both real functions), so a source
+ * scan is the honest tool, same reasoning as
+ * `R:\Acc_Portal\src\lib\acc\ported-imports.test.ts`: "the defect type-checks
+ * and survives every mocked-pool test."
+ */
+const SOURCE = fs.readFileSync(
+  path.resolve(process.cwd(), "src/lib/clr/clear-advance-bank-account.ts"),
+  "utf8",
+);
+
+test("fetchRealBrandAccounts forwards to listBrandAccounts in the right order", () => {
+  assert.match(SOURCE, /return listBrandAccounts\(kind, brandCode, formCode\);/);
+});
+
+test("mergeRealFormBrandAccount forwards to mergeFormBrandAccount in the right order", () => {
+  assert.match(
+    SOURCE,
+    /return mergeFormBrandAccount\(kind, brandCode, formCode, accountNo, erpDescription, userId\);/,
+  );
+});
+
+test("the two guards above are not vacuous — each would catch its swap", () => {
+  const fetchSwapped = SOURCE.replace(
+    "listBrandAccounts(kind, brandCode, formCode)",
+    "listBrandAccounts(kind, formCode, brandCode)",
+  );
+  assert.notEqual(fetchSwapped, SOURCE, "the replace must actually find something to swap");
+  assert.doesNotMatch(fetchSwapped, /return listBrandAccounts\(kind, brandCode, formCode\);/);
+
+  const mergeSwapped = SOURCE.replace(
+    "mergeFormBrandAccount(kind, brandCode, formCode, accountNo, erpDescription, userId)",
+    "mergeFormBrandAccount(kind, brandCode, accountNo, formCode, erpDescription, userId)",
+  );
+  assert.notEqual(mergeSwapped, SOURCE, "the replace must actually find something to swap");
+  assert.doesNotMatch(
+    mergeSwapped,
+    /return mergeFormBrandAccount\(kind, brandCode, formCode, accountNo, erpDescription, userId\);/,
+  );
 });

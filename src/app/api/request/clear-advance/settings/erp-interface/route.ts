@@ -32,18 +32,21 @@ export async function POST(req: NextRequest) {
     const brandCode = (body.brandCode ?? "").trim();
     if (!brandCode) return NextResponse.json({ ok: false, error: "กรุณาเลือกแบรนด์" }, { status: 400 });
     const uid = Number(session.user.id);
-    if (body.journalBatchName !== undefined) {
-      await saveClrBatch(brandCode, (body.journalBatchName ?? "").trim(), uid);
-    }
-    if (body.vatInputGlAccountNo !== undefined || body.whtPayableGlAccountNo !== undefined) {
-      await saveClrErpAccounts(brandCode, body.vatInputGlAccountNo ?? null, body.whtPayableGlAccountNo ?? null, uid);
-    }
+
+    // Validated up front, before any of the three writes below run. Unlike
+    // the two tax accounts, blank is NOT treated as "clear the setting" here
+    // — AP-3 cannot send a claim without a bank to post against, so a
+    // missing/blank/oversized/non-string value is refused outright. Doing
+    // that refusal before saveClrBatch/saveClrErpAccounts write anything
+    // keeps a bad bank from leaving a half-saved brand (batch + tax accounts
+    // committed, bank refused, client shown a failure over a server that
+    // already moved).
+    let bankAccountNo: string | undefined;
     if (body.bankAccountNo !== undefined) {
-      // Unlike the two tax accounts above, blank is NOT treated as "clear the
-      // setting" here: AP-3 cannot send a claim without a bank to post
-      // against, so an empty value is rejected rather than silently accepted
-      // as "no override".
-      const bankAccountNo = body.bankAccountNo.trim();
+      if (typeof body.bankAccountNo !== "string") {
+        return NextResponse.json({ ok: false, error: "รูปแบบเลขบัญชีธนาคารไม่ถูกต้อง" }, { status: 400 });
+      }
+      bankAccountNo = body.bankAccountNo.trim();
       if (!bankAccountNo) {
         return NextResponse.json({ ok: false, error: "กรุณาระบุเลขบัญชีธนาคาร" }, { status: 400 });
       }
@@ -53,6 +56,15 @@ export async function POST(req: NextRequest) {
           { status: 400 },
         );
       }
+    }
+
+    if (body.journalBatchName !== undefined) {
+      await saveClrBatch(brandCode, (body.journalBatchName ?? "").trim(), uid);
+    }
+    if (body.vatInputGlAccountNo !== undefined || body.whtPayableGlAccountNo !== undefined) {
+      await saveClrErpAccounts(brandCode, body.vatInputGlAccountNo ?? null, body.whtPayableGlAccountNo ?? null, uid);
+    }
+    if (bankAccountNo !== undefined) {
       await saveClrBankAccount(brandCode, bankAccountNo, uid);
     }
     return NextResponse.json({ ok: true });
