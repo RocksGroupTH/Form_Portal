@@ -80,6 +80,41 @@ import path from "node:path";
  * 22. `HostLookupResult` un-exported, and `loadHostByRequestNo` renamed →
  *     **red** (the export list, and the per-site rule list).
  * 23. `requireEditableGuest` dropped from the save path → **red**.
+ *
+ * ## Re-verified after the 2026-09-23 widening — seven more trials, none green
+ *
+ * The shape went from five fields to nine on the user's explicit decision, so
+ * the two allow-lists changed and the forbidden list lost two entries and
+ * gained two. **An allow-list that has just been edited is exactly the one
+ * nobody has tried to defeat since**, which is why these were run rather than
+ * assumed. Same harness as above: `cp` backup, literal replacement, re-run,
+ * restore, hash compared.
+ *
+ * 24. `w.Lat, w.Lng` appended to `HOST_LOCATION_COLUMNS` → **red**, twice
+ *     over (the column list, and the forbidden list those two joined in this
+ *     round). This is the widening the prefill module explicitly declined,
+ *     and it is two characters of SQL away.
+ * 25. `HostCandidateRow.workLocations` widened from `string[]` to objects
+ *     carrying `lat`/`lng` → **red**. The types half of the field allow-list
+ *     is what catches it; a name-only list would have called it unchanged.
+ * 26. `t.AccommodationName` appended to `HOST_DISPLAY_COLUMNS` → **red**,
+ *     twice over. Worth running because the `clearGuestOwnAccommodation`
+ *     carve-out strips an identifier containing "Accommodation", and this
+ *     proves the carve-out is still exactly that identifier.
+ * 27. `HOST_DISPLAY_COLUMNS` rewritten as a `"…" + "…"` concatenation →
+ *     **red**. `columnsOf` reads one double-quoted string, so a
+ *     concatenation would have left every column after the `+` unchecked —
+ *     which is why the constant carries a comment saying to keep it one
+ *     literal however long it grows.
+ * 28. `r.TotalAmount` added to the display columns but not to the emitted
+ *     shape → **red**, twice. A column read and dropped is where a later
+ *     mapping picks a field up for free.
+ * 29. `staffId` removed from `HostCandidateRow` with its column left in place
+ *     → **red**. The other direction of 28.
+ * 30. `export async function loadHostFullDetail` added beside the narrow
+ *     readers → **red** (the export list) — re-run because that arm's list
+ *     was not touched this round and a stale allow-list is the one that
+ *     quietly stops meaning anything.
  */
 
 const ROOT = process.cwd();

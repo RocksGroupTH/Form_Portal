@@ -226,6 +226,88 @@ import path from "node:path";
  *
  * Applied as literal replacements by a harness that restores from a `cp`
  * backup and verifies the restore by hash; identical each time.
+ *
+ * ## The 2026-09-23 round — points 1 to 4, twenty-nine more trials, one GREEN
+ *
+ * The picker's leading tab, the running-number gate, the host's identity, the
+ * prefill and the opening prompt all arrived together, and each was attacked
+ * in its own right rather than assumed to be covered by the arm written for
+ * it. Same harness: `cp` backup, `perl -0pi` literal replacement, re-run,
+ * restore, `md5sum` compared — and a trial whose replacement did not apply
+ * was reported as such rather than scored as red.
+ *
+ * **Point 1 — the leading tab**
+ * 18. `PICK_MODES` reordered to `["person", "number"]` → **red**.
+ * 19. `openPicker` naming a mode literally while `PICK_MODES` keeps its order
+ *     → **red**. This is the half that reverts silently: the buttons still
+ *     draw ระบุเลขที่คำขอ first and the picker still opens on the other one.
+ * 20. the two buttons rendered from a literal array again → **red**, twice
+ *     over (the tab-order arm, and the agreement-line arm, whose picker-
+ *     identity check reads `PICK_MODES.map(`).
+ *
+ * **Point 1's other half — the running-number gate**
+ * 21. the gate reverted to `trimmedNo.length < 3` → **red**.
+ * 22. **the call kept and the condition changed to a length test** — the
+ *     mutation-37 shape, and the reason the CONDITION is matched rather than
+ *     the call → **red**.
+ * 23. the gate's `return;` deleted, so an unfinished number falls through to
+ *     the fetch → **red**.
+ * 24. the old "พิมพ์อย่างน้อย 3 ตัวอักษร" copy restored → **red**.
+ * 25. the placeholder's example hardcoded instead of generated → **red**.
+ * 26. the import swapped for a regex retyped in this file → **red**.
+ *
+ * **Point 2 — whose booking it is**
+ * 27. `hostStaffId` reverted to the saved binding alone → **red**.
+ * 28. the resolved colleague stored without the staff id it belongs to →
+ *     **red**.
+ * 29. the `resolved.staffId === hostStaffId` comparison dropped on render →
+ *     **red**. 28 and 29 are the two halves of "a cache that trusts itself",
+ *     and each reverts without touching the other.
+ * 30. the card's label read off the saved binding again → **red**.
+ *
+ * **Point 3 — the prefill**
+ * 31. `roomSharePrefillPatch` dropped from `onChoose` → **red**.
+ * 32. the two patches spread in the other order → **red**.
+ * 33. the prefill handed a blank object instead of `tab`, so it believes the
+ *     requester has answered nothing and overwrites everything → **red**, and
+ *     this is why the arm matches `(host, tab)` rather than the call alone.
+ * 34. the import deleted → **red**.
+ *
+ * **Point 4 — the opening prompt**
+ * 35. `useState(() => shouldAskRoomShare(initial))` → `useState(true)`, i.e.
+ *     asked on every resumed draft → **red**.
+ * 36. a second `setAskRoomShare(true)` added, so the question comes back →
+ *     **red** (the call-count arm; the "turned off" arm still passes, which
+ *     is why they are separate).
+ * 37. the form stops handing the prompt and its answer to the tab → **red**.
+ * 38. the one write turned the prompt ON instead of off → **red**.
+ * 39. the prompt's `onOpenChange` made a no-op, so Escape and the backdrop
+ *     leave it unanswered → **red**.
+ * 40. `askYes` stops answering the prompt → **red**; 41. `askYes` stops
+ *     opening the picker → **red**; 42. `askNo` opens the picker too →
+ *     **red**. Three arms because all three are different lies to the
+ *     requester.
+ * 43. a latch of its own reintroduced inside `RoomShareControl` → **red**.
+ * 44. **`open={askRoomShare && hostRequestId == null}` — MEASURED GREEN, and
+ *     deliberately left green.** The arm read `/open=\{askRoomShare\}/`, an
+ *     exact spelling, and this narrowing is not a regression: the attached
+ *     branch returns before this JSX, so the extra condition is redundant
+ *     rather than wrong. A guard that reds on a harmless refinement is one
+ *     the next reader deletes, so the arm was **loosened** to require
+ *     `askRoomShare` *within* the open expression, and 46 below was added to
+ *     prove the loosened form still bites.
+ * 45. the prompt dialog deleted outright → **red**.
+ * 46. the latch dropped out of the open expression (`open={true}`) → **red**.
+ *
+ * **The agreement line, now that there are two dialogs**
+ * 47. the agreement line removed from the PICKER while the prompt and the
+ *     attached card keep theirs → **red**. This is the trial the slice exists
+ *     for: the old arm was "an agreement line anywhere after the first
+ *     `<Dialog`", which the prompt's own copy would have satisfied.
+ * 48. a third dialog carrying an agreement line inserted **before** the
+ *     picker → **red**, twice (the picker-identity check and the
+ *     dialog-count check). That is the reordering hazard in the form it would
+ *     actually arrive in.
  */
 
 const SRC = path.resolve(process.cwd(), "src");
@@ -562,8 +644,19 @@ test("the agreement line is the shared constant, shown before the choice and aft
     "a <Dialog> is nested inside the picker dialog, so the slice below no longer names the " +
       "picker's own region and every assertion over it is about something else",
   );
+  const picker = src.slice(dialogAt, dialogEnd);
+  /* The slice has to IDENTIFY itself as the picker, or reordering the two
+     dialogs would silently point this assertion at the prompt — whose own
+     agreement line would then satisfy it while the picker's had gone. The
+     two-tab strip exists in one of them and not the other. */
   assert.ok(
-    src.slice(dialogAt, dialogEnd).indexOf("<AgreementLine />") !== -1,
+    picker.indexOf("PICK_MODES.map(") !== -1,
+    "the file's first <Dialog> is no longer the host picker. Every assertion below slices that " +
+      "region; pointed at the opening prompt instead, the warning arm is satisfied by the " +
+      "prompt's own copy and the picker could lose its agreement line entirely",
+  );
+  assert.ok(
+    picker.indexOf("<AgreementLine />") !== -1,
     "no agreement line inside the PICKER dialog — the warning would then reach the requester " +
       "only in the opening prompt or after they had already attached, and the prompt is not a " +
       "substitute: somebody who reaches the picker from the พักห้องเดียวกับเพื่อนร่วมงาน button " +
@@ -1088,9 +1181,14 @@ test("the prompt blocks nothing, and ใช่ opens the picker", () => {
   assert.notEqual(titleAt, -1, "the opening prompt has gone");
   const promptAt = src.lastIndexOf("<Dialog", titleAt);
   const prompt = src.slice(promptAt, titleAt);
+  /* `askRoomShare` must be IN the open expression, not be the whole of it.
+     Pinning the exact spelling reds on a narrowing somebody might legitimately
+     add — `askRoomShare && hostRequestId == null`, say — and a guard that
+     reds on non-regressions is one the next reader deletes. What must not
+     happen is the latch dropping out of it altogether. */
   assert.match(
     prompt,
-    /open=\{askRoomShare\}/,
+    /open=\{[^}]*\baskRoomShare\b[^}]*\}/,
     "the prompt is no longer opened by the form's own latch, so it is shown on a resumed " +
       "draft, or after it has been answered, or never",
   );
