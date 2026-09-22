@@ -340,6 +340,7 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
     ? refundEvidenceMissing({
         refundToCompany: liveRefund,
         refundTransferDate: clear?.refundTransferDate,
+        refundTransferAmount: clear?.refundTransferAmount,
         proofCount: refundProofFiles.length,
       })
     : null;
