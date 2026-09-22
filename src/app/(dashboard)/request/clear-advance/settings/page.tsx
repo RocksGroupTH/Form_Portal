@@ -6,6 +6,8 @@ import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import useSWR from "swr";
 import { Link2, ReceiptText, ListTree, MapPin, Pin, Building2, ShieldCheck } from "lucide-react";
+// Building2 no longer labels a tab of this strip — แบรนด์ที่เบิกได้ moved to
+// AP-2's page — but it still marks the line below that says where it went.
 import { backTo } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
@@ -14,7 +16,6 @@ import { ClrErpInterfaceSettings } from "@/features/clear-advance/components/adm
 import { ClrGlAccountSettings } from "@/features/clear-advance/components/admin/ClrGlAccountSettings";
 import { BuGlAccountSettings } from "@/features/accounting/components/settings/BuGlAccountSettings";
 import { ClrLocationSyncPanel } from "@/features/clear-advance/components/admin/ClrLocationSyncPanel";
-import { AdvClrBrandSettings } from "@/features/advance/components/settings/AdvClrBrandSettings";
 import { AdvClrAccessSettings } from "@/features/advance/components/settings/AdvClrAccessSettings";
 import { CLEAR_SETTINGS_TAB_ORDER } from "@/lib/adv/settings-tabs";
 
@@ -33,9 +34,21 @@ type TabKey = (typeof CLEAR_SETTINGS_TAB_ORDER)[number];
  * would sit one tab to the right of "หมวดบัญชี G/L" — two near-identical names
  * describing different things — so the tab says what the rule DOES, and the pin
  * is the "fix" in it.
+ *
+ * **แบรนด์ที่เบิกได้ left this strip on 2026-09-22** (the user's decision) and
+ * now lives on AP-2's settings page alone. It was never really two tabs:
+ * `setBrandActiveShared` MERGEs `AccFormBrand` for `'AP-2'` and `'AP-3'` in one
+ * transaction, so a brand is claimable on both forms or neither, and two
+ * screens over it were two controls on one row. The banner below the strip is
+ * not optional politeness — somebody who has used that tab for a week will look
+ * for it, and a control that vanishes with no explanation reads as a bug or a
+ * lost permission.
+ *
+ * **สิทธิ์เข้าถึง shows AP-3's keys only**, from the same date and the same
+ * instruction. `AdvClrAccessSettings` derives what it renders from
+ * `CLEAR_SETTINGS_TAB_ORDER` itself, so this strip and that grid cannot drift.
  */
 const TAB_META: Record<TabKey, { label: string; icon: React.ReactNode }> = {
-  brands: { label: "แบรนด์ที่เบิกได้", icon: <Building2 size={15} /> },
   glAccounts: { label: "หมวดบัญชี G/L", icon: <ListTree size={15} /> },
   buGlMap: { label: "Fix G/L by BU or Branch", icon: <Pin size={15} /> },
   locations: { label: "Location / BU", icon: <MapPin size={15} /> },
@@ -148,7 +161,7 @@ function ClearAdvanceSettingsContent() {
       <PageHeaderBar
         icon={ReceiptText}
         title="ตั้งค่าเคลียร์คืนเงินทดรองจ่าย (AP-3)"
-        subtitle="แบรนด์ที่เบิกได้ · หมวดบัญชี G/L · Fix G/L by BU or Branch · Location / BU · Interface ERP · สิทธิ์เข้าถึง"
+        subtitle="หมวดบัญชี G/L · Fix G/L by BU or Branch · Location / BU · Interface ERP · สิทธิ์เข้าถึง"
         backHref={backTo("/request/clear-advance/admin", searchParams.get("from"))}
       />
 
@@ -177,6 +190,28 @@ function ClearAdvanceSettingsContent() {
           })}
         </div>
 
+        {/* Where แบรนด์ที่เบิกได้ went. Outside the panel and above every tab,
+            not on one of them: the person looking for it does not know which
+            tab to open, which is the whole reason they are looking. */}
+        <div className="px-5 pt-4">
+          <p className="text-[11px] m-0 px-3 py-2 rounded-lg flex items-start gap-1.5"
+            style={{
+              background: "var(--nav-active-bg)",
+              color: "var(--text-muted)",
+              border: "1px solid var(--border-card)",
+            }}>
+            <Building2 size={13} className="shrink-0 mt-0.5" style={{ color: "var(--nav-active-text)" }} />
+            <span>
+              <b>แบรนด์ที่เบิกได้</b> ย้ายไปอยู่ที่{" "}
+              <Link href="/request/advance/settings?tab=brands" className="font-semibold underline"
+                style={{ color: "var(--nav-active-text)" }}>
+                ตั้งค่าเบิกเงินทดรองจ่าย (AP-2) → แบรนด์ที่เบิกได้
+              </Link>{" "}
+              — เป็นสวิตช์เดียวกัน เปิด/ปิดที่นั่นมีผลกับ AP-3 ด้วย
+            </span>
+          </p>
+        </div>
+
         <div className="p-5">
           {openTab === "erpInterface" && <ClrErpInterfaceSettings />}
           {/* The same screen AP-4 shows, over the same rows — only the path
@@ -190,10 +225,9 @@ function ClearAdvanceSettingsContent() {
           )}
           {openTab === "glAccounts" && <ClrGlAccountSettings />}
           {openTab === "locations" && <ClrLocationSyncPanel />}
-          {openTab === "brands" && <AdvClrBrandSettings />}
           {openTab === "access" && (
             <div className="flex flex-col gap-6">
-              <AdvClrAccessSettings />
+              <AdvClrAccessSettings form="AP-3" />
               {/* The approver roster keeps its own table and its own editor —
                   only the tab merged. Sight and authority are different
                   questions; see AdvClrAccessSettings' docblock. */}

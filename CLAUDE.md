@@ -1015,19 +1015,68 @@ summary.
   caller's too — AP-2 / AP-3 write on the switch, the other three stage and
   write on their own Save button, which is what the `status` prop says.
 - **Both settings pages gained แบรนด์ที่เบิกได้ and traded ผู้อนุมัติ for
-  สิทธิ์เข้าถึง (2026-09-14, migration 152).** The strips are now
+  สิทธิ์เข้าถึง (2026-09-14, migration 152).** The strips are
   `brands · matrix · banks · erpInterface · access` (AP-2) and
-  `brands · glAccounts · buGlMap · locations · erpInterface · access` (AP-3),
+  `glAccounts · buGlMap · locations · erpInterface · access` (AP-3),
   declared in `src/lib/adv/settings-tabs.ts` and mapped to labels on each page,
   the shape AP-4 uses so the order and the grantable-key list cannot drift apart.
   Both pages now **open on `access`**, for AP-4's reason: an empty approver pool
-  stops every claim and is the one thing that must be set first.
+  stops every claim and is the one thing that must be set first. *(AP-3's strip
+  read `brands · glAccounts · …` until 2026-09-22 — see the split below.)*
+  - **สิทธิ์เข้าถึง shows ONE form's keys since 2026-09-22, and no migration
+    went with it** (user: *"สิทธิ์เข้าถึง AP-2 จะใช้แค่ AP-2 เท่านั้น และ
+    สิทธิ์เข้าถึง AP-3 ก็ใช้แค่ AP-3 เท่านั้น ปรับให้แยกกันเหมือนของ AP-4"*).
+    `AdvClrAccessSettings` takes a `form` and renders only that form's menus and
+    tabs. **Which form a settings tab belongs to is read off the two strips
+    above, never declared a second time** — `advClrTabsForForm` filters on strip
+    membership — so the grid, the page's own tab strip and the scoped save
+    cannot drift; only the **menus** carry a `form` field, because a menu has no
+    strip to read it off.
+    - **The write had to change with it, and getting that wrong deletes live
+      grants.** `setAdvClrAccessTabs` was `DELETE … WHERE AccessId = @aid` —
+      correct only while one screen posted every key somebody held. It now takes
+      the form and bounds the delete, `AND TabKey IN (…)` over
+      `storableAdvClrKeysForForm(form)`, parameterized from the index so no key
+      text reaches the statement. Without that bound, AP-2's first save wipes
+      every AP-3 grant that person holds, in both databases — the write-side
+      twin of *"the next tick would POST a one-element set and revoke the rest"*.
+      The partition is asserted **disjoint and covering** in
+      `settings-tabs.test.ts` and the SQL is pinned to it by
+      `access-service-form-scope.test.ts`.
+    - **`POST …/settings/access` now requires a `form` whenever it carries
+      `settingsTabs`, and refuses rather than guessing** (400, validated *before*
+      the upsert so a refused call mutates nothing). A stale browser tab posting
+      the old body shape gets a visible error telling the admin to reload, which
+      is the right trade against silently deleting the other form's grants.
+    - **The roster itself did NOT split** — one `AccAdvClrAccess` row per person,
+      no `FormCode`, no migration. Two things therefore stay shared and both
+      settings screens say so on the page: **membership** (adding somebody on one
+      form's page lists them on the other's, which grants nothing) and
+      **`IsActive`** — `resolveAdvClrTabsByEmail` tests it, so **ปิดสิทธิ์ on
+      either page revokes BOTH forms' grants.** Only the ticks are per form.
+    - **`canSettings` became `canAdvanceSettings` / `canClearSettings`.** One
+      union flag drew both hubs' ตั้งค่า card, so a grant of AP-2's `banks` put
+      the card on AP-3's hub, where that page has no tab the viewer may open and
+      answers ไม่มีสิทธิ์เข้าถึง. The split made it worse rather than causing it:
+      `brands` had been on both strips, so a `brands` holder genuinely had a tab
+      on both pages until it moved. Pinned by `settings-route-gates.test.ts`,
+      which reads both hub sources — the failure is a hub reading the *other*
+      form's field, and both are booleans on one payload, so nothing types it.
   - **แบรนด์ที่เบิกได้ is ONE switch for BOTH forms**, because
     `setBrandActiveShared` MERGEs `AccFormBrand` for `'AP-2'` and `'AP-3'` in
     one transaction — a brand is claimable on both or neither. So one panel
-    (`AdvClrBrandSettings`) is rendered by both pages rather than two toggles
+    (`AdvClrBrandSettings`) rather than two toggles
     over one row, and the Active switch is **gone from Interface ERP**, where it
     had been a per-brand control inside the posting configuration.
+    - **Since 2026-09-22 that panel is on AP-2's page ALONE** (the user's
+      decision, taken with the split above). Splitting the *grant* while the
+      switch stays single would put two people on half a grant over one control,
+      so the tab moved rather than being duplicated or divided. **AP-3's settings
+      page renders a line above every tab saying where it went**, linking
+      `/request/advance/settings?tab=brands` — not optional politeness: a control
+      that vanishes with no explanation reads as a bug or a lost permission. The
+      `brands` key is AP-2's in `storableAdvClrKeysForForm`, and a test pins that
+      it is **not** on AP-3's strip.
   - **`AccAdvClrAccess` + `AccAdvClrAccessTab` are ONE roster for TWO forms**
     (migration 152, both form databases, dual-written, `MASTER_TABLES` 28 → 30).
     No `FormCode` column, deliberately — the user chose a single list — which is
@@ -1068,7 +1117,9 @@ summary.
     called by AP-3's page too. That is safe where the `bu-gl-map` pair is not,
     and for a stated reason — these are shared master tables written through
     `writeBothPools`, so the rows are identical in both form databases and it
-    cannot matter which one a request resolves.
+    cannot matter which one a request resolves. **Still one route after the
+    2026-09-22 split**; what the split added is a `form` in the POST body, which
+    names the half of the roster being replaced and is refused when absent.
 - **Both Interface ERP tabs group by the target Company (2026-09-14), and the
   group is a UI grouping over rows that stay keyed on the CLAIM brand.** One
   card per PCTH / KSI / PCMY / UNO holding the claim brands mapped into it, a

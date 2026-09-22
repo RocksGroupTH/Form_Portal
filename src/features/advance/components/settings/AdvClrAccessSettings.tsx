@@ -6,7 +6,12 @@ import { Plus, ShieldCheck, Save, UserX, UserCheck } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui";
 import { ADSearchModal, type ADResult } from "@/components/settings/ADSearchModal";
-import { ADV_CLR_MENUS, ALL_ADV_CLR_TABS } from "@/lib/adv/settings-tabs";
+import {
+  advClrMenusForForm,
+  advClrTabsForForm,
+  filterAdvClrKeysForForm,
+  type AdvClrForm,
+} from "@/lib/adv/settings-tabs";
 
 const ENDPOINT = "/api/request/advance/settings/access";
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
@@ -21,12 +26,27 @@ interface AccessRow {
 }
 
 /**
- * Who may open which of AP-2's and AP-3's settings tabs and working menus.
+ * Who may open which of ONE form's settings tabs and working menus.
  *
- * **One roster for both forms** (`AccAdvClrAccess`, migration 152 — the user's
- * decision, 2026-09-14), which is why this panel is rendered by both settings
- * pages and calls one endpoint. The table carries no `FormCode`; the *keys* do,
- * so a person can be given AP-2's queue without AP-3's.
+ * **One roster for both forms, one screen each** (`AccAdvClrAccess`, migration
+ * 152 — the user's decision, 2026-09-14). The table carries no `FormCode` and
+ * still does not; what changed on 2026-09-22, on the user's instruction
+ * (*"สิทธิ์เข้าถึง AP-2 จะใช้แค่ AP-2 เท่านั้น..."*), is that this panel takes the
+ * form it is rendered for and shows only that form's keys. Both pages still
+ * call one endpoint, which is correct — these are shared master tables written
+ * through `writeBothPools`, so which database a request resolves cannot matter.
+ *
+ * **What it renders is derived, never retyped.** `advClrTabsForForm` reads the
+ * form's own tab strip and `advClrMenusForForm` the menus' `form` field, so the
+ * grid, the page's tab strip and the form-scoped save cannot disagree about
+ * what this form owns.
+ *
+ * **Two things about the person list are still shared, and the copy says so.**
+ * Adding somebody here adds them to the other form's list too, and ปิดสิทธิ์
+ * switches off *both* forms' grants — `resolveAdvClrTabsByEmail` tests
+ * `IsActive = 1`, so the flag is a property of the person, not of the form.
+ * Only the ticks are per form. Leaving that unsaid would make ปิดสิทธิ์ on this
+ * page look local when it is not.
  *
  * **It grants sight, never authority.** Who may actually approve is
  * `AccAdvanceApprover` / `AccClearAdvanceApprover`, edited by the panel beside
@@ -43,7 +63,7 @@ interface AccessRow {
  * pressed is a dead end, which is the shape AP-4's equivalent had to be fixed
  * out of.
  */
-export function AdvClrAccessSettings() {
+export function AdvClrAccessSettings({ form }: { form: AdvClrForm }) {
   const { data, isLoading, error, mutate } = useSWR<{ ok: boolean; data?: AccessRow[] }>(
     ENDPOINT,
     fetcher,
@@ -54,9 +74,26 @@ export function AdvClrAccessSettings() {
   /** Ticks being edited, keyed on StaffId. Absent = show what is saved. */
   const [draft, setDraft] = useState<Record<number, string[]>>({});
 
+  const menus = advClrMenusForForm(form);
+  const tabs = advClrTabsForForm(form);
+  const otherForm: AdvClrForm = form === "AP-2" ? "AP-3" : "AP-2";
+
+  /**
+   * The draft carries BOTH forms' keys — it starts from the saved row, which
+   * is deliberately wide — and only this form's are rendered, so only this
+   * form's can change. The other form's ride along untouched and are filtered
+   * off at the POST.
+   */
   const keysOf = (row: AccessRow) => draft[row.staffId] ?? row.settingsTabs;
+  /**
+   * Dirty is measured on THIS form's keys alone. Comparing the whole list would
+   * call a row dirty because a revalidation brought back a change somebody else
+   * made to the other form — a Save button lit by an edit this screen cannot
+   * even see.
+   */
   const dirty = (row: AccessRow) => {
-    const a = keysOf(row), b = row.settingsTabs;
+    const a = filterAdvClrKeysForForm(keysOf(row), form);
+    const b = filterAdvClrKeysForForm(row.settingsTabs, form);
     return a.length !== b.length || a.some((k) => b.indexOf(k) === -1);
   };
 
@@ -79,7 +116,13 @@ export function AdvClrAccessSettings() {
           // treats an absent flag as "leave it alone", and this keeps the two
           // readings the same whichever way that rule later moves.
           isActive: row.isActive,
-          settingsTabs: keysOf(row),
+          // Only this form's keys go on the wire. The service narrows again on
+          // arrival, but sending the other form's here would make that a silent
+          // drop rather than a second line of defence.
+          settingsTabs: filterAdvClrKeysForForm(keysOf(row), form),
+          // Which half of the roster this replaces. The route refuses a save
+          // that does not name one rather than guessing.
+          form,
         }),
       });
       const j = (await res.json()) as { ok: boolean; error?: string };
@@ -139,11 +182,19 @@ export function AdvClrAccessSettings() {
         style={{ background: "var(--nav-active-bg)", border: "1px solid var(--border-card)" }}>
         <div className="flex-1 min-w-[240px]">
           <p className="text-[13px] font-semibold m-0 flex items-center gap-1.5" style={{ color: "var(--text-heading)" }}>
-            <ShieldCheck size={15} style={{ color: "var(--nav-active-text)" }} /> สิทธิ์เข้าถึง (AP-2 + AP-3)
+            <ShieldCheck size={15} style={{ color: "var(--nav-active-text)" }} /> สิทธิ์เข้าถึง ({form})
           </p>
           <p className="text-[11px] m-0 mt-1" style={{ color: "var(--text-muted)" }}>
-            รายชื่อเดียวใช้ร่วมทั้งสองฟอร์ม · ติ๊กแล้วเลือกได้ว่าเป็นเมนูหรือแท็บตั้งค่าของฟอร์มไหน ·
+            ติ๊กได้เฉพาะเมนูและแท็บตั้งค่าของ {form} ·
             <b> ให้สิทธิ์ “เห็น” เท่านั้น</b> — สิทธิ์อนุมัติเงินอยู่ที่รายชื่อผู้อนุมัติด้านล่าง
+          </p>
+          {/* The ticks split per form; the person list and its on/off switch did
+              not. Saying so here is what keeps ปิดสิทธิ์ from looking local: it
+              clears the other form's grants too, because IsActive is a property
+              of the person. */}
+          <p className="text-[11px] m-0 mt-1" style={{ color: "var(--text-muted)" }}>
+            รายชื่อผู้มีสิทธิ์เป็นชุดเดียวกับ {otherForm} — การ <b>เพิ่ม</b> และ <b>ปิด/เปิดสิทธิ์</b>{" "}
+            มีผลกับทั้งสองฟอร์ม ส่วนการติ๊กแยกกันคนละหน้า
           </p>
         </div>
         <Button variant="secondary" size="sm" icon={<Plus size={14} />} onClick={() => setAdding(true)}>
@@ -204,16 +255,16 @@ export function AdvClrAccessSettings() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3"
                   style={{ borderTop: "1px solid var(--border-light)" }}>
                   <TickGroup
-                    label="เมนู"
+                    label={`เมนู ${form}`}
                     hint="เห็นหน้าคิว/รายงาน — ไม่ได้แปลว่าอนุมัติได้"
-                    items={ADV_CLR_MENUS}
+                    items={menus}
                     has={has}
                     onToggle={(k, on) => toggle(row, k, on)}
                   />
                   <TickGroup
-                    label="แท็บตั้งค่า"
-                    hint="ทุกแท็บอยู่ครบ — อันที่จางคือให้สิทธิ์ไม่ได้ ชี้เพื่อดูเหตุผล"
-                    items={ALL_ADV_CLR_TABS}
+                    label={`แท็บตั้งค่า ${form}`}
+                    hint="ทุกแท็บของหน้านี้อยู่ครบ — อันที่จางคือให้สิทธิ์ไม่ได้ ชี้เพื่อดูเหตุผล"
+                    items={tabs}
                     has={has}
                     onToggle={(k, on) => toggle(row, k, on)}
                   />
@@ -226,8 +277,8 @@ export function AdvClrAccessSettings() {
 
       {adding && (
         <ADSearchModal
-          title="เพิ่มผู้มีสิทธิ์เข้าถึง (AP-2 + AP-3)"
-          subtitle="ค้นหาจาก Azure AD — เพิ่มแล้วยังไม่ได้สิทธิ์ใด ๆ จนกว่าจะติ๊ก"
+          title="เพิ่มผู้มีสิทธิ์เข้าถึง"
+          subtitle={`ค้นหาจาก Azure AD — เพิ่มแล้วยังไม่ได้สิทธิ์ใด ๆ จนกว่าจะติ๊ก · รายชื่อใช้ร่วมกับ ${otherForm}`}
           existingEmails={rows.map((r) => r.email)}
           onClose={() => setAdding(false)}
           onSelect={(u) => void add(u)}
@@ -248,11 +299,20 @@ export function AdvClrAccessSettings() {
  * enforcement changes: `filterStorableAdvClrKeys` still refuses to write them
  * and `decideAdvClrTabAccess` still refuses to open them for a non-admin, so a
  * disabled box is a statement rather than the only thing stopping a grant.
+ *
+ * **Every tab shown is one THIS page has** — the caller passes the form's own
+ * strip. The two tabs both pages carry, Interface ERP and สิทธิ์เข้าถึง, are on
+ * both strips and so appear on both grids, which is what keeps the property
+ * above true on each of them.
+ *
+ * `note` is what a label can no longer say now that the `(AP-2 + AP-3)`
+ * suffixes are gone: แบรนด์ที่เบิกได้ is granted from AP-2's page and still
+ * reaches both forms' claimable brands, because there is one switch behind it.
  */
 function TickGroup({ label, hint, items, has, onToggle }: {
   label: string;
   hint: string;
-  items: readonly { key: string; label: string; adminOnly?: string }[];
+  items: readonly { key: string; label: string; adminOnly?: string; note?: string }[];
   has: (key: string) => boolean;
   onToggle: (key: string, on: boolean) => void;
 }) {
@@ -262,21 +322,28 @@ function TickGroup({ label, hint, items, has, onToggle }: {
       <p className="text-[10px] m-0 mb-2" style={{ color: "var(--text-faint)" }}>{hint}</p>
       <div className="flex flex-col gap-1.5">
         {items.map((it) => (
-          <label key={it.key}
-            className={`flex items-center gap-2 text-[12px] ${it.adminOnly ? "cursor-not-allowed" : "cursor-pointer"}`}
-            title={it.adminOnly ? `ให้สิทธิ์ไม่ได้ — ${it.adminOnly}` : undefined}
-            style={{ color: it.adminOnly ? "var(--text-faint)" : "var(--text-secondary)" }}>
-            <input type="checkbox" checked={!it.adminOnly && has(it.key)}
-              disabled={!!it.adminOnly}
-              onChange={(e) => onToggle(it.key, e.target.checked)} />
-            {it.label}
-            {it.adminOnly && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0"
-                style={{ background: "var(--bg-badge)", color: "var(--text-muted)" }}>
-                ผู้ดูแลระบบ
-              </span>
+          <div key={it.key} className="min-w-0">
+            <label
+              className={`flex items-center gap-2 text-[12px] ${it.adminOnly ? "cursor-not-allowed" : "cursor-pointer"}`}
+              title={it.adminOnly ? `ให้สิทธิ์ไม่ได้ — ${it.adminOnly}` : undefined}
+              style={{ color: it.adminOnly ? "var(--text-faint)" : "var(--text-secondary)" }}>
+              <input type="checkbox" checked={!it.adminOnly && has(it.key)}
+                disabled={!!it.adminOnly}
+                onChange={(e) => onToggle(it.key, e.target.checked)} />
+              {it.label}
+              {it.adminOnly && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0"
+                  style={{ background: "var(--bg-badge)", color: "var(--text-muted)" }}>
+                  ผู้ดูแลระบบ
+                </span>
+              )}
+            </label>
+            {it.note && (
+              <p className="text-[10px] m-0 ml-[22px]" style={{ color: "var(--text-faint)" }}>
+                {it.note}
+              </p>
             )}
-          </label>
+          </div>
         ))}
       </div>
     </div>

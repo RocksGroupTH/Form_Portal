@@ -31,6 +31,13 @@ type TabKey = (typeof ADVANCE_SETTINGS_TAB_ORDER)[number];
  *   there and still its own table — what the tab gained is the grid that hands
  *   out sight of a menu or a settings tab, which is a different question from
  *   who may approve. Both are rendered on it; neither table merged.
+ *
+ * **สิทธิ์เข้าถึง shows AP-2's keys only, since 2026-09-22** (the user's
+ * instruction). `AdvClrAccessSettings` takes the form and derives what to
+ * render from `ADVANCE_SETTINGS_TAB_ORDER` itself, so this strip and that grid
+ * cannot come to disagree. แบรนด์ที่เบิกได้ is on THIS page alone: the switch
+ * behind it writes `AccFormBrand` for both forms in one transaction, so it
+ * could not be split without putting two controls on one row.
  */
 const TAB_META: Record<TabKey, { label: string; icon: React.ReactNode }> = {
   brands: { label: "แบรนด์ที่เบิกได้", icon: <Building2 size={15} /> },
@@ -178,7 +185,7 @@ function AdvanceSettingsContent() {
           {openTab === "brands" && <AdvClrBrandSettings />}
           {openTab === "access" && (
             <div className="flex flex-col gap-6">
-              <AdvClrAccessSettings />
+              <AdvClrAccessSettings form="AP-2" />
               {/* The approver roster keeps its own table and its own editor —
                   only the tab merged. Sight and authority are different
                   questions; see AdvClrAccessSettings' docblock. */}

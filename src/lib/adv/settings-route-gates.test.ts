@@ -21,6 +21,13 @@ import path from "node:path";
  * 2. **The gate is the handler's FIRST await, and its refusal is returned.**
  *    A gate that runs after the read has already happened is not a gate; one
  *    whose `Response` is computed and dropped is not either.
+ *
+ * A third property joined them on 2026-09-22, when สิทธิ์เข้าถึง split per
+ * form: **each hub asks its own form's question.** It is not a gate — showing a
+ * card grants nothing and every destination re-decides server-side — but it is
+ * read out of source for the same reason the gates are, and it belongs beside
+ * them because it is the other half of "what may this viewer reach on AP-2 or
+ * AP-3". See the block at the foot of this file.
  */
 
 const ROUTES = [
@@ -79,6 +86,59 @@ for (const [file, gate, arg] of ROUTES) {
     );
   });
 }
+
+/* ── each hub asks about its OWN form (2026-09-22) ────────────────────────
+ *
+ * `/api/request/advance/access` used to answer one union `canSettings` and both
+ * hubs drew their ตั้งค่า card on it, so a grant of AP-2's `banks` put the card
+ * on AP-3's hub — where that page has no tab the viewer may open and answers
+ * ไม่มีสิทธิ์เข้าถึง. Splitting สิทธิ์เข้าถึง per form made that worse rather
+ * than causing it: `brands` had been on both strips, so a `brands` holder
+ * genuinely had a tab on both pages until it moved to AP-2 alone.
+ *
+ * Source-read because the failure is a hub reading the WRONG field, which type
+ * checking cannot see — both are booleans on the same payload, and a hub that
+ * reads a field the route stopped sending gets `undefined`, which `!!` turns
+ * into a silently missing card for admins too.
+ */
+const HUBS = [
+  ["src/app/(dashboard)/request/advance/admin/page.tsx", "canAdvanceSettings", "canClearSettings"],
+  ["src/app/(dashboard)/request/clear-advance/admin/page.tsx", "canClearSettings", "canAdvanceSettings"],
+] as const;
+
+for (const [file, mine, theirs] of HUBS) {
+  test(`${file} draws its settings card on ${mine}`, () => {
+    const src = read(file);
+    assert.ok(src.includes(mine), `${file} does not read ${mine}`);
+    assert.ok(
+      !src.includes(theirs),
+      `${file} reads ${theirs} — that is the other form's answer`,
+    );
+    // The union field is gone from the payload, so a hub still naming it would
+    // read `undefined` and hide the card from everybody, admins included.
+    assert.ok(
+      !/\bcanSettings\b\s*:\s*!!\s*d\?\.canSettings\b/.test(src),
+      `${file} still reads the union canSettings the route no longer sends`,
+    );
+  });
+}
+
+test("the access route answers a settings flag per form and no union", () => {
+  const src = read("src/app/api/request/advance/access/route.ts");
+  for (const key of ["canAdvanceSettings", "canClearSettings"]) {
+    assert.ok(src.includes(key + ":"), `the route no longer answers ${key}`);
+  }
+  assert.ok(
+    !/\bcanSettings\s*:/.test(src),
+    "the union canSettings is back — both hubs would share one answer again",
+  );
+  // Derived from each form's own strip, so a tab moving between the two pages
+  // moves this with it rather than needing to be remembered here.
+  assert.ok(
+    src.includes("advClrTabsForForm("),
+    "the per-form flag is not derived from the forms' tab strips",
+  );
+});
 
 test("the gate is the first await in every handler it guards", () => {
   for (const [file, gate] of ROUTES) {
