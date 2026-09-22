@@ -3,6 +3,7 @@ import { isDimensionType, type DimensionType } from "./gl-dimension";
 import { getAppPool } from "@/lib/db/mssql";
 import { loadErpJournalBuildContext } from "@/lib/acc/erp-journal-context";
 import { AP3_FORM_CODE } from "@/features/clear-advance/constants";
+import { listBank } from "@/lib/adv/advance-erp-master-service";
 
 /** DB holding the synced BC chart of accounts (per Brand/Company). */
 /**
@@ -102,6 +103,27 @@ export async function listClrErpJournalBatches(brandCode: string): Promise<ErpJo
   const ctx = await loadErpJournalBuildContext("AP-3");
   const company = (ctx.interfaceByClaim[brand] ?? brand).toUpperCase();
   return listClrErpJournalBatchesForCompany(company);
+}
+
+export interface ErpBankAccountOption { accountNo: string; displayName: string | null }
+
+/**
+ * Bank Account options for an already-resolved target Company — no brand
+ * resolution, unlike `listClrErpGlOptions` beside it.
+ *
+ * The company comes in already resolved. `listClrErpGlOptions` beside it
+ * resolves a claim brand through AP-3's own interface rows, while the ERP send
+ * resolves it through AP-2's mapping — and that path is additionally gated by
+ * `AccFormBrand.IsActive`, where only `ROCKS` is active for AP-2/AP-3 in either
+ * database today, so every other brand resolves to its own code. The card the
+ * picker sits in already holds the resolved target, so taking it directly
+ * removes a way for the list and the journal to disagree about whose accounts
+ * are on offer.
+ */
+export async function listClrErpBankAccountsForCompany(company: string): Promise<ErpBankAccountOption[]> {
+  const c = company.trim().toUpperCase();
+  if (!c) return [];
+  return listBank(c);
 }
 
 export interface ErpBranchOption { code: string; displayName: string | null }

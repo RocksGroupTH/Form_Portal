@@ -45,7 +45,11 @@ async function listGl(company: string): Promise<AdvErpAcctOption[]> {
   }));
 }
 
-async function listBank(company: string): Promise<AdvErpAcctOption[]> {
+/**
+ * Exported 2026-09-22 so AP-3's own Bank Account picker reads the same cards
+ * AP-2's Interface ERP screen does, rather than a second copy of this query.
+ */
+export async function listBank(company: string): Promise<AdvErpAcctOption[]> {
   const pool = await getAppPool(ERP_DATA_DB);
   const r = await pool.request().input("c", sql.NVarChar, company).query(`
     SELECT AccountNo, DisplayName FROM [dbo].[ErpBankAccountCard]
