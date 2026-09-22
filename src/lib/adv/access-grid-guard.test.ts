@@ -71,6 +71,75 @@ test("the extractor returns a whole function body, not its signature", () => {
   assert.match(fn, /return \(/, "no JSX in the extracted body");
 });
 
+/**
+ * The top-level keys of the object literal assigned to `const <name> ... = {`.
+ *
+ * **A substring search is not good enough here, and that was measured.** The
+ * first version of the `form` guard below asserted `/\n\s*form,\n/` over the
+ * whole function and a mutation deleting the POST body's `form` field
+ * SURVIVED it — because `filterAdvClrKeysForForm(..., form,)` a few lines
+ * above has `form,` on a line of its own. Splitting the literal on its own
+ * top-level commas, with brace/paren/bracket depth tracked, is what tells a
+ * field of this object from an argument of a call inside it.
+ */
+function objectKeys(declaration: string): string[] {
+  const at = SRC.indexOf(declaration);
+  assert.notEqual(at, -1, `${declaration} is gone`);
+  // Comments come out FIRST, not per segment: the explanatory line above
+  // `settingsTabs` contains a comma, and splitting before stripping made that
+  // comma a field boundary — the parser then reported half a sentence as a
+  // key and the guard failed for a reason that had nothing to do with the code
+  // it guards.
+  const src = SRC.slice(at)
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "");
+  const open = src.indexOf("{");
+  let depth = 0;
+  let end = -1;
+  for (let i = open; i < src.length; i += 1) {
+    const ch = src[i];
+    if (ch === "{" || ch === "(" || ch === "[") depth += 1;
+    else if (ch === "}" || ch === ")" || ch === "]") {
+      depth -= 1;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  assert.notEqual(end, -1, `${declaration} never closes`);
+
+  const keys: string[] = [];
+  let segment = "";
+  let d = 0;
+  const take = () => {
+    // Whatever precedes the first top-level colon; `foo,` (shorthand) and
+    // `foo: bar,` both leave the key.
+    const colon = segment.indexOf(":");
+    const key = (colon === -1 ? segment : segment.slice(0, colon)).trim();
+    if (key) keys.push(key);
+    segment = "";
+  };
+  for (let i = open + 1; i < end; i += 1) {
+    const ch = src[i];
+    if (ch === "{" || ch === "(" || ch === "[") d += 1;
+    else if (ch === "}" || ch === ")" || ch === "]") d -= 1;
+    if (ch === "," && d === 0) {
+      take();
+      continue;
+    }
+    segment += ch;
+  }
+  take();
+  return keys;
+}
+
+/* The parser has to actually parse, or every assertion over it is vacuous. */
+test("the key parser reads a literal's own fields, not a nested call's arguments", () => {
+  const keys = objectKeys("const body: Record<string, unknown> = ");
+  assert.deepEqual(keys.sort(), ["displayName", "email", "form", "settingsTabs"]);
+});
+
 /* ── the bounded save ── */
 
 test("the tab save still names its form", () => {
@@ -78,8 +147,10 @@ test("the tab save still names its form", () => {
   // refuses a save that does not name one rather than guessing. Dropping this
   // field does not silently widen the save — it stops every tick working — but
   // it is the field the whole form split rests on, so it is pinned here too.
-  const fn = topLevelFunction("TabGrantCells");
-  assert.match(fn, /\n\s*form,\n/, "the POST body no longer carries `form`");
+  assert.ok(
+    objectKeys("const body: Record<string, unknown> = ").indexOf("form") !== -1,
+    "the POST body no longer carries `form`",
+  );
 });
 
 test("the tab save posts only THIS form's keys", () => {
@@ -105,10 +176,12 @@ test("an approver-only row OMITS isActive instead of echoing false", () => {
     /if\s*\(row\.access\)\s*body\.isActive\s*=\s*row\.access\.isActive;/,
     "isActive is no longer conditional on the row having an access row",
   );
-  assert.doesNotMatch(
-    fn,
-    /isActive:\s*row\.access\?\.isActive/,
-    "isActive is echoed unconditionally — an orphan would be created switched off",
+  // And it is not ALSO a field of the literal, which would make the
+  // conditional line above a redundant overwrite of a value already sent.
+  assert.equal(
+    objectKeys("const body: Record<string, unknown> = ").indexOf("isActive"),
+    -1,
+    "isActive is in the POST body unconditionally — an orphan would be created switched off",
   );
 });
 
