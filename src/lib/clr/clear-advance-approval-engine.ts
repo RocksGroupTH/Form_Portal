@@ -50,7 +50,7 @@ function link(id: number): string {
 export async function approveCurrentStep(
   requestId: number,
   actor: Actor,
-  opts: { isChecked?: boolean; pvDocNo?: string | null; paymentDate?: string | null } = {},
+  opts: { isChecked?: boolean; paymentDate?: string | null } = {},
 ): Promise<void> {
   const staffId = requireActorStaffId(actor);
 
@@ -115,7 +115,7 @@ export async function approveCurrentStep(
       proofCount: before.clear?.refundProofFiles?.length ?? 0,
     });
     if (refundGap) throw new Error(refundEvidenceMessage(refundGap));
-    await setAccountAction(requestId, opts.pvDocNo ?? null, decided.paymentDate);
+    await setAccountAction(requestId, decided.paymentDate);
   }
 
   const pool = await getAccPool();

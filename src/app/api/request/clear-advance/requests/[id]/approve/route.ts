@@ -63,12 +63,10 @@ export async function POST(
       }
       const body = (await req.json().catch(() => ({}))) as {
         isChecked?: boolean;
-        pvDocNo?: string | null;
         paymentDate?: string | null;
       };
       await approveCurrentStep(id, actor, {
         isChecked: body.isChecked,
-        pvDocNo: body.pvDocNo ?? null,
         paymentDate: body.paymentDate ?? null,
       });
     }
