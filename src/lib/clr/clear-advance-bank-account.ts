@@ -93,3 +93,60 @@ export async function clrBankAccountNo(
   }
   return own[0]?.accountNo ?? null;
 }
+
+/** The shape of `mergeFormBrandAccount` — real in production, faked in tests. */
+export type MergeFormBrandAccount = (
+  kind: BrandAccountKind,
+  brandCode: string,
+  formCode: string,
+  accountNo: string,
+  erpDescription: string | null,
+  userId: number,
+) => Promise<void>;
+
+/**
+ * Loaded only when actually called, and only via dynamic import — same reason
+ * as `fetchRealBrandAccounts` above: a static top-level import of
+ * `@/lib/acc/brand-account-service` reaches `@/env` through `getAccPool` and
+ * throws at import time under this repo's env-less `node:test` runner.
+ */
+async function mergeRealFormBrandAccount(
+  kind: BrandAccountKind,
+  brandCode: string,
+  formCode: string,
+  accountNo: string,
+  erpDescription: string | null,
+  userId: number,
+): Promise<void> {
+  const { mergeFormBrandAccount } = await import("@/lib/acc/brand-account-service");
+  return mergeFormBrandAccount(kind, brandCode, formCode, accountNo, erpDescription, userId);
+}
+
+/**
+ * AP-3's Bank Account for one claim brand — **the write half of the same
+ * no-fallback rule** `clrBankAccountNo` reads back above.
+ *
+ * This writes AP-3's own row (`FormCode='AP-3'`) on `AccBrandBankAccount`
+ * through the shared `mergeFormBrandAccount` writer AP-2 and AP-4 already use
+ * for their own per-form rows — it never touches the `FormCode IS NULL`
+ * default row every other form falls back to.
+ *
+ * ACC Portal's twin writes the exact same rows through a different helper
+ * pair (`prepareFormBrandAccount` + `writeFormBrandAccountOnTx`), because the
+ * two applications cannot share code. The two must stay behaviourally
+ * identical regardless — they write the same `AccBrandBankAccount` rows, so a
+ * difference here is a claim posting to two different banks depending on
+ * which console saved the setting.
+ *
+ * `merge` is the same kind of test seam as `clrBankAccountNo`'s `fetchRows`:
+ * every real caller calls `saveClrBankAccount(brandCode, accountNo, userId)`
+ * with no fourth argument and gets the real `mergeFormBrandAccount`.
+ */
+export async function saveClrBankAccount(
+  brandCode: string,
+  accountNo: string,
+  userId: number,
+  merge: MergeFormBrandAccount = mergeRealFormBrandAccount,
+): Promise<void> {
+  await merge("bank", brandCode, AP3_FORM_CODE, accountNo, null, userId);
+}

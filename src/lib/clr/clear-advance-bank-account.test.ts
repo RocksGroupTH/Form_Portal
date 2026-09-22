@@ -2,7 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { AP3_FORM_CODE } from "@/features/clear-advance/constants";
 import type { BrandAccountRow } from "@/lib/acc/brand-account-service";
-import { clrBankAccountNo, type FetchBrandAccounts } from "./clear-advance-bank-account";
+import {
+  clrBankAccountNo,
+  saveClrBankAccount,
+  type FetchBrandAccounts,
+  type MergeFormBrandAccount,
+} from "./clear-advance-bank-account";
 
 /**
  * AP-3's bank account, and the one rule that makes it different from every
@@ -113,4 +118,26 @@ test("answers null for a brand with no rows at all", async () => {
   const { fetch } = fakeFetch([]);
 
   assert.equal(await clrBankAccountNo("KSI", fetch), null);
+});
+
+/**
+ * `saveClrBankAccount` — the write half of the same no-fallback rule.
+ *
+ * Same seam as `fakeFetch` above stands in for `mergeFormBrandAccount`,
+ * since this repo has no usable `node:test` module mock either.
+ */
+function fakeMerge(): { merge: MergeFormBrandAccount; calls: unknown[][] } {
+  const calls: unknown[][] = [];
+  const merge: MergeFormBrandAccount = async (...args) => {
+    calls.push(args);
+  };
+  return { merge, calls };
+}
+
+test("saveClrBankAccount merges AP-3's own bank row", async () => {
+  const { merge, calls } = fakeMerge();
+
+  await saveClrBankAccount("PCMY", "UOB-2726", 42, merge);
+
+  assert.deepEqual(calls[0], ["bank", "PCMY", AP3_FORM_CODE, "UOB-2726", null, 42]);
 });

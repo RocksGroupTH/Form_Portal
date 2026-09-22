@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireRole } from "@/lib/api-auth";
 import { listClrInterfaceConfigView } from "@/lib/clr/clear-advance-interface-settings-service";
 import { saveClrBatch, saveClrErpAccounts } from "@/lib/clr/clear-advance-interface-config-service";
+import { saveClrBankAccount } from "@/lib/clr/clear-advance-bank-account";
 
 /** GET — per-brand AP-3 Interface ERP view (inherited target + AP-3's Journal Batch). */
 export async function GET() {
@@ -26,6 +27,7 @@ export async function POST(req: NextRequest) {
       journalBatchName?: string;
       vatInputGlAccountNo?: string | null;
       whtPayableGlAccountNo?: string | null;
+      bankAccountNo?: string;
     };
     const brandCode = (body.brandCode ?? "").trim();
     if (!brandCode) return NextResponse.json({ ok: false, error: "กรุณาเลือกแบรนด์" }, { status: 400 });
@@ -35,6 +37,23 @@ export async function POST(req: NextRequest) {
     }
     if (body.vatInputGlAccountNo !== undefined || body.whtPayableGlAccountNo !== undefined) {
       await saveClrErpAccounts(brandCode, body.vatInputGlAccountNo ?? null, body.whtPayableGlAccountNo ?? null, uid);
+    }
+    if (body.bankAccountNo !== undefined) {
+      // Unlike the two tax accounts above, blank is NOT treated as "clear the
+      // setting" here: AP-3 cannot send a claim without a bank to post
+      // against, so an empty value is rejected rather than silently accepted
+      // as "no override".
+      const bankAccountNo = body.bankAccountNo.trim();
+      if (!bankAccountNo) {
+        return NextResponse.json({ ok: false, error: "กรุณาระบุเลขบัญชีธนาคาร" }, { status: 400 });
+      }
+      if (bankAccountNo.length > 50) {
+        return NextResponse.json(
+          { ok: false, error: "เลขบัญชีธนาคารต้องไม่เกิน 50 ตัวอักษร" },
+          { status: 400 },
+        );
+      }
+      await saveClrBankAccount(brandCode, bankAccountNo, uid);
     }
     return NextResponse.json({ ok: true });
   } catch (err) {
