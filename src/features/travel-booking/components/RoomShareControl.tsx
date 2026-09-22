@@ -64,6 +64,23 @@ import type {
  * card). `HostCandidateRow` is imported as a **type** from the service so this
  * component cannot invent a field the endpoint does not send;
  * `room-share-response-shape-guard.test.ts` pins the other end.
+ *
+ * ## The button saves the draft, rather than asking the requester to (2026-09-22)
+ *
+ * It used to be disabled on an unsaved tab, beside "กรุณาบันทึกร่างก่อนจึงจะ
+ * เลือกห้องพักร่วมได้". The user asked for the choice without that step.
+ *
+ * **What was NOT done is the important half.** The hosts endpoint still takes
+ * the caller's own request id in its path and is still authorized
+ * `authorizeAccRequest(…, "mutate", AP-17)` against it — creator only,
+ * `Draft`/`Returned` only, plus the UAT tester barrier. Without that gate any
+ * authenticated employee could enumerate any colleague's AP-17 running
+ * numbers, travel dates and work locations, and one person listing another's
+ * requests is the only new authorization reach this feature added. The
+ * complaint was the *friction*, not the gate, so the gate stands and the press
+ * satisfies it: `onRequireSave` saves the group, hands back this tab's new
+ * `AccRequest.Id`, and only then does the picker open. A refused save opens
+ * nothing and says so.
  */
 
 /* ─────────────────────────── display helpers ─────────────────────────── */
@@ -170,6 +187,20 @@ export interface RoomShareControlProps {
   /** The actor's department, already loaded by the form — the picker's starting list. */
   colleagues: RequesterOption[];
   /**
+   * Hand back this tab's `AccRequest.Id`, saving the draft group first if it
+   * has none — null when that save was refused.
+   *
+   * **This is how the picker opens from an unsaved tab, and it is not a way
+   * round the gate.** The hosts endpoint still takes an owned request id in
+   * its path and still authorizes `"mutate"` against it (see this file's
+   * header and the route's own docblock): one person listing another's AP-17
+   * requests is the only new authorization reach this feature has, and it is
+   * granted to somebody who could legitimately attach rather than to every
+   * authenticated session. What the auto-save removes is the *manual step*
+   * that reach was costing the requester, not the requirement behind it.
+   */
+  onRequireSave: () => Promise<number | null>;
+  /**
    * The attach succeeded server-side. The parent sets `isRoomShareGuest` and
    * **clears the accommodation choice** — see this file's header for why both.
    */
@@ -184,6 +215,7 @@ export function RoomShareControl({
   travelFrom,
   travelTo,
   colleagues,
+  onRequireSave,
   onAttached,
   onDetached,
 }: RoomShareControlProps) {
@@ -192,6 +224,41 @@ export function RoomShareControl({
   const [detaching, setDetaching] = useState(false);
 
   /* The picker, in two steps: a person, then one of that person's requests. */
+  /**
+   * The request id this picker *session* is bound to, captured when it opened.
+   *
+   * Deliberately not the `requestId` prop, for two reasons that are both about
+   * the auto-save opening path:
+   *
+   * - **The prop may still be null at the instant the picker opens.** The save
+   *   hands the id back through the parent's own state, so the new value
+   *   arrives on the next render, while `openPicker`'s continuation runs
+   *   before it. Capturing the id the save returned means the picker cannot
+   *   open against nothing — and because the parent writes the very same id
+   *   onto the tab, the two cannot disagree either.
+   * - **The attach POSTs to `/room-share/{id}`, and it must be the tab that
+   *   opened the picker.** A captured id can never be re-pointed mid-session
+   *   by a later group save.
+   *
+   * Cleared by `closeHostPicker`, and **the one path that leaves it set is
+   * inert**: `RequesterPickerModal` calls its `onClose` as part of *selecting*
+   * a person, so clearing it there would blank the id between step 1 and step
+   * 2 and the host list would never load. Dismissing step 1 without picking
+   * therefore leaves a value behind — which nothing reads, since the list
+   * effect needs `picked` and the attach needs a row, and the next press
+   * overwrites it before either exists.
+   */
+  const [pickerRequestId, setPickerRequestId] = useState<number | null>(null);
+  /** The auto-save is in flight. Spins the button, which `Button` also disables. */
+  const [opening, setOpening] = useState(false);
+  /**
+   * A press whose save was refused.
+   *
+   * `saveDraft` has already shown the server's own reason as a toast; this
+   * says the thing the toast cannot — that the picker is the action that did
+   * not happen because of it. Cleared on the next press.
+   */
+  const [openFailed, setOpenFailed] = useState(false);
   const [personOpen, setPersonOpen] = useState(false);
   const [picked, setPicked] = useState<RequesterOption | null>(null);
   const [hosts, setHosts] = useState<HostCandidateRow[] | null>(null);
@@ -294,7 +361,7 @@ export function RoomShareControl({
   /* ── the picker's list ── */
 
   useEffect(() => {
-    if (!picked || requestId == null) return;
+    if (!picked || pickerRequestId == null) return;
     let cancelled = false;
     setHostsLoading(true);
     setHostsError(null);
@@ -310,7 +377,7 @@ export function RoomShareControl({
     // Debounced: a date input fires per keystroke in some browsers, and this
     // endpoint scans a colleague's whole AP-17 history behind an ACL check.
     const timer = setTimeout(() => {
-      fetch(`/api/request/travel-booking/room-share/${requestId}/hosts?${params.toString()}`)
+      fetch(`/api/request/travel-booking/room-share/${pickerRequestId}/hosts?${params.toString()}`)
         .then((r) => r.json())
         .then((json) => {
           if (cancelled) return;
@@ -334,11 +401,53 @@ export function RoomShareControl({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [picked, requestId, mode, from, to, reload]);
+  }, [picked, pickerRequestId, mode, from, to, reload]);
 
   /* ── opening and closing ── */
 
-  const openPicker = useCallback(() => {
+  /**
+   * Re-entrancy guard for the press.
+   *
+   * A ref rather than the `opening` state because the state a callback closes
+   * over is the one from its own render: two presses landing in the same tick
+   * would both read `false` and both save, and with no anchor id yet that is
+   * two POSTs and two separate draft groups. `Button` disables itself while
+   * `loading`, which handles the ordinary double-click; this handles the rest.
+   */
+  const openingRef = useRef(false);
+
+  /**
+   * Press → save (only if needed) → picker.
+   *
+   * The requester asked not to have to press บันทึกร่าง first (2026-09-22).
+   * They are not asking to browse a colleague's requests from an unsaved form,
+   * and this does not let them: the save is what produces the owned, editable
+   * request id the hosts endpoint authorizes `"mutate"` against, so the gate
+   * is satisfied rather than skipped.
+   *
+   * **A refused save does not open the picker.** `saveDraft` has already
+   * toasted whatever the server said — a closed form, a validation message, a
+   * network error — and `openFailed` adds the one thing the toast cannot say.
+   */
+  const openPicker = useCallback(async () => {
+    if (openingRef.current) return;
+    setOpenFailed(false);
+    let rid = requestId;
+    if (rid == null) {
+      openingRef.current = true;
+      setOpening(true);
+      try {
+        rid = await onRequireSave();
+      } finally {
+        openingRef.current = false;
+        setOpening(false);
+      }
+      if (rid == null) {
+        setOpenFailed(true);
+        return;
+      }
+    }
+    setPickerRequestId(rid);
     setRefusal(null);
     setHosts(null);
     setHostsError(null);
@@ -351,13 +460,17 @@ export function RoomShareControl({
     setFrom(travelFrom ?? "");
     setTo(travelTo ?? "");
     setPersonOpen(true);
-  }, [travelFrom, travelTo]);
+  }, [requestId, onRequireSave, travelFrom, travelTo]);
 
   const closeHostPicker = useCallback(() => {
     setPicked(null);
     setHosts(null);
     setHostsError(null);
     setRefusal(null);
+    // The session's id goes with the session. This component is not remounted
+    // when the form switches tabs, so a surviving id could be read on behalf
+    // of whichever tab is active next.
+    setPickerRequestId(null);
   }, []);
 
   /** Switching filter mode re-seeds the dates, since the two mean different things. */
@@ -375,11 +488,13 @@ export function RoomShareControl({
 
   const attach = useCallback(
     async (host: HostCandidateRow) => {
-      if (requestId == null) return;
+      // The session's own id, not the prop — see `pickerRequestId`. The attach
+      // must land on the tab whose picker this is.
+      if (pickerRequestId == null) return;
       setAttaching(host.requestId);
       setRefusal(null);
       try {
-        const res = await fetch(`/api/request/travel-booking/room-share/${requestId}`, {
+        const res = await fetch(`/api/request/travel-booking/room-share/${pickerRequestId}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ hostRequestId: host.requestId }),
@@ -401,7 +516,7 @@ export function RoomShareControl({
         setAttaching(null);
       }
     },
-    [requestId, picked, closeHostPicker, onAttached],
+    [pickerRequestId, picked, closeHostPicker, onAttached],
   );
 
   const detach = useCallback(async () => {
@@ -530,23 +645,37 @@ export function RoomShareControl({
         <span className="h-px flex-1" style={{ background: "var(--border-card)" }} />
       </div>
 
+      {/* No longer disabled on an unsaved tab: the press saves the draft
+          itself and then opens (`openPicker`). The note beside it says that
+          will happen rather than telling the requester to go and do it — and
+          it promises exactly what the button does, no more: a save, then the
+          list. */}
       <div className="flex items-center gap-2 flex-wrap">
         <Button
           type="button"
           variant="secondary"
           size="md"
           onClick={openPicker}
-          disabled={requestId == null}
+          loading={opening}
           icon={<Users size={14} />}
         >
-          พักห้องเดียวกับเพื่อนร่วมงาน
+          {opening ? "กำลังบันทึกร่าง..." : "พักห้องเดียวกับเพื่อนร่วมงาน"}
         </Button>
-        {requestId == null && (
+        {requestId == null && !opening && (
           <span className="text-[11.5px]" style={{ color: "var(--text-muted)" }}>
-            กรุณาบันทึกร่างก่อนจึงจะเลือกห้องพักร่วมได้
+            ระบบจะบันทึกร่างให้ก่อนเปิดรายการ
           </span>
         )}
       </div>
+      {openFailed && (
+        <div
+          className="flex items-start gap-2 text-[12px] font-medium rounded-lg px-3 py-2"
+          style={{ background: "var(--bg-card-alt)", color: "var(--text-warning)" }}
+        >
+          <AlertTriangle size={14} className="shrink-0 mt-[1px]" />
+          <span>บันทึกร่างไม่สำเร็จ จึงยังเปิดรายการห้องพักร่วมไม่ได้ — กรุณาลองใหม่อีกครั้ง</span>
+        </div>
+      )}
       <p className="text-[11.5px] m-0" style={{ color: "var(--text-muted)" }}>
         เลือกแทนการจองห้องพักเอง — ใช้ห้องของเพื่อนร่วมงานที่จองไว้แล้ว และยังได้รับเบี้ยเลี้ยง
       </p>

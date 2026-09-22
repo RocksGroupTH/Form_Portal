@@ -167,6 +167,22 @@ interface TravelBookingTabProps {
   onChange: (patch: Partial<TabFormState>) => void;
   onSelectPendingIdCard: (file: File | null) => void;
   onRemoveIdCardFile: (fileId: number) => Promise<boolean>;
+  /**
+   * This tab's `AccRequest.Id`, saving the group first if it has none yet —
+   * null when that save was refused.
+   *
+   * Only พักห้องเดียวกับ needs it. Its hosts endpoint takes the caller's own
+   * request id in the path and authorizes `"mutate"` against it, so the picker
+   * cannot open on a tab that is not a row yet. Rather than make the requester
+   * press บันทึกร่าง first, the control calls this; the endpoint's gate is
+   * untouched.
+   *
+   * **Passed in rather than saving from here.** The save is a whole-group
+   * operation that also rewrites the page URL to the new group key, so it
+   * belongs to the form that owns the group, not to the tab rendering one
+   * member of it — the same reason `onRemoveIdCardFile` is a prop.
+   */
+  onRequireSave: () => Promise<number | null>;
 }
 
 export function TravelBookingTab({
@@ -189,6 +205,7 @@ export function TravelBookingTab({
   onChange,
   onSelectPendingIdCard,
   onRemoveIdCardFile,
+  onRequireSave,
 }: TravelBookingTabProps) {
   const errorKeys = useMemo(() => new Set(issues.map((i) => i.key)), [issues]);
   const hasErr = (key: string) => triedSubmit && errorKeys.has(key);
@@ -667,6 +684,12 @@ export function TravelBookingTab({
           travelFrom={tab.departDate}
           travelTo={tab.returnDate}
           colleagues={colleagues}
+          // The picker needs a saved request id and this is how it gets one —
+          // pressing the button saves the draft first. **The hosts endpoint's
+          // `authorizeAccRequest(…, "mutate")` gate is NOT relaxed by this**;
+          // it is still an owned, editable request that the listing is
+          // authorized against. What changed is only who presses บันทึกร่าง.
+          onRequireSave={onRequireSave}
           onAttached={() =>
             onChange({
               isRoomShareGuest: true,

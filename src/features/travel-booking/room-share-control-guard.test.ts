@@ -89,6 +89,38 @@ import path from "node:path";
  * 13. `RequesterPickerModal` renamed to a hand-rolled picker → **red**.
  * 14. the agreement line stops mentioning per diem → **red**.
  * 15. the agreement line stops mentioning the cancellation → **red**.
+ *
+ * ## The press saves the draft — added 2026-09-22, mutation-verified, six trials
+ *
+ * The button used to be disabled on an unsaved tab, beside "กรุณาบันทึกร่างก่อน
+ * จึงจะเลือกห้องพักร่วมได้". The user asked for the choice without that step;
+ * pressing it now saves the draft and then opens.
+ *
+ * **What the two arms below are actually defending is the gate that stayed.**
+ * The hosts endpoint takes the caller's *own* request id in its path and
+ * authorizes `authorizeAccRequest(…, "mutate", AP-17)` against it — without
+ * which any authenticated employee could enumerate any colleague's AP-17
+ * running numbers, travel dates and work locations. `room-share-response-
+ * shape-guard.test.ts` pins that gate at the route (its own mutations 4 and
+ * 5); these pin the only reason the requester never has to meet it by hand,
+ * so that a later reader who finds the picker opening against nothing reaches
+ * for the save rather than for the route.
+ *
+ * The second arm is the half that fails quietly: a revert of the *button*
+ * without the *copy*, or the reverse, leaves either a dead control explaining
+ * that the system will save for you, or a live one still telling the
+ * requester to go and do it themselves.
+ *
+ * 16. `rid = await onRequireSave()` replaced by `rid = requestId` → **red**.
+ * 17. `setPersonOpen(true)` hoisted above the save → **red** (the ordering
+ *     assertion; the "is it called at all" one still passes, which is why the
+ *     two are separate).
+ * 18. the `if (rid == null) … return` refusal branch deleted, so a failed save
+ *     opens the picker anyway → **red**.
+ * 19. `disabled={requestId == null}` restored on the button → **red**.
+ * 20. the old "กรุณาบันทึกร่างก่อน…" copy restored → **red**.
+ * 21. `loading={opening}` removed, so a press in flight shows nothing and a
+ *     second press is not refused by the button → **red**.
  */
 
 const SRC = path.resolve(process.cwd(), "src");
@@ -336,5 +368,70 @@ test("the warning names all three consequences the requester is accepting", () =
   assert.ok(
     stated.indexOf("วันเดินทาง") !== -1,
     "the line no longer says the travel dates follow the host's",
+  );
+});
+
+/* ─────────────────── the press saves, and the copy agrees ─────────────────── */
+
+test("pressing the button saves the draft first, and opens only once it has an id", () => {
+  const src = code(CONTROL);
+  const open = balancedAfter(src, "const openPicker = useCallback", "(");
+
+  const saveAt = open.indexOf("await onRequireSave()");
+  assert.notEqual(
+    saveAt,
+    -1,
+    "openPicker no longer saves the draft. The hosts endpoint takes an OWNED request id in its " +
+      "path and authorizes `mutate` against it, so a tab that is not a row yet has nothing to " +
+      "authorize — this save is the only reason the picker can open from an unsaved tab without " +
+      "the endpoint being relaxed, and relaxing it would let any authenticated employee " +
+      "enumerate any colleague's AP-17 running numbers, dates and work locations",
+  );
+
+  const openAt = open.indexOf("setPersonOpen(true)");
+  assert.notEqual(openAt, -1, "openPicker no longer opens the picker at all");
+  assert.ok(
+    saveAt < openAt,
+    "the picker is opened before the save has been awaited, so the host list fetches against a " +
+      "request id the tab does not have yet — the requester gets โหลดรายการคำขอไม่สำเร็จ on a " +
+      "press that did nothing wrong",
+  );
+
+  assert.match(
+    open,
+    /if\s*\(\s*rid\s*==\s*null\s*\)\s*\{[^}]*\breturn;[^}]*\}/,
+    "a refused save no longer abandons the press. `saveDraft` fails for real reasons — a form " +
+      "closed by assertFormWritable, a validation message, a dropped connection — and every one " +
+      "of them must leave the picker shut rather than open on an id that was never allocated",
+  );
+});
+
+test("the button is not gated on an unsaved tab, and the copy no longer tells anyone to save", () => {
+  const src = code(CONTROL);
+
+  const labelAt = src.indexOf("พักห้องเดียวกับเพื่อนร่วมงาน");
+  assert.notEqual(labelAt, -1, "the พักห้องเดียวกับเพื่อนร่วมงาน button has gone");
+  const btnAt = src.lastIndexOf("<Button", labelAt);
+  assert.notEqual(btnAt, -1, "the label is no longer inside a <Button>");
+  // Opening tag through to the label: everything the element is configured with.
+  const btn = src.slice(btnAt, labelAt);
+
+  assert.ok(
+    !/disabled=\{[^}]*requestId/.test(btn),
+    "the button is disabled on an unsaved tab again (user, 2026-09-22: เลือกได้ โดยยังไม่ต้อง" +
+      "บันทึกร่างก่อน). Pressing it saves the draft itself — re-gating it on requestId puts the " +
+      "manual step back without removing the save that replaced it",
+  );
+  assert.ok(
+    /loading=\{/.test(btn),
+    "the button shows nothing while the save is in flight, and `Button` disables itself only " +
+      "when `loading` is set — so a second press during a save posts a SECOND draft group, the " +
+      "group having no anchor id to update yet",
+  );
+
+  assert.ok(
+    src.indexOf("กรุณาบันทึกร่างก่อนจึงจะเลือกห้องพักร่วมได้") === -1,
+    "the copy telling the requester to save the draft first is back, beside a button that now " +
+      "does it for them — one of the two has been reverted without the other",
   );
 });
