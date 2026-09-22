@@ -147,8 +147,13 @@ test("the attach tells the host, on the caller's own transaction", () => {
       "declined to ask the host for consent and §5 makes this notice the only mitigation — " +
       "without it a guest attaches to somebody else's room and the host finds out at check-in",
   );
+  /* Matched as `.commit(` / `.begin(` rather than `tx.commit()`, because the
+     literal spelling was **measured green** against a mutation on 2026-09-22:
+     `await (tx as unknown as { commit: () => Promise<void> }).commit();`
+     contains no `tx.commit()` at all and sailed past. A receiver-agnostic
+     pattern cannot be dodged by renaming the variable or casting it. */
   assert.ok(
-    body.indexOf("tx.begin()") === -1 && body.indexOf("tx.commit()") === -1,
+    !/\.\s*begin\s*\(/.test(body) && !/\.\s*commit\s*\(/.test(body),
     "applyRoomShareSelection runs a transaction of its own again. Queuing on a transaction it " +
       "owns would let the notice commit while the tab that caused it rolls back, and the " +
       "reverse — the binding and its only mitigation must be one atomic thing",

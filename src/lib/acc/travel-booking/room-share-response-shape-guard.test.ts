@@ -41,6 +41,45 @@ import path from "node:path";
  * 6. a new `export async function loadHostFullDetail` added → red ("the
  *    service exports exactly…"), which is the arm that catches a wide reader
  *    arriving beside the narrow one rather than inside it.
+ *
+ * ## Re-verified after the 2026-09-22 rework — fifteen more trials, one GREEN
+ *
+ * Browsing lost its object gate and the write moved into the tab's own save,
+ * so most of the arms below now guard a *different* property from the one they
+ * were written for. Each was re-attacked rather than assumed to still bite.
+ * Every trial was applied as a literal replacement, the file re-run, the tree
+ * restored from a `cp` backup and the restore confirmed by hash — identical
+ * each time.
+ *
+ *  7. `requireAuth` deleted from the hosts route → **red**.
+ *  8. `requireAuth`'s refusal computed but not returned → **red**. Separate
+ *     from 7 because that is the arm 7 would pass without.
+ *  9. `await applyRoomShareSelection(tx, {` removed from `saveTravelBookingDraft`
+ *     → **red**. With no attach endpoint, this call IS the feature.
+ * 10. `!== undefined` relaxed to a truthiness test, collapsing "absent" into
+ *     "clear it" → **red**. That mutation deletes a binding on an ordinary save.
+ * 11. a `POST` handler added back to the binding route → **red**.
+ * 12. the hosts route importing `applyRoomShareSelection` → **red**.
+ * 13. `{ lock: true }` → `{ lock: false }` on the save's candidate re-read →
+ *     **red** (M13's own argument, unchanged; only its host function moved).
+ * 14. `canAttach(guestAfterClear, host)` → `canAttach(guest, host)` → **red**.
+ *     That reverts "changing your mind" to a `guest_has_host` refusal.
+ * 15. `guestAfterClear` widened to also blank `hostsFor` → **red**. It would
+ *     disable the one-hop check on exactly the replacement path.
+ * 16. `hostHasBeenFiled` dropped from `loadHostByRequestNo` → **red**.
+ * 17. `getAccPool()` called inside `applyRoomShareSelection` → **red**.
+ * 18. **`tx.commit()` spelled through a cast — MEASURED GREEN.** The arm read
+ *     `body.indexOf("tx.commit()") === -1`, and
+ *     `await (tx as unknown as { commit: … }).commit()` contains no such
+ *     substring. Closed by matching `/\.\s*commit\s*\(/`, which no rename or
+ *     cast can dodge, and re-run: red, as is a plain `tx.commit()` and a
+ *     `begin()` beside it.
+ * 19. a field spread beside `{ ok: true, data }` → **red**.
+ * 20. a second `ok: true` response added → **red**.
+ * 21. a `SELECT r.*` string introduced into the route → **red**, twice over.
+ * 22. `HostLookupResult` un-exported, and `loadHostByRequestNo` renamed →
+ *     **red** (the export list, and the per-site rule list).
+ * 23. `requireEditableGuest` dropped from the save path → **red**.
  */
 
 const ROOT = process.cwd();
@@ -572,8 +611,12 @@ test("the attach clears the guest's own accommodation, on the caller's transacti
      of the room it replaces, the trip's own columns and the host's notice one
      atomic thing. A transaction opened here would commit the share while the
      tab that owns it might still roll back. */
+  /* `.commit(` rather than `tx.commit()`: the literal spelling was **measured
+     green** on 2026-09-22 against a mutation that cast `tx` and committed
+     through the cast. A receiver-agnostic pattern cannot be dodged by
+     renaming the variable. */
   assert.ok(
-    body.indexOf("getAccPool(") === -1 && body.indexOf("tx.commit()") === -1,
+    body.indexOf("getAccPool(") === -1 && !/\.\s*commit\s*\(/.test(body),
     "applyRoomShareSelection opens a pool or commits. It takes the CALLER's open transaction — " +
       "the binding and the trip it belongs to must commit or roll back together, which is the " +
       "whole reason there is no attach endpoint any more",

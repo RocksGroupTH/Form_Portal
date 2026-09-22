@@ -137,6 +137,51 @@ import path from "node:path";
  * was re-run as a brace-balanced deletion and the assertion message checked.
  * Every trial was applied with `sed`, the file re-run, the tree restored from
  * a `cp` backup and the restore confirmed by `md5sum` — identical each time.
+ *
+ * ## The rework of 2026-09-22 — seventeen more trials, one GREEN
+ *
+ * Picking a host stopped being a POST and became tab state, so trials 16-23
+ * above are about an arrangement that no longer exists; the arms that replaced
+ * them were attacked in their own right.
+ *
+ * 24. `onChoose` spelling the patch out inline instead of calling
+ *     `roomShareChoicePatch` → **red**, and so is a stray `isRoomShareGuest`
+ *     spread beside the call (25) — two fields holding one fact must have one
+ *     writer.
+ * 26. `onClear` inlined, and (27) `onClear` restoring an accommodation →
+ *     **red**.
+ * 28. the tab redeclaring both patches locally instead of importing them →
+ *     **red**.
+ * 29. `openPicker` made `async` with an `await` in it → **red**; (30) an
+ *     `onRequireSave` reintroduced → **red**. Both are the draft-save coming
+ *     back in a different shape.
+ * 31. `disabled={requestId == null}` restored on the button → **red**.
+ * 32. the "ระบบจะบันทึกร่างให้ก่อนเปิดรายการ" copy restored → **red**.
+ * 33. `params.set("requestNo"…)` removed, so the number tab searches nothing
+ *     → **red**; (34) `excludeRequestId` dropped → **red**.
+ * 35. `<DateRangeField>` replaced by two `<input type="date">` → **red**;
+ *     (36) its `inline` removed, which is what makes the calendar clickable
+ *     inside a Radix modal at all → **red**.
+ * 37. **the default window removed from the PRESS while `switchMode` kept its
+ *     copy — MEASURED GREEN.** The arm was a file-wide
+ *     `indexOf("defaultHostFilterRange(new Date())")`, so it passed while the
+ *     picker opened completely unfiltered and only acquired the window if the
+ *     requester happened to toggle the date-mode tabs. Closed by asserting the
+ *     call inside `openPicker`'s own balanced region, with a second arm for
+ *     `switchMode`, and re-run: removing it from either is now red, as is
+ *     seeding the press with fixed dates instead.
+ * 38. `shownHosts`' `useMemo` removed, so the list stops being filterable →
+ *     **red**.
+ * 39. the "ยังไม่ได้บันทึก" note deleted → **red**; (40) shown
+ *     unconditionally → **red**. Each fails differently: the first loses a
+ *     room share silently when the page is closed, the second lies after every
+ *     save.
+ * 41. `openPicker` and `switchMode` renamed → **red** ("not found — has it
+ *     been renamed or removed?"). `balancedAfter` still fails closed rather
+ *     than handing the assertions an empty region.
+ *
+ * Applied as literal replacements by a harness that restores from a `cp`
+ * backup and verifies the restore by hash; identical each time.
  */
 
 const SRC = path.resolve(process.cwd(), "src");
@@ -529,12 +574,27 @@ test("the date filter is ONE range control, opened on the default window", () =>
       "calendar would be both unclickable and a dismiss trigger — measured in this repository " +
       "already, see LinePickers.tsx",
   );
+  /* Asserted INSIDE `openPicker`, not file-wide. The file-wide version was
+     **measured green** on 2026-09-22 against a mutation that removed the
+     default from the press and left `switchMode`'s copy behind: the picker
+     then opened completely unfiltered and only acquired the window if the
+     requester happened to toggle ตามวันเดินทาง / ตามวันที่ยื่นคำขอ. A call
+     present and the feature gone, which is the exact shape this project keeps
+     re-learning. */
+  const open = balancedAfter(src, "const openPicker = useCallback", "(");
   assert.ok(
-    src.indexOf("defaultHostFilterRange(new Date())") !== -1,
-    "the filter no longer opens on today … today + 30. It must not go back to the guest's own " +
-      "dates: since final review I4 the picker WRITES the host's dates into the tab, so seeding " +
-      "the search from a value it is about to overwrite is circular — and the tab may have no " +
-      "dates at all by then, the picker no longer requiring a saved draft",
+    open.indexOf("defaultHostFilterRange(new Date())") !== -1,
+    "the PRESS no longer seeds today … today + 30, so the picker opens unfiltered. It must not " +
+      "go back to the guest's own dates either: since final review I4 the picker WRITES the " +
+      "host's dates into the tab, so seeding the search from a value it is about to overwrite " +
+      "is circular — and the tab may have no dates at all by then, the picker no longer " +
+      "requiring a saved draft",
+  );
+  const switchBody = balancedAfter(src, "const switchMode = useCallback", "(");
+  assert.ok(
+    switchBody.indexOf("defaultHostFilterRange(new Date())") !== -1,
+    "switching back to ตามวันเดินทาง no longer re-seeds the window, so the toggle leaves the " +
+      "filter on whatever the ยื่นคำขอ tab cleared it to",
   );
 });
 
