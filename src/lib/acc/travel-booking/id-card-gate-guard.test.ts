@@ -12,7 +12,9 @@ import path from "node:path";
  * - `validateTravelBookingTab` (`request-service.ts`) — **the real check**;
  * - `validateTab` / `tabNeedsIdCard` (`useTravelBookingForm.ts`) — the client
  *   affordance;
- * - `TravelBookingTab.tsx` — whether the upload block is on screen at all.
+ * - `TravelBookingTab.tsx` — whether the upload block is on screen at all;
+ * - `TravelBookingForm.tsx` — **the line that connects the other two**, which
+ *   is the one this guard was missing until 2026-09-22.
  *
  * ## What this catches that nothing else can
  *
@@ -23,7 +25,7 @@ import path from "node:path";
  * `perdiem-source-guard.test.ts`, `booking-currency-guard.test.ts` and this
  * package's own `settings-id-card-guard.test.ts` are written around.
  *
- * Four failures, each invisible to the typechecker and to every other test:
+ * Five failures, each invisible to the typechecker and to every other test:
  *
  * 1. **The gate is deleted and the refusal goes back to unconditional.** That
  *    is the pre-package-C code, it compiles, and the whole package is then
@@ -44,6 +46,18 @@ import path from "node:path";
  *    has the scan attached, and hiding the block strands it — visible to the
  *    Admin desk, invisible to its own data subject, who can then neither see
  *    nor remove it.
+ * 5. **The producer and the consumer are both intact and no longer joined** —
+ *    `needsIdCard={false}`, or any other literal, in place of the
+ *    `tabNeedsIdCard(activeTab, settingsMaps)` call at the one `<TravelBookingTab>`
+ *    render site. Pinning the two ends and not the wire between them was a real
+ *    hole: measured 2026-09-22, that substitution left the suite at 2088/2088
+ *    and `tsc --noEmit` clean, with `tabNeedsIdCard` demoted to an unused import
+ *    that `noUnusedLocals` (off) does not object to either. It buys verbatim
+ *    the failure item 4 below calls "the disagreement that costs most": the
+ *    เอกสารแนบ block renders for nobody while `request-service.ts` still refuses
+ *    every submit whose options require a card, so the requester reads
+ *    "กรุณาแนบรูปบัตรประชาชน หรือ Passport อย่างน้อย 1 ไฟล์" with no control on
+ *    screen to obey and no way forward.
  *
  * ## Out of scope, deliberately
  *
@@ -52,8 +66,13 @@ import path from "node:path";
  * `statusForVisionError`) is unchanged by package C and unmentioned by this
  * guard: where a card is required, an unverified image is still refused.
  *
- * **Mutation-tested 2026-09-22** — see the report for the six mutations and
- * which test each one turned red.
+ * **Mutation-tested 2026-09-22** — **nine** mutations in the round that created
+ * this file (`task-5-report.md`, m1–m9), plus the `needsIdCard={false}` wiring
+ * substitution above, which the final review found surviving all nine and which
+ * `final-fix-report.md` records reding. Ten in total; both reports name which
+ * test each one turned red. The count is stated because it is the only measure
+ * of how much confidence this guard has earned — keep it honest rather than
+ * round.
  */
 
 function read(relative: string): string {
@@ -79,6 +98,7 @@ function between(src: string, startMarker: string, endMarker: string, what: stri
 const REQUEST_SERVICE = "lib/acc/travel-booking/request-service.ts";
 const FORM_HOOK = "features/travel-booking/hooks/useTravelBookingForm.ts";
 const TAB_COMPONENT = "features/travel-booking/components/TravelBookingTab.tsx";
+const FORM_COMPONENT = "features/travel-booking/components/TravelBookingForm.tsx";
 
 /** The Thai refusal both validators speak, as a regex-safe fragment. */
 const REFUSAL = "กรุณาแนบรูปบัตรประชาชน หรือ Passport อย่างน้อย 1 ไฟล์";
@@ -270,5 +290,58 @@ test("the tab component does not recompute the rule from the raw option flags", 
       "needsIdCard prop, which is the same tabNeedsIdCard call validateTab makes. Two spellings " +
       "can disagree, and the costly disagreement is a hidden block whose emptiness still refuses " +
       "the submit",
+  );
+});
+
+/* ── 4. The producer is actually wired to the consumer ── */
+
+/**
+ * Sections 2 and 3 pin `tabNeedsIdCard` and pin `TravelBookingTab`'s use of the
+ * `needsIdCard` prop. Neither says anything about the one line that joins them,
+ * and the final review measured that gap: replacing the call with a literal
+ * left the whole suite green and the typechecker silent.
+ *
+ * Three things have to hold, and each fails differently:
+ *
+ * - the prop is the **call**, not a literal or a locally-derived expression;
+ * - `tabNeedsIdCard` is the one imported from the hook, so the call cannot be
+ *   satisfied by a same-named local helper that answers something else;
+ * - `<TravelBookingTab>` is rendered **once**, because a second render site
+ *   passing a different expression would put two answers on one screen and
+ *   only one of them would match what `validateTab` asked.
+ */
+test("the tab's needsIdCard prop is the shared tabNeedsIdCard call, not a literal", () => {
+  const src = code(FORM_COMPONENT);
+  assert.ok(
+    /needsIdCard=\{\s*tabNeedsIdCard\(\s*activeTab\s*,\s*settingsMaps\s*\)\s*\}/.test(src),
+    "TravelBookingForm.tsx no longer passes needsIdCard={tabNeedsIdCard(activeTab, settingsMaps)} " +
+      "to <TravelBookingTab>. A literal there — `needsIdCard={false}` is the plausible one, and it " +
+      "typechecks with tabNeedsIdCard left an unused import — hides the เอกสารแนบ block from " +
+      "everybody while validateTravelBookingTab still refuses every submit whose options require a " +
+      "card. The requester is told to attach one with no control on screen to obey.",
+  );
+});
+
+test("tabNeedsIdCard is imported from the hook that validateTab uses", () => {
+  const src = code(FORM_COMPONENT);
+  assert.ok(
+    /import\s*\{[^}]*\btabNeedsIdCard\b[^}]*\}\s*from\s*"@\/features\/travel-booking\/hooks\/useTravelBookingForm"/.test(
+      src,
+    ),
+    "TravelBookingForm.tsx no longer imports tabNeedsIdCard from useTravelBookingForm — a " +
+      "same-named local helper would satisfy the call above while answering a different question " +
+      "from the one validateTab asks, which is the two-spellings failure this whole file exists " +
+      "to prevent",
+  );
+});
+
+test("<TravelBookingTab> has exactly one render site", () => {
+  const src = code(FORM_COMPONENT);
+  assert.equal(
+    src.split("<TravelBookingTab").length - 1,
+    1,
+    "TravelBookingForm.tsx renders <TravelBookingTab> somewhere other than once — the assertion " +
+      "above pins one needsIdCard expression, so a second render site could pass a different one " +
+      "and this guard would not see it",
   );
 });

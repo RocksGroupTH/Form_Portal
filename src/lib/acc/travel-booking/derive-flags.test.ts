@@ -316,6 +316,49 @@ test("needsIdCard is false when no option requires one — the fresh-database st
   assert.equal(flags.needsIdCard, false);
 });
 
+/**
+ * **The discriminating case for `needsIdCard`'s plain OR, and the one the six
+ * tests above could not tell apart from its opposite.**
+ *
+ * Every other `needsIdCard` case passes either `rentVehicle: null` or a rent
+ * option that itself requires a card, so all of them pass unchanged if somebody
+ * "restores the symmetry" with `needsRentBooking` twelve lines above and
+ * rewrites the OR into the answer-wins shape:
+ *
+ * ```ts
+ * options.rentVehicle !== null
+ *   ? options.rentVehicle.requiresIdCard
+ *   : (accommodation ?? false) || (go ?? false) || (back ?? false)
+ * ```
+ *
+ * Measured by the final review on 2026-09-22: that rewrite left the whole suite
+ * at 2088/2088 and `tsc --noEmit` clean. This test is what reds it.
+ *
+ * The case is the ordinary one, not an exotic one. A leg vehicle with
+ * `NeedsVehicleRent = 1` is what makes the form ask the rental question at all,
+ * and `ไม่เช่า` — a real row, carrying `RequiresIdCard = 0` like every row does
+ * by default — is how a requester declines it. Under the answer-wins shape that
+ * decline would cancel the *card* requirement the leg vehicle itself carries,
+ * on both client and server, silently: no card asked for, no refusal at submit.
+ *
+ * The asymmetry is deliberate and this test pins both halves of it at once.
+ * `ไม่เช่า` means "no" to a rental because a rental is a thing one can decline;
+ * there is no option meaning "and no identification", so nothing can answer the
+ * card question in the negative and the OR has nothing to defer to.
+ */
+test("a selected ไม่เช่า does not cancel another option's card requirement", () => {
+  const flags = deriveBookingFlags({
+    accommodation: null,
+    goVehicle: { ...hiredVehicle, requiresIdCard: true },
+    returnVehicle: { ...hiredVehicle, requiresIdCard: true },
+    rentVehicle: noRent,
+  });
+  // The decline still wins the question it answers…
+  assert.equal(flags.needsRentBooking, false);
+  // …and does not reach the one it does not.
+  assert.equal(flags.needsIdCard, true);
+});
+
 test("NO_BOOKING_FLAGS carries needsIdCard false", () => {
   assert.equal(NO_BOOKING_FLAGS.needsIdCard, false);
 });

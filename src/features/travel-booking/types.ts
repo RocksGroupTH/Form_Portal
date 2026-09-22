@@ -385,7 +385,11 @@ export interface TravelBookingRequest {
   groupKey: string | null;
   sortOrder: number;
 
-  // ข้อ17 — แนบบัตรประชาชน หรือ Passport (>=1)
+  // ข้อ17 — แนบบัตรประชาชน หรือ Passport. Required (>=1) only where a selected
+  // booking option carries RequiresIdCard (migration 154); empty is legitimate
+  // otherwise, and stays legitimate on a request whose option was un-ticked
+  // after the fact. `deriveBookingFlags(...).needsIdCard` is the one rule that
+  // answers which — never this field's length, and never a posted flag.
   idCardFiles: TravelBookingFileMeta[];
   // Admin fill-in (2.x)
   bookingDetails: BookingDetail[];

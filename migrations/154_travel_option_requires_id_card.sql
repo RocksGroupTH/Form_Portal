@@ -27,10 +27,14 @@
 -- All three tables are dual-written and listed in MASTER_TABLES
 -- (scripts/checks/verify-master-alignment.ts:77-79), with ids identical on
 -- both sides. SQL Server binds column names at COMPILE time, so
--- RequiresIdCard missing from EITHER database is "Invalid object name" for
--- whoever resolves that side — never a silent NULL — on the AP-17 form and
+-- RequiresIdCard missing from EITHER database is
+--   Msg 207, Level 16 — Invalid column name 'RequiresIdCard'.
+-- for whoever resolves that side — never a silent NULL — on the AP-17 form and
 -- settings paths that read or write it. Same hazard migrations 090, 120, 144
--- and 149 already carry.
+-- and 149 already carry, though note those are TABLE migrations: a missing
+-- table is Msg 208, "Invalid object name", which is a different string to grep
+-- for. 149 is a column migration and says the table one; it is wrong about the
+-- string only, and is left alone rather than rewritten from here.
 --
 -- npm run check:alignment MUST STILL READ 30 TABLES afterwards. This adds a
 -- column to three tables already on the list — it does not add a table. 31

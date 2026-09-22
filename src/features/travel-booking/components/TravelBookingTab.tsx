@@ -710,7 +710,7 @@ export function TravelBookingTab({
                 style={{ background: "var(--bg-card-alt)", color: "var(--text-secondary)" }}
               >
                 การจองที่เลือกไว้ไม่ได้กำหนดให้ต้องแนบบัตรประชาชน หรือ Passport แล้ว —
-                ไฟล์ที่แนบไว้ก่อนหน้านี้ยังอยู่ ลบออกได้หากไม่ต้องการส่ง
+                ไฟล์ที่แนบหรือเลือกไว้ยังอยู่ ลบออกได้หากไม่ต้องการส่ง
               </div>
             )}
             <IdCardUpload

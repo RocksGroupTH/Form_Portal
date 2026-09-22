@@ -39,6 +39,14 @@ import path from "node:path";
  * reverted by hand (not `git checkout`, since the working tree already had
  * this file staged as new) and `git diff` against the committed version was
  * empty afterwards.
+ *
+ * **What that first round missed, added 2026-09-22 after the final review.**
+ * Every assertion it contained read SQL *text*, and SQL text cannot tell which
+ * field a parameter was bound from. Three more mutations — one per upsert,
+ * rebinding `@requiresIdCard` to the neighbouring `needs*` flag — each survived
+ * the entire suite. The three `binds requiresIdCard to row.requiresIdCard`
+ * tests below are the answer; see the comment above `BIND` for what a wrong
+ * bind costs and `final-fix-report.md` for the per-site RED/GREEN.
  */
 
 function read(relative: string): string {
@@ -123,14 +131,44 @@ test("upsertVehicle's UPDATE branch also writes RequiresIdCard", () => {
   );
 });
 
-test("upsertVehicle's shared input builder binds a requiresIdCard parameter", () => {
-  const body = upsertVehicleBody();
-  assert.ok(
-    /\.input\(\s*"requiresIdCard"\s*,\s*sql\.Bit/.test(body),
-    "upsertVehicle no longer binds a requiresIdCard SQL parameter — naming the column in the SQL " +
-      "text with nothing bound to @requiresIdCard would fail at the database on every save, which " +
-      "the three branch tests above cannot see because they only look at the SQL text",
+/**
+ * **The bind, and the VALUE bound to it — not just the parameter name.**
+ *
+ * Every test above this one reads SQL *text*, and SQL text is satisfied by a
+ * parameter whose value came from the wrong field. The final review measured
+ * that on 2026-09-22: changing `upsertAccommodation`'s bind to
+ * `row.needsRoomBooking ? 1 : 0` — the line directly above it, one copy-paste
+ * away — left the whole suite at 2088/2088 and `tsc --noEmit` clean, because
+ * both fields are `boolean | undefined` and the SQL still names the column.
+ * The bind test that did exist stopped its regex at `sql.Bit`, so the identical
+ * mutation survived on the vehicle too.
+ *
+ * What that buys: an admin ticks "ต้องแนบบัตรประชาชน / Passport", sees
+ * บันทึกสำเร็จ, and the column is written from a different tick — off where it
+ * should be on, and on where it should be off, for every option of that kind,
+ * on both databases at once (so `check:alignment` says nothing either). **The
+ * whole feature is one bit wide and this is the write that sets it.** Nothing
+ * surfaces it until somebody notices that hotel bookings stopped asking for a
+ * card, by which point requests have been filed without one.
+ *
+ * One pattern, asserted per upsert rather than once over the file, so a
+ * mutation to any single one cannot be masked by the other two.
+ */
+const BIND = /\.input\(\s*"requiresIdCard"\s*,\s*sql\.Bit\s*,\s*row\.requiresIdCard\s*\?\s*1\s*:\s*0\s*\)/;
+
+/** The reason text is the same for all three; only the function name differs. */
+function bindMessage(fn: string): string {
+  return (
+    `${fn} no longer binds @requiresIdCard to \`row.requiresIdCard ? 1 : 0\`. Either nothing is ` +
+    "bound at all — which fails at the database on every save — or, far worse, it is bound to a " +
+    "different field of the same type: the SQL text still names RequiresIdCard, every other test " +
+    "in this file still passes, the typechecker is silent, and the admin's tick is written from " +
+    "the wrong box. Measured as surviving the whole suite on 2026-09-22."
   );
+}
+
+test("upsertVehicle binds requiresIdCard to row.requiresIdCard", () => {
+  assert.ok(BIND.test(upsertVehicleBody()), bindMessage("upsertVehicle"));
 });
 
 /**
@@ -140,6 +178,26 @@ test("upsertVehicle's shared input builder binds a requiresIdCard parameter", ()
  * still holds for each of them, and it is exactly as easy to lose one arm
  * while editing the other.
  */
+/** The body of one upsert, isolated by the `reorder*` function that follows it. */
+function upsertBody(fn: string, endMarker: string): string {
+  const src = code(SETTINGS_SERVICE);
+  const start = src.indexOf(`export async function ${fn}`);
+  assert.notEqual(start, -1, `${fn} not found in settings-service.ts`);
+  const end = src.indexOf(endMarker, start);
+  assert.notEqual(end, -1, `${endMarker} not found after ${fn} — has the file been restructured?`);
+  return src.slice(start, end);
+}
+
+test("upsertAccommodation binds requiresIdCard to row.requiresIdCard", () => {
+  const body = upsertBody("upsertAccommodation", "export async function reorderAccommodations");
+  assert.ok(BIND.test(body), bindMessage("upsertAccommodation"));
+});
+
+test("upsertRentVehicle binds requiresIdCard to row.requiresIdCard", () => {
+  const body = upsertBody("upsertRentVehicle", "export async function reorderRentVehicles");
+  assert.ok(BIND.test(body), bindMessage("upsertRentVehicle"));
+});
+
 test("upsertAccommodation writes RequiresIdCard on both its UPDATE and INSERT", () => {
   const src = code(SETTINGS_SERVICE);
   const start = src.indexOf("export async function upsertAccommodation");
