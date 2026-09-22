@@ -390,7 +390,25 @@ export function AdvClrAccessSettings({ form }: { form: AdvClrForm }) {
   } | null>(null);
 
   const menus = advClrMenusForForm(form);
-  const tabs = advClrTabsForForm(form);
+  /**
+   * **Grantable tabs only — the admin-only ones are NOT columns** (user,
+   * 2026-09-22: *"ตัดช่อง สิทธิ์เข้าถึง ในตารางออก และ ช่อง Interface ERP ไม่มีให้
+   * check box"*).
+   *
+   * `สิทธิ์เข้าถึง` and `Interface ERP` are ungrantable, so their cells could
+   * only ever render `—`: a column on a ticking screen that can never be
+   * ticked. `สิทธิ์เข้าถึง` is also the very tab this screen IS.
+   *
+   * **This diverges from AP-4's grid deliberately.** CLAUDE.md records the
+   * opposite call there (2026-09-14) — list every tab, because an admin
+   * looking for "who may open Interface ERP" should find the answer rather
+   * than conclude the tab is missing. That need is real, so it is met by the
+   * line under the table instead of by four dead columns; filtering on
+   * `adminOnly` rather than naming the two keys means a tab that becomes
+   * grantable later reappears as a column on its own.
+   */
+  const tabs = advClrTabsForForm(form).filter((t) => !t.adminOnly);
+  const adminOnlyTabs = advClrTabsForForm(form).filter((t) => t.adminOnly);
   const columns = advClrApproverColumnsForForm(form);
   const otherForm: AdvClrForm = form === "AP-2" ? "AP-3" : "AP-2";
 
@@ -848,6 +866,19 @@ export function AdvClrAccessSettings({ form }: { form: AdvClrForm }) {
                   </p>
                 ))}
               </div>
+            )}
+
+            {/* The admin-only tabs are no longer columns (see `tabs` above), so
+                they are named here instead. Without this an admin asking "who
+                may open Interface ERP?" finds no row, no column and no answer,
+                and reasonably concludes the tab has been removed — which is
+                exactly the complaint AP-4's grid was changed to fix on
+                2026-09-14. One line costs nothing and keeps that answerable. */}
+            {adminOnlyTabs.length > 0 && (
+              <p className="text-[10px] mt-2 m-0" style={{ color: "var(--text-faint)" }}>
+                {adminOnlyTabs.map((t) => t.label).join(" · ")} — เปิดได้เฉพาะ IT Admin และ
+                System Admin จึงไม่มีในตารางนี้
+              </p>
             )}
           </>
         )}
