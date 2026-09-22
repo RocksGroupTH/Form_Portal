@@ -183,6 +183,47 @@ import path from "node:path";
  *     `2972e26` bug — → **red**; so is reopening without clearing (43), and so
  *     is closing the whole picker instead (44).
  *
+ * *(42–44 were written against the two-dialog arrangement, where `personOpen`
+ * existed. The merge below made the middle one unrepresentable and rewrote
+ * the arms; the trials are left recorded because they are why the surviving
+ * ones are shaped as they are.)*
+ *
+ * ## The two dialogs merged — 2026-09-22, mutation-verified, seven trials
+ *
+ * The person search was a **second dialog** stacked over this one
+ * (`RequesterPickerModal`, portalled at `z-[80]`, with the host dialog closing
+ * itself to let it through). The user asked for one screen:
+ * "อยากปรับให้ 2 หน้านี้รวมกัน". `RequesterPickerBody` — the modal's
+ * frame-less half, extracted so both render one implementation — is now
+ * rendered inline on the first tab.
+ *
+ * 45. `<RequesterPickerBody>` deleted from the `person === null` step → **red**
+ *     (the step is blank; nothing else notices).
+ * 46. the shared import swapped for a hand-rolled search in this file →
+ *     **red**.
+ * 47. `<RequesterPickerModal>` rendered again beside the dialog → **red**.
+ * 48. `frame="inline"` dropped, so the body falls back to the modal frame →
+ *     **red**. This is the one that reverts by *deletion* and type-checks
+ *     perfectly: a second `flex-1 overflow-y-auto` scroller with the modal's
+ *     own padding, inside a panel that already scrolls.
+ * 49. `self={null}` dropped → **red** (a "ตัวฉันเอง" row that can only ever
+ *     be refused by the save).
+ * 50. **`<RequesterPickerBody>` moved OUT of the `person === null` step and
+ *     rendered unconditionally, props intact** → **red**. The trial that
+ *     earns `balancedAfter` here, exactly as 2 did for the grid: the element
+ *     is still in the file with every prop, and only containment tells the
+ *     difference between the merged first step and a search box sitting on
+ *     top of the chosen colleague's request list.
+ * 51. `← เปลี่ยนคน` calling `closePicker()` beside `setPerson(null)` — the
+ *     `2972e26` bug in the only form the merge leaves open to it → **red**.
+ * 52. `setPersonOpen` reintroduced beside `person` → **red**.
+ * 53. `RequesterPickerModal` given back a search of its own instead of
+ *     rendering the shared body → **red**. The other end of "one
+ *     implementation, two frames": every assertion about `RoomShareControl`
+ *     stays green while the four on-behalf callers drift onto a second copy.
+ * 54. the request list region rendered unconditionally again, so both steps
+ *     are on screen together → **red**.
+ *
  * Applied as literal replacements by a harness that restores from a `cp`
  * backup and verifies the restore by hash; identical each time.
  */
@@ -191,6 +232,8 @@ const SRC = path.resolve(process.cwd(), "src");
 
 const TAB = "features/travel-booking/components/TravelBookingTab.tsx";
 const CONTROL = "features/travel-booking/components/RoomShareControl.tsx";
+/** The on-behalf frame around the same shared search body — see the inline-search test. */
+const PERSON_MODAL = "components/RequesterPickerModal.tsx";
 const HOOK = "features/travel-booking/hooks/useTravelBookingForm.ts";
 const SERVICE = "lib/acc/travel-booking/request-service.ts";
 
@@ -382,13 +425,86 @@ test("the person search is the requester roster, never the admin-only directory"
   );
 });
 
-test("the picker reuses the shared person modal rather than a second search", () => {
+/**
+ * **The person search is rendered INSIDE this dialog, and it is the shared
+ * one** (the user, 2026-09-22: "อยากปรับให้ 2 หน้านี้รวมกัน").
+ *
+ * Two different regressions, one test, because they are the two ways the
+ * merge comes undone:
+ *
+ * - the search is **copied** into this file rather than shared. Spec §6 is
+ *   explicit that the directory search is not written twice, and the body
+ *   owns the 220 ms debounce and the `seq` staleness guard a hand-rolled copy
+ *   would have to reproduce — badly, since neither is visible in a screenshot.
+ * - a **second dialog** comes back. That is what was removed: a modal
+ *   portalled to `document.body` over a dialog that had to close itself to
+ *   let it through, which is the arrangement `personOpen` existed for and the
+ *   arrangement `← เปลี่ยนคน` kept breaking under.
+ *
+ * `frame="inline"` is asserted because it reverts by **deletion**: the prop
+ * defaults to `"modal"`, whose list region is `flex-1 overflow-y-auto` with
+ * the modal's own `px-5 pb-4`, so dropping it puts a second scroller and a
+ * stray inset inside a panel that already scrolls — and nothing type-checks
+ * differently.
+ */
+test("the person search is rendered inline in this dialog, from the shared body", () => {
   const src = code(CONTROL);
+  assert.match(
+    src,
+    /import\s*\{[^}]*\bRequesterPickerBody\b[^}]*\}\s*from\s*["']@\/components\/RequesterPickerBody["']/,
+    "RoomShareControl no longer imports the shared RequesterPickerBody, so the roster search " +
+      "it renders is a second copy of one that already exists",
+  );
   assert.ok(
-    src.indexOf("RequesterPickerModal") !== -1,
-    "RoomShareControl no longer reuses RequesterPickerModal. Spec §6 is explicit that the " +
-      "directory search is not written twice, and that modal owns the debounce and the `seq` " +
-      "staleness guard a hand-rolled copy would have to reproduce",
+    src.indexOf("<RequesterPickerModal") === -1,
+    "a second, stacked RequesterPickerModal is back on top of this dialog. The user asked for " +
+      "the two screens to become one (2026-09-22), and the two-dialog arrangement is what " +
+      "needed `personOpen` beside `person` — the pair that could disagree about which step was " +
+      "showing, and did",
+  );
+  // Containment, not presence: the search belongs on the step that has no
+  // colleague yet. Rendered anywhere else it is decoration, and the person
+  // tab is the empty panel with a button on it that this replaced.
+  const step1 = balancedAfter(src, "person === null ?", "(");
+  assert.ok(
+    step1.indexOf("<RequesterPickerBody") !== -1,
+    "the shared person search is not rendered on the step where no colleague has been chosen. " +
+      "That step is the whole first half of the merged dialog; without it the tab is blank",
+  );
+  assert.ok(
+    /frame="inline"/.test(step1),
+    'the inline search is rendered without frame="inline", so it falls back to the modal ' +
+      "frame — a second `flex-1 overflow-y-auto` scroller, with the modal's own padding, " +
+      "inside a dialog body that is already the scroll region. Two nested scrollers in one " +
+      "90vh panel is what makes this unusable on a phone",
+  );
+  assert.ok(
+    /self=\{null\}/.test(step1),
+    'the inline search offers a "ตัวฉันเอง" row again. This asks whose room, and your own is ' +
+      "not one — the save refuses a self-attach, so the row can only ever be a dead end",
+  );
+  /* The two steps stay mutually exclusive inside the one dialog, which is
+     what keeps the merged panel no taller than the taller of the two it
+     replaced — the thing that decides whether this works on a phone. Without
+     the gate the search step also carries the request list's reserved
+     `min-h-[120px]`, and, for as long as the fetch effect takes to clear
+     them, the PREVIOUS colleague's requests underneath the colleague search.
+     The class strings are deliberately not pinned; the gate is. */
+  assert.match(
+    src,
+    /className=\{hostListWanted \?/,
+    "the request list region is no longer gated on there being a query for it to answer, so " +
+      "the colleague search step renders it too — blank space on a phone at best, and the " +
+      "colleague you just stepped away from at worst",
+  );
+  // The other end of "one implementation, two frames". Four on-behalf callers
+  // reach the search through this modal, and it keeping its own copy is how
+  // the two drift — the room-share tab would stay green throughout.
+  assert.ok(
+    code(PERSON_MODAL).indexOf("<RequesterPickerBody") !== -1,
+    "RequesterPickerModal no longer renders the shared RequesterPickerBody, so the on-behalf " +
+      "เปลี่ยนผู้ขอเบิก picker and AP-17's room-share tab are running two copies of the roster " +
+      "search again — the thing the extraction existed to prevent",
   );
 });
 
@@ -618,17 +734,26 @@ test("the fetched list is filterable by running number", () => {
 
 /**
  * **`← เปลี่ยนคน` goes BACK a step, it does not close the picker** (fixed in
- * `2972e26`, and re-checked here because the rework moved every piece of state
- * it touches).
+ * `2972e26`; re-checked here through every rework because the state it reads
+ * has now been rewritten twice).
  *
- * The bug it fixes is subtle enough to come back by accident:
- * `RequesterPickerModal` calls its `onClose()` immediately after `onSelect()`,
- * so `personOpen` is **already false** by the time step 2 is on screen.
- * Clearing `person` alone therefore leaves step 1's own `open` condition false
- * as well, and the control closes the whole picker instead of reopening the
- * person list. Both setters, or neither.
+ * The history is the reason for the shape of the assertions. While the person
+ * search was a **second dialog**, which step was showing took two values —
+ * `person` and `personOpen` — and `RequesterPickerModal` calls its
+ * `onClose()` immediately after `onSelect()`, so `personOpen` was **already
+ * false** by the time step 2 rendered. Clearing `person` alone therefore left
+ * step 1's own `open` condition false as well and the whole picker closed.
+ * Both setters, or neither.
+ *
+ * Since the two dialogs merged (2026-09-22) there is only `person`, so that
+ * particular disagreement is unrepresentable — which is most of why the merge
+ * was worth doing. **Two things still have to hold**, and each has an arm:
+ * the handler must clear the person, and it must not reach for the dialog
+ * itself. The third arm is the structural one: `setPersonOpen` must not come
+ * back at all, because the moment a second value decides this again, so does
+ * the bug.
  */
-test("← เปลี่ยนคน reopens the person list rather than closing the picker", () => {
+test("← เปลี่ยนคน goes back to the search step rather than closing the picker", () => {
   const src = code(CONTROL);
   // The label sits at the END of its <Button>, so the handler is read
   // backwards from it rather than forwards through a balanced region.
@@ -642,13 +767,17 @@ test("← เปลี่ยนคน reopens the person list rather than closin
     /setPerson\(null\)/,
     "← เปลี่ยนคน no longer clears the chosen colleague, so it goes nowhere",
   );
-  assert.match(
-    handler,
-    /setPersonOpen\(true\)/,
-    "← เปลี่ยนคน clears the person WITHOUT reopening the person list. " +
-      "RequesterPickerModal calls onClose() straight after onSelect(), so personOpen is already " +
-      "false by then — clearing `person` alone closes the whole picker instead of going back a " +
-      "step, which is the exact bug 2972e26 fixed",
+  assert.ok(
+    handler.indexOf("closePicker") === -1 && handler.indexOf("setPickerOpen(false)") === -1,
+    "← เปลี่ยนคน closes the whole dialog instead of stepping back to the search. That is the " +
+      "2972e26 bug in the only form the merged dialog still leaves open to it — the requester " +
+      "loses the number tab, the date filter and everything else in one press",
+  );
+  assert.ok(
+    src.indexOf("setPersonOpen") === -1,
+    "a second piece of state decides which step is showing again. Which step it is has been " +
+      "`person === null` alone since the two dialogs merged; reintroducing `personOpen` beside " +
+      "it restores exactly the pair that could disagree, and did",
   );
 });
 

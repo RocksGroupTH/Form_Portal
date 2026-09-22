@@ -16,7 +16,7 @@ import {
 import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
-import { RequesterPickerModal, type RequesterOption } from "@/components/RequesterPickerModal";
+import { RequesterPickerBody, type RequesterOption } from "@/components/RequesterPickerBody";
 import { fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
 import { ROOM_SHARE_AGREEMENT_LINE } from "@/features/travel-booking/constants";
 import { defaultHostFilterRange } from "@/features/travel-booking/lib/host-filter-range";
@@ -84,11 +84,33 @@ import type {
  * in-transaction under `UPDLOCK, HOLDLOCK`. Binding two people's documents is
  * the act that needed the gate and it still has it.
  *
+ * ## One dialog, two steps (merged 2026-09-22)
+ *
+ * The person search used to be a **second, stacked dialog** —
+ * `RequesterPickerModal`, portalled to `document.body` at `z-[80]` over this
+ * one, which had to close itself (`open={pickerOpen && !personModalUp}`)
+ * while it was up. The user asked for the two to become one: "อยากปรับให้ 2
+ * หน้านี้รวมกัน". So `RequesterPickerBody` — the modal's frame-less half,
+ * extracted rather than copied — is rendered **inline on the เลือกเพื่อนร่วมงาน
+ * tab**, and no second modal opens at any point.
+ *
+ * **Which step is showing is now ONE value: `person === null`.** That is the
+ * whole reason the merge is worth doing beyond the click it saves. The old
+ * arrangement needed `personOpen` *and* `person` to agree, and they silently
+ * did not: `RequesterPickerModal` calls `onClose()` immediately after
+ * `onSelect()`, so `personOpen` was already false by the time step 2
+ * rendered, and `← เปลี่ยนคน` clearing `person` alone closed the whole picker
+ * instead of going back a step (shipped in package E, fixed in `2972e26`).
+ * With `personOpen` gone there is no second value left to disagree —
+ * `← เปลี่ยนคน` is `setPerson(null)` and nothing else.
+ *
  * ## Two fetch surfaces, both pre-existing, neither widened
  *
  * The person search is `/api/request/travel-booking/requesters`, the HR-backed
  * roster search the on-behalf เปลี่ยนผู้ขอเบิก picker already uses, reached
- * through the very same `RequesterPickerModal`. Spec §6 names
+ * through the very same `RequesterPickerBody` — the frame-less half of
+ * `RequesterPickerModal`, rendered here *inline on the first tab* rather than
+ * as a dialog of its own (see "One dialog, two steps" below). Spec §6 names
  * `/api/users/search` instead; that route is
  * `requireRole(["IT Admin","System Admin"])`, so an ordinary requester cannot
  * call it at all and following the spec literally would 403 for almost
@@ -243,7 +265,13 @@ export function RoomShareControl({
   /* ── the picker ── */
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickMode, setPickMode] = useState<PickMode>("person");
-  const [personOpen, setPersonOpen] = useState(false);
+  /**
+   * The colleague whose requests step 2 lists — and, since the two dialogs
+   * merged, **the only thing that says which step of the person tab is
+   * showing**: null is the search, set is the list. There is deliberately no
+   * second `personOpen` beside it; see this file's header for the bug the two
+   * of them used to be able to disagree about.
+   */
   const [person, setPerson] = useState<RequesterOption | null>(null);
   const [hosts, setHosts] = useState<HostCandidateRow[] | null>(null);
   const [hostsLoading, setHostsLoading] = useState(false);
@@ -378,7 +406,21 @@ export function RoomShareControl({
       setHostsLoading(false);
       return;
     }
-    if (!byNumber && personStaffId == null) return;
+    /* No colleague chosen is no query, so there are no results — the same
+       thing the under-three-characters branch above says for the number tab.
+       **Clearing here rather than in `← เปลี่ยนคน` is deliberate**: the list
+       is stale the moment its subject is gone, whatever made it gone, and a
+       clear attached to one button is a clear the next way back forgets. It
+       matters because the search step and the list step are now inside ONE
+       dialog: before the merge, stepping back closed the dialog holding these
+       rows, so nobody saw the previous colleague's requests survive. */
+    if (!byNumber && personStaffId == null) {
+      setHosts(null);
+      setNotice(null);
+      setHostsError(null);
+      setHostsLoading(false);
+      return;
+    }
 
     let cancelled = false;
     setHostsLoading(true);
@@ -438,6 +480,18 @@ export function RoomShareControl({
     // name change.
   }, [pickerOpen, pickMode, personStaffId, mode, from, to, numberQuery, requestId, reload]);
 
+  /**
+   * Is there a query for the request list to be the answer to?
+   *
+   * The number tab always is one; the person tab only once a colleague has
+   * been chosen. **This exists because of the merge**: the search step and the
+   * list step now share one dialog, so the list region — its `min-h-[120px]`
+   * reservation included — would otherwise sit under the colleague search as
+   * a slab of blank space, and would render the *previous* colleague's
+   * requests for as long as it took the effect above to clear them.
+   */
+  const hostListWanted = pickMode === "number" || person !== null;
+
   /** Point 3 — filtered in the browser over what was already fetched. */
   const shownHosts = useMemo(() => {
     const rows = hosts ?? [];
@@ -460,7 +514,6 @@ export function RoomShareControl({
     setPickerOpen(true);
     setPickMode("person");
     setPerson(null);
-    setPersonOpen(true);
     setHosts(null);
     setHostsError(null);
     setNotice(null);
@@ -478,7 +531,6 @@ export function RoomShareControl({
 
   const closePicker = useCallback(() => {
     setPickerOpen(false);
-    setPersonOpen(false);
     setPerson(null);
     setHosts(null);
     setHostsError(null);
@@ -526,11 +578,12 @@ export function RoomShareControl({
       setHostsError(null);
       setNotice(null);
       setListQuery("");
-      // Step 1's modal opens itself when the person tab is selected with
-      // nobody chosen — otherwise that tab is an empty panel with a button.
-      if (next === "person" && !person) setPersonOpen(true);
+      // Nothing to reopen any more: the person tab renders its own search
+      // inline whenever `person` is null, so selecting it with nobody chosen
+      // IS the search. It used to have to push step 1's modal back up here,
+      // or that tab was an empty panel with a button on it.
     },
-    [pickMode, person],
+    [pickMode],
   );
 
   /* ── choosing and clearing ── */
@@ -550,12 +603,6 @@ export function RoomShareControl({
     setSavedPerson(null);
     onClear();
   }, [onClear]);
-
-  /* Step 1 is in front whenever the person tab is selected and nobody has been
-     chosen yet. The host dialog and the person modal are never open together —
-     the same mutual exclusion package E shipped with, which is what makes
-     "← เปลี่ยนคน" a step back rather than a second layer. */
-  const personModalUp = pickerOpen && pickMode === "person" && personOpen && person === null;
 
   /* ─────────────────────────── attached ─────────────────────────── */
 
@@ -688,40 +735,11 @@ export function RoomShareControl({
         เลือกแทนการจองห้องพักเอง — ใช้ห้องของเพื่อนร่วมงานที่จองไว้แล้ว และยังได้รับเบี้ยเลี้ยง
       </p>
 
-      {/* Step 1 — the person. The same modal, the same roster search and the
-          same debounce/staleness guard the on-behalf picker uses; only the
-          heading differs. */}
-      <RequesterPickerModal
-        open={personModalUp}
-        // Dismissing without choosing drops back to the host dialog's person
-        // tab rather than closing everything, so the number tab is still one
-        // click away. It used to close the whole picker.
-        onClose={() => setPersonOpen(false)}
-        colleagues={colleagues}
-        // No "ตัวฉันเอง" row: this asks whose room, and your own is not one.
-        self={null}
-        value={null}
-        onSelect={(staffId) => {
-          if (staffId == null) return;
-          /* Set synchronously with the id alone, THEN refine with the HR row.
-             `RequesterPickerModal` calls `onClose()` immediately after
-             `onSelect()`, so `personOpen` is already false while
-             `resolvePerson` is still in flight — and a `person` that is still
-             null in that window renders step 2's "choose somebody first"
-             empty state for a frame. The id is the only thing the host fetch
-             needs; the name is for the heading. */
-          setPerson({ staffId, fullName: null });
-          resolvePerson(staffId, colleagues).then(setPerson);
-        }}
-        searchEndpoint="/api/request/travel-booking/requesters"
-        title="พักห้องเดียวกับใคร"
-        subtitle="เลือกเพื่อนร่วมงานที่จองห้องพักไว้แล้ว"
-      />
-
-      {/* Step 2 — which request. Two tabs: that person's list, or a running
-          number typed straight in (the user's point 2). */}
+      {/* ONE dialog, both steps. Two tabs across the top: a colleague — whose
+          search now sits inside this same panel — or a running number typed
+          straight in (the user's point 2). */}
       <Dialog
-        open={pickerOpen && !personModalUp}
+        open={pickerOpen}
         onOpenChange={(next) => {
           // Escape or a click outside closes the WHOLE picker, both steps.
           // Reopening the person list instead would make Escape read as "go
@@ -805,19 +823,39 @@ export function RoomShareControl({
           ) : (
             <>
               {person === null ? (
-                <div className="py-6 flex flex-col items-center gap-2.5">
-                  <p className="text-[12.5px] m-0 text-center" style={{ color: "var(--text-muted)" }}>
-                    เลือกเพื่อนร่วมงานก่อน เพื่อดูรายการคำขอที่พักห้องร่วมได้
+                /* Step 1, INLINE — no second dialog opens here any more. The
+                   same roster search, the same 220 ms debounce and the same
+                   `seq` staleness guard the on-behalf เปลี่ยนผู้ขอเบิก picker
+                   uses, because it is literally the same component; only the
+                   frame differs. `frame="inline"` drops the body's own
+                   scroller so this dialog's single `overflow-y-auto` column
+                   stays the one scroll region — two nested scrollers inside
+                   one 90vh panel is what makes a picker unusable on a phone. */
+                <div className="flex flex-col gap-2">
+                  <p className="text-[12px] m-0" style={{ color: "var(--text-muted)" }}>
+                    เลือกเพื่อนร่วมงานที่จองห้องพักไว้แล้ว
                   </p>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    icon={<Users size={13} />}
-                    onClick={() => setPersonOpen(true)}
-                  >
-                    เลือกเพื่อนร่วมงาน
-                  </Button>
+                  <RequesterPickerBody
+                    frame="inline"
+                    colleagues={colleagues}
+                    // No "ตัวฉันเอง" row: this asks whose room, and your own
+                    // is not one.
+                    self={null}
+                    value={null}
+                    searchEndpoint="/api/request/travel-booking/requesters"
+                    onSelect={(staffId) => {
+                      if (staffId == null) return;
+                      /* Set synchronously with the id alone, THEN refine with
+                         the HR row. The id is the only thing the host fetch
+                         needs, and it is what moves this tab on to step 2;
+                         the name is for the heading, and arrives a round trip
+                         later. Setting only the resolved row would leave the
+                         search on screen for the whole of that fetch, after a
+                         press that looked like it had done nothing. */
+                      setPerson({ staffId, fullName: null });
+                      resolvePerson(staffId, colleagues).then(setPerson);
+                    }}
+                  />
                 </div>
               ) : (
                 <div className="flex flex-col gap-2">
@@ -894,7 +932,11 @@ export function RoomShareControl({
             </>
           )}
 
-          {notice && (
+          {/* The server's refusal, verbatim — see `notice`'s own docblock.
+              Gated on there being a query at all, with everything else below,
+              so that stepping back to the search does not leave the previous
+              colleague's answer sitting under it. */}
+          {hostListWanted && notice && (
             <div
               className="flex items-start gap-2 text-[12px] font-medium rounded-lg px-3 py-2"
               style={{ background: "var(--bg-card-alt)", color: "var(--color-danger)" }}
@@ -904,7 +946,7 @@ export function RoomShareControl({
             </div>
           )}
 
-          {hostsError && (
+          {hostListWanted && hostsError && (
             <div className="flex items-center gap-2 text-[12px]" style={{ color: "var(--text-warning)" }}>
               <AlertTriangle size={13} className="shrink-0" />
               <span>{hostsError}</span>
@@ -919,7 +961,16 @@ export function RoomShareControl({
             </div>
           )}
 
-          <div className="flex flex-col gap-1.5 min-h-[120px]">
+          {/* The whole list region, `min-h-[120px]` included — the height is
+              reserved so the dialog does not jump between "กำลังค้นหา" and the
+              rows, which is only wanted once something has been asked for. On
+              the search step it would be a slab of blank space under the
+              colleague list.
+              Hidden rather than unmounted: `display: none` takes it out of
+              layout and out of reach of a click or the tab order just as
+              unmounting would, and leaves this eighty-line block where it is
+              instead of re-indenting all of it inside a conditional. */}
+          <div className={hostListWanted ? "flex flex-col gap-1.5 min-h-[120px]" : "hidden"}>
             {hostsLoading && (
               <p className="py-8 text-center text-[12px] flex items-center justify-center gap-1.5" style={{ color: "var(--text-muted)" }}>
                 <Loader2 size={13} className="animate-spin" /> กำลังค้นหา...
@@ -991,17 +1042,20 @@ export function RoomShareControl({
               type="button"
               variant="ghost"
               size="sm"
-              /* BOTH, and clearing `person` alone is not enough — the bug this
-                 fixes. `RequesterPickerModal` calls `onClose()` immediately after
-                 `onSelect()` (RequesterPickerModal.tsx:235), so `personOpen` is
-                 already false by the time step 2 renders. Step 1's own
-                 `open={personModalUp}` therefore stays false when only `person`
-                 is cleared, and "เปลี่ยนคน" closes the whole picker instead of
-                 going back a step. Shipped with package E; found 2026-09-22. */
-              onClick={() => {
-                setPerson(null);
-                setPersonOpen(true);
-              }}
+              /* ONE setter, and it has to stay one. Clearing `person` IS
+                 going back to the search, because that is the only thing
+                 deciding which step of this tab renders — the dialog itself
+                 never closes and there is no second modal to reopen.
+                 It took two values to express this before the merge
+                 (`person` and `personOpen`), they could disagree, and they
+                 did: `RequesterPickerModal` calls `onClose()` immediately
+                 after `onSelect()`, so `personOpen` was already false by the
+                 time step 2 rendered and clearing `person` alone closed the
+                 whole picker instead of stepping back. Shipped with package
+                 E, fixed in `2972e26`, and now unrepresentable.
+                 **Do not add `closePicker()` or `setPickerOpen(false)`
+                 here** — that is the same regression in its remaining form. */
+              onClick={() => setPerson(null)}
             >
               ← เปลี่ยนคน
             </Button>
