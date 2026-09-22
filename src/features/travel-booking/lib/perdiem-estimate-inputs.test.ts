@@ -96,16 +96,82 @@ test("with no other trips touching it, an own tab's continuation still comes fro
 
 /* ── moneyWithheldForRoom ── */
 
+/**
+ * The three original cases, now spelled with the object parameter package E
+ * gave this predicate and with `isRoomShareGuest: false` — which is what
+ * every one of them always meant, there being no other kind of trip when
+ * they were written. Their answers are unchanged, and that is the point:
+ * the guest arm is an addition in front of them, not a rewrite of them.
+ */
 test("no accommodation chosen yet withholds the money", () => {
-  assert.equal(moneyWithheldForRoom(null, false), true);
+  assert.equal(
+    moneyWithheldForRoom({ accommodationId: null, needsRoomBooking: false, isRoomShareGuest: false }),
+    true,
+  );
 });
 
 test("a chosen accommodation that needs no room booking withholds the money", () => {
-  assert.equal(moneyWithheldForRoom(7, false), true);
+  assert.equal(
+    moneyWithheldForRoom({ accommodationId: 7, needsRoomBooking: false, isRoomShareGuest: false }),
+    true,
+  );
 });
 
 test("a chosen accommodation that needs a room booking does not withhold the money", () => {
-  assert.equal(moneyWithheldForRoom(7, true), false);
+  assert.equal(
+    moneyWithheldForRoom({ accommodationId: 7, needsRoomBooking: true, isRoomShareGuest: false }),
+    false,
+  );
+});
+
+/* ── moneyWithheldForRoom: package E's room-share guest ── */
+
+test("a room-share guest is shown the money and a non-guest with no accommodation is not — side by side", () => {
+  // The estimate's half of the same pairing `perdiem.test.ts` makes about the
+  // stored figure, and the reason it has to exist HERE too: a guest picks NO
+  // accommodation — the control replaces the choice — so both rows below have
+  // `accommodationId: null`, and the old predicate looked at nothing else.
+  // Without the guest arm the guest's card reads ฿0 while the submit stores
+  // real money, which is this branch's own recorded defect with the sign
+  // flipped.
+  assert.equal(
+    moneyWithheldForRoom({ accommodationId: null, needsRoomBooking: false, isRoomShareGuest: true }),
+    false,
+  );
+  assert.equal(
+    moneyWithheldForRoom({ accommodationId: null, needsRoomBooking: false, isRoomShareGuest: false }),
+    true,
+  );
+});
+
+test("a guest who also picked a no-room accommodation is still shown the money", () => {
+  // Reachable state rather than a hypothetical: `needsRoomBooking` is derived
+  // from whatever accommodation row a tab holds, and attaching does not clear
+  // it. The estimate must answer what the submit will, and the submit asks
+  // `roomBookedOrShared`, which pays a guest either way.
+  assert.equal(
+    moneyWithheldForRoom({ accommodationId: 7, needsRoomBooking: false, isRoomShareGuest: true }),
+    false,
+  );
+});
+
+test("the guest arm changes nothing for a non-guest, at every combination", () => {
+  // Pinned exhaustively because the rewrite that introduced the arm also
+  // changed the shape of the whole predicate. If a later edit reaches for the
+  // simpler-looking `!roomBookedOrShared(tab)` alone, this is what reds: it
+  // drops the "no accommodation chosen yet" state, which is not the same
+  // question and must keep withholding.
+  for (const needsRoomBooking of [false, true]) {
+    assert.equal(
+      moneyWithheldForRoom({ accommodationId: null, needsRoomBooking, isRoomShareGuest: false }),
+      true,
+      `accommodationId null must withhold whatever needsRoomBooking says (${needsRoomBooking})`,
+    );
+    assert.equal(
+      moneyWithheldForRoom({ accommodationId: 7, needsRoomBooking, isRoomShareGuest: false }),
+      !needsRoomBooking,
+    );
+  }
 });
 
 /* ── estimateContinuationSources ── */

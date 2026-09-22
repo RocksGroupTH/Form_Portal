@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
 import { computePerDiem, rateForDay, type AllowanceLogEntry } from "@/lib/acc/travel-booking/perdiem";
+import { roomBookedOrShared } from "@/lib/acc/travel-booking/perdiem-room";
 import { findDateOverlap, type OtherTrip } from "@/lib/acc/travel-booking/date-overlap";
 import { continuationFlags as deriveContinuationFlags } from "@/lib/acc/travel-booking/continuation-chain";
 import { deriveBookingFlags } from "@/lib/acc/travel-booking/derive-flags";
@@ -83,6 +84,20 @@ export interface TabFormState {
   accommodationId: number | null;
   accommodationCustomText: string | null;
   needsRoomBooking: boolean;
+  /**
+   * พักห้องเดียวกับ — this tab is attached to a colleague's booking as a
+   * room-share **guest** (AP-17 package E). Server-derived on the request
+   * read, never set by a save: the attach and detach go through
+   * `/api/request/travel-booking/room-share/[guestRequestId]`, so this is
+   * what the form knows about a binding that already exists rather than an
+   * edit it is holding.
+   *
+   * **It is a per-diem input**: a guest books no room and is still paid, so
+   * the live estimate must ask `roomBookedOrShared` with this alongside
+   * `needsRoomBooking` — exactly as the submit does. A tab that carried the
+   * flag nowhere would show ฿0 while the submit stored real money.
+   */
+  isRoomShareGuest: boolean;
 
   departDate: string | null;
   returnDate: string | null;
@@ -129,6 +144,8 @@ export function emptyTab(): TabFormState {
     accommodationId: null,
     accommodationCustomText: null,
     needsRoomBooking: false,
+    // A brand-new tab is nobody's guest until it has been saved and attached.
+    isRoomShareGuest: false,
     departDate: null,
     returnDate: null,
     departTime: null,
@@ -181,6 +198,10 @@ function tabFromRequest(r: TravelBookingRequest): TabFormState {
     accommodationId: r.accommodationId,
     accommodationCustomText: r.accommodationCustomText,
     needsRoomBooking: r.needsRoomBooking,
+    // Straight off the server read, beside `needsRoomBooking` — the two are
+    // the per-diem room question's two inputs and must be resumed from the
+    // same load, or a resumed guest's estimate and the submit disagree.
+    isRoomShareGuest: r.isRoomShareGuest,
     departDate: r.departDate,
     returnDate: r.returnDate,
     departTime: r.departTime,
@@ -972,16 +993,36 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
         // (`attribution.kind === "pending"`) withholds money the same way, for
         // the unrelated reason that a figure that would silently change to a
         // different non-zero number is its own "lying screen".
-        const roomKnown = t.accommodationId != null;
+        //
+        // **Package E: a พักห้องเดียวกับ guest settles the room question
+        // WITHOUT choosing an accommodation** — that is the point of the
+        // control, it replaces the choice — so `accommodationId` stays null
+        // for them and this is the second `true` arm rather than a copy of
+        // the pay rule. The pay rule itself is `roomBookedOrShared`'s, the
+        // same single predicate the submit and the recompute apply, so a
+        // guest's screen cannot say ฿0 while the submit stores real money.
+        const roomKnown = t.accommodationId != null || t.isRoomShareGuest;
         const computed = computePerDiem(
           t.departDate,
           t.returnDate,
           continuationFlags[i],
           resolved.log,
-          roomKnown ? { roomBooked: t.needsRoomBooking } : undefined,
+          roomKnown
+            ? {
+                roomBooked: roomBookedOrShared({
+                  needsRoomBooking: t.needsRoomBooking,
+                  isRoomShareGuest: t.isRoomShareGuest,
+                }),
+              }
+            : undefined,
         );
         const shaped =
-          attribution.kind === "pending" || moneyWithheldForRoom(t.accommodationId, t.needsRoomBooking)
+          attribution.kind === "pending" ||
+          moneyWithheldForRoom({
+            accommodationId: t.accommodationId,
+            needsRoomBooking: t.needsRoomBooking,
+            isRoomShareGuest: t.isRoomShareGuest,
+          })
             ? { ...computed, total: 0, groups: [] }
             : computed;
         return { ...shaped, attribution, countryLog };

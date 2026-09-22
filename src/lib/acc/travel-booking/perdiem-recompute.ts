@@ -1,6 +1,10 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { continuationFlags, type ChainTrip } from "@/lib/acc/travel-booking/continuation-chain";
 import { computePerDiem } from "@/lib/acc/travel-booking/perdiem";
+import {
+  IS_ROOM_SHARE_GUEST_COLUMN,
+  roomBookedOrShared,
+} from "@/lib/acc/travel-booking/perdiem-room";
 import { getPerDiemEmployeeLog } from "@/lib/acc/travel-booking/allowance-log";
 import { uatByRecordId } from "@/lib/acc/travel-booking/perdiem-uat-gate";
 import { perDiemLogFor, type PerDiemCountryRate } from "@/lib/acc/travel-booking/perdiem-country";
@@ -85,12 +89,24 @@ function toYmd(d: Date): string {
  *   touches — not one class of trip mispriced, every recomputed trip this
  *   transaction writes, group or outside, written at **฿0**. Worse than either
  *   column above, and until this fix it carried neither a comment nor a guard.
+ * - **`IS_ROOM_SHARE_GUEST_COLUMN`** (AP-17 package E) — deleted,
+ *   `!!x.IsRoomShareGuest` reads `false` for a row that never had the column
+ *   (`!!undefined === false`), so every พักห้องเดียวกับ **guest** this
+ *   recompute touches is re-priced at **฿0** — a requester who books no room
+ *   because they are sharing a colleague's, and whose per diem the user
+ *   explicitly said they keep (spec §1), silently loses all of it inside the
+ *   transaction that cancels somebody else's trip. Exactly
+ *   `t.NeedsRoomBooking`'s failure narrowed to one population, and equally
+ *   invisible: the two facts are read together and answered by one predicate,
+ *   `roomBookedOrShared`, so dropping either one of them reaches the same
+ *   wrong money.
  *
- * None of the three fails a typecheck, and none fails any test but the guard.
+ * None of the four fails a typecheck, and none fails any test but the guard.
  */
 const PERDIEM_ROW_COLUMNS =
   "t.RequestId, t.DepartDate, t.ReturnDate, t.IsContinuation, t.PerDiemDays, " +
-  "t.PerDiemTotal, t.NeedsRoomBooking, r.Status, r.EmployeeId, r.CountryCode, r.StaffId";
+  "t.PerDiemTotal, t.NeedsRoomBooking, r.Status, r.EmployeeId, r.CountryCode, r.StaffId, " +
+  IS_ROOM_SHARE_GUEST_COLUMN;
 
 /**
  * Rewrite one trip's per diem for one continuation-flag change — the body
@@ -100,9 +116,10 @@ const PERDIEM_ROW_COLUMNS =
  * `x` carries the same column shape either way — `RequestId`, `Status`,
  * `DepartDate`, `ReturnDate`, `IsContinuation`, `PerDiemDays`, `PerDiemTotal`
  * plus `PERDIEM_ROW_COLUMNS`'s own `EmployeeId`/`CountryCode`/`StaffId`/
- * `NeedsRoomBooking` — because both readers, the `GroupKey` SELECT below and
- * `loadOutsideDetailRows`, build their column list off that one constant
- * rather than each naming it separately; the two cannot diverge in shape.
+ * `NeedsRoomBooking`/`IsRoomShareGuest` — because both readers, the `GroupKey`
+ * SELECT below and `loadOutsideDetailRows`, build their column list off that
+ * one constant rather than each naming it separately; the two cannot diverge
+ * in shape.
  *
  * No-op (no UPDATE, no audit row) when the flag has not changed — that row was
  * never touched by this cancellation and must not appear in the trail at all.
@@ -170,8 +187,17 @@ async function rewritePerDiemRow(
     // re-derived, so a trip whose accommodation option never books a room
     // cannot be silently repaid its full per diem the first time anything in
     // its chain is cancelled.
+    //
+    // **And its one exception, package E**: a พักห้องเดียวกับ guest books no
+    // room and IS paid (spec §1). `roomBookedOrShared` is the single predicate
+    // the submit, this recompute and the form's live estimate all apply, so a
+    // cancellation elsewhere cannot re-price a guest at ฿0 while the submit
+    // had stored real money — the two would then disagree with nothing said.
     const computed = computePerDiem(departDate!, returnDate!, nowContinuation, resolved.log, {
-      roomBooked: !!x.NeedsRoomBooking,
+      roomBooked: roomBookedOrShared({
+        needsRoomBooking: !!x.NeedsRoomBooking,
+        isRoomShareGuest: !!x.IsRoomShareGuest,
+      }),
     });
     afterDays = computed.days;
     afterTotal = computed.total;
@@ -265,11 +291,12 @@ async function rewritePerDiemRow(
  *
  * `loadRequesterTrips` only carries what the chain needs to order trips and
  * skip dead ones — it does not carry `Status`, `PerDiemDays`, `PerDiemTotal`,
- * `IsContinuation`, `EmployeeId`, `CountryCode`, `StaffId` or
- * `NeedsRoomBooking`, all of which `rewritePerDiemRow` needs. This is scoped
- * to exactly the ids that could have moved (`recomputeGroupPerDiem`'s
- * `alsoAffected`), never to every trip on the requester's calendar, so a trip
- * nothing touched is never locked by this transaction.
+ * `IsContinuation`, `EmployeeId`, `CountryCode`, `StaffId`,
+ * `NeedsRoomBooking` or `IsRoomShareGuest`, all of which `rewritePerDiemRow`
+ * needs. This is scoped to exactly the ids that could have moved
+ * (`recomputeGroupPerDiem`'s `alsoAffected`), never to every trip on the
+ * requester's calendar, so a trip nothing touched is never locked by this
+ * transaction.
  */
 async function loadOutsideDetailRows(
   tx: AccTx,

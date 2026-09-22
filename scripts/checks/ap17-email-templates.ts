@@ -44,6 +44,8 @@ const mockReq: TravelBookingRequest = {
   accommodationName: "โรงแรม",
   accommodationCustomText: null,
   needsRoomBooking: true,
+  // Books its own room, so it is nobody's room-share guest (package E).
+  isRoomShareGuest: false,
   departDate: "2026-07-20",
   returnDate: "2026-07-22",
   departTime: null,

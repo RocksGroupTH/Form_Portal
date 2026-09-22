@@ -334,6 +334,22 @@ export interface TravelBookingRequest {
   accommodationName: string | null;
   accommodationCustomText: string | null;
   needsRoomBooking: boolean;
+  /**
+   * พักห้องเดียวกับ — this request is a room-share **guest**: it has an
+   * `AccTravelRoomShare` row naming it as `GuestRequestId`, so it books
+   * nothing itself and sleeps in the host's room (AP-17 package E, spec §1).
+   *
+   * **It is a per-diem input, which is why it travels on the read shape rather
+   * than being fetched where it is displayed.** A guest earns per diem despite
+   * booking no room, so the submit and the form's live estimate both need it,
+   * and they must not learn it from two different reads — see
+   * `roomBookedOrShared` (`perdiem-room.ts`) for the one predicate both apply
+   * to it.
+   *
+   * Server-derived from the share table, never posted: the same rule
+   * `needsRoomBooking` beside it follows (`derive-flags.ts`).
+   */
+  isRoomShareGuest: boolean;
 
   // ข้อ6 — วันเดินทาง (range)
   departDate: string | null;

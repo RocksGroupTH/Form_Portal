@@ -16,6 +16,10 @@ import { allocateRequestNo } from "@/lib/acc/sequence";
 import { queueEmail } from "@/lib/acc/email-queue";
 import { buildTravelBookingEmail } from "@/lib/acc/travel-booking/email-templates";
 import { computePerDiem } from "@/lib/acc/travel-booking/perdiem";
+import {
+  IS_ROOM_SHARE_GUEST_COLUMN,
+  roomBookedOrShared,
+} from "@/lib/acc/travel-booking/perdiem-room";
 import { isTravelDateTooSoon } from "@/features/travel-booking/lib/earliest-travel-date";
 import { getPerDiemEmployeeLog } from "@/lib/acc/travel-booking/allowance-log";
 import {
@@ -150,6 +154,12 @@ function mapTravelBookingRow(
     accommodationName: (t.AccommodationName as string) ?? null,
     accommodationCustomText: (t.AccommodationCustomText as string) ?? null,
     needsRoomBooking: !!t.NeedsRoomBooking,
+    // พักห้องเดียวกับ (package E). Computed by `IS_ROOM_SHARE_GUEST_COLUMN`,
+    // which BOTH readers of this mapper interpolate — a reader that dropped it
+    // would read `!!undefined === false` and price a guest at ฿0 with no error
+    // anywhere, the same failure mode `perdiem-recompute.ts`'s
+    // `PERDIEM_ROW_COLUMNS` doc comment records for `t.NeedsRoomBooking`.
+    isRoomShareGuest: !!r.IsRoomShareGuest,
 
     departDate: t.DepartDate ? toYmd(t.DepartDate as Date) : null,
     returnDate: t.ReturnDate ? toYmd(t.ReturnDate as Date) : null,
@@ -323,7 +333,8 @@ export async function getTravelBookingRequest(id: number): Promise<TravelBooking
     .input("form", sql.NVarChar, AP17_FORM_CODE)
     .query(`SELECT r.*, e.PhotoUrl AS HrRequesterPhotoUrl, e.PhotoOverrideUrl AS HrRequesterPhotoOverrideUrl,
               cont.RequestNo AS ContinuationFromRequestNo,
-              cont.Id AS ContinuationFromRequestId
+              cont.Id AS ContinuationFromRequestId,
+              ${IS_ROOM_SHARE_GUEST_COLUMN}
             FROM [dbo].[AccRequest] r
             LEFT JOIN ${hrEmployeeTable()} e ON e.StaffId = r.StaffId AND e.Status = N'Active'
             -- The trip whose per diem already covers this one's first day.
@@ -449,7 +460,8 @@ export async function listMyTravelBookings(userId: number): Promise<TravelBookin
         t.GoVehicleId, t.GoVehicleName, t.GoVehicleCustomText, t.GoNeedsDepartureLocations, t.GoNeedsTicketBooking, t.GoNeedsDepartTime, t.GoNeedsVehicleRent,
         t.ReturnVehicleId, t.ReturnVehicleName, t.ReturnVehicleCustomText, t.ReturnNeedsDepartureLocations, t.ReturnNeedsTicketBooking, t.ReturnNeedsDepartTime, t.ReturnNeedsVehicleRent,
         t.RentVehicleId, t.RentVehicleName, t.RentVehicleCustomText, t.NeedsRentBooking, t.RentStartDate, t.RentEndDate,
-        t.Notes, t.IsContinuation, t.PerDiemDays, t.PerDiemTotal, t.GroupKey, t.SortOrder
+        t.Notes, t.IsContinuation, t.PerDiemDays, t.PerDiemTotal, t.GroupKey, t.SortOrder,
+        ${IS_ROOM_SHARE_GUEST_COLUMN}
       FROM [dbo].[AccRequest] r
       INNER JOIN [dbo].[AccTravelBooking] t ON t.RequestId = r.Id
       WHERE r.FormCode = @form AND (r.SubmittedBy = @uid OR r.CreatedBy = @uid)
@@ -1543,7 +1555,21 @@ export async function submitTravelBookingGroup(
         // No room booked, no per diem (2026-09-21). Read from the persisted
         // flag, never from the posted DTO — `derive-flags.ts` makes the same
         // point for every other booking flag.
-        { roomBooked: tabs[i].needsRoomBooking },
+        //
+        // **Through `roomBookedOrShared`, not off `needsRoomBooking` alone
+        // (package E).** A พักห้องเดียวกับ guest books no room of their own
+        // and IS paid — spec §1, the user's own *"(ถ้าเลือกอันนี้จะได้
+        // เบี้ยเลี้ยง)"* — so the room question has two inputs now and one
+        // predicate answers it for this write, the recompute and the form's
+        // live estimate alike. `isRoomShareGuest` is server-derived on the
+        // same read that gave `needsRoomBooking`, so the two cannot come from
+        // different states of the database.
+        {
+          roomBooked: roomBookedOrShared({
+            needsRoomBooking: tabs[i].needsRoomBooking,
+            isRoomShareGuest: tabs[i].isRoomShareGuest,
+          }),
+        },
       ),
     );
   }
