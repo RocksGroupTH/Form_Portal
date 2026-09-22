@@ -90,7 +90,7 @@ import path from "node:path";
  * 14. the agreement line stops mentioning per diem → **red**.
  * 15. the agreement line stops mentioning the cancellation → **red**.
  *
- * ## The press saves the draft — added 2026-09-22, mutation-verified, six trials
+ * ## The press saves the draft — added 2026-09-22, mutation-verified, eight trials
  *
  * The button used to be disabled on an unsaved tab, beside "กรุณาบันทึกร่างก่อน
  * จึงจะเลือกห้องพักร่วมได้". The user asked for the choice without that step;
@@ -121,6 +121,22 @@ import path from "node:path";
  * 20. the old "กรุณาบันทึกร่างก่อน…" copy restored → **red**.
  * 21. `loading={opening}` removed, so a press in flight shows nothing and a
  *     second press is not refused by the button → **red**.
+ * 22. **`await onRequireSave()` kept but its result discarded** (`rid =
+ *     requestId` after it) → **red**, and this is the trial that earns the
+ *     regex over a bare `indexOf` on the call. The save still runs, so a
+ *     "is it called" check passes — while `rid` stays null on exactly the
+ *     tab the feature exists for, the refusal branch fires, and the picker
+ *     never opens at all.
+ * 23. `openPicker` renamed → **red** ("not found — has it been renamed or
+ *     removed?"). `balancedAfter` fails closed rather than handing the
+ *     assertions an empty region that satisfies all of them; the same
+ *     property trial 3 above proved for the other marker.
+ *
+ * 18 was run twice: deleting the refusal branch *and* an enclosing brace reds
+ * too, but unbalanced source could have redded it for the wrong reason, so it
+ * was re-run as a brace-balanced deletion and the assertion message checked.
+ * Every trial was applied with `sed`, the file re-run, the tree restored from
+ * a `cp` backup and the restore confirmed by `md5sum` — identical each time.
  */
 
 const SRC = path.resolve(process.cwd(), "src");
@@ -377,16 +393,22 @@ test("pressing the button saves the draft first, and opens only once it has an i
   const src = code(CONTROL);
   const open = balancedAfter(src, "const openPicker = useCallback", "(");
 
-  const saveAt = open.indexOf("await onRequireSave()");
-  assert.notEqual(
-    saveAt,
-    -1,
-    "openPicker no longer saves the draft. The hosts endpoint takes an OWNED request id in its " +
-      "path and authorizes `mutate` against it, so a tab that is not a row yet has nothing to " +
-      "authorize — this save is the only reason the picker can open from an unsaved tab without " +
-      "the endpoint being relaxed, and relaxing it would let any authenticated employee " +
-      "enumerate any colleague's AP-17 running numbers, dates and work locations",
-  );
+  // The RESULT is what is asserted, not the call. `await onRequireSave()` with
+  // the id thrown away leaves `rid` null on exactly the tab this exists for,
+  // so the refusal branch fires and the picker never opens at all — a call
+  // present, a feature gone, and a bare indexOf on the call would pass.
+  const saveMatch = /rid\s*=\s*await\s+onRequireSave\(\)/.exec(open);
+  if (!saveMatch) {
+    assert.fail(
+      "openPicker no longer takes its request id from the draft save. The hosts endpoint takes " +
+        "an OWNED request id in its path and authorizes `mutate` against it, so a tab that is " +
+        "not a row yet has nothing to authorize — this save is the only reason the picker can " +
+        "open from an unsaved tab without the endpoint being relaxed, and relaxing it would let " +
+        "any authenticated employee enumerate any colleague's AP-17 running numbers, dates and " +
+        "work locations",
+    );
+  }
+  const saveAt = saveMatch.index;
 
   const openAt = open.indexOf("setPersonOpen(true)");
   assert.notEqual(openAt, -1, "openPicker no longer opens the picker at all");
