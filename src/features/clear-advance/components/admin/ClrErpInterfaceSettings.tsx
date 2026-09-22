@@ -224,6 +224,16 @@ function GroupCard({
     () => groupValue(members.map((m) => ({ brandCode: m.brandCode, value: m.whtPayableGlAccountNo }))),
     [members],
   );
+  /**
+   * Summarised the same way as the two tax accounts, even though the bank is
+   * also per-brand rather than a group control — a conflicted brand reports
+   * `bankAccountNo: null` here, same as "not set", because the per-member
+   * conflict message inside the dialog is where that detail belongs.
+   */
+  const bankState = useMemo(
+    () => groupValue(members.map((m) => ({ brandCode: m.brandCode, value: m.bankAccountNo }))),
+    [members],
+  );
 
   /**
    * The group's Journal Batch.
@@ -267,7 +277,6 @@ function GroupCard({
    * in the UI, is the fix that was applied there.
    */
   const [bankClearBlocked, setBankClearBlocked] = useState<Record<string, boolean>>({});
-  useEffect(() => { if (open) setBankClearBlocked({}); }, [open]);
   const setBankFor = (code: string, next: string) => {
     const savedBank = (saved[code]?.bankAcct ?? "").trim();
     if (savedBank !== "" && next.trim() === "") {
@@ -381,6 +390,23 @@ function GroupCard({
     }
   }
 
+  /**
+   * Opens fresh every time — an edit abandoned by closing without saving must
+   * not survive to the next open, and must not ride along on a later save
+   * triggered by something else in the group (`toWrite` includes every
+   * member once the batch is dirty, so a stale `draft[code]` here would be
+   * written for a brand nobody touched this time). `useEffect(…, [saved])`
+   * only clears `draft` on the post-save refetch, which never fires for a
+   * cancel — so the reset has to happen here, on open, same as ACC Portal's
+   * `openDialog`.
+   */
+  function openDialog() {
+    setBatch(batchAgreed);
+    setDraft(saved);
+    setBankClearBlocked({});
+    setOpen(true);
+  }
+
   const iface = ERP_INTERFACE_BRANDS.find((b) => b.id === target);
   const bcLine = [first?.bcName, first?.bcConnectionName, first?.environment]
     .map((v) => v?.trim())
@@ -415,8 +441,9 @@ function GroupCard({
         )}
       </div>
 
-      <div className="grid grid-cols-3 gap-3 pt-2" style={{ borderTop: "1px solid var(--border-light)" }}>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-2" style={{ borderTop: "1px solid var(--border-light)" }}>
         <GroupFieldSummary label="Journal Batch" state={batchState} />
+        <GroupFieldSummary label="บัญชีธนาคาร" state={bankState} />
         <GroupFieldSummary label="ภาษีซื้อ (VAT input)" state={vatState} />
         <GroupFieldSummary label="WHT payable" state={whtState} />
       </div>
@@ -428,7 +455,7 @@ function GroupCard({
           แบรนด์ในกลุ่มตั้งที่ AP-2 → ตั้งค่า → Interface ERP
         </p>
         <Button variant="secondary" size="sm" icon={<Pencil size={14} />}
-          disabled={members.length === 0} onClick={() => setOpen(true)}>
+          disabled={members.length === 0} onClick={openDialog}>
           แก้ไข
         </Button>
       </div>
@@ -438,7 +465,7 @@ function GroupCard({
           open
           onOpenChange={(v) => { if (!v) setOpen(false); }}
           title={`ตั้งค่า Interface ERP — ${target}`}
-          description={`${members.length} แบรนด์เบิก · Journal Batch ใช้ร่วมกันทั้งกลุ่ม · บัญชีภาษีแยกรายแบรนด์`}
+          description={`${members.length} แบรนด์เบิก · Journal Batch ใช้ร่วมกันทั้งกลุ่ม · บัญชีธนาคารและบัญชีภาษีแยกรายแบรนด์`}
         >
           <div className="flex flex-col gap-3">
             {batchErr && (
