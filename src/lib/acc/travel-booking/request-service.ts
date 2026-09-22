@@ -44,6 +44,10 @@ import { findDateOverlap, type OtherTrip } from "@/lib/acc/travel-booking/date-o
 import { continuationFlags, continuationPredecessors, type ChainTrip } from "@/lib/acc/travel-booking/continuation-chain";
 import { loadRequesterTrips } from "@/lib/acc/travel-booking/requester-trips";
 import { rewriteSubmitAffectedTrips } from "@/lib/acc/travel-booking/perdiem-recompute";
+import {
+  applyRoomShareDates,
+  applyRoomShareDeath,
+} from "@/lib/acc/travel-booking/room-share-cascade-apply";
 import type {
   Accommodation,
   BookingDetail,
@@ -767,6 +771,28 @@ async function persistDepartureLocations(
  * row pointing at the file had been deleted. See `@/lib/acc/stored-file`.
  */
 async function collectAndDeleteRequestArtifacts(tx: AccTx, requestId: number): Promise<StoredFileRef[]> {
+  /* A HARD DELETE IS A FIFTH CASCADE TRIGGER, and spec §4 names only four —
+     all of them status transitions. This one is not: a `Returned` request its
+     owner discards (or a tab dropped from a group on the next save) can be
+     somebody's room-share host, and simply deleting the binding rows below
+     would leave the guest un-cancelled, un-re-dated and untold, silently
+     pointing at nothing. That is precisely the state the feature exists to
+     prevent, so it cascades exactly as a cancellation does — same actions,
+     same activity rows, same transaction (user ruling, 2026-09-22).
+
+     It runs FIRST, before every delete below, for two reasons. The cascade
+     reads `AccTravelRoomShare` through `loadGuestsOf`, so it must see the rows
+     the delete at the bottom of this function is about to remove; and it can
+     write an `AccActivityLog` row or a per-diem figure onto THIS request when
+     the same person hosts and guests their own two trips in one group —
+     running first means the deletes below clean those up rather than leaving
+     rows pointing at a request that no longer exists.
+
+     Not wrapped in a `try`/`catch`: a delete that commits while the cascade
+     failed is the same silent survival the transaction boundary exists to
+     make impossible. */
+  await applyRoomShareDeath(tx, requestId);
+
   const filesRes = await tx.request().input("rid", sql.Int, requestId)
     .query(`SELECT StoragePath, StorageBackend FROM [dbo].[AccRequestFile] WHERE RequestId=@rid`);
   const paths = (filesRes.recordset as { StoragePath: string; StorageBackend: string | null }[]).map(
@@ -793,10 +819,17 @@ async function collectAndDeleteRequestArtifacts(tx: AccTx, requestId: number): P
          room while their own request is a draft, then discards that draft.
        - HostRequestId: only a `Returned` host, never a Draft one — the picker
          and the attach re-check both refuse a host that has never been filed
-         (`hostHasBeenFiled`, room-share-service.ts). Its guests are detached
-         silently here, which is a gap rather than a decision: the cancel
-         cascade (spec §4) fires on a status transition and a hard delete is
-         not one, so nobody is told. Recorded rather than papered over. */
+         (`hostHasBeenFiled`, room-share-service.ts). Its guests used to be
+         detached silently here, which was recorded at the time as a gap rather
+         than a decision — the cancel cascade fires on a status transition and
+         a hard delete is not one, so nobody was told. **That gap is closed:**
+         `applyRoomShareDeath` at the top of this function cancels and logs
+         every guest before anything is deleted, so by the time this statement
+         runs the bindings it removes name guests that have already been dealt
+         with. The statement itself is still required, and still names both
+         columns: both foreign keys are NO ACTION, so the `AccRequest` delete
+         below raises unless the binding goes first — the guest's side (a
+         requester discarding their own attached draft) as much as the host's. */
   await tx.request().input("rid", sql.Int, requestId)
     .query(`DELETE FROM [dbo].[AccTravelRoomShare] WHERE GuestRequestId=@rid OR HostRequestId=@rid`);
   await tx.request().input("rid", sql.Int, requestId)
@@ -960,12 +993,31 @@ export async function saveTravelBookingDraft(
   try {
     // Existing tabs in this group (if editing) — guard ownership + status.
     const existingRes = await tx.request().input("gk", sql.NVarChar(40), groupKey)
-      .query(`SELECT t.Id AS TravelBookingId, t.RequestId, r.CreatedBy, r.Status
+      // DepartDate/ReturnDate are read here and nowhere else: they are the
+      // "before" half of the room-share date cascade below, and `BOOKING_SET`
+      // overwrites them a few lines later, so after `upsertTravelBooking` has
+      // run there is nothing left to compare the new dates against.
+      .query(`SELECT t.Id AS TravelBookingId, t.RequestId, r.CreatedBy, r.Status,
+                     t.DepartDate, t.ReturnDate
               FROM [dbo].[AccTravelBooking] t
               INNER JOIN [dbo].[AccRequest] r ON r.Id = t.RequestId
               WHERE t.GroupKey = @gk`);
-    const existingRows = existingRes.recordset as
-      { TravelBookingId: number; RequestId: number; CreatedBy: number | null; Status: string }[];
+    const existingRows = existingRes.recordset as {
+      TravelBookingId: number;
+      RequestId: number;
+      CreatedBy: number | null;
+      Status: string;
+      DepartDate: Date | null;
+      ReturnDate: Date | null;
+    }[];
+    /** RequestId → the dates this tab held before this save, 'YYYY-MM-DD' or null. */
+    const datesBefore = new Map<number, { depart: string | null; return: string | null }>();
+    for (const row of existingRows) {
+      datesBefore.set(row.RequestId, {
+        depart: row.DepartDate ? toYmd(row.DepartDate) : null,
+        return: row.ReturnDate ? toYmd(row.ReturnDate) : null,
+      });
+    }
 
     if (input.id) {
       if (existingRows.length === 0) throw new Error("ไม่พบคำขอฉบับร่างนี้");
@@ -1058,6 +1110,47 @@ export async function saveTravelBookingDraft(
 
       await persistWorkLocations(tx, travelBookingId, tab.workLocations ?? []);
       await persistDepartureLocations(tx, travelBookingId, tab.departureLocations ?? []);
+
+      /* THE ROOM-SHARE DATE CASCADE (AP-17 package E, spec §4). `BOOKING_SET`
+         above is the only writer of DepartDate/ReturnDate in `src/`, so this
+         is the only place a host's dates can move, and the cascade belongs
+         beside it — inside this transaction, so a save that commits new dates
+         while failing to move its guests' is impossible.
+
+         The trigger is narrow on purpose, three conditions deep:
+
+         - `requestId` — an existing tab. A row inserted moments ago cannot be
+           anybody's host, so a first save never pays for this read;
+         - the dates actually CHANGED. `cascadeForHostDates` would skip a guest
+           already on the host's dates anyway, but a guest who is NOT on them —
+           because they attached before any cascade ran — would otherwise be
+           re-dated by a save that touched only the work detail, and handed an
+           activity row claiming the host had changed its dates when it had
+           not;
+         - both new dates are PRESENT. A draft save legitimately passes through
+           a half-filled state, and following a host into a blank date range is
+           worse than not following at all.
+
+         A host can only reach here while `Returned` — the guard above admits
+         Draft/Returned, and `hostHasBeenFiled` refuses a Draft host — so this
+         is specifically "a Returned host is edited and saved again". The
+         host's own change goes back through its manager on resubmit; only the
+         GUEST's approval is not reset, which is exactly what spec §2 accepted
+         for throughput. */
+      const before = requestId ? datesBefore.get(finalRequestId) : undefined;
+      const newDepart = tab.departDate || null;
+      const newReturn = tab.returnDate || null;
+      if (
+        before &&
+        newDepart &&
+        newReturn &&
+        (before.depart !== newDepart || before.return !== newReturn)
+      ) {
+        await applyRoomShareDates(tx, finalRequestId, {
+          depart: newDepart,
+          return: newReturn,
+        });
+      }
 
       keptRequestIds.add(finalRequestId);
       requestIds.push(finalRequestId);

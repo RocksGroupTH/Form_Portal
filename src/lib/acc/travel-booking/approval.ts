@@ -7,6 +7,7 @@ import { buildTravelBookingEmail, type TravelBookingTrigger } from "@/lib/acc/tr
 import { payoutDateFor, payoutTripKind } from "@/lib/acc/travel-booking/payout-rule";
 import { getTravelBookingRequest } from "@/lib/acc/travel-booking/request-service";
 import { recomputeGroupPerDiem } from "@/lib/acc/travel-booking/perdiem-recompute";
+import { applyRoomShareDeath } from "@/lib/acc/travel-booking/room-share-cascade-apply";
 import { loadPerDiemDependency } from "@/lib/acc/travel-booking/perdiem-dependency-load";
 import { dependencyRefusalText } from "@/lib/acc/travel-booking/perdiem-dependency-text";
 import { AP17_FORM_CODE } from "@/features/travel-booking/constants";
@@ -139,6 +140,26 @@ async function logManagerOnBehalf(
  * `recomputeGroupPerDiem`. A request with no group key skips silently; there
  * should be none for AP-17; `submitTravelBookingGroup` mints one for every tab,
  * including a single-trip group.
+ *
+ * **It also cascades to this request's พักห้องเดียวกับ guests** (AP-17 package
+ * E, spec §4), and this is the right home for that rather than a fourth thing
+ * bolted onto each caller: it is already inside the caller's transaction and
+ * already reached by all three sites that serve all four public cancel/reject
+ * paths — `rejectRequest`, `cancelByRequester`, and `transitionFromStage` for
+ * both `rejectByAdmin` and `rejectByAccount`. There is deliberately **no
+ * fourth call site**; adding one to `rejectByAccount` would cascade twice.
+ *
+ * The cascade runs **after** the group's own give-back, not before, for a
+ * reason worth keeping: cancelling a guest recomputes the *guest's* group, and
+ * the guest's calendar may legitimately overlap this one if the same person
+ * filed both — letting this request's own group settle first means the guest's
+ * recompute reads a finished state rather than a half-written one.
+ *
+ * **No `try`/`catch` around it, deliberately.** If the cascade throws, the
+ * host's own cancellation rolls back with it. Spec §4 states that direction
+ * outright: a host cancelled while its guests survive is the state this
+ * feature exists to prevent, and it is worse than a cancellation the user has
+ * to retry.
  */
 async function recomputeAfterDeath(
   tx: ReturnType<Awaited<ReturnType<typeof getAccPool>>["transaction"]>,
@@ -154,8 +175,14 @@ async function recomputeAfterDeath(
             WHERE t.RequestId = @rid`);
   const row = r.recordset[0] as { GroupKey: string | null; RequestNo: string | null } | undefined;
   const groupKey = row?.GroupKey ?? null;
-  if (!groupKey) return;
-  await recomputeGroupPerDiem(tx, groupKey, { requestId, requestNo: row?.RequestNo ?? null, kind });
+  if (groupKey) {
+    await recomputeGroupPerDiem(tx, groupKey, { requestId, requestNo: row?.RequestNo ?? null, kind });
+  }
+  // Unconditional — a request with no GroupKey can still be somebody's
+  // room-share host, and the give-back above returning early must not take
+  // the cascade with it. `applyRoomShareDeath` is one indexed read and out
+  // when there are no guests, which is almost always.
+  await applyRoomShareDeath(tx, requestId);
 }
 
 export async function approveByManager(requestId: number, actor: Actor): Promise<TravelBookingRequest> {
