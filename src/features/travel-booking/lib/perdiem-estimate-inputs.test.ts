@@ -1,7 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { continuationFlags } from "@/lib/acc/travel-booking/continuation-chain";
-import { buildEstimateChainTrips, moneyWithheldForRoom } from "./perdiem-estimate-inputs";
+import {
+  buildEstimateChainTrips,
+  estimateContinuationSources,
+  moneyWithheldForRoom,
+} from "./perdiem-estimate-inputs";
 
 /* ── buildEstimateChainTrips ── */
 
@@ -37,7 +41,7 @@ test("own tabs get their array index as sortOrder — parity with request-servic
 test("every trip in the chain is marked alive — otherTrips is already alive-filtered upstream", () => {
   const chain = buildEstimateChainTrips(
     [{ departDate: "2026-09-01", returnDate: "2026-09-02" }],
-    [{ requestId: 900001, departDate: "2026-08-01", returnDate: "2026-08-03", sortOrder: 0 }],
+    [{ requestId: 900001, requestNo: null, departDate: "2026-08-01", returnDate: "2026-08-03", sortOrder: 0 }],
   );
   assert.ok(chain.every((t) => t.alive));
 });
@@ -53,7 +57,7 @@ test("every trip in the chain is marked alive — otherTrips is already alive-fi
 test("an other trip's real SortOrder lands on the chain, not its requestId", () => {
   const chain = buildEstimateChainTrips(
     [],
-    [{ requestId: 900050, departDate: "2026-09-01", returnDate: "2026-09-03", sortOrder: 4 }],
+    [{ requestId: 900050, requestNo: null, departDate: "2026-09-01", returnDate: "2026-09-03", sortOrder: 4 }],
   );
   assert.equal(chain[0].sortOrder, 4);
   assert.notEqual(chain[0].sortOrder, chain[0].requestId);
@@ -69,7 +73,7 @@ test("an other trip's real SortOrder lands on the chain, not its requestId", () 
 test("an other (already-saved) trip's return date feeding this tab's depart date is a continuation", () => {
   const chain = buildEstimateChainTrips(
     [{ departDate: "2026-09-06", returnDate: "2026-09-08" }],
-    [{ requestId: 900001, departDate: "2026-09-01", returnDate: "2026-09-06", sortOrder: 0 }],
+    [{ requestId: 900001, requestNo: null, departDate: "2026-09-01", returnDate: "2026-09-06", sortOrder: 0 }],
   );
   const flags = continuationFlags(chain);
   const ownTripId = chain.find((t) => t.requestId < 0)!.requestId;
@@ -102,4 +106,69 @@ test("a chosen accommodation that needs no room booking withholds the money", ()
 
 test("a chosen accommodation that needs a room booking does not withhold the money", () => {
   assert.equal(moneyWithheldForRoom(7, true), false);
+});
+
+/* ── estimateContinuationSources ── */
+
+const OTHER = (requestId: number, requestNo: string | null, departDate: string, returnDate: string) =>
+  ({ requestId, requestNo, departDate, returnDate, sortOrder: 0 });
+
+test("a tab that continues nothing reports no source", () => {
+  const sources = estimateContinuationSources(
+    [{ departDate: "2026-09-20", returnDate: "2026-09-22" }],
+    [],
+  );
+  assert.deepEqual(sources, [{ kind: "none" }]);
+});
+
+test("a tab continuing one of the requester's other requests names that request's number", () => {
+  const sources = estimateContinuationSources(
+    [{ departDate: "2026-09-24", returnDate: "2026-09-26" }],
+    [OTHER(900, "TRL26-09007", "2026-09-20", "2026-09-24")],
+  );
+  assert.deepEqual(sources, [{ kind: "request", requestNo: "TRL26-09007" }]);
+});
+
+test("a tab continuing a SIBLING tab reports a sibling, never a number — a tab in this group has no running number until submit", () => {
+  const sources = estimateContinuationSources(
+    [
+      { departDate: "2026-09-20", returnDate: "2026-09-24" },
+      { departDate: "2026-09-24", returnDate: "2026-09-26" },
+    ],
+    [],
+  );
+  assert.deepEqual(sources, [{ kind: "none" }, { kind: "sibling" }]);
+});
+
+test("a SAVED sibling tab is still a sibling — a Draft carries an AccRequest.Id but no RequestNo", () => {
+  const sources = estimateContinuationSources(
+    [
+      { id: 401, departDate: "2026-09-20", returnDate: "2026-09-24" },
+      { id: 402, departDate: "2026-09-24", returnDate: "2026-09-26" },
+    ],
+    [],
+  );
+  assert.deepEqual(sources[1], { kind: "sibling" });
+});
+
+test("an other trip whose running number is missing still reports the request kind, with a null number", () => {
+  const sources = estimateContinuationSources(
+    [{ departDate: "2026-09-24", returnDate: "2026-09-26" }],
+    [OTHER(900, null, "2026-09-20", "2026-09-24")],
+  );
+  assert.deepEqual(sources, [{ kind: "request", requestNo: null }]);
+});
+
+test("the source agrees with continuationFlags — a tab with a source is exactly a tab flagged as a continuation", () => {
+  const tabs = [
+    { departDate: "2026-09-24", returnDate: "2026-09-26" },
+    { departDate: "2026-10-10", returnDate: "2026-10-11" },
+  ];
+  const others = [OTHER(900, "TRL26-09007", "2026-09-20", "2026-09-24")];
+  const sources = estimateContinuationSources(tabs, others);
+  const flags = continuationFlags(buildEstimateChainTrips(tabs, others));
+  const chain = buildEstimateChainTrips(tabs, others);
+  for (let i = 0; i < tabs.length; i++) {
+    assert.equal(sources[i].kind !== "none", flags.get(chain[i].requestId) === true);
+  }
 });

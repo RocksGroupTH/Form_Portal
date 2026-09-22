@@ -57,7 +57,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
     colleagues, colleaguesLoading, requesterEnvironment,
     existingRanges, otherTrips, requesterStaffId, setRequesterStaffId, selectedRequester,
     brands,
-    continuationFlags, perDiemEstimates, totalPerDiemEstimate,
+    continuationFlags, continuationSources, perDiemEstimates, totalPerDiemEstimate,
     settingsMaps,
     tabIssues, canSubmit,
     saving, submitting, submitPhase, saveDraft, submitAll, uploadIdCard, removeIdCardFile,
@@ -429,6 +429,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
         <TravelBookingTab
           tab={activeTab}
           isContinuation={continuationFlags[activeTabIndex] ?? false}
+          continuationSource={continuationSources[activeTabIndex] ?? { kind: "none" }}
           perDiemEstimate={
             perDiemEstimates[activeTabIndex] ?? {
               days: 0,

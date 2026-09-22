@@ -54,6 +54,30 @@ import type {
   VehicleOption,
 } from "@/features/travel-booking/types";
 import { earliestTravelDate } from "@/features/travel-booking/lib/earliest-travel-date";
+import type { ContinuationSource } from "@/features/travel-booking/lib/perdiem-estimate-inputs";
+
+/**
+ * The note under the date range when this trip's first day was already counted.
+ *
+ * It used to say only "ต่อเนื่องจากคำขอก่อนหน้า", which tells a requester a day
+ * was deducted and gives them nothing to check it against. The detail page has
+ * named the predecessor since 2026-09-22; this is the form catching up.
+ *
+ * **A sibling tab gets its own wording rather than a blank number.** A tab in
+ * this same group carries an `AccRequest.Id` once saved but no `RequestNo`
+ * until submit, so there is nothing to name — and rendering an empty slot
+ * would read as a bug rather than as "the one next to this".
+ */
+function continuationHintText(source: ContinuationSource): string {
+  const tail = "วันแรกนับ Per diem ให้แล้ว (-1 วัน)";
+  if (source.kind === "request" && source.requestNo) {
+    return `ต่อเนื่องจากคำขอ ${source.requestNo} — ${tail}`;
+  }
+  if (source.kind === "sibling") {
+    return `ต่อเนื่องจากคำขอใบก่อนหน้าในชุดนี้ — ${tail}`;
+  }
+  return `ต่อเนื่องจากคำขอก่อนหน้า — ${tail}`;
+}
 
 /** Sentinel option name for AccTravelRentVehicle's default "no rental" choice — mirrors the server. */
 
@@ -69,6 +93,13 @@ interface TravelBookingTabProps {
    */
   brands: AccBrandOption[];
   isContinuation: boolean;
+  /**
+   * WHICH trip already counted this tab's first day. Separate from
+   * `isContinuation` rather than folded into it because the note needs the
+   * identity and the deduction needs only the boolean — and a sibling tab in
+   * this same group has no running number to show until submit.
+   */
+  continuationSource: ContinuationSource;
   perDiemEstimate: {
     days: number;
     total: number;
@@ -132,6 +163,7 @@ interface TravelBookingTabProps {
 export function TravelBookingTab({
   tab,
   isContinuation,
+  continuationSource,
   perDiemEstimate,
   reasons,
   accommodations,
@@ -547,11 +579,7 @@ export function TravelBookingTab({
             hasError={hasErr("dateRange")}
             minDate={earliestTravelDate(new Date())}
             disabledDates={disabledTravelDates}
-            continuationHint={
-              isContinuation
-                ? "ต่อเนื่องจากคำขอก่อนหน้า — วันแรกนับ Per diem ให้แล้วในคำขอก่อนหน้า (-1 วัน)"
-                : null
-            }
+            continuationHint={isContinuation ? continuationHintText(continuationSource) : null}
           />
         </div>
 

@@ -1,4 +1,8 @@
-import type { ChainTrip } from "@/lib/acc/travel-booking/continuation-chain";
+import {
+  continuationFlags,
+  continuationPredecessors,
+  type ChainTrip,
+} from "@/lib/acc/travel-booking/continuation-chain";
 
 /**
  * Inputs to the LIVE per-diem estimate `useTravelBookingForm.ts` shows while a
@@ -24,10 +28,30 @@ export interface EstimateTab {
  *  with the real `AccTravelBooking.SortOrder` column (Task 8 fix round 1). */
 export interface EstimateOtherTrip {
   requestId: number;
+  /**
+   * The running number to show the requester when this trip is the one whose
+   * day was already counted. Nullable because the column is — in practice an
+   * other trip always has one, since `listTravelBookingDateRanges` excludes
+   * Drafts and a number is allocated at submit.
+   */
+  requestNo: string | null;
   departDate: string;
   returnDate: string;
   sortOrder: number;
 }
+
+/**
+ * Where a tab's dropped first day went, for the note on the form.
+ *
+ * `sibling` and `request` are deliberately separate rather than one nullable
+ * number: a tab in this same group has an `AccRequest.Id` once saved but **no
+ * running number until submit**, so "name the request" is not a thing the form
+ * can do for it, and rendering an empty number would read as a bug.
+ */
+export type ContinuationSource =
+  | { kind: "none" }
+  | { kind: "sibling" }
+  | { kind: "request"; requestNo: string | null };
 
 /**
  * The form's own tabs plus the requester's other, already-saved trips, as one
@@ -127,4 +151,52 @@ export function buildEstimateChainTrips(
  */
 export function moneyWithheldForRoom(accommodationId: number | null, needsRoomBooking: boolean): boolean {
   return accommodationId == null || !needsRoomBooking;
+}
+
+/**
+ * Which trip already counted each tab's first day, one answer per tab in tab
+ * order.
+ *
+ * The form used to say only "ต่อเนื่องจากคำขอก่อนหน้า", which states that a day
+ * was deducted and gives the requester nothing to check it against — the same
+ * defect the detail page had until 2026-09-22, fixed there and not here.
+ *
+ * **It reads `continuationPredecessors`, the identity half of the very walk
+ * `continuationFlags` is a wrapper over**, so the trip named here is by
+ * construction the trip whose presence dropped the day. A second hand-written
+ * walk could name a different one, which is the whole reason that export
+ * exists.
+ */
+export function estimateContinuationSources(
+  tabs: readonly EstimateTab[],
+  otherTrips: readonly EstimateOtherTrip[],
+): ContinuationSource[] {
+  const chain = buildEstimateChainTrips(tabs, otherTrips);
+  const predecessors = continuationPredecessors(chain);
+  // **Both halves, and neither re-derived here.** `continuationPredecessors`
+  // answers the nearest live predecessor whether or not it touches;
+  // `continuationFlags` is what adds `previous.returnDate === departDate`. So
+  // the identity comes from one and the "is this actually a continuation"
+  // from the other, rather than this module retyping the touch test — which
+  // is how it would become the fourth independent answer the whole module
+  // exists to avoid. Caught by the agreement test, which asserted a source is
+  // reported exactly when the flag is true and failed when it was not.
+  const flags = continuationFlags(chain);
+
+  // Own tabs are the first `tabs.length` entries of the chain, in order, so
+  // their keys are read back from it rather than re-deriving `id ?? -(i + 1)`
+  // here — two copies of that rule could drift apart.
+  const ownKeys: Record<number, true> = {};
+  for (let i = 0; i < tabs.length; i++) ownKeys[chain[i].requestId] = true;
+
+  const numberByRequestId: Record<number, string | null> = {};
+  for (const other of otherTrips) numberByRequestId[other.requestId] = other.requestNo;
+
+  return tabs.map((_t, i) => {
+    if (flags.get(chain[i].requestId) !== true) return { kind: "none" };
+    const previous = predecessors.get(chain[i].requestId) ?? null;
+    if (!previous) return { kind: "none" };
+    if (ownKeys[previous.requestId]) return { kind: "sibling" };
+    return { kind: "request", requestNo: numberByRequestId[previous.requestId] ?? null };
+  });
 }

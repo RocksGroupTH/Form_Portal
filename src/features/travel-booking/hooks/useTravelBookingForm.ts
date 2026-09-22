@@ -10,7 +10,11 @@ import { deriveBookingFlags } from "@/lib/acc/travel-booking/derive-flags";
 import { effectiveClaimCountry } from "@/features/accounting/lib/claim-currency";
 import type { PerDiemAttribution } from "@/features/travel-booking/lib/perdiem-note";
 import { destinationKeyFor } from "@/features/travel-booking/lib/destination-key";
-import { buildEstimateChainTrips, moneyWithheldForRoom } from "@/features/travel-booking/lib/perdiem-estimate-inputs";
+import {
+  buildEstimateChainTrips,
+  estimateContinuationSources,
+  moneyWithheldForRoom,
+} from "@/features/travel-booking/lib/perdiem-estimate-inputs";
 import { NO_RENT_VEHICLE_NAME } from "@/features/travel-booking/constants";
 import { workLocationIssue } from "@/lib/acc/travel-booking/work-location-pin";
 import {
@@ -727,6 +731,12 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
     () =>
       liveOtherRanges.map((r) => ({
         requestId: r.requestId,
+        // Carried so the estimate's note can NAME the trip that already
+        // counted this tab's first day, rather than saying only that one was
+        // deducted — the requester otherwise has nothing to check the figure
+        // against. The detail page has named it since 2026-09-22; the form
+        // did not until now.
+        requestNo: r.requestNo,
         departDate: r.departDate,
         returnDate: r.returnDate,
         sortOrder: r.sortOrder,
@@ -883,6 +893,16 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
   const continuationFlags = useMemo(
     () => tabs.map((t, i) => chainFlagsByRequestId.get(t.id ?? -(i + 1)) ?? false),
     [tabs, chainFlagsByRequestId],
+  );
+  /* WHICH trip already counted the first day, so the note can name it instead
+     of saying only that a day went. Built from the same two lists as the flags
+     above and reported only where the flag is true — see
+     `estimateContinuationSources`, which reads `continuationPredecessors` for
+     the identity and `continuationFlags` for the "is it actually a
+     continuation", rather than retyping the touch test. */
+  const continuationSources = useMemo(
+    () => estimateContinuationSources(tabs, otherTripsForChain),
+    [tabs, otherTripsForChain],
   );
 
   /* The attribution and the country's own log travel with the figure rather
@@ -1292,6 +1312,7 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
 
     // derived
     continuationFlags,
+    continuationSources,
     perDiemEstimates,
     totalPerDiemEstimate,
     tabIssues,
