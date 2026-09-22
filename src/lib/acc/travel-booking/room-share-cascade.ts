@@ -37,10 +37,12 @@
  * uses, reused rather than redefined (see that module's `DEAD` for why a
  * seventh expression of "which statuses count as alive" would be the bug).
  *
- * Pure and import-free of anything reaching a database — `DEAD` is the one
- * import, from a sibling module that is itself free of one — so the cascade's
- * decisions are unit-tested directly, with no pool, no transaction and no
- * `@/env`.
+ * Pure and import-free of anything reaching a database — there are exactly
+ * **two** imports, `DEAD` from `room-share-policy.ts` and `EDITABLE_STATUSES`
+ * from `request-acl-policy.ts`, and both of those modules are themselves free
+ * of one — so the cascade's decisions are unit-tested directly, with no pool,
+ * no transaction and no `@/env`. Both are reused rather than retyped for the
+ * same reason, and the second is load-bearing: see `cascadeForHostDeath`.
  */
 
 import { EDITABLE_STATUSES } from "@/lib/acc/request-acl-policy";
