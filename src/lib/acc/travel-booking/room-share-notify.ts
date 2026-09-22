@@ -286,8 +286,14 @@ export async function queueRoomShareAttachedMail(
 }
 
 /**
- * **Mails 2 and 3 — to each affected guest, and to accounting when money is
- * already involved.**
+ * **Mails 2, 3 and 6 — to each affected guest, and to accounting when money
+ * is already involved.**
+ *
+ * Three things can happen to a guest and each gets its own mail: cancelled
+ * (its host died and it had been filed), **detached** (its host died while it
+ * was still editable — final review C1) and re-dated. Only the first and the
+ * last can also reach accounting, because only they can touch a figure
+ * somebody has signed.
  *
  * Driven by the `GuestAction[]` the cascade actually applied, never by what it
  * decided: `applyRoomShareDeath` downgrades a `cancel` that lost a race to a
@@ -324,8 +330,17 @@ export async function queueRoomShareCascadeMails(
   // `skip` has been removed from the union. A plain filter leaves that to
   // TypeScript's inferred type predicates, which is a silent dependency on the
   // compiler version rather than on anything this file states.
+  //
+  // `detach` joined the union for final review C1 and is filtered in here
+  // beside the other two — and the compiler is what made that unmissable:
+  // widening `Exclude<…, { kind: "skip" }>` without adding the arm below
+  // broke `action.from` on the re-date branch at once, which is exactly the
+  // backstop this shape was written for. A mail is owed on a detach for the
+  // same reason one is owed on a cancel: the guest never asked for either,
+  // and the detach also leaves them a required field to answer.
   const affected = actions.filter(
-    (a): a is Exclude<GuestAction, { kind: "skip" }> => a.kind === "cancel" || a.kind === "redate",
+    (a): a is Exclude<GuestAction, { kind: "skip" }> =>
+      a.kind === "cancel" || a.kind === "redate" || a.kind === "detach",
   );
   // The overwhelmingly common case — a host with no guests, or a cascade that
   // skipped every one of them — costs nothing beyond this test.
@@ -362,6 +377,20 @@ export async function queueRoomShareCascadeMails(
   for (const action of affected) {
     const guestFacts = facts.get(action.requestId);
     const guest = toParty(guestFacts, action.requestId);
+
+    if (action.kind === "detach") {
+      // No accounting arm, and that is not an omission: a detach only ever
+      // happens to a `Draft` or `Returned` request, so there is no signed
+      // figure for accounting to reconcile — the two accounting mails exist
+      // for money that has already been approved or paid.
+      await queueOne(runner, guestFacts?.email ?? null, action.requestId, {
+        kind: "RoomShareGuestDetached",
+        subjectOf: guest,
+        counterpart: host,
+        previousStatus: action.previousStatus,
+      });
+      continue;
+    }
 
     if (action.kind === "cancel") {
       await queueOne(runner, guestFacts?.email ?? null, action.requestId, {

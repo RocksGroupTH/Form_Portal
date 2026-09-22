@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { cascadeForHostDeath, cascadeForHostDates, type GuestState } from "./room-share-cascade";
+import { EDITABLE_STATUSES } from "@/lib/acc/request-acl-policy";
 
 const guest = (over: Partial<GuestState> = {}): GuestState => ({
   requestId: 200,
@@ -19,13 +20,17 @@ test("a host with no guests produces an empty array, not a throw", () => {
   assert.deepEqual(cascadeForHostDeath([]), []);
 });
 
-test("every alive status is cancelled when the host dies, including Completed", () => {
+test("every alive FILED status is cancelled when the host dies, including Completed", () => {
   // Spec §7 names this explicitly: a guest at each status, Completed included.
   // A Completed guest's per diem has already been paid, and it is cancelled
   // anyway — this is the direction perdiem-window.ts exists to prevent, and
   // the user chose it knowingly (spec §2). `wasCompleted` is what lets a
   // caller (Task 8) tell accounting this happened.
-  for (const status of ["Draft", "Submitted", "ManagerApproved", "Completed", "Returned"]) {
+  //
+  // `Draft` and `Returned` left this list at final review C1 and have their
+  // own cases below: they are DETACHED, not cancelled, because cancelling
+  // them bricked the guest's whole booking group.
+  for (const status of ["Submitted", "ManagerApproved", "Completed"]) {
     const actions = cascadeForHostDeath([guest({ status })]);
     assert.equal(actions.length, 1);
     const action = actions[0];
@@ -35,6 +40,74 @@ test("every alive status is cancelled when the host dies, including Completed", 
     assert.equal(action.previousStatus, status);
     assert.equal(action.wasCompleted, status === "Completed", `wasCompleted wrong for ${status}`);
   }
+});
+
+/**
+ * **Final review C1, and the case that made this branch unshippable.**
+ *
+ * `saveTravelBookingDraft`, `deleteTravelBookingDraft` and
+ * `submitTravelBookingGroup` each loop every tab sharing the guest's
+ * `GroupKey` and throw on any whose status is not `Draft` or `Returned`. A
+ * cascade-cancelled tab therefore made the whole group unsavable,
+ * unsubmittable AND undeletable, with no in-app remedy — and it was the
+ * ORDINARY path, because the attach control refuses to open until the draft
+ * is saved, so a guest is normally `Draft` when it attaches.
+ */
+test("a Draft guest is DETACHED when the host dies, never cancelled", () => {
+  const actions = cascadeForHostDeath([guest({ status: "Draft" })]);
+  assert.equal(actions.length, 1);
+  const action = actions[0];
+  assert.equal(action.kind, "detach");
+  if (action.kind !== "detach") throw new Error("unreachable");
+  assert.equal(action.requestId, 200);
+  assert.equal(action.previousStatus, "Draft");
+});
+
+/**
+ * `Returned` was the one to decide deliberately rather than assume: unlike a
+ * draft it HAS been filed, so spec §2's "cancelled in every case" looks like
+ * it should reach it. It is detached all the same, and for two reasons that
+ * both point the same way — it carries the identical brick (the three group
+ * guards admit `Returned` exactly as they admit `Draft`), and a returned
+ * request is one its owner has been asked to change, so it holds no approved
+ * or paid position for the cancellation to protect. What it loses is
+ * recoverable by the person themselves; what cancelling costs is not.
+ */
+test("a Returned guest is DETACHED too — filed, but still its owner's to edit", () => {
+  const actions = cascadeForHostDeath([guest({ status: "Returned" })]);
+  assert.equal(actions.length, 1);
+  const action = actions[0];
+  assert.equal(action.kind, "detach");
+  if (action.kind !== "detach") throw new Error("unreachable");
+  assert.equal(action.previousStatus, "Returned");
+});
+
+/**
+ * **The correspondence, pinned in BOTH directions.** The brick lives exactly
+ * where the detach set and the group guards' admitted set disagree: a status
+ * those guards admit but this function cancels strands a group, and a status
+ * they refuse but this function detaches leaves a filed guest holding a room
+ * that no longer exists. `EDITABLE_STATUSES` is the constant those guards are
+ * the hardcoded expression of, so asserting equality against it is what keeps
+ * the two from drifting — `room-share-cascade-guard.test.ts` asserts the
+ * other half, that `request-service.ts` still spells that same pair.
+ */
+test("the detach set is EXACTLY EDITABLE_STATUSES — nothing more, nothing less", () => {
+  const everyStatus = [
+    "Draft",
+    "Submitted",
+    "ManagerApproved",
+    "Completed",
+    "Returned",
+    "Cancelled",
+    "Rejected",
+  ];
+  const detached: string[] = [];
+  for (const status of everyStatus) {
+    const action = cascadeForHostDeath([guest({ status })])[0];
+    if (action.kind === "detach") detached.push(status);
+  }
+  assert.deepEqual(detached.slice().sort(), EDITABLE_STATUSES.slice().sort());
 });
 
 test("a Completed guest is cancelled, and wasCompleted is true — the accepted cost, not silent", () => {

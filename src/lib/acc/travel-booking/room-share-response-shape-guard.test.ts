@@ -225,7 +225,31 @@ test("every SELECT that feeds the response interpolates a checked column list", 
  * bring with them.
  */
 test("the service never names a column the picker must not carry", () => {
-  const src = code(SERVICE);
+  /* ONE carve-out, and it is deliberately the narrowest possible shape.
+     `clearGuestOwnAccommodation` (final review I1) is a WRITE to the guest's
+     OWN `AccTravelBooking` row, not a read of a colleague's — the invariant
+     "a guest books nothing themselves", which until then lived only in a
+     React state patch. This list is about what the picker may carry out of
+     somebody else's request, and a file-wide `indexOf` cannot tell a write
+     from a read.
+
+     So the identifier is stripped — the EXACT identifier, and only after
+     asserting it appears exactly twice (the import and the single call), so
+     the carve-out cannot quietly grow. Every other occurrence of
+     "Accommodation" in this file, `t.AccommodationName` in a SELECT column
+     list very much included, still trips the ban below. Renaming the helper
+     to dodge the substring was the alternative and was rejected: it would
+     leave this list looking intact while meaning less. */
+  const raw = code(SERVICE);
+  const permitted = raw.match(/clearGuestOwnAccommodation/g) ?? [];
+  assert.equal(
+    permitted.length,
+    2,
+    `clearGuestOwnAccommodation appears ${permitted.length} times in room-share-service.ts, ` +
+      "not the import plus one call. The carve-out below is sized to exactly those two — a " +
+      "third occurrence is a new use nobody has argued for, and it must be argued for here",
+  );
+  const src = raw.split("clearGuestOwnAccommodation").join("");
   const forbidden = [
     "TotalAmount",
     "ForeignAmount",
@@ -442,6 +466,40 @@ test("the filed-host rule and the guest editability rule are applied at every si
       );
     }
   }
+});
+
+/**
+ * **Final review I1.** "A guest books nothing themselves" (spec §1) was
+ * enforced by `TravelBookingTab.tsx`'s `onAttached` patch and by nothing
+ * else, so a reload between the attach and the next save restored the
+ * accommodation from the server — into a grid that `isRoomShareGuest` hides,
+ * where the requester could neither see nor clear it — and the next save
+ * posted it back, `deriveBookingFlags` set `NeedsRoomBooking`, and
+ * `approveByManager` routed the request to `ADMIN` for a room nobody needed.
+ *
+ * Both halves are asserted, because each fails differently: the call missing
+ * is the invariant back in the browser, and the call after `tx.commit()` is
+ * the binding surviving a failed clear — the same half-state, reached by a
+ * crash instead of by a reload.
+ */
+test("the attach clears the guest's own accommodation, inside its own transaction", () => {
+  const body = bodyOf(code(SERVICE), "export async function attachRoomShare");
+  const clear = body.indexOf("clearGuestOwnAccommodation(tx");
+  assert.notEqual(
+    clear,
+    -1,
+    "attachRoomShare no longer calls clearGuestOwnAccommodation(tx, …). The guest's own " +
+      "AccommodationId/NeedsRoomBooking survive the attach, the grid that would show them is " +
+      "hidden, and the next save hands the Admin desk a hotel room to book for somebody who " +
+      "is sharing one — a client-side state patch is not an invariant",
+  );
+  const commit = body.indexOf("tx.commit()");
+  assert.notEqual(commit, -1, "attachRoomShare no longer commits — has it been restructured?");
+  assert.ok(
+    clear < commit,
+    "clearGuestOwnAccommodation runs after the commit, so a failure leaves the binding " +
+      "recorded and the accommodation live. They must stand or fall together",
+  );
 });
 
 /**

@@ -651,7 +651,16 @@ export function TravelBookingTab({
             `buildSaveInput` posts it on the very next save, where
             `deriveBookingFlags` reads it as a live answer and books a room.
             Exactly the shape of bug `selectVehicleBoth` clears the rent fields
-            to avoid, one section down. */}
+            to avoid, one section down.
+
+            **And since final review I1 this patch is a MIRROR of the
+            database, not the only copy of the rule.** `attachRoomShare` now
+            clears the same four columns on the guest's own `AccTravelBooking`
+            row inside the transaction that inserts the binding
+            (`room-share-guest-room.ts`), which is what makes the invariant
+            survive a reload — the case this comment described and did not
+            cover. The patch stays because it keeps the screen honest in the
+            moment, without a refetch. */}
         <RoomShareControl
           requestId={tab.id ?? null}
           isGuest={tab.isRoomShareGuest}
@@ -670,7 +679,9 @@ export function TravelBookingTab({
           // whatever it was before the attach: the requester is back at an
           // unanswered required field, which is the honest state, and
           // resurrecting a choice they replaced would re-book a room they had
-          // decided against.
+          // decided against. Since I1 that is true of the stored row too —
+          // the attach really cleared it — so this is no longer a screen
+          // state a reload would contradict.
           onDetached={() => onChange({ isRoomShareGuest: false })}
         />
       </SectionCard>

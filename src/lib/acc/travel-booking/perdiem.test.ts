@@ -104,6 +104,15 @@ test("roomBookedOrShared: every combination, so no arm is only ever reached by c
   assert.equal(roomBookedOrShared({ needsRoomBooking: false, isRoomShareGuest: true }), true);
   // Both at once is reachable: a guest who also picked an accommodation that
   // books a room. Paid, and paid once — there is no double arm to find.
+  //
+  // **It got much rarer on 2026-09-22 and is still not impossible**, which is
+  // why this arm stays. Final review I1 closed the ordinary route to it:
+  // `attachRoomShare` now clears the guest's own accommodation in the
+  // transaction that inserts the binding (`room-share-guest-room.ts`), so a
+  // guest cannot walk out of an attach still holding one. What remains is a
+  // row written BEFORE that fix, which nothing backfills — this predicate has
+  // to keep answering it, and it must keep answering `true`, because a guest
+  // who has not yet been repaired is still sleeping somewhere.
   assert.equal(roomBookedOrShared({ needsRoomBooking: true, isRoomShareGuest: true }), true);
   // The only false, and the only one worth ฿0.
   assert.equal(roomBookedOrShared({ needsRoomBooking: false, isRoomShareGuest: false }), false);

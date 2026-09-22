@@ -166,9 +166,9 @@ test("every room-share mail is queued on the CALLER'S RUNNER, not on a pool", ()
  * called with, so replacing `triggerType: input.kind` with one constant
  * string passed the whole suite. Nothing breaks immediately — the mail still
  * sends — but `AccEmailQueue.TriggerType` is the only column that says which
- * of the five a queued or `Failed` row is, and an operator looking at a stuck
+ * of the six a queued or `Failed` row is, and an operator looking at a stuck
  * queue, or anyone later counting how often the paid-then-cancelled case
- * actually happens, would have five different notifications flattened into
+ * actually happens, would have six different notifications flattened into
  * one label.
  */
 test("the queued row's TriggerType is the mail's own kind", () => {
@@ -176,7 +176,7 @@ test("the queued row's TriggerType is the mail's own kind", () => {
   assert.ok(
     /triggerType:\s*input\.kind/.test(src),
     "queueEmail's triggerType is no longer input.kind. A literal there is a second place to " +
-      "name the same thing and the two drift; a shared constant collapses all five kinds into " +
+      "name the same thing and the two drift; a shared constant collapses all six kinds into " +
       "one label, and AccEmailQueue.TriggerType is the only record of which mail a row is",
   );
 });
@@ -186,11 +186,43 @@ test("each cascaded guest's own mail is addressed to the GUEST", () => {
   const addressed = body.match(/queueOne\(runner,\s*guestFacts\?\.email \?\? null,/g) ?? [];
   assert.equal(
     addressed.length,
-    2,
-    "the cancel and re-date mails must both be addressed to guestFacts?.email — exactly two of " +
-      "them. Addressed to the host instead, the person whose trip was just cancelled or moved " +
-      "is told nothing at all, while the host receives a mail per guest about records they " +
-      "cannot open",
+    3,
+    "the cancel, detach and re-date mails must all be addressed to guestFacts?.email — exactly " +
+      "three of them since final review C1 added the detach. Addressed to the host instead, the " +
+      "person whose trip was just cancelled, detached or moved is told nothing at all, while the " +
+      "host receives a mail per guest about records they cannot open",
+  );
+});
+
+/**
+ * The detach arm exists at all, and it is addressed to the guest rather than
+ * folded into the cancel one.
+ *
+ * Final review C1: a `Draft`/`Returned` guest is detached rather than
+ * cancelled, and the two need different copy — the cancelled guest is told to
+ * file a new request, the detached one is told their request survives and
+ * owes the form an accommodation. Reusing `RoomShareGuestCancelled` for both
+ * would tell somebody their request had been cancelled when it had not, on
+ * the one mail that is their only notice of the change.
+ */
+test("a detached guest is told, with its own mail kind", () => {
+  const body = bodyOf(NOTIFY, "export async function queueRoomShareCascadeMails");
+  assert.ok(
+    /action\.kind === "detach"/.test(body),
+    "queueRoomShareCascadeMails no longer branches on the detach action. A guest detached from " +
+      "a dying host would be told nothing — and unlike a cancellation there is no other signal " +
+      "at all, since their own request is left exactly as it was apart from an accommodation " +
+      "field that is suddenly required again",
+  );
+  assert.ok(
+    /kind: "RoomShareGuestDetached"/.test(body),
+    "the detach arm no longer queues RoomShareGuestDetached. Reusing the cancelled kind tells " +
+      "somebody their request was cancelled when it was not",
+  );
+  assert.ok(
+    /a\.kind === "detach"/.test(body),
+    "the `affected` filter no longer admits detach actions, so the arm below it is unreachable " +
+      "— the mail would silently never be queued",
   );
 });
 

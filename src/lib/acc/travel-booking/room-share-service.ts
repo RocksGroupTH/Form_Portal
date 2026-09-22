@@ -42,6 +42,7 @@ import {
   type ShareRefusal,
 } from "@/lib/acc/travel-booking/room-share-policy";
 import type { GuestState } from "@/lib/acc/travel-booking/room-share-cascade";
+import { clearGuestOwnAccommodation } from "@/lib/acc/travel-booking/room-share-guest-room";
 import { processQueue } from "@/lib/acc/email-queue";
 import { queueRoomShareAttachedMail } from "@/lib/acc/travel-booking/room-share-notify";
 
@@ -634,6 +635,16 @@ export async function attachRoomShare(input: {
                WHERE r.Id = @hid`);
     const hostStaffId =
       (inserted.recordset[0]?.HostStaffId as number | null | undefined) ?? null;
+
+    /* THE GUEST BOOKS NOTHING THEMSELVES (spec §1), and until final review I1
+       that was enforced only by a React state patch — so a reload between the
+       attach and the next save restored the accommodation from the server,
+       into a grid `isRoomShareGuest` now hides, and the next save posted it
+       back and had the Admin desk book a real room for somebody sharing one.
+       Cleared here, on `tx`, so the binding and the withdrawal of the room it
+       replaces commit or roll back together. See `room-share-guest-room.ts`
+       for the whole argument, including why it is a separate module. */
+    await clearGuestOwnAccommodation(tx, input.guestRequestId);
 
     const display = await loadHostDisplayRows(tx, [input.hostRequestId]);
     const hostRow = display.get(input.hostRequestId);

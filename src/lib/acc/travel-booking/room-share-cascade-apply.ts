@@ -42,6 +42,7 @@
  */
 
 import { getAccPool, sql } from "@/lib/acc/pool";
+import { EDITABLE_STATUSES } from "@/lib/acc/request-acl-policy";
 import { loadGuestsOf } from "@/lib/acc/travel-booking/room-share-service";
 import {
   cascadeForHostDates,
@@ -60,9 +61,15 @@ type AccPool = Awaited<ReturnType<typeof getAccPool>>;
  */
 type SqlRunner = { request: () => ReturnType<AccPool["request"]> };
 
-/** The two activity actions this cascade writes. `AccActivityLog.Action` is `nvarchar(50)`; both fit, and it carries no CHECK. */
+/** The three activity actions this cascade writes. `AccActivityLog.Action` is `nvarchar(50)`; all three fit, and it carries no CHECK. */
 export const CASCADE_CANCEL_ACTION = "cancelled_by_room_share_host";
 export const CASCADE_REDATE_ACTION = "dates_followed_room_share_host";
+/**
+ * The third, added by final review C1 (2026-09-22): a guest whose own request
+ * is still editable is **detached** from a dying host rather than cancelled —
+ * see `cascadeForHostDeath` for the whole argument. 30 characters.
+ */
+export const CASCADE_DETACH_ACTION = "detached_by_room_share_host";
 
 /** Date column → 'YYYY-MM-DD' using local getters (server is Thai time, never toISOString). */
 function toYmd(d: Date): string {
@@ -135,11 +142,100 @@ async function storedDepart(runner: SqlRunner, requestId: number): Promise<strin
 }
 
 /**
- * The host was cancelled, rejected, or hard-deleted. Cancel every live guest.
+ * One `detach` decision, applied — the C1 half of the death cascade.
+ *
+ * **The `DELETE`'s status predicate is built from `EDITABLE_STATUSES`
+ * itself**, not from two hand-typed literals, for the same reason
+ * `cascadeForHostDeath` imports that constant to make the decision: the
+ * decision and the write have to agree about which guests are detachable, and
+ * two spellings of one rule is how they stop agreeing. The bound parameters
+ * are generated from the array, so adding a status to it moves both halves at
+ * once.
+ *
+ * **Why the predicate is there at all.** `loadGuestsOf` is a plain `SELECT`
+ * whose shared lock READ COMMITTED releases at statement end, so the guest
+ * could have been submitted between the decision and this statement — and a
+ * just-filed guest has had its per diem priced on the strength of the share.
+ * Stripping it then would leave a `Submitted` request paid for a room it no
+ * longer has any claim to. `rowsAffected === 0` means exactly that (or that
+ * the guest detached themselves first), and the action is downgraded to a
+ * `skip` — the same downgrade, for the same reason, the `cancel` arm makes.
+ *
+ * The residual is stated rather than hidden: in that race the binding
+ * survives, pointing at a host that is dead or about to be deleted. It is the
+ * same class of residue a lost `cancel` race leaves, it is recorded in the
+ * returned action list, and on the hard-delete path it cannot outlive the
+ * transaction anyway — `collectAndDeleteRequestArtifacts` removes every
+ * binding naming the host a few statements later.
+ */
+async function applyOneDetach(
+  runner: SqlRunner,
+  hostRequestId: number,
+  hostNo: string | null,
+  action: Extract<GuestAction, { kind: "detach" }>,
+): Promise<GuestAction> {
+  const req = runner
+    .request()
+    .input("gid", sql.Int, action.requestId)
+    .input("hid", sql.Int, hostRequestId);
+  const statusParams: string[] = [];
+  EDITABLE_STATUSES.forEach((status, i) => {
+    req.input(`es${i}`, sql.NVarChar, status);
+    statusParams.push(`@es${i}`);
+  });
+
+  const del = await req.query(`DELETE s
+                                 FROM [dbo].[AccTravelRoomShare] s
+                                 INNER JOIN [dbo].[AccRequest] r ON r.Id = s.GuestRequestId
+                                WHERE s.GuestRequestId=@gid AND s.HostRequestId=@hid
+                                  AND r.Status IN (${statusParams.join(", ")});
+                               SELECT @@ROWCOUNT AS n`);
+  if (((del.recordset[0]?.n as number) ?? 0) === 0) {
+    return {
+      kind: "skip",
+      requestId: action.requestId,
+      reason: "no longer an editable guest of this host by the time the cascade claimed it — not detached",
+    };
+  }
+
+  const note =
+    `ยกเลิกการพักห้องร่วมอัตโนมัติ เนื่องจากคำขอที่พักห้องร่วม ${label(hostNo, hostRequestId)}` +
+    ` ถูกยกเลิก/ไม่อนุมัติ/ถูกลบ — คำขอนี้ยังแก้ไขได้ (สถานะ ${action.previousStatus})` +
+    ` จึงไม่ถูกยกเลิก กรุณาเลือกที่พักค้างคืนใหม่ก่อนส่งคำขอ`;
+
+  await runner
+    .request()
+    .input("gid", sql.Int, action.requestId)
+    .input("action", sql.NVarChar(50), CASCADE_DETACH_ACTION)
+    .input("note", sql.NVarChar, note.slice(0, 2000))
+    .input("meta", sql.NVarChar, JSON.stringify({
+      hostRequestId,
+      hostRequestNo: hostNo,
+      previousStatus: action.previousStatus,
+    }))
+    .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note, MetadataJson)
+            VALUES (@gid, NULL, @action, @note, @meta)`);
+
+  return action;
+}
+
+/**
+ * The host was cancelled, rejected, or hard-deleted. Cancel every live guest
+ * that has been filed, and **detach** — rather than cancel — every one whose
+ * own request is still editable.
+ *
+ * The split is `cascadeForHostDeath`'s and its whole argument lives there:
+ * cancelling a `Draft` or `Returned` guest left its entire booking group
+ * unsavable, unsubmittable and undeletable, because all three AP-17 group
+ * operations throw on a tab that is neither. What the apply layer adds is the
+ * race guard below — the DELETE is conditional on the guest still being
+ * editable, so a guest filed between the decision and this statement is not
+ * stripped of a share its per diem was just priced on.
  *
  * Returns what was actually applied — the decisions from
- * `cascadeForHostDeath`, with any `cancel` that lost a race downgraded to a
- * `skip`. **Task 8 consumes this**: `wasCompleted` on a surviving `cancel` is
+ * `cascadeForHostDeath`, with any `cancel` **or `detach`** that lost a race
+ * downgraded to a `skip`. **Task 8 consumes this**: `wasCompleted` on a
+ * surviving `cancel` is
  * what tells it to mail accounting, which is the entire mitigation for the
  * cost spec §2 accepted (a guest whose per diem has already been paid is
  * cancelled anyway, and the system must say so rather than leave a
@@ -158,6 +254,14 @@ async function storedDepart(runner: SqlRunner, requestId: number): Promise<strin
  * 3. the audit row, `cancelled_by_room_share_host`, naming the host's running
  *    number and the guest's own previous status;
  * 4. the per-diem give-back on the guest's **own** group.
+ *
+ * Per **detached** guest there are only two steps, and the omissions are the
+ * point: the guarded `DELETE` of the binding, and the audit row
+ * `detached_by_room_share_host`. **No status change, no approval is closed
+ * and nothing is repriced** — the guest's request is untouched apart from
+ * losing a share it can no longer have, exactly as the guest's own
+ * `detachRoomShare` leaves it, and the figure it keeps cannot be paid without
+ * passing back through the submit, which prices it again from scratch.
  *
  * `CancelledBy` and `AuthorId` are both left NULL, deliberately and for the
  * same reason `perdiem_recalculated` leaves `AuthorId` NULL: **nobody did
@@ -187,6 +291,10 @@ export async function applyRoomShareDeath(
   const applied: GuestAction[] = [];
 
   for (const action of decided) {
+    if (action.kind === "detach") {
+      applied.push(await applyOneDetach(runner, hostRequestId, hostNo, action));
+      continue;
+    }
     if (action.kind !== "cancel") {
       applied.push(action);
       continue;

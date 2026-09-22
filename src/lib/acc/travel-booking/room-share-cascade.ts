@@ -7,7 +7,11 @@
  * database call and takes no transaction, it only decides:
  *
  * - **the host is cancelled or rejected** (`cascadeForHostDeath`): every live
- *   guest is cancelled too, whatever its own status, including `Completed`.
+ *   guest that has been FILED is cancelled too, whatever its own status,
+ *   including `Completed`; a guest whose own request is still **editable**
+ *   (`Draft`/`Returned`) is **detached** instead. See that function for why
+ *   the line falls exactly there, and why it must be `EDITABLE_STATUSES`
+ *   rather than a second spelling of the same pair.
  *   That is the direction `perdiem-window.ts` exists to prevent — its
  *   allow-list is deliberately `Draft`/`Submitted`/`ManagerApproved`/`Returned`
  *   precisely because "overwriting a figure somebody has already been paid on
@@ -39,6 +43,7 @@
  * `@/env`.
  */
 
+import { EDITABLE_STATUSES } from "@/lib/acc/request-acl-policy";
 import { DEAD } from "./room-share-policy";
 
 export interface GuestState {
@@ -51,6 +56,14 @@ export interface GuestState {
 
 export type GuestAction =
   | { kind: "cancel"; requestId: number; previousStatus: string; wasCompleted: boolean }
+  /**
+   * The guest is **detached** rather than cancelled, because its own request
+   * is still editable — see `cascadeForHostDeath` for why the two outcomes
+   * exist. The binding row goes; the request keeps its status, its running
+   * number and its per-diem figure, and is left at an unanswered
+   * accommodation field for its owner to fill in.
+   */
+  | { kind: "detach"; requestId: number; previousStatus: string }
   | {
       kind: "redate";
       requestId: number;
@@ -65,12 +78,54 @@ function isAlive(status: string): boolean {
 }
 
 /**
- * The host was cancelled or rejected. Every live guest is cancelled,
- * regardless of its own status — a `Completed` guest included, per spec §2.
- * An already-dead guest is skipped rather than re-cancelled.
+ * The host was cancelled, rejected or hard-deleted. Every live guest that has
+ * been **filed** is cancelled, regardless of its own status — a `Completed`
+ * guest included, per spec §2. An already-dead guest is skipped rather than
+ * re-cancelled.
  *
  * A host with no guests returns `[]`, not a throw — the common case, since
  * most requests are not hosting anyone.
+ *
+ * ## Why an EDITABLE guest is DETACHED instead, and why that gives up nothing
+ *
+ * Cancelling a `Draft` or `Returned` guest **bricked its whole booking
+ * group** (final review C1, reproduced 2026-09-22). All three AP-17 group
+ * operations — `saveTravelBookingDraft`, `deleteTravelBookingDraft` and
+ * `submitTravelBookingGroup` — loop every tab sharing the `GroupKey` and
+ * throw on any whose status is not `Draft` or `Returned`. One
+ * cascade-cancelled tab therefore made the group unsavable, unsubmittable
+ * **and undeletable**, with no in-app remedy at all. And it was the ordinary
+ * path rather than an edge: `RoomShareControl` refuses to open until the
+ * draft is saved, so a guest is normally `Draft` at the moment it attaches.
+ *
+ * Spec §2's "cancelled too, in every case" was written to protect a **filed,
+ * and possibly paid, position**: a guest who is travelling, or approved, or
+ * already paid, must not keep a room that no longer exists. A `Draft` holds
+ * no such position — nothing has been filed, approved or paid — and a
+ * `Returned` one has been handed back to its owner precisely so they can
+ * change it. Detaching costs neither of them anything that rule was
+ * defending, and it leaves the person able to act: the binding goes, the
+ * request keeps its status and its running number, and the accommodation
+ * field it must now answer is empty (`attachRoomShare` cleared it), so
+ * `validateTravelBookingTab` refuses the submit until they pick one.
+ *
+ * **The line is `EDITABLE_STATUSES`, imported rather than re-spelled, and
+ * that is the load-bearing part.** The brick lives exactly where the two sets
+ * disagree: any status the three group guards admit but this function
+ * cancels is a status that bricks a group. Reusing the one constant those
+ * guards are the hardcoded expression of — `request-acl-policy.ts`'s
+ * `Draft`/`Returned` pair, the same one `requireEditableGuest` and
+ * `decideRequestMutate` apply — makes the two agree by construction rather
+ * than by coincidence. `room-share-cascade.test.ts` pins the correspondence
+ * in both directions, and `room-share-cascade-guard.test.ts` pins that the
+ * three group guards still spell that same pair.
+ *
+ * **Nothing is repriced on a detach**, deliberately, and it is exactly what
+ * the guest's own `detachRoomShare` already does: the stale figure cannot be
+ * paid without passing back through `submitTravelBookingGroup`, which
+ * recomputes per diem from scratch, so inventing a money write nobody asked
+ * for — on a request that is by definition still being edited — is the more
+ * expensive direction to be wrong in.
  */
 export function cascadeForHostDeath(guests: readonly GuestState[]): GuestAction[] {
   const actions: GuestAction[] = [];
@@ -81,6 +136,14 @@ export function cascadeForHostDeath(guests: readonly GuestState[]): GuestAction[
         requestId: g.requestId,
         reason: `already ${g.status} — not re-cancelled`,
       });
+      continue;
+    }
+    // Still editable by its own owner, so there is no filed position to
+    // protect and cancelling it would strand the whole group — see the
+    // docblock above. Detach and tell them; they answer the accommodation
+    // question again before they can submit.
+    if (EDITABLE_STATUSES.indexOf(g.status) !== -1) {
+      actions.push({ kind: "detach", requestId: g.requestId, previousStatus: g.status });
       continue;
     }
     actions.push({

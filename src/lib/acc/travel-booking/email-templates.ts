@@ -228,6 +228,14 @@ export type RoomShareMailKind =
   | "RoomShareAttached"
   /** To the GUEST: your request was cancelled because the host's was. */
   | "RoomShareGuestCancelled"
+  /**
+   * To the GUEST: the host's request died, and because yours is still
+   * editable it was **detached** rather than cancelled — so you keep it, and
+   * you owe the form an accommodation before you can submit. Added by final
+   * review C1; see `cascadeForHostDeath` for why an editable guest is not
+   * cancelled.
+   */
+  | "RoomShareGuestDetached"
   /** To the GUEST: your travel dates moved because the host's did. */
   | "RoomShareGuestRedated"
   /** To ACCOUNTING: a request that had reached `Completed` was cancelled by the cascade. */
@@ -268,7 +276,7 @@ export interface RoomShareMailInput {
 }
 
 /**
- * The five "so what do I do" lines, exported so tests assert the constant
+ * The six "so what do I do" lines, exported so tests assert the constant
  * rather than a prose fragment — package A's precedent, so a reword does not
  * red the suite for no reason.
  */
@@ -281,6 +289,11 @@ export const ROOM_SHARE_HOST_NOTICE_TEXT =
 export const ROOM_SHARE_GUEST_CANCELLED_TEXT =
   "คำขอที่คุณขอพักห้องร่วมด้วยถูกยกเลิกหรือไม่อนุมัติ คำขอนี้จึงถูกยกเลิกตามโดยอัตโนมัติ " +
   "และเบี้ยเลี้ยงถูกคำนวณใหม่ให้กลุ่มคำขอของคุณแล้ว หากยังต้องเดินทาง กรุณายื่นคำขอใหม่";
+
+export const ROOM_SHARE_GUEST_DETACHED_TEXT =
+  "คำขอที่คุณขอพักห้องร่วมด้วยถูกยกเลิก ไม่อนุมัติ หรือถูกลบ " +
+  "คำขอของคุณยังแก้ไขได้อยู่ ระบบจึงไม่ได้ยกเลิกให้ แต่ยกเลิกเฉพาะการพักห้องร่วมออก " +
+  "กรุณาเลือกที่พักค้างคืน หรือเลือกพักห้องร่วมกับคำขออื่น ก่อนส่งคำขอนี้อีกครั้ง";
 
 export const ROOM_SHARE_GUEST_REDATED_TEXT =
   "คำขอที่คุณขอพักห้องร่วมด้วยเปลี่ยนวันเดินทาง คำขอนี้จึงเปลี่ยนวันตามโดยอัตโนมัติ " +
@@ -351,6 +364,21 @@ export function buildRoomShareEmail(input: RoomShareMailInput): { subject: strin
         row("สถานะเดิม", input.previousStatus ?? "-"),
         row("คำขอที่พักห้องร่วม", counterpartLabel(other)),
         row("สิ่งที่ต้องทำ", ROOM_SHARE_GUEST_CANCELLED_TEXT),
+      ].join("");
+      return { subject, html: shell(subject, rows, url) };
+    }
+
+    case "RoomShareGuestDetached": {
+      const subject = `ยกเลิกการพักห้องร่วมของคำขอ ${no}`;
+      const rows = [
+        row("เลขที่", no),
+        row("วันเดินทาง", partyRange(me)),
+        row("สถานที่ปฏิบัติงาน", me.workLocation ?? "-"),
+        // The status is the REASON this mail is not the cancellation one, so
+        // it is named rather than left for the reader to infer.
+        row("สถานะคำขอของคุณ", input.previousStatus ?? "-"),
+        row("คำขอที่พักห้องร่วมเดิม", counterpartLabel(other)),
+        row("สิ่งที่ต้องทำ", ROOM_SHARE_GUEST_DETACHED_TEXT),
       ].join("");
       return { subject, html: shell(subject, rows, url) };
     }
