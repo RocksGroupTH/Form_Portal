@@ -108,6 +108,19 @@ interface TravelBookingTabProps {
    */
   otherTrips?: readonly OtherTrip[];
   issues: FieldIssue[];
+  /**
+   * Whether this tab's booking selection asks for an ID/Passport scan (package
+   * C, `AccTravel*.RequiresIdCard`).
+   *
+   * **Passed in rather than recomputed here.** `tabNeedsIdCard`
+   * (`useTravelBookingForm.ts`) is the one caller of `deriveBookingFlags` on
+   * this side, and the same value decides whether `validateTab` complains about
+   * a missing card. Deriving it a second time in this component is how the
+   * upload block and the complaint about its absence come to disagree — and the
+   * expensive direction of that disagreement is a hidden block whose emptiness
+   * still refuses the submit.
+   */
+  needsIdCard: boolean;
   triedSubmit: boolean;
   /** ผู้ขอเบิก (self = null) — keys the ID-card reuse/consent lookup. */
   requesterStaffId?: number | null;
@@ -127,6 +140,7 @@ export function TravelBookingTab({
   disabledTravelDates,
   otherTrips,
   issues,
+  needsIdCard,
   triedSubmit,
   requesterStaffId,
   brands,
@@ -217,6 +231,11 @@ export function TravelBookingTab({
   // below might be showing — a settled "no room, no per diem" or a pending
   // "no accommodation chosen yet" — or null when the figure is not withheld.
   const roomNote = roomBookingNote(tab.accommodationId, tab.needsRoomBooking);
+
+  // A card already on this tab — uploaded on an earlier save, or picked and
+  // waiting for one. Either keeps the block on screen after the requirement has
+  // gone away; see the เอกสารแนบ section below for why.
+  const hasIdCardEvidence = tab.idCardFiles.length > 0 || !!tab.pendingIdCard;
 
   const showRentBlock = tab.goNeedsVehicleRent || tab.returnNeedsVehicleRent;
   const showRentDates = showRentBlock && !!selectedRentVehicle && selectedRentVehicle.name !== NO_RENT_VEHICLE_NAME;
@@ -665,20 +684,48 @@ export function TravelBookingTab({
         )}
       </SectionCard>
 
-      {/* เอกสารแนบ */}
-      <SectionCard dataTour="ap17-idcard" icon={<FileCheck size={15} />} title="เอกสารแนบ">
-        <div data-field="idCard">
-          <IdCardUpload
-            files={tab.idCardFiles}
-            requestId={tab.id ?? null}
-            requesterStaffId={requesterStaffId}
-            pendingFile={tab.pendingIdCard}
-            onSelectPending={onSelectPendingIdCard}
-            onRemove={onRemoveIdCardFile}
-            hasError={hasErr("idCard")}
-          />
-        </div>
-      </SectionCard>
+      {/* เอกสารแนบ — hidden entirely unless this booking selection asks for a
+          card, or the tab already carries one.
+
+          **Hidden, not disabled** (spec §3): a disabled control invites the
+          question "why can't I?"; an absent one matches "this booking does not
+          need it".
+
+          **`hasIdCardEvidence` is the second arm and it is not decoration.** A
+          draft saved while a card was required and resumed after an admin
+          un-ticked the option still has the file attached — a scan of the
+          requester's own national ID, the most sensitive thing this app holds.
+          Hiding the block would strand it: visible to the Admin desk and to the
+          detail page, invisible to its owner, who could then neither see nor
+          remove it. Showing it instead costs nothing, because the server only
+          ever refuses a MISSING card where one is required and never an extra
+          one. Same shape AP-1's expense row uses, where จำนวนเงิน appears once
+          `amount > 0` even though the normal path reveals it another way. */}
+      {(needsIdCard || hasIdCardEvidence) && (
+        <SectionCard dataTour="ap17-idcard" icon={<FileCheck size={15} />} title="เอกสารแนบ">
+          <div data-field="idCard">
+            {!needsIdCard && (
+              <div
+                className="mb-2 text-[12px] font-medium rounded-lg px-3 py-2"
+                style={{ background: "var(--bg-card-alt)", color: "var(--text-secondary)" }}
+              >
+                การจองที่เลือกไว้ไม่ได้กำหนดให้ต้องแนบบัตรประชาชน หรือ Passport แล้ว —
+                ไฟล์ที่แนบไว้ก่อนหน้านี้ยังอยู่ ลบออกได้หากไม่ต้องการส่ง
+              </div>
+            )}
+            <IdCardUpload
+              files={tab.idCardFiles}
+              requestId={tab.id ?? null}
+              requesterStaffId={requesterStaffId}
+              pendingFile={tab.pendingIdCard}
+              onSelectPending={onSelectPendingIdCard}
+              onRemove={onRemoveIdCardFile}
+              hasError={hasErr("idCard")}
+              required={needsIdCard}
+            />
+          </div>
+        </SectionCard>
+      )}
 
       {/* หมายเหตุ + สรุป Per diem */}
       <SectionCard icon={<StickyNote size={15} />} title="หมายเหตุและสรุป">

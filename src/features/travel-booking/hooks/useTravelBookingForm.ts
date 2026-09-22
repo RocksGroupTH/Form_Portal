@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { computePerDiem, rateForDay, type AllowanceLogEntry } from "@/lib/acc/travel-booking/perdiem";
 import { findDateOverlap, type OtherTrip } from "@/lib/acc/travel-booking/date-overlap";
 import { continuationFlags as deriveContinuationFlags } from "@/lib/acc/travel-booking/continuation-chain";
+import { deriveBookingFlags } from "@/lib/acc/travel-booking/derive-flags";
 import { effectiveClaimCountry } from "@/features/accounting/lib/claim-currency";
 import type { PerDiemAttribution } from "@/features/travel-booking/lib/perdiem-note";
 import { destinationKeyFor } from "@/features/travel-booking/lib/destination-key";
@@ -266,6 +267,46 @@ export interface FieldIssue {
   label: string;
 }
 
+/**
+ * Does this tab's booking selection ask for an ID/Passport scan? (package C,
+ * `AccTravel*.RequiresIdCard`, migration 154.)
+ *
+ * **One rule, shared with the server rather than mirrored.**
+ * `deriveBookingFlags` is pure and import-free, and it is the same module
+ * `validateTravelBookingTab` and the draft-save path run; the `requiresIdCard`
+ * it reads is the persisted column arriving verbatim on
+ * `/api/request/travel-booking/options/settings`, which returns
+ * `listAccommodations`/`listVehicles`/`listRentVehicles` unchanged. **Nothing
+ * here decides which booking types need identification** — that is a supplier
+ * fact an admin ticks, which is why the spec rejected a hardcoded list of
+ * booking types (§2).
+ *
+ * Exported because the form needs the same answer twice: whether to COMPLAIN
+ * about a missing card (`validateTab`, below) and whether to SHOW the upload at
+ * all (`TravelBookingTab`). Two spellings could disagree, and the disagreement
+ * that costs most is a hidden block whose absence still blocks the submit.
+ *
+ * An unknown id yields `null`, which `deriveBookingFlags` documents as
+ * contributing nothing. The maps hold ACTIVE options only, so a since-retired
+ * one reads as "no card needed" here while the server's maps — which are not
+ * filtered — would say otherwise; unreachable in practice, because
+ * `saveTravelBookingDraft` refuses a retired option outright before any submit,
+ * and the existing `needs*` reads in this file already have that property.
+ */
+export function tabNeedsIdCard(
+  tab: Pick<TabFormState, "accommodationId" | "goVehicleId" | "returnVehicleId" | "rentVehicleId">,
+  settings: TabSettingsMaps,
+): boolean {
+  const pick = <T>(map: Map<number, T>, id: number | null): T | null =>
+    id == null ? null : map.get(id) ?? null;
+  return deriveBookingFlags({
+    accommodation: pick(settings.accommodationById, tab.accommodationId),
+    goVehicle: pick(settings.vehicleById, tab.goVehicleId),
+    returnVehicle: pick(settings.vehicleById, tab.returnVehicleId),
+    rentVehicle: pick(settings.rentVehicleById, tab.rentVehicleId),
+  }).needsIdCard;
+}
+
 export function validateTab(
   tab: TabFormState,
   settings: TabSettingsMaps,
@@ -381,7 +422,22 @@ export function validateTab(
     }
   }
 
-  if ((!tab.idCardFiles || tab.idCardFiles.length === 0) && !tab.pendingIdCard) {
+  // Asked for only when one of the selected options is configured to need one —
+  // package C, `AccTravel*.RequiresIdCard` (migration 154).
+  //
+  // **The same rule the server runs, not a second copy of it.** `settings` here
+  // is built from `/api/request/travel-booking/options/settings`, which returns
+  // `listAccommodations/listVehicles/listRentVehicles` verbatim — so
+  // `requiresIdCard` arrives with each option's other `needs*` values and
+  // `deriveBookingFlags` (the one shared, pure module) answers. A client-local
+  // rule over a hardcoded list of booking types is what the spec rejected: which
+  // bookings need identification is a supplier fact, configured, not a fact
+  // about this codebase.
+  //
+  // The server check stays and is the real one — this is an affordance. A
+  // resumed draft, a direct POST, or an option ticked after the draft was saved
+  // all reach `validateTravelBookingTab`.
+  if (tabNeedsIdCard(tab, settings) && (!tab.idCardFiles || tab.idCardFiles.length === 0) && !tab.pendingIdCard) {
     issues.push({ key: "idCard", label: "รูปบัตรประชาชน หรือ Passport (อย่างน้อย 1 ไฟล์)" });
   }
 
