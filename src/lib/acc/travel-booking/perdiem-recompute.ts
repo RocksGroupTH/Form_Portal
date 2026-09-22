@@ -1,6 +1,10 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { continuationFlags, type ChainTrip } from "@/lib/acc/travel-booking/continuation-chain";
 import { computePerDiem } from "@/lib/acc/travel-booking/perdiem";
+import {
+  IS_ROOM_SHARE_GUEST_COLUMN,
+  roomBookedOrShared,
+} from "@/lib/acc/travel-booking/perdiem-room";
 import { getPerDiemEmployeeLog } from "@/lib/acc/travel-booking/allowance-log";
 import { uatByRecordId } from "@/lib/acc/travel-booking/perdiem-uat-gate";
 import { perDiemLogFor, type PerDiemCountryRate } from "@/lib/acc/travel-booking/perdiem-country";
@@ -26,11 +30,21 @@ type AccTx = { request: () => ReturnType<AccPool["request"]> };
  * itself, naming the newly filed trip responsible, and needs the type to do
  * it — `"submitted"` is that third case, added the same day. Its own
  * `causeLabel` sits beside the other two below.
+ *
+ * **`"host_redated"` is the fourth case (AP-17 package E, Task 6).** A
+ * พักห้องเดียวกับ host's travel dates changed, so every live guest's dates
+ * were rewritten to follow them (`room-share-cascade-apply.ts`) and each
+ * guest's own group is repriced against its new span. `cause.requestId` there
+ * is the **guest** whose dates moved, not the host — the host is in a
+ * different group and a different person's calendar, so naming it would make
+ * `recomputeGroupPerDiem`'s `causeDepart` lookup miss and silence the
+ * outside-trip arm entirely. The host's running number reaches the timeline
+ * through the guest's own `dates_followed_room_share_host` row instead.
  */
 export type RecomputeCause = {
   requestId: number;
   requestNo: string | null;
-  kind: "cancelled" | "rejected" | "submitted";
+  kind: "cancelled" | "rejected" | "submitted" | "host_redated";
 };
 
 /** Date column → 'YYYY-MM-DD' using local getters (server is Thai time, never toISOString). */
@@ -85,12 +99,24 @@ function toYmd(d: Date): string {
  *   touches — not one class of trip mispriced, every recomputed trip this
  *   transaction writes, group or outside, written at **฿0**. Worse than either
  *   column above, and until this fix it carried neither a comment nor a guard.
+ * - **`IS_ROOM_SHARE_GUEST_COLUMN`** (AP-17 package E) — deleted,
+ *   `!!x.IsRoomShareGuest` reads `false` for a row that never had the column
+ *   (`!!undefined === false`), so every พักห้องเดียวกับ **guest** this
+ *   recompute touches is re-priced at **฿0** — a requester who books no room
+ *   because they are sharing a colleague's, and whose per diem the user
+ *   explicitly said they keep (spec §1), silently loses all of it inside the
+ *   transaction that cancels somebody else's trip. Exactly
+ *   `t.NeedsRoomBooking`'s failure narrowed to one population, and equally
+ *   invisible: the two facts are read together and answered by one predicate,
+ *   `roomBookedOrShared`, so dropping either one of them reaches the same
+ *   wrong money.
  *
- * None of the three fails a typecheck, and none fails any test but the guard.
+ * None of the four fails a typecheck, and none fails any test but the guard.
  */
 const PERDIEM_ROW_COLUMNS =
   "t.RequestId, t.DepartDate, t.ReturnDate, t.IsContinuation, t.PerDiemDays, " +
-  "t.PerDiemTotal, t.NeedsRoomBooking, r.Status, r.EmployeeId, r.CountryCode, r.StaffId";
+  "t.PerDiemTotal, t.NeedsRoomBooking, r.Status, r.EmployeeId, r.CountryCode, r.StaffId, " +
+  IS_ROOM_SHARE_GUEST_COLUMN;
 
 /**
  * Rewrite one trip's per diem for one continuation-flag change — the body
@@ -100,12 +126,29 @@ const PERDIEM_ROW_COLUMNS =
  * `x` carries the same column shape either way — `RequestId`, `Status`,
  * `DepartDate`, `ReturnDate`, `IsContinuation`, `PerDiemDays`, `PerDiemTotal`
  * plus `PERDIEM_ROW_COLUMNS`'s own `EmployeeId`/`CountryCode`/`StaffId`/
- * `NeedsRoomBooking` — because both readers, the `GroupKey` SELECT below and
- * `loadOutsideDetailRows`, build their column list off that one constant
- * rather than each naming it separately; the two cannot diverge in shape.
+ * `NeedsRoomBooking`/`IsRoomShareGuest` — because both readers, the `GroupKey`
+ * SELECT below and `loadOutsideDetailRows`, build their column list off that
+ * one constant rather than each naming it separately; the two cannot diverge
+ * in shape.
  *
  * No-op (no UPDATE, no audit row) when the flag has not changed — that row was
  * never touched by this cancellation and must not appear in the trail at all.
+ *
+ * **`forceReprice` is the one thing that overrides that no-op, and it exists
+ * because the flag is not the only input that can move (AP-17 package E, Task
+ * 6).** Every caller before it changed a trip's per diem by changing its
+ * *position in the chain*, so "the flag did not move" and "nothing about this
+ * row's price changed" were the same statement. A room-share guest re-dated to
+ * follow its host breaks that: its **span** changed, so 20–24 becomes 25–30 and
+ * the days count with it, while its continuation flag very often does not move
+ * at all. Without this the guest would keep a figure priced for dates it is no
+ * longer travelling on — silently, on the path that writes
+ * `AccRequest.TotalAmount`.
+ *
+ * It overrides **only** the flag comparison. `perDiemWritable`'s gate below is
+ * untouched, so a `Completed` guest still gets its `locked: true` audit row and
+ * no money write — forcing a reprice must never become a way past the rule that
+ * an already-paid figure is a person's decision, not a cascade's.
  */
 async function rewritePerDiemRow(
   tx: AccTx,
@@ -113,11 +156,12 @@ async function rewritePerDiemRow(
   nowContinuation: boolean,
   cause: RecomputeCause,
   loadRates: () => Promise<PerDiemCountryRate[]>,
+  forceReprice = false,
 ): Promise<void> {
   const requestId = x.RequestId as number;
   const status = x.Status as string;
   const wasContinuation = !!x.IsContinuation;
-  if (wasContinuation === nowContinuation) return;
+  if (wasContinuation === nowContinuation && !forceReprice) return;
 
   const beforeDays = (x.PerDiemDays as number) ?? 0;
   const beforeTotal = Number(x.PerDiemTotal ?? 0);
@@ -170,8 +214,17 @@ async function rewritePerDiemRow(
     // re-derived, so a trip whose accommodation option never books a room
     // cannot be silently repaid its full per diem the first time anything in
     // its chain is cancelled.
+    //
+    // **And its one exception, package E**: a พักห้องเดียวกับ guest books no
+    // room and IS paid (spec §1). `roomBookedOrShared` is the single predicate
+    // the submit, this recompute and the form's live estimate all apply, so a
+    // cancellation elsewhere cannot re-price a guest at ฿0 while the submit
+    // had stored real money — the two would then disagree with nothing said.
     const computed = computePerDiem(departDate!, returnDate!, nowContinuation, resolved.log, {
-      roomBooked: !!x.NeedsRoomBooking,
+      roomBooked: roomBookedOrShared({
+        needsRoomBooking: !!x.NeedsRoomBooking,
+        isRoomShareGuest: !!x.IsRoomShareGuest,
+      }),
     });
     afterDays = computed.days;
     afterTotal = computed.total;
@@ -200,6 +253,12 @@ async function rewritePerDiemRow(
   const causeLabel =
     cause.kind === "cancelled" ? "ถูกยกเลิก"
     : cause.kind === "rejected" ? "ไม่ได้รับอนุมัติ"
+    // "host_redated" (AP-17 package E): the cause is the GUEST whose dates were
+    // rewritten to follow its room-share host — see `RecomputeCause`'s own
+    // docblock for why the guest and not the host. Like "submitted" the cause
+    // is never dead here (only a live guest is re-dated), so the "dead itself"
+    // branch below is unreachable for this kind too.
+    : cause.kind === "host_redated" ? "เปลี่ยนวันเดินทางตามคำขอที่พักห้องร่วม"
     // "submitted": the cause here is never dead (see rewriteSubmitAffectedTrips'
     // own doc comment for why), so the "dead itself" branch below — which reads
     // as if `cause` itself died — is unreachable for this kind; this label only
@@ -265,11 +324,12 @@ async function rewritePerDiemRow(
  *
  * `loadRequesterTrips` only carries what the chain needs to order trips and
  * skip dead ones — it does not carry `Status`, `PerDiemDays`, `PerDiemTotal`,
- * `IsContinuation`, `EmployeeId`, `CountryCode`, `StaffId` or
- * `NeedsRoomBooking`, all of which `rewritePerDiemRow` needs. This is scoped
- * to exactly the ids that could have moved (`recomputeGroupPerDiem`'s
- * `alsoAffected`), never to every trip on the requester's calendar, so a trip
- * nothing touched is never locked by this transaction.
+ * `IsContinuation`, `EmployeeId`, `CountryCode`, `StaffId`,
+ * `NeedsRoomBooking` or `IsRoomShareGuest`, all of which `rewritePerDiemRow`
+ * needs. This is scoped to exactly the ids that could have moved
+ * (`recomputeGroupPerDiem`'s `alsoAffected`), never to every trip on the
+ * requester's calendar, so a trip nothing touched is never locked by this
+ * transaction.
  */
 async function loadOutsideDetailRows(
   tx: AccTx,
@@ -401,11 +461,43 @@ export async function rewriteSubmitAffectedTrips(
  * gets a log row, with `before` equal to `after` — that is the case somebody
  * most needs to find later, and a silent skip leaves nothing to find.
  */
+export interface RecomputeGroupOptions {
+  /**
+   * Rows whose own pricing INPUTS changed, and which must therefore be
+   * repriced even though their continuation flag did not move — see
+   * `rewritePerDiemRow`'s `forceReprice`. Empty or absent is today's
+   * behaviour exactly, which is what every caller before AP-17 package E
+   * wants: a cancellation moves a figure only by moving a chain position.
+   *
+   * The one caller that supplies it is the room-share date cascade, naming
+   * the single guest whose depart/return it just rewrote.
+   */
+  repriceRequestIds?: readonly number[];
+  /**
+   * Overrides the "only a trip departing on or after the cause's own depart
+   * date could have moved" narrowing applied to the requester's OUTSIDE trips.
+   *
+   * That narrowing is sound for a cancellation, which can only give a day back
+   * to something later in the chain. A **re-date** is not directional: a guest
+   * moved from 25–30 back to 20–24 changes the position of trips sitting
+   * between the old span and the new one, and those are all EARLIER than the
+   * row's current depart date — so the default lookup would silently drop
+   * exactly the trips the move affected. The date cascade passes the earlier of
+   * the guest's old and new depart dates.
+   *
+   * `null` or absent keeps the default (the cause's own depart date, read out
+   * of the group).
+   */
+  affectedFromDate?: string | null;
+}
+
 export async function recomputeGroupPerDiem(
   tx: AccTx,
   groupKey: string,
   cause: RecomputeCause,
+  options?: RecomputeGroupOptions,
 ): Promise<void> {
+  const forced = options?.repriceRequestIds ?? [];
   const rows = await tx.request()
     .input("gk", sql.NVarChar(40), groupKey)
     // See `PERDIEM_ROW_COLUMNS`'s own doc comment above for what each of
@@ -487,7 +579,10 @@ export async function recomputeGroupPerDiem(
   for (const x of raw) {
     const requestId = x.RequestId as number;
     const nowContinuation = flags.get(requestId) ?? false;
-    await rewritePerDiemRow(tx, x, nowContinuation, cause, loadRates);
+    await rewritePerDiemRow(
+      tx, x, nowContinuation, cause, loadRates,
+      forced.indexOf(requestId) !== -1,
+    );
   }
 
   // Only a trip AFTER the cancelled one can have gained or lost its
@@ -496,7 +591,16 @@ export async function recomputeGroupPerDiem(
   // Dead outside trips are excluded here too — they will not be paid
   // regardless of what their flag reads, so there is nothing for them to
   // report.
-  const causeDepart = trips.find((t) => t.requestId === cause.requestId)?.departDate ?? null;
+  //
+  // `affectedFromDate` overrides the anchor for the one caller whose change is
+  // not directional — see `RecomputeGroupOptions`. It is read with `??` rather
+  // than `||` so a caller cannot be silently ignored, and it is deliberately
+  // NOT able to widen the arm to everything: an absent override still falls
+  // back to the cause's own depart date, and a null one still switches the arm
+  // off, exactly as before.
+  const causeDepart =
+    options?.affectedFromDate
+    ?? (trips.find((t) => t.requestId === cause.requestId)?.departDate ?? null);
   const alsoAffected = causeDepart
     ? outside.filter((o) => o.alive && o.departDate && o.departDate >= causeDepart)
     : [];

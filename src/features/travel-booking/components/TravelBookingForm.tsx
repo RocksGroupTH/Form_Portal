@@ -57,7 +57,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
     colleagues, colleaguesLoading, requesterEnvironment,
     existingRanges, otherTrips, requesterStaffId, setRequesterStaffId, selectedRequester,
     brands,
-    continuationFlags, perDiemEstimates, totalPerDiemEstimate,
+    continuationFlags, continuationSources, perDiemEstimates, totalPerDiemEstimate,
     settingsMaps,
     tabIssues, canSubmit,
     saving, submitting, submitPhase, saveDraft, submitAll, uploadIdCard, removeIdCardFile,
@@ -429,6 +429,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
         <TravelBookingTab
           tab={activeTab}
           isContinuation={continuationFlags[activeTabIndex] ?? false}
+          continuationSource={continuationSources[activeTabIndex] ?? { kind: "none" }}
           perDiemEstimate={
             perDiemEstimates[activeTabIndex] ?? {
               days: 0,
@@ -450,6 +451,11 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
           needsIdCard={tabNeedsIdCard(activeTab, settingsMaps)}
           triedSubmit={triedSubmit}
           requesterStaffId={requesterStaffId}
+          // The same department list the เปลี่ยนผู้ขอเบิก picker above opens
+          // on — AP-17's พักห้องเดียวกับ picker asks the same question of the
+          // same roster and reuses the same modal, so it takes the same list
+          // rather than fetching a second copy of it.
+          colleagues={colleagues}
           brands={brands}
           onChange={(patch) => updateTab(activeTabIndex, patch)}
           onSelectPendingIdCard={(file) => updateTab(activeTabIndex, { pendingIdCard: file })}

@@ -36,6 +36,8 @@ export function RequesterPickerModal({
   value,
   onSelect,
   searchEndpoint,
+  title = "เลือกผู้ขอเบิก",
+  subtitle = "เลือกตัวเอง หรือเพื่อนร่วมแผนกเพื่อกรอกแทน",
 }: {
   open: boolean;
   onClose: () => void;
@@ -51,6 +53,20 @@ export function RequesterPickerModal({
    * old client-side filtering.
    */
   searchEndpoint?: string;
+  /**
+   * Header copy, defaulted to the on-behalf wording every existing caller
+   * relies on.
+   *
+   * AP-17's พักห้องเดียวกับ picker (package E) asks the same question of the
+   * same roster — "which colleague?" — for an entirely different reason, and
+   * the alternative to two optional strings was a second modal carrying a
+   * second copy of the debounced `?q=` search and its `seq` staleness guard.
+   * The spec is explicit that the directory search is not to be written twice;
+   * this is what lets one component answer both without either caller reading
+   * the other's title.
+   */
+  title?: string;
+  subtitle?: string;
 }) {
   const [query, setQuery] = useState("");
   const [remote, setRemote] = useState<RequesterOption[] | null>(null);
@@ -173,10 +189,10 @@ export function RequesterPickerModal({
         >
           <div>
             <h2 className="text-[15px] font-bold m-0" style={{ color: "var(--text-heading)" }}>
-              เลือกผู้ขอเบิก
+              {title}
             </h2>
             <p className="text-[11px] m-0" style={{ color: "var(--text-muted)" }}>
-              เลือกตัวเอง หรือเพื่อนร่วมแผนกเพื่อกรอกแทน
+              {subtitle}
             </p>
           </div>
           <button
