@@ -40,6 +40,30 @@ test("a well-formed line raises nothing", () => {
   assert.deepEqual(validateLineMoney([line({})]), []);
 });
 
+/* The line the journal drops and the stored total keeps. `toJournalItems`
+   filters on `glAccountNo && amountBeforeVat !== 0`; `computeActualTotal`
+   filters on `isFilledLine`. A row with 0 before VAT and VAT on it passes
+   both filters differently: it counts toward `RefundToCompany`, which is
+   what the account step asks for evidence against, and never reaches the
+   bank line, which is what the send refuses over. So a clearing could be
+   approved with no slip asked for and then die at the send — the round trip
+   the evidence gate exists to prevent. The other half of the gap, a line
+   with money and no G/L account, `linesMissingGl` already refuses; this is
+   the half that was left open. */
+test("VAT on a line with no expense behind it is refused", () => {
+  const errs = validateLineMoney([line({ amountBeforeVat: 0, vatAmount: 7, whtAmount: 0 })]);
+  assert.equal(errs.length, 1);
+  assert.match(errs[0], /7\.00/);
+});
+
+test("an empty amount counts as zero, so VAT beside it is refused too", () => {
+  assert.equal(validateLineMoney([line({ amountBeforeVat: null, vatAmount: 7 })]).length, 1);
+});
+
+test("no expense and no VAT is a draft row, not an error", () => {
+  assert.deepEqual(validateLineMoney([line({ amountBeforeVat: 0, vatAmount: 0, whtAmount: 0 })]), []);
+});
+
 test("WHT larger than the expense is refused", () => {
   // The QA case: 10 + 0 VAT with 200 WHT nets −190, which inflates the bank
   // amount and flips the clearing to a 290-baht Refund.
