@@ -126,6 +126,36 @@ test("the bounded list is parameterized, never interpolated key text", () => {
   );
 });
 
+test("the list bound into the DELETE is the FORM'S SCOPE, not the posted keys", () => {
+  // Added after mutation testing: every assertion above survived swapping
+  // `scope` for `wanted` in both the map and the binding loop, and that is a
+  // real bug rather than a stylistic one. Bound to `wanted`, the statement
+  // deletes only the keys it is about to re-insert — so **unticking a box never
+  // takes effect**, and a grant can be added from this screen but never removed
+  // by it. The shape stays perfectly parameterized while doing it, which is why
+  // none of the shape checks noticed.
+  const body = bodyOf(REPLACE);
+  const del = deleteStatement(body);
+  const listVar = (del.match(/TabKey\s+IN\s*\(\$\{(\w+)\}\)/) ?? [])[1];
+  assert.ok(listVar, "the IN list is not an interpolated placeholder list");
+
+  // Whatever array the placeholders are mapped from is the one being deleted.
+  const source = (declarationOf(body, listVar).match(/(\w+)\s*\.map\(/) ?? [])[1];
+  assert.ok(source, "the placeholder list is not mapped from a named array");
+  assert.ok(
+    declarationOf(body, source).includes("storableAdvClrKeysForForm("),
+    "the DELETE is bound to `" + source + "`, which is not the form's key scope — " +
+      "if that is the posted list, unticking a grant silently does nothing",
+  );
+
+  // ...and the .input() loop must bind that SAME array, or the placeholders and
+  // their values come from two different lists.
+  assert.ok(
+    new RegExp("\\b" + source + "\\.forEach\\(").test(body),
+    "the bound values do not come from `" + source + "`, the array the placeholders count",
+  );
+});
+
 test("the bound list is the shared metadata, not a key list retyped beside the SQL", () => {
   const body = bodyOf(REPLACE);
   assert.ok(

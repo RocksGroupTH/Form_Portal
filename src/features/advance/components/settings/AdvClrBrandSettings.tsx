@@ -39,8 +39,17 @@ interface BrandRow {
  * **One switch covers both forms, and that is the storage rather than this
  * screen.** `setBrandActiveShared` MERGEs `AccFormBrand` for `'AP-2'` and
  * `'AP-3'` in one transaction, so a brand is claimable on both or neither;
- * rendering two toggles would be two controls over one row. Hence one panel
- * shown on both settings pages, saying so.
+ * rendering two toggles would be two controls over one row. Hence one panel,
+ * saying so on screen.
+ *
+ * **On AP-2's settings page ALONE since 2026-09-22** (the user's decision,
+ * taken with the per-form สิทธิ์เข้าถึง split). It was rendered by both pages
+ * until then, which was the same fact expressed differently — one switch, seen
+ * twice. Once each form's grants became its own, a `brands` tick had to belong
+ * to one page or be half a grant over a control neither owned, so the tab moved
+ * rather than being divided. **AP-3's settings page renders a line above every
+ * tab saying where it went**, because a control that vanishes with no
+ * explanation reads as a bug or a lost permission.
  *
  * **The list is every brand in the registry, not only the ones already
  * granted** — it is read from the Interface ERP endpoint, whose own row list
