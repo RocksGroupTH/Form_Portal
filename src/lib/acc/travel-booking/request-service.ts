@@ -1301,8 +1301,27 @@ export function validateTravelBookingTab(
   if (tab.returnNeedsDepartTime && !tab.returnTime) return fail("กรุณาระบุเวลาออกเดินทางขากลับ");
 
   // ข้อ10 — ที่พักค้างคืน
-  if (!tab.accommodationId) return fail("กรุณาเลือกที่พักค้างคืน");
-  if (settings.accommodationById.get(tab.accommodationId)?.requiresCustomReason && !tab.accommodationCustomText?.trim()) {
+  //
+  // **Unless this request is a พักห้องเดียวกับ guest** (AP-17 package E, spec
+  // §1). Attaching to a colleague's booking REPLACES choosing an accommodation
+  // — the guest "books nothing themselves" — so `AccommodationId` is null by
+  // design on exactly those rows, and `deriveBookingFlags` reads that as
+  // `NeedsRoomBooking = false`, which is correct: the Admin desk has no room
+  // to book for them. They are paid all the same, through
+  // `roomBookedOrShared`.
+  //
+  // `isRoomShareGuest` is read off the persisted row this validator was handed
+  // (`IS_ROOM_SHARE_GUEST_COLUMN`), never off a posted DTO — the same rule
+  // `needsRoomBooking` beside it follows. The form's own `validateTab`
+  // (`useTravelBookingForm.ts`) carries the identical arm so the two cannot
+  // disagree about whether a guest's tab is complete; this one is the real
+  // check.
+  if (!tab.accommodationId) {
+    if (!tab.isRoomShareGuest) return fail("กรุณาเลือกที่พักค้างคืน");
+  } else if (
+    settings.accommodationById.get(tab.accommodationId)?.requiresCustomReason &&
+    !tab.accommodationCustomText?.trim()
+  ) {
     return fail("กรุณาระบุที่พักค้างคืนเพิ่มเติม");
   }
 

@@ -29,6 +29,8 @@ import {
   effectiveClaimCountry,
 } from "@/features/accounting/lib/claim-currency";
 import { IdCardUpload } from "./IdCardUpload";
+import { RoomShareControl } from "./RoomShareControl";
+import type { RequesterOption } from "@/components/RequesterPickerModal";
 import {
   OptionCardSelect,
   SectionCard,
@@ -155,6 +157,13 @@ interface TravelBookingTabProps {
   triedSubmit: boolean;
   /** ผู้ขอเบิก (self = null) — keys the ID-card reuse/consent lookup. */
   requesterStaffId?: number | null;
+  /**
+   * The actor's own HR department, already loaded by the form — the list the
+   * พักห้องเดียวกับ person picker opens on before anybody types (AP-17 package
+   * E). Passed down rather than fetched here for the same reason `brands` is:
+   * it is identical for every tab, and a per-tab fetch would repeat it.
+   */
+  colleagues: RequesterOption[];
   onChange: (patch: Partial<TabFormState>) => void;
   onSelectPendingIdCard: (file: File | null) => void;
   onRemoveIdCardFile: (fileId: number) => Promise<boolean>;
@@ -175,6 +184,7 @@ export function TravelBookingTab({
   needsIdCard,
   triedSubmit,
   requesterStaffId,
+  colleagues,
   brands,
   onChange,
   onSelectPendingIdCard,
@@ -583,31 +593,86 @@ export function TravelBookingTab({
           />
         </div>
 
-        <div data-field="accommodation">
-          <label className={labelClass} style={errLabelStyle(hasErr("accommodation"))}>
-            <Hotel size={11} className="inline mr-1 -mt-0.5" />
-            ที่พักค้างคืน{requiredStar}
-          </label>
-          <OptionCardSelect
-            options={accommodationOptions}
-            value={tab.accommodationId != null ? String(tab.accommodationId) : ""}
-            onChange={(v) => {
-              const id = Number(v);
-              const a = accommodations.find((x) => x.id === id);
-              onChange({ accommodationId: id, accommodationCustomText: null, needsRoomBooking: !!a?.needsRoomBooking });
-            }}
-            hasError={hasErr("accommodation")}
-          />
-        </div>
+        {/* ที่พักค้างคืน, or the room share that REPLACES it.
 
-        {selectedAccommodation?.needsRoomBooking && (
-          <div
-            className="flex items-center gap-2 text-[12px] font-medium rounded-lg px-3 py-2"
-            style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}
-          >
-            <Hotel size={14} /> ทีม Admin จะจองห้องพักให้สำหรับที่พักนี้
-          </div>
+            **The two are alternatives and only one is ever on screen** (AP-17
+            package E, spec §1: a guest "books nothing themselves"). Rendering
+            both would invite a tab claiming a room of its own *and* a share of
+            somebody else's — a state nothing downstream knows how to price,
+            since `roomBookedOrShared` would read true from either input while
+            the Admin desk had a booking to make for a person who is not
+            sleeping there.
+
+            Hidden rather than disabled, which is package C's own ruling one
+            card down: "a disabled control invites the question 'why can't
+            I?'". The difference here is that the requester has just *caused*
+            the disappearance, so the card that replaces the grid says in so
+            many words that no accommodation is needed — an unexplained
+            vanishing required field would be worse than either. Detaching
+            brings the grid straight back. */}
+        {!tab.isRoomShareGuest && (
+          <>
+            <div data-field="accommodation">
+              <label className={labelClass} style={errLabelStyle(hasErr("accommodation"))}>
+                <Hotel size={11} className="inline mr-1 -mt-0.5" />
+                ที่พักค้างคืน{requiredStar}
+              </label>
+              <OptionCardSelect
+                options={accommodationOptions}
+                value={tab.accommodationId != null ? String(tab.accommodationId) : ""}
+                onChange={(v) => {
+                  const id = Number(v);
+                  const a = accommodations.find((x) => x.id === id);
+                  onChange({ accommodationId: id, accommodationCustomText: null, needsRoomBooking: !!a?.needsRoomBooking });
+                }}
+                hasError={hasErr("accommodation")}
+              />
+            </div>
+
+            {selectedAccommodation?.needsRoomBooking && (
+              <div
+                className="flex items-center gap-2 text-[12px] font-medium rounded-lg px-3 py-2"
+                style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}
+              >
+                <Hotel size={14} /> ทีม Admin จะจองห้องพักให้สำหรับที่พักนี้
+              </div>
+            )}
+          </>
         )}
+
+        {/* The attach/detach control. It renders the host card when this tab
+            is a guest and the "หรือ พักห้องเดียวกับเพื่อนร่วมงาน" affordance
+            when it is not, so it is mounted in both states rather than being
+            the second arm of the condition above.
+
+            **Attaching clears the accommodation in the same patch that sets
+            the flag.** A stale `accommodationId` left behind is not inert: the
+            grid is gone, so the requester cannot see or change it, and
+            `buildSaveInput` posts it on the very next save, where
+            `deriveBookingFlags` reads it as a live answer and books a room.
+            Exactly the shape of bug `selectVehicleBoth` clears the rent fields
+            to avoid, one section down. */}
+        <RoomShareControl
+          requestId={tab.id ?? null}
+          isGuest={tab.isRoomShareGuest}
+          travelFrom={tab.departDate}
+          travelTo={tab.returnDate}
+          colleagues={colleagues}
+          onAttached={() =>
+            onChange({
+              isRoomShareGuest: true,
+              accommodationId: null,
+              accommodationCustomText: null,
+              needsRoomBooking: false,
+            })
+          }
+          // Only the flag. The accommodation is deliberately NOT restored to
+          // whatever it was before the attach: the requester is back at an
+          // unanswered required field, which is the honest state, and
+          // resurrecting a choice they replaced would re-book a room they had
+          // decided against.
+          onDetached={() => onChange({ isRoomShareGuest: false })}
+        />
       </SectionCard>
 
       {/* ยานพาหนะ (ไป-กลับ ตัวเดียว) + จุดขึ้น/เวลา แยกทิศ + เช่ารถ */}

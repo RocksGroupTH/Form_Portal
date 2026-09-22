@@ -451,6 +451,11 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
           needsIdCard={tabNeedsIdCard(activeTab, settingsMaps)}
           triedSubmit={triedSubmit}
           requesterStaffId={requesterStaffId}
+          // The same department list the เปลี่ยนผู้ขอเบิก picker above opens
+          // on — AP-17's พักห้องเดียวกับ picker asks the same question of the
+          // same roster and reuses the same modal, so it takes the same list
+          // rather than fetching a second copy of it.
+          colleagues={colleagues}
           brands={brands}
           onChange={(patch) => updateTab(activeTabIndex, patch)}
           onSelectPendingIdCard={(file) => updateTab(activeTabIndex, { pendingIdCard: file })}

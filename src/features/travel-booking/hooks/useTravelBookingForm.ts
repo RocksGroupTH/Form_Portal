@@ -403,8 +403,18 @@ export function validateTab(
   if (tab.goNeedsDepartTime && !tab.departTime) issues.push({ key: "departTime", label: "เวลาออกเดินทางขาไป" });
   if (tab.returnNeedsDepartTime && !tab.returnTime) issues.push({ key: "returnTime", label: "เวลาออกเดินทางขากลับ" });
 
+  // **A พักห้องเดียวกับ guest chooses no accommodation, and that is complete,
+  // not missing** (AP-17 package E, spec §1: they "book nothing themselves").
+  // The control replaces the choice rather than sitting beside it, so without
+  // this arm every guest faces a required field whose input is not on screen
+  // and cannot be satisfied at all.
+  //
+  // **`validateTravelBookingTab` (`request-service.ts`) carries the identical
+  // arm and is the real check.** The two must move together: this one alone
+  // would let a guest press ส่งคำขอ into a server refusal they cannot act on,
+  // and that one alone would leave the form red on a tab the server accepts.
   if (!tab.accommodationId) {
-    issues.push({ key: "accommodation", label: "ที่พักค้างคืน" });
+    if (!tab.isRoomShareGuest) issues.push({ key: "accommodation", label: "ที่พักค้างคืน" });
   } else if (settings.accommodationById.get(tab.accommodationId)?.requiresCustomReason && !tab.accommodationCustomText?.trim()) {
     issues.push({ key: "accommodationCustom", label: "ที่พักค้างคืน (ระบุเพิ่มเติม)" });
   }
