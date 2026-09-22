@@ -66,6 +66,11 @@ const ROUTES = [
   [`${CLR_ROOT}/erp-interface/route.ts`, "requireAdvClrSettingsTab", "clearErpInterface"],
   [`${CLR_ROOT}/erp-gl-accounts/route.ts`, "requireAdvClrSettingsTab", "clearErpInterface"],
   [`${CLR_ROOT}/erp-journal-batches/route.ts`, "requireAdvClrSettingsTab", "clearErpInterface"],
+  // `erp-bank-accounts` is AP-3’s twin of `erp-master` above: the option list
+  // its Interface ERP tab picks a bank from. It READS Rocks_ERP_Data and writes
+  // nothing — the choice is saved by `erp-interface` beside it, which carries
+  // the same key. (user, 2026-09-23)
+  [`${CLR_ROOT}/erp-bank-accounts/route.ts`, "requireAdvClrSettingsTab", "clearErpInterface"],
   // Opened the same day, over rows that carry no FormCode and therefore serve
   // AP-4 as well — the grid says so in Thai beside each tick.
   [`${CLR_ROOT}/gl-accounts/route.ts`, "requireAdvClrSettingsTab", "glAccounts"],

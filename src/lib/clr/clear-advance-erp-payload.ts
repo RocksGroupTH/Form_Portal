@@ -187,7 +187,7 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
   const { config: c, items, requestNo, postingDate, departmentCode } = input;
   const advanceVendorNo = c.advanceVendorNo?.trim() ?? "";
   if (!advanceVendorNo) throw new Error("ยังไม่ได้เลือก Vendor ในใบเบิก AP-2 ที่เคลียร์ใบนี้ — เปิดใบ AP-2 แล้วเลือก Vendor ก่อนส่ง");
-  if (!c.bankAccountNo) throw new Error("ยังไม่ได้ตั้งค่า Bank Account (จาก AP-2) สำหรับแบรนด์นี้");
+  if (!c.bankAccountNo) throw new Error("ยังไม่ได้ตั้งค่า Bank Account ของ AP-3 สำหรับแบรนด์นี้");
   if (!c.journalBatchName) throw new Error("ยังไม่ได้ตั้งค่า Journal Batch ของ AP-3 สำหรับแบรนด์นี้");
   if (items.length === 0) throw new Error("ไม่มีรายการค่าใช้จ่ายสำหรับสร้าง journal");
 

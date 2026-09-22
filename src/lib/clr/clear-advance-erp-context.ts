@@ -1,6 +1,7 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { loadAdvanceErpContext } from "@/lib/adv/advance-erp-context";
 import { listClrInterfaceConfig } from "@/lib/clr/clear-advance-interface-config-service";
+import { clrBankAccountNo } from "@/lib/clr/clear-advance-bank-account";
 import type { ClrJournalConfig } from "@/lib/clr/clear-advance-erp-payload";
 import type { AdvanceErpTarget } from "@/lib/adv/advance-erp-context";
 
@@ -36,10 +37,10 @@ async function resolveAdvanceVendorNo(advanceRequestId: number): Promise<string 
 
 /**
  * Resolve the clearing-journal config + BC target for one AP-3 request's brand.
- * Bank / target Company / ERP dept are inherited from AP-2's config
+ * Target Company / ERP dept are inherited from AP-2's config
  * (loadAdvanceErpContext); the advance vendor is read from the linked AP-2 request.
- * Journal Batch + VAT-input + WHT-payable come from AP-3's own
- * AccClearAdvanceInterfaceConfig.
+ * Bank Account is AP-3's own (`clrBankAccountNo`), never AP-2's. Journal Batch +
+ * VAT-input + WHT-payable come from AP-3's own AccClearAdvanceInterfaceConfig.
  */
 export async function loadClearAdvanceErpContext(
   brandCode: string,
@@ -62,13 +63,21 @@ export async function loadClearAdvanceErpContext(
   if (!advanceVendorNo) {
     throw new Error("ยังไม่ได้เลือก Vendor ในใบเบิก AP-2 ที่เคลียร์ใบนี้ — เปิดใบ AP-2 แล้วเลือก Vendor ก่อนส่ง");
   }
-  if (!ap2.config.bankAccountNo) throw new Error(`ยังไม่ได้ตั้งค่า Bank Account (AP-2) สำหรับ ${code}`);
+  // AP-3's own row, with no fallback to the default and none to AP-2 — see
+  // `clear-advance-bank-account.ts` for why this one read departs from the
+  // house per-form rule, and what it costs to "fix" it.
+  const bankAccountNo = await clrBankAccountNo(code);
+  if (!bankAccountNo) {
+    throw new Error(
+      `ยังไม่ได้ตั้งค่า Bank Account ของ AP-3 สำหรับ ${code} — ตั้งที่ AP-3 → ตั้งค่า → Interface ERP`,
+    );
+  }
   if (!clr.journalBatchName) throw new Error(`ยังไม่ได้ตั้งค่า Journal Batch ของ AP-3 สำหรับ ${code}`);
 
   return {
     config: {
       advanceVendorNo,
-      bankAccountNo: ap2.config.bankAccountNo,
+      bankAccountNo,
       vatInputGlAccountNo: clr.vatInputGlAccountNo,
       whtPayableGlAccountNo: clr.whtPayableGlAccountNo,
       journalBatchName: clr.journalBatchName,

@@ -26,6 +26,8 @@ interface ViewRow {
   journalBatchName: string | null;
   vatInputGlAccountNo: string | null;
   whtPayableGlAccountNo: string | null;
+  bankAccountNo: string | null;
+  bankConflict: boolean;
   ready: boolean;
   active: boolean;
 }
@@ -149,16 +151,21 @@ function GroupFieldSummary({ label, state }: { label: string; state: GroupValue 
  * **The Journal Batch is not here**, and that is the one asymmetry on this
  * screen: it is a group control at the top of the dialog, exactly where AP-2
  * puts it (user, 2026-09-14: "Journal Batch * ของ AP-3 ต้องอยู่ด้านบนสุดของ
- * group เหมือน AP-2"). The two tax accounts stay per brand.
+ * group เหมือน AP-2"). The two tax accounts stay per brand. The bank account
+ * joined them here on 2026-09-22 — it used to be inherited from AP-2 and is
+ * now AP-3's own per-brand row too; see the module docblock below.
  */
-interface BrandDraft { vatGl: string; whtGl: string }
+interface BrandDraft { vatGl: string; whtGl: string; bankAcct: string }
 
 const draftOf = (row: ViewRow): BrandDraft => ({
   vatGl: row.vatInputGlAccountNo ?? "",
   whtGl: row.whtPayableGlAccountNo ?? "",
+  bankAcct: row.bankAccountNo ?? "",
 });
 const sameDraft = (a: BrandDraft, b: BrandDraft) =>
-  a.vatGl.trim() === b.vatGl.trim() && a.whtGl.trim() === b.whtGl.trim();
+  a.vatGl.trim() === b.vatGl.trim() &&
+  a.whtGl.trim() === b.whtGl.trim() &&
+  a.bankAcct.trim() === b.bankAcct.trim();
 
 /**
  * One target Company: the claim brands posting into it, each carrying its own
@@ -217,6 +224,16 @@ function GroupCard({
     () => groupValue(members.map((m) => ({ brandCode: m.brandCode, value: m.whtPayableGlAccountNo }))),
     [members],
   );
+  /**
+   * Summarised the same way as the two tax accounts, even though the bank is
+   * also per-brand rather than a group control — a conflicted brand reports
+   * `bankAccountNo: null` here, same as "not set", because the per-member
+   * conflict message inside the dialog is where that detail belongs.
+   */
+  const bankState = useMemo(
+    () => groupValue(members.map((m) => ({ brandCode: m.brandCode, value: m.bankAccountNo }))),
+    [members],
+  );
 
   /**
    * The group's Journal Batch.
@@ -246,9 +263,29 @@ function GroupCard({
   useEffect(() => { setDraft(saved); }, [saved]);
 
   const valueFor = (code: string): BrandDraft =>
-    draft[code] ?? saved[code] ?? { vatGl: "", whtGl: "" };
+    draft[code] ?? saved[code] ?? { vatGl: "", whtGl: "", bankAcct: "" };
   const setFor = (code: string, patch: Partial<BrandDraft>) =>
     setDraft((p) => ({ ...p, [code]: { ...valueFor(code), ...patch } }));
+
+  /**
+   * A saved bank account can never be cleared from this picker — there is no
+   * "stop sending" operation on the field itself, because the send route
+   * refuses a present-but-blank bank with a 400 (there is no bank to fall
+   * back to any more). ACC Portal shipped the alternative once: silently drop
+   * the empty value from the save body, which let a user believe they had
+   * cleared the account while it quietly stayed on the server. Blocking here,
+   * in the UI, is the fix that was applied there.
+   */
+  const [bankClearBlocked, setBankClearBlocked] = useState<Record<string, boolean>>({});
+  const setBankFor = (code: string, next: string) => {
+    const savedBank = (saved[code]?.bankAcct ?? "").trim();
+    if (savedBank !== "" && next.trim() === "") {
+      setBankClearBlocked((p) => ({ ...p, [code]: true }));
+      return;
+    }
+    setBankClearBlocked((p) => ({ ...p, [code]: false }));
+    setFor(code, { bankAcct: next });
+  };
 
   const first = members[0];
   /* One fetch per group, not per member: every brand in a group posts into the
@@ -261,8 +298,28 @@ function GroupCard({
     first ? `/api/request/clear-advance/settings/erp-gl-accounts?brand=${encodeURIComponent(first.brandCode)}` : null,
     fetcher,
   );
+  /*
+   * Keyed on `target` (the Company), like the batch fetch — not on
+   * `first.brandCode`, like the G/L fetch. The bank route takes `?company=`
+   * only and ignores `?brand=`, so keying it on a brand would be a request
+   * the route cannot answer any differently; this is not an inconsistency to
+   * "fix" into matching the G/L call.
+   */
+  const { data: liveBank, isLoading: bankLoading } = useSWR<{ ok: boolean; data?: GlOpt[] }>(
+    target ? `/api/request/clear-advance/settings/erp-bank-accounts?company=${encodeURIComponent(target)}` : null,
+    fetcher,
+  );
   const batchErr = liveBatch && !liveBatch.ok ? (liveBatch.error ?? "ดึง batch ไม่สำเร็จ") : null;
   const noBatches = !isLoading && !batchErr && (liveBatch?.data?.length ?? 0) === 0;
+  /*
+   * Surfaced the same way `batchErr` is, not left silent the way the G/L
+   * fetch's failure is (that hook has no not-ok handling at all — see the
+   * report on this). The bank fetch shares the batch fetch's key basis
+   * (`target`, one call per group) and, like the batch, now gates `ready`,
+   * so a failed fetch here is closer in kind to a failed batch fetch than to
+   * a failed G/L fetch.
+   */
+  const bankErr = liveBank && !liveBank.ok ? "ดึงบัญชีธนาคารไม่สำเร็จ" : null;
 
   const ready = members.length > 0 && members.every((m) => m.ready);
 
@@ -310,6 +367,11 @@ function GroupCard({
             journalBatchName: batch.trim(),
             vatInputGlAccountNo: v.vatGl.trim() || null,
             whtPayableGlAccountNo: v.whtGl.trim() || null,
+            // Omitted entirely when blank — never sent as "" — because the
+            // route refuses a present-but-blank bank with a 400: there is no
+            // "clear the bank" operation, so a blank here must not travel as
+            // an explicit instruction to clear it.
+            ...(v.bankAcct.trim() ? { bankAccountNo: v.bankAcct.trim() } : {}),
           }),
         });
         const j = (await res.json()) as { ok: boolean; error?: string };
@@ -326,6 +388,23 @@ function GroupCard({
     } finally {
       setBusy(false);
     }
+  }
+
+  /**
+   * Opens fresh every time — an edit abandoned by closing without saving must
+   * not survive to the next open, and must not ride along on a later save
+   * triggered by something else in the group (`toWrite` includes every
+   * member once the batch is dirty, so a stale `draft[code]` here would be
+   * written for a brand nobody touched this time). `useEffect(…, [saved])`
+   * only clears `draft` on the post-save refetch, which never fires for a
+   * cancel — so the reset has to happen here, on open, same as ACC Portal's
+   * `openDialog`.
+   */
+  function openDialog() {
+    setBatch(batchAgreed);
+    setDraft(saved);
+    setBankClearBlocked({});
+    setOpen(true);
   }
 
   const iface = ERP_INTERFACE_BRANDS.find((b) => b.id === target);
@@ -362,8 +441,9 @@ function GroupCard({
         )}
       </div>
 
-      <div className="grid grid-cols-3 gap-3 pt-2" style={{ borderTop: "1px solid var(--border-light)" }}>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-2" style={{ borderTop: "1px solid var(--border-light)" }}>
         <GroupFieldSummary label="Journal Batch" state={batchState} />
+        <GroupFieldSummary label="บัญชีธนาคาร" state={bankState} />
         <GroupFieldSummary label="ภาษีซื้อ (VAT input)" state={vatState} />
         <GroupFieldSummary label="WHT payable" state={whtState} />
       </div>
@@ -375,7 +455,7 @@ function GroupCard({
           แบรนด์ในกลุ่มตั้งที่ AP-2 → ตั้งค่า → Interface ERP
         </p>
         <Button variant="secondary" size="sm" icon={<Pencil size={14} />}
-          disabled={members.length === 0} onClick={() => setOpen(true)}>
+          disabled={members.length === 0} onClick={openDialog}>
           แก้ไข
         </Button>
       </div>
@@ -385,11 +465,14 @@ function GroupCard({
           open
           onOpenChange={(v) => { if (!v) setOpen(false); }}
           title={`ตั้งค่า Interface ERP — ${target}`}
-          description={`${members.length} แบรนด์เบิก · Journal Batch ใช้ร่วมกันทั้งกลุ่ม · บัญชีภาษีแยกรายแบรนด์`}
+          description={`${members.length} แบรนด์เบิก · Journal Batch ใช้ร่วมกันทั้งกลุ่ม · บัญชีธนาคารและบัญชีภาษีแยกรายแบรนด์`}
         >
           <div className="flex flex-col gap-3">
             {batchErr && (
               <p className="text-[11px] m-0" style={{ color: "var(--color-danger)" }}>{batchErr}</p>
+            )}
+            {bankErr && (
+              <p className="text-[11px] m-0" style={{ color: "var(--color-danger)" }}>{bankErr}</p>
             )}
             {noBatches && (
               <p className="text-[11px] m-0 px-3 py-2 rounded-lg"
@@ -483,6 +566,35 @@ function GroupCard({
                       />
                     </div>
                   </div>
+
+                  <div className="min-w-0">
+                    <FieldLabel>บัญชีธนาคาร</FieldLabel>
+                    {m.bankConflict ? (
+                      <p className="text-[11px] m-0 px-3 py-2 rounded-lg inline-flex items-center gap-1"
+                        style={{ background: "var(--bg-info-yellow)", color: "var(--text-warning)", border: "1px solid var(--border-info-yellow)" }}>
+                        <AlertTriangle size={12} />
+                        {m.brandCode} มีบัญชีธนาคารของ AP-3 มากกว่าหนึ่งรายการ — แก้ที่ฐานข้อมูลก่อน
+                      </p>
+                    ) : (
+                      <>
+                        <SearchableSelect
+                          value={v.bankAcct} onChange={(x) => setBankFor(m.brandCode, x)}
+                          options={glOptions(liveBank?.data ?? [], v.bankAcct)}
+                          disabled={busy || bankLoading}
+                          placeholder={bankLoading ? "กำลังโหลดบัญชีธนาคาร..." : "เลือกบัญชีธนาคาร"}
+                          emptyLabel="— ยังไม่ได้ตั้ง —"
+                          searchPlaceholder="ค้นหาบัญชี..."
+                          triggerBackground="var(--bg-card-alt)"
+                        />
+                        {bankClearBlocked[m.brandCode] && (
+                          <p className="text-[10px] m-0 mt-1" style={{ color: "var(--text-warning)" }}>
+                            ล้างบัญชีธนาคารที่ตั้งไว้แล้วไม่ได้ — หากต้องการให้แบรนด์นี้หยุดส่ง
+                            ให้ปิดใช้งานที่แท็บ แบรนด์ที่เบิกได้ แทน
+                          </p>
+                        )}
+                      </>
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -511,9 +623,15 @@ function GroupCard({
 /**
  * AP-3 Interface ERP — grouped by the target Company, like AP-1's and AP-4's.
  *
- * Company, G/L, bank and branch are inherited from the AP-2 entries being
- * cleared; what AP-3 configures is the clearing journal's batch and its two tax
- * accounts, and all three belong to the company whose books it posts into.
+ * Company and branch are inherited from the AP-2 entries being cleared. The
+ * **bank account is not**, as of 2026-09-22 — it used to be, and reading this
+ * paragraph before that date would have been correct. AP-3 now reads its own
+ * `AccBrandBankAccount` row (`FormCode='AP-3'`), never AP-2's and never the
+ * shared `FormCode IS NULL` default; the no-fallback rule and the measured
+ * reason for it live in `src/lib/clr/clear-advance-bank-account.ts`. What
+ * AP-3 configures here is the clearing journal's batch (shared per group),
+ * its two tax accounts, and now its own bank account (both per brand) — all
+ * belonging to the company whose books it posts into.
  */
 export function ClrErpInterfaceSettings() {
   const { data, isLoading, mutate } = useSWR<{ ok: boolean; data?: ViewRow[] }>(
@@ -551,9 +669,9 @@ export function ClrErpInterfaceSettings() {
   return (
     <div className="flex flex-col gap-4">
       <p className="text-[12px] m-0" style={{ color: "var(--text-muted)" }}>
-        จัดกลุ่มตาม Company ปลายทาง — AP-3 กลับรายการจาก AP-2 · G/L · ธนาคาร · สาขา มาจากรายการที่เคลียร์เอง
-        ตั้งค่าที่นี่: <b>Journal Batch</b> (ใช้ร่วมกันทั้งกลุ่ม) · บัญชี<b>ภาษีซื้อ (VAT input)</b> ·
-        บัญชี<b>WHT payable</b> (แยกรายแบรนด์เบิก)
+        จัดกลุ่มตาม Company ปลายทาง — AP-3 กลับรายการจาก AP-2 · G/L · สาขา มาจากรายการที่เคลียร์เอง
+        ตั้งค่าที่นี่: <b>Journal Batch</b> (ใช้ร่วมกันทั้งกลุ่ม) · <b>บัญชีธนาคาร</b> ·
+        บัญชี<b>ภาษีซื้อ (VAT input)</b> · บัญชี<b>WHT payable</b> (แยกรายแบรนด์เบิก)
       </p>
 
       {isLoading ? (

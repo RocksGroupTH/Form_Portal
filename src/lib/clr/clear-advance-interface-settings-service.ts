@@ -3,8 +3,15 @@ import { listFormBrands } from "@/lib/acc/settings-service";
 import { loadErpJournalBuildContext } from "@/lib/acc/erp-journal-context";
 import { resolveErpTargetProfile } from "@/lib/acc/erp-target-profile";
 import { listBrandErpInterfaceMaps } from "@/lib/acc/brand-erp-interface-map-service";
+import { listBrandAccounts } from "@/lib/acc/brand-account-service";
 import { AP2_FORM_CODE } from "@/features/advance/constants";
+import { AP3_FORM_CODE } from "@/features/clear-advance/constants";
 import { listClrInterfaceConfig } from "@/lib/clr/clear-advance-interface-config-service";
+import {
+  bankForBrand,
+  deriveClrReady,
+  groupClrBankAccountsByBrand,
+} from "@/lib/clr/clear-advance-interface-bank-core";
 
 /**
  * One brand's AP-3 Interface ERP view for the settings screen. The target Company
@@ -27,7 +34,15 @@ export interface ClrInterfaceConfigView {
   vatInputGlAccountNo: string | null;
   /** AP-3 GL account for WHT payable. */
   whtPayableGlAccountNo: string | null;
-  /** true when the Journal Batch is set and the BC profile is complete. */
+  /**
+   * AP-3's own Bank Account (`AccBrandBankAccount`, `FormCode='AP-3'`) — never
+   * falls back to the shared default, and never to AP-2's. See
+   * `src/lib/clr/clear-advance-bank-account.ts` for why.
+   */
+  bankAccountNo: string | null;
+  /** true when the brand has more than one active AP-3 bank row — fix it in the database, not by picking one. */
+  bankConflict: boolean;
+  /** true when the Journal Batch, the bank account, and the BC profile are all set. */
   ready: boolean;
 
   /** Shared AccFormBrand.IsActive (managed on the AP-2 card) — read-only here. */
@@ -35,13 +50,15 @@ export interface ClrInterfaceConfigView {
 }
 
 export async function listClrInterfaceConfigView(): Promise<ClrInterfaceConfigView[]> {
-  const [allBrands, ctx, ap2Maps, clr, ap3Brands] = await Promise.all([
+  const [allBrands, ctx, ap2Maps, clr, ap3Brands, bankRows] = await Promise.all([
     listAllBrands(),
     loadErpJournalBuildContext("AP-3"),
     listBrandErpInterfaceMaps(AP2_FORM_CODE),
     listClrInterfaceConfig(),
     listFormBrands("AP-3"),
+    listBrandAccounts("bank", null, AP3_FORM_CODE),
   ]);
+  const bankByBrand = groupClrBankAccountsByBrand(bankRows);
   const ap2ByCode = new Map(ap2Maps.map((m) => [m.brandCode.toUpperCase(), m]));
   const activeByCode = new Map(ap3Brands.map((b) => [b.brandCode.toUpperCase(), b.isActive]));
   const brandByCode = new Map(allBrands.map((b) => [b.brandCode.toUpperCase(), b]));
@@ -63,6 +80,7 @@ export async function listClrInterfaceConfigView(): Promise<ClrInterfaceConfigVi
       const target = (cfg?.interfaceBrandCode ?? ctx.interfaceByClaim[code] ?? code).toUpperCase();
       const profile = await resolveErpTargetProfile(target, "AP-3");
       const journalBatchName = clr[code]?.journalBatchName ?? null;
+      const bank = bankForBrand(bankByBrand, code);
       return {
         brandCode: code,
         brandName: master?.brandName ?? code,
@@ -75,7 +93,13 @@ export async function listClrInterfaceConfigView(): Promise<ClrInterfaceConfigVi
         journalBatchName,
         vatInputGlAccountNo: clr[code]?.vatInputGlAccountNo ?? null,
         whtPayableGlAccountNo: clr[code]?.whtPayableGlAccountNo ?? null,
-        ready: !!(journalBatchName && profile?.profileComplete),
+        bankAccountNo: bank.bankAccountNo,
+        bankConflict: bank.bankConflict,
+        ready: deriveClrReady({
+          journalBatchName,
+          bank,
+          profileComplete: profile?.profileComplete ?? false,
+        }),
         active: activeByCode.get(code) ?? false,
       } satisfies ClrInterfaceConfigView;
     }),
