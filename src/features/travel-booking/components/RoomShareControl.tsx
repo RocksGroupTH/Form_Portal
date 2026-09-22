@@ -362,6 +362,9 @@ export function RoomShareControl({
 
   /* ── the picker's list ── */
 
+  /** The colleague the list is for — the id alone, which is all the fetch reads. */
+  const personStaffId = person ? person.staffId : null;
+
   useEffect(() => {
     if (!pickerOpen) return;
     const byNumber = pickMode === "number";
@@ -375,7 +378,7 @@ export function RoomShareControl({
       setHostsLoading(false);
       return;
     }
-    if (!byNumber && !person) return;
+    if (!byNumber && personStaffId == null) return;
 
     let cancelled = false;
     setHostsLoading(true);
@@ -385,7 +388,7 @@ export function RoomShareControl({
     if (byNumber) {
       params.set("requestNo", trimmedNo);
     } else {
-      params.set("staffId", String(person!.staffId));
+      params.set("staffId", String(personStaffId));
       if (mode === "travel") {
         if (from) params.set("travelFrom", from);
         if (to) params.set("travelTo", to);
@@ -428,7 +431,12 @@ export function RoomShareControl({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [pickerOpen, pickMode, person, mode, from, to, numberQuery, requestId, reload]);
+    // Keyed on the colleague's STAFF ID, never on the `person` object: it is
+    // set twice for one choice — an id-only stand-in and then the resolved HR
+    // row — and the second carries no information this fetch reads, so
+    // depending on the object identity would run the whole scan again for a
+    // name change.
+  }, [pickerOpen, pickMode, personStaffId, mode, from, to, numberQuery, requestId, reload]);
 
   /** Point 3 — filtered in the browser over what was already fetched. */
   const shownHosts = useMemo(() => {
@@ -479,10 +487,21 @@ export function RoomShareControl({
     setNumberQuery("");
   }, []);
 
-  /** Switching filter mode re-seeds the dates, since the two mean different things. */
-  const switchMode = useCallback((next: "travel" | "requested") => {
-    setMode((current) => {
-      if (next === current) return current;
+  /**
+   * Switching filter mode re-seeds the dates, since the two mean different
+   * things.
+   *
+   * **The current value is read from the closure, not from a `setMode`
+   * updater.** A `useState` updater must be pure: `reactStrictMode` is unset
+   * in `next.config.mjs`, which means ON, so development invokes updaters
+   * twice — and side effects inside one therefore run twice. Harmless for
+   * idempotent setters like these and wrong anyway; the same trap the
+   * `aliveRef` note in CLAUDE.md records being bitten by.
+   */
+  const switchMode = useCallback(
+    (next: "travel" | "requested") => {
+      if (next === mode) return;
+      setMode(next);
       if (next === "travel") {
         const range = defaultHostFilterRange(new Date());
         setFrom(range.from);
@@ -495,13 +514,14 @@ export function RoomShareControl({
         setFrom("");
         setTo("");
       }
-      return next;
-    });
-  }, []);
+    },
+    [mode],
+  );
 
-  const switchPickMode = useCallback((next: PickMode) => {
-    setPickMode((current) => {
-      if (current === next) return current;
+  const switchPickMode = useCallback(
+    (next: PickMode) => {
+      if (next === pickMode) return;
+      setPickMode(next);
       setHosts(null);
       setHostsError(null);
       setNotice(null);
@@ -509,9 +529,9 @@ export function RoomShareControl({
       // Step 1's modal opens itself when the person tab is selected with
       // nobody chosen — otherwise that tab is an empty panel with a button.
       if (next === "person" && !person) setPersonOpen(true);
-      return next;
-    });
-  }, [person]);
+    },
+    [pickMode, person],
+  );
 
   /* ── choosing and clearing ── */
 
@@ -683,6 +703,14 @@ export function RoomShareControl({
         value={null}
         onSelect={(staffId) => {
           if (staffId == null) return;
+          /* Set synchronously with the id alone, THEN refine with the HR row.
+             `RequesterPickerModal` calls `onClose()` immediately after
+             `onSelect()`, so `personOpen` is already false while
+             `resolvePerson` is still in flight — and a `person` that is still
+             null in that window renders step 2's "choose somebody first"
+             empty state for a frame. The id is the only thing the host fetch
+             needs; the name is for the heading. */
+          setPerson({ staffId, fullName: null });
           resolvePerson(staffId, colleagues).then(setPerson);
         }}
         searchEndpoint="/api/request/travel-booking/requesters"
