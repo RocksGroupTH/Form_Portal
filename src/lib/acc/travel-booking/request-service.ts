@@ -770,6 +770,23 @@ async function collectAndDeleteRequestArtifacts(tx: AccTx, requestId: number): P
   // AccTravelBooking cascade-deletes AccTravelWorkLocation, AccTravelDepartureLocation, AccTravelBookingDetail.
   await tx.request().input("rid", sql.Int, requestId)
     .query(`DELETE FROM [dbo].[AccTravelBooking] WHERE RequestId=@rid`);
+  /* A room-share binding (AP-17 package E, migration 156) names an AccRequest
+     on BOTH sides and BOTH foreign keys are NO ACTION, so the row below raises
+     a raw foreign-key error unless the binding goes first. This function is
+     reached only for a Draft/Returned request — a discarded draft group, or a
+     tab dropped from a group on the next save — and both sides are genuinely
+     reachable:
+
+       - GuestRequestId: the common one. A requester attaches to a colleague's
+         room while their own request is a draft, then discards that draft.
+       - HostRequestId: only a `Returned` host, never a Draft one — the picker
+         and the attach re-check both refuse a host that has never been filed
+         (`hostHasBeenFiled`, room-share-service.ts). Its guests are detached
+         silently here, which is a gap rather than a decision: the cancel
+         cascade (spec §4) fires on a status transition and a hard delete is
+         not one, so nobody is told. Recorded rather than papered over. */
+  await tx.request().input("rid", sql.Int, requestId)
+    .query(`DELETE FROM [dbo].[AccTravelRoomShare] WHERE GuestRequestId=@rid OR HostRequestId=@rid`);
   await tx.request().input("rid", sql.Int, requestId)
     .query(`DELETE FROM [dbo].[AccRequest] WHERE Id=@rid`);
 
