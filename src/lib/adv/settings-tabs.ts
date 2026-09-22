@@ -36,15 +36,41 @@
  * grants no approval and joining an approver pool grants no settings tab —
  * exactly the split migration 120 exists for on AP-4.
  *
- * **Two of the settings tabs can never be granted.** `access` for the reason
- * all three siblings give — whoever opens it can grant themselves the rest, and
- * here it also edits both approver pools — and `erpInterface` because it is
- * gated but **not brand-scoped**: a grant would be a grant over every brand's
- * Business Central posting configuration, the gap CLAUDE.md records for AP-1's
- * `gl-accounts` / `bank-accounts` / `journal-batches` / `branch-codes` routes.
- * Its route stays `requireRole`.
+ * **Only `access` can never be granted.** Whoever opens it can grant themselves
+ * the rest, and here it also edits both approver pools. Its route stays
+ * `requireRole` on every method.
  *
- * Neither exclusion is a database constraint. `AccAdvClrAccessTab` has no CHECK
+ * **`erpInterface`, `glAccounts` and `buGlMap` became grantable on 2026-09-22**
+ * (user: *"ของ AP-3,4 ก็ต้อง เปิด check box ทุกอันและตัดช่อง สิทธิ์เข้าถึง
+ * ออกเหมือนกัน"*). Both risks were put to them before the change and accepted
+ * rather than overlooked, which is why this reads as a decision rather than a
+ * gap:
+ *
+ * - **Interface ERP is gated but NOT brand-scoped.** A holder can set **any**
+ *   brand's bank account, Journal Batch and Branch Code — the values every
+ *   journal line carries — not only the brands they approve for. That is the
+ *   gap CLAUDE.md records for AP-1's `gl-accounts` / `bank-accounts` /
+ *   `journal-batches` / `branch-codes` routes, now deliberately handed out.
+ * - **`glAccounts` and `buGlMap` edit rows that carry no `FormCode`.**
+ *   `AccClearAdvanceGl` / `AccClearAdvanceGlCompany` and `AccClrBuGlMap` /
+ *   `AccClrBranchGlMap` are one set of rules serving AP-3 **and** AP-4, so a
+ *   grant on this page reaches AP-4's posting rules too.
+ *
+ * Each of the three carries a `note` below, printed under the grid, so the
+ * admin ticking the box reads the reach rather than discovering it.
+ *
+ * **Interface ERP therefore needs a key per FORM, and that is not cosmetic.**
+ * `erpInterface` sat on both strips while it was ungrantable, which was safe
+ * exactly because an ungrantable key is on no form's storable set. The moment
+ * it became tickable it would have been owned by both forms, and
+ * `storableAdvClrKeysForForm`'s **disjointness** — the property the bounded
+ * DELETE in `setAdvClrAccessTabs` rests on — would have gone with it: a save
+ * from AP-2's grid would have cleared AP-3's Interface ERP grant. So the strips
+ * carry `advanceErpInterface` and `clearErpInterface`, which is also the truer
+ * statement of what they are: two tabs configuring different rows through
+ * different routes. Both pages still accept a legacy `?tab=erpInterface`.
+ *
+ * That exclusion is not a database constraint. `AccAdvClrAccessTab` has no CHECK
  * on `TabKey` and is writable from more than one place, so a row naming any
  * string can appear; `decideAdvClrTabAccess` refusing it is what makes that
  * inert — and the same freedom is what lets the menu vocabulary share the
@@ -74,7 +100,11 @@ export const ADVANCE_SETTINGS_TAB_ORDER = [
   "brands",
   "matrix",
   "banks",
-  "erpInterface",
+  // `advanceErpInterface`, not `erpInterface` — see the module docblock. One
+  // key on both strips was safe only while it was ungrantable; a tickable one
+  // would be owned by both forms and break the bounded save's disjointness.
+  // The page still answers `?tab=erpInterface`.
+  "advanceErpInterface",
   "access",
 ] as const;
 
@@ -96,7 +126,9 @@ export const CLEAR_SETTINGS_TAB_ORDER = [
   "glAccounts",
   "buGlMap",
   "locations",
-  "erpInterface",
+  // `clearErpInterface` — AP-2's twin above says why. The page still answers
+  // `?tab=erpInterface`.
+  "clearErpInterface",
   "access",
 ] as const;
 
@@ -113,16 +145,25 @@ export type ClearSettingsTabKey = (typeof CLEAR_SETTINGS_TAB_ORDER)[number];
  *
  * `brands` appears once because there is one switch behind it — and since
  * 2026-09-22 that switch is reached from AP-2's page alone.
- * `buGlMap` and `glAccounts` are NOT here for the reason AP-4 gives for the
- * same two keys: those rows are AP-3's own G/L rules, shared with AP-4, so a
- * grant would reach another form's posting configuration. They stay
- * `requireRole` like `erpInterface` and `access`.
+ *
+ * **`glAccounts`, `buGlMap` and both Interface ERP keys joined this list on
+ * 2026-09-22**, on the user's instruction and with the reach spelled out to
+ * them first — see the module docblock. `access` is the only settings tab left
+ * off it, and the only one whose routes stay `requireRole`.
+ *
+ * Interface ERP is TWO entries because it is two tabs over two sets of rows;
+ * a single shared key would break the per-form partition the bounded save
+ * rests on.
  */
 export const GRANTABLE_ADV_CLR_TABS: readonly { key: string; label: string }[] = [
   { key: "brands", label: "แบรนด์ที่เบิกได้" },
   { key: "matrix", label: "ขั้นตามเงิน" },
   { key: "banks", label: "ธนาคาร Master" },
+  { key: "advanceErpInterface", label: "Interface ERP" },
+  { key: "glAccounts", label: "หมวดบัญชี G/L" },
+  { key: "buGlMap", label: "Fix G/L by BU or Branch" },
   { key: "locations", label: "Location / BU" },
+  { key: "clearErpInterface", label: "Interface ERP" },
 ];
 
 /**
@@ -144,11 +185,16 @@ export const GRANTABLE_ADV_CLR_TABS: readonly { key: string; label: string }[] =
  * cannot: `brands` really does reach both forms' claimable brands, from AP-2's
  * page, and that has to be readable before it is ticked.
  *
- * **`erpInterface` and `access` are on BOTH strips and deliberately stay
- * there.** They are the two tabs every page has, so both grids list them —
- * which is what keeps the property this list exists for: an admin looking for
- * "who may open Interface ERP" finds the answer on the page they are already
- * on rather than concluding the tab is missing.
+ * **`access` is on BOTH strips and deliberately stays there.** It is the one
+ * tab every page has under one key, so both grids' source lists carry it —
+ * the grid itself then drops it as ungrantable, and the line under the table
+ * names it instead, which is what keeps an admin from concluding the tab is
+ * missing.
+ *
+ * **Interface ERP is TWO entries carrying ONE label.** Both pages have the
+ * tab; the keys differ because the grants do (see the module docblock). The
+ * label is deliberately identical — it is the same screen to a reader, and
+ * each grid shows one form under a heading that names it.
  */
 export const ALL_ADV_CLR_TABS: readonly {
   key: string;
@@ -166,20 +212,25 @@ export const ALL_ADV_CLR_TABS: readonly {
   { key: "matrix", label: "ขั้นตามเงิน" },
   { key: "banks", label: "ธนาคาร Master" },
   {
+    key: "advanceErpInterface",
+    label: "Interface ERP",
+    note: "ตั้งค่าบัญชีธนาคาร Journal Batch และ Branch Code ได้ทุกแบรนด์ ไม่จำกัดเฉพาะแบรนด์ที่ตนอนุมัติ",
+  },
+  {
     key: "glAccounts",
     label: "หมวดบัญชี G/L",
-    adminOnly: "ใช้ร่วมกับ AP-4 — ให้สิทธิ์ข้ามฟอร์มไม่ได้",
+    note: "เป็นข้อมูลชุดเดียวกับ AP-4 — แก้ที่นี่มีผลกับทั้งสองฟอร์ม",
   },
   {
     key: "buGlMap",
     label: "Fix G/L by BU or Branch",
-    adminOnly: "ใช้ร่วมกับ AP-4 — ให้สิทธิ์ข้ามฟอร์มไม่ได้",
+    note: "เป็นกฎชุดเดียวกับ AP-4 — แก้ที่นี่มีผลกับทั้งสองฟอร์ม",
   },
   { key: "locations", label: "Location / BU" },
   {
-    key: "erpInterface",
+    key: "clearErpInterface",
     label: "Interface ERP",
-    adminOnly: "ตัดสินว่าเงินลงบัญชีไหน และไม่ได้จำกัดตามแบรนด์",
+    note: "ตั้งค่าบัญชีธนาคาร Journal Batch และ Branch Code ได้ทุกแบรนด์ ไม่จำกัดเฉพาะแบรนด์ที่ตนอนุมัติ",
   },
   { key: "access", label: "สิทธิ์เข้าถึง", adminOnly: "หน้านี้เอง — ให้สิทธิ์ตัวเองต่อได้" },
 ];
@@ -253,9 +304,12 @@ export function filterAdvClrMenuKeys(keys: string[]): string[] {
 
 /**
  * Everything that may be STORED in `AccAdvClrAccessTab` — **GRANTABLE tabs ∪
- * menus**, not every settings tab. `access` and `erpInterface` are excluded
- * here as well as from `decideAdvClrTabAccess`, so a row naming either can
- * never be written in the first place.
+ * menus**, not every settings tab. `access` is excluded here as well as from
+ * `decideAdvClrTabAccess`, so a row naming it can never be written in the
+ * first place. The bare `erpInterface` a pre-2026-09-22 row may still hold is
+ * excluded by the same test, for a duller reason — it is no longer a key this
+ * module knows at all, the two live ones being `advanceErpInterface` and
+ * `clearErpInterface`.
  *
  * Storage takes that union; authorization keeps the narrow filters. Before
  * AP-17 drew this distinction its menu ticks were dropped on read AND on write,
@@ -317,8 +371,10 @@ export function advClrMenusForForm(
  * from nowhere while surviving every save.
  *
  * Ungrantable tabs are absent because they are unstorable —
- * `filterStorableAdvClrKeys` refuses them — so `erpInterface` and `access`
- * being on both strips creates no overlap here.
+ * `filterStorableAdvClrKeys` refuses them — so `access` being on both strips
+ * creates no overlap here. **Interface ERP is grantable and IS on both pages,
+ * which is exactly why its key is per form**: one shared key would put it in
+ * both sets and take the disjointness away.
  */
 export function storableAdvClrKeysForForm(form: AdvClrForm): string[] {
   const out: string[] = [];
@@ -348,7 +404,9 @@ export function filterAdvClrKeysForForm(keys: string[], form: AdvClrForm): strin
  *   are handed out from, and locking an admin out of the tab that grants access
  *   would leave nobody able to grant it;
  * - a non-admin passes only a tab that is *both* grantable and in their list, so
- *   `access` and `erpInterface` fail **even if a row for either exists**.
+ *   `access` fails **even if a row for it exists** — and so does the bare
+ *   `erpInterface` a row written before 2026-09-22 may still carry, which is
+ *   no longer a key this module knows.
  */
 export function decideAdvClrTabAccess(
   isAdmin: boolean,

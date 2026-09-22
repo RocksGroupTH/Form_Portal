@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/api-auth";
+import { requireAdvClrSettingsTab } from "@/lib/adv/require-adv-clr-settings-tab";
 import {
   listBranchGlMap,
   listBuGlMap,
@@ -9,6 +9,14 @@ import {
 } from "@/lib/clr/clr-bu-gl-map-service";
 
 /**
+ * **Gated on the `buGlMap` grant since 2026-09-22, not `requireRole`.** The
+ * user opened this tab to individual grant holders knowing what it reaches:
+ * `AccClrBuGlMap` / `AccClrBranchGlMap` carry no `FormCode` and AP-4's own
+ * Fix G/L by BU or Branch tab edits the same rows, so a grant here is a grant
+ * over AP-4's posting rules too. The grid prints that in Thai under the
+ * checkbox. The admin arm is unchanged — `requireAdvClrSettingsTab` passes
+ * exactly the roles `requireRole` did.
+ *
  * GET  ?company=PCTH — the BU → G/L rules for one BC company, and every BU its
  *                      Locations actually carry, so the screen can offer the
  *                      ones a rule could apply to instead of a free-text box.
@@ -17,7 +25,7 @@ import {
  *      never having had a rule, rather than a rule that means nothing.
  */
 export async function GET(req: NextRequest) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireAdvClrSettingsTab("buGlMap");
   if (session instanceof Response) return session;
 
   const company = req.nextUrl.searchParams.get("company") ?? "";
@@ -40,7 +48,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireAdvClrSettingsTab("buGlMap");
   if (session instanceof Response) return session;
   try {
     // One endpoint, two kinds of rule: a body naming a branch sets a branch rule,

@@ -52,22 +52,40 @@ const TAB_META: Record<TabKey, { label: string; icon: React.ReactNode }> = {
   glAccounts: { label: "หมวดบัญชี G/L", icon: <ListTree size={15} /> },
   buGlMap: { label: "Fix G/L by BU or Branch", icon: <Pin size={15} /> },
   locations: { label: "Location / BU", icon: <MapPin size={15} /> },
-  erpInterface: { label: "Interface ERP", icon: <Link2 size={15} /> },
+  clearErpInterface: { label: "Interface ERP", icon: <Link2 size={15} /> },
   access: { label: "สิทธิ์เข้าถึง", icon: <ShieldCheck size={15} /> },
 };
 
 const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] =
   CLEAR_SETTINGS_TAB_ORDER.map((key) => ({ key, ...TAB_META[key] }));
 
+/**
+ * `?tab=` → a tab on this strip, honouring one legacy spelling.
+ *
+ * Interface ERP's key became `clearErpInterface` on 2026-09-22, when the tab
+ * became grantable and needed a key per form (see `@/lib/adv/settings-tabs`).
+ * A link saved before that names `erpInterface`, and falling through to
+ * สิทธิ์เข้าถึง would open the wrong tab rather than saying so.
+ */
+function parseTabKey(raw: string | null): TabKey {
+  if (raw === "erpInterface") return "clearErpInterface";
+  return TABS.some((t) => t.key === raw) ? (raw as TabKey) : "access";
+}
+
 
 /**
  * Which tabs of this strip the viewer may open.
  *
  * A **filter, not a control** — every settings route re-decides its own access
- * server-side (`requireAdvClrSettingsTab`), and the two that hand out power
- * (`settings/access`, `settings/erp-interface`) stay `requireRole` and are
- * not grantable at all. An admin passes everything, so the page behaves
- * exactly as it did before grants existed.
+ * server-side (`requireAdvClrSettingsTab`), and `settings/access` stays
+ * `requireRole` and is not grantable at all. An admin passes everything, so
+ * the page behaves exactly as it did before grants existed.
+ *
+ * **`settings/erp-interface` left that sentence on 2026-09-22**, with
+ * `gl-accounts` and `bu-gl-map`, when the user opened all three to individual
+ * grants — see `@/lib/adv/settings-tabs` for what each one reaches. The
+ * routes that write `Rocks_ERP_Data` (`vendors/sync`, `erp-sync`,
+ * `locations/sync`) did NOT, and stay admin-only.
  *
  * `undefined` while the fetch is in flight, which is what keeps the page from
  * flashing its refusal at somebody who does have access.
@@ -104,9 +122,7 @@ function ClearAdvanceSettingsContent() {
   const { status } = useSession();
   const searchParams = useSearchParams();
   const tabParam = searchParams.get("tab");
-  const [activeTab, setActiveTab] = useState<TabKey>(
-    TABS.some((t) => t.key === tabParam) ? (tabParam as TabKey) : "access",
-  );
+  const [activeTab, setActiveTab] = useState<TabKey>(() => parseTabKey(tabParam));
   // Every hook before any early return: this one used to sit below the
   // session-loading branch, which is a conditional call and breaks the Rules
   // of Hooks the moment that branch is taken.
@@ -213,7 +229,7 @@ function ClearAdvanceSettingsContent() {
         </div>
 
         <div className="p-5">
-          {openTab === "erpInterface" && <ClrErpInterfaceSettings />}
+          {openTab === "clearErpInterface" && <ClrErpInterfaceSettings />}
           {/* The same screen AP-4 shows, over the same rows — only the path
               differs, and it has to. See BuGlAccountSettings' own docblock. */}
           {openTab === "buGlMap" && (

@@ -392,20 +392,27 @@ export function AdvClrAccessSettings({ form }: { form: AdvClrForm }) {
   const menus = advClrMenusForForm(form);
   /**
    * **Grantable tabs only — the admin-only ones are NOT columns** (user,
-   * 2026-09-22: *"ตัดช่อง สิทธิ์เข้าถึง ในตารางออก และ ช่อง Interface ERP ไม่มีให้
-   * check box"*).
+   * 2026-09-22: *"ตัดช่อง สิทธิ์เข้าถึง ในตารางออก"*).
    *
-   * `สิทธิ์เข้าถึง` and `Interface ERP` are ungrantable, so their cells could
-   * only ever render `—`: a column on a ticking screen that can never be
-   * ticked. `สิทธิ์เข้าถึง` is also the very tab this screen IS.
+   * `สิทธิ์เข้าถึง` is ungrantable, so its cell could only ever render `—`: a
+   * column on a ticking screen that can never be ticked. It is also the very
+   * tab this screen IS.
+   *
+   * **`Interface ERP` was in that sentence for half a day and is not any
+   * more.** The user's first instruction read as "cut the column" and it was
+   * cut; their second (*"ของ AP-3,4 ก็ต้อง เปิด check box ทุกอัน"*) asked for a
+   * working checkbox instead, so `erpInterface` — `advanceErpInterface` /
+   * `clearErpInterface`, one key per form now — became grantable and the
+   * column came back on its own. **Nothing here changed to bring it back**,
+   * which is the point of filtering on `adminOnly` rather than naming keys: a
+   * tab that becomes grantable reappears as a column by itself, and one that
+   * stops being grantable disappears the same way.
    *
    * **This diverges from AP-4's grid deliberately.** CLAUDE.md records the
    * opposite call there (2026-09-14) — list every tab, because an admin
    * looking for "who may open Interface ERP" should find the answer rather
    * than conclude the tab is missing. That need is real, so it is met by the
-   * line under the table instead of by four dead columns; filtering on
-   * `adminOnly` rather than naming the two keys means a tab that becomes
-   * grantable later reappears as a column on its own.
+   * line under the table instead of by a dead column.
    */
   const tabs = advClrTabsForForm(form).filter((t) => !t.adminOnly);
   const adminOnlyTabs = advClrTabsForForm(form).filter((t) => t.adminOnly);

@@ -58,9 +58,10 @@ export async function GET() {
    *
    * Read off the form's own strip rather than a hand-kept list, so `brands`
    * moving to AP-2 alone moved this answer with it and nothing had to be
-   * remembered. The ungrantable tabs are skipped: `erpInterface` and `access`
-   * are on both strips but open to admins only, and the admin arm is already
-   * ahead of them.
+   * remembered — and so did `erpInterface`, `glAccounts` and `buGlMap`
+   * becoming grantable on 2026-09-22, which needed no edit here at all. The
+   * ungrantable tabs are still skipped: `access` is on both strips but open to
+   * admins only, and the admin arm is already ahead of it.
    */
   const canSettingsFor = (form: AdvClrForm) =>
     isAdmin || advClrTabsForForm(form).some((t) => !t.adminOnly && settingsTabs[t.key]);

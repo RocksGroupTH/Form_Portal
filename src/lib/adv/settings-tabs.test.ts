@@ -34,22 +34,53 @@ test("no key is both a settings tab and a menu", () => {
   }
 });
 
-test("access and erpInterface are not grantable on either form", () => {
-  // access hands out power — and here it also edits both approver pools.
-  // erpInterface is gated but not brand-scoped, so a grant would reach every
-  // brand's posting configuration.
-  for (const key of ["access", "erpInterface"]) {
-    assert.equal(isGrantableAdvClrTabKey(key), false, `${key} became grantable`);
-    assert.equal(decideAdvClrTabAccess(false, [key], key), false, `${key} opened on a stored row`);
+test("access is the ONLY settings tab that can never be granted", () => {
+  // It hands out power — and here it also edits both approver pools.
+  assert.equal(isGrantableAdvClrTabKey("access"), false, "access became grantable");
+  assert.equal(
+    decideAdvClrTabAccess(false, ["access"], "access"),
+    false,
+    "access opened on a stored row",
+  );
+  // Nothing else on either strip is excluded any more. Written as a sweep
+  // rather than a list so a new ungrantable tab has to be argued for here.
+  const strips = [...ADVANCE_SETTINGS_TAB_ORDER, ...CLEAR_SETTINGS_TAB_ORDER] as string[];
+  for (const key of strips) {
+    if (key === "access") continue;
+    assert.equal(isGrantableAdvClrTabKey(key), true, `${key} is on a strip but ungrantable`);
   }
 });
 
-test("AP-3's own G/L tabs are not grantable — the rows belong to another form", () => {
-  // AccClearAdvanceGl / AccClrBuGlMap are shared with AP-4 and carry no
-  // FormCode, so a grant here would be a grant over another form's rules.
-  for (const key of ["glAccounts", "buGlMap"]) {
-    assert.equal(isGrantableAdvClrTabKey(key), false, `${key} became grantable`);
+test("the three tabs opened on 2026-09-22 really are tickable", () => {
+  // The user's instruction, taken with the reach stated to them first: Interface
+  // ERP is not brand-scoped, and glAccounts / buGlMap edit rows AP-4 shares.
+  // Asserted positively because the failure to guard against is a silent
+  // REVERSAL — a route left on requireRole plus a key quietly dropped from the
+  // grantable list reads as "this was never opened".
+  for (const key of ["advanceErpInterface", "clearErpInterface", "glAccounts", "buGlMap"]) {
+    assert.equal(isGrantableAdvClrTabKey(key), true, `${key} is not grantable`);
+    assert.equal(decideAdvClrTabAccess(false, [key], key), true, `${key} did not open on its grant`);
   }
+});
+
+test("the bare `erpInterface` key is dead — it is neither strip's, and inert", () => {
+  // One shared key was safe only while it was ungrantable. A tickable one would
+  // sit in BOTH forms' storable sets and take away the disjointness the bounded
+  // DELETE rests on, so the strips carry a key each. A row written before that
+  // still names the old key; it must grant nothing rather than grant both.
+  assert.equal(isGrantableAdvClrTabKey("erpInterface"), false);
+  assert.equal(decideAdvClrTabAccess(false, ["erpInterface"], "erpInterface"), false);
+  assert.equal(decideAdvClrTabAccess(false, ["erpInterface"], "advanceErpInterface"), false);
+  assert.equal(decideAdvClrTabAccess(false, ["erpInterface"], "clearErpInterface"), false);
+  assert.deepEqual(filterStorableAdvClrKeys(["erpInterface"]), []);
+});
+
+test("one form's Interface ERP grant does not open the other form's", () => {
+  // The whole reason the key is per form. AP-2's tab writes AccBrandBankAccount
+  // / AccBrandJournalBatch / AccBrandBranchCode for AP-2; AP-3's writes its own
+  // Journal Batch and two tax accounts. Different rows, different routes.
+  assert.equal(decideAdvClrTabAccess(false, ["advanceErpInterface"], "clearErpInterface"), false);
+  assert.equal(decideAdvClrTabAccess(false, ["clearErpInterface"], "advanceErpInterface"), false);
 });
 
 test("every grantable key really is a tab on one of the two strips", () => {
@@ -75,9 +106,22 @@ test("filters drop unknown keys, trim, and de-duplicate in the caller's order", 
 });
 
 test("storage takes the union of grantable tabs and menus, and nothing else", () => {
+  // `access` is a real tab key and still never storable; `erpInterface` is the
+  // retired shared key and is now simply unknown, which is why the two live
+  // ones are in the same call — a filter that dropped them all alike would
+  // read as passing while the whole change had been reverted.
   assert.deepEqual(
-    filterStorableAdvClrKeys(["brands", "clearReport", "access", "erpInterface", "made-up"]),
-    ["brands", "clearReport"],
+    filterStorableAdvClrKeys([
+      "brands",
+      "clearReport",
+      "access",
+      "erpInterface",
+      "advanceErpInterface",
+      "clearErpInterface",
+      "buGlMap",
+      "made-up",
+    ]),
+    ["brands", "clearReport", "advanceErpInterface", "clearErpInterface", "buGlMap"],
   );
 });
 
@@ -179,16 +223,46 @@ test("each form's grid renders exactly its own strip, in the strip's order", () 
   }
 });
 
-test("the two tabs BOTH pages carry appear on BOTH grids", () => {
-  // Interface ERP and สิทธิ์เข้าถึง are ungrantable, so they are on no form's
-  // key set — but an admin asking "who may open Interface ERP" must still find
-  // the answer on whichever page they are on. That is what ALL_ADV_CLR_TABS is
-  // for, and a per-form `form` field would have taken it away from one of them.
+test("สิทธิ์เข้าถึง is listed on BOTH grids, and each form's Interface ERP on its own", () => {
+  // `access` is ungrantable, so it is on no form's key set — but an admin
+  // asking "who may open it" must still find the answer on whichever page they
+  // are on, which is what ALL_ADV_CLR_TABS is for. Interface ERP is on both
+  // PAGES and must NOT be one key: each form's grid lists its own and not the
+  // other's, or the two grids would tick one another's grant.
   for (const form of ADV_CLR_FORMS) {
     const keys = advClrTabsForForm(form).map((t) => t.key);
-    for (const key of ["erpInterface", "access"]) {
-      assert.ok(keys.indexOf(key) !== -1, `${form}'s grid does not list ${key}`);
-    }
+    assert.ok(keys.indexOf("access") !== -1, `${form}'s grid does not list access`);
+    const mine = form === "AP-2" ? "advanceErpInterface" : "clearErpInterface";
+    const theirs = form === "AP-2" ? "clearErpInterface" : "advanceErpInterface";
+    assert.ok(keys.indexOf(mine) !== -1, `${form}'s grid does not list ${mine}`);
+    assert.equal(keys.indexOf(theirs), -1, `${form}'s grid lists ${theirs}`);
+    // Both render the same words, which is what makes the split invisible to a
+    // reader and is why the KEY is the thing tested rather than the label.
+    const label = advClrTabsForForm(form).filter((t) => t.key === mine)[0]?.label;
+    assert.equal(label, "Interface ERP", `${form}'s Interface ERP tab is labelled "${label}"`);
+  }
+});
+
+test("every tab opened on 2026-09-22 states its reach on the grid", () => {
+  // The user accepted a widening the codebase had argued against, so the screen
+  // must not be silent about it: `note` is printed under the table. A tick made
+  // without reading what it reaches is the failure this guards.
+  const noted = ["advanceErpInterface", "clearErpInterface", "glAccounts", "buGlMap"];
+  for (const key of noted) {
+    const entry = ALL_ADV_CLR_TABS.filter((t) => t.key === key)[0];
+    assert.ok(entry, `${key} is not in ALL_ADV_CLR_TABS`);
+    assert.ok(entry.note && entry.note.trim().length > 0, `${key} carries no note`);
+  }
+  // Interface ERP's says it is not brand-scoped; the two G/L tabs' say the rows
+  // are AP-4's too. Both facts, not both wordings — the assertion is on the
+  // fact each note has to carry.
+  for (const key of ["advanceErpInterface", "clearErpInterface"]) {
+    const note = ALL_ADV_CLR_TABS.filter((t) => t.key === key)[0].note ?? "";
+    assert.ok(note.indexOf("ทุกแบรนด์") !== -1, `${key}'s note does not say it reaches every brand`);
+  }
+  for (const key of ["glAccounts", "buGlMap"]) {
+    const note = ALL_ADV_CLR_TABS.filter((t) => t.key === key)[0].note ?? "";
+    assert.ok(note.indexOf("AP-4") !== -1, `${key}'s note does not name AP-4`);
   }
 });
 
@@ -202,9 +276,31 @@ test("every menu is claimed by exactly one form", () => {
 });
 
 test("a form's filter keeps the other form's keys out", () => {
-  const mixed = ["banks", "clearQueue", "locations", "advanceReport", "erpInterface", "junk"];
-  assert.deepEqual(filterAdvClrKeysForForm(mixed, "AP-2"), ["banks", "advanceReport"]);
-  assert.deepEqual(filterAdvClrKeysForForm(mixed, "AP-3"), ["clearQueue", "locations"]);
+  // Both Interface ERP keys are in the list on purpose: this is the assertion
+  // that would have gone red had they stayed one shared key, because a single
+  // `erpInterface` would come out of BOTH filters.
+  const mixed = [
+    "banks",
+    "clearQueue",
+    "glAccounts",
+    "locations",
+    "advanceReport",
+    "advanceErpInterface",
+    "clearErpInterface",
+    "erpInterface",
+    "junk",
+  ];
+  assert.deepEqual(filterAdvClrKeysForForm(mixed, "AP-2"), [
+    "banks",
+    "advanceReport",
+    "advanceErpInterface",
+  ]);
+  assert.deepEqual(filterAdvClrKeysForForm(mixed, "AP-3"), [
+    "clearQueue",
+    "glAccounts",
+    "locations",
+    "clearErpInterface",
+  ]);
 });
 
 test("saving one form's ticks leaves the other form's grants standing", () => {

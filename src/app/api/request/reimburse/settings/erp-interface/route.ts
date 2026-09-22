@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/api-auth";
+import { requireReimburseSettingsTab } from "@/lib/acc/reimburse/require-reimburse-settings-tab";
 import { isErpInterfaceBrandCode } from "@/lib/acc/erp-interface-brands";
 import { listFormBrands } from "@/lib/acc/settings-service";
 import {
@@ -20,16 +20,31 @@ import { AP4_FORM_CODE } from "@/features/reimburse/constants";
  * functions and the boxed comment marking them for deletion are gone from the
  * service file along with this route's old shape.
  *
- * **Admin-only on every method, not `requireReimburseSettingsTab`.** AP-4's
- * `erpInterface` tab is deliberately excluded from `GRANTABLE_REIMBURSE_TABS`
- * — see that module's docblock. `gl-accounts` / `bank-accounts` /
- * `journal-batches` / `branch-codes` are tab-gated on AP-1 but not
- * brand-scoped, so a brand-scoped grant holder there could set another
- * brand's posting configuration (CLAUDE.md, "Do not grant `erpInterface` to a
- * non-admin yet"). AP-4's own config carries the identical gap — nothing here
- * checks `AccApproverInterfaceBrand` or any AP-4 counterpart of it — so this
- * route stays `requireRole` outright rather than opening the same hole to a
- * non-admin who only happens to hold the AP-4 grant.
+ * **Gated on the `erpInterface` grant since 2026-09-22, not `requireRole`.**
+ * This route was admin-only until that day, and the reason was good: it is
+ * gated but **not brand-scoped** — nothing here checks
+ * `AccApproverInterfaceBrand` or any AP-4 counterpart of it — so a holder can
+ * set **any** brand's bank account, Journal Batch and Branch Code, the values
+ * every journal line carries, not only the brands they approve for. That is
+ * the identical gap CLAUDE.md records for AP-1's `gl-accounts` /
+ * `bank-accounts` / `journal-batches` / `branch-codes` routes, where the same
+ * tab has been grantable all along. **The user was told this before the change
+ * and chose it**, so the gap is now handed out deliberately; the สิทธิ์เข้าถึง
+ * grid prints a Thai line under the tick saying what it reaches. The admin arm
+ * is unchanged — `requireReimburseSettingsTab`'s is exactly the pair
+ * `requireRole(["IT Admin", "System Admin"])` allowed — so nobody lost access.
+ *
+ * **This tab's option lists come from two OTHER forms' routes, and this grant
+ * does not open them.** `ReimburseErpInterfaceSettings` reads AP-2's
+ * `/api/request/advance/settings/erp-master` for Bank / Branch / Journal Batch
+ * and AP-1's `/api/request/accounting/settings/erp-accounts` for Fix Dept,
+ * both on the strength of this tab having been admin-only. A non-admin holding
+ * this grant therefore reads AP-4's own configuration and gets the panel's
+ * `erpFailed` / `deptFailed` placeholders in those pickers — visible rather
+ * than silent, because the panel already tells a failed fetch from an empty
+ * one. Closing it means widening AP-1's and AP-2's routes to AP-4's roster, or
+ * minting AP-4-pathed twins; both are policy about another form's access model
+ * and neither was in this change's remit.
  *
  * **The brand allow-list comes from `listFormBrands("AP-4")`, resolved here,
  * never taken off the request body.** `saveReimburseErpGroup`'s own docblock
@@ -68,11 +83,9 @@ import { AP4_FORM_CODE } from "@/features/reimburse/constants";
  * not a rule.)
  */
 
-const SETTINGS_ROLES = ["IT Admin", "System Admin"] as const;
-
 /** GET — one card per interface target, plus the unassigned claim brands. */
 export async function GET() {
-  const session = await requireRole([...SETTINGS_ROLES]);
+  const session = await requireReimburseSettingsTab("erpInterface");
   if (session instanceof Response) return session;
   try {
     const data = await loadReimburseErpGroups();
@@ -90,7 +103,7 @@ export async function GET() {
  * module docblock for why that is `DELETE`'s job.
  */
 export async function POST(req: NextRequest) {
-  const session = await requireRole([...SETTINGS_ROLES]);
+  const session = await requireReimburseSettingsTab("erpInterface");
   if (session instanceof Response) return session;
   try {
     const body = (await req.json().catch(() => ({}))) as {
@@ -176,7 +189,7 @@ export async function POST(req: NextRequest) {
  * once per brand actually removed.
  */
 export async function DELETE(req: NextRequest) {
-  const session = await requireRole([...SETTINGS_ROLES]);
+  const session = await requireReimburseSettingsTab("erpInterface");
   if (session instanceof Response) return session;
   try {
     const brandCode = req.nextUrl.searchParams.get("brandCode")?.trim();

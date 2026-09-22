@@ -18,6 +18,43 @@ import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
 
 const ENDPOINT = "/api/request/reimburse/settings/access";
 
+/**
+ * The settings tabs this grid gives a CHECKBOX to — every one that can be
+ * granted, which since 2026-09-22 is all of them but `สิทธิ์เข้าถึง`.
+ *
+ * **The ungrantable ones are not columns any more** (user, 2026-09-22:
+ * *"ตัดช่อง สิทธิ์เข้าถึง ออก"*, applied to AP-4 after AP-2 / AP-3). A cell that
+ * can only ever render `—` is a column on a ticking screen that can never be
+ * ticked, and สิทธิ์เข้าถึง is also the very tab this screen IS.
+ *
+ * **This reverses the 2026-09-14 call CLAUDE.md records** — list every tab,
+ * so an admin looking for "who may open Interface ERP" finds the answer rather
+ * than concluding the tab is missing. That need is real and is met by
+ * `ADMIN_ONLY_TABS` below, printed as one line under the table, which is where
+ * AP-2 / AP-3's grid already put it.
+ *
+ * Filtered on `adminOnly` rather than naming keys, so a tab that becomes
+ * grantable reappears as a column by itself — which is exactly what
+ * `Interface ERP`, `หมวดบัญชี G/L` and `Fix G/L by BU or Branch` just did,
+ * with no edit here.
+ */
+const TAB_COLUMNS = ALL_REIMBURSE_TABS.filter((t) => !t.adminOnly);
+
+/** Named under the table instead of given a dead column — see `TAB_COLUMNS`. */
+const ADMIN_ONLY_TABS = ALL_REIMBURSE_TABS.filter((t) => t.adminOnly);
+
+/**
+ * The tabs whose reach is wider than their label, printed under the table and
+ * marked `*` in the header.
+ *
+ * Three of them since 2026-09-22, and the line is not decoration: the user
+ * opened grants this codebase had argued against, so the screen has to say
+ * what a tick actually reaches — Interface ERP is not brand-scoped, and the
+ * two G/L tabs edit rows AP-3 shares. A `title` alone would hide that from
+ * anybody not hovering.
+ */
+const TAB_NOTES = TAB_COLUMNS.filter((t) => t.note);
+
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
 interface ReimburseAccessRow {
@@ -169,14 +206,15 @@ function ConfirmModal({
 
 /* ── Per-tab and per-menu grants ──
  *
- * One cell per entry in `ALL_REIMBURSE_TABS` — a checkbox where the tab can
- * be granted, a dash where it cannot. The saved payload is still built from
- * `GRANTABLE_REIMBURSE_TABS`, which is derived from
- * the settings page's own tab order — so the columns and the tabs cannot drift.
+ * One cell per entry in `TAB_COLUMNS` — every settings tab that can be
+ * granted. The saved payload is still built from `GRANTABLE_REIMBURSE_TABS`,
+ * which is derived from the settings page's own tab order, as `TAB_COLUMNS`
+ * is — so the columns and the tabs cannot drift.
  * `access` can never appear among them: whoever opens it could grant
  * themselves the rest — including, since 2026-09-10, the brand-approval ticks
  * rendered by `BrandTickCells` above, which are a THIRD, unrelated grant group
- * on this same grid and post to a different table entirely.
+ * on this same grid and post to a different table entirely. Since 2026-09-22
+ * it is not a column at all; the line under the table names it instead.
  *
  * `REIMBURSE_MENUS` renders as a second, visually distinct group of the same
  * shape — a different vocabulary of keys, stored in the same `TabKey` column,
@@ -408,31 +446,28 @@ function TabGrantCells({
 
   return (
     <>
-      {ALL_REIMBURSE_TABS.map((tab, idx) => (
+      {TAB_COLUMNS.map((tab, idx) => (
         <td
           key={tab.key}
           className="px-3 py-2.5 text-center"
           // Left border on the first cell only, matching the header's own
           // boundary between the brand-approval group and this one.
           style={idx === 0 ? { borderLeft: "1px solid var(--border-light)" } : undefined}
-          title={tab.adminOnly ? `ให้สิทธิ์ไม่ได้ — ${tab.adminOnly}` : undefined}
+          // What this grant reaches, where the tab's label does not say —
+          // Interface ERP setting any brand's posting configuration, the two
+          // G/L tabs editing rows AP-3 shares. Repeated under the table, since
+          // a hover-only warning is one nobody reads.
+          title={tab.note}
         >
-          {tab.adminOnly ? (
-            // A dash, not an unticked box: an empty checkbox invites a click
-            // that would do nothing, and reads as "not granted yet" rather
-            // than "cannot be granted". Enforcement is unchanged either way —
-            // filterStorableReimburseKeys refuses to write these keys and
-            // decideReimburseTabAccess refuses to open them, so this cell is a
-            // statement rather than the thing stopping a grant.
-            <span className="text-[12px]" style={{ color: "var(--text-faint)" }}>—</span>
-          ) : (
-            <TabGrantCheckbox
-              checked={checked.has(tab.key)}
-              saving={saving}
-              onChange={() => void toggle(tab.key)}
-              ariaLabel={`${row.displayName || row.email} — ตั้งค่า: ${tab.label}`}
-            />
-          )}
+          {/* No `adminOnly` arm here any more: `TAB_COLUMNS` is filtered to
+              the grantable tabs, so every cell in this group is a real
+              checkbox. The ungrantable ones are named under the table. */}
+          <TabGrantCheckbox
+            checked={checked.has(tab.key)}
+            saving={saving}
+            onChange={() => void toggle(tab.key)}
+            ariaLabel={`${row.displayName || row.email} — ตั้งค่า: ${tab.label}`}
+          />
         </td>
       ))}
       {/* The menu group — a different vocabulary in the same TabKey column
@@ -763,7 +798,7 @@ export function ReimburseAccessSettings() {
                       ผู้อนุมัติฝ่ายบัญชี (ติ๊กแบรนด์)
                     </th>
                     <th
-                      colSpan={ALL_REIMBURSE_TABS.length}
+                      colSpan={TAB_COLUMNS.length}
                       className="text-center px-3 py-1.5 font-semibold whitespace-nowrap"
                       style={{ color: "var(--text-info-green)", borderLeft: "1px solid var(--border-light)" }}
                     >
@@ -808,27 +843,31 @@ export function ReimburseAccessSettings() {
                         <span className="block text-[10px]">{b.id}</span>
                       </th>
                     ))}
-                    {/* EVERY settings tab, in the page's own order — not only the
-                        grantable two (user, 2026-09-14: the group showed two of
-                        six and read as incomplete). The four that cannot be
-                        handed out render greyed here and disabled below, with
-                        the reason on hover, because an admin looking for "who
-                        may open Interface ERP" should find the answer on this
-                        screen rather than conclude the tab is missing. Both
-                        lists come from ALL_REIMBURSE_TABS, which is mapped from
-                        the page's own tab order, so a new tab appears in the
-                        header and the body or in neither. */}
-                    {ALL_REIMBURSE_TABS.map((tab, idx) => (
+                    {/* Every GRANTABLE settings tab, in the page's own order.
+                        This listed all six until 2026-09-22 (user, 2026-09-14:
+                        the group showed two of six and read as incomplete);
+                        now that five of the six can actually be ticked, the
+                        one that cannot is named under the table instead of
+                        given a column that can only render `—`. The list comes
+                        from TAB_COLUMNS, filtered from ALL_REIMBURSE_TABS,
+                        which is mapped from the page's own tab order — so a
+                        new tab appears in the header and the body or in
+                        neither, and a tab that changes grantability moves
+                        between the column and the line below on its own.
+                        A `*` marks a tab whose reach is wider than its label;
+                        the notes under the table say what. */}
+                    {TAB_COLUMNS.map((tab, idx) => (
                       <th
                         key={tab.key}
                         className="text-center px-3 py-2 font-semibold whitespace-nowrap"
-                        title={tab.adminOnly ? `ให้สิทธิ์ไม่ได้ — ${tab.adminOnly}` : undefined}
+                        title={tab.note}
                         style={{
-                          color: tab.adminOnly ? "var(--text-faint)" : "var(--text-muted)",
+                          color: "var(--text-muted)",
                           ...(idx === 0 ? { borderLeft: "1px solid var(--border-light)" } : {}),
                         }}
                       >
                         {tab.label}
+                        {tab.note && <sup style={{ color: "var(--color-warning)" }}>*</sup>}
                       </th>
                     ))}
                     {/* The menu group — a second, unrelated vocabulary of keys
@@ -998,6 +1037,34 @@ export function ReimburseAccessSettings() {
                 </tbody>
               </table>
             </div>
+            {/* What a tick reaches, where a column heading has no room for it
+                and a `title` would hide it from anybody not hovering. Three
+                tabs became grantable on 2026-09-22 on the user's instruction,
+                over the objections recorded in `settings-tabs.ts` — Interface
+                ERP is not brand-scoped, and the two G/L tabs edit rows AP-3
+                shares — so the screen says so rather than letting an admin
+                find out afterwards. Same shape AP-2 / AP-3's grid uses. */}
+            {TAB_NOTES.length > 0 && (
+              <div className="mt-2 flex flex-col gap-0.5">
+                {TAB_NOTES.map((t) => (
+                  <p key={t.key} className="text-[10px] m-0" style={{ color: "var(--text-faint)" }}>
+                    <span style={{ color: "var(--color-warning)" }}>*</span> {t.label} — {t.note}
+                  </p>
+                ))}
+              </div>
+            )}
+            {/* สิทธิ์เข้าถึง is no longer a column (see TAB_COLUMNS), so it is
+                named here instead. Without this an admin asking "who may open
+                it?" finds no row, no column and no answer, and reasonably
+                concludes the tab has been removed — which is the complaint
+                that put every tab in the header on 2026-09-14. One line keeps
+                it answerable without a column that can never be ticked. */}
+            {ADMIN_ONLY_TABS.length > 0 && (
+              <p className="text-[10px] mt-2 m-0" style={{ color: "var(--text-faint)" }}>
+                {ADMIN_ONLY_TABS.map((t) => t.label).join(" · ")} — เปิดได้เฉพาะ IT Admin และ
+                System Admin จึงไม่มีในตารางนี้
+              </p>
+            )}
           </>
         )}
       </div>

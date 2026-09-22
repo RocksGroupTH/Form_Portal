@@ -1,11 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/api-auth";
+import { requireAdvClrSettingsTab } from "@/lib/adv/require-adv-clr-settings-tab";
 import { isErpInterfaceBrandCode } from "@/lib/acc/erp-interface-brands";
 import { listAdvanceInterfaceConfigView, saveAdvanceInterfacePerForm } from "@/lib/adv/advance-interface-settings-service";
 
-/** GET — per-brand AP-2 Interface ERP config (AP-2's own + inherited display). */
+/**
+ * **Gated on `advanceErpInterface` since 2026-09-22, not `requireRole`.** The
+ * user opened Interface ERP to individual grant holders having been told what
+ * it reaches: this route is gated but **not brand-scoped**, so a holder sets
+ * the bank account, Journal Batch and Branch Code of **any** brand, not only
+ * the brands they approve for. The grid prints that in Thai under the
+ * checkbox. The admin arm is unchanged.
+ *
+ * **The key is `advanceErpInterface`, not `erpInterface`.** AP-3 has a tab of
+ * the same name over different rows, and one shared key would have put it in
+ * both forms' storable sets — taking away the disjointness the bounded save in
+ * `setAdvClrAccessTabs` rests on. See `@/lib/adv/settings-tabs`.
+ *
+ * **`AdvClrBrandSettings` (the แบรนด์ที่เบิกได้ tab) reads this GET for its
+ * row list**, and a `brands` grant does NOT satisfy this gate — a pre-existing
+ * mismatch this change neither caused nor closed, since the payload carries
+ * every brand's bank account and Journal Batch and a `brands` holder has no
+ * business reading those.
+ *
+ * GET — per-brand AP-2 Interface ERP config (AP-2's own + inherited display).
+ */
 export async function GET() {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireAdvClrSettingsTab("advanceErpInterface");
   if (session instanceof Response) return session;
   try {
     const data = await listAdvanceInterfaceConfigView();
@@ -18,7 +38,7 @@ export async function GET() {
 
 /** POST — save AP-2's Bank + Branch + Journal Batch for one brand in a single write. */
 export async function POST(req: NextRequest) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireAdvClrSettingsTab("advanceErpInterface");
   if (session instanceof Response) return session;
   try {
     const body = (await req.json().catch(() => ({}))) as {
