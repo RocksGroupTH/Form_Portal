@@ -8,9 +8,29 @@
  *
  * - `loadHostableRequests` — the picker's list of one colleague's requests
  *   that can host (spec §6);
- * - `loadRoomShare` / `attachRoomShare` / `detachRoomShare` — the guest's own
- *   binding;
+ * - `loadHostByRequestNo` — the same admission decision for **one** request
+ *   named by its running number (the picker's second tab, 2026-09-22);
+ * - `loadRoomShare` / `applyRoomShareSelection` — the guest's own binding;
  * - `loadGuestsOf` — every guest of one host, for the cascade (spec §4).
+ *
+ * ## The binding is written by the TAB SAVE, not by an endpoint of its own
+ *
+ * Until 2026-09-22 this module exported `attachRoomShare` and
+ * `detachRoomShare`, each opening its own transaction behind a `POST`/`DELETE`
+ * on `/room-share/{guestRequestId}`. Both are gone. Picking a host is now
+ * ordinary tab state — like the accommodation it replaces — and
+ * `saveTravelBookingDraft` calls `applyRoomShareSelection` **inside the
+ * transaction that writes the rest of the tab**, so the binding, the
+ * withdrawal of the guest's own room and the trip's dates commit or roll back
+ * together.
+ *
+ * **Nothing about the write's authorization was relaxed by that move.** The
+ * save path is `authorizeAccRequest(…, "mutate", AP-17)` at its route and
+ * re-asserts creator-and-`Draft`/`Returned` for every tab in the group before
+ * it writes; `applyRoomShareSelection` re-asserts it a third time through
+ * `requireEditableGuest`, under the same `UPDLOCK, HOLDLOCK` the old attach
+ * took. What DID change is **browsing** — see `loadHostableRequests` and the
+ * `room-share/hosts` route.
  *
  * ## `@/env` is why there is no unit test beside this file
  *
@@ -26,9 +46,9 @@
  * ## The one condition this module adds on top of `canHost`
  *
  * `hostHasBeenFiled`. See its own docblock — it is written once and applied at
- * both sites (the listing and the attach re-check), because a list and an
- * action that disagree about what is offerable is exactly the shape of bug
- * this feature cannot afford.
+ * all three sites (the listing, the by-number lookup, and the save's own
+ * re-check), because a list and an action that disagree about what is
+ * offerable is exactly the shape of bug this feature cannot afford.
  */
 
 import { getAccPool, sql } from "@/lib/acc/pool";
@@ -38,12 +58,12 @@ import { ACL_NOT_EDITABLE, EDITABLE_STATUSES } from "@/lib/acc/request-acl-polic
 import {
   canAttach,
   canHost,
+  SELF_ATTACH_MESSAGE,
   type ShareCandidate,
   type ShareRefusal,
 } from "@/lib/acc/travel-booking/room-share-policy";
 import type { GuestState } from "@/lib/acc/travel-booking/room-share-cascade";
 import { clearGuestOwnAccommodation } from "@/lib/acc/travel-booking/room-share-guest-room";
-import { processQueue } from "@/lib/acc/email-queue";
 import { queueRoomShareAttachedMail } from "@/lib/acc/travel-booking/room-share-notify";
 
 type AccPool = Awaited<ReturnType<typeof getAccPool>>;
@@ -82,14 +102,39 @@ function toYmd(d: Date): string {
  * One row of the host picker — **and the only shape this module ever returns
  * about somebody else's request.**
  *
- * Spec §6 names exactly three things the picker needs: the running number, the
- * travel dates and the work location. `requestId` is the fourth field and is
- * not a fourth fact — it is the handle the picker posts back to `attach`.
+ * ## It carries nine fields since 2026-09-23, and it used to carry five
  *
- * **Not the amount, not the attachments, not the ID card, not the requester's
- * other fields.** Listing another person's requests is new reach in this
- * application, so the shape is built from an explicit column list
- * (`HOST_DISPLAY_COLUMNS`) rather than from a `SELECT *` or a reuse of
+ * Spec §6 named three facts — the running number, the travel dates and the
+ * work location — plus `requestId`, which is not a fourth fact but the handle
+ * the picker records in the tab and the save posts back. Every brief on this
+ * feature until 2026-09-23 said "five fields and do not add a sixth without
+ * asking". **That is the asking, and the user's answer was yes.** Two of
+ * their requests need more:
+ *
+ * - **the host's identity** (`staffId`) — a host picked by running number
+ *   rendered as "เพื่อนร่วมงาน" beside a blank avatar, because the picker had
+ *   no person to name. Only the id is carried: the name and the photograph
+ *   are then read by the browser from
+ *   `/api/request/travel-booking/requesters?staffId=`, the `requireAuth`
+ *   roster search this picker already calls, so no name or photograph is new
+ *   reach — the **link** is;
+ * - **the rest of the trip** (`brandCode`, `reasonId`, `reasonCustomText`,
+ *   `workDetail`, and the work locations that were already here) — two people
+ *   sharing a room are on the same trip, and `room-share-prefill.ts` fills
+ *   the guest's tab in from these where the guest has not filled it
+ *   themselves.
+ *
+ * **What that costs, in plain terms, because the residual belongs where it is
+ * read:** any authenticated employee can now read *who went where, when, why,
+ * and what the work was* for any AP-17 request, by walking sequential running
+ * numbers. The route's own docblock states the same thing at the endpoint.
+ *
+ * **What is still excluded, on its own merits and not by inertia: not the
+ * amount, not the attachments, not the ID card, not the per-diem figures**,
+ * and not the work locations' coordinates — `workLocations` stays a list of
+ * bare names. Listing another person's requests is reach this application did
+ * not have before package E, so the shape is built from an explicit column
+ * list (`HOST_DISPLAY_COLUMNS`) rather than from a `SELECT *` or a reuse of
  * `getTravelBookingRequest`'s read shape — the latter being how a field nobody
  * intended to expose arrives by inheritance. `room-share-response-shape-guard.test.ts`
  * asserts both halves: these keys, and those columns.
@@ -99,8 +144,43 @@ export interface HostCandidateRow {
   requestNo: string | null;
   departDate: string | null;
   returnDate: string | null;
-  /** `AccTravelWorkLocation.Name` only — never the coordinates, which the picker does not draw. */
-  workLocations: string[];
+  /**
+   * `AccTravelWorkLocation` — the name **and its pin**, for each place.
+   *
+   * **It was `string[]` until 2026-09-23, and the coordinates were argued
+   * *out* twice before being argued back in by a measurement.** The picker
+   * does not draw a map, so the pin looked like reach nobody needed. It is
+   * not: since 2026-09-01 `validateTravelBookingTab` refuses a submit whose
+   * work location is not pinned — `workLocationIssue(…) === "unpinned"`,
+   * "สถานที่ไปปฏิบัติงานต้องเลือกจากผลค้นหา Google Maps" — so a name copied
+   * into the guest's tab without its pin produces a field that **looks filled
+   * in and cannot be submitted**, refused over a value the system put there
+   * itself. The requester's remedy would be to delete it and re-pick the same
+   * place, which is the work the prefill exists to save. Names alone would
+   * have been the worse answer, not the safer one.
+   *
+   * `room-share-prefill.ts` copies a row only when it is named **and**
+   * pinned, asking `hasUsablePin` — the same predicate the two validators
+   * ask, rather than a third spelling of it.
+   */
+  workLocations: { name: string; lat: number | null; lng: number | null }[];
+  /**
+   * `AccRequest.StaffId` — the host's HR id, and **only** the id.
+   *
+   * It is the link the card resolves a name and a photograph from, through
+   * the roster search the picker already uses. Null for a request written
+   * with no StaffId, which `loadHostableRequests` cannot offer by person
+   * anyway and which the card then falls back to the running number for.
+   */
+  staffId: number | null;
+  /** `AccRequest.BrandCode` — แบรนด์ที่เบิก, for the prefill. */
+  brandCode: string | null;
+  /** `AccTravelBooking.ReasonId` — เหตุผลการเดินทาง, for the prefill. */
+  reasonId: number | null;
+  /** `AccTravelBooking.ReasonCustomText` — ระบุเหตุผลเพิ่มเติม, for the prefill. */
+  reasonCustomText: string | null;
+  /** `AccTravelBooking.WorkDetail` — รายละเอียดการไปปฏิบัติงาน, for the prefill. */
+  workDetail: string | null;
 }
 
 /** A guest's own binding, as the form renders it. */
@@ -118,13 +198,27 @@ export interface RoomShareView {
  * (`Status`, `NeedsRoomBooking`, the share rows) are read by a *different*
  * query — `CANDIDATE_COLUMNS` below — which is not a stylistic split: it means
  * the display columns are read only for requests that have already passed
- * `canHost`, so a request the caller may not be offered never has its dates
- * fetched at all.
+ * `canHost`, so a request the caller may not be offered never has its dates,
+ * its reason or its work detail fetched at all. That split mattered more once
+ * the list widened on 2026-09-23 than it did when it was written.
  */
-const HOST_DISPLAY_COLUMNS = "r.Id, r.RequestNo, t.DepartDate, t.ReturnDate";
+/* Deliberately ONE double-quoted string on one line, however long it grows:
+   `room-share-response-shape-guard.test.ts`'s `columnsOf` reads it with a
+   regex over exactly that shape and says so ("no longer a plain double-quoted
+   string"). A concatenation here would hand the guard the first fragment and
+   leave every column after the `+` unchecked. */
+const HOST_DISPLAY_COLUMNS = "r.Id, r.RequestNo, r.StaffId, r.BrandCode, t.DepartDate, t.ReturnDate, t.ReasonId, t.ReasonCustomText, t.WorkDetail";
 
-/** The second and last list feeding the response: a work location's name, and the request it hangs off. */
-const HOST_LOCATION_COLUMNS = "t.RequestId, w.Name";
+/**
+ * The second and last list feeding the response: a work location's name **and
+ * its pin**, plus the request it hangs off.
+ *
+ * `w.Lat, w.Lng` (migration 135) joined it on 2026-09-23, and the reason is
+ * `HostCandidateRow.workLocations`' own docblock: a copied place that is not
+ * pinned cannot be submitted, so a name without its coordinates is not a
+ * narrower answer to the user's point 3, it is an unusable one.
+ */
+const HOST_LOCATION_COLUMNS = "t.RequestId, w.Name, w.Lat, w.Lng";
 
 /**
  * What `canHost` needs to judge a candidate, and nothing that is emitted for
@@ -226,6 +320,36 @@ interface CandidateRow {
 }
 
 /**
+ * What one candidate read answers: the candidates themselves, and — separately
+ * — **which host each of them currently has**.
+ *
+ * `ShareCandidate.isGuest` says *that* a request is somebody's guest, which is
+ * all `canHost` and `canAttach` need and all they should be given. But
+ * `applyRoomShareSelection` has to tell "already attached to exactly the host
+ * being saved" (do nothing, and mail nobody again) from "attached to a
+ * different one" (replace), and that is a different question.
+ *
+ * It rides on this read rather than being a second query **because of lock
+ * order.** The locked read takes `UPDLOCK, HOLDLOCK` on `AccRequest` first and
+ * on `AccTravelRoomShare` second, which is the order the cascade
+ * (`applyRoomShareDeath`, inside the host's own transaction) already takes
+ * them in. A separate share-row read or delete placed *before* it would invert
+ * that — we would hold a guest's share row and want the host's `AccRequest`
+ * row while the cascade held the host's `AccRequest` row and wanted that same
+ * share row — which is a deadlock, not a slow path. Keeping it on this one
+ * read also keeps `{ lock: true }` to the single call site
+ * `room-share-response-shape-guard.test.ts` counts.
+ *
+ * Deliberately NOT a field on `ShareCandidate`: that type is the pure policy's
+ * input, and a host id is not something `canHost` or `canAttach` may branch on.
+ */
+interface ShareCandidateRead {
+  candidates: Map<number, ShareCandidate>;
+  /** `GuestRequestId` → its current `HostRequestId`. Absent for a request that is nobody's guest. */
+  hostOf: Map<number, number>;
+}
+
+/**
  * Build a `ShareCandidate` for each of `requestIds`, straight from the
  * database.
  *
@@ -236,12 +360,19 @@ interface CandidateRow {
  * refuses).
  *
  * `lock` takes `UPDLOCK, HOLDLOCK` on the `AccRequest` rows and on the share
- * rows, and is passed by `attachRoomShare` alone. That is what stops the host
- * being cancelled, or becoming somebody else's guest, between this read and
- * the `INSERT` in the same transaction: the host's own cancellation path
- * `UPDATE`s that `AccRequest` row, so it blocks until the attach commits and
- * then sees the new guest. On a pool the hint would be pointless contention,
- * which is why the picker does not ask for it.
+ * rows, and is passed by `applyRoomShareSelection` alone. That is what stops
+ * the host being cancelled, or becoming somebody else's guest, between this
+ * read and the `INSERT` in the same transaction: the host's own cancellation
+ * path `UPDATE`s that `AccRequest` row, so it blocks until the save commits
+ * and then sees the new guest. On a pool the hint would be pointless
+ * contention, which is why the picker does not ask for it.
+ *
+ * **`AccRequest` first, `AccTravelRoomShare` second, and that order is the
+ * reason `hostOf` rides on this read.** The cascade
+ * (`applyRoomShareDeath`) takes them in exactly this order from inside the
+ * host's own transaction. A share-row read or delete placed *before* this
+ * would invert it and deadlock against that cascade rather than merely
+ * queue behind it.
  *
  * The join to `AccTravelBooking` is a `LEFT JOIN` on purpose: a request with no
  * booking row yields `needsRoomBooking: false`, which `canHost` refuses with
@@ -253,9 +384,10 @@ async function loadShareCandidates(
   runner: SqlRunner,
   requestIds: readonly number[],
   opts?: { lock?: boolean },
-): Promise<Map<number, ShareCandidate>> {
+): Promise<ShareCandidateRead> {
   const out = new Map<number, ShareCandidate>();
-  if (requestIds.length === 0) return out;
+  const hostOf = new Map<number, number>();
+  if (requestIds.length === 0) return { candidates: out, hostOf };
 
   const lockHint = opts?.lock ? " WITH (UPDLOCK, HOLDLOCK)" : "";
 
@@ -293,6 +425,8 @@ async function loadShareCandidates(
   const hostsFor = new Map<number, number[]>();
   for (const s of shares.recordset as { GuestRequestId: number; HostRequestId: number }[]) {
     guestOf.set(s.GuestRequestId, true);
+    // Which host, not merely that there is one — see `ShareCandidateRead`.
+    hostOf.set(s.GuestRequestId, s.HostRequestId);
     const list = hostsFor.get(s.HostRequestId) ?? [];
     list.push(s.GuestRequestId);
     hostsFor.set(s.HostRequestId, list);
@@ -308,7 +442,7 @@ async function loadShareCandidates(
       hostsFor: hostsFor.get(row.Id) ?? [],
     });
   }
-  return out;
+  return { candidates: out, hostOf };
 }
 
 /* ─────────────────────────── the narrow display read ─────────────────────────── */
@@ -343,8 +477,13 @@ async function loadHostDisplayRows(
   for (const row of res.recordset as {
     Id: number;
     RequestNo: string | null;
+    StaffId: number | null;
+    BrandCode: string | null;
     DepartDate: Date | null;
     ReturnDate: Date | null;
+    ReasonId: number | null;
+    ReasonCustomText: string | null;
+    WorkDetail: string | null;
   }[]) {
     out.set(row.Id, {
       requestId: row.Id,
@@ -352,6 +491,16 @@ async function loadHostDisplayRows(
       departDate: row.DepartDate ? toYmd(row.DepartDate) : null,
       returnDate: row.ReturnDate ? toYmd(row.ReturnDate) : null,
       workLocations: [],
+      // Added 2026-09-23 with the user's decision to widen — see
+      // `HostCandidateRow`'s own docblock for what each one is for and what
+      // it costs. `?? null` throughout rather than a default, because a
+      // missing value here is a fact about the host's request and the
+      // prefill treats absence as "fill nothing".
+      staffId: row.StaffId ?? null,
+      brandCode: row.BrandCode ?? null,
+      reasonId: row.ReasonId ?? null,
+      reasonCustomText: row.ReasonCustomText ?? null,
+      workDetail: row.WorkDetail ?? null,
     });
   }
 
@@ -367,10 +516,27 @@ async function loadHostDisplayRows(
      WHERE t.RequestId IN (${locIds.join(", ")})
      ORDER BY w.SortOrder, w.Id
   `);
-  for (const row of locs.recordset as { RequestId: number; Name: string | null }[]) {
+  for (const row of locs.recordset as {
+    RequestId: number;
+    Name: string | null;
+    Lat: number | null;
+    Lng: number | null;
+  }[]) {
     const target = out.get(row.RequestId);
     if (!target) continue;
-    if (row.Name) target.workLocations.push(row.Name);
+    // Still keyed on the NAME being present: an unnamed row names nothing on
+    // screen and fills nothing. The pin rides along and may legitimately be
+    // null — every location filed before 2026-09-01 has none (migration 135
+    // added the columns with no backfill, and nothing can backfill them
+    // because the Google key is HTTP-referrer restricted). The prefill drops
+    // those rather than copying a place that cannot be submitted.
+    if (row.Name) {
+      target.workLocations.push({
+        name: row.Name,
+        lat: row.Lat ?? null,
+        lng: row.Lng ?? null,
+      });
+    }
   }
 
   return out;
@@ -391,12 +557,26 @@ async function loadHostDisplayRows(
 export interface HostSearchFilters {
   /** HR StaffId of the colleague whose requests are being listed. Required — there is no "list everyone" mode. */
   staffId: number;
-  /** The guest's own request, never offered as its own host. */
+  /**
+   * The guest's own request, never offered as its own host — **null while the
+   * tab has not been saved**, which since 2026-09-22 is an ordinary state
+   * rather than one the picker refuses to open in. It only ever removes a row,
+   * so a caller that cannot supply it loses a nicety and nothing else:
+   * `canAttach` still refuses `self_attach` at the save.
+   */
   excludeRequestId: number | null;
   /**
-   * The guest's travel dates — the default filter (spec §6: "the overwhelmingly
-   * common case is two people on the same trip"). Overlap, not equality: a host
-   * whose trip merely touches the guest's is still the right room.
+   * The travel-date window the picker is showing. Overlap, not equality: a host
+   * whose trip merely touches it is still the right room.
+   *
+   * **It no longer opens on the guest's own dates.** Spec §6 seeded it from
+   * them ("the overwhelmingly common case is two people on the same trip"),
+   * which made sense while the guest's dates were the fixed thing. Since the
+   * picker writes the *host's* dates into the guest's tab on pick (2026-09-22,
+   * final review I4), the dates flow the other way and the filter opens on
+   * today … today + 30 instead — `defaultHostFilterRange`, client-side, which
+   * is also the only sensible default now that the picker opens on a tab that
+   * may have no dates at all yet.
    */
   travelFrom: string | null;
   travelTo: string | null;
@@ -475,7 +655,7 @@ export async function loadHostableRequests(
   const scannedIds = (scanned.recordset as { Id: number }[]).map((r) => r.Id);
   if (scannedIds.length === 0) return [];
 
-  const candidates = await loadShareCandidates(pool, scannedIds);
+  const { candidates } = await loadShareCandidates(pool, scannedIds);
   const admitted: number[] = [];
   for (const id of scannedIds) {
     const candidate = candidates.get(id);
@@ -493,6 +673,91 @@ export async function loadHostableRequests(
     if (row) out.push(row);
   }
   return out;
+}
+
+/* ─────────────────────────── one request, by its running number ─────────────────────────── */
+
+/**
+ * What `loadHostByRequestNo` can answer.
+ *
+ * Three outcomes rather than a nullable row, because **"no such number" and
+ * "that number names a request you may not share" are different answers and
+ * the requester has to be able to tell them apart** (the second tab's whole
+ * point: a typo and a cancelled colleague need different next actions).
+ *
+ * `not_hostable.message` is the **policy's own sentence, carried verbatim** —
+ * `canHost`'s refusal, or `HOST_NOT_FILED_MESSAGE`, or `SELF_ATTACH_MESSAGE`.
+ * `ShareRefusalCode` stays closed and nothing new is written beside it; only
+ * `not_found` has copy of its own, and it belongs to the route because it is
+ * not a policy refusal at all.
+ */
+export type HostLookupResult =
+  | { kind: "found"; host: HostCandidateRow }
+  | { kind: "not_found" }
+  | { kind: "not_hostable"; message: string };
+
+/**
+ * One AP-17 request named by its running number, if it can host.
+ *
+ * **This is a by-number read of a request the caller names, and that is new
+ * reach on top of the person-and-date scan above.** The route's docblock
+ * states the residual in full; what belongs here is that it answers the *same*
+ * `HostCandidateRow` — whatever that shape currently holds, from
+ * `loadHostDisplayRows` and nothing else, which is why the shape is stated in
+ * exactly one place — and applies the
+ * *same* two admission rules `loadHostableRequests` applies, in the same
+ * order, so a number cannot reach a request the list would have hidden.
+ *
+ * **The widening of 2026-09-23 landed here too, and it bites hardest here.**
+ * The list is reached through a person; this is reached through a sequential
+ * identifier. See `HostCandidateRow` and the route's docblock.
+ *
+ * `excludeRequestId` is the caller's own tab. It is refused with
+ * `SELF_ATTACH_MESSAGE` **before any row is read**, deliberately: building a
+ * `ShareCandidate` for it to let `canAttach` phrase the refusal would mean
+ * loading a request the caller merely named and reading its guest/host state
+ * back to them. A skip cannot leak; a refusal derived from the row could.
+ */
+export async function loadHostByRequestNo(
+  requestNo: string,
+  excludeRequestId: number | null,
+): Promise<HostLookupResult> {
+  const trimmed = requestNo.trim();
+  if (trimmed.length === 0) return { kind: "not_found" };
+
+  const pool = await getAccPool();
+  const res = await pool
+    .request()
+    .input("form", sql.NVarChar, AP17_FORM_CODE)
+    .input("no", sql.NVarChar(50), trimmed)
+    .query(`SELECT TOP (1) r.Id
+              FROM [dbo].[AccRequest] r
+             WHERE r.FormCode = @form
+               AND r.RequestNo = @no`);
+  const row = res.recordset[0] as { Id: number } | undefined;
+  if (!row) return { kind: "not_found" };
+
+  if (excludeRequestId != null && row.Id === excludeRequestId) {
+    return { kind: "not_hostable", message: SELF_ATTACH_MESSAGE };
+  }
+
+  const { candidates } = await loadShareCandidates(pool, [row.Id]);
+  const candidate = candidates.get(row.Id);
+  // A request with no `AccTravelBooking` row still produces a candidate (the
+  // join is a LEFT JOIN), so this is only reachable if the row vanished
+  // between the two reads — answered as the number naming nothing, which by
+  // then it does.
+  if (!candidate) return { kind: "not_found" };
+  if (!hostHasBeenFiled(candidate)) {
+    return { kind: "not_hostable", message: HOST_NOT_FILED_MESSAGE };
+  }
+  const refusal = canHost(candidate);
+  if (refusal) return { kind: "not_hostable", message: refusal.message };
+
+  const display = await loadHostDisplayRows(pool, [row.Id]);
+  const host = display.get(row.Id);
+  if (!host) return { kind: "not_found" };
+  return { kind: "found", host };
 }
 
 /* ─────────────────────────── the guest's own binding ─────────────────────────── */
@@ -573,145 +838,175 @@ function isUniqueViolation(err: unknown): boolean {
 }
 
 /**
- * Attach `guestRequestId` to `hostRequestId`.
+ * Write, replace or clear this guest's binding — **on the caller's open
+ * transaction, as part of saving the tab.**
  *
- * **Every admission decision is re-taken from the database inside the
- * transaction that inserts**, not carried from the picker:
+ * ## Why this is not an endpoint any more
  *
- * - the guest is still theirs and still editable (`requireEditableGuest`);
+ * It replaces `attachRoomShare` and `detachRoomShare`, which each opened a
+ * transaction of their own behind a `POST`/`DELETE` that fired the moment a
+ * host was clicked. That shape forced the picker to demand a saved draft
+ * first — an unsaved tab has no `AccRequest.Id` to post to — and the user
+ * asked twice (2026-09-22) for that step to go. Picking a host is now
+ * ordinary tab state, exactly like the accommodation it replaces, and
+ * `saveTravelBookingDraft` persists it with everything else.
+ *
+ * **Every admission decision is still re-taken from the database here**, not
+ * carried from the picker:
+ *
+ * - the guest is still theirs and still editable (`requireEditableGuest`) —
+ *   the same `Draft`/`Returned` rule `decideRequestMutate` applies, which the
+ *   save's route and the group guard above have each already applied once;
  * - the host still exists, is still AP-17, has still been filed, and
  *   `canAttach(guest, host)` still answers null — with both rows locked, so a
- *   cancellation racing this attach either commits first and is seen, or waits
+ *   cancellation racing this save either commits first and is seen, or waits
  *   and then sees the guest.
  *
- * A client that has had the picker open while the host was cancelled therefore
- * cannot slip past. This is the discipline `approveByAccount` already uses for
- * the per-diem dependency gate, and the reason it is not merely a re-run of the
- * same check: the check the route made was against a state that no longer has
- * to hold.
+ * A form left open while the host was cancelled therefore cannot slip past.
+ *
+ * ## The three shapes, and the one that costs nothing
+ *
+ * - **unchanged** — the stored host is already the one being saved. Returns
+ *   immediately, writes nothing and **mails nobody**: an ordinary re-save of a
+ *   guest tab must not tell the host again, and must not churn `CreatedBy` or
+ *   `CreatedAt`. This is also the cheap path for every tab that has no binding
+ *   and wants none, which is nearly every tab of nearly every save — one
+ *   `SELECT`, no lock, no write.
+ * - **cleared** (`hostRequestId` null over a stored row) — the row is deleted.
+ *   Nothing is restored: the requester is put back at an unanswered
+ *   ที่พักค้างคืน, which is the honest state, and resurrecting the choice the
+ *   attach replaced would re-book a room they had decided against.
+ * - **set or replaced** — refuse, or delete-then-insert.
+ *
+ * **Replacing used to be impossible and now is not**, deliberately. The old
+ * `POST` refused a guest that already had a host (`canAttach`'s
+ * `guest_has_host`), so changing your mind meant `DELETE` then `POST`. Here
+ * both halves are one transaction, and `canAttach` is asked about the guest
+ * **as it will be once the old row is gone** — `isGuest: false`, which is not
+ * a convenient fiction but the state this function is about to commit, and
+ * the only field of the candidate the delete changes. `hostsFor` is rows where
+ * the guest is the *host*, which deleting its own guest row cannot touch, so
+ * the one-hop check is untouched and still answers from the locked read.
+ * `UQ_AccTravelRoomShare_Guest` remains the backstop.
  *
  * `HostStaffId` is filled from the host's own `AccRequest.StaffId` in the
  * `INSERT` itself rather than from anything the caller sent — it is display
  * data, and the one thing worse than a stale label is a caller-chosen one.
+ *
+ * ## It does not drain the mail queue, and must not
+ *
+ * `queueRoomShareAttachedMail` writes its row on `tx`, so the notice and the
+ * binding stand or fall together (spec §5: telling the host is the entire
+ * protection, since §2 declined to ask their consent). Draining is
+ * `saveTravelBookingDraft`'s unconditional `processQueue()` **after the
+ * commit** — the same call the two cascades already rely on. Draining from in
+ * here would try to send a notice about a binding that has not committed yet.
  */
-export async function attachRoomShare(input: {
-  guestRequestId: number;
-  hostRequestId: number;
-  userId: number;
-}): Promise<RoomShareView> {
-  const pool = await getAccPool();
-  const tx = pool.transaction();
-  await tx.begin();
-  try {
-    await requireEditableGuest(tx, input.guestRequestId, input.userId);
+export async function applyRoomShareSelection(
+  tx: SqlRunner,
+  input: {
+    guestRequestId: number;
+    /** The tab's chosen host, or null to clear. Never `undefined` — the caller decides what an absent field means. */
+    hostRequestId: number | null;
+    userId: number;
+  },
+): Promise<{ changed: boolean }> {
+  /* The cheap path, and the reason a save of five ordinary tabs costs five
+     SELECTs rather than five locked reads and five no-op DELETEs. Unlocked on
+     purpose: it decides only whether to do nothing, and nothing is what a
+     stale answer would also lead to. The one thing that can move these rows
+     underneath it is the host-death cascade, which mails the guest about
+     exactly that. */
+  const currentRes = await tx
+    .request()
+    .input("gid", sql.Int, input.guestRequestId)
+    .query(`SELECT HostRequestId
+              FROM [dbo].[AccTravelRoomShare]
+             WHERE GuestRequestId = @gid`);
+  const currentHostId =
+    (currentRes.recordset[0]?.HostRequestId as number | undefined) ?? null;
+  if (currentHostId === input.hostRequestId) return { changed: false };
 
-    const candidates = await loadShareCandidates(
-      tx,
-      [input.guestRequestId, input.hostRequestId],
-      { lock: true },
-    );
-    const guest = candidates.get(input.guestRequestId);
-    const host = candidates.get(input.hostRequestId);
-    if (!guest) throw new AccForbiddenError("ไม่พบคำขอนี้");
-    // Deliberately the same wording whether the id names nothing at all or
-    // names a request of another form: this endpoint must not confirm that
-    // some arbitrary id exists.
-    if (!host) throw new AccConflictError("ไม่พบคำขอที่ต้องการพักห้องร่วมด้วย");
-    if (!hostHasBeenFiled(host)) throw new AccConflictError(HOST_NOT_FILED_MESSAGE);
+  await requireEditableGuest(tx, input.guestRequestId, input.userId);
 
-    const refusal = canAttach(guest, host);
-    if (refusal) throw refusalError(refusal);
-
-    const inserted = await tx
+  if (input.hostRequestId === null) {
+    await tx
       .request()
       .input("gid", sql.Int, input.guestRequestId)
-      .input("hid", sql.Int, input.hostRequestId)
+      .query(`DELETE FROM [dbo].[AccTravelRoomShare] WHERE GuestRequestId = @gid`);
+    return { changed: true };
+  }
+
+  const hostRequestId = input.hostRequestId;
+  const { candidates } = await loadShareCandidates(
+    tx,
+    [input.guestRequestId, hostRequestId],
+    { lock: true },
+  );
+  const guest = candidates.get(input.guestRequestId);
+  const host = candidates.get(hostRequestId);
+  if (!guest) throw new AccForbiddenError("ไม่พบคำขอนี้");
+  // Deliberately the same wording whether the id names nothing at all or
+  // names a request of another form: a save must not confirm that some
+  // arbitrary id exists.
+  if (!host) throw new AccConflictError("ไม่พบคำขอที่ต้องการพักห้องร่วมด้วย");
+  if (!hostHasBeenFiled(host)) throw new AccConflictError(HOST_NOT_FILED_MESSAGE);
+
+  // The guest as it will be once the row below is deleted — see the header.
+  const guestAfterClear: ShareCandidate =
+    currentHostId === null ? guest : { ...guest, isGuest: false };
+  const refusal = canAttach(guestAfterClear, host);
+  // Decided BEFORE anything is deleted, so a refusal leaves the existing
+  // binding in place without relying on the caller's rollback to put it back.
+  if (refusal) throw refusalError(refusal);
+
+  try {
+    if (currentHostId !== null) {
+      await tx
+        .request()
+        .input("gid", sql.Int, input.guestRequestId)
+        .query(`DELETE FROM [dbo].[AccTravelRoomShare] WHERE GuestRequestId = @gid`);
+    }
+
+    await tx
+      .request()
+      .input("gid", sql.Int, input.guestRequestId)
+      .input("hid", sql.Int, hostRequestId)
       .input("by", sql.Int, input.userId)
       .query(`INSERT INTO [dbo].[AccTravelRoomShare]
                 (GuestRequestId, HostRequestId, HostStaffId, CreatedBy)
-              OUTPUT INSERTED.HostStaffId AS HostStaffId
               SELECT @gid, @hid, r.StaffId, @by
                 FROM [dbo].[AccRequest] r
                WHERE r.Id = @hid`);
-    const hostStaffId =
-      (inserted.recordset[0]?.HostStaffId as number | null | undefined) ?? null;
-
-    /* THE GUEST BOOKS NOTHING THEMSELVES (spec §1), and until final review I1
-       that was enforced only by a React state patch — so a reload between the
-       attach and the next save restored the accommodation from the server,
-       into a grid `isRoomShareGuest` now hides, and the next save posted it
-       back and had the Admin desk book a real room for somebody sharing one.
-       Cleared here, on `tx`, so the binding and the withdrawal of the room it
-       replaces commit or roll back together. See `room-share-guest-room.ts`
-       for the whole argument, including why it is a separate module. */
-    await clearGuestOwnAccommodation(tx, input.guestRequestId);
-
-    const display = await loadHostDisplayRows(tx, [input.hostRequestId]);
-    const hostRow = display.get(input.hostRequestId);
-    if (!hostRow) throw new AccConflictError("ไม่พบคำขอที่ต้องการพักห้องร่วมด้วย");
-
-    /* TELLING THE HOST IS THE ENTIRE PROTECTION, so it is queued here — inside
-       the transaction that inserts the binding — and not after the commit.
-       Spec §2 declined to ask the host for consent; §5 makes the notice the
-       only mitigation. A binding that commits while the notice does not is
-       that mitigation silently not happening, and the host would first learn
-       of their room-mate at check-in. Queued on `tx`, so the two stand or fall
-       together; `applyUatRedirect` and the `[UAT] ` prefix still apply at
-       drain time, unchanged, because this is an ordinary AccEmailQueue row. */
-    await queueRoomShareAttachedMail(tx, {
-      guestRequestId: input.guestRequestId,
-      hostRequestId: input.hostRequestId,
-    });
-
-    await tx.commit();
-    // Fire-and-forget, after the commit — the established shape for every
-    // AP-17 mutation. The row is already durable either way; this only decides
-    // whether the host hears now or on the next drain.
-    void processQueue().catch(() => {});
-    return { guestRequestId: input.guestRequestId, hostStaffId, host: hostRow };
   } catch (e) {
-    await tx.rollback().catch(() => {});
     if (isUniqueViolation(e)) {
       // `UQ_AccTravelRoomShare_Guest` is the backstop `canAttach`'s
       // `guest_has_host` refusal normally speaks for; reaching it means two
-      // attaches raced. Same message, so the requester reads one answer.
+      // saves raced. Same message, so the requester reads one answer.
       throw new AccConflictError("คำขอนี้แนบกับห้องพักร่วมอื่นอยู่แล้ว — กรุณาโหลดหน้านี้ใหม่");
     }
     throw e;
   }
-}
 
-/**
- * Undo the attachment while the guest's own request is still editable.
- *
- * Idempotent: detaching something already detached answers `removed: false`
- * rather than throwing, because a double-click and a stale page are the two
- * ways to get here and neither is an error worth showing. The editability rule
- * is re-asserted first all the same — a request past `Returned` must not have
- * its binding removed, since by then the per diem it earned as a guest has been
- * priced on it.
- */
-export async function detachRoomShare(input: {
-  guestRequestId: number;
-  userId: number;
-}): Promise<{ removed: boolean }> {
-  const pool = await getAccPool();
-  const tx = pool.transaction();
-  await tx.begin();
-  try {
-    await requireEditableGuest(tx, input.guestRequestId, input.userId);
-    const res = await tx
-      .request()
-      .input("gid", sql.Int, input.guestRequestId)
-      .query(`DELETE FROM [dbo].[AccTravelRoomShare] WHERE GuestRequestId = @gid;
-              SELECT @@ROWCOUNT AS n`);
-    const removed = ((res.recordset[0]?.n as number) ?? 0) > 0;
-    await tx.commit();
-    return { removed };
-  } catch (e) {
-    await tx.rollback().catch(() => {});
-    throw e;
-  }
+  /* THE GUEST BOOKS NOTHING THEMSELVES (spec §1), and until final review I1
+     that was enforced only by a React state patch — so a reload between the
+     attach and the next save restored the accommodation from the server,
+     into a grid `isRoomShareGuest` hides, and the next save posted it back
+     and had the Admin desk book a real room for somebody sharing one.
+     Cleared on `tx`, so the binding and the withdrawal of the room it
+     replaces commit or roll back together. **It runs AFTER
+     `upsertTravelBooking` has written this tab** — the caller's own ordering
+     note says why: this clear must be the last word on those four columns,
+     not a value the save then writes over. See `room-share-guest-room.ts`
+     for the whole argument, including why it is a separate module. */
+  await clearGuestOwnAccommodation(tx, input.guestRequestId);
+
+  await queueRoomShareAttachedMail(tx, {
+    guestRequestId: input.guestRequestId,
+    hostRequestId,
+  });
+
+  return { changed: true };
 }
 
 /* ─────────────────────────── the cascade's loader ─────────────────────────── */

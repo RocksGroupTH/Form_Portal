@@ -65,6 +65,8 @@ export function DateRangeField({
   disabledDates,
   disabled,
   disabledHint,
+  required = true,
+  inline = false,
 }: {
   label: string;
   /** @deprecated retained for call-site compatibility. */
@@ -83,6 +85,29 @@ export function DateRangeField({
   /** Block opening the picker (e.g. until a prerequisite is set), showing `disabledHint`. */
   disabled?: boolean;
   disabledHint?: string;
+  /**
+   * Draw the red `*`. Default true, because every call site that predates this
+   * prop is a required field (ข้อ6 and ข้อ16).
+   *
+   * False for a **filter** — พักห้องเดียวกับ's host search opens on a default
+   * window the requester may clear, and a required marker on a control that
+   * refuses nothing says the opposite of what is true.
+   */
+  required?: boolean;
+  /**
+   * Render the calendar under the trigger instead of portalling it to `<body>`.
+   *
+   * **Required inside a modal dialog, and not for looks.** Radix puts
+   * `pointer-events: none` on `<body>` while a modal is open and treats a
+   * body-level node as *outside* its content, so a portalled panel there is
+   * both unclickable and a dismiss trigger — `LinePickers.tsx` records having
+   * measured exactly that, and `SearchableSelect` solves the same problem the
+   * other way, by portalling into the `[role="dialog"]` element. Inline is the
+   * simpler half of that pair and is what a narrow dialog wants anyway: no
+   * clipping arithmetic against the content's `overflow-hidden`, and the
+   * dialog's own scroll region absorbs the height.
+   */
+  inline?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [panelRect, setPanelRect] = useState<{ top: number; left: number; width: number } | null>(null);
@@ -191,15 +216,26 @@ export function DateRangeField({
 
   const hint = !departDate || returnDate ? "แตะเลือกวันเริ่มต้น" : "แตะเลือกวันสิ้นสุด";
 
-  const panel = open && panelRect ? (
+  const panel = open && (inline || panelRect) ? (
     <div
       ref={panelRef}
+      /* Marks an open calendar in the DOM, for a dialog hosting this control
+         to read: while the panel is up the first Escape belongs to the panel,
+         so the dialog must refuse it (`onEscapeKeyDown` + `preventDefault`).
+         Radix registers its own Escape handler when the dialog mounts, before
+         any nested panel exists, so a child cannot win this by stopping the
+         event — refusing it at the dialog is the only order-independent way.
+         The attribute rather than lifted state, for the reason
+         `LinePickers.tsx`'s `PICKER_PANEL_ATTR` gives: this panel owns its own
+         open flag and there is no shared parent to ask. */
+      data-daterange-panel=""
       className="rounded-xl overflow-hidden"
       style={{
-        position: "fixed",
-        top: panelRect.top,
-        left: panelRect.left,
-        width: panelRect.width,
+        position: inline ? "relative" : "fixed",
+        top: inline ? undefined : panelRect?.top,
+        left: inline ? undefined : panelRect?.left,
+        width: inline ? "100%" : panelRect?.width,
+        marginTop: inline ? 4 : undefined,
         zIndex: 200,
         background: "var(--bg-card)",
         border: "1px solid var(--border-card)",
@@ -316,7 +352,7 @@ export function DateRangeField({
   return (
     <div ref={rootRef}>
       <label className={labelClass} style={errLabelStyle(!!hasError)}>
-        {label}{requiredStar}
+        {label}{required ? requiredStar : null}
       </label>
       <button
         ref={triggerRef}
@@ -339,7 +375,11 @@ export function DateRangeField({
         </span>
       </button>
 
-      {typeof document !== "undefined" && panel ? createPortal(panel, document.body) : null}
+      {inline
+        ? panel
+        : typeof document !== "undefined" && panel
+          ? createPortal(panel, document.body)
+          : null}
 
       {continuationHint && (
         <p className="text-[11px] mt-1.5" style={{ color: "var(--color-action)" }}>

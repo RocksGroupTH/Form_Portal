@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isGrantableReimburseTabKey } from "./settings-tabs";
+import { GRANTABLE_REIMBURSE_TABS, isGrantableReimburseTabKey } from "./settings-tabs";
 
 /**
  * What actually gates each AP-4 settings route.
@@ -38,32 +38,25 @@ const ROUTE_GATES: { route: string; gate: Gate; publicRead?: "GET" }[] = [
   },
   { route: "rules", gate: { kind: "tab", tab: "rules" }, publicRead: "GET" },
   { route: "brands", gate: { kind: "tab", tab: "brands" } },
-  {
-    route: "erp-interface",
-    gate: {
-      kind: "role",
-      why: "not brand-scoped (see settings-tabs.ts) — a scoped grant holder could set another brand's posting configuration",
-    },
-  },
-  {
-    route: "gl-accounts",
-    gate: {
-      kind: "role",
-      why: "edits AP-3's OWN rows (AccClearAdvanceGl / AccClearAdvanceGlCompany), so a grant here would be a grant over another form's configuration — bu-gl-map's reason exactly",
-    },
-  },
+  // The three opened on 2026-09-22 (user: "ของ AP-3,4 ก็ต้อง เปิด check box
+  // ทุกอัน"). Each was `requireRole` until that day for a reason this table
+  // used to carry, and each reason was put to the user and accepted — see
+  // `settings-tabs.ts`, which now records them as what a tick REACHES rather
+  // than as why it cannot be given:
+  //  - erp-interface: gated but NOT brand-scoped, so a holder sets any brand's
+  //    bank account, Journal Batch and Branch Code;
+  //  - gl-accounts / bu-gl-map: the rows are AP-3's as much as AP-4's
+  //    (AccClearAdvanceGl / AccClearAdvanceGlCompany, AccClrBuGlMap /
+  //    AccClrBranchGlMap — no FormCode column), so a grant reaches another
+  //    form's configuration and posting rules.
+  { route: "erp-interface", gate: { kind: "tab", tab: "erpInterface" } },
+  { route: "gl-accounts", gate: { kind: "tab", tab: "glAccounts" } },
+  { route: "bu-gl-map", gate: { kind: "tab", tab: "buGlMap" } },
   {
     route: "erp-sync",
     gate: {
       kind: "role",
-      why: "writes Rocks_ERP_Data — the Business Central mirror Rocks Fast also writes and ACC Portal reads through Fast_Data's synonyms; the same rule AP-1's erp-accounts/sync and AP-3's locations/sync carry",
-    },
-  },
-  {
-    route: "bu-gl-map",
-    gate: {
-      kind: "role",
-      why: "edits AP-3's OWN rows (AccClrBuGlMap / AccClrBranchGlMap, no FormCode column), so a grant here would be a grant over another form's posting rules — and, like erp-interface, it is not brand-scoped",
+      why: "writes Rocks_ERP_Data — the Business Central mirror Rocks Fast also writes and ACC Portal reads through Fast_Data's synonyms; the same rule AP-1's erp-accounts/sync and AP-3's locations/sync carry. It is the sync button INSIDE the two G/L tabs, so a grant holder works those tabs and this button alone answers 403 — the one deliberately partial grant here, and it stayed that way when the tabs opened",
     },
   },
 ];
@@ -199,6 +192,28 @@ test("every tab-gated route names a tab an admin can actually tick", () => {
         `${rule.route} is gated on "${rule.gate.tab}", which no admin can tick`,
       );
     }
+  }
+});
+
+test("every tab an admin can tick has a route that honours the tick", () => {
+  // The OTHER direction, and the one this file was missing until 2026-09-22 —
+  // the direction that matters for the bug that prompted the change. A key in
+  // `GRANTABLE_REIMBURSE_TABS` whose route is still `requireRole` renders a
+  // tickable column that grants nothing: the holder sees the tab and its data
+  // 403s. CLAUDE.md names that exact shape as the thing this codebase
+  // deliberately did not copy from ACC Portal, and nothing here noticed it.
+  //
+  // `GRANTABLE_REIMBURSE_TABS` is now `everything but access`, so this is also
+  // what keeps a NEW tab from defaulting into a tick with no gate behind it.
+  const gatedTabs: string[] = [];
+  for (const rule of ROUTE_GATES) {
+    if (rule.gate.kind === "tab") gatedTabs.push(rule.gate.tab);
+  }
+  for (const t of GRANTABLE_REIMBURSE_TABS) {
+    assert.ok(
+      gatedTabs.indexOf(t.key) !== -1,
+      `"${t.key}" can be ticked but no route in this table is gated on it — the grant would open a tab whose every request 403s`,
+    );
   }
 });
 

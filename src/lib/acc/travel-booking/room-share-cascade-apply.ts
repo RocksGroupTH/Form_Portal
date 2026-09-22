@@ -269,9 +269,11 @@ async function applyOneDetach(
  * point: the guarded `DELETE` of the binding, and the audit row
  * `detached_by_room_share_host`. **No status change, no approval is closed
  * and nothing is repriced** — the guest's request is untouched apart from
- * losing a share it can no longer have, exactly as the guest's own
- * `detachRoomShare` leaves it, and the figure it keeps cannot be paid without
- * passing back through the submit, which prices it again from scratch.
+ * losing a share it can no longer have, exactly as the guest clearing the
+ * choice themselves leaves it (`applyRoomShareSelection` with a null host,
+ * inside their own tab save since 2026-09-22), and the figure it keeps cannot
+ * be paid without passing back through the submit, which prices it again from
+ * scratch.
  *
  * `CancelledBy` and `AuthorId` are both left NULL, deliberately and for the
  * same reason `perdiem_recalculated` leaves `AuthorId` NULL: **nobody did

@@ -9,7 +9,6 @@ import { Users, Landmark, Wallet, SlidersHorizontal, Link2, Building2, ShieldChe
 import { backTo } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
-import { AdvanceApproverSettings } from "@/features/advance/components/settings/AdvanceApproverSettings";
 import { AdvanceApprovalMatrixSettings } from "@/features/advance/components/settings/AdvanceApprovalMatrixSettings";
 import { AdvanceBankMasterSettings } from "@/features/advance/components/settings/AdvanceBankMasterSettings";
 import { AdvanceErpInterfaceSettings } from "@/features/advance/components/settings/AdvanceErpInterfaceSettings";
@@ -27,31 +26,65 @@ type TabKey = (typeof ADVANCE_SETTINGS_TAB_ORDER)[number];
  * - **แบรนด์ที่เบิกได้ is its own tab**, split out of Interface ERP where it had
  *   been a per-brand switch inside the posting configuration. AP-1, AP-17 and
  *   AP-4 all give it a tab.
- * - **ผู้อนุมัติ became สิทธิ์เข้าถึง**, and last. The approver roster is still
- *   there and still its own table — what the tab gained is the grid that hands
- *   out sight of a menu or a settings tab, which is a different question from
- *   who may approve. Both are rendered on it; neither table merged.
+ * - **ผู้อนุมัติ became สิทธิ์เข้าถึง**, and last.
+ *
+ * **The standalone approver panel came off on 2026-09-22** (the user's
+ * instruction), and with it the sentence that used to sit here — that the
+ * roster "is still its own table … Both are rendered on it; neither table
+ * merged." The *tables* are still separate, and that part of the argument
+ * stands: being on `AccAdvanceApprover` approves money, being on
+ * `AccAdvClrAccess` grants sight, and neither implies the other. What merged is
+ * the **editor**: the three approver roles are columns in the one grid, where
+ * ticking creates the row and unticking deactivates it. Two editors over one
+ * `IsActive` flag on one screen is how each comes to lie about the other, which
+ * is what this removed.
+ *
+ * **สิทธิ์เข้าถึง shows AP-2's keys only, since 2026-09-22** (the user's
+ * instruction). `AdvClrAccessSettings` takes the form and derives what to
+ * render from `ADVANCE_SETTINGS_TAB_ORDER` itself, so this strip and that grid
+ * cannot come to disagree. แบรนด์ที่เบิกได้ is on THIS page alone: the switch
+ * behind it writes `AccFormBrand` for both forms in one transaction, so it
+ * could not be split without putting two controls on one row.
  */
 const TAB_META: Record<TabKey, { label: string; icon: React.ReactNode }> = {
   brands: { label: "แบรนด์ที่เบิกได้", icon: <Building2 size={15} /> },
   matrix: { label: "ขั้นตามเงิน", icon: <SlidersHorizontal size={15} /> },
   banks: { label: "ธนาคาร (Master)", icon: <Landmark size={15} /> },
-  erpInterface: { label: "Interface ERP", icon: <Link2 size={15} /> },
+  advanceErpInterface: { label: "Interface ERP", icon: <Link2 size={15} /> },
   access: { label: "สิทธิ์เข้าถึง", icon: <ShieldCheck size={15} /> },
 };
 
 const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] =
   ADVANCE_SETTINGS_TAB_ORDER.map((key) => ({ key, ...TAB_META[key] }));
 
+/**
+ * `?tab=` → a tab on this strip, honouring one legacy spelling.
+ *
+ * Interface ERP's key became `advanceErpInterface` on 2026-09-22, when the tab
+ * became grantable and needed a key per form (see `@/lib/adv/settings-tabs`).
+ * A link saved before that names `erpInterface`, and falling through to
+ * สิทธิ์เข้าถึง would open the wrong tab rather than saying so — the same
+ * bookmark promise AP-4's `buGlMap` key kept through two renames.
+ */
+function parseTabKey(raw: string | null): TabKey {
+  if (raw === "erpInterface") return "advanceErpInterface";
+  return TABS.some((t) => t.key === raw) ? (raw as TabKey) : "access";
+}
+
 
 /**
  * Which tabs of this strip the viewer may open.
  *
  * A **filter, not a control** — every settings route re-decides its own access
- * server-side (`requireAdvClrSettingsTab`), and the two that hand out power
- * (`settings/access`, `settings/erp-interface`) stay `requireRole` and are
- * not grantable at all. An admin passes everything, so the page behaves
- * exactly as it did before grants existed.
+ * server-side (`requireAdvClrSettingsTab`), and `settings/access` stays
+ * `requireRole` and is not grantable at all. An admin passes everything, so
+ * the page behaves exactly as it did before grants existed.
+ *
+ * **`settings/erp-interface` left that sentence on 2026-09-22**, with
+ * `gl-accounts` and `bu-gl-map`, when the user opened all three to individual
+ * grants — see `@/lib/adv/settings-tabs` for what each one reaches. The
+ * routes that write `Rocks_ERP_Data` (`vendors/sync`, `erp-sync`,
+ * `locations/sync`) did NOT, and stay admin-only.
  *
  * `undefined` while the fetch is in flight, which is what keeps the page from
  * flashing its refusal at somebody who does have access.
@@ -88,9 +121,7 @@ function AdvanceSettingsContent() {
   const { status } = useSession();
   const searchParams = useSearchParams();
   const tabParam = searchParams.get("tab");
-  const [activeTab, setActiveTab] = useState<TabKey>(
-    TABS.some((t) => t.key === tabParam) ? (tabParam as TabKey) : "access",
-  );
+  const [activeTab, setActiveTab] = useState<TabKey>(() => parseTabKey(tabParam));
   // Every hook before any early return: this one used to sit below the
   // session-loading branch, which is a conditional call and breaks the Rules
   // of Hooks the moment that branch is taken.
@@ -176,20 +207,23 @@ function AdvanceSettingsContent() {
 
         <div className="p-5">
           {openTab === "brands" && <AdvClrBrandSettings />}
-          {openTab === "access" && (
-            <div className="flex flex-col gap-6">
-              <AdvClrAccessSettings />
-              {/* The approver roster keeps its own table and its own editor —
-                  only the tab merged. Sight and authority are different
-                  questions; see AdvClrAccessSettings' docblock. */}
-              <div className="pt-5" style={{ borderTop: "1px solid var(--border-card)" }}>
-                <AdvanceApproverSettings />
-              </div>
-            </div>
-          )}
+          {/* The standalone approver panel is GONE (user, 2026-09-22: "ของ AP-2
+              ก็เหมือนกันตัดออกได้เลยอยู่ด้านบนแล้ว"). Its three roles are columns
+              in the grid above — ticking creates the approver row, unticking
+              deactivates it — so the panel had become a second editor over the
+              same rows, and two controls over one flag on one screen is how
+              each comes to lie about the other.
+
+              What is genuinely lost is the panel's HARD DELETE. That is the
+              established direction here rather than a regression: every other
+              roster in this app soft-deletes and says so ("A row is never
+              deleted, only switched off"), and the approver panels were the
+              outlier. Adding is unaffected — `+ เพิ่มผู้มีสิทธิ์` opens the same
+              AD search and the role tick does the rest. */}
+          {openTab === "access" && <AdvClrAccessSettings form="AP-2" />}
           {openTab === "matrix" && <AdvanceApprovalMatrixSettings />}
           {openTab === "banks" && <AdvanceBankMasterSettings />}
-          {openTab === "erpInterface" && <AdvanceErpInterfaceSettings />}
+          {openTab === "advanceErpInterface" && <AdvanceErpInterfaceSettings />}
         </div>
       </div>
     </PageContainer>

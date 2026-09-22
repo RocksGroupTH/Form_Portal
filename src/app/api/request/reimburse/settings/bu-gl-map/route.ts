@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/api-auth";
+import { requireReimburseSettingsTab } from "@/lib/acc/reimburse/require-reimburse-settings-tab";
 import {
   listBranchGlMap,
   listBuGlMap,
@@ -31,10 +31,14 @@ import {
  * path classifies `AP-4` — the `/api/request/reimburse` prefix already does —
  * so the tab reads and writes whichever database AP-4 itself resolves.
  *
- * `requireRole` on both handlers, matching AP-3's, and the tab is deliberately
- * absent from `GRANTABLE_REIMBURSE_TABS`: it decides which account money lands
- * in and is not brand-scoped, the same argument that keeps `erpInterface`
- * ungrantable.
+ * **Gated on the `buGlMap` grant since 2026-09-22, matching AP-3's twin.**
+ * Both handlers were `requireRole` until that day and the tab was absent from
+ * `GRANTABLE_REIMBURSE_TABS`, because it decides which account money lands in,
+ * is not brand-scoped, and — sharper — edits rows that are **AP-3's as much as
+ * AP-4's**, so a grant here is a grant over another form's posting rules. The
+ * user was told that and opened it anyway; the สิทธิ์เข้าถึง grid prints a
+ * Thai line under the tick saying the rules are shared. The admin arm is
+ * unchanged, so nobody lost access.
  *
  * GET  ?company=PCTH — the rules for one BC company, plus the three lists the
  *                      screen picks from: every BU its Locations carry, its
@@ -50,7 +54,7 @@ import {
  *      state as never having had a rule.
  */
 export async function GET(req: NextRequest) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireReimburseSettingsTab("buGlMap");
   if (session instanceof Response) return session;
 
   const company = req.nextUrl.searchParams.get("company") ?? "";
@@ -82,7 +86,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireReimburseSettingsTab("buGlMap");
   if (session instanceof Response) return session;
   try {
     // One endpoint, two kinds of rule: a body naming a branch sets a branch

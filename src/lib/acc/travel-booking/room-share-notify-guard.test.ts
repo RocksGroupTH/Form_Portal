@@ -121,21 +121,53 @@ test("the death cascade mails what it APPLIED, never what it merely decided", ()
   );
 });
 
-test("attachRoomShare tells the host, and does it BEFORE the commit", () => {
-  const body = bodyOf(SERVICE, "export async function attachRoomShare");
+/**
+ * **The attach is `applyRoomShareSelection` now, and it commits nothing** — the
+ * tab's own save owns the transaction (2026-09-22). So "before the commit" can
+ * no longer be asserted here at all; what replaces it is the pair of facts
+ * that make the notice atomic with the binding anyway:
+ *
+ * - it is queued **on `tx`**, the caller's open transaction, so a save that
+ *   rolls back takes the notice with it and a save that commits cannot
+ *   commit a binding without one;
+ * - this function **opens no transaction of its own**, which is what makes the
+ *   first fact mean something.
+ *
+ * Both matter for the same reason the old ordering assertion did. Spec §2
+ * declined to ask the host for consent and §5 makes this notice the only
+ * mitigation: a binding that commits while the notice does not is that
+ * mitigation silently not happening, and the host learns of their room-mate at
+ * check-in.
+ */
+test("the attach tells the host, on the caller's own transaction", () => {
+  const body = bodyOf(SERVICE, "export async function applyRoomShareSelection");
   assert.ok(
     /queueRoomShareAttachedMail\s*\(\s*tx\s*,/.test(body),
-    "attachRoomShare no longer calls queueRoomShareAttachedMail(tx, …). Spec §2 declined to " +
-      "ask the host for consent and §5 makes this notice the only mitigation — without it a " +
-      "guest attaches to somebody else's room and the host finds out at check-in",
+    "applyRoomShareSelection no longer calls queueRoomShareAttachedMail(tx, …). Spec §2 " +
+      "declined to ask the host for consent and §5 makes this notice the only mitigation — " +
+      "without it a guest attaches to somebody else's room and the host finds out at check-in",
   );
-  assertBefore(
-    body,
-    "queueRoomShareAttachedMail(tx",
-    "await tx.commit()",
-    "the notice must be queued inside the transaction that inserts the binding. Queued after " +
-      "the commit, a binding can exist with no notice ever written — the mitigation silently " +
-      "not happening, which is the one failure mode this feature cannot afford",
+  /* Matched as `.commit(` / `.begin(` rather than `tx.commit()`, because the
+     literal spelling was **measured green** against a mutation on 2026-09-22:
+     `await (tx as unknown as { commit: () => Promise<void> }).commit();`
+     contains no `tx.commit()` at all and sailed past. A receiver-agnostic
+     pattern cannot be dodged by renaming the variable or casting it. */
+  assert.ok(
+    !/\.\s*begin\s*\(/.test(body) && !/\.\s*commit\s*\(/.test(body),
+    "applyRoomShareSelection runs a transaction of its own again. Queuing on a transaction it " +
+      "owns would let the notice commit while the tab that caused it rolls back, and the " +
+      "reverse — the binding and its only mitigation must be one atomic thing",
+  );
+  /* And nobody else may write the binding: a second writer is a second place
+     the notice can be forgotten, which is how "the host is always told"
+     becomes "the host is usually told". */
+  const save = code("lib/acc/travel-booking/request-service.ts");
+  const calls = save.match(/applyRoomShareSelection\s*\(/g) ?? [];
+  assert.equal(
+    calls.length,
+    1,
+    `request-service.ts calls applyRoomShareSelection ${calls.length} times, not once — the ` +
+      "group save is the single writer of the binding",
   );
 });
 

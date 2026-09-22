@@ -61,6 +61,23 @@ export type ShareRefusalCode =
 export type ShareRefusal = { code: ShareRefusalCode; message: string };
 
 /**
+ * The `self_attach` sentence, named so it is written **once**.
+ *
+ * `canAttach` below is the only place that can decide `self_attach` from two
+ * candidates, and it still does. But the picker's running-number lookup
+ * (`loadHostByRequestNo`, `room-share-service.ts`) has to answer the same
+ * refusal from **one** id — a requester typing their own number — and it
+ * deliberately builds no `ShareCandidate` for the caller's own request to do
+ * it: that would mean loading a request the caller merely named, and reading
+ * its `isGuest`/`hostsFor` state back to them through a refusal message.
+ *
+ * So the lookup reuses this constant rather than a second sentence. Inventing
+ * copy beside a closed refusal union is how a picker starts telling a
+ * requester something the policy did not say.
+ */
+export const SELF_ATTACH_MESSAGE = "ไม่สามารถเลือกคำขอของตัวเองเป็นห้องพักร่วมได้";
+
+/**
  * Dead, and so unusable as a host — the exact exclusion `continuation-chain.ts`,
  * `date-overlap.ts`, `requester-trips.ts` and `perdiem-dependency.ts` already
  * use for "alive". A seventh definition that disagreed would be the bug this
@@ -119,10 +136,7 @@ export function canHost(candidate: ShareCandidate): ShareRefusal | null {
  */
 export function canAttach(guest: ShareCandidate, host: ShareCandidate): ShareRefusal | null {
   if (guest.requestId === host.requestId) {
-    return {
-      code: "self_attach",
-      message: "ไม่สามารถเลือกคำขอของตัวเองเป็นห้องพักร่วมได้",
-    };
+    return { code: "self_attach", message: SELF_ATTACH_MESSAGE };
   }
 
   // "A guest's request may not itself be a host" (spec §3) — unconditional,

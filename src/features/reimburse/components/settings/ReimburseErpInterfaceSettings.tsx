@@ -960,8 +960,9 @@ function ReimburseErpGroupModal({
  * AP-4's Interface ERP tab — grouped by interface target since SDD Task 8,
  * the way AP-1's own tab groups (`BrandErpInterfaceSettings.tsx`). Reads
  * `/api/request/reimburse/settings/erp-interface` (Task 6's service, Task 7's
- * route — `requireRole` on every method, this tab is deliberately not
- * grantable, see `settings-tabs.ts`).
+ * route — gated on the `erpInterface` grant since 2026-09-22, `requireRole` on
+ * every method before that; see `settings-tabs.ts` for what the user was told
+ * the grant reaches, and chose).
  *
  * Bank / Branch / Journal Batch option lists come from AP-2's existing
  * `/api/request/advance/settings/erp-master` — the same reuse the old flat
@@ -969,8 +970,18 @@ function ReimburseErpGroupModal({
  * Company and unrelated to which form is asking. Department options for Fix
  * Dept come from AP-1's admin-sync GET, `/api/request/accounting/settings/erp-accounts`
  * (no `brand`/`category` query — the batched shape) — reused rather than
- * duplicated for the same reason, and reachable here because this whole tab
- * is admin-only, and `requireSettingsTab`'s admin arm is exactly `requireRole`.
+ * duplicated for the same reason.
+ *
+ * **⚠ Both borrowings rested on this tab being admin-only, and it no longer
+ * is.** They were reachable because `requireSettingsTab`'s admin arm is
+ * exactly `requireRole`; now that a non-admin can hold AP-4's `erpInterface`
+ * grant, those two routes still answer to AP-1's and AP-2's own gates and
+ * refuse them. Such a viewer reads AP-4's own configuration and gets
+ * `erpFailed` / `deptFailed` in the pickers — visible rather than silent,
+ * because this panel already tells a failed fetch from an empty one (see
+ * those two flags). Closing it means widening AP-1's and AP-2's routes to
+ * AP-4's roster or minting AP-4-pathed twins, and both are policy about
+ * another form's access model rather than a wiring fix here.
  *
  * **No Sync Vendor button, unlike AP-2's panel.** Vendor sync exists so AP-2's
  * Dr line can match a Business Central vendor at send time; AP-4 has no send
