@@ -13,7 +13,7 @@ import {
 } from "@/lib/uat-tester/guards";
 import { AccConflictError, SUBMIT_ALREADY_CLAIMED } from "@/lib/acc/request-errors";
 import { allocateRequestNo } from "@/lib/acc/sequence";
-import { queueEmail } from "@/lib/acc/email-queue";
+import { processQueue, queueEmail } from "@/lib/acc/email-queue";
 import { buildTravelBookingEmail } from "@/lib/acc/travel-booking/email-templates";
 import { computePerDiem } from "@/lib/acc/travel-booking/perdiem";
 import {
@@ -1173,6 +1173,18 @@ export async function saveTravelBookingDraft(
   // these objects are already gone, so the log is the only remaining record.
   await deleteStoredFiles(removedFilePaths, "AP-17 saveTravelBookingGroup removed tabs");
 
+  /* Both room-share cascades can fire inside the transaction above — the date
+     cascade when a Returned host's dates move, the death cascade when a tab is
+     dropped from the group — and each queues its notices on `tx`
+     (`room-share-notify.ts`). Unlike every approve/reject/cancel path, this
+     one has no route-level drain, so without this the guest whose trip was
+     just cancelled or re-dated would wait for somebody else's action to flush
+     the queue. Unconditional rather than gated on whether a cascade ran: an
+     empty queue costs one `SELECT TOP 20`, and threading a "did anything
+     queue" flag out through `collectAndDeleteRequestArtifacts`'s return type
+     is more moving parts than the read it would save. */
+  void processQueue().catch(() => {});
+
   return { groupKey, requestIds };
 }
 
@@ -1211,6 +1223,12 @@ export async function deleteTravelBookingDraft(groupKey: string, userId: number)
   }
 
   await deleteStoredFiles(allPaths, "AP-17 deleteTravelBookingDraft");
+
+  // The hard delete is the cascade's fifth trigger (see
+  // `collectAndDeleteRequestArtifacts`), so discarding a Returned host cancels
+  // its guests and queues their notices on that transaction. This route has no
+  // drain of its own either — same reasoning as `saveTravelBookingDraft`'s.
+  void processQueue().catch(() => {});
 }
 
 /* ─────────────────────────── validation + submit (Task 5) ─────────────────────────── */

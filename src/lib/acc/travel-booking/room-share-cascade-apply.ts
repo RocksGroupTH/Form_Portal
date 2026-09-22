@@ -49,6 +49,7 @@ import {
   type GuestAction,
 } from "@/lib/acc/travel-booking/room-share-cascade";
 import { recomputeGroupPerDiem } from "@/lib/acc/travel-booking/perdiem-recompute";
+import { queueRoomShareCascadeMails } from "@/lib/acc/travel-booking/room-share-notify";
 
 type AccPool = Awaited<ReturnType<typeof getAccPool>>;
 /**
@@ -252,6 +253,14 @@ export async function applyRoomShareDeath(
     applied.push(action);
   }
 
+  // Told, in the same transaction that did it (spec §5). Driven by `applied`
+  // rather than `decided`, so a guest whose cancel lost the race above is not
+  // mailed about a cancellation that did not happen. No `try`/`catch`, for
+  // this module's stated reason: notification is the ENTIRE mitigation for a
+  // host who was never asked, so a cascade that commits while its notice does
+  // not is the silent survival the transaction boundary exists to prevent.
+  await queueRoomShareCascadeMails(runner, hostRequestId, applied);
+
   return applied;
 }
 
@@ -377,6 +386,14 @@ export async function applyRoomShareDates(
       );
     }
   }
+
+  // Told, in the same transaction that moved the dates (spec §5) — and this
+  // is the arm that carries the user's 2026-09-22 ruling: `perDiemWritable`
+  // refuses to reprice a `Completed` guest, so its dates move while its paid
+  // figure does not. `queueRoomShareCascadeMails` re-reads each guest's status
+  // and tells accounting when that has happened, because the conservative
+  // choice about the money must not also be the silent one.
+  await queueRoomShareCascadeMails(runner, hostRequestId, decided);
 
   return decided;
 }

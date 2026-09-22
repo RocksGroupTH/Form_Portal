@@ -42,6 +42,8 @@ import {
   type ShareRefusal,
 } from "@/lib/acc/travel-booking/room-share-policy";
 import type { GuestState } from "@/lib/acc/travel-booking/room-share-cascade";
+import { processQueue } from "@/lib/acc/email-queue";
+import { queueRoomShareAttachedMail } from "@/lib/acc/travel-booking/room-share-notify";
 
 type AccPool = Awaited<ReturnType<typeof getAccPool>>;
 /**
@@ -637,7 +639,24 @@ export async function attachRoomShare(input: {
     const hostRow = display.get(input.hostRequestId);
     if (!hostRow) throw new AccConflictError("ไม่พบคำขอที่ต้องการพักห้องร่วมด้วย");
 
+    /* TELLING THE HOST IS THE ENTIRE PROTECTION, so it is queued here — inside
+       the transaction that inserts the binding — and not after the commit.
+       Spec §2 declined to ask the host for consent; §5 makes the notice the
+       only mitigation. A binding that commits while the notice does not is
+       that mitigation silently not happening, and the host would first learn
+       of their room-mate at check-in. Queued on `tx`, so the two stand or fall
+       together; `applyUatRedirect` and the `[UAT] ` prefix still apply at
+       drain time, unchanged, because this is an ordinary AccEmailQueue row. */
+    await queueRoomShareAttachedMail(tx, {
+      guestRequestId: input.guestRequestId,
+      hostRequestId: input.hostRequestId,
+    });
+
     await tx.commit();
+    // Fire-and-forget, after the commit — the established shape for every
+    // AP-17 mutation. The row is already durable either way; this only decides
+    // whether the host hears now or on the next drain.
+    void processQueue().catch(() => {});
     return { guestRequestId: input.guestRequestId, hostStaffId, host: hostRow };
   } catch (e) {
     await tx.rollback().catch(() => {});
